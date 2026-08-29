@@ -15,7 +15,9 @@ struct PenControlsView: View {
           .frame(width: 1, height: 24)
 
         widthControl
-        opacityControl
+        if model.drawingTool == .pen {
+          opacityControl
+        }
       }
 
       Button {
@@ -99,7 +101,16 @@ struct PenControlsView: View {
     .accessibilityIdentifier("drawing-tool-eraser")
   }
 
+  @ViewBuilder
   private var widthControl: some View {
+    if model.drawingTool == .pen {
+      penWidthControl
+    } else {
+      eraserWidthControl
+    }
+  }
+
+  private var penWidthControl: some View {
     HStack(spacing: 9) {
       Capsule()
         .fill(model.penStyle.color.displayColor)
@@ -113,12 +124,41 @@ struct PenControlsView: View {
           get: { model.penStyle.width },
           set: model.selectPenWidth
         ),
-        in: PenStyle.minimumWidth ... PenStyle.maximumWidth
+        in: PenStyle.minimumWidth...PenStyle.maximumWidth
       )
       .tint(model.penStyle.color.displayColor)
       .frame(width: 112)
       .accessibilityLabel("Толщина ручки")
       .accessibilityIdentifier("pen-width")
+    }
+  }
+
+  private var eraserWidthControl: some View {
+    HStack(spacing: 9) {
+      ZStack {
+        Circle()
+          .fill(.primary.opacity(0.14))
+          .frame(
+            width: eraserPreviewWidth,
+            height: eraserPreviewWidth
+          )
+      }
+      .frame(width: 26, height: 26)
+
+      Slider(
+        value: Binding(
+          get: { model.eraserStyle.maximumWidth },
+          set: model.selectEraserWidth
+        ),
+        in: EraserStyle.minimumSelectableWidth...EraserStyle.maximumSelectableWidth
+      )
+      .tint(.primary)
+      .frame(width: 112)
+      .accessibilityLabel("Толщина ластика")
+      .accessibilityValue(
+        "\(Int(model.eraserStyle.maximumWidth.rounded())) пунктов"
+      )
+      .accessibilityIdentifier("eraser-width")
     }
   }
 
@@ -141,7 +181,7 @@ struct PenControlsView: View {
           get: { model.penStyle.minimumOpacity },
           set: model.selectPenMinimumOpacity
         ),
-        in: PenStyle.lowestMinimumOpacity ... PenStyle.highestMinimumOpacity
+        in: PenStyle.lowestMinimumOpacity...PenStyle.highestMinimumOpacity
       )
       .tint(model.penStyle.color.displayColor)
       .frame(width: 96)
@@ -160,5 +200,12 @@ struct PenControlsView: View {
 
   private var controlColor: Color {
     model.drawingTool == .pen ? model.penStyle.color.displayColor : .primary
+  }
+
+  private var eraserPreviewWidth: CGFloat {
+    let progress =
+      (model.eraserStyle.maximumWidth - EraserStyle.minimumSelectableWidth)
+      / (EraserStyle.maximumSelectableWidth - EraserStyle.minimumSelectableWidth)
+    return CGFloat(6 + (18 * progress))
   }
 }

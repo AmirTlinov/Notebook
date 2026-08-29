@@ -7,6 +7,7 @@ struct PencilCanvasView: UIViewRepresentable {
   let pageID: UUID
   let drawingData: Data
   let penStyle: PenStyle
+  let eraserStyle: EraserStyle
   let drawingTool: DrawingTool
   let onToggleTool: () -> Void
   let onNavigate: (_ horizontal: Bool, _ direction: Int) -> Void
@@ -25,7 +26,12 @@ struct PencilCanvasView: UIViewRepresentable {
   func makeUIView(context: Context) -> PaperCanvasContainerView {
     let paper = PaperCanvasContainerView()
     context.coordinator.attach(to: paper)
-    context.coordinator.apply(penStyle, tool: drawingTool, to: paper)
+    context.coordinator.apply(
+      penStyle,
+      eraserStyle: eraserStyle,
+      tool: drawingTool,
+      to: paper
+    )
     context.coordinator.apply(drawingData, pageID: pageID, to: paper)
     return paper
   }
@@ -35,7 +41,12 @@ struct PencilCanvasView: UIViewRepresentable {
     context.coordinator.onNavigate = onNavigate
     context.coordinator.onUndo = onUndo
     context.coordinator.onChange = onChange
-    context.coordinator.apply(penStyle, tool: drawingTool, to: paper)
+    context.coordinator.apply(
+      penStyle,
+      eraserStyle: eraserStyle,
+      tool: drawingTool,
+      to: paper
+    )
     context.coordinator.apply(drawingData, pageID: pageID, to: paper)
   }
 
@@ -49,6 +60,7 @@ struct PencilCanvasView: UIViewRepresentable {
     private var pageID: UUID?
     private var appliedDrawing = PKDrawing()
     private var appliedPenStyle: PenStyle?
+    private var appliedEraserStyle: EraserStyle?
     private var appliedDrawingTool: DrawingTool?
     private var pageGestures: TwoFingerPageGestureController?
 
@@ -90,15 +102,25 @@ struct PencilCanvasView: UIViewRepresentable {
 
     func apply(
       _ style: PenStyle,
+      eraserStyle: EraserStyle,
       tool: DrawingTool,
       to paper: PaperCanvasContainerView
     ) {
-      guard style != appliedPenStyle || tool != appliedDrawingTool else {
+      guard
+        style != appliedPenStyle
+          || eraserStyle != appliedEraserStyle
+          || tool != appliedDrawingTool
+      else {
         return
       }
       appliedPenStyle = style
+      appliedEraserStyle = eraserStyle
       appliedDrawingTool = tool
-      paper.touchView.configure(penStyle: style, drawingTool: tool)
+      paper.touchView.configure(
+        penStyle: style,
+        eraserStyle: eraserStyle,
+        drawingTool: tool
+      )
     }
 
     func apply(
@@ -201,17 +223,18 @@ final class PaperInputView: UIView {
     let timestamp: TimeInterval
   }
 
-  private static let eraserWidth: CGFloat = 24
   private static let liveInterval: TimeInterval = 1.0 / 30.0
   private static let estimateWait = Duration.milliseconds(120)
 
   private var drawing = PKDrawing()
   private var penStyle = PenStyle.standard
+  private var eraserStyle = EraserStyle.standard
   private var drawingTool = DrawingTool.pen
 
   private var activeTouch: UITouch?
   private var actionTool: DrawingTool?
   private var actionPenStyle: PenStyle?
+  private var actionEraserStyle: EraserStyle?
   private var actionBaseDrawing = PKDrawing()
   private var actionCreationDate = Date()
   private var actionPathID = UUID()
@@ -238,8 +261,13 @@ final class PaperInputView: UIView {
     fatalError("init(coder:) is unavailable")
   }
 
-  func configure(penStyle: PenStyle, drawingTool: DrawingTool) {
+  func configure(
+    penStyle: PenStyle,
+    eraserStyle: EraserStyle,
+    drawingTool: DrawingTool
+  ) {
     self.penStyle = penStyle
+    self.eraserStyle = eraserStyle
     self.drawingTool = drawingTool
   }
 
@@ -412,6 +440,7 @@ final class PaperInputView: UIView {
     activeTouch = touch
     actionTool = drawingTool
     actionPenStyle = penStyle
+    actionEraserStyle = eraserStyle
     actionBaseDrawing = drawing
     workingDrawing = drawing
     actionCreationDate = Date()
@@ -482,17 +511,35 @@ final class PaperInputView: UIView {
   }
 
   private func makeSample(from touch: UITouch, timestamp: TimeInterval) -> Sample {
-    let style = actionPenStyle ?? penStyle
-    let opacity = PencilPressureOpacity.value(
-      force: Double(touch.force),
-      minimum: style.minimumOpacity
-    )
-    let width = CGFloat(style.width)
+    let tool = actionTool ?? drawingTool
+    let width: CGFloat
+    let opacity: CGFloat
+    switch tool {
+    case .pen:
+      let style = actionPenStyle ?? penStyle
+      width = CGFloat(style.width)
+      opacity = CGFloat(
+        PencilPressureOpacity.value(
+          force: Double(touch.force),
+          minimum: style.minimumOpacity
+        )
+      )
+    case .eraser:
+      let style = actionEraserStyle ?? eraserStyle
+      width = CGFloat(
+        PencilPressureWidth.value(
+          force: Double(touch.force),
+          minimum: EraserStyle.minimumContactWidth,
+          maximum: style.maximumWidth
+        )
+      )
+      opacity = 1
+    }
     let point = PKStrokePoint(
       location: touch.preciseLocation(in: self),
       timeOffset: timestamp,
       size: CGSize(width: width, height: width),
-      opacity: CGFloat(opacity),
+      opacity: opacity,
       force: touch.force,
       azimuth: touch.azimuthAngle(in: self),
       altitude: touch.altitudeAngle
@@ -537,22 +584,8 @@ final class PaperInputView: UIView {
   }
 
   private func eraserPath() -> PKStrokePath {
-    let points = samples.map { sample in
-      PKStrokePoint(
-        location: sample.point.location,
-        timeOffset: sample.point.timeOffset,
-        size: CGSize(
-          width: Self.eraserWidth,
-          height: Self.eraserWidth
-        ),
-        opacity: 1,
-        force: sample.point.force,
-        azimuth: sample.point.azimuth,
-        altitude: sample.point.altitude
-      )
-    }
     return PKStrokePath(
-      controlPoints: points,
+      controlPoints: samples.map(\.point),
       creationDate: actionCreationDate
     )
   }
@@ -617,6 +650,7 @@ final class PaperInputView: UIView {
     activeTouch = nil
     actionTool = nil
     actionPenStyle = nil
+    actionEraserStyle = nil
     samples = []
     predictedSamples = []
     pendingForceEstimates = [:]

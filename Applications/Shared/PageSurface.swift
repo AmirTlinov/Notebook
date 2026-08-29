@@ -27,6 +27,7 @@ struct PageSurface: View {
               pageID: page.id,
               drawingData: page.drawingData,
               penStyle: model.penStyle,
+              eraserStyle: model.eraserStyle,
               drawingTool: model.drawingTool,
               onToggleTool: model.toggleDrawingTool,
               onNavigate: onNavigate,

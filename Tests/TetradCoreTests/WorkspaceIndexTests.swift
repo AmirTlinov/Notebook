@@ -24,6 +24,15 @@ func pencilPressureControlsOpacity() {
   )
 }
 
+@Test("Нажим Pencil расширяет ластик до выбранной толщины")
+func pencilPressureControlsEraserWidth() {
+  #expect(PencilPressureWidth.value(force: 0, minimum: 3, maximum: 21) == 3)
+  #expect(PencilPressureWidth.value(force: 0.5, minimum: 3, maximum: 21) == 12)
+  #expect(PencilPressureWidth.value(force: 1, minimum: 3, maximum: 21) == 21)
+  #expect(PencilPressureWidth.value(force: 2, minimum: 3, maximum: 21) == 21)
+  #expect(PencilPressureWidth.value(force: -1, minimum: 3, maximum: 21) == 3)
+}
+
 @Test("Одно движение Pencil создаёт один шаг отмены")
 func pencilUndoGroupsLiveChangesIntoOneAction() {
   let pageID = UUID()

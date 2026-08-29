@@ -9,7 +9,7 @@
 | Письмо Apple Pencil | [UIKit: Handling input from Apple Pencil](https://developer.apple.com/documentation/uikit/handling-input-from-apple-pencil) | `UITouch` отдаёт координату, силу, наклон и поздние уточнения измерений | `PaperInputView` принимает только Pencil, превращает измерения в `PKStrokePoint`, а закрытый от касаний `PKCanvasView` рисует готовый `PKDrawing` |
 | Плавная ручка | [`coalescedTouches`](https://developer.apple.com/documentation/uikit/getting-high-fidelity-input-with-coalesced-touches) и [`predictedTouches`](https://developer.apple.com/documentation/uikit/uievent/predictedtouches%28for%3A%29) | UIKit отдаёт пропущенные точки частого опроса и временный прогноз следующего положения | В штрих попадают все измеренные точки, а прогноз живёт только в предпросмотре и заменяется новым событием |
 | Нажим Pencil | [`UITouch.force`](https://developer.apple.com/documentation/uikit/uitouch/force) и [`PKStrokePoint.opacity`](https://developer.apple.com/documentation/pencilkit/pkstrokepointreference/opacity) | Система калибрует средний нажим как `1`, а непрозрачность точки умножает непрозрачность чернил | Цвет штриха хранится полностью непрозрачным; каждая точка получает непрозрачность между выбранным минимумом и `1` по текущей силе |
-| Стирание | [`PKDrawing.erasingPath`](https://developer.apple.com/documentation/pencilkit/pkdrawing-swift.struct) | PencilKit применяет путь ластика прямо к существующему рисунку | Тот же низкоуровневый ввод строит путь ластика и сразу показывает результат |
+| Стирание | [`PKDrawing.erasingPath`](https://developer.apple.com/documentation/pencilkit/pkdrawing-swift.struct) | PencilKit применяет путь ластика прямо к существующему рисунку | Каждая точка пути получает ширину от текущего нажима; PencilKit вырезает пройденное место и сохраняет части штриха вокруг него |
 | Отмена двумя пальцами | [`UITapGestureRecognizer.numberOfTouchesRequired`](https://developer.apple.com/documentation/uikit/uitapgesturerecognizer/numberoftouchesrequired) и [`UILongPressGestureRecognizer`](https://developer.apple.com/documentation/uikit/uilongpressgesturerecognizer) | Распознаватели закреплены прямо за видимым холстом и принимают только два прямых касания | Касание возвращает один снимок, а удержание повторяет отмену каждые 95 миллисекунд |
 | Чистое касание бумаги | [UIKit: Handling touches in your view](https://developer.apple.com/documentation/uikit/handling-touches-in-your-view) | Обычный `UIView` различает прямое касание и Pencil | Верхний `PaperInputView` забирает касания; один палец заканчивается пустым действием, два идут жестам, Pencil идёт ручке; `PKCanvasView` не получает событий и служит только рендерером |
 | Цвет бумаги | [`NSAppearance.performAsCurrentDrawingAppearance`](https://developer.apple.com/documentation/appkit/nsappearance/performascurrentdrawingappearance(_:)) | Рендер можно выполнить в явно выбранной светлой теме | `PaperInkRenderer` одинаково сохраняет тёмные чернила в окне Mac и в PNG для агента |
@@ -48,6 +48,27 @@ opacity  = minimum + (1 - minimum) * pressure
 штрих и ждёт уточнение до 120 миллисекунд после подъёма Pencil. Поэтому
 сохранённый штрих содержит измеренный нажим, а не одно значение настройки на
 всю линию.
+
+## Как нажим меняет ластик
+
+Регулятор ластика задаёт его наибольшую ширину. Каждое измерение Pencil
+вычисляет свою ширину тем же нормализованным нажимом:
+
+```text
+pressure     = clamp(force, 0, 1)
+eraser_width = 3 + (selected_width - 3) * pressure
+```
+
+При самом лёгком касании получается кончик шириной `3` points. При нажиме `1`
+он доходит до выбранной ширины. Регулятор позволяет выбрать максимум от `9`
+до `48` points и сохраняет выбор между запусками.
+
+`PaperInputView` помещает вычисленную ширину в каждую точку пути и применяет
+`PKDrawing.erasingPath` к рисунку, который был до начала движения. Поэтому
+движение ластика вырезает только пересечённую полосу. Проверочный маршрут
+строит линию длиной `200` points, проводит ластиком по её середине и получает
+две сохранённые части по краям. Затем он увеличивает ластик и проверяет, что
+вырез стал шире. Так проверяются локальное стирание и выбранная толщина.
 
 ## Кто получает касание
 

@@ -25,6 +25,7 @@ final class TetradAppModel {
   private(set) var isConnected = false
   private(set) var actionCue: String?
   private(set) var penStyle: PenStyle
+  private(set) var eraserStyle: EraserStyle
   private(set) var drawingTool: DrawingTool = .pen
 
   let store: TetradStore
@@ -40,6 +41,7 @@ final class TetradAppModel {
   init(store: TetradStore = TetradStore(root: TetradStore.defaultRoot)) {
     self.store = store
     penStyle = Self.loadPenStyle()
+    eraserStyle = Self.loadEraserStyle()
     actorID = Self.loadActorID()
     #if os(iOS)
       let syncRole = NearbySync.Role.iPadConnector
@@ -220,6 +222,14 @@ final class TetradAppModel {
     savePenStyle()
   }
 
+  func selectEraserWidth(_ maximumWidth: Double) {
+    drawingTool = .eraser
+    let next = EraserStyle(maximumWidth: maximumWidth)
+    guard next != eraserStyle else { return }
+    eraserStyle = next
+    saveEraserStyle()
+  }
+
   func selectDrawingTool(_ tool: DrawingTool) {
     drawingTool = tool
   }
@@ -394,12 +404,31 @@ final class TetradAppModel {
     return style
   }
 
+  private static func loadEraserStyle() -> EraserStyle {
+    let defaults = UserDefaults.standard
+    let storedWidth =
+      defaults.object(forKey: "tetrad.eraser-width") as? Double
+      ?? EraserStyle.standard.maximumWidth
+    let style = EraserStyle(maximumWidth: storedWidth)
+    if style.maximumWidth != storedWidth {
+      defaults.set(style.maximumWidth, forKey: "tetrad.eraser-width")
+    }
+    return style
+  }
+
   private func savePenStyle() {
     UserDefaults.standard.set(penStyle.color.rawValue, forKey: "tetrad.pen-color")
     UserDefaults.standard.set(penStyle.width, forKey: "tetrad.pen-width")
     UserDefaults.standard.set(
       penStyle.minimumOpacity,
       forKey: "tetrad.pen-minimum-opacity"
+    )
+  }
+
+  private func saveEraserStyle() {
+    UserDefaults.standard.set(
+      eraserStyle.maximumWidth,
+      forKey: "tetrad.eraser-width"
     )
   }
 }

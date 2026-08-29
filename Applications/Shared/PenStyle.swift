@@ -61,3 +61,19 @@ struct PenStyle: Equatable, Sendable {
     )
   }
 }
+
+struct EraserStyle: Equatable, Sendable {
+  static let minimumContactWidth = 3.0
+  static let minimumSelectableWidth = 9.0
+  static let maximumSelectableWidth = 48.0
+  static let standard = Self(maximumWidth: 14.0)
+
+  let maximumWidth: Double
+
+  init(maximumWidth: Double) {
+    self.maximumWidth = min(
+      max(maximumWidth, Self.minimumSelectableWidth),
+      Self.maximumSelectableWidth
+    )
+  }
+}

@@ -8,6 +8,23 @@ trap 'rm -rf "$DERIVED"' EXIT
 cd "$ROOT"
 swift test
 
+ERASER_APP="$DERIVED/TetradEraserProof.app"
+mkdir -p "$ERASER_APP/Contents/MacOS"
+xcrun swiftc \
+  "$ROOT/Tests/PencilKitIntegration/EraserPathProof.swift" \
+  -o "$ERASER_APP/Contents/MacOS/TetradEraserProof"
+plutil -create xml1 "$ERASER_APP/Contents/Info.plist"
+plutil -insert CFBundleIdentifier \
+  -string com.amirtlinov.tetrad.eraser-proof \
+  "$ERASER_APP/Contents/Info.plist"
+plutil -insert CFBundleExecutable \
+  -string TetradEraserProof \
+  "$ERASER_APP/Contents/Info.plist"
+plutil -insert CFBundlePackageType \
+  -string APPL \
+  "$ERASER_APP/Contents/Info.plist"
+"$ERASER_APP/Contents/MacOS/TetradEraserProof"
+
 cd "$ROOT/MCP"
 npm ci --ignore-scripts
 npm run check
@@ -35,4 +52,4 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO \
   build
 
-printf '\nТетрадь проверена: Swift, MCP, macOS и iPadOS прошли.\n'
+printf '\nТетрадь проверена: Swift, локальный ластик, MCP, macOS и iPadOS прошли.\n'
