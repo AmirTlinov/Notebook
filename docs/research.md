@@ -7,6 +7,10 @@
 | Потребность | Системный владелец | Использованный контракт | Следствие в коде |
 |---|---|---|---|
 | Письмо Apple Pencil | [PencilKit `PKCanvasView`](https://developer.apple.com/documentation/pencilkit/pkcanvasview) | Canvas принимает события Pencil и хранит их как drawing | `PencilCanvasView` фиксирует масштаб `1`, отключает прокрутку и передаёт `PKDrawing.dataRepresentation()` |
+| Обычная ручка | [`PKInkingTool`](https://developer.apple.com/documentation/pencilkit/pkinkingtool-swift.struct) | Выбранная ширина задаёт основу штриха, а PencilKit учитывает силу, азимут и угол Pencil | Маленькая палитра меняет цвет и базовую толщину инструмента `.pen` |
+| Нажим Pencil | [`PKInkingTool.color`](https://developer.apple.com/documentation/pencilkit/pkinkingtool-swift.struct/color-5xmlo) | Слабый нажим добавляет прозрачность, сильный повышает непрозрачность | Приложение передаёт непрозрачный базовый цвет, а итоговую прозрачность каждого штриха определяет PencilKit |
+| Отмена двумя пальцами | [`UITapGestureRecognizer.numberOfTouchesRequired`](https://developer.apple.com/documentation/uikit/uitapgesturerecognizer/numberoftouchesrequired) | Распознаватель отличает касание заданным числом пальцев | Одно касание двумя пальцами возвращает снимок перед последним движением Pencil на этом листе |
+| Цвет бумаги | [`NSAppearance.performAsCurrentDrawingAppearance`](https://developer.apple.com/documentation/appkit/nsappearance/performascurrentdrawingappearance(_:)) | Рендер можно выполнить в явно выбранной светлой теме | Светлый лист сохраняет тёмные чернила на iPad, в окне Mac и в PNG для агента |
 | Прямая связь iPad и Mac | [Network.framework](https://developer.apple.com/documentation/technotes/tn3151-choosing-the-right-networking-api) | Network — основной API Apple для TCP, Bonjour и peer-to-peer Wi-Fi | Mac публикует `_tetrad._tcp`, iPad ищет сервис и открывает двусторонний канал |
 | Типизированные сообщения | [WWDC25: structured concurrency with Network](https://developer.apple.com/videos/play/wwdc2025/250/) | `Coder` кадрирует `Codable`-сообщения для `NetworkConnection` | `WireMessage` передаётся без собственного парсера длины и сокетов |
 | Только ближайший канал | [`localOnly(true)`](https://developer.apple.com/documentation/network/nwparametersprovider/localonly%28_%3A%29) | Listener рекламируется и принимает соединения только на local link | Тетрадь не создаёт доступный из интернета сервер |
@@ -44,7 +48,8 @@ MCP меняет агентский поток только при совпад�
 Текущий физический iPad — iPad Pro 11-inch (3rd generation, `iPad13,4`). У
 полноразмерных iPad с экраном 264 ppi один UIKit point равен двум пикселям,
 поэтому один дюйм равен 132 points. Шаг клетки равен `132 / 2.54`, то есть
-`51.9685` points. Этот контракт проверен тестом. Для iPad mini с другой
+одному сантиметру; приложение делит его пополам и получает `25.9843` points.
+Этот контракт проверен тестом. Для iPad mini с другой
 плотностью нужна отдельная калибровка; текущая сборка предназначена для
 подключённого 11-дюймового iPad.
 

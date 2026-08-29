@@ -3,9 +3,10 @@ import UIKit
 
 struct TwoFingerNavigationInstaller: UIViewRepresentable {
   let onNavigate: (_ horizontal: Bool, _ direction: Int) -> Void
+  let onUndo: () -> Void
 
   func makeCoordinator() -> Coordinator {
-    Coordinator(onNavigate: onNavigate)
+    Coordinator(onNavigate: onNavigate, onUndo: onUndo)
   }
 
   func makeUIView(context: Context) -> AttachmentView {
@@ -18,6 +19,7 @@ struct TwoFingerNavigationInstaller: UIViewRepresentable {
 
   func updateUIView(_ view: AttachmentView, context: Context) {
     context.coordinator.onNavigate = onNavigate
+    context.coordinator.onUndo = onUndo
   }
 
   static func dismantleUIView(_ view: AttachmentView, coordinator: Coordinator) {
@@ -40,34 +42,62 @@ struct TwoFingerNavigationInstaller: UIViewRepresentable {
   @MainActor
   final class Coordinator: NSObject, UIGestureRecognizerDelegate {
     var onNavigate: (_ horizontal: Bool, _ direction: Int) -> Void
+    var onUndo: () -> Void
     private weak var installedView: UIView?
-    private var recognizer: UIPanGestureRecognizer?
+    private var panRecognizer: UIPanGestureRecognizer?
+    private var tapRecognizer: UITapGestureRecognizer?
 
-    init(onNavigate: @escaping (_ horizontal: Bool, _ direction: Int) -> Void) {
+    init(
+      onNavigate: @escaping (_ horizontal: Bool, _ direction: Int) -> Void,
+      onUndo: @escaping () -> Void
+    ) {
       self.onNavigate = onNavigate
+      self.onUndo = onUndo
     }
 
     func install(on view: UIView?) {
       guard let view, installedView !== view else { return }
       uninstall()
-      let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handle))
-      recognizer.minimumNumberOfTouches = 2
-      recognizer.maximumNumberOfTouches = 2
-      recognizer.cancelsTouchesInView = true
-      recognizer.delaysTouchesBegan = false
-      recognizer.delegate = self
-      view.addGestureRecognizer(recognizer)
+      let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
+      tap.numberOfTouchesRequired = 2
+      tap.numberOfTapsRequired = 1
+      tap.cancelsTouchesInView = true
+      tap.delaysTouchesBegan = false
+      tap.delegate = self
+
+      let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan))
+      pan.minimumNumberOfTouches = 2
+      pan.maximumNumberOfTouches = 2
+      pan.cancelsTouchesInView = true
+      pan.delaysTouchesBegan = false
+      pan.delegate = self
+      pan.require(toFail: tap)
+
+      view.addGestureRecognizer(tap)
+      view.addGestureRecognizer(pan)
       installedView = view
-      self.recognizer = recognizer
+      tapRecognizer = tap
+      panRecognizer = pan
     }
 
     func uninstall() {
-      if let recognizer { installedView?.removeGestureRecognizer(recognizer) }
-      recognizer = nil
+      if let panRecognizer {
+        installedView?.removeGestureRecognizer(panRecognizer)
+      }
+      if let tapRecognizer {
+        installedView?.removeGestureRecognizer(tapRecognizer)
+      }
+      panRecognizer = nil
+      tapRecognizer = nil
       installedView = nil
     }
 
-    @objc private func handle(_ recognizer: UIPanGestureRecognizer) {
+    @objc private func handleTap(_ recognizer: UITapGestureRecognizer) {
+      guard recognizer.state == .ended else { return }
+      onUndo()
+    }
+
+    @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
       guard recognizer.state == .ended else { return }
       let translation = recognizer.translation(in: recognizer.view)
       let velocity = recognizer.velocity(in: recognizer.view)

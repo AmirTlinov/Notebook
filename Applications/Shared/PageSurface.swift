@@ -24,6 +24,7 @@ struct PageSurface: View {
             PencilCanvasView(
               pageID: page.id,
               drawingData: page.drawingData,
+              penStyle: model.penStyle,
               onChange: model.replaceDrawing
             )
           #endif

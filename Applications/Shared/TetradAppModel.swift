@@ -23,7 +23,8 @@ final class TetradAppModel {
   private(set) var workspace: WorkspaceIndex?
   private(set) var pages: [UUID: PageDocument] = [:]
   private(set) var isConnected = false
-  private(set) var navigationCue: String?
+  private(set) var actionCue: String?
+  private(set) var penStyle: PenStyle
 
   let store: TetradStore
   let actorID: UUID
@@ -32,10 +33,12 @@ final class TetradAppModel {
   private var started = false
   private var saveTasks: [UUID: Task<Void, Never>] = [:]
   private var cueTask: Task<Void, Never>?
+  private var pencilUndoHistory = PencilUndoHistory()
   private let sync: NearbySync
 
   init(store: TetradStore = TetradStore(root: TetradStore.defaultRoot)) {
     self.store = store
+    penStyle = Self.loadPenStyle()
     actorID = Self.loadActorID()
     #if os(iOS)
       let syncRole = NearbySync.Role.iPadConnector
@@ -133,10 +136,44 @@ final class TetradAppModel {
 
   func replaceDrawing(_ data: Data, settled: Bool) {
     guard var page = activePage else { return }
+    pencilUndoHistory.observeChange(
+      pageID: page.id,
+      before: page.drawingData,
+      after: data,
+      settled: settled
+    )
     let previous = page.drawingStamp
     page.replaceDrawing(data, actor: actorID)
-    guard previous != page.drawingStamp else { return }
+    if previous != page.drawingStamp {
+      pages[page.id] = page
+      sync.send(
+        .drawing(
+          pageID: page.id,
+          data: page.drawingData,
+          stamp: page.drawingStamp
+        )
+      )
+    }
+    if settled {
+      saveTasks[page.id]?.cancel()
+      saveTasks[page.id] = nil
+      if let current = pages[page.id] {
+        persistMerged(current)
+      }
+    } else if previous != page.drawingStamp {
+      scheduleSave(page.id)
+    }
+  }
+
+  func undoLastDrawingAction() {
+    guard var page = activePage,
+          let previousDrawing = pencilUndoHistory.removeLastChange(for: page.id)
+    else { return }
+    page.replaceDrawing(previousDrawing, actor: actorID)
     pages[page.id] = page
+    saveTasks[page.id]?.cancel()
+    saveTasks[page.id] = nil
+    page = persistMerged(page)
     sync.send(
       .drawing(
         pageID: page.id,
@@ -144,13 +181,20 @@ final class TetradAppModel {
         stamp: page.drawingStamp
       )
     )
-    if settled {
-      saveTasks[page.id]?.cancel()
-      saveTasks[page.id] = nil
-      persistMerged(page)
-    } else {
-      scheduleSave(page.id)
-    }
+    showCue("Отменено")
+  }
+
+  func selectPenColor(_ color: PenColor) {
+    guard color != penStyle.color else { return }
+    penStyle = PenStyle(color: color, width: penStyle.width)
+    savePenStyle()
+  }
+
+  func selectPenWidth(_ width: Double) {
+    let next = PenStyle(color: penStyle.color, width: width)
+    guard next != penStyle else { return }
+    penStyle = next
+    savePenStyle()
   }
 
   func commitElementState(elementID: String, state: JSONValue) {
@@ -277,11 +321,11 @@ final class TetradAppModel {
 
   private func showCue(_ text: String) {
     cueTask?.cancel()
-    navigationCue = text
+    actionCue = text
     cueTask = Task { [weak self] in
       try? await Task.sleep(for: .milliseconds(700))
       guard !Task.isCancelled else { return }
-      self?.navigationCue = nil
+      self?.actionCue = nil
     }
   }
 
@@ -294,5 +338,19 @@ final class TetradAppModel {
     let id = UUID()
     UserDefaults.standard.set(id.uuidString, forKey: key)
     return id
+  }
+
+  private static func loadPenStyle() -> PenStyle {
+    let defaults = UserDefaults.standard
+    let color = defaults.string(forKey: "tetrad.pen-color")
+      .flatMap(PenColor.init(rawValue:)) ?? PenStyle.standard.color
+    let width = defaults.object(forKey: "tetrad.pen-width") as? Double
+      ?? PenStyle.standard.width
+    return PenStyle(color: color, width: width)
+  }
+
+  private func savePenStyle() {
+    UserDefaults.standard.set(penStyle.color.rawValue, forKey: "tetrad.pen-color")
+    UserDefaults.standard.set(penStyle.width, forKey: "tetrad.pen-width")
   }
 }

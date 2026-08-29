@@ -46,13 +46,13 @@ enum PagePreviewWriter {
     while x <= page.size.width {
       grid.move(to: NSPoint(x: x, y: 0))
       grid.line(to: NSPoint(x: x, y: page.size.height))
-      x += PhysicalPaper.pointsPerCentimeter
+      x += PhysicalPaper.gridSpacing
     }
     var y = 0.0
     while y <= page.size.height {
       grid.move(to: NSPoint(x: 0, y: y))
       grid.line(to: NSPoint(x: page.size.width, y: y))
-      y += PhysicalPaper.pointsPerCentimeter
+      y += PhysicalPaper.gridSpacing
     }
     NSColor(
       calibratedRed: 0.31,
@@ -64,7 +64,14 @@ enum PagePreviewWriter {
 
     if !page.drawingData.isEmpty,
        let drawing = try? PKDrawing(data: page.drawingData) {
-      drawing.image(from: bounds, scale: scale).draw(in: bounds)
+      let drawInk = {
+        drawing.image(from: bounds, scale: scale).draw(in: bounds)
+      }
+      if let paperAppearance = NSAppearance(named: .aqua) {
+        paperAppearance.performAsCurrentDrawingAppearance(drawInk)
+      } else {
+        drawInk()
+      }
     }
     context.flushGraphics()
     NSGraphicsContext.restoreGraphicsState()

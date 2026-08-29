@@ -5,6 +5,7 @@ import UIKit
 struct PencilCanvasView: UIViewRepresentable {
   let pageID: UUID
   let drawingData: Data
+  let penStyle: PenStyle
   let onChange: (Data, Bool) -> Void
 
   func makeCoordinator() -> Coordinator {
@@ -15,7 +16,6 @@ struct PencilCanvasView: UIViewRepresentable {
     let canvas = PKCanvasView(frame: .zero)
     canvas.delegate = context.coordinator
     canvas.drawingPolicy = .pencilOnly
-    canvas.tool = PKInkingTool(.pen, color: .black, width: 2.2)
     canvas.backgroundColor = .clear
     canvas.isOpaque = false
     canvas.isScrollEnabled = false
@@ -24,12 +24,14 @@ struct PencilCanvasView: UIViewRepresentable {
     canvas.bouncesZoom = false
     canvas.contentInset = .zero
     context.coordinator.attach(to: canvas)
+    context.coordinator.apply(penStyle, to: canvas)
     context.coordinator.apply(drawingData, pageID: pageID, to: canvas)
     return canvas
   }
 
   func updateUIView(_ canvas: PKCanvasView, context: Context) {
     context.coordinator.onChange = onChange
+    context.coordinator.apply(penStyle, to: canvas)
     context.coordinator.apply(drawingData, pageID: pageID, to: canvas)
     canvas.contentSize = canvas.bounds.size
     canvas.contentOffset = .zero
@@ -45,7 +47,8 @@ struct PencilCanvasView: UIViewRepresentable {
     private var appliedDrawing = PKDrawing()
     private var applying = false
     private var liveTask: Task<Void, Never>?
-    private let ink = PKInkingTool(.pen, color: .black, width: 2.2)
+    private var appliedPenStyle: PenStyle?
+    private var ink = PKInkingTool(.pen, color: .black, width: 2.2)
 
     init(onChange: @escaping (Data, Bool) -> Void) {
       self.onChange = onChange
@@ -54,6 +57,23 @@ struct PencilCanvasView: UIViewRepresentable {
     func attach(to canvas: PKCanvasView) {
       self.canvas = canvas
       canvas.addInteraction(UIPencilInteraction(delegate: self))
+    }
+
+    func apply(_ style: PenStyle, to canvas: PKCanvasView) {
+      guard style != appliedPenStyle else { return }
+      appliedPenStyle = style
+      let components = style.color.components
+      ink = PKInkingTool(
+        .pen,
+        color: UIColor(
+          red: CGFloat(components.red),
+          green: CGFloat(components.green),
+          blue: CGFloat(components.blue),
+          alpha: 1
+        ),
+        width: CGFloat(style.width)
+      )
+      canvas.tool = ink
     }
 
     func apply(_ data: Data, pageID: UUID, to canvas: PKCanvasView) {

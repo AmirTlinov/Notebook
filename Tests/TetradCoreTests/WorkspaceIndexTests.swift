@@ -2,9 +2,72 @@ import Foundation
 import Testing
 @testable import TetradCore
 
-@Test("Клетка равна одному сантиметру на полноразмерном iPad")
-func centimeterGrid() {
+@Test("Клетка равна половине сантиметра на полноразмерном iPad")
+func halfCentimeterGrid() {
   #expect(abs(PhysicalPaper.pointsPerCentimeter - 51.968_503_937) < 0.000_001)
+  #expect(abs(PhysicalPaper.gridSpacing - 25.984_251_969) < 0.000_001)
+}
+
+@Test("Одно движение Pencil создаёт один шаг отмены")
+func pencilUndoGroupsLiveChangesIntoOneAction() {
+  let pageID = UUID()
+  let empty = Data()
+  let live = Data("live".utf8)
+  let settled = Data("settled".utf8)
+  var history = PencilUndoHistory()
+
+  history.observeChange(
+    pageID: pageID,
+    before: empty,
+    after: live,
+    settled: false
+  )
+  history.observeChange(
+    pageID: pageID,
+    before: live,
+    after: settled,
+    settled: true
+  )
+
+  #expect(history.removeLastChange(for: pageID) == empty)
+  #expect(history.removeLastChange(for: pageID) == nil)
+}
+
+@Test("История Pencil разделена по листам и ограничена")
+func pencilUndoIsPageLocalAndBounded() {
+  let firstPage = UUID()
+  let secondPage = UUID()
+  var history = PencilUndoHistory(capacity: 2)
+
+  history.observeChange(
+    pageID: firstPage,
+    before: Data("zero".utf8),
+    after: Data("one".utf8),
+    settled: true
+  )
+  history.observeChange(
+    pageID: firstPage,
+    before: Data("one".utf8),
+    after: Data("two".utf8),
+    settled: true
+  )
+  history.observeChange(
+    pageID: firstPage,
+    before: Data("two".utf8),
+    after: Data("three".utf8),
+    settled: true
+  )
+  history.observeChange(
+    pageID: secondPage,
+    before: Data("other zero".utf8),
+    after: Data("other one".utf8),
+    settled: true
+  )
+
+  #expect(history.removeLastChange(for: secondPage) == Data("other zero".utf8))
+  #expect(history.removeLastChange(for: firstPage) == Data("two".utf8))
+  #expect(history.removeLastChange(for: firstPage) == Data("one".utf8))
+  #expect(history.removeLastChange(for: firstPage) == nil)
 }
 
 @Test("Перелистывание за последний лист создаёт ровно один лист")

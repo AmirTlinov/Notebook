@@ -10,7 +10,7 @@ struct GridPaperView: View {
         Path(CGRect(origin: .zero, size: size)),
         with: .color(Color(red: 0.992, green: 0.988, blue: 0.969))
       )
-      let spacing = PhysicalPaper.pointsPerCentimeter
+      let spacing = PhysicalPaper.gridSpacing
       var grid = Path()
       var x = 0.0
       while x <= size.width {

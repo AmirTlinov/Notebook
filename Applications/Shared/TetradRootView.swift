@@ -28,7 +28,7 @@ struct TetradRootView: View {
             .padding(32)
         }
 
-        if let cue = model.navigationCue {
+        if let cue = model.actionCue {
           Text(cue)
             .font(.system(size: 15, weight: .medium, design: .rounded))
             .padding(.horizontal, 14)
@@ -39,10 +39,22 @@ struct TetradRootView: View {
         }
 
         #if os(iOS)
-          TwoFingerNavigationInstaller { horizontal, direction in
-            navigate(horizontal: horizontal, direction: direction)
-          }
+          TwoFingerNavigationInstaller(
+            onNavigate: { horizontal, direction in
+              navigate(horizontal: horizontal, direction: direction)
+            },
+            onUndo: model.undoLastDrawingAction
+          )
           .allowsHitTesting(false)
+
+          PenControlsView()
+            .frame(
+              maxWidth: .infinity,
+              maxHeight: .infinity,
+              alignment: .topTrailing
+            )
+            .padding(.top, 18)
+            .padding(.trailing, 18)
         #endif
       }
       .onAppear {
@@ -59,6 +71,7 @@ struct TetradRootView: View {
       }
     }
     .ignoresSafeArea()
+    .preferredColorScheme(.light)
   }
 
   private var acceptsPencil: Bool {
