@@ -22,60 +22,34 @@ struct PencilCanvasView: UIViewRepresentable {
     )
   }
 
-  func makeUIView(context: Context) -> PKCanvasView {
-    let canvas = PaperCanvasView(frame: .zero)
-    canvas.delegate = context.coordinator
-    canvas.drawingPolicy = .pencilOnly
-    canvas.backgroundColor = .clear
-    canvas.isOpaque = false
-    canvas.isScrollEnabled = false
-    canvas.minimumZoomScale = 1
-    canvas.maximumZoomScale = 1
-    canvas.bouncesZoom = false
-    canvas.contentInset = .zero
-    context.coordinator.attach(to: canvas)
-    context.coordinator.apply(penStyle, tool: drawingTool, to: canvas)
-    context.coordinator.apply(drawingData, pageID: pageID, to: canvas)
-    return canvas
+  func makeUIView(context: Context) -> PaperCanvasContainerView {
+    let paper = PaperCanvasContainerView()
+    context.coordinator.attach(to: paper)
+    context.coordinator.apply(penStyle, tool: drawingTool, to: paper)
+    context.coordinator.apply(drawingData, pageID: pageID, to: paper)
+    return paper
   }
 
-  func updateUIView(_ canvas: PKCanvasView, context: Context) {
+  func updateUIView(_ paper: PaperCanvasContainerView, context: Context) {
     context.coordinator.onToggleTool = onToggleTool
     context.coordinator.onNavigate = onNavigate
     context.coordinator.onUndo = onUndo
     context.coordinator.onChange = onChange
-    context.coordinator.apply(penStyle, tool: drawingTool, to: canvas)
-    context.coordinator.apply(drawingData, pageID: pageID, to: canvas)
-    canvas.contentSize = canvas.bounds.size
-    canvas.contentOffset = .zero
-    canvas.zoomScale = 1
+    context.coordinator.apply(penStyle, tool: drawingTool, to: paper)
+    context.coordinator.apply(drawingData, pageID: pageID, to: paper)
   }
 
   @MainActor
-  final class Coordinator: NSObject, PKCanvasViewDelegate, UIPencilInteractionDelegate {
+  final class Coordinator: NSObject, UIPencilInteractionDelegate {
     var onToggleTool: () -> Void
     var onNavigate: (_ horizontal: Bool, _ direction: Int) -> Void
     var onUndo: () -> Void
     var onChange: (Data, Bool) -> Void
 
-    private struct ToolSession {
-      let tool: DrawingTool
-      let penStyle: PenStyle
-      let strokeCountBefore: Int
-    }
-
     private var pageID: UUID?
     private var appliedDrawing = PKDrawing()
-    private var applying = false
-    private var activeSession: ToolSession?
-    private var endedSession: ToolSession?
-    private var pressureStyles: [Int: PenStyle] = [:]
-    private var needsSettlement = false
-    private var liveTask: Task<Void, Never>?
-    private var settlementTask: Task<Void, Never>?
     private var appliedPenStyle: PenStyle?
     private var appliedDrawingTool: DrawingTool?
-    private var ink = PKInkingTool(.pen, color: .black, width: 2.2)
     private var pageGestures: TwoFingerPageGestureController?
 
     init(
@@ -90,100 +64,54 @@ struct PencilCanvasView: UIViewRepresentable {
       self.onChange = onChange
     }
 
-    func attach(to canvas: PKCanvasView) {
-      canvas.addInteraction(UIPencilInteraction(delegate: self))
+    func attach(to paper: PaperCanvasContainerView) {
+      paper.touchView.onDrawingChange = { [weak self] drawing, settled in
+        guard let self else { return }
+        appliedDrawing = drawing
+        onChange(drawing.dataRepresentation(), settled)
+      }
+      paper.touchView.addInteraction(UIPencilInteraction(delegate: self))
 
       let pageGestures = TwoFingerPageGestureController(
-        onNavigate: { [weak self, weak canvas] horizontal, direction in
-          guard let self, let canvas else { return }
-          settleNow(canvas)
+        onNavigate: { [weak self, weak paper] horizontal, direction in
+          guard let self, let paper else { return }
+          paper.touchView.finishCurrentAction()
           onNavigate(horizontal, direction)
         },
-        onUndo: { [weak self, weak canvas] in
-          guard let self, let canvas else { return }
-          settleNow(canvas)
+        onUndo: { [weak self, weak paper] in
+          guard let self, let paper else { return }
+          paper.touchView.finishCurrentAction()
           onUndo()
         }
       )
-      pageGestures.install(on: canvas)
+      pageGestures.install(on: paper.touchView)
       self.pageGestures = pageGestures
     }
 
-    func apply(_ style: PenStyle, tool: DrawingTool, to canvas: PKCanvasView) {
-      let styleChanged = style != appliedPenStyle
-      let toolChanged = tool != appliedDrawingTool
-      guard styleChanged || toolChanged else { return }
-
-      if styleChanged {
-        appliedPenStyle = style
-        ink = PKInkingTool(
-          .pen,
-          color: style.uiColor(alpha: style.minimumOpacity),
-          width: CGFloat(style.width)
-        )
+    func apply(
+      _ style: PenStyle,
+      tool: DrawingTool,
+      to paper: PaperCanvasContainerView
+    ) {
+      guard style != appliedPenStyle || tool != appliedDrawingTool else {
+        return
       }
+      appliedPenStyle = style
       appliedDrawingTool = tool
-      canvas.tool = tool == .pen ? ink : PKEraserTool(.vector)
+      paper.touchView.configure(penStyle: style, drawingTool: tool)
     }
 
-    func apply(_ data: Data, pageID: UUID, to canvas: PKCanvasView) {
+    func apply(
+      _ data: Data,
+      pageID: UUID,
+      to paper: PaperCanvasContainerView
+    ) {
       let drawing = (try? PKDrawing(data: data)) ?? PKDrawing()
       guard self.pageID != pageID || drawing != appliedDrawing else { return }
 
-      cancelPendingWork()
       self.pageID = pageID
       appliedDrawing = drawing
-      applying = true
-      canvas.drawing = drawing
-      canvas.contentOffset = .zero
-      canvas.zoomScale = 1
-      applying = false
-    }
-
-    func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
-      if let endedSession {
-        registerPressureTargets(from: endedSession, in: canvasView.drawing)
-      }
-      settleNow(canvasView)
-      endedSession = nil
-      activeSession = ToolSession(
-        tool: appliedDrawingTool ?? .pen,
-        penStyle: appliedPenStyle ?? .standard,
-        strokeCountBefore: canvasView.drawing.strokes.count
-      )
-    }
-
-    func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
-      guard !applying else { return }
-      let drawing = canvasView.drawing
-      guard drawing != appliedDrawing else { return }
-
-      appliedDrawing = drawing
-      emitLive(drawing)
-      if let endedSession {
-        registerPressureTargets(from: endedSession, in: drawing)
-      }
-      if activeSession == nil && containsPressureManagedStroke(in: drawing) {
-        needsSettlement = true
-      }
-      if needsSettlement && activeSession == nil {
-        scheduleSettlement(on: canvasView)
-      }
-    }
-
-    func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
-      endedSession = activeSession
-      if let activeSession {
-        registerPressureTargets(from: activeSession, in: canvasView.drawing)
-      }
-      if activeSession?.tool == .eraser {
-        pressureStyles = [:]
-      }
-
-      activeSession = nil
-      appliedDrawing = canvasView.drawing
-      needsSettlement = true
-      scheduleSettlement(on: canvasView)
+      paper.apply(drawing)
     }
 
     func pencilInteraction(
@@ -200,89 +128,131 @@ struct PencilCanvasView: UIViewRepresentable {
       guard squeeze.phase == .ended else { return }
       onToggleTool()
     }
-
-    private func emitLive(_ drawing: PKDrawing) {
-      let data = drawing.dataRepresentation()
-      liveTask?.cancel()
-      liveTask = Task { [weak self] in
-        try? await Task.sleep(for: .milliseconds(34))
-        guard !Task.isCancelled, let self else { return }
-        onChange(data, false)
-      }
-    }
-
-    private func scheduleSettlement(on canvas: PKCanvasView) {
-      settlementTask?.cancel()
-      settlementTask = Task { [weak self, weak canvas] in
-        try? await Task.sleep(for: .milliseconds(120))
-        guard !Task.isCancelled, let self, let canvas else { return }
-        settleNow(canvas)
-      }
-    }
-
-    private func settleNow(_ canvas: PKCanvasView) {
-      guard needsSettlement else { return }
-      liveTask?.cancel()
-      settlementTask?.cancel()
-
-      let settled = PressureSensitiveInk.apply(
-        pressureStyles,
-        to: canvas.drawing
-      )
-      needsSettlement = false
-
-      pressureStyles = pressureStyles.filter {
-        settled.strokes.indices.contains($0.key)
-      }
-
-      if settled != canvas.drawing {
-        applying = true
-        canvas.drawing = settled
-        applying = false
-      }
-      appliedDrawing = settled
-      onChange(settled.dataRepresentation(), true)
-    }
-
-    private func cancelPendingWork() {
-      liveTask?.cancel()
-      settlementTask?.cancel()
-      activeSession = nil
-      endedSession = nil
-      pressureStyles = [:]
-      needsSettlement = false
-    }
-
-    private func containsPressureManagedStroke(in drawing: PKDrawing) -> Bool {
-      pressureStyles.keys.contains {
-        drawing.strokes.indices.contains($0)
-      }
-    }
-
-    private func registerPressureTargets(
-      from session: ToolSession,
-      in drawing: PKDrawing
-    ) {
-      guard session.tool == .pen,
-            session.strokeCountBefore < drawing.strokes.count
-      else { return }
-
-      for index in session.strokeCountBefore ..< drawing.strokes.count {
-        if pressureStyles[index] == nil {
-          needsSettlement = true
-        }
-        pressureStyles[index] = session.penStyle
-      }
-    }
   }
 }
 
 @MainActor
-private final class PaperCanvasView: PKCanvasView {
+final class PaperCanvasContainerView: UIView {
+  let canvasView = PKCanvasView(frame: .zero)
+  let touchView = PaperInputView(frame: .zero)
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+
+    backgroundColor = .clear
+    isOpaque = false
+
+    canvasView.backgroundColor = .clear
+    canvasView.isOpaque = false
+    canvasView.isScrollEnabled = false
+    canvasView.minimumZoomScale = 1
+    canvasView.maximumZoomScale = 1
+    canvasView.bouncesZoom = false
+    canvasView.contentInset = .zero
+    canvasView.contentInsetAdjustmentBehavior = .never
+    canvasView.isUserInteractionEnabled = false
+
+    touchView.backgroundColor = .clear
+    touchView.isOpaque = false
+    touchView.accessibilityIdentifier = "paper-input"
+    touchView.renderDrawing = { [weak canvasView] drawing in
+      canvasView?.drawing = drawing
+    }
+
+    addSubview(canvasView)
+    addSubview(touchView)
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) is unavailable")
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    canvasView.frame = bounds
+    canvasView.contentSize = bounds.size
+    canvasView.contentOffset = .zero
+    canvasView.zoomScale = 1
+    touchView.frame = bounds
+  }
+
+  func apply(_ drawing: PKDrawing) {
+    canvasView.drawing = drawing
+    canvasView.contentOffset = .zero
+    canvasView.zoomScale = 1
+    touchView.apply(drawing)
+  }
+}
+
+@MainActor
+final class PaperInputView: UIView {
+  var onDrawingChange: ((PKDrawing, Bool) -> Void)?
+  var renderDrawing: ((PKDrawing) -> Void)?
+
   override var canBecomeFirstResponder: Bool { false }
 
   override var editingInteractionConfiguration: UIEditingInteractionConfiguration {
     .none
+  }
+
+  private struct Sample {
+    var point: PKStrokePoint
+    let timestamp: TimeInterval
+  }
+
+  private static let eraserWidth: CGFloat = 24
+  private static let liveInterval: TimeInterval = 1.0 / 30.0
+  private static let estimateWait = Duration.milliseconds(120)
+
+  private var drawing = PKDrawing()
+  private var penStyle = PenStyle.standard
+  private var drawingTool = DrawingTool.pen
+
+  private var activeTouch: UITouch?
+  private var actionTool: DrawingTool?
+  private var actionPenStyle: PenStyle?
+  private var actionBaseDrawing = PKDrawing()
+  private var actionCreationDate = Date()
+  private var actionPathID = UUID()
+  private var actionStrokeID = UUID()
+  private var actionRandomSeed = UInt32.random(in: 0...UInt32.max)
+  private var actionStartTimestamp: TimeInterval = 0
+  private var samples: [Sample] = []
+  private var predictedSamples: [Sample] = []
+  private var pendingForceEstimates: [NSNumber: Int] = [:]
+  private var actionHasEnded = false
+  private var workingDrawing = PKDrawing()
+
+  private var lastLiveEmission: TimeInterval = 0
+  private var liveTask: Task<Void, Never>?
+  private var finalizationTask: Task<Void, Never>?
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    isMultipleTouchEnabled = true
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) is unavailable")
+  }
+
+  func configure(penStyle: PenStyle, drawingTool: DrawingTool) {
+    self.penStyle = penStyle
+    self.drawingTool = drawingTool
+  }
+
+  func apply(_ drawing: PKDrawing) {
+    cancelCurrentAction()
+    self.drawing = drawing
+    workingDrawing = drawing
+    setNeedsDisplay()
+  }
+
+  func finishCurrentAction() {
+    guard actionTool != nil else { return }
+    finalizeAction()
   }
 
   override func canPerformAction(
@@ -293,58 +263,370 @@ private final class PaperCanvasView: PKCanvasView {
   }
 
   override func buildMenu(with builder: any UIMenuBuilder) {}
-}
 
-@MainActor
-private enum PressureSensitiveInk {
-  static func apply(
-    _ styles: [Int: PenStyle],
-    to drawing: PKDrawing
-  ) -> PKDrawing {
-    guard !styles.isEmpty else { return drawing }
-
-    let strokes = drawing.strokes.enumerated().map { index, stroke in
-      guard let style = styles[index] else { return stroke }
-      return apply(style, to: stroke)
-    }
-    return PKDrawing(strokes: strokes)
+  override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+    guard let touch = pencilTouch(in: touches) else { return }
+    beginAction(with: touch, event: event)
   }
 
-  private static func apply(_ style: PenStyle, to stroke: PKStroke) -> PKStroke {
-    let points = stroke.path.map { point in
+  override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+    guard let touch = pencilTouch(in: touches), touch === activeTouch else {
+      return
+    }
+    updateAction(with: touch, event: event)
+  }
+
+  override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+    guard let touch = pencilTouch(in: touches), touch === activeTouch else {
+      return
+    }
+    updateAction(with: touch, event: event)
+    activeTouch = nil
+    actionHasEnded = true
+    predictedSamples = []
+    setNeedsDisplay()
+
+    if pendingForceEstimates.isEmpty {
+      finalizeAction()
+    } else {
+      scheduleFinalization()
+    }
+  }
+
+  override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+    guard let touch = pencilTouch(in: touches), touch === activeTouch else {
+      return
+    }
+    activeTouch = nil
+    actionHasEnded = true
+    predictedSamples = []
+    finalizeAction()
+  }
+
+  override func touchesEstimatedPropertiesUpdated(_ touches: Set<UITouch>) {
+    guard actionTool != nil else { return }
+
+    var changed = false
+    for touch in touches where touch.type == .pencil {
+      guard let updateIndex = touch.estimationUpdateIndex,
+        let sampleIndex = pendingForceEstimates[updateIndex],
+        samples.indices.contains(sampleIndex)
+      else { continue }
+
+      let timestamp = samples[sampleIndex].timestamp
+      samples[sampleIndex] = makeSample(from: touch, timestamp: timestamp)
+      changed = true
+
+      if !touch.estimatedPropertiesExpectingUpdates.contains(.force) {
+        pendingForceEstimates.removeValue(forKey: updateIndex)
+      }
+    }
+
+    guard changed else { return }
+    refreshAction()
+    if actionHasEnded && pendingForceEstimates.isEmpty {
+      finalizeAction()
+    }
+  }
+
+  override func draw(_ rect: CGRect) {
+    super.draw(rect)
+    guard actionTool == .pen,
+      let style = actionPenStyle,
+      let context = UIGraphicsGetCurrentContext()
+    else { return }
+
+    let visibleSamples = samples + predictedSamples
+    guard let first = visibleSamples.first else { return }
+
+    context.saveGState()
+    context.setAllowsAntialiasing(true)
+    context.setShouldAntialias(true)
+    context.setLineCap(.butt)
+    context.setLineJoin(.round)
+
+    if visibleSamples.count == 1 {
+      let width = first.point.size.width
+      context.setFillColor(
+        style.uiColor(alpha: Double(first.point.opacity)).cgColor
+      )
+      context.fillEllipse(
+        in: CGRect(
+          x: first.point.location.x - (width / 2),
+          y: first.point.location.y - (width / 2),
+          width: width,
+          height: width
+        )
+      )
+    } else {
+      for (start, end) in zip(visibleSamples, visibleSamples.dropFirst()) {
+        let opacity = (start.point.opacity + end.point.opacity) / 2
+        let width = (start.point.size.width + end.point.size.width) / 2
+        context.setStrokeColor(
+          style.uiColor(alpha: Double(opacity)).cgColor
+        )
+        context.setLineWidth(width)
+        context.beginPath()
+        context.move(to: start.point.location)
+        context.addLine(to: end.point.location)
+        context.strokePath()
+      }
+
+      drawCap(for: first.point, style: style, in: context)
+      if let last = visibleSamples.last {
+        drawCap(for: last.point, style: style, in: context)
+      }
+    }
+
+    context.restoreGState()
+  }
+
+  private func drawCap(
+    for point: PKStrokePoint,
+    style: PenStyle,
+    in context: CGContext
+  ) {
+    let width = point.size.width
+    context.setFillColor(
+      style.uiColor(alpha: Double(point.opacity)).cgColor
+    )
+    context.fillEllipse(
+      in: CGRect(
+        x: point.location.x - (width / 2),
+        y: point.location.y - (width / 2),
+        width: width,
+        height: width
+      )
+    )
+  }
+
+  private func pencilTouch(in touches: Set<UITouch>) -> UITouch? {
+    touches.first { $0.type == .pencil }
+  }
+
+  private func beginAction(with touch: UITouch, event: UIEvent?) {
+    if actionTool != nil {
+      finalizeAction()
+    }
+
+    activeTouch = touch
+    actionTool = drawingTool
+    actionPenStyle = penStyle
+    actionBaseDrawing = drawing
+    workingDrawing = drawing
+    actionCreationDate = Date()
+    actionPathID = UUID()
+    actionStrokeID = UUID()
+    actionRandomSeed = UInt32.random(in: 0...UInt32.max)
+    actionStartTimestamp = touch.timestamp
+    samples = []
+    predictedSamples = []
+    pendingForceEstimates = [:]
+    actionHasEnded = false
+    lastLiveEmission = 0
+
+    addActualSamples(for: touch, event: event)
+    updatePredictions(for: touch, event: event)
+    refreshAction()
+  }
+
+  private func updateAction(with touch: UITouch, event: UIEvent?) {
+    addActualSamples(for: touch, event: event)
+    updatePredictions(for: touch, event: event)
+    refreshAction()
+  }
+
+  private func addActualSamples(for touch: UITouch, event: UIEvent?) {
+    let coalesced = event?.coalescedTouches(for: touch) ?? [touch]
+    for sampleTouch in coalesced where sampleTouch.type == .pencil {
+      appendActualSample(from: sampleTouch)
+    }
+  }
+
+  private func appendActualSample(from touch: UITouch) {
+    let timestamp = max(0, touch.timestamp - actionStartTimestamp)
+    let sample = makeSample(from: touch, timestamp: timestamp)
+
+    if let lastIndex = samples.indices.last,
+      abs(samples[lastIndex].timestamp - timestamp) < 0.000_001
+    {
+      samples[lastIndex] = sample
+      pendingForceEstimates = pendingForceEstimates.filter {
+        $0.value != lastIndex
+      }
+      registerForceEstimate(for: touch, at: lastIndex)
+      return
+    }
+
+    guard samples.last.map({ timestamp > $0.timestamp }) ?? true else { return }
+    samples.append(sample)
+    registerForceEstimate(for: touch, at: samples.count - 1)
+  }
+
+  private func registerForceEstimate(for touch: UITouch, at sampleIndex: Int) {
+    guard touch.estimatedPropertiesExpectingUpdates.contains(.force),
+      let updateIndex = touch.estimationUpdateIndex
+    else { return }
+    pendingForceEstimates[updateIndex] = sampleIndex
+  }
+
+  private func updatePredictions(for touch: UITouch, event: UIEvent?) {
+    predictedSamples = (event?.predictedTouches(for: touch) ?? [])
+      .filter { $0.type == .pencil }
+      .map {
+        makeSample(
+          from: $0,
+          timestamp: max(0, $0.timestamp - actionStartTimestamp)
+        )
+      }
+  }
+
+  private func makeSample(from touch: UITouch, timestamp: TimeInterval) -> Sample {
+    let style = actionPenStyle ?? penStyle
+    let opacity = PencilPressureOpacity.value(
+      force: Double(touch.force),
+      minimum: style.minimumOpacity
+    )
+    let width = CGFloat(style.width)
+    let point = PKStrokePoint(
+      location: touch.preciseLocation(in: self),
+      timeOffset: timestamp,
+      size: CGSize(width: width, height: width),
+      opacity: CGFloat(opacity),
+      force: touch.force,
+      azimuth: touch.azimuthAngle(in: self),
+      altitude: touch.altitudeAngle
+    )
+    return Sample(point: point, timestamp: timestamp)
+  }
+
+  private func refreshAction() {
+    guard actionTool != nil, !samples.isEmpty else { return }
+    predictedSamples = predictedSamples.filter {
+      $0.timestamp > (samples.last?.timestamp ?? 0)
+    }
+
+    if actionTool == .eraser {
+      workingDrawing = actionBaseDrawing.erasingPath(eraserPath())
+      renderDrawing?(workingDrawing)
+    }
+    setNeedsDisplay()
+    scheduleLiveEmission()
+  }
+
+  private func actionDrawing() -> PKDrawing {
+    guard actionTool == .pen, let stroke = penStroke() else {
+      return workingDrawing
+    }
+    return PKDrawing(strokes: actionBaseDrawing.strokes + [stroke])
+  }
+
+  private func penStroke() -> PKStroke? {
+    guard let style = actionPenStyle, !samples.isEmpty else { return nil }
+    let path = PKStrokePath(
+      controlPoints: samples.map(\.point),
+      creationDate: actionCreationDate,
+      id: actionPathID
+    )
+    return PKStroke(
+      ink: PKInk(.pen, color: style.uiColor(alpha: 1)),
+      path: path,
+      randomSeed: actionRandomSeed,
+      id: actionStrokeID
+    )
+  }
+
+  private func eraserPath() -> PKStrokePath {
+    let points = samples.map { sample in
       PKStrokePoint(
-        location: point.location,
-        timeOffset: point.timeOffset,
-        size: point.size,
-        opacity: CGFloat(
-          PencilPressureOpacity.value(
-            force: Double(point.force),
-            minimum: style.minimumOpacity
-          )
+        location: sample.point.location,
+        timeOffset: sample.point.timeOffset,
+        size: CGSize(
+          width: Self.eraserWidth,
+          height: Self.eraserWidth
         ),
-        force: point.force,
-        azimuth: point.azimuth,
-        altitude: point.altitude,
-        secondaryScale: point.secondaryScale,
-        threshold: point.threshold
+        opacity: 1,
+        force: sample.point.force,
+        azimuth: sample.point.azimuth,
+        altitude: sample.point.altitude
       )
     }
-
-    var adjusted = stroke
-    adjusted.path = PKStrokePath(
+    return PKStrokePath(
       controlPoints: points,
-      creationDate: stroke.path.creationDate
+      creationDate: actionCreationDate
     )
-    adjusted.ink = PKInk(
-      stroke.ink.inkType,
-      color: style.uiColor(alpha: 1)
-    )
-    return adjusted
+  }
+
+  private func scheduleLiveEmission() {
+    let now = CACurrentMediaTime()
+    let remaining = Self.liveInterval - (now - lastLiveEmission)
+    if remaining <= 0 {
+      emitLiveNow()
+      return
+    }
+    guard liveTask == nil else { return }
+
+    liveTask = Task { [weak self] in
+      let nanoseconds = UInt64(max(remaining, 0) * 1_000_000_000)
+      try? await Task.sleep(nanoseconds: nanoseconds)
+      guard !Task.isCancelled, let self else { return }
+      liveTask = nil
+      emitLiveNow()
+    }
+  }
+
+  private func emitLiveNow() {
+    guard actionTool != nil else { return }
+    lastLiveEmission = CACurrentMediaTime()
+    onDrawingChange?(actionDrawing(), false)
+  }
+
+  private func scheduleFinalization() {
+    finalizationTask?.cancel()
+    finalizationTask = Task { [weak self] in
+      try? await Task.sleep(for: Self.estimateWait)
+      guard !Task.isCancelled, let self else { return }
+      finalizeAction()
+    }
+  }
+
+  private func finalizeAction() {
+    guard actionTool != nil else { return }
+    liveTask?.cancel()
+    liveTask = nil
+    finalizationTask?.cancel()
+    finalizationTask = nil
+
+    let finalDrawing = actionDrawing()
+    drawing = finalDrawing
+    workingDrawing = finalDrawing
+    renderDrawing?(finalDrawing)
+    clearAction()
+    onDrawingChange?(finalDrawing, true)
+  }
+
+  private func cancelCurrentAction() {
+    liveTask?.cancel()
+    liveTask = nil
+    finalizationTask?.cancel()
+    finalizationTask = nil
+    clearAction()
+  }
+
+  private func clearAction() {
+    activeTouch = nil
+    actionTool = nil
+    actionPenStyle = nil
+    samples = []
+    predictedSamples = []
+    pendingForceEstimates = [:]
+    actionHasEnded = false
+    setNeedsDisplay()
   }
 }
 
-private extension PenStyle {
-  func uiColor(alpha: Double) -> UIColor {
+extension PenStyle {
+  fileprivate func uiColor(alpha: Double) -> UIColor {
     let components = color.components
     return UIColor(
       red: CGFloat(components.red),

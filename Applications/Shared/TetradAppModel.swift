@@ -380,11 +380,18 @@ final class TetradAppModel {
     let minimumOpacity = defaults.object(
       forKey: "tetrad.pen-minimum-opacity"
     ) as? Double ?? PenStyle.standard.minimumOpacity
-    return PenStyle(
+    let style = PenStyle(
       color: color,
       width: width,
       minimumOpacity: minimumOpacity
     )
+    if style.minimumOpacity != minimumOpacity {
+      defaults.set(
+        style.minimumOpacity,
+        forKey: "tetrad.pen-minimum-opacity"
+      )
+    }
+    return style
   }
 
   private func savePenStyle() {

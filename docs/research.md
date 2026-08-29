@@ -6,12 +6,12 @@
 
 | Потребность | Системный владелец | Использованный контракт | Следствие в коде |
 |---|---|---|---|
-| Письмо Apple Pencil | [PencilKit `PKCanvasView`](https://developer.apple.com/documentation/pencilkit/pkcanvasview) | Canvas принимает события Pencil и хранит их как drawing | `PencilCanvasView` фиксирует масштаб `1`, отключает прокрутку и передаёт `PKDrawing.dataRepresentation()` |
-| Обычная ручка | [`PKInkingTool`](https://developer.apple.com/documentation/pencilkit/pkinkingtool-swift.struct) | Выбранная ширина задаёт основу штриха, а путь хранит измерения Pencil | Маленькая палитра меняет цвет и базовую толщину инструмента `.pen` |
-| Нажим Pencil | [`PKStrokePoint.force`](https://developer.apple.com/documentation/pencilkit/pkstrokepointreference/force) и [`opacity`](https://developer.apple.com/documentation/pencilkit/pkstrokepointreference/opacity) | Средний нажим имеет силу `1`; непрозрачность точки служит множителем цвета | После получения последних значений силы приложение явно переводит каждую точку из диапазона `0...1` в выбранный минимум `...1` |
-| Стирание | [`PKEraserTool`](https://developer.apple.com/documentation/pencilkit/pkerasertool) | Векторный ластик удаляет целый штрих PencilKit | Кнопка в палитре и жест Pencil меняют одно состояние инструмента, поэтому экран всегда показывает выбранный режим |
+| Письмо Apple Pencil | [UIKit: Handling input from Apple Pencil](https://developer.apple.com/documentation/uikit/handling-input-from-apple-pencil) | `UITouch` отдаёт координату, силу, наклон и поздние уточнения измерений | `PaperInputView` принимает только Pencil, превращает измерения в `PKStrokePoint`, а закрытый от касаний `PKCanvasView` рисует готовый `PKDrawing` |
+| Плавная ручка | [`coalescedTouches`](https://developer.apple.com/documentation/uikit/getting-high-fidelity-input-with-coalesced-touches) и [`predictedTouches`](https://developer.apple.com/documentation/uikit/uievent/predictedtouches%28for%3A%29) | UIKit отдаёт пропущенные точки частого опроса и временный прогноз следующего положения | В штрих попадают все измеренные точки, а прогноз живёт только в предпросмотре и заменяется новым событием |
+| Нажим Pencil | [`UITouch.force`](https://developer.apple.com/documentation/uikit/uitouch/force) и [`PKStrokePoint.opacity`](https://developer.apple.com/documentation/pencilkit/pkstrokepointreference/opacity) | Система калибрует средний нажим как `1`, а непрозрачность точки умножает непрозрачность чернил | Цвет штриха хранится полностью непрозрачным; каждая точка получает непрозрачность между выбранным минимумом и `1` по текущей силе |
+| Стирание | [`PKDrawing.erasingPath`](https://developer.apple.com/documentation/pencilkit/pkdrawing-swift.struct) | PencilKit применяет путь ластика прямо к существующему рисунку | Тот же низкоуровневый ввод строит путь ластика и сразу показывает результат |
 | Отмена двумя пальцами | [`UITapGestureRecognizer.numberOfTouchesRequired`](https://developer.apple.com/documentation/uikit/uitapgesturerecognizer/numberoftouchesrequired) и [`UILongPressGestureRecognizer`](https://developer.apple.com/documentation/uikit/uilongpressgesturerecognizer) | Распознаватели закреплены прямо за видимым холстом и принимают только два прямых касания | Касание возвращает один снимок, а удержание повторяет отмену каждые 95 миллисекунд |
-| Чистое касание бумаги | [`UIEditingInteractionConfiguration.none`](https://developer.apple.com/documentation/uikit/uieditinginteractionconfiguration/none) | Холст может отключить системное редактирование UIResponder | Один палец остаётся пустым действием: меню `Select All` и `Insert Space` не строится |
+| Чистое касание бумаги | [UIKit: Handling touches in your view](https://developer.apple.com/documentation/uikit/handling-touches-in-your-view) | Обычный `UIView` различает прямое касание и Pencil | Верхний `PaperInputView` забирает касания; один палец заканчивается пустым действием, два идут жестам, Pencil идёт ручке; `PKCanvasView` не получает событий и служит только рендерером |
 | Цвет бумаги | [`NSAppearance.performAsCurrentDrawingAppearance`](https://developer.apple.com/documentation/appkit/nsappearance/performascurrentdrawingappearance(_:)) | Рендер можно выполнить в явно выбранной светлой теме | `PaperInkRenderer` одинаково сохраняет тёмные чернила в окне Mac и в PNG для агента |
 | Прямая связь iPad и Mac | [Network.framework](https://developer.apple.com/documentation/technotes/tn3151-choosing-the-right-networking-api) | Network — основной API Apple для TCP, Bonjour и peer-to-peer Wi-Fi | Mac публикует `_tetrad._tcp`, iPad ищет сервис и открывает двусторонний канал |
 | Типизированные сообщения | [WWDC25: structured concurrency with Network](https://developer.apple.com/videos/play/wwdc2025/250/) | `Coder` кадрирует `Codable`-сообщения для `NetworkConnection` | `WireMessage` передаётся без собственного парсера длины и сокетов |
@@ -28,25 +28,41 @@ Apple пометила Multipeer Connectivity устаревшим в 2026 го�
 
 ## Как нажим становится прозрачностью
 
-`PKStrokePoint.force` содержит измеренную силу, но у обычного инструмента
-`.pen` сохранённые точки имели непрозрачность `1` при слабом и сильном нажиме.
-Поэтому владелец этого поведения находится в приложении. Для каждой новой
+`UITouch.force` содержит измеренную силу; Apple калибрует средний нажим как
+`1`. Обычный инструмент `.pen` сохранял непрозрачность точек равной `1`,
+поэтому владелец нужной зависимости находится в приложении. Для каждой новой
 точки оно вычисляет:
 
 ```text
-opacity = minimum + (1 - minimum) * clamp(force, 0, 1)
+pressure = clamp(force, 0, 1)
+opacity  = minimum + (1 - minimum) * pressure
 ```
 
-Так регулятор задаёт самый бледный возможный след, сила `0.5` оказывается
-ровно посередине, а обычный сильный нажим `1` даёт полный выбранный цвет.
-PencilKit может прислать последние значения силы уже после завершения касания;
-Apple отдельно описывает эту задержку в
-[`Handling input from Apple Pencil`](https://developer.apple.com/documentation/uikit/handling-input-from-apple-pencil),
-а для PencilKit её фиксирует контракт
-[`canvasViewDrawingDidChange`](https://developer.apple.com/documentation/pencilkit/pkcanvasviewdelegate/canvasviewdrawingdidchange(_:)).
-Холст поэтому ждёт короткую тишину после штриха, перестраивает только новые
-точки и повторяет расчёт, если позднее измерение всё же пришло. Старые штрихи
-и штрихи ластика он не меняет.
+Так регулятор задаёт нижнюю границу, сила `0.5` даёт середину между этой
+границей и полным цветом, а обычный нажим `1` даёт полный цвет. Верхняя граница
+регулятора равна `0.6`: даже в самом тёмном положении у Pencil остаётся `0.4`
+диапазона для видимого ответа на силу. Цвет
+`PKInk` всегда имеет alpha `1`; видимая переменная прозрачность принадлежит
+точкам. UIKit иногда уточняет силу уже после исходного события. Приложение
+связывает уточнение с точкой через `estimationUpdateIndex`, обновляет живой
+штрих и ждёт уточнение до 120 миллисекунд после подъёма Pencil. Поэтому
+сохранённый штрих содержит измеренный нажим, а не одно значение настройки на
+всю линию.
+
+## Кто получает касание
+
+```text
+палец x1 ---------> PaperInputView ---------> пустое действие
+палец x2 ---------> жест -------------------> undo / лист / тетрадь
+Apple Pencil -----> точки + нажим ----------> PKStroke / путь ластика
+PKCanvasView <----- готовый PKDrawing         (ввод выключен)
+```
+
+Это разделение устраняет прежнего второго владельца жестов. Системное меню
+редактирования возникало внутри интерактивного `PKCanvasView`, поэтому запрета
+на уровне внешнего responder было мало. Теперь холст PencilKit не участвует в
+hit-testing, а простой `PaperInputView` сам принимает и завершает касание
+одного пальца. У него нет текста, выделения и меню, которое можно открыть.
 
 ## Контракт страницы
 

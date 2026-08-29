@@ -1,4 +1,5 @@
 import SwiftUI
+import TetradCore
 
 enum DrawingTool: Sendable {
   case pen
@@ -44,7 +45,7 @@ struct PenStyle: Equatable, Sendable {
   static let minimumWidth = 1.0
   static let maximumWidth = 8.0
   static let lowestMinimumOpacity = 0.0
-  static let highestMinimumOpacity = 1.0
+  static let highestMinimumOpacity = PencilPressureOpacity.maximumFloor
   static let standard = Self(color: .black, width: 2.2, minimumOpacity: 0.18)
 
   let color: PenColor

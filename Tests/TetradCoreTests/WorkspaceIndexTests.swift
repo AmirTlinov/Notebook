@@ -18,6 +18,10 @@ func pencilPressureControlsOpacity() {
   #expect(PencilPressureOpacity.value(force: 1, minimum: 0.2) == 1)
   #expect(PencilPressureOpacity.value(force: 2, minimum: 0.2) == 1)
   #expect(PencilPressureOpacity.value(force: -1, minimum: 0.2) == 0.2)
+  #expect(
+    PencilPressureOpacity.value(force: 0, minimum: 1)
+      == PencilPressureOpacity.maximumFloor
+  )
 }
 
 @Test("Одно движение Pencil создаёт один шаг отмены")
