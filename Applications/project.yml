@@ -1,0 +1,93 @@
+name: Tetrad
+
+options:
+  minimumXcodeGenVersion: 2.46.0
+  xcodeVersion: "27.0"
+  deploymentTarget:
+    iOS: "27.0"
+    macOS: "27.0"
+
+packages:
+  TetradCore:
+    path: ..
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    ENABLE_USER_SCRIPT_SANDBOXING: true
+    CLANG_ENABLE_MODULES: true
+
+targets:
+  Tetrad:
+    type: application
+    platform: iOS
+    sources:
+      - path: Shared
+      - path: iPad
+      - path: Assets.xcassets
+    dependencies:
+      - package: TetradCore
+        product: TetradCore
+    info:
+      path: iPad/Info.plist
+      properties:
+        CFBundleDisplayName: Тетрадь
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.productivity
+        NSLocalNetworkUsageDescription: Тетрадь показывает написанное на вашем Mac без облачного сервера.
+        NSBonjourServices:
+          - _tetrad._tcp
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+        UIStatusBarHidden: true
+        UIViewControllerBasedStatusBarAppearance: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.tetrad
+        PRODUCT_NAME: Tetrad
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: VUNH73AYPY
+        TARGETED_DEVICE_FAMILY: 2
+        SUPPORTS_MACCATALYST: false
+        GENERATE_INFOPLIST_FILE: false
+        SWIFT_EMIT_LOC_STRINGS: true
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+  TetradMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: Shared
+      - path: Mac
+      - path: Assets.xcassets
+    dependencies:
+      - package: TetradCore
+        product: TetradCore
+    info:
+      path: Mac/Info.plist
+      properties:
+        CFBundleDisplayName: Тетрадь
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.productivity
+        NSLocalNetworkUsageDescription: Тетрадь принимает страницы с вашего iPad без облачного сервера.
+        NSBonjourServices:
+          - _tetrad._tcp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.tetrad.mac
+        PRODUCT_NAME: Tetrad
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: VUNH73AYPY
+        GENERATE_INFOPLIST_FILE: false
+        SWIFT_EMIT_LOC_STRINGS: true
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

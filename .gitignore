@@ -1,0 +1,9 @@
+.DS_Store
+.build/
+Applications/Tetrad.xcodeproj/
+Applications/DerivedData*/
+Applications/iPad/Info.plist
+Applications/Mac/Info.plist
+MCP/node_modules/
+MCP/.tetrad-test/
+*.xcresult
