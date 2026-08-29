@@ -188,13 +188,33 @@ final class TetradAppModel {
   func selectPenColor(_ color: PenColor) {
     drawingTool = .pen
     guard color != penStyle.color else { return }
-    penStyle = PenStyle(color: color, width: penStyle.width)
+    penStyle = PenStyle(
+      color: color,
+      width: penStyle.width,
+      minimumOpacity: penStyle.minimumOpacity
+    )
     savePenStyle()
   }
 
   func selectPenWidth(_ width: Double) {
     drawingTool = .pen
-    let next = PenStyle(color: penStyle.color, width: width)
+    let next = PenStyle(
+      color: penStyle.color,
+      width: width,
+      minimumOpacity: penStyle.minimumOpacity
+    )
+    guard next != penStyle else { return }
+    penStyle = next
+    savePenStyle()
+  }
+
+  func selectPenMinimumOpacity(_ minimumOpacity: Double) {
+    drawingTool = .pen
+    let next = PenStyle(
+      color: penStyle.color,
+      width: penStyle.width,
+      minimumOpacity: minimumOpacity
+    )
     guard next != penStyle else { return }
     penStyle = next
     savePenStyle()
@@ -357,11 +377,22 @@ final class TetradAppModel {
       .flatMap(PenColor.init(rawValue:)) ?? PenStyle.standard.color
     let width = defaults.object(forKey: "tetrad.pen-width") as? Double
       ?? PenStyle.standard.width
-    return PenStyle(color: color, width: width)
+    let minimumOpacity = defaults.object(
+      forKey: "tetrad.pen-minimum-opacity"
+    ) as? Double ?? PenStyle.standard.minimumOpacity
+    return PenStyle(
+      color: color,
+      width: width,
+      minimumOpacity: minimumOpacity
+    )
   }
 
   private func savePenStyle() {
     UserDefaults.standard.set(penStyle.color.rawValue, forKey: "tetrad.pen-color")
     UserDefaults.standard.set(penStyle.width, forKey: "tetrad.pen-width")
+    UserDefaults.standard.set(
+      penStyle.minimumOpacity,
+      forKey: "tetrad.pen-minimum-opacity"
+    )
   }
 }

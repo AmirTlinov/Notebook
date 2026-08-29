@@ -15,6 +15,7 @@ struct PenControlsView: View {
           .frame(width: 1, height: 24)
 
         widthControl
+        opacityControl
       }
 
       Button {
@@ -118,6 +119,37 @@ struct PenControlsView: View {
       .frame(width: 112)
       .accessibilityLabel("Толщина ручки")
       .accessibilityIdentifier("pen-width")
+    }
+  }
+
+  private var opacityControl: some View {
+    HStack(spacing: 9) {
+      Circle()
+        .fill(
+          model.penStyle.color.displayColor.opacity(
+            model.penStyle.minimumOpacity
+          )
+        )
+        .overlay {
+          Circle()
+            .stroke(.primary.opacity(0.18), lineWidth: 1)
+        }
+        .frame(width: 24, height: 24)
+
+      Slider(
+        value: Binding(
+          get: { model.penStyle.minimumOpacity },
+          set: model.selectPenMinimumOpacity
+        ),
+        in: PenStyle.lowestMinimumOpacity ... PenStyle.highestMinimumOpacity
+      )
+      .tint(model.penStyle.color.displayColor)
+      .frame(width: 96)
+      .accessibilityLabel("Непрозрачность слабого нажима")
+      .accessibilityValue(
+        "\(Int((model.penStyle.minimumOpacity * 100).rounded())) процентов"
+      )
+      .accessibilityIdentifier("pen-minimum-opacity")
     }
   }
 

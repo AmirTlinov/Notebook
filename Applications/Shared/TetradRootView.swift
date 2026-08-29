@@ -16,7 +16,12 @@ struct TetradRootView: View {
           Color.clear
         case .ready:
           if let page = model.activePage {
-            PageSurface(page: page, acceptsPencil: acceptsPencil)
+            PageSurface(
+              page: page,
+              acceptsPencil: acceptsPencil,
+              onNavigate: navigate,
+              onUndo: model.undoLastDrawingAction
+            )
               .id(page.id)
               .transition(pageTransition)
           }
@@ -39,14 +44,6 @@ struct TetradRootView: View {
         }
 
         #if os(iOS)
-          TwoFingerNavigationInstaller(
-            onNavigate: { horizontal, direction in
-              navigate(horizontal: horizontal, direction: direction)
-            },
-            onUndo: model.undoLastDrawingAction
-          )
-          .allowsHitTesting(false)
-
           PenControlsView()
             .frame(
               maxWidth: .infinity,

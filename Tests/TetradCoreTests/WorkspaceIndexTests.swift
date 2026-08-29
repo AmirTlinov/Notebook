@@ -8,6 +8,18 @@ func halfCentimeterGrid() {
   #expect(abs(PhysicalPaper.gridSpacing - 25.984_251_969) < 0.000_001)
 }
 
+@Test("Сила Pencil поднимает непрозрачность от выбранного минимума до единицы")
+func pencilPressureControlsOpacity() {
+  #expect(PencilPressureOpacity.value(force: 0, minimum: 0.2) == 0.2)
+  #expect(
+    abs(PencilPressureOpacity.value(force: 0.5, minimum: 0.2) - 0.6)
+      < 0.000_001
+  )
+  #expect(PencilPressureOpacity.value(force: 1, minimum: 0.2) == 1)
+  #expect(PencilPressureOpacity.value(force: 2, minimum: 0.2) == 1)
+  #expect(PencilPressureOpacity.value(force: -1, minimum: 0.2) == 0.2)
+}
+
 @Test("Одно движение Pencil создаёт один шаг отмены")
 func pencilUndoGroupsLiveChangesIntoOneAction() {
   let pageID = UUID()

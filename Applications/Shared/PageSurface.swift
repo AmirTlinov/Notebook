@@ -6,6 +6,8 @@ struct PageSurface: View {
 
   let page: PageDocument
   let acceptsPencil: Bool
+  let onNavigate: (_ horizontal: Bool, _ direction: Int) -> Void
+  let onUndo: () -> Void
 
   var body: some View {
     GeometryReader { geometry in
@@ -27,6 +29,8 @@ struct PageSurface: View {
               penStyle: model.penStyle,
               drawingTool: model.drawingTool,
               onToggleTool: model.toggleDrawingTool,
+              onNavigate: onNavigate,
+              onUndo: onUndo,
               onChange: model.replaceDrawing
             )
           #endif

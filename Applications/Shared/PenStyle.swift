@@ -43,13 +43,20 @@ enum PenColor: String, CaseIterable, Identifiable, Sendable {
 struct PenStyle: Equatable, Sendable {
   static let minimumWidth = 1.0
   static let maximumWidth = 8.0
-  static let standard = Self(color: .black, width: 2.2)
+  static let lowestMinimumOpacity = 0.0
+  static let highestMinimumOpacity = 1.0
+  static let standard = Self(color: .black, width: 2.2, minimumOpacity: 0.18)
 
   let color: PenColor
   let width: Double
+  let minimumOpacity: Double
 
-  init(color: PenColor, width: Double) {
+  init(color: PenColor, width: Double, minimumOpacity: Double) {
     self.color = color
     self.width = min(max(width, Self.minimumWidth), Self.maximumWidth)
+    self.minimumOpacity = min(
+      max(minimumOpacity, Self.lowestMinimumOpacity),
+      Self.highestMinimumOpacity
+    )
   }
 }
