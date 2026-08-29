@@ -64,14 +64,11 @@ enum PagePreviewWriter {
 
     if !page.drawingData.isEmpty,
        let drawing = try? PKDrawing(data: page.drawingData) {
-      let drawInk = {
-        drawing.image(from: bounds, scale: scale).draw(in: bounds)
-      }
-      if let paperAppearance = NSAppearance(named: .aqua) {
-        paperAppearance.performAsCurrentDrawingAppearance(drawInk)
-      } else {
-        drawInk()
-      }
+      PaperInkRenderer.image(
+        from: drawing,
+        bounds: bounds,
+        scale: scale
+      ).draw(in: bounds)
     }
     context.flushGraphics()
     NSGraphicsContext.restoreGraphicsState()

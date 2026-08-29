@@ -25,6 +25,7 @@ final class TetradAppModel {
   private(set) var isConnected = false
   private(set) var actionCue: String?
   private(set) var penStyle: PenStyle
+  private(set) var drawingTool: DrawingTool = .pen
 
   let store: TetradStore
   let actorID: UUID
@@ -185,16 +186,26 @@ final class TetradAppModel {
   }
 
   func selectPenColor(_ color: PenColor) {
+    drawingTool = .pen
     guard color != penStyle.color else { return }
     penStyle = PenStyle(color: color, width: penStyle.width)
     savePenStyle()
   }
 
   func selectPenWidth(_ width: Double) {
+    drawingTool = .pen
     let next = PenStyle(color: penStyle.color, width: width)
     guard next != penStyle else { return }
     penStyle = next
     savePenStyle()
+  }
+
+  func selectDrawingTool(_ tool: DrawingTool) {
+    drawingTool = tool
+  }
+
+  func toggleDrawingTool() {
+    drawingTool = drawingTool == .pen ? .eraser : .pen
   }
 
   func commitElementState(elementID: String, state: JSONValue) {

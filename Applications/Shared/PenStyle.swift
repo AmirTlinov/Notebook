@@ -1,5 +1,10 @@
 import SwiftUI
 
+enum DrawingTool: Sendable {
+  case pen
+  case eraser
+}
+
 enum PenColor: String, CaseIterable, Identifiable, Sendable {
   case black
   case blue
@@ -19,10 +24,10 @@ enum PenColor: String, CaseIterable, Identifiable, Sendable {
 
   var components: (red: Double, green: Double, blue: Double) {
     switch self {
-    case .black: (0.075, 0.082, 0.094)
-    case .blue: (0.035, 0.235, 0.675)
-    case .red: (0.745, 0.105, 0.125)
-    case .green: (0.035, 0.405, 0.225)
+    case .black: (0, 0, 0)
+    case .blue: (0, 0.19, 0.78)
+    case .red: (0.82, 0.04, 0.07)
+    case .green: (0, 0.43, 0.2)
     }
   }
 

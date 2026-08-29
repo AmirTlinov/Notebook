@@ -23,8 +23,9 @@ struct PencilDrawingView: View {
         .resizable()
       #else
         Image(
-          nsImage: drawing.image(
-            from: CGRect(
+          nsImage: PaperInkRenderer.image(
+            from: drawing,
+            bounds: CGRect(
               x: 0,
               y: 0,
               width: page.size.width,

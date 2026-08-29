@@ -6,10 +6,12 @@ struct PencilCanvasView: UIViewRepresentable {
   let pageID: UUID
   let drawingData: Data
   let penStyle: PenStyle
+  let drawingTool: DrawingTool
+  let onToggleTool: () -> Void
   let onChange: (Data, Bool) -> Void
 
   func makeCoordinator() -> Coordinator {
-    Coordinator(onChange: onChange)
+    Coordinator(onToggleTool: onToggleTool, onChange: onChange)
   }
 
   func makeUIView(context: Context) -> PKCanvasView {
@@ -24,14 +26,15 @@ struct PencilCanvasView: UIViewRepresentable {
     canvas.bouncesZoom = false
     canvas.contentInset = .zero
     context.coordinator.attach(to: canvas)
-    context.coordinator.apply(penStyle, to: canvas)
+    context.coordinator.apply(penStyle, tool: drawingTool, to: canvas)
     context.coordinator.apply(drawingData, pageID: pageID, to: canvas)
     return canvas
   }
 
   func updateUIView(_ canvas: PKCanvasView, context: Context) {
+    context.coordinator.onToggleTool = onToggleTool
     context.coordinator.onChange = onChange
-    context.coordinator.apply(penStyle, to: canvas)
+    context.coordinator.apply(penStyle, tool: drawingTool, to: canvas)
     context.coordinator.apply(drawingData, pageID: pageID, to: canvas)
     canvas.contentSize = canvas.bounds.size
     canvas.contentOffset = .zero
@@ -40,40 +43,50 @@ struct PencilCanvasView: UIViewRepresentable {
 
   @MainActor
   final class Coordinator: NSObject, PKCanvasViewDelegate, UIPencilInteractionDelegate {
+    var onToggleTool: () -> Void
     var onChange: (Data, Bool) -> Void
 
-    private weak var canvas: PKCanvasView?
     private var pageID: UUID?
     private var appliedDrawing = PKDrawing()
     private var applying = false
     private var liveTask: Task<Void, Never>?
     private var appliedPenStyle: PenStyle?
+    private var appliedDrawingTool: DrawingTool?
     private var ink = PKInkingTool(.pen, color: .black, width: 2.2)
 
-    init(onChange: @escaping (Data, Bool) -> Void) {
+    init(
+      onToggleTool: @escaping () -> Void,
+      onChange: @escaping (Data, Bool) -> Void
+    ) {
+      self.onToggleTool = onToggleTool
       self.onChange = onChange
     }
 
     func attach(to canvas: PKCanvasView) {
-      self.canvas = canvas
       canvas.addInteraction(UIPencilInteraction(delegate: self))
     }
 
-    func apply(_ style: PenStyle, to canvas: PKCanvasView) {
-      guard style != appliedPenStyle else { return }
-      appliedPenStyle = style
-      let components = style.color.components
-      ink = PKInkingTool(
-        .pen,
-        color: UIColor(
-          red: CGFloat(components.red),
-          green: CGFloat(components.green),
-          blue: CGFloat(components.blue),
-          alpha: 1
-        ),
-        width: CGFloat(style.width)
-      )
-      canvas.tool = ink
+    func apply(_ style: PenStyle, tool: DrawingTool, to canvas: PKCanvasView) {
+      let styleChanged = style != appliedPenStyle
+      let toolChanged = tool != appliedDrawingTool
+      guard styleChanged || toolChanged else { return }
+
+      if styleChanged {
+        appliedPenStyle = style
+        let components = style.color.components
+        ink = PKInkingTool(
+          .pen,
+          color: UIColor(
+            red: CGFloat(components.red),
+            green: CGFloat(components.green),
+            blue: CGFloat(components.blue),
+            alpha: 1
+          ),
+          width: CGFloat(style.width)
+        )
+      }
+      appliedDrawingTool = tool
+      canvas.tool = tool == .pen ? ink : PKEraserTool(.vector)
     }
 
     func apply(_ data: Data, pageID: UUID, to canvas: PKCanvasView) {
@@ -114,7 +127,7 @@ struct PencilCanvasView: UIViewRepresentable {
       _ interaction: UIPencilInteraction,
       didReceiveTap tap: UIPencilInteraction.Tap
     ) {
-      toggleEraser()
+      onToggleTool()
     }
 
     func pencilInteraction(
@@ -122,12 +135,7 @@ struct PencilCanvasView: UIViewRepresentable {
       didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze
     ) {
       guard squeeze.phase == .ended else { return }
-      toggleEraser()
-    }
-
-    private func toggleEraser() {
-      guard let canvas else { return }
-      canvas.tool = canvas.tool is PKEraserTool ? ink : PKEraserTool(.vector)
+      onToggleTool()
     }
   }
 }

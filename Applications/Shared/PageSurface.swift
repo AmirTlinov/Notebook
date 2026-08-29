@@ -25,6 +25,8 @@ struct PageSurface: View {
               pageID: page.id,
               drawingData: page.drawingData,
               penStyle: model.penStyle,
+              drawingTool: model.drawingTool,
+              onToggleTool: model.toggleDrawingTool,
               onChange: model.replaceDrawing
             )
           #endif
@@ -38,10 +40,15 @@ struct PageSurface: View {
       }
       .frame(width: page.size.width, height: page.size.height)
       .scaleEffect(scale, anchor: .topLeading)
-      .frame(width: renderedSize.width, height: renderedSize.height)
-      .position(
-        x: geometry.size.width / 2,
-        y: geometry.size.height / 2
+      .frame(
+        width: renderedSize.width,
+        height: renderedSize.height,
+        alignment: .topLeading
+      )
+      .frame(
+        width: geometry.size.width,
+        height: geometry.size.height,
+        alignment: .center
       )
       .clipped()
     }
