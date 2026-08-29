@@ -3,7 +3,16 @@ set -euo pipefail
 
 ROOT=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
 DERIVED=$(mktemp -d "${TMPDIR:-/tmp}/tetrad-derived.XXXXXX")
-trap 'rm -rf "$DERIVED"' EXIT
+SIMULATOR_ID=""
+SHUTDOWN_SIMULATOR=false
+
+cleanup() {
+  if [[ "$SHUTDOWN_SIMULATOR" == true && -n "$SIMULATOR_ID" ]]; then
+    xcrun simctl shutdown "$SIMULATOR_ID" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$DERIVED"
+}
+trap cleanup EXIT
 
 cd "$ROOT"
 swift test
@@ -52,4 +61,42 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO \
   build
 
-printf '\nТетрадь проверена: Swift, локальный ластик, MCP, macOS и iPadOS прошли.\n'
+read -r SIMULATOR_ID SIMULATOR_STATE <<<"$(
+  xcrun simctl list devices available --json | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+devices = [
+    device
+    for runtime in data["devices"].values()
+    for device in runtime
+    if device.get("isAvailable") and device["name"].startswith("iPad")
+]
+if not devices:
+    raise SystemExit("Нужен установленный iPad Simulator")
+devices.sort(key=lambda d: (
+    d["state"] != "Booted",
+    "11-inch" not in d["name"],
+    d["name"],
+))
+chosen = devices[0]
+print(chosen["udid"], chosen["state"])
+'
+)"
+
+if [[ "$SIMULATOR_STATE" != Booted ]]; then
+  xcrun simctl boot "$SIMULATOR_ID"
+  xcrun simctl bootstatus "$SIMULATOR_ID" -b >/dev/null
+  SHUTDOWN_SIMULATOR=true
+fi
+
+xcodebuild \
+  -quiet \
+  -project Tetrad.xcodeproj \
+  -scheme Tetrad \
+  -configuration Debug \
+  -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+  -derivedDataPath "$DERIVED/ipad-tests" \
+  test \
+  -only-testing:TetradUITests/EraserResponsivenessTests/testEraserKeepsDensePaperResponsive
+
+printf '\nТетрадь проверена: Swift, локальный ластик, MCP, macOS, iPadOS и отзывчивость Simulator прошли.\n'

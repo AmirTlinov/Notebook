@@ -87,13 +87,15 @@ struct PencilCanvasView: UIViewRepresentable {
       let pageGestures = TwoFingerPageGestureController(
         onNavigate: { [weak self, weak paper] horizontal, direction in
           guard let self, let paper else { return }
-          paper.touchView.finishCurrentAction()
-          onNavigate(horizontal, direction)
+          paper.touchView.finishCurrentAction {
+            self.onNavigate(horizontal, direction)
+          }
         },
         onUndo: { [weak self, weak paper] in
           guard let self, let paper else { return }
-          paper.touchView.finishCurrentAction()
-          onUndo()
+          paper.touchView.finishCurrentAction {
+            self.onUndo()
+          }
         }
       )
       pageGestures.install(on: paper.touchView)
@@ -176,6 +178,8 @@ final class PaperCanvasContainerView: UIView {
 
     touchView.backgroundColor = .clear
     touchView.isOpaque = false
+    touchView.isAccessibilityElement = true
+    touchView.accessibilityLabel = "Лист"
     touchView.accessibilityIdentifier = "paper-input"
     touchView.renderDrawing = { [weak canvasView] drawing in
       canvasView?.drawing = drawing
@@ -224,6 +228,7 @@ final class PaperInputView: UIView {
   }
 
   private static let liveInterval: TimeInterval = 1.0 / 30.0
+  private static let eraserPreviewInterval: TimeInterval = 1.0 / 20.0
   private static let estimateWait = Duration.milliseconds(120)
 
   private var drawing = PKDrawing()
@@ -250,10 +255,18 @@ final class PaperInputView: UIView {
   private var lastLiveEmission: TimeInterval = 0
   private var liveTask: Task<Void, Never>?
   private var finalizationTask: Task<Void, Never>?
+  private var eraserTask: Task<Void, Never>?
+  private var eraserDelayTask: Task<Void, Never>?
+  private var eraserRevision = 0
+  private var renderedEraserRevision = 0
+  private var lastEraserPreviewStart: TimeInterval = 0
+  private var eraserFinishRequested = false
+  private var actionCompletions: [() -> Void] = []
 
   override init(frame: CGRect) {
     super.init(frame: frame)
     isMultipleTouchEnabled = true
+    updateAccessibilityValue()
   }
 
   @available(*, unavailable)
@@ -275,11 +288,20 @@ final class PaperInputView: UIView {
     cancelCurrentAction()
     self.drawing = drawing
     workingDrawing = drawing
+    updateAccessibilityValue()
     setNeedsDisplay()
   }
 
-  func finishCurrentAction() {
-    guard actionTool != nil else { return }
+  func finishCurrentAction(completion: @escaping () -> Void) {
+    guard actionTool != nil else {
+      completion()
+      return
+    }
+    actionCompletions.append(completion)
+    activeTouch = nil
+    actionHasEnded = true
+    predictedSamples = []
+    pendingForceEstimates = [:]
     finalizeAction()
   }
 
@@ -293,19 +315,19 @@ final class PaperInputView: UIView {
   override func buildMenu(with builder: any UIMenuBuilder) {}
 
   override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-    guard let touch = pencilTouch(in: touches) else { return }
+    guard let touch = drawingTouch(in: touches) else { return }
     beginAction(with: touch, event: event)
   }
 
   override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-    guard let touch = pencilTouch(in: touches), touch === activeTouch else {
+    guard let touch = drawingTouch(in: touches), touch === activeTouch else {
       return
     }
     updateAction(with: touch, event: event)
   }
 
   override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-    guard let touch = pencilTouch(in: touches), touch === activeTouch else {
+    guard let touch = drawingTouch(in: touches), touch === activeTouch else {
       return
     }
     updateAction(with: touch, event: event)
@@ -322,7 +344,7 @@ final class PaperInputView: UIView {
   }
 
   override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-    guard let touch = pencilTouch(in: touches), touch === activeTouch else {
+    guard let touch = drawingTouch(in: touches), touch === activeTouch else {
       return
     }
     activeTouch = nil
@@ -428,12 +450,23 @@ final class PaperInputView: UIView {
     )
   }
 
-  private func pencilTouch(in touches: Set<UITouch>) -> UITouch? {
-    touches.first { $0.type == .pencil }
+  private func drawingTouch(in touches: Set<UITouch>) -> UITouch? {
+    if let pencil = touches.first(where: { $0.type == .pencil }) {
+      return pencil
+    }
+    #if targetEnvironment(simulator)
+      return touches.first { $0.type == .direct }
+    #else
+      return nil
+    #endif
   }
 
   private func beginAction(with touch: UITouch, event: UIEvent?) {
     if actionTool != nil {
+      guard actionTool != .eraser else {
+        finalizeAction()
+        return
+      }
       finalizeAction()
     }
 
@@ -453,6 +486,11 @@ final class PaperInputView: UIView {
     pendingForceEstimates = [:]
     actionHasEnded = false
     lastLiveEmission = 0
+    eraserRevision = 0
+    renderedEraserRevision = 0
+    lastEraserPreviewStart = 0
+    eraserFinishRequested = false
+    actionCompletions = []
 
     addActualSamples(for: touch, event: event)
     updatePredictions(for: touch, event: event)
@@ -467,9 +505,18 @@ final class PaperInputView: UIView {
 
   private func addActualSamples(for touch: UITouch, event: UIEvent?) {
     let coalesced = event?.coalescedTouches(for: touch) ?? [touch]
-    for sampleTouch in coalesced where sampleTouch.type == .pencil {
+    for sampleTouch in coalesced where acceptsDrawingTouch(sampleTouch) {
       appendActualSample(from: sampleTouch)
     }
+  }
+
+  private func acceptsDrawingTouch(_ touch: UITouch) -> Bool {
+    if touch.type == .pencil { return true }
+    #if targetEnvironment(simulator)
+      return touch.type == .direct
+    #else
+      return false
+    #endif
   }
 
   private func appendActualSample(from touch: UITouch) {
@@ -501,7 +548,7 @@ final class PaperInputView: UIView {
 
   private func updatePredictions(for touch: UITouch, event: UIEvent?) {
     predictedSamples = (event?.predictedTouches(for: touch) ?? [])
-      .filter { $0.type == .pencil }
+      .filter(acceptsDrawingTouch)
       .map {
         makeSample(
           from: $0,
@@ -554,11 +601,12 @@ final class PaperInputView: UIView {
     }
 
     if actionTool == .eraser {
-      workingDrawing = actionBaseDrawing.erasingPath(eraserPath())
-      renderDrawing?(workingDrawing)
+      eraserRevision &+= 1
+      scheduleEraserPreview()
+    } else {
+      scheduleLiveEmission()
     }
     setNeedsDisplay()
-    scheduleLiveEmission()
   }
 
   private func actionDrawing() -> PKDrawing {
@@ -588,6 +636,69 @@ final class PaperInputView: UIView {
       controlPoints: samples.map(\.point),
       creationDate: actionCreationDate
     )
+  }
+
+  private func scheduleEraserPreview() {
+    guard actionTool == .eraser,
+      !samples.isEmpty,
+      !actionHasEnded,
+      eraserTask == nil,
+      eraserDelayTask == nil
+    else { return }
+
+    let remaining =
+      Self.eraserPreviewInterval
+      - (CACurrentMediaTime() - lastEraserPreviewStart)
+    if remaining <= 0 {
+      startEraserComputation()
+      return
+    }
+
+    eraserDelayTask = Task { [weak self] in
+      let nanoseconds = UInt64(max(remaining, 0) * 1_000_000_000)
+      try? await Task.sleep(nanoseconds: nanoseconds)
+      guard !Task.isCancelled, let self else { return }
+      eraserDelayTask = nil
+      startEraserComputation()
+    }
+  }
+
+  private func startEraserComputation() {
+    guard actionTool == .eraser,
+      !samples.isEmpty,
+      eraserTask == nil
+    else { return }
+
+    lastEraserPreviewStart = CACurrentMediaTime()
+    let baseDrawing = actionBaseDrawing
+    let path = eraserPath()
+    let pathID = actionPathID
+    let revision = eraserRevision
+
+    eraserTask = Task { [weak self] in
+      let result = await Task.detached(priority: .userInitiated) {
+        baseDrawing.erasingPath(path)
+      }.value
+      guard !Task.isCancelled, let self,
+        actionTool == .eraser,
+        actionPathID == pathID
+      else { return }
+      eraserTask = nil
+
+      workingDrawing = result
+      renderedEraserRevision = revision
+      renderDrawing?(result)
+
+      if eraserFinishRequested {
+        if revision == eraserRevision {
+          finishAction(with: result)
+        } else {
+          startEraserComputation()
+        }
+      } else if revision != eraserRevision {
+        scheduleEraserPreview()
+      }
+    }
   }
 
   private func scheduleLiveEmission() {
@@ -630,12 +741,39 @@ final class PaperInputView: UIView {
     finalizationTask?.cancel()
     finalizationTask = nil
 
-    let finalDrawing = actionDrawing()
+    if actionTool == .eraser {
+      finishEraserWhenReady()
+      return
+    }
+
+    finishAction(with: actionDrawing())
+  }
+
+  private func finishEraserWhenReady() {
+    actionHasEnded = true
+    eraserFinishRequested = true
+    eraserDelayTask?.cancel()
+    eraserDelayTask = nil
+
+    guard eraserTask == nil else { return }
+    if renderedEraserRevision == eraserRevision {
+      finishAction(with: workingDrawing)
+    } else {
+      startEraserComputation()
+    }
+  }
+
+  private func finishAction(with finalDrawing: PKDrawing) {
+    let completions = actionCompletions
     drawing = finalDrawing
     workingDrawing = finalDrawing
+    updateAccessibilityValue()
     renderDrawing?(finalDrawing)
     clearAction()
     onDrawingChange?(finalDrawing, true)
+    for completion in completions {
+      completion()
+    }
   }
 
   private func cancelCurrentAction() {
@@ -643,6 +781,10 @@ final class PaperInputView: UIView {
     liveTask = nil
     finalizationTask?.cancel()
     finalizationTask = nil
+    eraserTask?.cancel()
+    eraserTask = nil
+    eraserDelayTask?.cancel()
+    eraserDelayTask = nil
     clearAction()
   }
 
@@ -655,7 +797,16 @@ final class PaperInputView: UIView {
     predictedSamples = []
     pendingForceEstimates = [:]
     actionHasEnded = false
+    eraserRevision = 0
+    renderedEraserRevision = 0
+    lastEraserPreviewStart = 0
+    eraserFinishRequested = false
+    actionCompletions = []
     setNeedsDisplay()
+  }
+
+  private func updateAccessibilityValue() {
+    accessibilityValue = "\(drawing.strokes.count) штрихов"
   }
 }
 

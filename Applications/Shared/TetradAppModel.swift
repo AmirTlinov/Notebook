@@ -36,10 +36,15 @@ final class TetradAppModel {
   private var saveTasks: [UUID: Task<Void, Never>] = [:]
   private var cueTask: Task<Void, Never>?
   private var pencilUndoHistory = PencilUndoHistory()
+  private let startsNearbySync: Bool
   private let sync: NearbySync
 
-  init(store: TetradStore = TetradStore(root: TetradStore.defaultRoot)) {
+  init(
+    store: TetradStore = TetradStore(root: TetradStore.defaultRoot),
+    startsNearbySync: Bool = true
+  ) {
     self.store = store
+    self.startsNearbySync = startsNearbySync
     penStyle = Self.loadPenStyle()
     eraserStyle = Self.loadEraserStyle()
     actorID = Self.loadActorID()
@@ -93,7 +98,9 @@ final class TetradAppModel {
       workspace = stored.0
       pages = stored.1
       loadState = .ready
-      sync.start()
+      if startsNearbySync {
+        sync.start()
+      }
     } catch {
       loadState = .failed(error.localizedDescription)
     }

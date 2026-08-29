@@ -1,0 +1,94 @@
+#if DEBUG && targetEnvironment(simulator)
+  import Foundation
+  import PencilKit
+  import TetradCore
+
+  @MainActor
+  enum SimulatorEraserFixture {
+    static let launchArgument = "--tetrad-eraser-responsiveness-fixture"
+
+    static var isRequested: Bool {
+      ProcessInfo.processInfo.arguments.contains(launchArgument)
+    }
+
+    static func makeModel() -> TetradAppModel {
+      let fileManager = FileManager.default
+      let root = fileManager.temporaryDirectory
+        .appendingPathComponent("TetradUITests", isDirectory: true)
+        .appendingPathComponent("EraserResponsiveness", isDirectory: true)
+      do {
+        if fileManager.fileExists(atPath: root.path) {
+          try fileManager.removeItem(at: root)
+        }
+
+        let store = TetradStore(root: root)
+        let actor = UUID(
+          uuidString: "7E7A1000-0000-4000-8000-000000000001"
+        )!
+        let notebookID = UUID(
+          uuidString: "7E7A1000-0000-4000-8000-000000000002"
+        )!
+        let pageID = UUID(
+          uuidString: "7E7A1000-0000-4000-8000-000000000003"
+        )!
+        let size = TetradAppModel.defaultPageSize
+        let initial = WorkspaceIndex.initial(
+          actor: actor,
+          pageSize: size,
+          notebookID: notebookID,
+          pageID: pageID
+        )
+        let page = PageDocument(
+          id: pageID,
+          size: size,
+          actor: actor,
+          drawingData: denseDrawing(size: size).dataRepresentation()
+        )
+        try store.savePage(page)
+        try store.saveIndex(initial.index)
+        return TetradAppModel(store: store, startsNearbySync: false)
+      } catch {
+        fatalError("Не удалось создать лист проверки ластика: \(error)")
+      }
+    }
+
+    private static func denseDrawing(size: PageSize) -> PKDrawing {
+      let strokeCount = 80
+      let pointsPerStroke = 64
+      let horizontalInset = 80.0
+      let verticalInset = 80.0
+      let usableWidth = size.width - (horizontalInset * 2)
+      let usableHeight = size.height - (verticalInset * 2)
+
+      let strokes = (0..<strokeCount).map { strokeIndex in
+        let xProgress = Double(strokeIndex) / Double(strokeCount - 1)
+        let baseX = horizontalInset + (usableWidth * xProgress)
+        let points = (0..<pointsPerStroke).map { pointIndex in
+          let progress = Double(pointIndex) / Double(pointsPerStroke - 1)
+          let wave = sin((progress * .pi * 6) + Double(strokeIndex)) * 3
+          return PKStrokePoint(
+            location: CGPoint(
+              x: baseX + wave,
+              y: verticalInset + (usableHeight * progress)
+            ),
+            timeOffset: Double(pointIndex) / 120,
+            size: CGSize(width: 2.2, height: 2.2),
+            opacity: 1,
+            force: 1,
+            azimuth: 0,
+            altitude: .pi / 2
+          )
+        }
+        return PKStroke(
+          ink: PKInk(.pen, color: .black),
+          path: PKStrokePath(
+            controlPoints: points,
+            creationDate: Date(timeIntervalSince1970: Double(strokeIndex))
+          ),
+          randomSeed: UInt32(strokeIndex)
+        )
+      }
+      return PKDrawing(strokes: strokes)
+    }
+  }
+#endif

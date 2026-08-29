@@ -1,6 +1,7 @@
 # Исследование системных контрактов
 
-Проверено 29 августа 2026 года по текущей документации Apple и MCP SDK.
+Проверено 30 августа 2026 года по текущей документации Apple, текущему SDK и
+исполняемым проверкам проекта.
 
 ## Выбранные владельцы
 
@@ -9,7 +10,7 @@
 | Письмо Apple Pencil | [UIKit: Handling input from Apple Pencil](https://developer.apple.com/documentation/uikit/handling-input-from-apple-pencil) | `UITouch` отдаёт координату, силу, наклон и поздние уточнения измерений | `PaperInputView` принимает только Pencil, превращает измерения в `PKStrokePoint`, а закрытый от касаний `PKCanvasView` рисует готовый `PKDrawing` |
 | Плавная ручка | [`coalescedTouches`](https://developer.apple.com/documentation/uikit/getting-high-fidelity-input-with-coalesced-touches) и [`predictedTouches`](https://developer.apple.com/documentation/uikit/uievent/predictedtouches%28for%3A%29) | UIKit отдаёт пропущенные точки частого опроса и временный прогноз следующего положения | В штрих попадают все измеренные точки, а прогноз живёт только в предпросмотре и заменяется новым событием |
 | Нажим Pencil | [`UITouch.force`](https://developer.apple.com/documentation/uikit/uitouch/force) и [`PKStrokePoint.opacity`](https://developer.apple.com/documentation/pencilkit/pkstrokepointreference/opacity) | Система калибрует средний нажим как `1`, а непрозрачность точки умножает непрозрачность чернил | Цвет штриха хранится полностью непрозрачным; каждая точка получает непрозрачность между выбранным минимумом и `1` по текущей силе |
-| Стирание | [`PKDrawing.erasingPath`](https://developer.apple.com/documentation/pencilkit/pkdrawing-swift.struct) | PencilKit применяет путь ластика прямо к существующему рисунку | Каждая точка пути получает ширину от текущего нажима; PencilKit вырезает пройденное место и сохраняет части штриха вокруг него |
+| Стирание | [`PKDrawing.erasingPath`](https://developer.apple.com/documentation/pencilkit/pkdrawing-swift.struct) | PencilKit применяет путь ластика прямо к существующему рисунку; `PKDrawing` и `PKStrokePath` в текущем SDK являются `Sendable` | Каждая точка пути получает ширину от текущего нажима; один фоновый расчёт строит локальный вырез, а главный поток только показывает готовый снимок |
 | Отмена двумя пальцами | [`UITapGestureRecognizer.numberOfTouchesRequired`](https://developer.apple.com/documentation/uikit/uitapgesturerecognizer/numberoftouchesrequired) и [`UILongPressGestureRecognizer`](https://developer.apple.com/documentation/uikit/uilongpressgesturerecognizer) | Распознаватели закреплены прямо за видимым холстом и принимают только два прямых касания | Касание возвращает один снимок, а удержание повторяет отмену каждые 95 миллисекунд |
 | Чистое касание бумаги | [UIKit: Handling touches in your view](https://developer.apple.com/documentation/uikit/handling-touches-in-your-view) | Обычный `UIView` различает прямое касание и Pencil | Верхний `PaperInputView` забирает касания; один палец заканчивается пустым действием, два идут жестам, Pencil идёт ручке; `PKCanvasView` не получает событий и служит только рендерером |
 | Цвет бумаги | [`NSAppearance.performAsCurrentDrawingAppearance`](https://developer.apple.com/documentation/appkit/nsappearance/performascurrentdrawingappearance(_:)) | Рендер можно выполнить в явно выбранной светлой теме | `PaperInkRenderer` одинаково сохраняет тёмные чернила в окне Mac и в PNG для агента |
@@ -69,6 +70,33 @@ eraser_width = 3 + (selected_width - 3) * pressure
 строит линию длиной `200` points, проводит ластиком по её середине и получает
 две сохранённые части по краям. Затем он увеличивает ластик и проверяет, что
 вырез стал шире. Так проверяются локальное стирание и выбранная толщина.
+
+Первый вариант заново применял весь растущий путь ластика к исходному рисунку
+при каждом событии Pencil и делал это в главном потоке. На настоящем листе из
+29 штрихов и 3897 точек 240 таких обновлений заняли 12.8-14.0 секунды. Pencil
+успевал сложить в очередь много новых обновлений, поэтому приложение выглядело
+полностью зависшим.
+
+Теперь у движения есть номер ревизии и не больше одного фонового расчёта. Пока
+он занят, новые точки только заменяют желаемую ревизию. Предпросмотр запускается
+не чаще 20 раз в секунду. После подъёма Pencil последняя ревизия считается без
+ожидания интервала и ровно один раз передаётся владельцу страницы как
+завершённое действие.
+
+```text
+точки Pencil -> последняя ревизия -> один фоновый erasingPath -> предпросмотр
+      |                                                        |
+      `---------------- подъём Pencil -------------------------'
+                               |
+                               v
+                    один PageDocument update
+```
+
+Simulator-проверка каждый раз создаёт изолированный лист из 80 штрихов и 5120
+точек. Медленный жест занял около 3 секунд, панель ответила в пределах 2 секунд,
+вырез появился, а `drawingStamp.counter` изменился с `0` на `1`. Обычное
+хранилище Simulator при этом осталось на прежней версии. Это различает
+предпросмотр на экране и единственное завершённое изменение страницы.
 
 ## Кто получает касание
 
