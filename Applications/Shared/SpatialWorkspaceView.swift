@@ -4,15 +4,18 @@ import NotebookCore
 private struct CameraGestureSnapshot {
   struct BoardEngagement {
     let notebookID: UUID
-    let cameraScale: Double
   }
 
   let presence: SessionPresence
-  let startCentroid: CGPoint
+  var baselineCamera: SpatialCamera
+  var baselineCentroid: CGPoint
+  var baselineMagnification: CGFloat
+  var lastMagnification: CGFloat
+  var lastCentroid: CGPoint
   var candidateNotebookID: UUID?
-  let isOpeningApproach: Bool
-  var hasInitialApproachEvidence: Bool
+  var isApproaching: Bool
   var boardEngagement: BoardEngagement?
+  var dockingStrength: Double
 }
 
 struct RenderedNotebook: Identifiable {
@@ -122,7 +125,7 @@ struct SpatialWorkspaceView: View {
           .allowsHitTesting(false)
 
           WorkspaceGestureLayer(
-            isEnabled: !settling,
+            isEnabled: true,
             isPageOpen: presence.mode == .page,
             onCamera: handleWorkspaceMagnification,
             onNavigate: { direction in
@@ -315,7 +318,6 @@ struct SpatialWorkspaceView: View {
     presence: SessionPresence
   ) -> Bool {
     if let gesture = cameraGesture,
-      gesture.isOpeningApproach,
       let candidate = gesture.candidateNotebookID,
       presence.camera.scale >= coverFocusScale(viewport: presence.viewport)
         * NotebookOpeningIntent.pagePreparationScaleRatio
@@ -333,70 +335,29 @@ struct SpatialWorkspaceView: View {
   }
 
   private func handleBoardMagnification(_ phase: WorkspaceMagnificationPhase) {
-    guard !settling, let presence = model.presence else { return }
     switch phase {
     case .began(let centroid, let isOpeningApproach):
-      let candidate = presence.mode == .cover
-        ? (presence.focusedNotebookID
-          ?? focusCandidate(at: centroid, presence: presence))
-        : focusCandidate(at: centroid, presence: presence)
-      cameraGesture = CameraGestureSnapshot(
-        presence: presence,
-        startCentroid: centroid,
-        candidateNotebookID: candidate,
-        isOpeningApproach: isOpeningApproach,
-        hasInitialApproachEvidence: isOpeningApproach,
-        boardEngagement: nil
-      )
-    case .changed(let scale, let velocity, _, let centroid):
-      updateMagnification(
-        scale: scale,
-        velocity: velocity,
-        centroid: centroid
-      )
-    case .ended(let scale, let velocity, _, let centroid):
-      updateMagnification(
-        scale: scale,
-        velocity: velocity,
-        centroid: centroid
-      )
-      settleMagnification(velocity: velocity)
-    case .cancelled:
-      cancelMagnification()
-    }
-  }
-
-  private func handleWorkspaceMagnification(
-    _ phase: WorkspaceMagnificationPhase
-  ) {
-    switch phase {
-    case .began:
-      if model.presence?.mode == .page {
-        handlePageMagnification(phase)
-      } else {
-        handleBoardMagnification(phase)
-      }
-    default:
-      if cameraGesture?.presence.mode == .page {
-        handlePageMagnification(phase)
-      } else {
-        handleBoardMagnification(phase)
-      }
-    }
-  }
-
-  private func handlePageMagnification(_ phase: WorkspaceMagnificationPhase) {
-    switch phase {
-    case .began(let centroid, let isOpeningApproach):
+      interruptSettlementForInput()
       guard let presence = model.presence else { return }
-      pageGestureActive = true
+      let focusedNotebookID = presence.mode == .board
+        ? nil
+        : presence.focusedNotebookID
+      let candidate = focusedNotebookID
+        ?? focusCandidate(at: centroid, presence: presence)
+      pageGestureActive = presence.mode == .page
       cameraGesture = CameraGestureSnapshot(
         presence: presence,
-        startCentroid: centroid,
-        candidateNotebookID: presence.focusedNotebookID,
-        isOpeningApproach: isOpeningApproach,
-        hasInitialApproachEvidence: isOpeningApproach,
-        boardEngagement: nil
+        baselineCamera: presence.camera,
+        baselineCentroid: centroid,
+        baselineMagnification: 1,
+        lastMagnification: 1,
+        lastCentroid: centroid,
+        candidateNotebookID: candidate,
+        isApproaching: isOpeningApproach,
+        boardEngagement: focusedNotebookID.map {
+          CameraGestureSnapshot.BoardEngagement(notebookID: $0)
+        },
+        dockingStrength: 0
       )
     case .changed(let scale, let velocity, _, let centroid):
       updateMagnification(
@@ -417,9 +378,15 @@ struct SpatialWorkspaceView: View {
     }
   }
 
+  private func handleWorkspaceMagnification(
+    _ phase: WorkspaceMagnificationPhase
+  ) {
+    handleBoardMagnification(phase)
+  }
+
   private func updateMagnification(
     scale: CGFloat,
-    velocity: CGFloat,
+    velocity _: CGFloat,
     centroid: CGPoint
   ) {
     guard var snapshot = cameraGesture else { return }
@@ -427,110 +394,143 @@ struct SpatialWorkspaceView: View {
     let pageScale = fitScale(viewport: viewport)
     let coverScale = coverFocusScale(viewport: viewport)
     let magnification = Double(scale)
+    let directionThreshold: CGFloat = 0.000_5
+    let directionDelta = scale - snapshot.lastMagnification
+    let directionChanged: Bool
+    if abs(directionDelta) > directionThreshold {
+      let currentDirection = directionDelta > 0
+      directionChanged = currentDirection != snapshot.isApproaching
+      snapshot.isApproaching = currentDirection
+    } else {
+      directionChanged = false
+    }
 
-    let start = SpatialPoint(
-      x: snapshot.startCentroid.x,
-      y: snapshot.startCentroid.y
-    )
-    let current = SpatialPoint(x: centroid.x, y: centroid.y)
-    var camera = snapshot.presence.camera.pinched(
-      by: magnification,
-      from: start,
-      to: current,
-      viewport: viewport,
-      maximumScale: snapshot.presence.mode == .board
-        ? SpatialCamera.maximumScale
-        : pageScale
-    )
+    let maximumScale = snapshot.boardEngagement == nil
+      ? SpatialCamera.maximumScale
+      : pageScale
+    var camera: SpatialCamera
+    if directionChanged, let displayedCamera = model.presence?.camera {
+      camera = displayedCamera.pinched(
+        by: magnification / max(Double(snapshot.lastMagnification), 0.001),
+        from: SpatialPoint(
+          x: snapshot.lastCentroid.x,
+          y: snapshot.lastCentroid.y
+        ),
+        to: SpatialPoint(x: centroid.x, y: centroid.y),
+        viewport: viewport,
+        maximumScale: maximumScale
+      )
+      snapshot.baselineCamera = camera
+      snapshot.baselineCentroid = centroid
+      snapshot.baselineMagnification = scale
+    } else {
+      camera = snapshot.baselineCamera.pinched(
+        by: magnification
+          / max(Double(snapshot.baselineMagnification), 0.001),
+        from: SpatialPoint(
+          x: snapshot.baselineCentroid.x,
+          y: snapshot.baselineCentroid.y
+        ),
+        to: SpatialPoint(x: centroid.x, y: centroid.y),
+        viewport: viewport,
+        maximumScale: maximumScale
+      )
+    }
 
-    if snapshot.presence.mode == .board {
-      if let boardEngagement = snapshot.boardEngagement,
+    if let boardEngagement = snapshot.boardEngagement {
+      if
         NotebookOpeningIntent.shouldDisengage(
-          cameraScale: camera.scale,
-          engagedAtCameraScale: boardEngagement.cameraScale
-        )
-      {
-        snapshot.boardEngagement = nil
-      }
-      if snapshot.isOpeningApproach, snapshot.boardEngagement == nil {
-        let liveBoardPresence = SessionPresence(
-          mode: .board,
-          camera: camera,
-          viewport: viewport
-        )
-        if let detected = focusCandidate(
-          at: centroid,
-          presence: liveBoardPresence
-        ) {
-          snapshot.candidateNotebookID = detected
-        } else if let retained = snapshot.candidateNotebookID,
-          selectionStrength(
-            for: retained,
-            at: centroid,
-            presence: liveBoardPresence,
-            halo: NotebookOpeningIntent.candidateRetentionHalo
-          ) <= 0
-        {
-          snapshot.candidateNotebookID = nil
-        }
-      }
-      if snapshot.isOpeningApproach,
-        snapshot.boardEngagement == nil,
-        let candidate = snapshot.candidateNotebookID,
-        NotebookOpeningIntent.shouldEngage(
-          isApproaching: snapshot.hasInitialApproachEvidence
-            || velocity > 0.05,
           cameraScale: camera.scale,
           coverScale: coverScale
         )
       {
-        snapshot.hasInitialApproachEvidence = false
-        snapshot.boardEngagement = CameraGestureSnapshot.BoardEngagement(
-          notebookID: candidate,
-          cameraScale: camera.scale
-        )
-        model.selectNotebook(candidate)
-      }
-      if let boardEngagement = snapshot.boardEngagement {
-        camera = snapshot.presence.camera.pinched(
-          by: magnification,
-          from: start,
-          to: current,
-          viewport: viewport,
-          maximumScale: NotebookOpeningIntent.openingTargetScale(
-            engagedAtCameraScale: boardEngagement.cameraScale,
-            pageScale: pageScale
-          )
-        )
+        snapshot.boardEngagement = nil
+        snapshot.dockingStrength = 0
+      } else {
+        snapshot.candidateNotebookID = boardEngagement.notebookID
       }
     }
-    cameraGesture = snapshot
+
+    if snapshot.boardEngagement == nil {
+      let liveBoardPresence = SessionPresence(
+        mode: .board,
+        camera: camera,
+        viewport: viewport
+      )
+      if let detected = focusCandidate(
+        at: centroid,
+        presence: liveBoardPresence
+      ) {
+        snapshot.candidateNotebookID = detected
+      } else if let retained = snapshot.candidateNotebookID,
+        selectionStrength(
+          for: retained,
+          at: centroid,
+          presence: liveBoardPresence,
+          halo: NotebookOpeningIntent.candidateRetentionHalo
+        ) <= 0
+      {
+        snapshot.candidateNotebookID = nil
+      }
+    }
+
+    if snapshot.boardEngagement == nil,
+      let candidate = snapshot.candidateNotebookID,
+      NotebookOpeningIntent.shouldEngage(
+        isApproaching: snapshot.isApproaching,
+        cameraScale: camera.scale,
+        coverScale: coverScale
+      )
+    {
+      snapshot.boardEngagement = CameraGestureSnapshot.BoardEngagement(
+        notebookID: candidate
+      )
+      model.selectNotebook(candidate)
+      camera = snapshot.baselineCamera.pinched(
+        by: magnification
+          / max(Double(snapshot.baselineMagnification), 0.001),
+        from: SpatialPoint(
+          x: snapshot.baselineCentroid.x,
+          y: snapshot.baselineCentroid.y
+        ),
+        to: SpatialPoint(x: centroid.x, y: centroid.y),
+        viewport: viewport,
+        maximumScale: pageScale
+      )
+    }
 
     let candidate = snapshot.boardEngagement?.notebookID
-      ?? (snapshot.presence.mode == .board
-        ? nil
-        : snapshot.presence.focusedNotebookID)
     let open: Double
-    if snapshot.presence.mode == .board,
-      let boardEngagement = snapshot.boardEngagement
+    if let candidate,
+      let center = model.board?.focusedCenter(of: candidate)
     {
-      open = NotebookOpeningIntent.progress(
-        cameraScale: camera.scale,
-        engagedAtCameraScale: boardEngagement.cameraScale,
-        pageScale: pageScale
+      let dockingStrength = NotebookDockingField.strength(
+        camera: camera,
+        notebookCenter: center,
+        viewport: viewport
       )
-    } else if candidate != nil {
+      snapshot.dockingStrength = dockingStrength
+      if snapshot.isApproaching {
+        camera = NotebookDockingField.attractedCamera(
+          camera,
+          toward: center,
+          viewport: viewport,
+          strength: dockingStrength
+        )
+      }
       open = NotebookOpeningTransition.progress(
         cameraScale: camera.scale,
         coverScale: coverScale,
         pageScale: pageScale
       )
     } else {
+      snapshot.dockingStrength = 0
       open = 0
     }
-    let mode: WorkspaceSemanticMode = open >= 0.999
-      ? .page
-      : (candidate == nil ? .board : .cover)
+    let mode: WorkspaceSemanticMode = candidate == nil ? .board : .cover
+    snapshot.lastMagnification = scale
+    snapshot.lastCentroid = centroid
+    cameraGesture = snapshot
     model.updatePresence(
       SessionPresence(
         mode: mode,
@@ -550,68 +550,25 @@ struct SpatialWorkspaceView: View {
     cameraGesture = nil
     let viewport = presence.viewport
     let pageScale = fitScale(viewport: viewport)
-    let coverScale = coverFocusScale(viewport: viewport)
-    let targetMode: WorkspaceSemanticMode
-    if snapshot.presence.mode == .board,
-      let boardEngagement = snapshot.boardEngagement
-    {
-      targetMode = NotebookOpeningIntent.releaseMode(
-        progress: presence.openProgress,
-        cameraScale: presence.camera.scale,
-        engagedAtCameraScale: boardEngagement.cameraScale,
+    if let notebookID = presence.focusedNotebookID,
+      NotebookDockingField.shouldDock(
+        strength: snapshot.dockingStrength,
+        isApproaching: snapshot.isApproaching,
         velocity: Double(velocity)
-      )
-    } else if snapshot.presence.mode == .board {
-      targetMode = .board
-    } else if presence.focusedNotebookID != nil {
-      targetMode = NotebookOpeningTransition.releaseMode(
-        startingMode: snapshot.presence.mode,
-        startedOutward: snapshot.isOpeningApproach,
-        openProgress: presence.openProgress,
-        cameraScale: presence.camera.scale,
-        coverScale: coverScale,
-        velocity: Double(velocity)
-      )
-    } else {
-      targetMode = .board
-    }
-
-    let target: SessionPresence
-    if targetMode == .page,
-      let notebookID = presence.focusedNotebookID,
+      ),
       let center = model.board?.focusedCenter(of: notebookID)
     {
-      target = SessionPresence(
+      let target = SessionPresence(
         mode: .page,
         camera: SpatialCamera(center: center, scale: pageScale),
         viewport: viewport,
         focusedNotebookID: notebookID,
         openProgress: 1
       )
-    } else if targetMode == .cover,
-      let notebookID = presence.focusedNotebookID,
-      let center = model.board?.focusedCenter(of: notebookID)
-    {
-      target = SessionPresence(
-        mode: .cover,
-        camera: SpatialCamera(center: center, scale: coverScale),
-        viewport: viewport,
-        focusedNotebookID: notebookID,
-        openProgress: 0
-      )
+      animateSettlement(to: target, duration: 0.2)
     } else {
-      target = SessionPresence(
-        mode: .board,
-        camera: presence.camera,
-        viewport: viewport
-      )
-    }
-
-    if target == presence {
       pageGestureActive = false
-      model.updatePresence(target, settled: true)
-    } else {
-      animateSettlement(to: target, duration: 0.32)
+      model.updatePresence(presence, settled: true)
     }
   }
 
@@ -619,6 +576,12 @@ struct SpatialWorkspaceView: View {
     guard let snapshot = cameraGesture else { return }
     cameraGesture = nil
     animateSettlement(to: snapshot.presence, duration: 0.26)
+  }
+
+  private func interruptSettlementForInput() {
+    settlementTask?.cancel()
+    settlementTask = nil
+    settling = false
   }
 
   private func updateBoardPan(

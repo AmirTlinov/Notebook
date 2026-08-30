@@ -225,117 +225,75 @@ func nearbyNotebookAcceptsTheRecognizedPinch() {
   ))
 }
 
-@Test("Раскрытие начинается непрерывно с кадра подтверждения")
-func engagedOpeningStartsWithoutAProgressJump() {
-  let engagedAt = 0.72
-  let pageScale = 1.0
-  #expect(NotebookOpeningIntent.progress(
-    cameraScale: engagedAt,
-    engagedAtCameraScale: engagedAt,
-    pageScale: pageScale
+@Test("Полноэкранный магнит действует только рядом с центром страницы")
+func pageDockingFieldHasOneLocalCaptureArea() {
+  let viewport = SpatialPoint(x: 834, y: 1_194)
+  let notebookCenter = WorldPoint.zero
+  let farScale = SpatialCamera(center: notebookCenter, scale: 0.8)
+  let nearby = SpatialCamera(center: notebookCenter, scale: 0.95)
+  let offCenter = SpatialCamera(
+    center: WorldPoint(x: 200 / 0.95, y: 0),
+    scale: 0.95
+  )
+
+  #expect(NotebookDockingField.strength(
+    camera: farScale,
+    notebookCenter: notebookCenter,
+    viewport: viewport
   ) == 0)
-  #expect(abs(NotebookOpeningIntent.progress(
-    cameraScale: sqrt(engagedAt * pageScale),
-    engagedAtCameraScale: engagedAt,
-    pageScale: pageScale
-  ) - 0.5) < 0.000_001)
-  #expect(NotebookOpeningIntent.progress(
-    cameraScale: pageScale,
-    engagedAtCameraScale: engagedAt,
-    pageScale: pageScale
-  ) == 1)
+  #expect(NotebookDockingField.strength(
+    camera: nearby,
+    notebookCenter: notebookCenter,
+    viewport: viewport
+  ) > NotebookDockingField.commitStrength)
+  #expect(NotebookDockingField.strength(
+    camera: offCenter,
+    notebookCenter: notebookCenter,
+    viewport: viewport
+  ) == 0)
 }
 
-@Test("Подход открывает лист, а обратное движение остаётся управляемым")
-func openingReleaseAlwaysChoosesAWholeState() {
-  #expect(NotebookOpeningIntent.releaseMode(
-    progress: 0,
-    cameraScale: 0.72,
-    engagedAtCameraScale: 0.72,
-    velocity: 0
-  ) == .page)
-  #expect(NotebookOpeningIntent.releaseMode(
-    progress: 0,
-    cameraScale: 0.64,
-    engagedAtCameraScale: 0.72,
-    velocity: -1
-  ) == .board)
-  #expect(NotebookOpeningIntent.releaseMode(
-    progress: 0.2,
-    cameraScale: 0.78,
-    engagedAtCameraScale: 0.72,
-    velocity: 0
-  ) == .page)
-  #expect(NotebookOpeningIntent.releaseMode(
-    progress: 0,
-    cameraScale: 0.70,
-    engagedAtCameraScale: 0.72,
-    velocity: -0.3
-  ) == .cover)
-}
+@Test("Магнит приближает камеру, а разворот щипка освобождает её")
+func pageDockingFollowsTheCurrentPinchDirection() {
+  let viewport = SpatialPoint(x: 834, y: 1_194)
+  let notebookCenter = WorldPoint.zero
+  let camera = SpatialCamera(
+    center: WorldPoint(x: 15, y: -10),
+    scale: 0.95
+  )
+  let strength = NotebookDockingField.strength(
+    camera: camera,
+    notebookCenter: notebookCenter,
+    viewport: viewport
+  )
+  let attracted = NotebookDockingField.attractedCamera(
+    camera,
+    toward: notebookCenter,
+    viewport: viewport,
+    strength: strength
+  )
 
-@Test("Продолжение закрывающего щипка свободно выпускает на доску")
-func closingReleaseDoesNotPullBackToTheCover() {
-  #expect(NotebookOpeningTransition.releaseMode(
-    startingMode: .page,
-    startedOutward: false,
-    openProgress: 0,
-    cameraScale: 0.72,
-    coverScale: 0.72,
+  #expect(attracted.scale > camera.scale)
+  #expect(
+    hypot(
+      attracted.center.delta(to: notebookCenter).x,
+      attracted.center.delta(to: notebookCenter).y
+    )
+      < hypot(
+        camera.center.delta(to: notebookCenter).x,
+        camera.center.delta(to: notebookCenter).y
+      )
+  )
+  #expect(NotebookDockingField.shouldDock(
+    strength: strength,
+    isApproaching: true,
     velocity: 0
-  ) == .cover)
-  #expect(NotebookOpeningTransition.releaseMode(
-    startingMode: .page,
-    startedOutward: false,
-    openProgress: 0,
-    cameraScale: 0.67,
-    coverScale: 0.72,
-    velocity: 0
-  ) == .board)
-  #expect(NotebookOpeningTransition.releaseMode(
-    startingMode: .page,
-    startedOutward: false,
-    openProgress: 0,
-    cameraScale: 0.71,
-    coverScale: 0.72,
-    velocity: -0.8
-  ) == .board)
-  #expect(NotebookOpeningTransition.releaseMode(
-    startingMode: .page,
-    startedOutward: false,
-    openProgress: 0.6,
-    cameraScale: 0.86,
-    coverScale: 0.72,
-    velocity: 0
-  ) == .page)
-}
-
-@Test("Новый щипок от близкой обложки продолжает открытие")
-func coverApproachDoesNotFallBackIntoADeadZone() {
-  #expect(NotebookOpeningTransition.releaseMode(
-    startingMode: .cover,
-    startedOutward: true,
-    openProgress: 0.04,
-    cameraScale: 0.73,
-    coverScale: 0.72,
-    velocity: 0
-  ) == .page)
-  #expect(NotebookOpeningTransition.releaseMode(
-    startingMode: .cover,
-    startedOutward: false,
-    openProgress: 0,
-    cameraScale: 0.72,
-    coverScale: 0.72,
-    velocity: 0
-  ) == .cover)
-  #expect(NotebookOpeningTransition.releaseMode(
-    startingMode: .cover,
-    startedOutward: false,
-    openProgress: 0,
-    cameraScale: 0.67,
-    coverScale: 0.72,
-    velocity: -0.5
-  ) == .board)
+  ))
+  #expect(!NotebookDockingField.shouldDock(
+    strength: strength,
+    isApproaching: false,
+    velocity: -0.2
+  ))
 }
 
 @Test("Угол листа равен восьми физическим миллиметрам")
@@ -442,6 +400,57 @@ func stackFocusUsesTheSameCenterAsTheReadableBoardLayout() throws {
     abs(lowerCenter.delta(to: upperCenter).x
       - NotebookGeometry.width * 0.62) < 0.000_001
   )
+}
+
+@Test("Стопка принимает пять тетрадей, а шестая остаётся на доске")
+func stackCapacityPreservesAReadableLayout() throws {
+  let actor = UUID()
+  let notebookIDs = (0..<6).map { _ in UUID() }
+  var board = BoardDocument.initial(
+    notebookIDs: notebookIDs,
+    actor: actor
+  )
+
+  #expect(board.createStack(
+    moving: notebookIDs[1],
+    onto: notebookIDs[0],
+    actor: actor
+  ) != nil)
+  for index in 2..<NotebookStack.maximumNotebookCount {
+    #expect(board.createStack(
+      moving: notebookIDs[index],
+      onto: notebookIDs[0],
+      actor: actor
+    ) != nil)
+  }
+
+  #expect(board.stack(containing: notebookIDs[0])?.notebookIDs.count == 5)
+  let stack = try #require(board.stack(containing: notebookIDs[0]))
+  let viewport = SpatialPoint(x: 834, y: 1_194)
+  let coverScale = NotebookPresentation.coverScale(viewport: viewport)
+  let firstCenter = try #require(NotebookStackPresentation.boardCenter(
+    of: notebookIDs[0],
+    in: stack,
+    cameraScale: coverScale,
+    viewport: viewport
+  ))
+  let lastCenter = try #require(NotebookStackPresentation.boardCenter(
+    of: notebookIDs[4],
+    in: stack,
+    cameraScale: coverScale,
+    viewport: viewport
+  ))
+  #expect(
+    abs(firstCenter.delta(to: lastCenter).x
+      - NotebookGeometry.width * 0.62) < 0.000_001
+  )
+  #expect(board.createStack(
+    moving: notebookIDs[5],
+    onto: notebookIDs[0],
+    actor: actor
+  ) == nil)
+  #expect(board.placement(of: notebookIDs[5]) != nil)
+  #expect(board.isValid(notebookIDs: Set(notebookIDs)))
 }
 
 @Test("Каталог публикует новую тетрадь после её страницы и размещения")

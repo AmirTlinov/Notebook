@@ -19,7 +19,11 @@ import type {
   WorldPoint,
   WorkspaceIndex,
 } from "./domain.js";
-import { publicPage, revision } from "./domain.js";
+import {
+  maximumStackNotebookCount,
+  publicPage,
+  revision,
+} from "./domain.js";
 import {
   StoreError,
   NotebookStore,
@@ -726,6 +730,7 @@ function visibleNotebooks(
           ? sameID(notebookID, presence.focusedNotebookID)
           : false
       );
+    const spanCount = Math.max(stack.notebookIDs.length - 1, 1);
     for (const [index, notebookID] of stack.notebookIDs.entries()) {
       if (focusedMemberID && !sameID(focusedMemberID, notebookID)) continue;
       const notebook = byID.get(notebookID.toLowerCase());
@@ -733,8 +738,8 @@ function visibleNotebooks(
       const centered = index - (stack.notebookIDs.length - 1) / 2;
       const collapsedX = centered * 9 / Math.max(presence.camera.scale, 0.001);
       const collapsedY = -index * 7 / Math.max(presence.camera.scale, 0.001);
-      const fannedX = centered * 834 * 0.62;
-      const fannedY = Math.abs(centered) * 1_194 * 0.08;
+      const fannedX = centered * 834 * 0.62 / spanCount;
+      const fannedY = Math.abs(centered) * 1_194 * 0.08 / spanCount;
       rendered.push({
         notebookID: notebook.id,
         title: notebook.title,
@@ -858,6 +863,11 @@ function stackNotebook(
     (stack) => stack.notebookIDs.some((notebookID) => sameID(notebookID, targetID)),
   );
   if (targetStack) {
+    if (targetStack.notebookIDs.length >= maximumStackNotebookCount) {
+      throw new StoreError(
+        `В одной стопке помещается до ${maximumStackNotebookCount} тетрадей.`,
+      );
+    }
     targetStack.notebookIDs.push(board.freeNotebooks[movingIndex]!.notebookID);
     targetStack.stamp = stamp;
     board.freeNotebooks.splice(movingIndex, 1);

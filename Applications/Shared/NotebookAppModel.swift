@@ -822,19 +822,9 @@ final class NotebookAppModel {
 
     if presence.mode == .cover,
       let notebookID,
-      let notebookCenter,
       workspace.notebooks.contains(where: { $0.id == notebookID })
     {
-      return SessionPresence(
-        mode: .cover,
-        camera: SpatialCamera(
-          center: notebookCenter,
-          scale: NotebookPresentation.coverScale(viewport: viewport)
-        ),
-        viewport: viewport,
-        focusedNotebookID: notebookID,
-        openProgress: 0
-      )
+      return adapted
     }
 
     return SessionPresence(

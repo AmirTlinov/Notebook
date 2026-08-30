@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import type { AgentElement } from "../src/domain.js";
+import type {
+  AgentElement,
+  BoardDocument,
+  WorkspaceIndex,
+} from "../src/domain.js";
 import { revision } from "../src/domain.js";
 import {
   ConflictError,
@@ -131,6 +135,48 @@ test("accepts a placement staged before the workspace publishes its notebook", a
     await writeFile(boardPath, JSON.stringify(board));
 
     assert.equal((await store.readBoard(await store.readWorkspace())).freeNotebooks.length, 2);
+  });
+});
+
+test("rejects a stack that cannot expose every notebook", async () => {
+  await withStore(async (store, root) => {
+    const workspacePath = join(root, "workspace.json");
+    const boardPath = join(root, "board.json");
+    const workspace = JSON.parse(
+      await readFile(workspacePath, "utf8"),
+    ) as WorkspaceIndex;
+    const board = JSON.parse(
+      await readFile(boardPath, "utf8"),
+    ) as BoardDocument;
+    const additionalNotebookIDs = [
+      "7e7a0000-0000-4000-8000-000000000011",
+      "7e7a0000-0000-4000-8000-000000000012",
+      "7e7a0000-0000-4000-8000-000000000013",
+      "7e7a0000-0000-4000-8000-000000000014",
+      "7e7a0000-0000-4000-8000-000000000015",
+    ];
+    workspace.notebooks.push(...additionalNotebookIDs.map((id, index) => ({
+      id,
+      title: `Notebook ${index + 2}`,
+      pageIDs: [`7e7a0000-0000-4000-8000-00000000002${index + 1}`],
+    })));
+    board.freeNotebooks = [];
+    board.stacks = [{
+      id: "7e7a0000-0000-4000-8000-000000000030",
+      center: { tileX: 0, tileY: 0, localX: 0, localY: 0 },
+      zIndex: 1,
+      notebookIDs: [notebookID, ...additionalNotebookIDs],
+      stamp: { counter: 1, actor: appActor },
+    }];
+    await Promise.all([
+      writeFile(workspacePath, JSON.stringify(workspace)),
+      writeFile(boardPath, JSON.stringify(board)),
+    ]);
+
+    await assert.rejects(
+      store.readBoard(await store.readWorkspace()),
+      StoreError,
+    );
   });
 });
 

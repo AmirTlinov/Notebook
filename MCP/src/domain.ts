@@ -122,6 +122,10 @@ export interface NotebookStack {
   stamp: VersionStamp;
 }
 
+export const maximumStackNotebookCount = 5;
+export const minimumCameraScale = 0.0125;
+export const maximumCameraScale = 4;
+
 export interface BoardDocument {
   format: number;
   freeNotebooks: FreeNotebookPlacement[];

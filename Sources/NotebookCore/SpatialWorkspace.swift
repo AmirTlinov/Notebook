@@ -279,11 +279,6 @@ public enum NotebookSelectionField {
 }
 
 public enum NotebookOpeningTransition {
-  /// Once the closed cover has become a little smaller than its focused size,
-  /// releasing the same inward pinch should reveal the board instead of
-  /// pulling the camera back toward the cover.
-  public static let boardReleaseScaleRatio = 0.94
-
   /// Converts the multiplicative scale of a pinch into reversible visual
   /// progress between the closed cover and the full-page presentation.
   public static func progress(
@@ -299,35 +294,87 @@ public enum NotebookOpeningTransition {
       / log(pageScale / coverScale)
     return min(max(progress, 0), 1)
   }
+}
 
-  public static func releaseMode(
-    startingMode: WorkspaceSemanticMode,
-    startedOutward: Bool,
-    openProgress: Double,
-    cameraScale: Double,
-    coverScale: Double,
+/// Attracts only the last part of a notebook approach. The raw pinch remains
+/// the camera everywhere else, while a nearby, centered page acquires one
+/// reversible full-screen docking target.
+public enum NotebookDockingField {
+  public static let fieldStartScaleRatio = 0.82
+  public static let fullStrengthScaleRatio = 0.97
+  public static let innerCenterRadiusRatio = 0.015
+  public static let outerCenterRadiusRatio = 0.14
+  public static let commitStrength = 0.72
+
+  public static func strength(
+    camera: SpatialCamera,
+    notebookCenter: WorldPoint,
+    viewport: SpatialPoint
+  ) -> Double {
+    guard viewport.x > 0, viewport.y > 0 else { return 0 }
+    let pageScale = NotebookPresentation.fitScale(viewport: viewport)
+    let scaleStrength = smoothstep(
+      from: fieldStartScaleRatio,
+      through: fullStrengthScaleRatio,
+      value: camera.scale / pageScale
+    )
+    let projected = camera.worldToScreen(notebookCenter, viewport: viewport)
+    let centerDistance = hypot(
+      projected.x - viewport.x / 2,
+      projected.y - viewport.y / 2
+    )
+    let shortSide = min(viewport.x, viewport.y)
+    let centerStrength = 1 - smoothstep(
+      from: innerCenterRadiusRatio * shortSide,
+      through: outerCenterRadiusRatio * shortSide,
+      value: centerDistance
+    )
+    return scaleStrength * centerStrength
+  }
+
+  public static func attractedCamera(
+    _ camera: SpatialCamera,
+    toward notebookCenter: WorldPoint,
+    viewport: SpatialPoint,
+    strength: Double
+  ) -> SpatialCamera {
+    guard strength.isFinite, strength > 0 else { return camera }
+    let weight = pow(min(strength, 1), 2)
+    let delta = camera.center.delta(to: notebookCenter)
+    let targetScale = NotebookPresentation.fitScale(viewport: viewport)
+    let resolvedScale = exp(
+      log(camera.scale) + (log(targetScale) - log(camera.scale)) * weight
+    )
+    return SpatialCamera(
+      center: camera.center.offsetBy(
+        x: delta.x * weight,
+        y: delta.y * weight
+      ),
+      scale: resolvedScale
+    )
+  }
+
+  public static func shouldDock(
+    strength: Double,
+    isApproaching: Bool,
     velocity: Double
-  ) -> WorkspaceSemanticMode {
-    guard openProgress.isFinite, cameraScale.isFinite,
-      coverScale.isFinite, coverScale > 0, velocity.isFinite
-    else { return .board }
-    guard startingMode == .page || startingMode == .cover else { return .board }
-    if startingMode == .cover {
-      if cameraScale < coverScale * boardReleaseScaleRatio
-        || velocity < -0.35
-      {
-        return .board
-      }
-      if startedOutward || velocity > 0.35 { return .page }
-      return .cover
-    }
-    if openProgress > 0.46 || velocity > 0.9 { return .page }
-    if cameraScale < coverScale * boardReleaseScaleRatio
-      || (openProgress <= 0.02 && velocity < -0.35)
-    {
-      return .board
-    }
-    return .cover
+  ) -> Bool {
+    strength.isFinite && velocity.isFinite
+      && strength >= commitStrength
+      && isApproaching
+      && velocity >= -0.05
+  }
+
+  private static func smoothstep(
+    from lowerBound: Double,
+    through upperBound: Double,
+    value: Double
+  ) -> Double {
+    guard lowerBound.isFinite, upperBound.isFinite, value.isFinite,
+      upperBound > lowerBound
+    else { return 0 }
+    let t = min(max((value - lowerBound) / (upperBound - lowerBound), 0), 1)
+    return t * t * (3 - 2 * t)
   }
 }
 
@@ -340,9 +387,6 @@ public enum NotebookOpeningIntent {
   /// A notebook receives the opening gesture only after reaching its normal
   /// focused-cover size on screen.
   public static let entryScaleRatio = 1.0
-  /// A sampled gesture that crosses the whole page in one frame still gets a
-  /// short controllable opening interval instead of a semantic jump.
-  public static let overshootOpeningScaleRatio = 1.08
   public static let selectionHalo = 1.12
   /// A candidate survives small centroid noise while the camera approaches it,
   /// but is released once the fingers clearly leave the cover.
@@ -360,58 +404,11 @@ public enum NotebookOpeningIntent {
     return true
   }
 
-  public static func openingTargetScale(
-    engagedAtCameraScale: Double,
-    pageScale: Double
-  ) -> Double {
-    max(pageScale, engagedAtCameraScale * overshootOpeningScaleRatio)
-  }
-
-  /// Opening begins at zero on the exact frame that acquires the nearby
-  /// notebook. The remaining camera travel then opens the same physical object.
-  public static func progress(
-    cameraScale: Double,
-    engagedAtCameraScale: Double,
-    pageScale: Double
-  ) -> Double {
-    NotebookOpeningTransition.progress(
-      cameraScale: cameraScale,
-      coverScale: engagedAtCameraScale,
-      pageScale: openingTargetScale(
-        engagedAtCameraScale: engagedAtCameraScale,
-        pageScale: pageScale
-      )
-    )
-  }
-
   public static func shouldDisengage(
     cameraScale: Double,
-    engagedAtCameraScale: Double
+    coverScale: Double
   ) -> Bool {
-    cameraScale < engagedAtCameraScale * 0.9
-  }
-
-  /// Every completed gesture lands on one whole semantic state. Reaching a
-  /// nearby notebook commits to its page; reversing the same motion still
-  /// returns through the cover to the board.
-  public static func releaseMode(
-    progress: Double,
-    cameraScale: Double,
-    engagedAtCameraScale: Double,
-    velocity: Double
-  ) -> WorkspaceSemanticMode {
-    guard progress.isFinite, cameraScale.isFinite,
-      engagedAtCameraScale.isFinite, engagedAtCameraScale > 0,
-      velocity.isFinite
-    else { return .board }
-    let retainedEngagement = cameraScale >= engagedAtCameraScale * 0.96
-    if !retainedEngagement && progress < 0.08 { return .board }
-    if progress >= 0.42 || velocity >= 0.9
-      || (retainedEngagement && velocity >= -0.05)
-    {
-      return .page
-    }
-    return .cover
+    cameraScale < coverScale * 0.9
   }
 }
 
@@ -450,6 +447,8 @@ public struct FreeNotebookPlacement: Codable, Equatable, Identifiable, Sendable 
 }
 
 public struct NotebookStack: Codable, Equatable, Identifiable, Sendable {
+  public static let maximumNotebookCount = 5
+
   public let id: UUID
   public private(set) var center: WorldPoint
   public private(set) var zIndex: Int
@@ -463,7 +462,10 @@ public struct NotebookStack: Codable, Equatable, Identifiable, Sendable {
     notebookIDs: [UUID],
     stamp: VersionStamp
   ) {
-    precondition(notebookIDs.count >= 2)
+    precondition(
+      notebookIDs.count >= 2
+        && notebookIDs.count <= Self.maximumNotebookCount
+    )
     self.id = id
     self.center = center
     self.zIndex = zIndex
@@ -472,7 +474,8 @@ public struct NotebookStack: Codable, Equatable, Identifiable, Sendable {
   }
 
   mutating func append(_ notebookID: UUID, actor: UUID) -> Bool {
-    guard !notebookIDs.contains(notebookID),
+    guard notebookIDs.count < Self.maximumNotebookCount,
+      !notebookIDs.contains(notebookID),
       let next = stamp.advanced(by: actor)
     else { return false }
     notebookIDs.append(notebookID)
@@ -499,6 +502,7 @@ public struct NotebookStack: Codable, Equatable, Identifiable, Sendable {
 
   var isValid: Bool {
     center.isValid && zIndex >= 0 && notebookIDs.count >= 2
+      && notebookIDs.count <= Self.maximumNotebookCount
       && Set(notebookIDs).count == notebookIDs.count
       && stamp.counter <= VersionStamp.maximumCounter
   }
@@ -511,8 +515,11 @@ public struct NotebookStack: Codable, Equatable, Identifiable, Sendable {
 public enum NotebookStackPresentation {
   private static let collapsedHorizontalSpacing = 9.0
   private static let collapsedVerticalSpacing = 7.0
-  private static let fannedHorizontalRatio = 0.62
-  private static let fannedVerticalRatio = 0.08
+  /// The whole fan occupies one bounded envelope regardless of whether it
+  /// contains two or five covers. More members expose narrower, still
+  /// tappable strips instead of pushing the outer notebooks off screen.
+  private static let fannedHorizontalSpanRatio = 0.62
+  private static let fannedVerticalSpanRatio = 0.08
   private static let fanStartProjectedHeight = 160.0
   private static let fanEndProjectedHeight = 600.0
 
@@ -542,11 +549,10 @@ public enum NotebookStackPresentation {
     )
     let collapsedX = centered * collapsedHorizontalSpacing / cameraScale
     let collapsedY = -Double(index) * collapsedVerticalSpacing / cameraScale
-    let fannedX = centered * NotebookGeometry.width * fannedHorizontalRatio
-    let fannedY = abs(centered) * NotebookGeometry.height * fannedVerticalRatio
+    let fanned = fannedOffset(index: index, count: stack.notebookIDs.count)
     return stack.center.offsetBy(
-      x: collapsedX + (fannedX - collapsedX) * fan,
-      y: collapsedY + (fannedY - collapsedY) * fan
+      x: collapsedX + (fanned.x - collapsedX) * fan,
+      y: collapsedY + (fanned.y - collapsedY) * fan
     )
   }
 
@@ -557,10 +563,21 @@ public enum NotebookStackPresentation {
     guard let index = stack.notebookIDs.firstIndex(of: notebookID) else {
       return nil
     }
-    let centered = Double(index) - Double(stack.notebookIDs.count - 1) / 2
+    let fanned = fannedOffset(index: index, count: stack.notebookIDs.count)
     return stack.center.offsetBy(
-      x: centered * NotebookGeometry.width * fannedHorizontalRatio,
-      y: abs(centered) * NotebookGeometry.height * fannedVerticalRatio
+      x: fanned.x,
+      y: fanned.y
+    )
+  }
+
+  private static func fannedOffset(index: Int, count: Int) -> SpatialPoint {
+    let spanCount = Double(max(count - 1, 1))
+    let centered = Double(index) - Double(count - 1) / 2
+    return SpatialPoint(
+      x: centered * NotebookGeometry.width
+        * fannedHorizontalSpanRatio / spanCount,
+      y: abs(centered) * NotebookGeometry.height
+        * fannedVerticalSpanRatio / spanCount
     )
   }
 }
@@ -1020,23 +1037,21 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
     case .board:
       return focusedNotebookID == nil && openProgress <= 0.001
     case .cover:
-      return focusedNotebookID != nil && openProgress <= 0.001
+      return focusedNotebookID != nil
     case .page:
       return focusedNotebookID != nil && openProgress >= 0.999
     }
   }
 
-  /// Projects the same semantic scene into another viewport. Stable cover and
-  /// page states have one canonical scale; transitional and board states keep
-  /// their dimensionless zoom relative to the notebook fit.
+  /// Projects the same camera into another viewport. A docked page has one
+  /// canonical scale; every free board or cover position keeps its
+  /// dimensionless zoom relative to the notebook fit.
   public func adapted(to targetViewport: SpatialPoint) -> Self {
     precondition(targetViewport.x > 0 && targetViewport.y > 0)
     let targetFit = NotebookPresentation.fitScale(viewport: targetViewport)
     let resolvedScale: Double
     if mode == .page && openProgress >= 0.999 {
       resolvedScale = targetFit
-    } else if mode == .cover && openProgress <= 0.001 {
-      resolvedScale = targetFit * NotebookPresentation.coverScaleRatio
     } else {
       let sourceFit = NotebookPresentation.fitScale(viewport: viewport)
       resolvedScale = camera.scale * targetFit / sourceFit

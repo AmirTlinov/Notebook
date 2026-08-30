@@ -17,7 +17,12 @@ import type {
   WorldPoint,
   WorkspaceIndex,
 } from "./domain.js";
-import { revision } from "./domain.js";
+import {
+  maximumCameraScale,
+  maximumStackNotebookCount,
+  minimumCameraScale,
+  revision,
+} from "./domain.js";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -553,8 +558,11 @@ function validateBoard(
     validateWorldPoint(stack.center, "stack.center");
     validateZIndex(stack.zIndex, "stack.zIndex");
     validateStamp(stack.stamp, "stack.stamp");
-    if (!Array.isArray(stack.notebookIDs) || stack.notebookIDs.length < 2) {
-      throw new StoreError("В стопке должно быть хотя бы две тетради.");
+    if (!Array.isArray(stack.notebookIDs) || stack.notebookIDs.length < 2
+      || stack.notebookIDs.length > maximumStackNotebookCount) {
+      throw new StoreError(
+        `В стопке должно быть от двух до ${maximumStackNotebookCount} тетрадей.`,
+      );
     }
     for (const notebookID of stack.notebookIDs) {
       if (typeof notebookID !== "string") throw new StoreError("notebookID стопки поврежден.");
@@ -680,7 +688,8 @@ function validatePresence(value: unknown): asserts value is SessionPresence {
   if (!isRecord(value.camera)) throw new StoreError("Камера повреждена.");
   validateWorldPoint(value.camera.center, "camera.center");
   if (typeof value.camera.scale !== "number" || !Number.isFinite(value.camera.scale)
-    || value.camera.scale < 0.055 || value.camera.scale > 4) {
+    || value.camera.scale < minimumCameraScale
+    || value.camera.scale > maximumCameraScale) {
     throw new StoreError("Масштаб камеры поврежден.");
   }
   if (!isSpatialPoint(value.viewport) || value.viewport.x <= 0 || value.viewport.y <= 0) {

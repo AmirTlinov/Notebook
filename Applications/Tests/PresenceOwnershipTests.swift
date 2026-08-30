@@ -78,6 +78,33 @@ final class PresenceOwnershipTests: XCTestCase {
   }
 
   @MainActor
+  func testSettledPartialCoverKeepsTheExactCamera() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = NotebookStore(root: root)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    model.start(pageSize: PageSize(width: 834, height: 1_194))
+    let notebookID = try XCTUnwrap(model.workspace?.selectedNotebookID)
+    let partial = SessionPresence(
+      mode: .cover,
+      camera: SpatialCamera(
+        center: WorldPoint(x: 37, y: -22),
+        scale: 0.86
+      ),
+      viewport: SpatialPoint(x: 834, y: 1_194),
+      focusedNotebookID: notebookID,
+      openProgress: 0.55
+    )
+
+    model.updatePresence(partial, settled: true)
+
+    XCTAssertEqual(model.presence, partial)
+    XCTAssertEqual(try store.loadPresence(), partial)
+  }
+
+  @MainActor
   func testSettledStackedPageCentersTheSelectedNotebook() throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
