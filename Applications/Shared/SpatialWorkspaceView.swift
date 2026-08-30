@@ -5,13 +5,13 @@ private struct CameraGestureSnapshot {
   struct BoardEngagement {
     let notebookID: UUID
     let cameraScale: Double
-    let intent: NotebookOpeningIntent.Engagement
   }
 
   let presence: SessionPresence
   let startCentroid: CGPoint
-  let candidateNotebookID: UUID?
-  let mayOpenNotebook: Bool
+  var candidateNotebookID: UUID?
+  let isOpeningApproach: Bool
+  var hasInitialApproachEvidence: Bool
   var boardEngagement: BoardEngagement?
 }
 
@@ -313,7 +313,7 @@ struct SpatialWorkspaceView: View {
     presence: SessionPresence
   ) -> Bool {
     if let gesture = cameraGesture,
-      gesture.mayOpenNotebook,
+      gesture.isOpeningApproach,
       let candidate = gesture.candidateNotebookID,
       presence.camera.scale >= coverFocusScale(viewport: presence.viewport)
         * NotebookOpeningIntent.pagePreparationScaleRatio
@@ -333,7 +333,7 @@ struct SpatialWorkspaceView: View {
   private func handleBoardMagnification(_ phase: WorkspaceMagnificationPhase) {
     guard !settling, let presence = model.presence else { return }
     switch phase {
-    case .began(let centroid, let mayOpenNotebook):
+    case .began(let centroid, let isOpeningApproach):
       let candidate = presence.mode == .cover
         ? (presence.focusedNotebookID
           ?? focusCandidate(at: centroid, presence: presence))
@@ -342,21 +342,20 @@ struct SpatialWorkspaceView: View {
         presence: presence,
         startCentroid: centroid,
         candidateNotebookID: candidate,
-        mayOpenNotebook: mayOpenNotebook,
+        isOpeningApproach: isOpeningApproach,
+        hasInitialApproachEvidence: isOpeningApproach,
         boardEngagement: nil
       )
-    case .changed(let scale, let velocity, let elapsed, let centroid):
+    case .changed(let scale, let velocity, _, let centroid):
       updateMagnification(
         scale: scale,
         velocity: velocity,
-        elapsed: elapsed,
         centroid: centroid
       )
-    case .ended(let scale, let velocity, let elapsed, let centroid):
+    case .ended(let scale, let velocity, _, let centroid):
       updateMagnification(
         scale: scale,
         velocity: velocity,
-        elapsed: elapsed,
         centroid: centroid
       )
       settleMagnification(velocity: velocity)
@@ -386,28 +385,27 @@ struct SpatialWorkspaceView: View {
 
   private func handlePageMagnification(_ phase: WorkspaceMagnificationPhase) {
     switch phase {
-    case .began(let centroid, _):
+    case .began(let centroid, let isOpeningApproach):
       guard let presence = model.presence else { return }
       pageGestureActive = true
       cameraGesture = CameraGestureSnapshot(
         presence: presence,
         startCentroid: centroid,
         candidateNotebookID: presence.focusedNotebookID,
-        mayOpenNotebook: true,
+        isOpeningApproach: isOpeningApproach,
+        hasInitialApproachEvidence: isOpeningApproach,
         boardEngagement: nil
       )
-    case .changed(let scale, let velocity, let elapsed, let centroid):
+    case .changed(let scale, let velocity, _, let centroid):
       updateMagnification(
         scale: scale,
         velocity: velocity,
-        elapsed: elapsed,
         centroid: centroid
       )
-    case .ended(let scale, let velocity, let elapsed, let centroid):
+    case .ended(let scale, let velocity, _, let centroid):
       updateMagnification(
         scale: scale,
         velocity: velocity,
-        elapsed: elapsed,
         centroid: centroid
       )
       settleMagnification(velocity: velocity)
@@ -420,7 +418,6 @@ struct SpatialWorkspaceView: View {
   private func updateMagnification(
     scale: CGFloat,
     velocity: CGFloat,
-    elapsed: TimeInterval,
     centroid: CGPoint
   ) {
     guard var snapshot = cameraGesture else { return }
@@ -453,21 +450,42 @@ struct SpatialWorkspaceView: View {
       {
         snapshot.boardEngagement = nil
       }
-      if snapshot.mayOpenNotebook,
+      if snapshot.isOpeningApproach, snapshot.boardEngagement == nil {
+        let liveBoardPresence = SessionPresence(
+          mode: .board,
+          camera: camera,
+          viewport: viewport
+        )
+        if let detected = focusCandidate(
+          at: centroid,
+          presence: liveBoardPresence
+        ) {
+          snapshot.candidateNotebookID = detected
+        } else if let retained = snapshot.candidateNotebookID,
+          selectionStrength(
+            for: retained,
+            at: centroid,
+            presence: liveBoardPresence,
+            halo: NotebookOpeningIntent.candidateRetentionHalo
+          ) <= 0
+        {
+          snapshot.candidateNotebookID = nil
+        }
+      }
+      if snapshot.isOpeningApproach,
         snapshot.boardEngagement == nil,
         let candidate = snapshot.candidateNotebookID,
-        let intent = NotebookOpeningIntent.engagement(
-          magnification: magnification,
-          velocity: Double(velocity),
-          elapsed: elapsed,
+        NotebookOpeningIntent.shouldEngage(
+          isApproaching: snapshot.hasInitialApproachEvidence
+            || velocity > 0.05,
           cameraScale: camera.scale,
           coverScale: coverScale
         )
       {
+        snapshot.hasInitialApproachEvidence = false
         snapshot.boardEngagement = CameraGestureSnapshot.BoardEngagement(
           notebookID: candidate,
-          cameraScale: camera.scale,
-          intent: intent
+          cameraScale: camera.scale
         )
         model.selectNotebook(candidate)
       }
@@ -540,13 +558,14 @@ struct SpatialWorkspaceView: View {
         progress: presence.openProgress,
         cameraScale: presence.camera.scale,
         engagedAtCameraScale: boardEngagement.cameraScale,
-        engagement: boardEngagement.intent,
         velocity: Double(velocity)
       )
     } else if snapshot.presence.mode == .board {
       targetMode = .board
     } else if presence.focusedNotebookID != nil {
       targetMode = NotebookOpeningTransition.releaseMode(
+        startingMode: snapshot.presence.mode,
+        startedOutward: snapshot.isOpeningApproach,
         openProgress: presence.openProgress,
         cameraScale: presence.camera.scale,
         coverScale: coverScale,
@@ -654,7 +673,8 @@ struct SpatialWorkspaceView: View {
   private func selectionStrength(
     for notebookID: UUID,
     at centroid: CGPoint,
-    presence: SessionPresence
+    presence: SessionPresence,
+    halo: Double = NotebookOpeningIntent.selectionHalo
   ) -> Double {
     guard let rendered = renderedNotebooks(presence: presence)
       .first(where: { $0.id == notebookID })
@@ -673,7 +693,7 @@ struct SpatialWorkspaceView: View {
         width: width,
         height: height
       ),
-      halo: NotebookOpeningIntent.selectionHalo
+      halo: halo
     )
   }
 

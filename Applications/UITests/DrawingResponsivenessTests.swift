@@ -108,6 +108,33 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(paper.frame.height, originalPaperFrame.height, accuracy: 2)
   }
 
+  func testShortRecognizedPinchOpensTheNearbyCover() async throws {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-simulator-finger-gestures",
+      "--notebook-nearby-cover-fixture",
+    ]
+    app.launch()
+
+    let notebook = app.descendants(matching: .any)
+      .matching(
+        identifier: "notebook-7e7a1000-0000-4000-8000-000000000002"
+      )
+      .firstMatch
+    XCTAssertTrue(notebook.waitForExistence(timeout: 3))
+    let coverFrame = notebook.frame
+
+    notebook.pinch(withScale: 1.05, velocity: 0.2)
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 5))
+    try await Task.sleep(for: .milliseconds(300))
+
+    XCTAssertGreaterThan(paper.frame.width, coverFrame.width * 1.15)
+    XCTAssertGreaterThan(paper.frame.height, coverFrame.height * 1.15)
+  }
+
   func testPenCommitsOneStrokeAndKeepsThePaperResponsive() {
     continueAfterFailure = false
     let app = XCUIApplication()

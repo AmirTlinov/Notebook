@@ -124,7 +124,8 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
         onCamera(
           .began(
             centroid: recognizer.startCentroidValue,
-            mayOpenNotebook: recognizer.intent == .magnification
+            isOpeningApproach: recognizer.intent == .magnification
+              && recognizer.isOpeningApproach
           )
         )
         onCamera(

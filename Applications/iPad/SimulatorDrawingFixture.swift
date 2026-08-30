@@ -7,6 +7,7 @@
   enum SimulatorDrawingFixture {
     static let launchArgument = "--notebook-drawing-responsiveness-fixture"
     static let fingerGestureArgument = "--notebook-simulator-finger-gestures"
+    static let coverArgument = "--notebook-nearby-cover-fixture"
 
     static var isRequested: Bool {
       ProcessInfo.processInfo.arguments.contains(launchArgument)
@@ -14,9 +15,14 @@
 
     static func makeModel() -> NotebookAppModel {
       let fileManager = FileManager.default
-      let fixtureName = ProcessInfo.processInfo.arguments.contains(
-        fingerGestureArgument
-      ) ? "SpatialTransition" : "DrawingResponsiveness"
+      let startsAtCover = ProcessInfo.processInfo.arguments.contains(
+        coverArgument
+      )
+      let fixtureName = startsAtCover
+        ? "NearbyCoverTransition"
+        : (ProcessInfo.processInfo.arguments.contains(fingerGestureArgument)
+          ? "SpatialTransition"
+          : "DrawingResponsiveness")
       let root = fileManager.temporaryDirectory
         .appendingPathComponent("NotebookUITests", isDirectory: true)
         .appendingPathComponent(fixtureName, isDirectory: true)
@@ -49,6 +55,28 @@
           drawingData: denseDrawing(size: size).dataRepresentation()
         )
         try store.savePage(page)
+        if startsAtCover {
+          let board = BoardDocument.initial(
+            notebookIDs: [notebookID],
+            actor: actor
+          )
+          let center = board.placement(of: notebookID)?.center
+            ?? WorldPoint(x: 0, y: 0)
+          let viewport = SpatialPoint(x: size.width, y: size.height)
+          try store.saveBoard(board, notebookIDs: Set([notebookID]))
+          try store.savePresence(
+            SessionPresence(
+              mode: .cover,
+              camera: SpatialCamera(
+                center: center,
+                scale: NotebookPresentation.coverScale(viewport: viewport)
+              ),
+              viewport: viewport,
+              focusedNotebookID: notebookID,
+              openProgress: 0
+            )
+          )
+        }
         try store.saveIndex(initial.index)
         return NotebookAppModel(store: store, startsNearbySync: false)
       } catch {
