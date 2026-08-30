@@ -6,6 +6,7 @@
   @MainActor
   enum SimulatorDrawingFixture {
     static let launchArgument = "--tetrad-drawing-responsiveness-fixture"
+    static let fingerGestureArgument = "--tetrad-simulator-finger-gestures"
 
     static var isRequested: Bool {
       ProcessInfo.processInfo.arguments.contains(launchArgument)
@@ -13,9 +14,12 @@
 
     static func makeModel() -> TetradAppModel {
       let fileManager = FileManager.default
+      let fixtureName = ProcessInfo.processInfo.arguments.contains(
+        fingerGestureArgument
+      ) ? "SpatialTransition" : "DrawingResponsiveness"
       let root = fileManager.temporaryDirectory
         .appendingPathComponent("TetradUITests", isDirectory: true)
-        .appendingPathComponent("DrawingResponsiveness", isDirectory: true)
+        .appendingPathComponent(fixtureName, isDirectory: true)
       do {
         if fileManager.fileExists(atPath: root.path) {
           try fileManager.removeItem(at: root)

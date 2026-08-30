@@ -24,6 +24,26 @@ public struct TetradStore: Sendable {
     root.appendingPathComponent("pages", isDirectory: true)
   }
 
+  public var boardURL: URL {
+    root.appendingPathComponent("board.json")
+  }
+
+  public var spatialInkURL: URL {
+    root.appendingPathComponent("spatial-ink.json")
+  }
+
+  public var presenceURL: URL {
+    root.appendingPathComponent("last-context.json")
+  }
+
+  public var currentViewPreviewURL: URL {
+    previewsURL.appendingPathComponent("current-view.png")
+  }
+
+  public var currentViewRevisionURL: URL {
+    previewsURL.appendingPathComponent("current-view.revision")
+  }
+
   private var previewsURL: URL {
     root.appendingPathComponent("previews", isDirectory: true)
   }
@@ -73,8 +93,15 @@ public struct TetradStore: Sendable {
       notebookID: initialNotebookID,
       pageID: initialPageID
     )
-    try savePage(initial.page)
-    try saveIndex(initial.index)
+    let board = BoardDocument.initial(
+      notebookIDs: [initialNotebookID],
+      actor: actor
+    )
+    try saveWorkspaceBundle(
+      index: initial.index,
+      page: initial.page,
+      board: board
+    )
     return (initial.index, [initial.page.id: initial.page])
   }
 
@@ -85,6 +112,71 @@ public struct TetradStore: Sendable {
     )
     guard index.isValid else { throw corruptFile(at: indexURL) }
     return index
+  }
+
+  public func loadOrCreateBoard(
+    workspace: WorkspaceIndex,
+    actor: UUID
+  ) throws -> BoardDocument {
+    try prepare()
+    let notebookIDs = Set(workspace.notebooks.map(\.id))
+    if FileManager.default.fileExists(atPath: boardURL.path) {
+      let board = try decoder.decode(
+        BoardDocument.self,
+        from: Data(contentsOf: boardURL)
+      )
+      guard board.isValid(notebookIDs: notebookIDs) else {
+        throw corruptFile(at: boardURL)
+      }
+      return board
+    }
+    let board = BoardDocument.initial(
+      notebookIDs: workspace.notebooks.map(\.id),
+      actor: actor
+    )
+    try saveBoard(board, notebookIDs: notebookIDs)
+    return board
+  }
+
+  public func loadBoard(notebookIDs: Set<UUID>) throws -> BoardDocument {
+    let board = try decoder.decode(
+      BoardDocument.self,
+      from: Data(contentsOf: boardURL)
+    )
+    guard board.isValid(notebookIDs: notebookIDs) else {
+      throw corruptFile(at: boardURL)
+    }
+    return board
+  }
+
+  public func loadOrCreateSpatialInk(actor: UUID) throws -> SpatialInkJournal {
+    try prepare()
+    if FileManager.default.fileExists(atPath: spatialInkURL.path) {
+      return try loadSpatialInk()
+    }
+    let journal = SpatialInkJournal(
+      stamp: VersionStamp(counter: 0, actor: actor)
+    )
+    try saveSpatialInk(journal)
+    return journal
+  }
+
+  public func loadSpatialInk() throws -> SpatialInkJournal {
+    let journal = try decoder.decode(
+      SpatialInkJournal.self,
+      from: Data(contentsOf: spatialInkURL)
+    )
+    guard journal.isValid else { throw corruptFile(at: spatialInkURL) }
+    return journal
+  }
+
+  public func loadPresence() throws -> SessionPresence {
+    let presence = try decoder.decode(
+      SessionPresence.self,
+      from: Data(contentsOf: presenceURL)
+    )
+    guard presence.isValid else { throw corruptFile(at: presenceURL) }
+    return presence
   }
 
   public func loadPage(_ id: UUID) throws -> PageDocument {
@@ -103,6 +195,109 @@ public struct TetradStore: Sendable {
     try prepare()
     try withMutationLock {
       try encoder.encode(index).write(to: indexURL, options: [.atomic])
+    }
+  }
+
+  public func saveBoard(
+    _ board: BoardDocument,
+    notebookIDs: Set<UUID>
+  ) throws {
+    guard board.isValid(notebookIDs: notebookIDs) else {
+      throw corruptFile(at: boardURL)
+    }
+    try prepare()
+    try withMutationLock {
+      try encoder.encode(board).write(to: boardURL, options: [.atomic])
+    }
+  }
+
+  @discardableResult
+  public func saveMergedBoard(
+    _ board: BoardDocument,
+    notebookIDs: Set<UUID>
+  ) throws -> BoardDocument {
+    guard board.isValid(notebookIDs: notebookIDs) else {
+      throw corruptFile(at: boardURL)
+    }
+    try prepare()
+    return try withMutationLock {
+      var resolved = board
+      if FileManager.default.fileExists(atPath: boardURL.path) {
+        let disk = try decoder.decode(
+          BoardDocument.self,
+          from: Data(contentsOf: boardURL)
+        )
+        guard disk.isValid(notebookIDs: notebookIDs) else {
+          throw corruptFile(at: boardURL)
+        }
+        _ = resolved.merge(disk, notebookIDs: notebookIDs)
+      }
+      try encoder.encode(resolved).write(to: boardURL, options: [.atomic])
+      return resolved
+    }
+  }
+
+  public func saveSpatialInk(_ journal: SpatialInkJournal) throws {
+    guard journal.isValid else { throw corruptFile(at: spatialInkURL) }
+    try prepare()
+    try withMutationLock {
+      try encoder.encode(journal).write(to: spatialInkURL, options: [.atomic])
+    }
+  }
+
+  @discardableResult
+  public func saveMergedSpatialInk(
+    _ journal: SpatialInkJournal
+  ) throws -> SpatialInkJournal {
+    guard journal.isValid else { throw corruptFile(at: spatialInkURL) }
+    try prepare()
+    return try withMutationLock {
+      var resolved = journal
+      if FileManager.default.fileExists(atPath: spatialInkURL.path) {
+        let disk = try decoder.decode(
+          SpatialInkJournal.self,
+          from: Data(contentsOf: spatialInkURL)
+        )
+        guard disk.isValid else { throw corruptFile(at: spatialInkURL) }
+        _ = resolved.merge(disk)
+      }
+      try encoder.encode(resolved).write(
+        to: spatialInkURL,
+        options: [.atomic]
+      )
+      return resolved
+    }
+  }
+
+  public func savePresence(_ presence: SessionPresence) throws {
+    guard presence.isValid else { throw corruptFile(at: presenceURL) }
+    try prepare()
+    try withMutationLock {
+      try encoder.encode(presence).write(to: presenceURL, options: [.atomic])
+    }
+  }
+
+  /// Creation publishes dependencies first and the catalog last. Readers that
+  /// discover the notebook through the catalog can therefore also read its
+  /// page and board placement.
+  public func saveWorkspaceBundle(
+    index: WorkspaceIndex,
+    page: PageDocument,
+    board: BoardDocument
+  ) throws {
+    let notebookIDs = Set(index.notebooks.map(\.id))
+    guard index.isValid, page.isValid,
+      board.isValid(notebookIDs: notebookIDs),
+      index.notebooks.flatMap(\.pageIDs).contains(page.id)
+    else { throw corruptFile(at: indexURL) }
+    try prepare()
+    try withMutationLock {
+      let indexData = try encoder.encode(index)
+      let pageData = try encoder.encode(page)
+      let boardData = try encoder.encode(board)
+      try pageData.write(to: pageURL(page.id), options: [.atomic])
+      try boardData.write(to: boardURL, options: [.atomic])
+      try indexData.write(to: indexURL, options: [.atomic])
     }
   }
 

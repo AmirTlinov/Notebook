@@ -6,8 +6,13 @@ import test from "node:test";
 
 import type { AgentElement } from "../src/domain.js";
 import { revision } from "../src/domain.js";
-import { ConflictError, StoreError, TetradStore } from "../src/store.js";
-import { appActor, pageID, writeFixture } from "./fixture.js";
+import {
+  ConflictError,
+  StoreError,
+  TetradStore,
+  nextVersionStamp,
+} from "../src/store.js";
+import { appActor, notebookID, pageID, writeFixture } from "./fixture.js";
 
 async function withStore(
   body: (store: TetradStore, root: string) => Promise<void>,
@@ -26,6 +31,89 @@ test("reads the page selected by the native workspace", async () => {
     const selected = await store.readSelected();
     assert.equal(selected.page.id, pageID);
     assert.equal(revision(selected.page.agentStamp), `0@${appActor}`);
+  });
+});
+
+test("reads one-owner board, spatial ink, and current presence", async () => {
+  await withStore(async (store) => {
+    const workspace = await store.readWorkspace();
+    const [board, ink, presence] = await Promise.all([
+      store.readBoard(workspace),
+      store.readSpatialInk(),
+      store.readPresence(),
+    ]);
+    assert.equal(board.freeNotebooks[0]?.notebookID, notebookID);
+    assert.equal(ink.actions.length, 0);
+    assert.equal(presence.mode, "page");
+  });
+});
+
+test("requires the rendered page revision while the page is open", async () => {
+  await withStore(async (store, root) => {
+    const receiptPath = join(root, "previews", "current-view.revision");
+    const receipt = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, unknown>;
+    delete receipt.page;
+    await writeFile(receiptPath, JSON.stringify(receipt));
+
+    await assert.rejects(store.readCurrentViewReceipt(), StoreError);
+  });
+});
+
+test("moves a board entity under an optimistic board revision", async () => {
+  await withStore(async (store) => {
+    const moved = await store.replaceBoard({
+      expectedRevision: `0@${appActor}`,
+      transform: (board, _workspace, actor) => {
+        const placement = board.freeNotebooks[0]!;
+        placement.center = { tileX: -2, tileY: 3, localX: 40, localY: 70 };
+        placement.stamp = nextVersionStamp(board.stamp, actor);
+        return board;
+      },
+    });
+    assert.equal(moved.stamp.counter, 1);
+    assert.equal(moved.freeNotebooks[0]?.center.tileX, -2);
+    await assert.rejects(
+      store.replaceBoard({
+        expectedRevision: `0@${appActor}`,
+        transform: (board) => board,
+      }),
+      ConflictError,
+    );
+  });
+});
+
+test("creates a notebook, page, and placement as one valid bundle", async () => {
+  await withStore(async (store) => {
+    const created = await store.createNotebook({
+      title: "Исследование",
+      center: { tileX: 1, tileY: -1, localX: 100, localY: 200 },
+      expectedWorkspaceRevision: `0@${appActor}`,
+      expectedBoardRevision: `0@${appActor}`,
+    });
+    assert.equal(created.workspace.notebooks.length, 2);
+    assert.ok(created.board.freeNotebooks.some(
+      (placement) => placement.notebookID === created.notebookID,
+    ));
+    assert.equal((await store.readPage(created.page.id)).id, created.page.id);
+    assert.equal((await store.readBoard(created.workspace)).freeNotebooks.length, 2);
+  });
+});
+
+test("accepts a placement staged before the workspace publishes its notebook", async () => {
+  await withStore(async (store, root) => {
+    const boardPath = join(root, "board.json");
+    const board = JSON.parse(await readFile(boardPath, "utf8")) as {
+      freeNotebooks: Array<Record<string, unknown>>;
+    };
+    board.freeNotebooks.push({
+      notebookID: "7e7a0000-0000-4000-8000-000000000099",
+      center: { tileX: 0, tileY: 0, localX: 900, localY: 0 },
+      zIndex: 1,
+      stamp: { counter: 1, actor: appActor },
+    });
+    await writeFile(boardPath, JSON.stringify(board));
+
+    assert.equal((await store.readBoard(await store.readWorkspace())).freeNotebooks.length, 2);
   });
 });
 

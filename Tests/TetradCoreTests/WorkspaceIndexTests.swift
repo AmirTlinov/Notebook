@@ -162,23 +162,6 @@ func pageTurnCreatesOnePage() {
   #expect(index.selectedNotebook.pageIDs.count == 2)
 }
 
-@Test("Вертикальный переход создаёт новую тетрадь только за краем")
-func notebookChangeCreatesAtEdge() {
-  let actor = UUID()
-  let size = PageSize(width: 834, height: 1_194)
-  var index = WorkspaceIndex.initial(actor: actor, pageSize: size).index
-
-  let page = index.changeNotebook(by: 1, actor: actor, pageSize: size)
-  #expect(page != nil)
-  #expect(index.notebooks.count == 2)
-  #expect(index.selectedNotebook.title == "Тетрадь 2")
-
-  _ = index.changeNotebook(by: -1, actor: actor, pageSize: size)
-  let existing = index.changeNotebook(by: 1, actor: actor, pageSize: size)
-  #expect(existing == nil)
-  #expect(index.notebooks.count == 2)
-}
-
 @Test("Штрихи и агентские элементы сходятся независимо")
 func pageFieldsMergeIndependently() {
   let firstActor = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!

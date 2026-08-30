@@ -9,6 +9,85 @@ private typealias TetradWireProtocol = Coder<
   NetworkJSONCoder
 >
 
+struct WireSendQueue {
+  private var storage: [WireMessage] = []
+  private var head = 0
+
+  var isEmpty: Bool { head == storage.count }
+  var messages: [WireMessage] { Array(storage[head...]) }
+
+  mutating func enqueue(_ message: WireMessage) {
+    if case .presence = message,
+      head < storage.count,
+      case .presence = storage[storage.count - 1]
+    {
+      storage[storage.count - 1] = message
+    } else {
+      storage.append(message)
+    }
+  }
+
+  mutating func takeFirst() -> WireMessage? {
+    guard head < storage.count else { return nil }
+    let message = storage[head]
+    head += 1
+    if head >= 64, head * 2 >= storage.count {
+      storage.removeFirst(head)
+      head = 0
+    }
+    return message
+  }
+}
+
+@MainActor
+private final class OrderedWireSender {
+  private let connection: NetworkConnection<TetradWireProtocol>
+  private var queue = WireSendQueue()
+  private var drainTask: Task<Void, Never>?
+  private var isStopped = false
+
+  init(connection: NetworkConnection<TetradWireProtocol>) {
+    self.connection = connection
+  }
+
+  func enqueue(_ message: WireMessage) {
+    guard !isStopped else { return }
+    queue.enqueue(message)
+    guard drainTask == nil else { return }
+    drainTask = Task { [weak self] in
+      await self?.drain()
+    }
+  }
+
+  func cancel() {
+    isStopped = true
+    drainTask?.cancel()
+    drainTask = nil
+    queue = WireSendQueue()
+  }
+
+  private func drain() async {
+    while !Task.isCancelled, let message = queue.takeFirst() {
+      do {
+        try await connection.send(message)
+      } catch {
+        isStopped = true
+        queue = WireSendQueue()
+        break
+      }
+    }
+    drainTask = nil
+    if !isStopped, !queue.isEmpty { enqueueNextDrain() }
+  }
+
+  private func enqueueNextDrain() {
+    guard drainTask == nil else { return }
+    drainTask = Task { [weak self] in
+      await self?.drain()
+    }
+  }
+}
+
 @MainActor
 final class NearbySync {
   enum Role {
@@ -24,6 +103,7 @@ final class NearbySync {
   private var listenerTask: Task<Void, Never>?
   private var browserTask: Task<Void, Never>?
   private var connections: [String: NetworkConnection<TetradWireProtocol>] = [:]
+  private var senders: [String: OrderedWireSender] = [:]
   private var requestedEndpoints = Set<String>()
   private let logger = Logger(
     subsystem: "com.amirtlinov.tetrad",
@@ -94,10 +174,8 @@ final class NearbySync {
   }
 
   func send(_ message: WireMessage) {
-    for connection in connections.values {
-      Task {
-        try? await connection.send(message)
-      }
+    for sender in senders.values {
+      sender.enqueue(message)
     }
   }
 
@@ -123,6 +201,7 @@ final class NearbySync {
     guard connections[id] == nil else { return }
     logger.info("Opening connection \(id, privacy: .public)")
     connections[id] = connection
+    senders[id] = OrderedWireSender(connection: connection)
     onConnect?()
     do {
       for try await message in connection.messages {
@@ -131,6 +210,8 @@ final class NearbySync {
     } catch {
       logger.error("Connection \(id, privacy: .public) stopped: \(error.localizedDescription, privacy: .public)")
     }
+    senders[id]?.cancel()
+    senders[id] = nil
     connections[id] = nil
   }
 

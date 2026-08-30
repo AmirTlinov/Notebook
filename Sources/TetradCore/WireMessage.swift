@@ -13,4 +13,7 @@ public enum WireMessage: Codable, Equatable, Sendable {
     elements: [AgentElement],
     stamp: VersionStamp
   )
+  case board(BoardDocument)
+  case spatialInk(SpatialInkJournal)
+  case presence(SessionPresence)
 }

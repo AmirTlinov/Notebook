@@ -9,14 +9,19 @@ struct PenControlsView: View {
       if isExpanded {
         colorChoices
         eraserChoice
+        if model.presence?.mode == .cover {
+          textChoice
+        }
 
-        Rectangle()
-          .fill(.primary.opacity(0.12))
-          .frame(width: 1, height: 24)
+        if !model.isTextToolSelected {
+          Rectangle()
+            .fill(.primary.opacity(0.12))
+            .frame(width: 1, height: 24)
 
-        widthControl
-        if model.drawingTool == .pen {
-          opacityControl
+          widthControl
+          if model.drawingTool == .pen {
+            opacityControl
+          }
         }
       }
 
@@ -99,6 +104,29 @@ struct PenControlsView: View {
       model.drawingTool == .eraser ? .isSelected : []
     )
     .accessibilityIdentifier("drawing-tool-eraser")
+  }
+
+  private var textChoice: some View {
+    Button {
+      model.selectTextTool()
+    } label: {
+      Text("T")
+        .font(.system(size: 18, weight: .semibold, design: .rounded))
+        .foregroundStyle(.primary)
+        .frame(width: 31, height: 31)
+        .background(
+          model.isTextToolSelected
+            ? Color.primary.opacity(0.12)
+            : .clear,
+          in: Circle()
+        )
+        .frame(width: 36, height: 36)
+        .contentShape(Circle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel("Текст")
+    .accessibilityAddTraits(model.isTextToolSelected ? .isSelected : [])
+    .accessibilityIdentifier("drawing-tool-text")
   }
 
   @ViewBuilder
@@ -195,6 +223,7 @@ struct PenControlsView: View {
 
   private var controlIcon: String {
     if isExpanded { return "xmark" }
+    if model.isTextToolSelected { return "textformat" }
     return model.drawingTool == .pen ? "pencil.tip" : "eraser.fill"
   }
 

@@ -2,7 +2,7 @@ import Foundation
 
 public struct Notebook: Codable, Equatable, Identifiable, Sendable {
   public let id: UUID
-  public let title: String
+  public internal(set) var title: String
   public internal(set) var pageIDs: [UUID]
 
   public init(id: UUID = UUID(), title: String, pageIDs: [UUID]) {
@@ -71,6 +71,70 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     selectedNotebook.pageIDs.firstIndex(of: selectedPageID) ?? 0
   }
 
+  @discardableResult
+  public mutating func selectNotebook(
+    _ notebookID: UUID,
+    pageID: UUID? = nil,
+    actor: UUID
+  ) -> Bool {
+    guard let notebook = notebooks.first(where: { $0.id == notebookID }),
+      let selectedPage = pageID ?? notebook.pageIDs.first,
+      notebook.pageIDs.contains(selectedPage),
+      let nextStamp = stamp.advanced(by: actor)
+    else { return false }
+    guard selectedNotebookID != notebookID || selectedPageID != selectedPage else {
+      return false
+    }
+    selectedNotebookID = notebookID
+    selectedPageID = selectedPage
+    stamp = nextStamp
+    return true
+  }
+
+  @discardableResult
+  public mutating func renameNotebook(
+    _ notebookID: UUID,
+    title: String,
+    actor: UUID
+  ) -> Bool {
+    let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !normalized.isEmpty,
+      let index = notebooks.firstIndex(where: { $0.id == notebookID }),
+      notebooks[index].title != normalized,
+      let nextStamp = stamp.advanced(by: actor)
+    else { return false }
+    notebooks[index].title = normalized
+    stamp = nextStamp
+    return true
+  }
+
+  @discardableResult
+  public mutating func createNotebook(
+    title: String,
+    actor: UUID,
+    pageSize: PageSize,
+    notebookID: UUID = UUID(),
+    pageID: UUID = UUID()
+  ) -> (notebook: Notebook, page: PageDocument)? {
+    let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !normalized.isEmpty,
+      !notebooks.contains(where: { $0.id == notebookID }),
+      !notebooks.flatMap(\.pageIDs).contains(pageID),
+      let nextStamp = stamp.advanced(by: actor)
+    else { return nil }
+    let page = PageDocument(id: pageID, size: pageSize, actor: actor)
+    let notebook = Notebook(
+      id: notebookID,
+      title: normalized,
+      pageIDs: [pageID]
+    )
+    notebooks.append(notebook)
+    selectedNotebookID = notebookID
+    selectedPageID = pageID
+    stamp = nextStamp
+    return (notebook, page)
+  }
+
   var isValid: Bool {
     guard format == Self.formatVersion,
       !notebooks.isEmpty,
@@ -110,34 +174,6 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     guard direction > 0 else { return nil }
     let page = PageDocument(size: pageSize, actor: actor)
     notebooks[notebookIndex].pageIDs.append(page.id)
-    selectedPageID = page.id
-    stamp = nextStamp
-    return page
-  }
-
-  @discardableResult
-  public mutating func changeNotebook(
-    by direction: Int,
-    actor: UUID,
-    pageSize: PageSize
-  ) -> PageDocument? {
-    precondition(direction == -1 || direction == 1)
-    guard let nextStamp = stamp.advanced(by: actor) else { return nil }
-    let target = selectedNotebookIndex + direction
-    if target >= 0 && target < notebooks.count {
-      selectedNotebookID = notebooks[target].id
-      selectedPageID = notebooks[target].pageIDs[0]
-      stamp = nextStamp
-      return nil
-    }
-    guard direction > 0 else { return nil }
-    let page = PageDocument(size: pageSize, actor: actor)
-    let notebook = Notebook(
-      title: "Тетрадь \(notebooks.count + 1)",
-      pageIDs: [page.id]
-    )
-    notebooks.append(notebook)
-    selectedNotebookID = notebook.id
     selectedPageID = page.id
     stamp = nextStamp
     return page

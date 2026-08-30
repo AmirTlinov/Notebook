@@ -10,7 +10,7 @@ import {
   getDefaultEnvironment,
 } from "@modelcontextprotocol/client/stdio";
 
-import { appActor, pageID, writeFixture } from "./fixture.js";
+import { appActor, notebookID, pageID, writeFixture } from "./fixture.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const mcpRoot = join(here, "..");
@@ -31,17 +31,58 @@ try {
     listed.tools.map((tool) => tool.name).sort(),
     [
       "tetrad_context",
+      "tetrad_create_notebook",
+      "tetrad_move_nodes",
       "tetrad_put_markdown",
+      "tetrad_put_spatial_markdown",
+      "tetrad_put_spatial_web",
       "tetrad_put_web",
+      "tetrad_read_board",
+      "tetrad_read_notebook",
       "tetrad_read_page",
       "tetrad_remove_elements",
+      "tetrad_remove_spatial_elements",
+      "tetrad_rename_notebook",
       "tetrad_render_page",
+      "tetrad_render_view",
+      "tetrad_stack_nodes",
     ],
   );
 
   const context = await client.callTool({ name: "tetrad_context", arguments: {} });
   assert.equal(context.isError, undefined);
   assert.match(JSON.stringify(context.structuredContent), /Тетрадь 1/);
+
+  const currentView = await client.callTool({
+    name: "tetrad_render_view",
+    arguments: {},
+  });
+  assert.equal(currentView.isError, undefined);
+  assert.ok(currentView.content.some((block) => block.type === "image"));
+
+  const currentViewPath = join(storeRoot, "previews", "current-view.png");
+  const currentViewPNG = await readFile(currentViewPath);
+  await writeFile(currentViewPath, Buffer.from("updating"));
+  const mismatchedCurrentView = await client.callTool({
+    name: "tetrad_render_view",
+    arguments: {},
+  });
+  assert.equal(mismatchedCurrentView.isError, true);
+  assert.match(JSON.stringify(mismatchedCurrentView.content), /квитанция обновляются/);
+  await writeFile(currentViewPath, currentViewPNG);
+
+  const spatialChanged = await client.callTool({
+    name: "tetrad_put_spatial_markdown",
+    arguments: {
+      expected_revision: `0@${appActor}`,
+      surface: { kind: "cover", notebook_id: notebookID },
+      id: "cover-note",
+      frame: { x: 80, y: 360, width: 420, height: 180 },
+      markdown: "# На обложке",
+    },
+  });
+  assert.equal(spatialChanged.isError, undefined);
+  assert.match(JSON.stringify(spatialChanged.structuredContent), /cover-note/);
 
   const changed = await client.callTool({
     name: "tetrad_put_markdown",

@@ -13,13 +13,7 @@ struct TetradRootView: View {
         case .loading:
           Color.clear
         case .ready:
-          if let page = model.activePage {
-            PageSurface(
-              page: page,
-              onNavigate: navigate,
-              onUndo: model.undoLastDrawingAction
-            )
-          }
+          SpatialWorkspaceView()
         case .failed(let message):
           Text(message)
             .font(.footnote)
@@ -66,11 +60,4 @@ struct TetradRootView: View {
     .preferredColorScheme(.light)
   }
 
-  private func navigate(horizontal: Bool, direction: Int) {
-    if horizontal {
-      model.turnPage(direction)
-    } else {
-      model.changeNotebook(direction)
-    }
-  }
 }

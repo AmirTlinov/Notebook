@@ -9,15 +9,13 @@ struct PencilCanvasView: UIViewRepresentable {
   let penStyle: PenStyle
   let eraserStyle: EraserStyle
   let drawingTool: DrawingTool
-  let onNavigate: (_ horizontal: Bool, _ direction: Int) -> Void
-  let onUndo: () -> Void
+  let pageInputGate: PageInputGate
   let reserveAction: (UUID) -> VersionStamp?
   let commitAction: (Data, Data, UUID, VersionStamp) -> Data?
 
   func makeCoordinator() -> Coordinator {
     Coordinator(
-      onNavigate: onNavigate,
-      onUndo: onUndo,
+      pageInputGate: pageInputGate,
       reserveAction: reserveAction,
       commitAction: commitAction
     )
@@ -37,8 +35,7 @@ struct PencilCanvasView: UIViewRepresentable {
   }
 
   func updateUIView(_ paper: PaperCanvasContainerView, context: Context) {
-    context.coordinator.onNavigate = onNavigate
-    context.coordinator.onUndo = onUndo
+    context.coordinator.pageInputGate = pageInputGate
     context.coordinator.reserveAction = reserveAction
     context.coordinator.commitAction = commitAction
     context.coordinator.apply(
@@ -52,8 +49,7 @@ struct PencilCanvasView: UIViewRepresentable {
 
   @MainActor
   final class Coordinator: NSObject {
-    var onNavigate: (_ horizontal: Bool, _ direction: Int) -> Void
-    var onUndo: () -> Void
+    var pageInputGate: PageInputGate
     var reserveAction: (UUID) -> VersionStamp?
     var commitAction: (Data, Data, UUID, VersionStamp) -> Data?
 
@@ -63,19 +59,16 @@ struct PencilCanvasView: UIViewRepresentable {
     private var appliedPenStyle: PenStyle?
     private var appliedEraserStyle: EraserStyle?
     private var appliedDrawingTool: DrawingTool?
-    private var pageGestures: TwoFingerPageGestureController?
     private var serializationTails: [UUID: Task<Void, Never>] = [:]
     private var pendingLocalDeliveries: [UUID: Int] = [:]
     private var localDrawingData: [UUID: Data] = [:]
 
     init(
-      onNavigate: @escaping (_ horizontal: Bool, _ direction: Int) -> Void,
-      onUndo: @escaping () -> Void,
+      pageInputGate: PageInputGate,
       reserveAction: @escaping (UUID) -> VersionStamp?,
       commitAction: @escaping (Data, Data, UUID, VersionStamp) -> Data?
     ) {
-      self.onNavigate = onNavigate
-      self.onUndo = onUndo
+      self.pageInputGate = pageInputGate
       self.reserveAction = reserveAction
       self.commitAction = commitAction
     }
@@ -111,35 +104,15 @@ struct PencilCanvasView: UIViewRepresentable {
           )
         }
       }
-      let pageGestures = TwoFingerPageGestureController(
-        onNavigate: { [weak self, weak paper] horizontal, direction in
-          guard let self, let paper else { return }
-          paper.touchView.finishCurrentAction {
-            self.afterLocalDeliveries(on: self.pageID) {
-              self.onNavigate(horizontal, direction)
-            }
-          }
-        },
-        onUndo: { [weak self, weak paper] in
-          guard let self, let paper else { return }
-          paper.touchView.finishCurrentAction {
-            self.afterLocalDeliveries(on: self.pageID) {
-              self.onUndo()
-            }
-          }
-        }
-      )
-      paper.onWindowChange = { [weak pageGestures, weak paper] window in
-        guard let window, let paper else {
-          pageGestures?.uninstall()
+      pageInputGate.register { [weak self, weak paper] completion in
+        guard let self, let paper else {
+          completion()
           return
         }
-        pageGestures?.install(on: window, inside: paper)
+        paper.touchView.finishCurrentAction {
+          self.afterLocalDeliveries(on: self.pageID, perform: completion)
+        }
       }
-      if let window = paper.window {
-        pageGestures.install(on: window, inside: paper)
-      }
-      self.pageGestures = pageGestures
     }
 
     func apply(
@@ -250,8 +223,6 @@ struct PencilCanvasView: UIViewRepresentable {
 
 @MainActor
 final class PaperCanvasContainerView: UIView {
-  var onWindowChange: ((UIWindow?) -> Void)?
-
   let inkView = InkCanvasView(frame: .zero)
   let touchView = PaperInputView(frame: .zero)
 
@@ -295,11 +266,6 @@ final class PaperCanvasContainerView: UIView {
     super.layoutSubviews()
     inkView.frame = bounds
     touchView.frame = bounds
-  }
-
-  override func didMoveToWindow() {
-    super.didMoveToWindow()
-    onWindowChange?(window)
   }
 
   func apply(_ drawing: PKDrawing) {
@@ -485,6 +451,9 @@ final class PaperInputView: UIView {
       return pencil
     }
     #if targetEnvironment(simulator)
+      guard !ProcessInfo.processInfo.arguments.contains(
+        SimulatorDrawingFixture.fingerGestureArgument
+      ) else { return nil }
       return touches.first { $0.type == .direct }
     #else
       return nil
@@ -552,6 +521,9 @@ final class PaperInputView: UIView {
     if touch.type == .pencil { return true }
     #if targetEnvironment(simulator)
       return touch.type == .direct
+        && !ProcessInfo.processInfo.arguments.contains(
+          SimulatorDrawingFixture.fingerGestureArgument
+        )
     #else
       return false
     #endif

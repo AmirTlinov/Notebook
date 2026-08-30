@@ -2,6 +2,35 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testPinchClosesThePageOntoTheBoard() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--tetrad-drawing-responsiveness-fixture",
+      "--tetrad-simulator-finger-gestures",
+    ]
+    app.launch()
+
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 5))
+    paper.pinch(withScale: 0.28, velocity: -2)
+
+    XCTAssertTrue(
+      app.buttons["create-notebook"].waitForExistence(timeout: 5),
+      "После закрытия листа должна появиться бесконечная доска"
+    )
+
+    let notebook = app.descendants(matching: .any)[
+      "notebook-7e7a1000-0000-4000-8000-000000000002"
+    ]
+    XCTAssertTrue(notebook.waitForExistence(timeout: 3))
+    notebook.pinch(withScale: 4, velocity: 2)
+    XCTAssertTrue(
+      paper.waitForExistence(timeout: 5),
+      "Щипок над тетрадью должен снова открыть её лист"
+    )
+  }
+
   func testPenCommitsOneStrokeAndKeepsThePaperResponsive() {
     continueAfterFailure = false
     let app = XCUIApplication()

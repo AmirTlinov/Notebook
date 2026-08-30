@@ -2,6 +2,26 @@ import Foundation
 import Observation
 import TetradCore
 
+typealias PageInputCompletion = @MainActor @Sendable () -> Void
+typealias PageInputFinisher = (@escaping PageInputCompletion) -> Void
+
+@MainActor
+final class PageInputGate {
+  private var finisher: PageInputFinisher?
+
+  func register(_ finisher: @escaping PageInputFinisher) {
+    self.finisher = finisher
+  }
+
+  func perform(_ action: @escaping PageInputCompletion) {
+    if let finisher {
+      finisher(action)
+    } else {
+      action()
+    }
+  }
+}
+
 @MainActor
 @Observable
 final class TetradAppModel {
@@ -22,17 +42,24 @@ final class TetradAppModel {
   private(set) var loadState: LoadState = .loading
   private(set) var workspace: WorkspaceIndex?
   private(set) var pages: [UUID: PageDocument] = [:]
+  private(set) var board: BoardDocument?
+  private(set) var spatialInk: SpatialInkJournal?
+  private(set) var presence: SessionPresence?
   private(set) var actionCue: String?
   private(set) var penStyle: PenStyle
   private(set) var eraserStyle: EraserStyle
   private(set) var drawingTool: DrawingTool = .pen
+  private(set) var isTextToolSelected = false
+  private(set) var pendingTitleFocusID: UUID?
 
   let store: TetradStore
   let actorID: UUID
+  let pageInputGate = PageInputGate()
 
   private var pageSize = defaultPageSize
   private var started = false
   private var saveTasks: [UUID: Task<Void, Never>] = [:]
+  private var spatialInkSaveTask: Task<Void, Never>?
   private var cueTask: Task<Void, Never>?
   private var pencilUndoHistory = PencilUndoHistory()
   private var reservedDrawingCounters: [UUID: UInt64] = [:]
@@ -70,6 +97,14 @@ final class TetradAppModel {
     return pages[pageID]
   }
 
+  var activeNotebook: Notebook? {
+    workspace?.selectedNotebook
+  }
+
+  var isPageOpen: Bool {
+    presence?.mode == .page && (presence?.openProgress ?? 0) >= 0.999
+  }
+
   func start(pageSize: PageSize) {
     guard !started else { return }
     started = true
@@ -83,6 +118,21 @@ final class TetradAppModel {
       )
       workspace = stored.0
       pages = stored.1
+      board = try store.loadOrCreateBoard(
+        workspace: stored.0,
+        actor: actorID
+      )
+      spatialInk = try store.loadOrCreateSpatialInk(actor: actorID)
+      presence = initialPresence(
+        workspace: stored.0,
+        board: board,
+        viewport: pageSize
+      )
+      if let diskPresence = try? store.loadPresence(),
+        presenceIsUsable(diskPresence, workspace: stored.0)
+      {
+        presence = diskPresence
+      }
       loadState = .ready
       if startsNearbySync {
         sync.start()
@@ -111,23 +161,199 @@ final class TetradAppModel {
     showCue("Страница \(workspace.selectedPageIndex + 1)")
   }
 
-  func changeNotebook(_ direction: Int) {
-    guard var workspace else { return }
-    let created = workspace.changeNotebook(
-      by: direction,
+  @discardableResult
+  func createNotebook(at center: WorldPoint) -> UUID? {
+    guard var workspace, var board else { return nil }
+    let number = workspace.notebooks.count + 1
+    guard let created = workspace.createNotebook(
+      title: "Тетрадь \(number)",
       actor: actorID,
       pageSize: pageSize
-    )
-    guard workspace != self.workspace else { return }
-    if let created {
-      pages[created.id] = created
-      try? store.savePage(created)
-      sync.send(.page(created))
+    ), board.addNotebook(created.notebook.id, near: center, actor: actorID)
+    else { return nil }
+
+    do {
+      try store.saveWorkspaceBundle(
+        index: workspace,
+        page: created.page,
+        board: board
+      )
+    } catch {
+      showCue("Не удалось создать тетрадь")
+      return nil
     }
+
+    self.workspace = workspace
+    self.board = board
+    pages[created.page.id] = created.page
+    pendingTitleFocusID = created.notebook.id
+    sync.send(.page(created.page))
+    sync.send(.board(board))
+    sync.send(.index(workspace))
+    showCue("Новая тетрадь")
+    return created.notebook.id
+  }
+
+  func consumePendingTitleFocus(_ notebookID: UUID) {
+    guard pendingTitleFocusID == notebookID else { return }
+    pendingTitleFocusID = nil
+  }
+
+  func renameNotebook(_ notebookID: UUID, title: String) {
+    guard var workspace,
+      workspace.renameNotebook(notebookID, title: title, actor: actorID)
+    else { return }
     self.workspace = workspace
     try? store.saveIndex(workspace)
     sync.send(.index(workspace))
-    showCue(workspace.selectedNotebook.title)
+  }
+
+  func selectNotebook(_ notebookID: UUID) {
+    guard var workspace,
+      workspace.selectNotebook(notebookID, actor: actorID)
+    else { return }
+    self.workspace = workspace
+    try? store.saveIndex(workspace)
+    sync.send(.index(workspace))
+  }
+
+  func moveNotebook(_ notebookID: UUID, to center: WorldPoint) {
+    guard var board,
+      board.moveNotebook(notebookID, to: center, actor: actorID),
+      let workspace
+    else { return }
+    self.board = board
+    let notebookIDs = Set(workspace.notebooks.map(\.id))
+    try? store.saveBoard(board, notebookIDs: notebookIDs)
+    sync.send(.board(board))
+  }
+
+  @discardableResult
+  func stackNotebook(_ movingID: UUID, onto targetID: UUID) -> UUID? {
+    guard var board,
+      let stackID = board.createStack(
+        moving: movingID,
+        onto: targetID,
+        actor: actorID
+      ), let workspace
+    else { return nil }
+    self.board = board
+    try? store.saveBoard(
+      board,
+      notebookIDs: Set(workspace.notebooks.map(\.id))
+    )
+    sync.send(.board(board))
+    showCue("Стопка")
+    return stackID
+  }
+
+  func unstackNotebook(_ notebookID: UUID, at center: WorldPoint) {
+    guard var board,
+      board.unstackNotebook(notebookID, at: center, actor: actorID),
+      let workspace
+    else { return }
+    self.board = board
+    try? store.saveBoard(
+      board,
+      notebookIDs: Set(workspace.notebooks.map(\.id))
+    )
+    sync.send(.board(board))
+  }
+
+  func updatePresence(_ presence: SessionPresence, settled: Bool) {
+    guard presence.isValid else { return }
+    self.presence = presence
+    #if os(iOS)
+      sync.send(.presence(presence))
+      if settled { try? store.savePresence(presence) }
+    #else
+      if settled { try? store.savePresence(presence) }
+    #endif
+  }
+
+  func appendSpatialInk(
+    tool: SpatialInkTool,
+    color: SpatialInkColor,
+    spans: [SpatialInkSpan]
+  ) {
+    guard var journal = spatialInk,
+      journal.append(
+        tool: tool,
+        color: color,
+        spans: spans,
+        actor: actorID
+      ) != nil
+    else { return }
+    spatialInk = journal
+    sync.send(.spatialInk(journal))
+    scheduleSpatialInkSave()
+  }
+
+  func undoLastSurfaceAction() {
+    if isPageOpen {
+      undoLastDrawingAction()
+      return
+    }
+    guard var journal = spatialInk else { return }
+    let surface: SurfaceID? = presence?.focusedNotebookID.map(SurfaceID.cover)
+    guard journal.undoLast(actor: actorID, touching: surface) != nil
+      || (surface != nil && journal.undoLast(actor: actorID) != nil)
+    else { return }
+    spatialInk = journal
+    sync.send(.spatialInk(journal))
+    scheduleSpatialInkSave()
+    showCue("Отменено")
+  }
+
+  func afterPageInput(_ action: @escaping PageInputCompletion) {
+    pageInputGate.perform(action)
+  }
+
+  func addNativeText(on notebookID: UUID, at point: SpatialPoint) -> String? {
+    guard var board else { return nil }
+    let id = "text-\(UUID().uuidString.lowercased())"
+    let element = SpatialElement(
+      id: id,
+      surface: .cover(notebookID),
+      kind: .nativeText,
+      frame: SpatialRect(
+        x: point.x,
+        y: point.y,
+        width: 420,
+        height: 120
+      ),
+      source: "",
+      stamp: VersionStamp(counter: 0, actor: actorID)
+    )
+    guard board.upsertElement(element, expected: nil, actor: actorID) else {
+      return nil
+    }
+    persistBoard(board)
+    return id
+  }
+
+  func updateNativeText(elementID: String, text: String) {
+    guard var board,
+      let index = board.elements.firstIndex(where: { $0.id == elementID })
+    else { return }
+    var element = board.elements[index]
+    let expected = element.stamp
+    guard element.update(source: text, actor: actorID),
+      board.upsertElement(element, expected: expected, actor: actorID)
+    else { return }
+    persistBoard(board)
+  }
+
+  func commitSpatialElementState(elementID: String, state: JSONValue) {
+    guard var board,
+      let index = board.elements.firstIndex(where: { $0.id == elementID })
+    else { return }
+    var element = board.elements[index]
+    let expected = element.stamp
+    guard element.update(state: state, actor: actorID),
+      board.upsertElement(element, expected: expected, actor: actorID)
+    else { return }
+    persistBoard(board)
   }
 
   func reserveDrawingAction(pageID: UUID) -> VersionStamp? {
@@ -195,6 +421,7 @@ final class TetradAppModel {
   }
 
   func selectPenColor(_ color: PenColor) {
+    isTextToolSelected = false
     drawingTool = .pen
     guard color != penStyle.color else { return }
     penStyle = PenStyle(
@@ -206,6 +433,7 @@ final class TetradAppModel {
   }
 
   func selectPenWidth(_ width: Double) {
+    isTextToolSelected = false
     drawingTool = .pen
     let next = PenStyle(
       color: penStyle.color,
@@ -218,6 +446,7 @@ final class TetradAppModel {
   }
 
   func selectPenMinimumOpacity(_ minimumOpacity: Double) {
+    isTextToolSelected = false
     drawingTool = .pen
     let next = PenStyle(
       color: penStyle.color,
@@ -230,6 +459,7 @@ final class TetradAppModel {
   }
 
   func selectEraserWidth(_ maximumWidth: Double) {
+    isTextToolSelected = false
     drawingTool = .eraser
     let next = EraserStyle(maximumWidth: maximumWidth)
     guard next != eraserStyle else { return }
@@ -238,7 +468,12 @@ final class TetradAppModel {
   }
 
   func selectDrawingTool(_ tool: DrawingTool) {
+    isTextToolSelected = false
     drawingTool = tool
+  }
+
+  func selectTextTool() {
+    isTextToolSelected = true
   }
 
   func commitElementState(elementID: String, state: JSONValue) {
@@ -271,6 +506,27 @@ final class TetradAppModel {
       if workspace?.merge(diskIndex) == true {
         workspace = diskIndex
         sync.send(.index(diskIndex))
+      }
+      let notebookIDs = Set(diskIndex.notebooks.map(\.id))
+      let diskBoard = try store.loadBoard(notebookIDs: notebookIDs)
+      if var currentBoard = board {
+        if currentBoard.merge(diskBoard, notebookIDs: notebookIDs) {
+          board = currentBoard
+          sync.send(.board(currentBoard))
+        }
+      } else {
+        board = diskBoard
+        sync.send(.board(diskBoard))
+      }
+      let diskInk = try store.loadSpatialInk()
+      if var currentInk = spatialInk {
+        if currentInk.merge(diskInk) {
+          spatialInk = currentInk
+          sync.send(.spatialInk(currentInk))
+        }
+      } else {
+        spatialInk = diskInk
+        sync.send(.spatialInk(diskInk))
       }
       for notebook in diskIndex.notebooks {
         for pageID in notebook.pageIDs {
@@ -334,15 +590,51 @@ final class TetradAppModel {
         page.replaceElements(elements, stamp: stamp)
       else { return }
       persistMerged(page)
+    case .board(let incoming):
+      guard let workspace else { return }
+      let notebookIDs = Set(workspace.notebooks.map(\.id))
+      if var current = board {
+        guard current.merge(incoming, notebookIDs: notebookIDs) else { return }
+        board = (try? store.saveMergedBoard(
+          current,
+          notebookIDs: notebookIDs
+        )) ?? current
+      } else {
+        guard incoming.isValid(notebookIDs: notebookIDs) else { return }
+        board = incoming
+        try? store.saveBoard(incoming, notebookIDs: notebookIDs)
+      }
+    case .spatialInk(let incoming):
+      if var current = spatialInk {
+        guard current.merge(incoming) else { return }
+        spatialInk = (try? store.saveMergedSpatialInk(current)) ?? current
+      } else {
+        guard incoming.isValid else { return }
+        spatialInk = incoming
+        try? store.saveSpatialInk(incoming)
+      }
+    case .presence(let incoming):
+      #if os(macOS)
+        guard let workspace,
+          presenceIsUsable(incoming, workspace: workspace)
+        else { return }
+        presence = incoming
+        try? store.savePresence(incoming)
+      #endif
     }
   }
 
   private func sendSnapshot() {
     guard let workspace else { return }
-    sync.send(.index(workspace))
     for page in pages.values {
       sync.send(.page(page))
     }
+    if let board { sync.send(.board(board)) }
+    if let spatialInk { sync.send(.spatialInk(spatialInk)) }
+    sync.send(.index(workspace))
+    #if os(iOS)
+      if let presence { sync.send(.presence(presence)) }
+    #endif
   }
 
   private func scheduleSave(_ pageID: UUID) {
@@ -368,6 +660,38 @@ final class TetradAppModel {
     }
   }
 
+  private func scheduleSpatialInkSave() {
+    spatialInkSaveTask?.cancel()
+    let store = store
+    spatialInkSaveTask = Task { [weak self] in
+      guard !Task.isCancelled, let self, let journal = spatialInk else {
+        return
+      }
+      let resolved = await Task.detached(priority: .utility) {
+        try? store.saveMergedSpatialInk(journal)
+      }.value
+      guard !Task.isCancelled, let resolved else { return }
+      if var current = spatialInk {
+        _ = current.merge(resolved)
+        spatialInk = current
+      } else {
+        spatialInk = resolved
+      }
+      spatialInkSaveTask = nil
+    }
+  }
+
+  private func persistBoard(_ board: BoardDocument) {
+    guard let workspace else { return }
+    let notebookIDs = Set(workspace.notebooks.map(\.id))
+    let resolved = (try? store.saveMergedBoard(
+      board,
+      notebookIDs: notebookIDs
+    )) ?? board
+    self.board = resolved
+    sync.send(.board(resolved))
+  }
+
   @discardableResult
   private func persistMerged(_ page: PageDocument) -> PageDocument {
     let previousDrawingStamp = pages[page.id]?.drawingStamp
@@ -389,6 +713,44 @@ final class TetradAppModel {
       guard !Task.isCancelled else { return }
       self?.actionCue = nil
     }
+  }
+
+  private func initialPresence(
+    workspace: WorkspaceIndex,
+    board: BoardDocument?,
+    viewport: PageSize
+  ) -> SessionPresence {
+    let notebookID = workspace.selectedNotebookID
+    let center = board?.placement(of: notebookID)?.center
+      ?? board?.stack(containing: notebookID)?.center
+      ?? .zero
+    let fit = min(
+      viewport.width / NotebookGeometry.width,
+      viewport.height / NotebookGeometry.height
+    )
+    return SessionPresence(
+      mode: .page,
+      camera: SpatialCamera(center: center, scale: fit),
+      viewport: SpatialPoint(x: viewport.width, y: viewport.height),
+      focusedNotebookID: notebookID,
+      openProgress: 1
+    )
+  }
+
+  private func presenceIsUsable(
+    _ presence: SessionPresence,
+    workspace: WorkspaceIndex
+  ) -> Bool {
+    guard presence.isValid else { return false }
+    if let notebookID = presence.focusedNotebookID,
+      !workspace.notebooks.contains(where: { $0.id == notebookID })
+    {
+      return false
+    }
+    if presence.mode != .board,
+      presence.focusedNotebookID != workspace.selectedNotebookID
+    { return false }
+    return true
   }
 
   private static func loadActorID() -> UUID {

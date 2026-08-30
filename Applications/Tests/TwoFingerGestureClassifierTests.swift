@@ -14,7 +14,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
 
     XCTAssertEqual(
       decision,
-      TwoFingerNavigationDecision(horizontal: true, direction: 1)
+      TwoFingerNavigationDecision(direction: 1)
     )
   }
 
@@ -30,7 +30,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
 
     XCTAssertEqual(
       decision,
-      TwoFingerNavigationDecision(horizontal: true, direction: -1)
+      TwoFingerNavigationDecision(direction: -1)
     )
   }
 
@@ -46,11 +46,11 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
 
     XCTAssertEqual(
       decision,
-      TwoFingerNavigationDecision(horizontal: true, direction: 1)
+      TwoFingerNavigationDecision(direction: 1)
     )
   }
 
-  func testVerticalSwipeChangesNotebook() {
+  func testVerticalSwipeLeavesNotebookNavigationToTheBoard() {
     let decision = TwoFingerGestureClassifier.navigation(
       translation: CGPoint(x: 3, y: -52),
       velocity: CGPoint(x: 20, y: -280),
@@ -60,10 +60,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
       ]
     )
 
-    XCTAssertEqual(
-      decision,
-      TwoFingerNavigationDecision(horizontal: false, direction: 1)
-    )
+    XCTAssertNil(decision)
   }
 
   func testPinchDoesNotNavigate() {
@@ -92,18 +89,84 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
     )
   }
 
+  func testFastBoardSampleIsSplitAroundCrossedCover() {
+    let notebookID = UUID()
+    let intervals = SpatialSurfaceRouter.intervals(
+      from: CGPoint(x: 0, y: 50),
+      to: CGPoint(x: 300, y: 50),
+      covers: [
+        SpatialScreenSurface(
+          id: .cover(notebookID),
+          frame: CGRect(x: 100, y: 0, width: 100, height: 100),
+          zIndex: 1
+        )
+      ]
+    )
+
+    XCTAssertEqual(intervals.map(\.surface), [
+      .board,
+      .cover(notebookID),
+      .board,
+    ])
+    XCTAssertEqual(intervals[0].upperBound, 1.0 / 3.0, accuracy: 0.0001)
+    XCTAssertEqual(intervals[1].upperBound, 2.0 / 3.0, accuracy: 0.0001)
+  }
+
+  func testTopCoverOwnsAnOverlappingSegment() {
+    let lower = UUID()
+    let upper = UUID()
+    let intervals = SpatialSurfaceRouter.intervals(
+      from: CGPoint(x: 0, y: 50),
+      to: CGPoint(x: 300, y: 50),
+      covers: [
+        SpatialScreenSurface(
+          id: .cover(lower),
+          frame: CGRect(x: 50, y: 0, width: 200, height: 100),
+          zIndex: 1
+        ),
+        SpatialScreenSurface(
+          id: .cover(upper),
+          frame: CGRect(x: 125, y: 0, width: 50, height: 100),
+          zIndex: 2
+        ),
+      ]
+    )
+
+    XCTAssertTrue(intervals.contains { $0.surface == .cover(upper) })
+    XCTAssertEqual(
+      SpatialSurfaceRouter.surface(
+        at: CGPoint(x: 150, y: 50),
+        covers: [
+          SpatialScreenSurface(
+            id: .cover(lower),
+            frame: CGRect(x: 50, y: 0, width: 200, height: 100),
+            zIndex: 1
+          ),
+          SpatialScreenSurface(
+            id: .cover(upper),
+            frame: CGRect(x: 125, y: 0, width: 50, height: 100),
+            zIndex: 2
+          ),
+        ]
+      ),
+      .cover(upper)
+    )
+  }
+
   @MainActor
   func testOneRecognizerOwnsTheWholeTwoFingerSequence() {
     let host = UIView(frame: CGRect(x: 0, y: 0, width: 800, height: 1_100))
-    let paper = UIView(frame: host.bounds)
-    host.addSubview(paper)
-    let controller = TwoFingerPageGestureController(
-      onNavigate: { _, _ in },
+    let scene = UIView(frame: host.bounds)
+    host.addSubview(scene)
+    let controller = WorkspaceGestureLayer.Coordinator(
+      isPageOpen: true,
+      onCamera: { _ in },
+      onNavigate: { _ in },
       onUndo: {}
     )
 
-    controller.install(on: host, inside: paper)
-    controller.install(on: host, inside: paper)
+    controller.install(on: host, inside: scene)
+    controller.install(on: host, inside: scene)
 
     let paperRecognizers = (host.gestureRecognizers ?? []).compactMap {
       $0 as? TwoFingerPaperGestureRecognizer

@@ -2,6 +2,11 @@ import MetalKit
 import PencilKit
 import UIKit
 
+enum SpatialInkRenderLayer {
+  case ink(PKDrawing)
+  case eraseRect(CGRect)
+}
+
 struct VisibleInkStrokeRun {
   let points: [PKStrokePoint]
   let roundsStart: Bool
@@ -243,6 +248,26 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     committedBuffer = nil
     committedBatches.removeAll(keepingCapacity: true)
     committedStrokeCount = drawing.strokes.count
+    discardActiveAction()
+    requestFrame()
+  }
+
+  /// Rebuilds the ordered board/cover composite in this same Metal owner.
+  /// Erase rectangles hide ink belonging to surfaces behind an opaque cover.
+  func applySpatial(_ layers: [SpatialInkRenderLayer]) {
+    committedVertices.removeAll(keepingCapacity: true)
+    committedBuffer = nil
+    committedBatches.removeAll(keepingCapacity: true)
+    committedStrokeCount = 0
+
+    for layer in layers {
+      switch layer {
+      case .ink(let drawing):
+        appendCommitted(makeVertices(for: drawing), operation: .ink)
+      case .eraseRect(let rect):
+        appendCommitted(rectangleVertices(rect), operation: .erase)
+      }
+    }
     discardActiveAction()
     requestFrame()
   }
@@ -524,6 +549,31 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         )
       )
     }
+  }
+
+  private func rectangleVertices(_ rect: CGRect) -> [Vertex] {
+    guard !rect.isNull, !rect.isEmpty else { return [] }
+    let color = SIMD4<Float>(1, 1, 1, 1)
+    let topLeft = vertex(
+      at: SIMD2(Float(rect.minX), Float(rect.minY)),
+      color: color
+    )
+    let topRight = vertex(
+      at: SIMD2(Float(rect.maxX), Float(rect.minY)),
+      color: color
+    )
+    let bottomLeft = vertex(
+      at: SIMD2(Float(rect.minX), Float(rect.maxY)),
+      color: color
+    )
+    let bottomRight = vertex(
+      at: SIMD2(Float(rect.maxX), Float(rect.maxY)),
+      color: color
+    )
+    return [
+      topLeft, bottomLeft, topRight,
+      topRight, bottomLeft, bottomRight,
+    ]
   }
 
   private func makeBuffer(for vertices: [Vertex]) -> (any MTLBuffer)? {

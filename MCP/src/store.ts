@@ -5,8 +5,15 @@ import { dirname, join } from "node:path";
 
 import type {
   AgentElement,
+  BoardDocument,
+  CurrentViewReceipt,
   PageDocument,
   PageRect,
+  SessionPresence,
+  SpatialElement,
+  SpatialInkJournal,
+  VersionStamp,
+  WorldPoint,
   WorkspaceIndex,
 } from "./domain.js";
 import { revision } from "./domain.js";
@@ -14,6 +21,7 @@ import { revision } from "./domain.js";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAXIMUM_PAGE_DIMENSION = 2_048;
+const WORLD_TILE_SIZE = (132 / 2.54 / 2) * 256;
 
 export class StoreError extends Error {}
 export class ConflictError extends StoreError {}
@@ -32,6 +40,26 @@ export class TetradStore {
 
   get pagesPath(): string {
     return join(this.root, "pages");
+  }
+
+  get boardPath(): string {
+    return join(this.root, "board.json");
+  }
+
+  get spatialInkPath(): string {
+    return join(this.root, "spatial-ink.json");
+  }
+
+  get presencePath(): string {
+    return join(this.root, "last-context.json");
+  }
+
+  get currentViewPath(): string {
+    return join(this.root, "previews", "current-view.png");
+  }
+
+  get currentViewReceiptPath(): string {
+    return join(this.root, "previews", "current-view.revision");
   }
 
   pagePath(pageID: string): string {
@@ -64,6 +92,34 @@ export class TetradStore {
     return page;
   }
 
+  async readBoard(workspace?: WorkspaceIndex): Promise<BoardDocument> {
+    const resolvedWorkspace = workspace ?? await this.readWorkspace();
+    const board = await readJSON<unknown>(this.boardPath, "board");
+    validateBoard(board, resolvedWorkspace);
+    return board;
+  }
+
+  async readSpatialInk(): Promise<SpatialInkJournal> {
+    const journal = await readJSON<unknown>(this.spatialInkPath, "spatial ink");
+    validateSpatialInk(journal);
+    return journal;
+  }
+
+  async readPresence(): Promise<SessionPresence> {
+    const presence = await readJSON<unknown>(this.presencePath, "current context");
+    validatePresence(presence);
+    return presence;
+  }
+
+  async readCurrentViewReceipt(): Promise<CurrentViewReceipt> {
+    const receipt = await readJSON<unknown>(
+      this.currentViewReceiptPath,
+      "current view receipt",
+    );
+    validateCurrentViewReceipt(receipt);
+    return receipt;
+  }
+
   async readSelected(): Promise<{
     workspace: WorkspaceIndex;
     page: PageDocument;
@@ -71,6 +127,20 @@ export class TetradStore {
     const workspace = await this.readWorkspace();
     return {
       workspace,
+      page: await this.readPage(workspace.selectedPageID),
+    };
+  }
+
+  async readCurrent(): Promise<{
+    workspace: WorkspaceIndex;
+    presence: SessionPresence;
+    page: PageDocument;
+  }> {
+    const workspace = await this.readWorkspace();
+    const presence = await this.readPresence();
+    return {
+      workspace,
+      presence,
       page: await this.readPage(workspace.selectedPageID),
     };
   }
@@ -110,7 +180,7 @@ export class TetradStore {
     return this.serializeMutation(() => this.withMutationLock(async () => {
       const page = args.pageID
         ? await this.readPage(args.pageID)
-        : (await this.readSelected()).page;
+        : (await this.readCurrent()).page;
       const currentRevision = revision(page.agentStamp);
       if (args.expectedRevision !== currentRevision) {
         throw new ConflictError(
@@ -132,6 +202,113 @@ export class TetradStore {
       };
       await atomicJSON(this.pagePath(page.id), next);
       return next;
+    }));
+  }
+
+  async replaceBoard(args: {
+    expectedRevision: string;
+    transform: (
+      board: BoardDocument,
+      workspace: WorkspaceIndex,
+      actor: string,
+    ) => BoardDocument;
+  }): Promise<BoardDocument> {
+    return this.serializeMutation(() => this.withMutationLock(async () => {
+      const workspace = await this.readWorkspace();
+      const board = await this.readBoard(workspace);
+      assertExpectedRevision(args.expectedRevision, board.stamp, "Доска");
+      const actor = await this.readActorID();
+      const transformed = args.transform(structuredClone(board), workspace, actor);
+      if (JSON.stringify(transformed) === JSON.stringify(board)) return board;
+      transformed.stamp = advance(board.stamp, actor, "версии доски");
+      validateBoard(transformed, workspace);
+      await atomicJSON(this.boardPath, transformed);
+      return transformed;
+    }));
+  }
+
+  async renameNotebook(args: {
+    notebookID: string;
+    title: string;
+    expectedRevision: string;
+  }): Promise<WorkspaceIndex> {
+    return this.serializeMutation(() => this.withMutationLock(async () => {
+      const workspace = await this.readWorkspace();
+      assertExpectedRevision(args.expectedRevision, workspace.stamp, "Workspace");
+      const notebook = workspace.notebooks.find(
+        (candidate) => sameID(candidate.id, args.notebookID),
+      );
+      if (!notebook) throw new StoreError("Тетрадь не найдена.");
+      const title = args.title.trim();
+      if (!title) throw new StoreError("Название тетради должно быть непустым.");
+      if (notebook.title === title) return workspace;
+      const actor = await this.readActorID();
+      notebook.title = title;
+      workspace.stamp = advance(workspace.stamp, actor, "версии workspace");
+      validateWorkspace(workspace);
+      await atomicJSON(this.indexPath, workspace);
+      return workspace;
+    }));
+  }
+
+  async createNotebook(args: {
+    title: string;
+    center: WorldPoint;
+    expectedWorkspaceRevision: string;
+    expectedBoardRevision: string;
+  }): Promise<{
+    workspace: WorkspaceIndex;
+    board: BoardDocument;
+    page: PageDocument;
+    notebookID: string;
+  }> {
+    return this.serializeMutation(() => this.withMutationLock(async () => {
+      const workspace = await this.readWorkspace();
+      const board = await this.readBoard(workspace);
+      assertExpectedRevision(
+        args.expectedWorkspaceRevision,
+        workspace.stamp,
+        "Workspace",
+      );
+      assertExpectedRevision(args.expectedBoardRevision, board.stamp, "Доска");
+      validateWorldPoint(args.center, "center");
+      const title = args.title.trim();
+      if (!title) throw new StoreError("Название тетради должно быть непустым.");
+
+      const actor = await this.readActorID();
+      const notebookID = randomUUID();
+      const pageID = randomUUID();
+      const appPage = await this.readPage(workspace.selectedPageID);
+      const initialStamp: VersionStamp = { counter: 0, actor };
+      const page: PageDocument = {
+        format: 1,
+        id: pageID,
+        size: appPage.size,
+        drawingData: "",
+        drawingStamp: initialStamp,
+        elements: [],
+        agentStamp: initialStamp,
+      };
+      validatePage(page);
+
+      workspace.notebooks.push({ id: notebookID, title, pageIDs: [pageID] });
+      workspace.stamp = advance(workspace.stamp, actor, "версии workspace");
+
+      const boardStamp = advance(board.stamp, actor, "версии доски");
+      board.freeNotebooks.push({
+        notebookID,
+        center: args.center,
+        zIndex: highestZIndex(board) + 1,
+        stamp: boardStamp,
+      });
+      board.stamp = boardStamp;
+      validateWorkspace(workspace);
+      validateBoard(board, workspace);
+
+      await atomicJSON(this.pagePath(pageID), page);
+      await atomicJSON(this.boardPath, board);
+      await atomicJSON(this.indexPath, workspace);
+      return { workspace, board, page, notebookID };
     }));
   }
 
@@ -195,6 +372,33 @@ export function assertFrame(frame: PageRect, page: PageDocument): void {
       `Элемент должен лежать внутри листа ${page.size.width}x${page.size.height}.`,
     );
   }
+}
+
+export function assertSpatialFrame(
+  frame: PageRect,
+  surface: { kind: "board" | "cover" | "page" },
+): void {
+  for (const [name, value] of Object.entries(frame)) {
+    if (!Number.isFinite(value)) throw new StoreError(`frame.${name} должен быть числом.`);
+  }
+  if (frame.width <= 0 || frame.height <= 0) {
+    throw new StoreError("Ширина и высота элемента должны быть больше нуля.");
+  }
+  if (
+    surface.kind === "cover"
+    && (frame.x < 0 || frame.y < 0 || frame.x + frame.width > 834
+      || frame.y + frame.height > 1_194)
+  ) {
+    throw new StoreError("Элемент обложки должен лежать внутри 834x1194.");
+  }
+}
+
+export function nextVersionStamp(stamp: VersionStamp, actor: string): VersionStamp {
+  return advance(stamp, actor, "версии записи");
+}
+
+export function boardHighestZIndex(board: BoardDocument): number {
+  return highestZIndex(board);
 }
 
 function validateElements(elements: unknown, page: PageDocument): asserts elements is AgentElement[] {
@@ -295,6 +499,216 @@ function validateWorkspace(value: unknown): asserts value is WorkspaceIndex {
   }
 }
 
+function validateBoard(
+  value: unknown,
+  workspace: WorkspaceIndex,
+): asserts value is BoardDocument {
+  if (!isRecord(value) || value.format !== 1) {
+    throw new StoreError("Доска повреждена или имеет неизвестный формат.");
+  }
+  validateStamp(value.stamp, "board.stamp");
+  if (!Array.isArray(value.freeNotebooks) || !Array.isArray(value.stacks)
+    || !Array.isArray(value.elements)) {
+    throw new StoreError("Содержимое доски повреждено.");
+  }
+  const expectedNotebookIDs = new Set(
+    workspace.notebooks.map((notebook) => notebook.id.toLowerCase()),
+  );
+  const ownedNotebookIDs = new Set<string>();
+  for (const placement of value.freeNotebooks) {
+    if (!isRecord(placement) || typeof placement.notebookID !== "string") {
+      throw new StoreError("Размещение тетради повреждено.");
+    }
+    assertUUID(placement.notebookID, "placement.notebookID");
+    validateWorldPoint(placement.center, "placement.center");
+    validateZIndex(placement.zIndex, "placement.zIndex");
+    validateStamp(placement.stamp, "placement.stamp");
+    addOwnedNotebook(ownedNotebookIDs, placement.notebookID);
+  }
+  const stackIDs = new Set<string>();
+  for (const stack of value.stacks) {
+    if (!isRecord(stack) || typeof stack.id !== "string") {
+      throw new StoreError("Стопка повреждена.");
+    }
+    assertUUID(stack.id, "stack.id");
+    const stackID = stack.id.toLowerCase();
+    if (stackIDs.has(stackID)) throw new StoreError(`Повторяется stack.id: ${stack.id}`);
+    stackIDs.add(stackID);
+    validateWorldPoint(stack.center, "stack.center");
+    validateZIndex(stack.zIndex, "stack.zIndex");
+    validateStamp(stack.stamp, "stack.stamp");
+    if (!Array.isArray(stack.notebookIDs) || stack.notebookIDs.length < 2) {
+      throw new StoreError("В стопке должно быть хотя бы две тетради.");
+    }
+    for (const notebookID of stack.notebookIDs) {
+      if (typeof notebookID !== "string") throw new StoreError("notebookID стопки поврежден.");
+      assertUUID(notebookID, "stack.notebookID");
+      addOwnedNotebook(ownedNotebookIDs, notebookID);
+    }
+  }
+  if ([...expectedNotebookIDs].some((id) => !ownedNotebookIDs.has(id))) {
+    throw new StoreError("Каждая тетрадь должна принадлежать доске ровно один раз.");
+  }
+  validateSpatialElements(value.elements, ownedNotebookIDs);
+}
+
+function validateSpatialElements(
+  elements: unknown[],
+  notebookIDs: Set<string>,
+): asserts elements is SpatialElement[] {
+  const ids = new Set<string>();
+  for (const element of elements) {
+    if (!isRecord(element) || typeof element.id !== "string" || !element.id.trim()) {
+      throw new StoreError("Пространственный элемент поврежден.");
+    }
+    if (ids.has(element.id)) throw new StoreError(`Повторяется id элемента: ${element.id}`);
+    ids.add(element.id);
+    validateSurface(element.surface, "element.surface");
+    const surface = element.surface as unknown as { kind: "board" | "cover" | "page"; ownerID?: string };
+    if (surface.kind === "page") {
+      throw new StoreError("Листовые элементы должны храниться в файле листа.");
+    }
+    if (surface.kind === "cover" && !notebookIDs.has(surface.ownerID!.toLowerCase())) {
+      throw new StoreError("Элемент ссылается на неизвестную обложку.");
+    }
+    if (!isFrame(element.frame)) throw new StoreError(`frame элемента ${element.id} поврежден.`);
+    assertSpatialFrame(element.frame, surface);
+    if (surface.kind === "board") {
+      validateWorldPoint(element.worldOrigin, `worldOrigin элемента ${element.id}`);
+    } else if (element.worldOrigin !== undefined && element.worldOrigin !== null) {
+      throw new StoreError("Элемент обложки не должен иметь мировую позицию.");
+    }
+    if (element.kind !== "nativeText" && element.kind !== "markdown" && element.kind !== "web") {
+      throw new StoreError(`Неизвестный вид элемента: ${String(element.kind)}`);
+    }
+    for (const field of ["source", "html", "css", "javaScript"] as const) {
+      if (typeof element[field] !== "string") {
+        throw new StoreError(`${field} элемента ${element.id} поврежден.`);
+      }
+    }
+    if (!("state" in element) || !isJSONValue(element.state)) {
+      throw new StoreError(`state элемента ${element.id} поврежден.`);
+    }
+    validateTextStyle(element.textStyle, `textStyle элемента ${element.id}`);
+    validateStamp(element.stamp, `stamp элемента ${element.id}`);
+  }
+}
+
+function validateSpatialInk(value: unknown): asserts value is SpatialInkJournal {
+  if (!isRecord(value) || value.format !== 1 || !Array.isArray(value.actions)) {
+    throw new StoreError("Пространственные штрихи повреждены.");
+  }
+  validateStamp(value.stamp, "spatialInk.stamp");
+  const actionIDs = new Set<string>();
+  for (const action of value.actions) {
+    if (!isRecord(action) || typeof action.id !== "string") {
+      throw new StoreError("Действие Pencil повреждено.");
+    }
+    assertUUID(action.id, "spatialInk.action.id");
+    if (actionIDs.has(action.id.toLowerCase())) {
+      throw new StoreError(`Повторяется действие Pencil: ${action.id}`);
+    }
+    actionIDs.add(action.id.toLowerCase());
+    if (action.tool !== "pen" && action.tool !== "eraser") {
+      throw new StoreError("Инструмент пространственного штриха поврежден.");
+    }
+    validateRGB(action.color, "spatialInk.action.color");
+    validateStamp(action.stamp, "spatialInk.action.stamp");
+    validateStamp(action.stateStamp, "spatialInk.action.stateStamp");
+    if (typeof action.isActive !== "boolean" || !Array.isArray(action.spans)
+      || action.spans.length === 0) {
+      throw new StoreError("Состояние действия Pencil повреждено.");
+    }
+    for (const span of action.spans) validateSpatialInkSpan(span);
+  }
+}
+
+function validateSpatialInkSpan(value: unknown): void {
+  if (!isRecord(value)) throw new StoreError("Часть пространственного штриха повреждена.");
+  validateSurface(value.surface, "spatialInk.span.surface");
+  const surface = value.surface as unknown as { kind: string };
+  if (surface.kind === "page" || !Array.isArray(value.samples) || value.samples.length === 0) {
+    throw new StoreError("Часть пространственного штриха повреждена.");
+  }
+  for (const sample of value.samples) {
+    if (!isRecord(sample) || !isSpatialPoint(sample.point)) {
+      throw new StoreError("Замер Pencil поврежден.");
+    }
+    if (surface.kind === "board") validateWorldPoint(sample.worldPoint, "sample.worldPoint");
+    if (surface.kind === "cover" && sample.worldPoint !== undefined && sample.worldPoint !== null) {
+      throw new StoreError("Замер обложки не должен иметь мировую позицию.");
+    }
+    for (const name of ["timeOffset", "width", "opacity", "force", "azimuth", "altitude"] as const) {
+      if (typeof sample[name] !== "number" || !Number.isFinite(sample[name])) {
+        throw new StoreError(`sample.${name} поврежден.`);
+      }
+    }
+    const typedSample = sample as Record<
+      "timeOffset" | "width" | "opacity" | "force" | "azimuth" | "altitude",
+      number
+    >;
+    if (typedSample.timeOffset < 0 || typedSample.width <= 0 || typedSample.opacity < 0
+      || typedSample.opacity > 1 || typedSample.force < 0) {
+      throw new StoreError("Диапазон замера Pencil поврежден.");
+    }
+  }
+}
+
+function validatePresence(value: unknown): asserts value is SessionPresence {
+  if (!isRecord(value) || value.format !== 1) {
+    throw new StoreError("Текущий контекст поврежден.");
+  }
+  if (value.mode !== "board" && value.mode !== "cover" && value.mode !== "page") {
+    throw new StoreError("Режим текущего контекста поврежден.");
+  }
+  if (!isRecord(value.camera)) throw new StoreError("Камера повреждена.");
+  validateWorldPoint(value.camera.center, "camera.center");
+  if (typeof value.camera.scale !== "number" || !Number.isFinite(value.camera.scale)
+    || value.camera.scale < 0.055 || value.camera.scale > 4) {
+    throw new StoreError("Масштаб камеры поврежден.");
+  }
+  if (!isSpatialPoint(value.viewport) || value.viewport.x <= 0 || value.viewport.y <= 0) {
+    throw new StoreError("Размер области просмотра поврежден.");
+  }
+  validateOptionalUUID(value.focusedNotebookID, "focusedNotebookID");
+  validateOptionalUUID(value.focusedStackID, "focusedStackID");
+  if (typeof value.openProgress !== "number" || !Number.isFinite(value.openProgress)
+    || value.openProgress < 0 || value.openProgress > 1) {
+    throw new StoreError("Прогресс открытия поврежден.");
+  }
+  if (value.mode !== "board" && typeof value.focusedNotebookID !== "string") {
+    throw new StoreError("Обложка или лист должны указывать тетрадь.");
+  }
+}
+
+function validateCurrentViewReceipt(value: unknown): asserts value is CurrentViewReceipt {
+  if (!isRecord(value) || value.format !== 1) {
+    throw new StoreError("Квитанция текущего вида повреждена.");
+  }
+  validateStamp(value.workspaceStamp, "receipt.workspaceStamp");
+  validateStamp(value.boardStamp, "receipt.boardStamp");
+  validateStamp(value.spatialInkStamp, "receipt.spatialInkStamp");
+  validatePresence(value.presence);
+  if (!isSpatialPoint(value.renderViewport)
+    || value.renderViewport.x <= 0 || value.renderViewport.y <= 0) {
+    throw new StoreError("Размер текущего изображения поврежден.");
+  }
+  if (typeof value.pngSHA256 !== "string" || !/^[0-9a-f]{64}$/.test(value.pngSHA256)) {
+    throw new StoreError("Отпечаток текущего изображения поврежден.");
+  }
+  if (value.page !== undefined && value.page !== null) {
+    if (!isRecord(value.page) || typeof value.page.pageID !== "string") {
+      throw new StoreError("Квитанция листа повреждена.");
+    }
+    assertUUID(value.page.pageID, "receipt.page.pageID");
+    validateStamp(value.page.drawingStamp, "receipt.page.drawingStamp");
+    validateStamp(value.page.agentStamp, "receipt.page.agentStamp");
+  }
+  if (value.presence.mode === "page" && (value.page === undefined || value.page === null)) {
+    throw new StoreError("Квитанция открытого листа должна содержать его версию.");
+  }
+}
+
 function validateStamp(value: unknown, owner: string): void {
   if (!isRecord(value) || typeof value.actor !== "string") {
     throw new StoreError(`${owner} поврежден.`);
@@ -308,6 +722,124 @@ function validateStamp(value: unknown, owner: string): void {
   ) {
     throw new StoreError(`${owner}.counter поврежден.`);
   }
+}
+
+function assertExpectedRevision(
+  expected: string,
+  stamp: VersionStamp,
+  owner: string,
+): void {
+  const current = revision(stamp);
+  if (expected !== current) {
+    throw new ConflictError(
+      `${owner} изменилась: ожидалась версия ${expected}, сейчас ${current}. `
+        + "Сначала прочитайте её снова.",
+    );
+  }
+}
+
+function advance(stamp: VersionStamp, actor: string, owner: string): VersionStamp {
+  if (stamp.counter === Number.MAX_SAFE_INTEGER) {
+    throw new StoreError(`Счётчик ${owner} исчерпан.`);
+  }
+  return { counter: stamp.counter + 1, actor };
+}
+
+function highestZIndex(board: BoardDocument): number {
+  return Math.max(
+    0,
+    ...board.freeNotebooks.map((placement) => placement.zIndex),
+    ...board.stacks.map((stack) => stack.zIndex),
+  );
+}
+
+function validateWorldPoint(value: unknown, owner: string): asserts value is WorldPoint {
+  if (!isRecord(value)) throw new StoreError(`${owner} поврежден.`);
+  for (const name of ["tileX", "tileY"] as const) {
+    if (typeof value[name] !== "number" || !Number.isSafeInteger(value[name])) {
+      throw new StoreError(`${owner}.${name} поврежден.`);
+    }
+  }
+  for (const name of ["localX", "localY"] as const) {
+    if (typeof value[name] !== "number" || !Number.isFinite(value[name])
+      || value[name] < 0 || value[name] >= WORLD_TILE_SIZE) {
+      throw new StoreError(`${owner}.${name} должен лежать в пределах тайла.`);
+    }
+  }
+}
+
+function validateSurface(value: unknown, owner: string): void {
+  if (!isRecord(value)
+    || (value.kind !== "board" && value.kind !== "cover" && value.kind !== "page")) {
+    throw new StoreError(`${owner} поврежден.`);
+  }
+  if (value.kind === "board") {
+    if (value.ownerID !== undefined && value.ownerID !== null) {
+      throw new StoreError(`${owner} доски не должен иметь ownerID.`);
+    }
+  } else {
+    if (typeof value.ownerID !== "string") throw new StoreError(`${owner}.ownerID поврежден.`);
+    assertUUID(value.ownerID, `${owner}.ownerID`);
+  }
+}
+
+function validateTextStyle(value: unknown, owner: string): void {
+  if (!isRecord(value)) throw new StoreError(`${owner} поврежден.`);
+  for (const name of ["fontSize", "weight", "red", "green", "blue", "alpha"] as const) {
+    if (typeof value[name] !== "number" || !Number.isFinite(value[name])) {
+      throw new StoreError(`${owner}.${name} поврежден.`);
+    }
+  }
+  const style = value as Record<
+    "fontSize" | "weight" | "red" | "green" | "blue" | "alpha",
+    number
+  >;
+  if (style.fontSize < 8 || style.fontSize > 240 || style.weight < 0 || style.weight > 1
+    || [style.red, style.green, style.blue, style.alpha].some(
+      (component) => component < 0 || component > 1,
+    )) {
+    throw new StoreError(`${owner} содержит значение вне диапазона.`);
+  }
+}
+
+function validateRGB(value: unknown, owner: string): void {
+  if (!isRecord(value)) throw new StoreError(`${owner} поврежден.`);
+  for (const name of ["red", "green", "blue"] as const) {
+    if (typeof value[name] !== "number" || !Number.isFinite(value[name])
+      || value[name] < 0 || value[name] > 1) {
+      throw new StoreError(`${owner}.${name} поврежден.`);
+    }
+  }
+}
+
+function validateZIndex(value: unknown, owner: string): void {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new StoreError(`${owner} поврежден.`);
+  }
+}
+
+function validateOptionalUUID(value: unknown, owner: string): void {
+  if (value === undefined || value === null) return;
+  if (typeof value !== "string") throw new StoreError(`${owner} поврежден.`);
+  assertUUID(value, owner);
+}
+
+function addOwnedNotebook(ids: Set<string>, value: string): void {
+  const normalized = value.toLowerCase();
+  if (ids.has(normalized)) {
+    throw new StoreError(`Тетрадь ${value} принадлежит доске больше одного раза.`);
+  }
+  ids.add(normalized);
+}
+
+function isSpatialPoint(value: unknown): value is { x: number; y: number } {
+  return isRecord(value)
+    && typeof value.x === "number" && Number.isFinite(value.x)
+    && typeof value.y === "number" && Number.isFinite(value.y);
+}
+
+function sameID(first: string, second: string): boolean {
+  return first.toLowerCase() === second.toLowerCase();
 }
 
 function isFrame(value: unknown): value is PageRect {
