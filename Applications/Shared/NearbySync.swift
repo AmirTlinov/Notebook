@@ -1,9 +1,9 @@
 import Foundation
 import Network
 import OSLog
-import TetradCore
+import NotebookCore
 
-private typealias TetradWireProtocol = Coder<
+private typealias NotebookWireProtocol = Coder<
   WireMessage,
   WireMessage,
   NetworkJSONCoder
@@ -65,12 +65,12 @@ struct WireSendQueue {
 
 @MainActor
 private final class OrderedWireSender {
-  private let connection: NetworkConnection<TetradWireProtocol>
+  private let connection: NetworkConnection<NotebookWireProtocol>
   private var queue = WireSendQueue()
   private var drainTask: Task<Void, Never>?
   private var isStopped = false
 
-  init(connection: NetworkConnection<TetradWireProtocol>) {
+  init(connection: NetworkConnection<NotebookWireProtocol>) {
     self.connection = connection
   }
 
@@ -128,10 +128,10 @@ final class NearbySync {
   private var listenerTask: Task<Void, Never>?
   private var browserTask: Task<Void, Never>?
   private var endpointTasks: [String: Task<Void, Never>] = [:]
-  private var connections: [String: NetworkConnection<TetradWireProtocol>] = [:]
+  private var connections: [String: NetworkConnection<NotebookWireProtocol>] = [:]
   private var senders: [String: OrderedWireSender] = [:]
   private let logger = Logger(
-    subsystem: "com.amirtlinov.tetrad",
+    subsystem: "com.amirtlinov.notebook",
     category: "NearbySync"
   )
 
@@ -156,7 +156,7 @@ final class NearbySync {
       while !Task.isCancelled {
         do {
           let listener = try NetworkListener(
-            for: .bonjour(name: "mac-\(peerName)", type: "_tetrad._tcp"),
+            for: .bonjour(name: "mac-\(peerName)", type: "_notebook._tcp"),
             using: wireParameters()
           )
           .onStateUpdate { [logger] _, state in
@@ -185,7 +185,7 @@ final class NearbySync {
         parameters.includePeerToPeer = true
         parameters.acceptLocalOnly = true
         let browser = NetworkBrowser(
-          for: .bonjour("_tetrad._tcp"),
+          for: .bonjour("_notebook._tcp"),
           using: parameters
         )
         .onStateUpdate { [logger] _, state in
@@ -252,7 +252,7 @@ final class NearbySync {
     }
   }
 
-  private func accept(_ connection: NetworkConnection<TetradWireProtocol>) async {
+  private func accept(_ connection: NetworkConnection<NotebookWireProtocol>) async {
     let id = connection.id
     guard connections[id] == nil else { return }
     logger.info("Opening connection \(id, privacy: .public)")
@@ -272,7 +272,7 @@ final class NearbySync {
     if connections.isEmpty { onDisconnect?() }
   }
 
-  private func wireParameters() -> NWParametersBuilder<TetradWireProtocol> {
+  private func wireParameters() -> NWParametersBuilder<NotebookWireProtocol> {
     .parameters {
       Coder(WireMessage.self, using: .json) {
         TCP().noDelay(true).keepalive(

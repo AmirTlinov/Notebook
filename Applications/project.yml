@@ -1,4 +1,4 @@
-name: Tetrad
+name: Notebook
 
 options:
   minimumXcodeGenVersion: 2.46.0
@@ -8,7 +8,7 @@ options:
     macOS: "27.0"
 
 packages:
-  TetradCore:
+  NotebookCore:
     path: ..
 
 settings:
@@ -19,7 +19,7 @@ settings:
     CLANG_ENABLE_MODULES: true
 
 targets:
-  Tetrad:
+  Notebook:
     type: application
     platform: iOS
     sources:
@@ -27,18 +27,18 @@ targets:
       - path: iPad
       - path: Assets.xcassets
     dependencies:
-      - package: TetradCore
-        product: TetradCore
+      - package: NotebookCore
+        product: NotebookCore
     info:
       path: iPad/Info.plist
       properties:
-        CFBundleDisplayName: Тетрадь
+        CFBundleDisplayName: Notebook
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.productivity
-        NSLocalNetworkUsageDescription: Тетрадь показывает написанное на вашем Mac без облачного сервера.
+        NSLocalNetworkUsageDescription: Notebook показывает написанное на вашем Mac без облачного сервера.
         NSBonjourServices:
-          - _tetrad._tcp
+          - _notebook._tcp
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -47,8 +47,8 @@ targets:
           - UIInterfaceOrientationLandscapeRight
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.tetrad
-        PRODUCT_NAME: Tetrad
+        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook
+        PRODUCT_NAME: Notebook
         MARKETING_VERSION: 0.1.0
         CURRENT_PROJECT_VERSION: 1
         CODE_SIGN_STYLE: Automatic
@@ -61,42 +61,42 @@ targets:
     scheme:
       gatherCoverageData: false
       testTargets:
-        - TetradTests
-        - TetradUITests
+        - NotebookTests
+        - NotebookUITests
 
-  TetradTests:
+  NotebookTests:
     type: bundle.unit-test
     platform: iOS
     deploymentTarget: "27.0"
     sources:
       - path: Tests
     dependencies:
-      - target: Tetrad
+      - target: Notebook
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.tetrad.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook.tests
         GENERATE_INFOPLIST_FILE: true
         TARGETED_DEVICE_FAMILY: 2
 
-  TetradUITests:
+  NotebookUITests:
     type: bundle.ui-testing
     platform: iOS
     deploymentTarget: "27.0"
     sources:
       - path: UITests
     dependencies:
-      - target: Tetrad
+      - target: Notebook
     info:
       path: UITests/Info.plist
       properties: {}
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.tetrad.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook.uitests
         GENERATE_INFOPLIST_FILE: false
-        TEST_TARGET_NAME: Tetrad
+        TEST_TARGET_NAME: Notebook
         TARGETED_DEVICE_FAMILY: 2
 
-  TetradMac:
+  NotebookMac:
     type: application
     platform: macOS
     sources:
@@ -104,22 +104,22 @@ targets:
       - path: Mac
       - path: Assets.xcassets
     dependencies:
-      - package: TetradCore
-        product: TetradCore
+      - package: NotebookCore
+        product: NotebookCore
     info:
       path: Mac/Info.plist
       properties:
-        CFBundleDisplayName: Тетрадь
+        CFBundleDisplayName: Notebook
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.productivity
-        NSLocalNetworkUsageDescription: Тетрадь принимает страницы с вашего iPad без облачного сервера.
+        NSLocalNetworkUsageDescription: Notebook принимает страницы с вашего iPad без облачного сервера.
         NSBonjourServices:
-          - _tetrad._tcp
+          - _notebook._tcp
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.tetrad.mac
-        PRODUCT_NAME: Tetrad
+        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook.mac
+        PRODUCT_NAME: Notebook
         MARKETING_VERSION: 0.1.0
         CURRENT_PROJECT_VERSION: 1
         CODE_SIGN_STYLE: Automatic

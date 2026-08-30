@@ -1,7 +1,8 @@
 import Foundation
 
-public struct TetradStore: Sendable {
+public struct NotebookStore: Sendable {
   private static let lockName = ".mutation-lock"
+  private static let legacyDirectoryName = "Tetrad"
 
   public let root: URL
 
@@ -10,10 +11,21 @@ public struct TetradStore: Sendable {
   }
 
   public static var defaultRoot: URL {
+    applicationSupportRoot.appendingPathComponent("Notebook", isDirectory: true)
+  }
+
+  private static var applicationSupportRoot: URL {
     FileManager.default.urls(
       for: .applicationSupportDirectory,
       in: .userDomainMask
-    )[0].appendingPathComponent("Tetrad", isDirectory: true)
+    )[0]
+  }
+
+  private static var legacyDefaultRoot: URL {
+    applicationSupportRoot.appendingPathComponent(
+      legacyDirectoryName,
+      isDirectory: true
+    )
   }
 
   public var indexURL: URL {
@@ -61,6 +73,12 @@ public struct TetradStore: Sendable {
   }
 
   public func prepare() throws {
+    if root.standardizedFileURL == Self.defaultRoot.standardizedFileURL {
+      try Self.migrateLegacyStore(
+        from: Self.legacyDefaultRoot,
+        to: root
+      )
+    }
     try FileManager.default.createDirectory(
       at: pagesURL,
       withIntermediateDirectories: true
@@ -69,6 +87,27 @@ public struct TetradStore: Sendable {
       at: previewsURL,
       withIntermediateDirectories: true
     )
+  }
+
+  static func migrateLegacyStore(
+    from legacyRoot: URL,
+    to currentRoot: URL,
+    fileManager: FileManager = .default
+  ) throws {
+    guard
+      !fileManager.fileExists(atPath: currentRoot.path),
+      fileManager.fileExists(atPath: legacyRoot.path)
+    else { return }
+
+    try fileManager.createDirectory(
+      at: currentRoot.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    do {
+      try fileManager.moveItem(at: legacyRoot, to: currentRoot)
+    } catch {
+      guard fileManager.fileExists(atPath: currentRoot.path) else { throw error }
+    }
   }
 
   public func loadOrCreate(

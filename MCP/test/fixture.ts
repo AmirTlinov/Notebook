@@ -22,7 +22,7 @@ export async function writeFixture(root: string): Promise<void> {
   );
   const workspace: WorkspaceIndex = {
     format: 1,
-    notebooks: [{ id: notebookID, title: "Тетрадь 1", pageIDs: [pageID] }],
+    notebooks: [{ id: notebookID, title: "Notebook 1", pageIDs: [pageID] }],
     selectedNotebookID: notebookID,
     selectedPageID: pageID,
     stamp: { counter: 0, actor: appActor },

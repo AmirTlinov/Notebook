@@ -1,5 +1,5 @@
 import SwiftUI
-import TetradCore
+import NotebookCore
 
 enum DrawingTool: Sendable {
   case pen

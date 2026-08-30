@@ -3,16 +3,16 @@
 import PackageDescription
 
 let package = Package(
-  name: "Tetrad",
+  name: "Notebook",
   platforms: [
     .iOS(.v27),
     .macOS(.v27),
   ],
   products: [
-    .library(name: "TetradCore", targets: ["TetradCore"]),
+    .library(name: "NotebookCore", targets: ["NotebookCore"]),
   ],
   targets: [
-    .target(name: "TetradCore"),
-    .testTarget(name: "TetradCoreTests", dependencies: ["TetradCore"]),
+    .target(name: "NotebookCore"),
+    .testTarget(name: "NotebookCoreTests", dependencies: ["NotebookCore"]),
   ]
 )

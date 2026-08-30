@@ -1,12 +1,12 @@
 {
-  "name": "tetrad-mcp",
+  "name": "notebook-mcp",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=20"
   },
-  "description": "Local MCP tools for the Tetrad page store.",
+  "description": "Local MCP tools for the Notebook page store.",
   "scripts": {
     "check": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",

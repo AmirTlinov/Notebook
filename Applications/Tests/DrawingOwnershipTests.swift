@@ -1,7 +1,7 @@
 import PencilKit
-import TetradCore
+import NotebookCore
 import XCTest
-@testable import Tetrad
+@testable import Notebook
 
 final class DrawingOwnershipTests: XCTestCase {
   @MainActor
@@ -41,8 +41,8 @@ final class DrawingOwnershipTests: XCTestCase {
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
 
-    let store = TetradStore(root: root)
-    let model = TetradAppModel(store: store, startsNearbySync: false)
+    let store = NotebookStore(root: root)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
     model.start(pageSize: PageSize(width: 834, height: 1_194))
     let pageID = try XCTUnwrap(model.activePage?.id)
     let localStamp = try XCTUnwrap(model.reserveDrawingAction(pageID: pageID))

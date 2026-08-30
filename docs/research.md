@@ -15,15 +15,15 @@
 | Чистое касание бумаги | [UIKit: Handling touches in your view](https://developer.apple.com/documentation/uikit/handling-touches-in-your-view) | Обычный `UIView` различает прямое касание и Pencil | Верхний `PaperInputView` забирает касания; один палец заканчивается пустым действием, два идут жестам, Pencil идёт ручке; под ним находится неинтерактивный `InkCanvasView` без текстового меню |
 | Цвет бумаги | [`NSAppearance.performAsCurrentDrawingAppearance`](https://developer.apple.com/documentation/appkit/nsappearance/performascurrentdrawingappearance(_:)) | Рендер можно выполнить в явно выбранной светлой теме | `PaperInkRenderer` одинаково сохраняет тёмные чернила в окне Mac и в PNG для агента |
 | Точный текущий вид | [SwiftUI `ImageRenderer`](https://developer.apple.com/documentation/swiftui/imagerenderer) | SwiftUI-сцену можно вывести в платформенное изображение с заданным размером | Mac пишет `current-view.png` только для завершённой сцены и после схлопывания близких изменений; MCP сверяет версии всех владельцев и SHA-256 самих PNG-байтов перед выдачей картинки |
-| Прямая связь iPad и Mac | [Network.framework](https://developer.apple.com/documentation/technotes/tn3151-choosing-the-right-networking-api) | Network — основной API Apple для TCP, Bonjour и peer-to-peer Wi-Fi | Mac публикует `_tetrad._tcp`, iPad ищет сервис и открывает двусторонний канал |
+| Прямая связь iPad и Mac | [Network.framework](https://developer.apple.com/documentation/technotes/tn3151-choosing-the-right-networking-api) | Network — основной API Apple для TCP, Bonjour и peer-to-peer Wi-Fi | Mac публикует `_notebook._tcp`, iPad ищет сервис и открывает двусторонний канал |
 | Типизированные сообщения | [WWDC25: structured concurrency with Network](https://developer.apple.com/videos/play/wwdc2025/250/) | `Coder` кадрирует `Codable`-сообщения для `NetworkConnection` | `OrderedWireSender` передаёт `WireMessage` по порядку; активные кадры камеры и ожидающие полные рисунки схлопываются, а завершённая камера остаётся границей состояния |
 | Только ближайший канал | [`localOnly(true)`](https://developer.apple.com/documentation/network/nwparametersprovider/localonly%28_%3A%29) | Listener рекламируется и принимает соединения только на local link | Тетрадь не создаёт доступный из интернета сервер |
-| Интерактивный ответ агента | [`WKScriptMessageHandler`](https://developer.apple.com/documentation/webkit/wkscriptmessagehandler) | JavaScript посылает структурированное сообщение нативному обработчику | `window.tetrad.commit(value)` сохраняет состояние кнопок и схем |
+| Интерактивный ответ агента | [`WKScriptMessageHandler`](https://developer.apple.com/documentation/webkit/wkscriptmessagehandler) | JavaScript посылает структурированное сообщение нативному обработчику | `window.notebook.commit(value)` сохраняет состояние кнопок и схем |
 | Инструменты для ИИ-агента | [MCP TypeScript SDK v2](https://ts.sdk.modelcontextprotocol.io/v2/) | Стабильная ветка v2 реализует спецификацию 2026-07-28 и stdio transport | `McpServer` публикует 16 операций над текущим видом, тетрадями, доской, стопками, листами и прозрачными элементами; `serveStdio` владеет каналом |
 
 Apple пометила Multipeer Connectivity устаревшим в 2026 году и прямо
 рекомендует Network.framework для нового peer-to-peer кода. Поэтому
-`Тетрадь` не строит новый слой поверх Multipeer Connectivity. Новый Swift API
+`Notebook` не строит новый слой поверх Multipeer Connectivity. Новый Swift API
 `NetworkConnection`, `NetworkListener` и `NetworkBrowser` появился в 2025
 году, работает со structured concurrency и является самым прямым системным
 маршрутом для этого приложения.
@@ -226,7 +226,7 @@ PageDocument
 
 Два штампа — это не лишняя история. Они различают два одновременных факта:
 человек дописал линию, а агент в тот же момент изменил схему. При сохранении
-`TetradStore.saveMergedPage` берёт самый новый штамп каждого потока отдельно.
+`NotebookStore.saveMergedPage` берёт самый новый штамп каждого потока отдельно.
 Общий directory-lock делает одно чтение, слияние и атомарную замену файла
 неделимой операцией для Swift-приложения и Node MCP.
 

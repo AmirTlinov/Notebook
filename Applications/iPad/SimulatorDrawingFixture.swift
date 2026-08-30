@@ -1,31 +1,31 @@
 #if DEBUG && targetEnvironment(simulator)
   import Foundation
   import PencilKit
-  import TetradCore
+  import NotebookCore
 
   @MainActor
   enum SimulatorDrawingFixture {
-    static let launchArgument = "--tetrad-drawing-responsiveness-fixture"
-    static let fingerGestureArgument = "--tetrad-simulator-finger-gestures"
+    static let launchArgument = "--notebook-drawing-responsiveness-fixture"
+    static let fingerGestureArgument = "--notebook-simulator-finger-gestures"
 
     static var isRequested: Bool {
       ProcessInfo.processInfo.arguments.contains(launchArgument)
     }
 
-    static func makeModel() -> TetradAppModel {
+    static func makeModel() -> NotebookAppModel {
       let fileManager = FileManager.default
       let fixtureName = ProcessInfo.processInfo.arguments.contains(
         fingerGestureArgument
       ) ? "SpatialTransition" : "DrawingResponsiveness"
       let root = fileManager.temporaryDirectory
-        .appendingPathComponent("TetradUITests", isDirectory: true)
+        .appendingPathComponent("NotebookUITests", isDirectory: true)
         .appendingPathComponent(fixtureName, isDirectory: true)
       do {
         if fileManager.fileExists(atPath: root.path) {
           try fileManager.removeItem(at: root)
         }
 
-        let store = TetradStore(root: root)
+        let store = NotebookStore(root: root)
         let actor = UUID(
           uuidString: "7E7A1000-0000-4000-8000-000000000001"
         )!
@@ -35,7 +35,7 @@
         let pageID = UUID(
           uuidString: "7E7A1000-0000-4000-8000-000000000003"
         )!
-        let size = TetradAppModel.defaultPageSize
+        let size = NotebookAppModel.defaultPageSize
         let initial = WorkspaceIndex.initial(
           actor: actor,
           pageSize: size,
@@ -50,7 +50,7 @@
         )
         try store.savePage(page)
         try store.saveIndex(initial.index)
-        return TetradAppModel(store: store, startsNearbySync: false)
+        return NotebookAppModel(store: store, startsNearbySync: false)
       } catch {
         fatalError("Не удалось создать лист проверки инструментов: \(error)")
       }

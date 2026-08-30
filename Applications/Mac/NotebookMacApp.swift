@@ -1,8 +1,8 @@
 import SwiftUI
 
 @main
-struct TetradMacApp: App {
-  @State private var model = TetradAppModel()
+struct NotebookMacApp: App {
+  @State private var model = NotebookAppModel()
 
   var body: some Scene {
     WindowGroup {

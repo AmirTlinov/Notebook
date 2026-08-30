@@ -9,18 +9,19 @@ import { revision } from "../src/domain.js";
 import {
   ConflictError,
   StoreError,
-  TetradStore,
+  NotebookStore,
+  migrateLegacyStore,
   nextVersionStamp,
 } from "../src/store.js";
 import { appActor, notebookID, pageID, writeFixture } from "./fixture.js";
 
 async function withStore(
-  body: (store: TetradStore, root: string) => Promise<void>,
+  body: (store: NotebookStore, root: string) => Promise<void>,
 ): Promise<void> {
-  const root = await mkdtemp(join(tmpdir(), "tetrad-mcp-"));
+  const root = await mkdtemp(join(tmpdir(), "notebook-mcp-"));
   try {
     await writeFixture(root);
-    await body(new TetradStore(root), root);
+    await body(new NotebookStore(root), root);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -32,6 +33,22 @@ test("reads the page selected by the native workspace", async () => {
     assert.equal(selected.page.id, pageID);
     assert.equal(revision(selected.page.agentStamp), `0@${appActor}`);
   });
+});
+
+test("moves the legacy local store to Notebook once", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "notebook-migration-"));
+  const legacyRoot = join(parent, "Tetrad");
+  const currentRoot = join(parent, "Notebook");
+  try {
+    await writeFixture(legacyRoot);
+
+    migrateLegacyStore(legacyRoot, currentRoot);
+
+    assert.equal(await readFile(join(currentRoot, "workspace.json"), "utf8") !== "", true);
+    await assert.rejects(readFile(join(legacyRoot, "workspace.json"), "utf8"));
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
 });
 
 test("reads one-owner board, spatial ink, and current presence", async () => {

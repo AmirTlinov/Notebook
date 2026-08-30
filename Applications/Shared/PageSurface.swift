@@ -1,8 +1,8 @@
 import SwiftUI
-import TetradCore
+import NotebookCore
 
 struct PageSurface: View {
-  @Environment(TetradAppModel.self) private var model
+  @Environment(NotebookAppModel.self) private var model
 
   let page: PageDocument
   let isInteractive: Bool

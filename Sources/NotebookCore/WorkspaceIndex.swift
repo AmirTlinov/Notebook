@@ -45,7 +45,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
   ) -> (index: Self, page: PageDocument) {
     let notebook = Notebook(
       id: notebookID,
-      title: "Тетрадь 1",
+      title: "Notebook 1",
       pageIDs: [pageID]
     )
     return (

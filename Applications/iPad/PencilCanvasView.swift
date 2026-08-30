@@ -1,6 +1,6 @@
 import PencilKit
 import SwiftUI
-import TetradCore
+import NotebookCore
 import UIKit
 
 struct PencilCanvasView: UIViewRepresentable {

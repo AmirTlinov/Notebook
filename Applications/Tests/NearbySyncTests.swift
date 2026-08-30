@@ -1,6 +1,6 @@
-import TetradCore
+import NotebookCore
 import XCTest
-@testable import Tetrad
+@testable import Notebook
 
 final class NearbySyncTests: XCTestCase {
   func testAnEmptySendQueueExposesNoMessages() {

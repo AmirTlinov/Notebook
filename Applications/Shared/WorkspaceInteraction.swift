@@ -1,6 +1,6 @@
 import CoreGraphics
 import Foundation
-import TetradCore
+import NotebookCore
 
 enum WorkspaceMagnificationPhase: Equatable {
   case began(centroid: CGPoint, mayOpenNotebook: Bool)

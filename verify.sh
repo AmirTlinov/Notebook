@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
-DERIVED=$(mktemp -d "${TMPDIR:-/tmp}/tetrad-derived.XXXXXX")
+DERIVED=$(mktemp -d "${TMPDIR:-/tmp}/notebook-derived.XXXXXX")
 SIMULATOR_ID=""
 SHUTDOWN_SIMULATOR=false
 
@@ -41,22 +41,22 @@ if [[ "$ERASER_MUTATION_COUNT" != 1 ]]; then
   exit 1
 fi
 
-ERASER_APP="$DERIVED/TetradEraserProof.app"
+ERASER_APP="$DERIVED/NotebookEraserProof.app"
 mkdir -p "$ERASER_APP/Contents/MacOS"
 xcrun swiftc \
   "$ROOT/Tests/PencilKitIntegration/EraserPathProof.swift" \
-  -o "$ERASER_APP/Contents/MacOS/TetradEraserProof"
+  -o "$ERASER_APP/Contents/MacOS/NotebookEraserProof"
 plutil -create xml1 "$ERASER_APP/Contents/Info.plist"
 plutil -insert CFBundleIdentifier \
-  -string com.amirtlinov.tetrad.eraser-proof \
+  -string com.amirtlinov.notebook.eraser-proof \
   "$ERASER_APP/Contents/Info.plist"
 plutil -insert CFBundleExecutable \
-  -string TetradEraserProof \
+  -string NotebookEraserProof \
   "$ERASER_APP/Contents/Info.plist"
 plutil -insert CFBundlePackageType \
   -string APPL \
   "$ERASER_APP/Contents/Info.plist"
-"$ERASER_APP/Contents/MacOS/TetradEraserProof"
+"$ERASER_APP/Contents/MacOS/NotebookEraserProof"
 
 cd "$ROOT/MCP"
 npm ci --ignore-scripts
@@ -68,8 +68,8 @@ cd "$ROOT/Applications"
 xcodegen generate --spec project.yml
 xcodebuild \
   -quiet \
-  -project Tetrad.xcodeproj \
-  -scheme TetradMac \
+  -project Notebook.xcodeproj \
+  -scheme NotebookMac \
   -configuration Debug \
   -destination 'generic/platform=macOS' \
   -derivedDataPath "$DERIVED/mac" \
@@ -77,8 +77,8 @@ xcodebuild \
   build
 xcodebuild \
   -quiet \
-  -project Tetrad.xcodeproj \
-  -scheme Tetrad \
+  -project Notebook.xcodeproj \
+  -scheme Notebook \
   -configuration Debug \
   -destination 'generic/platform=iOS Simulator' \
   -derivedDataPath "$DERIVED/ipad" \
@@ -115,19 +115,19 @@ fi
 
 xcodebuild \
   -quiet \
-  -project Tetrad.xcodeproj \
-  -scheme Tetrad \
+  -project Notebook.xcodeproj \
+  -scheme Notebook \
   -configuration Debug \
   -collect-test-diagnostics never \
   -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
   -derivedDataPath "$DERIVED/ipad-tests" \
   test \
-  -only-testing:TetradTests \
-  -only-testing:TetradUITests/DrawingResponsivenessTests
+  -only-testing:NotebookTests \
+  -only-testing:NotebookUITests/DrawingResponsivenessTests
 
 APP_CONTAINER=$(xcrun simctl get_app_container \
-  "$SIMULATOR_ID" com.amirtlinov.tetrad data)
-python3 - "$APP_CONTAINER/tmp/TetradUITests/DrawingResponsiveness/pages" <<'PY'
+  "$SIMULATOR_ID" com.amirtlinov.notebook data)
+python3 - "$APP_CONTAINER/tmp/NotebookUITests/DrawingResponsiveness/pages" <<'PY'
 import json
 import pathlib
 import sys
@@ -141,4 +141,4 @@ if counter != 1:
     raise SystemExit(f"Одно движение должно сохраниться один раз, получено: {counter}")
 PY
 
-printf '\nТетрадь проверена: Swift, локальные инструменты, MCP, macOS, iPadOS и отзывчивость Simulator прошли.\n'
+printf '\nNotebook проверен: Swift, локальные инструменты, MCP, macOS, iPadOS и отзывчивость Simulator прошли.\n'

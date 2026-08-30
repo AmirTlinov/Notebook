@@ -1,6 +1,6 @@
-# Тетрадь
+# Notebook
 
-`Тетрадь` превращает iPad в лист бумаги и раскрывает этот лист в бесконечную
+`Notebook` превращает iPad в лист бумаги и раскрывает этот лист в бесконечную
 доску. Открытая тетрадь занимает весь экран. Щипок внутрь постепенно закрывает
 её: движение пальцев напрямую управляет размером листа и поворотом обложки.
 Дальше видна доска с тетрадями, стопками, рисунками и элементами агента. Обратный
@@ -88,7 +88,7 @@ Apple Pencil -> Metal -> документ -> Network.framework -> Mac -> фай�
 
 iPad находит Mac через Bonjour и передаёт изменения напрямую по локальному
 каналу Network.framework. Mac показывает ту же сцену, следит за атомарными
-файлами в `~/Library/Application Support/Tetrad` и создаёт два вида PNG:
+файлами в `~/Library/Application Support/Notebook` и создаёт два вида PNG:
 изображение каждого листа и точное изображение текущей сцены. Рядом с текущим
 PNG лежит квитанция версий камеры, доски, чернил и листа вместе с SHA-256 самой
 картинки. MCP возвращает её только тогда, когда версии и отпечаток совпадают с
@@ -119,12 +119,12 @@ Mac больше не требует перезапуска приложения
 Нужны Xcode 27, XcodeGen 2.46 или новее и iPadOS/macOS 27.
 
 ```bash
-cd /Users/amir/Documents/projects/Tetrad/Applications
+cd /Users/amir/Documents/projects/Notebook/Applications
 xcodegen generate
-open Tetrad.xcodeproj
+open Notebook.xcodeproj
 ```
 
-В Xcode сначала запустите `TetradMac` на Mac, затем `Tetrad` на iPad. Обе схемы
+В Xcode сначала запустите `NotebookMac` на Mac, затем `Notebook` на iPad. Обе схемы
 используют команду разработки `VUNH73AYPY`; другой владелец меняет
 `DEVELOPMENT_TEAM` в `Applications/project.yml`. При первом запуске iPad нужно
 разрешить доступ к локальной сети.
@@ -132,43 +132,43 @@ open Tetrad.xcodeproj
 ## MCP для агента
 
 ```bash
-cd /Users/amir/Documents/projects/Tetrad/MCP
+cd /Users/amir/Documents/projects/Notebook/MCP
 npm ci --ignore-scripts
-codex mcp add tetrad -- /Users/amir/Documents/projects/Tetrad/MCP/run.sh
+codex mcp add notebook -- /Users/amir/Documents/projects/Notebook/MCP/run.sh
 ```
 
 После добавления нужен новый сеанс Codex. На этой машине сервер зарегистрирован
-как `tetrad`.
+как `notebook`.
 
 | Инструмент | Проверяемое действие |
 |---|---|
-| `tetrad_context` | Читает текущий режим, камеру, тетрадь, лист и видимые тетради |
-| `tetrad_read_board` | Читает размещения, стопки, пространственные элементы и версии |
-| `tetrad_read_notebook` | Читает одну тетрадь, её место, стопку и обложку |
-| `tetrad_render_view` | Возвращает свежий PNG ровно того, что сейчас показывает Mac |
-| `tetrad_create_notebook` | Создаёт тетрадь, первый лист и размещение |
-| `tetrad_rename_notebook` | Меняет название на обложке |
-| `tetrad_move_nodes` | Перемещает тетради и стопки в точных мировых координатах |
-| `tetrad_stack_nodes` | Кладёт одну тетрадь на другую или в существующую стопку |
-| `tetrad_put_spatial_markdown` | Добавляет прозрачный Markdown на доску или обложку |
-| `tetrad_put_spatial_web` | Добавляет прозрачный интерактивный HTML/SVG/CSS/JS на доску или обложку |
-| `tetrad_remove_spatial_elements` | Удаляет выбранные пространственные элементы, сохраняя Pencil |
-| `tetrad_read_page` | Читает данные и агентские элементы листа |
-| `tetrad_render_page` | Возвращает свежий PNG листа с клеткой и рукописью |
-| `tetrad_put_markdown` | Добавляет прозрачный Markdown на лист |
-| `tetrad_put_web` | Добавляет прозрачный интерактивный HTML/SVG/CSS/JS на лист |
-| `tetrad_remove_elements` | Удаляет выбранные элементы листа, сохраняя Pencil |
+| `notebook_context` | Читает текущий режим, камеру, тетрадь, лист и видимые тетради |
+| `notebook_read_board` | Читает размещения, стопки, пространственные элементы и версии |
+| `notebook_read_notebook` | Читает одну тетрадь, её место, стопку и обложку |
+| `notebook_render_view` | Возвращает свежий PNG ровно того, что сейчас показывает Mac |
+| `notebook_create_notebook` | Создаёт тетрадь, первый лист и размещение |
+| `notebook_rename_notebook` | Меняет название на обложке |
+| `notebook_move_nodes` | Перемещает тетради и стопки в точных мировых координатах |
+| `notebook_stack_nodes` | Кладёт одну тетрадь на другую или в существующую стопку |
+| `notebook_put_spatial_markdown` | Добавляет прозрачный Markdown на доску или обложку |
+| `notebook_put_spatial_web` | Добавляет прозрачный интерактивный HTML/SVG/CSS/JS на доску или обложку |
+| `notebook_remove_spatial_elements` | Удаляет выбранные пространственные элементы, сохраняя Pencil |
+| `notebook_read_page` | Читает данные и агентские элементы листа |
+| `notebook_render_page` | Возвращает свежий PNG листа с клеткой и рукописью |
+| `notebook_put_markdown` | Добавляет прозрачный Markdown на лист |
+| `notebook_put_web` | Добавляет прозрачный интерактивный HTML/SVG/CSS/JS на лист |
+| `notebook_remove_elements` | Удаляет выбранные элементы листа, сохраняя Pencil |
 
 Сначала агент читает контекст или доску, затем изображение и данные, после чего
 передаёт полученную ревизию в изменение. Устаревшая запись получает конфликт и
 должна перечитать владельца. Интерактивный слой читает
-`window.tetrad.state` и сохраняет новое состояние через
-`window.tetrad.commit(nextState)`. WebKit не имеет сетевого доступа.
+`window.notebook.state` и сохраняет новое состояние через
+`window.notebook.commit(nextState)`. WebKit не имеет сетевого доступа.
 
 ## Проверка
 
 ```bash
-cd /Users/amir/Documents/projects/Tetrad
+cd /Users/amir/Documents/projects/Notebook
 ./verify.sh
 ```
 

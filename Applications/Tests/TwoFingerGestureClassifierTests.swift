@@ -1,5 +1,5 @@
 import XCTest
-@testable import Tetrad
+@testable import Notebook
 
 final class TwoFingerGestureClassifierTests: XCTestCase {
   func testNoisyHorizontalPageSwipeOwnsTheGestureBeforePinch() {

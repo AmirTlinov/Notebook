@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import TetradCore
+@testable import NotebookCore
 
 @Test("Клетка равна половине сантиметра на полноразмерном iPad")
 func halfCentimeterGrid() {
@@ -233,7 +233,7 @@ func exhaustedVersionDoesNotCrashOrMutate() {
   let pageID = UUID()
   let notebookID = UUID()
   var index = WorkspaceIndex(
-    notebooks: [Notebook(id: notebookID, title: "Тетрадь 1", pageIDs: [pageID])],
+    notebooks: [Notebook(id: notebookID, title: "Notebook 1", pageIDs: [pageID])],
     selectedNotebookID: notebookID,
     selectedPageID: pageID,
     stamp: VersionStamp(
@@ -273,7 +273,7 @@ func storeRoundTrip() throws {
     .appendingPathComponent(UUID().uuidString, isDirectory: true)
   defer { try? FileManager.default.removeItem(at: root) }
 
-  let store = TetradStore(root: root)
+  let store = NotebookStore(root: root)
   let actor = UUID()
   let created = try store.loadOrCreate(
     actor: actor,
@@ -288,13 +288,37 @@ func storeRoundTrip() throws {
   #expect(reopened.1[page.id] == page)
 }
 
+@Test("Notebook один раз переносит прежнее локальное хранилище")
+func storeMigratesLegacyDirectory() throws {
+  let parent = FileManager.default.temporaryDirectory
+    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+  let legacyRoot = parent.appendingPathComponent("Tetrad", isDirectory: true)
+  let currentRoot = parent.appendingPathComponent("Notebook", isDirectory: true)
+  defer { try? FileManager.default.removeItem(at: parent) }
+
+  try FileManager.default.createDirectory(
+    at: legacyRoot,
+    withIntermediateDirectories: true
+  )
+  let marker = legacyRoot.appendingPathComponent("workspace.json")
+  try Data("saved pages".utf8).write(to: marker)
+
+  try NotebookStore.migrateLegacyStore(from: legacyRoot, to: currentRoot)
+
+  #expect(!FileManager.default.fileExists(atPath: legacyRoot.path))
+  #expect(
+    try Data(contentsOf: currentRoot.appendingPathComponent("workspace.json"))
+      == Data("saved pages".utf8)
+  )
+}
+
 @Test("Поздняя запись сохраняет новые штрихи и новые элементы вместе")
 func storeMergesConcurrentStreams() throws {
   let root = FileManager.default.temporaryDirectory
     .appendingPathComponent(UUID().uuidString, isDirectory: true)
   defer { try? FileManager.default.removeItem(at: root) }
 
-  let store = TetradStore(root: root)
+  let store = NotebookStore(root: root)
   let pencilActor = UUID()
   let agentActor = UUID()
   let created = try store.loadOrCreate(
@@ -336,7 +360,7 @@ func storeRejectsConflictingPageSize() throws {
     .appendingPathComponent(UUID().uuidString, isDirectory: true)
   defer { try? FileManager.default.removeItem(at: root) }
 
-  let store = TetradStore(root: root)
+  let store = NotebookStore(root: root)
   let actor = UUID()
   let id = UUID()
   try store.savePage(
@@ -363,7 +387,7 @@ func storeRejectsInvalidDecodedPage() throws {
     .appendingPathComponent(UUID().uuidString, isDirectory: true)
   defer { try? FileManager.default.removeItem(at: root) }
 
-  let store = TetradStore(root: root)
+  let store = NotebookStore(root: root)
   let created = try store.loadOrCreate(
     actor: UUID(),
     pageSize: PageSize(width: 834, height: 1_194)
@@ -390,7 +414,7 @@ func storeRejectsAPathologicalPageAllocation() throws {
     .appendingPathComponent(UUID().uuidString, isDirectory: true)
   defer { try? FileManager.default.removeItem(at: root) }
 
-  let store = TetradStore(root: root)
+  let store = NotebookStore(root: root)
   let created = try store.loadOrCreate(
     actor: UUID(),
     pageSize: PageSize(width: 834, height: 1_194)
@@ -416,7 +440,7 @@ func storeRejectsInvalidDecodedWorkspace() throws {
     .appendingPathComponent(UUID().uuidString, isDirectory: true)
   defer { try? FileManager.default.removeItem(at: root) }
 
-  let store = TetradStore(root: root)
+  let store = NotebookStore(root: root)
   _ = try store.loadOrCreate(
     actor: UUID(),
     pageSize: PageSize(width: 834, height: 1_194)

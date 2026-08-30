@@ -1,6 +1,6 @@
 import PencilKit
 import XCTest
-@testable import Tetrad
+@testable import Notebook
 
 final class InkStrokeGeometryTests: XCTestCase {
   func testRendererUsesOnlyThePathRangesLeftByTheEraser() {

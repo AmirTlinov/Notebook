@@ -7,7 +7,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCUIDevice.shared.orientation = .portrait
     try await Task.sleep(for: .milliseconds(450))
     let app = XCUIApplication()
-    app.launchArguments = ["--tetrad-drawing-responsiveness-fixture"]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
     app.launch()
 
     let paper = app.otherElements["paper-input"]
@@ -30,8 +30,8 @@ final class DrawingResponsivenessTests: XCTestCase {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = [
-      "--tetrad-drawing-responsiveness-fixture",
-      "--tetrad-simulator-finger-gestures",
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-simulator-finger-gestures",
     ]
     app.launch()
 
@@ -75,8 +75,8 @@ final class DrawingResponsivenessTests: XCTestCase {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = [
-      "--tetrad-drawing-responsiveness-fixture",
-      "--tetrad-simulator-finger-gestures",
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-simulator-finger-gestures",
     ]
     app.launch()
 
@@ -104,7 +104,7 @@ final class DrawingResponsivenessTests: XCTestCase {
   func testPenCommitsOneStrokeAndKeepsThePaperResponsive() {
     continueAfterFailure = false
     let app = XCUIApplication()
-    app.launchArguments = ["--tetrad-drawing-responsiveness-fixture"]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
     app.launch()
 
     let paper = app.otherElements["paper-input"]
@@ -147,7 +147,7 @@ final class DrawingResponsivenessTests: XCTestCase {
   func testEraserKeepsDensePaperResponsive() {
     continueAfterFailure = false
     let app = XCUIApplication()
-    app.launchArguments = ["--tetrad-drawing-responsiveness-fixture"]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
     app.launch()
 
     let controls = app.buttons["pen-controls-toggle"]

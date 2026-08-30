@@ -1,11 +1,11 @@
-# Тетрадь: карта проекта
+# Notebook: карта проекта
 
 ```text
-Tetrad/
+Notebook/
 |-- README.md                 # Пользовательский путь, запуск и доказательства.
 |-- Package.swift             # Общий домен без UI и сети.
-|-- Sources/TetradCore/       # Каталог, доска, страницы, пространственные чернила, диск и wire.
-|-- Tests/TetradCoreTests/    # Камера, владение, слияние и публикация файлов.
+|-- Sources/NotebookCore/       # Каталог, доска, страницы, пространственные чернила, диск и wire.
+|-- Tests/NotebookCoreTests/    # Камера, владение, слияние и публикация файлов.
 |-- Applications/
 |   |-- project.yml           # Нативные iPad и Mac targets.
 |   |-- Shared/               # Единая сцена, лист, обложки, WebKit и модель.

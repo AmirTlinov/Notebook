@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import TetradCore
+@testable import NotebookCore
 
 @Test("Камера возвращает мировую точку после проекции на экран")
 func cameraRoundTrip() {
@@ -363,7 +363,7 @@ func storeCreatesBoardBesideExistingWorkspace() throws {
     .appendingPathComponent(UUID().uuidString, isDirectory: true)
   defer { try? FileManager.default.removeItem(at: root) }
   let actor = UUID()
-  let store = TetradStore(root: root)
+  let store = NotebookStore(root: root)
   let loaded = try store.loadOrCreate(
     actor: actor,
     pageSize: PageSize(width: 834, height: 1_194)

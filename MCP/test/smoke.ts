@@ -14,14 +14,14 @@ import { appActor, notebookID, pageID, writeFixture } from "./fixture.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const mcpRoot = join(here, "..");
-const storeRoot = await mkdtemp(join(tmpdir(), "tetrad-mcp-smoke-"));
+const storeRoot = await mkdtemp(join(tmpdir(), "notebook-mcp-smoke-"));
 
 try {
   await writeFixture(storeRoot);
-  const client = new Client({ name: "tetrad-smoke", version: "0.1.0" });
+  const client = new Client({ name: "notebook-smoke", version: "0.1.0" });
   const transport = new StdioClientTransport({
     command: join(mcpRoot, "run.sh"),
-    env: { ...getDefaultEnvironment(), TETRAD_HOME: storeRoot },
+    env: { ...getDefaultEnvironment(), NOTEBOOK_HOME: storeRoot },
     stderr: "pipe",
   });
   await client.connect(transport);
@@ -30,31 +30,31 @@ try {
   assert.deepEqual(
     listed.tools.map((tool) => tool.name).sort(),
     [
-      "tetrad_context",
-      "tetrad_create_notebook",
-      "tetrad_move_nodes",
-      "tetrad_put_markdown",
-      "tetrad_put_spatial_markdown",
-      "tetrad_put_spatial_web",
-      "tetrad_put_web",
-      "tetrad_read_board",
-      "tetrad_read_notebook",
-      "tetrad_read_page",
-      "tetrad_remove_elements",
-      "tetrad_remove_spatial_elements",
-      "tetrad_rename_notebook",
-      "tetrad_render_page",
-      "tetrad_render_view",
-      "tetrad_stack_nodes",
+      "notebook_context",
+      "notebook_create_notebook",
+      "notebook_move_nodes",
+      "notebook_put_markdown",
+      "notebook_put_spatial_markdown",
+      "notebook_put_spatial_web",
+      "notebook_put_web",
+      "notebook_read_board",
+      "notebook_read_notebook",
+      "notebook_read_page",
+      "notebook_remove_elements",
+      "notebook_remove_spatial_elements",
+      "notebook_rename_notebook",
+      "notebook_render_page",
+      "notebook_render_view",
+      "notebook_stack_nodes",
     ],
   );
 
-  const context = await client.callTool({ name: "tetrad_context", arguments: {} });
+  const context = await client.callTool({ name: "notebook_context", arguments: {} });
   assert.equal(context.isError, undefined);
-  assert.match(JSON.stringify(context.structuredContent), /Тетрадь 1/);
+  assert.match(JSON.stringify(context.structuredContent), /Notebook 1/);
 
   const currentView = await client.callTool({
-    name: "tetrad_render_view",
+    name: "notebook_render_view",
     arguments: {},
   });
   assert.equal(currentView.isError, undefined);
@@ -64,7 +64,7 @@ try {
   const currentViewPNG = await readFile(currentViewPath);
   await writeFile(currentViewPath, Buffer.from("updating"));
   const mismatchedCurrentView = await client.callTool({
-    name: "tetrad_render_view",
+    name: "notebook_render_view",
     arguments: {},
   });
   assert.equal(mismatchedCurrentView.isError, true);
@@ -72,7 +72,7 @@ try {
   await writeFile(currentViewPath, currentViewPNG);
 
   const spatialChanged = await client.callTool({
-    name: "tetrad_put_spatial_markdown",
+    name: "notebook_put_spatial_markdown",
     arguments: {
       expected_revision: `0@${appActor}`,
       surface: { kind: "cover", notebook_id: notebookID },
@@ -85,7 +85,7 @@ try {
   assert.match(JSON.stringify(spatialChanged.structuredContent), /cover-note/);
 
   const changed = await client.callTool({
-    name: "tetrad_put_markdown",
+    name: "notebook_put_markdown",
     arguments: {
       expected_revision: `0@${appActor}`,
       id: "mcp-smoke",
@@ -97,7 +97,7 @@ try {
   assert.match(JSON.stringify(changed.structuredContent), /mcp-smoke/);
 
   const rendered = await client.callTool({
-    name: "tetrad_render_page",
+    name: "notebook_render_page",
     arguments: {},
   });
   assert.equal(rendered.isError, undefined);
@@ -110,7 +110,7 @@ try {
   page.drawingStamp.counter += 1;
   await writeFile(pagePath, JSON.stringify(page));
   const stalePreview = await client.callTool({
-    name: "tetrad_render_page",
+    name: "notebook_render_page",
     arguments: {},
   });
   assert.equal(stalePreview.isError, true);

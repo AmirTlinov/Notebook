@@ -1,6 +1,6 @@
 import Foundation
 import Observation
-import TetradCore
+import NotebookCore
 
 typealias PageInputCompletion = @MainActor @Sendable () -> Void
 typealias PageInputFinisher = (@escaping PageInputCompletion) -> Void
@@ -24,7 +24,7 @@ final class PageInputGate {
 
 @MainActor
 @Observable
-final class TetradAppModel {
+final class NotebookAppModel {
   enum LoadState: Equatable {
     case loading
     case ready
@@ -53,7 +53,7 @@ final class TetradAppModel {
   private(set) var isTextToolSelected = false
   private(set) var pendingTitleFocusID: UUID?
 
-  let store: TetradStore
+  let store: NotebookStore
   let actorID: UUID
   let pageInputGate = PageInputGate()
 
@@ -72,7 +72,7 @@ final class TetradAppModel {
   private let sync: NearbySync
 
   init(
-    store: TetradStore = TetradStore(root: TetradStore.defaultRoot),
+    store: NotebookStore = NotebookStore(root: NotebookStore.defaultRoot),
     startsNearbySync: Bool = true
   ) {
     self.store = store
@@ -186,7 +186,7 @@ final class TetradAppModel {
     guard var workspace, var board else { return nil }
     let number = workspace.notebooks.count + 1
     guard let created = workspace.createNotebook(
-      title: "Тетрадь \(number)",
+      title: "Notebook \(number)",
       actor: actorID,
       pageSize: pageSize
     ), board.addNotebook(created.notebook.id, near: center, actor: actorID)
@@ -904,7 +904,7 @@ final class TetradAppModel {
   }
 
   private static func loadActorID() -> UUID {
-    let key = "tetrad.actor-id"
+    let key = "notebook.actor-id"
     if let raw = UserDefaults.standard.string(forKey: key),
        let id = UUID(uuidString: raw) {
       return id
@@ -916,12 +916,12 @@ final class TetradAppModel {
 
   private static func loadPenStyle() -> PenStyle {
     let defaults = UserDefaults.standard
-    let color = defaults.string(forKey: "tetrad.pen-color")
+    let color = defaults.string(forKey: "notebook.pen-color")
       .flatMap(PenColor.init(rawValue:)) ?? PenStyle.standard.color
-    let width = defaults.object(forKey: "tetrad.pen-width") as? Double
+    let width = defaults.object(forKey: "notebook.pen-width") as? Double
       ?? PenStyle.standard.width
     let minimumOpacity = defaults.object(
-      forKey: "tetrad.pen-minimum-opacity"
+      forKey: "notebook.pen-minimum-opacity"
     ) as? Double ?? PenStyle.standard.minimumOpacity
     let style = PenStyle(
       color: color,
@@ -931,7 +931,7 @@ final class TetradAppModel {
     if style.minimumOpacity != minimumOpacity {
       defaults.set(
         style.minimumOpacity,
-        forKey: "tetrad.pen-minimum-opacity"
+        forKey: "notebook.pen-minimum-opacity"
       )
     }
     return style
@@ -940,28 +940,28 @@ final class TetradAppModel {
   private static func loadEraserStyle() -> EraserStyle {
     let defaults = UserDefaults.standard
     let storedWidth =
-      defaults.object(forKey: "tetrad.eraser-width") as? Double
+      defaults.object(forKey: "notebook.eraser-width") as? Double
       ?? EraserStyle.standard.maximumWidth
     let style = EraserStyle(maximumWidth: storedWidth)
     if style.maximumWidth != storedWidth {
-      defaults.set(style.maximumWidth, forKey: "tetrad.eraser-width")
+      defaults.set(style.maximumWidth, forKey: "notebook.eraser-width")
     }
     return style
   }
 
   private func savePenStyle() {
-    UserDefaults.standard.set(penStyle.color.rawValue, forKey: "tetrad.pen-color")
-    UserDefaults.standard.set(penStyle.width, forKey: "tetrad.pen-width")
+    UserDefaults.standard.set(penStyle.color.rawValue, forKey: "notebook.pen-color")
+    UserDefaults.standard.set(penStyle.width, forKey: "notebook.pen-width")
     UserDefaults.standard.set(
       penStyle.minimumOpacity,
-      forKey: "tetrad.pen-minimum-opacity"
+      forKey: "notebook.pen-minimum-opacity"
     )
   }
 
   private func saveEraserStyle() {
     UserDefaults.standard.set(
       eraserStyle.maximumWidth,
-      forKey: "tetrad.eraser-width"
+      forKey: "notebook.eraser-width"
     )
   }
 }

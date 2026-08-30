@@ -1,8 +1,8 @@
 import SwiftUI
-import TetradCore
+import NotebookCore
 
-struct TetradRootView: View {
-  @Environment(TetradAppModel.self) private var model
+struct NotebookRootView: View {
+  @Environment(NotebookAppModel.self) private var model
 
   var body: some View {
     GeometryReader { geometry in
@@ -52,7 +52,7 @@ struct TetradRootView: View {
             )
           )
         #else
-          model.start(pageSize: TetradAppModel.defaultPageSize)
+          model.start(pageSize: NotebookAppModel.defaultPageSize)
         #endif
       }
     }

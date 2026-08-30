@@ -1,24 +1,24 @@
 import SwiftUI
 
 @main
-struct TetradApp: App {
-  @State private var model: TetradAppModel
+struct NotebookApp: App {
+  @State private var model: NotebookAppModel
 
   init() {
     #if DEBUG && targetEnvironment(simulator)
       if SimulatorDrawingFixture.isRequested {
         _model = State(initialValue: SimulatorDrawingFixture.makeModel())
       } else {
-        _model = State(initialValue: TetradAppModel())
+        _model = State(initialValue: NotebookAppModel())
       }
     #else
-      _model = State(initialValue: TetradAppModel())
+      _model = State(initialValue: NotebookAppModel())
     #endif
   }
 
   var body: some Scene {
     WindowGroup {
-      TetradRootView()
+      NotebookRootView()
         .environment(model)
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)

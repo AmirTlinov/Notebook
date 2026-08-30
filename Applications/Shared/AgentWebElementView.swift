@@ -1,5 +1,5 @@
 import SwiftUI
-import TetradCore
+import NotebookCore
 import WebKit
 
 #if os(iOS)
@@ -72,7 +72,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     _ userContentController: WKUserContentController,
     didReceive message: WKScriptMessage
   ) {
-    guard message.name == "tetrad",
+    guard message.name == "notebook",
           let object = message.body as? [String: Any],
           object["kind"] as? String == "state",
           let state = object["value"],
@@ -92,7 +92,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
 
   fileprivate static func makeWebView(coordinator: AgentWebCoordinator) -> WKWebView {
     let controller = WKUserContentController()
-    controller.add(coordinator, name: "tetrad")
+    controller.add(coordinator, name: "notebook")
     let configuration = WKWebViewConfiguration()
     configuration.userContentController = controller
     configuration.websiteDataStore = .nonPersistent()
@@ -134,10 +134,10 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       \(element.css)
     </style>
     <script>
-      window.tetrad = Object.freeze({
+      window.notebook = Object.freeze({
         state: \(state),
         commit(value) {
-          window.webkit.messageHandlers.tetrad.postMessage({ kind: 'state', value });
+          window.webkit.messageHandlers.notebook.postMessage({ kind: 'state', value });
         }
       });
     </script>

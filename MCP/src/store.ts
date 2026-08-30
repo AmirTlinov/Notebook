@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, renameSync } from "node:fs";
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -26,7 +27,7 @@ const WORLD_TILE_SIZE = (132 / 2.54 / 2) * 256;
 export class StoreError extends Error {}
 export class ConflictError extends StoreError {}
 
-export class TetradStore {
+export class NotebookStore {
   readonly root: string;
   private mutationTail: Promise<unknown> = Promise.resolve();
 
@@ -185,7 +186,7 @@ export class TetradStore {
       if (args.expectedRevision !== currentRevision) {
         throw new ConflictError(
           `Страница изменилась: ожидалась версия ${args.expectedRevision}, ` +
-            `сейчас ${currentRevision}. Сначала снова вызовите tetrad_read_page.`,
+            `сейчас ${currentRevision}. Сначала снова вызовите notebook_read_page.`,
         );
       }
       const elements = args.transform(page.elements, page);
@@ -351,8 +352,23 @@ export class TetradStore {
 }
 
 function defaultStoreRoot(): string {
-  return process.env.TETRAD_HOME ??
-    join(homedir(), "Library", "Application Support", "Tetrad");
+  if (process.env.NOTEBOOK_HOME) return process.env.NOTEBOOK_HOME;
+
+  const applicationSupport = join(homedir(), "Library", "Application Support");
+  const currentRoot = join(applicationSupport, "Notebook");
+  migrateLegacyStore(join(applicationSupport, "Tetrad"), currentRoot);
+  return currentRoot;
+}
+
+export function migrateLegacyStore(legacyRoot: string, currentRoot: string): void {
+  if (existsSync(currentRoot) || !existsSync(legacyRoot)) return;
+
+  mkdirSync(dirname(currentRoot), { recursive: true });
+  try {
+    renameSync(legacyRoot, currentRoot);
+  } catch (error) {
+    if (!existsSync(currentRoot)) throw error;
+  }
 }
 
 export function assertFrame(frame: PageRect, page: PageDocument): void {
@@ -879,7 +895,7 @@ async function readJSON<T>(path: string, owner: string): Promise<T> {
   } catch (error) {
     if (isMissing(error)) {
       throw new StoreError(
-        `Файл ${owner} еще не создан. Откройте приложение «Тетрадь» на Mac.`,
+        `Файл ${owner} еще не создан. Откройте Notebook на Mac.`,
       );
     }
     if (error instanceof SyntaxError) throw new StoreError(`Файл ${owner} поврежден.`);

@@ -1,5 +1,5 @@
 import SwiftUI
-import TetradCore
+import NotebookCore
 
 private struct PreviewKey: Hashable {
   let pageID: UUID
@@ -23,12 +23,12 @@ private struct CurrentViewKey: Hashable {
 }
 
 struct MacRootView: View {
-  @Environment(TetradAppModel.self) private var model
+  @Environment(NotebookAppModel.self) private var model
   @State private var watcher: DirectoryWatcher?
 
   var body: some View {
     GeometryReader { geometry in
-      TetradRootView()
+      NotebookRootView()
         .task(id: currentViewKey(viewport: geometry.size)) {
           guard model.presencePhase == .settled else { return }
           try? await Task.sleep(for: .milliseconds(220))

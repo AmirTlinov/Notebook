@@ -22,7 +22,7 @@ import type {
 import { publicPage, revision } from "./domain.js";
 import {
   StoreError,
-  TetradStore,
+  NotebookStore,
   assertFrame,
   assertSpatialFrame,
   boardHighestZIndex,
@@ -55,17 +55,17 @@ const spatialSurfaceSchema = z.discriminatedUnion("kind", [
 ]);
 
 const spatialSelection = {
-  expected_revision: z.string().min(1).describe("boardRevision from tetrad_read_board."),
+  expected_revision: z.string().min(1).describe("boardRevision from notebook_read_board."),
   surface: spatialSurfaceSchema,
 };
 
-export function createServer(store = new TetradStore()): McpServer {
-  const server = new McpServer({ name: "tetrad", version: "0.1.0" });
+export function createServer(store = new NotebookStore()): McpServer {
+  const server = new McpServer({ name: "notebook", version: "0.1.0" });
 
   server.registerTool(
-    "tetrad_context",
+    "notebook_context",
     {
-      title: "Current Tetrad context",
+      title: "Current Notebook context",
       description:
         "Read the selected notebook and page on this Mac. Call this first to locate the page Amir sees.",
       inputSchema: z.object({}),
@@ -113,12 +113,12 @@ export function createServer(store = new TetradStore()): McpServer {
   );
 
   server.registerTool(
-    "tetrad_read_board",
+    "notebook_read_board",
     {
-      title: "Read the infinite Tetrad board",
+      title: "Read the infinite Notebook board",
       description:
         "Read every free notebook, stack, and agent-authored board or cover element. "
-        + "Use tetrad_render_view to see Pencil ink.",
+        + "Use notebook_render_view to see Pencil ink.",
       inputSchema: z.object({}),
     },
     () => safely(async () => {
@@ -139,7 +139,7 @@ export function createServer(store = new TetradStore()): McpServer {
   );
 
   server.registerTool(
-    "tetrad_read_notebook",
+    "notebook_read_notebook",
     {
       title: "Read a notebook and its cover",
       description:
@@ -184,7 +184,7 @@ export function createServer(store = new TetradStore()): McpServer {
   );
 
   server.registerTool(
-    "tetrad_render_view",
+    "notebook_render_view",
     {
       title: "See what Amir currently sees",
       description:
@@ -205,7 +205,7 @@ export function createServer(store = new TetradStore()): McpServer {
         if (!sameStamp(page.drawingStamp, receipt.page.drawingStamp)
           || !sameStamp(page.agentStamp, receipt.page.agentStamp)) {
           throw new StoreError(
-            "Изображение текущего вида догоняет новый лист. Повторите tetrad_render_view через мгновение.",
+            "Изображение текущего вида догоняет новый лист. Повторите notebook_render_view через мгновение.",
           );
         }
       }
@@ -215,7 +215,7 @@ export function createServer(store = new TetradStore()): McpServer {
       } catch (error) {
         if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
           throw new StoreError(
-            "Текущий вид еще не создан. Откройте «Тетрадь» на Mac и оставьте ее запущенной.",
+            "Текущий вид еще не создан. Откройте Notebook на Mac и оставьте его запущенным.",
           );
         }
         throw error;
@@ -223,7 +223,7 @@ export function createServer(store = new TetradStore()): McpServer {
       const pngSHA256 = createHash("sha256").update(png).digest("hex");
       if (pngSHA256 !== receipt.pngSHA256) {
         throw new StoreError(
-          "Изображение текущего вида и его квитанция обновляются. Повторите tetrad_render_view через мгновение.",
+          "Изображение текущего вида и его квитанция обновляются. Повторите notebook_render_view через мгновение.",
         );
       }
       return {
@@ -243,7 +243,7 @@ export function createServer(store = new TetradStore()): McpServer {
   );
 
   server.registerTool(
-    "tetrad_create_notebook",
+    "notebook_create_notebook",
     {
       title: "Create a notebook on the board",
       description:
@@ -273,7 +273,7 @@ export function createServer(store = new TetradStore()): McpServer {
   );
 
   server.registerTool(
-    "tetrad_rename_notebook",
+    "notebook_rename_notebook",
     {
       title: "Rename a notebook",
       description: "Change the title printed on a notebook cover.",
@@ -298,13 +298,13 @@ export function createServer(store = new TetradStore()): McpServer {
   );
 
   server.registerTool(
-    "tetrad_move_nodes",
+    "notebook_move_nodes",
     {
       title: "Move notebooks or stacks",
       description:
         "Move board nodes to exact tiled world coordinates. Moving one notebook out of a stack extracts it.",
       inputSchema: z.object({
-        expected_revision: z.string().min(1).describe("boardRevision from tetrad_read_board."),
+        expected_revision: z.string().min(1).describe("boardRevision from notebook_read_board."),
         moves: z.array(z.object({
           kind: z.enum(["notebook", "stack"]),
           id: z.uuid(),
@@ -334,13 +334,13 @@ export function createServer(store = new TetradStore()): McpServer {
   );
 
   server.registerTool(
-    "tetrad_stack_nodes",
+    "notebook_stack_nodes",
     {
       title: "Put one notebook onto another",
       description:
         "Move a free notebook onto a free notebook or an existing stack. The board keeps one owner per notebook.",
       inputSchema: z.object({
-        expected_revision: z.string().min(1).describe("boardRevision from tetrad_read_board."),
+        expected_revision: z.string().min(1).describe("boardRevision from notebook_read_board."),
         moving_notebook_id: z.uuid(),
         target_notebook_id: z.uuid(),
       }),
@@ -367,7 +367,7 @@ export function createServer(store = new TetradStore()): McpServer {
   );
 
   server.registerTool(
-    "tetrad_put_spatial_markdown",
+    "notebook_put_spatial_markdown",
     {
       title: "Put Markdown on the board or a cover",
       description:
@@ -413,11 +413,11 @@ export function createServer(store = new TetradStore()): McpServer {
   );
 
   server.registerTool(
-    "tetrad_put_spatial_web",
+    "notebook_put_spatial_web",
     {
       title: "Put an interactive layer on the board or a cover",
       description:
-        "Create or replace transparent HTML, SVG, CSS, and JavaScript. Use window.tetrad.commit(value) for state; network access stays blocked.",
+        "Create or replace transparent HTML, SVG, CSS, and JavaScript. Use window.notebook.commit(value) for state; network access stays blocked.",
       inputSchema: z.object({
         ...spatialSelection,
         id: z.string().trim().min(1).max(120),
@@ -469,12 +469,12 @@ export function createServer(store = new TetradStore()): McpServer {
   );
 
   server.registerTool(
-    "tetrad_remove_spatial_elements",
+    "notebook_remove_spatial_elements",
     {
       title: "Remove layers from the board or covers",
       description: "Remove named agent-authored spatial layers while preserving Pencil ink.",
       inputSchema: z.object({
-        expected_revision: z.string().min(1).describe("boardRevision from tetrad_read_board."),
+        expected_revision: z.string().min(1).describe("boardRevision from notebook_read_board."),
         ids: z.array(z.string().trim().min(1)).min(1),
       }),
     },
@@ -497,12 +497,12 @@ export function createServer(store = new TetradStore()): McpServer {
   );
 
   server.registerTool(
-    "tetrad_read_page",
+    "notebook_read_page",
     {
-      title: "Read a Tetrad page",
+      title: "Read a Notebook page",
       description:
         "Read page size and all agent-authored Markdown, SVG, CSS, JavaScript, and interactive state. " +
-        "Call tetrad_render_page to see Pencil handwriting.",
+        "Call notebook_render_page to see Pencil handwriting.",
       inputSchema: z.object(pageSelection),
     },
     ({ page_id }) => safely(async () => {
@@ -514,12 +514,12 @@ export function createServer(store = new TetradStore()): McpServer {
   );
 
   server.registerTool(
-    "tetrad_render_page",
+    "notebook_render_page",
     {
       title: "See Pencil handwriting",
       description:
         "Return a PNG of the faint grid and Apple Pencil drawing. " +
-        "Agent-authored web layers are returned as source by tetrad_read_page.",
+        "Agent-authored web layers are returned as source by notebook_read_page.",
       inputSchema: z.object(pageSelection),
     },
     ({ page_id }) => safely(async () => {
@@ -536,7 +536,7 @@ export function createServer(store = new TetradStore()): McpServer {
       } catch (error) {
         if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
           throw new StoreError(
-            "Предпросмотр еще не создан. Откройте «Тетрадь» на Mac и оставьте ее запущенной.",
+            "Предпросмотр еще не создан. Откройте Notebook на Mac и оставьте его запущенным.",
           );
         }
         throw error;
@@ -544,7 +544,7 @@ export function createServer(store = new TetradStore()): McpServer {
       const currentRevision = revision(page.drawingStamp);
       if (renderedRevision.trim() !== currentRevision) {
         throw new StoreError(
-          "Предпросмотр догоняет новый штрих. Повторите tetrad_render_page через мгновение.",
+          "Предпросмотр догоняет новый штрих. Повторите notebook_render_page через мгновение.",
         );
       }
       return {
@@ -559,14 +559,14 @@ export function createServer(store = new TetradStore()): McpServer {
   );
 
   server.registerTool(
-    "tetrad_put_markdown",
+    "notebook_put_markdown",
     {
-      title: "Put Markdown on a Tetrad page",
+      title: "Put Markdown on a Notebook page",
       description:
         "Create or replace one transparent Markdown layer. The frame is in page points; there is no card, border, or toolbar.",
       inputSchema: z.object({
         ...pageSelection,
-        expected_revision: z.string().min(1).describe("agentRevision from tetrad_read_page."),
+        expected_revision: z.string().min(1).describe("agentRevision from notebook_read_page."),
         id: z.string().trim().min(1).max(120),
         frame: frameSchema,
         markdown: z.string(),
@@ -597,16 +597,16 @@ export function createServer(store = new TetradStore()): McpServer {
   );
 
   server.registerTool(
-    "tetrad_put_web",
+    "notebook_put_web",
     {
-      title: "Put an interactive web layer on a Tetrad page",
+      title: "Put an interactive web layer on a Notebook page",
       description:
         "Create or replace one transparent HTML/SVG/CSS/JavaScript layer. " +
-        "Use window.tetrad.state to read state and window.tetrad.commit(value) after a user action. " +
+        "Use window.notebook.state to read state and window.notebook.commit(value) after a user action. " +
         "The layer has no surrounding UI and cannot use the network.",
       inputSchema: z.object({
         ...pageSelection,
-        expected_revision: z.string().min(1).describe("agentRevision from tetrad_read_page."),
+        expected_revision: z.string().min(1).describe("agentRevision from notebook_read_page."),
         id: z.string().trim().min(1).max(120),
         frame: frameSchema,
         html: z.string(),
@@ -641,13 +641,13 @@ export function createServer(store = new TetradStore()): McpServer {
   );
 
   server.registerTool(
-    "tetrad_remove_elements",
+    "notebook_remove_elements",
     {
-      title: "Remove layers from a Tetrad page",
+      title: "Remove layers from a Notebook page",
       description: "Remove named agent-authored layers while preserving the Pencil drawing.",
       inputSchema: z.object({
         ...pageSelection,
-        expected_revision: z.string().min(1).describe("agentRevision from tetrad_read_page."),
+        expected_revision: z.string().min(1).describe("agentRevision from notebook_read_page."),
         ids: z.array(z.string().trim().min(1)).min(1),
       }),
     },
@@ -759,7 +759,7 @@ function assertFreshCurrentView(
     || !sameStamp(receipt.spatialInkStamp, spatialInkStamp)
     || !isDeepStrictEqual(receipt.presence, presence)) {
     throw new StoreError(
-      "Изображение текущего вида догоняет изменения. Повторите tetrad_render_view через мгновение.",
+      "Изображение текущего вида догоняет изменения. Повторите notebook_render_view через мгновение.",
     );
   }
 }

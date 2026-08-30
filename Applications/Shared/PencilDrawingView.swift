@@ -1,7 +1,7 @@
 #if os(macOS)
 import PencilKit
 import SwiftUI
-import TetradCore
+import NotebookCore
 
 struct PencilDrawingView: View {
   let page: PageDocument

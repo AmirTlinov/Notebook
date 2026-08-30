@@ -1,5 +1,5 @@
 import SwiftUI
-import TetradCore
+import NotebookCore
 
 struct AgentOverlayView: View {
   let elements: [AgentElement]

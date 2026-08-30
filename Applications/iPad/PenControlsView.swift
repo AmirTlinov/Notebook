@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct PenControlsView: View {
-  @Environment(TetradAppModel.self) private var model
+  @Environment(NotebookAppModel.self) private var model
   @State private var isExpanded = false
 
   var body: some View {

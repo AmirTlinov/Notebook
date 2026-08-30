@@ -1,6 +1,6 @@
 import AppKit
 import PencilKit
-import TetradCore
+import NotebookCore
 
 enum PagePreviewWriter {
   @MainActor

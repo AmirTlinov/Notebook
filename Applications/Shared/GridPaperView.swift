@@ -1,5 +1,5 @@
 import SwiftUI
-import TetradCore
+import NotebookCore
 
 struct PaperColorComponents {
   let red: Double

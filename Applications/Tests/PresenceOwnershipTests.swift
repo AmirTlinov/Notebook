@@ -1,6 +1,6 @@
-import TetradCore
+import NotebookCore
 import XCTest
-@testable import Tetrad
+@testable import Notebook
 
 final class PresenceOwnershipTests: XCTestCase {
   @MainActor
@@ -9,8 +9,8 @@ final class PresenceOwnershipTests: XCTestCase {
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
 
-    let store = TetradStore(root: root)
-    let model = TetradAppModel(store: store, startsNearbySync: false)
+    let store = NotebookStore(root: root)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
     model.start(pageSize: PageSize(width: 834, height: 1_194))
     let stable = try store.loadPresence()
     let notebookID = try XCTUnwrap(model.workspace?.selectedNotebookID)
@@ -35,8 +35,8 @@ final class PresenceOwnershipTests: XCTestCase {
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
 
-    let store = TetradStore(root: root)
-    let model = TetradAppModel(store: store, startsNearbySync: false)
+    let store = NotebookStore(root: root)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
     model.start(pageSize: PageSize(width: 834, height: 1_194))
     let notebookID = try XCTUnwrap(model.workspace?.selectedNotebookID)
     let center = try XCTUnwrap(model.board?.placement(of: notebookID)?.center)
@@ -61,8 +61,8 @@ final class PresenceOwnershipTests: XCTestCase {
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
 
-    let store = TetradStore(root: root)
-    let model = TetradAppModel(store: store, startsNearbySync: false)
+    let store = NotebookStore(root: root)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
     model.start(pageSize: PageSize(width: 834, height: 1_194))
     let viewport = SpatialPoint(x: 834, y: 1_194)
     let inspected = SessionPresence(

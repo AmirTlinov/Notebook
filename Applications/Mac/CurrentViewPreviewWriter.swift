@@ -1,12 +1,12 @@
 import AppKit
 import CryptoKit
 import SwiftUI
-import TetradCore
+import NotebookCore
 
 enum CurrentViewPreviewWriter {
   @MainActor
   static func write(
-    model: TetradAppModel,
+    model: NotebookAppModel,
     viewport: CGSize,
     workspace: WorkspaceIndex,
     board: BoardDocument,

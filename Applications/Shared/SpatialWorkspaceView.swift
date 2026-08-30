@@ -1,5 +1,5 @@
 import SwiftUI
-import TetradCore
+import NotebookCore
 
 private struct CameraGestureSnapshot {
   struct BoardEngagement {
@@ -27,7 +27,7 @@ struct RenderedNotebook: Identifiable {
 }
 
 struct SpatialWorkspaceView: View {
-  @Environment(TetradAppModel.self) private var model
+  @Environment(NotebookAppModel.self) private var model
 
   @State private var cameraGesture: CameraGestureSnapshot?
   @State private var panStart: SessionPresence?
@@ -756,7 +756,7 @@ struct SpatialWorkspaceView: View {
 }
 
 private struct NotebookSceneItem: View {
-  @Environment(TetradAppModel.self) private var model
+  @Environment(NotebookAppModel.self) private var model
 
   let rendered: RenderedNotebook
   let page: PageDocument?
@@ -863,7 +863,7 @@ private struct NotebookSceneItem: View {
 }
 
 private struct NotebookCoverView: View {
-  @Environment(TetradAppModel.self) private var model
+  @Environment(NotebookAppModel.self) private var model
   @FocusState private var titleFocused: Bool
   @State private var title = ""
 
@@ -988,7 +988,7 @@ private struct NotebookCoverView: View {
 }
 
 private struct SpatialElementContent: View {
-  @Environment(TetradAppModel.self) private var model
+  @Environment(NotebookAppModel.self) private var model
   let element: SpatialElement
 
   var body: some View {
@@ -1023,7 +1023,7 @@ private struct SpatialElementContent: View {
 }
 
 private struct NativeTextElementView: View {
-  @Environment(TetradAppModel.self) private var model
+  @Environment(NotebookAppModel.self) private var model
   @FocusState private var focused: Bool
   @State private var text: String
   @State private var commitTask: Task<Void, Never>?
