@@ -168,7 +168,6 @@ export interface SessionPresence {
   camera: SpatialCamera;
   viewport: SpatialPoint;
   focusedNotebookID?: string;
-  focusedStackID?: string;
   openProgress: number;
 }
 

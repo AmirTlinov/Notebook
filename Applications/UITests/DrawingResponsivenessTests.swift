@@ -135,6 +135,133 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertGreaterThan(paper.frame.height, coverFrame.height * 1.15)
   }
 
+  func testEachStackMemberOpensAsOneCenteredPage() async throws {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    try await Task.sleep(for: .milliseconds(350))
+
+    try await assertCenteredStackMember(
+      launchArgument: "--notebook-stacked-page-fixture",
+      selectedID: "7e7a1000-0000-4000-8000-000000000004",
+      hiddenSiblingID: "7e7a1000-0000-4000-8000-000000000002",
+      attachmentName: "stacked-upper-page"
+    )
+    try await assertCenteredStackMember(
+      launchArgument: "--notebook-stacked-lower-page-fixture",
+      selectedID: "7e7a1000-0000-4000-8000-000000000002",
+      hiddenSiblingID: "7e7a1000-0000-4000-8000-000000000004",
+      attachmentName: "stacked-lower-page"
+    )
+  }
+
+  func testStackMembersOpenFromTheBoardWithoutSplittingTheScreen() async throws {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    try await Task.sleep(for: .milliseconds(350))
+
+    try await openStackMemberFromBoard(
+      selectedID: "7e7a1000-0000-4000-8000-000000000004",
+      hiddenSiblingID: "7e7a1000-0000-4000-8000-000000000002",
+      attachmentName: "stacked-upper-double-tap"
+    )
+    try await openStackMemberFromBoard(
+      selectedID: "7e7a1000-0000-4000-8000-000000000002",
+      hiddenSiblingID: "7e7a1000-0000-4000-8000-000000000004",
+      attachmentName: "stacked-lower-double-tap"
+    )
+  }
+
+  private func openStackMemberFromBoard(
+    selectedID: String,
+    hiddenSiblingID: String,
+    attachmentName: String
+  ) async throws {
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-simulator-finger-gestures",
+      "--notebook-stacked-board-fixture",
+    ]
+    app.launch()
+    XCTAssertTrue(app.buttons["create-notebook"].waitForExistence(timeout: 5))
+
+    let selected = app.descendants(matching: .any)
+      .matching(identifier: "notebook-\(selectedID)")
+      .firstMatch
+    let sibling = app.descendants(matching: .any)
+      .matching(identifier: "notebook-\(hiddenSiblingID)")
+      .firstMatch
+    XCTAssertTrue(selected.waitForExistence(timeout: 3))
+    XCTAssertTrue(sibling.exists)
+    selected.doubleTap()
+
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 5))
+    let window = app.windows.firstMatch
+    XCTAssertTrue(window.exists)
+    try await Task.sleep(for: .milliseconds(350))
+    assertFittedAndCentered(paper.frame, in: window.frame)
+    XCTAssertFalse(
+      app.descendants(matching: .any)
+        .matching(identifier: "notebook-\(hiddenSiblingID)")
+        .firstMatch.exists,
+      "После входа соседняя тетрадь должна остаться в стопке"
+    )
+
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = attachmentName
+    proof.lifetime = .keepAlways
+    add(proof)
+    app.terminate()
+  }
+
+  private func assertCenteredStackMember(
+    launchArgument: String,
+    selectedID: String,
+    hiddenSiblingID: String,
+    attachmentName: String
+  ) async throws {
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--notebook-drawing-responsiveness-fixture",
+      launchArgument,
+    ]
+    app.launch()
+
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 5))
+    let window = app.windows.firstMatch
+    XCTAssertTrue(window.exists)
+    try await Task.sleep(for: .milliseconds(250))
+
+    assertFittedAndCentered(paper.frame, in: window.frame)
+    XCTAssertTrue(
+      app.descendants(matching: .any)
+        .matching(identifier: "notebook-\(selectedID)")
+        .firstMatch.exists
+    )
+    XCTAssertFalse(
+      app.descendants(matching: .any)
+        .matching(identifier: "notebook-\(hiddenSiblingID)")
+        .firstMatch.exists,
+      "Соседняя тетрадь должна оставаться внутри стопки"
+    )
+
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = attachmentName
+    proof.lifetime = .keepAlways
+    add(proof)
+    app.terminate()
+  }
+
+  private func assertFittedAndCentered(_ paper: CGRect, in window: CGRect) {
+    XCTAssertEqual(paper.midX, window.midX, accuracy: 2)
+    XCTAssertEqual(paper.midY, window.midY, accuracy: 2)
+    let fit = min(window.width / 834, window.height / 1_194)
+    XCTAssertEqual(paper.width, 834 * fit, accuracy: 2)
+    XCTAssertEqual(paper.height, 1_194 * fit, accuracy: 2)
+  }
+
   func testPenCommitsOneStrokeAndKeepsThePaperResponsive() {
     continueAfterFailure = false
     let app = XCUIApplication()

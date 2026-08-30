@@ -687,7 +687,6 @@ function validatePresence(value: unknown): asserts value is SessionPresence {
     throw new StoreError("Размер области просмотра поврежден.");
   }
   validateOptionalUUID(value.focusedNotebookID, "focusedNotebookID");
-  validateOptionalUUID(value.focusedStackID, "focusedStackID");
   if (typeof value.openProgress !== "number" || !Number.isFinite(value.openProgress)
     || value.openProgress < 0 || value.openProgress > 1) {
     throw new StoreError("Прогресс открытия поврежден.");

@@ -777,9 +777,7 @@ final class NotebookAppModel {
     viewport: PageSize
   ) -> SessionPresence {
     let notebookID = workspace.selectedNotebookID
-    let center = board?.placement(of: notebookID)?.center
-      ?? board?.stack(containing: notebookID)?.center
-      ?? .zero
+    let center = board?.focusedCenter(of: notebookID) ?? .zero
     let viewportPoint = SpatialPoint(x: viewport.width, y: viewport.height)
     let fit = NotebookPresentation.fitScale(
       viewport: viewportPoint
@@ -802,8 +800,7 @@ final class NotebookAppModel {
     let adapted = presence.adapted(to: viewport)
     let notebookID = presence.focusedNotebookID
     let notebookCenter = notebookID.flatMap { id in
-      board?.placement(of: id)?.center
-        ?? board?.stack(containing: id)?.center
+      board?.focusedCenter(of: id)
     }
 
     if presence.mode == .page,

@@ -397,6 +397,53 @@ func boardHasOnePlacementOwner() {
   #expect(board.isValid(notebookIDs: [first, second, third]))
 }
 
+@Test("Камера и веер стопки получают один центр выбранной тетради")
+func stackFocusUsesTheSameCenterAsTheReadableBoardLayout() throws {
+  let actor = UUID()
+  let lower = UUID()
+  let upper = UUID()
+  var board = BoardDocument.initial(
+    notebookIDs: [lower, upper],
+    actor: actor
+  )
+  let createdStackID = board.createStack(
+    moving: upper,
+    onto: lower,
+    actor: actor
+  )
+  let stackID = try #require(createdStackID)
+  let stack = try #require(board.stacks.first { $0.id == stackID })
+  let viewports = [
+    SpatialPoint(x: 834, y: 1_194),
+    SpatialPoint(x: 1_194, y: 834),
+    SpatialPoint(x: 600, y: 800),
+    SpatialPoint(x: 320, y: 320),
+  ]
+
+  for viewport in viewports {
+    let coverScale = NotebookPresentation.coverScale(viewport: viewport)
+    for notebookID in [lower, upper] {
+      let boardCenter = try #require(NotebookStackPresentation.boardCenter(
+        of: notebookID,
+        in: stack,
+        cameraScale: coverScale,
+        viewport: viewport
+      ))
+      let focusedCenter = try #require(board.focusedCenter(of: notebookID))
+      let difference = boardCenter.delta(to: focusedCenter)
+      #expect(abs(difference.x) < 0.000_001)
+      #expect(abs(difference.y) < 0.000_001)
+    }
+  }
+
+  let lowerCenter = try #require(board.focusedCenter(of: lower))
+  let upperCenter = try #require(board.focusedCenter(of: upper))
+  #expect(
+    abs(lowerCenter.delta(to: upperCenter).x
+      - NotebookGeometry.width * 0.62) < 0.000_001
+  )
+}
+
 @Test("Каталог публикует новую тетрадь после её страницы и размещения")
 func boardAcceptsAStagedPlacementButNeverMissesAPublishedNotebook() {
   let actor = UUID()

@@ -270,23 +270,25 @@ struct SpatialWorkspaceView: View {
     }
 
     for stack in board.stacks {
-      let projectedHeight = NotebookGeometry.height * presence.camera.scale
-      let fan = min(max((projectedHeight - 160) / 440, 0), 1)
-      let count = stack.notebookIDs.count
+      let focusedMemberID = presence.mode == .board
+        ? nil
+        : presence.focusedNotebookID.flatMap { notebookID in
+          stack.notebookIDs.contains(notebookID) ? notebookID : nil
+        }
       for (index, notebookID) in stack.notebookIDs.enumerated() {
-        guard let notebook = notebooks[notebookID] else { continue }
-        let centered = Double(index) - Double(count - 1) / 2
-        let collapsedX = centered * 9 / max(presence.camera.scale, 0.001)
-        let collapsedY = -Double(index) * 7 / max(presence.camera.scale, 0.001)
-        let fannedX = centered * NotebookGeometry.width * 0.62
-        let fannedY = abs(centered) * NotebookGeometry.height * 0.08
+        guard focusedMemberID == nil || focusedMemberID == notebookID,
+          let notebook = notebooks[notebookID],
+          let center = NotebookStackPresentation.boardCenter(
+            of: notebookID,
+            in: stack,
+            cameraScale: presence.camera.scale,
+            viewport: presence.viewport
+          )
+        else { continue }
         result.append(
           RenderedNotebook(
             notebook: notebook,
-            center: stack.center.offsetBy(
-              x: collapsedX + (fannedX - collapsedX) * fan,
-              y: collapsedY + (fannedY - collapsedY) * fan
-            ),
+            center: center,
             zIndex: Double(stack.zIndex) + Double(index) / 100,
             stackID: stack.id
           )
@@ -535,7 +537,6 @@ struct SpatialWorkspaceView: View {
         camera: camera,
         viewport: viewport,
         focusedNotebookID: candidate,
-        focusedStackID: nil,
         openProgress: open
       ),
       settled: false
@@ -578,8 +579,7 @@ struct SpatialWorkspaceView: View {
     let target: SessionPresence
     if targetMode == .page,
       let notebookID = presence.focusedNotebookID,
-      let center = renderedNotebooks(presence: presence)
-        .first(where: { $0.id == notebookID })?.center
+      let center = model.board?.focusedCenter(of: notebookID)
     {
       target = SessionPresence(
         mode: .page,
@@ -590,8 +590,7 @@ struct SpatialWorkspaceView: View {
       )
     } else if targetMode == .cover,
       let notebookID = presence.focusedNotebookID,
-      let center = renderedNotebooks(presence: presence)
-        .first(where: { $0.id == notebookID })?.center
+      let center = model.board?.focusedCenter(of: notebookID)
     {
       target = SessionPresence(
         mode: .cover,
@@ -635,7 +634,6 @@ struct SpatialWorkspaceView: View {
         camera: camera,
         viewport: viewport,
         focusedNotebookID: start.focusedNotebookID,
-        focusedStackID: start.focusedStackID,
         openProgress: start.openProgress
       ),
       settled: false
@@ -703,9 +701,8 @@ struct SpatialWorkspaceView: View {
   ) {
     guard !settling,
       cameraGesture == nil,
-      let presence = model.presence?.adapted(to: viewport),
-      let center = renderedNotebooks(presence: presence)
-        .first(where: { $0.id == notebookID })?.center
+      model.presence != nil,
+      let center = model.board?.focusedCenter(of: notebookID)
     else { return }
     model.selectNotebook(notebookID)
     let target = SessionPresence(

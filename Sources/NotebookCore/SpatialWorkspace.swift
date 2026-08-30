@@ -504,6 +504,67 @@ public struct NotebookStack: Codable, Equatable, Identifiable, Sendable {
   }
 }
 
+/// Gives every member of a stack one deterministic visual anchor. The board
+/// may fan the covers apart as they become readable, while a focused cover or
+/// page uses the fully fanned anchor. Camera and renderer therefore ask the
+/// same owner where the selected notebook is.
+public enum NotebookStackPresentation {
+  private static let collapsedHorizontalSpacing = 9.0
+  private static let collapsedVerticalSpacing = 7.0
+  private static let fannedHorizontalRatio = 0.62
+  private static let fannedVerticalRatio = 0.08
+  private static let fanStartProjectedHeight = 160.0
+  private static let fanEndProjectedHeight = 600.0
+
+  public static func boardCenter(
+    of notebookID: UUID,
+    in stack: NotebookStack,
+    cameraScale: Double,
+    viewport: SpatialPoint
+  ) -> WorldPoint? {
+    guard cameraScale.isFinite, cameraScale > 0,
+      viewport.x.isFinite, viewport.x > 0,
+      viewport.y.isFinite, viewport.y > 0,
+      let index = stack.notebookIDs.firstIndex(of: notebookID)
+    else { return nil }
+    let centered = Double(index) - Double(stack.notebookIDs.count - 1) / 2
+    let projectedHeight = NotebookGeometry.height * cameraScale
+    let coverProjectedHeight = NotebookGeometry.height
+      * NotebookPresentation.coverScale(viewport: viewport)
+    let fanEnd = min(fanEndProjectedHeight, coverProjectedHeight)
+    let fanStart = min(fanStartProjectedHeight, fanEnd * 0.75)
+    let fan = min(
+      max(
+        (projectedHeight - fanStart) / (fanEnd - fanStart),
+        0
+      ),
+      1
+    )
+    let collapsedX = centered * collapsedHorizontalSpacing / cameraScale
+    let collapsedY = -Double(index) * collapsedVerticalSpacing / cameraScale
+    let fannedX = centered * NotebookGeometry.width * fannedHorizontalRatio
+    let fannedY = abs(centered) * NotebookGeometry.height * fannedVerticalRatio
+    return stack.center.offsetBy(
+      x: collapsedX + (fannedX - collapsedX) * fan,
+      y: collapsedY + (fannedY - collapsedY) * fan
+    )
+  }
+
+  public static func focusedCenter(
+    of notebookID: UUID,
+    in stack: NotebookStack
+  ) -> WorldPoint? {
+    guard let index = stack.notebookIDs.firstIndex(of: notebookID) else {
+      return nil
+    }
+    let centered = Double(index) - Double(stack.notebookIDs.count - 1) / 2
+    return stack.center.offsetBy(
+      x: centered * NotebookGeometry.width * fannedHorizontalRatio,
+      y: abs(centered) * NotebookGeometry.height * fannedVerticalRatio
+    )
+  }
+}
+
 public enum SurfaceKind: String, Codable, Sendable {
   case board
   case cover
@@ -720,6 +781,15 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     stacks.first { $0.notebookIDs.contains(notebookID) }
   }
 
+  public func focusedCenter(of notebookID: UUID) -> WorldPoint? {
+    if let placement = placement(of: notebookID) { return placement.center }
+    guard let stack = stack(containing: notebookID) else { return nil }
+    return NotebookStackPresentation.focusedCenter(
+      of: notebookID,
+      in: stack
+    )
+  }
+
   @discardableResult
   public mutating func addNotebook(
     _ notebookID: UUID,
@@ -919,7 +989,6 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
   public let camera: SpatialCamera
   public let viewport: SpatialPoint
   public let focusedNotebookID: UUID?
-  public let focusedStackID: UUID?
   public let openProgress: Double
 
   public init(
@@ -927,7 +996,6 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
     camera: SpatialCamera,
     viewport: SpatialPoint,
     focusedNotebookID: UUID? = nil,
-    focusedStackID: UUID? = nil,
     openProgress: Double = 0
   ) {
     precondition(openProgress.isFinite && openProgress >= 0 && openProgress <= 1)
@@ -936,7 +1004,6 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
     self.camera = camera
     self.viewport = viewport
     self.focusedNotebookID = focusedNotebookID
-    self.focusedStackID = focusedStackID
     self.openProgress = openProgress
   }
 
@@ -982,7 +1049,6 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
       ),
       viewport: targetViewport,
       focusedNotebookID: focusedNotebookID,
-      focusedStackID: focusedStackID,
       openProgress: openProgress
     )
   }

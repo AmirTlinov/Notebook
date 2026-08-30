@@ -76,4 +76,62 @@ final class PresenceOwnershipTests: XCTestCase {
     XCTAssertEqual(model.presence, inspected)
     XCTAssertEqual(try store.loadPresence(), inspected)
   }
+
+  @MainActor
+  func testSettledStackedPageCentersTheSelectedNotebook() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = NotebookStore(root: root)
+    let actor = UUID()
+    let lowerID = UUID()
+    let lowerPageID = UUID()
+    let upperID = UUID()
+    let upperPageID = UUID()
+    let size = PageSize(width: 834, height: 1_194)
+    var initial = WorkspaceIndex.initial(
+      actor: actor,
+      pageSize: size,
+      notebookID: lowerID,
+      pageID: lowerPageID
+    )
+    let upper = try XCTUnwrap(initial.index.createNotebook(
+      title: "Upper",
+      actor: actor,
+      pageSize: size,
+      notebookID: upperID,
+      pageID: upperPageID
+    ))
+    var board = BoardDocument.initial(
+      notebookIDs: [lowerID, upperID],
+      actor: actor
+    )
+    XCTAssertNotNil(board.createStack(
+      moving: upperID,
+      onto: lowerID,
+      actor: actor
+    ))
+    let stackCenter = try XCTUnwrap(board.stack(containing: upperID)?.center)
+    let expectedCenter = try XCTUnwrap(board.focusedCenter(of: upperID))
+    try store.savePage(initial.page)
+    try store.savePage(upper.page)
+    try store.saveBoard(board, notebookIDs: Set([lowerID, upperID]))
+    try store.saveIndex(initial.index)
+    try store.savePresence(
+      SessionPresence(
+        mode: .page,
+        camera: SpatialCamera(center: stackCenter, scale: 1),
+        viewport: SpatialPoint(x: size.width, y: size.height),
+        focusedNotebookID: upperID,
+        openProgress: 1
+      )
+    )
+
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    model.start(pageSize: size)
+
+    XCTAssertEqual(model.presence?.camera.center, expectedCenter)
+    XCTAssertNotEqual(expectedCenter, stackCenter)
+  }
 }

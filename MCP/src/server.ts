@@ -84,12 +84,17 @@ export function createServer(store = new NotebookStore()): McpServer {
       const pageIndex = notebook.pageIDs.findIndex(
         (pageID) => pageID.toLowerCase() === page.id.toLowerCase(),
       );
+      const focusedStackID = presence.focusedNotebookID
+        ? board.stacks.find((stack) => stack.notebookIDs.some(
+          (notebookID) => sameID(notebookID, presence.focusedNotebookID!),
+        ))?.id ?? null
+        : null;
       return {
         mode: presence.mode,
         camera: presence.camera,
         viewport: presence.viewport,
         focusedNotebookID: presence.focusedNotebookID ?? null,
-        focusedStackID: presence.focusedStackID ?? null,
+        focusedStackID,
         openProgress: presence.openProgress,
         notebook: {
           id: notebook.id,
@@ -702,8 +707,27 @@ function visibleNotebooks(
   }
   for (const stack of board.stacks) {
     const projectedHeight = 1_194 * presence.camera.scale;
-    const fan = clamp((projectedHeight - 160) / 440, 0, 1);
+    const fitScale = Math.min(
+      presence.viewport.x / 834,
+      presence.viewport.y / 1_194,
+    );
+    const coverProjectedHeight = 1_194 * fitScale * 0.72;
+    const fanEnd = Math.min(600, coverProjectedHeight);
+    const fanStart = Math.min(160, fanEnd * 0.75);
+    const fan = clamp(
+      (projectedHeight - fanStart) / (fanEnd - fanStart),
+      0,
+      1,
+    );
+    const focusedMemberID = presence.mode === "board"
+      ? undefined
+      : stack.notebookIDs.find((notebookID) =>
+        presence.focusedNotebookID
+          ? sameID(notebookID, presence.focusedNotebookID)
+          : false
+      );
     for (const [index, notebookID] of stack.notebookIDs.entries()) {
+      if (focusedMemberID && !sameID(focusedMemberID, notebookID)) continue;
       const notebook = byID.get(notebookID.toLowerCase());
       if (!notebook) continue;
       const centered = index - (stack.notebookIDs.length - 1) / 2;
