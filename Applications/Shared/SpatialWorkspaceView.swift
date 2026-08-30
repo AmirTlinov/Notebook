@@ -1,11 +1,20 @@
-import PencilKit
 import SwiftUI
 import TetradCore
 
 private struct CameraGestureSnapshot {
+  struct BoardEngagement {
+    let notebookID: UUID
+    let magnification: Double
+    let intent: NotebookOpeningIntent.Engagement
+  }
+
   let presence: SessionPresence
   let startCentroid: CGPoint
   let candidateNotebookID: UUID?
+  let mayOpenNotebook: Bool
+  var boardEngagement: BoardEngagement?
+  var latestMagnification: Double
+  var openingWasCancelled: Bool
 }
 
 struct RenderedNotebook: Identifiable {
@@ -24,6 +33,7 @@ struct SpatialWorkspaceView: View {
   @State private var panStart: SessionPresence?
   @State private var pageGestureActive = false
   @State private var settling = false
+  @State private var settlementTask: Task<Void, Never>?
 
   var body: some View {
     GeometryReader { geometry in
@@ -38,7 +48,8 @@ struct SpatialWorkspaceView: View {
 
         #if os(iOS)
           BoardPanView(
-            isEnabled: presence.mode != .page && cameraGesture == nil,
+            isEnabled: presence.mode != .page && cameraGesture == nil
+              && !settling,
             onBegan: { panStart = presence },
             onChanged: { translation in
               updateBoardPan(translation, viewport: viewport)
@@ -70,13 +81,21 @@ struct SpatialWorkspaceView: View {
             camera: presence.camera,
             viewport: viewport,
             isFocused: presence.focusedNotebookID == rendered.id,
+            preparesPage: preparesPage(
+              rendered.id,
+              presence: presence
+            ),
             openProgress: presence.focusedNotebookID == rendered.id
               ? presence.openProgress
               : 0,
             pageIsInteractive: presence.focusedNotebookID == rendered.id
-              && (presence.mode == .page || pageGestureActive),
+              && (presence.mode == .page || pageGestureActive)
+              && !settling,
             onDrop: { notebookID, center in
               dropNotebook(notebookID, at: center, presence: presence)
+            },
+            onOpen: { notebookID in
+              openNotebook(notebookID, viewport: viewport)
             }
           )
           .zIndex(rendered.zIndex)
@@ -105,6 +124,7 @@ struct SpatialWorkspaceView: View {
           .allowsHitTesting(false)
 
           WorkspaceGestureLayer(
+            isEnabled: !settling,
             isPageOpen: presence.mode == .page,
             onCamera: handleWorkspaceMagnification,
             onNavigate: { direction in
@@ -125,6 +145,13 @@ struct SpatialWorkspaceView: View {
       }
       .onChange(of: geometry.size) { _, _ in
         publishViewportIfNeeded(viewport)
+      }
+      .onDisappear {
+        settlementTask?.cancel()
+        settlementTask = nil
+        cameraGesture = nil
+        pageGestureActive = false
+        settling = false
       }
     }
   }
@@ -283,21 +310,49 @@ struct SpatialWorkspaceView: View {
     return model.pages[pageID]
   }
 
+  private func preparesPage(
+    _ notebookID: UUID,
+    presence: SessionPresence
+  ) -> Bool {
+    if presence.focusedNotebookID == notebookID { return true }
+    #if os(iOS)
+      return model.workspace?.selectedNotebookID == notebookID
+    #else
+      return false
+    #endif
+  }
+
   private func handleBoardMagnification(_ phase: WorkspaceMagnificationPhase) {
-    guard let presence = model.presence else { return }
+    guard !settling, let presence = model.presence else { return }
     switch phase {
-    case .began(let centroid):
-      let candidate = focusCandidate(at: centroid, presence: presence)
+    case .began(let centroid, let mayOpenNotebook):
+      let candidate = presence.mode == .cover
+        ? (presence.focusedNotebookID
+          ?? focusCandidate(at: centroid, presence: presence))
+        : focusCandidate(at: centroid, presence: presence)
       cameraGesture = CameraGestureSnapshot(
         presence: presence,
         startCentroid: centroid,
-        candidateNotebookID: candidate
+        candidateNotebookID: candidate,
+        mayOpenNotebook: mayOpenNotebook,
+        boardEngagement: nil,
+        latestMagnification: 1,
+        openingWasCancelled: false
       )
-      if let candidate { model.selectNotebook(candidate) }
-    case .changed(let scale, let centroid):
-      updateMagnification(scale: scale, centroid: centroid)
-    case .ended(let scale, let velocity, let centroid):
-      updateMagnification(scale: scale, centroid: centroid)
+    case .changed(let scale, let velocity, let elapsed, let centroid):
+      updateMagnification(
+        scale: scale,
+        velocity: velocity,
+        elapsed: elapsed,
+        centroid: centroid
+      )
+    case .ended(let scale, let velocity, let elapsed, let centroid):
+      updateMagnification(
+        scale: scale,
+        velocity: velocity,
+        elapsed: elapsed,
+        centroid: centroid
+      )
       settleMagnification(velocity: velocity)
     case .cancelled:
       cancelMagnification()
@@ -325,18 +380,32 @@ struct SpatialWorkspaceView: View {
 
   private func handlePageMagnification(_ phase: WorkspaceMagnificationPhase) {
     switch phase {
-    case .began(let centroid):
+    case .began(let centroid, _):
       guard let presence = model.presence else { return }
       pageGestureActive = true
       cameraGesture = CameraGestureSnapshot(
         presence: presence,
         startCentroid: centroid,
-        candidateNotebookID: presence.focusedNotebookID
+        candidateNotebookID: presence.focusedNotebookID,
+        mayOpenNotebook: true,
+        boardEngagement: nil,
+        latestMagnification: 1,
+        openingWasCancelled: false
       )
-    case .changed(let scale, let centroid):
-      updateMagnification(scale: scale, centroid: centroid)
-    case .ended(let scale, let velocity, let centroid):
-      updateMagnification(scale: scale, centroid: centroid)
+    case .changed(let scale, let velocity, let elapsed, let centroid):
+      updateMagnification(
+        scale: scale,
+        velocity: velocity,
+        elapsed: elapsed,
+        centroid: centroid
+      )
+    case .ended(let scale, let velocity, let elapsed, let centroid):
+      updateMagnification(
+        scale: scale,
+        velocity: velocity,
+        elapsed: elapsed,
+        centroid: centroid
+      )
       settleMagnification(velocity: velocity)
     case .cancelled:
       pageGestureActive = false
@@ -344,29 +413,83 @@ struct SpatialWorkspaceView: View {
     }
   }
 
-  private func updateMagnification(scale: CGFloat, centroid: CGPoint) {
-    guard let snapshot = cameraGesture else { return }
+  private func updateMagnification(
+    scale: CGFloat,
+    velocity: CGFloat,
+    elapsed: TimeInterval,
+    centroid: CGPoint
+  ) {
+    guard var snapshot = cameraGesture else { return }
     let viewport = snapshot.presence.viewport
     let pageScale = fitScale(viewport: viewport)
+    let magnification = Double(scale)
+    snapshot.latestMagnification = magnification
+
+    if snapshot.presence.mode == .board {
+      if let boardEngagement = snapshot.boardEngagement,
+        NotebookOpeningIntent.shouldDisengage(
+          magnification: magnification,
+          engagedAt: boardEngagement.magnification
+        )
+      {
+        snapshot.boardEngagement = nil
+        snapshot.openingWasCancelled = true
+      }
+      if snapshot.mayOpenNotebook,
+        !snapshot.openingWasCancelled,
+        snapshot.boardEngagement == nil,
+        let candidate = snapshot.candidateNotebookID,
+        let intent = NotebookOpeningIntent.engagement(
+          magnification: magnification,
+          velocity: Double(velocity),
+          elapsed: elapsed
+        )
+      {
+        snapshot.boardEngagement = CameraGestureSnapshot.BoardEngagement(
+          notebookID: candidate,
+          magnification: magnification,
+          intent: intent
+        )
+        model.selectNotebook(candidate)
+      }
+    }
+    cameraGesture = snapshot
+
     let camera = snapshot.presence.camera.pinched(
-      by: Double(scale),
+      by: magnification,
       from: SpatialPoint(
         x: snapshot.startCentroid.x,
         y: snapshot.startCentroid.y
       ),
       to: SpatialPoint(x: centroid.x, y: centroid.y),
       viewport: viewport,
-      maximumScale: pageScale
+      maximumScale: snapshot.presence.mode == .board
+        ? SpatialCamera.maximumScale
+        : pageScale
     )
 
-    let candidate = snapshot.candidateNotebookID
-      ?? snapshot.presence.focusedNotebookID
+    let candidate = snapshot.boardEngagement?.notebookID
+      ?? (snapshot.presence.mode == .board
+        ? nil
+        : snapshot.presence.focusedNotebookID)
     let coverScale = coverFocusScale(viewport: viewport)
-    let open = candidate == nil ? 0 : NotebookOpeningTransition.progress(
-      cameraScale: camera.scale,
-      coverScale: coverScale,
-      pageScale: pageScale
-    )
+    let open: Double
+    if snapshot.presence.mode == .board,
+      let boardEngagement = snapshot.boardEngagement
+    {
+      open = NotebookOpeningIntent.progress(
+        magnification: magnification,
+        engagedAt: boardEngagement.magnification
+      )
+    } else if candidate != nil {
+      open = NotebookOpeningTransition.progress(
+        cameraScale: camera.scale,
+        coverScale: coverScale,
+        pageScale: pageScale
+      )
+    } else {
+      open = 0
+    }
     let mode: WorkspaceSemanticMode = open >= 0.999
       ? .page
       : (candidate == nil ? .board : .cover)
@@ -384,20 +507,40 @@ struct SpatialWorkspaceView: View {
   }
 
   private func settleMagnification(velocity: CGFloat) {
-    guard let presence = model.presence else { return }
+    guard let snapshot = cameraGesture, let presence = model.presence else {
+      return
+    }
     cameraGesture = nil
-    settling = true
     let viewport = presence.viewport
     let pageScale = fitScale(viewport: viewport)
     let coverScale = coverFocusScale(viewport: viewport)
-    let wantsPage = presence.focusedNotebookID != nil
-      && (presence.openProgress > 0.46 || velocity > 0.7)
-    let wantsCover = presence.focusedNotebookID != nil
-      && !wantsPage
-      && presence.camera.scale >= coverScale * 0.62
+    let targetMode: WorkspaceSemanticMode
+    if snapshot.presence.mode == .board,
+      let boardEngagement = snapshot.boardEngagement
+    {
+      targetMode = NotebookOpeningIntent.releaseMode(
+        progress: presence.openProgress,
+        magnification: snapshot.latestMagnification,
+        engagedAt: boardEngagement.magnification,
+        engagement: boardEngagement.intent,
+        velocity: Double(velocity)
+      )
+    } else if snapshot.presence.mode == .board {
+      targetMode = .board
+    } else if presence.focusedNotebookID != nil,
+      presence.openProgress > 0.46 || velocity > 0.9
+    {
+      targetMode = .page
+    } else if presence.focusedNotebookID != nil,
+      presence.camera.scale >= coverScale * 0.72
+    {
+      targetMode = .cover
+    } else {
+      targetMode = .board
+    }
 
     let target: SessionPresence
-    if wantsPage,
+    if targetMode == .page,
       let notebookID = presence.focusedNotebookID,
       let center = renderedNotebooks(presence: presence)
         .first(where: { $0.id == notebookID })?.center
@@ -409,7 +552,7 @@ struct SpatialWorkspaceView: View {
         focusedNotebookID: notebookID,
         openProgress: 1
       )
-    } else if wantsCover,
+    } else if targetMode == .cover,
       let notebookID = presence.focusedNotebookID,
       let center = renderedNotebooks(presence: presence)
         .first(where: { $0.id == notebookID })?.center
@@ -424,30 +567,23 @@ struct SpatialWorkspaceView: View {
     } else {
       target = SessionPresence(
         mode: .board,
-        camera: SpatialCamera(
-          center: presence.camera.center,
-          scale: min(presence.camera.scale, coverScale * 0.48)
-        ),
+        camera: presence.camera,
         viewport: viewport
       )
     }
 
-    withAnimation(.spring(duration: 0.36, bounce: 0.1)) {
-      model.updatePresence(target, settled: true)
-    }
-    Task { @MainActor in
-      try? await Task.sleep(for: .milliseconds(380))
+    if target == presence {
       pageGestureActive = false
-      settling = false
+      model.updatePresence(target, settled: true)
+    } else {
+      animateSettlement(to: target, duration: 0.32)
     }
   }
 
   private func cancelMagnification() {
     guard let snapshot = cameraGesture else { return }
     cameraGesture = nil
-    withAnimation(.spring(duration: 0.28, bounce: 0.08)) {
-      model.updatePresence(snapshot.presence, settled: true)
-    }
+    animateSettlement(to: snapshot.presence, duration: 0.26)
   }
 
   private func updateBoardPan(
@@ -519,8 +655,48 @@ struct SpatialWorkspaceView: View {
         y: screen.y - height / 2,
         width: width,
         height: height
-      )
+      ),
+      halo: NotebookOpeningIntent.selectionHalo
     )
+  }
+
+  private func openNotebook(
+    _ notebookID: UUID,
+    viewport: SpatialPoint
+  ) {
+    guard !settling,
+      cameraGesture == nil,
+      let presence = model.presence?.adapted(to: viewport),
+      let center = renderedNotebooks(presence: presence)
+        .first(where: { $0.id == notebookID })?.center
+    else { return }
+    model.selectNotebook(notebookID)
+    let target = SessionPresence(
+      mode: .page,
+      camera: SpatialCamera(center: center, scale: fitScale(viewport: viewport)),
+      viewport: viewport,
+      focusedNotebookID: notebookID,
+      openProgress: 1
+    )
+    animateSettlement(to: target, duration: 0.3)
+  }
+
+  private func animateSettlement(
+    to target: SessionPresence,
+    duration: TimeInterval
+  ) {
+    settlementTask?.cancel()
+    settling = true
+    withAnimation(.spring(duration: duration, bounce: 0.08)) {
+      model.updatePresence(target, settled: true)
+    }
+    settlementTask = Task { @MainActor in
+      try? await Task.sleep(for: .seconds(duration + 0.02))
+      guard !Task.isCancelled else { return }
+      pageGestureActive = false
+      settling = false
+      settlementTask = nil
+    }
   }
 
   private func createNotebook(
@@ -540,14 +716,7 @@ struct SpatialWorkspaceView: View {
       focusedNotebookID: notebookID,
       openProgress: 0
     )
-    settling = true
-    withAnimation(.spring(duration: 0.42, bounce: 0.08)) {
-      model.updatePresence(target, settled: true)
-    }
-    Task { @MainActor in
-      try? await Task.sleep(for: .milliseconds(440))
-      settling = false
-    }
+    animateSettlement(to: target, duration: 0.42)
   }
 
   private func dropNotebook(
@@ -594,22 +763,27 @@ private struct NotebookSceneItem: View {
   let camera: SpatialCamera
   let viewport: SpatialPoint
   let isFocused: Bool
+  let preparesPage: Bool
   let openProgress: Double
   let pageIsInteractive: Bool
   let onDrop: (UUID, WorldPoint) -> Void
+  let onOpen: (UUID) -> Void
 
   @State private var dragTranslation = CGSize.zero
 
   var body: some View {
     let screen = camera.worldToScreen(rendered.center, viewport: viewport)
     let scale = camera.scale
+    let pageIsVisible = openProgress > 0.001 || pageIsInteractive
     ZStack {
-      if isFocused, let page, openProgress > 0.001 || pageIsInteractive {
-        if pageIsInteractive {
-          PageSurface(page: page)
-        } else {
-          StaticPageSurface(page: page)
-        }
+      if preparesPage, let page {
+        PageSurface(
+          page: page,
+          isInteractive: pageIsInteractive,
+          isVisible: pageIsVisible
+        )
+          .opacity(pageIsVisible ? 1 : 0)
+          .allowsHitTesting(pageIsInteractive)
       }
 
       NotebookCoverView(
@@ -645,6 +819,14 @@ private struct NotebookSceneItem: View {
         moveGesture(scale: scale),
         including: openProgress < 0.12 ? .all : .none
       )
+      .simultaneousGesture(
+        TapGesture(count: 2)
+          .onEnded {
+            guard openProgress < 0.12 else { return }
+            onOpen(rendered.id)
+          },
+        including: openProgress < 0.12 ? .all : .none
+      )
     #endif
     .accessibilityIdentifier("notebook-\(rendered.id.uuidString.lowercased())")
   }
@@ -664,12 +846,11 @@ private struct NotebookSceneItem: View {
           dragTranslation = .zero
           return
         }
-        let translation: CGSize
-        if case .second(true, let drag?) = value {
-          translation = drag.translation
-        } else {
-          translation = dragTranslation
+        guard case .second(true, let drag?) = value else {
+          dragTranslation = .zero
+          return
         }
+        let translation = drag.translation
         let center = rendered.center.offsetBy(
           x: translation.width / max(scale, 0.001),
           y: translation.height / max(scale, 0.001)
@@ -917,49 +1098,6 @@ private struct NativeTextElementView: View {
     }
   }
 }
-
-private struct StaticPageSurface: View {
-  let page: PageDocument
-
-  var body: some View {
-    ZStack(alignment: .topLeading) {
-      GridPaperView()
-      #if os(iOS)
-        StaticPencilDrawingView(page: page)
-      #else
-        PencilDrawingView(page: page)
-      #endif
-      AgentOverlayView(elements: page.elements) { _, _ in }
-    }
-    .frame(width: page.size.width, height: page.size.height)
-    .clipped()
-  }
-}
-
-#if os(iOS)
-private struct StaticPencilDrawingView: View {
-  let page: PageDocument
-
-  var body: some View {
-    if !page.drawingData.isEmpty,
-      let drawing = try? PKDrawing(data: page.drawingData)
-    {
-      Image(
-        uiImage: drawing.image(
-          from: CGRect(
-            x: 0,
-            y: 0,
-            width: page.size.width,
-            height: page.size.height
-          ),
-          scale: 2
-        )
-      )
-      .resizable()
-    }
-  }
-}
-#endif
 
 private struct SpatialBoardGrid: View {
   @Environment(\.displayScale) private var displayScale

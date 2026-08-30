@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 
 struct WorkspaceGestureLayer: UIViewRepresentable {
+  let isEnabled: Bool
   let isPageOpen: Bool
   let onCamera: (WorkspaceMagnificationPhase) -> Void
   let onNavigate: (Int) -> Void
@@ -10,6 +11,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
   func makeCoordinator() -> Coordinator {
     Coordinator(
       isPageOpen: isPageOpen,
+      isEnabled: isEnabled,
       onCamera: onCamera,
       onNavigate: onNavigate,
       onUndo: onUndo
@@ -31,6 +33,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     context.coordinator.onNavigate = onNavigate
     context.coordinator.onUndo = onUndo
     context.coordinator.isPageOpen = isPageOpen
+    context.coordinator.isEnabled = isEnabled
     if let window = view.window {
       context.coordinator.install(on: window, inside: view)
     }
@@ -45,6 +48,11 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     var isPageOpen: Bool {
       didSet { recognizer?.isPageOpen = isPageOpen }
     }
+    var isEnabled: Bool {
+      didSet {
+        if oldValue != isEnabled { recognizer?.isEnabled = isEnabled }
+      }
+    }
     var onCamera: (WorkspaceMagnificationPhase) -> Void
     var onNavigate: (Int) -> Void
     var onUndo: () -> Void
@@ -56,11 +64,13 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
 
     init(
       isPageOpen: Bool,
+      isEnabled: Bool,
       onCamera: @escaping (WorkspaceMagnificationPhase) -> Void,
       onNavigate: @escaping (Int) -> Void,
       onUndo: @escaping () -> Void
     ) {
       self.isPageOpen = isPageOpen
+      self.isEnabled = isEnabled
       self.onCamera = onCamera
       self.onNavigate = onNavigate
       self.onUndo = onUndo
@@ -86,6 +96,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       recognizer.delaysTouchesBegan = false
       recognizer.delaysTouchesEnded = false
       recognizer.isPageOpen = isPageOpen
+      recognizer.isEnabled = isEnabled
       recognizer.delegate = self
       hostView.addGestureRecognizer(recognizer)
       self.hostView = hostView
@@ -110,10 +121,17 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       case .began where recognizer.intent == .magnification
         || (recognizer.intent == .navigation && !isPageOpen):
         repeatTask?.cancel()
-        onCamera(.began(centroid: recognizer.startCentroidValue))
+        onCamera(
+          .began(
+            centroid: recognizer.startCentroidValue,
+            mayOpenNotebook: recognizer.intent == .magnification
+          )
+        )
         onCamera(
           .changed(
             scale: recognizer.magnification,
+            velocity: recognizer.magnificationVelocity,
+            elapsed: recognizer.gestureElapsed,
             centroid: recognizer.centroid
           )
         )
@@ -122,6 +140,8 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
         onCamera(
           .changed(
             scale: recognizer.magnification,
+            velocity: recognizer.magnificationVelocity,
+            elapsed: recognizer.gestureElapsed,
             centroid: recognizer.centroid
           )
         )
@@ -171,6 +191,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
         .ended(
           scale: recognizer.magnification,
           velocity: recognizer.magnificationVelocity,
+          elapsed: recognizer.gestureElapsed,
           centroid: recognizer.centroid
         )
       )

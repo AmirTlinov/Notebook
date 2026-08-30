@@ -5,6 +5,8 @@ struct PageSurface: View {
   @Environment(TetradAppModel.self) private var model
 
   let page: PageDocument
+  let isInteractive: Bool
+  let isVisible: Bool
 
   var body: some View {
     GeometryReader { geometry in
@@ -22,6 +24,7 @@ struct PageSurface: View {
           PencilCanvasView(
             pageID: page.id,
             drawingData: page.drawingData,
+            isInputEnabled: isInteractive,
             penStyle: model.penStyle,
             eraserStyle: model.eraserStyle,
             drawingTool: model.drawingTool,
@@ -40,8 +43,11 @@ struct PageSurface: View {
           PencilDrawingView(page: page)
             .allowsHitTesting(false)
         #endif
-        AgentOverlayView(elements: page.elements) { elementID, state in
-          model.commitElementState(elementID: elementID, state: state)
+        if isVisible {
+          AgentOverlayView(elements: page.elements) { elementID, state in
+            model.commitElementState(elementID: elementID, state: state)
+          }
+          .allowsHitTesting(isInteractive)
         }
       }
       .frame(width: page.size.width, height: page.size.height)

@@ -842,13 +842,7 @@ final class TetradAppModel {
 
     return SessionPresence(
       mode: .board,
-      camera: SpatialCamera(
-        center: adapted.camera.center,
-        scale: min(
-          adapted.camera.scale,
-          NotebookPresentation.coverScale(viewport: viewport) * 0.48
-        )
-      ),
+      camera: adapted.camera,
       viewport: viewport
     )
   }

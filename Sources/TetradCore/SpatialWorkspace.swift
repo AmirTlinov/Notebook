@@ -292,6 +292,94 @@ public enum NotebookOpeningTransition {
   }
 }
 
+/// Decides when a board pinch becomes an instruction to open one notebook.
+/// Until this policy sees deliberate evidence, the board camera remains the
+/// semantic owner of the same fingers.
+public enum NotebookOpeningIntent {
+  public enum Engagement: Equatable, Sendable {
+    case deliberate
+    case sharp
+  }
+
+  /// A 50% spread is large enough to be an intentional second-stage action,
+  /// while a short inspection pinch remains ordinary board zoom.
+  public static let deliberateMagnification = 1.5
+  /// Scale units per second measured over the recognizer's recent 80 ms.
+  public static let sharpVelocity = 2.4
+  /// Velocity alone is noisy during the first hardware samples. A sharp pinch
+  /// must also create a visible 28% spread before it can acquire a notebook.
+  public static let sharpMinimumMagnification = 1.28
+  /// One raw touch sample cannot own a semantic transition. This interval is
+  /// the same size as the recognizer's velocity window.
+  public static let minimumEvidenceDuration = 0.08
+  /// Once engaged, another 50% spread reveals the complete page.
+  public static let openingMagnificationRatio = 1.5
+  public static let selectionHalo = 1.12
+
+  public static func engagement(
+    magnification: Double,
+    velocity: Double,
+    elapsed: TimeInterval
+  ) -> Engagement? {
+    guard magnification.isFinite, magnification >= 1,
+      velocity.isFinite, elapsed.isFinite,
+      elapsed >= minimumEvidenceDuration
+    else { return nil }
+    if magnification >= sharpMinimumMagnification,
+      velocity >= sharpVelocity
+    {
+      return .sharp
+    }
+    if magnification >= deliberateMagnification { return .deliberate }
+    return nil
+  }
+
+  /// Opening begins at zero on the exact frame that acquires the notebook.
+  /// Continuing or reversing the same pinch then changes this value
+  /// continuously, even if the board camera has reached its own zoom limit.
+  public static func progress(
+    magnification: Double,
+    engagedAt engagementMagnification: Double
+  ) -> Double {
+    NotebookOpeningTransition.progress(
+      cameraScale: magnification,
+      coverScale: engagementMagnification,
+      pageScale: engagementMagnification * openingMagnificationRatio
+    )
+  }
+
+  public static func shouldDisengage(
+    magnification: Double,
+    engagedAt engagementMagnification: Double
+  ) -> Bool {
+    magnification < engagementMagnification * 0.9
+  }
+
+  /// Every completed gesture lands on one whole semantic state. A sharp
+  /// outward motion commits to the page; a barely crossed deliberate threshold
+  /// may rest on the closed cover; reversing the motion returns to the board.
+  public static func releaseMode(
+    progress: Double,
+    magnification: Double,
+    engagedAt engagementMagnification: Double,
+    engagement: Engagement,
+    velocity: Double
+  ) -> WorkspaceSemanticMode {
+    guard progress.isFinite, magnification.isFinite,
+      engagementMagnification.isFinite, engagementMagnification > 0,
+      velocity.isFinite
+    else { return .board }
+    let retainedEngagement = magnification >= engagementMagnification * 0.96
+    if !retainedEngagement && progress < 0.08 { return .board }
+    if progress >= 0.42 || velocity >= 0.9
+      || (engagement == .sharp && retainedEngagement)
+    {
+      return .page
+    }
+    return .cover
+  }
+}
+
 public struct FreeNotebookPlacement: Codable, Equatable, Identifiable, Sendable {
   public var id: UUID { notebookID }
 

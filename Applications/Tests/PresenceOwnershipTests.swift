@@ -54,4 +54,26 @@ final class PresenceOwnershipTests: XCTestCase {
     XCTAssertEqual(model.presence?.camera.center, center)
     XCTAssertEqual(try store.loadPresence().camera.scale, 1)
   }
+
+  @MainActor
+  func testSettledBoardKeepsTheScaleChosenForInspection() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = TetradStore(root: root)
+    let model = TetradAppModel(store: store, startsNearbySync: false)
+    model.start(pageSize: PageSize(width: 834, height: 1_194))
+    let viewport = SpatialPoint(x: 834, y: 1_194)
+    let inspected = SessionPresence(
+      mode: .board,
+      camera: SpatialCamera(center: WorldPoint(x: 90, y: -40), scale: 0.68),
+      viewport: viewport
+    )
+
+    model.updatePresence(inspected, settled: true)
+
+    XCTAssertEqual(model.presence, inspected)
+    XCTAssertEqual(try store.loadPresence(), inspected)
+  }
 }

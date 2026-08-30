@@ -3,9 +3,19 @@ import Foundation
 import TetradCore
 
 enum WorkspaceMagnificationPhase: Equatable {
-  case began(centroid: CGPoint)
-  case changed(scale: CGFloat, centroid: CGPoint)
-  case ended(scale: CGFloat, velocity: CGFloat, centroid: CGPoint)
+  case began(centroid: CGPoint, mayOpenNotebook: Bool)
+  case changed(
+    scale: CGFloat,
+    velocity: CGFloat,
+    elapsed: TimeInterval,
+    centroid: CGPoint
+  )
+  case ended(
+    scale: CGFloat,
+    velocity: CGFloat,
+    elapsed: TimeInterval,
+    centroid: CGPoint
+  )
   case cancelled
 }
 

@@ -6,6 +6,7 @@ import UIKit
 struct PencilCanvasView: UIViewRepresentable {
   let pageID: UUID
   let drawingData: Data
+  let isInputEnabled: Bool
   let penStyle: PenStyle
   let eraserStyle: EraserStyle
   let drawingTool: DrawingTool
@@ -23,6 +24,7 @@ struct PencilCanvasView: UIViewRepresentable {
 
   func makeUIView(context: Context) -> PaperCanvasContainerView {
     let paper = PaperCanvasContainerView()
+    paper.setInputEnabled(isInputEnabled)
     context.coordinator.attach(to: paper)
     context.coordinator.apply(
       penStyle,
@@ -35,6 +37,7 @@ struct PencilCanvasView: UIViewRepresentable {
   }
 
   func updateUIView(_ paper: PaperCanvasContainerView, context: Context) {
+    paper.setInputEnabled(isInputEnabled)
     context.coordinator.pageInputGate = pageInputGate
     context.coordinator.reserveAction = reserveAction
     context.coordinator.commitAction = commitAction
@@ -271,6 +274,12 @@ final class PaperCanvasContainerView: UIView {
   func apply(_ drawing: PKDrawing) {
     inkView.apply(drawing)
     touchView.apply(drawing)
+  }
+
+  func setInputEnabled(_ enabled: Bool) {
+    touchView.isUserInteractionEnabled = enabled
+    touchView.isAccessibilityElement = enabled
+    touchView.accessibilityElementsHidden = !enabled
   }
 }
 

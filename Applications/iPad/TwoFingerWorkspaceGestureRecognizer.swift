@@ -137,6 +137,10 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   var isPageOpen = false
 
   var startCentroidValue: CGPoint { startCentroid ?? centroid }
+  var gestureElapsed: TimeInterval {
+    guard let startTimestamp else { return 0 }
+    return max(0, currentTimestamp() - startTimestamp)
+  }
 
   override func touchesBegan(
     _ touches: Set<UITouch>,
@@ -176,6 +180,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
         state = .began
       case .magnification:
         cancelHold()
+        beginMagnificationFromCurrentPair()
         intent = .magnification
         state = .began
       case .undecided:
@@ -280,6 +285,28 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
       intent = .hold
       state = .began
     }
+  }
+
+  /// The second finger may arrive a few hardware samples after the first one.
+  /// The intent arbiter already waits for both fingers, so the owned pinch must
+  /// start from that confirmed pair rather than from their staggered touchdown.
+  /// Otherwise the first reported scale can be much larger than the motion the
+  /// person actually made.
+  private func beginMagnificationFromCurrentPair() {
+    let timestamp = currentTimestamp()
+    startLocations = activeTouches.mapValues { $0.location(in: view) }
+    let current = currentCentroid()
+    startCentroid = current
+    centroid = current
+    startDistance = currentDistance()
+    startTimestamp = timestamp
+    translation = .zero
+    velocity = .zero
+    fingerDisplacements = activeTouches.values.map { _ in .zero }
+    magnification = 1
+    magnificationVelocity = 0
+    centroidSamples = [CentroidSample(timestamp: timestamp, point: current)]
+    magnificationSamples = [(timestamp: timestamp, value: 1)]
   }
 
   private func updateMetrics() {

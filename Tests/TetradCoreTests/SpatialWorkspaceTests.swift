@@ -174,6 +174,81 @@ func notebookOpeningProgressUsesThePinchRatio() {
   ) == 1)
 }
 
+@Test("Небольшой щипок оставляет управление у камеры доски")
+func smallBoardPinchDoesNotAcquireANotebook() {
+  #expect(NotebookOpeningIntent.engagement(
+    magnification: 1.24,
+    velocity: 0.7,
+    elapsed: 0.4
+  ) == nil)
+}
+
+@Test("Большой или резкий щипок подтверждает открытие тетради")
+func deliberateAndSharpPinchesAcquireANotebook() {
+  #expect(NotebookOpeningIntent.engagement(
+    magnification: 1.5,
+    velocity: 0.4,
+    elapsed: 0.4
+  ) == .deliberate)
+  #expect(NotebookOpeningIntent.engagement(
+    magnification: 1.32,
+    velocity: 2.8,
+    elapsed: 0.12
+  ) == .sharp)
+  #expect(NotebookOpeningIntent.engagement(
+    magnification: 1.2,
+    velocity: 4,
+    elapsed: 0.12
+  ) == nil)
+  #expect(NotebookOpeningIntent.engagement(
+    magnification: 1.8,
+    velocity: 8,
+    elapsed: 0.03
+  ) == nil)
+}
+
+@Test("Раскрытие начинается непрерывно с кадра подтверждения")
+func engagedOpeningStartsWithoutAProgressJump() {
+  let engagedAt = 1.5
+  #expect(NotebookOpeningIntent.progress(
+    magnification: engagedAt,
+    engagedAt: engagedAt
+  ) == 0)
+  #expect(abs(NotebookOpeningIntent.progress(
+    magnification: engagedAt * sqrt(1.5),
+    engagedAt: engagedAt
+  ) - 0.5) < 0.000_001)
+  #expect(NotebookOpeningIntent.progress(
+    magnification: engagedAt * 1.5,
+    engagedAt: engagedAt
+  ) == 1)
+}
+
+@Test("Резкий щипок открывает лист, а обратное движение возвращает доску")
+func openingReleaseAlwaysChoosesAWholeState() {
+  #expect(NotebookOpeningIntent.releaseMode(
+    progress: 0,
+    magnification: 1.32,
+    engagedAt: 1.32,
+    engagement: .sharp,
+    velocity: 0
+  ) == .page)
+  #expect(NotebookOpeningIntent.releaseMode(
+    progress: 0,
+    magnification: 1.3,
+    engagedAt: 1.5,
+    engagement: .deliberate,
+    velocity: -1
+  ) == .board)
+  #expect(NotebookOpeningIntent.releaseMode(
+    progress: 0.2,
+    magnification: 1.63,
+    engagedAt: 1.5,
+    engagement: .deliberate,
+    velocity: 0
+  ) == .cover)
+}
+
 @Test("Сила выбора растёт по мере приближения щипка к центру обложки")
 func selectionFieldGrowsTowardCenter() {
   let cover = SpatialRect(x: 100, y: 100, width: 300, height: 420)

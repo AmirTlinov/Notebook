@@ -37,6 +37,7 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
+    let originalPaperFrame = paper.frame
     paper.pinch(withScale: 0.28, velocity: -2)
 
     XCTAssertTrue(
@@ -48,15 +49,56 @@ final class DrawingResponsivenessTests: XCTestCase {
     boardProof.lifetime = .keepAlways
     add(boardProof)
 
-    let notebook = app.descendants(matching: .any)[
-      "notebook-7e7a1000-0000-4000-8000-000000000002"
-    ]
+    let notebook = app.descendants(matching: .any)
+      .matching(
+        identifier: "notebook-7e7a1000-0000-4000-8000-000000000002"
+      )
+      .firstMatch
     XCTAssertTrue(notebook.waitForExistence(timeout: 3))
+    notebook.pinch(withScale: 1.2, velocity: 0.4)
+    XCTAssertTrue(
+      app.buttons["create-notebook"].exists,
+      "Небольшой щипок должен только приблизить доску"
+    )
     notebook.pinch(withScale: 4, velocity: 2)
     XCTAssertTrue(
       paper.waitForExistence(timeout: 5),
       "Щипок над тетрадью должен снова открыть её лист"
     )
+    XCTAssertEqual(paper.frame.midX, originalPaperFrame.midX, accuracy: 2)
+    XCTAssertEqual(paper.frame.midY, originalPaperFrame.midY, accuracy: 2)
+    XCTAssertEqual(paper.frame.width, originalPaperFrame.width, accuracy: 2)
+    XCTAssertEqual(paper.frame.height, originalPaperFrame.height, accuracy: 2)
+  }
+
+  func testDoubleTapOpensAWholePageImmediately() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--tetrad-drawing-responsiveness-fixture",
+      "--tetrad-simulator-finger-gestures",
+    ]
+    app.launch()
+
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 5))
+    let originalPaperFrame = paper.frame
+    paper.pinch(withScale: 0.28, velocity: -2)
+    XCTAssertTrue(app.buttons["create-notebook"].waitForExistence(timeout: 5))
+
+    let notebook = app.descendants(matching: .any)
+      .matching(
+        identifier: "notebook-7e7a1000-0000-4000-8000-000000000002"
+      )
+      .firstMatch
+    XCTAssertTrue(notebook.waitForExistence(timeout: 3))
+    notebook.doubleTap()
+
+    XCTAssertTrue(paper.waitForExistence(timeout: 3))
+    XCTAssertEqual(paper.frame.midX, originalPaperFrame.midX, accuracy: 2)
+    XCTAssertEqual(paper.frame.midY, originalPaperFrame.midY, accuracy: 2)
+    XCTAssertEqual(paper.frame.width, originalPaperFrame.width, accuracy: 2)
+    XCTAssertEqual(paper.frame.height, originalPaperFrame.height, accuracy: 2)
   }
 
   func testPenCommitsOneStrokeAndKeepsThePaperResponsive() {

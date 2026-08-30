@@ -220,6 +220,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
     host.addSubview(scene)
     let controller = WorkspaceGestureLayer.Coordinator(
       isPageOpen: true,
+      isEnabled: true,
       onCamera: { _ in },
       onNavigate: { _ in },
       onUndo: {}
