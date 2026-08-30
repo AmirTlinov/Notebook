@@ -474,35 +474,10 @@ struct SpatialWorkspaceView: View {
       }
     }
 
-    if snapshot.boardEngagement == nil,
-      let candidate = snapshot.candidateNotebookID,
-      NotebookOpeningIntent.shouldEngage(
-        isApproaching: snapshot.isApproaching,
-        cameraScale: camera.scale,
-        coverScale: coverScale
-      )
-    {
-      snapshot.boardEngagement = CameraGestureSnapshot.BoardEngagement(
-        notebookID: candidate
-      )
-      model.selectNotebook(candidate)
-      camera = snapshot.baselineCamera.pinched(
-        by: magnification
-          / max(Double(snapshot.baselineMagnification), 0.001),
-        from: SpatialPoint(
-          x: snapshot.baselineCentroid.x,
-          y: snapshot.baselineCentroid.y
-        ),
-        to: SpatialPoint(x: centroid.x, y: centroid.y),
-        viewport: viewport,
-        maximumScale: pageScale
-      )
-    }
-
-    let candidate = snapshot.boardEngagement?.notebookID
-    let open: Double
-    if let candidate,
-      let center = model.board?.focusedCenter(of: candidate)
+    let attractionTarget = snapshot.boardEngagement?.notebookID
+      ?? snapshot.candidateNotebookID
+    if let attractionTarget,
+      let center = model.board?.focusedCenter(of: attractionTarget)
     {
       let dockingStrength = NotebookDockingField.strength(
         camera: camera,
@@ -517,13 +492,33 @@ struct SpatialWorkspaceView: View {
           strength: dockingStrength
         )
       }
+    } else {
+      snapshot.dockingStrength = 0
+    }
+
+    if snapshot.boardEngagement == nil,
+      let candidate = snapshot.candidateNotebookID,
+      NotebookOpeningIntent.shouldEngage(
+        isApproaching: snapshot.isApproaching,
+        cameraScale: camera.scale,
+        coverScale: coverScale
+      )
+    {
+      snapshot.boardEngagement = CameraGestureSnapshot.BoardEngagement(
+        notebookID: candidate
+      )
+      model.selectNotebook(candidate)
+    }
+
+    let candidate = snapshot.boardEngagement?.notebookID
+    let open: Double
+    if candidate != nil {
       open = NotebookOpeningTransition.progress(
         cameraScale: camera.scale,
         coverScale: coverScale,
         pageScale: pageScale
       )
     } else {
-      snapshot.dockingStrength = 0
       open = 0
     }
     let mode: WorkspaceSemanticMode = candidate == nil ? .board : .cover

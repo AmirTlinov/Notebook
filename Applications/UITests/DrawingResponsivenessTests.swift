@@ -114,7 +114,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.launchArguments = [
       "--notebook-drawing-responsiveness-fixture",
       "--notebook-simulator-finger-gestures",
-      "--notebook-nearby-cover-fixture",
+      "--notebook-off-center-cover-fixture",
     ]
     app.launch()
 
@@ -125,15 +125,21 @@ final class DrawingResponsivenessTests: XCTestCase {
       .firstMatch
     XCTAssertTrue(notebook.waitForExistence(timeout: 3))
     let coverFrame = notebook.frame
+    let window = app.windows.firstMatch
+    XCTAssertTrue(window.exists)
+    let coverOffset = abs(coverFrame.midX - window.frame.midX)
+    XCTAssertGreaterThan(coverOffset, 80)
 
     notebook.pinch(withScale: 1.05, velocity: 0.2)
     try await Task.sleep(for: .milliseconds(300))
     let releasedFrame = notebook.frame
+    let releasedOffset = abs(releasedFrame.midX - window.frame.midX)
 
     XCTAssertGreaterThan(releasedFrame.width, coverFrame.width * 1.02)
-    XCTAssertLessThan(releasedFrame.width, coverFrame.width * 1.15)
     XCTAssertGreaterThan(releasedFrame.height, coverFrame.height * 1.02)
-    XCTAssertLessThan(releasedFrame.height, coverFrame.height * 1.15)
+    XCTAssertLessThan(releasedOffset, coverOffset - 5)
+    XCTAssertGreaterThan(releasedOffset, 20)
+    XCTAssertFalse(app.otherElements["paper-input"].exists)
   }
 
   func testNearPageApproachMagnetCompletesTheDock() async throws {

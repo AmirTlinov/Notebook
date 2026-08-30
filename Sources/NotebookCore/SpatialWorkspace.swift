@@ -296,14 +296,14 @@ public enum NotebookOpeningTransition {
   }
 }
 
-/// Attracts only the last part of an already selected notebook approach. The
-/// raw pinch remains the camera everywhere else. Near page scale the selected
-/// notebook itself supplies the center, so the person does not have to align
-/// two invisible crosshairs by hand.
+/// Turns an approached notebook into one continuous camera target. The pinch
+/// supplies the raw path; once a candidate is visibly near, this field adds a
+/// small pull toward its center and full-page scale. The pull grows smoothly
+/// with apparent notebook size and becomes exact only beside the page.
 public enum NotebookDockingField {
-  public static let fieldStartScaleRatio = 0.84
+  public static let fieldStartScaleRatio = 0.52
   public static let fullStrengthScaleRatio = 0.96
-  public static let commitStrength = 0.68
+  public static let commitStrength = 0.92
 
   public static func strength(
     camera: SpatialCamera,

@@ -225,20 +225,31 @@ func nearbyNotebookAcceptsTheRecognizedPinch() {
   ))
 }
 
-@Test("Близкий лист сам находит центр экрана")
-func pageDockingFieldDoesNotRequireManualCentering() {
+@Test("Притяжение к тетради усиливается по мере приближения")
+func pageDockingFieldGrowsThroughoutTheApproach() {
   let viewport = SpatialPoint(x: 834, y: 1_194)
-  let farScale = SpatialCamera(center: .zero, scale: 0.82)
-  let nearby = SpatialCamera(center: .zero, scale: 0.95)
+  let center = WorldPoint(x: 300, y: -180)
+  let farScale = SpatialCamera(center: center, scale: 0.5)
+  let approaching = SpatialCamera(center: center, scale: 0.65)
+  let focusedCover = SpatialCamera(center: center, scale: 0.72)
+  let nearby = SpatialCamera(center: center, scale: 0.9)
   let offCenter = SpatialCamera(
-    center: WorldPoint(x: 300 / 0.95, y: 0),
-    scale: 0.95
+    center: WorldPoint(x: 600, y: 400),
+    scale: nearby.scale
   )
 
   #expect(NotebookDockingField.strength(
     camera: farScale,
     viewport: viewport
   ) == 0)
+  let approachingStrength = NotebookDockingField.strength(
+    camera: approaching,
+    viewport: viewport
+  )
+  let coverStrength = NotebookDockingField.strength(
+    camera: focusedCover,
+    viewport: viewport
+  )
   let nearbyStrength = NotebookDockingField.strength(
     camera: nearby,
     viewport: viewport
@@ -247,8 +258,47 @@ func pageDockingFieldDoesNotRequireManualCentering() {
     camera: offCenter,
     viewport: viewport
   )
+  #expect(approachingStrength > 0)
+  #expect(approachingStrength < coverStrength)
+  #expect(coverStrength < nearbyStrength)
   #expect(nearbyStrength > NotebookDockingField.commitStrength)
   #expect(offCenterStrength == nearbyStrength)
+
+  let approachingCamera = NotebookDockingField.attractedCamera(
+    approaching,
+    toward: .zero,
+    viewport: viewport,
+    strength: approachingStrength
+  )
+  let coverCamera = NotebookDockingField.attractedCamera(
+    focusedCover,
+    toward: .zero,
+    viewport: viewport,
+    strength: coverStrength
+  )
+  let nearbyCamera = NotebookDockingField.attractedCamera(
+    nearby,
+    toward: .zero,
+    viewport: viewport,
+    strength: nearbyStrength
+  )
+  func distanceToTarget(_ point: WorldPoint) -> Double {
+    let delta = point.delta(to: .zero)
+    return hypot(delta.x, delta.y)
+  }
+  let originalDistance = distanceToTarget(center)
+  let approachingRemainder = distanceToTarget(
+    approachingCamera.center
+  ) / originalDistance
+  let coverRemainder = distanceToTarget(
+    coverCamera.center
+  ) / originalDistance
+  let nearbyRemainder = distanceToTarget(
+    nearbyCamera.center
+  ) / originalDistance
+  #expect(approachingRemainder < 1)
+  #expect(approachingRemainder > coverRemainder)
+  #expect(coverRemainder > nearbyRemainder)
 }
 
 @Test("Магнит приближает камеру, а разворот щипка освобождает её")
