@@ -142,7 +142,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.launchArguments = [
       "--notebook-drawing-responsiveness-fixture",
       "--notebook-simulator-finger-gestures",
-      "--notebook-nearby-cover-fixture",
+      "--notebook-off-center-cover-fixture",
     ]
     app.launch()
 
@@ -152,12 +152,20 @@ final class DrawingResponsivenessTests: XCTestCase {
       )
       .firstMatch
     XCTAssertTrue(notebook.waitForExistence(timeout: 3))
+    let window = app.windows.firstMatch
+    XCTAssertTrue(window.exists)
+    XCTAssertGreaterThan(
+      abs(notebook.frame.midX - window.frame.midX),
+      80
+    )
+    XCTAssertGreaterThan(
+      abs(notebook.frame.midY - window.frame.midY),
+      50
+    )
     notebook.pinch(withScale: 1.35, velocity: 0.5)
 
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
-    let window = app.windows.firstMatch
-    XCTAssertTrue(window.exists)
     try await Task.sleep(for: .milliseconds(350))
     assertFittedAndCentered(paper.frame, in: window.frame)
   }

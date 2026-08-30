@@ -296,40 +296,26 @@ public enum NotebookOpeningTransition {
   }
 }
 
-/// Attracts only the last part of a notebook approach. The raw pinch remains
-/// the camera everywhere else, while a nearby, centered page acquires one
-/// reversible full-screen docking target.
+/// Attracts only the last part of an already selected notebook approach. The
+/// raw pinch remains the camera everywhere else. Near page scale the selected
+/// notebook itself supplies the center, so the person does not have to align
+/// two invisible crosshairs by hand.
 public enum NotebookDockingField {
-  public static let fieldStartScaleRatio = 0.82
-  public static let fullStrengthScaleRatio = 0.97
-  public static let innerCenterRadiusRatio = 0.015
-  public static let outerCenterRadiusRatio = 0.14
-  public static let commitStrength = 0.72
+  public static let fieldStartScaleRatio = 0.84
+  public static let fullStrengthScaleRatio = 0.96
+  public static let commitStrength = 0.68
 
   public static func strength(
     camera: SpatialCamera,
-    notebookCenter: WorldPoint,
     viewport: SpatialPoint
   ) -> Double {
     guard viewport.x > 0, viewport.y > 0 else { return 0 }
     let pageScale = NotebookPresentation.fitScale(viewport: viewport)
-    let scaleStrength = smoothstep(
+    return smoothstep(
       from: fieldStartScaleRatio,
       through: fullStrengthScaleRatio,
       value: camera.scale / pageScale
     )
-    let projected = camera.worldToScreen(notebookCenter, viewport: viewport)
-    let centerDistance = hypot(
-      projected.x - viewport.x / 2,
-      projected.y - viewport.y / 2
-    )
-    let shortSide = min(viewport.x, viewport.y)
-    let centerStrength = 1 - smoothstep(
-      from: innerCenterRadiusRatio * shortSide,
-      through: outerCenterRadiusRatio * shortSide,
-      value: centerDistance
-    )
-    return scaleStrength * centerStrength
   }
 
   public static func attractedCamera(

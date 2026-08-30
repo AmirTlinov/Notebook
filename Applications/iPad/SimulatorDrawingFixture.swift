@@ -8,6 +8,7 @@
     static let launchArgument = "--notebook-drawing-responsiveness-fixture"
     static let fingerGestureArgument = "--notebook-simulator-finger-gestures"
     static let coverArgument = "--notebook-nearby-cover-fixture"
+    static let offCenterCoverArgument = "--notebook-off-center-cover-fixture"
     static let stackArgument = "--notebook-stacked-page-fixture"
     static let lowerStackArgument = "--notebook-stacked-lower-page-fixture"
     static let stackBoardArgument = "--notebook-stacked-board-fixture"
@@ -20,6 +21,9 @@
       let fileManager = FileManager.default
       let startsAtCover = ProcessInfo.processInfo.arguments.contains(
         coverArgument
+      ) || ProcessInfo.processInfo.arguments.contains(offCenterCoverArgument)
+      let startsOffCenterCover = ProcessInfo.processInfo.arguments.contains(
+        offCenterCoverArgument
       )
       let startsInStack = ProcessInfo.processInfo.arguments.contains(
         stackArgument
@@ -39,7 +43,9 @@
             ? "StackedLowerPage"
             : "StackedUpperPage")
       } else if startsAtCover {
-        fixtureName = "NearbyCoverTransition"
+        fixtureName = startsOffCenterCover
+          ? "OffCenterCoverTransition"
+          : "NearbyCoverTransition"
       } else if ProcessInfo.processInfo.arguments.contains(
         fingerGestureArgument
       ) {
@@ -155,13 +161,20 @@
           let center = board.placement(of: notebookID)?.center
             ?? WorldPoint(x: 0, y: 0)
           let viewport = SpatialPoint(x: size.width, y: size.height)
+          let coverScale = NotebookPresentation.coverScale(viewport: viewport)
+          let cameraCenter = startsOffCenterCover
+            ? center.offsetBy(
+              x: 100 / coverScale,
+              y: -70 / coverScale
+            )
+            : center
           try store.saveBoard(board, notebookIDs: Set([notebookID]))
           try store.savePresence(
             SessionPresence(
               mode: .cover,
               camera: SpatialCamera(
-                center: center,
-                scale: NotebookPresentation.coverScale(viewport: viewport)
+                center: cameraCenter,
+                scale: coverScale
               ),
               viewport: viewport,
               focusedNotebookID: notebookID,

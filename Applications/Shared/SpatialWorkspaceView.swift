@@ -506,7 +506,6 @@ struct SpatialWorkspaceView: View {
     {
       let dockingStrength = NotebookDockingField.strength(
         camera: camera,
-        notebookCenter: center,
         viewport: viewport
       )
       snapshot.dockingStrength = dockingStrength

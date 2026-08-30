@@ -225,32 +225,30 @@ func nearbyNotebookAcceptsTheRecognizedPinch() {
   ))
 }
 
-@Test("Полноэкранный магнит действует только рядом с центром страницы")
-func pageDockingFieldHasOneLocalCaptureArea() {
+@Test("Близкий лист сам находит центр экрана")
+func pageDockingFieldDoesNotRequireManualCentering() {
   let viewport = SpatialPoint(x: 834, y: 1_194)
-  let notebookCenter = WorldPoint.zero
-  let farScale = SpatialCamera(center: notebookCenter, scale: 0.8)
-  let nearby = SpatialCamera(center: notebookCenter, scale: 0.95)
+  let farScale = SpatialCamera(center: .zero, scale: 0.82)
+  let nearby = SpatialCamera(center: .zero, scale: 0.95)
   let offCenter = SpatialCamera(
-    center: WorldPoint(x: 200 / 0.95, y: 0),
+    center: WorldPoint(x: 300 / 0.95, y: 0),
     scale: 0.95
   )
 
   #expect(NotebookDockingField.strength(
     camera: farScale,
-    notebookCenter: notebookCenter,
     viewport: viewport
   ) == 0)
-  #expect(NotebookDockingField.strength(
+  let nearbyStrength = NotebookDockingField.strength(
     camera: nearby,
-    notebookCenter: notebookCenter,
     viewport: viewport
-  ) > NotebookDockingField.commitStrength)
-  #expect(NotebookDockingField.strength(
+  )
+  let offCenterStrength = NotebookDockingField.strength(
     camera: offCenter,
-    notebookCenter: notebookCenter,
     viewport: viewport
-  ) == 0)
+  )
+  #expect(nearbyStrength > NotebookDockingField.commitStrength)
+  #expect(offCenterStrength == nearbyStrength)
 }
 
 @Test("Магнит приближает камеру, а разворот щипка освобождает её")
@@ -263,7 +261,6 @@ func pageDockingFollowsTheCurrentPinchDirection() {
   )
   let strength = NotebookDockingField.strength(
     camera: camera,
-    notebookCenter: notebookCenter,
     viewport: viewport
   )
   let attracted = NotebookDockingField.attractedCamera(
@@ -282,7 +279,7 @@ func pageDockingFollowsTheCurrentPinchDirection() {
       < hypot(
         camera.center.delta(to: notebookCenter).x,
         camera.center.delta(to: notebookCenter).y
-      )
+      ) * 0.1
   )
   #expect(NotebookDockingField.shouldDock(
     strength: strength,
