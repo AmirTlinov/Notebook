@@ -151,6 +151,24 @@ func clampedPinchStillKeepsItsAnchor() {
   #expect(abs(projected.y - current.y) < 0.000_001)
 }
 
+@Test("Открытый лист одним щипком уменьшается до масштаба всей доски")
+func pagePinchCanReachADeepBoardOverview() {
+  let viewport = SpatialPoint(x: 834, y: 1_194)
+  let fingers = SpatialPoint(x: 417, y: 597)
+  let camera = SpatialCamera(scale: 1)
+
+  let overview = camera.pinched(
+    by: 0.02,
+    from: fingers,
+    to: fingers,
+    viewport: viewport,
+    maximumScale: 1
+  )
+
+  #expect(overview.scale == 0.02)
+  #expect(overview.scale < NotebookPresentation.coverScale(viewport: viewport))
+}
+
 @Test("Половина открытия соответствует половине отношения масштабов")
 func notebookOpeningProgressUsesThePinchRatio() {
   let coverScale = 0.72
@@ -179,48 +197,69 @@ func smallBoardPinchDoesNotAcquireANotebook() {
   #expect(NotebookOpeningIntent.engagement(
     magnification: 1.24,
     velocity: 0.7,
-    elapsed: 0.4
+    elapsed: 0.4,
+    cameraScale: 0.3,
+    coverScale: 0.72
+  ) == nil)
+  #expect(NotebookOpeningIntent.engagement(
+    magnification: 3,
+    velocity: 4,
+    elapsed: 0.4,
+    cameraScale: 0.6,
+    coverScale: 0.72
   ) == nil)
 }
 
-@Test("Большой или резкий щипок подтверждает открытие тетради")
-func deliberateAndSharpPinchesAcquireANotebook() {
+@Test("Близкая тетрадь принимает спокойный или резкий щипок")
+func nearbyNotebookAcceptsDeliberateAndSharpPinches() {
   #expect(NotebookOpeningIntent.engagement(
-    magnification: 1.5,
+    magnification: 1.1,
     velocity: 0.4,
-    elapsed: 0.4
+    elapsed: 0.4,
+    cameraScale: 0.72,
+    coverScale: 0.72
   ) == .deliberate)
   #expect(NotebookOpeningIntent.engagement(
-    magnification: 1.32,
+    magnification: 1.05,
     velocity: 2.8,
-    elapsed: 0.12
+    elapsed: 0.12,
+    cameraScale: 0.73,
+    coverScale: 0.72
   ) == .sharp)
   #expect(NotebookOpeningIntent.engagement(
-    magnification: 1.2,
+    magnification: 1.04,
     velocity: 4,
-    elapsed: 0.12
+    elapsed: 0.12,
+    cameraScale: 0.73,
+    coverScale: 0.72
   ) == nil)
   #expect(NotebookOpeningIntent.engagement(
     magnification: 1.8,
     velocity: 8,
-    elapsed: 0.03
+    elapsed: 0.03,
+    cameraScale: 0.9,
+    coverScale: 0.72
   ) == nil)
 }
 
 @Test("Раскрытие начинается непрерывно с кадра подтверждения")
 func engagedOpeningStartsWithoutAProgressJump() {
-  let engagedAt = 1.5
+  let engagedAt = 0.72
+  let pageScale = 1.0
   #expect(NotebookOpeningIntent.progress(
-    magnification: engagedAt,
-    engagedAt: engagedAt
+    cameraScale: engagedAt,
+    engagedAtCameraScale: engagedAt,
+    pageScale: pageScale
   ) == 0)
   #expect(abs(NotebookOpeningIntent.progress(
-    magnification: engagedAt * sqrt(1.5),
-    engagedAt: engagedAt
+    cameraScale: sqrt(engagedAt * pageScale),
+    engagedAtCameraScale: engagedAt,
+    pageScale: pageScale
   ) - 0.5) < 0.000_001)
   #expect(NotebookOpeningIntent.progress(
-    magnification: engagedAt * 1.5,
-    engagedAt: engagedAt
+    cameraScale: pageScale,
+    engagedAtCameraScale: engagedAt,
+    pageScale: pageScale
   ) == 1)
 }
 
@@ -228,25 +267,58 @@ func engagedOpeningStartsWithoutAProgressJump() {
 func openingReleaseAlwaysChoosesAWholeState() {
   #expect(NotebookOpeningIntent.releaseMode(
     progress: 0,
-    magnification: 1.32,
-    engagedAt: 1.32,
+    cameraScale: 0.72,
+    engagedAtCameraScale: 0.72,
     engagement: .sharp,
     velocity: 0
   ) == .page)
   #expect(NotebookOpeningIntent.releaseMode(
     progress: 0,
-    magnification: 1.3,
-    engagedAt: 1.5,
+    cameraScale: 0.64,
+    engagedAtCameraScale: 0.72,
     engagement: .deliberate,
     velocity: -1
   ) == .board)
   #expect(NotebookOpeningIntent.releaseMode(
     progress: 0.2,
-    magnification: 1.63,
-    engagedAt: 1.5,
+    cameraScale: 0.78,
+    engagedAtCameraScale: 0.72,
     engagement: .deliberate,
     velocity: 0
   ) == .cover)
+}
+
+@Test("Продолжение закрывающего щипка свободно выпускает на доску")
+func closingReleaseDoesNotPullBackToTheCover() {
+  #expect(NotebookOpeningTransition.releaseMode(
+    openProgress: 0,
+    cameraScale: 0.72,
+    coverScale: 0.72,
+    velocity: 0
+  ) == .cover)
+  #expect(NotebookOpeningTransition.releaseMode(
+    openProgress: 0,
+    cameraScale: 0.67,
+    coverScale: 0.72,
+    velocity: 0
+  ) == .board)
+  #expect(NotebookOpeningTransition.releaseMode(
+    openProgress: 0,
+    cameraScale: 0.71,
+    coverScale: 0.72,
+    velocity: -0.8
+  ) == .board)
+  #expect(NotebookOpeningTransition.releaseMode(
+    openProgress: 0.6,
+    cameraScale: 0.86,
+    coverScale: 0.72,
+    velocity: 0
+  ) == .page)
+}
+
+@Test("Угол листа равен одному физическому сантиметру")
+func notebookCornerMatchesTheFullSizeIPadSilhouette() {
+  #expect(NotebookGeometry.cornerRadius == PhysicalPaper.pointsPerCentimeter)
 }
 
 @Test("Сила выбора растёт по мере приближения щипка к центру обложки")

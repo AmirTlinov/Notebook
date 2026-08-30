@@ -4,7 +4,7 @@ import NotebookCore
 private struct CameraGestureSnapshot {
   struct BoardEngagement {
     let notebookID: UUID
-    let magnification: Double
+    let cameraScale: Double
     let intent: NotebookOpeningIntent.Engagement
   }
 
@@ -13,8 +13,6 @@ private struct CameraGestureSnapshot {
   let candidateNotebookID: UUID?
   let mayOpenNotebook: Bool
   var boardEngagement: BoardEngagement?
-  var latestMagnification: Double
-  var openingWasCancelled: Bool
 }
 
 struct RenderedNotebook: Identifiable {
@@ -314,7 +312,17 @@ struct SpatialWorkspaceView: View {
     _ notebookID: UUID,
     presence: SessionPresence
   ) -> Bool {
-    if presence.focusedNotebookID == notebookID { return true }
+    if let gesture = cameraGesture,
+      gesture.mayOpenNotebook,
+      let candidate = gesture.candidateNotebookID,
+      presence.camera.scale >= coverFocusScale(viewport: presence.viewport)
+        * NotebookOpeningIntent.pagePreparationScaleRatio
+    {
+      return candidate == notebookID
+    }
+    if let focusedNotebookID = presence.focusedNotebookID {
+      return focusedNotebookID == notebookID
+    }
     #if os(iOS)
       return model.workspace?.selectedNotebookID == notebookID
     #else
@@ -335,9 +343,7 @@ struct SpatialWorkspaceView: View {
         startCentroid: centroid,
         candidateNotebookID: candidate,
         mayOpenNotebook: mayOpenNotebook,
-        boardEngagement: nil,
-        latestMagnification: 1,
-        openingWasCancelled: false
+        boardEngagement: nil
       )
     case .changed(let scale, let velocity, let elapsed, let centroid):
       updateMagnification(
@@ -388,9 +394,7 @@ struct SpatialWorkspaceView: View {
         startCentroid: centroid,
         candidateNotebookID: presence.focusedNotebookID,
         mayOpenNotebook: true,
-        boardEngagement: nil,
-        latestMagnification: 1,
-        openingWasCancelled: false
+        boardEngagement: nil
       )
     case .changed(let scale, let velocity, let elapsed, let centroid):
       updateMagnification(
@@ -422,64 +426,78 @@ struct SpatialWorkspaceView: View {
     guard var snapshot = cameraGesture else { return }
     let viewport = snapshot.presence.viewport
     let pageScale = fitScale(viewport: viewport)
+    let coverScale = coverFocusScale(viewport: viewport)
     let magnification = Double(scale)
-    snapshot.latestMagnification = magnification
 
-    if snapshot.presence.mode == .board {
-      if let boardEngagement = snapshot.boardEngagement,
-        NotebookOpeningIntent.shouldDisengage(
-          magnification: magnification,
-          engagedAt: boardEngagement.magnification
-        )
-      {
-        snapshot.boardEngagement = nil
-        snapshot.openingWasCancelled = true
-      }
-      if snapshot.mayOpenNotebook,
-        !snapshot.openingWasCancelled,
-        snapshot.boardEngagement == nil,
-        let candidate = snapshot.candidateNotebookID,
-        let intent = NotebookOpeningIntent.engagement(
-          magnification: magnification,
-          velocity: Double(velocity),
-          elapsed: elapsed
-        )
-      {
-        snapshot.boardEngagement = CameraGestureSnapshot.BoardEngagement(
-          notebookID: candidate,
-          magnification: magnification,
-          intent: intent
-        )
-        model.selectNotebook(candidate)
-      }
-    }
-    cameraGesture = snapshot
-
-    let camera = snapshot.presence.camera.pinched(
+    let start = SpatialPoint(
+      x: snapshot.startCentroid.x,
+      y: snapshot.startCentroid.y
+    )
+    let current = SpatialPoint(x: centroid.x, y: centroid.y)
+    var camera = snapshot.presence.camera.pinched(
       by: magnification,
-      from: SpatialPoint(
-        x: snapshot.startCentroid.x,
-        y: snapshot.startCentroid.y
-      ),
-      to: SpatialPoint(x: centroid.x, y: centroid.y),
+      from: start,
+      to: current,
       viewport: viewport,
       maximumScale: snapshot.presence.mode == .board
         ? SpatialCamera.maximumScale
         : pageScale
     )
 
+    if snapshot.presence.mode == .board {
+      if let boardEngagement = snapshot.boardEngagement,
+        NotebookOpeningIntent.shouldDisengage(
+          cameraScale: camera.scale,
+          engagedAtCameraScale: boardEngagement.cameraScale
+        )
+      {
+        snapshot.boardEngagement = nil
+      }
+      if snapshot.mayOpenNotebook,
+        snapshot.boardEngagement == nil,
+        let candidate = snapshot.candidateNotebookID,
+        let intent = NotebookOpeningIntent.engagement(
+          magnification: magnification,
+          velocity: Double(velocity),
+          elapsed: elapsed,
+          cameraScale: camera.scale,
+          coverScale: coverScale
+        )
+      {
+        snapshot.boardEngagement = CameraGestureSnapshot.BoardEngagement(
+          notebookID: candidate,
+          cameraScale: camera.scale,
+          intent: intent
+        )
+        model.selectNotebook(candidate)
+      }
+      if let boardEngagement = snapshot.boardEngagement {
+        camera = snapshot.presence.camera.pinched(
+          by: magnification,
+          from: start,
+          to: current,
+          viewport: viewport,
+          maximumScale: NotebookOpeningIntent.openingTargetScale(
+            engagedAtCameraScale: boardEngagement.cameraScale,
+            pageScale: pageScale
+          )
+        )
+      }
+    }
+    cameraGesture = snapshot
+
     let candidate = snapshot.boardEngagement?.notebookID
       ?? (snapshot.presence.mode == .board
         ? nil
         : snapshot.presence.focusedNotebookID)
-    let coverScale = coverFocusScale(viewport: viewport)
     let open: Double
     if snapshot.presence.mode == .board,
       let boardEngagement = snapshot.boardEngagement
     {
       open = NotebookOpeningIntent.progress(
-        magnification: magnification,
-        engagedAt: boardEngagement.magnification
+        cameraScale: camera.scale,
+        engagedAtCameraScale: boardEngagement.cameraScale,
+        pageScale: pageScale
       )
     } else if candidate != nil {
       open = NotebookOpeningTransition.progress(
@@ -520,21 +538,20 @@ struct SpatialWorkspaceView: View {
     {
       targetMode = NotebookOpeningIntent.releaseMode(
         progress: presence.openProgress,
-        magnification: snapshot.latestMagnification,
-        engagedAt: boardEngagement.magnification,
+        cameraScale: presence.camera.scale,
+        engagedAtCameraScale: boardEngagement.cameraScale,
         engagement: boardEngagement.intent,
         velocity: Double(velocity)
       )
     } else if snapshot.presence.mode == .board {
       targetMode = .board
-    } else if presence.focusedNotebookID != nil,
-      presence.openProgress > 0.46 || velocity > 0.9
-    {
-      targetMode = .page
-    } else if presence.focusedNotebookID != nil,
-      presence.camera.scale >= coverScale * 0.72
-    {
-      targetMode = .cover
+    } else if presence.focusedNotebookID != nil {
+      targetMode = NotebookOpeningTransition.releaseMode(
+        openProgress: presence.openProgress,
+        cameraScale: presence.camera.scale,
+        coverScale: coverScale,
+        velocity: Double(velocity)
+      )
     } else {
       targetMode = .board
     }
@@ -774,32 +791,36 @@ private struct NotebookSceneItem: View {
   var body: some View {
     let screen = camera.worldToScreen(rendered.center, viewport: viewport)
     let scale = camera.scale
-    let pageIsVisible = openProgress > 0.001 || pageIsInteractive
+    let pageContentIsLive = openProgress > 0.001 || pageIsInteractive
     ZStack {
       if preparesPage, let page {
         PageSurface(
           page: page,
           isInteractive: pageIsInteractive,
-          isVisible: pageIsVisible
+          isVisible: pageContentIsLive
         )
-          .opacity(pageIsVisible ? 1 : 0)
           .allowsHitTesting(pageIsInteractive)
       }
 
-      NotebookCoverView(
-        notebook: rendered.notebook,
-        isFocused: isFocused,
-        elements: model.board?.elements.filter {
-          $0.surface == .cover(rendered.id)
-        } ?? []
-      )
+      ZStack {
+        NotebookCoverView(
+          notebook: rendered.notebook,
+          isFocused: isFocused,
+          elements: model.board?.elements.filter {
+            $0.surface == .cover(rendered.id)
+          } ?? []
+        )
+        .opacity(openProgress <= 0.5 ? 1 : 0)
+
+        NotebookCoverBackView()
+          .opacity(openProgress > 0.5 ? 1 : 0)
+      }
       .rotation3DEffect(
         .degrees(-178 * openProgress),
         axis: (x: 0, y: 1, z: 0),
         anchor: .leading,
         perspective: 0.62
       )
-      .opacity(openProgress < 0.54 ? 1 : max(0, 1 - (openProgress - 0.54) / 0.12))
       .allowsHitTesting(openProgress < 0.12)
     }
     .frame(
@@ -873,9 +894,15 @@ private struct NotebookCoverView: View {
 
   var body: some View {
     ZStack(alignment: .topLeading) {
-      RoundedRectangle(cornerRadius: NotebookGeometry.cornerRadius)
+      RoundedRectangle(
+        cornerRadius: NotebookGeometry.cornerRadius,
+        style: .continuous
+      )
         .fill(Color(red: 0.945, green: 0.93, blue: 0.875))
-      RoundedRectangle(cornerRadius: NotebookGeometry.cornerRadius)
+      RoundedRectangle(
+        cornerRadius: NotebookGeometry.cornerRadius,
+        style: .continuous
+      )
         .stroke(Color.black.opacity(0.08), lineWidth: 2)
       Rectangle()
         .fill(Color.black.opacity(0.055))
@@ -925,8 +952,17 @@ private struct NotebookCoverView: View {
       width: NotebookGeometry.width,
       height: NotebookGeometry.height
     )
+    .clipShape(
+      RoundedRectangle(
+        cornerRadius: NotebookGeometry.cornerRadius,
+        style: .continuous
+      )
+    )
     .contentShape(
-      RoundedRectangle(cornerRadius: NotebookGeometry.cornerRadius)
+      RoundedRectangle(
+        cornerRadius: NotebookGeometry.cornerRadius,
+        style: .continuous
+      )
     )
     .onAppear {
       title = notebook.title
@@ -984,6 +1020,27 @@ private struct NotebookCoverView: View {
       titleFocused = true
       model.consumePendingTitleFocus(notebook.id)
     }
+  }
+}
+
+private struct NotebookCoverBackView: View {
+  var body: some View {
+    RoundedRectangle(
+      cornerRadius: NotebookGeometry.cornerRadius,
+      style: .continuous
+    )
+    .fill(Color(red: 0.965, green: 0.955, blue: 0.915))
+    .overlay {
+      RoundedRectangle(
+        cornerRadius: NotebookGeometry.cornerRadius,
+        style: .continuous
+      )
+      .stroke(Color.black.opacity(0.07), lineWidth: 2)
+    }
+    .frame(
+      width: NotebookGeometry.width,
+      height: NotebookGeometry.height
+    )
   }
 }
 

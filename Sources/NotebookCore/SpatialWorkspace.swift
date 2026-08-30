@@ -3,7 +3,9 @@ import Foundation
 public enum NotebookGeometry {
   public static let width = 834.0
   public static let height = 1_194.0
-  public static let cornerRadius = 34.0
+  /// Matches the continuous silhouette of a full-size 11-inch iPad closely
+  /// enough that a fitted page and the physical display read as one object.
+  public static let cornerRadius = PhysicalPaper.pointsPerCentimeter
 }
 
 /// Converts the fixed physical notebook into a presentation for a particular
@@ -171,7 +173,9 @@ public struct SpatialRect: Codable, Equatable, Sendable {
 }
 
 public struct SpatialCamera: Codable, Equatable, Hashable, Sendable {
-  public static let minimumScale = 0.055
+  /// The board remains useful at overview scale: a notebook can shrink to
+  /// roughly ten screen points without exhausting the tiled coordinates.
+  public static let minimumScale = 0.0125
   public static let maximumScale = 4.0
 
   public private(set) var center: WorldPoint
@@ -275,6 +279,11 @@ public enum NotebookSelectionField {
 }
 
 public enum NotebookOpeningTransition {
+  /// Once the closed cover has become a little smaller than its focused size,
+  /// releasing the same inward pinch should reveal the board instead of
+  /// pulling the camera back toward the cover.
+  public static let boardReleaseScaleRatio = 0.94
+
   /// Converts the multiplicative scale of a pinch into reversible visual
   /// progress between the closed cover and the full-page presentation.
   public static func progress(
@@ -290,6 +299,24 @@ public enum NotebookOpeningTransition {
       / log(pageScale / coverScale)
     return min(max(progress, 0), 1)
   }
+
+  public static func releaseMode(
+    openProgress: Double,
+    cameraScale: Double,
+    coverScale: Double,
+    velocity: Double
+  ) -> WorkspaceSemanticMode {
+    guard openProgress.isFinite, cameraScale.isFinite,
+      coverScale.isFinite, coverScale > 0, velocity.isFinite
+    else { return .board }
+    if openProgress > 0.46 || velocity > 0.9 { return .page }
+    if cameraScale < coverScale * boardReleaseScaleRatio
+      || (openProgress <= 0.02 && velocity < -0.35)
+    {
+      return .board
+    }
+    return .cover
+  }
 }
 
 /// Decides when a board pinch becomes an instruction to open one notebook.
@@ -301,29 +328,40 @@ public enum NotebookOpeningIntent {
     case sharp
   }
 
-  /// A 50% spread is large enough to be an intentional second-stage action,
-  /// while a short inspection pinch remains ordinary board zoom.
-  public static let deliberateMagnification = 1.5
+  /// Radial motion proves that the gesture is an approach; actual screen scale
+  /// decides when the notebook is close enough to receive it.
+  public static let deliberateMagnification = 1.1
   /// Scale units per second measured over the recognizer's recent 80 ms.
   public static let sharpVelocity = 2.4
   /// Velocity alone is noisy during the first hardware samples. A sharp pinch
-  /// must also create a visible 28% spread before it can acquire a notebook.
-  public static let sharpMinimumMagnification = 1.28
+  /// must also create a visible spread before it can acquire a notebook.
+  public static let sharpMinimumMagnification = 1.05
   /// One raw touch sample cannot own a semantic transition. This interval is
   /// the same size as the recognizer's velocity window.
   public static let minimumEvidenceDuration = 0.08
-  /// Once engaged, another 50% spread reveals the complete page.
-  public static let openingMagnificationRatio = 1.5
+  /// The page renderer moves to the approached notebook while the opaque cover
+  /// still hides it, leaving enough camera travel to finish preparation.
+  public static let pagePreparationScaleRatio = 0.55
+  /// A notebook receives the opening gesture only after reaching its normal
+  /// focused-cover size on screen.
+  public static let entryScaleRatio = 1.0
+  /// A sampled gesture that crosses the whole page in one frame still gets a
+  /// short controllable opening interval instead of a semantic jump.
+  public static let overshootOpeningScaleRatio = 1.08
   public static let selectionHalo = 1.12
 
   public static func engagement(
     magnification: Double,
     velocity: Double,
-    elapsed: TimeInterval
+    elapsed: TimeInterval,
+    cameraScale: Double,
+    coverScale: Double
   ) -> Engagement? {
     guard magnification.isFinite, magnification >= 1,
-      velocity.isFinite, elapsed.isFinite,
-      elapsed >= minimumEvidenceDuration
+      velocity.isFinite, elapsed.isFinite, cameraScale.isFinite,
+      coverScale.isFinite, coverScale > 0,
+      elapsed >= minimumEvidenceDuration,
+      cameraScale >= coverScale * entryScaleRatio
     else { return nil }
     if magnification >= sharpMinimumMagnification,
       velocity >= sharpVelocity
@@ -334,25 +372,35 @@ public enum NotebookOpeningIntent {
     return nil
   }
 
-  /// Opening begins at zero on the exact frame that acquires the notebook.
-  /// Continuing or reversing the same pinch then changes this value
-  /// continuously, even if the board camera has reached its own zoom limit.
+  public static func openingTargetScale(
+    engagedAtCameraScale: Double,
+    pageScale: Double
+  ) -> Double {
+    max(pageScale, engagedAtCameraScale * overshootOpeningScaleRatio)
+  }
+
+  /// Opening begins at zero on the exact frame that acquires the nearby
+  /// notebook. The remaining camera travel then opens the same physical object.
   public static func progress(
-    magnification: Double,
-    engagedAt engagementMagnification: Double
+    cameraScale: Double,
+    engagedAtCameraScale: Double,
+    pageScale: Double
   ) -> Double {
     NotebookOpeningTransition.progress(
-      cameraScale: magnification,
-      coverScale: engagementMagnification,
-      pageScale: engagementMagnification * openingMagnificationRatio
+      cameraScale: cameraScale,
+      coverScale: engagedAtCameraScale,
+      pageScale: openingTargetScale(
+        engagedAtCameraScale: engagedAtCameraScale,
+        pageScale: pageScale
+      )
     )
   }
 
   public static func shouldDisengage(
-    magnification: Double,
-    engagedAt engagementMagnification: Double
+    cameraScale: Double,
+    engagedAtCameraScale: Double
   ) -> Bool {
-    magnification < engagementMagnification * 0.9
+    cameraScale < engagedAtCameraScale * 0.9
   }
 
   /// Every completed gesture lands on one whole semantic state. A sharp
@@ -360,16 +408,16 @@ public enum NotebookOpeningIntent {
   /// may rest on the closed cover; reversing the motion returns to the board.
   public static func releaseMode(
     progress: Double,
-    magnification: Double,
-    engagedAt engagementMagnification: Double,
+    cameraScale: Double,
+    engagedAtCameraScale: Double,
     engagement: Engagement,
     velocity: Double
   ) -> WorkspaceSemanticMode {
-    guard progress.isFinite, magnification.isFinite,
-      engagementMagnification.isFinite, engagementMagnification > 0,
+    guard progress.isFinite, cameraScale.isFinite,
+      engagedAtCameraScale.isFinite, engagedAtCameraScale > 0,
       velocity.isFinite
     else { return .board }
-    let retainedEngagement = magnification >= engagementMagnification * 0.96
+    let retainedEngagement = cameraScale >= engagedAtCameraScale * 0.96
     if !retainedEngagement && progress < 0.08 { return .board }
     if progress >= 0.42 || velocity >= 0.9
       || (engagement == .sharp && retainedEngagement)

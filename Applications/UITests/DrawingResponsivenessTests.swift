@@ -55,10 +55,17 @@ final class DrawingResponsivenessTests: XCTestCase {
       )
       .firstMatch
     XCTAssertTrue(notebook.waitForExistence(timeout: 3))
+    let distantNotebookWidth = notebook.frame.width
     notebook.pinch(withScale: 1.2, velocity: 0.4)
     XCTAssertTrue(
       app.buttons["create-notebook"].exists,
       "Небольшой щипок должен только приблизить доску"
+    )
+    XCTAssertGreaterThan(notebook.frame.width, distantNotebookWidth)
+    notebook.pinch(withScale: 1.4, velocity: 0.5)
+    XCTAssertTrue(
+      app.buttons["create-notebook"].exists,
+      "Тетрадь вдали должна приближаться вместе с доской"
     )
     notebook.pinch(withScale: 4, velocity: 2)
     XCTAssertTrue(

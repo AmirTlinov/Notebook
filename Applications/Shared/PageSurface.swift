@@ -51,6 +51,12 @@ struct PageSurface: View {
         }
       }
       .frame(width: page.size.width, height: page.size.height)
+      .clipShape(
+        RoundedRectangle(
+          cornerRadius: NotebookGeometry.cornerRadius,
+          style: .continuous
+        )
+      )
       .scaleEffect(scale, anchor: .topLeading)
       .frame(
         width: renderedSize.width,
