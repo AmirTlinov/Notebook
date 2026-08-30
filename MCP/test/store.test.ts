@@ -120,6 +120,22 @@ test("creates a notebook, page, and placement as one valid bundle", async () => 
   });
 });
 
+test("creates a visually identified notebook without a printed title", async () => {
+  await withStore(async (store) => {
+    const created = await store.createNotebook({
+      title: "",
+      center: { tileX: 0, tileY: 0, localX: 400, localY: 500 },
+      expectedWorkspaceRevision: `0@${appActor}`,
+      expectedBoardRevision: `0@${appActor}`,
+    });
+    const notebook = created.workspace.notebooks.find(
+      (candidate) => candidate.id === created.notebookID,
+    );
+    assert.equal(notebook?.title, "");
+    assert.equal((await store.readWorkspace()).notebooks.length, 2);
+  });
+});
+
 test("accepts a placement staged before the workspace publishes its notebook", async () => {
   await withStore(async (store, root) => {
     const boardPath = join(root, "board.json");

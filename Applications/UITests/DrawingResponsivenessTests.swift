@@ -108,6 +108,133 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(paper.frame.height, originalPaperFrame.height, accuracy: 2)
   }
 
+  func testSingleTapOffersDeletionAndRepairsAStack() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-simulator-finger-gestures",
+      "--notebook-stacked-board-fixture",
+    ]
+    app.launch()
+    XCTAssertTrue(app.buttons["create-notebook"].waitForExistence(timeout: 5))
+
+    let removed = app.descendants(matching: .any)
+      .matching(
+        identifier: "notebook-7e7a1000-0000-4000-8000-000000000004"
+      )
+      .firstMatch
+    let remaining = app.descendants(matching: .any)
+      .matching(
+        identifier: "notebook-7e7a1000-0000-4000-8000-000000000002"
+      )
+      .firstMatch
+    XCTAssertTrue(removed.waitForExistence(timeout: 3))
+    XCTAssertTrue(remaining.exists)
+
+    removed.tap()
+    let delete = app.buttons["delete-notebook"]
+    XCTAssertTrue(delete.waitForExistence(timeout: 2))
+    delete.tap()
+
+    XCTAssertTrue(remaining.waitForExistence(timeout: 2))
+    XCTAssertFalse(removed.exists)
+  }
+
+  func testLongPressPicksUpAndMovesTheNotebook() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-simulator-finger-gestures",
+      "--notebook-nearby-cover-fixture",
+    ]
+    app.launch()
+
+    let notebook = app.descendants(matching: .any)
+      .matching(
+        identifier: "notebook-7e7a1000-0000-4000-8000-000000000002"
+      )
+      .firstMatch
+    XCTAssertTrue(notebook.waitForExistence(timeout: 5))
+    let initialFrame = notebook.frame
+    let start = notebook.coordinate(
+      withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)
+    )
+    let end = start.withOffset(CGVector(dx: 120, dy: 80))
+
+    start.press(
+      forDuration: 0.28,
+      thenDragTo: end,
+      withVelocity: .slow,
+      thenHoldForDuration: 0
+    )
+
+    let moved = XCTNSPredicateExpectation(
+      predicate: NSPredicate(
+        block: { object, _ in
+          guard let element = object as? XCUIElement else { return false }
+          return element.frame.midX > initialFrame.midX + 70
+            && element.frame.midY > initialFrame.midY + 40
+        }
+      ),
+      object: notebook
+    )
+    wait(for: [moved], timeout: 2)
+  }
+
+  func testCoverAndBoardAcceptConsecutivePencilActions() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-nearby-cover-fixture",
+    ]
+    app.launch()
+
+    let notebook = app.descendants(matching: .any)
+      .matching(
+        identifier: "notebook-7e7a1000-0000-4000-8000-000000000002"
+      )
+      .firstMatch
+    let ink = app.otherElements["spatial-ink"]
+    XCTAssertTrue(notebook.waitForExistence(timeout: 5))
+    XCTAssertTrue(ink.waitForExistence(timeout: 2))
+    XCTAssertEqual(ink.value as? String, "0 действий")
+
+    notebook.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.3))
+      .press(
+        forDuration: 0.04,
+        thenDragTo: notebook.coordinate(
+          withNormalizedOffset: CGVector(dx: 0.72, dy: 0.42)
+        ),
+        withVelocity: .slow,
+        thenHoldForDuration: 0
+      )
+    let firstCommitted = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value == %@", "1 действий"),
+      object: ink
+    )
+    wait(for: [firstCommitted], timeout: 2)
+
+    let window = app.windows.firstMatch
+    XCTAssertTrue(window.exists)
+    window.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.18))
+      .press(
+        forDuration: 0.04,
+        thenDragTo: window.coordinate(
+          withNormalizedOffset: CGVector(dx: 0.08, dy: 0.52)
+        ),
+        withVelocity: .slow,
+        thenHoldForDuration: 0
+      )
+    let secondCommitted = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value == %@", "2 действий"),
+      object: ink
+    )
+    wait(for: [secondCommitted], timeout: 2)
+  }
+
   func testPartialOpeningKeepsTheReleasedCamera() async throws {
     continueAfterFailure = false
     let app = XCUIApplication()
@@ -400,5 +527,60 @@ final class DrawingResponsivenessTests: XCTestCase {
       object: paper
     )
     wait(for: [drawingChanged], timeout: 2)
+  }
+
+  func testErasureIsCommittedBeforeLeavingAndReopeningTheNotebook() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-simulator-finger-gestures",
+      "--notebook-simulator-mixed-input",
+    ]
+    app.launch()
+
+    let controls = app.buttons["pen-controls-toggle"]
+    XCTAssertTrue(controls.waitForExistence(timeout: 5))
+    controls.tap()
+    let eraser = app.buttons["drawing-tool-eraser"]
+    XCTAssertTrue(eraser.waitForExistence(timeout: 2))
+    eraser.tap()
+
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 2))
+    let originalValue = paper.value as? String
+    XCTAssertEqual(originalValue, "80 штрихов")
+    paper.coordinate(withNormalizedOffset: CGVector(dx: 0.12, dy: 0.48))
+      .press(
+        forDuration: 0.04,
+        thenDragTo: paper.coordinate(
+          withNormalizedOffset: CGVector(dx: 0.88, dy: 0.56)
+        ),
+        withVelocity: .fast,
+        thenHoldForDuration: 0
+      )
+    let erased = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value != %@", originalValue ?? ""),
+      object: paper
+    )
+    wait(for: [erased], timeout: 2)
+
+    paper.pinch(withScale: 0.28, velocity: -2)
+    XCTAssertTrue(app.buttons["create-notebook"].waitForExistence(timeout: 5))
+    let notebook = app.descendants(matching: .any)
+      .matching(
+        identifier: "notebook-7e7a1000-0000-4000-8000-000000000002"
+      )
+      .firstMatch
+    XCTAssertTrue(notebook.waitForExistence(timeout: 2))
+    notebook.doubleTap()
+
+    let reopened = app.otherElements["paper-input"]
+    XCTAssertTrue(reopened.waitForExistence(timeout: 5))
+    XCTAssertNotEqual(
+      reopened.value as? String,
+      originalValue,
+      "Закрытие должно дождаться сериализации ластика"
+    )
   }
 }

@@ -4,6 +4,56 @@ import XCTest
 @testable import Notebook
 
 final class DrawingOwnershipTests: XCTestCase {
+  func testCoverInkRendersOnTheCoverOwnedSurface() throws {
+    let actor = UUID()
+    let coverID = UUID()
+    var journal = SpatialInkJournal(
+      stamp: VersionStamp(counter: 0, actor: actor)
+    )
+    let samples = [
+      spatialSample(x: 80, y: 120, time: 0),
+      spatialSample(x: 240, y: 220, time: 0.05),
+    ]
+    let action = journal.append(
+      tool: .pen,
+      spans: [SpatialInkSpan(surface: .cover(coverID), samples: samples)],
+      actor: actor
+    )
+    XCTAssertNotNil(action)
+
+    let drawing = SpatialInkDrawingComposer.drawing(
+      for: .cover(coverID),
+      in: journal
+    )
+
+    XCTAssertEqual(drawing.strokes.count, 1)
+    XCTAssertGreaterThan(drawing.bounds.width, 100)
+  }
+
+  @MainActor
+  func testFinishedSpatialStrokeSurvivesTheNextPencilDown() {
+    let view = InkCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 400))
+    let first = ActiveInkStroke(style: .standard)
+    first.replaceMeasuredTail(
+      from: 0,
+      with: [point(x: 20, y: 20), point(x: 180, y: 80)]
+    )
+    view.displayActiveStroke(first)
+    view.commitActiveSpatialAction()
+    let committed = view.committedVertexCount
+    XCTAssertGreaterThan(committed, 0)
+
+    let second = ActiveInkStroke(style: .standard)
+    second.replaceMeasuredTail(
+      from: 0,
+      with: [point(x: 40, y: 160), point(x: 200, y: 220)]
+    )
+    view.displayActiveStroke(second)
+    view.clearActiveAction()
+
+    XCTAssertEqual(view.committedVertexCount, committed)
+  }
+
   @MainActor
   func testARepeatedModelSnapshotCannotReplaceANewerLocalDrawing() async {
     let base = PKDrawing(strokes: [stroke(y: 20)])
@@ -86,6 +136,22 @@ final class DrawingOwnershipTests: XCTestCase {
       location: CGPoint(x: x, y: y),
       timeOffset: 0,
       size: CGSize(width: 4, height: 4),
+      opacity: 1,
+      force: 1,
+      azimuth: 0,
+      altitude: .pi / 2
+    )
+  }
+
+  private func spatialSample(
+    x: Double,
+    y: Double,
+    time: Double
+  ) -> SpatialInkSample {
+    SpatialInkSample(
+      point: SpatialPoint(x: x, y: y),
+      timeOffset: time,
+      width: 4,
       opacity: 1,
       force: 1,
       azimuth: 0,

@@ -912,6 +912,48 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     return true
   }
 
+  /// Removes a notebook from its single board owner. A two-member stack turns
+  /// into one free notebook, and cover elements leave with their cover.
+  @discardableResult
+  public mutating func deleteNotebook(
+    _ notebookID: UUID,
+    actor: UUID
+  ) -> Bool {
+    guard notebookIDs.contains(notebookID),
+      let next = stamp.advanced(by: actor)
+    else { return false }
+
+    if let index = freeNotebooks.firstIndex(where: {
+      $0.notebookID == notebookID
+    }) {
+      freeNotebooks.remove(at: index)
+    } else if let stackIndex = stacks.firstIndex(where: {
+      $0.notebookIDs.contains(notebookID)
+    }) {
+      var stack = stacks[stackIndex]
+      guard stack.remove(notebookID, actor: actor) else { return false }
+      if stack.notebookIDs.count == 1, let remaining = stack.notebookIDs.first {
+        freeNotebooks.append(
+          FreeNotebookPlacement(
+            notebookID: remaining,
+            center: stack.center,
+            zIndex: stack.zIndex,
+            stamp: next
+          )
+        )
+        stacks.remove(at: stackIndex)
+      } else {
+        stacks[stackIndex] = stack
+      }
+    } else {
+      return false
+    }
+
+    elements.removeAll { $0.surface == .cover(notebookID) }
+    stamp = next
+    return true
+  }
+
   @discardableResult
   public mutating func upsertElement(
     _ element: SpatialElement,

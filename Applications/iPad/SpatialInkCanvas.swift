@@ -137,6 +137,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       self.drawingTool = drawingTool
       self.isEnabled = isEnabled
       self.onCommit = onCommit
+      view.accessibilityValue = "\(journal?.actions.filter(\.isActive).count ?? 0) действий"
       recognizer?.isEnabled = isEnabled
       scheduleRenderIfNeeded()
       if let window = view.window { install(on: window, inside: view) }
@@ -291,6 +292,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         view?.inkView.clearActiveAction()
         return
       }
+      view?.inkView.commitActiveSpatialAction()
       onCommit(actionTool == .pen ? .pen : .eraser, color, spans)
       appliedSignature = nil
     }
@@ -567,6 +569,9 @@ final class SpatialInkContainerView: UIView {
     backgroundColor = .clear
     isOpaque = false
     isUserInteractionEnabled = false
+    isAccessibilityElement = true
+    accessibilityLabel = "Чернила доски и обложек"
+    accessibilityIdentifier = "spatial-ink"
     addSubview(inkView)
   }
 
@@ -667,26 +672,6 @@ enum SpatialInkComposer {
         height: NotebookGeometry.height * camera.scale
       )
       result.append(.eraseRect(rect))
-      let cover = SpatialInkDrawingComposer.drawing(
-        for: .cover(notebook.notebookID),
-        in: journal
-      )
-      if !cover.strokes.isEmpty {
-        result.append(
-          .ink(
-            cover.transformed(
-              using: CGAffineTransform(
-                a: camera.scale,
-                b: 0,
-                c: 0,
-                d: camera.scale,
-                tx: rect.minX,
-                ty: rect.minY
-              )
-            )
-          )
-        )
-      }
     }
     return result
   }

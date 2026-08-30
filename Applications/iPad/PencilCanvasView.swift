@@ -459,14 +459,7 @@ final class PaperInputView: UIView {
     if let pencil = touches.first(where: { $0.type == .pencil }) {
       return pencil
     }
-    #if targetEnvironment(simulator)
-      guard !ProcessInfo.processInfo.arguments.contains(
-        SimulatorDrawingFixture.fingerGestureArgument
-      ) else { return nil }
-      return touches.first { $0.type == .direct }
-    #else
-      return nil
-    #endif
+    return touches.first(where: acceptsDrawingTouch)
   }
 
   private func beginAction(with touch: UITouch, event: UIEvent?) {
@@ -530,8 +523,13 @@ final class PaperInputView: UIView {
     if touch.type == .pencil { return true }
     #if targetEnvironment(simulator)
       return touch.type == .direct
-        && !ProcessInfo.processInfo.arguments.contains(
-          SimulatorDrawingFixture.fingerGestureArgument
+        && (
+          !ProcessInfo.processInfo.arguments.contains(
+            SimulatorDrawingFixture.fingerGestureArgument
+          )
+            || ProcessInfo.processInfo.arguments.contains(
+              SimulatorDrawingFixture.mixedInputArgument
+            )
         )
     #else
       return false

@@ -500,6 +500,43 @@ func stackCapacityPreservesAReadableLayout() throws {
   #expect(board.isValid(notebookIDs: Set(notebookIDs)))
 }
 
+@Test("Удаление из пары распускает стопку и уносит элементы обложки")
+func deletingNotebookRepairsItsBoardOwner() throws {
+  let actor = UUID()
+  let first = UUID()
+  let removed = UUID()
+  let third = UUID()
+  var board = BoardDocument.initial(
+    notebookIDs: [first, removed, third],
+    actor: actor
+  )
+  let stackID = board.createStack(
+    moving: removed,
+    onto: first,
+    actor: actor
+  )
+  _ = try #require(stackID)
+  let coverElement = SpatialElement(
+    id: "cover-label",
+    surface: .cover(removed),
+    kind: .markdown,
+    frame: SpatialRect(x: 20, y: 20, width: 200, height: 100),
+    source: "Удаляется вместе с обложкой",
+    stamp: VersionStamp(counter: 0, actor: actor)
+  )
+  let inserted = board.upsertElement(coverElement, expected: nil, actor: actor)
+  #expect(inserted)
+
+  let deleted = board.deleteNotebook(removed, actor: actor)
+  #expect(deleted)
+
+  #expect(board.stack(containing: first) == nil)
+  #expect(board.placement(of: first) != nil)
+  #expect(board.placement(of: third) != nil)
+  #expect(board.elements.allSatisfy { $0.surface != .cover(removed) })
+  #expect(board.isValid(notebookIDs: [first, third]))
+}
+
 @Test("Каталог публикует новую тетрадь после её страницы и размещения")
 func boardAcceptsAStagedPlacementButNeverMissesAPublishedNotebook() {
   let actor = UUID()

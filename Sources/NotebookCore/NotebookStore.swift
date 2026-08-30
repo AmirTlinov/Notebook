@@ -340,6 +340,30 @@ public struct NotebookStore: Sendable {
     }
   }
 
+  /// Deletion publishes the smaller catalog first. During the following file
+  /// writes an older board may contain an invisible orphan, but no reader can
+  /// discover a notebook whose pages are already gone.
+  public func deleteWorkspaceBundle(
+    index: WorkspaceIndex,
+    board: BoardDocument,
+    pageIDs: [UUID]
+  ) throws {
+    let notebookIDs = Set(index.notebooks.map(\.id))
+    guard index.isValid,
+      board.isValid(notebookIDs: notebookIDs)
+    else { throw corruptFile(at: indexURL) }
+    try prepare()
+    try withMutationLock {
+      try encoder.encode(index).write(to: indexURL, options: [.atomic])
+      try encoder.encode(board).write(to: boardURL, options: [.atomic])
+      for pageID in pageIDs {
+        try? FileManager.default.removeItem(at: pageURL(pageID))
+        try? FileManager.default.removeItem(at: previewURL(pageID))
+        try? FileManager.default.removeItem(at: previewRevisionURL(pageID))
+      }
+    }
+  }
+
   public func savePage(_ page: PageDocument) throws {
     guard page.isValid else { throw corruptFile(at: pageURL(page.id)) }
     try prepare()
@@ -355,6 +379,20 @@ public struct NotebookStore: Sendable {
     guard page.isValid else { throw corruptFile(at: pageURL(page.id)) }
     try prepare()
     return try withMutationLock {
+      if FileManager.default.fileExists(atPath: indexURL.path) {
+        let index = try decoder.decode(
+          WorkspaceIndex.self,
+          from: Data(contentsOf: indexURL)
+        )
+        guard index.isValid,
+          index.notebooks.contains(where: { $0.pageIDs.contains(page.id) })
+        else {
+          throw CocoaError(
+            .fileNoSuchFile,
+            userInfo: [NSFilePathErrorKey: pageURL(page.id).path]
+          )
+        }
+      }
       var resolved = page
       let url = pageURL(page.id)
       if FileManager.default.fileExists(atPath: url.path) {

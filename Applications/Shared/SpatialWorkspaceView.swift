@@ -32,7 +32,11 @@ struct SpatialWorkspaceView: View {
 
   @State private var cameraGesture: CameraGestureSnapshot?
   @State private var panStart: SessionPresence?
+  @State private var selectedNotebookID: UUID?
+  @State private var liftedNotebookID: UUID?
   @State private var pageGestureActive = false
+  @State private var pageInputGestureID: UUID?
+  @State private var bufferedCameraPhases: [WorkspaceMagnificationPhase] = []
   @State private var settling = false
   @State private var settlementTask: Task<Void, Never>?
 
@@ -43,6 +47,7 @@ struct SpatialWorkspaceView: View {
         y: geometry.size.height
       )
       let presence = normalizedPresence(for: viewport)
+      let rendered = renderedNotebooks(presence: presence)
 
       ZStack {
         SpatialBoardGrid(camera: presence.camera)
@@ -51,7 +56,24 @@ struct SpatialWorkspaceView: View {
           BoardPanView(
             isEnabled: presence.mode != .page && cameraGesture == nil
               && !settling,
-            onBegan: { panStart = presence },
+            excludedFrames: rendered.map { notebook in
+              let center = presence.camera.worldToScreen(
+                notebook.center,
+                viewport: viewport
+              )
+              let width = NotebookGeometry.width * presence.camera.scale
+              let height = NotebookGeometry.height * presence.camera.scale
+              return CGRect(
+                x: center.x - width / 2,
+                y: center.y - height / 2,
+                width: width,
+                height: height
+              )
+            },
+            onBegan: {
+              selectedNotebookID = nil
+              panStart = presence
+            },
             onChanged: { translation in
               updateBoardPan(translation, viewport: viewport)
             },
@@ -59,6 +81,7 @@ struct SpatialWorkspaceView: View {
               finishBoardPan(translation, viewport: viewport)
             }
           )
+          .frame(width: viewport.x, height: viewport.y)
         #endif
 
         boardElements(presence: presence, viewport: viewport)
@@ -75,7 +98,7 @@ struct SpatialWorkspaceView: View {
           .allowsHitTesting(false)
         #endif
 
-        ForEach(renderedNotebooks(presence: presence)) { rendered in
+        ForEach(rendered) { rendered in
           NotebookSceneItem(
             rendered: rendered,
             page: page(for: rendered.notebook),
@@ -92,21 +115,35 @@ struct SpatialWorkspaceView: View {
             pageIsInteractive: presence.focusedNotebookID == rendered.id
               && (presence.mode == .page || pageGestureActive)
               && !settling,
+            isSelected: selectedNotebookID == rendered.id,
+            isLifted: liftedNotebookID == rendered.id,
             onDrop: { notebookID, center in
               dropNotebook(notebookID, at: center, presence: presence)
             },
+            onSelect: { notebookID in
+              withAnimation(.easeOut(duration: 0.12)) {
+                selectedNotebookID = notebookID
+              }
+            },
+            onLiftChanged: { notebookID, lifted in
+              withAnimation(.spring(duration: 0.18, bounce: 0.18)) {
+                liftedNotebookID = lifted ? notebookID : nil
+                if lifted { selectedNotebookID = notebookID }
+              }
+            },
             onOpen: { notebookID in
+              selectedNotebookID = nil
               openNotebook(notebookID, viewport: viewport)
             }
           )
-          .zIndex(rendered.zIndex)
+          .zIndex(liftedNotebookID == rendered.id ? 9_000 : rendered.zIndex)
         }
 
         #if os(iOS)
           SpatialInkCanvas(
             camera: presence.camera,
             viewport: viewport,
-            notebooks: renderedNotebooks(presence: presence).map {
+            notebooks: rendered.map {
               SpatialNotebookSurface(
                 notebookID: $0.id,
                 center: $0.center,
@@ -121,7 +158,6 @@ struct SpatialWorkspaceView: View {
             isEnabled: presence.mode != .page && !pageGestureActive
               && !model.isTextToolSelected
           )
-          .opacity(globalInkOpacity(presence))
           .allowsHitTesting(false)
 
           WorkspaceGestureLayer(
@@ -136,6 +172,8 @@ struct SpatialWorkspaceView: View {
             }
           )
           .allowsHitTesting(false)
+
+          notebookSelectionControl(presence: presence, viewport: viewport)
         #endif
 
         controls(presence: presence, viewport: viewport)
@@ -152,8 +190,50 @@ struct SpatialWorkspaceView: View {
         settlementTask = nil
         cameraGesture = nil
         pageGestureActive = false
+        pageInputGestureID = nil
+        bufferedCameraPhases = []
         settling = false
       }
+    }
+  }
+
+  @ViewBuilder
+  private func notebookSelectionControl(
+    presence: SessionPresence,
+    viewport: SpatialPoint
+  ) -> some View {
+    if presence.mode != .page,
+      liftedNotebookID == nil,
+      let selectedNotebookID,
+      let rendered = renderedNotebooks(presence: presence).first(where: {
+        $0.id == selectedNotebookID
+      })
+    {
+      let center = presence.camera.worldToScreen(
+        rendered.center,
+        viewport: viewport
+      )
+      let halfWidth = NotebookGeometry.width * presence.camera.scale / 2
+      let halfHeight = NotebookGeometry.height * presence.camera.scale / 2
+      Button(role: .destructive) {
+        guard model.deleteNotebook(selectedNotebookID) else { return }
+        self.selectedNotebookID = nil
+      } label: {
+        Image(systemName: "trash")
+          .font(.system(size: 17, weight: .semibold))
+          .frame(width: 44, height: 44)
+          .background(.regularMaterial, in: Circle())
+          .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("Удалить тетрадь")
+      .accessibilityIdentifier("delete-notebook")
+      .position(
+        x: min(max(center.x + halfWidth + 8, 28), viewport.x - 28),
+        y: min(max(center.y - halfHeight - 8, 28), viewport.y - 28)
+      )
+      .transition(.scale(scale: 0.82).combined(with: .opacity))
+      .zIndex(9_500)
     }
   }
 
@@ -231,24 +311,6 @@ struct SpatialWorkspaceView: View {
       presence.viewport != viewport
     else { return }
     model.updatePresence(normalizedPresence(for: viewport), settled: true)
-    #endif
-  }
-
-  private func sceneAnchoredInkOpacity(
-    _ presence: SessionPresence
-  ) -> Double {
-    #if os(iOS)
-      min(max(presence.openProgress * 6, 0), 1)
-    #else
-      1
-    #endif
-  }
-
-  private func globalInkOpacity(_ presence: SessionPresence) -> Double {
-    #if os(iOS)
-      1 - sceneAnchoredInkOpacity(presence)
-    #else
-      0
     #endif
   }
 
@@ -338,6 +400,7 @@ struct SpatialWorkspaceView: View {
     switch phase {
     case .began(let centroid, let isOpeningApproach):
       interruptSettlementForInput()
+      selectedNotebookID = nil
       guard let presence = model.presence else { return }
       let focusedNotebookID = presence.mode == .board
         ? nil
@@ -381,7 +444,46 @@ struct SpatialWorkspaceView: View {
   private func handleWorkspaceMagnification(
     _ phase: WorkspaceMagnificationPhase
   ) {
+    if pageInputGestureID != nil {
+      bufferCameraPhase(phase)
+      return
+    }
+    if case .began = phase, model.presence?.mode == .page {
+      let gestureID = UUID()
+      pageInputGestureID = gestureID
+      bufferedCameraPhases = [phase]
+      model.afterPageInput {
+        guard pageInputGestureID == gestureID else { return }
+        let phases = bufferedCameraPhases
+        pageInputGestureID = nil
+        bufferedCameraPhases = []
+        for buffered in phases {
+          handleBoardMagnification(buffered)
+        }
+      }
+      return
+    }
     handleBoardMagnification(phase)
+  }
+
+  /// While the page finishes a Pencil action, the two-finger recognizer keeps
+  /// measuring. Its newest complete state is enough to resume the same closed
+  /// camera formula without inventing a second gesture.
+  private func bufferCameraPhase(_ phase: WorkspaceMagnificationPhase) {
+    switch phase {
+    case .began:
+      bufferedCameraPhases = [phase]
+    case .changed:
+      if bufferedCameraPhases.count > 1 {
+        bufferedCameraPhases.removeSubrange(1...)
+      }
+      bufferedCameraPhases.append(phase)
+    case .ended, .cancelled:
+      if bufferedCameraPhases.count > 1 {
+        bufferedCameraPhases.removeSubrange(1...)
+      }
+      bufferedCameraPhases.append(phase)
+    }
   }
 
   private func updateMagnification(
@@ -694,6 +796,7 @@ struct SpatialWorkspaceView: View {
     presence: SessionPresence,
     viewport: SpatialPoint
   ) {
+    selectedNotebookID = nil
     let offset = Double(model.workspace?.notebooks.count ?? 0) * 28
     let center = presence.camera.center.offsetBy(x: offset, y: offset)
     guard let notebookID = model.createNotebook(at: center) else { return }
@@ -757,10 +860,16 @@ private struct NotebookSceneItem: View {
   let preparesPage: Bool
   let openProgress: Double
   let pageIsInteractive: Bool
+  let isSelected: Bool
+  let isLifted: Bool
   let onDrop: (UUID, WorldPoint) -> Void
+  let onSelect: (UUID) -> Void
+  let onLiftChanged: (UUID, Bool) -> Void
   let onOpen: (UUID) -> Void
 
   @State private var dragTranslation = CGSize.zero
+  @State private var liftStarted = false
+  @State private var lastTapUptime: TimeInterval?
 
   var body: some View {
     let screen = camera.worldToScreen(rendered.center, viewport: viewport)
@@ -801,66 +910,100 @@ private struct NotebookSceneItem: View {
       width: NotebookGeometry.width,
       height: NotebookGeometry.height
     )
-    .scaleEffect(scale)
+    .overlay {
+      if openProgress < 0.12 {
+        ZStack {
+          if isSelected {
+            RoundedRectangle(
+              cornerRadius: NotebookGeometry.cornerRadius,
+              style: .continuous
+            )
+            .stroke(
+              Color.accentColor.opacity(0.72),
+              lineWidth: 2 / max(scale, 0.0125)
+            )
+            .allowsHitTesting(false)
+          }
+
+          #if os(iOS)
+            NotebookInteractionView(
+              onTap: handleTap,
+              onLiftChanged: { lifted in
+                if lifted {
+                  beginLift()
+                } else {
+                  endLift()
+                }
+              },
+              onTranslationChanged: { translation in
+                dragTranslation = translation
+              },
+              onTranslationEnded: { translation in
+                finishMove(translation: translation, scale: scale)
+              }
+            )
+            .accessibilityHidden(true)
+          #endif
+        }
+      }
+    }
+    .scaleEffect(scale * (isLifted ? 1.035 : 1))
+    .rotationEffect(.degrees(isLifted ? -0.6 : 0))
     .offset(dragTranslation)
+    .offset(y: isLifted ? -8 : 0)
     .position(x: screen.x, y: screen.y)
     .shadow(
-      color: .black.opacity(0.13 * (1 - openProgress)),
-      radius: max(3, 18 * scale),
-      y: max(2, 8 * scale)
+      color: .black.opacity((isLifted ? 0.28 : 0.13) * (1 - openProgress)),
+      radius: isLifted ? 24 : max(3, 18 * scale),
+      y: isLifted ? 15 : max(2, 8 * scale)
     )
-    #if os(iOS)
-      .gesture(
-        moveGesture(scale: scale),
-        including: openProgress < 0.12 ? .all : .none
-      )
-      .simultaneousGesture(
-        TapGesture(count: 2)
-          .onEnded {
-            guard openProgress < 0.12 else { return }
-            onOpen(rendered.id)
-          },
-        including: openProgress < 0.12 ? .all : .none
-      )
-    #endif
+    .animation(.spring(duration: 0.18, bounce: 0.18), value: isLifted)
     .accessibilityIdentifier("notebook-\(rendered.id.uuidString.lowercased())")
+    .accessibilityAddTraits(.isButton)
+    .accessibilityValue(
+      isLifted ? "Готова к перемещению" : (isSelected ? "Выбрана" : "")
+    )
   }
 
   #if os(iOS)
-  private func moveGesture(scale: Double) -> some Gesture {
-    LongPressGesture(minimumDuration: 0.18, maximumDistance: 18)
-      .sequenced(before: DragGesture(minimumDistance: 0))
-      .onChanged { value in
-        guard openProgress < 0.12 else { return }
-        if case .second(true, let drag?) = value {
-          dragTranslation = drag.translation
-        }
-      }
-      .onEnded { value in
-        guard openProgress < 0.12 else {
-          dragTranslation = .zero
-          return
-        }
-        guard case .second(true, let drag?) = value else {
-          dragTranslation = .zero
-          return
-        }
-        let translation = drag.translation
-        let center = rendered.center.offsetBy(
-          x: translation.width / max(scale, 0.001),
-          y: translation.height / max(scale, 0.001)
-        )
-        dragTranslation = .zero
-        onDrop(rendered.id, center)
-      }
+  private func handleTap() {
+    guard openProgress < 0.12 else { return }
+    let now = ProcessInfo.processInfo.systemUptime
+    onSelect(rendered.id)
+    if let lastTapUptime, now - lastTapUptime <= 0.36 {
+      self.lastTapUptime = nil
+      onOpen(rendered.id)
+    } else {
+      lastTapUptime = now
+    }
+  }
+
+  private func finishMove(translation: CGSize, scale: Double) {
+    dragTranslation = .zero
+    guard hypot(translation.width, translation.height) >= 2 else { return }
+    let center = rendered.center.offsetBy(
+      x: translation.width / max(scale, 0.001),
+      y: translation.height / max(scale, 0.001)
+    )
+    onDrop(rendered.id, center)
+  }
+
+  private func beginLift() {
+    guard !liftStarted else { return }
+    liftStarted = true
+    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    onLiftChanged(rendered.id, true)
+  }
+
+  private func endLift() {
+    liftStarted = false
+    onLiftChanged(rendered.id, false)
   }
   #endif
 }
 
 private struct NotebookCoverView: View {
   @Environment(NotebookAppModel.self) private var model
-  @FocusState private var titleFocused: Bool
-  @State private var title = ""
 
   let notebook: Notebook
   let isFocused: Bool
@@ -884,20 +1027,7 @@ private struct NotebookCoverView: View {
         .padding(.vertical, 2)
         .padding(.leading, 24)
 
-      if isFocused {
-        TextField("Без названия", text: $title, axis: .vertical)
-          .textFieldStyle(.plain)
-          .font(.system(size: 38, weight: .medium, design: .rounded))
-          .foregroundStyle(Color.black.opacity(0.74))
-          .focused($titleFocused)
-          .submitLabel(.done)
-          .onSubmit(commitTitle)
-          .onChange(of: titleFocused) { _, focused in
-            if !focused { commitTitle() }
-          }
-          .frame(width: 570, alignment: .leading)
-          .offset(x: 126, y: 170)
-      } else {
+      if !notebook.title.isEmpty {
         Text(notebook.title)
           .font(.system(size: 38, weight: .medium, design: .rounded))
           .foregroundStyle(Color.black.opacity(0.64))
@@ -912,15 +1042,13 @@ private struct NotebookCoverView: View {
           .offset(x: element.frame.x, y: element.frame.y)
       }
 
-      #if os(macOS)
-        SpatialInkSurfaceView(
-          drawing: SpatialInkDrawingComposer.drawing(
-            for: .cover(notebook.id),
-            in: model.spatialInk
-          )
+      SpatialInkSurfaceView(
+        drawing: SpatialInkDrawingComposer.drawing(
+          for: .cover(notebook.id),
+          in: model.spatialInk
         )
-        .allowsHitTesting(false)
-      #endif
+      )
+      .allowsHitTesting(false)
     }
     .frame(
       width: NotebookGeometry.width,
@@ -938,16 +1066,6 @@ private struct NotebookCoverView: View {
         style: .continuous
       )
     )
-    .onAppear {
-      title = notebook.title
-      focusPendingTitleIfNeeded()
-    }
-    .onChange(of: notebook.title) { _, newTitle in
-      if !titleFocused { title = newTitle }
-    }
-    .onChange(of: model.pendingTitleFocusID) { _, _ in
-      focusPendingTitleIfNeeded()
-    }
     #if os(iOS)
       .simultaneousGesture(
         SpatialTapGesture()
@@ -973,27 +1091,10 @@ private struct NotebookCoverView: View {
                 )
               )
             )
-          }
-          )
+          },
+        including: isFocused && model.isTextToolSelected ? .all : .none
+      )
     #endif
-  }
-
-  private func commitTitle() {
-    let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
-    if normalized.isEmpty {
-      title = notebook.title
-    } else {
-      model.renameNotebook(notebook.id, title: normalized)
-    }
-  }
-
-  private func focusPendingTitleIfNeeded() {
-    guard isFocused, model.pendingTitleFocusID == notebook.id else { return }
-    Task { @MainActor in
-      try? await Task.sleep(for: .milliseconds(430))
-      titleFocused = true
-      model.consumePendingTitleFocus(notebook.id)
-    }
   }
 }
 

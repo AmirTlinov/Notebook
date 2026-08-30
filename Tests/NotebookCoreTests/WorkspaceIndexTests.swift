@@ -162,6 +162,114 @@ func pageTurnCreatesOnePage() {
   #expect(index.selectedNotebook.pageIDs.count == 2)
 }
 
+@Test("Обложка может жить без печатного названия и сохраняет устойчивый UUID")
+func blankNotebookTitleIsAValidVisualCover() throws {
+  let actor = UUID()
+  let initial = WorkspaceIndex.initial(
+    actor: actor,
+    pageSize: PageSize(width: 834, height: 1_194)
+  )
+  var index = initial.index
+
+  let creation = index.createNotebook(
+    title: "   ",
+    actor: actor,
+    pageSize: initial.page.size
+  )
+  let created = try #require(creation)
+
+  #expect(created.notebook.title.isEmpty)
+  #expect(index.isValid)
+  #expect(index.selectedNotebookID == created.notebook.id)
+}
+
+@Test("Удаление публикует каталог и доску, затем убирает страницы")
+func storeDeletesOneCompleteNotebookBundle() throws {
+  let root = FileManager.default.temporaryDirectory
+    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let actor = UUID()
+  let store = NotebookStore(root: root)
+  let loaded = try store.loadOrCreate(
+    actor: actor,
+    pageSize: PageSize(width: 834, height: 1_194)
+  )
+  var index = loaded.0
+  var board = try store.loadOrCreateBoard(workspace: index, actor: actor)
+  let creation = index.createNotebook(
+    title: "",
+    actor: actor,
+    pageSize: loaded.1.values.first!.size
+  )
+  let created = try #require(creation)
+  let added = board.addNotebook(created.notebook.id, near: .zero, actor: actor)
+  #expect(added)
+  try store.saveWorkspaceBundle(
+    index: index,
+    page: created.page,
+    board: board
+  )
+  let pageURL = store.pageURL(created.page.id)
+  #expect(FileManager.default.fileExists(atPath: pageURL.path))
+
+  let removed = index.deleteNotebook(created.notebook.id, actor: actor)
+  _ = try #require(removed)
+  let removedFromBoard = board.deleteNotebook(created.notebook.id, actor: actor)
+  #expect(removedFromBoard)
+  try store.deleteWorkspaceBundle(
+    index: index,
+    board: board,
+    pageIDs: created.notebook.pageIDs
+  )
+
+  #expect(try store.loadIndex() == index)
+  #expect(try store.loadBoard(notebookIDs: Set(index.notebooks.map(\.id))) == board)
+  #expect(!FileManager.default.fileExists(atPath: pageURL.path))
+
+  #expect(throws: CocoaError.self) {
+    try store.saveMergedPage(created.page)
+  }
+  #expect(!FileManager.default.fileExists(atPath: pageURL.path))
+}
+
+@Test("Удаление выбранной тетради выбирает ближайшую живую тетрадь")
+func deletingNotebookKeepsWorkspaceSelectionLive() throws {
+  let actor = UUID()
+  let initial = WorkspaceIndex.initial(
+    actor: actor,
+    pageSize: PageSize(width: 834, height: 1_194)
+  )
+  var index = initial.index
+  let secondCreation = index.createNotebook(
+    title: "",
+    actor: actor,
+    pageSize: initial.page.size
+  )
+  let second = try #require(secondCreation)
+  let thirdCreation = index.createNotebook(
+    title: "Третья",
+    actor: actor,
+    pageSize: initial.page.size
+  )
+  let third = try #require(thirdCreation)
+  _ = index.selectNotebook(second.notebook.id, actor: actor)
+
+  let deletion = index.deleteNotebook(second.notebook.id, actor: actor)
+  let removed = try #require(deletion)
+
+  #expect(removed.id == second.notebook.id)
+  #expect(index.selectedNotebookID == third.notebook.id)
+  #expect(index.selectedPageID == third.page.id)
+  #expect(index.isValid)
+  let removedFirst = index.deleteNotebook(
+    initial.index.selectedNotebookID,
+    actor: actor
+  )
+  let refusedLast = index.deleteNotebook(third.notebook.id, actor: actor)
+  #expect(removedFirst != nil)
+  #expect(refusedLast == nil)
+}
+
 @Test("Штрихи и агентские элементы сходятся независимо")
 func pageFieldsMergeIndependently() {
   let firstActor = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!

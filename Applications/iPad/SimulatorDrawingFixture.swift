@@ -7,6 +7,7 @@
   enum SimulatorDrawingFixture {
     static let launchArgument = "--notebook-drawing-responsiveness-fixture"
     static let fingerGestureArgument = "--notebook-simulator-finger-gestures"
+    static let mixedInputArgument = "--notebook-simulator-mixed-input"
     static let coverArgument = "--notebook-nearby-cover-fixture"
     static let offCenterCoverArgument = "--notebook-off-center-cover-fixture"
     static let stackArgument = "--notebook-stacked-page-fixture"

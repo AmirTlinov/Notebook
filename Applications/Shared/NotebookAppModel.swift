@@ -51,7 +51,6 @@ final class NotebookAppModel {
   private(set) var eraserStyle: EraserStyle
   private(set) var drawingTool: DrawingTool = .pen
   private(set) var isTextToolSelected = false
-  private(set) var pendingTitleFocusID: UUID?
 
   let store: NotebookStore
   let actorID: UUID
@@ -60,6 +59,11 @@ final class NotebookAppModel {
   private var pageSize = defaultPageSize
   private var started = false
   private var saveTasks: [UUID: Task<Void, Never>] = [:]
+  /// A peer sends a new page before publishing the catalog that owns it. Keep
+  /// that page out of the durable and visible page set until the newer index
+  /// arrives; the same boundary also makes a late page for a deleted notebook
+  /// harmless.
+  private var stagedRemotePages: [UUID: PageDocument] = [:]
   private var spatialInkSaveTask: Task<Void, Never>?
   private var cueTask: Task<Void, Never>?
   private var pencilUndoHistory = PencilUndoHistory()
@@ -184,9 +188,8 @@ final class NotebookAppModel {
   @discardableResult
   func createNotebook(at center: WorldPoint) -> UUID? {
     guard var workspace, var board else { return nil }
-    let number = workspace.notebooks.count + 1
     guard let created = workspace.createNotebook(
-      title: "Notebook \(number)",
+      title: "",
       actor: actorID,
       pageSize: pageSize
     ), board.addNotebook(created.notebook.id, near: center, actor: actorID)
@@ -206,26 +209,11 @@ final class NotebookAppModel {
     self.workspace = workspace
     self.board = board
     pages[created.page.id] = created.page
-    pendingTitleFocusID = created.notebook.id
     sync.send(.page(created.page))
     sync.send(.board(board))
     sync.send(.index(workspace))
     showCue("Новая тетрадь")
     return created.notebook.id
-  }
-
-  func consumePendingTitleFocus(_ notebookID: UUID) {
-    guard pendingTitleFocusID == notebookID else { return }
-    pendingTitleFocusID = nil
-  }
-
-  func renameNotebook(_ notebookID: UUID, title: String) {
-    guard var workspace,
-      workspace.renameNotebook(notebookID, title: title, actor: actorID)
-    else { return }
-    self.workspace = workspace
-    try? store.saveIndex(workspace)
-    sync.send(.index(workspace))
   }
 
   func selectNotebook(_ notebookID: UUID) {
@@ -235,6 +223,53 @@ final class NotebookAppModel {
     self.workspace = workspace
     try? store.saveIndex(workspace)
     sync.send(.index(workspace))
+  }
+
+  @discardableResult
+  func deleteNotebook(_ notebookID: UUID) -> Bool {
+    guard var workspace, var board else { return false }
+    guard let removed = workspace.deleteNotebook(notebookID, actor: actorID) else {
+      showCue("Одна тетрадь остаётся рабочей")
+      return false
+    }
+    guard board.deleteNotebook(notebookID, actor: actorID) else { return false }
+
+    do {
+      try store.deleteWorkspaceBundle(
+        index: workspace,
+        board: board,
+        pageIDs: removed.pageIDs
+      )
+    } catch {
+      showCue("Не удалось удалить тетрадь")
+      return false
+    }
+
+    for pageID in removed.pageIDs {
+      saveTasks[pageID]?.cancel()
+      saveTasks[pageID] = nil
+      pages[pageID] = nil
+      stagedRemotePages[pageID] = nil
+      reservedDrawingCounters[pageID] = nil
+      pencilUndoHistory.discardChanges(for: pageID)
+    }
+    self.workspace = workspace
+    self.board = board
+    sync.send(.index(workspace))
+    sync.send(.board(board))
+
+    if let presence, presence.focusedNotebookID == notebookID {
+      updatePresence(
+        SessionPresence(
+          mode: .board,
+          camera: presence.camera,
+          viewport: presence.viewport
+        ),
+        settled: true
+      )
+    }
+    showCue("Тетрадь удалена")
+    return true
   }
 
   func moveNotebook(_ notebookID: UUID, to center: WorldPoint) {
@@ -544,6 +579,7 @@ final class NotebookAppModel {
       let diskIndex = try store.loadIndex()
       if workspace?.merge(diskIndex) == true {
         workspace = diskIndex
+        reconcilePages(with: diskIndex)
         sync.send(.index(diskIndex))
       }
       let notebookIDs = Set(diskIndex.notebooks.map(\.id))
@@ -611,8 +647,13 @@ final class NotebookAppModel {
       if workspace?.merge(incoming) == true {
         workspace = incoming
         try? store.saveIndex(incoming)
+        reconcilePages(with: incoming)
       }
     case .page(let incoming):
+      guard workspaceContainsPage(incoming.id) else {
+        stageRemotePage(incoming)
+        return
+      }
       if var current = pages[incoming.id] {
         guard current.merge(incoming) else { return }
         acceptRemotePage(current)
@@ -676,6 +717,7 @@ final class NotebookAppModel {
 
   private func sendSnapshot() {
     guard let workspace else { return }
+    let publishedPageIDs = Set(workspace.notebooks.flatMap(\.pageIDs))
     sync.send(.index(workspace))
     if let board { sync.send(.board(board)) }
     #if os(iOS)
@@ -688,7 +730,8 @@ final class NotebookAppModel {
       sync.send(.page(selectedPage))
     }
     if let spatialInk { sync.send(.spatialInk(spatialInk)) }
-    for page in pages.values where page.id != selectedPageID {
+    for page in pages.values
+    where page.id != selectedPageID && publishedPageIDs.contains(page.id) {
       sync.send(.page(page))
     }
   }
@@ -855,6 +898,47 @@ final class NotebookAppModel {
       pencilUndoHistory.discardChanges(for: page.id)
     }
     scheduleSave(page.id)
+  }
+
+  private func workspaceContainsPage(_ pageID: UUID) -> Bool {
+    workspace?.notebooks.contains(where: { $0.pageIDs.contains(pageID) }) == true
+  }
+
+  private func stageRemotePage(_ incoming: PageDocument) {
+    if var staged = stagedRemotePages[incoming.id] {
+      _ = staged.merge(incoming)
+      stagedRemotePages[incoming.id] = staged
+    } else {
+      stagedRemotePages[incoming.id] = incoming
+    }
+  }
+
+  /// WorkspaceIndex is the publication boundary for pages. It promotes pages
+  /// sent ahead of a creation and evicts pages removed by a deletion before a
+  /// delayed serializer or peer can expose them again.
+  private func reconcilePages(with workspace: WorkspaceIndex) {
+    let publishedPageIDs = Set(workspace.notebooks.flatMap(\.pageIDs))
+    let obsoletePageIDs = pages.keys.filter { !publishedPageIDs.contains($0) }
+    for pageID in obsoletePageIDs {
+      saveTasks[pageID]?.cancel()
+      saveTasks[pageID] = nil
+      pages[pageID] = nil
+      reservedDrawingCounters[pageID] = nil
+      pencilUndoHistory.discardChanges(for: pageID)
+    }
+
+    let promoted = stagedRemotePages.values.filter {
+      publishedPageIDs.contains($0.id)
+    }
+    stagedRemotePages.removeAll(keepingCapacity: true)
+    for page in promoted {
+      if var current = pages[page.id] {
+        _ = current.merge(page)
+        acceptRemotePage(current)
+      } else {
+        acceptRemotePage(page)
+      }
+    }
   }
 
   private func restoreSettledPresenceAfterDisconnect() {

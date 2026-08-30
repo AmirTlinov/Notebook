@@ -17,6 +17,15 @@ trap cleanup EXIT
 cd "$ROOT"
 swift test
 
+"$ROOT/Applications/render-ipad-icon.sh" "$DERIVED/AppIcon-1024.png"
+if ! cmp -s \
+  "$ROOT/Applications/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png" \
+  "$DERIVED/AppIcon-1024.png"; then
+  printf '%s\n' \
+    'iPad icon должен быть свежим результатом render-ipad-icon.sh.' >&2
+  exit 1
+fi
+
 if rg -n 'PKCanvasView|override func draw\(' \
   "$ROOT/Applications/iPad" \
   --glob '*.swift'; then

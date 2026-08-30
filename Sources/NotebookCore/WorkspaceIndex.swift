@@ -15,6 +15,7 @@ public struct Notebook: Codable, Equatable, Identifiable, Sendable {
 
 public struct WorkspaceIndex: Codable, Equatable, Sendable {
   public static let formatVersion = 1
+  public static let maximumTitleLength = 240
 
   public let format: Int
   public private(set) var notebooks: [Notebook]
@@ -45,7 +46,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
   ) -> (index: Self, page: PageDocument) {
     let notebook = Notebook(
       id: notebookID,
-      title: "Notebook 1",
+      title: "",
       pageIDs: [pageID]
     )
     return (
@@ -92,23 +93,6 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
   }
 
   @discardableResult
-  public mutating func renameNotebook(
-    _ notebookID: UUID,
-    title: String,
-    actor: UUID
-  ) -> Bool {
-    let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !normalized.isEmpty,
-      let index = notebooks.firstIndex(where: { $0.id == notebookID }),
-      notebooks[index].title != normalized,
-      let nextStamp = stamp.advanced(by: actor)
-    else { return false }
-    notebooks[index].title = normalized
-    stamp = nextStamp
-    return true
-  }
-
-  @discardableResult
   public mutating func createNotebook(
     title: String,
     actor: UUID,
@@ -117,7 +101,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     pageID: UUID = UUID()
   ) -> (notebook: Notebook, page: PageDocument)? {
     let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !normalized.isEmpty,
+    guard normalized.utf16.count <= Self.maximumTitleLength,
       !notebooks.contains(where: { $0.id == notebookID }),
       !notebooks.flatMap(\.pageIDs).contains(pageID),
       let nextStamp = stamp.advanced(by: actor)
@@ -135,6 +119,29 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     return (notebook, page)
   }
 
+  /// Removes one notebook and moves selection to its nearest neighbour.
+  /// A workspace always contains one writable notebook, so its last member is
+  /// the only notebook that cannot be removed.
+  @discardableResult
+  public mutating func deleteNotebook(
+    _ notebookID: UUID,
+    actor: UUID
+  ) -> Notebook? {
+    guard notebooks.count > 1,
+      let removedIndex = notebooks.firstIndex(where: { $0.id == notebookID }),
+      let nextStamp = stamp.advanced(by: actor)
+    else { return nil }
+
+    let removed = notebooks.remove(at: removedIndex)
+    if selectedNotebookID == notebookID {
+      let replacement = notebooks[min(removedIndex, notebooks.count - 1)]
+      selectedNotebookID = replacement.id
+      selectedPageID = replacement.pageIDs[0]
+    }
+    stamp = nextStamp
+    return removed
+  }
+
   var isValid: Bool {
     guard format == Self.formatVersion,
       !notebooks.isEmpty,
@@ -146,7 +153,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     guard Set(notebookIDs).count == notebookIDs.count,
       Set(pageIDs).count == pageIDs.count,
       notebooks.allSatisfy({
-        !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        $0.title.utf16.count <= Self.maximumTitleLength
           && !$0.pageIDs.isEmpty
       })
     else { return false }

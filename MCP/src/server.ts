@@ -103,6 +103,7 @@ export function createServer(store = new NotebookStore()): McpServer {
         notebook: {
           id: notebook.id,
           title: notebook.title,
+          identity: notebookIdentity(notebook, board, spatialInk),
           number: notebookIndex + 1,
           count: workspace.notebooks.length,
         },
@@ -116,7 +117,9 @@ export function createServer(store = new NotebookStore()): McpServer {
         },
         boardRevision: revision(board.stamp),
         spatialInkRevision: revision(spatialInk.stamp),
-        visibleNotebooks: visibleNotebooks(workspace, board, presence),
+        visibleNotebooks: visibleNotebooks(workspace, board, spatialInk, presence),
+        visualIdentityGuide:
+          "Для тетради без печатного названия сопоставьте её screenFrame с рисунком в notebook_render_view; shortID остаётся стабильной ссылкой.",
       };
     }),
   );
@@ -142,6 +145,9 @@ export function createServer(store = new NotebookStore()): McpServer {
         freeNotebooks: board.freeNotebooks,
         stacks: board.stacks,
         elements: board.elements,
+        notebooks: workspace.notebooks.map((notebook) =>
+          notebookIdentity(notebook, board, spatialInk)
+        ),
         activePencilActions: spatialInk.actions.filter((action) => action.isActive).length,
       };
     }),
@@ -171,6 +177,7 @@ export function createServer(store = new NotebookStore()): McpServer {
       );
       return {
         notebook,
+        identity: notebookIdentity(notebook, board, spatialInk),
         selectedPageID: sameID(workspace.selectedNotebookID, notebook.id)
           ? workspace.selectedPageID
           : null,
@@ -256,11 +263,11 @@ export function createServer(store = new NotebookStore()): McpServer {
     {
       title: "Create a notebook on the board",
       description:
-        "Create a real notebook, its first blank page, and one board placement in one mutation.",
+        "Create a real notebook, its first blank page, and one board placement in one mutation. The printed title may be empty because Pencil marks can identify the cover.",
       inputSchema: z.object({
         expected_workspace_revision: z.string().min(1),
         expected_board_revision: z.string().min(1),
-        title: z.string().trim().min(1).max(240),
+        title: z.string().trim().max(240).default(""),
         center: worldPointSchema,
       }),
     },
@@ -285,10 +292,10 @@ export function createServer(store = new NotebookStore()): McpServer {
     "notebook_rename_notebook",
     {
       title: "Rename a notebook",
-      description: "Change the title printed on a notebook cover.",
+      description: "Change or clear the optional title printed on a notebook cover.",
       inputSchema: z.object({
         notebook_id: z.uuid(),
-        title: z.string().trim().min(1).max(240),
+        title: z.string().trim().max(240),
         expected_workspace_revision: z.string().min(1),
       }),
     },
@@ -686,6 +693,7 @@ export function createServer(store = new NotebookStore()): McpServer {
 function visibleNotebooks(
   workspace: WorkspaceIndex,
   board: BoardDocument,
+  spatialInk: Awaited<ReturnType<NotebookStore["readSpatialInk"]>>,
   presence: SessionPresence,
 ): object[] {
   const byID = new Map(
@@ -761,6 +769,11 @@ function visibleNotebooks(
       const center = worldToScreen(item.center, presence);
       return {
         ...item,
+        identity: notebookIdentity(
+          byID.get(item.notebookID.toLowerCase())!,
+          board,
+          spatialInk,
+        ),
         screenFrame: {
           x: center.x - width / 2,
           y: center.y - height / 2,
@@ -774,6 +787,33 @@ function visibleNotebooks(
       && item.screenFrame.x + item.screenFrame.width > 0
       && item.screenFrame.y + item.screenFrame.height > 0)
     .slice(-200);
+}
+
+function notebookIdentity(
+  notebook: WorkspaceIndex["notebooks"][number],
+  board: BoardDocument,
+  spatialInk: Awaited<ReturnType<NotebookStore["readSpatialInk"]>>,
+): object {
+  const title = notebook.title.trim();
+  const shortID = notebook.id.slice(0, 8).toUpperCase();
+  const coverElements = board.elements.filter((element) =>
+    element.surface.kind === "cover"
+      && sameID(element.surface.ownerID!, notebook.id)
+  );
+  const coverPencilActionCount = spatialInk.actions.filter(
+    (action) => action.isActive && action.spans.some(
+      (span) => span.surface.kind === "cover"
+        && sameID(span.surface.ownerID!, notebook.id),
+    ),
+  ).length;
+  return {
+    notebookID: notebook.id,
+    shortID,
+    title: title || null,
+    reference: title || `Безымянная #${shortID}`,
+    coverPencilActionCount,
+    coverElementIDs: coverElements.map((element) => element.id),
+  };
 }
 
 function assertFreshCurrentView(

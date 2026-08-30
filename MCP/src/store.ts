@@ -246,7 +246,6 @@ export class NotebookStore {
       );
       if (!notebook) throw new StoreError("Тетрадь не найдена.");
       const title = args.title.trim();
-      if (!title) throw new StoreError("Название тетради должно быть непустым.");
       if (notebook.title === title) return workspace;
       const actor = await this.readActorID();
       notebook.title = title;
@@ -279,7 +278,6 @@ export class NotebookStore {
       assertExpectedRevision(args.expectedBoardRevision, board.stamp, "Доска");
       validateWorldPoint(args.center, "center");
       const title = args.title.trim();
-      if (!title) throw new StoreError("Название тетради должно быть непустым.");
 
       const actor = await this.readActorID();
       const notebookID = randomUUID();
@@ -496,7 +494,7 @@ function validateWorkspace(value: unknown): asserts value is WorkspaceIndex {
     const notebookID = notebook.id.toLowerCase();
     if (notebookIDs.has(notebookID)) throw new StoreError(`Повторяется notebook.id: ${notebook.id}`);
     notebookIDs.add(notebookID);
-    if (typeof notebook.title !== "string" || !notebook.title.trim()) {
+    if (typeof notebook.title !== "string" || notebook.title.length > 240) {
       throw new StoreError(`Название тетради ${notebook.id} повреждено.`);
     }
     if (!Array.isArray(notebook.pageIDs) || notebook.pageIDs.length === 0) {

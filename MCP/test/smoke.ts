@@ -52,6 +52,8 @@ try {
   const context = await client.callTool({ name: "notebook_context", arguments: {} });
   assert.equal(context.isError, undefined);
   assert.match(JSON.stringify(context.structuredContent), /Notebook 1/);
+  assert.match(JSON.stringify(context.structuredContent), /shortID/);
+  assert.match(JSON.stringify(context.structuredContent), /screenFrame/);
 
   const currentView = await client.callTool({
     name: "notebook_render_view",

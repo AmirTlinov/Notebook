@@ -152,6 +152,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private var frameSlot = 0
   private var hasPresentedFrame = false
 
+  var committedVertexCount: Int {
+    committedVertices.count
+      + committedBatches.reduce(0) { $0 + $1.vertices.count }
+  }
+
   init(frame: CGRect) {
     let device = MTLCreateSystemDefaultDevice()
     commandQueue = device?.makeCommandQueue()
@@ -341,6 +346,39 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       )
       appendCommitted(vertices, operation: .erase)
       committedStrokeCount = drawing.strokes.count
+    }
+    discardActiveAction()
+    requestFrame()
+  }
+
+  /// Freezes a finished board or cover gesture into this same Metal surface.
+  /// The journal replay may arrive on a later frame; a following Pencil-down
+  /// can therefore clear only its own live tip, never the preceding stroke.
+  func commitActiveSpatialAction() {
+    if let activeInkStroke, !activeInkStroke.measuredPoints.isEmpty {
+      let components = activeInkStroke.style.color.components
+      var vertices: [Vertex] = []
+      appendStrokeVertices(
+        points: activeInkStroke.measuredPoints,
+        color: SIMD4(
+          Float(components.red),
+          Float(components.green),
+          Float(components.blue),
+          1
+        ),
+        to: &vertices
+      )
+      appendCommitted(vertices, operation: .ink)
+    } else if let activeEraserStroke,
+      !activeEraserStroke.measuredPoints.isEmpty
+    {
+      var vertices: [Vertex] = []
+      appendStrokeVertices(
+        points: activeEraserStroke.measuredPoints,
+        color: SIMD4(1, 1, 1, 1),
+        to: &vertices
+      )
+      appendCommitted(vertices, operation: .erase)
     }
     discardActiveAction()
     requestFrame()

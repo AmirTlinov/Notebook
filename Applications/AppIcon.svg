@@ -86,19 +86,21 @@
 
   <g id="background">
     <rect width="1024" height="1024" fill="url(#backgroundFill)" filter="url(#backgroundTexture)"/>
-    <rect x="170" y="150" width="700" height="730" rx="112" fill="#353535" opacity="0.3" transform="translate(0 28)" filter="url(#softShadow)"/>
-    <ellipse cx="518" cy="886" rx="350" ry="61" fill="#555" opacity="0.12" filter="url(#softShadow)"/>
   </g>
 
-  <g id="notebook">
-    <g id="pageStack">
+  <g id="iconArtwork">
+    <rect x="170" y="150" width="700" height="730" rx="112" fill="#353535" opacity="0.3" transform="translate(0 28)" filter="url(#softShadow)"/>
+    <ellipse cx="518" cy="886" rx="350" ry="61" fill="#555" opacity="0.12" filter="url(#softShadow)"/>
+
+    <g id="notebook">
+      <g id="pageStack">
       <rect x="185" y="150" width="680" height="736" rx="106" fill="#aca296" stroke="#9c9286" stroke-width="3"/>
       <rect x="183" y="144" width="680" height="734" rx="106" fill="url(#pageFill)" stroke="#c6c0b5" stroke-width="3"/>
       <rect x="181" y="137" width="680" height="730" rx="106" fill="#d1c8bc" stroke="#b9b0a4" stroke-width="3"/>
       <path d="M236 856C380 868 662 868 813 852M231 868C386 881 665 880 815 864M229 879C389 891 663 891 807 876" fill="none" stroke="#948b80" stroke-width="3" stroke-linecap="round" opacity="0.66"/>
-    </g>
+      </g>
 
-    <g id="bindingBack" transform="translate(8 0)" clip-path="url(#bindingOutsideClip)">
+      <g id="bindingBack" transform="translate(8 0)" clip-path="url(#bindingOutsideClip)">
       <use href="#ringBack" transform="translate(0 250)"/>
       <use href="#ringBack" transform="translate(0 335)"/>
       <use href="#ringBack" transform="translate(0 421)"/>
@@ -106,17 +108,17 @@
       <use href="#ringBack" transform="translate(0 592)"/>
       <use href="#ringBack" transform="translate(0 677)"/>
       <use href="#ringBack" transform="translate(0 762)"/>
-    </g>
+      </g>
 
-    <g id="cover">
+      <g id="cover">
       <rect x="178" y="122" width="684" height="730" rx="108" fill="url(#coverFill)" stroke="#cfc7bb" stroke-width="4"/>
       <rect x="182" y="126" width="676" height="722" rx="104" fill="url(#coverFill)" filter="url(#coverTexture)" clip-path="url(#coverClip)" opacity="0.72"/>
       <rect x="185" y="129" width="670" height="716" rx="101" fill="none" stroke="#fff" stroke-width="4" opacity="0.62"/>
       <path d="M205 818C353 839 688 839 831 811" fill="none" stroke="#bdb6aa" stroke-width="5" opacity="0.38"/>
       <path d="M840 188V774" fill="none" stroke="#bdb4a8" stroke-width="5" opacity="0.25"/>
-    </g>
+      </g>
 
-    <g id="bindingFront" transform="translate(8 0)">
+      <g id="bindingFront" transform="translate(8 0)">
       <use href="#ringFront" transform="translate(0 250)"/>
       <use href="#ringFront" transform="translate(0 335)"/>
       <use href="#ringFront" transform="translate(0 421)"/>
@@ -124,15 +126,16 @@
       <use href="#ringFront" transform="translate(0 592)"/>
       <use href="#ringFront" transform="translate(0 677)"/>
       <use href="#ringFront" transform="translate(0 762)"/>
-    </g>
+      </g>
 
-    <g id="elasticBand">
+      <g id="elasticBand">
       <rect x="687" y="118" width="57" height="772" rx="5" fill="#1f2d38" opacity="0.34" filter="url(#softShadow)"/>
       <rect x="692" y="120" width="47" height="766" rx="4" fill="url(#elasticFill)" stroke="#46596d" stroke-width="3"/>
       <rect x="693.5" y="121.5" width="44" height="763" rx="3" fill="url(#elasticLength)"/>
       <path d="M698 123V883M704 123V883M710 123V883M716 123V883M722 123V883M728 123V883M734 123V883" fill="none" stroke="#354b5e" stroke-width="1.4" opacity="0.48"/>
       <path d="M700 123V883M706 123V883M712 123V883M718 123V883M724 123V883M730 123V883M736 123V883" fill="none" stroke="#a9b5bf" stroke-width="0.9" opacity="0.4"/>
       <path d="M695 128V878" fill="none" stroke="#d7dce0" stroke-width="1.4" opacity="0.3"/>
+      </g>
     </g>
   </g>
 </svg>

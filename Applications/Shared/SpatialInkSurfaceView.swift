@@ -106,7 +106,31 @@ enum SpatialInkDrawingComposer {
   }
 }
 
-#if os(macOS)
+#if os(iOS)
+struct SpatialInkSurfaceView: UIViewRepresentable {
+  let drawing: PKDrawing
+
+  func makeCoordinator() -> Coordinator { Coordinator() }
+
+  func makeUIView(context: Context) -> InkCanvasView {
+    let view = InkCanvasView(frame: .zero)
+    view.apply(drawing)
+    context.coordinator.drawing = drawing
+    return view
+  }
+
+  func updateUIView(_ view: InkCanvasView, context: Context) {
+    guard context.coordinator.drawing != drawing else { return }
+    context.coordinator.drawing = drawing
+    view.apply(drawing)
+  }
+
+  @MainActor
+  final class Coordinator {
+    var drawing = PKDrawing()
+  }
+}
+#elseif os(macOS)
 struct SpatialInkSurfaceView: View {
   let drawing: PKDrawing
 
