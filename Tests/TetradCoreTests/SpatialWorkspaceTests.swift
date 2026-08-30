@@ -17,18 +17,138 @@ func cameraRoundTrip() {
   #expect(abs(error.y) < 0.000_001)
 }
 
-@Test("Притяжение растёт по мере приближения щипка к центру обложки")
-func focusFieldGrowsTowardCenter() {
+@Test("Мировая точка под щипком остаётся под пальцами при увеличении")
+func pinchKeepsItsWorldAnchorUnderTheFingers() {
+  let camera = SpatialCamera(
+    center: WorldPoint(tileX: 91, tileY: -37, localX: 211, localY: 3_900),
+    scale: 0.43
+  )
+  let viewport = SpatialPoint(x: 1_024, y: 1_366)
+  let fingers = SpatialPoint(x: 781, y: 428)
+  let worldAnchor = camera.screenToWorld(fingers, viewport: viewport)
+
+  let pinched = camera.pinched(
+    by: 2.1,
+    from: fingers,
+    to: fingers,
+    viewport: viewport
+  )
+
+  let projected = pinched.worldToScreen(worldAnchor, viewport: viewport)
+  #expect(abs(projected.x - fingers.x) < 0.000_001)
+  #expect(abs(projected.y - fingers.y) < 0.000_001)
+}
+
+@Test("Мировая точка следует за движущимся центром щипка")
+func pinchAnchorFollowsTheCurrentFingerCentroid() {
+  let camera = SpatialCamera(
+    center: WorldPoint(tileX: -48, tileY: 76, localX: 2_111, localY: 903),
+    scale: 0.31
+  )
+  let viewport = SpatialPoint(x: 1_366, y: 1_024)
+  let start = SpatialPoint(x: 982, y: 271)
+  let current = SpatialPoint(x: 811, y: 496)
+  let worldAnchor = camera.screenToWorld(start, viewport: viewport)
+
+  let pinched = camera.pinched(
+    by: 1.73,
+    from: start,
+    to: current,
+    viewport: viewport
+  )
+
+  let projected = pinched.worldToScreen(worldAnchor, viewport: viewport)
+  #expect(abs(projected.x - current.x) < 0.000_001)
+  #expect(abs(projected.y - current.y) < 0.000_001)
+}
+
+@Test("Обратный щипок возвращает исходную камеру")
+func pinchIsReversible() {
+  let camera = SpatialCamera(
+    center: WorldPoint(tileX: 15, tileY: -21, localX: 512, localY: 712),
+    scale: 0.37
+  )
+  let viewport = SpatialPoint(x: 1_024, y: 1_366)
+  let start = SpatialPoint(x: 792, y: 514)
+  let current = SpatialPoint(x: 701, y: 623)
+  let magnification = 2.25
+
+  let expanded = camera.pinched(
+    by: magnification,
+    from: start,
+    to: current,
+    viewport: viewport
+  )
+  let restored = expanded.pinched(
+    by: 1 / magnification,
+    from: current,
+    to: start,
+    viewport: viewport
+  )
+  let centerError = camera.center.delta(to: restored.center)
+
+  #expect(abs(restored.scale - camera.scale) < 0.000_001)
+  #expect(abs(centerError.x) < 0.000_001)
+  #expect(abs(centerError.y) < 0.000_001)
+}
+
+@Test("Ограничение масштаба сохраняет точку под пальцами")
+func clampedPinchStillKeepsItsAnchor() {
+  let camera = SpatialCamera(center: WorldPoint(x: 2_400, y: -900), scale: 0.4)
+  let viewport = SpatialPoint(x: 1_024, y: 1_366)
+  let start = SpatialPoint(x: 210, y: 904)
+  let current = SpatialPoint(x: 331, y: 812)
+  let worldAnchor = camera.screenToWorld(start, viewport: viewport)
+
+  let pinched = camera.pinched(
+    by: 20,
+    from: start,
+    to: current,
+    viewport: viewport,
+    maximumScale: 0.9
+  )
+  let projected = pinched.worldToScreen(worldAnchor, viewport: viewport)
+
+  #expect(pinched.scale == 0.9)
+  #expect(abs(projected.x - current.x) < 0.000_001)
+  #expect(abs(projected.y - current.y) < 0.000_001)
+}
+
+@Test("Половина открытия соответствует половине отношения масштабов")
+func notebookOpeningProgressUsesThePinchRatio() {
+  let coverScale = 0.72
+  let pageScale = 1.25
+  let halfwayScale = sqrt(coverScale * pageScale)
+
+  #expect(NotebookOpeningTransition.progress(
+    cameraScale: coverScale / 2,
+    coverScale: coverScale,
+    pageScale: pageScale
+  ) == 0)
+  #expect(abs(NotebookOpeningTransition.progress(
+    cameraScale: halfwayScale,
+    coverScale: coverScale,
+    pageScale: pageScale
+  ) - 0.5) < 0.000_001)
+  #expect(NotebookOpeningTransition.progress(
+    cameraScale: pageScale * 2,
+    coverScale: coverScale,
+    pageScale: pageScale
+  ) == 1)
+}
+
+@Test("Сила выбора растёт по мере приближения щипка к центру обложки")
+func selectionFieldGrowsTowardCenter() {
   let cover = SpatialRect(x: 100, y: 100, width: 300, height: 420)
-  let outside = SemanticFocusField.influence(
+  let outside = NotebookSelectionField.influence(
     centroid: SpatialPoint(x: 800, y: 800),
     cover: cover
   )
-  let edge = SemanticFocusField.influence(
+  let edge = NotebookSelectionField.influence(
     centroid: SpatialPoint(x: 110, y: 310),
     cover: cover
   )
-  let center = SemanticFocusField.influence(
+  let center = NotebookSelectionField.influence(
     centroid: SpatialPoint(x: 250, y: 310),
     cover: cover
   )

@@ -193,28 +193,36 @@ public struct SpatialCamera: Codable, Equatable, Hashable, Sendable {
     )
   }
 
-  public mutating func zoom(
+  /// Solves the complete two-finger camera transform from the gesture's
+  /// starting camera. The world point beneath `startCentroid` is projected
+  /// beneath `currentCentroid`, so the fingers determine the path independently
+  /// of frame rate and semantic focus.
+  public func pinched(
     by magnification: Double,
-    anchoredAt anchor: SpatialPoint,
+    from startCentroid: SpatialPoint,
+    to currentCentroid: SpatialPoint,
     viewport: SpatialPoint,
     maximumScale: Double = SpatialCamera.maximumScale
-  ) {
-    guard magnification.isFinite && magnification > 0 else { return }
-    let worldAnchor = screenToWorld(anchor, viewport: viewport)
-    scale = min(
-      max(scale * magnification, Self.minimumScale),
-      max(maximumScale, Self.minimumScale)
+  ) -> Self {
+    guard magnification.isFinite && magnification > 0,
+      maximumScale.isFinite && maximumScale > 0
+    else { return self }
+    let worldAnchor = screenToWorld(startCentroid, viewport: viewport)
+    let upperScale = min(
+      max(maximumScale, Self.minimumScale),
+      Self.maximumScale
     )
-    let projected = worldToScreen(worldAnchor, viewport: viewport)
-    pan(screenX: projected.x - anchor.x, screenY: projected.y - anchor.y)
-  }
-
-  public mutating func moveCenter(toward target: WorldPoint, weight: Double) {
-    let clamped = min(max(weight, 0), 1)
-    let delta = center.delta(to: target)
-    center = center.offsetBy(
-      x: delta.x * clamped,
-      y: delta.y * clamped
+    let resolvedScale = min(
+      max(scale * magnification, Self.minimumScale),
+      upperScale
+    )
+    let resolvedCenter = worldAnchor.offsetBy(
+      x: -(currentCentroid.x - viewport.x / 2) / resolvedScale,
+      y: -(currentCentroid.y - viewport.y / 2) / resolvedScale
+    )
+    return Self(
+      center: resolvedCenter,
+      scale: resolvedScale
     )
   }
 
@@ -224,8 +232,9 @@ public struct SpatialCamera: Codable, Equatable, Hashable, Sendable {
   }
 }
 
-public enum SemanticFocusField {
-  /// Elliptical, smooth and reversible attraction around a projected cover.
+public enum NotebookSelectionField {
+  /// Elliptical selection strength around a projected cover. This chooses the
+  /// notebook; the fingers remain the sole owner of camera movement.
   public static func influence(
     centroid: SpatialPoint,
     cover: SpatialRect,
@@ -243,6 +252,24 @@ public enum SemanticFocusField {
     guard normalized < 1 else { return 0 }
     let t = 1 - normalized
     return t * t * (3 - 2 * t)
+  }
+}
+
+public enum NotebookOpeningTransition {
+  /// Converts the multiplicative scale of a pinch into reversible visual
+  /// progress between the closed cover and the full-page presentation.
+  public static func progress(
+    cameraScale: Double,
+    coverScale: Double,
+    pageScale: Double
+  ) -> Double {
+    guard cameraScale.isFinite && cameraScale > 0,
+      coverScale.isFinite && coverScale > 0,
+      pageScale.isFinite && pageScale > coverScale
+    else { return 0 }
+    let progress = log(cameraScale / coverScale)
+      / log(pageScale / coverScale)
+    return min(max(progress, 0), 1)
   }
 }
 

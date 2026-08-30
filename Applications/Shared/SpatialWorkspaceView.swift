@@ -6,7 +6,6 @@ private struct CameraGestureSnapshot {
   let presence: SessionPresence
   let startCentroid: CGPoint
   let candidateNotebookID: UUID?
-  let attraction: Double
 }
 
 struct RenderedNotebook: Identifiable {
@@ -307,14 +306,10 @@ struct SpatialWorkspaceView: View {
     switch phase {
     case .began(let centroid):
       let candidate = focusCandidate(at: centroid, presence: presence)
-      let attraction = candidate.map {
-        focusInfluence(for: $0, at: centroid, presence: presence)
-      } ?? 0
       cameraGesture = CameraGestureSnapshot(
         presence: presence,
         startCentroid: centroid,
-        candidateNotebookID: candidate,
-        attraction: attraction
+        candidateNotebookID: candidate
       )
       if let candidate { model.selectNotebook(candidate) }
     case .changed(let scale, let centroid):
@@ -354,8 +349,7 @@ struct SpatialWorkspaceView: View {
       cameraGesture = CameraGestureSnapshot(
         presence: presence,
         startCentroid: centroid,
-        candidateNotebookID: presence.focusedNotebookID,
-        attraction: 1
+        candidateNotebookID: presence.focusedNotebookID
       )
     case .changed(let scale, let centroid):
       updateMagnification(scale: scale, centroid: centroid)
@@ -371,46 +365,29 @@ struct SpatialWorkspaceView: View {
   private func updateMagnification(scale: CGFloat, centroid: CGPoint) {
     guard let snapshot = cameraGesture else { return }
     let viewport = snapshot.presence.viewport
-    var camera = snapshot.presence.camera
     let pageScale = fitScale(viewport: viewport)
-    camera.zoom(
+    let camera = snapshot.presence.camera.pinched(
       by: Double(scale),
-      anchoredAt: SpatialPoint(
+      from: SpatialPoint(
         x: snapshot.startCentroid.x,
         y: snapshot.startCentroid.y
       ),
+      to: SpatialPoint(x: centroid.x, y: centroid.y),
       viewport: viewport,
       maximumScale: pageScale
-    )
-    camera.pan(
-      screenX: centroid.x - snapshot.startCentroid.x,
-      screenY: centroid.y - snapshot.startCentroid.y
     )
 
     let candidate = snapshot.candidateNotebookID
       ?? snapshot.presence.focusedNotebookID
-    if let candidate,
-      let center = renderedNotebooks(presence: snapshot.presence)
-        .first(where: { $0.id == candidate })?.center
-    {
-      let coverScale = coverFocusScale(viewport: viewport)
-      let progress = min(max(
-        (camera.scale - snapshot.presence.camera.scale)
-          / max(coverScale - snapshot.presence.camera.scale, 0.001),
-        0
-      ), 1)
-      camera.moveCenter(
-        toward: center,
-        weight: snapshot.attraction * progress
-      )
-    }
-
     let coverScale = coverFocusScale(viewport: viewport)
-    let open = candidate == nil ? 0 : min(max(
-      (camera.scale - coverScale) / max(pageScale - coverScale, 0.001),
-      0
-    ), 1)
-    let mode: WorkspaceSemanticMode = open >= 0.999 ? .page : (candidate == nil ? .board : .cover)
+    let open = candidate == nil ? 0 : NotebookOpeningTransition.progress(
+      cameraScale: camera.scale,
+      coverScale: coverScale,
+      pageScale: pageScale
+    )
+    let mode: WorkspaceSemanticMode = open >= 0.999
+      ? .page
+      : (candidate == nil ? .board : .cover)
     model.updatePresence(
       SessionPresence(
         mode: mode,
@@ -529,17 +506,17 @@ struct SpatialWorkspaceView: View {
     renderedNotebooks(presence: presence)
       .reversed()
       .compactMap { rendered -> (UUID, Double)? in
-        let influence = focusInfluence(
+        let strength = selectionStrength(
           for: rendered.id,
           at: centroid,
           presence: presence
         )
-        return influence > 0 ? (rendered.id, influence) : nil
+        return strength > 0 ? (rendered.id, strength) : nil
       }
       .max { $0.1 < $1.1 }?.0
   }
 
-  private func focusInfluence(
+  private func selectionStrength(
     for notebookID: UUID,
     at centroid: CGPoint,
     presence: SessionPresence
@@ -553,7 +530,7 @@ struct SpatialWorkspaceView: View {
     )
     let width = NotebookGeometry.width * presence.camera.scale
     let height = NotebookGeometry.height * presence.camera.scale
-    return SemanticFocusField.influence(
+    return NotebookSelectionField.influence(
       centroid: SpatialPoint(x: centroid.x, y: centroid.y),
       cover: SpatialRect(
         x: screen.x - width / 2,
