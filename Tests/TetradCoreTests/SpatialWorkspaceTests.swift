@@ -92,6 +92,43 @@ func pinchIsReversible() {
   #expect(abs(centerError.y) < 0.000_001)
 }
 
+@Test("Смена пропорций экрана и возврат сохраняют масштаб доски")
+func viewportProjectionIsReversible() {
+  let portrait = SpatialPoint(x: 834, y: 1_194)
+  let landscape = SpatialPoint(x: 1_194, y: 834)
+  let original = SessionPresence(
+    mode: .board,
+    camera: SpatialCamera(center: WorldPoint(x: 180, y: -90), scale: 0.41),
+    viewport: portrait
+  )
+
+  let restored = original
+    .adapted(to: landscape)
+    .adapted(to: portrait)
+
+  #expect(restored.camera.center == original.camera.center)
+  #expect(abs(restored.camera.scale - original.camera.scale) < 0.000_000_1)
+}
+
+@Test("Полностью открытый лист восстанавливает канонический масштаб")
+func stablePageRepairsLossyViewportScale() {
+  let viewport = SpatialPoint(x: 834, y: 1_194)
+  let notebookID = UUID()
+  let corrupted = SessionPresence(
+    mode: .page,
+    camera: SpatialCamera(scale: 0.487_891_719_906_063),
+    viewport: viewport,
+    focusedNotebookID: notebookID,
+    openProgress: 1
+  )
+
+  let repaired = corrupted.adapted(to: viewport)
+
+  #expect(repaired.camera.scale == 1)
+  #expect(repaired.focusedNotebookID == notebookID)
+  #expect(repaired.openProgress == 1)
+}
+
 @Test("Ограничение масштаба сохраняет точку под пальцами")
 func clampedPinchStillKeepsItsAnchor() {
   let camera = SpatialCamera(center: WorldPoint(x: 2_400, y: -900), scale: 0.4)

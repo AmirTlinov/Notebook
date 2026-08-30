@@ -9,17 +9,41 @@ private typealias TetradWireProtocol = Coder<
   NetworkJSONCoder
 >
 
+struct PresenceSequenceTracker {
+  private var latestBySession: [UUID: UInt64] = [:]
+
+  mutating func accepts(_ envelope: PresenceEnvelope) -> Bool {
+    guard envelope.isValid,
+      envelope.sequence > latestBySession[envelope.sessionID, default: 0]
+    else { return false }
+    latestBySession[envelope.sessionID] = envelope.sequence
+    return true
+  }
+}
+
 struct WireSendQueue {
   private var storage: [WireMessage] = []
   private var head = 0
 
   var isEmpty: Bool { head == storage.count }
-  var messages: [WireMessage] { Array(storage[head...]) }
+  var messages: [WireMessage] {
+    guard head < storage.count else { return [] }
+    return Array(storage[head...])
+  }
 
   mutating func enqueue(_ message: WireMessage) {
-    if case .presence = message,
+    if case .presence(let incoming) = message,
+      incoming.phase == .active,
       head < storage.count,
-      case .presence = storage[storage.count - 1]
+      case .presence(let pending) = storage[storage.count - 1],
+      pending.phase == .active,
+      pending.sessionID == incoming.sessionID
+    {
+      storage[storage.count - 1] = message
+    } else if case .drawing(let incomingPageID, _, _) = message,
+      head < storage.count,
+      case .drawing(let pendingPageID, _, _) = storage[storage.count - 1],
+      pendingPageID == incomingPageID
     {
       storage[storage.count - 1] = message
     } else {
@@ -97,14 +121,15 @@ final class NearbySync {
 
   var onMessage: ((WireMessage) -> Void)?
   var onConnect: (() -> Void)?
+  var onDisconnect: (() -> Void)?
 
   private let role: Role
   private let peerName: String
   private var listenerTask: Task<Void, Never>?
   private var browserTask: Task<Void, Never>?
+  private var endpointTasks: [String: Task<Void, Never>] = [:]
   private var connections: [String: NetworkConnection<TetradWireProtocol>] = [:]
   private var senders: [String: OrderedWireSender] = [:]
-  private var requestedEndpoints = Set<String>()
   private let logger = Logger(
     subsystem: "com.amirtlinov.tetrad",
     category: "NearbySync"
@@ -128,20 +153,26 @@ final class NearbySync {
   private func startListener() {
     listenerTask = Task { [weak self] in
       guard let self else { return }
-      do {
-        let listener = try NetworkListener(
-          for: .bonjour(name: "mac-\(peerName)", type: "_tetrad._tcp"),
-          using: wireParameters()
-        )
-        .onStateUpdate { [logger] _, state in
-          logger.info("Listener: \(String(describing: state), privacy: .public)")
+      while !Task.isCancelled {
+        do {
+          let listener = try NetworkListener(
+            for: .bonjour(name: "mac-\(peerName)", type: "_tetrad._tcp"),
+            using: wireParameters()
+          )
+          .onStateUpdate { [logger] _, state in
+            logger.info("Listener: \(String(describing: state), privacy: .public)")
+          }
+          try await listener.run { [weak self] connection in
+            guard let self else { return }
+            Task { [weak self] in
+              await self?.accept(connection)
+            }
+          }
+        } catch {
+          logger.error("Listener stopped: \(error.localizedDescription, privacy: .public)")
         }
-        try await listener.run { [weak self] connection in
-          guard let self else { return }
-          await accept(connection)
-        }
-      } catch {
-        logger.error("Listener stopped: \(error.localizedDescription, privacy: .public)")
+        guard !Task.isCancelled else { return }
+        try? await Task.sleep(for: .seconds(1))
       }
     }
   }
@@ -149,26 +180,28 @@ final class NearbySync {
   private func startBrowser() {
     browserTask = Task { [weak self] in
       guard let self else { return }
-      let parameters = NWParameters.tcp
-      parameters.includePeerToPeer = true
-      parameters.acceptLocalOnly = true
-      let browser = NetworkBrowser(
-        for: .bonjour("_tetrad._tcp"),
-        using: parameters
-      )
-      .onStateUpdate { [logger] _, state in
-        logger.info("Browser: \(String(describing: state), privacy: .public)")
-      }
-      do {
-        try await browser.run { [weak self] endpoints in
-          guard let self else { return }
-          logger.info("Discovered \(endpoints.count, privacy: .public) endpoint(s)")
-          for endpoint in endpoints where endpoint.name.hasPrefix("mac-") {
-            await connect(to: endpoint)
-          }
+      while !Task.isCancelled {
+        let parameters = NWParameters.tcp
+        parameters.includePeerToPeer = true
+        parameters.acceptLocalOnly = true
+        let browser = NetworkBrowser(
+          for: .bonjour("_tetrad._tcp"),
+          using: parameters
+        )
+        .onStateUpdate { [logger] _, state in
+          logger.info("Browser: \(String(describing: state), privacy: .public)")
         }
-      } catch {
-        logger.error("Browser stopped: \(error.localizedDescription, privacy: .public)")
+        do {
+          try await browser.run { [weak self] endpoints in
+            guard let self else { return }
+            discovered(Array(endpoints))
+          }
+        } catch {
+          logger.error("Browser stopped: \(error.localizedDescription, privacy: .public)")
+        }
+        cancelEndpointTasks()
+        guard !Task.isCancelled else { return }
+        try? await Task.sleep(for: .seconds(1))
       }
     }
   }
@@ -179,9 +212,32 @@ final class NearbySync {
     }
   }
 
-  private func connect(to endpoint: Bonjour.Endpoint) async {
-    guard requestedEndpoints.insert(endpoint.id).inserted else { return }
-    defer { requestedEndpoints.remove(endpoint.id) }
+  private func discovered(_ endpoints: [Bonjour.Endpoint]) {
+    let available = Dictionary(
+      uniqueKeysWithValues: endpoints
+        .filter { $0.name.hasPrefix("mac-") }
+        .map { ($0.id, $0) }
+    )
+    logger.info("Discovered \(available.count, privacy: .public) Mac endpoint(s)")
+
+    let removed = endpointTasks.keys.filter { available[$0] == nil }
+    for id in removed {
+      endpointTasks[id]?.cancel()
+      endpointTasks[id] = nil
+    }
+    for (id, endpoint) in available where endpointTasks[id] == nil {
+      endpointTasks[id] = Task { [weak self] in
+        await self?.maintainConnection(to: endpoint)
+      }
+    }
+  }
+
+  private func cancelEndpointTasks() {
+    for task in endpointTasks.values { task.cancel() }
+    endpointTasks.removeAll()
+  }
+
+  private func maintainConnection(to endpoint: Bonjour.Endpoint) async {
     while !Task.isCancelled {
       let connection = NetworkConnection(
         to: endpoint,
@@ -213,6 +269,7 @@ final class NearbySync {
     senders[id]?.cancel()
     senders[id] = nil
     connections[id] = nil
+    if connections.isEmpty { onDisconnect?() }
   }
 
   private func wireParameters() -> NWParametersBuilder<TetradWireProtocol> {

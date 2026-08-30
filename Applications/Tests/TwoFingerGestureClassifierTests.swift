@@ -2,6 +2,66 @@ import XCTest
 @testable import Tetrad
 
 final class TwoFingerGestureClassifierTests: XCTestCase {
+  func testNoisyHorizontalPageSwipeOwnsTheGestureBeforePinch() {
+    let intent = TwoFingerIntentArbiter.resolve(
+      isPageOpen: true,
+      translation: CGPoint(x: -10, y: 0),
+      fingerDisplacements: [
+        CGPoint(x: -5, y: 0),
+        CGPoint(x: -15, y: 0),
+      ],
+      magnification: 0.95,
+      elapsed: 0.08
+    )
+
+    XCTAssertEqual(intent, .navigation)
+  }
+
+  func testTruePinchWithDriftingCentroidOwnsTheCamera() {
+    let intent = TwoFingerIntentArbiter.resolve(
+      isPageOpen: true,
+      translation: CGPoint(x: 10, y: 4),
+      fingerDisplacements: [
+        CGPoint(x: -36, y: 2),
+        CGPoint(x: 56, y: 6),
+      ],
+      magnification: 1.46,
+      elapsed: 0.04
+    )
+
+    XCTAssertEqual(intent, .magnification)
+  }
+
+  func testFirstMovingFingerWaitsForEvidence() {
+    let intent = TwoFingerIntentArbiter.resolve(
+      isPageOpen: true,
+      translation: CGPoint(x: -8, y: 0),
+      fingerDisplacements: [
+        CGPoint(x: -16, y: 0),
+        .zero,
+      ],
+      magnification: 0.92,
+      elapsed: 0.02
+    )
+
+    XCTAssertEqual(intent, .undecided)
+  }
+
+  func testAnchoredPinchStartsAfterTheEvidenceWindow() {
+    let intent = TwoFingerIntentArbiter.resolve(
+      isPageOpen: true,
+      translation: CGPoint(x: 8, y: 0),
+      fingerDisplacements: [
+        .zero,
+        CGPoint(x: 16, y: 0),
+      ],
+      magnification: 1.08,
+      elapsed: 0.07
+    )
+
+    XCTAssertEqual(intent, .magnification)
+  }
+
   func testTwoFingersMovingLeftTurnToTheNextPage() {
     let decision = TwoFingerGestureClassifier.navigation(
       translation: CGPoint(x: -60, y: 4),

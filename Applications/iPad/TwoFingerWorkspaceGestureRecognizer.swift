@@ -4,6 +4,64 @@ struct TwoFingerNavigationDecision: Equatable {
   let direction: Int
 }
 
+enum TwoFingerMotionIntent: Equatable {
+  case undecided
+  case navigation
+  case magnification
+}
+
+/// Chooses the owner of one two-finger sequence from the motion of both
+/// fingers. A page swipe is coherent translation; a pinch is differential
+/// motion. The short evidence window lets the second finger join before the
+/// first hardware sample can steal the sequence as a pinch.
+enum TwoFingerIntentArbiter {
+  static let activationTravel: CGFloat = 14
+  static let magnificationActivation: CGFloat = 0.045
+  static let evidenceDelay: TimeInterval = 0.055
+  static let participatingTravel: CGFloat = 4
+
+  static func resolve(
+    isPageOpen: Bool,
+    translation: CGPoint,
+    fingerDisplacements: [CGPoint],
+    magnification: CGFloat,
+    elapsed: TimeInterval
+  ) -> TwoFingerMotionIntent {
+    guard fingerDisplacements.count == 2 else { return .undecided }
+    let first = fingerDisplacements[0]
+    let second = fingerDisplacements[1]
+    let firstTravel = hypot(first.x, first.y)
+    let secondTravel = hypot(second.x, second.y)
+    let maximumTravel = max(firstTravel, secondTravel)
+    let bothParticipate = min(firstTravel, secondTravel) >= participatingTravel
+    let coherent = bothParticipate
+      && first.x * second.x + first.y * second.y > 0
+    let horizontal = abs(translation.x) >= abs(translation.y)
+    let horizontalAgreement = first.x * second.x > 0
+      && min(abs(first.x), abs(second.x)) >= participatingTravel
+
+    if maximumTravel >= activationTravel, coherent,
+      (!isPageOpen || (horizontal && horizontalAgreement))
+    {
+      return .navigation
+    }
+
+    let scaleEvidence = abs(log(max(magnification, 0.001)))
+    guard scaleEvidence >= magnificationActivation else { return .undecided }
+    let differentialTravel = hypot(
+      second.x - first.x,
+      second.y - first.y
+    ) / 2
+    let centroidTravel = hypot(translation.x, translation.y)
+    let radialMotionOwnsTheGesture = differentialTravel
+      >= max(participatingTravel, centroidTravel * 0.8)
+    guard radialMotionOwnsTheGesture,
+      bothParticipate || elapsed >= evidenceDelay
+    else { return .undecided }
+    return .magnification
+  }
+}
+
 enum TwoFingerGestureClassifier {
   static let navigationDistance: CGFloat = 44
   static let navigationSpeed: CGFloat = 520
@@ -50,8 +108,6 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
 
   private static let holdDelay = Duration.milliseconds(340)
   private static let tapMovement: CGFloat = 16
-  private static let navigationActivation: CGFloat = 14
-  private static let magnificationActivation: CGFloat = 0.045
   private static let velocityWindow: TimeInterval = 0.08
 
   private struct CentroidSample {
@@ -61,6 +117,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
 
   private var activeTouches: [ObjectIdentifier: UITouch] = [:]
   private var startLocations: [ObjectIdentifier: CGPoint] = [:]
+  private var startTimestamp: TimeInterval?
   private var startCentroid: CGPoint?
   private var startDistance: CGFloat?
   private var centroidSamples: [CentroidSample] = []
@@ -76,6 +133,8 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   private(set) var magnification: CGFloat = 1
   private(set) var magnificationVelocity: CGFloat = 0
   private(set) var centroid = CGPoint.zero
+
+  var isPageOpen = false
 
   var startCentroidValue: CGPoint { startCentroid ?? centroid }
 
@@ -102,16 +161,26 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     updateMetrics()
 
     switch intent {
-    case .undecided where abs(log(max(magnification, 0.001)))
-      >= Self.magnificationActivation:
-      cancelHold()
-      intent = .magnification
-      state = .began
-    case .undecided where maximumFingerMovement >= Self.navigationActivation
-      && hasCoherentTranslation:
-      cancelHold()
-      intent = .navigation
-      state = .began
+    case .undecided:
+      let motionIntent = TwoFingerIntentArbiter.resolve(
+        isPageOpen: isPageOpen,
+        translation: translation,
+        fingerDisplacements: fingerDisplacements,
+        magnification: magnification,
+        elapsed: max(0, currentTimestamp() - (startTimestamp ?? 0))
+      )
+      switch motionIntent {
+      case .navigation:
+        cancelHold()
+        intent = .navigation
+        state = .began
+      case .magnification:
+        cancelHold()
+        intent = .magnification
+        state = .began
+      case .undecided:
+        break
+      }
     case .magnification where state == .began || state == .changed:
       state = .changed
     case .navigation where state == .began || state == .changed:
@@ -174,6 +243,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     cancelHold()
     activeTouches.removeAll(keepingCapacity: true)
     startLocations.removeAll(keepingCapacity: true)
+    startTimestamp = nil
     startCentroid = nil
     startDistance = nil
     centroidSamples.removeAll(keepingCapacity: true)
@@ -195,6 +265,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     startCentroid = centroid
     self.centroid = centroid
     startDistance = currentDistance()
+    startTimestamp = currentTimestamp()
     centroidSamples = [
       CentroidSample(timestamp: currentTimestamp(), point: centroid)
     ]
@@ -281,19 +352,6 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
       locations[0].x - locations[1].x,
       locations[0].y - locations[1].y
     )
-  }
-
-  /// A pan starts only after both fingers agree on one direction. Waiting for
-  /// that agreement prevents the first moving finger of a wide pinch from
-  /// stealing the whole sequence as navigation.
-  private var hasCoherentTranslation: Bool {
-    guard fingerDisplacements.count == 2 else { return false }
-    let first = fingerDisplacements[0]
-    let second = fingerDisplacements[1]
-    let firstTravel = hypot(first.x, first.y)
-    let secondTravel = hypot(second.x, second.y)
-    guard min(firstTravel, secondTravel) >= 4 else { return false }
-    return first.x * second.x + first.y * second.y > 0
   }
 
   private func currentTimestamp() -> TimeInterval {

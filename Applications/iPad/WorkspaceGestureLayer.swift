@@ -42,7 +42,9 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
 
   @MainActor
   final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-    var isPageOpen: Bool
+    var isPageOpen: Bool {
+      didSet { recognizer?.isPageOpen = isPageOpen }
+    }
     var onCamera: (WorkspaceMagnificationPhase) -> Void
     var onNavigate: (Int) -> Void
     var onUndo: () -> Void
@@ -83,6 +85,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       recognizer.cancelsTouchesInView = true
       recognizer.delaysTouchesBegan = false
       recognizer.delaysTouchesEnded = false
+      recognizer.isPageOpen = isPageOpen
       recognizer.delegate = self
       hostView.addGestureRecognizer(recognizer)
       self.hostView = hostView

@@ -194,25 +194,7 @@ struct SpatialWorkspaceView: View {
         viewport: viewport
       )
     }
-    guard presence.viewport != viewport else { return presence }
-    let scaleRatio = min(
-      viewport.x / presence.viewport.x,
-      viewport.y / presence.viewport.y
-    )
-    return SessionPresence(
-      mode: presence.mode,
-      camera: SpatialCamera(
-        center: presence.camera.center,
-        scale: max(
-          SpatialCamera.minimumScale,
-          presence.camera.scale * scaleRatio
-        )
-      ),
-      viewport: viewport,
-      focusedNotebookID: presence.focusedNotebookID,
-      focusedStackID: presence.focusedStackID,
-      openProgress: presence.openProgress
-    )
+    return presence.adapted(to: viewport)
   }
 
   private func publishViewportIfNeeded(_ viewport: SpatialPoint) {
@@ -596,14 +578,11 @@ struct SpatialWorkspaceView: View {
   }
 
   private func fitScale(viewport: SpatialPoint) -> Double {
-    min(
-      viewport.x / NotebookGeometry.width,
-      viewport.y / NotebookGeometry.height
-    )
+    NotebookPresentation.fitScale(viewport: viewport)
   }
 
   private func coverFocusScale(viewport: SpatialPoint) -> Double {
-    fitScale(viewport: viewport) * 0.72
+    NotebookPresentation.coverScale(viewport: viewport)
   }
 }
 
@@ -990,17 +969,13 @@ private struct SpatialBoardGrid: View {
     Canvas(opaque: true, colorMode: .nonLinear) { context, size in
       context.fill(
         Path(CGRect(origin: .zero, size: size)),
-        with: .color(
-          Color(
-            red: PaperAppearance.background.red,
-            green: PaperAppearance.background.green,
-            blue: PaperAppearance.background.blue
-          )
-        )
+        with: .color(BoardAppearance.background)
       )
 
       var worldStep = PhysicalPaper.gridSpacing
-      while worldStep * camera.scale < 14 { worldStep *= 2 }
+      while worldStep * camera.scale < BoardAppearance.minimumDotSpacing {
+        worldStep *= 2
+      }
       let step = worldStep * camera.scale
       let phaseX = camera.center.localX
         .truncatingRemainder(dividingBy: worldStep) * camera.scale
@@ -1010,30 +985,25 @@ private struct SpatialBoardGrid: View {
         .truncatingRemainder(dividingBy: step)
       let startY = (size.height / 2 - phaseY)
         .truncatingRemainder(dividingBy: step)
-      var path = Path()
+      let radius = max(0.65, 0.9 / displayScale)
+      var dots = Path()
       var x = startX < 0 ? startX + step : startX
       while x <= size.width {
-        path.move(to: CGPoint(x: x, y: 0))
-        path.addLine(to: CGPoint(x: x, y: size.height))
+        var y = startY < 0 ? startY + step : startY
+        while y <= size.height {
+          dots.addEllipse(
+            in: CGRect(
+              x: x - radius,
+              y: y - radius,
+              width: radius * 2,
+              height: radius * 2
+            )
+          )
+          y += step
+        }
         x += step
       }
-      var y = startY < 0 ? startY + step : startY
-      while y <= size.height {
-        path.move(to: CGPoint(x: 0, y: y))
-        path.addLine(to: CGPoint(x: size.width, y: y))
-        y += step
-      }
-      context.stroke(
-        path,
-        with: .color(
-          Color(
-            red: PaperAppearance.grid.red,
-            green: PaperAppearance.grid.green,
-            blue: PaperAppearance.grid.blue
-          ).opacity(0.075)
-        ),
-        lineWidth: 1 / displayScale
-      )
+      context.fill(dots, with: .color(BoardAppearance.dot))
     }
     .ignoresSafeArea()
   }

@@ -45,6 +45,7 @@ final class TetradAppModel {
   private(set) var board: BoardDocument?
   private(set) var spatialInk: SpatialInkJournal?
   private(set) var presence: SessionPresence?
+  private(set) var presencePhase = PresencePhase.settled
   private(set) var actionCue: String?
   private(set) var penStyle: PenStyle
   private(set) var eraserStyle: EraserStyle
@@ -63,6 +64,10 @@ final class TetradAppModel {
   private var cueTask: Task<Void, Never>?
   private var pencilUndoHistory = PencilUndoHistory()
   private var reservedDrawingCounters: [UUID: UInt64] = [:]
+  private let presenceSessionID = UUID()
+  private var presenceSequence: UInt64 = 0
+  private var lastSettledPresenceEnvelope: PresenceEnvelope?
+  private var presenceSequenceTracker = PresenceSequenceTracker()
   private let startsNearbySync: Bool
   private let sync: NearbySync
 
@@ -89,6 +94,9 @@ final class TetradAppModel {
     }
     sync.onConnect = { [weak self] in
       self?.sendSnapshot()
+    }
+    sync.onDisconnect = { [weak self] in
+      self?.restoreSettledPresenceAfterDisconnect()
     }
   }
 
@@ -131,7 +139,19 @@ final class TetradAppModel {
       if let diskPresence = try? store.loadPresence(),
         presenceIsUsable(diskPresence, workspace: stored.0)
       {
-        presence = diskPresence
+        presence = settledPresence(
+          from: diskPresence,
+          workspace: stored.0,
+          board: board,
+          viewport: SpatialPoint(x: pageSize.width, y: pageSize.height)
+        )
+      }
+      if let presence {
+        try? store.savePresence(presence)
+        lastSettledPresenceEnvelope = makePresenceEnvelope(
+          presence,
+          phase: .settled
+        )
       }
       loadState = .ready
       if startsNearbySync {
@@ -262,12 +282,31 @@ final class TetradAppModel {
 
   func updatePresence(_ presence: SessionPresence, settled: Bool) {
     guard presence.isValid else { return }
-    self.presence = presence
+    let resolved: SessionPresence
+    if settled, let workspace {
+      resolved = settledPresence(
+        from: presence,
+        workspace: workspace,
+        board: board,
+        viewport: presence.viewport
+      )
+    } else {
+      resolved = presence
+    }
+    self.presence = resolved
+    let phase = settled ? PresencePhase.settled : .active
+    presencePhase = phase
     #if os(iOS)
-      sync.send(.presence(presence))
-      if settled { try? store.savePresence(presence) }
+      guard let envelope = makePresenceEnvelope(resolved, phase: phase) else {
+        return
+      }
+      sync.send(.presence(envelope))
+      if settled {
+        lastSettledPresenceEnvelope = envelope
+        try? store.savePresence(resolved)
+      }
     #else
-      if settled { try? store.savePresence(presence) }
+      if settled { try? store.savePresence(resolved) }
     #endif
   }
 
@@ -576,20 +615,20 @@ final class TetradAppModel {
     case .page(let incoming):
       if var current = pages[incoming.id] {
         guard current.merge(incoming) else { return }
-        persistMerged(current)
+        acceptRemotePage(current)
       } else {
-        persistMerged(incoming)
+        acceptRemotePage(incoming)
       }
     case .drawing(let pageID, let data, let stamp):
       guard var page = pages[pageID],
         page.replaceDrawing(data, stamp: stamp)
       else { return }
-      persistMerged(page)
+      acceptRemotePage(page)
     case .elements(let pageID, let elements, let stamp):
       guard var page = pages[pageID],
         page.replaceElements(elements, stamp: stamp)
       else { return }
-      persistMerged(page)
+      acceptRemotePage(page)
     case .board(let incoming):
       guard let workspace else { return }
       let notebookIDs = Set(workspace.notebooks.map(\.id))
@@ -613,28 +652,45 @@ final class TetradAppModel {
         spatialInk = incoming
         try? store.saveSpatialInk(incoming)
       }
-    case .presence(let incoming):
+    case .presence(let envelope):
       #if os(macOS)
-        guard let workspace,
-          presenceIsUsable(incoming, workspace: workspace)
+        guard presenceSequenceTracker.accepts(envelope), let workspace
         else { return }
+        let incoming = envelope.phase == .settled
+          ? settledPresence(
+            from: envelope.presence,
+            workspace: workspace,
+            board: board,
+            viewport: envelope.presence.viewport
+          )
+          : envelope.presence
+        guard presenceIsUsable(incoming, workspace: workspace) else { return }
         presence = incoming
-        try? store.savePresence(incoming)
+        presencePhase = envelope.phase
+        if envelope.phase == .settled {
+          try? store.savePresence(incoming)
+        }
       #endif
     }
   }
 
   private func sendSnapshot() {
     guard let workspace else { return }
-    for page in pages.values {
+    sync.send(.index(workspace))
+    if let board { sync.send(.board(board)) }
+    #if os(iOS)
+      if let lastSettledPresenceEnvelope {
+        sync.send(.presence(lastSettledPresenceEnvelope))
+      }
+    #endif
+    let selectedPageID = workspace.selectedPageID
+    if let selectedPage = pages[selectedPageID] {
+      sync.send(.page(selectedPage))
+    }
+    if let spatialInk { sync.send(.spatialInk(spatialInk)) }
+    for page in pages.values where page.id != selectedPageID {
       sync.send(.page(page))
     }
-    if let board { sync.send(.board(board)) }
-    if let spatialInk { sync.send(.spatialInk(spatialInk)) }
-    sync.send(.index(workspace))
-    #if os(iOS)
-      if let presence { sync.send(.presence(presence)) }
-    #endif
   }
 
   private func scheduleSave(_ pageID: UUID) {
@@ -724,17 +780,117 @@ final class TetradAppModel {
     let center = board?.placement(of: notebookID)?.center
       ?? board?.stack(containing: notebookID)?.center
       ?? .zero
-    let fit = min(
-      viewport.width / NotebookGeometry.width,
-      viewport.height / NotebookGeometry.height
+    let viewportPoint = SpatialPoint(x: viewport.width, y: viewport.height)
+    let fit = NotebookPresentation.fitScale(
+      viewport: viewportPoint
     )
     return SessionPresence(
       mode: .page,
       camera: SpatialCamera(center: center, scale: fit),
-      viewport: SpatialPoint(x: viewport.width, y: viewport.height),
+      viewport: viewportPoint,
       focusedNotebookID: notebookID,
       openProgress: 1
     )
+  }
+
+  private func settledPresence(
+    from presence: SessionPresence,
+    workspace: WorkspaceIndex,
+    board: BoardDocument?,
+    viewport: SpatialPoint
+  ) -> SessionPresence {
+    let adapted = presence.adapted(to: viewport)
+    let notebookID = presence.focusedNotebookID
+    let notebookCenter = notebookID.flatMap { id in
+      board?.placement(of: id)?.center
+        ?? board?.stack(containing: id)?.center
+    }
+
+    if presence.mode == .page,
+      let notebookID,
+      let notebookCenter,
+      workspace.notebooks.contains(where: { $0.id == notebookID })
+    {
+      return SessionPresence(
+        mode: .page,
+        camera: SpatialCamera(
+          center: notebookCenter,
+          scale: NotebookPresentation.fitScale(viewport: viewport)
+        ),
+        viewport: viewport,
+        focusedNotebookID: notebookID,
+        openProgress: 1
+      )
+    }
+
+    if presence.mode == .cover,
+      let notebookID,
+      let notebookCenter,
+      workspace.notebooks.contains(where: { $0.id == notebookID })
+    {
+      return SessionPresence(
+        mode: .cover,
+        camera: SpatialCamera(
+          center: notebookCenter,
+          scale: NotebookPresentation.coverScale(viewport: viewport)
+        ),
+        viewport: viewport,
+        focusedNotebookID: notebookID,
+        openProgress: 0
+      )
+    }
+
+    return SessionPresence(
+      mode: .board,
+      camera: SpatialCamera(
+        center: adapted.camera.center,
+        scale: min(
+          adapted.camera.scale,
+          NotebookPresentation.coverScale(viewport: viewport) * 0.48
+        )
+      ),
+      viewport: viewport
+    )
+  }
+
+  private func makePresenceEnvelope(
+    _ presence: SessionPresence,
+    phase: PresencePhase
+  ) -> PresenceEnvelope? {
+    guard presenceSequence < VersionStamp.maximumCounter else { return nil }
+    presenceSequence += 1
+    return PresenceEnvelope(
+      sessionID: presenceSessionID,
+      sequence: presenceSequence,
+      phase: phase,
+      presence: presence
+    )
+  }
+
+  private func acceptRemotePage(_ page: PageDocument) {
+    let previousDrawingStamp = pages[page.id]?.drawingStamp
+    pages[page.id] = page
+    if let previousDrawingStamp, previousDrawingStamp < page.drawingStamp {
+      pencilUndoHistory.discardChanges(for: page.id)
+    }
+    scheduleSave(page.id)
+  }
+
+  private func restoreSettledPresenceAfterDisconnect() {
+    #if os(macOS)
+      guard presencePhase == .active,
+        let workspace,
+        let stored = try? store.loadPresence(),
+        presenceIsUsable(stored, workspace: workspace)
+      else { return }
+      presence = settledPresence(
+        from: stored,
+        workspace: workspace,
+        board: board,
+        viewport: stored.viewport
+      )
+      presencePhase = .settled
+    #endif
   }
 
   private func presenceIsUsable(

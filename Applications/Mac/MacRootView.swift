@@ -15,6 +15,7 @@ private struct CurrentViewKey: Hashable {
   let boardStamp: VersionStamp
   let spatialInkStamp: VersionStamp
   let presence: SessionPresence
+  let presencePhase: PresencePhase
   let pageDrawingStamp: VersionStamp?
   let pageAgentStamp: VersionStamp?
   let width: Int
@@ -29,6 +30,9 @@ struct MacRootView: View {
     GeometryReader { geometry in
       TetradRootView()
         .task(id: currentViewKey(viewport: geometry.size)) {
+          guard model.presencePhase == .settled else { return }
+          try? await Task.sleep(for: .milliseconds(220))
+          guard !Task.isCancelled, model.presencePhase == .settled else { return }
           writeCurrentView(viewport: geometry.size)
         }
     }
@@ -47,6 +51,8 @@ struct MacRootView: View {
         watcher = nil
       }
       .task(id: previewKeys) {
+        try? await Task.sleep(for: .milliseconds(420))
+        guard !Task.isCancelled else { return }
         for key in previewKeys {
           guard !Task.isCancelled, let page = model.pages[key.pageID] else {
             return
@@ -91,6 +97,7 @@ struct MacRootView: View {
       boardStamp: board.stamp,
       spatialInkStamp: spatialInk.stamp,
       presence: presence,
+      presencePhase: model.presencePhase,
       pageDrawingStamp: page?.drawingStamp,
       pageAgentStamp: page?.agentStamp,
       width: max(1, Int(viewport.width.rounded())),

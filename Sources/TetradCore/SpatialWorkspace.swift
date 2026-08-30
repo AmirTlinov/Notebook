@@ -6,6 +6,25 @@ public enum NotebookGeometry {
   public static let cornerRadius = 34.0
 }
 
+/// Converts the fixed physical notebook into a presentation for a particular
+/// viewport. Camera scale is stored relative to this fit, so changing an
+/// aspect ratio and changing it back cannot progressively shrink the scene.
+public enum NotebookPresentation {
+  public static let coverScaleRatio = 0.72
+
+  public static func fitScale(viewport: SpatialPoint) -> Double {
+    precondition(viewport.x > 0 && viewport.y > 0)
+    return min(
+      viewport.x / NotebookGeometry.width,
+      viewport.y / NotebookGeometry.height
+    )
+  }
+
+  public static func coverScale(viewport: SpatialPoint) -> Double {
+    fitScale(viewport: viewport) * coverScaleRatio
+  }
+}
+
 /// A point on the unbounded board. The tile keeps nearby calculations small
 /// even after the camera has travelled far away from the origin.
 public struct WorldPoint: Codable, Equatable, Hashable, Sendable {
@@ -803,5 +822,45 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
       && viewport.isValid && viewport.x > 0 && viewport.y > 0
       && openProgress.isFinite && openProgress >= 0 && openProgress <= 1
       && (mode == .board || focusedNotebookID != nil)
+  }
+
+  public var isSettled: Bool {
+    guard isValid else { return false }
+    switch mode {
+    case .board:
+      return focusedNotebookID == nil && openProgress <= 0.001
+    case .cover:
+      return focusedNotebookID != nil && openProgress <= 0.001
+    case .page:
+      return focusedNotebookID != nil && openProgress >= 0.999
+    }
+  }
+
+  /// Projects the same semantic scene into another viewport. Stable cover and
+  /// page states have one canonical scale; transitional and board states keep
+  /// their dimensionless zoom relative to the notebook fit.
+  public func adapted(to targetViewport: SpatialPoint) -> Self {
+    precondition(targetViewport.x > 0 && targetViewport.y > 0)
+    let targetFit = NotebookPresentation.fitScale(viewport: targetViewport)
+    let resolvedScale: Double
+    if mode == .page && openProgress >= 0.999 {
+      resolvedScale = targetFit
+    } else if mode == .cover && openProgress <= 0.001 {
+      resolvedScale = targetFit * NotebookPresentation.coverScaleRatio
+    } else {
+      let sourceFit = NotebookPresentation.fitScale(viewport: viewport)
+      resolvedScale = camera.scale * targetFit / sourceFit
+    }
+    return Self(
+      mode: mode,
+      camera: SpatialCamera(
+        center: camera.center,
+        scale: max(SpatialCamera.minimumScale, resolvedScale)
+      ),
+      viewport: targetViewport,
+      focusedNotebookID: focusedNotebookID,
+      focusedStackID: focusedStackID,
+      openProgress: openProgress
+    )
   }
 }

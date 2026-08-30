@@ -2,6 +2,30 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testPageFitSurvivesPortraitLandscapePortrait() async throws {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    try await Task.sleep(for: .milliseconds(450))
+    let app = XCUIApplication()
+    app.launchArguments = ["--tetrad-drawing-responsiveness-fixture"]
+    app.launch()
+
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 5))
+    let original = paper.frame
+
+    XCUIDevice.shared.orientation = .landscapeLeft
+    try await Task.sleep(for: .milliseconds(700))
+    XCUIDevice.shared.orientation = .portrait
+    try await Task.sleep(for: .milliseconds(900))
+
+    let restored = paper.frame
+    XCTAssertEqual(restored.midX, original.midX, accuracy: 2)
+    XCTAssertEqual(restored.midY, original.midY, accuracy: 2)
+    XCTAssertEqual(restored.width, original.width, accuracy: 2)
+    XCTAssertEqual(restored.height, original.height, accuracy: 2)
+  }
+
   func testPinchClosesThePageOntoTheBoard() {
     continueAfterFailure = false
     let app = XCUIApplication()
@@ -19,6 +43,10 @@ final class DrawingResponsivenessTests: XCTestCase {
       app.buttons["create-notebook"].waitForExistence(timeout: 5),
       "После закрытия листа должна появиться бесконечная доска"
     )
+    let boardProof = XCTAttachment(screenshot: app.screenshot())
+    boardProof.name = "infinite-board"
+    boardProof.lifetime = .keepAlways
+    add(boardProof)
 
     let notebook = app.descendants(matching: .any)[
       "notebook-7e7a1000-0000-4000-8000-000000000002"

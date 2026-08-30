@@ -1,5 +1,36 @@
 import Foundation
 
+public enum PresencePhase: String, Codable, Equatable, Sendable {
+  case active
+  case settled
+}
+
+/// Orders the transient camera frames of one app run and distinguishes the
+/// durable final scene from motion that happened to be in flight.
+public struct PresenceEnvelope: Codable, Equatable, Sendable {
+  public let sessionID: UUID
+  public let sequence: UInt64
+  public let phase: PresencePhase
+  public let presence: SessionPresence
+
+  public init(
+    sessionID: UUID,
+    sequence: UInt64,
+    phase: PresencePhase,
+    presence: SessionPresence
+  ) {
+    self.sessionID = sessionID
+    self.sequence = sequence
+    self.phase = phase
+    self.presence = presence
+  }
+
+  public var isValid: Bool {
+    sequence <= VersionStamp.maximumCounter && presence.isValid
+      && (phase == .active || presence.isSettled)
+  }
+}
+
 public enum WireMessage: Codable, Equatable, Sendable {
   case index(WorkspaceIndex)
   case page(PageDocument)
@@ -15,5 +46,5 @@ public enum WireMessage: Codable, Equatable, Sendable {
   )
   case board(BoardDocument)
   case spatialInk(SpatialInkJournal)
-  case presence(SessionPresence)
+  case presence(PresenceEnvelope)
 }

@@ -11,12 +11,12 @@
 | Плавная ручка | [`coalescedTouches`](https://developer.apple.com/documentation/uikit/getting-high-fidelity-input-with-coalesced-touches), [`predictedTouches`](https://developer.apple.com/documentation/uikit/uievent/predictedtouches%28for%3A%29) и [MetalKit](https://developer.apple.com/documentation/metalkit/mtkview) | UIKit отдаёт пропущенные точки частого опроса и заменяемый прогноз; непрерывный режим `MTKView` показывает последнюю геометрию по такту экрана | Обработчик Pencil меняет только `ActiveInkStroke`; один `InkCanvasView` рисует и активный штрих, и всю страницу, а тройные буферы не дают CPU переписывать вершины, которые ещё читает GPU |
 | Нажим Pencil | [`UITouch.force`](https://developer.apple.com/documentation/uikit/uitouch/force), [`maximumPossibleForce`](https://developer.apple.com/documentation/uikit/uitouch/maximumpossibleforce) и [`PKStrokePoint.opacity`](https://developer.apple.com/documentation/pencilkit/pkstrokepointreference/opacity) | `force == 1` означает средний нажим, а `maximumPossibleForce` задаёт верхнюю границу датчика | Сила сначала делится на аппаратный максимум; после короткого фильтра каждая точка получает непрозрачность между выбранным минимумом и `1` |
 | Стирание | [MetalKit](https://developer.apple.com/documentation/metalkit/mtkview) и [`PKDrawing.erasingPath`](https://developer.apple.com/documentation/pencilkit/pkdrawing-swift.struct) | Destination-out смешивание вычитает активный путь из прозрачного слоя чернил; PencilKit сохраняет полный завершённый путь | `ActiveEraserStroke` следует за измеренными точками на частоте экрана, а один фоновый расчёт после подъёма Pencil создаёт файл для Mac и MCP |
-| Два пальца и непрерывный щипок | [`UIGestureRecognizer`](https://developer.apple.com/documentation/uikit/uigesturerecognizer) | Один распознаватель получает всю пару прямых касаний и сохраняет владельца до конца последовательности | Сценический `TwoFingerPaperGestureRecognizer` различает tap, hold, согласованный перенос и magnification; переход `лист -> обложка -> доска` не уничтожает распознаватель посреди щипка |
+| Два пальца и непрерывный щипок | [`UIGestureRecognizer`](https://developer.apple.com/documentation/uikit/uigesturerecognizer) | Один распознаватель получает всю пару прямых касаний и сохраняет владельца до конца последовательности | `TwoFingerIntentArbiter` сравнивает совместный перенос с разностью движений пальцев и даёт второму пальцу 55 мс на участие; переход `лист -> обложка -> доска` не уничтожает распознаватель посреди щипка |
 | Чистое касание бумаги | [UIKit: Handling touches in your view](https://developer.apple.com/documentation/uikit/handling-touches-in-your-view) | Обычный `UIView` различает прямое касание и Pencil | Верхний `PaperInputView` забирает касания; один палец заканчивается пустым действием, два идут жестам, Pencil идёт ручке; под ним находится неинтерактивный `InkCanvasView` без текстового меню |
 | Цвет бумаги | [`NSAppearance.performAsCurrentDrawingAppearance`](https://developer.apple.com/documentation/appkit/nsappearance/performascurrentdrawingappearance(_:)) | Рендер можно выполнить в явно выбранной светлой теме | `PaperInkRenderer` одинаково сохраняет тёмные чернила в окне Mac и в PNG для агента |
-| Точный текущий вид | [SwiftUI `ImageRenderer`](https://developer.apple.com/documentation/swiftui/imagerenderer) | SwiftUI-сцену можно вывести в платформенное изображение с заданным размером | Mac пишет `current-view.png` и `CurrentViewReceipt`; MCP сверяет версии всех владельцев и SHA-256 самих PNG-байтов перед выдачей картинки |
+| Точный текущий вид | [SwiftUI `ImageRenderer`](https://developer.apple.com/documentation/swiftui/imagerenderer) | SwiftUI-сцену можно вывести в платформенное изображение с заданным размером | Mac пишет `current-view.png` только для завершённой сцены и после схлопывания близких изменений; MCP сверяет версии всех владельцев и SHA-256 самих PNG-байтов перед выдачей картинки |
 | Прямая связь iPad и Mac | [Network.framework](https://developer.apple.com/documentation/technotes/tn3151-choosing-the-right-networking-api) | Network — основной API Apple для TCP, Bonjour и peer-to-peer Wi-Fi | Mac публикует `_tetrad._tcp`, iPad ищет сервис и открывает двусторонний канал |
-| Типизированные сообщения | [WWDC25: structured concurrency with Network](https://developer.apple.com/videos/play/wwdc2025/250/) | `Coder` кадрирует `Codable`-сообщения для `NetworkConnection` | `OrderedWireSender` передаёт `WireMessage` по порядку без собственного парсера; соседние кадры камеры схлопываются до самого свежего |
+| Типизированные сообщения | [WWDC25: structured concurrency with Network](https://developer.apple.com/videos/play/wwdc2025/250/) | `Coder` кадрирует `Codable`-сообщения для `NetworkConnection` | `OrderedWireSender` передаёт `WireMessage` по порядку; активные кадры камеры и ожидающие полные рисунки схлопываются, а завершённая камера остаётся границей состояния |
 | Только ближайший канал | [`localOnly(true)`](https://developer.apple.com/documentation/network/nwparametersprovider/localonly%28_%3A%29) | Listener рекламируется и принимает соединения только на local link | Тетрадь не создаёт доступный из интернета сервер |
 | Интерактивный ответ агента | [`WKScriptMessageHandler`](https://developer.apple.com/documentation/webkit/wkscriptmessagehandler) | JavaScript посылает структурированное сообщение нативному обработчику | `window.tetrad.commit(value)` сохраняет состояние кнопок и схем |
 | Инструменты для ИИ-агента | [MCP TypeScript SDK v2](https://ts.sdk.modelcontextprotocol.io/v2/) | Стабильная ветка v2 реализует спецификацию 2026-07-28 и stdio transport | `McpServer` публикует 16 операций над текущим видом, тетрадями, доской, стопками, листами и прозрачными элементами; `serveStdio` владеет каналом |
@@ -176,10 +176,12 @@ Tap, hold, pan и pinch раньше могли принадлежать раз�
 
 Теперь `WorkspaceGestureLayer` живёт столько же, сколько вся сцена, и держит
 один `TwoFingerPaperGestureRecognizer` на окне. Он выбирает намерение после
-наблюдаемого различия: противоположное движение пальцев даёт magnification, а
-согласованное движение обоих пальцев даёт перенос. На открытом листе
-горизонтальный перенос перелистывает страницу; на доске он двигает камеру.
-Касание отменяет одно действие, удержание повторяет отмену каждые 95 мс.
+наблюдаемого различия. `TwoFingerIntentArbiter` раскладывает движение на перенос
+центра пары и разность движений пальцев. На открытом листе согласованный
+горизонтальный перенос получает жест раньше небольшого шума расстояния; настоящая
+разность движений получает magnification. Первому аппаратному замеру даётся
+55 миллисекунд, чтобы второй палец успел присоединиться. На доске перенос двигает
+камеру. Касание отменяет одно действие, удержание повторяет отмену каждые 95 мс.
 
 ```text
 Pencil down -> штрих ещё активен
@@ -251,14 +253,17 @@ MCP меняет агентский поток только при совпад�
 плотностью нужна отдельная калибровка; текущая сборка предназначена для
 подключённого 11-дюймового iPad.
 
-Размер страницы хранится независимо от размера окна. `PageSurface` вычисляет
-один равномерный масштаб, привязывает отрисовку к левому верхнему углу самого
-листа, а готовый лист помещает в центр окна. Поэтому изменение размера окна на
-Mac или iPad меняет только свободное поле вокруг бумаги: клетка, штрихи и слои
-агента остаются совмещены.
+Размер страницы хранится независимо от размера окна. `NotebookPresentation`
+вычисляет масштаб вписывания одной физической тетради. Устойчивый лист всегда
+получает этот масштаб, обложка — `0,72` от него, а переход и доска сохраняют
+безразмерное отношение к старому вписыванию. Поэтому путь
+`834x1194 -> 1194x834 -> 834x1194` возвращает исходную камеру вместо прежнего
+умножения на `0,698` два раза. UI-проверка поворачивает живой Simulator туда и
+обратно и требует прежнюю рамку листа.
 
-Доска использует ту же базовую клетку `0,5 см`. Когда она проецируется мельче
-14 points, `SpatialBoardGrid` удваивает мировой шаг, сохраняя общие узлы тайлов.
+У доски собственный `BoardAppearance`: холодно-серый рабочий материал и редкие
+точки вместо тёплой бумаги с линейной клеткой. Когда точки сближаются меньше чем
+на 30 points, `SpatialBoardGrid` удваивает мировой шаг, сохраняя общие узлы тайлов.
 Камера хранит центр как `WorldPoint(tileX, tileY, localX, localY)`, поэтому pan и
 zoom выполняют арифметику рядом с центром даже далеко от начала координат.
 `SpatialCamera.pinched` решает весь кадр из начальной камеры, начального центра
@@ -269,6 +274,39 @@ zoom выполняют арифметику рядом с центром даж
 отпускания пружина выбирает ближайшее устойчивое состояние `board`, `cover` или
 `page`. Сам открытый лист не имеет отдельного зума: уменьшение означает закрытие
 тетради.
+
+## Как живое зеркало становится устойчивым состоянием
+
+Один `SessionPresence` описывает сцену, а `PresenceEnvelope` сообщает её место в
+потоке: `sessionID`, возрастающий `sequence` и фазу `active` либо `settled`.
+Активный кадр нужен окну Mac, чтобы оно двигалось вместе с пальцами. Завершённый
+кадр является владельцем `last-context.json`, квитанции и PNG для MCP. Поэтому
+разрыв соединения посреди щипка оставляет на диске последнее целое состояние, а
+окно Mac сразу возвращается к нему; следующее подключение начинает с той же
+границы.
+
+```text
+active 17 -> live Mac window
+active 18 -> live Mac window
+settled 19 -> live Mac window + last-context.json + delayed MCP PNG
+```
+
+Очередь заменяет только соседние ожидающие `active` одного сеанса. `settled`
+всегда остаётся отдельной границей, поэтому начало следующего жеста не может его
+стереть. Аналогично два ещё не отправленных полных рисунка одного листа оставляют
+самую новую ревизию. Mac принимает только возрастающий `sequence`, сохраняет
+полученные страницы в фоновой задаче и строит тяжёлые PNG после короткой паузы:
+220 мс для текущей сцены и 420 мс для отдельного листа. Промежуточный жест вообще
+не запускает MCP-рендер, потому что его квитанция всё равно не совпала бы с
+устойчивым файлом.
+
+`NetworkBrowser` больше не ждёт завершения одного бесконечного соединения внутри
+обработчика списка. Он быстро сравнивает адреса и держит отдельную задачу на
+каждый Mac; listener так же передаёт каждое принятое соединение своей задаче.
+Оба системных владельца перезапускаются после временной ошибки. В живой проверке
+iPad оставался запущен, Mac был остановлен и запущен снова: новый listener стал
+готов, а iPad открыл соединение без перезапуска приложения примерно через
+0,8 секунды после готовности listener.
 
 ## Исполнимая граница безопасности
 
