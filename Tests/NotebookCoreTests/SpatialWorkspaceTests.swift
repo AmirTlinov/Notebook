@@ -177,19 +177,39 @@ func notebookOpeningProgressUsesThePinchRatio() {
 
   #expect(NotebookOpeningTransition.progress(
     cameraScale: coverScale / 2,
-    coverScale: coverScale,
+    openingScale: coverScale,
     pageScale: pageScale
   ) == 0)
   #expect(abs(NotebookOpeningTransition.progress(
     cameraScale: halfwayScale,
-    coverScale: coverScale,
+    openingScale: coverScale,
     pageScale: pageScale
   ) - 0.5) < 0.000_001)
   #expect(NotebookOpeningTransition.progress(
     cameraScale: pageScale * 2,
-    coverScale: coverScale,
+    openingScale: coverScale,
     pageScale: pageScale
   ) == 1)
+}
+
+@Test("Повторный щипок продолжает частичное открытие с той же кривой")
+func partialOpeningRecoversItsOriginalScale() {
+  let openingScale = 0.61
+  let pageScale = 1.0
+  let cameraScale = 0.78
+  let progress = NotebookOpeningTransition.progress(
+    cameraScale: cameraScale,
+    openingScale: openingScale,
+    pageScale: pageScale
+  )
+  let recovered = NotebookOpeningTransition.openingScale(
+    cameraScale: cameraScale,
+    pageScale: pageScale,
+    progress: progress,
+    fallback: 0.72
+  )
+
+  #expect(abs(recovered - openingScale) < 0.000_001)
 }
 
 @Test("Небольшой щипок оставляет управление у камеры доски")
@@ -208,20 +228,35 @@ func smallBoardPinchDoesNotAcquireANotebook() {
 
 @Test("Близкая тетрадь принимает уже распознанный щипок без второго порога")
 func nearbyNotebookAcceptsTheRecognizedPinch() {
+  let coverScale = 0.72
+  let entryScale = coverScale * NotebookOpeningIntent.entryScaleRatio
+  #expect(!NotebookOpeningIntent.shouldEngage(
+    isApproaching: true,
+    cameraScale: entryScale - 0.001,
+    coverScale: coverScale
+  ))
   #expect(NotebookOpeningIntent.shouldEngage(
     isApproaching: true,
-    cameraScale: 0.72,
-    coverScale: 0.72
+    cameraScale: entryScale,
+    coverScale: coverScale
   ))
   #expect(NotebookOpeningIntent.shouldEngage(
     isApproaching: true,
     cameraScale: 0.73,
-    coverScale: 0.72
+    coverScale: coverScale
   ))
   #expect(!NotebookOpeningIntent.shouldEngage(
     isApproaching: false,
     cameraScale: 0.8,
-    coverScale: 0.72
+    coverScale: coverScale
+  ))
+  #expect(!NotebookOpeningIntent.shouldDisengage(
+    cameraScale: entryScale,
+    coverScale: coverScale
+  ))
+  #expect(NotebookOpeningIntent.shouldDisengage(
+    cameraScale: coverScale * 0.75,
+    coverScale: coverScale
   ))
 }
 

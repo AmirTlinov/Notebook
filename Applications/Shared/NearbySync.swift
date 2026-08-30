@@ -21,6 +21,23 @@ struct PresenceSequenceTracker {
   }
 }
 
+struct BonjourPeerCandidate: Hashable {
+  let peerName: String
+  let endpointID: String
+}
+
+struct BonjourPeerDirectory: Equatable {
+  let endpointIDsByPeer: [String: [String]]
+
+  init(_ candidates: [BonjourPeerCandidate]) {
+    var grouped: [String: Set<String>] = [:]
+    for candidate in candidates {
+      grouped[candidate.peerName, default: []].insert(candidate.endpointID)
+    }
+    endpointIDsByPeer = grouped.mapValues { $0.sorted() }
+  }
+}
+
 struct WireSendQueue {
   private var storage: [WireMessage] = []
   private var head = 0
@@ -127,7 +144,8 @@ final class NearbySync {
   private let peerName: String
   private var listenerTask: Task<Void, Never>?
   private var browserTask: Task<Void, Never>?
-  private var endpointTasks: [String: Task<Void, Never>] = [:]
+  private var peerTasks: [String: Task<Void, Never>] = [:]
+  private var endpointsByPeer: [String: [Bonjour.Endpoint]] = [:]
   private var connections: [String: NetworkConnection<NotebookWireProtocol>] = [:]
   private var senders: [String: OrderedWireSender] = [:]
   private let logger = Logger(
@@ -199,7 +217,7 @@ final class NearbySync {
         } catch {
           logger.error("Browser stopped: \(error.localizedDescription, privacy: .public)")
         }
-        cancelEndpointTasks()
+        cancelPeerTasks()
         guard !Task.isCancelled else { return }
         try? await Task.sleep(for: .seconds(1))
       }
@@ -213,32 +231,48 @@ final class NearbySync {
   }
 
   private func discovered(_ endpoints: [Bonjour.Endpoint]) {
-    let available = Dictionary(
-      uniqueKeysWithValues: endpoints
-        .filter { $0.name.hasPrefix("mac-") }
-        .map { ($0.id, $0) }
+    let candidates = endpoints.filter { $0.name.hasPrefix("mac-") }
+    let directory = BonjourPeerDirectory(
+      candidates.map {
+        BonjourPeerCandidate(peerName: $0.name, endpointID: $0.id)
+      }
     )
-    logger.info("Discovered \(available.count, privacy: .public) Mac endpoint(s)")
-
-    let removed = endpointTasks.keys.filter { available[$0] == nil }
-    for id in removed {
-      endpointTasks[id]?.cancel()
-      endpointTasks[id] = nil
+    var endpointsByID: [String: Bonjour.Endpoint] = [:]
+    for endpoint in candidates { endpointsByID[endpoint.id] = endpoint }
+    let available = directory.endpointIDsByPeer.mapValues { ids in
+      ids.compactMap { endpointsByID[$0] }
     }
-    for (id, endpoint) in available where endpointTasks[id] == nil {
-      endpointTasks[id] = Task { [weak self] in
-        await self?.maintainConnection(to: endpoint)
+    endpointsByPeer = available
+    logger.info(
+      "Discovered \(available.count, privacy: .public) Mac peer(s) via \(candidates.count, privacy: .public) endpoint(s)"
+    )
+
+    let removed = peerTasks.keys.filter { available[$0] == nil }
+    for peer in removed {
+      peerTasks[peer]?.cancel()
+      peerTasks[peer] = nil
+    }
+    for peer in available.keys where peerTasks[peer] == nil {
+      peerTasks[peer] = Task { [weak self] in
+        await self?.maintainConnection(toPeer: peer)
       }
     }
   }
 
-  private func cancelEndpointTasks() {
-    for task in endpointTasks.values { task.cancel() }
-    endpointTasks.removeAll()
+  private func cancelPeerTasks() {
+    for task in peerTasks.values { task.cancel() }
+    peerTasks.removeAll()
+    endpointsByPeer.removeAll()
   }
 
-  private func maintainConnection(to endpoint: Bonjour.Endpoint) async {
+  private func maintainConnection(toPeer peer: String) async {
+    var candidateIndex = 0
     while !Task.isCancelled {
+      guard let candidates = endpointsByPeer[peer], !candidates.isEmpty else {
+        return
+      }
+      let endpoint = candidates[candidateIndex % candidates.count]
+      candidateIndex = (candidateIndex + 1) % candidates.count
       let connection = NetworkConnection(
         to: endpoint,
         using: wireParameters()

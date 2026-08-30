@@ -1,10 +1,11 @@
 import MetalKit
+import NotebookCore
 import PencilKit
 import UIKit
 
 enum SpatialInkRenderLayer {
-  case ink(PKDrawing)
-  case eraseRect(CGRect)
+  case ink(points: [PKStrokePoint], color: SpatialInkColor)
+  case erase(points: [PKStrokePoint])
 }
 
 struct VisibleInkStrokeRun {
@@ -92,10 +93,11 @@ final class ActiveEraserStroke {
   }
 }
 
-/// The only view that turns notebook ink into pixels on iPad.
+/// The one renderer that turns a mounted notebook surface into pixels on iPad.
 ///
-/// PencilKit remains the file format. Metal owns every live pixel: it draws
-/// ink and subtracts the active eraser before PencilKit computes persistence.
+/// A page later persists as PencilKit; the spatial scene persists raw journal
+/// samples. Metal owns every live pixel and replays each stable format without
+/// replacing the geometry that was shown under Pencil.
 @MainActor
 final class InkCanvasView: MTKView, MTKViewDelegate {
   private enum RenderOperation: Equatable {
@@ -155,6 +157,12 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   var committedVertexCount: Int {
     committedVertices.count
       + committedBatches.reduce(0) { $0 + $1.vertices.count }
+  }
+
+  var committedEraserVertexCount: Int {
+    committedBatches.reduce(0) { count, batch in
+      count + (batch.operation == .erase ? batch.vertices.count : 0)
+    }
   }
 
   init(frame: CGRect) {
@@ -257,8 +265,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     requestFrame()
   }
 
-  /// Rebuilds the ordered board/cover composite in this same Metal owner.
-  /// Erase rectangles hide ink belonging to surfaces behind an opaque cover.
+  /// Rebuilds one spatial surface from its ordered raw journal actions.
   func applySpatial(_ layers: [SpatialInkRenderLayer]) {
     committedVertices.removeAll(keepingCapacity: true)
     committedBuffer = nil
@@ -267,10 +274,27 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
     for layer in layers {
       switch layer {
-      case .ink(let drawing):
-        appendCommitted(makeVertices(for: drawing), operation: .ink)
-      case .eraseRect(let rect):
-        appendCommitted(rectangleVertices(rect), operation: .erase)
+      case .ink(let points, let color):
+        var vertices: [Vertex] = []
+        appendStrokeVertices(
+          points: points,
+          color: SIMD4(
+            Float(color.red),
+            Float(color.green),
+            Float(color.blue),
+            1
+          ),
+          to: &vertices
+        )
+        appendCommitted(vertices, operation: .ink)
+      case .erase(let points):
+        var vertices: [Vertex] = []
+        appendStrokeVertices(
+          points: points,
+          color: SIMD4(1, 1, 1, 1),
+          to: &vertices
+        )
+        appendCommitted(vertices, operation: .erase)
       }
     }
     discardActiveAction()
@@ -587,31 +611,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         )
       )
     }
-  }
-
-  private func rectangleVertices(_ rect: CGRect) -> [Vertex] {
-    guard !rect.isNull, !rect.isEmpty else { return [] }
-    let color = SIMD4<Float>(1, 1, 1, 1)
-    let topLeft = vertex(
-      at: SIMD2(Float(rect.minX), Float(rect.minY)),
-      color: color
-    )
-    let topRight = vertex(
-      at: SIMD2(Float(rect.maxX), Float(rect.minY)),
-      color: color
-    )
-    let bottomLeft = vertex(
-      at: SIMD2(Float(rect.minX), Float(rect.maxY)),
-      color: color
-    )
-    let bottomRight = vertex(
-      at: SIMD2(Float(rect.maxX), Float(rect.maxY)),
-      color: color
-    )
-    return [
-      topLeft, bottomLeft, topRight,
-      topRight, bottomLeft, bottomRight,
-    ]
   }
 
   private func makeBuffer(for vertices: [Vertex]) -> (any MTLBuffer)? {

@@ -17,12 +17,21 @@ trap cleanup EXIT
 cd "$ROOT"
 swift test
 
-"$ROOT/Applications/render-ipad-icon.sh" "$DERIVED/AppIcon-1024.png"
-if ! cmp -s \
-  "$ROOT/Applications/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png" \
-  "$DERIVED/AppIcon-1024.png"; then
+ICON_PROOF="$DERIVED/AppIcon.appiconset"
+"$ROOT/Applications/render-app-icon.sh" "$ICON_PROOF"
+for icon in "$ROOT"/Applications/Assets.xcassets/AppIcon.appiconset/*.png; do
+  if ! cmp -s "$icon" "$ICON_PROOF/$(basename "$icon")"; then
+    printf '%s\n' \
+      'Иконки Mac и iPad должны быть свежим результатом одного AppIcon.svg.' >&2
+    exit 1
+  fi
+done
+
+if rg -n 'DirectoryWatcher' "$ROOT/Applications/Mac/MacRootView.swift" \
+  || ! rg -q 'externalChangeWatcher: DirectoryWatcher' \
+    "$ROOT/Applications/Shared/NotebookAppModel.swift"; then
   printf '%s\n' \
-    'iPad icon должен быть свежим результатом render-ipad-icon.sh.' >&2
+    'MCP file-watch должен принадлежать модели Mac, а не времени жизни окна.' >&2
   exit 1
 fi
 
@@ -35,7 +44,27 @@ if rg -n 'PKCanvasView|override func draw\(' \
 fi
 if [[ "$(rg -l ': MTKView' "$ROOT/Applications/iPad" --glob '*.swift' | wc -l | tr -d ' ')" != 1 ]]; then
   printf '%s\n' \
-    'На iPad должен быть ровно один Metal-владелец видимых чернил.' >&2
+    'На iPad должна быть одна реализация Metal-рендера: InkCanvasView.' >&2
+  exit 1
+fi
+if ! rg -q 'struct SpatialInkSurfaceView: UIViewRepresentable' \
+  "$ROOT/Applications/Shared/SpatialInkSurfaceView.swift" \
+  || ! rg -q 'makeUIView\(context: Context\) -> InkCanvasView' \
+    "$ROOT/Applications/Shared/SpatialInkSurfaceView.swift"; then
+  printf '%s\n' \
+    'Каждая обложка должна носить собственный InkCanvasView внутри своего transform.' >&2
+  exit 1
+fi
+if rg -n 'SpatialInkTransitionView|drawing\.image\(' \
+  "$ROOT/Applications/Shared/SpatialInkSurfaceView.swift"; then
+  printf '%s\n' \
+    'Обложка должна двигать живой Metal-холст, а не запаздывающий снимок.' >&2
+  exit 1
+fi
+if rg -n 'SpatialInkDrawingComposer' \
+  "$ROOT/Applications/iPad/SpatialInkCanvas.swift"; then
+  printf '%s\n' \
+    'Пространственный Metal должен повторять сырые точки журнала без перерисовки PencilKit.' >&2
   exit 1
 fi
 ERASER_MUTATION_COUNT=$(
@@ -84,6 +113,16 @@ xcodebuild \
   -derivedDataPath "$DERIVED/mac" \
   CODE_SIGNING_ALLOWED=NO \
   build
+xcodebuild \
+  -quiet \
+  -project Notebook.xcodeproj \
+  -scheme NotebookMac \
+  -configuration Debug \
+  -destination 'platform=macOS' \
+  -derivedDataPath "$DERIVED/mac-tests" \
+  CODE_SIGNING_ALLOWED=NO \
+  test \
+  -only-testing:NotebookMacTests
 xcodebuild \
   -quiet \
   -project Notebook.xcodeproj \

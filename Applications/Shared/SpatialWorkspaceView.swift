@@ -4,6 +4,7 @@ import NotebookCore
 private struct CameraGestureSnapshot {
   struct BoardEngagement {
     let notebookID: UUID
+    let openingScale: Double
   }
 
   let presence: SessionPresence
@@ -39,6 +40,7 @@ struct SpatialWorkspaceView: View {
   @State private var bufferedCameraPhases: [WorkspaceMagnificationPhase] = []
   @State private var settling = false
   @State private var settlementTask: Task<Void, Never>?
+  @State private var spatialInkSurfaces = SpatialInkSurfaceRegistry()
 
   var body: some View {
     GeometryReader { geometry in
@@ -70,6 +72,11 @@ struct SpatialWorkspaceView: View {
                 height: height
               )
             },
+            onTap: {
+              withAnimation(.easeOut(duration: 0.12)) {
+                selectedNotebookID = nil
+              }
+            },
             onBegan: {
               selectedNotebookID = nil
               panStart = presence
@@ -98,6 +105,29 @@ struct SpatialWorkspaceView: View {
           .allowsHitTesting(false)
         #endif
 
+        #if os(iOS)
+          SpatialInkCanvas(
+            camera: presence.camera,
+            viewport: viewport,
+            notebooks: rendered.map {
+              SpatialNotebookSurface(
+                notebookID: $0.id,
+                center: $0.center,
+                zIndex: $0.zIndex
+              )
+            },
+            journal: model.spatialInk,
+            penStyle: model.penStyle,
+            eraserStyle: model.eraserStyle,
+            drawingTool: model.drawingTool,
+            surfaceRegistry: spatialInkSurfaces,
+            onCommit: model.appendSpatialInk,
+            isEnabled: presence.mode != .page && !pageGestureActive
+              && !model.isTextToolSelected
+          )
+          .allowsHitTesting(false)
+        #endif
+
         ForEach(rendered) { rendered in
           NotebookSceneItem(
             rendered: rendered,
@@ -117,6 +147,7 @@ struct SpatialWorkspaceView: View {
               && !settling,
             isSelected: selectedNotebookID == rendered.id,
             isLifted: liftedNotebookID == rendered.id,
+            spatialInkSurfaces: spatialInkSurfaces,
             onDrop: { notebookID, center in
               dropNotebook(notebookID, at: center, presence: presence)
             },
@@ -140,26 +171,6 @@ struct SpatialWorkspaceView: View {
         }
 
         #if os(iOS)
-          SpatialInkCanvas(
-            camera: presence.camera,
-            viewport: viewport,
-            notebooks: rendered.map {
-              SpatialNotebookSurface(
-                notebookID: $0.id,
-                center: $0.center,
-                zIndex: $0.zIndex
-              )
-            },
-            journal: model.spatialInk,
-            penStyle: model.penStyle,
-            eraserStyle: model.eraserStyle,
-            drawingTool: model.drawingTool,
-            onCommit: model.appendSpatialInk,
-            isEnabled: presence.mode != .page && !pageGestureActive
-              && !model.isTextToolSelected
-          )
-          .allowsHitTesting(false)
-
           WorkspaceGestureLayer(
             isEnabled: true,
             isPageOpen: presence.mode == .page,
@@ -418,7 +429,20 @@ struct SpatialWorkspaceView: View {
         candidateNotebookID: candidate,
         isApproaching: isOpeningApproach,
         boardEngagement: focusedNotebookID.map {
-          CameraGestureSnapshot.BoardEngagement(notebookID: $0)
+          let coverScale = coverFocusScale(viewport: presence.viewport)
+          let fallback = presence.mode == .cover
+            && presence.openProgress <= 0.001
+            ? presence.camera.scale
+            : coverScale * NotebookOpeningIntent.entryScaleRatio
+          return CameraGestureSnapshot.BoardEngagement(
+            notebookID: $0,
+            openingScale: NotebookOpeningTransition.openingScale(
+              cameraScale: presence.camera.scale,
+              pageScale: fitScale(viewport: presence.viewport),
+              progress: presence.openProgress,
+              fallback: fallback
+            )
+          )
         },
         dockingStrength: 0
       )
@@ -607,17 +631,19 @@ struct SpatialWorkspaceView: View {
       )
     {
       snapshot.boardEngagement = CameraGestureSnapshot.BoardEngagement(
-        notebookID: candidate
+        notebookID: candidate,
+        openingScale: camera.scale
       )
       model.selectNotebook(candidate)
     }
 
-    let candidate = snapshot.boardEngagement?.notebookID
+    let engagement = snapshot.boardEngagement
+    let candidate = engagement?.notebookID
     let open: Double
-    if candidate != nil {
+    if let engagement {
       open = NotebookOpeningTransition.progress(
         cameraScale: camera.scale,
-        coverScale: coverScale,
+        openingScale: engagement.openingScale,
         pageScale: pageScale
       )
     } else {
@@ -862,6 +888,7 @@ private struct NotebookSceneItem: View {
   let pageIsInteractive: Bool
   let isSelected: Bool
   let isLifted: Bool
+  let spatialInkSurfaces: SpatialInkSurfaceRegistry
   let onDrop: (UUID, WorldPoint) -> Void
   let onSelect: (UUID) -> Void
   let onLiftChanged: (UUID, Bool) -> Void
@@ -889,6 +916,7 @@ private struct NotebookSceneItem: View {
         NotebookCoverView(
           notebook: rendered.notebook,
           isFocused: isFocused,
+          spatialInkSurfaces: spatialInkSurfaces,
           elements: model.board?.elements.filter {
             $0.surface == .cover(rendered.id)
           } ?? []
@@ -1007,6 +1035,7 @@ private struct NotebookCoverView: View {
 
   let notebook: Notebook
   let isFocused: Bool
+  let spatialInkSurfaces: SpatialInkSurfaceRegistry
   let elements: [SpatialElement]
 
   var body: some View {
@@ -1042,13 +1071,22 @@ private struct NotebookCoverView: View {
           .offset(x: element.frame.x, y: element.frame.y)
       }
 
-      SpatialInkSurfaceView(
-        drawing: SpatialInkDrawingComposer.drawing(
-          for: .cover(notebook.id),
-          in: model.spatialInk
+      #if os(iOS)
+        SpatialInkSurfaceView(
+          surface: .cover(notebook.id),
+          journal: model.spatialInk,
+          registry: spatialInkSurfaces
         )
-      )
-      .allowsHitTesting(false)
+        .allowsHitTesting(false)
+      #elseif os(macOS)
+        SpatialInkSurfaceView(
+          drawing: SpatialInkDrawingComposer.drawing(
+            for: .cover(notebook.id),
+            in: model.spatialInk
+          )
+        )
+        .allowsHitTesting(false)
+      #endif
     }
     .frame(
       width: NotebookGeometry.width,

@@ -135,6 +135,17 @@ final class DrawingResponsivenessTests: XCTestCase {
     removed.tap()
     let delete = app.buttons["delete-notebook"]
     XCTAssertTrue(delete.waitForExistence(timeout: 2))
+
+    app.windows.firstMatch.coordinate(
+      withNormalizedOffset: CGVector(dx: 0.04, dy: 0.08)
+    ).tap()
+    XCTAssertFalse(
+      delete.waitForExistence(timeout: 0.6),
+      "Касание свободной доски должно снять выбор"
+    )
+
+    removed.tap()
+    XCTAssertTrue(delete.waitForExistence(timeout: 2))
     delete.tap()
 
     XCTAssertTrue(remaining.waitForExistence(timeout: 2))
@@ -147,7 +158,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.launchArguments = [
       "--notebook-drawing-responsiveness-fixture",
       "--notebook-simulator-finger-gestures",
-      "--notebook-nearby-cover-fixture",
+      "--notebook-cover-eraser-fixture",
     ]
     app.launch()
 
@@ -181,6 +192,11 @@ final class DrawingResponsivenessTests: XCTestCase {
       object: notebook
     )
     wait(for: [moved], timeout: 2)
+
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "cover-ink-after-notebook-move"
+    proof.lifetime = .keepAlways
+    add(proof)
   }
 
   func testCoverAndBoardAcceptConsecutivePencilActions() {
@@ -233,6 +249,46 @@ final class DrawingResponsivenessTests: XCTestCase {
       object: ink
     )
     wait(for: [secondCommitted], timeout: 2)
+  }
+
+  func testCoverEraserCommitsIntoTheVisibleSpatialScene() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-cover-eraser-fixture",
+    ]
+    app.launch()
+
+    let notebook = app.descendants(matching: .any)
+      .matching(
+        identifier: "notebook-7e7a1000-0000-4000-8000-000000000002"
+      )
+      .firstMatch
+    let ink = app.otherElements["spatial-ink"]
+    XCTAssertTrue(notebook.waitForExistence(timeout: 5))
+    XCTAssertTrue(ink.waitForExistence(timeout: 2))
+    XCTAssertEqual(ink.value as? String, "1 действий")
+
+    notebook.coordinate(withNormalizedOffset: CGVector(dx: 0.18, dy: 0.42))
+      .press(
+        forDuration: 0.04,
+        thenDragTo: notebook.coordinate(
+          withNormalizedOffset: CGVector(dx: 0.82, dy: 0.42)
+        ),
+        withVelocity: .slow,
+        thenHoldForDuration: 0
+      )
+
+    let erased = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value == %@", "2 действий"),
+      object: ink
+    )
+    wait(for: [erased], timeout: 2)
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "cover-eraser"
+    proof.lifetime = .keepAlways
+    add(proof)
   }
 
   func testPartialOpeningKeepsTheReleasedCamera() async throws {

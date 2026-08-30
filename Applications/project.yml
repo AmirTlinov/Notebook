@@ -127,3 +127,21 @@ targets:
         GENERATE_INFOPLIST_FILE: false
         SWIFT_EMIT_LOC_STRINGS: true
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    scheme:
+      gatherCoverageData: false
+      testTargets:
+        - NotebookMacTests
+
+  NotebookMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: MacTests
+    dependencies:
+      - target: NotebookMac
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook.mac.tests
+        GENERATE_INFOPLIST_FILE: true
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Notebook.app/Contents/MacOS/Notebook
+        BUNDLE_LOADER: $(TEST_HOST)

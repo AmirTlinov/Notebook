@@ -11,11 +11,12 @@ struct SpatialInkCanvas: UIViewRepresentable {
   let penStyle: PenStyle
   let eraserStyle: EraserStyle
   let drawingTool: DrawingTool
+  let surfaceRegistry: SpatialInkSurfaceRegistry
   let onCommit: (SpatialInkTool, SpatialInkColor, [SpatialInkSpan]) -> Void
   let isEnabled: Bool
 
   func makeCoordinator() -> Coordinator {
-    Coordinator(onCommit: onCommit)
+    Coordinator(surfaceRegistry: surfaceRegistry, onCommit: onCommit)
   }
 
   func makeUIView(context: Context) -> SpatialInkContainerView {
@@ -33,6 +34,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       penStyle: penStyle,
       eraserStyle: eraserStyle,
       drawingTool: drawingTool,
+      surfaceRegistry: surfaceRegistry,
       isEnabled: isEnabled,
       onCommit: onCommit
     )
@@ -49,6 +51,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       penStyle: penStyle,
       eraserStyle: eraserStyle,
       drawingTool: drawingTool,
+      surfaceRegistry: surfaceRegistry,
       isEnabled: isEnabled,
       onCommit: onCommit
     )
@@ -67,9 +70,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
       let journalStamp: VersionStamp?
       let camera: SpatialCamera
       let viewport: SpatialPoint
-      let notebooks: [SpatialNotebookSurface]
     }
 
+    private var surfaceRegistry: SpatialInkSurfaceRegistry
     private weak var view: SpatialInkContainerView?
     private weak var window: UIWindow?
     private var recognizer: SpatialPencilGestureRecognizer?
@@ -97,17 +100,21 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private var actionSamples: [PKStrokePoint] = []
     private var activePen: ActiveInkStroke?
     private var activeEraser: ActiveEraserStroke?
+    private var currentSurface: SurfaceID?
+    private var touchedSurfaces: Set<SurfaceID> = []
     private var previousFilteredForce: CGFloat?
     private var previousTimestamp: TimeInterval?
     private var actionStartTimestamp: TimeInterval = 0
 
     init(
+      surfaceRegistry: SpatialInkSurfaceRegistry,
       onCommit: @escaping (
         SpatialInkTool,
         SpatialInkColor,
         [SpatialInkSpan]
       ) -> Void
     ) {
+      self.surfaceRegistry = surfaceRegistry
       self.onCommit = onCommit
     }
 
@@ -120,6 +127,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       penStyle: PenStyle,
       eraserStyle: EraserStyle,
       drawingTool: DrawingTool,
+      surfaceRegistry: SpatialInkSurfaceRegistry,
       isEnabled: Bool,
       onCommit: @escaping (
         SpatialInkTool,
@@ -135,8 +143,14 @@ struct SpatialInkCanvas: UIViewRepresentable {
       self.penStyle = penStyle
       self.eraserStyle = eraserStyle
       self.drawingTool = drawingTool
+      if self.surfaceRegistry !== surfaceRegistry {
+        self.surfaceRegistry.unregister(view.inkView, for: .board)
+        self.surfaceRegistry = surfaceRegistry
+        appliedSignature = nil
+      }
       self.isEnabled = isEnabled
       self.onCommit = onCommit
+      surfaceRegistry.register(view.inkView, for: .board)
       view.accessibilityValue = "\(journal?.actions.filter(\.isActive).count ?? 0) действий"
       recognizer?.isEnabled = isEnabled
       scheduleRenderIfNeeded()
@@ -150,9 +164,11 @@ struct SpatialInkCanvas: UIViewRepresentable {
       }
       guard self.window !== window else {
         recognizer?.isEnabled = isEnabled
+        surfaceRegistry.register(view.inkView, for: .board)
         return
       }
       uninstall()
+      surfaceRegistry.register(view.inkView, for: .board)
       let recognizer = SpatialPencilGestureRecognizer()
       recognizer.allowedTouchTypes = [
         NSNumber(value: UITouch.TouchType.pencil.rawValue)
@@ -184,6 +200,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
       recognizer = nil
       window = nil
       cancelAction()
+      if let view {
+        surfaceRegistry.unregister(view.inkView, for: .board)
+      }
     }
 
     private func handle(
@@ -211,26 +230,17 @@ struct SpatialInkCanvas: UIViewRepresentable {
       actionPenStyle = penStyle
       actionEraserStyle = eraserStyle
       actionSamples = []
+      currentSurface = nil
+      touchedSurfaces = []
       previousFilteredForce = nil
       previousTimestamp = nil
       actionStartTimestamp = touch.timestamp
-      if drawingTool == .pen {
-        let stroke = ActiveInkStroke(style: penStyle)
-        activePen = stroke
-        view?.inkView.displayActiveStroke(stroke)
-      } else {
-        let stroke = ActiveEraserStroke()
-        activeEraser = stroke
-        view?.inkView.displayActiveEraser(stroke)
-      }
       appendSamples(touch: touch, event: event)
     }
 
     private func appendSamples(touch: UITouch, event: UIEvent) {
       guard let actionTool else { return }
       let actual = event.coalescedTouches(for: touch) ?? [touch]
-      var newPoints: [PKStrokePoint] = []
-      newPoints.reserveCapacity(actual.count)
       for sampleTouch in actual where accepts(sampleTouch) {
         let timestamp = max(0, sampleTouch.timestamp - actionStartTimestamp)
         guard actionSamples.last.map({ timestamp > $0.timeOffset }) ?? true else {
@@ -241,14 +251,25 @@ struct SpatialInkCanvas: UIViewRepresentable {
           timestamp: timestamp,
           tool: actionTool
         )
+        if let previous = actionSamples.last {
+          routeMeasuredSegment(from: previous, to: point)
+        } else {
+          beginSegment(
+            on: SpatialSurfaceRouter.surface(
+              at: point.location,
+              covers: screenSurfaces()
+            ),
+            with: point
+          )
+        }
         actionSamples.append(point)
-        newPoints.append(point)
       }
-      guard !newPoints.isEmpty else { return }
-      let firstNewIndex = actionSamples.count - newPoints.count
+      guard !actionSamples.isEmpty else { return }
 
-      if actionTool == .pen, let activePen {
-        activePen.replaceMeasuredTail(from: firstNewIndex, with: newPoints)
+      if actionTool == .pen,
+        let activePen,
+        let currentSurface
+      {
         let predictions = (event.predictedTouches(for: touch) ?? [])
           .filter(accepts)
           .map {
@@ -259,11 +280,16 @@ struct SpatialInkCanvas: UIViewRepresentable {
               updatesFilter: false
             )
           }
-        activePen.replacePredictions(with: predictions)
-        view?.inkView.displayActiveStroke(activePen)
-      } else if let activeEraser {
-        activeEraser.replaceMeasuredTail(from: firstNewIndex, with: newPoints)
-        view?.inkView.displayActiveEraser(activeEraser)
+          .prefix { prediction in
+            SpatialSurfaceRouter.surface(
+              at: prediction.location,
+              covers: screenSurfaces()
+            ) == currentSurface
+          }
+          .map { livePoint($0, on: currentSurface) }
+        activePen.replacePredictions(with: Array(predictions))
+        surfaceRegistry.canvas(for: currentSurface)?
+          .displayActiveStroke(activePen)
       }
     }
 
@@ -273,6 +299,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         return
       }
       activePen?.replacePredictions(with: [])
+      finishCurrentSegment()
       let spans = splitIntoSurfaceSpans(actionSamples)
       let components = (actionPenStyle ?? penStyle).color.components
       let color = SpatialInkColor(
@@ -285,28 +312,125 @@ struct SpatialInkCanvas: UIViewRepresentable {
       actionEraserStyle = nil
       activePen = nil
       activeEraser = nil
+      currentSurface = nil
       actionSamples = []
       previousFilteredForce = nil
       previousTimestamp = nil
       guard !spans.isEmpty else {
-        view?.inkView.clearActiveAction()
+        for surface in touchedSurfaces {
+          surfaceRegistry.finishAction(
+            on: surface,
+            keepingCommittedMesh: false
+          )
+        }
+        touchedSurfaces = []
         return
       }
-      view?.inkView.commitActiveSpatialAction()
       onCommit(actionTool == .pen ? .pen : .eraser, color, spans)
+      for surface in touchedSurfaces {
+        surfaceRegistry.finishAction(
+          on: surface,
+          keepingCommittedMesh: true
+        )
+      }
+      touchedSurfaces = []
       appliedSignature = nil
     }
 
     private func cancelAction() {
+      if let currentSurface {
+        surfaceRegistry.canvas(for: currentSurface)?.clearActiveAction()
+      }
+      let cancelledSurfaces = touchedSurfaces
       actionTool = nil
       actionPenStyle = nil
       actionEraserStyle = nil
       actionSamples = []
       activePen = nil
       activeEraser = nil
+      currentSurface = nil
+      touchedSurfaces = []
       previousFilteredForce = nil
       previousTimestamp = nil
-      view?.inkView.clearActiveAction()
+      for surface in cancelledSurfaces {
+        surfaceRegistry.finishAction(
+          on: surface,
+          keepingCommittedMesh: false
+        )
+        surfaceRegistry.applyStable(
+          stableLayers(for: surface),
+          to: surface
+        )
+      }
+    }
+
+    private func routeMeasuredSegment(
+      from start: PKStrokePoint,
+      to end: PKStrokePoint
+    ) {
+      let intervals = SpatialSurfaceRouter.intervals(
+        from: start.location,
+        to: end.location,
+        covers: screenSurfaces()
+      )
+      for interval in intervals {
+        let lower = interpolate(start, end, t: Double(interval.lowerBound))
+        if currentSurface != interval.surface {
+          finishCurrentSegment()
+          beginSegment(on: interval.surface, with: lower)
+        }
+        appendToCurrentSegment(
+          interpolate(start, end, t: Double(interval.upperBound))
+        )
+      }
+    }
+
+    private func beginSegment(
+      on surface: SurfaceID,
+      with point: PKStrokePoint
+    ) {
+      currentSurface = surface
+      touchedSurfaces.insert(surface)
+      surfaceRegistry.beginAction(on: surface)
+      if actionTool == .pen {
+        let stroke = ActiveInkStroke(style: actionPenStyle ?? penStyle)
+        activePen = stroke
+        activeEraser = nil
+      } else {
+        activePen = nil
+        activeEraser = ActiveEraserStroke()
+      }
+      appendToCurrentSegment(point)
+    }
+
+    private func appendToCurrentSegment(_ point: PKStrokePoint) {
+      guard let currentSurface else { return }
+      let localPoint = livePoint(point, on: currentSurface)
+      if let activePen {
+        activePen.replaceMeasuredTail(
+          from: activePen.measuredPoints.count,
+          with: [localPoint]
+        )
+        surfaceRegistry.canvas(for: currentSurface)?
+          .displayActiveStroke(activePen)
+      } else if let activeEraser {
+        activeEraser.replaceMeasuredTail(
+          from: activeEraser.measuredPoints.count,
+          with: [localPoint]
+        )
+        surfaceRegistry.canvas(for: currentSurface)?
+          .displayActiveEraser(activeEraser)
+      }
+    }
+
+    private func finishCurrentSegment() {
+      guard let currentSurface else { return }
+      activePen?.replacePredictions(with: [])
+      surfaceRegistry.canvas(for: currentSurface)?
+        .commitActiveSpatialAction()
+      activePen = nil
+      activeEraser = nil
+      self.currentSurface = nil
     }
 
     private func makePoint(
@@ -521,13 +645,51 @@ struct SpatialInkCanvas: UIViewRepresentable {
       )
     }
 
+    private func livePoint(
+      _ point: PKStrokePoint,
+      on surface: SurfaceID
+    ) -> PKStrokePoint {
+      guard surface.kind == .cover,
+        let notebookID = surface.ownerID,
+        let notebook = notebooks.first(where: { $0.notebookID == notebookID })
+      else { return point }
+      let center = camera.worldToScreen(notebook.center, viewport: viewport)
+      return PKStrokePoint(
+        location: CGPoint(
+          x: (point.location.x - center.x) / camera.scale
+            + NotebookGeometry.width / 2,
+          y: (point.location.y - center.y) / camera.scale
+            + NotebookGeometry.height / 2
+        ),
+        timeOffset: point.timeOffset,
+        size: CGSize(
+          width: point.size.width / camera.scale,
+          height: point.size.height / camera.scale
+        ),
+        opacity: point.opacity,
+        force: point.force,
+        azimuth: point.azimuth,
+        altitude: point.altitude
+      )
+    }
+
+    private func stableLayers(for surface: SurfaceID) -> [SpatialInkRenderLayer] {
+      if surface == .board {
+        return SpatialInkComposer.boardLayers(
+          journal: journal,
+          camera: camera,
+          viewport: viewport
+        )
+      }
+      return SpatialInkComposer.localLayers(for: surface, journal: journal)
+    }
+
     private func scheduleRenderIfNeeded() {
       guard actionTool == nil, let view else { return }
       let signature = RenderSignature(
         journalStamp: journal?.stamp,
         camera: camera,
-        viewport: viewport,
-        notebooks: notebooks
+        viewport: viewport
       )
       guard signature != appliedSignature else { return }
       appliedSignature = signature
@@ -536,15 +698,13 @@ struct SpatialInkCanvas: UIViewRepresentable {
       let journal = journal
       let camera = camera
       let viewport = viewport
-      let notebooks = notebooks
       renderTask?.cancel()
       renderTask = Task { [weak self, weak view] in
         let layers = await Task.detached(priority: .userInitiated) {
-          SpatialInkComposer.layers(
+          SpatialInkComposer.boardLayers(
             journal: journal,
             camera: camera,
-            viewport: viewport,
-            notebooks: notebooks
+            viewport: viewport
           )
         }.value
         guard !Task.isCancelled,
@@ -553,7 +713,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
           generation == renderGeneration,
           actionTool == nil
         else { return }
-        view.inkView.applySpatial(layers)
+        surfaceRegistry.applyStable(layers, to: .board, in: view.inkView)
       }
     }
   }
@@ -646,34 +806,73 @@ final class SpatialPencilGestureRecognizer: UIGestureRecognizer {
 }
 
 enum SpatialInkComposer {
-  static func layers(
+  static func boardLayers(
     journal: SpatialInkJournal?,
     camera: SpatialCamera,
-    viewport: SpatialPoint,
-    notebooks: [SpatialNotebookSurface]
+    viewport: SpatialPoint
   ) -> [SpatialInkRenderLayer] {
     guard let journal else { return [] }
-    var result: [SpatialInkRenderLayer] = []
-    let board = SpatialInkDrawingComposer.boardDrawing(
-      in: journal,
-      camera: camera,
-      viewport: viewport
-    )
-    if !board.strokes.isEmpty {
-      result.append(.ink(board))
-    }
-
-    for notebook in notebooks.sorted(by: { $0.zIndex < $1.zIndex }) {
-      let center = camera.worldToScreen(notebook.center, viewport: viewport)
-      let rect = CGRect(
-        x: center.x - NotebookGeometry.width * camera.scale / 2,
-        y: center.y - NotebookGeometry.height * camera.scale / 2,
-        width: NotebookGeometry.width * camera.scale,
-        height: NotebookGeometry.height * camera.scale
+    return layers(for: .board, in: journal) { sample in
+      guard let worldPoint = sample.worldPoint else { return nil }
+      let screen = camera.worldToScreen(worldPoint, viewport: viewport)
+      return point(
+        sample,
+        location: CGPoint(x: screen.x, y: screen.y),
+        widthScale: camera.scale
       )
-      result.append(.eraseRect(rect))
+    }
+  }
+
+  static func localLayers(
+    for surface: SurfaceID,
+    journal: SpatialInkJournal?
+  ) -> [SpatialInkRenderLayer] {
+    guard let journal else { return [] }
+    return layers(for: surface, in: journal) { sample in
+      point(
+        sample,
+        location: CGPoint(x: sample.point.x, y: sample.point.y),
+        widthScale: 1
+      )
+    }
+  }
+
+  private static func layers(
+    for surface: SurfaceID,
+    in journal: SpatialInkJournal,
+    point transform: (SpatialInkSample) -> PKStrokePoint?
+  ) -> [SpatialInkRenderLayer] {
+    var result: [SpatialInkRenderLayer] = []
+    for action in journal.actions where action.isActive {
+      for span in action.spans where span.surface == surface {
+        let points = span.samples.compactMap(transform)
+        guard !points.isEmpty else { continue }
+        if action.tool == .pen {
+          result.append(.ink(points: points, color: action.color))
+        } else {
+          result.append(.erase(points: points))
+        }
+      }
     }
     return result
   }
 
+  private static func point(
+    _ sample: SpatialInkSample,
+    location: CGPoint,
+    widthScale: Double
+  ) -> PKStrokePoint {
+    PKStrokePoint(
+      location: location,
+      timeOffset: sample.timeOffset,
+      size: CGSize(
+        width: sample.width * widthScale,
+        height: sample.width * widthScale
+      ),
+      opacity: sample.opacity,
+      force: sample.force,
+      azimuth: sample.azimuth,
+      altitude: sample.altitude
+    )
+  }
 }

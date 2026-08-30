@@ -9,6 +9,7 @@
     static let fingerGestureArgument = "--notebook-simulator-finger-gestures"
     static let mixedInputArgument = "--notebook-simulator-mixed-input"
     static let coverArgument = "--notebook-nearby-cover-fixture"
+    static let coverEraserArgument = "--notebook-cover-eraser-fixture"
     static let offCenterCoverArgument = "--notebook-off-center-cover-fixture"
     static let stackArgument = "--notebook-stacked-page-fixture"
     static let lowerStackArgument = "--notebook-stacked-lower-page-fixture"
@@ -23,6 +24,10 @@
       let startsAtCover = ProcessInfo.processInfo.arguments.contains(
         coverArgument
       ) || ProcessInfo.processInfo.arguments.contains(offCenterCoverArgument)
+        || ProcessInfo.processInfo.arguments.contains(coverEraserArgument)
+      let startsWithCoverEraser = ProcessInfo.processInfo.arguments.contains(
+        coverEraserArgument
+      )
       let startsOffCenterCover = ProcessInfo.processInfo.arguments.contains(
         offCenterCoverArgument
       )
@@ -44,9 +49,11 @@
             ? "StackedLowerPage"
             : "StackedUpperPage")
       } else if startsAtCover {
-        fixtureName = startsOffCenterCover
-          ? "OffCenterCoverTransition"
-          : "NearbyCoverTransition"
+        fixtureName = startsWithCoverEraser
+          ? "CoverEraser"
+          : (startsOffCenterCover
+            ? "OffCenterCoverTransition"
+            : "NearbyCoverTransition")
       } else if ProcessInfo.processInfo.arguments.contains(
         fingerGestureArgument
       ) {
@@ -183,8 +190,50 @@
             )
           )
         }
+        if startsWithCoverEraser {
+          var journal = SpatialInkJournal(
+            stamp: VersionStamp(counter: 0, actor: actor)
+          )
+          let samples = [
+            SpatialInkSample(
+              point: SpatialPoint(x: 150, y: 500),
+              timeOffset: 0,
+              width: 8,
+              opacity: 1,
+              force: 1,
+              azimuth: 0,
+              altitude: .pi / 2
+            ),
+            SpatialInkSample(
+              point: SpatialPoint(x: 684, y: 500),
+              timeOffset: 0.1,
+              width: 8,
+              opacity: 1,
+              force: 1,
+              azimuth: 0,
+              altitude: .pi / 2
+            ),
+          ]
+          guard journal.append(
+            tool: .pen,
+            spans: [
+              SpatialInkSpan(
+                surface: .cover(notebookID),
+                samples: samples
+              )
+            ],
+            actor: actor
+          ) != nil else {
+            fatalError("Не удалось создать линию проверки ластика обложки")
+          }
+          try store.saveSpatialInk(journal)
+        }
         try store.saveIndex(index)
-        return NotebookAppModel(store: store, startsNearbySync: false)
+        let model = NotebookAppModel(store: store, startsNearbySync: false)
+        if startsWithCoverEraser {
+          model.selectDrawingTool(.eraser)
+        }
+        return model
       } catch {
         fatalError("Не удалось создать лист проверки инструментов: \(error)")
       }

@@ -230,6 +230,7 @@ final class GestureAnchorView: UIView {
 struct BoardPanView: UIViewRepresentable {
   let isEnabled: Bool
   let excludedFrames: [CGRect]
+  let onTap: () -> Void
   let onBegan: () -> Void
   let onChanged: (CGPoint) -> Void
   let onEnded: (CGPoint) -> Void
@@ -238,6 +239,7 @@ struct BoardPanView: UIViewRepresentable {
     Coordinator(
       isEnabled: isEnabled,
       excludedFrames: excludedFrames,
+      onTap: onTap,
       onBegan: onBegan,
       onChanged: onChanged,
       onEnded: onEnded
@@ -257,6 +259,7 @@ struct BoardPanView: UIViewRepresentable {
   func updateUIView(_ view: GestureAnchorView, context: Context) {
     context.coordinator.isEnabled = isEnabled
     context.coordinator.excludedFrames = excludedFrames
+    context.coordinator.onTap = onTap
     context.coordinator.onBegan = onBegan
     context.coordinator.onChanged = onChanged
     context.coordinator.onEnded = onEnded
@@ -276,10 +279,13 @@ struct BoardPanView: UIViewRepresentable {
   final class Coordinator: NSObject, UIGestureRecognizerDelegate {
     var isEnabled: Bool {
       didSet {
-        if oldValue != isEnabled { pan?.isEnabled = isEnabled }
+        guard oldValue != isEnabled else { return }
+        pan?.isEnabled = isEnabled
+        tap?.isEnabled = isEnabled
       }
     }
     var excludedFrames: [CGRect]
+    var onTap: () -> Void
     var onBegan: () -> Void
     var onChanged: (CGPoint) -> Void
     var onEnded: (CGPoint) -> Void
@@ -287,16 +293,19 @@ struct BoardPanView: UIViewRepresentable {
     private weak var hostView: UIView?
     private weak var sceneView: UIView?
     private var pan: UIPanGestureRecognizer?
+    private var tap: UITapGestureRecognizer?
 
     init(
       isEnabled: Bool,
       excludedFrames: [CGRect],
+      onTap: @escaping () -> Void,
       onBegan: @escaping () -> Void,
       onChanged: @escaping (CGPoint) -> Void,
       onEnded: @escaping (CGPoint) -> Void
     ) {
       self.isEnabled = isEnabled
       self.excludedFrames = excludedFrames
+      self.onTap = onTap
       self.onBegan = onBegan
       self.onChanged = onChanged
       self.onEnded = onEnded
@@ -323,15 +332,31 @@ struct BoardPanView: UIViewRepresentable {
       pan.cancelsTouchesInView = false
       pan.delegate = self
       pan.isEnabled = isEnabled
+      let tap = UITapGestureRecognizer(
+        target: self,
+        action: #selector(handleTap)
+      )
+      tap.allowedTouchTypes = [
+        NSNumber(value: UITouch.TouchType.direct.rawValue)
+      ]
+      tap.cancelsTouchesInView = false
+      tap.delaysTouchesBegan = false
+      tap.delaysTouchesEnded = false
+      tap.delegate = self
+      tap.isEnabled = isEnabled
       hostView.addGestureRecognizer(pan)
+      hostView.addGestureRecognizer(tap)
       self.hostView = hostView
       self.sceneView = sceneView
       self.pan = pan
+      self.tap = tap
     }
 
     func uninstall() {
       if let pan { hostView?.removeGestureRecognizer(pan) }
+      if let tap { hostView?.removeGestureRecognizer(tap) }
       pan = nil
+      tap = nil
       hostView = nil
       sceneView = nil
     }
@@ -350,6 +375,10 @@ struct BoardPanView: UIViewRepresentable {
       default:
         break
       }
+    }
+
+    @objc private func handleTap() {
+      onTap()
     }
 
     func gestureRecognizer(

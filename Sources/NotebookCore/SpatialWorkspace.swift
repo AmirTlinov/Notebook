@@ -280,19 +280,42 @@ public enum NotebookSelectionField {
 
 public enum NotebookOpeningTransition {
   /// Converts the multiplicative scale of a pinch into reversible visual
-  /// progress between the closed cover and the full-page presentation.
+  /// progress between the scale where this cover joined the gesture and the
+  /// full-page presentation.
   public static func progress(
     cameraScale: Double,
-    coverScale: Double,
+    openingScale: Double,
     pageScale: Double
   ) -> Double {
     guard cameraScale.isFinite && cameraScale > 0,
-      coverScale.isFinite && coverScale > 0,
-      pageScale.isFinite && pageScale > coverScale
+      openingScale.isFinite && openingScale > 0,
+      pageScale.isFinite && pageScale > openingScale
     else { return 0 }
-    let progress = log(cameraScale / coverScale)
-      / log(pageScale / coverScale)
+    let progress = log(cameraScale / openingScale)
+      / log(pageScale / openingScale)
     return min(max(progress, 0), 1)
+  }
+
+  /// Recovers the beginning of a released partial opening, so the next pinch
+  /// continues the same curve rather than replacing it with a new one.
+  public static func openingScale(
+    cameraScale: Double,
+    pageScale: Double,
+    progress: Double,
+    fallback: Double
+  ) -> Double {
+    guard cameraScale.isFinite && cameraScale > 0,
+      pageScale.isFinite && pageScale > 0,
+      progress.isFinite && progress > 0 && progress < 1,
+      fallback.isFinite && fallback > 0
+    else { return fallback }
+    let resolved = exp(
+      (log(cameraScale) - progress * log(pageScale)) / (1 - progress)
+    )
+    guard resolved.isFinite, resolved > 0, resolved < pageScale else {
+      return fallback
+    }
+    return resolved
   }
 }
 
@@ -370,9 +393,13 @@ public enum NotebookOpeningIntent {
   /// The page renderer moves to the approached notebook while the opaque cover
   /// still hides it, leaving enough camera travel to finish preparation.
   public static let pagePreparationScaleRatio = 0.55
-  /// A notebook receives the opening gesture only after reaching its normal
-  /// focused-cover size on screen.
-  public static let entryScaleRatio = 1.0
+  /// A cover joins the already-recognized pinch while it still occupies about
+  /// sixty percent of a fitted page. This leaves visible travel before it
+  /// reaches the former focused-cover size.
+  public static let entryScaleRatio = 0.84
+  /// Hysteresis keeps a newly engaged cover from blinking between board and
+  /// cover while the fingers hover around the entry scale.
+  public static let exitScaleRatio = 0.76
   public static let selectionHalo = 1.12
   /// A candidate survives small centroid noise while the camera approaches it,
   /// but is released once the fingers clearly leave the cover.
@@ -394,7 +421,7 @@ public enum NotebookOpeningIntent {
     cameraScale: Double,
     coverScale: Double
   ) -> Bool {
-    cameraScale < coverScale * 0.9
+    cameraScale < coverScale * exitScaleRatio
   }
 }
 

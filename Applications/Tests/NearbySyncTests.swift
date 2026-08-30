@@ -133,6 +133,24 @@ final class NearbySyncTests: XCTestCase {
     XCTAssertEqual(queue.messages, [newest])
   }
 
+  func testOneMacSeenThroughManyInterfacesIsOnePeer() {
+    let peer = "mac-123"
+    let directory = BonjourPeerDirectory(
+      (1...13).map {
+        BonjourPeerCandidate(peerName: peer, endpointID: "endpoint-\($0)")
+      } + [
+        BonjourPeerCandidate(
+          peerName: "mac-456",
+          endpointID: "endpoint-other"
+        ),
+        BonjourPeerCandidate(peerName: peer, endpointID: "endpoint-1"),
+      ]
+    )
+
+    XCTAssertEqual(Set(directory.endpointIDsByPeer.keys), [peer, "mac-456"])
+    XCTAssertEqual(directory.endpointIDsByPeer[peer]?.count, 13)
+  }
+
   private func envelope(
     sessionID: UUID,
     sequence: UInt64,

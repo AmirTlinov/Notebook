@@ -55,7 +55,7 @@ final class DirectoryWatcher: @unchecked Sendable {
     let work = DispatchWorkItem { [weak self] in
       guard let self else { return }
       debounce = nil
-      Task { @MainActor in onChange() }
+      Task { @MainActor in self.onChange() }
     }
     debounce = work
     queue.asyncAfter(deadline: .now() + 0.04, execute: work)

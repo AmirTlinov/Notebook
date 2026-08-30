@@ -24,7 +24,6 @@ private struct CurrentViewKey: Hashable {
 
 struct MacRootView: View {
   @Environment(NotebookAppModel.self) private var model
-  @State private var watcher: DirectoryWatcher?
 
   var body: some View {
     GeometryReader { geometry in
@@ -36,20 +35,6 @@ struct MacRootView: View {
           writeCurrentView(viewport: geometry.size)
         }
     }
-      .onAppear {
-        try? model.store.prepare()
-        let watcher = DirectoryWatcher(
-          urls: [model.store.root, model.store.pagesURL]
-        ) {
-          model.reloadExternalChanges()
-        }
-        watcher.start()
-        self.watcher = watcher
-      }
-      .onDisappear {
-        watcher?.stop()
-        watcher = nil
-      }
       .task(id: previewKeys) {
         try? await Task.sleep(for: .milliseconds(420))
         guard !Task.isCancelled else { return }

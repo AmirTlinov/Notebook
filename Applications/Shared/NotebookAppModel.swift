@@ -74,6 +74,13 @@ final class NotebookAppModel {
   private var presenceSequenceTracker = PresenceSequenceTracker()
   private let startsNearbySync: Bool
   private let sync: NearbySync
+  #if os(macOS)
+    /// MCP writes the same files as the app. This observer belongs to the
+    /// long-lived model, so closing the mirror window cannot stop delivery to
+    /// the iPad while the Mac app is still running.
+    private var externalChangeWatcher: DirectoryWatcher?
+    private var externalReloadRetry: Task<Void, Never>?
+  #endif
 
   init(
     store: NotebookStore = NotebookStore(root: NotebookStore.defaultRoot),
@@ -158,6 +165,9 @@ final class NotebookAppModel {
         )
       }
       loadState = .ready
+      #if os(macOS)
+        startExternalChangeObservation()
+      #endif
       if startsNearbySync {
         sync.start()
       }
@@ -574,6 +584,10 @@ final class NotebookAppModel {
   }
 
   func reloadExternalChanges() {
+    reloadExternalChanges(remainingAttempts: 2)
+  }
+
+  private func reloadExternalChanges(remainingAttempts: Int) {
     guard loadState == .ready else { return }
     do {
       let diskIndex = try store.loadIndex()
@@ -636,10 +650,41 @@ final class NotebookAppModel {
           }
         }
       }
+      #if os(macOS)
+        externalReloadRetry?.cancel()
+        externalReloadRetry = nil
+      #endif
     } catch {
-      // An atomic writer may be between rename notifications. The next event retries.
+      #if os(macOS)
+        guard remainingAttempts > 0 else { return }
+        externalReloadRetry?.cancel()
+        externalReloadRetry = Task { [weak self] in
+          try? await Task.sleep(for: .milliseconds(60))
+          guard !Task.isCancelled else { return }
+          self?.reloadExternalChanges(
+            remainingAttempts: remainingAttempts - 1
+          )
+        }
+      #endif
     }
   }
+
+  #if os(macOS)
+    private func startExternalChangeObservation() {
+      guard externalChangeWatcher == nil else { return }
+      let watcher = DirectoryWatcher(urls: [store.root, store.pagesURL]) {
+        [weak self] in
+        self?.reloadExternalChanges()
+      }
+      watcher.start()
+      externalChangeWatcher = watcher
+
+      // Close the only race that a file watcher cannot observe: an MCP write
+      // may finish after the initial load but just before the descriptors are
+      // installed. A post-install read covers that interval.
+      reloadExternalChanges()
+    }
+  #endif
 
   private func receive(_ message: WireMessage) {
     switch message {

@@ -88,7 +88,7 @@
     <rect width="1024" height="1024" fill="url(#backgroundFill)" filter="url(#backgroundTexture)"/>
   </g>
 
-  <g id="iconArtwork">
+  <g id="iconArtwork" transform="translate(-296.96 -296.96) scale(1.58)">
     <rect x="170" y="150" width="700" height="730" rx="112" fill="#353535" opacity="0.3" transform="translate(0 28)" filter="url(#softShadow)"/>
     <ellipse cx="518" cy="886" rx="350" ry="61" fill="#555" opacity="0.12" filter="url(#softShadow)"/>
 
