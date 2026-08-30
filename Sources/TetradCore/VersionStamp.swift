@@ -1,6 +1,9 @@
 import Foundation
 
 public struct VersionStamp: Codable, Hashable, Sendable, Comparable {
+  /// Largest integer represented exactly by both Swift UInt64 and JavaScript Number.
+  public static let maximumCounter: UInt64 = 9_007_199_254_740_991
+
   public let counter: UInt64
   public let actor: UUID
 
@@ -9,8 +12,9 @@ public struct VersionStamp: Codable, Hashable, Sendable, Comparable {
     self.actor = actor
   }
 
-  public func advanced(by actor: UUID) -> Self {
-    Self(counter: counter + 1, actor: actor)
+  public func advanced(by actor: UUID) -> Self? {
+    guard counter < Self.maximumCounter else { return nil }
+    return Self(counter: counter + 1, actor: actor)
   }
 
   public static func < (lhs: Self, rhs: Self) -> Bool {

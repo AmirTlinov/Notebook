@@ -2,8 +2,8 @@ import Foundation
 
 public struct Notebook: Codable, Equatable, Identifiable, Sendable {
   public let id: UUID
-  public var title: String
-  public var pageIDs: [UUID]
+  public let title: String
+  public internal(set) var pageIDs: [UUID]
 
   public init(id: UUID = UUID(), title: String, pageIDs: [UUID]) {
     precondition(!pageIDs.isEmpty)
@@ -17,10 +17,10 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
   public static let formatVersion = 1
 
   public let format: Int
-  public var notebooks: [Notebook]
-  public var selectedNotebookID: UUID
-  public var selectedPageID: UUID
-  public var stamp: VersionStamp
+  public private(set) var notebooks: [Notebook]
+  public private(set) var selectedNotebookID: UUID
+  public private(set) var selectedPageID: UUID
+  public private(set) var stamp: VersionStamp
 
   public init(
     notebooks: [Notebook],
@@ -34,7 +34,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     self.selectedNotebookID = selectedNotebookID
     self.selectedPageID = selectedPageID
     self.stamp = stamp
-    precondition(isSelectionValid)
+    precondition(isValid)
   }
 
   public static func initial(
@@ -59,7 +59,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     )
   }
 
-  public var selectedNotebookIndex: Int {
+  private var selectedNotebookIndex: Int {
     notebooks.firstIndex { $0.id == selectedNotebookID } ?? 0
   }
 
@@ -71,8 +71,23 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     selectedNotebook.pageIDs.firstIndex(of: selectedPageID) ?? 0
   }
 
-  public var isSelectionValid: Bool {
-    notebooks.first(where: { $0.id == selectedNotebookID })?
+  var isValid: Bool {
+    guard format == Self.formatVersion,
+      !notebooks.isEmpty,
+      stamp.counter <= VersionStamp.maximumCounter
+    else { return false }
+
+    let notebookIDs = notebooks.map(\.id)
+    let pageIDs = notebooks.flatMap(\.pageIDs)
+    guard Set(notebookIDs).count == notebookIDs.count,
+      Set(pageIDs).count == pageIDs.count,
+      notebooks.allSatisfy({
+        !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+          && !$0.pageIDs.isEmpty
+      })
+    else { return false }
+
+    return notebooks.first(where: { $0.id == selectedNotebookID })?
       .pageIDs.contains(selectedPageID) == true
   }
 
@@ -83,19 +98,20 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     pageSize: PageSize
   ) -> PageDocument? {
     precondition(direction == -1 || direction == 1)
+    guard let nextStamp = stamp.advanced(by: actor) else { return nil }
     let notebookIndex = selectedNotebookIndex
     let pageIndex = selectedPageIndex
     let target = pageIndex + direction
     if target >= 0 && target < notebooks[notebookIndex].pageIDs.count {
       selectedPageID = notebooks[notebookIndex].pageIDs[target]
-      stamp = stamp.advanced(by: actor)
+      stamp = nextStamp
       return nil
     }
     guard direction > 0 else { return nil }
     let page = PageDocument(size: pageSize, actor: actor)
     notebooks[notebookIndex].pageIDs.append(page.id)
     selectedPageID = page.id
-    stamp = stamp.advanced(by: actor)
+    stamp = nextStamp
     return page
   }
 
@@ -106,11 +122,12 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     pageSize: PageSize
   ) -> PageDocument? {
     precondition(direction == -1 || direction == 1)
+    guard let nextStamp = stamp.advanced(by: actor) else { return nil }
     let target = selectedNotebookIndex + direction
     if target >= 0 && target < notebooks.count {
       selectedNotebookID = notebooks[target].id
       selectedPageID = notebooks[target].pageIDs[0]
-      stamp = stamp.advanced(by: actor)
+      stamp = nextStamp
       return nil
     }
     guard direction > 0 else { return nil }
@@ -122,12 +139,12 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     notebooks.append(notebook)
     selectedNotebookID = notebook.id
     selectedPageID = page.id
-    stamp = stamp.advanced(by: actor)
+    stamp = nextStamp
     return page
   }
 
   public mutating func merge(_ other: Self) -> Bool {
-    guard stamp < other.stamp, other.isSelectionValid else { return false }
+    guard stamp < other.stamp, other.isValid else { return false }
     notebooks = other.notebooks
     selectedNotebookID = other.selectedNotebookID
     selectedPageID = other.selectedPageID

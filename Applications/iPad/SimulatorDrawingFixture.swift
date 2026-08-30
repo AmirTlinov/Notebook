@@ -4,8 +4,8 @@
   import TetradCore
 
   @MainActor
-  enum SimulatorEraserFixture {
-    static let launchArgument = "--tetrad-eraser-responsiveness-fixture"
+  enum SimulatorDrawingFixture {
+    static let launchArgument = "--tetrad-drawing-responsiveness-fixture"
 
     static var isRequested: Bool {
       ProcessInfo.processInfo.arguments.contains(launchArgument)
@@ -15,7 +15,7 @@
       let fileManager = FileManager.default
       let root = fileManager.temporaryDirectory
         .appendingPathComponent("TetradUITests", isDirectory: true)
-        .appendingPathComponent("EraserResponsiveness", isDirectory: true)
+        .appendingPathComponent("DrawingResponsiveness", isDirectory: true)
       do {
         if fileManager.fileExists(atPath: root.path) {
           try fileManager.removeItem(at: root)
@@ -48,7 +48,7 @@
         try store.saveIndex(initial.index)
         return TetradAppModel(store: store, startsNearbySync: false)
       } catch {
-        fatalError("Не удалось создать лист проверки ластика: \(error)")
+        fatalError("Не удалось создать лист проверки инструментов: \(error)")
       }
     }
 

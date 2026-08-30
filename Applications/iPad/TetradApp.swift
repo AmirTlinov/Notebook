@@ -6,8 +6,8 @@ struct TetradApp: App {
 
   init() {
     #if DEBUG && targetEnvironment(simulator)
-      if SimulatorEraserFixture.isRequested {
-        _model = State(initialValue: SimulatorEraserFixture.makeModel())
+      if SimulatorDrawingFixture.isRequested {
+        _model = State(initialValue: SimulatorDrawingFixture.makeModel())
       } else {
         _model = State(initialValue: TetradAppModel())
       }

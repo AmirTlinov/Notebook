@@ -3,13 +3,11 @@ import TetradCore
 
 struct TetradRootView: View {
   @Environment(TetradAppModel.self) private var model
-  @State private var insertionEdge: Edge = .trailing
 
   var body: some View {
     GeometryReader { geometry in
       ZStack {
         Color(red: 0.965, green: 0.957, blue: 0.925)
-          .ignoresSafeArea()
 
         switch model.loadState {
         case .loading:
@@ -18,12 +16,9 @@ struct TetradRootView: View {
           if let page = model.activePage {
             PageSurface(
               page: page,
-              acceptsPencil: acceptsPencil,
               onNavigate: navigate,
               onUndo: model.undoLastDrawingAction
             )
-              .id(page.id)
-              .transition(pageTransition)
           }
         case .failed(let message):
           Text(message)
@@ -71,30 +66,11 @@ struct TetradRootView: View {
     .preferredColorScheme(.light)
   }
 
-  private var acceptsPencil: Bool {
-    #if os(iOS)
-      true
-    #else
-      false
-    #endif
-  }
-
-  private var pageTransition: AnyTransition {
-    let removal: Edge = insertionEdge == .trailing ? .leading : .trailing
-    return .asymmetric(
-      insertion: .move(edge: insertionEdge).combined(with: .opacity),
-      removal: .move(edge: removal).combined(with: .opacity)
-    )
-  }
-
   private func navigate(horizontal: Bool, direction: Int) {
-    insertionEdge = direction > 0 ? .trailing : .leading
-    withAnimation(.smooth(duration: 0.22)) {
-      if horizontal {
-        model.turnPage(direction)
-      } else {
-        model.changeNotebook(direction)
-      }
+    if horizontal {
+      model.turnPage(direction)
+    } else {
+      model.changeNotebook(direction)
     }
   }
 }

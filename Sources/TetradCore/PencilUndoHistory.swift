@@ -2,7 +2,6 @@ import Foundation
 
 public struct PencilUndoHistory: Sendable {
   private let capacity: Int
-  private var pendingStarts: [UUID: Data] = [:]
   private var snapshots: [UUID: [Data]] = [:]
 
   public init(capacity: Int = 32) {
@@ -10,23 +9,15 @@ public struct PencilUndoHistory: Sendable {
     self.capacity = capacity
   }
 
-  public mutating func observeChange(
+  public mutating func recordAction(
     pageID: UUID,
     before: Data,
-    after: Data,
-    settled: Bool
+    after: Data
   ) {
-    if before != after, pendingStarts[pageID] == nil {
-      pendingStarts[pageID] = before
-    }
-
-    guard settled, let start = pendingStarts.removeValue(forKey: pageID) else {
-      return
-    }
-    guard start != after else { return }
+    guard before != after else { return }
 
     var pageSnapshots = snapshots[pageID, default: []]
-    pageSnapshots.append(start)
+    pageSnapshots.append(before)
     if pageSnapshots.count > capacity {
       pageSnapshots.removeFirst(pageSnapshots.count - capacity)
     }
@@ -38,8 +29,11 @@ public struct PencilUndoHistory: Sendable {
           let previous = pageSnapshots.popLast() else {
       return nil
     }
-    pendingStarts[pageID] = nil
     snapshots[pageID] = pageSnapshots.isEmpty ? nil : pageSnapshots
     return previous
+  }
+
+  public mutating func discardChanges(for pageID: UUID) {
+    snapshots[pageID] = nil
   }
 }

@@ -7,12 +7,12 @@ struct AgentWebElementView: UIViewRepresentable {
   let element: AgentElement
   let onState: (JSONValue) -> Void
 
-  func makeCoordinator() -> Coordinator {
-    Coordinator(onState: onState)
+  func makeCoordinator() -> AgentWebCoordinator {
+    AgentWebCoordinator(onState: onState)
   }
 
   func makeUIView(context: Context) -> WKWebView {
-    Coordinator.makeWebView(coordinator: context.coordinator)
+    AgentWebCoordinator.makeWebView(coordinator: context.coordinator)
   }
 
   func updateUIView(_ webView: WKWebView, context: Context) {
@@ -25,12 +25,12 @@ struct AgentWebElementView: NSViewRepresentable {
   let element: AgentElement
   let onState: (JSONValue) -> Void
 
-  func makeCoordinator() -> Coordinator {
-    Coordinator(onState: onState)
+  func makeCoordinator() -> AgentWebCoordinator {
+    AgentWebCoordinator(onState: onState)
   }
 
   func makeNSView(context: Context) -> WKWebView {
-    Coordinator.makeWebView(coordinator: context.coordinator)
+    AgentWebCoordinator.makeWebView(coordinator: context.coordinator)
   }
 
   func updateNSView(_ webView: WKWebView, context: Context) {
@@ -41,21 +41,28 @@ struct AgentWebElementView: NSViewRepresentable {
 #endif
 
 @MainActor
-final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+  private struct DocumentSignature: Equatable {
+    let html: String
+    let css: String
+    let javaScript: String
+    let state: JSONValue
+  }
+
   var onState: (JSONValue) -> Void
-  private var loadedSignature: String?
+  private var loadedSignature: DocumentSignature?
 
   init(onState: @escaping (JSONValue) -> Void) {
     self.onState = onState
   }
 
   func load(_ element: AgentElement, in webView: WKWebView) {
-    let signature = [
-      element.html,
-      element.css,
-      element.javaScript,
-      Self.json(element.state),
-    ].joined(separator: "\u{1f}")
+    let signature = DocumentSignature(
+      html: element.html,
+      css: element.css,
+      javaScript: element.javaScript,
+      state: element.state
+    )
     guard signature != loadedSignature else { return }
     loadedSignature = signature
     webView.loadHTMLString(Self.document(for: element), baseURL: nil)
@@ -69,12 +76,7 @@ final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
           let object = message.body as? [String: Any],
           object["kind"] as? String == "state",
           let state = object["value"],
-          JSONSerialization.isValidJSONObject(state),
-          let data = try? JSONSerialization.data(
-            withJSONObject: state,
-            options: [.fragmentsAllowed]
-          ),
-          let value = try? JSONDecoder().decode(JSONValue.self, from: data)
+          let value = Self.decodeState(state)
     else { return }
     onState(value)
   }
@@ -88,7 +90,7 @@ final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     decisionHandler(scheme == nil || scheme == "about" ? .allow : .cancel)
   }
 
-  fileprivate static func makeWebView(coordinator: Coordinator) -> WKWebView {
+  fileprivate static func makeWebView(coordinator: AgentWebCoordinator) -> WKWebView {
     let controller = WKUserContentController()
     controller.add(coordinator, name: "tetrad")
     let configuration = WKWebViewConfiguration()
@@ -149,5 +151,13 @@ final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
   private static func json(_ value: JSONValue) -> String {
     guard let data = try? JSONEncoder().encode(value) else { return "{}" }
     return String(decoding: data, as: UTF8.self)
+  }
+
+  static func decodeState(_ object: Any) -> JSONValue? {
+    guard let data = try? JSONSerialization.data(
+      withJSONObject: object,
+      options: [.fragmentsAllowed]
+    ) else { return nil }
+    return try? JSONDecoder().decode(JSONValue.self, from: data)
   }
 }

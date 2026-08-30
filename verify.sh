@@ -17,6 +17,30 @@ trap cleanup EXIT
 cd "$ROOT"
 swift test
 
+if rg -n 'PKCanvasView|override func draw\(' \
+  "$ROOT/Applications/iPad" \
+  --glob '*.swift'; then
+  printf '%s\n' \
+    'iPad должен иметь один визуальный тракт чернил: InkCanvasView.' >&2
+  exit 1
+fi
+if [[ "$(rg -l ': MTKView' "$ROOT/Applications/iPad" --glob '*.swift' | wc -l | tr -d ' ')" != 1 ]]; then
+  printf '%s\n' \
+    'На iPad должен быть ровно один Metal-владелец видимых чернил.' >&2
+  exit 1
+fi
+ERASER_MUTATION_COUNT=$(
+  { rg -o 'erasingPath\(' \
+      "$ROOT/Applications/iPad/PencilCanvasView.swift" || true; } \
+    | wc -l \
+    | tr -d ' '
+)
+if [[ "$ERASER_MUTATION_COUNT" != 1 ]]; then
+  printf '%s\n' \
+    'PencilKit должен вычислять ластик один раз после завершения жеста.' >&2
+  exit 1
+fi
+
 ERASER_APP="$DERIVED/TetradEraserProof.app"
 mkdir -p "$ERASER_APP/Contents/MacOS"
 xcrun swiftc \
@@ -94,9 +118,27 @@ xcodebuild \
   -project Tetrad.xcodeproj \
   -scheme Tetrad \
   -configuration Debug \
+  -collect-test-diagnostics never \
   -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
   -derivedDataPath "$DERIVED/ipad-tests" \
   test \
-  -only-testing:TetradUITests/EraserResponsivenessTests/testEraserKeepsDensePaperResponsive
+  -only-testing:TetradTests \
+  -only-testing:TetradUITests/DrawingResponsivenessTests
 
-printf '\nТетрадь проверена: Swift, локальный ластик, MCP, macOS, iPadOS и отзывчивость Simulator прошли.\n'
+APP_CONTAINER=$(xcrun simctl get_app_container \
+  "$SIMULATOR_ID" com.amirtlinov.tetrad data)
+python3 - "$APP_CONTAINER/tmp/TetradUITests/DrawingResponsiveness/pages" <<'PY'
+import json
+import pathlib
+import sys
+
+pages = list(pathlib.Path(sys.argv[1]).glob("*.json"))
+if len(pages) != 1:
+    raise SystemExit(f"Ожидался один проверочный лист, найдено: {len(pages)}")
+page = json.loads(pages[0].read_text())
+counter = page["drawingStamp"]["counter"]
+if counter != 1:
+    raise SystemExit(f"Одно движение должно сохраниться один раз, получено: {counter}")
+PY
+
+printf '\nТетрадь проверена: Swift, локальные инструменты, MCP, macOS, iPadOS и отзывчивость Simulator прошли.\n'

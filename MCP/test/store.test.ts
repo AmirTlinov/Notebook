@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -111,5 +111,78 @@ test("keeps every agent layer inside the physical page", async () => {
       }),
       StoreError,
     );
+  });
+});
+
+test("rejects a workspace whose selection has no live page", async () => {
+  await withStore(async (store, root) => {
+    const path = join(root, "workspace.json");
+    const workspace = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+    workspace.notebooks = [];
+    await writeFile(path, JSON.stringify(workspace));
+
+    await assert.rejects(store.readWorkspace(), StoreError);
+  });
+});
+
+test("rejects a page with an impossible physical size", async () => {
+  await withStore(async (store, root) => {
+    const path = join(root, "pages", `${pageID}.json`);
+    const page = JSON.parse(await readFile(path, "utf8")) as {
+      size: { width: number; height: number };
+    };
+    page.size.width = 0;
+    await writeFile(path, JSON.stringify(page));
+
+    await assert.rejects(store.readPage(pageID), StoreError);
+  });
+});
+
+test("rejects a page size that could exhaust the native renderer", async () => {
+  await withStore(async (store, root) => {
+    const path = join(root, "pages", `${pageID}.json`);
+    const page = JSON.parse(await readFile(path, "utf8")) as {
+      size: { width: number; height: number };
+    };
+    page.size.width = 1e100;
+    await writeFile(path, JSON.stringify(page));
+
+    await assert.rejects(store.readPage(pageID), StoreError);
+  });
+});
+
+test("rejects a revision that JavaScript cannot represent exactly", async () => {
+  await withStore(async (store, root) => {
+    const path = join(root, "pages", `${pageID}.json`);
+    const page = JSON.parse(await readFile(path, "utf8")) as {
+      agentStamp: { counter: number };
+    };
+    page.agentStamp.counter = Number.MAX_SAFE_INTEGER + 1;
+    await writeFile(path, JSON.stringify(page));
+
+    await assert.rejects(store.readPage(pageID), StoreError);
+  });
+});
+
+test("rejects a non-finite number inside interactive state", async () => {
+  await withStore(async (store, root) => {
+    const path = join(root, "pages", `${pageID}.json`);
+    const page = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+    const encoded = JSON.stringify({
+      ...page,
+      elements: [{
+        id: "counter",
+        kind: "web",
+        frame: { x: 0, y: 0, width: 100, height: 100 },
+        source: "",
+        html: "",
+        css: "",
+        javaScript: "",
+        state: "NON_FINITE_NUMBER",
+      }],
+    }).replace('"NON_FINITE_NUMBER"', "1e400");
+    await writeFile(path, encoded);
+
+    await assert.rejects(store.readPage(pageID), StoreError);
   });
 });

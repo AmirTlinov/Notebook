@@ -24,7 +24,7 @@ public struct TetradStore: Sendable {
     root.appendingPathComponent("pages", isDirectory: true)
   }
 
-  public var previewsURL: URL {
+  private var previewsURL: URL {
     root.appendingPathComponent("previews", isDirectory: true)
   }
 
@@ -79,20 +79,27 @@ public struct TetradStore: Sendable {
   }
 
   public func loadIndex() throws -> WorkspaceIndex {
-    try decoder.decode(
+    let index = try decoder.decode(
       WorkspaceIndex.self,
       from: Data(contentsOf: indexURL)
     )
+    guard index.isValid else { throw corruptFile(at: indexURL) }
+    return index
   }
 
   public func loadPage(_ id: UUID) throws -> PageDocument {
-    try decoder.decode(
+    let page = try decoder.decode(
       PageDocument.self,
       from: Data(contentsOf: pageURL(id))
     )
+    guard page.id == id, page.isValid else {
+      throw corruptFile(at: pageURL(id))
+    }
+    return page
   }
 
   public func saveIndex(_ index: WorkspaceIndex) throws {
+    guard index.isValid else { throw corruptFile(at: indexURL) }
     try prepare()
     try withMutationLock {
       try encoder.encode(index).write(to: indexURL, options: [.atomic])
@@ -100,6 +107,7 @@ public struct TetradStore: Sendable {
   }
 
   public func savePage(_ page: PageDocument) throws {
+    guard page.isValid else { throw corruptFile(at: pageURL(page.id)) }
     try prepare()
     try withMutationLock {
       try writePage(page)
@@ -110,6 +118,7 @@ public struct TetradStore: Sendable {
   /// a newer Pencil drawing or a newer agent layer.
   @discardableResult
   public func saveMergedPage(_ page: PageDocument) throws -> PageDocument {
+    guard page.isValid else { throw corruptFile(at: pageURL(page.id)) }
     try prepare()
     return try withMutationLock {
       var resolved = page
@@ -119,6 +128,12 @@ public struct TetradStore: Sendable {
           PageDocument.self,
           from: Data(contentsOf: url)
         )
+        guard disk.id == page.id,
+          disk.size == page.size,
+          disk.isValid
+        else {
+          throw corruptFile(at: url)
+        }
         _ = resolved.merge(disk)
       }
       try writePage(resolved)
@@ -128,6 +143,13 @@ public struct TetradStore: Sendable {
 
   private func writePage(_ page: PageDocument) throws {
     try encoder.encode(page).write(to: pageURL(page.id), options: [.atomic])
+  }
+
+  private func corruptFile(at url: URL) -> CocoaError {
+    CocoaError(
+      .fileReadCorruptFile,
+      userInfo: [NSFilePathErrorKey: url.path]
+    )
   }
 
   private func withMutationLock<T>(_ operation: () throws -> T) throws -> T {
@@ -142,7 +164,9 @@ public struct TetradStore: Sendable {
         )
         acquired = true
         break
-      } catch {
+      } catch let error as CocoaError
+        where error.code == .fileWriteFileExists
+      {
         if let values = try? lockURL.resourceValues(forKeys: [.contentModificationDateKey]),
            let date = values.contentModificationDate,
            Date().timeIntervalSince(date) > 15 {
@@ -150,6 +174,8 @@ public struct TetradStore: Sendable {
           continue
         }
         Thread.sleep(forTimeInterval: 0.003)
+      } catch {
+        throw error
       }
     }
     guard acquired else {

@@ -8,7 +8,6 @@ import type {
   AgentElement,
   JSONValue,
   PageDocument,
-  PageRect,
 } from "./domain.js";
 import { publicPage, revision } from "./domain.js";
 import { StoreError, TetradStore, assertFrame } from "./store.js";

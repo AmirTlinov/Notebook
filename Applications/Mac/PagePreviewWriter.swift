@@ -20,9 +20,11 @@ enum PagePreviewWriter {
       bitmapFormat: [],
       bytesPerRow: 0,
       bitsPerPixel: 0
-    ) else { return }
+    ) else { throw PreviewError.bitmapAllocation }
     bitmap.size = NSSize(width: page.size.width, height: page.size.height)
-    guard let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return }
+    guard let context = NSGraphicsContext(bitmapImageRep: bitmap) else {
+      throw PreviewError.graphicsContext
+    }
 
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = context
@@ -33,9 +35,9 @@ enum PagePreviewWriter {
       height: page.size.height
     )
     NSColor(
-      calibratedRed: 0.992,
-      green: 0.988,
-      blue: 0.969,
+      calibratedRed: PaperAppearance.background.red,
+      green: PaperAppearance.background.green,
+      blue: PaperAppearance.background.blue,
       alpha: 1
     ).setFill()
     bounds.fill()
@@ -55,10 +57,10 @@ enum PagePreviewWriter {
       y += PhysicalPaper.gridSpacing
     }
     NSColor(
-      calibratedRed: 0.31,
-      green: 0.49,
-      blue: 0.67,
-      alpha: 0.105
+      calibratedRed: PaperAppearance.grid.red,
+      green: PaperAppearance.grid.green,
+      blue: PaperAppearance.grid.blue,
+      alpha: PaperAppearance.gridOpacity
     ).setStroke()
     grid.stroke()
 
@@ -74,7 +76,7 @@ enum PagePreviewWriter {
     NSGraphicsContext.restoreGraphicsState()
 
     guard let png = bitmap.representation(using: .png, properties: [:]) else {
-      return
+      throw PreviewError.pngEncoding
     }
     try FileManager.default.createDirectory(
       at: url.deletingLastPathComponent(),
@@ -85,5 +87,11 @@ enum PagePreviewWriter {
       page.drawingStamp.actor.uuidString.lowercased() + "\n"
     let revisionURL = url.deletingPathExtension().appendingPathExtension("revision")
     try Data(revision.utf8).write(to: revisionURL, options: [.atomic])
+  }
+
+  private enum PreviewError: Error {
+    case bitmapAllocation
+    case graphicsContext
+    case pngEncoding
   }
 }

@@ -17,7 +17,7 @@ final class NearbySync {
   }
 
   var onMessage: ((WireMessage) -> Void)?
-  var onConnectionChange: ((Bool) -> Void)?
+  var onConnect: (() -> Void)?
 
   private let role: Role
   private let peerName: String
@@ -123,7 +123,7 @@ final class NearbySync {
     guard connections[id] == nil else { return }
     logger.info("Opening connection \(id, privacy: .public)")
     connections[id] = connection
-    onConnectionChange?(true)
+    onConnect?()
     do {
       for try await message in connection.messages {
         onMessage?(message.content)
@@ -132,7 +132,6 @@ final class NearbySync {
       logger.error("Connection \(id, privacy: .public) stopped: \(error.localizedDescription, privacy: .public)")
     }
     connections[id] = nil
-    onConnectionChange?(!connections.isEmpty)
   }
 
   private func wireParameters() -> NWParametersBuilder<TetradWireProtocol> {

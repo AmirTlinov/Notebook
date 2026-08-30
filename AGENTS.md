@@ -9,7 +9,7 @@ Tetrad/
 |-- Applications/
 |   |-- project.yml           # Два нативных target: iPad и Mac.
 |   |-- Shared/               # Лист, сетка, WebKit-слои, модель и Network.framework.
-|   |-- iPad/                 # PencilKit и полноэкранный вход.
+|   |-- iPad/                 # UIKit-ввод, единый Metal-холст и PencilKit-хранилище.
 |   `-- Mac/                  # Тихое зеркало, file watch и PNG для агента.
 |-- MCP/                      # Локальный stdio-сервер над файлами Mac-приложения.
 |-- docs/research.md          # Проверенные внешние API и выбранные следствия.

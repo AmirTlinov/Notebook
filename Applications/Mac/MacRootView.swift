@@ -4,6 +4,10 @@ import TetradCore
 private struct PreviewKey: Hashable {
   let pageID: UUID
   let drawingStamp: VersionStamp
+
+  var revision: String {
+    "\(drawingStamp.counter)@\(drawingStamp.actor.uuidString.lowercased())"
+  }
 }
 
 struct MacRootView: View {
@@ -26,15 +30,34 @@ struct MacRootView: View {
         watcher?.stop()
         watcher = nil
       }
-      .task(id: previewKey) {
-        guard let page = model.activePage else { return }
-        try? PagePreviewWriter.write(page, to: model.store.previewURL(page.id))
+      .task(id: previewKeys) {
+        for key in previewKeys {
+          guard !Task.isCancelled, let page = model.pages[key.pageID] else {
+            return
+          }
+          let revisionURL = model.store.previewRevisionURL(page.id)
+          let renderedRevision = try? String(
+            contentsOf: revisionURL,
+            encoding: .utf8
+          ).trimmingCharacters(in: .whitespacesAndNewlines)
+          let previewExists = FileManager.default.fileExists(
+            atPath: model.store.previewURL(page.id).path
+          )
+          guard !previewExists || renderedRevision != key.revision else {
+            continue
+          }
+          try? PagePreviewWriter.write(
+            page,
+            to: model.store.previewURL(page.id)
+          )
+          await Task.yield()
+        }
       }
   }
 
-  private var previewKey: PreviewKey? {
-    model.activePage.map {
-      PreviewKey(pageID: $0.id, drawingStamp: $0.drawingStamp)
-    }
+  private var previewKeys: [PreviewKey] {
+    model.pages.values
+      .map { PreviewKey(pageID: $0.id, drawingStamp: $0.drawingStamp) }
+      .sorted { $0.pageID.uuidString < $1.pageID.uuidString }
   }
 }

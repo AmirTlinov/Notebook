@@ -1,13 +1,28 @@
 import Foundation
 
 public struct PageSize: Codable, Equatable, Sendable {
+  /// Larger values are not a physical iPad page and can exhaust render memory.
+  public static let maximumDimension = 2_048.0
+
   public let width: Double
   public let height: Double
 
   public init(width: Double, height: Double) {
-    precondition(width > 0 && height > 0)
+    precondition(
+      width.isFinite && height.isFinite
+        && width > 0 && height > 0
+        && width <= Self.maximumDimension
+        && height <= Self.maximumDimension
+    )
     self.width = width
     self.height = height
+  }
+
+  var isValid: Bool {
+    width.isFinite && height.isFinite
+      && width > 0 && height > 0
+      && width <= Self.maximumDimension
+      && height <= Self.maximumDimension
   }
 }
 
@@ -18,11 +33,27 @@ public struct PageRect: Codable, Equatable, Sendable {
   public let height: Double
 
   public init(x: Double, y: Double, width: Double, height: Double) {
-    precondition(width > 0 && height > 0)
+    precondition(
+      x.isFinite && y.isFinite && width.isFinite && height.isFinite
+        && width > 0 && height > 0
+    )
     self.x = x
     self.y = y
     self.width = width
     self.height = height
+  }
+
+  func isContained(in pageSize: PageSize) -> Bool {
+    x.isFinite
+      && y.isFinite
+      && width.isFinite
+      && height.isFinite
+      && width > 0
+      && height > 0
+      && x >= 0
+      && y >= 0
+      && x + width <= pageSize.width
+      && y + height <= pageSize.height
   }
 }
 
@@ -51,7 +82,7 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
     javaScript: String = "",
     state: JSONValue = .object([:])
   ) {
-    precondition(!id.isEmpty)
+    precondition(!id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     self.id = id
     self.kind = kind
     self.frame = frame
@@ -82,10 +113,10 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   public let format: Int
   public let id: UUID
   public let size: PageSize
-  public var drawingData: Data
-  public var drawingStamp: VersionStamp
-  public var elements: [AgentElement]
-  public var agentStamp: VersionStamp
+  public private(set) var drawingData: Data
+  public private(set) var drawingStamp: VersionStamp
+  public private(set) var elements: [AgentElement]
+  public private(set) var agentStamp: VersionStamp
 
   public init(
     id: UUID = UUID(),
@@ -101,25 +132,75 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     drawingStamp = VersionStamp(counter: 0, actor: actor)
     self.elements = elements
     agentStamp = VersionStamp(counter: 0, actor: actor)
+    precondition(isValid)
   }
 
-  public mutating func replaceDrawing(_ data: Data, actor: UUID) {
-    guard data != drawingData else { return }
+  var isValid: Bool {
+    guard format == Self.formatVersion,
+      size.isValid,
+      drawingStamp.counter <= VersionStamp.maximumCounter,
+      agentStamp.counter <= VersionStamp.maximumCounter
+    else { return false }
+
+    let ids = elements.map(\.id)
+    return Set(ids).count == ids.count
+      && elements.allSatisfy {
+        !$0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+          && $0.frame.isContained(in: size)
+          && $0.state.isValid
+      }
+  }
+
+  @discardableResult
+  public mutating func replaceDrawing(_ data: Data, actor: UUID) -> Bool {
+    guard data != drawingData,
+      let stamp = drawingStamp.advanced(by: actor)
+    else { return false }
+    return replaceDrawing(data, stamp: stamp)
+  }
+
+  @discardableResult
+  public mutating func replaceDrawing(
+    _ data: Data,
+    stamp: VersionStamp
+  ) -> Bool {
+    guard drawingStamp < stamp,
+      stamp.counter <= VersionStamp.maximumCounter
+    else { return false }
     drawingData = data
-    drawingStamp = drawingStamp.advanced(by: actor)
+    drawingStamp = stamp
+    return true
   }
 
+  @discardableResult
   public mutating func replaceElements(
     _ elements: [AgentElement],
     actor: UUID
-  ) {
-    guard elements != self.elements else { return }
-    self.elements = elements
-    agentStamp = agentStamp.advanced(by: actor)
+  ) -> Bool {
+    guard elements != self.elements,
+      let stamp = agentStamp.advanced(by: actor)
+    else { return false }
+    return replaceElements(elements, stamp: stamp)
+  }
+
+  @discardableResult
+  public mutating func replaceElements(
+    _ elements: [AgentElement],
+    stamp: VersionStamp
+  ) -> Bool {
+    guard agentStamp < stamp,
+      stamp.counter <= VersionStamp.maximumCounter
+    else { return false }
+    var candidate = self
+    candidate.elements = elements
+    candidate.agentStamp = stamp
+    guard candidate.isValid else { return false }
+    self = candidate
+    return true
   }
 
   public mutating func merge(_ other: Self) -> Bool {
-    guard id == other.id else { return false }
+    guard id == other.id, size == other.size, other.isValid else { return false }
     var changed = false
     if drawingStamp < other.drawingStamp {
       drawingData = other.drawingData

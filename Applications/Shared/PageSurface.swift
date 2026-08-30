@@ -5,7 +5,6 @@ struct PageSurface: View {
   @Environment(TetradAppModel.self) private var model
 
   let page: PageDocument
-  let acceptsPencil: Bool
   let onNavigate: (_ horizontal: Bool, _ direction: Int) -> Void
   let onUndo: () -> Void
 
@@ -21,24 +20,29 @@ struct PageSurface: View {
       )
       ZStack(alignment: .topLeading) {
         GridPaperView()
-        if acceptsPencil {
-          #if os(iOS)
-            PencilCanvasView(
-              pageID: page.id,
-              drawingData: page.drawingData,
-              penStyle: model.penStyle,
-              eraserStyle: model.eraserStyle,
-              drawingTool: model.drawingTool,
-              onToggleTool: model.toggleDrawingTool,
-              onNavigate: onNavigate,
-              onUndo: onUndo,
-              onChange: model.replaceDrawing
-            )
-          #endif
-        } else {
+        #if os(iOS)
+          PencilCanvasView(
+            pageID: page.id,
+            drawingData: page.drawingData,
+            penStyle: model.penStyle,
+            eraserStyle: model.eraserStyle,
+            drawingTool: model.drawingTool,
+            onNavigate: onNavigate,
+            onUndo: onUndo,
+            reserveAction: model.reserveDrawingAction,
+            commitAction: { data, previousData, pageID, stamp in
+              model.commitDrawingAction(
+                data,
+                replacing: previousData,
+                pageID: pageID,
+                stamp: stamp
+              )
+            }
+          )
+        #else
           PencilDrawingView(page: page)
             .allowsHitTesting(false)
-        }
+        #endif
         AgentOverlayView(elements: page.elements) { elementID, state in
           model.commitElementState(elementID: elementID, state: state)
         }

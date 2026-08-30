@@ -8,6 +8,19 @@ public enum JSONValue: Codable, Equatable, Sendable {
   case array([JSONValue])
   case object([String: JSONValue])
 
+  var isValid: Bool {
+    switch self {
+    case .null, .bool, .string:
+      true
+    case .number(let value):
+      value.isFinite
+    case .array(let values):
+      values.allSatisfy(\.isValid)
+    case .object(let values):
+      values.values.allSatisfy(\.isValid)
+    }
+  }
+
   public init(from decoder: Decoder) throws {
     let container = try decoder.singleValueContainer()
     if container.decodeNil() {

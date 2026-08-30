@@ -1,9 +1,9 @@
-export interface VersionStamp {
+interface VersionStamp {
   counter: number;
   actor: string;
 }
 
-export interface PageSize {
+interface PageSize {
   width: number;
   height: number;
 }
@@ -15,7 +15,7 @@ export interface PageRect {
   height: number;
 }
 
-export type AgentElementKind = "markdown" | "web";
+type AgentElementKind = "markdown" | "web";
 export type JSONValue =
   | null
   | boolean
@@ -45,7 +45,7 @@ export interface PageDocument {
   agentStamp: VersionStamp;
 }
 
-export interface Notebook {
+interface Notebook {
   id: string;
   title: string;
   pageIDs: string[];

@@ -40,12 +40,11 @@ targets:
         NSBonjourServices:
           - _tetrad._tcp
         UILaunchScreen: {}
-        UIRequiresFullScreen: true
-        UIStatusBarHidden: true
-        UIViewControllerBasedStatusBarAppearance: true
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.tetrad
@@ -62,7 +61,22 @@ targets:
     scheme:
       gatherCoverageData: false
       testTargets:
+        - TetradTests
         - TetradUITests
+
+  TetradTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "27.0"
+    sources:
+      - path: Tests
+    dependencies:
+      - target: Tetrad
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.tetrad.tests
+        GENERATE_INFOPLIST_FILE: true
+        TARGETED_DEVICE_FAMILY: 2
 
   TetradUITests:
     type: bundle.ui-testing

@@ -65,7 +65,8 @@ struct PenStyle: Equatable, Sendable {
 struct EraserStyle: Equatable, Sendable {
   static let minimumContactWidth = 3.0
   static let minimumSelectableWidth = 9.0
-  static let maximumSelectableWidth = 48.0
+  /// Twenty notebook cells, or ten physical centimetres on a full-size iPad.
+  static let maximumSelectableWidth = PhysicalPaper.gridSpacing * 20
   static let standard = Self(maximumWidth: 14.0)
 
   let maximumWidth: Double
