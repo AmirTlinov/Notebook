@@ -3,23 +3,36 @@
   <desc id="description">A warm white spiral notebook with seven metal rings, layered pages, and a blue-gray elastic band.</desc>
   <defs>
     <radialGradient id="backgroundFill" cx="50%" cy="35%" r="76%">
-      <stop offset="0" stop-color="#f3f3f3"/>
-      <stop offset="0.68" stop-color="#e8e8e8"/>
-      <stop offset="1" stop-color="#d6d6d6"/>
+      <stop offset="0" stop-color="#f1f0f0"/>
+      <stop offset="0.58" stop-color="#e1dfde"/>
+      <stop offset="1" stop-color="#cbc8c6"/>
     </radialGradient>
-    <linearGradient id="coverFill" x1="230" y1="130" x2="824" y2="850" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#fffef9"/>
-      <stop offset="0.55" stop-color="#f7f4ec"/>
-      <stop offset="1" stop-color="#e9e4da"/>
+    <linearGradient id="coverFill" x1="520" y1="122" x2="520" y2="852" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fffaf0"/>
+      <stop offset="0.12" stop-color="#fff8ec"/>
+      <stop offset="0.22" stop-color="#fff8eb"/>
+      <stop offset="0.36" stop-color="#efe7dc"/>
+      <stop offset="0.48" stop-color="#e9e1d7"/>
+      <stop offset="0.62" stop-color="#f2eadf"/>
+      <stop offset="0.9" stop-color="#f1e9dc"/>
+      <stop offset="1" stop-color="#d8cec0"/>
     </linearGradient>
     <linearGradient id="pageFill" x1="250" y1="134" x2="810" y2="890" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#faf8f1"/>
-      <stop offset="1" stop-color="#d8d2c7"/>
+      <stop offset="0" stop-color="#f6f1e8"/>
+      <stop offset="1" stop-color="#b1a89d"/>
     </linearGradient>
-    <linearGradient id="elasticFill" x1="692" y1="120" x2="738" y2="886" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#6f879d"/>
-      <stop offset="0.48" stop-color="#526d85"/>
-      <stop offset="1" stop-color="#405b72"/>
+    <linearGradient id="elasticFill" x1="692" y1="503" x2="739" y2="503" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3d5265"/>
+      <stop offset="0.14" stop-color="#7c8da0"/>
+      <stop offset="0.48" stop-color="#6c7e90"/>
+      <stop offset="0.84" stop-color="#586b7e"/>
+      <stop offset="1" stop-color="#34495c"/>
+    </linearGradient>
+    <linearGradient id="elasticLength" x1="715" y1="120" x2="715" y2="886" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#d2d8dd" stop-opacity="0.32"/>
+      <stop offset="0.18" stop-color="#fff" stop-opacity="0.04"/>
+      <stop offset="0.72" stop-color="#263b4e" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#1f3447" stop-opacity="0.3"/>
     </linearGradient>
     <linearGradient id="metalStroke" x1="148" y1="0" x2="244" y2="0" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#303a3d"/>
@@ -37,27 +50,30 @@
     </linearGradient>
     <filter id="backgroundTexture" x="-5%" y="-5%" width="110%" height="110%" color-interpolation-filters="sRGB">
       <feTurbulence type="fractalNoise" baseFrequency="0.62" numOctaves="3" seed="13" stitchTiles="stitch" result="noise"/>
-      <feColorMatrix in="noise" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.08 0" result="grain"/>
+      <feColorMatrix in="noise" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.13 0" result="grain"/>
       <feBlend in="SourceGraphic" in2="grain" mode="soft-light"/>
     </filter>
     <filter id="coverTexture" x="-4%" y="-4%" width="108%" height="108%" color-interpolation-filters="sRGB">
-      <feTurbulence type="fractalNoise" baseFrequency="0.48" numOctaves="4" seed="29" stitchTiles="stitch" result="noise"/>
-      <feColorMatrix in="noise" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.13 0" result="grain"/>
-      <feBlend in="SourceGraphic" in2="grain" mode="multiply"/>
+      <feTurbulence type="fractalNoise" baseFrequency="0.32" numOctaves="4" seed="29" stitchTiles="stitch" result="noise"/>
+      <feColorMatrix in="noise" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.22 0" result="grain"/>
+      <feBlend in="SourceGraphic" in2="grain" mode="soft-light"/>
     </filter>
     <filter id="softShadow" x="-30%" y="-20%" width="160%" height="150%" color-interpolation-filters="sRGB">
       <feGaussianBlur stdDeviation="5"/>
     </filter>
+    <filter id="ringCastShadow" x="-25%" y="-40%" width="170%" height="190%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="3" dy="5" stdDeviation="3" flood-color="#1c1f20" flood-opacity="0.38"/>
+    </filter>
     <clipPath id="coverClip">
       <rect x="178" y="122" width="684" height="730" rx="108"/>
     </clipPath>
-    <g id="ring">
+    <g id="ring" filter="url(#ringCastShadow)">
       <rect x="211" y="-16" width="40" height="32" rx="13" fill="#1d1d1b" opacity="0.2" filter="url(#softShadow)"/>
       <rect x="214" y="-14" width="35" height="28" rx="12" fill="url(#slotFill)"/>
-      <path d="M240 -7C211 -18 168 -18 156 -5C145 7 168 19 225 20" fill="none" stroke="#444d50" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M240 -7C211 -18 168 -18 156 -5C145 7 168 19 225 20" fill="none" stroke="url(#metalStroke)" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M236 5C207 -6 166 -6 155 7C145 19 170 31 225 30" fill="none" stroke="#444d50" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M236 5C207 -6 166 -6 155 7C145 19 170 31 225 30" fill="none" stroke="url(#metalStroke)" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M240 -7C211 -18 168 -18 156 -5C145 7 168 19 225 20" fill="none" stroke="#4a5457" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M240 -7C211 -18 168 -18 156 -5C145 7 168 19 225 20" fill="none" stroke="url(#metalStroke)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M236 5C207 -6 166 -6 155 7C145 19 170 31 225 30" fill="none" stroke="#4a5457" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M236 5C207 -6 166 -6 155 7C145 19 170 31 225 30" fill="none" stroke="url(#metalStroke)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="M158 -4C173 -11 205 -10 232 -2M158 8C175 1 205 2 229 10" fill="none" stroke="#f4f4ef" stroke-width="1.8" stroke-linecap="round" opacity="0.78"/>
     </g>
   </defs>
@@ -70,35 +86,37 @@
 
   <g id="notebook">
     <g id="pageStack">
-      <rect x="185" y="150" width="680" height="736" rx="106" fill="#c9c3b8" stroke="#b8b1a6" stroke-width="3"/>
+      <rect x="185" y="150" width="680" height="736" rx="106" fill="#aca296" stroke="#9c9286" stroke-width="3"/>
       <rect x="183" y="144" width="680" height="734" rx="106" fill="url(#pageFill)" stroke="#c6c0b5" stroke-width="3"/>
-      <rect x="181" y="137" width="680" height="730" rx="106" fill="#eeeae1" stroke="#cec8bd" stroke-width="3"/>
-      <path d="M236 856C380 868 662 868 813 852M231 868C386 881 665 880 815 864M229 879C389 891 663 891 807 876" fill="none" stroke="#aaa397" stroke-width="3" stroke-linecap="round" opacity="0.62"/>
+      <rect x="181" y="137" width="680" height="730" rx="106" fill="#d1c8bc" stroke="#b9b0a4" stroke-width="3"/>
+      <path d="M236 856C380 868 662 868 813 852M231 868C386 881 665 880 815 864M229 879C389 891 663 891 807 876" fill="none" stroke="#948b80" stroke-width="3" stroke-linecap="round" opacity="0.66"/>
     </g>
 
     <g id="cover">
-      <rect x="178" y="122" width="684" height="730" rx="108" fill="url(#coverFill)" stroke="#ded8cd" stroke-width="4"/>
-      <rect x="182" y="126" width="676" height="722" rx="104" fill="url(#coverFill)" filter="url(#coverTexture)" clip-path="url(#coverClip)" opacity="0.5"/>
+      <rect x="178" y="122" width="684" height="730" rx="108" fill="url(#coverFill)" stroke="#cfc7bb" stroke-width="4"/>
+      <rect x="182" y="126" width="676" height="722" rx="104" fill="url(#coverFill)" filter="url(#coverTexture)" clip-path="url(#coverClip)" opacity="0.72"/>
       <rect x="185" y="129" width="670" height="716" rx="101" fill="none" stroke="#fff" stroke-width="4" opacity="0.62"/>
       <path d="M205 818C353 839 688 839 831 811" fill="none" stroke="#bdb6aa" stroke-width="5" opacity="0.38"/>
-      <path d="M821 176V786" fill="none" stroke="#c9c2b7" stroke-width="5" opacity="0.25"/>
+      <path d="M840 188V774" fill="none" stroke="#bdb4a8" stroke-width="5" opacity="0.25"/>
     </g>
 
-    <g id="binding">
-      <use href="#ring" transform="translate(0 247)"/>
-      <use href="#ring" transform="translate(0 331)"/>
-      <use href="#ring" transform="translate(0 415)"/>
-      <use href="#ring" transform="translate(0 502)"/>
-      <use href="#ring" transform="translate(0 588)"/>
-      <use href="#ring" transform="translate(0 672)"/>
-      <use href="#ring" transform="translate(0 756)"/>
+    <g id="binding" transform="translate(8 0)">
+      <use href="#ring" transform="translate(0 250)"/>
+      <use href="#ring" transform="translate(0 335)"/>
+      <use href="#ring" transform="translate(0 421)"/>
+      <use href="#ring" transform="translate(0 506)"/>
+      <use href="#ring" transform="translate(0 592)"/>
+      <use href="#ring" transform="translate(0 677)"/>
+      <use href="#ring" transform="translate(0 762)"/>
     </g>
 
     <g id="elasticBand">
       <rect x="687" y="118" width="57" height="772" rx="5" fill="#1f2d38" opacity="0.34" filter="url(#softShadow)"/>
-      <rect x="692" y="120" width="47" height="766" rx="4" fill="url(#elasticFill)" stroke="#354d62" stroke-width="3"/>
-      <path d="M698 122V884M704 122V884M710 122V884M716 122V884M722 122V884M728 122V884M734 122V884" fill="none" stroke="#283f53" stroke-width="2" opacity="0.72"/>
-      <path d="M701 122V884M713 122V884M725 122V884M737 122V884" fill="none" stroke="#91a3b1" stroke-width="1.5" opacity="0.5"/>
+      <rect x="692" y="120" width="47" height="766" rx="4" fill="url(#elasticFill)" stroke="#46596d" stroke-width="3"/>
+      <rect x="693.5" y="121.5" width="44" height="763" rx="3" fill="url(#elasticLength)"/>
+      <path d="M698 123V883M704 123V883M710 123V883M716 123V883M722 123V883M728 123V883M734 123V883" fill="none" stroke="#354b5e" stroke-width="1.4" opacity="0.48"/>
+      <path d="M700 123V883M706 123V883M712 123V883M718 123V883M724 123V883M730 123V883M736 123V883" fill="none" stroke="#a9b5bf" stroke-width="0.9" opacity="0.4"/>
+      <path d="M695 128V878" fill="none" stroke="#d7dce0" stroke-width="1.4" opacity="0.3"/>
     </g>
   </g>
 </svg>
