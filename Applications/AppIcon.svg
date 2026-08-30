@@ -67,14 +67,20 @@
     <clipPath id="coverClip">
       <rect x="178" y="122" width="684" height="730" rx="108"/>
     </clipPath>
-    <g id="ring" filter="url(#ringCastShadow)">
+    <clipPath id="pageStackClip">
+      <rect x="185" y="150" width="680" height="736" rx="106"/>
+    </clipPath>
+    <g id="ringBack" filter="url(#ringCastShadow)">
+      <path d="M236 5C207 -6 166 -6 155 7C145 19 170 31 225 30" fill="none" stroke="#4a5457" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M236 5C207 -6 166 -6 155 7C145 19 170 31 225 30" fill="none" stroke="url(#metalStroke)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M158 8C175 1 205 2 229 10" fill="none" stroke="#f4f4ef" stroke-width="1.8" stroke-linecap="round" opacity="0.78"/>
+    </g>
+    <g id="ringFront" filter="url(#ringCastShadow)">
       <rect x="211" y="-16" width="40" height="32" rx="13" fill="#1d1d1b" opacity="0.2" filter="url(#softShadow)"/>
       <rect x="214" y="-14" width="35" height="28" rx="12" fill="url(#slotFill)"/>
       <path d="M240 -7C211 -18 168 -18 156 -5C145 7 168 19 225 20" fill="none" stroke="#4a5457" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="M240 -7C211 -18 168 -18 156 -5C145 7 168 19 225 20" fill="none" stroke="url(#metalStroke)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M236 5C207 -6 166 -6 155 7C145 19 170 31 225 30" fill="none" stroke="#4a5457" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M236 5C207 -6 166 -6 155 7C145 19 170 31 225 30" fill="none" stroke="url(#metalStroke)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M158 -4C173 -11 205 -10 232 -2M158 8C175 1 205 2 229 10" fill="none" stroke="#f4f4ef" stroke-width="1.8" stroke-linecap="round" opacity="0.78"/>
+      <path d="M158 -4C173 -11 205 -10 232 -2" fill="none" stroke="#f4f4ef" stroke-width="1.8" stroke-linecap="round" opacity="0.78"/>
     </g>
   </defs>
 
@@ -89,7 +95,19 @@
       <rect x="185" y="150" width="680" height="736" rx="106" fill="#aca296" stroke="#9c9286" stroke-width="3"/>
       <rect x="183" y="144" width="680" height="734" rx="106" fill="url(#pageFill)" stroke="#c6c0b5" stroke-width="3"/>
       <rect x="181" y="137" width="680" height="730" rx="106" fill="#d1c8bc" stroke="#b9b0a4" stroke-width="3"/>
-      <path d="M236 856C380 868 662 868 813 852M231 868C386 881 665 880 815 864M229 879C389 891 663 891 807 876" fill="none" stroke="#948b80" stroke-width="3" stroke-linecap="round" opacity="0.66"/>
+      <g id="pageEdgeLines" clip-path="url(#pageStackClip)">
+        <path d="M246 856C384 868 657 868 804 852M244 868C390 881 660 880 805 864M244 879C394 891 658 891 798 876" fill="none" stroke="#948b80" stroke-width="3" stroke-linecap="round" opacity="0.66"/>
+      </g>
+    </g>
+
+    <g id="bindingBack" transform="translate(8 0)">
+      <use href="#ringBack" transform="translate(0 250)"/>
+      <use href="#ringBack" transform="translate(0 335)"/>
+      <use href="#ringBack" transform="translate(0 421)"/>
+      <use href="#ringBack" transform="translate(0 506)"/>
+      <use href="#ringBack" transform="translate(0 592)"/>
+      <use href="#ringBack" transform="translate(0 677)"/>
+      <use href="#ringBack" transform="translate(0 762)"/>
     </g>
 
     <g id="cover">
@@ -100,14 +118,14 @@
       <path d="M840 188V774" fill="none" stroke="#bdb4a8" stroke-width="5" opacity="0.25"/>
     </g>
 
-    <g id="binding" transform="translate(8 0)">
-      <use href="#ring" transform="translate(0 250)"/>
-      <use href="#ring" transform="translate(0 335)"/>
-      <use href="#ring" transform="translate(0 421)"/>
-      <use href="#ring" transform="translate(0 506)"/>
-      <use href="#ring" transform="translate(0 592)"/>
-      <use href="#ring" transform="translate(0 677)"/>
-      <use href="#ring" transform="translate(0 762)"/>
+    <g id="bindingFront" transform="translate(8 0)">
+      <use href="#ringFront" transform="translate(0 250)"/>
+      <use href="#ringFront" transform="translate(0 335)"/>
+      <use href="#ringFront" transform="translate(0 421)"/>
+      <use href="#ringFront" transform="translate(0 506)"/>
+      <use href="#ringFront" transform="translate(0 592)"/>
+      <use href="#ringFront" transform="translate(0 677)"/>
+      <use href="#ringFront" transform="translate(0 762)"/>
     </g>
 
     <g id="elasticBand">
