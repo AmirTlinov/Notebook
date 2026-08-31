@@ -91,6 +91,32 @@ func legacySpatialOwnersDecodeAsVersionTwo() throws {
   #expect(board.freeItems.map(\.itemID) == [legacyItemID])
   #expect(presence.format == SessionPresence.formatVersion)
   #expect(presence.focusedItemID == legacyItemID)
+  #expect(presence.documentPageIndex == 0)
+}
+
+@Test("Присутствие до пагинации документа открывается на первом листе")
+func versionTwoPresenceDefaultsToFirstDocumentPage() throws {
+  let data = try JSONSerialization.data(withJSONObject: [
+    "format": 2,
+    "mode": "document",
+    "camera": [
+      "center": [
+        "tileX": 0,
+        "tileY": 0,
+        "localX": 0.0,
+        "localY": 0.0
+      ],
+      "scale": 1.0
+    ],
+    "viewport": ["x": 834.0, "y": 1_194.0],
+    "focusedItemID": legacyItemID.uuidString,
+    "openProgress": 1.0
+  ])
+
+  let presence = try JSONDecoder().decode(SessionPresence.self, from: data)
+
+  #expect(presence.format == SessionPresence.formatVersion)
+  #expect(presence.documentPageIndex == 0)
 }
 
 @Test("Старая доска возвращает отсутствующие тетради из каталога")

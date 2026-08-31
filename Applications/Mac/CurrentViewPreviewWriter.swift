@@ -21,7 +21,8 @@ enum CurrentViewPreviewWriter {
     if let document, let documentState,
       DocumentSnapshotCache.shared.image(
         for: document,
-        state: documentState
+        state: documentState,
+        pageIndex: presence.documentPageIndex
       ) == nil
     {
       throw PreviewError.documentSnapshotPending

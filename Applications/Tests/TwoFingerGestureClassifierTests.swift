@@ -213,6 +213,139 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
     )
   }
 
+  func testPageTracksTheFingerOneToOneAfterIntentAcquisition() {
+    let position = PageMotionPhysics.trackedPosition(
+      origin: 0,
+      translation: -250,
+      extent: 1_000,
+      availability: PageMotionAvailability(previous: true, next: true)
+    )
+
+    XCTAssertEqual(position, -0.25, accuracy: 0.000_1)
+  }
+
+  func testUnavailablePageHasAVisibleButBoundedPaperEdge() {
+    let position = PageMotionPhysics.trackedPosition(
+      origin: 0,
+      translation: 500,
+      extent: 1_000,
+      availability: PageMotionAvailability(previous: false, next: true)
+    )
+
+    XCTAssertGreaterThan(position, 0)
+    XCTAssertLessThanOrEqual(position, PageMotionPhysics.edgeTravel)
+  }
+
+  func testSlowShortPageMoveReturnsToItsOwner() {
+    let target = PageMotionPhysics.settlementTarget(
+      position: -0.2,
+      velocity: -0.1,
+      availability: PageMotionAvailability(previous: true, next: true)
+    )
+
+    XCTAssertEqual(target, 0)
+  }
+
+  func testShortFastFlickCommitsTheNextPage() {
+    let target = PageMotionPhysics.settlementTarget(
+      position: -0.14,
+      velocity: -1,
+      availability: PageMotionAvailability(previous: true, next: true)
+    )
+
+    XCTAssertEqual(target, -1)
+  }
+
+  func testClassifierSpeedStillProducesAVisiblePageFlick() {
+    let target = PageMotionPhysics.settlementTarget(
+      position: -28.0 / 834.0,
+      velocity: -700.0 / 834.0,
+      availability: PageMotionAvailability(previous: true, next: true)
+    )
+
+    XCTAssertEqual(target, -1)
+  }
+
+  func testReleaseProjectionRespectsAReversal() {
+    let target = PageMotionPhysics.settlementTarget(
+      position: -0.48,
+      velocity: 1.2,
+      availability: PageMotionAvailability(previous: true, next: true)
+    )
+
+    XCTAssertEqual(target, 0)
+  }
+
+  func testCriticalSettlementStartsWithoutADiscontinuityAndConverges() {
+    let settlement = PageMotionSettlement(
+      start: -0.43,
+      target: -1,
+      initialVelocity: -0.7,
+      angularFrequency: 17,
+      maximumDuration: 0.38
+    )
+
+    XCTAssertEqual(settlement.sample(at: 0).position, -0.43, accuracy: 0.000_1)
+    XCTAssertEqual(settlement.sample(at: 0).velocity, -0.7, accuracy: 0.000_1)
+    XCTAssertEqual(settlement.sample(at: 0.38).position, -1, accuracy: 0.02)
+  }
+
+  @MainActor
+  func testPageMotionCommitsSelectionExactlyOnceAfterSettlement() async {
+    let controller = PageMotionController()
+    var commits: [Int] = []
+    var finishes = 0
+    let availability = PageMotionAvailability(previous: true, next: true)
+    controller.begin(
+      PageNavigationSample(translation: 0, velocity: 0),
+      extent: 1_000,
+      availability: availability,
+      onCommit: { commits.append($0) },
+      onFinish: { finishes += 1 }
+    )
+    controller.end(
+      PageNavigationSample(translation: -420, velocity: -250),
+      reduceMotion: false
+    )
+
+    try? await Task.sleep(for: .milliseconds(450))
+
+    XCTAssertEqual(commits, [1])
+    XCTAssertEqual(finishes, 1)
+    XCTAssertEqual(controller.phase, .idle)
+    XCTAssertEqual(controller.position, 0)
+  }
+
+  @MainActor
+  func testNewGestureInterruptsSettlementAtItsPresentedPosition() async {
+    let controller = PageMotionController()
+    let availability = PageMotionAvailability(previous: true, next: true)
+    controller.begin(
+      PageNavigationSample(translation: 0, velocity: 0),
+      extent: 1_000,
+      availability: availability,
+      onCommit: { _ in },
+      onFinish: {}
+    )
+    controller.end(
+      PageNavigationSample(translation: -420, velocity: -250),
+      reduceMotion: false
+    )
+    try? await Task.sleep(for: .milliseconds(45))
+    let presented = controller.position
+
+    controller.begin(
+      PageNavigationSample(translation: 0, velocity: 0),
+      extent: 1_000,
+      availability: availability,
+      onCommit: { _ in },
+      onFinish: {}
+    )
+
+    XCTAssertEqual(controller.position, presented, accuracy: 0.000_1)
+    controller.reset()
+  }
+
   func testFastBoardSampleIsSplitAroundCrossedCover() {
     let itemID = UUID()
     let intervals = SpatialSurfaceRouter.intervals(
@@ -287,7 +420,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
       isEnabled: true,
       pencilInputGate: PencilInputGate(),
       onCamera: { _ in },
-      onNavigate: { _ in },
+      onPageNavigation: { _ in },
       onUndo: {}
     )
 

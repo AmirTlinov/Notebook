@@ -12,11 +12,12 @@
 | Нажим Pencil | [`UITouch.force`](https://developer.apple.com/documentation/uikit/uitouch/force), [`maximumPossibleForce`](https://developer.apple.com/documentation/uikit/uitouch/maximumpossibleforce) и [`PKStrokePoint.opacity`](https://developer.apple.com/documentation/pencilkit/pkstrokepointreference/opacity) | `force == 1` означает средний нажим, а `maximumPossibleForce` задаёт верхнюю границу датчика | Сила сначала делится на аппаратный максимум; после короткого фильтра каждая точка получает непрозрачность между выбранным минимумом и `1` |
 | Стирание | [MetalKit](https://developer.apple.com/documentation/metalkit/mtkview) и [`PKDrawing.erasingPath`](https://developer.apple.com/documentation/pencilkit/pkdrawing-swift.struct) | Destination-out смешивание вычитает активный путь из прозрачного слоя чернил; PencilKit сохраняет полный завершённый путь | `ActiveEraserStroke` следует за измеренными точками на частоте экрана, а один фоновый расчёт после подъёма Pencil создаёт файл для Mac и MCP |
 | Два пальца и непрерывный щипок | [`UIGestureRecognizer`](https://developer.apple.com/documentation/uikit/uigesturerecognizer) | Один распознаватель получает всю пару прямых касаний и сохраняет владельца до конца последовательности | `TwoFingerIntentArbiter` сравнивает совместный перенос с разностью движений пальцев и даёт второму пальцу 55 мс на участие; переход `лист -> обложка -> доска` не уничтожает распознаватель посреди щипка |
+| Предсказуемое перелистывание | [`CADisplayLink`](https://developer.apple.com/documentation/quartzcore/cadisplaylink) и [Designing Fluid Interfaces](https://developer.apple.com/videos/play/wwdc2018/803/) | Прямой жест должен быть прерываемым и сохранять скорость в момент передачи анимации; кадры следуют развёртке дисплея | `PageMotionController` один ведёт тетрадь и документ: полный перенос задаёт положение листа один к одному, проекция решает исход, а критически затухающая пружина продолжает показанное положение без второго владельца |
 | Текст на обложке | [`UITouch.tapCount`](https://developer.apple.com/documentation/uikit/uitouch/tapcount) и SwiftUI `FocusState` | UIKit уже хранит ритм повторных касаний, а фокус является явным состоянием редактора | На доске второе касание открывает тетрадь; на сфокусированной обложке оно создаёт `nativeText` либо открывает существующий. Рамка активного текста получает касания напрямую, а касание рядом завершает и сохраняет ввод |
 | Форма физической тетради | [SwiftUI `RoundedRectangle`](https://developer.apple.com/documentation/swiftui/roundedrectangle) | Стиль `continuous` создаёт единую плавную кривую угла | Лист, лицевая и обратная стороны обложки используют визуально откалиброванный радиус `0,8 см` и одну `continuous`-форму |
 | Чистое касание бумаги | [UIKit: Handling touches in your view](https://developer.apple.com/documentation/uikit/handling-touches-in-your-view) | Обычный `UIView` различает прямое касание и Pencil | Верхний `PaperInputView` забирает касания; один палец заканчивается пустым действием, два идут жестам, Pencil идёт ручке; под ним находится неинтерактивный `InkCanvasView` без текстового меню |
 | Цвет бумаги | [`NSAppearance.performAsCurrentDrawingAppearance`](https://developer.apple.com/documentation/appkit/nsappearance/performascurrentdrawingappearance(_:)) | Рендер можно выполнить в явно выбранной светлой теме | `PaperInkRenderer` одинаково сохраняет тёмные чернила в окне Mac и в PNG для агента |
-| Точный текущий вид | [SwiftUI `ImageRenderer`](https://developer.apple.com/documentation/swiftui/imagerenderer) и [`WKWebView.takeSnapshot`](https://developer.apple.com/documentation/webkit/wkwebview/takesnapshot(with:completionhandler:)) | SwiftUI-сцену можно вывести в платформенное изображение, а WebKit обязан заранее дать растр своего отдельного процесса | `DocumentSnapshotCache` связывает WebKit-кадр с `contentStamp + stateStamp`; Mac пишет `current-view.png` только для завершённой сцены и MCP сверяет версии всех владельцев и SHA-256 самих PNG-байтов |
+| Точный текущий вид | [SwiftUI `ImageRenderer`](https://developer.apple.com/documentation/swiftui/imagerenderer) и [`WKWebView.takeSnapshot`](https://developer.apple.com/documentation/webkit/wkwebview/takesnapshot(with:completionhandler:)) | SwiftUI-сцену можно вывести в платформенное изображение, а WebKit обязан заранее дать растр своего отдельного процесса | `DocumentSnapshotCache` связывает WebKit-кадр с `contentStamp + stateStamp + documentPageIndex`; Mac пишет `current-view.png` только для завершённой сцены и MCP сверяет версии всех владельцев и SHA-256 самих PNG-байтов |
 | Увеличение рукописи | [`PKDrawing.image`](https://developer.apple.com/documentation/pencilkit/pkdrawing-swift.struct/image(from:scale:)) и `NSBitmapImageRep` | Итоговый растр уже применяет `mask` и `maskedPathRanges`, а физическая клетка даёт общую координату человеку и агенту | `PageVisionRenderer` извлекает занятые клетки из альфа-пикселей, ограничивает детальное окно двенадцатью клетками и связывает обзор, карту и увеличения одной SHA-квитанцией |
 | Прямая связь iPad и Mac | [Network.framework](https://developer.apple.com/documentation/technotes/tn3151-choosing-the-right-networking-api) | Network — основной API Apple для TCP, Bonjour и peer-to-peer Wi-Fi | Mac публикует `_notebook._tcp`; iPad группирует интерфейсные адреса одного имени и держит на этот Mac один двусторонний канал |
 | Типизированные сообщения | [WWDC25: structured concurrency with Network](https://developer.apple.com/videos/play/wwdc2025/250/) | `Coder` кадрирует `Codable`-сообщения для `NetworkConnection` | `OrderedWireSender` передаёт `WireMessage` по порядку; активные кадры камеры и ожидающие полные рисунки схлопываются, а завершённая камера остаётся границей состояния |
@@ -282,6 +283,22 @@ HTML, DOMPurify очищает его, а MathJax после своего `start
 остаются одним DOM, но видимый результат имеет конечные границы страниц и
 горизонтальное перелистывание. Старый format 1 становится A4; format 2 всегда
 пишет явный `paperSize`.
+Тетрадь и документ получают жест от одного `PageMotionController`. От начала
+пары он хранит безразмерное положение текущего листа: `0` означает исходную
+страницу, `-1` следующую, `+1` предыдущую. Полный перенос пальцев делится на
+видимую ширину бумаги, поэтому изменение направления сразу меняет направление
+листа. Отпускание проецирует скорость на короткие `0,22 с`; граница решения
+`0,34` страницы отделяет просмотр от выбора. Затем критически затухающая
+пружина работает по `CADisplayLink` до `0` либо `+/-1`. Новый жест останавливает
+её в текущем показанном значении. Открытая тетрадь держит по соседству два
+неинтерактивных readout; в режиме обложки эта направляющая размонтирована, а
+единственным владельцем Pencil остаётся текущий `PencilCanvasView`. На iPad
+нативный владелец напрямую двигает внешний
+`WKWebView.scrollView`, а DOM лишь сообщает физический шаг страницы; собственный
+scroll-snap WebKit освобождает этот контракт.
+После завершения тетрадь один раз меняет `WorkspaceIndex`, документ один раз
+меняет `SessionPresence.documentPageIndex`; только этот законченный выбор идёт
+по сети и участвует в зрительной квитанции.
 Двойное касание заменяет Markdown или LaTeX-блок одним `textarea`. Касание
 свободного места, закрытие страницы и новый входной payload сначала публикуют
 введённый исходник, поэтому камера не может молча выбросить открытую правку.
@@ -305,7 +322,7 @@ base URL и плагины закрыты. Кадр читает `window.noteboo
 `ImageRenderer` сам не рисует содержимое отдельного процесса WebKit. Поэтому
 живой `WKWebView` ждёт набора MathJax и загрузки интерактивных кадров, затем
 вызывает `takeSnapshot`. `DocumentSnapshotCache` принимает снимок только с тем же
-`contentStamp + stateStamp`. `CurrentViewPreviewWriter` отказывается выпускать
+`contentStamp + stateStamp + documentPageIndex`. `CurrentViewPreviewWriter` отказывается выпускать
 квитанцию, пока точного кадра нет; итоговый PNG для MCP тем самым содержит
 видимый документ, а не пустое место.
 

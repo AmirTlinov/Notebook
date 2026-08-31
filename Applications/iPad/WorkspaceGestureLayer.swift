@@ -6,7 +6,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
   let allowsPageNavigation: Bool
   let pencilInputGate: PencilInputGate
   let onCamera: (WorkspaceMagnificationPhase) -> Void
-  let onNavigate: (Int) -> Void
+  let onPageNavigation: (PageNavigationPhase) -> Void
   let onUndo: () -> Void
 
   func makeCoordinator() -> Coordinator {
@@ -15,7 +15,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       isEnabled: isEnabled,
       pencilInputGate: pencilInputGate,
       onCamera: onCamera,
-      onNavigate: onNavigate,
+      onPageNavigation: onPageNavigation,
       onUndo: onUndo
     )
   }
@@ -32,7 +32,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
 
   func updateUIView(_ view: GestureAnchorView, context: Context) {
     context.coordinator.onCamera = onCamera
-    context.coordinator.onNavigate = onNavigate
+    context.coordinator.onPageNavigation = onPageNavigation
     context.coordinator.onUndo = onUndo
     context.coordinator.allowsPageNavigation = allowsPageNavigation
     context.coordinator.isEnabled = isEnabled
@@ -57,7 +57,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       }
     }
     var onCamera: (WorkspaceMagnificationPhase) -> Void
-    var onNavigate: (Int) -> Void
+    var onPageNavigation: (PageNavigationPhase) -> Void
     var onUndo: () -> Void
     var pencilInputGate: PencilInputGate {
       didSet { recognizer?.pencilInputGate = pencilInputGate }
@@ -73,14 +73,14 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       isEnabled: Bool,
       pencilInputGate: PencilInputGate,
       onCamera: @escaping (WorkspaceMagnificationPhase) -> Void,
-      onNavigate: @escaping (Int) -> Void,
+      onPageNavigation: @escaping (PageNavigationPhase) -> Void,
       onUndo: @escaping () -> Void
     ) {
       self.allowsPageNavigation = allowsPageNavigation
       self.isEnabled = isEnabled
       self.pencilInputGate = pencilInputGate
       self.onCamera = onCamera
-      self.onNavigate = onNavigate
+      self.onPageNavigation = onPageNavigation
       self.onUndo = onUndo
     }
 
@@ -127,6 +127,10 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       case .began where recognizer.intent == .hold:
         onUndo()
         startRepeating()
+      case .began where recognizer.intent == .navigation
+        && allowsPageNavigation:
+        repeatTask?.cancel()
+        onPageNavigation(.began(pageSample(from: recognizer)))
       case .began where recognizer.intent == .magnification
         || (recognizer.intent == .navigation && !allowsPageNavigation):
         repeatTask?.cancel()
@@ -145,6 +149,9 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
             centroid: recognizer.centroid
           )
         )
+      case .changed where recognizer.intent == .navigation
+        && allowsPageNavigation:
+        onPageNavigation(.changed(pageSample(from: recognizer)))
       case .changed where recognizer.intent == .magnification
         || (recognizer.intent == .navigation && !allowsPageNavigation):
         onCamera(
@@ -162,8 +169,8 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
         case .tap:
           onUndo()
         case .navigation:
-          if allowsPageNavigation, let decision = recognizer.navigationDecision {
-            onNavigate(decision.direction)
+          if allowsPageNavigation {
+            onPageNavigation(.ended(pageSample(from: recognizer)))
           } else {
             finishCamera(recognizer)
           }
@@ -175,7 +182,9 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       case .cancelled, .failed:
         repeatTask?.cancel()
         repeatTask = nil
-        if recognizer.intent == .magnification
+        if recognizer.intent == .navigation && allowsPageNavigation {
+          onPageNavigation(.cancelled)
+        } else if recognizer.intent == .magnification
           || (recognizer.intent == .navigation && !allowsPageNavigation)
         {
           onCamera(.cancelled)
@@ -204,6 +213,15 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
           elapsed: recognizer.gestureElapsed,
           centroid: recognizer.centroid
         )
+      )
+    }
+
+    private func pageSample(
+      from recognizer: TwoFingerPaperGestureRecognizer
+    ) -> PageNavigationSample {
+      PageNavigationSample(
+        translation: recognizer.translation.x,
+        velocity: recognizer.velocity.x
       )
     }
 

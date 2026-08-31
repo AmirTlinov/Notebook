@@ -218,14 +218,15 @@ final class NotebookAppModel {
     }
   }
 
-  func turnPage(_ direction: Int) {
-    guard var workspace else { return }
+  @discardableResult
+  func turnPage(_ direction: Int) -> Int? {
+    guard var workspace else { return nil }
     let created = workspace.turnPage(
       by: direction,
       actor: actorID,
       pageSize: pageSize
     )
-    guard workspace != self.workspace else { return }
+    guard workspace != self.workspace else { return nil }
     if let created {
       pages[created.id] = created
       try? store.savePage(created)
@@ -234,9 +235,7 @@ final class NotebookAppModel {
     self.workspace = workspace
     try? store.saveIndex(workspace)
     sync.send(.index(workspace))
-    if let selectedPageIndex = workspace.selectedPageIndex {
-      showCue("Страница \(selectedPageIndex + 1)")
-    }
+    return workspace.selectedPageIndex
   }
 
   @discardableResult
@@ -1122,7 +1121,10 @@ final class NotebookAppModel {
         ),
         viewport: viewport,
         focusedItemID: itemID,
-        openProgress: 1
+        openProgress: 1,
+        documentPageIndex: presence.mode == .document
+          ? presence.documentPageIndex
+          : 0
       )
     }
 

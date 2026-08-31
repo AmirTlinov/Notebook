@@ -113,6 +113,30 @@ final class DrawingResponsivenessTests: XCTestCase {
     )
   }
 
+  func testStoredDocumentPageBecomesTheVisiblePhysicalSheet() async throws {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    try await Task.sleep(for: .milliseconds(350))
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-document-runtime-fixture",
+      "--notebook-document-page-three-fixture",
+    ]
+    app.launch()
+
+    let thirdPage = app.otherElements.matching(
+      NSPredicate(format: "label BEGINSWITH 'Страница 3 из '")
+    ).firstMatch
+    XCTAssertTrue(thirdPage.waitForExistence(timeout: 8))
+    XCTAssertEqual(
+      thirdPage.frame.midX,
+      app.frame.midX,
+      accuracy: 4,
+      "SessionPresence должен поставить выбранный физический лист в центр"
+    )
+  }
+
   func testPageFitSurvivesPortraitLandscapePortrait() async throws {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait

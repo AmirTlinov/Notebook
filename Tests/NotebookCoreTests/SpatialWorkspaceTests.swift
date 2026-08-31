@@ -129,6 +129,26 @@ func stablePageRepairsLossyViewportScale() {
   #expect(repaired.openProgress == 1)
 }
 
+@Test("Смена окна сохраняет выбранный лист документа")
+func documentPageSelectionSurvivesViewportProjection() {
+  let documentID = UUID()
+  let portrait = SpatialPoint(x: 834, y: 1_194)
+  let landscape = SpatialPoint(x: 1_194, y: 834)
+  let original = SessionPresence(
+    mode: .document,
+    camera: SpatialCamera(scale: 1),
+    viewport: portrait,
+    focusedItemID: documentID,
+    openProgress: 1,
+    documentPageIndex: 4
+  )
+
+  let projected = original.adapted(to: landscape)
+
+  #expect(projected.documentPageIndex == 4)
+  #expect(projected.isValid)
+}
+
 @Test("Ограничение масштаба сохраняет точку под пальцами")
 func clampedPinchStillKeepsItsAnchor() {
   let camera = SpatialCamera(center: WorldPoint(x: 2_400, y: -900), scale: 0.4)

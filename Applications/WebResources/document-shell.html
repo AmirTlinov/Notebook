@@ -48,6 +48,20 @@
       -webkit-overflow-scrolling: touch;
       touch-action: pan-x;
     }
+    #page-viewport[data-external-paging="true"] {
+      position: relative;
+      inset: auto;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      scroll-snap-type: none;
+      touch-action: manipulation;
+    }
+    html[data-external-paging="true"],
+    html[data-external-paging="true"] body,
+    html[data-external-paging="true"] #page-viewport {
+      overflow: visible;
+    }
     #page-stage, #page-track, #page-backgrounds { position: relative; }
     #page-track {
       position: absolute;
@@ -210,7 +224,10 @@
       });
 
       const currentPageIndex = () => pageLayout
-        ? Math.max(0, Math.round(viewport.scrollLeft / pageLayout.stride))
+        ? Math.max(0, Math.round(
+            (payload?.externalPaging ? scrollX : viewport.scrollLeft)
+              / pageLayout.stride
+          ))
         : 0;
 
       const configurePaper = (nextPayload, requestedPage = currentPageIndex()) => {
@@ -220,6 +237,11 @@
         };
         const viewportWidth = Math.max(1, viewport.clientWidth || innerWidth);
         const viewportHeight = Math.max(1, viewport.clientHeight || innerHeight);
+        viewport.dataset.externalPaging = nextPayload.externalPaging
+          ? 'true'
+          : 'false';
+        document.documentElement.dataset.externalPaging =
+          viewport.dataset.externalPaging;
         const scale = Math.max(.1, Math.min(
           (viewportWidth - 24) / paper.widthPoints,
           (viewportHeight - 24) / paper.heightPoints
@@ -288,6 +310,19 @@
         pageLayout.pageCount = pageCount;
         pageLayout.requestedPage = page;
         return pageCount;
+      };
+
+      const setPagePosition = (requestedPosition) => {
+        if (!pageLayout || !Number.isFinite(requestedPosition)) return;
+        const maximum = Math.max(0, (pageLayout.pageCount || 1) - 1);
+        const position = Math.max(0, Math.min(maximum, requestedPosition));
+        const scroller = payload?.externalPaging ? window : viewport;
+        scroller.scrollTo({
+          left: position * pageLayout.stride,
+          top: 0,
+          behavior: 'auto'
+        });
+        pageLayout.requestedPage = position;
       };
 
       const schedulePagination = () => {
@@ -425,6 +460,8 @@
           documentID: nextPayload.documentID,
           renderToken: nextPayload.renderToken,
           pageCount,
+          currentPage: currentPageIndex(),
+          stride: pageLayout.stride,
           paperSize: nextPayload.paper?.kind || 'a4'
         });
       };
@@ -567,7 +604,10 @@
         schedulePagination();
       });
 
-      window.notebookRenderer = { apply: render };
+      window.notebookRenderer = {
+        apply: render,
+        setPagePosition
+      };
       bridge({ kind: 'ready' });
     })();
   </script>

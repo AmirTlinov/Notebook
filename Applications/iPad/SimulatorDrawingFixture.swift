@@ -15,6 +15,7 @@
     static let lowerStackArgument = "--notebook-stacked-lower-page-fixture"
     static let stackBoardArgument = "--notebook-stacked-board-fixture"
     static let documentArgument = "--notebook-document-runtime-fixture"
+    static let documentPageArgument = "--notebook-document-page-three-fixture"
 
     static var isRequested: Bool {
       ProcessInfo.processInfo.arguments.contains(launchArgument)
@@ -44,6 +45,9 @@
       )
       let startsInDocument = ProcessInfo.processInfo.arguments.contains(
         documentArgument
+      )
+      let startsOnLaterDocumentPage = ProcessInfo.processInfo.arguments.contains(
+        documentPageArgument
       )
       let fixtureName: String
       if startsInDocument {
@@ -160,7 +164,8 @@
               ),
               viewport: viewport,
               focusedItemID: documentID,
-              openProgress: 1
+              openProgress: 1,
+              documentPageIndex: startsOnLaterDocumentPage ? 2 : 0
             )
           )
         } else if startsInStack {

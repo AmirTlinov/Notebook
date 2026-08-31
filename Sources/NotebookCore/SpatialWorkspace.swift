@@ -1196,7 +1196,7 @@ public enum WorkspaceSemanticMode: String, Codable, Sendable {
 }
 
 public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
-  public static let formatVersion = 2
+  public static let formatVersion = 3
 
   public let format: Int
   public let mode: WorkspaceSemanticMode
@@ -1204,28 +1204,39 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
   public let viewport: SpatialPoint
   public let focusedItemID: UUID?
   public let openProgress: Double
+  /// The selected physical sheet inside a paginated document. Notebook page
+  /// selection remains durable in WorkspaceIndex; document pagination is a
+  /// view property and therefore travels with presence instead.
+  public let documentPageIndex: Int
 
   public init(
     mode: WorkspaceSemanticMode,
     camera: SpatialCamera,
     viewport: SpatialPoint,
     focusedItemID: UUID? = nil,
-    openProgress: Double = 0
+    openProgress: Double = 0,
+    documentPageIndex: Int = 0
   ) {
-    precondition(openProgress.isFinite && openProgress >= 0 && openProgress <= 1)
+    precondition(
+      openProgress.isFinite && openProgress >= 0 && openProgress <= 1
+        && documentPageIndex >= 0
+    )
     format = Self.formatVersion
     self.mode = mode
     self.camera = camera
     self.viewport = viewport
     self.focusedItemID = focusedItemID
     self.openProgress = openProgress
+    self.documentPageIndex = documentPageIndex
   }
 
   public var isValid: Bool {
     format == Self.formatVersion && camera.isValid
       && viewport.isValid && viewport.x > 0 && viewport.y > 0
       && openProgress.isFinite && openProgress >= 0 && openProgress <= 1
+      && documentPageIndex >= 0
       && (mode == .board || focusedItemID != nil)
+      && (mode == .cover || mode == .document || documentPageIndex == 0)
   }
 
   public var isSettled: Bool {
@@ -1261,7 +1272,8 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
       ),
       viewport: targetViewport,
       focusedItemID: focusedItemID,
-      openProgress: openProgress
+      openProgress: openProgress,
+      documentPageIndex: documentPageIndex
     )
   }
 
@@ -1272,6 +1284,7 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
     case viewport
     case focusedItemID
     case openProgress
+    case documentPageIndex
     case legacyFocusedNotebookID = "focusedNotebookID"
   }
 
@@ -1289,11 +1302,22 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
         UUID.self,
         forKey: .focusedItemID
       )
+      documentPageIndex = try container.decode(
+        Int.self,
+        forKey: .documentPageIndex
+      )
+    case 2:
+      focusedItemID = try container.decodeIfPresent(
+        UUID.self,
+        forKey: .focusedItemID
+      )
+      documentPageIndex = 0
     case 1:
       focusedItemID = try container.decodeIfPresent(
         UUID.self,
         forKey: .legacyFocusedNotebookID
       )
+      documentPageIndex = 0
     default:
       throw DecodingError.dataCorruptedError(
         forKey: .format,
@@ -1311,5 +1335,6 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
     try container.encode(viewport, forKey: .viewport)
     try container.encodeIfPresent(focusedItemID, forKey: .focusedItemID)
     try container.encode(openProgress, forKey: .openProgress)
+    try container.encode(documentPageIndex, forKey: .documentPageIndex)
   }
 }
