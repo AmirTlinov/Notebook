@@ -135,6 +135,13 @@ final class DrawingResponsivenessTests: XCTestCase {
       accuracy: 4,
       "SessionPresence должен поставить выбранный физический лист в центр"
     )
+
+    let thirdPageMarker = app.staticTexts["Раздел 12"].firstMatch
+    XCTAssertTrue(thirdPageMarker.waitForExistence(timeout: 3))
+    XCTAssertTrue(
+      app.frame.intersects(thirdPageMarker.frame),
+      "На выбранном листе должен быть виден его собственный раздел"
+    )
   }
 
   func testNotebookPageTurnCommitsBothDirections() {
@@ -163,7 +170,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(app.state, .runningForeground)
   }
 
-  func testDocumentUsesTheSamePageTurnSurface() {
+  func testDocumentPageTurnShowsTheCommittedPhysicalPage() async throws {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication()
@@ -175,24 +182,28 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     let surface = app.otherElements["page-turn-surface"]
     XCTAssertTrue(surface.waitForExistence(timeout: 8))
-    let secondPhysicalPage = app.otherElements.matching(
-      NSPredicate(format: "label BEGINSWITH 'Страница 2 из '")
-    ).firstMatch
-    XCTAssertTrue(secondPhysicalPage.waitForExistence(timeout: 8))
     let paginationReady = XCTNSPredicateExpectation(
       predicate: NSPredicate(
         format: "value BEGINSWITH 'Страница 1 из ' AND value != 'Страница 1 из 1'"
       ),
       object: surface
     )
-    wait(for: [paginationReady], timeout: 3)
+    await fulfillment(of: [paginationReady], timeout: 3)
+    try await Task.sleep(for: .seconds(2.5))
     surface.swipeLeft()
 
     let landed = XCTNSPredicateExpectation(
       predicate: NSPredicate(format: "value BEGINSWITH 'Страница 2 из '"),
       object: surface
     )
-    wait(for: [landed], timeout: 3)
+    await fulfillment(of: [landed], timeout: 3)
+
+    let secondPageMarker = app.staticTexts["Раздел 5"].firstMatch
+    XCTAssertTrue(secondPageMarker.waitForExistence(timeout: 3))
+    XCTAssertTrue(
+      app.frame.intersects(secondPageMarker.frame),
+      "После перелистывания на экране должен появиться раздел второго листа"
+    )
   }
 
   func testPageFitSurvivesPortraitLandscapePortrait() async throws {

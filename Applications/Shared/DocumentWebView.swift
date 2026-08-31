@@ -207,7 +207,8 @@ private final class DocumentWebCoordinator: NSObject,
   var lastAppliedData: Data?
   var requestedPageIndex: Int?
   var appliedPageIndex: Int?
-  var pageIndexUpdateIsRunning = false
+  var pageIndexRequestID: UUID?
+  var renderedToken: String?
   var pageCount = 1
   var capturesSnapshot = false
   var renderIsReady = false
@@ -248,6 +249,10 @@ private final class DocumentWebCoordinator: NSObject,
     let nextPageIndex = max(0, selectedPageIndex)
     let pageChanged = requestedPageIndex != nextPageIndex
     requestedPageIndex = nextPageIndex
+    if pageChanged {
+      pageIndexRequestID = nil
+      appliedPageIndex = nil
+    }
     self.capturesSnapshot = capturesSnapshot
     let nextKey = DocumentRuntimePayloadKey(
       document: document,
@@ -256,6 +261,10 @@ private final class DocumentWebCoordinator: NSObject,
     )
     if payloadKey != nextKey {
       setRenderReady(false)
+      pageIndexRequestID = nil
+      appliedPageIndex = nil
+      renderedToken = nil
+      pageCount = 1
       payloadKey = nextKey
       payload = DocumentRuntimePayload(
         document: document,
@@ -315,6 +324,7 @@ private final class DocumentWebCoordinator: NSObject,
       guard let renderToken = body["renderToken"] as? String,
         renderToken == payload.renderToken
       else { return }
+      renderedToken = renderToken
       if let pageCount = (body["pageCount"] as? NSNumber)?.intValue {
         self.pageCount = max(1, pageCount)
         onPageLayout(
@@ -356,7 +366,7 @@ private final class DocumentWebCoordinator: NSObject,
     else { return }
     lastAppliedData = data
     webView.evaluateJavaScript(
-      "window.notebookRenderer?.apply(\(json))"
+      "window.notebookRenderer.apply(\(json))"
     ) { [weak self] _, error in
       guard error != nil else { return }
       Task { @MainActor [weak self] in
@@ -367,30 +377,50 @@ private final class DocumentWebCoordinator: NSObject,
   }
 
   private func applyPageIndexIfReady() {
-    guard isReady, !pageIndexUpdateIsRunning,
+    guard isReady, pageIndexRequestID == nil,
       let webView,
+      let payload,
+      renderedToken == payload.renderToken,
       let requestedPageIndex,
       appliedPageIndex != requestedPageIndex
     else { return }
 
     let value = min(max(0, requestedPageIndex), max(0, pageCount - 1))
-    pageIndexUpdateIsRunning = true
+    let requestID = UUID()
+    let expectedDocumentID = payload.documentID.uuidString
+    let expectedRenderToken = payload.renderToken
+    pageIndexRequestID = requestID
     webView.callAsyncJavaScript(
       """
-      window.notebookRenderer?.setPageIndex(index);
+      const receipt = window.notebookRenderer.setPageIndex(index);
       await new Promise(resolve => requestAnimationFrame(
         () => requestAnimationFrame(resolve)
       ));
-      return index;
+      return receipt;
       """,
       arguments: ["index": value],
       in: nil,
       in: .page,
-      completionHandler: { [weak self] _ in
+      completionHandler: { [weak self] result in
         guard let self else { return }
-        appliedPageIndex = value
-        pageIndexUpdateIsRunning = false
-        setRenderReady(requestedPageIndex == value)
+        guard pageIndexRequestID == requestID else { return }
+        pageIndexRequestID = nil
+        guard case .success(let rawReceipt) = result,
+          let receipt = rawReceipt as? NSDictionary,
+          let receiptDocumentID = receipt["documentID"] as? String,
+          receiptDocumentID.caseInsensitiveCompare(expectedDocumentID)
+            == .orderedSame,
+          let receiptRenderToken = receipt["renderToken"] as? String,
+          receiptRenderToken == expectedRenderToken,
+          let receiptPage = (receipt["pageIndex"] as? NSNumber)?.intValue,
+          receiptPage == value
+        else {
+          appliedPageIndex = nil
+          setRenderReady(false)
+          return
+        }
+        appliedPageIndex = receiptPage
+        setRenderReady(requestedPageIndex == receiptPage)
         applyPageIndexIfReady()
         #if os(macOS)
           DispatchQueue.main.asyncAfter(deadline: .now() + 0.035) { [weak self] in
@@ -409,7 +439,7 @@ private final class DocumentWebCoordinator: NSObject,
 
   #if os(macOS)
     private func capturePendingSnapshotIfReady() {
-      guard capturesSnapshot, !pageIndexUpdateIsRunning,
+      guard capturesSnapshot, pageIndexRequestID == nil,
         let payload = pendingSnapshotPayload
       else { return }
       if let requestedPageIndex {

@@ -245,6 +245,9 @@
         style.setProperty('--body-font-size', `${12 * scale}px`);
         track.style.top = `${top}px`;
         track.style.left = `${side}px`;
+        // Page curl reparents and resizes a prewarmed WKWebView. Geometry owns
+        // the fixed page in the same layout transaction as its new size.
+        track.style.transform = `translate3d(${-requestedPage * stride}px, 0, 0)`;
         track.style.height = `${pageHeight}px`;
         stage.style.height = `${viewportHeight}px`;
       };
@@ -283,11 +286,19 @@
       };
 
       const setPageIndex = (requestedIndex) => {
-        if (!pageLayout || !Number.isInteger(requestedIndex)) return;
+        if (!pageLayout || !payload || !Number.isInteger(requestedIndex)) {
+          return null;
+        }
         const maximum = Math.max(0, (pageLayout.pageCount || 1) - 1);
         const index = Math.max(0, Math.min(maximum, requestedIndex));
         track.style.transform = `translate3d(${-index * pageLayout.stride}px, 0, 0)`;
         pageLayout.requestedPage = index;
+        return {
+          documentID: payload.documentID,
+          renderToken: payload.renderToken,
+          pageIndex: index,
+          pageCount: pageLayout.pageCount
+        };
       };
 
       const schedulePagination = () => {
