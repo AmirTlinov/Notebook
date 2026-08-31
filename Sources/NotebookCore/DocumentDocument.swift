@@ -6,6 +6,36 @@ public enum DocumentBlockKind: String, Codable, Equatable, Sendable {
   case interactive
 }
 
+public enum DocumentPaperSize: String, Codable, CaseIterable, Equatable,
+  Sendable
+{
+  case a4
+  case letter
+
+  /// Physical dimensions in PostScript points. The live WebKit page and the
+  /// exported PDF both derive their aspect ratio from this single contract.
+  public var widthPoints: Double {
+    switch self {
+    case .a4: 595.275590551
+    case .letter: 612
+    }
+  }
+
+  public var heightPoints: Double {
+    switch self {
+    case .a4: 841.88976378
+    case .letter: 792
+    }
+  }
+
+  public var marginPoints: Double {
+    switch self {
+    case .a4: 70.8661417323 // 25 mm
+    case .letter: 72 // 1 inch
+    }
+  }
+}
+
 public struct DocumentBlock: Codable, Equatable, Identifiable, Sendable {
   public static let maximumSourceLength = 1_000_000
   public static let minimumInteractiveHeight = 48.0
@@ -111,12 +141,13 @@ public struct DocumentBlock: Codable, Equatable, Identifiable, Sendable {
 }
 
 public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
-  public static let formatVersion = 1
+  public static let formatVersion = 2
   public static let maximumBlockCount = 512
   public static let maximumPreambleLength = 200_000
 
   public let format: Int
   public let id: UUID
+  public let paperSize: DocumentPaperSize
   public private(set) var preamble: String
   public private(set) var blocks: [DocumentBlock]
   public private(set) var contentStamp: VersionStamp
@@ -124,6 +155,7 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
   public init(
     id: UUID = UUID(),
     actor: UUID,
+    paperSize: DocumentPaperSize = .a4,
     preamble: String = "",
     blocks: [DocumentBlock] = [
       .markdown(id: "body", source: "")
@@ -131,6 +163,7 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
   ) {
     format = Self.formatVersion
     self.id = id
+    self.paperSize = paperSize
     self.preamble = preamble
     self.blocks = blocks
     contentStamp = VersionStamp(counter: 0, actor: actor)
@@ -200,12 +233,64 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
   }
 
   public mutating func merge(_ other: Self) -> Bool {
-    guard id == other.id, other.isValid, contentStamp < other.contentStamp
+    guard id == other.id,
+      paperSize == other.paperSize,
+      other.isValid,
+      contentStamp < other.contentStamp
     else { return false }
     preamble = other.preamble
     blocks = other.blocks
     contentStamp = other.contentStamp
     return true
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case format
+    case id
+    case paperSize
+    case preamble
+    case blocks
+    case contentStamp
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    let decodedFormat = try container.decode(Int.self, forKey: .format)
+    guard decodedFormat == 1 || decodedFormat == Self.formatVersion else {
+      throw DecodingError.dataCorruptedError(
+        forKey: .format,
+        in: container,
+        debugDescription: "Unsupported document format \(decodedFormat)"
+      )
+    }
+    format = Self.formatVersion
+    id = try container.decode(UUID.self, forKey: .id)
+    paperSize = decodedFormat == 1
+      ? .a4
+      : try container.decode(DocumentPaperSize.self, forKey: .paperSize)
+    preamble = try container.decode(String.self, forKey: .preamble)
+    blocks = try container.decode([DocumentBlock].self, forKey: .blocks)
+    contentStamp = try container.decode(
+      VersionStamp.self,
+      forKey: .contentStamp
+    )
+    guard isValid else {
+      throw DecodingError.dataCorruptedError(
+        forKey: .blocks,
+        in: container,
+        debugDescription: "Document violates its content contract"
+      )
+    }
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(format, forKey: .format)
+    try container.encode(id, forKey: .id)
+    try container.encode(paperSize, forKey: .paperSize)
+    try container.encode(preamble, forKey: .preamble)
+    try container.encode(blocks, forKey: .blocks)
+    try container.encode(contentStamp, forKey: .contentStamp)
   }
 }
 

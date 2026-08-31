@@ -20,8 +20,10 @@ Notebook/
 Network.framework -> такой же лист на втором устройстве. Pencil меняет
 `drawing`, а MCP и интерактивные элементы меняют `elements`.
 
-Путь документа: Markdown/LaTeX/interactive source -> `DocumentDocument` ->
-WebKit на обоих устройствах. Состояние кнопок и моделей принадлежит отдельному
+Путь документа: выбранный при создании A4/Letter + Markdown/LaTeX/interactive
+source -> `DocumentDocument` -> WebKit на обоих устройствах. WebKit переносит
+единый поток содержания по конечным физическим листам, а Tectonic получает тот
+же размер бумаги. Состояние кнопок и моделей принадлежит отдельному
 `DocumentStateJournal` и сходится по устойчивому `blockID`; изменение исходника
 его не перезаписывает. MCP собирает печатную форму из того же исходника через
 Tectonic. Интерактивный блок остаётся живым в приложении и явно обозначается в
@@ -124,3 +126,5 @@ MathJax и интерактивных кадров. Каждый interactive blo
 текстовым редактором и при уходе сохраняет исходник. На Mac завершённый WebKit
 кадр попадает в `DocumentSnapshotCache`; `CurrentViewPreviewWriter` публикует
 квитанцию документа только с точным снимком его `contentStamp + stateStamp`.
+`DocumentDocument.paperSize` неизменяем после создания: прежний format 1
+мигрирует в A4, а новая запись всегда имеет format 2.

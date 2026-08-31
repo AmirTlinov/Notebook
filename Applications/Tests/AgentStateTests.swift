@@ -68,7 +68,11 @@ final class AgentStateTests: XCTestCase {
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     model.start(pageSize: PageSize(width: 834, height: 1_194))
-    let documentID = try XCTUnwrap(model.createDocument(at: .zero))
+    let documentID = try XCTUnwrap(
+      model.createDocument(at: .zero, paperSize: .letter)
+    )
+
+    XCTAssertEqual(try store.loadDocument(documentID).paperSize, .letter)
 
     model.replaceDocumentBlockSource(
       documentID: documentID,
@@ -149,7 +153,9 @@ final class AgentStateTests: XCTestCase {
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     model.start(pageSize: PageSize(width: 834, height: 1_194))
-    let documentID = try XCTUnwrap(model.createDocument(at: .zero))
+    let documentID = try XCTUnwrap(
+      model.createDocument(at: .zero, paperSize: .a4)
+    )
     var remoteIndex = try XCTUnwrap(model.workspace)
     var remoteBoard = try XCTUnwrap(model.board)
     let actor = UUID()

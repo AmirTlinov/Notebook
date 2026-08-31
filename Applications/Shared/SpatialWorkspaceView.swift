@@ -293,12 +293,29 @@ struct SpatialWorkspaceView: View {
           } label: {
             Label("Тетрадь", systemImage: "book.closed")
           }
-          Button {
-            createItem(
-              kind: .document,
-              presence: presence,
-              viewport: viewport
-            )
+          Menu {
+            Button {
+              createItem(
+                kind: .document,
+                paperSize: .a4,
+                presence: presence,
+                viewport: viewport
+              )
+            } label: {
+              Label("A4", systemImage: "doc")
+            }
+            .accessibilityIdentifier("create-document-a4")
+            Button {
+              createItem(
+                kind: .document,
+                paperSize: .letter,
+                presence: presence,
+                viewport: viewport
+              )
+            } label: {
+              Label("Letter", systemImage: "doc")
+            }
+            .accessibilityIdentifier("create-document-letter")
           } label: {
             Label("Документ", systemImage: "doc.text")
           }
@@ -892,6 +909,7 @@ struct SpatialWorkspaceView: View {
 
   private func createItem(
     kind: WorkspaceItemKind,
+    paperSize: DocumentPaperSize = .a4,
     presence: SessionPresence,
     viewport: SpatialPoint
   ) {
@@ -903,7 +921,7 @@ struct SpatialWorkspaceView: View {
     case .notebook:
       itemID = model.createNotebook(at: center)
     case .document:
-      itemID = model.createDocument(at: center)
+      itemID = model.createDocument(at: center, paperSize: paperSize)
     }
     guard let itemID else { return }
     let target = SessionPresence(

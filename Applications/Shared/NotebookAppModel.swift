@@ -271,13 +271,20 @@ final class NotebookAppModel {
   }
 
   @discardableResult
-  func createDocument(at center: WorldPoint) -> UUID? {
+  func createDocument(
+    at center: WorldPoint,
+    paperSize: DocumentPaperSize
+  ) -> UUID? {
     guard var workspace, var board,
       let item = workspace.createDocument(title: "", actor: actorID),
       board.addItem(item.id, near: center, actor: actorID)
     else { return nil }
 
-    let document = DocumentDocument(id: item.id, actor: actorID)
+    let document = DocumentDocument(
+      id: item.id,
+      actor: actorID,
+      paperSize: paperSize
+    )
     let state = DocumentStateJournal(id: item.id, actor: actorID)
     do {
       try store.saveDocumentWorkspaceBundle(

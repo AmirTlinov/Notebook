@@ -131,6 +131,12 @@
                 initialState: .object(["x": .number(3)]),
                 height: 190
               ),
+              .markdown(
+                id: "continuation",
+                source: (1...36).map { paragraph in
+                  "## Раздел \(paragraph)\n\nЭто текст следующей физической страницы. Он проверяет, что содержание течёт из листа в лист, а размер бумаги остаётся конечным."
+                }.joined(separator: "\n\n")
+              ),
             ]
           )
           let state = DocumentStateJournal(id: documentID, actor: actor)

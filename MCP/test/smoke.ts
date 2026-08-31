@@ -208,6 +208,7 @@ try {
       expected_workspace_revision: `0@${appActor}`,
       expected_board_revision: spatialRevision,
       title: "MCP Document",
+      paper_size: "letter",
       center: { tileX: 0, tileY: 0, localX: 600, localY: 700 },
       blocks: [
         { id: "body", kind: "markdown", source: "# Документ\n\nФормула $x_1$." },
@@ -227,7 +228,9 @@ try {
   const createdReceipt = createdDocument.structuredContent as {
     documentID: string;
     contentRevision: string;
+    paperSize: string;
   };
+  assert.equal(createdReceipt.paperSize, "letter");
 
   const readDocument = await client.callTool({
     name: "notebook_read_document",
@@ -235,6 +238,10 @@ try {
   });
   assert.equal(readDocument.isError, undefined);
   assert.match(JSON.stringify(readDocument.structuredContent), /counter/);
+  assert.equal(
+    (readDocument.structuredContent as { paperSize: string }).paperSize,
+    "letter",
+  );
 
   const patchedDocument = await client.callTool({
     name: "notebook_patch_document",

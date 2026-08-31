@@ -349,12 +349,15 @@ export function createServer(store = new NotebookStore()): McpServer {
     {
       title: "Create a document on the board",
       description:
-        "Create and select one document with ordered Markdown, LaTeX, and sandboxed interactive blocks. "
+        "Create and select one finite A4 or Letter document with ordered Markdown, LaTeX, and sandboxed interactive blocks. "
         + "Live pages typeset Markdown and TeX math; notebook_export_document compiles the complete TeX artifact.",
       inputSchema: z.object({
         expected_workspace_revision: z.string().min(1),
         expected_board_revision: z.string().min(1),
         title: z.string().trim().max(240).default("Документ"),
+        paper_size: z.enum(["a4", "letter"]).describe(
+          "Физический формат страниц, выбираемый один раз при создании.",
+        ),
         center: worldPointSchema,
         preamble: z.string().max(200_000).default(""),
         blocks: z.array(documentBlockSchema).max(512).default([
@@ -366,12 +369,14 @@ export function createServer(store = new NotebookStore()): McpServer {
       expected_workspace_revision,
       expected_board_revision,
       title,
+      paper_size,
       center,
       preamble,
       blocks,
     }) => safely(async () => {
       const created = await store.createDocument({
         title,
+        paperSize: paper_size,
         center,
         preamble,
         blocks: blocks.map(inputDocumentBlock),
@@ -381,6 +386,7 @@ export function createServer(store = new NotebookStore()): McpServer {
       return {
         itemID: created.itemID,
         documentID: created.document.id,
+        paperSize: created.document.paperSize,
         workspaceRevision: revision(created.workspace.stamp),
         boardRevision: revision(created.board.stamp),
         contentRevision: revision(created.document.contentStamp),

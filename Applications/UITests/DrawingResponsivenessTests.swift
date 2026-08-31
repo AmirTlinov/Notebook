@@ -18,16 +18,23 @@ final class DrawingResponsivenessTests: XCTestCase {
       heading.waitForExistence(timeout: 8),
       "Markdown должен стать читаемым текстом WebKit"
     )
-    heading.doubleTap()
+    let firstPage = app.otherElements.matching(
+      NSPredicate(format: "label BEGINSWITH 'Страница 1 из '")
+    ).firstMatch
+    XCTAssertTrue(firstPage.waitForExistence(timeout: 3))
+    firstPage.coordinate(
+      withNormalizedOffset: CGVector(dx: 0.32, dy: 0.16)
+    ).doubleTap()
 
     let editor = app.textViews["Исходный Markdown или LaTeX"].firstMatch
     XCTAssertTrue(
       editor.waitForExistence(timeout: 3),
       "Двойное касание должно заменить блок одним редактором исходника"
     )
-    // WebKit reports the programmatically focused textarea correctly, while
-    // XCUITest only grants synthesized typing to a web control after a direct
-    // automation tap. A person already supplied that activation tap above.
+    // WKWebView honours the person's double tap, while XCUITest does not pass
+    // that activation token to a textarea created during the same event. A
+    // direct automation tap gives the synthesized keyboard the same focus a
+    // real touch already has.
     editor.tap()
     editor.typeText("\n\nНовая строка\n\n")
 
@@ -66,6 +73,44 @@ final class DrawingResponsivenessTests: XCTestCase {
     proof.name = "document-markdown-latex-interactive"
     proof.lifetime = .keepAlways
     add(proof)
+  }
+
+  func testDocumentContentFlowsAcrossFiniteA4Pages() async throws {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    try await Task.sleep(for: .milliseconds(350))
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-document-runtime-fixture",
+    ]
+    app.launch()
+
+    let firstPage = app.otherElements.matching(
+      NSPredicate(format: "label BEGINSWITH 'Страница 1 из '")
+    ).firstMatch
+    XCTAssertTrue(
+      firstPage.waitForExistence(timeout: 8),
+      "WebKit должен разбить содержание на конечные листы"
+    )
+    let secondPage = app.otherElements.matching(
+      NSPredicate(format: "label BEGINSWITH 'Страница 2 из '")
+    ).firstMatch
+    XCTAssertTrue(
+      secondPage.waitForExistence(timeout: 3),
+      "Длинный текст должен перейти на второй лист"
+    )
+    XCTAssertGreaterThan(
+      secondPage.frame.minX,
+      firstPage.frame.maxX,
+      "Страницы должны быть отдельными листами, а не одной вертикальной лентой"
+    )
+    XCTAssertEqual(
+      firstPage.frame.height / firstPage.frame.width,
+      841.88976378 / 595.275590551,
+      accuracy: 0.03,
+      "Экранный лист должен сохранять физическую пропорцию A4"
+    )
   }
 
   func testPageFitSurvivesPortraitLandscapePortrait() async throws {

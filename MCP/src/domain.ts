@@ -64,6 +64,7 @@ export interface WorkspaceIndex {
 }
 
 export type DocumentBlockKind = "markdown" | "latex" | "interactive";
+export type DocumentPaperSize = "a4" | "letter";
 
 export interface DocumentBlock {
   id: string;
@@ -77,8 +78,9 @@ export interface DocumentBlock {
 }
 
 export interface DocumentDocument {
-  format: 1;
+  format: 2;
   id: string;
+  paperSize: DocumentPaperSize;
   preamble: string;
   blocks: DocumentBlock[];
   contentStamp: VersionStamp;
@@ -254,6 +256,7 @@ export function publicDocument(
 ): object {
   return {
     id: document.id,
+    paperSize: document.paperSize,
     contentRevision: revision(document.contentStamp),
     stateRevision: revision(state.stamp),
     preamble: document.preamble,

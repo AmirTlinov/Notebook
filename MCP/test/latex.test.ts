@@ -29,10 +29,15 @@ function latex(id: string, source: string): DocumentBlock {
   return { ...markdown(id, source), kind: "latex" };
 }
 
-function document(blocks: DocumentBlock[], preamble = ""): DocumentDocument {
+function document(
+  blocks: DocumentBlock[],
+  preamble = "",
+  paperSize: "a4" | "letter" = "a4",
+): DocumentDocument {
   return {
-    format: 1,
+    format: 2,
     id: documentID,
+    paperSize,
     preamble,
     blocks,
     contentStamp: { counter: 0, actor: appActor },
@@ -49,12 +54,24 @@ test("turns Markdown prose and exact LaTeX blocks into one TeX artifact", () => 
   ]));
 
   assert.match(source, /\\setmainfont\{Georgia\}/);
+  assert.match(source, /\\geometry\{a4paper,margin=25mm\}/);
   assert.match(source, /\\section\{Привет\}/);
   assert.match(source, /\$x_1\$/);
   assert.match(source, /\$\$y=x\^2\$\$/);
   assert.match(source, /\\\[z=3\\\]/);
   assert.match(source, /a\\_b/);
   assert.match(source, /\\begin\{align\}y &= x\^2\\end\{align\}/);
+});
+
+test("binds Letter creation choice to the exported PDF geometry", () => {
+  const source = documentTeX(document(
+    [markdown("body", "Letter")],
+    "\\documentclass{article}\n\\usepackage{geometry}",
+    "letter",
+  ));
+
+  assert.match(source, /\\geometry\{letterpaper,margin=1in\}/);
+  assert.equal((source.match(/\\usepackage\{geometry\}/g) || []).length, 1);
 });
 
 test("keeps document boundaries owned by the exporter", () => {

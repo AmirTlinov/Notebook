@@ -102,11 +102,25 @@ struct DocumentWebView: View {
 }
 
 private struct DocumentRuntimePayload: Codable {
+  struct Paper: Codable {
+    let kind: DocumentPaperSize
+    let widthPoints: Double
+    let heightPoints: Double
+    let marginPoints: Double
+
+    init(_ size: DocumentPaperSize) {
+      kind = size
+      widthPoints = size.widthPoints
+      heightPoints = size.heightPoints
+      marginPoints = size.marginPoints
+    }
+  }
+
   let documentID: UUID
+  let paper: Paper
   let blocks: [DocumentBlock]
   let states: [String: JSONValue]
   let editable: Bool
-  let measureREM: Double
   let renderToken: String
 
   init(
@@ -115,12 +129,12 @@ private struct DocumentRuntimePayload: Codable {
     editable: Bool
   ) {
     documentID = document.id
+    paper = Paper(document.paperSize)
     blocks = document.blocks
     states = Dictionary(
       uniqueKeysWithValues: state.records.map { ($0.id, $0.value) }
     )
     self.editable = editable
-    measureREM = 46
     #if os(macOS)
       renderToken = DocumentSnapshotCache.token(
         document: document,

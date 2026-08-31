@@ -208,10 +208,11 @@ export class NotebookStore {
   }
 
   async readDocument(documentID: string): Promise<DocumentDocument> {
-    const document = await readJSON<unknown>(
+    const stored = await readJSON<unknown>(
       this.documentPath(documentID),
       "document",
     );
+    const document = normalizeDocument(stored);
     validateDocument(document);
     if (!sameID(document.id, documentID)) {
       throw new StoreError("document.id не совпадает с именем файла.");
@@ -409,6 +410,7 @@ export class NotebookStore {
   async createDocument(args: {
     title: string;
     center: WorldPoint;
+    paperSize: "a4" | "letter";
     expectedWorkspaceRevision: string;
     expectedBoardRevision: string;
     preamble?: string;
@@ -435,8 +437,9 @@ export class NotebookStore {
       const itemID = randomUUID();
       const initialStamp: VersionStamp = { counter: 0, actor };
       const document: DocumentDocument = {
-        format: 1,
+        format: 2,
         id: itemID,
+        paperSize: args.paperSize,
         preamble: args.preamble ?? "",
         blocks: args.blocks ?? [markdownBlock("body", "")],
         contentStamp: initialStamp,
@@ -759,7 +762,8 @@ function markdownBlock(id: string, source: string): DocumentBlock {
 }
 
 function validateDocument(value: unknown): asserts value is DocumentDocument {
-  if (!isRecord(value) || value.format !== 1 || typeof value.id !== "string") {
+  if (!isRecord(value) || value.format !== 2 || typeof value.id !== "string"
+    || (value.paperSize !== "a4" && value.paperSize !== "letter")) {
     throw new StoreError("Документ повреждён.");
   }
   assertUUID(value.id, "document.id");
@@ -770,6 +774,13 @@ function validateDocument(value: unknown): asserts value is DocumentDocument {
   validateStamp(value.contentStamp, "document.contentStamp");
   const ids = new Set<string>();
   for (const block of value.blocks) validateDocumentBlock(block, ids);
+}
+
+function normalizeDocument(value: unknown): unknown {
+  if (isRecord(value) && value.format === 1 && !("paperSize" in value)) {
+    return { ...value, format: 2, paperSize: "a4" };
+  }
+  return value;
 }
 
 function validateDocumentBlock(value: unknown, ids: Set<string>): asserts value is DocumentBlock {

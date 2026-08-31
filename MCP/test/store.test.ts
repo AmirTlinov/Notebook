@@ -140,6 +140,7 @@ test("creates and patches a document while interactive state keeps its own owner
   await withStore(async (store, root) => {
     const created = await store.createDocument({
       title: "Документ",
+      paperSize: "letter",
       center: { tileX: 0, tileY: 0, localX: 400, localY: 500 },
       expectedWorkspaceRevision: `0@${appActor}`,
       expectedBoardRevision: `0@${appActor}`,
@@ -166,6 +167,7 @@ test("creates and patches a document while interactive state keeps its own owner
     assert.equal(created.workspace.selectedItemID, created.itemID);
     assert.equal(created.workspace.selectedPageID, undefined);
     assert.equal(created.document.id, created.itemID);
+    assert.equal(created.document.paperSize, "letter");
     assert.equal(created.state.id, created.itemID);
     assert.equal(
       JSON.parse(await readFile(
@@ -204,6 +206,7 @@ test("creates a canonical notebook when the board currently contains only docume
   await withStore(async (store, root) => {
     const createdDocument = await store.createDocument({
       title: "Единственный документ",
+      paperSize: "a4",
       center: { tileX: 0, tileY: 0, localX: 400, localY: 500 },
       expectedWorkspaceRevision: `0@${appActor}`,
       expectedBoardRevision: `0@${appActor}`,
@@ -246,6 +249,28 @@ test("creates a canonical notebook when the board currently contains only docume
 
     assert.deepEqual(createdNotebook.page.size, { width: 834, height: 1_194 });
     assert.equal(createdNotebook.workspace.selectedPageID, createdNotebook.page.id);
+  });
+});
+
+test("migrates a version-one continuous document to paginated A4", async () => {
+  await withStore(async (store, root) => {
+    const created = await store.createDocument({
+      title: "Старый документ",
+      paperSize: "letter",
+      center: { tileX: 0, tileY: 0, localX: 400, localY: 500 },
+      expectedWorkspaceRevision: `0@${appActor}`,
+      expectedBoardRevision: `0@${appActor}`,
+    });
+    const path = join(root, "documents", `${created.itemID}.json`);
+    const legacy = JSON.parse(await readFile(path, "utf8"));
+    legacy.format = 1;
+    delete legacy.paperSize;
+    await writeFile(path, JSON.stringify(legacy));
+
+    const migrated = await store.readDocument(created.itemID);
+
+    assert.equal(migrated.format, 2);
+    assert.equal(migrated.paperSize, "a4");
   });
 });
 

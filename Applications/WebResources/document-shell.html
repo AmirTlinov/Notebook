@@ -8,29 +8,87 @@
     :root {
       color-scheme: light;
       --paper: #fbfaf5;
+      --desk: #e4e4e1;
       --ink: #171713;
       --muted: rgba(23, 23, 19, .55);
       --selection: rgba(46, 104, 255, .14);
-      --measure: 46rem;
+      --page-width: 595px;
+      --page-height: 842px;
+      --page-margin: 71px;
+      --page-gap: 24px;
+      --content-width: 453px;
+      --content-height: 700px;
+      --column-gap: 166px;
+      --body-font-size: 12px;
     }
     * { box-sizing: border-box; }
-    html, body { min-height: 100%; margin: 0; background: var(--paper); }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      margin: 0;
+      background: var(--desk);
+    }
     body {
       color: var(--ink);
       font-family: ui-serif, "New York", "Times New Roman", serif;
-      font-size: clamp(17px, 2.05vw, 22px);
-      line-height: 1.58;
+      font-size: var(--body-font-size);
+      line-height: 1.5;
       -webkit-font-smoothing: antialiased;
       -webkit-text-size-adjust: 100%;
       overscroll-behavior: none;
     }
+    #page-viewport {
+      position: fixed;
+      inset: 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scroll-snap-type: x proximity;
+      overscroll-behavior: none;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-x;
+    }
+    #page-stage, #page-track, #page-backgrounds { position: relative; }
+    #page-track {
+      position: absolute;
+      isolation: isolate;
+    }
+    #page-backgrounds {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+    }
+    .paper-sheet {
+      position: absolute;
+      top: 0;
+      width: var(--page-width);
+      height: var(--page-height);
+      overflow: hidden;
+      border: 1px solid rgba(42, 42, 36, .09);
+      border-radius: clamp(5px, calc(var(--page-width) * .012), 10px);
+      background: var(--paper);
+      box-shadow:
+        0 1px 2px rgba(30, 30, 24, .08),
+        0 10px 32px rgba(30, 30, 24, .10);
+      scroll-snap-align: center;
+    }
     #document {
-      width: min(var(--measure), calc(100% - 3rem));
-      min-height: 100vh;
-      margin: 0 auto;
-      padding: max(4.5rem, env(safe-area-inset-top)) 0 max(7rem, env(safe-area-inset-bottom));
+      position: absolute;
+      z-index: 1;
+      top: var(--page-margin);
+      left: var(--page-margin);
+      width: var(--content-width);
+      height: var(--content-height);
+      margin: 0;
+      padding: 0;
+      column-width: var(--content-width);
+      column-gap: var(--column-gap);
+      column-fill: auto;
+      overflow: visible;
     }
     .block { position: relative; margin: 0 0 1.5em; }
+    .block.interactive, .block.latex, pre { break-inside: avoid-column; }
     .block.editable { border-radius: .45rem; touch-action: manipulation; }
     .block.editable:active { background: rgba(23, 23, 19, .018); }
     h1, h2, h3, h4 { line-height: 1.12; letter-spacing: -.025em; margin: 1.6em 0 .55em; }
@@ -57,10 +115,11 @@
       color-scheme: light;
     }
     .source-editor {
+      position: absolute;
       display: block;
-      width: 100%;
       min-height: 9rem;
-      resize: vertical;
+      resize: none;
+      overflow: auto;
       margin: 0;
       padding: .8rem .9rem;
       border: 0;
@@ -74,13 +133,19 @@
       box-shadow: 0 .6rem 2rem rgba(30, 42, 68, .08);
       -webkit-user-select: text;
       user-select: text;
+      touch-action: manipulation;
+      pointer-events: auto;
     }
+    #editor-layer {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      pointer-events: auto;
+    }
+    #editor-layer:empty { display: none; }
     .empty-hint { color: var(--muted); font-style: italic; }
     ::selection { background: var(--selection); }
     ::-webkit-scrollbar { width: 0; height: 0; }
-    @media (min-width: 900px) {
-      #document { padding-top: 6rem; }
-    }
   </style>
   <script>
     window.MathJax = {
@@ -99,14 +164,30 @@
   <script src="tex-svg-nofont.js"></script>
 </head>
 <body>
-  <main id="document" aria-label="Документ"></main>
+  <div id="page-viewport" aria-label="Страницы документа">
+    <div id="page-stage">
+      <div id="page-track">
+        <div id="page-backgrounds"></div>
+        <main id="document" aria-label="Содержимое документа"></main>
+        <div id="editor-layer"></div>
+      </div>
+    </div>
+  </div>
   <script>
     (() => {
       'use strict';
       const root = document.getElementById('document');
+      const viewport = document.getElementById('page-viewport');
+      const stage = document.getElementById('page-stage');
+      const track = document.getElementById('page-track');
+      const backgrounds = document.getElementById('page-backgrounds');
+      const editorLayer = document.getElementById('editor-layer');
       let payload = null;
+      let pageLayout = null;
+      let layoutFrame = null;
       let editingBlockID = null;
       let activeEditorFinish = null;
+      let activeEditorLayout = null;
       let lastTouchTap = null;
 
       const bridge = (message) => {
@@ -127,6 +208,95 @@
         javaScript: block.javaScript,
         height: block.height
       });
+
+      const currentPageIndex = () => pageLayout
+        ? Math.max(0, Math.round(viewport.scrollLeft / pageLayout.stride))
+        : 0;
+
+      const configurePaper = (nextPayload, requestedPage = currentPageIndex()) => {
+        const paper = nextPayload.paper || {
+          kind: 'a4', widthPoints: 595.275590551,
+          heightPoints: 841.88976378, marginPoints: 70.8661417323
+        };
+        const viewportWidth = Math.max(1, viewport.clientWidth || innerWidth);
+        const viewportHeight = Math.max(1, viewport.clientHeight || innerHeight);
+        const scale = Math.max(.1, Math.min(
+          (viewportWidth - 24) / paper.widthPoints,
+          (viewportHeight - 24) / paper.heightPoints
+        ));
+        const pageWidth = paper.widthPoints * scale;
+        const pageHeight = paper.heightPoints * scale;
+        const margin = paper.marginPoints * scale;
+        const gap = Math.max(18, Math.min(30, 22 * scale));
+        const contentWidth = pageWidth - 2 * margin;
+        const contentHeight = pageHeight - 2 * margin;
+        const columnGap = 2 * margin + gap;
+        const side = Math.max(12, (viewportWidth - pageWidth) / 2);
+        const top = Math.max(12, (viewportHeight - pageHeight) / 2);
+        const stride = pageWidth + gap;
+        pageLayout = {
+          kind: paper.kind,
+          pageWidth, pageHeight, margin, gap,
+          contentWidth, contentHeight, columnGap,
+          side, top, stride, requestedPage
+        };
+        const style = document.documentElement.style;
+        style.setProperty('--page-width', `${pageWidth}px`);
+        style.setProperty('--page-height', `${pageHeight}px`);
+        style.setProperty('--page-margin', `${margin}px`);
+        style.setProperty('--page-gap', `${gap}px`);
+        style.setProperty('--content-width', `${contentWidth}px`);
+        style.setProperty('--content-height', `${contentHeight}px`);
+        style.setProperty('--column-gap', `${columnGap}px`);
+        style.setProperty('--body-font-size', `${12 * scale}px`);
+        track.style.top = `${top}px`;
+        track.style.left = `${side}px`;
+        track.style.height = `${pageHeight}px`;
+        stage.style.height = `${viewportHeight}px`;
+      };
+
+      const paginate = (requestedPage = pageLayout?.requestedPage ?? 0) => {
+        if (!pageLayout) return 1;
+        const { contentWidth, columnGap, pageWidth, pageHeight, gap, side, stride } = pageLayout;
+        const extent = Math.max(contentWidth, root.scrollWidth);
+        const pageCount = Math.max(
+          1,
+          Math.round((extent + columnGap) / (contentWidth + columnGap))
+        );
+        const trackWidth = pageCount * pageWidth + (pageCount - 1) * gap;
+        track.style.width = `${trackWidth}px`;
+        backgrounds.style.width = `${trackWidth}px`;
+        backgrounds.style.height = `${pageHeight}px`;
+        stage.style.width = `${trackWidth + 2 * side}px`;
+        for (let index = 0; index < pageCount; index += 1) {
+          const sheet = backgrounds.children[index]
+            || backgrounds.appendChild(document.createElement('section'));
+          sheet.className = 'paper-sheet';
+          sheet.style.left = `${index * stride}px`;
+          sheet.setAttribute('role', 'region');
+          sheet.setAttribute('aria-label', `Страница ${index + 1} из ${pageCount}`);
+          sheet.dataset.page = String(index + 1);
+          sheet.dataset.paper = pageLayout.kind;
+        }
+        while (backgrounds.children.length > pageCount) {
+          backgrounds.lastElementChild.remove();
+        }
+        const page = Math.max(0, Math.min(pageCount - 1, requestedPage));
+        if (!document.activeElement?.classList.contains('source-editor')) {
+          viewport.scrollTo({ left: page * stride, top: 0, behavior: 'auto' });
+        }
+        pageLayout.pageCount = pageCount;
+        pageLayout.requestedPage = page;
+        return pageCount;
+      };
+
+      const schedulePagination = () => {
+        if (!payload || layoutFrame !== null) return;
+        layoutFrame = requestAnimationFrame(() => {
+          layoutFrame = null;
+          paginate(currentPageIndex());
+        });
+      };
 
       const interactiveDocument = (block, state) => {
         const safeID = JSON.stringify(block.id).replaceAll('<', '\\u003c');
@@ -201,8 +371,9 @@
 
       const render = async (nextPayload) => {
         if (activeEditorFinish) activeEditorFinish(true, false);
+        const requestedPage = currentPageIndex();
         payload = nextPayload;
-        root.style.setProperty('--measure', `${Math.max(28, Math.min(70, nextPayload.measureREM || 46))}rem`);
+        configurePaper(nextPayload, requestedPage);
         const oldByID = new Map([...root.children].map(node => [node.dataset.blockId, node]));
         const nextNodes = [];
         const typesetNodes = [];
@@ -248,10 +419,13 @@
         await new Promise(resolve => requestAnimationFrame(
           () => requestAnimationFrame(resolve)
         ));
+        const pageCount = paginate(requestedPage);
         bridge({
           kind: 'rendered',
           documentID: nextPayload.documentID,
-          renderToken: nextPayload.renderToken
+          renderToken: nextPayload.renderToken,
+          pageCount,
+          paperSize: nextPayload.paper?.kind || 'a4'
         });
       };
 
@@ -263,12 +437,55 @@
         if (!section) return;
         if (window.MathJax?.typesetClear) MathJax.typesetClear([section]);
         editingBlockID = blockID;
+        const minimumHeight = 144;
+        let editorTop = pageLayout.margin;
         const editor = document.createElement('textarea');
         editor.className = 'source-editor';
         editor.value = block.source || '';
         editor.setAttribute('aria-label', 'Исходный Markdown или LaTeX');
-        section.replaceChildren(editor);
-        editor.style.height = `${Math.max(144, editor.scrollHeight + 4)}px`;
+        editor.setAttribute('autofocus', '');
+        editor.setAttribute('inputmode', 'text');
+        section.style.visibility = 'hidden';
+        editorLayer.append(editor);
+        const fitEditor = () => {
+          const available = Math.max(
+            minimumHeight,
+            pageLayout.pageHeight - pageLayout.margin - editorTop
+          );
+          editor.style.height = '1px';
+          editor.style.height = `${Math.min(
+            available,
+            Math.max(minimumHeight, editor.scrollHeight + 4)
+          )}px`;
+        };
+        const positionEditor = () => {
+          const sectionRect = section.getBoundingClientRect();
+          const trackRect = track.getBoundingClientRect();
+          const page = currentPageIndex();
+          editorTop = Math.max(
+            pageLayout.margin,
+            Math.min(
+              sectionRect.top - trackRect.top,
+              pageLayout.pageHeight - pageLayout.margin - minimumHeight
+            )
+          );
+          editor.style.left = `${page * pageLayout.stride + pageLayout.margin}px`;
+          editor.style.top = `${editorTop}px`;
+          editor.style.width = `${pageLayout.contentWidth}px`;
+          fitEditor();
+        };
+        positionEditor();
+        activeEditorLayout = positionEditor;
+        editor.addEventListener('input', fitEditor);
+        const focusEditor = () => {
+          editor.focus({ preventScroll: true });
+        };
+        editor.addEventListener('pointerdown', focusEditor);
+        editor.addEventListener('click', focusEditor);
+        editor.addEventListener('touchend', focusEditor);
+        // iPadOS will show the software keyboard only when focus is claimed
+        // inside the double-tap event itself. Deferring this call even by one
+        // task leaves a visible editor with no keyboard.
         editor.focus({ preventScroll: true });
         editor.setSelectionRange(editor.value.length, editor.value.length);
 
@@ -277,8 +494,11 @@
           if (finished) return;
           finished = true;
           const source = editor.value;
+          editor.remove();
+          section.style.visibility = '';
           editingBlockID = null;
           activeEditorFinish = null;
+          activeEditorLayout = null;
           if (commit && source !== block.source) {
             block.source = source;
             bridge({ kind: 'source', documentID: payload.documentID, blockID, source });
@@ -286,7 +506,6 @@
           if (rerender) render(payload);
         };
         activeEditorFinish = finish;
-        editor.addEventListener('blur', () => finish(true), { once: true });
         editor.addEventListener('keydown', event => {
           if (event.key === 'Escape') { event.preventDefault(); finish(false); }
           if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
@@ -295,15 +514,13 @@
         });
       };
 
-      document.addEventListener('pointerdown', event => {
-        if (activeEditorFinish && !event.target.closest('.source-editor')) {
-          activeEditorFinish(true);
-        }
-      }, true);
       root.addEventListener('dblclick', event => {
         event.preventDefault();
         const section = event.target.closest('.block.editable');
         if (section) beginEditing(section.dataset.blockId);
+      });
+      editorLayer.addEventListener('pointerdown', event => {
+        if (event.target === editorLayer) activeEditorFinish?.(true);
       });
       root.addEventListener('pointerup', event => {
         if (event.pointerType !== 'touch') return;
@@ -342,6 +559,13 @@
         });
       });
       addEventListener('dragstart', event => event.preventDefault());
+      addEventListener('resize', () => {
+        if (!payload) return;
+        const requestedPage = currentPageIndex();
+        configurePaper(payload, requestedPage);
+        requestAnimationFrame(() => activeEditorLayout?.());
+        schedulePagination();
+      });
 
       window.notebookRenderer = { apply: render };
       bridge({ kind: 'ready' });

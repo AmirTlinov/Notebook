@@ -20,7 +20,7 @@ export interface DocumentExportReceipt {
 
 export function documentTeX(document: DocumentDocument): string {
   const suppliedPreamble = document.preamble.trim();
-  const preamble = /\\documentclass(?:\[[^\]]*\])?\{/.test(suppliedPreamble)
+  let preamble = /\\documentclass(?:\[[^\]]*\])?\{/.test(suppliedPreamble)
     ? suppliedPreamble
     : [
       "\\documentclass[12pt]{article}",
@@ -28,7 +28,6 @@ export function documentTeX(document: DocumentDocument): string {
       "\\setmainfont{Georgia}",
       "\\usepackage{amsmath,amssymb,booktabs,longtable,array,graphicx,xcolor}",
       "\\usepackage[colorlinks=true,linkcolor=black,urlcolor=blue]{hyperref}",
-      "\\usepackage[margin=25mm]{geometry}",
       suppliedPreamble,
     ].filter(Boolean).join("\n");
   if (/\\begin\s*\{document\}/.test(preamble)
@@ -37,6 +36,13 @@ export function documentTeX(document: DocumentDocument): string {
       "preamble задаёт класс и пакеты; begin/end document принадлежат экспортёру.",
     );
   }
+  if (!/\\(?:usepackage|RequirePackage)(?:\[[^\]]*\])?\{[^}]*\bgeometry\b[^}]*\}/.test(preamble)) {
+    preamble += "\n\\usepackage{geometry}";
+  }
+  const geometry = document.paperSize === "letter"
+    ? "letterpaper,margin=1in"
+    : "a4paper,margin=25mm";
+  preamble += `\n\\geometry{${geometry}}`;
   return [
     preamble,
     "\\begin{document}",

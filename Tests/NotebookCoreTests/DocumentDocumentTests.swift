@@ -207,6 +207,82 @@ func documentSelectionHasNoNotebookPage() throws {
   ) == nil)
 }
 
+@Test("Формат бумаги хранит настоящие пропорции A4 и Letter")
+func documentPaperSizesHavePhysicalDimensions() {
+  #expect(abs(DocumentPaperSize.a4.widthPoints - 595.275590551) < 0.000_001)
+  #expect(abs(DocumentPaperSize.a4.heightPoints - 841.88976378) < 0.000_001)
+  #expect(abs(DocumentPaperSize.a4.marginPoints - 70.8661417323) < 0.000_001)
+  #expect(DocumentPaperSize.letter.widthPoints == 612)
+  #expect(DocumentPaperSize.letter.heightPoints == 792)
+  #expect(DocumentPaperSize.letter.marginPoints == 72)
+  #expect(DocumentPaperSize.a4.heightPoints / DocumentPaperSize.a4.widthPoints > 1.41)
+  #expect(DocumentPaperSize.letter.heightPoints / DocumentPaperSize.letter.widthPoints < 1.30)
+}
+
+@Test("Старый бесконечный документ мигрирует в A4")
+func legacyDocumentDecodesAsPaginatedA4() throws {
+  let current = DocumentDocument(
+    id: legacyItemID,
+    actor: legacyActor,
+    paperSize: .letter,
+    blocks: [.markdown(id: "body", source: "# Старый документ")]
+  )
+  let encoded = try JSONEncoder().encode(current)
+  var object = try #require(
+    JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+  )
+  object["format"] = 1
+  object["paperSize"] = nil
+
+  let legacy = try JSONSerialization.data(withJSONObject: object)
+  let decoded = try JSONDecoder().decode(DocumentDocument.self, from: legacy)
+
+  #expect(decoded.format == DocumentDocument.formatVersion)
+  #expect(decoded.paperSize == .a4)
+  #expect(decoded.blocks == current.blocks)
+  let migrated = try #require(
+    JSONSerialization.jsonObject(
+      with: JSONEncoder().encode(decoded)
+    ) as? [String: Any]
+  )
+  #expect(migrated["format"] as? Int == 2)
+  #expect(migrated["paperSize"] as? String == "a4")
+}
+
+@Test("Новый формат всегда называет размер бумаги")
+func currentDocumentRequiresPaperSize() throws {
+  let current = DocumentDocument(id: legacyItemID, actor: legacyActor)
+  var object = try #require(
+    JSONSerialization.jsonObject(
+      with: JSONEncoder().encode(current)
+    ) as? [String: Any]
+  )
+  object["paperSize"] = nil
+  let malformed = try JSONSerialization.data(withJSONObject: object)
+
+  #expect(throws: DecodingError.self) {
+    try JSONDecoder().decode(DocumentDocument.self, from: malformed)
+  }
+}
+
+@Test("Размер бумаги выбирается при создании и не меняется с содержимым")
+func documentPaperSizeIsCreationOwned() {
+  let id = UUID()
+  var a4 = DocumentDocument(id: id, actor: legacyActor, paperSize: .a4)
+  var letter = DocumentDocument(id: id, actor: legacyActor, paperSize: .letter)
+  let advanced = letter.replaceBlockSource(
+    id: "body",
+    source: "Новая версия",
+    actor: UUID()
+  )
+  #expect(advanced)
+
+  let merged = a4.merge(letter)
+  #expect(!merged)
+  #expect(a4.paperSize == .a4)
+  #expect(a4.blocks.first?.source == "")
+}
+
 @Test("Исходник документа и состояние интерактива сходятся независимо")
 func documentSourceAndInteractiveStateMergeIndependently() {
   let documentID = UUID()
