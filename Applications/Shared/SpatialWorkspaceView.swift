@@ -35,6 +35,7 @@ struct SpatialWorkspaceView: View {
   @State private var panStart: SessionPresence?
   @State private var selectedNotebookID: UUID?
   @State private var liftedNotebookID: UUID?
+  @State private var editingSpatialTextID: String?
   @State private var pageGestureActive = false
   @State private var pageInputGestureID: UUID?
   @State private var bufferedCameraPhases: [WorkspaceMagnificationPhase] = []
@@ -76,9 +77,11 @@ struct SpatialWorkspaceView: View {
               withAnimation(.easeOut(duration: 0.12)) {
                 selectedNotebookID = nil
               }
+              editingSpatialTextID = nil
             },
             onBegan: {
               selectedNotebookID = nil
+              editingSpatialTextID = nil
               panStart = presence
             },
             onChanged: { translation in
@@ -123,7 +126,7 @@ struct SpatialWorkspaceView: View {
             surfaceRegistry: spatialInkSurfaces,
             onCommit: model.appendSpatialInk,
             isEnabled: presence.mode != .page && !pageGestureActive
-              && !model.isTextToolSelected
+              && editingSpatialTextID == nil
           )
           .allowsHitTesting(false)
         #endif
@@ -147,6 +150,7 @@ struct SpatialWorkspaceView: View {
               && !settling,
             isSelected: selectedNotebookID == rendered.id,
             isLifted: liftedNotebookID == rendered.id,
+            editingTextID: editingSpatialTextID,
             spatialInkSurfaces: spatialInkSurfaces,
             onDrop: { notebookID, center in
               dropNotebook(notebookID, at: center, presence: presence)
@@ -157,14 +161,24 @@ struct SpatialWorkspaceView: View {
               }
             },
             onLiftChanged: { notebookID, lifted in
+              if lifted { editingSpatialTextID = nil }
               withAnimation(.spring(duration: 0.18, bounce: 0.18)) {
                 liftedNotebookID = lifted ? notebookID : nil
                 if lifted { selectedNotebookID = notebookID }
               }
             },
             onOpen: { notebookID in
+              editingSpatialTextID = nil
               selectedNotebookID = nil
               openNotebook(notebookID, viewport: viewport)
+            },
+            onEditText: { notebookID, point in
+              beginTextEditing(on: notebookID, at: point)
+            },
+            onTextEditingEnded: { elementID in
+              if editingSpatialTextID == elementID {
+                editingSpatialTextID = nil
+              }
             }
           )
           .zIndex(liftedNotebookID == rendered.id ? 9_000 : rendered.zIndex)
@@ -196,6 +210,12 @@ struct SpatialWorkspaceView: View {
       .onChange(of: geometry.size) { _, _ in
         publishViewportIfNeeded(viewport)
       }
+      .onChange(of: presence.mode) { _, mode in
+        if mode != .cover { editingSpatialTextID = nil }
+      }
+      .onChange(of: presence.focusedNotebookID) { _, notebookID in
+        if notebookID == nil { editingSpatialTextID = nil }
+      }
       .onDisappear {
         settlementTask?.cancel()
         settlementTask = nil
@@ -204,6 +224,7 @@ struct SpatialWorkspaceView: View {
         pageInputGestureID = nil
         bufferedCameraPhases = []
         settling = false
+        editingSpatialTextID = nil
       }
     }
   }
@@ -303,6 +324,29 @@ struct SpatialWorkspaceView: View {
         }
       }
     }
+  }
+
+  private func beginTextEditing(
+    on notebookID: UUID,
+    at point: SpatialPoint
+  ) {
+    guard model.presence?.mode == .cover,
+      model.presence?.focusedNotebookID == notebookID,
+      let board = model.board
+    else { return }
+    let elements = board.elements.filter {
+      $0.surface == .cover(notebookID)
+    }
+    if let text = elements.reversed().first(where: {
+      $0.kind == .nativeText && $0.frame.contains(point)
+    }) {
+      editingSpatialTextID = text.id
+      return
+    }
+    guard !elements.contains(where: { $0.frame.contains(point) }),
+      let elementID = model.addNativeText(on: notebookID, at: point)
+    else { return }
+    editingSpatialTextID = elementID
   }
 
   private func normalizedPresence(for viewport: SpatialPoint) -> SessionPresence {
@@ -412,6 +456,7 @@ struct SpatialWorkspaceView: View {
     case .began(let centroid, let isOpeningApproach):
       interruptSettlementForInput()
       selectedNotebookID = nil
+      editingSpatialTextID = nil
       guard let presence = model.presence else { return }
       let focusedNotebookID = presence.mode == .board
         ? nil
@@ -888,15 +933,17 @@ private struct NotebookSceneItem: View {
   let pageIsInteractive: Bool
   let isSelected: Bool
   let isLifted: Bool
+  let editingTextID: String?
   let spatialInkSurfaces: SpatialInkSurfaceRegistry
   let onDrop: (UUID, WorldPoint) -> Void
   let onSelect: (UUID) -> Void
   let onLiftChanged: (UUID, Bool) -> Void
   let onOpen: (UUID) -> Void
+  let onEditText: (UUID, SpatialPoint) -> Void
+  let onTextEditingEnded: (String) -> Void
 
   @State private var dragTranslation = CGSize.zero
   @State private var liftStarted = false
-  @State private var lastTapUptime: TimeInterval?
 
   var body: some View {
     let screen = camera.worldToScreen(rendered.center, viewport: viewport)
@@ -915,11 +962,26 @@ private struct NotebookSceneItem: View {
       ZStack {
         NotebookCoverView(
           notebook: rendered.notebook,
-          isFocused: isFocused,
           spatialInkSurfaces: spatialInkSurfaces,
           elements: model.board?.elements.filter {
             $0.surface == .cover(rendered.id)
-          } ?? []
+          } ?? [],
+          editingTextID: editingTextID,
+          onTap: handleTap,
+          onLiftChanged: { lifted in
+            if lifted {
+              beginLift()
+            } else {
+              endLift()
+            }
+          },
+          onTranslationChanged: { translation in
+            dragTranslation = translation
+          },
+          onTranslationEnded: { translation in
+            finishMove(translation: translation, scale: scale)
+          },
+          onTextEditingEnded: onTextEditingEnded
         )
         .opacity(openProgress <= 0.5 ? 1 : 0)
 
@@ -939,40 +1001,16 @@ private struct NotebookSceneItem: View {
       height: NotebookGeometry.height
     )
     .overlay {
-      if openProgress < 0.12 {
-        ZStack {
-          if isSelected {
-            RoundedRectangle(
-              cornerRadius: NotebookGeometry.cornerRadius,
-              style: .continuous
-            )
-            .stroke(
-              Color.accentColor.opacity(0.72),
-              lineWidth: 2 / max(scale, 0.0125)
-            )
-            .allowsHitTesting(false)
-          }
-
-          #if os(iOS)
-            NotebookInteractionView(
-              onTap: handleTap,
-              onLiftChanged: { lifted in
-                if lifted {
-                  beginLift()
-                } else {
-                  endLift()
-                }
-              },
-              onTranslationChanged: { translation in
-                dragTranslation = translation
-              },
-              onTranslationEnded: { translation in
-                finishMove(translation: translation, scale: scale)
-              }
-            )
-            .accessibilityHidden(true)
-          #endif
-        }
+      if openProgress < 0.12, isSelected {
+        RoundedRectangle(
+          cornerRadius: NotebookGeometry.cornerRadius,
+          style: .continuous
+        )
+        .stroke(
+          Color.accentColor.opacity(0.72),
+          lineWidth: 2 / max(scale, 0.0125)
+        )
+        .allowsHitTesting(false)
       }
     }
     .scaleEffect(scale * (isLifted ? 1.035 : 1))
@@ -986,6 +1024,7 @@ private struct NotebookSceneItem: View {
       y: isLifted ? 15 : max(2, 8 * scale)
     )
     .animation(.spring(duration: 0.18, bounce: 0.18), value: isLifted)
+    .accessibilityElement(children: .contain)
     .accessibilityIdentifier("notebook-\(rendered.id.uuidString.lowercased())")
     .accessibilityAddTraits(.isButton)
     .accessibilityValue(
@@ -993,16 +1032,20 @@ private struct NotebookSceneItem: View {
     )
   }
 
-  #if os(iOS)
-  private func handleTap() {
+  private func handleTap(_ location: CGPoint, tapCount: Int) {
     guard openProgress < 0.12 else { return }
-    let now = ProcessInfo.processInfo.systemUptime
     onSelect(rendered.id)
-    if let lastTapUptime, now - lastTapUptime <= 0.36 {
-      self.lastTapUptime = nil
-      onOpen(rendered.id)
+    if let editingTextID {
+      onTextEditingEnded(editingTextID)
+    }
+    guard tapCount >= 2 else { return }
+    if isFocused, model.presence?.mode == .cover {
+      onEditText(
+        rendered.id,
+        SpatialPoint(x: location.x, y: location.y)
+      )
     } else {
-      lastTapUptime = now
+      onOpen(rendered.id)
     }
   }
 
@@ -1019,7 +1062,9 @@ private struct NotebookSceneItem: View {
   private func beginLift() {
     guard !liftStarted else { return }
     liftStarted = true
+    #if os(iOS)
     UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    #endif
     onLiftChanged(rendered.id, true)
   }
 
@@ -1027,16 +1072,20 @@ private struct NotebookSceneItem: View {
     liftStarted = false
     onLiftChanged(rendered.id, false)
   }
-  #endif
 }
 
 private struct NotebookCoverView: View {
   @Environment(NotebookAppModel.self) private var model
 
   let notebook: Notebook
-  let isFocused: Bool
   let spatialInkSurfaces: SpatialInkSurfaceRegistry
   let elements: [SpatialElement]
+  let editingTextID: String?
+  let onTap: (CGPoint, Int) -> Void
+  let onLiftChanged: (Bool) -> Void
+  let onTranslationChanged: (CGSize) -> Void
+  let onTranslationEnded: (CGSize) -> Void
+  let onTextEditingEnded: (String) -> Void
 
   var body: some View {
     ZStack(alignment: .topLeading) {
@@ -1066,10 +1115,29 @@ private struct NotebookCoverView: View {
       }
 
       ForEach(elements) { element in
-        SpatialElementContent(element: element)
+        SpatialElementContent(
+          element: element,
+          isTextEditing: editingTextID == element.id,
+          onTextEditingEnded: { onTextEditingEnded(element.id) }
+        )
           .frame(width: element.frame.width, height: element.frame.height)
           .offset(x: element.frame.x, y: element.frame.y)
       }
+
+      #if os(iOS)
+        NotebookInteractionView(
+          passthroughFrames: interactionPassthroughFrames,
+          onTap: onTap,
+          onLiftChanged: onLiftChanged,
+          onTranslationChanged: onTranslationChanged,
+          onTranslationEnded: onTranslationEnded
+        )
+        .frame(
+          width: NotebookGeometry.width,
+          height: NotebookGeometry.height
+        )
+        .accessibilityHidden(true)
+      #endif
 
       #if os(iOS)
         SpatialInkSurfaceView(
@@ -1104,35 +1172,20 @@ private struct NotebookCoverView: View {
         style: .continuous
       )
     )
-    #if os(iOS)
-      .simultaneousGesture(
-        SpatialTapGesture()
-          .onEnded { value in
-            guard isFocused, model.isTextToolSelected else { return }
-            let point = SpatialPoint(
-              x: value.location.x,
-              y: value.location.y
-            )
-            guard !elements.contains(where: { $0.frame.contains(point) }) else {
-              return
-            }
-            _ = model.addNativeText(
-              on: notebook.id,
-              at: SpatialPoint(
-                x: min(
-                  max(value.location.x, 0),
-                  NotebookGeometry.width - 420
-                ),
-                y: min(
-                  max(value.location.y, 0),
-                  NotebookGeometry.height - 120
-                )
-              )
-            )
-          },
-        including: isFocused && model.isTextToolSelected ? .all : .none
+  }
+
+  private var interactionPassthroughFrames: [CGRect] {
+    elements.compactMap { element in
+      guard element.kind != .nativeText || editingTextID == element.id else {
+        return nil
+      }
+      return CGRect(
+        x: element.frame.x,
+        y: element.frame.y,
+        width: element.frame.width,
+        height: element.frame.height
       )
-    #endif
+    }
   }
 }
 
@@ -1160,11 +1213,27 @@ private struct NotebookCoverBackView: View {
 private struct SpatialElementContent: View {
   @Environment(NotebookAppModel.self) private var model
   let element: SpatialElement
+  let isTextEditing: Bool
+  let onTextEditingEnded: () -> Void
+
+  init(
+    element: SpatialElement,
+    isTextEditing: Bool = false,
+    onTextEditingEnded: @escaping () -> Void = {}
+  ) {
+    self.element = element
+    self.isTextEditing = isTextEditing
+    self.onTextEditingEnded = onTextEditingEnded
+  }
 
   var body: some View {
     switch element.kind {
     case .nativeText:
-      NativeTextElementView(element: element)
+      NativeTextElementView(
+        element: element,
+        isEditing: isTextEditing,
+        onEditingEnded: onTextEditingEnded
+      )
     case .markdown, .web:
       AgentWebElementView(element: agentElement) { state in
         model.commitSpatialElementState(elementID: element.id, state: state)
@@ -1197,11 +1266,22 @@ private struct NativeTextElementView: View {
   @FocusState private var focused: Bool
   @State private var text: String
   @State private var commitTask: Task<Void, Never>?
+  @State private var focusTask: Task<Void, Never>?
+  @State private var hasFinishedEditing = false
+  @State private var hasOwnedEditing = false
 
   let element: SpatialElement
+  let isEditing: Bool
+  let onEditingEnded: () -> Void
 
-  init(element: SpatialElement) {
+  init(
+    element: SpatialElement,
+    isEditing: Bool,
+    onEditingEnded: @escaping () -> Void
+  ) {
     self.element = element
+    self.isEditing = isEditing
+    self.onEditingEnded = onEditingEnded
     _text = State(initialValue: element.source)
   }
 
@@ -1224,22 +1304,46 @@ private struct NativeTextElementView: View {
         )
       )
       .focused($focused)
+      .allowsHitTesting(isEditing)
+      .accessibilityHidden(!isEditing)
+      .accessibilityIdentifier("native-text-editor")
       .onAppear {
-        if element.source.isEmpty {
-          Task { @MainActor in
-            await Task.yield()
-            focused = true
-          }
-        }
+        synchronizeEditingState()
       }
       .onChange(of: element.source) { _, source in
         if !focused { text = source }
       }
-      .onChange(of: text) { _, _ in scheduleCommit() }
-      .onChange(of: focused) { _, isFocused in
-        if !isFocused { commit() }
+      .onChange(of: text) { _, _ in
+        if isEditing { scheduleCommit() }
       }
-      .onDisappear { commit() }
+      .onChange(of: isEditing) { _, _ in
+        synchronizeEditingState()
+      }
+      .onChange(of: focused) { _, isFocused in
+        if !isFocused, isEditing { finishEditing() }
+      }
+      .onDisappear {
+        focusTask?.cancel()
+        focusTask = nil
+        if isEditing { finishEditing() }
+      }
+  }
+
+  private func synchronizeEditingState() {
+    focusTask?.cancel()
+    focusTask = nil
+    if isEditing {
+      hasOwnedEditing = true
+      hasFinishedEditing = false
+      focusTask = Task { @MainActor in
+        await Task.yield()
+        guard !Task.isCancelled else { return }
+        focused = true
+      }
+    } else {
+      if focused { focused = false }
+      if hasOwnedEditing { finishEditing() }
+    }
   }
 
   private func scheduleCommit() {
@@ -1256,6 +1360,15 @@ private struct NativeTextElementView: View {
     commitTask = nil
     guard text != element.source else { return }
     model.updateNativeText(elementID: element.id, text: text)
+  }
+
+  private func finishEditing() {
+    guard !hasFinishedEditing else { return }
+    hasFinishedEditing = true
+    commitTask?.cancel()
+    commitTask = nil
+    model.finishNativeTextEditing(elementID: element.id, text: text)
+    onEditingEnded()
   }
 
   private func fontWeight(_ value: Double) -> Font.Weight {

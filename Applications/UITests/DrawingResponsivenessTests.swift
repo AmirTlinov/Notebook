@@ -108,6 +108,62 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(paper.frame.height, originalPaperFrame.height, accuracy: 2)
   }
 
+  func testDoubleTapCreatesAndReopensTextOnAFocusedCover() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-simulator-finger-gestures",
+      "--notebook-nearby-cover-fixture",
+    ]
+    app.launch()
+
+    let notebook = app.descendants(matching: .any)
+      .matching(
+        identifier: "notebook-7e7a1000-0000-4000-8000-000000000002"
+      )
+      .firstMatch
+    XCTAssertTrue(notebook.waitForExistence(timeout: 5))
+    notebook.doubleTap()
+
+    let editor = app.descendants(matching: .any)
+      .matching(identifier: "native-text-editor")
+      .firstMatch
+    XCTAssertTrue(
+      editor.waitForExistence(timeout: 3),
+      "Двойное касание близкой обложки должно сразу передать фокус тексту"
+    )
+    XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 2))
+    editor.typeText("Первая мысль")
+
+    notebook.coordinate(
+      withNormalizedOffset: CGVector(dx: 0.12, dy: 0.2)
+    ).tap()
+    XCTAssertTrue(
+      app.keyboards.firstMatch.waitForNonExistence(timeout: 2),
+      "Касание обложки вне текста должно закончить редактирование"
+    )
+
+    let textPoint = notebook.coordinate(
+      withNormalizedOffset: CGVector(dx: 0.55, dy: 0.53)
+    )
+    textPoint.tap()
+    XCTAssertFalse(
+      app.keyboards.firstMatch.exists,
+      "Одно касание готового текста должно оставить обложку спокойной"
+    )
+    textPoint.doubleTap()
+    XCTAssertTrue(
+      app.keyboards.firstMatch.waitForExistence(timeout: 3),
+      "Повторное двойное касание текста должно вернуть редактор"
+    )
+    editor.typeText("!")
+    XCTAssertTrue(
+      (editor.value as? String)?.contains("!") == true,
+      "Открытый повторно текст должен принимать продолжение"
+    )
+  }
+
   func testSingleTapOffersDeletionAndRepairsAStack() {
     continueAfterFailure = false
     let app = XCUIApplication()

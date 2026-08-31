@@ -50,7 +50,6 @@ final class NotebookAppModel {
   private(set) var penStyle: PenStyle
   private(set) var eraserStyle: EraserStyle
   private(set) var drawingTool: DrawingTool = .pen
-  private(set) var isTextToolSelected = false
 
   let store: NotebookStore
   let actorID: UUID
@@ -394,17 +393,23 @@ final class NotebookAppModel {
   }
 
   func addNativeText(on notebookID: UUID, at point: SpatialPoint) -> String? {
-    guard var board else { return nil }
+    guard var board, board.notebookIDs.contains(notebookID) else { return nil }
+    let width = 420.0
+    let height = 120.0
+    let origin = SpatialPoint(
+      x: min(max(point.x, 0), NotebookGeometry.width - width),
+      y: min(max(point.y, 0), NotebookGeometry.height - height)
+    )
     let id = "text-\(UUID().uuidString.lowercased())"
     let element = SpatialElement(
       id: id,
       surface: .cover(notebookID),
       kind: .nativeText,
       frame: SpatialRect(
-        x: point.x,
-        y: point.y,
-        width: 420,
-        height: 120
+        x: origin.x,
+        y: origin.y,
+        width: width,
+        height: height
       ),
       source: "",
       stamp: VersionStamp(counter: 0, actor: actorID)
@@ -418,14 +423,37 @@ final class NotebookAppModel {
 
   func updateNativeText(elementID: String, text: String) {
     guard var board,
-      let index = board.elements.firstIndex(where: { $0.id == elementID })
+      let index = board.elements.firstIndex(where: {
+        $0.id == elementID && $0.kind == .nativeText
+      })
     else { return }
     var element = board.elements[index]
+    guard element.source != text else { return }
     let expected = element.stamp
     guard element.update(source: text, actor: actorID),
       board.upsertElement(element, expected: expected, actor: actorID)
     else { return }
     persistBoard(board)
+  }
+
+  /// Ends the editor's ownership of one native text element. A blank draft has
+  /// no visible meaning, so ending its edit removes it from the cover and from
+  /// the durable board in the same mutation.
+  func finishNativeTextEditing(elementID: String, text: String) {
+    guard var board,
+      let element = board.elements.first(where: {
+        $0.id == elementID && $0.kind == .nativeText
+      })
+    else { return }
+    if text.isEmpty {
+      guard board.removeElements(ids: [elementID], actor: actorID) == 1 else {
+        return
+      }
+      persistBoard(board)
+      return
+    }
+    guard element.source != text else { return }
+    updateNativeText(elementID: elementID, text: text)
   }
 
   func commitSpatialElementState(elementID: String, state: JSONValue) {
@@ -505,7 +533,6 @@ final class NotebookAppModel {
   }
 
   func selectPenColor(_ color: PenColor) {
-    isTextToolSelected = false
     drawingTool = .pen
     guard color != penStyle.color else { return }
     penStyle = PenStyle(
@@ -517,7 +544,6 @@ final class NotebookAppModel {
   }
 
   func selectPenWidth(_ width: Double) {
-    isTextToolSelected = false
     drawingTool = .pen
     let next = PenStyle(
       color: penStyle.color,
@@ -530,7 +556,6 @@ final class NotebookAppModel {
   }
 
   func selectPenMinimumOpacity(_ minimumOpacity: Double) {
-    isTextToolSelected = false
     drawingTool = .pen
     let next = PenStyle(
       color: penStyle.color,
@@ -543,7 +568,6 @@ final class NotebookAppModel {
   }
 
   func selectEraserWidth(_ maximumWidth: Double) {
-    isTextToolSelected = false
     drawingTool = .eraser
     let next = EraserStyle(maximumWidth: maximumWidth)
     guard next != eraserStyle else { return }
@@ -552,12 +576,7 @@ final class NotebookAppModel {
   }
 
   func selectDrawingTool(_ tool: DrawingTool) {
-    isTextToolSelected = false
     drawingTool = tool
-  }
-
-  func selectTextTool() {
-    isTextToolSelected = true
   }
 
   func commitElementState(elementID: String, state: JSONValue) {

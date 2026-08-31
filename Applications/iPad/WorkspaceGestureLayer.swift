@@ -400,12 +400,13 @@ struct BoardPanView: UIViewRepresentable {
   }
 }
 
-/// One direct-touch owner for a closed notebook. It resolves tap, double-tap
-/// (in the SwiftUI owner), pickup, and movement without making several SwiftUI
-/// recognizers compete for the same finger stream. Pencil touches remain owned
-/// by the window-level spatial ink recognizer.
+/// One direct-touch owner for a closed notebook. UIKit owns tap cadence and
+/// reports `UITouch.tapCount`; this view owns pickup and movement from the same
+/// finger stream. Pencil touches remain owned by the window-level spatial ink
+/// recognizer.
 struct NotebookInteractionView: UIViewRepresentable {
-  let onTap: () -> Void
+  let passthroughFrames: [CGRect]
+  let onTap: (CGPoint, Int) -> Void
   let onLiftChanged: (Bool) -> Void
   let onTranslationChanged: (CGSize) -> Void
   let onTranslationEnded: (CGSize) -> Void
@@ -422,6 +423,7 @@ struct NotebookInteractionView: UIViewRepresentable {
     _ view: NotebookInteractionTouchView,
     context: Context
   ) {
+    view.passthroughFrames = passthroughFrames
     view.onTap = onTap
     view.onLiftChanged = onLiftChanged
     view.onTranslationChanged = onTranslationChanged
@@ -441,10 +443,11 @@ final class NotebookInteractionTouchView: UIView {
   private static let liftDelay: TimeInterval = 0.18
   private static let movementTolerance: CGFloat = 18
 
-  var onTap: () -> Void = {}
+  var onTap: (CGPoint, Int) -> Void = { _, _ in }
   var onLiftChanged: (Bool) -> Void = { _ in }
   var onTranslationChanged: (CGSize) -> Void = { _ in }
   var onTranslationEnded: (CGSize) -> Void = { _ in }
+  var passthroughFrames: [CGRect] = []
 
   private weak var activeTouch: UITouch?
   private var startPoint = CGPoint.zero
@@ -452,6 +455,11 @@ final class NotebookInteractionTouchView: UIView {
   private var maximumTravel: CGFloat = 0
   private var liftWorkItem: DispatchWorkItem?
   private var isLifted = false
+
+  override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+    super.point(inside: point, with: event)
+      && !passthroughFrames.contains(where: { $0.contains(point) })
+  }
 
   override func touchesBegan(
     _ touches: Set<UITouch>,
@@ -510,7 +518,11 @@ final class NotebookInteractionTouchView: UIView {
       maximumTravel,
       hypot(latestTranslation.width, latestTranslation.height)
     )
-    finishInteraction(acceptTap: true)
+    finishInteraction(
+      acceptTap: true,
+      tapLocation: activeTouch.location(in: self),
+      tapCount: activeTouch.tapCount
+    )
   }
 
   override func touchesCancelled(
@@ -524,7 +536,7 @@ final class NotebookInteractionTouchView: UIView {
   }
 
   func cancelInteraction() {
-    finishInteraction(acceptTap: false)
+    finishInteraction(acceptTap: false, tapLocation: .zero, tapCount: 0)
   }
 
   private func scheduleLift() {
@@ -543,7 +555,11 @@ final class NotebookInteractionTouchView: UIView {
     )
   }
 
-  private func finishInteraction(acceptTap: Bool) {
+  private func finishInteraction(
+    acceptTap: Bool,
+    tapLocation: CGPoint,
+    tapCount: Int
+  ) {
     let wasLifted = isLifted
     let translation = latestTranslation
     let wasTap = acceptTap && !wasLifted
@@ -559,7 +575,7 @@ final class NotebookInteractionTouchView: UIView {
       onTranslationEnded(translation)
       onLiftChanged(false)
     } else if wasTap {
-      onTap()
+      onTap(tapLocation, tapCount)
     }
   }
 }
