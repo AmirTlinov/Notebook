@@ -1134,11 +1134,12 @@ private struct WorkspaceSceneItem: View {
         canBeginNavigation: {
           model.pencilInputGate.beginFingerSequence() != nil
         },
-        page: { index, isCurrent in
+        page: { index, isCurrent, readiness in
           notebookPage(
             at: index,
             isCurrent: isCurrent,
-            isLive: isLive
+            isLive: isLive,
+            onRenderReady: readiness
           )
         },
         onCommit: commitNotebookPage,
@@ -1177,12 +1178,13 @@ private struct WorkspaceSceneItem: View {
         navigationIsEnabled: pageNavigationIsEnabled,
         pageIsInteractive: contentIsInteractive,
         canBeginNavigation: { true },
-        page: { index, isCurrent in
+        page: { index, isCurrent, readiness in
           documentPage(
             document: document,
             state: documentState,
             index: index,
-            isCurrent: isCurrent
+            isCurrent: isCurrent,
+            onRenderReady: readiness
           )
         },
         onCommit: commitDocumentPage,
@@ -1220,27 +1222,25 @@ private struct WorkspaceSceneItem: View {
   private func notebookPage(
     at index: Int,
     isCurrent: Bool,
-    isLive: Bool
+    isLive: Bool,
+    onRenderReady: PageTurnReadiness
   ) -> AnyView {
     guard index >= 0,
       index < rendered.item.pageIDs.count,
       let page = model.pages[rendered.item.pageIDs[index]]
     else {
       return AnyView(
-        PageReadoutSurface(page: nil, fallbackSize: notebookFallbackSize)
-      )
-    }
-    if isCurrent {
-      return AnyView(
-        PageSurface(
-          page: page,
-          isInteractive: contentIsInteractive,
-          isVisible: isLive
-        )
+        BlankPageSurface(fallbackSize: notebookFallbackSize)
+          .onAppear { onRenderReady(true) }
       )
     }
     return AnyView(
-      PageReadoutSurface(page: page, fallbackSize: notebookFallbackSize)
+      PageSurface(
+        page: page,
+        isInteractive: isCurrent && contentIsInteractive,
+        isVisible: isLive,
+        onRenderReady: onRenderReady
+      )
     )
   }
 
@@ -1248,7 +1248,8 @@ private struct WorkspaceSceneItem: View {
     document: DocumentDocument,
     state: DocumentStateJournal,
     index: Int,
-    isCurrent: Bool
+    isCurrent: Bool,
+    onRenderReady: PageTurnReadiness
   ) -> AnyView {
     AnyView(
       DocumentWebView(
@@ -1257,6 +1258,7 @@ private struct WorkspaceSceneItem: View {
         isInteractive: isCurrent && contentIsInteractive,
         selectedPageIndex: index,
         capturesSnapshot: isCurrent,
+        onRenderReady: onRenderReady,
         onPageLayout: onDocumentPageLayout,
         onSourceChange: { blockID, source in
           model.replaceDocumentBlockSource(
@@ -1579,9 +1581,13 @@ private struct SpatialElementContent: View {
         onEditingEnded: onTextEditingEnded
       )
     case .markdown, .web:
-      AgentWebElementView(element: agentElement) { state in
-        model.commitSpatialElementState(elementID: element.id, state: state)
-      }
+      AgentWebElementView(
+        element: agentElement,
+        onRenderReady: { _ in },
+        onState: { state in
+          model.commitSpatialElementState(elementID: element.id, state: state)
+        }
+      )
     }
   }
 

@@ -1,10 +1,5 @@
-import SwiftUI
 import NotebookCore
-
-#if os(iOS)
-  import PencilKit
-  import UIKit
-#endif
+import SwiftUI
 
 struct PageSurface: View {
   @Environment(NotebookAppModel.self) private var model
@@ -12,6 +7,10 @@ struct PageSurface: View {
   let page: PageDocument
   let isInteractive: Bool
   let isVisible: Bool
+  let onRenderReady: PageTurnReadiness
+
+  @State private var inkIsReady = false
+  @State private var overlayIsReady = false
 
   var body: some View {
     GeometryReader { geometry in
@@ -42,18 +41,32 @@ struct PageSurface: View {
                 pageID: pageID,
                 stamp: stamp
               )
+            },
+            onRenderReady: { ready in
+              inkIsReady = ready
+              publishReadiness(ink: ready, overlay: overlayIsReady)
             }
           )
         #else
           PencilDrawingView(page: page)
             .allowsHitTesting(false)
+            .onAppear {
+              inkIsReady = true
+              publishReadiness(ink: true, overlay: overlayIsReady)
+            }
         #endif
-        if isVisible {
-          AgentOverlayView(elements: page.elements) { elementID, state in
+        AgentOverlayView(
+          elements: page.elements,
+          onRenderReady: { ready in
+            overlayIsReady = ready
+            publishReadiness(ink: inkIsReady, overlay: ready)
+          },
+          onState: { elementID, state in
             model.commitElementState(elementID: elementID, state: state)
           }
-          .allowsHitTesting(isInteractive)
-        }
+        )
+        .opacity(isVisible ? 1 : 0)
+        .allowsHitTesting(isVisible && isInteractive)
       }
       .frame(width: page.size.width, height: page.size.height)
       .clipShape(
@@ -75,19 +88,23 @@ struct PageSurface: View {
       )
       .clipped()
     }
+    .onAppear {
+      publishReadiness(ink: inkIsReady, overlay: overlayIsReady)
+    }
+  }
+
+  private func publishReadiness(ink: Bool, overlay: Bool) {
+    onRenderReady(ink && overlay)
   }
 }
 
-/// A neighbouring sheet is a readout, not another writing surface. It keeps
-/// the interactive Pencil owner singular while making the next sheet ready
-/// before the fingers begin to move it onscreen.
-struct PageReadoutSurface: View {
-  let page: PageDocument?
+/// The provisional sheet after the last persisted notebook page.
+struct BlankPageSurface: View {
   let fallbackSize: PageSize
 
   var body: some View {
     GeometryReader { geometry in
-      let pageSize = page?.size ?? fallbackSize
+      let pageSize = fallbackSize
       let scale = min(
         geometry.size.width / pageSize.width,
         geometry.size.height / pageSize.height
@@ -98,18 +115,6 @@ struct PageReadoutSurface: View {
       )
       ZStack(alignment: .topLeading) {
         GridPaperView()
-        if let page {
-          #if os(iOS)
-            PencilDrawingReadout(
-              drawingData: page.drawingData,
-              pageSize: page.size
-            )
-          #else
-            PencilDrawingView(page: page)
-          #endif
-          AgentOverlayView(elements: page.elements) { _, _ in }
-          .allowsHitTesting(false)
-        }
       }
       .frame(width: pageSize.width, height: pageSize.height)
       .clipShape(
@@ -135,57 +140,3 @@ struct PageReadoutSurface: View {
     .accessibilityHidden(true)
   }
 }
-
-#if os(iOS)
-private struct PencilDrawingReadout: UIViewRepresentable {
-  let drawingData: Data
-  let pageSize: PageSize
-
-  func makeCoordinator() -> Coordinator {
-    Coordinator()
-  }
-
-  func makeUIView(context: Context) -> UIImageView {
-    let view = UIImageView()
-    view.backgroundColor = .clear
-    view.isOpaque = false
-    view.contentMode = .scaleToFill
-    update(view, coordinator: context.coordinator)
-    return view
-  }
-
-  func updateUIView(_ view: UIImageView, context: Context) {
-    update(view, coordinator: context.coordinator)
-  }
-
-  private func update(_ view: UIImageView, coordinator: Coordinator) {
-    let key = DrawingKey(data: drawingData, size: pageSize)
-    guard coordinator.key != key else { return }
-    coordinator.key = key
-    guard !drawingData.isEmpty,
-      let drawing = try? PKDrawing(data: drawingData)
-    else {
-      view.image = nil
-      return
-    }
-    view.image = drawing.image(
-      from: CGRect(
-        x: 0,
-        y: 0,
-        width: pageSize.width,
-        height: pageSize.height
-      ),
-      scale: min(2, max(1, view.traitCollection.displayScale))
-    )
-  }
-
-  final class Coordinator {
-    var key: DrawingKey?
-  }
-
-  struct DrawingKey: Equatable {
-    let data: Data
-    let size: PageSize
-  }
-}
-#endif

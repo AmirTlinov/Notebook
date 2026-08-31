@@ -153,6 +153,16 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   )
   private var frameSlot = 0
   private var hasPresentedFrame = false
+  private var stableContentRevision: UInt64 = 0
+  private var presentedStableContentRevision: UInt64?
+
+  var onRenderReadinessChange: ((Bool) -> Void)? {
+    didSet {
+      onRenderReadinessChange?(
+        presentedStableContentRevision == stableContentRevision
+      )
+    }
+  }
 
   var committedVertexCount: Int {
     committedVertices.count
@@ -257,6 +267,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   /// Replaces the page atomically. This is used for load, undo, and sync.
   func apply(_ drawing: PKDrawing) {
+    beginStableContentUpdate()
     committedVertices = makeVertices(for: drawing)
     committedBuffer = nil
     committedBatches.removeAll(keepingCapacity: true)
@@ -267,6 +278,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   /// Rebuilds one spatial surface from its ordered raw journal actions.
   func applySpatial(_ layers: [SpatialInkRenderLayer]) {
+    beginStableContentUpdate()
     committedVertices.removeAll(keepingCapacity: true)
     committedBuffer = nil
     committedBatches.removeAll(keepingCapacity: true)
@@ -491,8 +503,20 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     encoder.endEncoding()
 
     commandBuffer.present(drawable)
-    commandBuffer.addCompletedHandler { [inFlightSemaphore] _ in
+    let presentedRevision: UInt64? =
+      activeInkStroke == nil && activeEraserStroke == nil
+      ? stableContentRevision : nil
+    commandBuffer.addCompletedHandler { [weak self, inFlightSemaphore] _ in
       inFlightSemaphore.signal()
+      guard let presentedRevision else { return }
+      Task { @MainActor [weak self] in
+        guard let self,
+          stableContentRevision == presentedRevision,
+          presentedStableContentRevision != presentedRevision
+        else { return }
+        presentedStableContentRevision = presentedRevision
+        onRenderReadinessChange?(true)
+      }
     }
     commandBuffer.commit()
     mustSignal = false
@@ -506,9 +530,12 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       layer.opacity = 1
     }
 
-    if activeInkStroke == nil, activeEraserStroke == nil {
-      isPaused = true
-    }
+    if activeInkStroke == nil, activeEraserStroke == nil { isPaused = true }
+  }
+
+  private func beginStableContentUpdate() {
+    stableContentRevision &+= 1
+    onRenderReadinessChange?(false)
   }
 
   private func requestFrame() {

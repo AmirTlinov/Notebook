@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 
 @testable import Notebook
@@ -5,11 +6,63 @@ import XCTest
 final class TwoFingerGestureClassifierTests: XCTestCase {
   @MainActor
   func testIPadPageTurnUsesTheSystemPageCurl() {
-    let controller = PageTurnPlatformContract.makePageViewController()
+    let controller = IPadPageTurnController()
+    controller.loadViewIfNeeded()
 
-    XCTAssertEqual(controller.transitionStyle, .pageCurl)
-    XCTAssertEqual(controller.navigationOrientation, .horizontal)
-    XCTAssertFalse(controller.isDoubleSided)
+    XCTAssertEqual(controller.pageViewController.transitionStyle, .pageCurl)
+    XCTAssertEqual(
+      controller.pageViewController.navigationOrientation,
+      .horizontal
+    )
+    XCTAssertFalse(controller.pageViewController.isDoubleSided)
+  }
+
+  @MainActor
+  func testIPadTurnLandsTheAlreadyMountedTargetPage() async throws {
+    let controller = IPadPageTurnController()
+    let ownerID = UUID()
+    controller.update(
+      ownerID: ownerID,
+      pageCount: 2,
+      selectedIndex: 0,
+      navigationIsEnabled: true,
+      pageIsInteractive: true,
+      canBeginNavigation: { true },
+      page: { index, _, readiness in
+        readiness(true)
+        return AnyView(Text("Page \(index)"))
+      },
+      onCommit: { _ in },
+      onTransitioningChange: { _ in }
+    )
+    controller.loadViewIfNeeded()
+    controller.view.frame = CGRect(x: 0, y: 0, width: 1_024, height: 1_366)
+    controller.view.layoutIfNeeded()
+
+    let targetIdentity = try XCTUnwrap(controller.cachedPageIdentities[1])
+
+    controller.update(
+      ownerID: ownerID,
+      pageCount: 2,
+      selectedIndex: 1,
+      navigationIsEnabled: true,
+      pageIsInteractive: true,
+      canBeginNavigation: { true },
+      page: { index, _, readiness in
+        readiness(true)
+        return AnyView(Text("Page \(index)"))
+      },
+      onCommit: { _ in },
+      onTransitioningChange: { _ in }
+    )
+    try? await Task.sleep(for: .milliseconds(650))
+
+    XCTAssertEqual(controller.displayedIndex, 1)
+    XCTAssertEqual(
+      controller.visiblePageIdentity,
+      targetIdentity,
+      "Приземлиться должен тот же экземпляр страницы, который уже был виден в жесте"
+    )
   }
 
   @MainActor

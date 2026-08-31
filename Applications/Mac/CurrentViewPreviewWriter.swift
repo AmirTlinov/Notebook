@@ -1,7 +1,7 @@
 import AppKit
 import CryptoKit
-import SwiftUI
 import NotebookCore
+import SwiftUI
 
 enum CurrentViewPreviewWriter {
   @MainActor
@@ -30,6 +30,7 @@ enum CurrentViewPreviewWriter {
     let content = SpatialWorkspaceView()
       .environment(model)
       .environment(\.rendersDocumentSnapshot, true)
+      .environment(\.rendersSettledPageSnapshot, true)
       .frame(width: viewport.width, height: viewport.height)
     let renderer = ImageRenderer(content: content)
     renderer.proposedSize = ProposedViewSize(viewport)

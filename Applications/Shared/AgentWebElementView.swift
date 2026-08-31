@@ -5,10 +5,14 @@ import WebKit
 #if os(iOS)
   struct AgentWebElementView: UIViewRepresentable {
     let element: AgentElement
+    let onRenderReady: (Bool) -> Void
     let onState: (JSONValue) -> Void
 
     func makeCoordinator() -> AgentWebCoordinator {
-      AgentWebCoordinator(onState: onState)
+      AgentWebCoordinator(
+        onRenderReady: onRenderReady,
+        onState: onState
+      )
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -16,6 +20,7 @@ import WebKit
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
+      context.coordinator.use(onRenderReady: onRenderReady)
       context.coordinator.onState = onState
       context.coordinator.load(element, in: webView)
     }
@@ -23,10 +28,14 @@ import WebKit
 #else
   struct AgentWebElementView: NSViewRepresentable {
     let element: AgentElement
+    let onRenderReady: (Bool) -> Void
     let onState: (JSONValue) -> Void
 
     func makeCoordinator() -> AgentWebCoordinator {
-      AgentWebCoordinator(onState: onState)
+      AgentWebCoordinator(
+        onRenderReady: onRenderReady,
+        onState: onState
+      )
     }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -34,6 +43,7 @@ import WebKit
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
+      context.coordinator.use(onRenderReady: onRenderReady)
       context.coordinator.onState = onState
       context.coordinator.load(element, in: webView)
     }
@@ -50,10 +60,23 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   }
 
   var onState: (JSONValue) -> Void
+  private var onRenderReady: (Bool) -> Void
+  private var renderIsReady = false
   private var loadedSignature: DocumentSignature?
+  private var activeNavigation: WKNavigation?
+  private var renderRevision: UInt64 = 0
 
-  init(onState: @escaping (JSONValue) -> Void) {
+  init(
+    onRenderReady: @escaping (Bool) -> Void = { _ in },
+    onState: @escaping (JSONValue) -> Void
+  ) {
+    self.onRenderReady = onRenderReady
     self.onState = onState
+  }
+
+  func use(onRenderReady: @escaping (Bool) -> Void) {
+    self.onRenderReady = onRenderReady
+    publishRenderReadiness(renderIsReady)
   }
 
   func load(_ element: AgentElement, in webView: WKWebView) {
@@ -65,7 +88,12 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     )
     guard signature != loadedSignature else { return }
     loadedSignature = signature
-    webView.loadHTMLString(Self.document(for: element), baseURL: nil)
+    renderRevision &+= 1
+    setRenderReady(false)
+    activeNavigation = webView.loadHTMLString(
+      Self.document(for: element),
+      baseURL: nil
+    )
   }
 
   func userContentController(
@@ -88,6 +116,55 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   ) {
     let scheme = navigationAction.request.url?.scheme
     decisionHandler(scheme == nil || scheme == "about" ? .allow : .cancel)
+  }
+
+  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    guard navigation === activeNavigation else { return }
+    let revision = renderRevision
+    webView.callAsyncJavaScript(
+      """
+      await new Promise(resolve => requestAnimationFrame(
+        () => requestAnimationFrame(resolve)
+      ));
+      return true;
+      """,
+      arguments: [:],
+      in: nil,
+      in: .page,
+      completionHandler: { [weak self] _ in
+        guard let self, renderRevision == revision else { return }
+        setRenderReady(true)
+      }
+    )
+  }
+
+  func webView(
+    _ webView: WKWebView,
+    didFail navigation: WKNavigation!,
+    withError error: any Error
+  ) {
+    guard navigation === activeNavigation else { return }
+    setRenderReady(true)
+  }
+
+  func webView(
+    _ webView: WKWebView,
+    didFailProvisionalNavigation navigation: WKNavigation!,
+    withError error: any Error
+  ) {
+    guard navigation === activeNavigation else { return }
+    setRenderReady(true)
+  }
+
+  private func setRenderReady(_ ready: Bool) {
+    guard renderIsReady != ready else { return }
+    renderIsReady = ready
+    publishRenderReadiness(ready)
+  }
+
+  private func publishRenderReadiness(_ ready: Bool) {
+    let handler = onRenderReady
+    Task { @MainActor in handler(ready) }
   }
 
   fileprivate static func makeWebView(

@@ -137,7 +137,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     )
   }
 
-  func testNotebookPageCurlCommitsThePageThatLands() {
+  func testNotebookPageTurnCommitsThePageThatLands() {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication()
@@ -171,6 +171,13 @@ final class DrawingResponsivenessTests: XCTestCase {
       NSPredicate(format: "label BEGINSWITH 'Страница 2 из '")
     ).firstMatch
     XCTAssertTrue(secondPhysicalPage.waitForExistence(timeout: 8))
+    let paginationReady = XCTNSPredicateExpectation(
+      predicate: NSPredicate(
+        format: "value BEGINSWITH 'Страница 1 из ' AND value != 'Страница 1 из 1'"
+      ),
+      object: surface
+    )
+    wait(for: [paginationReady], timeout: 3)
     surface.swipeLeft()
 
     let landed = XCTNSPredicateExpectation(

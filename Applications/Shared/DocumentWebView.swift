@@ -86,6 +86,7 @@ struct DocumentWebView: View {
   let isInteractive: Bool
   let selectedPageIndex: Int
   let capturesSnapshot: Bool
+  let onRenderReady: PageTurnReadiness
   let onPageLayout: (DocumentPageLayout) -> Void
   let onSourceChange: (String, String) -> Void
   let onStateChange: (String, JSONValue) -> Void
@@ -117,6 +118,7 @@ struct DocumentWebView: View {
       isInteractive: isInteractive,
       selectedPageIndex: selectedPageIndex,
       capturesSnapshot: capturesSnapshot,
+      onRenderReady: onRenderReady,
       onPageLayout: onPageLayout,
       onSourceChange: onSourceChange,
       onStateChange: onStateChange
@@ -176,21 +178,15 @@ private struct DocumentRuntimePayload: Codable {
 private struct DocumentRuntimePayloadKey: Equatable {
   let contentStamp: VersionStamp
   let stateStamp: VersionStamp
-  let editable: Bool
-  let capturesSnapshot: Bool
   let snapshotPageIndex: Int
 
   init(
     document: DocumentDocument,
     state: DocumentStateJournal,
-    editable: Bool,
-    capturesSnapshot: Bool,
     selectedPageIndex: Int
   ) {
     contentStamp = document.contentStamp
     stateStamp = state.stamp
-    self.editable = editable
-    self.capturesSnapshot = capturesSnapshot
     #if os(macOS)
       snapshotPageIndex = selectedPageIndex
     #else
@@ -214,6 +210,8 @@ private final class DocumentWebCoordinator: NSObject,
   var pageIndexUpdateIsRunning = false
   var pageCount = 1
   var capturesSnapshot = false
+  var renderIsReady = false
+  var onRenderReady: PageTurnReadiness
   var onPageLayout: (DocumentPageLayout) -> Void
   var onSourceChange: (String, String) -> Void
   var onStateChange: (String, JSONValue) -> Void
@@ -222,10 +220,12 @@ private final class DocumentWebCoordinator: NSObject,
   #endif
 
   init(
+    onRenderReady: PageTurnReadiness,
     onPageLayout: @escaping (DocumentPageLayout) -> Void,
     onSourceChange: @escaping (String, String) -> Void,
     onStateChange: @escaping (String, JSONValue) -> Void
   ) {
+    self.onRenderReady = onRenderReady
     self.onPageLayout = onPageLayout
     self.onSourceChange = onSourceChange
     self.onStateChange = onStateChange
@@ -234,36 +234,44 @@ private final class DocumentWebCoordinator: NSObject,
   func update(
     document: DocumentDocument,
     state: DocumentStateJournal,
-    editable: Bool,
     selectedPageIndex: Int,
     capturesSnapshot: Bool,
+    onRenderReady: PageTurnReadiness,
     onPageLayout: @escaping (DocumentPageLayout) -> Void,
     onSourceChange: @escaping (String, String) -> Void,
     onStateChange: @escaping (String, JSONValue) -> Void
   ) {
+    self.onRenderReady = onRenderReady
     self.onPageLayout = onPageLayout
     self.onSourceChange = onSourceChange
     self.onStateChange = onStateChange
-    requestedPageIndex = max(0, selectedPageIndex)
+    let nextPageIndex = max(0, selectedPageIndex)
+    let pageChanged = requestedPageIndex != nextPageIndex
+    requestedPageIndex = nextPageIndex
     self.capturesSnapshot = capturesSnapshot
     let nextKey = DocumentRuntimePayloadKey(
       document: document,
       state: state,
-      editable: editable,
-      capturesSnapshot: capturesSnapshot,
       selectedPageIndex: selectedPageIndex
     )
     if payloadKey != nextKey {
+      setRenderReady(false)
       payloadKey = nextKey
       payload = DocumentRuntimePayload(
         document: document,
         state: state,
-        editable: editable,
+        editable: true,
         selectedPageIndex: selectedPageIndex
       )
       applyIfReady()
+    } else if pageChanged {
+      setRenderReady(false)
     }
+    #if os(macOS)
+      pendingSnapshotPayload = capturesSnapshot ? payload : nil
+    #endif
     applyPageIndexIfReady()
+    onRenderReady(renderIsReady)
   }
 
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -367,13 +375,22 @@ private final class DocumentWebCoordinator: NSObject,
 
     let value = min(max(0, requestedPageIndex), max(0, pageCount - 1))
     pageIndexUpdateIsRunning = true
-    webView.evaluateJavaScript(
-      "window.notebookRenderer?.setPageIndex(\(value))"
-    ) { [weak self] _, _ in
-      Task { @MainActor [weak self] in
+    webView.callAsyncJavaScript(
+      """
+      window.notebookRenderer?.setPageIndex(index);
+      await new Promise(resolve => requestAnimationFrame(
+        () => requestAnimationFrame(resolve)
+      ));
+      return index;
+      """,
+      arguments: ["index": value],
+      in: nil,
+      in: .page,
+      completionHandler: { [weak self] _ in
         guard let self else { return }
         appliedPageIndex = value
         pageIndexUpdateIsRunning = false
+        setRenderReady(requestedPageIndex == value)
         applyPageIndexIfReady()
         #if os(macOS)
           DispatchQueue.main.asyncAfter(deadline: .now() + 0.035) { [weak self] in
@@ -381,7 +398,13 @@ private final class DocumentWebCoordinator: NSObject,
           }
         #endif
       }
-    }
+    )
+  }
+
+  private func setRenderReady(_ ready: Bool) {
+    guard renderIsReady != ready else { return }
+    renderIsReady = ready
+    onRenderReady(ready)
   }
 
   #if os(macOS)
@@ -486,12 +509,14 @@ private enum DocumentWebViewFactory {
     let isInteractive: Bool
     let selectedPageIndex: Int
     let capturesSnapshot: Bool
+    let onRenderReady: PageTurnReadiness
     let onPageLayout: (DocumentPageLayout) -> Void
     let onSourceChange: (String, String) -> Void
     let onStateChange: (String, JSONValue) -> Void
 
     func makeCoordinator() -> DocumentWebCoordinator {
       DocumentWebCoordinator(
+        onRenderReady: onRenderReady,
         onPageLayout: onPageLayout,
         onSourceChange: onSourceChange,
         onStateChange: onStateChange
@@ -506,9 +531,9 @@ private enum DocumentWebViewFactory {
       context.coordinator.update(
         document: document,
         state: state,
-        editable: isInteractive,
         selectedPageIndex: selectedPageIndex,
         capturesSnapshot: capturesSnapshot,
+        onRenderReady: onRenderReady,
         onPageLayout: onPageLayout,
         onSourceChange: onSourceChange,
         onStateChange: onStateChange
@@ -534,12 +559,14 @@ private enum DocumentWebViewFactory {
     let isInteractive: Bool
     let selectedPageIndex: Int
     let capturesSnapshot: Bool
+    let onRenderReady: PageTurnReadiness
     let onPageLayout: (DocumentPageLayout) -> Void
     let onSourceChange: (String, String) -> Void
     let onStateChange: (String, JSONValue) -> Void
 
     func makeCoordinator() -> DocumentWebCoordinator {
       DocumentWebCoordinator(
+        onRenderReady: onRenderReady,
         onPageLayout: onPageLayout,
         onSourceChange: onSourceChange,
         onStateChange: onStateChange
@@ -554,9 +581,9 @@ private enum DocumentWebViewFactory {
       context.coordinator.update(
         document: document,
         state: state,
-        editable: isInteractive,
         selectedPageIndex: selectedPageIndex,
         capturesSnapshot: capturesSnapshot,
+        onRenderReady: onRenderReady,
         onPageLayout: onPageLayout,
         onSourceChange: onSourceChange,
         onStateChange: onStateChange

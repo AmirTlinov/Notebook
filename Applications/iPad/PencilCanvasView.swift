@@ -1,6 +1,6 @@
+import NotebookCore
 import PencilKit
 import SwiftUI
-import NotebookCore
 import UIKit
 
 struct PencilCanvasView: UIViewRepresentable {
@@ -13,6 +13,7 @@ struct PencilCanvasView: UIViewRepresentable {
   let pencilInputGate: PencilInputGate
   let reserveAction: (UUID) -> VersionStamp?
   let commitAction: (Data, Data, UUID, VersionStamp) -> Data?
+  let onRenderReady: (Bool) -> Void
 
   func makeCoordinator() -> Coordinator {
     Coordinator(
@@ -24,6 +25,9 @@ struct PencilCanvasView: UIViewRepresentable {
 
   func makeUIView(context: Context) -> PaperCanvasContainerView {
     let paper = PaperCanvasContainerView()
+    paper.inkView.onRenderReadinessChange = { ready in
+      Task { @MainActor in onRenderReady(ready) }
+    }
     paper.setInputEnabled(isInputEnabled)
     context.coordinator.attach(to: paper)
     context.coordinator.apply(
@@ -37,6 +41,9 @@ struct PencilCanvasView: UIViewRepresentable {
   }
 
   func updateUIView(_ paper: PaperCanvasContainerView, context: Context) {
+    paper.inkView.onRenderReadinessChange = { ready in
+      Task { @MainActor in onRenderReady(ready) }
+    }
     paper.setInputEnabled(isInputEnabled)
     context.coordinator.use(pencilInputGate)
     context.coordinator.reserveAction = reserveAction
@@ -54,6 +61,7 @@ struct PencilCanvasView: UIViewRepresentable {
     _ paper: PaperCanvasContainerView,
     coordinator: Coordinator
   ) {
+    paper.inkView.onRenderReadinessChange = nil
     coordinator.detach(from: paper)
   }
 

@@ -12,7 +12,7 @@
 | Нажим Pencil | [`UITouch.force`](https://developer.apple.com/documentation/uikit/uitouch/force), [`maximumPossibleForce`](https://developer.apple.com/documentation/uikit/uitouch/maximumpossibleforce) и [`PKStrokePoint.opacity`](https://developer.apple.com/documentation/pencilkit/pkstrokepointreference/opacity) | `force == 1` означает средний нажим, а `maximumPossibleForce` задаёт верхнюю границу датчика | Сила сначала делится на аппаратный максимум; после короткого фильтра каждая точка получает непрозрачность между выбранным минимумом и `1` |
 | Стирание | [MetalKit](https://developer.apple.com/documentation/metalkit/mtkview) и [`PKDrawing.erasingPath`](https://developer.apple.com/documentation/pencilkit/pkdrawing-swift.struct) | Destination-out смешивание вычитает активный путь из прозрачного слоя чернил; PencilKit сохраняет полный завершённый путь | `ActiveEraserStroke` следует за измеренными точками на частоте экрана, а один фоновый расчёт после подъёма Pencil создаёт файл для Mac и MCP |
 | Два пальца и непрерывный щипок | [`UIGestureRecognizer`](https://developer.apple.com/documentation/uikit/uigesturerecognizer) | Один распознаватель получает всю пару прямых касаний и сохраняет владельца до конца последовательности | `TwoFingerIntentArbiter` сравнивает совместный перенос с разностью движений пальцев и даёт второму пальцу 55 мс на участие; переход `лист -> обложка -> доска` не уничтожает распознаватель посреди щипка |
-| Предсказуемое перелистывание | [`UIPageViewController.pageCurl`](https://developer.apple.com/documentation/uikit/uipageviewcontroller/transitionstyle-swift.enum/pagecurl), [Pages](https://github.com/nachonavarro/Pages/tree/00ae33a8f304702099a958a8cb11f499069569cd) и [Flipbook](https://github.com/rayhankhilji/flipbook/tree/94c8724245e768e9f597c3b1859a300ef061797e) | UIKit ведёт системный curl за пальцем и подтверждает завершение delegate-вызовом; на Mac одна staged-геометрия должна владеть жестом, presentation transform, скоростью, пружиной и commit | `PageTurnSurface` один принимает страницы тетради и документа. iPad использует системный page curl через тонкую SwiftUI-оболочку; Mac использует одну двухстороннюю Core Animation поверхность с тенью и переносом скорости |
+| Предсказуемое перелистывание | [`UIPageViewController.pageCurl`](https://developer.apple.com/documentation/uikit/uipageviewcontroller/transitionstyle-swift.enum/pagecurl), [Pages](https://github.com/nachonavarro/Pages/tree/00ae33a8f304702099a958a8cb11f499069569cd) и [Flipbook](https://github.com/rayhankhilji/flipbook/tree/94c8724245e768e9f597c3b1859a300ef061797e) | На iPad UIKit ведёт системный curl за рукой и подтверждает посадку delegate-вызовом; на Mac одна сцена владеет transform, скоростью, пружиной и commit | `PageTurnSurface` один принимает страницы тетради и документа. Соседние живые страницы заранее смонтированы и допускаются к движению после готового кадра |
 | Текст на обложке | [`UITouch.tapCount`](https://developer.apple.com/documentation/uikit/uitouch/tapcount) и SwiftUI `FocusState` | UIKit уже хранит ритм повторных касаний, а фокус является явным состоянием редактора | На доске второе касание открывает тетрадь; на сфокусированной обложке оно создаёт `nativeText` либо открывает существующий. Рамка активного текста получает касания напрямую, а касание рядом завершает и сохраняет ввод |
 | Форма физической тетради | [SwiftUI `RoundedRectangle`](https://developer.apple.com/documentation/swiftui/roundedrectangle) | Стиль `continuous` создаёт единую плавную кривую угла | Лист, лицевая и обратная стороны обложки используют визуально откалиброванный радиус `0,8 см` и одну `continuous`-форму |
 | Чистое касание бумаги | [UIKit: Handling touches in your view](https://developer.apple.com/documentation/uikit/handling-touches-in-your-view) | Обычный `UIView` различает прямое касание и Pencil | Верхний `PaperInputView` забирает касания; один палец заканчивается пустым действием, два идут жестам, Pencil идёт ручке; под ним находится неинтерактивный `InkCanvasView` без текстового меню |
@@ -284,29 +284,26 @@ HTML, DOMPurify очищает его, а MathJax после своего `start
 горизонтальное перелистывание. Старый format 1 становится A4; format 2 всегда
 пишет явный `paperSize`.
 Тетрадь и документ отдают страницы одному `PageTurnSurface`. У них больше нет
-собственных координат, жестов и settle-анимаций. На iPad тонкая оболочка,
-построенная по положительному примеру Pages, создаёт системный
-`UIPageViewController` со стилем `.pageCurl`. Data source лениво предоставляет
-предыдущий или следующий `UIHostingController`, UIKit ведёт бумагу за прямым
-касанием, а delegate меняет устойчивый индекс только при
-`transitionCompleted == true`. Сценовый двухпальцевый распознаватель при
-горизонтальном движении завершается как failed, поэтому не становится вторым
-владельцем той же пары. Pencil исключён из системных жестов страницы.
+собственных координат, жестов и settle-анимаций. На iPad тонкий контейнер,
+построенный по примеру Pages, использует системный
+`UIPageViewController.pageCurl`. UIKit владеет мягкой геометрией, ходом пальца,
+возвратом и посадкой. Текущий и соседние `UIHostingController` уже находятся в
+окне до жеста: Metal ждёт завершения GPU-кадра, а WebKit — двух кадров
+браузерной отрисовки. Data source отдаёт соседний лист только после этого и
+передаёт UIKit тот же живой экземпляр вместо второго растра рукописи или нового
+WebView.
 
-На Mac `MacPageTurnView` следует устройству Flipbook. Состояния `pending`,
-`dragging` и `settling` принадлежат одной поверхности. Она заранее ставит
-лежащую страницу, лицевую и обратную стороны движущегося листа; затем один
-transform поворачивает лист вокруг переплёта. Самозатемнение и отбрасываемая
-тень меняются вместе с тем же progress. При отпускании `CASpringAnimation`
-начинается с presentation transform и получает измеренную скорость трекпада.
-Новый жест снимает presentation transform и продолжает из действительно
-показанного положения. Стрелки входят в тот же путь. Переход через несколько
-невидимых листов растворяется за `140 мс`.
+На Mac `MacPageTurnView` хранит состояния `pending`, `dragging` и `settling`.
+При отпускании `CASpringAnimation` начинается с presentation transform и
+получает измеренную скорость. Новый жест продолжает из действительно
+показанного положения. После посадки тот же экземпляр становится интерактивным.
+Стрелки входят в тот же путь, а переход через несколько невидимых листов
+растворяется за `140 мс`.
 
 WebKit теперь только набирает документ и показывает запрошенный целый индекс.
 Он не содержит scroll-snap, momentum или дробную координату страницы. Во время
-движения соседние тетрадные листы являются readout, соседние документы —
-неинтерактивными WebKit-поверхностями; ввод и снимок принадлежат только текущему
+движения соседние тетрадные листы и документы остаются теми же заранее готовыми,
+но неинтерактивными поверхностями; ввод и снимок принадлежат только текущему
 листу. После посадки тетрадь один раз меняет `WorkspaceIndex`, документ один раз
 меняет `SessionPresence.documentPageIndex`; ожидание сохранения не откатывает
 уже показанную страницу к прежнему индексу. Только законченный выбор идёт по
