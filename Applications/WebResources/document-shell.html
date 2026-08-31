@@ -480,6 +480,10 @@
         editor.className = 'source-editor';
         editor.value = block.source || '';
         editor.setAttribute('aria-label', 'Исходный Markdown или LaTeX');
+        editor.setAttribute('autocomplete', 'off');
+        editor.setAttribute('autocorrect', 'off');
+        editor.setAttribute('autocapitalize', 'none');
+        editor.setAttribute('spellcheck', 'false');
         editor.setAttribute('autofocus', '');
         editor.setAttribute('inputmode', 'text');
         section.style.visibility = 'hidden';
