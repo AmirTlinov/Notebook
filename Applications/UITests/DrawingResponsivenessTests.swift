@@ -1,3 +1,5 @@
+import CoreGraphics
+import UIKit
 import XCTest
 
 @MainActor
@@ -583,6 +585,71 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertLessThan(releasedOffset, coverOffset - 5)
     XCTAssertGreaterThan(releasedOffset, 20)
     XCTAssertFalse(app.otherElements["paper-input"].exists)
+
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "physical-cover-partial-open"
+    proof.lifetime = .keepAlways
+    add(proof)
+  }
+
+  func testCoverInkTravelsWithThePhysicalCurl() async throws {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-simulator-finger-gestures",
+      "--notebook-cover-eraser-fixture",
+    ]
+    app.launch()
+
+    let notebook = app.descendants(matching: .any)
+      .matching(
+        identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000002"
+      )
+      .firstMatch
+    XCTAssertTrue(notebook.waitForExistence(timeout: 3))
+    notebook.pinch(withScale: 1.05, velocity: 0.2)
+    try await Task.sleep(for: .milliseconds(300))
+
+    XCTAssertFalse(app.otherElements["paper-input"].exists)
+    XCTAssertEqual(app.state, .runningForeground)
+    let screenshot = app.screenshot()
+    XCTAssertGreaterThan(
+      darkPixelShare(
+        in: screenshot,
+        normalizedRect: CGRect(x: 0.16, y: 0.34, width: 0.26, height: 0.18)
+      ),
+      0.005,
+      "Чернила обложки должны остаться на изгибающемся физическом листе"
+    )
+    let proof = XCTAttachment(screenshot: screenshot)
+    proof.name = "cover-ink-on-physical-curl"
+    proof.lifetime = .keepAlways
+    add(proof)
+  }
+
+  func testDocumentCoverUsesTheSamePhysicalCurl() async throws {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-simulator-finger-gestures",
+      "--notebook-document-runtime-fixture",
+    ]
+    app.launch()
+
+    let page = app.otherElements["page-turn-surface"]
+    XCTAssertTrue(page.waitForExistence(timeout: 8))
+    page.pinch(withScale: 0.75, velocity: -0.6)
+    try await Task.sleep(for: .milliseconds(400))
+
+    let cover = app.otherElements["cover-opening-surface"]
+    XCTAssertTrue(cover.waitForExistence(timeout: 3))
+    XCTAssertEqual(app.state, .runningForeground)
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "document-cover-physical-curl"
+    proof.lifetime = .keepAlways
+    add(proof)
   }
 
   func testNearPageApproachMagnetCompletesTheDock() async throws {
@@ -744,6 +811,70 @@ final class DrawingResponsivenessTests: XCTestCase {
     let fit = min(window.width / 834, window.height / 1_194)
     XCTAssertEqual(paper.width, 834 * fit, accuracy: 2)
     XCTAssertEqual(paper.height, 1_194 * fit, accuracy: 2)
+  }
+
+  private func darkPixelShare(
+    in screenshot: XCUIScreenshot,
+    normalizedRect: CGRect
+  ) -> Double {
+    guard let image = screenshot.image.cgImage else {
+      XCTFail("Снимок проверки должен содержать растровое изображение")
+      return 0
+    }
+
+    let imageBounds = CGRect(
+      x: 0,
+      y: 0,
+      width: image.width,
+      height: image.height
+    )
+    let pixelRect = CGRect(
+      x: normalizedRect.minX * imageBounds.width,
+      y: normalizedRect.minY * imageBounds.height,
+      width: normalizedRect.width * imageBounds.width,
+      height: normalizedRect.height * imageBounds.height
+    ).integral.intersection(imageBounds)
+    guard !pixelRect.isEmpty, let crop = image.cropping(to: pixelRect) else {
+      XCTFail("Область проверки чернил должна попадать в снимок")
+      return 0
+    }
+
+    let bytesPerPixel = 4
+    let bytesPerRow = crop.width * bytesPerPixel
+    var pixels = [UInt8](
+      repeating: 0,
+      count: crop.height * bytesPerRow
+    )
+    let rendered = pixels.withUnsafeMutableBytes { buffer -> Bool in
+      guard
+        let context = CGContext(
+          data: buffer.baseAddress,
+          width: crop.width,
+          height: crop.height,
+          bitsPerComponent: 8,
+          bytesPerRow: bytesPerRow,
+          space: CGColorSpaceCreateDeviceRGB(),
+          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )
+      else { return false }
+      context.draw(
+        crop,
+        in: CGRect(x: 0, y: 0, width: crop.width, height: crop.height)
+      )
+      return true
+    }
+    guard rendered else {
+      XCTFail("Снимок проверки чернил должен читаться как RGBA")
+      return 0
+    }
+
+    var darkPixels = 0
+    for offset in stride(from: 0, to: pixels.count, by: bytesPerPixel) {
+      if max(pixels[offset], pixels[offset + 1], pixels[offset + 2]) < 45 {
+        darkPixels += 1
+      }
+    }
+    return Double(darkPixels) / Double(crop.width * crop.height)
   }
 
   func testPenCommitsOneStrokeAndKeepsThePaperResponsive() {

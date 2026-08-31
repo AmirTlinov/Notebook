@@ -1153,19 +1153,14 @@ private struct WorkspaceSceneItem: View {
       )
     }
 
-    ZStack {
+    CoverOpeningSurface(
+      ownerID: rendered.id,
+      progress: openProgress,
+      revision: coverRenderingRevision,
+      backsideColor: .notebook
+    ) {
       itemCover
-        .opacity(openProgress <= 0.5 ? 1 : 0)
-      NotebookCoverBackView()
-        .opacity(openProgress > 0.5 ? 1 : 0)
     }
-    .rotation3DEffect(
-      .degrees(-178 * openProgress),
-      axis: (x: 0, y: 1, z: 0),
-      anchor: .leading,
-      perspective: 0.62
-    )
-    .allowsHitTesting(openProgress < 0.12)
   }
 
   @ViewBuilder
@@ -1199,10 +1194,14 @@ private struct WorkspaceSceneItem: View {
       )
       .opacity(isLive ? 1 : 0)
     }
-    itemCover
-      .opacity(max(0, 1 - openProgress * 2.4))
-      .scaleEffect(1 - openProgress * 0.015)
-      .allowsHitTesting(openProgress < 0.12)
+    CoverOpeningSurface(
+      ownerID: rendered.id,
+      progress: openProgress,
+      revision: coverRenderingRevision,
+      backsideColor: .document
+    ) {
+      itemCover
+    }
   }
 
   private var notebookSelectedPageIndex: Int {
@@ -1311,9 +1310,7 @@ private struct WorkspaceSceneItem: View {
     WorkspaceItemCoverView(
       item: rendered.item,
       spatialInkSurfaces: spatialInkSurfaces,
-      elements: model.board?.elements.filter {
-        $0.surface == .cover(rendered.id)
-      } ?? [],
+      elements: coverElements,
       editingTextID: editingTextID,
       onTap: handleTap,
       onLiftChanged: { lifted in
@@ -1326,6 +1323,20 @@ private struct WorkspaceSceneItem: View {
         finishMove(translation: translation, scale: camera.scale)
       },
       onTextEditingEnded: onTextEditingEnded
+    )
+  }
+
+  private var coverElements: [SpatialElement] {
+    model.board?.elements.filter {
+      $0.surface == .cover(rendered.id)
+    } ?? []
+  }
+
+  private var coverRenderingRevision: CoverRenderingRevision {
+    CoverRenderingRevision(
+      item: rendered.item,
+      elements: coverElements,
+      journal: model.spatialInk
     )
   }
 
@@ -1532,27 +1543,6 @@ private struct WorkspaceItemCoverView: View {
         height: element.frame.height
       )
     }
-  }
-}
-
-private struct NotebookCoverBackView: View {
-  var body: some View {
-    RoundedRectangle(
-      cornerRadius: NotebookGeometry.cornerRadius,
-      style: .continuous
-    )
-    .fill(Color(red: 0.965, green: 0.955, blue: 0.915))
-    .overlay {
-      RoundedRectangle(
-        cornerRadius: NotebookGeometry.cornerRadius,
-        style: .continuous
-      )
-      .stroke(Color.black.opacity(0.07), lineWidth: 2)
-    }
-    .frame(
-      width: NotebookGeometry.width,
-      height: NotebookGeometry.height
-    )
   }
 }
 
