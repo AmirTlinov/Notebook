@@ -443,6 +443,51 @@ final class NotebookAppModel {
     #endif
   }
 
+  /// Document pagination is session presence. The iPad remains its durable
+  /// owner; a Mac interaction is an explicit command which the iPad confirms
+  /// by publishing the resulting presence back to the mirror.
+  @discardableResult
+  func selectDocumentPage(
+    _ pageIndex: Int,
+    documentID: UUID,
+    publishesRequest: Bool = true
+  ) -> Int? {
+    guard pageIndex >= 0,
+      pageIndex <= DocumentPageSelectionRequest.maximumPageIndex,
+      documents[documentID] != nil,
+      let presence,
+      presence.mode == .document,
+      presence.focusedItemID == documentID,
+      presence.openProgress >= 0.999,
+      presence.documentPageIndex != pageIndex
+    else { return nil }
+
+    updatePresence(
+      SessionPresence(
+        mode: presence.mode,
+        camera: presence.camera,
+        viewport: presence.viewport,
+        focusedItemID: documentID,
+        openProgress: presence.openProgress,
+        documentPageIndex: pageIndex
+      ),
+      settled: true
+    )
+    #if os(macOS)
+      if publishesRequest {
+        sync.send(
+          .documentPageSelection(
+            DocumentPageSelectionRequest(
+              documentID: documentID,
+              pageIndex: pageIndex
+            )
+          )
+        )
+      }
+    #endif
+    return pageIndex
+  }
+
   func appendSpatialInk(
     tool: SpatialInkTool,
     color: SpatialInkColor,
@@ -958,6 +1003,15 @@ final class NotebookAppModel {
         if envelope.phase == .settled {
           try? store.savePresence(incoming)
         }
+      #endif
+    case .documentPageSelection(let request):
+      #if os(iOS)
+        guard request.isValid else { return }
+        _ = selectDocumentPage(
+          request.pageIndex,
+          documentID: request.documentID,
+          publishesRequest: false
+        )
       #endif
     }
   }

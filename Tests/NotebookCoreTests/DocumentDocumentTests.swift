@@ -581,3 +581,23 @@ func documentWireMessagesRoundTrip() throws {
     #expect(decoded == message)
   }
 }
+
+@Test("Mac просит страницу документа, не становясь владельцем presence")
+func documentPageSelectionRequestRoundTrips() throws {
+  let request = DocumentPageSelectionRequest(
+    documentID: UUID(),
+    pageIndex: 7
+  )
+  let message = WireMessage.documentPageSelection(request)
+  let encoded = try JSONEncoder().encode(message)
+  let decoded = try JSONDecoder().decode(WireMessage.self, from: encoded)
+
+  #expect(request.isValid)
+  #expect(decoded == message)
+  #expect(
+    !DocumentPageSelectionRequest(
+      documentID: request.documentID,
+      pageIndex: -1
+    ).isValid
+  )
+}

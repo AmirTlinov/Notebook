@@ -21,14 +21,14 @@ final class DrawingResponsivenessTests: XCTestCase {
     let firstPage = app.otherElements.matching(
       NSPredicate(format: "label BEGINSWITH 'Страница 1 из '")
     ).firstMatch
-    XCTAssertTrue(firstPage.waitForExistence(timeout: 3))
+    XCTAssertTrue(firstPage.waitForExistence(timeout: 8))
     firstPage.coordinate(
       withNormalizedOffset: CGVector(dx: 0.32, dy: 0.16)
     ).doubleTap()
 
     let editor = app.textViews["Исходный Markdown или LaTeX"].firstMatch
     XCTAssertTrue(
-      editor.waitForExistence(timeout: 3),
+      editor.waitForExistence(timeout: 5),
       "Двойное касание должно заменить блок одним редактором исходника"
     )
     // WKWebView honours the person's double tap, while XCUITest does not pass

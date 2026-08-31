@@ -9,6 +9,17 @@ import Observation
 struct PageNavigationSample: Equatable, Sendable {
   let translation: CGFloat
   let velocity: CGFloat
+  let gripY: CGFloat
+
+  init(
+    translation: CGFloat,
+    velocity: CGFloat,
+    gripY: CGFloat = 0.5
+  ) {
+    self.translation = translation
+    self.velocity = velocity
+    self.gripY = min(max(gripY, 0), 1)
+  }
 }
 
 enum PageNavigationPhase: Equatable, Sendable {
@@ -123,6 +134,48 @@ struct PageMotionSettlement: Equatable, Sendable {
   }
 }
 
+/// The curl is a projection of PageMotion's signed sheet coordinate. It never
+/// chooses a destination and never advances time. A negative coordinate bends
+/// the current sheet away to expose the next one. A positive coordinate lays
+/// the previous sheet over the current one.
+struct PageCurlProjection: Equatable, Sendable {
+  enum TextureSlot: Equatable, Sendable {
+    case previous
+    case current
+    case next
+  }
+
+  let progress: CGFloat
+  let direction: CGFloat
+  let base: TextureSlot
+  let moving: TextureSlot
+
+  static func resolve(
+    position: CGFloat,
+    hasPrevious: Bool,
+    hasNext: Bool
+  ) -> Self? {
+    guard abs(position) > 0.000_1 else { return nil }
+    if position < 0, hasNext {
+      return Self(
+        progress: min(abs(position), 1),
+        direction: -1,
+        base: .next,
+        moving: .current
+      )
+    }
+    if position > 0, hasPrevious {
+      return Self(
+        progress: min(position, 1),
+        direction: 1,
+        base: .current,
+        moving: .previous
+      )
+    }
+    return nil
+  }
+}
+
 @MainActor
 @Observable
 final class PageMotionController: NSObject {
@@ -132,9 +185,17 @@ final class PageMotionController: NSObject {
     case settling
   }
 
+  enum Presentation: Equatable {
+    case rail
+    case dissolve
+  }
+
   private(set) var phase = Phase.idle
+  private(set) var presentation = Presentation.rail
   private(set) var position: CGFloat = 0
   private(set) var velocity: CGFloat = 0
+  private(set) var gripY: CGFloat = 0.5
+  private(set) var dissolveProgress: CGFloat = 1
 
   var isActive: Bool { phase != .idle }
 
@@ -146,6 +207,7 @@ final class PageMotionController: NSObject {
   @ObservationIgnored private var extent: CGFloat = 1
   @ObservationIgnored private var settlement: PageMotionSettlement?
   @ObservationIgnored private var settlementStartedAt: TimeInterval = 0
+  @ObservationIgnored private var dissolveDuration: TimeInterval = 0
   @ObservationIgnored private var pendingDirection = 0
   @ObservationIgnored private var onCommit: ((Int) -> Void)?
   @ObservationIgnored private var onFinish: (() -> Void)?
@@ -163,11 +225,22 @@ final class PageMotionController: NSObject {
     onCommit: @escaping (Int) -> Void,
     onFinish: @escaping () -> Void
   ) {
+    // A dissolve has no spatial coordinate to continue. A new direct gesture
+    // takes the durable page at zero and releases the old readout first.
+    if presentation == .dissolve, phase != .idle {
+      let finish = self.onFinish
+      self.onFinish = nil
+      finish?()
+      position = 0
+    }
     stopAnimation()
+    presentation = .rail
+    dissolveProgress = 1
     self.extent = max(extent, 1)
     self.availability = availability
     self.onCommit = onCommit
     self.onFinish = onFinish
+    gripY = sample.gripY
     gestureOrigin = position
     phase = .tracking
     track(sample)
@@ -200,11 +273,97 @@ final class PageMotionController: NSObject {
     settle(to: 0, initialVelocity: 0, reduceMotion: reduceMotion)
   }
 
+  /// Keyboard navigation uses the same destination, velocity transfer and
+  /// settlement as a released direct gesture. It has no second animation
+  /// owner and therefore remains interruptible by the next trackpad gesture.
+  func select(
+    direction: Int,
+    availability: PageMotionAvailability,
+    reduceMotion: Bool,
+    onCommit: @escaping (Int) -> Void,
+    onFinish: @escaping () -> Void
+  ) {
+    guard direction == -1 || direction == 1,
+      (direction < 0 && availability.previous)
+        || (direction > 0 && availability.next)
+    else { return }
+    if phase != .idle { reset() }
+    stopAnimation()
+    presentation = .rail
+    dissolveProgress = 1
+    self.availability = availability
+    self.onCommit = onCommit
+    self.onFinish = onFinish
+    position = 0
+    velocity = CGFloat(-direction) * 0.85
+    gripY = 0.5
+    settle(
+      to: CGFloat(-direction),
+      initialVelocity: velocity,
+      reduceMotion: reduceMotion
+    )
+  }
+
+  /// A durable selection received from another input owner already names the
+  /// new page. Present it from the old adjacent page, then settle to the new
+  /// canonical zero without committing the selection a second time.
+  func presentCommittedChange(
+    from offset: CGFloat,
+    reduceMotion: Bool,
+    onFinish: @escaping () -> Void
+  ) {
+    guard offset != 0 else {
+      onFinish()
+      return
+    }
+    if phase != .idle { reset() }
+    stopAnimation()
+    presentation = .rail
+    dissolveProgress = 1
+    availability = PageMotionAvailability(previous: true, next: true)
+    onCommit = nil
+    self.onFinish = onFinish
+    position = min(max(offset, -1), 1)
+    velocity = 0
+    gripY = 0.5
+    settle(to: 0, initialVelocity: 0, reduceMotion: reduceMotion)
+  }
+
+  /// A non-adjacent remote jump has no honest spatial path. The same temporal
+  /// owner therefore performs one compact dissolve instead of pretending the
+  /// unseen intermediate pages crossed the screen.
+  func presentDissolve(
+    duration: TimeInterval = 0.14,
+    onFinish: @escaping () -> Void
+  ) {
+    if phase != .idle { reset() }
+    stopAnimation()
+    presentation = .dissolve
+    phase = .settling
+    position = 0
+    velocity = 0
+    gripY = 0.5
+    dissolveProgress = 0
+    dissolveDuration = max(0.001, duration)
+    settlementStartedAt = ProcessInfo.processInfo.systemUptime
+    settlement = nil
+    pendingDirection = 0
+    onCommit = nil
+    self.onFinish = onFinish
+    startAnimation()
+  }
+
   /// Camera movement and page movement cannot own the same pixels. If a pinch
   /// begins while a released page is settling, finish that already chosen
   /// destination before handing the surface to the camera.
   func finishBeforeCompetingGesture() {
-    guard phase == .settling, let settlement else { return }
+    guard phase == .settling else { return }
+    if presentation == .dissolve {
+      dissolveProgress = 1
+      completeSettlement()
+      return
+    }
+    guard let settlement else { return }
     position = settlement.target
     completeSettlement()
   }
@@ -212,9 +371,13 @@ final class PageMotionController: NSObject {
   func reset() {
     stopAnimation()
     phase = .idle
+    presentation = .rail
     position = 0
     velocity = 0
+    gripY = 0.5
+    dissolveProgress = 1
     settlement = nil
+    dissolveDuration = 0
     pendingDirection = 0
     onCommit = nil
     let finish = onFinish
@@ -228,8 +391,10 @@ final class PageMotionController: NSObject {
     reduceMotion: Bool
   ) {
     stopAnimation()
-    let frequency: CGFloat = reduceMotion ? 34 : 17
-    let duration: TimeInterval = reduceMotion ? 0.14 : 0.38
+    presentation = .rail
+    dissolveProgress = 1
+    let frequency: CGFloat = reduceMotion ? 34 : 22
+    let duration: TimeInterval = reduceMotion ? 0.14 : 0.30
     settlement = PageMotionSettlement(
       start: position,
       target: target,
@@ -250,6 +415,14 @@ final class PageMotionController: NSObject {
   }
 
   private func advance(at timestamp: TimeInterval) {
+    if phase == .settling, presentation == .dissolve {
+      let elapsed = max(0, timestamp - settlementStartedAt)
+      let linear = min(1, elapsed / dissolveDuration)
+      let eased = linear * linear * (3 - 2 * linear)
+      dissolveProgress = CGFloat(eased)
+      if linear >= 1 { completeSettlement() }
+      return
+    }
     guard phase == .settling, let settlement else {
       stopAnimation()
       return
@@ -276,9 +449,13 @@ final class PageMotionController: NSObject {
       onCommit?(direction)
     }
     phase = .idle
+    presentation = .rail
     position = 0
     velocity = 0
+    gripY = 0.5
+    dissolveProgress = 1
     settlement = nil
+    dissolveDuration = 0
     onCommit = nil
     let finish = onFinish
     onFinish = nil

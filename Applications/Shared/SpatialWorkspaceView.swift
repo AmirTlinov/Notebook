@@ -38,6 +38,11 @@ private struct NotebookPageSet {
   let next: PageDocument?
 }
 
+private enum LocalPageSelection: Equatable {
+  case notebook(UUID)
+  case document(UUID, Int)
+}
+
 struct SpatialWorkspaceView: View {
   @Environment(NotebookAppModel.self) private var model
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -53,6 +58,11 @@ struct SpatialWorkspaceView: View {
   @State private var pageNavigationGestureID: UUID?
   @State private var bufferedPageNavigationPhases: [PageNavigationPhase] = []
   @State private var pageMotion = PageMotionController()
+  @State private var pageTransitionID: UUID?
+  @State private var transitionItemID: UUID?
+  @State private var departingNotebookPage: PageDocument?
+  @State private var departingDocumentPageIndex: Int?
+  @State private var expectedLocalSelection: LocalPageSelection?
   @State private var documentPageLayouts: [UUID: DocumentPageLayout] = [:]
   @State private var settling = false
   @State private var settlementTask: Task<Void, Never>?
@@ -164,6 +174,12 @@ struct SpatialWorkspaceView: View {
               && (presence.mode == .page || presence.mode == .document)
               ? pageMotion
               : nil,
+            departingPage: transitionItemID == rendered.id
+              ? departingNotebookPage
+              : nil,
+            departingDocumentPageIndex: transitionItemID == rendered.id
+              ? departingDocumentPageIndex
+              : nil,
             camera: presence.camera,
             viewport: viewport,
             isFocused: presence.focusedItemID == rendered.id,
@@ -224,8 +240,9 @@ struct SpatialWorkspaceView: View {
         #if os(iOS)
           WorkspaceGestureLayer(
             isEnabled: true,
-            allowsPageNavigation: presence.mode == .page
-              || presence.mode == .document,
+            allowsPageNavigation: (presence.mode == .page
+              || presence.mode == .document)
+              && presence.openProgress >= 0.999,
             pencilInputGate: model.pencilInputGate,
             onCamera: handleWorkspaceMagnification,
             onPageNavigation: { phase in
@@ -244,6 +261,21 @@ struct SpatialWorkspaceView: View {
           itemSelectionControl(presence: presence, viewport: viewport)
         #endif
 
+        #if os(macOS)
+          MacTrackpadPageGestureLayer(
+            isEnabled: (presence.mode == .page || presence.mode == .document)
+              && presence.openProgress >= 0.999 && !settling,
+            onNavigation: { phase in
+              handlePageNavigation(
+                phase,
+                presence: normalizedPresence(for: viewport),
+                viewport: viewport
+              )
+            }
+          )
+          .frame(width: viewport.x, height: viewport.y)
+        #endif
+
         controls(presence: presence, viewport: viewport)
       }
       .clipped()
@@ -257,14 +289,29 @@ struct SpatialWorkspaceView: View {
         if mode != .cover { editingSpatialTextID = nil }
         if mode != .page && mode != .document {
           pageMotion.reset()
+          clearPageTransition()
+          expectedLocalSelection = nil
         }
       }
       .onChange(of: presence.focusedItemID) { _, itemID in
         if itemID == nil { editingSpatialTextID = nil }
         pageMotion.reset()
+        clearPageTransition()
+        expectedLocalSelection = nil
       }
-      .onChange(of: model.workspace?.selectedPageID) { _, _ in
-        pageMotion.reset()
+      .onChange(of: model.workspace?.selectedPageID) { oldID, newID in
+        handleNotebookSelectionChange(
+          from: oldID,
+          to: newID,
+          presence: normalizedPresence(for: viewport)
+        )
+      }
+      .onChange(of: presence.documentPageIndex) { oldIndex, newIndex in
+        handleDocumentSelectionChange(
+          from: oldIndex,
+          to: newIndex,
+          presence: normalizedPresence(for: viewport)
+        )
       }
       .onDisappear {
         settlementTask?.cancel()
@@ -276,10 +323,25 @@ struct SpatialWorkspaceView: View {
         pageNavigationGestureID = nil
         bufferedPageNavigationPhases = []
         pageMotion.reset()
+        clearPageTransition()
         settling = false
         editingSpatialTextID = nil
       }
     }
+    #if os(macOS)
+      .onMoveCommand { direction in
+        switch direction {
+        case .left:
+          handlePageStep(-1)
+        case .right:
+          handlePageStep(1)
+        case .up, .down:
+          break
+        @unknown default:
+          break
+        }
+      }
+    #endif
   }
 
   @ViewBuilder
@@ -532,6 +594,146 @@ struct SpatialWorkspaceView: View {
     )
   }
 
+  private func handleNotebookSelectionChange(
+    from oldPageID: UUID?,
+    to newPageID: UUID?,
+    presence: SessionPresence
+  ) {
+    guard oldPageID != newPageID else { return }
+    if let newPageID,
+      expectedLocalSelection == .notebook(newPageID)
+    {
+      expectedLocalSelection = nil
+      return
+    }
+    expectedLocalSelection = nil
+
+    guard presence.mode == .page,
+      let itemID = presence.focusedItemID,
+      let item = model.workspace?.items.first(where: { $0.id == itemID }),
+      item.kind == .notebook,
+      let oldPageID,
+      let newPageID,
+      let oldIndex = item.pageIDs.firstIndex(of: oldPageID),
+      let newIndex = item.pageIDs.firstIndex(of: newPageID)
+    else {
+      pageMotion.reset()
+      clearPageTransition()
+      return
+    }
+
+    beginCommittedPagePresentation(
+      itemID: itemID,
+      offset: newIndex - oldIndex,
+      departingPage: model.pages[oldPageID],
+      departingDocumentPageIndex: nil
+    )
+  }
+
+  private func handleDocumentSelectionChange(
+    from oldIndex: Int,
+    to newIndex: Int,
+    presence: SessionPresence
+  ) {
+    guard oldIndex != newIndex else { return }
+    if let itemID = presence.focusedItemID,
+      expectedLocalSelection == .document(itemID, newIndex)
+    {
+      expectedLocalSelection = nil
+      return
+    }
+    expectedLocalSelection = nil
+
+    guard presence.mode == .document,
+      let itemID = presence.focusedItemID,
+      model.documents[itemID] != nil
+    else {
+      pageMotion.reset()
+      clearPageTransition()
+      return
+    }
+
+    beginCommittedPagePresentation(
+      itemID: itemID,
+      offset: newIndex - oldIndex,
+      departingPage: nil,
+      departingDocumentPageIndex: oldIndex
+    )
+  }
+
+  /// A durable change is already true before this presentation begins. One
+  /// adjacent sheet has a real spatial path; a larger jump honestly fades
+  /// through zero because no intermediate path was observed.
+  private func beginCommittedPagePresentation(
+    itemID: UUID,
+    offset: Int,
+    departingPage: PageDocument?,
+    departingDocumentPageIndex: Int?
+  ) {
+    pageMotion.reset()
+    clearPageTransition()
+    let transitionID = UUID()
+    pageTransitionID = transitionID
+    transitionItemID = itemID
+
+    if abs(offset) == 1, !reduceMotion {
+      pageMotion.presentCommittedChange(
+        from: CGFloat(offset),
+        reduceMotion: false,
+        onFinish: {
+          finishPageTransition(transitionID)
+        }
+      )
+    } else {
+      self.departingNotebookPage = departingPage
+      self.departingDocumentPageIndex = departingDocumentPageIndex
+      pageMotion.presentDissolve {
+        finishPageTransition(transitionID)
+      }
+    }
+    contentGestureActive = true
+  }
+
+  private func finishPageTransition(_ transitionID: UUID) {
+    guard pageTransitionID == transitionID else { return }
+    contentGestureActive = false
+    clearPageTransition()
+  }
+
+  private func clearPageTransition() {
+    pageTransitionID = nil
+    transitionItemID = nil
+    departingNotebookPage = nil
+    departingDocumentPageIndex = nil
+  }
+
+  private func handlePageStep(_ direction: Int) {
+    guard direction == -1 || direction == 1 else { return }
+    pageMotion.finishBeforeCompetingGesture()
+    guard let presence = model.presence,
+      presence.mode == .page || presence.mode == .document,
+      presence.openProgress >= 0.999,
+      let itemID = presence.focusedItemID
+    else { return }
+    let availability = pageAvailability(itemID: itemID, presence: presence)
+    guard (direction < 0 && availability.previous)
+      || (direction > 0 && availability.next)
+    else { return }
+
+    pageMotion.select(
+      direction: direction,
+      availability: availability,
+      reduceMotion: reduceMotion,
+      onCommit: { committedDirection in
+        commitPageSelection(committedDirection, itemID: itemID)
+      },
+      onFinish: {
+        contentGestureActive = false
+      }
+    )
+    contentGestureActive = true
+  }
+
   private func handlePageNavigation(
     _ phase: PageNavigationPhase,
     presence: SessionPresence,
@@ -588,6 +790,7 @@ struct SpatialWorkspaceView: View {
     viewport _: SpatialPoint
   ) {
     guard presence.mode == .page || presence.mode == .document,
+      presence.openProgress >= 0.999,
       let itemID = presence.focusedItemID,
       model.presence?.mode == presence.mode,
       model.presence?.focusedItemID == itemID
@@ -599,7 +802,9 @@ struct SpatialWorkspaceView: View {
     )
     let extent = CGFloat(NotebookGeometry.width * presence.camera.scale)
     let begin: (PageNavigationSample) -> Void = { sample in
-      contentGestureActive = true
+      // Direct input inherits the shown coordinate, but the old remote
+      // presentation no longer needs its readout lease.
+      if pageTransitionID != nil { clearPageTransition() }
       pageMotion.begin(
         sample,
         extent: extent,
@@ -611,6 +816,7 @@ struct SpatialWorkspaceView: View {
           contentGestureActive = false
         }
       )
+      contentGestureActive = true
     }
 
     switch phase {
@@ -658,7 +864,14 @@ struct SpatialWorkspaceView: View {
     let pageNumber: Int?
     switch presence.mode {
     case .page:
-      pageNumber = model.turnPage(direction).map { $0 + 1 }
+      if let pageIndex = model.turnPage(direction) {
+        expectedLocalSelection = model.workspace?.selectedPageID.map {
+          .notebook($0)
+        }
+        pageNumber = pageIndex + 1
+      } else {
+        pageNumber = nil
+      }
     case .document:
       let count = documentPageLayouts[itemID]?.pageCount ?? 1
       let next = min(
@@ -666,18 +879,13 @@ struct SpatialWorkspaceView: View {
         count - 1
       )
       guard next != presence.documentPageIndex else { return }
-      model.updatePresence(
-        SessionPresence(
-          mode: presence.mode,
-          camera: presence.camera,
-          viewport: presence.viewport,
-          focusedItemID: itemID,
-          openProgress: presence.openProgress,
-          documentPageIndex: next
-        ),
-        settled: true
+      expectedLocalSelection = .document(itemID, next)
+      let selected = model.selectDocumentPage(
+        next,
+        documentID: itemID
       )
-      pageNumber = next + 1
+      if selected == nil { expectedLocalSelection = nil }
+      pageNumber = selected.map { $0 + 1 }
     case .board, .cover:
       pageNumber = nil
     }
@@ -696,24 +904,20 @@ struct SpatialWorkspaceView: View {
     _ layout: DocumentPageLayout,
     documentID: UUID
   ) {
-    guard documentPageLayouts[documentID] != layout else { return }
-    documentPageLayouts[documentID] = layout
+    if documentPageLayouts[documentID] != layout {
+      documentPageLayouts[documentID] = layout
+    }
     guard let presence = model.presence,
       presence.mode == .document,
       presence.focusedItemID == documentID,
       presence.documentPageIndex >= layout.pageCount
     else { return }
-    model.updatePresence(
-      SessionPresence(
-        mode: presence.mode,
-        camera: presence.camera,
-        viewport: presence.viewport,
-        focusedItemID: documentID,
-        openProgress: presence.openProgress,
-        documentPageIndex: layout.pageCount - 1
-      ),
-      settled: true
+    expectedLocalSelection = .document(documentID, layout.pageCount - 1)
+    let selected = model.selectDocumentPage(
+      layout.pageCount - 1,
+      documentID: documentID
     )
+    if selected == nil { expectedLocalSelection = nil }
   }
 
   private func preparesContent(
@@ -1258,6 +1462,8 @@ private struct WorkspaceSceneItem: View {
   let documentState: DocumentStateJournal?
   let documentPageIndex: Int
   let pageMotion: PageMotionController?
+  let departingPage: PageDocument?
+  let departingDocumentPageIndex: Int?
   let camera: SpatialCamera
   let viewport: SpatialPoint
   let isFocused: Bool
@@ -1331,49 +1537,16 @@ private struct WorkspaceSceneItem: View {
   @ViewBuilder
   private func notebookContents(isLive: Bool) -> some View {
     if preparesContent, let page {
-      if pageMotion != nil {
-        ZStack {
-          if let previousPage {
-            PageReadoutSurface(
-              page: previousPage,
-              fallbackSize: page.size
-            )
-            .overlay(alignment: .trailing) {
-              sheetEdgeShadow(trailing: true)
-            }
-            .offset(x: (pageMotionPosition - 1) * NotebookGeometry.width)
-          }
-
-          PageReadoutSurface(
-            page: nextPage,
-            fallbackSize: page.size
-          )
-          .overlay(alignment: .leading) {
-            sheetEdgeShadow(trailing: false)
-          }
-          .offset(x: (pageMotionPosition + 1) * NotebookGeometry.width)
-
-          PageSurface(
-            page: page,
-            isInteractive: contentIsInteractive,
-            isVisible: isLive
-          )
-          .allowsHitTesting(contentIsInteractive)
-          .offset(x: pageMotionPosition * NotebookGeometry.width)
-        }
-        .frame(
-          width: NotebookGeometry.width,
-          height: NotebookGeometry.height
+      if let pageMotion {
+        NotebookPageTransitionSurface(
+          page: page,
+          previousPage: previousPage,
+          nextPage: nextPage,
+          departingPage: departingPage,
+          pageMotion: pageMotion,
+          isInteractive: contentIsInteractive,
+          isVisible: isLive
         )
-        .clipShape(
-          RoundedRectangle(
-            cornerRadius: NotebookGeometry.cornerRadius,
-            style: .continuous
-          )
-        )
-        .transaction { transaction in
-          transaction.animation = nil
-        }
       } else {
         PageSurface(
           page: page,
@@ -1407,7 +1580,7 @@ private struct WorkspaceSceneItem: View {
         state: documentState,
         isInteractive: contentIsInteractive || pageMotion?.isActive == true,
         selectedPageIndex: documentPageIndex,
-        pagePosition: Double(documentPageIndex) - Double(pageMotionPosition),
+        pagePosition: documentPagePosition,
         usesExternalPaging: usesExternalDocumentPaging,
         onPageLayout: onDocumentPageLayout,
         onSourceChange: { blockID, source in
@@ -1433,6 +1606,7 @@ private struct WorkspaceSceneItem: View {
         )
       )
       .opacity(isLive ? 1 : 0)
+      .opacity(documentDissolveOpacity)
       .allowsHitTesting(contentIsInteractive)
     }
     itemCover
@@ -1441,29 +1615,36 @@ private struct WorkspaceSceneItem: View {
       .allowsHitTesting(openProgress < 0.12)
   }
 
-  private func sheetEdgeShadow(trailing: Bool) -> some View {
-    LinearGradient(
-      colors: trailing
-        ? [.clear, .black.opacity(0.11)]
-        : [.black.opacity(0.11), .clear],
-      startPoint: .leading,
-      endPoint: .trailing
-    )
-    .frame(width: 14)
-    .opacity(min(1, abs(pageMotionPosition) * 1.8))
-    .allowsHitTesting(false)
-  }
-
   private var pageMotionPosition: CGFloat {
     pageMotion?.position ?? 0
   }
 
+  private var dissolveProgress: CGFloat {
+    pageMotion?.dissolveProgress ?? 1
+  }
+
+  private var documentDissolveOpacity: Double {
+    guard pageMotion?.presentation == .dissolve,
+      departingDocumentPageIndex != nil
+    else { return 1 }
+    if dissolveProgress < 0.5 {
+      return Double(max(0, 1 - dissolveProgress / 0.35))
+    }
+    return Double(max(0, (dissolveProgress - 0.65) / 0.35))
+  }
+
+  private var documentPagePosition: Double {
+    if pageMotion?.presentation == .dissolve,
+      let departingDocumentPageIndex,
+      dissolveProgress < 0.5
+    {
+      return Double(departingDocumentPageIndex)
+    }
+    return Double(documentPageIndex) - Double(pageMotionPosition)
+  }
+
   private var usesExternalDocumentPaging: Bool {
-    #if os(iOS)
-      true
-    #else
-      false
-    #endif
+    true
   }
 
   private var itemCover: some View {

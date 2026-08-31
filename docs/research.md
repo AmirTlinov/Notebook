@@ -12,7 +12,7 @@
 | Нажим Pencil | [`UITouch.force`](https://developer.apple.com/documentation/uikit/uitouch/force), [`maximumPossibleForce`](https://developer.apple.com/documentation/uikit/uitouch/maximumpossibleforce) и [`PKStrokePoint.opacity`](https://developer.apple.com/documentation/pencilkit/pkstrokepointreference/opacity) | `force == 1` означает средний нажим, а `maximumPossibleForce` задаёт верхнюю границу датчика | Сила сначала делится на аппаратный максимум; после короткого фильтра каждая точка получает непрозрачность между выбранным минимумом и `1` |
 | Стирание | [MetalKit](https://developer.apple.com/documentation/metalkit/mtkview) и [`PKDrawing.erasingPath`](https://developer.apple.com/documentation/pencilkit/pkdrawing-swift.struct) | Destination-out смешивание вычитает активный путь из прозрачного слоя чернил; PencilKit сохраняет полный завершённый путь | `ActiveEraserStroke` следует за измеренными точками на частоте экрана, а один фоновый расчёт после подъёма Pencil создаёт файл для Mac и MCP |
 | Два пальца и непрерывный щипок | [`UIGestureRecognizer`](https://developer.apple.com/documentation/uikit/uigesturerecognizer) | Один распознаватель получает всю пару прямых касаний и сохраняет владельца до конца последовательности | `TwoFingerIntentArbiter` сравнивает совместный перенос с разностью движений пальцев и даёт второму пальцу 55 мс на участие; переход `лист -> обложка -> доска` не уничтожает распознаватель посреди щипка |
-| Предсказуемое перелистывание | [`CADisplayLink`](https://developer.apple.com/documentation/quartzcore/cadisplaylink) и [Designing Fluid Interfaces](https://developer.apple.com/videos/play/wwdc2018/803/) | Прямой жест должен быть прерываемым и сохранять скорость в момент передачи анимации; кадры следуют развёртке дисплея | `PageMotionController` один ведёт тетрадь и документ: полный перенос задаёт положение листа один к одному, проекция решает исход, а критически затухающая пружина продолжает показанное положение без второго владельца |
+| Предсказуемое перелистывание | [`CADisplayLink`](https://developer.apple.com/documentation/quartzcore/cadisplaylink), [MetalKit](https://developer.apple.com/documentation/metalkit) и [Designing Fluid Interfaces](https://developer.apple.com/videos/play/wwdc2018/803/) | Прямой жест должен быть прерываемым и сохранять скорость в момент передачи анимации; геометрия материала является проекцией, а не вторым автоматом движения | `PageMotionController` один ведёт тетрадь и документ на iPad и Mac. Тетрадь передаёт его координату 64x24 Metal-сетке, адаптированной из Ransel; renderer только рисует последний кадр и не знает target, spring или commit |
 | Текст на обложке | [`UITouch.tapCount`](https://developer.apple.com/documentation/uikit/uitouch/tapcount) и SwiftUI `FocusState` | UIKit уже хранит ритм повторных касаний, а фокус является явным состоянием редактора | На доске второе касание открывает тетрадь; на сфокусированной обложке оно создаёт `nativeText` либо открывает существующий. Рамка активного текста получает касания напрямую, а касание рядом завершает и сохраняет ввод |
 | Форма физической тетради | [SwiftUI `RoundedRectangle`](https://developer.apple.com/documentation/swiftui/roundedrectangle) | Стиль `continuous` создаёт единую плавную кривую угла | Лист, лицевая и обратная стороны обложки используют визуально откалиброванный радиус `0,8 см` и одну `continuous`-форму |
 | Чистое касание бумаги | [UIKit: Handling touches in your view](https://developer.apple.com/documentation/uikit/handling-touches-in-your-view) | Обычный `UIView` различает прямое касание и Pencil | Верхний `PaperInputView` забирает касания; один палец заканчивается пустым действием, два идут жестам, Pencil идёт ручке; под ним находится неинтерактивный `InkCanvasView` без текстового меню |
@@ -291,14 +291,28 @@ HTML, DOMPurify очищает его, а MathJax после своего `start
 `0,34` страницы отделяет просмотр от выбора. Затем критически затухающая
 пружина работает по `CADisplayLink` до `0` либо `+/-1`. Новый жест останавливает
 её в текущем показанном значении. Открытая тетрадь держит по соседству два
-неинтерактивных readout; в режиме обложки эта направляющая размонтирована, а
-единственным владельцем Pencil остаётся текущий `PencilCanvasView`. На iPad
+неинтерактивных readout. Их сетка, окончательный `PKDrawing` и агентские элементы
+заранее собираются в текстуры. Знак положения выбирает ровно две текстуры:
+вперёд изгибается текущий лист над следующим, назад предыдущий лист ложится над
+текущим. Адаптированная из Ransel Metal-сетка 64x24 получает только progress,
+direction и высоту захвата. Её display link лишь показывает последнюю переданную
+проекцию и сразу засыпает; время, скорость и исход остаются у
+`PageMotionController`. Если текстуры ещё нет, плоская рельса показывает ту же
+координату без исчезновения содержания. В режиме обложки readout размонтирован,
+а единственным владельцем Pencil остаётся текущий `PencilCanvasView`. На iPad
 нативный владелец напрямую двигает внешний
 `WKWebView.scrollView`, а DOM лишь сообщает физический шаг страницы; собственный
 scroll-snap WebKit освобождает этот контракт.
+Исходная геометрия Ransel распространяется по Apache-2.0; копия лицензии лежит
+в [`docs/licenses/Ransel-Apache-2.0.txt`](licenses/Ransel-Apache-2.0.txt).
 После завершения тетрадь один раз меняет `WorkspaceIndex`, документ один раз
 меняет `SessionPresence.documentPageIndex`; только этот законченный выбор идёт
-по сети и участвует в зрительной квитанции.
+по сети и участвует в зрительной квитанции. Mac превращает горизонтальные
+события трекпада в тот же перенос и измеренную скорость, поглощая отдельный
+системный momentum; стрелки запускают ту же пружину. Документный выбор Mac идёт
+на iPad как команда, после чего iPad подтверждает единственный authoritative
+presence. Полученный соседний лист проходит рельсу без второго commit, а
+переход через несколько невидимых листов использует одно растворение `140 мс`.
 Двойное касание заменяет Markdown или LaTeX-блок одним `textarea`. Касание
 свободного места, закрытие страницы и новый входной payload сначала публикуют
 введённый исходник, поэтому камера не может молча выбросить открытую правку.

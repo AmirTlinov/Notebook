@@ -50,6 +50,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   }
 
   var onState: (JSONValue) -> Void
+  var onNavigationCompletion: ((WKWebView, Bool) -> Void)?
   private var loadedSignature: DocumentSignature?
 
   init(onState: @escaping (JSONValue) -> Void) {
@@ -90,7 +91,33 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     decisionHandler(scheme == nil || scheme == "about" ? .allow : .cancel)
   }
 
-  fileprivate static func makeWebView(coordinator: AgentWebCoordinator) -> WKWebView {
+  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    let completion = onNavigationCompletion
+    onNavigationCompletion = nil
+    completion?(webView, true)
+  }
+
+  func webView(
+    _ webView: WKWebView,
+    didFail navigation: WKNavigation!,
+    withError error: any Error
+  ) {
+    let completion = onNavigationCompletion
+    onNavigationCompletion = nil
+    completion?(webView, false)
+  }
+
+  func webView(
+    _ webView: WKWebView,
+    didFailProvisionalNavigation navigation: WKNavigation!,
+    withError error: any Error
+  ) {
+    let completion = onNavigationCompletion
+    onNavigationCompletion = nil
+    completion?(webView, false)
+  }
+
+  static func makeWebView(coordinator: AgentWebCoordinator) -> WKWebView {
     let controller = WKUserContentController()
     controller.add(coordinator, name: "notebook")
     let configuration = WKWebViewConfiguration()

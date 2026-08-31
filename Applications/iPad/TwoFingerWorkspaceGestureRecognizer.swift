@@ -15,7 +15,7 @@ enum TwoFingerMotionIntent: Equatable {
 /// motion. The short evidence window lets the second finger join before the
 /// first hardware sample can steal the sequence as a pinch.
 enum TwoFingerIntentArbiter {
-  static let activationTravel: CGFloat = 14
+  static let activationTravel: CGFloat = 12
   static let magnificationActivation: CGFloat = 0.01
   static let evidenceDelay: TimeInterval = 0.055
   static let participatingTravel: CGFloat = 4

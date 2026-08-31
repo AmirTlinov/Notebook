@@ -219,9 +219,11 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     private func pageSample(
       from recognizer: TwoFingerPaperGestureRecognizer
     ) -> PageNavigationSample {
-      PageNavigationSample(
+      let height = max(sceneView?.bounds.height ?? 1, 1)
+      return PageNavigationSample(
         translation: recognizer.translation.x,
-        velocity: recognizer.velocity.x
+        velocity: recognizer.velocity.x,
+        gripY: recognizer.startCentroidValue.y / height
       )
     }
 
