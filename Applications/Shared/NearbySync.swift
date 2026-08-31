@@ -63,6 +63,18 @@ struct WireSendQueue {
       pendingPageID == incomingPageID
     {
       storage[storage.count - 1] = message
+    } else if case .document(let incoming) = message,
+      head < storage.count,
+      case .document(let pending) = storage[storage.count - 1],
+      pending.id == incoming.id
+    {
+      storage[storage.count - 1] = message
+    } else if case .documentState(let incoming) = message,
+      head < storage.count,
+      case .documentState(let pending) = storage[storage.count - 1],
+      pending.id == incoming.id
+    {
+      storage[storage.count - 1] = message
     } else {
       storage.append(message)
     }

@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; frame-src 'self' data: blob:; form-action 'none'; base-uri 'none'; object-src 'none';">
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #fbfaf5;
+      --ink: #171713;
+      --muted: rgba(23, 23, 19, .55);
+      --selection: rgba(46, 104, 255, .14);
+      --measure: 46rem;
+    }
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; background: var(--paper); }
+    body {
+      color: var(--ink);
+      font-family: ui-serif, "New York", "Times New Roman", serif;
+      font-size: clamp(17px, 2.05vw, 22px);
+      line-height: 1.58;
+      -webkit-font-smoothing: antialiased;
+      -webkit-text-size-adjust: 100%;
+      overscroll-behavior: none;
+    }
+    #document {
+      width: min(var(--measure), calc(100% - 3rem));
+      min-height: 100vh;
+      margin: 0 auto;
+      padding: max(4.5rem, env(safe-area-inset-top)) 0 max(7rem, env(safe-area-inset-bottom));
+    }
+    .block { position: relative; margin: 0 0 1.5em; }
+    .block.editable { border-radius: .45rem; touch-action: manipulation; }
+    .block.editable:active { background: rgba(23, 23, 19, .018); }
+    h1, h2, h3, h4 { line-height: 1.12; letter-spacing: -.025em; margin: 1.6em 0 .55em; }
+    h1 { font-size: 2.25em; font-weight: 650; }
+    h2 { font-size: 1.55em; font-weight: 620; }
+    h3 { font-size: 1.22em; font-weight: 620; }
+    p, ul, ol, blockquote, pre, table { margin: 0 0 1em; }
+    ul, ol { padding-left: 1.45em; }
+    blockquote { margin-left: 0; padding-left: 1em; color: var(--muted); border-left: 2px solid rgba(23,23,19,.14); }
+    code { font-family: ui-monospace, "SFMono-Regular", monospace; font-size: .86em; }
+    :not(pre) > code { padding: .12em .32em; background: rgba(23,23,19,.055); border-radius: .28em; }
+    pre { overflow-x: auto; padding: 1em; background: rgba(23,23,19,.045); border-radius: .55em; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: .45em .6em; text-align: left; border-bottom: 1px solid rgba(23,23,19,.11); }
+    a { color: inherit; text-decoration-thickness: .06em; text-underline-offset: .14em; }
+    img, svg { max-width: 100%; }
+    .latex { overflow-x: auto; padding: .2em 0; text-align: center; }
+    .interactive-frame {
+      display: block;
+      width: 100%;
+      border: 0;
+      border-radius: .7rem;
+      background: transparent;
+      color-scheme: light;
+    }
+    .source-editor {
+      display: block;
+      width: 100%;
+      min-height: 9rem;
+      resize: vertical;
+      margin: 0;
+      padding: .8rem .9rem;
+      border: 0;
+      border-radius: .55rem;
+      outline: 2px solid rgba(46, 104, 255, .24);
+      outline-offset: 0;
+      background: rgba(255,255,255,.7);
+      color: var(--ink);
+      font: 500 .86em/1.55 ui-monospace, "SFMono-Regular", monospace;
+      caret-color: #1e65f3;
+      box-shadow: 0 .6rem 2rem rgba(30, 42, 68, .08);
+      -webkit-user-select: text;
+      user-select: text;
+    }
+    .empty-hint { color: var(--muted); font-style: italic; }
+    ::selection { background: var(--selection); }
+    ::-webkit-scrollbar { width: 0; height: 0; }
+    @media (min-width: 900px) {
+      #document { padding-top: 6rem; }
+    }
+  </style>
+  <script>
+    window.MathJax = {
+      startup: { typeset: false },
+      tex: {
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$', '$$'], ['\\[', '\\]']],
+        processEscapes: true,
+        processEnvironments: true
+      },
+      svg: { fontCache: 'local' }
+    };
+  </script>
+  <script src="marked.umd.js"></script>
+  <script src="purify.min.js"></script>
+  <script src="tex-svg-nofont.js"></script>
+</head>
+<body>
+  <main id="document" aria-label="Документ"></main>
+  <script>
+    (() => {
+      'use strict';
+      const root = document.getElementById('document');
+      let payload = null;
+      let editingBlockID = null;
+      let activeEditorFinish = null;
+      let lastTouchTap = null;
+
+      const bridge = (message) => {
+        const handler = window.webkit?.messageHandlers?.notebook;
+        if (handler) handler.postMessage(message);
+      };
+
+      const stable = (value) => JSON.stringify(value ?? null);
+      const stateFor = (block) => payload?.states
+        && Object.prototype.hasOwnProperty.call(payload.states, block.id)
+        ? payload.states[block.id]
+        : (block.initialState ?? {});
+      const signatureFor = (block) => stable({
+        kind: block.kind,
+        source: block.source,
+        html: block.html,
+        css: block.css,
+        javaScript: block.javaScript,
+        height: block.height
+      });
+
+      const interactiveDocument = (block, state) => {
+        const safeID = JSON.stringify(block.id).replaceAll('<', '\\u003c');
+        const safeState = JSON.stringify(state ?? null).replaceAll('<', '\\u003c');
+        const safeScript = JSON.stringify(block.javaScript || '').replaceAll('<', '\\u003c');
+        const safeCSS = String(block.css || '').replace(/<\/style/gi, '<\\/style');
+        const csp = "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; font-src data:; media-src data: blob:; form-action 'none'; base-uri 'none'; object-src 'none';";
+        return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}${safeCSS}</style></head><body>${block.html || ''}<script>(()=>{const blockID=${safeID};let value=${safeState};window.notebook={get state(){return value},commit(next){value=next;parent.postMessage({channel:'notebook-interactive',blockID,state:next},'*')}};addEventListener('message',event=>{if(event.data?.channel==='notebook-state'&&event.data.blockID===blockID){value=event.data.state;dispatchEvent(new CustomEvent('notebookstate',{detail:value}))}});try{(0,eval)(${safeScript})}catch(error){document.body.dataset.runtimeError=String(error)}})()<\/script></body></html>`;
+      };
+
+      const createBlock = (block) => {
+        const section = document.createElement('section');
+        section.className = `block ${block.kind === 'interactive' ? 'interactive' : 'editable'}`;
+        section.dataset.blockId = block.id;
+        section.dataset.kind = block.kind;
+        section.dataset.signature = signatureFor(block);
+
+        if (block.kind === 'interactive') {
+          const frame = document.createElement('iframe');
+          frame.className = 'interactive-frame';
+          frame.title = block.id;
+          frame.height = String(block.height || 320);
+          frame.setAttribute('sandbox', 'allow-scripts');
+          frame.setAttribute('scrolling', 'no');
+          frame.dataset.runtimeLoaded = 'false';
+          frame.addEventListener('load', () => {
+            frame.dataset.runtimeLoaded = 'true';
+          }, { once: true });
+          frame.srcdoc = interactiveDocument(block, stateFor(block));
+          section.append(frame);
+        } else if (block.kind === 'latex') {
+          section.classList.add('latex');
+          const source = block.source || '';
+          const ownsDisplayMath = /^\s*(\$\$|\\\[|\\begin\s*\{(?:equation|align|alignat|gather|multline|flalign)\*?\})/.test(source);
+          section.textContent = ownsDisplayMath ? source : `\\[${source}\\]`;
+        } else {
+          const source = block.source || '';
+          section.innerHTML = source
+            ? DOMPurify.sanitize(marked.parse(source), {
+                USE_PROFILES: { html: true, svg: true, svgFilters: true },
+                FORBID_TAGS: ['script', 'iframe', 'object', 'embed'],
+                FORBID_ATTR: ['style', 'onerror', 'onload']
+              })
+            : '<p class="empty-hint">Дважды коснитесь, чтобы начать писать.</p>';
+        }
+        return section;
+      };
+
+      const typeset = async (nodes) => {
+        if (nodes.length === 0) return;
+        try {
+          await window.MathJax?.startup?.promise;
+          if (typeof window.MathJax?.typesetPromise !== 'function') {
+            throw new Error('MathJax runtime did not finish loading');
+          }
+          await MathJax.typesetPromise(nodes);
+          for (const node of nodes) {
+            if (node.classList.contains('latex')) {
+              if (!node.querySelector('mjx-container')) {
+                throw new Error(`LaTeX block ${node.dataset.blockId} stayed unrendered`);
+              }
+              node.setAttribute('role', 'math');
+              node.setAttribute('aria-label', 'Формула отрисована');
+            }
+            node.dataset.mathState = 'rendered';
+          }
+        } catch (error) {
+          for (const node of nodes) node.dataset.mathState = 'error';
+          console.error('MathJax failed to typeset a document block', error);
+        }
+      };
+
+      const render = async (nextPayload) => {
+        if (activeEditorFinish) activeEditorFinish(true, false);
+        payload = nextPayload;
+        root.style.setProperty('--measure', `${Math.max(28, Math.min(70, nextPayload.measureREM || 46))}rem`);
+        const oldByID = new Map([...root.children].map(node => [node.dataset.blockId, node]));
+        const nextNodes = [];
+        const typesetNodes = [];
+
+        for (const block of nextPayload.blocks || []) {
+          const old = oldByID.get(block.id);
+          const signature = signatureFor(block);
+          if (old && old.dataset.signature === signature && editingBlockID !== block.id) {
+            if (block.kind === 'interactive') {
+              old.querySelector('iframe')?.contentWindow?.postMessage({
+                channel: 'notebook-state', blockID: block.id, state: stateFor(block)
+              }, '*');
+            }
+            nextNodes.push(old);
+            oldByID.delete(block.id);
+            continue;
+          }
+          if (old && window.MathJax?.typesetClear) MathJax.typesetClear([old]);
+          const node = createBlock(block);
+          nextNodes.push(node);
+          if (block.kind !== 'interactive') typesetNodes.push(node);
+          oldByID.delete(block.id);
+        }
+
+        for (const node of oldByID.values()) {
+          if (window.MathJax?.typesetClear) MathJax.typesetClear([node]);
+        }
+        root.replaceChildren(...nextNodes);
+        await typeset(typesetNodes);
+        const loadingFrames = [...root.querySelectorAll('iframe.interactive-frame')]
+          .filter(frame => frame.dataset.runtimeLoaded !== 'true');
+        await Promise.all(loadingFrames.map(frame => new Promise(resolve => {
+          const finish = () => {
+            frame.dataset.runtimeLoaded = 'true';
+            resolve();
+          };
+          const timeout = setTimeout(finish, 1000);
+          frame.addEventListener('load', () => {
+            clearTimeout(timeout);
+            finish();
+          }, { once: true });
+        })));
+        await new Promise(resolve => requestAnimationFrame(
+          () => requestAnimationFrame(resolve)
+        ));
+        bridge({
+          kind: 'rendered',
+          documentID: nextPayload.documentID,
+          renderToken: nextPayload.renderToken
+        });
+      };
+
+      const beginEditing = (blockID) => {
+        if (!payload?.editable || editingBlockID) return;
+        const block = payload.blocks.find(candidate => candidate.id === blockID);
+        if (!block || block.kind === 'interactive') return;
+        const section = [...root.children].find(node => node.dataset.blockId === blockID);
+        if (!section) return;
+        if (window.MathJax?.typesetClear) MathJax.typesetClear([section]);
+        editingBlockID = blockID;
+        const editor = document.createElement('textarea');
+        editor.className = 'source-editor';
+        editor.value = block.source || '';
+        editor.setAttribute('aria-label', 'Исходный Markdown или LaTeX');
+        section.replaceChildren(editor);
+        editor.style.height = `${Math.max(144, editor.scrollHeight + 4)}px`;
+        editor.focus({ preventScroll: true });
+        editor.setSelectionRange(editor.value.length, editor.value.length);
+
+        let finished = false;
+        const finish = (commit, rerender = true) => {
+          if (finished) return;
+          finished = true;
+          const source = editor.value;
+          editingBlockID = null;
+          activeEditorFinish = null;
+          if (commit && source !== block.source) {
+            block.source = source;
+            bridge({ kind: 'source', documentID: payload.documentID, blockID, source });
+          }
+          if (rerender) render(payload);
+        };
+        activeEditorFinish = finish;
+        editor.addEventListener('blur', () => finish(true), { once: true });
+        editor.addEventListener('keydown', event => {
+          if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault(); finish(true);
+          }
+        });
+      };
+
+      document.addEventListener('pointerdown', event => {
+        if (activeEditorFinish && !event.target.closest('.source-editor')) {
+          activeEditorFinish(true);
+        }
+      }, true);
+      root.addEventListener('dblclick', event => {
+        event.preventDefault();
+        const section = event.target.closest('.block.editable');
+        if (section) beginEditing(section.dataset.blockId);
+      });
+      root.addEventListener('pointerup', event => {
+        if (event.pointerType !== 'touch') return;
+        const section = event.target.closest('.block.editable');
+        if (!section) { lastTouchTap = null; return; }
+        const now = performance.now();
+        const tap = {
+          blockID: section.dataset.blockId,
+          x: event.clientX,
+          y: event.clientY,
+          time: now
+        };
+        if (lastTouchTap
+          && lastTouchTap.blockID === tap.blockID
+          && now - lastTouchTap.time <= 360
+          && Math.hypot(tap.x - lastTouchTap.x, tap.y - lastTouchTap.y) <= 28) {
+          event.preventDefault();
+          lastTouchTap = null;
+          beginEditing(tap.blockID);
+        } else {
+          lastTouchTap = tap;
+        }
+      });
+      addEventListener('pagehide', () => activeEditorFinish?.(true, false));
+      addEventListener('message', event => {
+        const message = event.data;
+        if (message?.channel !== 'notebook-interactive' || !payload) return;
+        const frame = [...root.querySelectorAll('iframe.interactive-frame')]
+          .find(candidate => candidate.contentWindow === event.source);
+        const blockID = frame?.closest('.block.interactive')?.dataset.blockId;
+        if (!blockID) return;
+        payload.states[blockID] = message.state;
+        bridge({
+          kind: 'state', documentID: payload.documentID,
+          blockID, value: message.state
+        });
+      });
+      addEventListener('dragstart', event => event.preventDefault());
+
+      window.notebookRenderer = { apply: render };
+      bridge({ kind: 'ready' });
+    })();
+  </script>
+</body>
+</html>

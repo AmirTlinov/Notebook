@@ -25,7 +25,7 @@ enum TwoFingerIntentArbiter {
   }
 
   static func resolve(
-    isPageOpen: Bool,
+    allowsPageNavigation: Bool,
     translation: CGPoint,
     fingerDisplacements: [CGPoint],
     magnification: CGFloat,
@@ -45,7 +45,7 @@ enum TwoFingerIntentArbiter {
       && min(abs(first.x), abs(second.x)) >= participatingTravel
 
     if maximumTravel >= activationTravel, coherent,
-      (!isPageOpen || (horizontal && horizontalAgreement))
+      (!allowsPageNavigation || (horizontal && horizontalAgreement))
     {
       return .navigation
     }
@@ -174,7 +174,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   private(set) var isOpeningApproach = false
   private(set) var centroid = CGPoint.zero
 
-  var isPageOpen = false
+  var allowsPageNavigation = false
   weak var pencilInputGate: PencilInputGate?
 
   var startCentroidValue: CGPoint { startCentroid ?? centroid }
@@ -223,7 +223,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     switch intent {
     case .undecided:
       let motionIntent = TwoFingerIntentArbiter.resolve(
-        isPageOpen: isPageOpen,
+        allowsPageNavigation: allowsPageNavigation,
         translation: translation,
         fingerDisplacements: fingerDisplacements,
         magnification: magnification,

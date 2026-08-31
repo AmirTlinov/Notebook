@@ -1,97 +1,174 @@
-import AppKit
-import PencilKit
+import Foundation
 import NotebookCore
 
 enum PagePreviewWriter {
   @MainActor
-  static func write(_ page: PageDocument, to url: URL) throws {
-    let scale = 2.0
-    let pixelWidth = max(1, Int((page.size.width * scale).rounded()))
-    let pixelHeight = max(1, Int((page.size.height * scale).rounded()))
-    guard let bitmap = NSBitmapImageRep(
-      bitmapDataPlanes: nil,
-      pixelsWide: pixelWidth,
-      pixelsHigh: pixelHeight,
-      bitsPerSample: 8,
-      samplesPerPixel: 4,
-      hasAlpha: true,
-      isPlanar: false,
-      colorSpaceName: .deviceRGB,
-      bitmapFormat: [],
-      bytesPerRow: 0,
-      bitsPerPixel: 0
-    ) else { throw PreviewError.bitmapAllocation }
-    bitmap.size = NSSize(width: page.size.width, height: page.size.height)
-    guard let context = NSGraphicsContext(bitmapImageRep: bitmap) else {
-      throw PreviewError.graphicsContext
-    }
+  static func hasCurrentArtifacts(
+    for page: PageDocument,
+    store: NotebookStore
+  ) -> Bool {
+    guard let receiptData = try? Data(
+      contentsOf: store.previewVisionReceiptURL(page.id)
+    ),
+      let receipt = try? JSONDecoder().decode(
+        PageVisionReceipt.self,
+        from: receiptData
+      ),
+      receipt.isValid,
+      receipt.pageID == page.id,
+      receipt.drawingStamp == page.drawingStamp,
+      let preview = try? Data(contentsOf: store.previewURL(page.id)),
+      PageVisionRenderer.sha256(preview) == receipt.previewPNG_SHA256,
+      let ink = try? Data(contentsOf: store.previewInkURL(page.id)),
+      PageVisionRenderer.sha256(ink) == receipt.inkPNG_SHA256
+    else { return false }
 
-    NSGraphicsContext.saveGraphicsState()
-    NSGraphicsContext.current = context
-    let bounds = NSRect(
-      x: 0,
-      y: 0,
-      width: page.size.width,
-      height: page.size.height
-    )
-    NSColor(
-      calibratedRed: PaperAppearance.background.red,
-      green: PaperAppearance.background.green,
-      blue: PaperAppearance.background.blue,
-      alpha: 1
-    ).setFill()
-    bounds.fill()
-
-    let grid = NSBezierPath()
-    grid.lineWidth = 0.5
-    var x = 0.0
-    while x <= page.size.width {
-      grid.move(to: NSPoint(x: x, y: 0))
-      grid.line(to: NSPoint(x: x, y: page.size.height))
-      x += PhysicalPaper.gridSpacing
+    let directory = store.previewRegionsURL(page.id)
+    return receipt.regions.allSatisfy { region in
+      guard let faithful = try? Data(contentsOf: regionURL(
+        in: directory,
+        regionID: region.id,
+        mode: "faithful"
+      )),
+        PageVisionRenderer.sha256(faithful) == region.faithfulPNG_SHA256,
+        let cleanInk = try? Data(contentsOf: regionURL(
+          in: directory,
+          regionID: region.id,
+          mode: "ink"
+        ))
+      else { return false }
+      return PageVisionRenderer.sha256(cleanInk) == region.inkPNG_SHA256
     }
-    var y = 0.0
-    while y <= page.size.height {
-      grid.move(to: NSPoint(x: 0, y: y))
-      grid.line(to: NSPoint(x: page.size.width, y: y))
-      y += PhysicalPaper.gridSpacing
-    }
-    NSColor(
-      calibratedRed: PaperAppearance.grid.red,
-      green: PaperAppearance.grid.green,
-      blue: PaperAppearance.grid.blue,
-      alpha: PaperAppearance.gridOpacity
-    ).setStroke()
-    grid.stroke()
-
-    if !page.drawingData.isEmpty,
-       let drawing = try? PKDrawing(data: page.drawingData) {
-      PaperInkRenderer.image(
-        from: drawing,
-        bounds: bounds,
-        scale: scale
-      ).draw(in: bounds)
-    }
-    context.flushGraphics()
-    NSGraphicsContext.restoreGraphicsState()
-
-    guard let png = bitmap.representation(using: .png, properties: [:]) else {
-      throw PreviewError.pngEncoding
-    }
-    try FileManager.default.createDirectory(
-      at: url.deletingLastPathComponent(),
-      withIntermediateDirectories: true
-    )
-    try png.write(to: url, options: [.atomic])
-    let revision = "\(page.drawingStamp.counter)@" +
-      page.drawingStamp.actor.uuidString.lowercased() + "\n"
-    let revisionURL = url.deletingPathExtension().appendingPathExtension("revision")
-    try Data(revision.utf8).write(to: revisionURL, options: [.atomic])
   }
 
-  private enum PreviewError: Error {
-    case bitmapAllocation
-    case graphicsContext
-    case pngEncoding
+  @MainActor
+  static func write(_ page: PageDocument, store: NotebookStore) throws {
+    let previewURL = store.previewURL(page.id)
+    let render = try PageVisionRenderer.render(page)
+    let regionsURL = store.previewRegionsURL(page.id)
+    let fileManager = FileManager.default
+    try fileManager.createDirectory(
+      at: previewURL.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try fileManager.createDirectory(
+      at: regionsURL,
+      withIntermediateDirectories: true
+    )
+    try archivePreviousReceipt(page: page, store: store)
+
+    var expectedRegionFiles = Set<String>()
+    for region in render.regions {
+      let faithfulURL = regionURL(
+        in: regionsURL,
+        regionID: region.receipt.id,
+        mode: "faithful"
+      )
+      let inkURL = regionURL(
+        in: regionsURL,
+        regionID: region.receipt.id,
+        mode: "ink"
+      )
+      try region.faithfulPNG.write(to: faithfulURL, options: [.atomic])
+      try region.inkPNG.write(to: inkURL, options: [.atomic])
+      expectedRegionFiles.insert(faithfulURL.lastPathComponent)
+      expectedRegionFiles.insert(inkURL.lastPathComponent)
+    }
+
+    let receipt = PageVisionReceipt(
+      page: page,
+      renderScale: PageVisionRenderer.scale,
+      gridSpacing: PhysicalPaper.gridSpacing,
+      pixelSize: render.pixelSize,
+      visibleInkBounds: render.visibleInkBounds,
+      occupiedCells: render.occupiedCells,
+      regions: render.regions.map(\.receipt),
+      previewPNG_SHA256: PageVisionRenderer.sha256(render.faithfulPNG),
+      inkPNG_SHA256: PageVisionRenderer.sha256(render.inkPNG)
+    )
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let receiptData = try encoder.encode(receipt)
+
+    // The receipt is the commit marker. Readers verify its hashes, so a read
+    // during publication is rejected instead of mixing two page revisions.
+    try render.faithfulPNG.write(to: previewURL, options: [.atomic])
+    try render.inkPNG.write(
+      to: store.previewInkURL(page.id),
+      options: [.atomic]
+    )
+    try receiptData.write(
+      to: store.previewVisionReceiptURL(page.id),
+      options: [.atomic]
+    )
+    let replacedRevisionURL = previewURL.deletingPathExtension()
+      .appendingPathExtension("revision")
+    try? fileManager.removeItem(at: replacedRevisionURL)
+
+    let existingRegionFiles = try fileManager.contentsOfDirectory(
+      at: regionsURL,
+      includingPropertiesForKeys: nil
+    )
+    for url in existingRegionFiles
+      where !expectedRegionFiles.contains(url.lastPathComponent)
+    {
+      try? fileManager.removeItem(at: url)
+    }
+  }
+
+  private static func regionURL(
+    in directory: URL,
+    regionID: String,
+    mode: String
+  ) -> URL {
+    directory.appendingPathComponent("\(regionID).\(mode).png")
+  }
+
+  private static func archivePreviousReceipt(
+    page: PageDocument,
+    store: NotebookStore
+  ) throws {
+    let currentURL = store.previewVisionReceiptURL(page.id)
+    guard let data = try? Data(contentsOf: currentURL),
+          let previous = try? JSONDecoder().decode(PageVisionReceipt.self, from: data),
+          previous.isValid,
+          previous.pageID == page.id,
+          previous.drawingStamp != page.drawingStamp
+    else { return }
+
+    let historyURL = store.previewVisionHistoryURL(page.id)
+    try FileManager.default.createDirectory(
+      at: historyURL,
+      withIntermediateDirectories: true
+    )
+    let actor = previous.drawingStamp.actor.uuidString.lowercased()
+    let archivedURL = historyURL.appendingPathComponent(
+      "\(previous.drawingStamp.counter)-\(actor).json"
+    )
+    try data.write(to: archivedURL, options: [.atomic])
+
+    let historyFiles = try FileManager.default.contentsOfDirectory(
+      at: historyURL,
+      includingPropertiesForKeys: nil
+    ).filter { $0.pathExtension == "json" }
+    var archivedReceipts: [(URL, VersionStamp)] = []
+    for url in historyFiles {
+      guard let data = try? Data(contentsOf: url),
+            let receipt = try? JSONDecoder().decode(
+              PageVisionReceipt.self,
+              from: data
+            ),
+            receipt.isValid,
+            receipt.pageID == page.id
+      else {
+        try? FileManager.default.removeItem(at: url)
+        continue
+      }
+      archivedReceipts.append((url, receipt.drawingStamp))
+    }
+    archivedReceipts.sort { $0.1 > $1.1 }
+    for obsolete in archivedReceipts.dropFirst(8) {
+      try? FileManager.default.removeItem(at: obsolete.0)
+    }
   }
 }

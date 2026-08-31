@@ -22,7 +22,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
 
   func testSmallDeliberatePinchBelongsToTheCamera() {
     let intent = TwoFingerIntentArbiter.resolve(
-      isPageOpen: true,
+      allowsPageNavigation: true,
       translation: .zero,
       fingerDisplacements: [
         CGPoint(x: -4, y: 0),
@@ -68,7 +68,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
 
   func testNoisyHorizontalPageSwipeOwnsTheGestureBeforePinch() {
     let intent = TwoFingerIntentArbiter.resolve(
-      isPageOpen: true,
+      allowsPageNavigation: true,
       translation: CGPoint(x: -10, y: 0),
       fingerDisplacements: [
         CGPoint(x: -5, y: 0),
@@ -83,7 +83,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
 
   func testTruePinchWithDriftingCentroidOwnsTheCamera() {
     let intent = TwoFingerIntentArbiter.resolve(
-      isPageOpen: true,
+      allowsPageNavigation: true,
       translation: CGPoint(x: 10, y: 4),
       fingerDisplacements: [
         CGPoint(x: -36, y: 2),
@@ -98,7 +98,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
 
   func testFirstMovingFingerWaitsForEvidence() {
     let intent = TwoFingerIntentArbiter.resolve(
-      isPageOpen: true,
+      allowsPageNavigation: true,
       translation: CGPoint(x: -8, y: 0),
       fingerDisplacements: [
         CGPoint(x: -16, y: 0),
@@ -113,7 +113,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
 
   func testAnchoredPinchStartsAfterTheEvidenceWindow() {
     let intent = TwoFingerIntentArbiter.resolve(
-      isPageOpen: true,
+      allowsPageNavigation: true,
       translation: CGPoint(x: 8, y: 0),
       fingerDisplacements: [
         .zero,
@@ -214,13 +214,13 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
   }
 
   func testFastBoardSampleIsSplitAroundCrossedCover() {
-    let notebookID = UUID()
+    let itemID = UUID()
     let intervals = SpatialSurfaceRouter.intervals(
       from: CGPoint(x: 0, y: 50),
       to: CGPoint(x: 300, y: 50),
       covers: [
         SpatialScreenSurface(
-          id: .cover(notebookID),
+          id: .cover(itemID),
           frame: CGRect(x: 100, y: 0, width: 100, height: 100),
           zIndex: 1
         )
@@ -229,7 +229,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
 
     XCTAssertEqual(intervals.map(\.surface), [
       .board,
-      .cover(notebookID),
+      .cover(itemID),
       .board,
     ])
     XCTAssertEqual(intervals[0].upperBound, 1.0 / 3.0, accuracy: 0.0001)
@@ -283,7 +283,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
     let scene = UIView(frame: host.bounds)
     host.addSubview(scene)
     let controller = WorkspaceGestureLayer.Coordinator(
-      isPageOpen: true,
+      allowsPageNavigation: true,
       isEnabled: true,
       pencilInputGate: PencilInputGate(),
       onCamera: { _ in },

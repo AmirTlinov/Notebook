@@ -98,6 +98,23 @@ plutil -insert CFBundlePackageType \
 
 cd "$ROOT/MCP"
 npm ci --ignore-scripts
+for pair in \
+  "node_modules/marked/lib/marked.umd.js:$ROOT/Applications/WebResources/marked.umd.js" \
+  "node_modules/dompurify/dist/purify.min.js:$ROOT/Applications/WebResources/purify.min.js" \
+  "node_modules/mathjax/tex-svg-nofont.js:$ROOT/Applications/WebResources/tex-svg-nofont.js" \
+  "node_modules/marked/LICENSE:$ROOT/Applications/WebResources/Licenses/marked-LICENSE" \
+  "node_modules/dompurify/LICENSE:$ROOT/Applications/WebResources/Licenses/dompurify-LICENSE" \
+  "node_modules/dompurify/LICENSE-MPL:$ROOT/Applications/WebResources/Licenses/dompurify-LICENSE-MPL" \
+  "node_modules/mathjax/LICENSE:$ROOT/Applications/WebResources/Licenses/mathjax-LICENSE"
+do
+  source=${pair%%:*}
+  bundled=${pair#*:}
+  if ! cmp -s "$source" "$bundled"; then
+    printf '%s\n' \
+      "WebKit runtime должен совпадать с зафиксированным npm-пакетом: $source" >&2
+    exit 1
+  fi
+done
 npm run check
 npm test
 npm run smoke

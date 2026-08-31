@@ -153,13 +153,13 @@ func pageTurnCreatesOnePage() {
     pageSize: initial.page.size
   )
   #expect(created != nil)
-  #expect(index.selectedNotebook.pageIDs.count == 2)
+  #expect(index.selectedItem.pageIDs.count == 2)
   #expect(index.selectedPageID == created?.id)
 
   _ = index.turnPage(by: -1, actor: actor, pageSize: initial.page.size)
   let reopened = index.turnPage(by: 1, actor: actor, pageSize: initial.page.size)
   #expect(reopened == nil)
-  #expect(index.selectedNotebook.pageIDs.count == 2)
+  #expect(index.selectedItem.pageIDs.count == 2)
 }
 
 @Test("Обложка может жить без печатного названия и сохраняет устойчивый UUID")
@@ -178,9 +178,9 @@ func blankNotebookTitleIsAValidVisualCover() throws {
   )
   let created = try #require(creation)
 
-  #expect(created.notebook.title.isEmpty)
+  #expect(created.item.title.isEmpty)
   #expect(index.isValid)
-  #expect(index.selectedNotebookID == created.notebook.id)
+  #expect(index.selectedItemID == created.item.id)
 }
 
 @Test("Удаление публикует каталог и доску, затем убирает страницы")
@@ -202,7 +202,7 @@ func storeDeletesOneCompleteNotebookBundle() throws {
     pageSize: loaded.1.values.first!.size
   )
   let created = try #require(creation)
-  let added = board.addNotebook(created.notebook.id, near: .zero, actor: actor)
+  let added = board.addItem(created.item.id, near: .zero, actor: actor)
   #expect(added)
   try store.saveWorkspaceBundle(
     index: index,
@@ -212,18 +212,18 @@ func storeDeletesOneCompleteNotebookBundle() throws {
   let pageURL = store.pageURL(created.page.id)
   #expect(FileManager.default.fileExists(atPath: pageURL.path))
 
-  let removed = index.deleteNotebook(created.notebook.id, actor: actor)
+  let removed = index.deleteItem(created.item.id, actor: actor)
   _ = try #require(removed)
-  let removedFromBoard = board.deleteNotebook(created.notebook.id, actor: actor)
+  let removedFromBoard = board.deleteItem(created.item.id, actor: actor)
   #expect(removedFromBoard)
   try store.deleteWorkspaceBundle(
     index: index,
     board: board,
-    pageIDs: created.notebook.pageIDs
+    pageIDs: created.item.pageIDs
   )
 
   #expect(try store.loadIndex() == index)
-  #expect(try store.loadBoard(notebookIDs: Set(index.notebooks.map(\.id))) == board)
+  #expect(try store.loadBoard(itemIDs: Set(index.items.map(\.id))) == board)
   #expect(!FileManager.default.fileExists(atPath: pageURL.path))
 
   #expect(throws: CocoaError.self) {
@@ -252,20 +252,20 @@ func deletingNotebookKeepsWorkspaceSelectionLive() throws {
     pageSize: initial.page.size
   )
   let third = try #require(thirdCreation)
-  _ = index.selectNotebook(second.notebook.id, actor: actor)
+  _ = index.selectItem(second.item.id, actor: actor)
 
-  let deletion = index.deleteNotebook(second.notebook.id, actor: actor)
+  let deletion = index.deleteItem(second.item.id, actor: actor)
   let removed = try #require(deletion)
 
-  #expect(removed.id == second.notebook.id)
-  #expect(index.selectedNotebookID == third.notebook.id)
+  #expect(removed.id == second.item.id)
+  #expect(index.selectedItemID == third.item.id)
   #expect(index.selectedPageID == third.page.id)
   #expect(index.isValid)
-  let removedFirst = index.deleteNotebook(
-    initial.index.selectedNotebookID,
+  let removedFirst = index.deleteItem(
+    initial.index.selectedItemID,
     actor: actor
   )
-  let refusedLast = index.deleteNotebook(third.notebook.id, actor: actor)
+  let refusedLast = index.deleteItem(third.item.id, actor: actor)
   #expect(removedFirst != nil)
   #expect(refusedLast == nil)
 }
@@ -339,10 +339,10 @@ func exhaustedVersionDoesNotCrashOrMutate() {
   #expect(page.drawingData == Data("last".utf8))
 
   let pageID = UUID()
-  let notebookID = UUID()
+  let itemID = UUID()
   var index = WorkspaceIndex(
-    notebooks: [Notebook(id: notebookID, title: "Notebook 1", pageIDs: [pageID])],
-    selectedNotebookID: notebookID,
+    items: [WorkspaceItem.notebook(id: itemID, title: "Notebook 1", pageIDs: [pageID])],
+    selectedItemID: itemID,
     selectedPageID: pageID,
     stamp: VersionStamp(
       counter: VersionStamp.maximumCounter,
@@ -387,7 +387,8 @@ func storeRoundTrip() throws {
     actor: actor,
     pageSize: PageSize(width: 834, height: 1_194)
   )
-  var page = try #require(created.1[created.0.selectedPageID])
+  let selectedPageID = try #require(created.0.selectedPageID)
+  var page = try #require(created.1[selectedPageID])
   page.replaceDrawing(Data([1, 2, 3]), actor: actor)
   try store.savePage(page)
 
@@ -433,7 +434,8 @@ func storeMergesConcurrentStreams() throws {
     actor: pencilActor,
     pageSize: PageSize(width: 834, height: 1_194)
   )
-  var pencil = try #require(created.1[created.0.selectedPageID])
+  let selectedPageID = try #require(created.0.selectedPageID)
+  var pencil = try #require(created.1[selectedPageID])
   var agent = pencil
   pencil.replaceDrawing(Data("new ink".utf8), actor: pencilActor)
   agent.replaceElements(
@@ -500,7 +502,7 @@ func storeRejectsInvalidDecodedPage() throws {
     actor: UUID(),
     pageSize: PageSize(width: 834, height: 1_194)
   )
-  let pageID = created.0.selectedPageID
+  let pageID = try #require(created.0.selectedPageID)
   let pageURL = store.pageURL(pageID)
   var json = try #require(
     JSONSerialization.jsonObject(with: Data(contentsOf: pageURL))
@@ -527,7 +529,8 @@ func storeRejectsAPathologicalPageAllocation() throws {
     actor: UUID(),
     pageSize: PageSize(width: 834, height: 1_194)
   )
-  let pageURL = store.pageURL(created.0.selectedPageID)
+  let pageID = try #require(created.0.selectedPageID)
+  let pageURL = store.pageURL(pageID)
   var json = try #require(
     JSONSerialization.jsonObject(with: Data(contentsOf: pageURL))
       as? [String: Any]
@@ -538,7 +541,7 @@ func storeRejectsAPathologicalPageAllocation() throws {
   try JSONSerialization.data(withJSONObject: json).write(to: pageURL)
 
   #expect(throws: CocoaError.self) {
-    try store.loadPage(created.0.selectedPageID)
+    try store.loadPage(pageID)
   }
 }
 
@@ -557,7 +560,7 @@ func storeRejectsInvalidDecodedWorkspace() throws {
     JSONSerialization.jsonObject(with: Data(contentsOf: store.indexURL))
       as? [String: Any]
   )
-  json["notebooks"] = []
+  json["items"] = []
   try JSONSerialization.data(withJSONObject: json).write(to: store.indexURL)
 
   #expect(throws: CocoaError.self) {

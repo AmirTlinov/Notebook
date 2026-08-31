@@ -113,19 +113,19 @@ func viewportProjectionIsReversible() {
 @Test("Полностью открытый лист восстанавливает канонический масштаб")
 func stablePageRepairsLossyViewportScale() {
   let viewport = SpatialPoint(x: 834, y: 1_194)
-  let notebookID = UUID()
+  let itemID = UUID()
   let corrupted = SessionPresence(
     mode: .page,
     camera: SpatialCamera(scale: 0.487_891_719_906_063),
     viewport: viewport,
-    focusedNotebookID: notebookID,
+    focusedItemID: itemID,
     openProgress: 1
   )
 
   let repaired = corrupted.adapted(to: viewport)
 
   #expect(repaired.camera.scale == 1)
-  #expect(repaired.focusedNotebookID == notebookID)
+  #expect(repaired.focusedItemID == itemID)
   #expect(repaired.openProgress == 1)
 }
 
@@ -414,7 +414,7 @@ func boardHasOnePlacementOwner() {
   let second = UUID()
   let third = UUID()
   var board = BoardDocument.initial(
-    notebookIDs: [first, second, third],
+    itemIDs: [first, second, third],
     actor: actor
   )
   let stackID = board.createStack(
@@ -427,14 +427,14 @@ func boardHasOnePlacementOwner() {
   #expect(board.placement(of: second) == nil)
   #expect(board.stack(containing: first)?.id == stackID)
   #expect(board.stack(containing: second)?.id == stackID)
-  #expect(board.isValid(notebookIDs: [first, second, third]))
+  #expect(board.isValid(itemIDs: [first, second, third]))
 
   let extracted = WorldPoint(x: 2_000, y: -900)
-  let didUnstack = board.unstackNotebook(second, at: extracted, actor: actor)
+  let didUnstack = board.unstackItem(second, at: extracted, actor: actor)
   #expect(didUnstack)
   #expect(board.stack(containing: second) == nil)
   #expect(board.placement(of: second)?.center == extracted)
-  #expect(board.isValid(notebookIDs: [first, second, third]))
+  #expect(board.isValid(itemIDs: [first, second, third]))
 }
 
 @Test("Камера и веер стопки получают один центр выбранной тетради")
@@ -443,7 +443,7 @@ func stackFocusUsesTheSameCenterAsTheReadableBoardLayout() throws {
   let lower = UUID()
   let upper = UUID()
   var board = BoardDocument.initial(
-    notebookIDs: [lower, upper],
+    itemIDs: [lower, upper],
     actor: actor
   )
   let createdStackID = board.createStack(
@@ -462,14 +462,14 @@ func stackFocusUsesTheSameCenterAsTheReadableBoardLayout() throws {
 
   for viewport in viewports {
     let coverScale = NotebookPresentation.coverScale(viewport: viewport)
-    for notebookID in [lower, upper] {
-      let boardCenter = try #require(NotebookStackPresentation.boardCenter(
-        of: notebookID,
+    for itemID in [lower, upper] {
+      let boardCenter = try #require(WorkspaceItemStackPresentation.boardCenter(
+        of: itemID,
         in: stack,
         cameraScale: coverScale,
         viewport: viewport
       ))
-      let focusedCenter = try #require(board.focusedCenter(of: notebookID))
+      let focusedCenter = try #require(board.focusedCenter(of: itemID))
       let difference = boardCenter.delta(to: focusedCenter)
       #expect(abs(difference.x) < 0.000_001)
       #expect(abs(difference.y) < 0.000_001)
@@ -487,37 +487,37 @@ func stackFocusUsesTheSameCenterAsTheReadableBoardLayout() throws {
 @Test("Стопка принимает пять тетрадей, а шестая остаётся на доске")
 func stackCapacityPreservesAReadableLayout() throws {
   let actor = UUID()
-  let notebookIDs = (0..<6).map { _ in UUID() }
+  let itemIDs = (0..<6).map { _ in UUID() }
   var board = BoardDocument.initial(
-    notebookIDs: notebookIDs,
+    itemIDs: itemIDs,
     actor: actor
   )
 
   #expect(board.createStack(
-    moving: notebookIDs[1],
-    onto: notebookIDs[0],
+    moving: itemIDs[1],
+    onto: itemIDs[0],
     actor: actor
   ) != nil)
-  for index in 2..<NotebookStack.maximumNotebookCount {
+  for index in 2..<WorkspaceItemStack.maximumItemCount {
     #expect(board.createStack(
-      moving: notebookIDs[index],
-      onto: notebookIDs[0],
+      moving: itemIDs[index],
+      onto: itemIDs[0],
       actor: actor
     ) != nil)
   }
 
-  #expect(board.stack(containing: notebookIDs[0])?.notebookIDs.count == 5)
-  let stack = try #require(board.stack(containing: notebookIDs[0]))
+  #expect(board.stack(containing: itemIDs[0])?.itemIDs.count == 5)
+  let stack = try #require(board.stack(containing: itemIDs[0]))
   let viewport = SpatialPoint(x: 834, y: 1_194)
   let coverScale = NotebookPresentation.coverScale(viewport: viewport)
-  let firstCenter = try #require(NotebookStackPresentation.boardCenter(
-    of: notebookIDs[0],
+  let firstCenter = try #require(WorkspaceItemStackPresentation.boardCenter(
+    of: itemIDs[0],
     in: stack,
     cameraScale: coverScale,
     viewport: viewport
   ))
-  let lastCenter = try #require(NotebookStackPresentation.boardCenter(
-    of: notebookIDs[4],
+  let lastCenter = try #require(WorkspaceItemStackPresentation.boardCenter(
+    of: itemIDs[4],
     in: stack,
     cameraScale: coverScale,
     viewport: viewport
@@ -527,12 +527,12 @@ func stackCapacityPreservesAReadableLayout() throws {
       - NotebookGeometry.width * 0.62) < 0.000_001
   )
   #expect(board.createStack(
-    moving: notebookIDs[5],
-    onto: notebookIDs[0],
+    moving: itemIDs[5],
+    onto: itemIDs[0],
     actor: actor
   ) == nil)
-  #expect(board.placement(of: notebookIDs[5]) != nil)
-  #expect(board.isValid(notebookIDs: Set(notebookIDs)))
+  #expect(board.placement(of: itemIDs[5]) != nil)
+  #expect(board.isValid(itemIDs: Set(itemIDs)))
 }
 
 @Test("Удаление из пары распускает стопку и уносит элементы обложки")
@@ -542,7 +542,7 @@ func deletingNotebookRepairsItsBoardOwner() throws {
   let removed = UUID()
   let third = UUID()
   var board = BoardDocument.initial(
-    notebookIDs: [first, removed, third],
+    itemIDs: [first, removed, third],
     actor: actor
   )
   let stackID = board.createStack(
@@ -562,14 +562,14 @@ func deletingNotebookRepairsItsBoardOwner() throws {
   let inserted = board.upsertElement(coverElement, expected: nil, actor: actor)
   #expect(inserted)
 
-  let deleted = board.deleteNotebook(removed, actor: actor)
+  let deleted = board.deleteItem(removed, actor: actor)
   #expect(deleted)
 
   #expect(board.stack(containing: first) == nil)
   #expect(board.placement(of: first) != nil)
   #expect(board.placement(of: third) != nil)
   #expect(board.elements.allSatisfy { $0.surface != .cover(removed) })
-  #expect(board.isValid(notebookIDs: [first, third]))
+  #expect(board.isValid(itemIDs: [first, third]))
 }
 
 @Test("Каталог публикует новую тетрадь после её страницы и размещения")
@@ -578,19 +578,19 @@ func boardAcceptsAStagedPlacementButNeverMissesAPublishedNotebook() {
   let published = UUID()
   let staged = UUID()
   let board = BoardDocument.initial(
-    notebookIDs: [published, staged],
+    itemIDs: [published, staged],
     actor: actor
   )
 
-  #expect(board.isValid(notebookIDs: [published]))
-  #expect(board.isValid(notebookIDs: [published, staged]))
-  #expect(!board.isValid(notebookIDs: [published, staged, UUID()]))
+  #expect(board.isValid(itemIDs: [published]))
+  #expect(board.isValid(itemIDs: [published, staged]))
+  #expect(!board.isValid(itemIDs: [published, staged, UUID()]))
 }
 
 @Test("Один штрих через доску и обложку отменяется одним действием")
 func crossSurfaceInkIsOneUndoAction() {
   let actor = UUID()
-  let notebookID = UUID()
+  let itemID = UUID()
   let stamp = VersionStamp(counter: 0, actor: actor)
   let coverSample = SpatialInkSample(
     point: .zero,
@@ -613,7 +613,7 @@ func crossSurfaceInkIsOneUndoAction() {
   )
   let spans = [
     SpatialInkSpan(surface: .board, samples: [boardSample]),
-    SpatialInkSpan(surface: .cover(notebookID), samples: [coverSample]),
+    SpatialInkSpan(surface: .cover(itemID), samples: [coverSample]),
     SpatialInkSpan(surface: .board, samples: [boardSample]),
   ]
   var journal = SpatialInkJournal(stamp: stamp)
@@ -676,7 +676,7 @@ func storeCreatesBoardBesideExistingWorkspace() throws {
   )
   let board = try store.loadOrCreateBoard(workspace: loaded.0, actor: actor)
   let journal = try store.loadOrCreateSpatialInk(actor: actor)
-  #expect(board.notebookIDs == loaded.0.notebooks.map(\.id))
+  #expect(board.itemIDs == loaded.0.items.map(\.id))
   #expect(journal.actions.isEmpty)
   #expect(FileManager.default.fileExists(atPath: store.boardURL.path))
   #expect(FileManager.default.fileExists(atPath: store.spatialInkURL.path))

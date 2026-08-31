@@ -19,12 +19,12 @@ enum WorkspaceMagnificationPhase: Equatable {
   case cancelled
 }
 
-struct SpatialNotebookSurface: Equatable, Identifiable {
-  let notebookID: UUID
+struct SpatialWorkspaceItemSurface: Equatable, Identifiable {
+  let itemID: UUID
   let center: WorldPoint
   let zIndex: Double
 
-  var id: UUID { notebookID }
+  var id: UUID { itemID }
 }
 
 struct SpatialScreenSurface: Equatable {

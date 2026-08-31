@@ -64,6 +64,8 @@ final class NotebookAppModel {
   private(set) var loadState: LoadState = .loading
   private(set) var workspace: WorkspaceIndex?
   private(set) var pages: [UUID: PageDocument] = [:]
+  private(set) var documents: [UUID: DocumentDocument] = [:]
+  private(set) var documentStates: [UUID: DocumentStateJournal] = [:]
   private(set) var board: BoardDocument?
   private(set) var spatialInk: SpatialInkJournal?
   private(set) var presence: SessionPresence?
@@ -85,6 +87,10 @@ final class NotebookAppModel {
   /// arrives; the same boundary also makes a late page for a deleted notebook
   /// harmless.
   private var stagedRemotePages: [UUID: PageDocument] = [:]
+  private var stagedRemoteDocuments: [UUID: DocumentDocument] = [:]
+  private var stagedRemoteDocumentStates: [UUID: DocumentStateJournal] = [:]
+  private var stagedRemoteIndex: WorkspaceIndex?
+  private var stagedRemoteBoard: BoardDocument?
   private var spatialInkSaveTask: Task<Void, Never>?
   private var cueTask: Task<Void, Never>?
   private var pencilUndoHistory = PencilUndoHistory()
@@ -122,7 +128,7 @@ final class NotebookAppModel {
       peerName: actorID.uuidString.lowercased()
     )
     sync.onMessage = { [weak self] message in
-      self?.receive(message)
+      self?.receivePeerMessage(message)
     }
     sync.onConnect = { [weak self] in
       self?.sendSnapshot()
@@ -137,8 +143,18 @@ final class NotebookAppModel {
     return pages[pageID]
   }
 
-  var activeNotebook: Notebook? {
-    workspace?.selectedNotebook
+  var activeItem: WorkspaceItem? {
+    workspace?.selectedItem
+  }
+
+  var activeDocument: DocumentDocument? {
+    guard let item = activeItem, item.kind == .document else { return nil }
+    return documents[item.id]
+  }
+
+  var activeDocumentState: DocumentStateJournal? {
+    guard let item = activeItem, item.kind == .document else { return nil }
+    return documentStates[item.id]
   }
 
   var isPageOpen: Bool {
@@ -158,6 +174,11 @@ final class NotebookAppModel {
       )
       workspace = stored.0
       pages = stored.1
+      let storedDocuments = try store.loadAvailableDocuments(
+        workspace: stored.0
+      )
+      documents = storedDocuments.documents
+      documentStates = storedDocuments.states
       board = try store.loadOrCreateBoard(
         workspace: stored.0,
         actor: actorID
@@ -213,7 +234,9 @@ final class NotebookAppModel {
     self.workspace = workspace
     try? store.saveIndex(workspace)
     sync.send(.index(workspace))
-    showCue("Страница \(workspace.selectedPageIndex + 1)")
+    if let selectedPageIndex = workspace.selectedPageIndex {
+      showCue("Страница \(selectedPageIndex + 1)")
+    }
   }
 
   @discardableResult
@@ -223,7 +246,7 @@ final class NotebookAppModel {
       title: "",
       actor: actorID,
       pageSize: pageSize
-    ), board.addNotebook(created.notebook.id, near: center, actor: actorID)
+    ), board.addItem(created.item.id, near: center, actor: actorID)
     else { return nil }
 
     do {
@@ -244,12 +267,45 @@ final class NotebookAppModel {
     sync.send(.board(board))
     sync.send(.index(workspace))
     showCue("Новая тетрадь")
-    return created.notebook.id
+    return created.item.id
   }
 
-  func selectNotebook(_ notebookID: UUID) {
+  @discardableResult
+  func createDocument(at center: WorldPoint) -> UUID? {
+    guard var workspace, var board,
+      let item = workspace.createDocument(title: "", actor: actorID),
+      board.addItem(item.id, near: center, actor: actorID)
+    else { return nil }
+
+    let document = DocumentDocument(id: item.id, actor: actorID)
+    let state = DocumentStateJournal(id: item.id, actor: actorID)
+    do {
+      try store.saveDocumentWorkspaceBundle(
+        index: workspace,
+        document: document,
+        state: state,
+        board: board
+      )
+    } catch {
+      showCue("Не удалось создать документ")
+      return nil
+    }
+
+    self.workspace = workspace
+    self.board = board
+    documents[item.id] = document
+    documentStates[item.id] = state
+    sync.send(.document(document))
+    sync.send(.documentState(state))
+    sync.send(.board(board))
+    sync.send(.index(workspace))
+    showCue("Новый документ")
+    return item.id
+  }
+
+  func selectItem(_ itemID: UUID) {
     guard var workspace,
-      workspace.selectNotebook(notebookID, actor: actorID)
+      workspace.selectItem(itemID, actor: actorID)
     else { return }
     self.workspace = workspace
     try? store.saveIndex(workspace)
@@ -257,22 +313,23 @@ final class NotebookAppModel {
   }
 
   @discardableResult
-  func deleteNotebook(_ notebookID: UUID) -> Bool {
+  func deleteItem(_ itemID: UUID) -> Bool {
     guard var workspace, var board else { return false }
-    guard let removed = workspace.deleteNotebook(notebookID, actor: actorID) else {
-      showCue("Одна тетрадь остаётся рабочей")
+    guard let removed = workspace.deleteItem(itemID, actor: actorID) else {
+      showCue("Один рабочий элемент должен остаться")
       return false
     }
-    guard board.deleteNotebook(notebookID, actor: actorID) else { return false }
+    guard board.deleteItem(itemID, actor: actorID) else { return false }
 
     do {
       try store.deleteWorkspaceBundle(
         index: workspace,
         board: board,
-        pageIDs: removed.pageIDs
+        pageIDs: removed.pageIDs,
+        documentIDs: removed.kind == .document ? [removed.id] : []
       )
     } catch {
-      showCue("Не удалось удалить тетрадь")
+      showCue("Не удалось удалить элемент")
       return false
     }
 
@@ -284,12 +341,16 @@ final class NotebookAppModel {
       reservedDrawingCounters[pageID] = nil
       pencilUndoHistory.discardChanges(for: pageID)
     }
+    documents[removed.id] = nil
+    documentStates[removed.id] = nil
+    stagedRemoteDocuments[removed.id] = nil
+    stagedRemoteDocumentStates[removed.id] = nil
     self.workspace = workspace
     self.board = board
-    sync.send(.index(workspace))
     sync.send(.board(board))
+    sync.send(.index(workspace))
 
-    if let presence, presence.focusedNotebookID == notebookID {
+    if let presence, presence.focusedItemID == itemID {
       updatePresence(
         SessionPresence(
           mode: .board,
@@ -299,23 +360,23 @@ final class NotebookAppModel {
         settled: true
       )
     }
-    showCue("Тетрадь удалена")
+    showCue(removed.kind == .document ? "Документ удалён" : "Тетрадь удалена")
     return true
   }
 
-  func moveNotebook(_ notebookID: UUID, to center: WorldPoint) {
+  func moveItem(_ itemID: UUID, to center: WorldPoint) {
     guard var board,
-      board.moveNotebook(notebookID, to: center, actor: actorID),
+      board.moveItem(itemID, to: center, actor: actorID),
       let workspace
     else { return }
     self.board = board
-    let notebookIDs = Set(workspace.notebooks.map(\.id))
-    try? store.saveBoard(board, notebookIDs: notebookIDs)
+    let itemIDs = Set(workspace.items.map(\.id))
+    try? store.saveBoard(board, itemIDs: itemIDs)
     sync.send(.board(board))
   }
 
   @discardableResult
-  func stackNotebook(_ movingID: UUID, onto targetID: UUID) -> UUID? {
+  func stackItem(_ movingID: UUID, onto targetID: UUID) -> UUID? {
     guard var board,
       let stackID = board.createStack(
         moving: movingID,
@@ -326,22 +387,22 @@ final class NotebookAppModel {
     self.board = board
     try? store.saveBoard(
       board,
-      notebookIDs: Set(workspace.notebooks.map(\.id))
+      itemIDs: Set(workspace.items.map(\.id))
     )
     sync.send(.board(board))
     showCue("Стопка")
     return stackID
   }
 
-  func unstackNotebook(_ notebookID: UUID, at center: WorldPoint) {
+  func unstackItem(_ itemID: UUID, at center: WorldPoint) {
     guard var board,
-      board.unstackNotebook(notebookID, at: center, actor: actorID),
+      board.unstackItem(itemID, at: center, actor: actorID),
       let workspace
     else { return }
     self.board = board
     try? store.saveBoard(
       board,
-      notebookIDs: Set(workspace.notebooks.map(\.id))
+      itemIDs: Set(workspace.items.map(\.id))
     )
     sync.send(.board(board))
   }
@@ -395,12 +456,13 @@ final class NotebookAppModel {
   }
 
   func undoLastSurfaceAction() {
+    guard presence?.mode != .document else { return }
     if isPageOpen {
       undoLastDrawingAction()
       return
     }
     guard var journal = spatialInk else { return }
-    let surface: SurfaceID? = presence?.focusedNotebookID.map(SurfaceID.cover)
+    let surface: SurfaceID? = presence?.focusedItemID.map(SurfaceID.cover)
     guard journal.undoLast(actor: actorID, touching: surface) != nil
       || (surface != nil && journal.undoLast(actor: actorID) != nil)
     else { return }
@@ -414,8 +476,8 @@ final class NotebookAppModel {
     pencilInputGate.performAfterPageInput(action)
   }
 
-  func addNativeText(on notebookID: UUID, at point: SpatialPoint) -> String? {
-    guard var board, board.notebookIDs.contains(notebookID) else { return nil }
+  func addNativeText(on itemID: UUID, at point: SpatialPoint) -> String? {
+    guard var board, board.itemIDs.contains(itemID) else { return nil }
     let width = 420.0
     let height = 120.0
     let origin = SpatialPoint(
@@ -425,7 +487,7 @@ final class NotebookAppModel {
     let id = "text-\(UUID().uuidString.lowercased())"
     let element = SpatialElement(
       id: id,
-      surface: .cover(notebookID),
+      surface: .cover(itemID),
       kind: .nativeText,
       frame: SpatialRect(
         x: origin.x,
@@ -624,6 +686,36 @@ final class NotebookAppModel {
     )
   }
 
+  func replaceDocumentBlockSource(
+    documentID: UUID,
+    blockID: String,
+    source: String
+  ) {
+    guard var document = documents[documentID],
+      document.replaceBlockSource(
+        id: blockID,
+        source: source,
+        actor: actorID
+      )
+    else { return }
+    let resolved = (try? store.saveMergedDocument(document)) ?? document
+    documents[documentID] = resolved
+    sync.send(.document(resolved))
+  }
+
+  func commitDocumentState(
+    documentID: UUID,
+    blockID: String,
+    value: JSONValue
+  ) {
+    guard var journal = documentStates[documentID],
+      journal.commit(blockID: blockID, value: value, actor: actorID)
+    else { return }
+    let resolved = (try? store.saveMergedDocumentState(journal)) ?? journal
+    documentStates[documentID] = resolved
+    sync.send(.documentState(resolved))
+  }
+
   func reloadExternalChanges() {
     reloadExternalChanges(remainingAttempts: 2)
   }
@@ -632,20 +724,22 @@ final class NotebookAppModel {
     guard loadState == .ready else { return }
     do {
       let diskIndex = try store.loadIndex()
-      if workspace?.merge(diskIndex) == true {
+      let indexChanged = workspace?.merge(diskIndex) == true
+      if indexChanged {
         workspace = diskIndex
-        reconcilePages(with: diskIndex)
-        sync.send(.index(diskIndex))
+        reconcileWorkspace(with: diskIndex)
       }
-      let notebookIDs = Set(diskIndex.notebooks.map(\.id))
-      let diskBoard = try store.loadBoard(notebookIDs: notebookIDs)
+      let itemIDs = Set(diskIndex.items.map(\.id))
+      let diskBoard = try store.loadBoard(itemIDs: itemIDs)
       if var currentBoard = board {
-        if currentBoard.merge(diskBoard, notebookIDs: notebookIDs) {
+        if currentBoard.merge(diskBoard, itemIDs: itemIDs) {
           board = currentBoard
+          reconcilePresence(with: diskIndex, board: currentBoard)
           sync.send(.board(currentBoard))
         }
       } else {
         board = diskBoard
+        reconcilePresence(with: diskIndex, board: diskBoard)
         sync.send(.board(diskBoard))
       }
       let diskInk = try store.loadSpatialInk()
@@ -658,8 +752,8 @@ final class NotebookAppModel {
         spatialInk = diskInk
         sync.send(.spatialInk(diskInk))
       }
-      for notebook in diskIndex.notebooks {
-        for pageID in notebook.pageIDs {
+      for item in diskIndex.items where item.kind == .notebook {
+        for pageID in item.pageIDs {
           let diskPage = try store.loadPage(pageID)
           if var current = pages[pageID] {
             let oldDrawing = current.drawingStamp
@@ -691,6 +785,30 @@ final class NotebookAppModel {
           }
         }
       }
+      for item in diskIndex.items where item.kind == .document {
+        let diskDocument = try store.loadDocument(item.id)
+        if var current = documents[item.id] {
+          if current.merge(diskDocument) {
+            documents[item.id] = current
+            sync.send(.document(current))
+          }
+        } else {
+          documents[item.id] = diskDocument
+          sync.send(.document(diskDocument))
+        }
+
+        let diskState = try store.loadDocumentState(item.id)
+        if var current = documentStates[item.id] {
+          if current.merge(diskState) {
+            documentStates[item.id] = current
+            sync.send(.documentState(current))
+          }
+        } else {
+          documentStates[item.id] = diskState
+          sync.send(.documentState(diskState))
+        }
+      }
+      if indexChanged { sync.send(.index(diskIndex)) }
       #if os(macOS)
         externalReloadRetry?.cancel()
         externalReloadRetry = nil
@@ -713,7 +831,12 @@ final class NotebookAppModel {
   #if os(macOS)
     private func startExternalChangeObservation() {
       guard externalChangeWatcher == nil else { return }
-      let watcher = DirectoryWatcher(urls: [store.root, store.pagesURL]) {
+      let watcher = DirectoryWatcher(urls: [
+        store.root,
+        store.pagesURL,
+        store.documentsURL,
+        store.documentStatesURL,
+      ]) {
         [weak self] in
         self?.reloadExternalChanges()
       }
@@ -727,14 +850,10 @@ final class NotebookAppModel {
     }
   #endif
 
-  private func receive(_ message: WireMessage) {
+  func receivePeerMessage(_ message: WireMessage) {
     switch message {
     case .index(let incoming):
-      if workspace?.merge(incoming) == true {
-        workspace = incoming
-        try? store.saveIndex(incoming)
-        reconcilePages(with: incoming)
-      }
+      stageRemoteIndex(incoming)
     case .page(let incoming):
       guard workspaceContainsPage(incoming.id) else {
         stageRemotePage(incoming)
@@ -756,20 +875,56 @@ final class NotebookAppModel {
         page.replaceElements(elements, stamp: stamp)
       else { return }
       acceptRemotePage(page)
+    case .document(let incoming):
+      guard workspaceContainsDocument(incoming.id) else {
+        stageRemoteDocument(incoming)
+        return
+      }
+      if var current = documents[incoming.id] {
+        guard current.merge(incoming) else { return }
+        documents[incoming.id] = (try? store.saveMergedDocument(current))
+          ?? current
+      } else {
+        documents[incoming.id] = incoming
+        try? store.saveDocument(incoming)
+      }
+    case .documentState(let incoming):
+      guard workspaceContainsDocument(incoming.id) else {
+        stageRemoteDocumentState(incoming)
+        return
+      }
+      if var current = documentStates[incoming.id] {
+        guard current.merge(incoming) else { return }
+        documentStates[incoming.id] = (
+          try? store.saveMergedDocumentState(current)
+        ) ?? current
+      } else {
+        documentStates[incoming.id] = incoming
+        try? store.saveDocumentState(incoming)
+      }
     case .board(let incoming):
       guard let workspace else { return }
-      let notebookIDs = Set(workspace.notebooks.map(\.id))
+      let itemIDs = Set(workspace.items.map(\.id))
       if var current = board {
-        guard current.merge(incoming, notebookIDs: notebookIDs) else { return }
-        board = (try? store.saveMergedBoard(
-          current,
-          notebookIDs: notebookIDs
-        )) ?? current
+        if current.merge(incoming, itemIDs: itemIDs) {
+          board = (try? store.saveMergedBoard(
+            current,
+            itemIDs: itemIDs
+          )) ?? current
+          reconcilePresence(with: workspace, board: board)
+        } else {
+          stageRemoteBoard(incoming)
+        }
       } else {
-        guard incoming.isValid(notebookIDs: notebookIDs) else { return }
-        board = incoming
-        try? store.saveBoard(incoming, notebookIDs: notebookIDs)
+        if incoming.isValid(itemIDs: itemIDs) {
+          board = incoming
+          try? store.saveBoard(incoming, itemIDs: itemIDs)
+          reconcilePresence(with: workspace, board: incoming)
+        } else {
+          stageRemoteBoard(incoming)
+        }
       }
+      publishStagedWorkspaceIfReady()
     case .spatialInk(let incoming):
       if var current = spatialInk {
         guard current.merge(incoming) else { return }
@@ -803,23 +958,36 @@ final class NotebookAppModel {
 
   private func sendSnapshot() {
     guard let workspace else { return }
-    let publishedPageIDs = Set(workspace.notebooks.flatMap(\.pageIDs))
-    sync.send(.index(workspace))
-    if let board { sync.send(.board(board)) }
-    #if os(iOS)
-      if let lastSettledPresenceEnvelope {
-        sync.send(.presence(lastSettledPresenceEnvelope))
-      }
-    #endif
+    let publishedPageIDs = Set(workspace.items.flatMap(\.pageIDs))
     let selectedPageID = workspace.selectedPageID
-    if let selectedPage = pages[selectedPageID] {
+    if let selectedPageID, let selectedPage = pages[selectedPageID] {
       sync.send(.page(selectedPage))
+    }
+    if workspace.selectedItem.kind == .document {
+      let id = workspace.selectedItemID
+      if let document = documents[id] { sync.send(.document(document)) }
+      if let state = documentStates[id] { sync.send(.documentState(state)) }
     }
     if let spatialInk { sync.send(.spatialInk(spatialInk)) }
     for page in pages.values
     where page.id != selectedPageID && publishedPageIDs.contains(page.id) {
       sync.send(.page(page))
     }
+    for item in workspace.items where item.kind == .document
+      && item.id != workspace.selectedItemID
+    {
+      if let document = documents[item.id] { sync.send(.document(document)) }
+      if let state = documentStates[item.id] {
+        sync.send(.documentState(state))
+      }
+    }
+    if let board { sync.send(.board(board)) }
+    sync.send(.index(workspace))
+    #if os(iOS)
+      if let lastSettledPresenceEnvelope {
+        sync.send(.presence(lastSettledPresenceEnvelope))
+      }
+    #endif
   }
 
   private func scheduleSave(_ pageID: UUID) {
@@ -868,10 +1036,10 @@ final class NotebookAppModel {
 
   private func persistBoard(_ board: BoardDocument) {
     guard let workspace else { return }
-    let notebookIDs = Set(workspace.notebooks.map(\.id))
+    let itemIDs = Set(workspace.items.map(\.id))
     let resolved = (try? store.saveMergedBoard(
       board,
-      notebookIDs: notebookIDs
+      itemIDs: itemIDs
     )) ?? board
     self.board = resolved
     sync.send(.board(resolved))
@@ -905,17 +1073,18 @@ final class NotebookAppModel {
     board: BoardDocument?,
     viewport: PageSize
   ) -> SessionPresence {
-    let notebookID = workspace.selectedNotebookID
-    let center = board?.focusedCenter(of: notebookID) ?? .zero
+    let item = workspace.selectedItem
+    let itemID = item.id
+    let center = board?.focusedCenter(of: itemID) ?? .zero
     let viewportPoint = SpatialPoint(x: viewport.width, y: viewport.height)
     let fit = NotebookPresentation.fitScale(
       viewport: viewportPoint
     )
     return SessionPresence(
-      mode: .page,
+      mode: item.kind == .document ? .document : .page,
       camera: SpatialCamera(center: center, scale: fit),
       viewport: viewportPoint,
-      focusedNotebookID: notebookID,
+      focusedItemID: itemID,
       openProgress: 1
     )
   }
@@ -927,31 +1096,32 @@ final class NotebookAppModel {
     viewport: SpatialPoint
   ) -> SessionPresence {
     let adapted = presence.adapted(to: viewport)
-    let notebookID = presence.focusedNotebookID
-    let notebookCenter = notebookID.flatMap { id in
+    let itemID = presence.focusedItemID
+    let itemCenter = itemID.flatMap { id in
       board?.focusedCenter(of: id)
     }
 
-    if presence.mode == .page,
-      let notebookID,
-      let notebookCenter,
-      workspace.notebooks.contains(where: { $0.id == notebookID })
+    if presence.mode == .page || presence.mode == .document,
+      let itemID,
+      let itemCenter,
+      let item = workspace.items.first(where: { $0.id == itemID }),
+      (presence.mode == .page) == (item.kind == .notebook)
     {
       return SessionPresence(
-        mode: .page,
+        mode: presence.mode,
         camera: SpatialCamera(
-          center: notebookCenter,
+          center: itemCenter,
           scale: NotebookPresentation.fitScale(viewport: viewport)
         ),
         viewport: viewport,
-        focusedNotebookID: notebookID,
+        focusedItemID: itemID,
         openProgress: 1
       )
     }
 
     if presence.mode == .cover,
-      let notebookID,
-      workspace.notebooks.contains(where: { $0.id == notebookID })
+      let itemID,
+      workspace.items.contains(where: { $0.id == itemID })
     {
       return adapted
     }
@@ -987,7 +1157,7 @@ final class NotebookAppModel {
   }
 
   private func workspaceContainsPage(_ pageID: UUID) -> Bool {
-    workspace?.notebooks.contains(where: { $0.pageIDs.contains(pageID) }) == true
+    workspace?.items.contains(where: { $0.pageIDs.contains(pageID) }) == true
   }
 
   private func stageRemotePage(_ incoming: PageDocument) {
@@ -997,13 +1167,14 @@ final class NotebookAppModel {
     } else {
       stagedRemotePages[incoming.id] = incoming
     }
+    publishStagedWorkspaceIfReady()
   }
 
   /// WorkspaceIndex is the publication boundary for pages. It promotes pages
   /// sent ahead of a creation and evicts pages removed by a deletion before a
   /// delayed serializer or peer can expose them again.
-  private func reconcilePages(with workspace: WorkspaceIndex) {
-    let publishedPageIDs = Set(workspace.notebooks.flatMap(\.pageIDs))
+  private func reconcileWorkspace(with workspace: WorkspaceIndex) {
+    let publishedPageIDs = Set(workspace.items.flatMap(\.pageIDs))
     let obsoletePageIDs = pages.keys.filter { !publishedPageIDs.contains($0) }
     for pageID in obsoletePageIDs {
       saveTasks[pageID]?.cancel()
@@ -1025,6 +1196,250 @@ final class NotebookAppModel {
         acceptRemotePage(page)
       }
     }
+
+    let publishedDocumentIDs = Set(
+      workspace.items.lazy.filter { $0.kind == .document }.map(\.id)
+    )
+    for id in documents.keys where !publishedDocumentIDs.contains(id) {
+      documents[id] = nil
+      documentStates[id] = nil
+    }
+
+    let promotedDocuments = stagedRemoteDocuments.values.filter {
+      publishedDocumentIDs.contains($0.id)
+    }
+    let promotedStates = stagedRemoteDocumentStates.values.filter {
+      publishedDocumentIDs.contains($0.id)
+    }
+    stagedRemoteDocuments.removeAll(keepingCapacity: true)
+    stagedRemoteDocumentStates.removeAll(keepingCapacity: true)
+    for incoming in promotedDocuments {
+      if var current = documents[incoming.id] {
+        _ = current.merge(incoming)
+        documents[incoming.id] = current
+        try? store.saveDocument(current)
+      } else {
+        documents[incoming.id] = incoming
+        try? store.saveDocument(incoming)
+      }
+    }
+    for incoming in promotedStates {
+      if var current = documentStates[incoming.id] {
+        _ = current.merge(incoming)
+        documentStates[incoming.id] = current
+        try? store.saveDocumentState(current)
+      } else {
+        documentStates[incoming.id] = incoming
+        try? store.saveDocumentState(incoming)
+      }
+    }
+
+    reconcilePresence(with: workspace, board: board)
+  }
+
+  /// Selection lives in the catalog while its screen anchor lives on the
+  /// board. A newer catalog or board therefore settles the camera from both
+  /// owners together. This keeps a deleted focus from leaving an empty view.
+  private func reconcilePresence(
+    with workspace: WorkspaceIndex,
+    board: BoardDocument?
+  ) {
+    guard let current = presence else { return }
+    let resolved: SessionPresence
+    if presenceIsUsable(current, workspace: workspace) {
+      resolved = settledPresence(
+        from: current,
+        workspace: workspace,
+        board: board,
+        viewport: current.viewport
+      )
+    } else {
+      resolved = initialPresence(
+        workspace: workspace,
+        board: board,
+        viewport: PageSize(
+          width: current.viewport.x,
+          height: current.viewport.y
+        )
+      )
+    }
+    guard resolved != current || presencePhase != .settled else { return }
+    presence = resolved
+    presencePhase = .settled
+    try? store.savePresence(resolved)
+    #if os(iOS)
+      lastSettledPresenceEnvelope = makePresenceEnvelope(
+        resolved,
+        phase: .settled
+      )
+    #endif
+  }
+
+  private func workspaceContainsDocument(_ id: UUID) -> Bool {
+    workspace?.items.contains(where: {
+      $0.id == id && $0.kind == .document
+    }) == true
+  }
+
+  private func stageRemoteDocument(_ incoming: DocumentDocument) {
+    if var staged = stagedRemoteDocuments[incoming.id] {
+      _ = staged.merge(incoming)
+      stagedRemoteDocuments[incoming.id] = staged
+    } else {
+      stagedRemoteDocuments[incoming.id] = incoming
+    }
+    publishStagedWorkspaceIfReady()
+  }
+
+  private func stageRemoteDocumentState(_ incoming: DocumentStateJournal) {
+    if var staged = stagedRemoteDocumentStates[incoming.id] {
+      _ = staged.merge(incoming)
+      stagedRemoteDocumentStates[incoming.id] = staged
+    } else {
+      stagedRemoteDocumentStates[incoming.id] = incoming
+    }
+    publishStagedWorkspaceIfReady()
+  }
+
+  /// A catalog is the moment new content becomes discoverable. Keep a newer
+  /// catalog private until every page, document state and board placement it
+  /// names has arrived, then write those dependencies before the catalog.
+  private func stageRemoteIndex(_ incoming: WorkspaceIndex) {
+    guard workspace.map({ $0.stamp < incoming.stamp }) ?? true
+    else { return }
+    if var stagedRemoteIndex {
+      _ = stagedRemoteIndex.merge(incoming)
+      self.stagedRemoteIndex = stagedRemoteIndex
+    } else {
+      stagedRemoteIndex = incoming
+    }
+    publishStagedWorkspaceIfReady()
+  }
+
+  private func stageRemoteBoard(_ incoming: BoardDocument) {
+    if let stagedRemoteBoard,
+      stagedRemoteBoard.stamp >= incoming.stamp
+    {
+      return
+    }
+    stagedRemoteBoard = incoming
+  }
+
+  private func publishStagedWorkspaceIfReady() {
+    guard let incoming = stagedRemoteIndex,
+      workspace.map({ $0.stamp < incoming.stamp }) ?? true
+    else {
+      stagedRemoteIndex = nil
+      return
+    }
+
+    let pageIDs = incoming.items.flatMap(\.pageIDs)
+    guard pageIDs.allSatisfy({
+      pages[$0] != nil || stagedRemotePages[$0] != nil
+    }) else { return }
+
+    let documentIDs = incoming.items.compactMap { item in
+      item.kind == .document ? item.id : nil
+    }
+    guard documentIDs.allSatisfy({
+      (documents[$0] != nil || stagedRemoteDocuments[$0] != nil)
+        && (documentStates[$0] != nil
+          || stagedRemoteDocumentStates[$0] != nil)
+    }) else { return }
+
+    let expectedItemIDs = Set(incoming.items.map(\.id))
+    var boardCandidates = [BoardDocument]()
+    if let board, board.isValid(itemIDs: expectedItemIDs) {
+      boardCandidates.append(board)
+    }
+    if let stagedRemoteBoard,
+      stagedRemoteBoard.isValid(itemIDs: expectedItemIDs)
+    {
+      boardCandidates.append(stagedRemoteBoard)
+    }
+    let exactBoards = boardCandidates.filter {
+      Set($0.itemIDs) == expectedItemIDs
+    }
+    guard let candidateBoard = (exactBoards.isEmpty
+      ? boardCandidates
+      : exactBoards
+    ).max(by: { $0.stamp < $1.stamp }) else { return }
+
+    var resolvedPages: [UUID: PageDocument] = [:]
+    for id in pageIDs {
+      guard var page = pages[id] ?? stagedRemotePages[id] else { return }
+      if let staged = stagedRemotePages[id] { _ = page.merge(staged) }
+      resolvedPages[id] = page
+    }
+    var resolvedDocuments: [UUID: DocumentDocument] = [:]
+    var resolvedStates: [UUID: DocumentStateJournal] = [:]
+    for id in documentIDs {
+      guard var document = documents[id] ?? stagedRemoteDocuments[id],
+        var state = documentStates[id] ?? stagedRemoteDocumentStates[id]
+      else { return }
+      if let staged = stagedRemoteDocuments[id] {
+        _ = document.merge(staged)
+      }
+      if let staged = stagedRemoteDocumentStates[id] {
+        _ = state.merge(staged)
+      }
+      resolvedDocuments[id] = document
+      resolvedStates[id] = state
+    }
+
+    do {
+      let currentPageIDs = Set(workspace?.items.flatMap(\.pageIDs) ?? [])
+      let currentDocumentIDs = Set(workspace?.items.compactMap { item in
+        item.kind == .document ? item.id : nil
+      } ?? [])
+      var durablePages: [UUID: PageDocument] = [:]
+      for (id, page) in resolvedPages {
+        if currentPageIDs.contains(id) {
+          durablePages[id] = try store.saveMergedPage(page)
+        } else {
+          try store.savePage(page)
+          durablePages[id] = page
+        }
+      }
+      resolvedPages = durablePages
+      var durableDocuments: [UUID: DocumentDocument] = [:]
+      for (id, document) in resolvedDocuments {
+        if currentDocumentIDs.contains(id) {
+          durableDocuments[id] = try store.saveMergedDocument(document)
+        } else {
+          try store.saveDocument(document)
+          durableDocuments[id] = document
+        }
+      }
+      resolvedDocuments = durableDocuments
+      var durableStates: [UUID: DocumentStateJournal] = [:]
+      for (id, state) in resolvedStates {
+        if currentDocumentIDs.contains(id) {
+          durableStates[id] = try store.saveMergedDocumentState(state)
+        } else {
+          try store.saveDocumentState(state)
+          durableStates[id] = state
+        }
+      }
+      resolvedStates = durableStates
+      try store.publishRemoteWorkspace(
+        index: incoming,
+        board: candidateBoard,
+        actor: actorID
+      )
+    } catch {
+      return
+    }
+
+    workspace = incoming
+    board = candidateBoard
+    for (id, page) in resolvedPages { pages[id] = page }
+    for (id, document) in resolvedDocuments { documents[id] = document }
+    for (id, state) in resolvedStates { documentStates[id] = state }
+    stagedRemoteIndex = nil
+    stagedRemoteBoard = nil
+    reconcileWorkspace(with: incoming)
+    reconcilePresence(with: incoming, board: candidateBoard)
   }
 
   private func restoreSettledPresenceAfterDisconnect() {
@@ -1049,14 +1464,20 @@ final class NotebookAppModel {
     workspace: WorkspaceIndex
   ) -> Bool {
     guard presence.isValid else { return false }
-    if let notebookID = presence.focusedNotebookID,
-      !workspace.notebooks.contains(where: { $0.id == notebookID })
+    if let itemID = presence.focusedItemID,
+      !workspace.items.contains(where: { $0.id == itemID })
     {
       return false
     }
     if presence.mode != .board,
-      presence.focusedNotebookID != workspace.selectedNotebookID
+      presence.focusedItemID != workspace.selectedItemID
     { return false }
+    if let itemID = presence.focusedItemID,
+      let item = workspace.items.first(where: { $0.id == itemID })
+    {
+      if presence.mode == .page && item.kind != .notebook { return false }
+      if presence.mode == .document && item.kind != .document { return false }
+    }
     return true
   }
 

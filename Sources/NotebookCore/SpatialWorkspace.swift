@@ -425,21 +425,21 @@ public enum NotebookOpeningIntent {
   }
 }
 
-public struct FreeNotebookPlacement: Codable, Equatable, Identifiable, Sendable {
-  public var id: UUID { notebookID }
+public struct FreeItemPlacement: Codable, Equatable, Identifiable, Sendable {
+  public var id: UUID { itemID }
 
-  public let notebookID: UUID
+  public let itemID: UUID
   public private(set) var center: WorldPoint
   public private(set) var zIndex: Int
   public private(set) var stamp: VersionStamp
 
   public init(
-    notebookID: UUID,
+    itemID: UUID,
     center: WorldPoint,
     zIndex: Int,
     stamp: VersionStamp
   ) {
-    self.notebookID = notebookID
+    self.itemID = itemID
     self.center = center
     self.zIndex = zIndex
     self.stamp = stamp
@@ -459,48 +459,48 @@ public struct FreeNotebookPlacement: Codable, Equatable, Identifiable, Sendable 
   }
 }
 
-public struct NotebookStack: Codable, Equatable, Identifiable, Sendable {
-  public static let maximumNotebookCount = 5
+public struct WorkspaceItemStack: Codable, Equatable, Identifiable, Sendable {
+  public static let maximumItemCount = 5
 
   public let id: UUID
   public private(set) var center: WorldPoint
   public private(set) var zIndex: Int
-  public private(set) var notebookIDs: [UUID]
+  public private(set) var itemIDs: [UUID]
   public private(set) var stamp: VersionStamp
 
   public init(
     id: UUID = UUID(),
     center: WorldPoint,
     zIndex: Int,
-    notebookIDs: [UUID],
+    itemIDs: [UUID],
     stamp: VersionStamp
   ) {
     precondition(
-      notebookIDs.count >= 2
-        && notebookIDs.count <= Self.maximumNotebookCount
+      itemIDs.count >= 2
+        && itemIDs.count <= Self.maximumItemCount
     )
     self.id = id
     self.center = center
     self.zIndex = zIndex
-    self.notebookIDs = notebookIDs
+    self.itemIDs = itemIDs
     self.stamp = stamp
   }
 
-  mutating func append(_ notebookID: UUID, actor: UUID) -> Bool {
-    guard notebookIDs.count < Self.maximumNotebookCount,
-      !notebookIDs.contains(notebookID),
+  mutating func append(_ itemID: UUID, actor: UUID) -> Bool {
+    guard itemIDs.count < Self.maximumItemCount,
+      !itemIDs.contains(itemID),
       let next = stamp.advanced(by: actor)
     else { return false }
-    notebookIDs.append(notebookID)
+    itemIDs.append(itemID)
     stamp = next
     return true
   }
 
-  mutating func remove(_ notebookID: UUID, actor: UUID) -> Bool {
-    guard let index = notebookIDs.firstIndex(of: notebookID),
+  mutating func remove(_ itemID: UUID, actor: UUID) -> Bool {
+    guard let index = itemIDs.firstIndex(of: itemID),
       let next = stamp.advanced(by: actor)
     else { return false }
-    notebookIDs.remove(at: index)
+    itemIDs.remove(at: index)
     stamp = next
     return true
   }
@@ -514,9 +514,9 @@ public struct NotebookStack: Codable, Equatable, Identifiable, Sendable {
   }
 
   var isValid: Bool {
-    center.isValid && zIndex >= 0 && notebookIDs.count >= 2
-      && notebookIDs.count <= Self.maximumNotebookCount
-      && Set(notebookIDs).count == notebookIDs.count
+    center.isValid && zIndex >= 0 && itemIDs.count >= 2
+      && itemIDs.count <= Self.maximumItemCount
+      && Set(itemIDs).count == itemIDs.count
       && stamp.counter <= VersionStamp.maximumCounter
   }
 }
@@ -525,7 +525,7 @@ public struct NotebookStack: Codable, Equatable, Identifiable, Sendable {
 /// may fan the covers apart as they become readable, while a focused cover or
 /// page uses the fully fanned anchor. Camera and renderer therefore ask the
 /// same owner where the selected notebook is.
-public enum NotebookStackPresentation {
+public enum WorkspaceItemStackPresentation {
   private static let collapsedHorizontalSpacing = 9.0
   private static let collapsedVerticalSpacing = 7.0
   /// The whole fan occupies one bounded envelope regardless of whether it
@@ -537,17 +537,17 @@ public enum NotebookStackPresentation {
   private static let fanEndProjectedHeight = 600.0
 
   public static func boardCenter(
-    of notebookID: UUID,
-    in stack: NotebookStack,
+    of itemID: UUID,
+    in stack: WorkspaceItemStack,
     cameraScale: Double,
     viewport: SpatialPoint
   ) -> WorldPoint? {
     guard cameraScale.isFinite, cameraScale > 0,
       viewport.x.isFinite, viewport.x > 0,
       viewport.y.isFinite, viewport.y > 0,
-      let index = stack.notebookIDs.firstIndex(of: notebookID)
+      let index = stack.itemIDs.firstIndex(of: itemID)
     else { return nil }
-    let centered = Double(index) - Double(stack.notebookIDs.count - 1) / 2
+    let centered = Double(index) - Double(stack.itemIDs.count - 1) / 2
     let projectedHeight = NotebookGeometry.height * cameraScale
     let coverProjectedHeight = NotebookGeometry.height
       * NotebookPresentation.coverScale(viewport: viewport)
@@ -562,7 +562,7 @@ public enum NotebookStackPresentation {
     )
     let collapsedX = centered * collapsedHorizontalSpacing / cameraScale
     let collapsedY = -Double(index) * collapsedVerticalSpacing / cameraScale
-    let fanned = fannedOffset(index: index, count: stack.notebookIDs.count)
+    let fanned = fannedOffset(index: index, count: stack.itemIDs.count)
     return stack.center.offsetBy(
       x: collapsedX + (fanned.x - collapsedX) * fan,
       y: collapsedY + (fanned.y - collapsedY) * fan
@@ -570,13 +570,13 @@ public enum NotebookStackPresentation {
   }
 
   public static func focusedCenter(
-    of notebookID: UUID,
-    in stack: NotebookStack
+    of itemID: UUID,
+    in stack: WorkspaceItemStack
   ) -> WorldPoint? {
-    guard let index = stack.notebookIDs.firstIndex(of: notebookID) else {
+    guard let index = stack.itemIDs.firstIndex(of: itemID) else {
       return nil
     }
-    let fanned = fannedOffset(index: index, count: stack.notebookIDs.count)
+    let fanned = fannedOffset(index: index, count: stack.itemIDs.count)
     return stack.center.offsetBy(
       x: fanned.x,
       y: fanned.y
@@ -612,8 +612,8 @@ public struct SurfaceID: Codable, Equatable, Hashable, Sendable {
   }
 
   public static let board = SurfaceID(kind: .board)
-  public static func cover(_ notebookID: UUID) -> Self {
-    Self(kind: .cover, ownerID: notebookID)
+  public static func cover(_ itemID: UUID) -> Self {
+    Self(kind: .cover, ownerID: itemID)
   }
   public static func page(_ pageID: UUID) -> Self {
     Self(kind: .page, ownerID: pageID)
@@ -748,36 +748,36 @@ public struct SpatialElement: Codable, Equatable, Identifiable, Sendable {
 }
 
 public struct BoardDocument: Codable, Equatable, Sendable {
-  public static let formatVersion = 1
+  public static let formatVersion = 2
 
   public let format: Int
-  public private(set) var freeNotebooks: [FreeNotebookPlacement]
-  public private(set) var stacks: [NotebookStack]
+  public private(set) var freeItems: [FreeItemPlacement]
+  public private(set) var stacks: [WorkspaceItemStack]
   public private(set) var elements: [SpatialElement]
   public private(set) var stamp: VersionStamp
 
   public init(
-    freeNotebooks: [FreeNotebookPlacement],
-    stacks: [NotebookStack] = [],
+    freeItems: [FreeItemPlacement],
+    stacks: [WorkspaceItemStack] = [],
     elements: [SpatialElement] = [],
     stamp: VersionStamp
   ) {
     format = Self.formatVersion
-    self.freeNotebooks = freeNotebooks
+    self.freeItems = freeItems
     self.stacks = stacks
     self.elements = elements
     self.stamp = stamp
   }
 
-  public static func initial(notebookIDs: [UUID], actor: UUID) -> Self {
-    let columns = max(1, min(3, notebookIDs.count))
+  public static func initial(itemIDs: [UUID], actor: UUID) -> Self {
+    let columns = max(1, min(3, itemIDs.count))
     let horizontalStep = NotebookGeometry.width * 1.28
     let verticalStep = NotebookGeometry.height * 1.18
-    let placements = notebookIDs.enumerated().map { index, id in
+    let placements = itemIDs.enumerated().map { index, id in
       let column = index % columns
       let row = index / columns
-      return FreeNotebookPlacement(
-        notebookID: id,
+      return FreeItemPlacement(
+        itemID: id,
         center: WorldPoint(
           x: (Double(column) - Double(columns - 1) / 2) * horizontalStep,
           y: Double(row) * verticalStep
@@ -787,51 +787,107 @@ public struct BoardDocument: Codable, Equatable, Sendable {
       )
     }
     return Self(
-      freeNotebooks: placements,
+      freeItems: placements,
       stamp: VersionStamp(counter: 0, actor: actor)
     )
   }
 
-  public var notebookIDs: [UUID] {
-    freeNotebooks.map(\.notebookID) + stacks.flatMap(\.notebookIDs)
+  public var itemIDs: [UUID] {
+    freeItems.map(\.itemID) + stacks.flatMap(\.itemIDs)
   }
 
   public var highestZIndex: Int {
     max(
-      freeNotebooks.map(\.zIndex).max() ?? 0,
+      freeItems.map(\.zIndex).max() ?? 0,
       stacks.map(\.zIndex).max() ?? 0
     )
   }
 
-  public func placement(of notebookID: UUID) -> FreeNotebookPlacement? {
-    freeNotebooks.first { $0.notebookID == notebookID }
+  public func placement(of itemID: UUID) -> FreeItemPlacement? {
+    freeItems.first { $0.itemID == itemID }
   }
 
-  public func stack(containing notebookID: UUID) -> NotebookStack? {
-    stacks.first { $0.notebookIDs.contains(notebookID) }
+  public func stack(containing itemID: UUID) -> WorkspaceItemStack? {
+    stacks.first { $0.itemIDs.contains(itemID) }
   }
 
-  public func focusedCenter(of notebookID: UUID) -> WorldPoint? {
-    if let placement = placement(of: notebookID) { return placement.center }
-    guard let stack = stack(containing: notebookID) else { return nil }
-    return NotebookStackPresentation.focusedCenter(
-      of: notebookID,
+  public func focusedCenter(of itemID: UUID) -> WorldPoint? {
+    if let placement = placement(of: itemID) { return placement.center }
+    guard let stack = stack(containing: itemID) else { return nil }
+    return WorkspaceItemStackPresentation.focusedCenter(
+      of: itemID,
       in: stack
     )
   }
 
+  /// Restores board ownership for catalog items written by releases that only
+  /// placed the first notebook. Existing positions remain untouched; each
+  /// missing item receives the first free slot in the board's native grid.
   @discardableResult
-  public mutating func addNotebook(
-    _ notebookID: UUID,
+  public mutating func placeMissingItems(
+    _ expectedItemIDs: [UUID],
+    actor: UUID
+  ) -> Bool {
+    let missing = expectedItemIDs.filter { !itemIDs.contains($0) }
+    guard !missing.isEmpty else { return false }
+
+    let horizontalStep = NotebookGeometry.width * 1.28
+    let verticalStep = NotebookGeometry.height * 1.18
+    var occupied = freeItems.map(\.center) + stacks.map(\.center)
+    var slot = 0
+
+    for itemID in missing {
+      var center: WorldPoint
+      repeat {
+        let column = slot % 3
+        let row = slot / 3
+        center = WorldPoint(
+          x: (Double(column) - 1) * horizontalStep,
+          y: Double(row) * verticalStep
+        )
+        slot += 1
+      } while occupied.contains { existing in
+        let delta = existing.delta(to: center)
+        return abs(delta.x) < horizontalStep * 0.5
+          && abs(delta.y) < verticalStep * 0.5
+      }
+
+      guard addItem(itemID, near: center, actor: actor) else {
+        return false
+      }
+      occupied.append(center)
+    }
+    return true
+  }
+
+  /// Turns a recoverable publication boundary into one stable board: orphaned
+  /// owners leave first, then every missing catalog item receives a place.
+  @discardableResult
+  public mutating func reconcileItems(
+    _ expectedItemIDs: [UUID],
+    actor: UUID
+  ) -> Bool {
+    let expected = Set(expectedItemIDs)
+    let obsolete = itemIDs.filter { !expected.contains($0) }
+    var changed = false
+    for itemID in obsolete {
+      changed = deleteItem(itemID, actor: actor) || changed
+    }
+    return placeMissingItems(expectedItemIDs, actor: actor) || changed
+  }
+
+  @discardableResult
+  public mutating func addItem(
+    _ itemID: UUID,
     near center: WorldPoint,
     actor: UUID
   ) -> Bool {
-    guard !notebookIDs.contains(notebookID),
+    guard !itemIDs.contains(itemID),
       let next = stamp.advanced(by: actor)
     else { return false }
-    freeNotebooks.append(
-      FreeNotebookPlacement(
-        notebookID: notebookID,
+    freeItems.append(
+      FreeItemPlacement(
+        itemID: itemID,
         center: center,
         zIndex: highestZIndex + 1,
         stamp: next
@@ -842,16 +898,16 @@ public struct BoardDocument: Codable, Equatable, Sendable {
   }
 
   @discardableResult
-  public mutating func moveNotebook(
-    _ notebookID: UUID,
+  public mutating func moveItem(
+    _ itemID: UUID,
     to center: WorldPoint,
     actor: UUID
   ) -> Bool {
-    guard let index = freeNotebooks.firstIndex(where: {
-      $0.notebookID == notebookID
+    guard let index = freeItems.firstIndex(where: {
+      $0.itemID == itemID
     }), let next = stamp.advanced(by: actor)
     else { return false }
-    guard freeNotebooks[index].move(
+    guard freeItems[index].move(
       to: center,
       zIndex: highestZIndex + 1,
       actor: actor
@@ -868,33 +924,33 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     stackID: UUID = UUID()
   ) -> UUID? {
     guard movingID != targetID,
-      let movingIndex = freeNotebooks.firstIndex(where: {
-        $0.notebookID == movingID
+      let movingIndex = freeItems.firstIndex(where: {
+        $0.itemID == movingID
       }), let next = stamp.advanced(by: actor)
     else { return nil }
 
     if let stackIndex = stacks.firstIndex(where: {
-      $0.notebookIDs.contains(targetID)
+      $0.itemIDs.contains(targetID)
     }) {
       guard stacks[stackIndex].append(movingID, actor: actor) else { return nil }
-      freeNotebooks.remove(at: movingIndex)
+      freeItems.remove(at: movingIndex)
       stamp = next
       return stacks[stackIndex].id
     }
 
-    guard let targetIndex = freeNotebooks.firstIndex(where: {
-      $0.notebookID == targetID
+    guard let targetIndex = freeItems.firstIndex(where: {
+      $0.itemID == targetID
     }) else { return nil }
-    let moving = freeNotebooks[movingIndex]
-    let target = freeNotebooks[targetIndex]
+    let moving = freeItems[movingIndex]
+    let target = freeItems[targetIndex]
     let indexes = [movingIndex, targetIndex].sorted(by: >)
-    for index in indexes { freeNotebooks.remove(at: index) }
+    for index in indexes { freeItems.remove(at: index) }
     stacks.append(
-      NotebookStack(
+      WorkspaceItemStack(
         id: stackID,
         center: target.center,
         zIndex: max(moving.zIndex, target.zIndex) + 1,
-        notebookIDs: [targetID, movingID],
+        itemIDs: [targetID, movingID],
         stamp: next
       )
     )
@@ -903,29 +959,29 @@ public struct BoardDocument: Codable, Equatable, Sendable {
   }
 
   @discardableResult
-  public mutating func unstackNotebook(
-    _ notebookID: UUID,
+  public mutating func unstackItem(
+    _ itemID: UUID,
     at center: WorldPoint,
     actor: UUID
   ) -> Bool {
     guard let stackIndex = stacks.firstIndex(where: {
-      $0.notebookIDs.contains(notebookID)
+      $0.itemIDs.contains(itemID)
     }), let next = stamp.advanced(by: actor)
     else { return false }
     var stack = stacks[stackIndex]
-    guard stack.remove(notebookID, actor: actor) else { return false }
-    freeNotebooks.append(
-      FreeNotebookPlacement(
-        notebookID: notebookID,
+    guard stack.remove(itemID, actor: actor) else { return false }
+    freeItems.append(
+      FreeItemPlacement(
+        itemID: itemID,
         center: center,
         zIndex: highestZIndex + 1,
         stamp: next
       )
     )
-    if stack.notebookIDs.count == 1, let remaining = stack.notebookIDs.first {
-      freeNotebooks.append(
-        FreeNotebookPlacement(
-          notebookID: remaining,
+    if stack.itemIDs.count == 1, let remaining = stack.itemIDs.first {
+      freeItems.append(
+        FreeItemPlacement(
+          itemID: remaining,
           center: stack.center,
           zIndex: stack.zIndex,
           stamp: next
@@ -942,27 +998,27 @@ public struct BoardDocument: Codable, Equatable, Sendable {
   /// Removes a notebook from its single board owner. A two-member stack turns
   /// into one free notebook, and cover elements leave with their cover.
   @discardableResult
-  public mutating func deleteNotebook(
-    _ notebookID: UUID,
+  public mutating func deleteItem(
+    _ itemID: UUID,
     actor: UUID
   ) -> Bool {
-    guard notebookIDs.contains(notebookID),
+    guard itemIDs.contains(itemID),
       let next = stamp.advanced(by: actor)
     else { return false }
 
-    if let index = freeNotebooks.firstIndex(where: {
-      $0.notebookID == notebookID
+    if let index = freeItems.firstIndex(where: {
+      $0.itemID == itemID
     }) {
-      freeNotebooks.remove(at: index)
+      freeItems.remove(at: index)
     } else if let stackIndex = stacks.firstIndex(where: {
-      $0.notebookIDs.contains(notebookID)
+      $0.itemIDs.contains(itemID)
     }) {
       var stack = stacks[stackIndex]
-      guard stack.remove(notebookID, actor: actor) else { return false }
-      if stack.notebookIDs.count == 1, let remaining = stack.notebookIDs.first {
-        freeNotebooks.append(
-          FreeNotebookPlacement(
-            notebookID: remaining,
+      guard stack.remove(itemID, actor: actor) else { return false }
+      if stack.itemIDs.count == 1, let remaining = stack.itemIDs.first {
+        freeItems.append(
+          FreeItemPlacement(
+            itemID: remaining,
             center: stack.center,
             zIndex: stack.zIndex,
             stamp: next
@@ -976,7 +1032,7 @@ public struct BoardDocument: Codable, Equatable, Sendable {
       return false
     }
 
-    elements.removeAll { $0.surface == .cover(notebookID) }
+    elements.removeAll { $0.surface == .cover(itemID) }
     stamp = next
     return true
   }
@@ -1016,22 +1072,22 @@ public struct BoardDocument: Codable, Equatable, Sendable {
   }
 
   @discardableResult
-  public mutating func merge(_ other: Self, notebookIDs: Set<UUID>) -> Bool {
-    guard stamp < other.stamp, other.isValid(notebookIDs: notebookIDs) else {
+  public mutating func merge(_ other: Self, itemIDs: Set<UUID>) -> Bool {
+    guard stamp < other.stamp, other.isValid(itemIDs: itemIDs) else {
       return false
     }
     self = other
     return true
   }
 
-  public func isValid(notebookIDs expectedIDs: Set<UUID>) -> Bool {
+  public func isValid(itemIDs expectedIDs: Set<UUID>) -> Bool {
     guard format == Self.formatVersion,
       stamp.counter <= VersionStamp.maximumCounter,
-      freeNotebooks.allSatisfy(\.isValid),
+      freeItems.allSatisfy(\.isValid),
       stacks.allSatisfy(\.isValid),
       elements.allSatisfy(\.isValid)
     else { return false }
-    let ids = notebookIDs
+    let ids = itemIDs
     let ownedIDs = Set(ids)
     guard ownedIDs.count == ids.count,
       expectedIDs.isSubset(of: ownedIDs)
@@ -1045,29 +1101,115 @@ public struct BoardDocument: Codable, Equatable, Sendable {
         || element.surface.ownerID.map(ownedIDs.contains) == true
     }
   }
+
+  private enum CodingKeys: String, CodingKey {
+    case format
+    case freeItems
+    case stacks
+    case elements
+    case stamp
+    case legacyFreeNotebooks = "freeNotebooks"
+  }
+
+  private struct LegacyFreeNotebookPlacement: Codable {
+    let notebookID: UUID
+    let center: WorldPoint
+    let zIndex: Int
+    let stamp: VersionStamp
+  }
+
+  private struct LegacyNotebookStack: Codable {
+    let id: UUID
+    let center: WorldPoint
+    let zIndex: Int
+    let notebookIDs: [UUID]
+    let stamp: VersionStamp
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    let storedFormat = try container.decode(Int.self, forKey: .format)
+    format = Self.formatVersion
+    elements = try container.decode([SpatialElement].self, forKey: .elements)
+    stamp = try container.decode(VersionStamp.self, forKey: .stamp)
+
+    switch storedFormat {
+    case Self.formatVersion:
+      freeItems = try container.decode(
+        [FreeItemPlacement].self,
+        forKey: .freeItems
+      )
+      stacks = try container.decode(
+        [WorkspaceItemStack].self,
+        forKey: .stacks
+      )
+    case 1:
+      let legacyFree = try container.decode(
+        [LegacyFreeNotebookPlacement].self,
+        forKey: .legacyFreeNotebooks
+      )
+      let legacyStacks = try container.decode(
+        [LegacyNotebookStack].self,
+        forKey: .stacks
+      )
+      freeItems = legacyFree.map {
+        FreeItemPlacement(
+          itemID: $0.notebookID,
+          center: $0.center,
+          zIndex: $0.zIndex,
+          stamp: $0.stamp
+        )
+      }
+      stacks = legacyStacks.map {
+        WorkspaceItemStack(
+          id: $0.id,
+          center: $0.center,
+          zIndex: $0.zIndex,
+          itemIDs: $0.notebookIDs,
+          stamp: $0.stamp
+        )
+      }
+    default:
+      throw DecodingError.dataCorruptedError(
+        forKey: .format,
+        in: container,
+        debugDescription: "Unsupported board format: \(storedFormat)"
+      )
+    }
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(Self.formatVersion, forKey: .format)
+    try container.encode(freeItems, forKey: .freeItems)
+    try container.encode(stacks, forKey: .stacks)
+    try container.encode(elements, forKey: .elements)
+    try container.encode(stamp, forKey: .stamp)
+  }
 }
 
 public enum WorkspaceSemanticMode: String, Codable, Sendable {
   case board
   case cover
   case page
+  case document
 }
 
 public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
-  public static let formatVersion = 1
+  public static let formatVersion = 2
 
   public let format: Int
   public let mode: WorkspaceSemanticMode
   public let camera: SpatialCamera
   public let viewport: SpatialPoint
-  public let focusedNotebookID: UUID?
+  public let focusedItemID: UUID?
   public let openProgress: Double
 
   public init(
     mode: WorkspaceSemanticMode,
     camera: SpatialCamera,
     viewport: SpatialPoint,
-    focusedNotebookID: UUID? = nil,
+    focusedItemID: UUID? = nil,
     openProgress: Double = 0
   ) {
     precondition(openProgress.isFinite && openProgress >= 0 && openProgress <= 1)
@@ -1075,7 +1217,7 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
     self.mode = mode
     self.camera = camera
     self.viewport = viewport
-    self.focusedNotebookID = focusedNotebookID
+    self.focusedItemID = focusedItemID
     self.openProgress = openProgress
   }
 
@@ -1083,18 +1225,18 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
     format == Self.formatVersion && camera.isValid
       && viewport.isValid && viewport.x > 0 && viewport.y > 0
       && openProgress.isFinite && openProgress >= 0 && openProgress <= 1
-      && (mode == .board || focusedNotebookID != nil)
+      && (mode == .board || focusedItemID != nil)
   }
 
   public var isSettled: Bool {
     guard isValid else { return false }
     switch mode {
     case .board:
-      return focusedNotebookID == nil && openProgress <= 0.001
+      return focusedItemID == nil && openProgress <= 0.001
     case .cover:
-      return focusedNotebookID != nil
-    case .page:
-      return focusedNotebookID != nil && openProgress >= 0.999
+      return focusedItemID != nil
+    case .page, .document:
+      return focusedItemID != nil && openProgress >= 0.999
     }
   }
 
@@ -1105,7 +1247,7 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
     precondition(targetViewport.x > 0 && targetViewport.y > 0)
     let targetFit = NotebookPresentation.fitScale(viewport: targetViewport)
     let resolvedScale: Double
-    if mode == .page && openProgress >= 0.999 {
+    if (mode == .page || mode == .document) && openProgress >= 0.999 {
       resolvedScale = targetFit
     } else {
       let sourceFit = NotebookPresentation.fitScale(viewport: viewport)
@@ -1118,8 +1260,56 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
         scale: max(SpatialCamera.minimumScale, resolvedScale)
       ),
       viewport: targetViewport,
-      focusedNotebookID: focusedNotebookID,
+      focusedItemID: focusedItemID,
       openProgress: openProgress
     )
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case format
+    case mode
+    case camera
+    case viewport
+    case focusedItemID
+    case openProgress
+    case legacyFocusedNotebookID = "focusedNotebookID"
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    let storedFormat = try container.decode(Int.self, forKey: .format)
+    format = Self.formatVersion
+    mode = try container.decode(WorkspaceSemanticMode.self, forKey: .mode)
+    camera = try container.decode(SpatialCamera.self, forKey: .camera)
+    viewport = try container.decode(SpatialPoint.self, forKey: .viewport)
+    openProgress = try container.decode(Double.self, forKey: .openProgress)
+    switch storedFormat {
+    case Self.formatVersion:
+      focusedItemID = try container.decodeIfPresent(
+        UUID.self,
+        forKey: .focusedItemID
+      )
+    case 1:
+      focusedItemID = try container.decodeIfPresent(
+        UUID.self,
+        forKey: .legacyFocusedNotebookID
+      )
+    default:
+      throw DecodingError.dataCorruptedError(
+        forKey: .format,
+        in: container,
+        debugDescription: "Unsupported presence format: \(storedFormat)"
+      )
+    }
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(Self.formatVersion, forKey: .format)
+    try container.encode(mode, forKey: .mode)
+    try container.encode(camera, forKey: .camera)
+    try container.encode(viewport, forKey: .viewport)
+    try container.encodeIfPresent(focusedItemID, forKey: .focusedItemID)
+    try container.encode(openProgress, forKey: .openProgress)
   }
 }

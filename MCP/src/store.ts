@@ -8,6 +8,9 @@ import type {
   AgentElement,
   BoardDocument,
   CurrentViewReceipt,
+  DocumentBlock,
+  DocumentDocument,
+  DocumentStateJournal,
   PageDocument,
   PageRect,
   SessionPresence,
@@ -16,11 +19,13 @@ import type {
   VersionStamp,
   WorldPoint,
   WorkspaceIndex,
+  WorkspaceItem,
 } from "./domain.js";
 import {
   maximumCameraScale,
-  maximumStackNotebookCount,
+  maximumStackItemCount,
   minimumCameraScale,
+  canonicalPageSize,
   revision,
 } from "./domain.js";
 
@@ -48,6 +53,14 @@ export class NotebookStore {
     return join(this.root, "pages");
   }
 
+  get documentsPath(): string {
+    return join(this.root, "documents");
+  }
+
+  get documentStatesPath(): string {
+    return join(this.root, "document-states");
+  }
+
   get boardPath(): string {
     return join(this.root, "board.json");
   }
@@ -73,18 +86,24 @@ export class NotebookStore {
     return join(this.pagesPath, `${pageID.toLowerCase()}.json`);
   }
 
+  documentPath(documentID: string): string {
+    assertUUID(documentID, "document_id");
+    return join(this.documentsPath, `${documentID.toLowerCase()}.json`);
+  }
+
+  documentStatePath(documentID: string): string {
+    assertUUID(documentID, "document_id");
+    return join(this.documentStatesPath, `${documentID.toLowerCase()}.json`);
+  }
+
   previewPath(pageID: string): string {
     assertUUID(pageID, "page_id");
     return join(this.root, "previews", `${pageID.toLowerCase()}.png`);
   }
 
-  previewRevisionPath(pageID: string): string {
-    assertUUID(pageID, "page_id");
-    return join(this.root, "previews", `${pageID.toLowerCase()}.revision`);
-  }
-
   async readWorkspace(): Promise<WorkspaceIndex> {
-    const workspace = await readJSON<unknown>(this.indexPath, "workspace");
+    const stored = await readJSON<unknown>(this.indexPath, "workspace");
+    const workspace = migrateWorkspace(stored);
     validateWorkspace(workspace);
     return workspace;
   }
@@ -100,7 +119,8 @@ export class NotebookStore {
 
   async readBoard(workspace?: WorkspaceIndex): Promise<BoardDocument> {
     const resolvedWorkspace = workspace ?? await this.readWorkspace();
-    const board = await readJSON<unknown>(this.boardPath, "board");
+    const stored = await readJSON<unknown>(this.boardPath, "board");
+    const board = migrateBoard(stored);
     validateBoard(board, resolvedWorkspace);
     return board;
   }
@@ -112,43 +132,103 @@ export class NotebookStore {
   }
 
   async readPresence(): Promise<SessionPresence> {
-    const presence = await readJSON<unknown>(this.presencePath, "current context");
+    const stored = await readJSON<unknown>(this.presencePath, "current context");
+    const presence = migratePresence(stored);
     validatePresence(presence);
     return presence;
   }
 
   async readCurrentViewReceipt(): Promise<CurrentViewReceipt> {
-    const receipt = await readJSON<unknown>(
+    const stored = await readJSON<unknown>(
       this.currentViewReceiptPath,
       "current view receipt",
     );
+    const receipt = isRecord(stored)
+      ? { ...stored, presence: migratePresence(stored.presence) }
+      : stored;
     validateCurrentViewReceipt(receipt);
     return receipt;
   }
 
-  async readSelected(): Promise<{
-    workspace: WorkspaceIndex;
-    page: PageDocument;
-  }> {
+  async readCurrentPage(): Promise<PageDocument> {
+    return this.readWorkspacePage();
+  }
+
+  async readWorkspacePage(pageID?: string): Promise<PageDocument> {
     const workspace = await this.readWorkspace();
+    const resolvedPageID = pageID ?? workspace.selectedPageID;
+    if (!resolvedPageID) {
+      throw new StoreError("Сейчас выбран документ, а не лист тетради.");
+    }
+    const owner = workspace.items.find((item) =>
+      item.kind === "notebook"
+        && item.pageIDs.some((candidate) => sameID(candidate, resolvedPageID))
+    );
+    if (!owner) throw new StoreError("Лист не принадлежит живой тетради.");
+    return this.readPage(resolvedPageID);
+  }
+
+  async readCurrent(): Promise<
+    | {
+      kind: "notebook";
+      workspace: WorkspaceIndex;
+      presence: SessionPresence;
+      item: WorkspaceItem;
+      page: PageDocument;
+    }
+    | {
+      kind: "document";
+      workspace: WorkspaceIndex;
+      presence: SessionPresence;
+      item: WorkspaceItem;
+      document: DocumentDocument;
+      state: DocumentStateJournal;
+    }
+  > {
+    const workspace = await this.readWorkspace();
+    const presence = await this.readPresence();
+    const item = selectedItem(workspace);
+    if (item.kind === "document") {
+      const [document, state] = await Promise.all([
+        this.readDocument(item.id),
+        this.readDocumentState(item.id),
+      ]);
+      return { kind: "document", workspace, presence, item, document, state };
+    }
+    if (!workspace.selectedPageID) {
+      throw new StoreError("У выбранной тетради нет выбранного листа.");
+    }
     return {
+      kind: "notebook",
       workspace,
+      presence,
+      item,
       page: await this.readPage(workspace.selectedPageID),
     };
   }
 
-  async readCurrent(): Promise<{
-    workspace: WorkspaceIndex;
-    presence: SessionPresence;
-    page: PageDocument;
-  }> {
-    const workspace = await this.readWorkspace();
-    const presence = await this.readPresence();
-    return {
-      workspace,
-      presence,
-      page: await this.readPage(workspace.selectedPageID),
-    };
+  async readDocument(documentID: string): Promise<DocumentDocument> {
+    const document = await readJSON<unknown>(
+      this.documentPath(documentID),
+      "document",
+    );
+    validateDocument(document);
+    if (!sameID(document.id, documentID)) {
+      throw new StoreError("document.id не совпадает с именем файла.");
+    }
+    return document;
+  }
+
+  async readDocumentState(documentID: string): Promise<DocumentStateJournal> {
+    const state = await readJSON<unknown>(
+      this.documentStatePath(documentID),
+      "document state",
+    );
+    validateDocumentState(state);
+    if (!sameID(state.id, documentID)) {
+      throw new StoreError("document state id не совпадает с именем файла.");
+    }
+    return state;
   }
 
   async readActorID(): Promise<string> {
@@ -184,9 +264,7 @@ export class NotebookStore {
     transform: (current: AgentElement[], page: PageDocument) => AgentElement[];
   }): Promise<PageDocument> {
     return this.serializeMutation(() => this.withMutationLock(async () => {
-      const page = args.pageID
-        ? await this.readPage(args.pageID)
-        : (await this.readCurrent()).page;
+      const page = await this.readWorkspacePage(args.pageID);
       const currentRevision = revision(page.agentStamp);
       if (args.expectedRevision !== currentRevision) {
         throw new ConflictError(
@@ -233,22 +311,22 @@ export class NotebookStore {
     }));
   }
 
-  async renameNotebook(args: {
-    notebookID: string;
+  async renameItem(args: {
+    itemID: string;
     title: string;
     expectedRevision: string;
   }): Promise<WorkspaceIndex> {
     return this.serializeMutation(() => this.withMutationLock(async () => {
       const workspace = await this.readWorkspace();
       assertExpectedRevision(args.expectedRevision, workspace.stamp, "Workspace");
-      const notebook = workspace.notebooks.find(
-        (candidate) => sameID(candidate.id, args.notebookID),
+      const item = workspace.items.find(
+        (candidate) => sameID(candidate.id, args.itemID),
       );
-      if (!notebook) throw new StoreError("Тетрадь не найдена.");
+      if (!item) throw new StoreError("Элемент рабочего пространства не найден.");
       const title = args.title.trim();
-      if (notebook.title === title) return workspace;
+      if (item.title === title) return workspace;
       const actor = await this.readActorID();
-      notebook.title = title;
+      item.title = title;
       workspace.stamp = advance(workspace.stamp, actor, "версии workspace");
       validateWorkspace(workspace);
       await atomicJSON(this.indexPath, workspace);
@@ -265,7 +343,7 @@ export class NotebookStore {
     workspace: WorkspaceIndex;
     board: BoardDocument;
     page: PageDocument;
-    notebookID: string;
+    itemID: string;
   }> {
     return this.serializeMutation(() => this.withMutationLock(async () => {
       const workspace = await this.readWorkspace();
@@ -280,14 +358,19 @@ export class NotebookStore {
       const title = args.title.trim();
 
       const actor = await this.readActorID();
-      const notebookID = randomUUID();
+      const itemID = randomUUID();
       const pageID = randomUUID();
-      const appPage = await this.readPage(workspace.selectedPageID);
+      const templatePageID = workspace.items.find(
+        (item) => item.kind === "notebook",
+      )?.pageIDs[0];
+      const pageSize = templatePageID
+        ? (await this.readPage(templatePageID)).size
+        : canonicalPageSize;
       const initialStamp: VersionStamp = { counter: 0, actor };
       const page: PageDocument = {
         format: 1,
         id: pageID,
-        size: appPage.size,
+        size: pageSize,
         drawingData: "",
         drawingStamp: initialStamp,
         elements: [],
@@ -295,12 +378,19 @@ export class NotebookStore {
       };
       validatePage(page);
 
-      workspace.notebooks.push({ id: notebookID, title, pageIDs: [pageID] });
+      workspace.items.push({
+        id: itemID,
+        kind: "notebook",
+        title,
+        pageIDs: [pageID],
+      });
+      workspace.selectedItemID = itemID;
+      workspace.selectedPageID = pageID;
       workspace.stamp = advance(workspace.stamp, actor, "версии workspace");
 
       const boardStamp = advance(board.stamp, actor, "версии доски");
-      board.freeNotebooks.push({
-        notebookID,
+      board.freeItems.push({
+        itemID,
         center: args.center,
         zIndex: highestZIndex(board) + 1,
         stamp: boardStamp,
@@ -312,7 +402,128 @@ export class NotebookStore {
       await atomicJSON(this.pagePath(pageID), page);
       await atomicJSON(this.boardPath, board);
       await atomicJSON(this.indexPath, workspace);
-      return { workspace, board, page, notebookID };
+      return { workspace, board, page, itemID };
+    }));
+  }
+
+  async createDocument(args: {
+    title: string;
+    center: WorldPoint;
+    expectedWorkspaceRevision: string;
+    expectedBoardRevision: string;
+    preamble?: string;
+    blocks?: DocumentBlock[];
+  }): Promise<{
+    workspace: WorkspaceIndex;
+    board: BoardDocument;
+    document: DocumentDocument;
+    state: DocumentStateJournal;
+    itemID: string;
+  }> {
+    return this.serializeMutation(() => this.withMutationLock(async () => {
+      const workspace = await this.readWorkspace();
+      const board = await this.readBoard(workspace);
+      assertExpectedRevision(
+        args.expectedWorkspaceRevision,
+        workspace.stamp,
+        "Workspace",
+      );
+      assertExpectedRevision(args.expectedBoardRevision, board.stamp, "Доска");
+      validateWorldPoint(args.center, "center");
+
+      const actor = await this.readActorID();
+      const itemID = randomUUID();
+      const initialStamp: VersionStamp = { counter: 0, actor };
+      const document: DocumentDocument = {
+        format: 1,
+        id: itemID,
+        preamble: args.preamble ?? "",
+        blocks: args.blocks ?? [markdownBlock("body", "")],
+        contentStamp: initialStamp,
+      };
+      const state: DocumentStateJournal = {
+        format: 1,
+        id: itemID,
+        records: [],
+        stamp: initialStamp,
+      };
+      validateDocument(document);
+      validateDocumentState(state);
+
+      workspace.items.push({
+        id: itemID,
+        kind: "document",
+        title: args.title.trim(),
+        pageIDs: [],
+      });
+      workspace.selectedItemID = itemID;
+      delete workspace.selectedPageID;
+      workspace.stamp = advance(workspace.stamp, actor, "версии workspace");
+
+      const boardStamp = advance(board.stamp, actor, "версии доски");
+      board.freeItems.push({
+        itemID,
+        center: args.center,
+        zIndex: highestZIndex(board) + 1,
+        stamp: boardStamp,
+      });
+      board.stamp = boardStamp;
+      validateWorkspace(workspace);
+      validateBoard(board, workspace);
+
+      await atomicJSON(this.documentPath(itemID), document);
+      await atomicJSON(this.documentStatePath(itemID), state);
+      await atomicJSON(this.boardPath, board);
+      await atomicJSON(this.indexPath, workspace);
+      return { workspace, board, document, state, itemID };
+    }));
+  }
+
+  async replaceDocumentContent(args: {
+    documentID: string | undefined;
+    expectedRevision: string;
+    preamble: string;
+    blocks: DocumentBlock[];
+  }): Promise<{
+    document: DocumentDocument;
+    state: DocumentStateJournal;
+  }> {
+    return this.serializeMutation(() => this.withMutationLock(async () => {
+      const workspace = await this.readWorkspace();
+      const item = args.documentID
+        ? workspace.items.find((candidate) => sameID(candidate.id, args.documentID!))
+        : selectedItem(workspace);
+      if (!item || item.kind !== "document") {
+        throw new StoreError("Документ не найден.");
+      }
+      const [document, state] = await Promise.all([
+        this.readDocument(item.id),
+        this.readDocumentState(item.id),
+      ]);
+      assertExpectedRevision(
+        args.expectedRevision,
+        document.contentStamp,
+        "Документ",
+      );
+      const nextDocument: DocumentDocument = {
+        ...document,
+        preamble: args.preamble,
+        blocks: args.blocks,
+      };
+      validateDocument(nextDocument);
+      if (JSON.stringify(nextDocument.blocks) === JSON.stringify(document.blocks)
+        && nextDocument.preamble === document.preamble) {
+        return { document, state };
+      }
+      const actor = await this.readActorID();
+      nextDocument.contentStamp = advance(
+        document.contentStamp,
+        actor,
+        "версии документа",
+      );
+
+      await atomicJSON(this.documentPath(item.id), nextDocument);
+      return { document: nextDocument, state };
     }));
   }
 
@@ -466,55 +677,210 @@ function validatePage(page: unknown): asserts page is PageDocument {
   validateElements(typedPage.elements, typedPage);
 }
 
+function migrateWorkspace(value: unknown): unknown {
+  if (!isRecord(value) || value.format !== 1) return value;
+  if (!Array.isArray(value.notebooks)
+    || typeof value.selectedNotebookID !== "string") return value;
+  return {
+    format: 2,
+    items: value.notebooks.map((notebook) => isRecord(notebook)
+      ? { ...notebook, kind: "notebook" }
+      : notebook),
+    selectedItemID: value.selectedNotebookID,
+    ...(typeof value.selectedPageID === "string"
+      ? { selectedPageID: value.selectedPageID }
+      : {}),
+    stamp: value.stamp,
+  };
+}
+
+function migrateBoard(value: unknown): unknown {
+  if (!isRecord(value) || value.format !== 1) return value;
+  if (!Array.isArray(value.freeNotebooks) || !Array.isArray(value.stacks)) {
+    return value;
+  }
+  return {
+    format: 2,
+    freeItems: value.freeNotebooks.map((placement) => isRecord(placement)
+      ? {
+        itemID: placement.notebookID,
+        center: placement.center,
+        zIndex: placement.zIndex,
+        stamp: placement.stamp,
+      }
+      : placement),
+    stacks: value.stacks.map((stack) => isRecord(stack)
+      ? {
+        id: stack.id,
+        center: stack.center,
+        zIndex: stack.zIndex,
+        itemIDs: stack.notebookIDs,
+        stamp: stack.stamp,
+      }
+      : stack),
+    elements: value.elements,
+    stamp: value.stamp,
+  };
+}
+
+function migratePresence(value: unknown): unknown {
+  if (!isRecord(value) || value.format !== 1) return value;
+  return {
+    format: 2,
+    mode: value.mode,
+    camera: value.camera,
+    viewport: value.viewport,
+    ...(typeof value.focusedNotebookID === "string"
+      ? { focusedItemID: value.focusedNotebookID }
+      : {}),
+    openProgress: value.openProgress,
+  };
+}
+
+function selectedItem(workspace: WorkspaceIndex): WorkspaceItem {
+  const item = workspace.items.find(
+    (candidate) => sameID(candidate.id, workspace.selectedItemID),
+  );
+  if (!item) throw new StoreError("Выбранный элемент workspace не найден.");
+  return item;
+}
+
+function markdownBlock(id: string, source: string): DocumentBlock {
+  return {
+    id,
+    kind: "markdown",
+    source,
+    html: "",
+    css: "",
+    javaScript: "",
+    initialState: {},
+    height: 320,
+  };
+}
+
+function validateDocument(value: unknown): asserts value is DocumentDocument {
+  if (!isRecord(value) || value.format !== 1 || typeof value.id !== "string") {
+    throw new StoreError("Документ повреждён.");
+  }
+  assertUUID(value.id, "document.id");
+  if (typeof value.preamble !== "string" || value.preamble.length > 200_000
+    || !Array.isArray(value.blocks) || value.blocks.length > 512) {
+    throw new StoreError("Содержимое документа повреждено.");
+  }
+  validateStamp(value.contentStamp, "document.contentStamp");
+  const ids = new Set<string>();
+  for (const block of value.blocks) validateDocumentBlock(block, ids);
+}
+
+function validateDocumentBlock(value: unknown, ids: Set<string>): asserts value is DocumentBlock {
+  if (!isRecord(value) || typeof value.id !== "string" || !value.id.trim()
+    || value.id.length > 120 || ids.has(value.id)) {
+    throw new StoreError("id блока документа повреждён или повторяется.");
+  }
+  ids.add(value.id);
+  if (value.kind !== "markdown" && value.kind !== "latex"
+    && value.kind !== "interactive") {
+    throw new StoreError(`Неизвестный вид блока: ${String(value.kind)}`);
+  }
+  for (const field of ["source", "html", "css", "javaScript"] as const) {
+    if (typeof value[field] !== "string" || value[field].length > 1_000_000) {
+      throw new StoreError(`${field} блока ${value.id} повреждено.`);
+    }
+  }
+  if (!("initialState" in value) || !isJSONValue(value.initialState)
+    || typeof value.height !== "number" || !Number.isFinite(value.height)) {
+    throw new StoreError(`Параметры блока ${value.id} повреждены.`);
+  }
+  if (value.kind === "interactive") {
+    if (value.source !== value.html || value.height < 48 || value.height > 2_048) {
+      throw new StoreError(`Интерактивный блок ${value.id} повреждён.`);
+    }
+  } else if (value.html !== "" || value.css !== "" || value.javaScript !== ""
+    || !isEmptyObject(value.initialState)) {
+    throw new StoreError(`Текстовый блок ${value.id} содержит лишние поля.`);
+  }
+}
+
+function validateDocumentState(value: unknown): asserts value is DocumentStateJournal {
+  if (!isRecord(value) || value.format !== 1 || typeof value.id !== "string"
+    || !Array.isArray(value.records)) {
+    throw new StoreError("Состояние документа повреждено.");
+  }
+  assertUUID(value.id, "documentState.id");
+  validateStamp(value.stamp, "documentState.stamp");
+  const ids = new Set<string>();
+  for (const record of value.records) {
+    if (!isRecord(record) || typeof record.id !== "string" || !record.id
+      || record.id.length > 120 || ids.has(record.id)
+      || !("value" in record) || !isJSONValue(record.value)) {
+      throw new StoreError("Запись состояния документа повреждена.");
+    }
+    ids.add(record.id);
+    validateStamp(record.stamp, `documentState.${record.id}.stamp`);
+    if (compareStamp(record.stamp as VersionStamp, value.stamp as VersionStamp) > 0) {
+      throw new StoreError("Запись состояния новее журнала документа.");
+    }
+  }
+}
+
 function validateWorkspace(value: unknown): asserts value is WorkspaceIndex {
   if (!isRecord(value)) throw new StoreError("workspace поврежден.");
-  if (value.format !== 1) {
+  if (value.format !== 2) {
     throw new StoreError(`Неизвестный формат workspace: ${String(value.format)}`);
   }
-  if (!Array.isArray(value.notebooks) || value.notebooks.length === 0) {
-    throw new StoreError("В workspace нет тетрадей.");
+  if (!Array.isArray(value.items) || value.items.length === 0) {
+    throw new StoreError("В workspace нет рабочих элементов.");
   }
-  if (typeof value.selectedNotebookID !== "string" || typeof value.selectedPageID !== "string") {
+  if (typeof value.selectedItemID !== "string") {
     throw new StoreError("Выбор workspace поврежден.");
   }
-  const selectedNotebookID = value.selectedNotebookID;
-  const selectedPageID = value.selectedPageID;
-  assertUUID(selectedNotebookID, "selectedNotebookID");
-  assertUUID(selectedPageID, "selectedPageID");
+  const selectedItemID = value.selectedItemID;
+  assertUUID(selectedItemID, "selectedItemID");
+  validateOptionalUUID(value.selectedPageID, "selectedPageID");
   validateStamp(value.stamp, "workspace.stamp");
 
-  const notebookIDs = new Set<string>();
+  const itemIDs = new Set<string>();
   const pageIDs = new Set<string>();
-  let selectedPageBelongsToSelection = false;
-  for (const notebook of value.notebooks) {
-    if (!isRecord(notebook) || typeof notebook.id !== "string") {
-      throw new StoreError("Тетрадь в workspace повреждена.");
+  let selectedItem: Record<string, unknown> | undefined;
+  for (const item of value.items) {
+    if (!isRecord(item) || typeof item.id !== "string") {
+      throw new StoreError("Элемент workspace повреждён.");
     }
-    assertUUID(notebook.id, "notebook.id");
-    const notebookID = notebook.id.toLowerCase();
-    if (notebookIDs.has(notebookID)) throw new StoreError(`Повторяется notebook.id: ${notebook.id}`);
-    notebookIDs.add(notebookID);
-    if (typeof notebook.title !== "string" || notebook.title.length > 240) {
-      throw new StoreError(`Название тетради ${notebook.id} повреждено.`);
+    assertUUID(item.id, "item.id");
+    const itemID = item.id.toLowerCase();
+    if (itemIDs.has(itemID)) throw new StoreError(`Повторяется item.id: ${item.id}`);
+    itemIDs.add(itemID);
+    if (item.kind !== "notebook" && item.kind !== "document") {
+      throw new StoreError(`Вид элемента ${item.id} повреждён.`);
     }
-    if (!Array.isArray(notebook.pageIDs) || notebook.pageIDs.length === 0) {
-      throw new StoreError(`В тетради ${notebook.id} нет листов.`);
+    if (typeof item.title !== "string" || item.title.length > 240) {
+      throw new StoreError(`Название элемента ${item.id} повреждено.`);
     }
-    for (const pageID of notebook.pageIDs) {
+    if (!Array.isArray(item.pageIDs)
+      || (item.kind === "notebook" && item.pageIDs.length === 0)
+      || (item.kind === "document" && item.pageIDs.length !== 0)) {
+      throw new StoreError(`Листы элемента ${item.id} повреждены.`);
+    }
+    for (const pageID of item.pageIDs) {
       if (typeof pageID !== "string") throw new StoreError("pageID поврежден.");
       assertUUID(pageID, "pageID");
       const normalized = pageID.toLowerCase();
       if (pageIDs.has(normalized)) throw new StoreError(`Повторяется pageID: ${pageID}`);
       pageIDs.add(normalized);
     }
-    if (notebookID === selectedNotebookID.toLowerCase()) {
-      selectedPageBelongsToSelection = notebook.pageIDs.some(
-        (pageID) => pageID.toLowerCase() === selectedPageID.toLowerCase(),
-      );
-    }
+    if (itemID === selectedItemID.toLowerCase()) selectedItem = item;
   }
-  if (!selectedPageBelongsToSelection) {
-    throw new StoreError("Выбранный лист не принадлежит выбранной тетради.");
+  if (!selectedItem) throw new StoreError("Выбранный элемент не найден.");
+  if (selectedItem.kind === "notebook") {
+    const selectedPageID = value.selectedPageID;
+    if (typeof selectedPageID !== "string"
+      || !(selectedItem.pageIDs as unknown[]).some(
+        (pageID) => typeof pageID === "string" && sameID(pageID, selectedPageID),
+      )) {
+      throw new StoreError("Выбранный лист не принадлежит выбранной тетради.");
+    }
+  } else if (value.selectedPageID !== undefined && value.selectedPageID !== null) {
+    throw new StoreError("Документ не может выбирать тетрадный лист.");
   }
 }
 
@@ -522,27 +888,27 @@ function validateBoard(
   value: unknown,
   workspace: WorkspaceIndex,
 ): asserts value is BoardDocument {
-  if (!isRecord(value) || value.format !== 1) {
+  if (!isRecord(value) || value.format !== 2) {
     throw new StoreError("Доска повреждена или имеет неизвестный формат.");
   }
   validateStamp(value.stamp, "board.stamp");
-  if (!Array.isArray(value.freeNotebooks) || !Array.isArray(value.stacks)
+  if (!Array.isArray(value.freeItems) || !Array.isArray(value.stacks)
     || !Array.isArray(value.elements)) {
     throw new StoreError("Содержимое доски повреждено.");
   }
-  const expectedNotebookIDs = new Set(
-    workspace.notebooks.map((notebook) => notebook.id.toLowerCase()),
+  const expectedItemIDs = new Set(
+    workspace.items.map((item) => item.id.toLowerCase()),
   );
-  const ownedNotebookIDs = new Set<string>();
-  for (const placement of value.freeNotebooks) {
-    if (!isRecord(placement) || typeof placement.notebookID !== "string") {
-      throw new StoreError("Размещение тетради повреждено.");
+  const ownedItemIDs = new Set<string>();
+  for (const placement of value.freeItems) {
+    if (!isRecord(placement) || typeof placement.itemID !== "string") {
+      throw new StoreError("Размещение элемента повреждено.");
     }
-    assertUUID(placement.notebookID, "placement.notebookID");
+    assertUUID(placement.itemID, "placement.itemID");
     validateWorldPoint(placement.center, "placement.center");
     validateZIndex(placement.zIndex, "placement.zIndex");
     validateStamp(placement.stamp, "placement.stamp");
-    addOwnedNotebook(ownedNotebookIDs, placement.notebookID);
+    addOwnedItem(ownedItemIDs, placement.itemID);
   }
   const stackIDs = new Set<string>();
   for (const stack of value.stacks) {
@@ -556,27 +922,27 @@ function validateBoard(
     validateWorldPoint(stack.center, "stack.center");
     validateZIndex(stack.zIndex, "stack.zIndex");
     validateStamp(stack.stamp, "stack.stamp");
-    if (!Array.isArray(stack.notebookIDs) || stack.notebookIDs.length < 2
-      || stack.notebookIDs.length > maximumStackNotebookCount) {
+    if (!Array.isArray(stack.itemIDs) || stack.itemIDs.length < 2
+      || stack.itemIDs.length > maximumStackItemCount) {
       throw new StoreError(
-        `В стопке должно быть от двух до ${maximumStackNotebookCount} тетрадей.`,
+        `В стопке должно быть от двух до ${maximumStackItemCount} элементов.`,
       );
     }
-    for (const notebookID of stack.notebookIDs) {
-      if (typeof notebookID !== "string") throw new StoreError("notebookID стопки поврежден.");
-      assertUUID(notebookID, "stack.notebookID");
-      addOwnedNotebook(ownedNotebookIDs, notebookID);
+    for (const itemID of stack.itemIDs) {
+      if (typeof itemID !== "string") throw new StoreError("itemID стопки повреждён.");
+      assertUUID(itemID, "stack.itemID");
+      addOwnedItem(ownedItemIDs, itemID);
     }
   }
-  if ([...expectedNotebookIDs].some((id) => !ownedNotebookIDs.has(id))) {
-    throw new StoreError("Каждая тетрадь должна принадлежать доске ровно один раз.");
+  if ([...expectedItemIDs].some((id) => !ownedItemIDs.has(id))) {
+    throw new StoreError("Каждый элемент должен принадлежать доске ровно один раз.");
   }
-  validateSpatialElements(value.elements, ownedNotebookIDs);
+  validateSpatialElements(value.elements, ownedItemIDs);
 }
 
 function validateSpatialElements(
   elements: unknown[],
-  notebookIDs: Set<string>,
+  itemIDs: Set<string>,
 ): asserts elements is SpatialElement[] {
   const ids = new Set<string>();
   for (const element of elements) {
@@ -590,7 +956,7 @@ function validateSpatialElements(
     if (surface.kind === "page") {
       throw new StoreError("Листовые элементы должны храниться в файле листа.");
     }
-    if (surface.kind === "cover" && !notebookIDs.has(surface.ownerID!.toLowerCase())) {
+    if (surface.kind === "cover" && !itemIDs.has(surface.ownerID!.toLowerCase())) {
       throw new StoreError("Элемент ссылается на неизвестную обложку.");
     }
     if (!isFrame(element.frame)) throw new StoreError(`frame элемента ${element.id} поврежден.`);
@@ -677,10 +1043,11 @@ function validateSpatialInkSpan(value: unknown): void {
 }
 
 function validatePresence(value: unknown): asserts value is SessionPresence {
-  if (!isRecord(value) || value.format !== 1) {
+  if (!isRecord(value) || value.format !== 2) {
     throw new StoreError("Текущий контекст поврежден.");
   }
-  if (value.mode !== "board" && value.mode !== "cover" && value.mode !== "page") {
+  if (value.mode !== "board" && value.mode !== "cover" && value.mode !== "page"
+    && value.mode !== "document") {
     throw new StoreError("Режим текущего контекста поврежден.");
   }
   if (!isRecord(value.camera)) throw new StoreError("Камера повреждена.");
@@ -693,18 +1060,18 @@ function validatePresence(value: unknown): asserts value is SessionPresence {
   if (!isSpatialPoint(value.viewport) || value.viewport.x <= 0 || value.viewport.y <= 0) {
     throw new StoreError("Размер области просмотра поврежден.");
   }
-  validateOptionalUUID(value.focusedNotebookID, "focusedNotebookID");
+  validateOptionalUUID(value.focusedItemID, "focusedItemID");
   if (typeof value.openProgress !== "number" || !Number.isFinite(value.openProgress)
     || value.openProgress < 0 || value.openProgress > 1) {
     throw new StoreError("Прогресс открытия поврежден.");
   }
-  if (value.mode !== "board" && typeof value.focusedNotebookID !== "string") {
-    throw new StoreError("Обложка или лист должны указывать тетрадь.");
+  if (value.mode !== "board" && typeof value.focusedItemID !== "string") {
+    throw new StoreError("Открытый элемент должен указывать своего владельца.");
   }
 }
 
 function validateCurrentViewReceipt(value: unknown): asserts value is CurrentViewReceipt {
-  if (!isRecord(value) || value.format !== 1) {
+  if (!isRecord(value) || value.format !== 2) {
     throw new StoreError("Квитанция текущего вида повреждена.");
   }
   validateStamp(value.workspaceStamp, "receipt.workspaceStamp");
@@ -726,8 +1093,24 @@ function validateCurrentViewReceipt(value: unknown): asserts value is CurrentVie
     validateStamp(value.page.drawingStamp, "receipt.page.drawingStamp");
     validateStamp(value.page.agentStamp, "receipt.page.agentStamp");
   }
+  if (value.document !== undefined && value.document !== null) {
+    if (!isRecord(value.document) || typeof value.document.documentID !== "string") {
+      throw new StoreError("Квитанция документа повреждена.");
+    }
+    assertUUID(value.document.documentID, "receipt.document.documentID");
+    validateStamp(value.document.contentStamp, "receipt.document.contentStamp");
+    validateStamp(value.document.stateStamp, "receipt.document.stateStamp");
+  }
   if (value.presence.mode === "page" && (value.page === undefined || value.page === null)) {
     throw new StoreError("Квитанция открытого листа должна содержать его версию.");
+  }
+  if (value.presence.mode === "document"
+    && (value.document === undefined || value.document === null)) {
+    throw new StoreError("Квитанция открытого документа должна содержать его версию.");
+  }
+  if (value.page !== undefined && value.page !== null
+    && value.document !== undefined && value.document !== null) {
+    throw new StoreError("Квитанция не может описывать лист и документ одновременно.");
   }
 }
 
@@ -770,7 +1153,7 @@ function advance(stamp: VersionStamp, actor: string, owner: string): VersionStam
 function highestZIndex(board: BoardDocument): number {
   return Math.max(
     0,
-    ...board.freeNotebooks.map((placement) => placement.zIndex),
+    ...board.freeItems.map((placement) => placement.zIndex),
     ...board.stacks.map((stack) => stack.zIndex),
   );
 }
@@ -846,10 +1229,10 @@ function validateOptionalUUID(value: unknown, owner: string): void {
   assertUUID(value, owner);
 }
 
-function addOwnedNotebook(ids: Set<string>, value: string): void {
+function addOwnedItem(ids: Set<string>, value: string): void {
   const normalized = value.toLowerCase();
   if (ids.has(normalized)) {
-    throw new StoreError(`Тетрадь ${value} принадлежит доске больше одного раза.`);
+    throw new StoreError(`Элемент ${value} принадлежит доске больше одного раза.`);
   }
   ids.add(normalized);
 }
@@ -862,6 +1245,11 @@ function isSpatialPoint(value: unknown): value is { x: number; y: number } {
 
 function sameID(first: string, second: string): boolean {
   return first.toLowerCase() === second.toLowerCase();
+}
+
+function compareStamp(first: VersionStamp, second: VersionStamp): number {
+  if (first.counter !== second.counter) return first.counter - second.counter;
+  return first.actor.toLowerCase().localeCompare(second.actor.toLowerCase());
 }
 
 function isFrame(value: unknown): value is PageRect {
@@ -893,6 +1281,10 @@ function isJSONValue(value: unknown): boolean {
   if (Array.isArray(value)) return value.every(isJSONValue);
   if (isRecord(value)) return Object.values(value).every(isJSONValue);
   return false;
+}
+
+function isEmptyObject(value: unknown): boolean {
+  return isRecord(value) && Object.keys(value).length === 0;
 }
 
 async function readJSON<T>(path: string, owner: string): Promise<T> {

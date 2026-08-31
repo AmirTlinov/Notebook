@@ -2,6 +2,72 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testDocumentTextOpensMarkdownEditorOnDoubleTap() async throws {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    try await Task.sleep(for: .milliseconds(350))
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-document-runtime-fixture",
+    ]
+    app.launch()
+
+    let heading = app.staticTexts["Живая математика"].firstMatch
+    XCTAssertTrue(
+      heading.waitForExistence(timeout: 8),
+      "Markdown должен стать читаемым текстом WebKit"
+    )
+    heading.doubleTap()
+
+    let editor = app.textViews["Исходный Markdown или LaTeX"].firstMatch
+    XCTAssertTrue(
+      editor.waitForExistence(timeout: 3),
+      "Двойное касание должно заменить блок одним редактором исходника"
+    )
+    // WebKit reports the programmatically focused textarea correctly, while
+    // XCUITest only grants synthesized typing to a web control after a direct
+    // automation tap. A person already supplied that activation tap above.
+    editor.tap()
+    editor.typeText("\n\nНовая строка\n\n")
+
+    XCTAssertTrue(
+      (editor.value as? String)?.contains("Новая строка") == true,
+      "Редактор должен принимать Markdown с экранной клавиатуры"
+    )
+  }
+
+  func testDocumentRuntimeRendersMarkdownLatexAndInteractiveContent() async throws {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    try await Task.sleep(for: .milliseconds(350))
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-document-runtime-fixture",
+    ]
+    app.launch()
+
+    let runtime = app.descendants(matching: .any)
+      .matching(identifier: "document-runtime")
+      .firstMatch
+    XCTAssertTrue(
+      runtime.waitForExistence(timeout: 8),
+      "Открытый документ должен создать один живой WebKit runtime"
+    )
+    try await Task.sleep(for: .seconds(2))
+    XCTAssertEqual(
+      app.state,
+      .runningForeground,
+      "Markdown, LaTeX и интерактивный блок должны жить без падения приложения"
+    )
+
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "document-markdown-latex-interactive"
+    proof.lifetime = .keepAlways
+    add(proof)
+  }
+
   func testPageFitSurvivesPortraitLandscapePortrait() async throws {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
@@ -41,7 +107,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     paper.pinch(withScale: 0.28, velocity: -2)
 
     XCTAssertTrue(
-      app.buttons["create-notebook"].waitForExistence(timeout: 5),
+      app.buttons["create-workspace-item"].waitForExistence(timeout: 5),
       "После закрытия листа должна появиться бесконечная доска"
     )
     let boardProof = XCTAttachment(screenshot: app.screenshot())
@@ -51,20 +117,20 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     let notebook = app.descendants(matching: .any)
       .matching(
-        identifier: "notebook-7e7a1000-0000-4000-8000-000000000002"
+        identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000002"
       )
       .firstMatch
     XCTAssertTrue(notebook.waitForExistence(timeout: 3))
     let distantNotebookWidth = notebook.frame.width
     notebook.pinch(withScale: 1.2, velocity: 0.4)
     XCTAssertTrue(
-      app.buttons["create-notebook"].exists,
+      app.buttons["create-workspace-item"].exists,
       "Небольшой щипок должен только приблизить доску"
     )
     XCTAssertGreaterThan(notebook.frame.width, distantNotebookWidth)
     notebook.pinch(withScale: 1.4, velocity: 0.5)
     XCTAssertTrue(
-      app.buttons["create-notebook"].exists,
+      app.buttons["create-workspace-item"].exists,
       "Тетрадь вдали должна приближаться вместе с доской"
     )
     notebook.pinch(withScale: 4, velocity: 2)
@@ -91,11 +157,11 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
     let originalPaperFrame = paper.frame
     paper.pinch(withScale: 0.28, velocity: -2)
-    XCTAssertTrue(app.buttons["create-notebook"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
 
     let notebook = app.descendants(matching: .any)
       .matching(
-        identifier: "notebook-7e7a1000-0000-4000-8000-000000000002"
+        identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000002"
       )
       .firstMatch
     XCTAssertTrue(notebook.waitForExistence(timeout: 3))
@@ -120,7 +186,7 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     let notebook = app.descendants(matching: .any)
       .matching(
-        identifier: "notebook-7e7a1000-0000-4000-8000-000000000002"
+        identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000002"
       )
       .firstMatch
     XCTAssertTrue(notebook.waitForExistence(timeout: 5))
@@ -173,23 +239,23 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-stacked-board-fixture",
     ]
     app.launch()
-    XCTAssertTrue(app.buttons["create-notebook"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
 
     let removed = app.descendants(matching: .any)
       .matching(
-        identifier: "notebook-7e7a1000-0000-4000-8000-000000000004"
+        identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000004"
       )
       .firstMatch
     let remaining = app.descendants(matching: .any)
       .matching(
-        identifier: "notebook-7e7a1000-0000-4000-8000-000000000002"
+        identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000002"
       )
       .firstMatch
     XCTAssertTrue(removed.waitForExistence(timeout: 3))
     XCTAssertTrue(remaining.exists)
 
     removed.tap()
-    let delete = app.buttons["delete-notebook"]
+    let delete = app.buttons["delete-workspace-item"]
     XCTAssertTrue(delete.waitForExistence(timeout: 2))
 
     app.windows.firstMatch.coordinate(
@@ -220,7 +286,7 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     let notebook = app.descendants(matching: .any)
       .matching(
-        identifier: "notebook-7e7a1000-0000-4000-8000-000000000002"
+        identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000002"
       )
       .firstMatch
     XCTAssertTrue(notebook.waitForExistence(timeout: 5))
@@ -266,7 +332,7 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     let notebook = app.descendants(matching: .any)
       .matching(
-        identifier: "notebook-7e7a1000-0000-4000-8000-000000000002"
+        identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000002"
       )
       .firstMatch
     let ink = app.otherElements["spatial-ink"]
@@ -318,7 +384,7 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     let notebook = app.descendants(matching: .any)
       .matching(
-        identifier: "notebook-7e7a1000-0000-4000-8000-000000000002"
+        identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000002"
       )
       .firstMatch
     let ink = app.otherElements["spatial-ink"]
@@ -359,7 +425,7 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     let notebook = app.descendants(matching: .any)
       .matching(
-        identifier: "notebook-7e7a1000-0000-4000-8000-000000000002"
+        identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000002"
       )
       .firstMatch
     XCTAssertTrue(notebook.waitForExistence(timeout: 3))
@@ -393,7 +459,7 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     let notebook = app.descendants(matching: .any)
       .matching(
-        identifier: "notebook-7e7a1000-0000-4000-8000-000000000002"
+        identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000002"
       )
       .firstMatch
     XCTAssertTrue(notebook.waitForExistence(timeout: 3))
@@ -463,13 +529,13 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-stacked-board-fixture",
     ]
     app.launch()
-    XCTAssertTrue(app.buttons["create-notebook"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
 
     let selected = app.descendants(matching: .any)
-      .matching(identifier: "notebook-\(selectedID)")
+      .matching(identifier: "workspace-item-\(selectedID)")
       .firstMatch
     let sibling = app.descendants(matching: .any)
-      .matching(identifier: "notebook-\(hiddenSiblingID)")
+      .matching(identifier: "workspace-item-\(hiddenSiblingID)")
       .firstMatch
     XCTAssertTrue(selected.waitForExistence(timeout: 3))
     XCTAssertTrue(sibling.exists)
@@ -483,7 +549,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     assertFittedAndCentered(paper.frame, in: window.frame)
     XCTAssertFalse(
       app.descendants(matching: .any)
-        .matching(identifier: "notebook-\(hiddenSiblingID)")
+        .matching(identifier: "workspace-item-\(hiddenSiblingID)")
         .firstMatch.exists,
       "После входа соседняя тетрадь должна остаться в стопке"
     )
@@ -517,12 +583,12 @@ final class DrawingResponsivenessTests: XCTestCase {
     assertFittedAndCentered(paper.frame, in: window.frame)
     XCTAssertTrue(
       app.descendants(matching: .any)
-        .matching(identifier: "notebook-\(selectedID)")
+        .matching(identifier: "workspace-item-\(selectedID)")
         .firstMatch.exists
     )
     XCTAssertFalse(
       app.descendants(matching: .any)
-        .matching(identifier: "notebook-\(hiddenSiblingID)")
+        .matching(identifier: "workspace-item-\(hiddenSiblingID)")
         .firstMatch.exists,
       "Соседняя тетрадь должна оставаться внутри стопки"
     )
@@ -678,10 +744,10 @@ final class DrawingResponsivenessTests: XCTestCase {
     wait(for: [erased], timeout: 2)
 
     paper.pinch(withScale: 0.28, velocity: -2)
-    XCTAssertTrue(app.buttons["create-notebook"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
     let notebook = app.descendants(matching: .any)
       .matching(
-        identifier: "notebook-7e7a1000-0000-4000-8000-000000000002"
+        identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000002"
       )
       .firstMatch
     XCTAssertTrue(notebook.waitForExistence(timeout: 2))

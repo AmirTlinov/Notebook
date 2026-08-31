@@ -23,9 +23,9 @@ final class AgentStateTests: XCTestCase {
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     model.start(pageSize: PageSize(width: 834, height: 1_194))
-    let notebookID = try XCTUnwrap(model.workspace?.selectedNotebookID)
+    let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
     let elementID = try XCTUnwrap(model.addNativeText(
-      on: notebookID,
+      on: itemID,
       at: SpatialPoint(x: 830, y: 1_190)
     ))
 
@@ -40,8 +40,8 @@ final class AgentStateTests: XCTestCase {
       text: "Первая мысль"
     )
 
-    let notebookIDs = Set(try XCTUnwrap(model.workspace).notebooks.map(\.id))
-    let saved = try store.loadBoard(notebookIDs: notebookIDs)
+    let itemIDs = Set(try XCTUnwrap(model.workspace).items.map(\.id))
+    let saved = try store.loadBoard(itemIDs: itemIDs)
     XCTAssertEqual(
       saved.elements.first(where: { $0.id == elementID })?.source,
       "Первая мысль"
@@ -53,9 +53,119 @@ final class AgentStateTests: XCTestCase {
       $0.id == elementID
     }) ?? true)
     XCTAssertFalse(
-      try store.loadBoard(notebookIDs: notebookIDs).elements.contains(where: {
+      try store.loadBoard(itemIDs: itemIDs).elements.contains(where: {
         $0.id == elementID
       })
     )
+  }
+
+  @MainActor
+  func testDocumentSourceAndInteractiveStatePersistThroughTheirOwners() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = NotebookStore(root: root)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    model.start(pageSize: PageSize(width: 834, height: 1_194))
+    let documentID = try XCTUnwrap(model.createDocument(at: .zero))
+
+    model.replaceDocumentBlockSource(
+      documentID: documentID,
+      blockID: "body",
+      source: "# Отредактировано на iPad"
+    )
+    model.commitDocumentState(
+      documentID: documentID,
+      blockID: "counter",
+      value: .object(["count": .number(4)])
+    )
+
+    XCTAssertEqual(
+      try store.loadDocument(documentID).blocks.first?.source,
+      "# Отредактировано на iPad"
+    )
+    XCTAssertEqual(
+      try store.loadDocumentState(documentID).value(for: "counter"),
+      .object(["count": .number(4)])
+    )
+    XCTAssertTrue(model.deleteItem(documentID))
+    XCTAssertThrowsError(try store.loadDocument(documentID))
+    XCTAssertThrowsError(try store.loadDocumentState(documentID))
+  }
+
+  @MainActor
+  func testRemoteDocumentCatalogWaitsForAllDependencies() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = NotebookStore(root: root)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    model.start(pageSize: PageSize(width: 834, height: 1_194))
+    let original = try XCTUnwrap(model.workspace)
+    var remoteIndex = original
+    var remoteBoard = try XCTUnwrap(model.board)
+    let remoteActor = UUID()
+    let item = try XCTUnwrap(remoteIndex.createDocument(
+      title: "Сетевой документ",
+      actor: remoteActor
+    ))
+    XCTAssertTrue(remoteBoard.addItem(
+      item.id,
+      near: WorldPoint(x: 1_200, y: 300),
+      actor: remoteActor
+    ))
+    let document = DocumentDocument(
+      id: item.id,
+      actor: remoteActor,
+      blocks: [.markdown(id: "body", source: "# Доставлено целиком")]
+    )
+    let state = DocumentStateJournal(id: item.id, actor: remoteActor)
+
+    model.receivePeerMessage(.index(remoteIndex))
+    XCTAssertEqual(model.workspace, original)
+    XCTAssertEqual(try store.loadIndex(), original)
+
+    model.receivePeerMessage(.document(document))
+    model.receivePeerMessage(.documentState(state))
+    XCTAssertEqual(model.workspace, original)
+    model.receivePeerMessage(.board(remoteBoard))
+
+    XCTAssertEqual(model.workspace, remoteIndex)
+    XCTAssertEqual(try store.loadIndex(), remoteIndex)
+    XCTAssertEqual(try store.loadDocument(item.id), document)
+    XCTAssertEqual(try store.loadDocumentState(item.id), state)
+    XCTAssertEqual(model.presence?.focusedItemID, item.id)
+    XCTAssertEqual(model.presence?.mode, .document)
+  }
+
+  @MainActor
+  func testRemoteDocumentDeletionRemovesItsDurableOwners() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = NotebookStore(root: root)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    model.start(pageSize: PageSize(width: 834, height: 1_194))
+    let documentID = try XCTUnwrap(model.createDocument(at: .zero))
+    var remoteIndex = try XCTUnwrap(model.workspace)
+    var remoteBoard = try XCTUnwrap(model.board)
+    let actor = UUID()
+    XCTAssertNotNil(remoteIndex.deleteItem(documentID, actor: actor))
+    XCTAssertTrue(remoteBoard.deleteItem(documentID, actor: actor))
+
+    model.receivePeerMessage(.board(remoteBoard))
+    model.receivePeerMessage(.index(remoteIndex))
+
+    XCTAssertNil(model.documents[documentID])
+    XCTAssertNil(model.documentStates[documentID])
+    XCTAssertFalse(FileManager.default.fileExists(
+      atPath: store.documentURL(documentID).path
+    ))
+    XCTAssertFalse(FileManager.default.fileExists(
+      atPath: store.documentStateURL(documentID).path
+    ))
   }
 }

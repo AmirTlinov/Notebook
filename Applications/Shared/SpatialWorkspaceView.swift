@@ -3,7 +3,7 @@ import NotebookCore
 
 private struct CameraGestureSnapshot {
   struct BoardEngagement {
-    let notebookID: UUID
+    let itemID: UUID
     let openingScale: Double
   }
 
@@ -13,19 +13,19 @@ private struct CameraGestureSnapshot {
   var baselineMagnification: CGFloat
   var lastMagnification: CGFloat
   var lastCentroid: CGPoint
-  var candidateNotebookID: UUID?
+  var candidateItemID: UUID?
   var isApproaching: Bool
   var boardEngagement: BoardEngagement?
   var dockingStrength: Double
 }
 
-struct RenderedNotebook: Identifiable {
-  let notebook: Notebook
+struct RenderedWorkspaceItem: Identifiable {
+  let item: WorkspaceItem
   let center: WorldPoint
   let zIndex: Double
   let stackID: UUID?
 
-  var id: UUID { notebook.id }
+  var id: UUID { item.id }
 }
 
 struct SpatialWorkspaceView: View {
@@ -33,10 +33,10 @@ struct SpatialWorkspaceView: View {
 
   @State private var cameraGesture: CameraGestureSnapshot?
   @State private var panStart: SessionPresence?
-  @State private var selectedNotebookID: UUID?
-  @State private var liftedNotebookID: UUID?
+  @State private var selectedItemID: UUID?
+  @State private var liftedItemID: UUID?
   @State private var editingSpatialTextID: String?
-  @State private var pageGestureActive = false
+  @State private var contentGestureActive = false
   @State private var pageInputGestureID: UUID?
   @State private var bufferedCameraPhases: [WorkspaceMagnificationPhase] = []
   @State private var settling = false
@@ -50,18 +50,18 @@ struct SpatialWorkspaceView: View {
         y: geometry.size.height
       )
       let presence = normalizedPresence(for: viewport)
-      let rendered = renderedNotebooks(presence: presence)
+      let rendered = renderedItems(presence: presence)
 
       ZStack {
         SpatialBoardGrid(camera: presence.camera)
 
         #if os(iOS)
           BoardPanView(
-            isEnabled: presence.mode != .page && cameraGesture == nil
-              && !settling,
-            excludedFrames: rendered.map { notebook in
+            isEnabled: (presence.mode == .board || presence.mode == .cover)
+              && cameraGesture == nil && !settling,
+            excludedFrames: rendered.map { item in
               let center = presence.camera.worldToScreen(
-                notebook.center,
+                item.center,
                 viewport: viewport
               )
               let width = NotebookGeometry.width * presence.camera.scale
@@ -75,12 +75,12 @@ struct SpatialWorkspaceView: View {
             },
             onTap: {
               withAnimation(.easeOut(duration: 0.12)) {
-                selectedNotebookID = nil
+                selectedItemID = nil
               }
               editingSpatialTextID = nil
             },
             onBegan: {
-              selectedNotebookID = nil
+              selectedItemID = nil
               editingSpatialTextID = nil
               panStart = presence
             },
@@ -112,9 +112,9 @@ struct SpatialWorkspaceView: View {
           SpatialInkCanvas(
             camera: presence.camera,
             viewport: viewport,
-            notebooks: rendered.map {
-              SpatialNotebookSurface(
-                notebookID: $0.id,
+            items: rendered.map {
+              SpatialWorkspaceItemSurface(
+                itemID: $0.id,
                 center: $0.center,
                 zIndex: $0.zIndex
               )
@@ -126,55 +126,59 @@ struct SpatialWorkspaceView: View {
             surfaceRegistry: spatialInkSurfaces,
             pencilInputGate: model.pencilInputGate,
             onCommit: model.appendSpatialInk,
-            isEnabled: presence.mode != .page && !pageGestureActive
+            isEnabled: (presence.mode == .board || presence.mode == .cover)
+              && !contentGestureActive
               && editingSpatialTextID == nil
           )
           .allowsHitTesting(false)
         #endif
 
         ForEach(rendered) { rendered in
-          NotebookSceneItem(
+          WorkspaceSceneItem(
             rendered: rendered,
-            page: page(for: rendered.notebook),
+            page: page(for: rendered.item),
+            document: model.documents[rendered.id],
+            documentState: model.documentStates[rendered.id],
             camera: presence.camera,
             viewport: viewport,
-            isFocused: presence.focusedNotebookID == rendered.id,
-            preparesPage: preparesPage(
+            isFocused: presence.focusedItemID == rendered.id,
+            preparesContent: preparesContent(
               rendered.id,
               presence: presence
             ),
-            openProgress: presence.focusedNotebookID == rendered.id
+            openProgress: presence.focusedItemID == rendered.id
               ? presence.openProgress
               : 0,
-            pageIsInteractive: presence.focusedNotebookID == rendered.id
-              && (presence.mode == .page || pageGestureActive)
+            contentIsInteractive: presence.focusedItemID == rendered.id
+              && (presence.mode == .page || presence.mode == .document)
+              && !contentGestureActive
               && !settling,
-            isSelected: selectedNotebookID == rendered.id,
-            isLifted: liftedNotebookID == rendered.id,
+            isSelected: selectedItemID == rendered.id,
+            isLifted: liftedItemID == rendered.id,
             editingTextID: editingSpatialTextID,
             spatialInkSurfaces: spatialInkSurfaces,
-            onDrop: { notebookID, center in
-              dropNotebook(notebookID, at: center, presence: presence)
+            onDrop: { itemID, center in
+              dropItem(itemID, at: center, presence: presence)
             },
-            onSelect: { notebookID in
+            onSelect: { itemID in
               withAnimation(.easeOut(duration: 0.12)) {
-                selectedNotebookID = notebookID
+                selectedItemID = itemID
               }
             },
-            onLiftChanged: { notebookID, lifted in
+            onLiftChanged: { itemID, lifted in
               if lifted { editingSpatialTextID = nil }
               withAnimation(.spring(duration: 0.18, bounce: 0.18)) {
-                liftedNotebookID = lifted ? notebookID : nil
-                if lifted { selectedNotebookID = notebookID }
+                liftedItemID = lifted ? itemID : nil
+                if lifted { selectedItemID = itemID }
               }
             },
-            onOpen: { notebookID in
+            onOpen: { itemID in
               editingSpatialTextID = nil
-              selectedNotebookID = nil
-              openNotebook(notebookID, viewport: viewport)
+              selectedItemID = nil
+              openItem(itemID, viewport: viewport)
             },
-            onEditText: { notebookID, point in
-              beginTextEditing(on: notebookID, at: point)
+            onEditText: { itemID, point in
+              beginTextEditing(on: itemID, at: point)
             },
             onTextEditingEnded: { elementID in
               if editingSpatialTextID == elementID {
@@ -182,16 +186,17 @@ struct SpatialWorkspaceView: View {
               }
             }
           )
-          .zIndex(liftedNotebookID == rendered.id ? 9_000 : rendered.zIndex)
+          .zIndex(liftedItemID == rendered.id ? 9_000 : rendered.zIndex)
         }
 
         #if os(iOS)
           WorkspaceGestureLayer(
             isEnabled: true,
-            isPageOpen: presence.mode == .page,
+            allowsPageNavigation: presence.mode == .page,
             pencilInputGate: model.pencilInputGate,
             onCamera: handleWorkspaceMagnification,
             onNavigate: { direction in
+              guard presence.mode == .page else { return }
               model.afterPageInput { model.turnPage(direction) }
             },
             onUndo: {
@@ -200,7 +205,7 @@ struct SpatialWorkspaceView: View {
           )
           .allowsHitTesting(false)
 
-          notebookSelectionControl(presence: presence, viewport: viewport)
+          itemSelectionControl(presence: presence, viewport: viewport)
         #endif
 
         controls(presence: presence, viewport: viewport)
@@ -215,14 +220,14 @@ struct SpatialWorkspaceView: View {
       .onChange(of: presence.mode) { _, mode in
         if mode != .cover { editingSpatialTextID = nil }
       }
-      .onChange(of: presence.focusedNotebookID) { _, notebookID in
-        if notebookID == nil { editingSpatialTextID = nil }
+      .onChange(of: presence.focusedItemID) { _, itemID in
+        if itemID == nil { editingSpatialTextID = nil }
       }
       .onDisappear {
         settlementTask?.cancel()
         settlementTask = nil
         cameraGesture = nil
-        pageGestureActive = false
+        contentGestureActive = false
         pageInputGestureID = nil
         bufferedCameraPhases = []
         settling = false
@@ -232,15 +237,15 @@ struct SpatialWorkspaceView: View {
   }
 
   @ViewBuilder
-  private func notebookSelectionControl(
+  private func itemSelectionControl(
     presence: SessionPresence,
     viewport: SpatialPoint
   ) -> some View {
-    if presence.mode != .page,
-      liftedNotebookID == nil,
-      let selectedNotebookID,
-      let rendered = renderedNotebooks(presence: presence).first(where: {
-        $0.id == selectedNotebookID
+    if presence.mode == .board || presence.mode == .cover,
+      liftedItemID == nil,
+      let selectedItemID,
+      let rendered = renderedItems(presence: presence).first(where: {
+        $0.id == selectedItemID
       })
     {
       let center = presence.camera.worldToScreen(
@@ -250,8 +255,8 @@ struct SpatialWorkspaceView: View {
       let halfWidth = NotebookGeometry.width * presence.camera.scale / 2
       let halfHeight = NotebookGeometry.height * presence.camera.scale / 2
       Button(role: .destructive) {
-        guard model.deleteNotebook(selectedNotebookID) else { return }
-        self.selectedNotebookID = nil
+        guard model.deleteItem(selectedItemID) else { return }
+        self.selectedItemID = nil
       } label: {
         Image(systemName: "trash")
           .font(.system(size: 17, weight: .semibold))
@@ -260,8 +265,8 @@ struct SpatialWorkspaceView: View {
           .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
       }
       .buttonStyle(.plain)
-      .accessibilityLabel("Удалить тетрадь")
-      .accessibilityIdentifier("delete-notebook")
+      .accessibilityLabel("Удалить")
+      .accessibilityIdentifier("delete-workspace-item")
       .position(
         x: min(max(center.x + halfWidth + 8, 28), viewport.x - 28),
         y: min(max(center.y - halfHeight - 8, 28), viewport.y - 28)
@@ -278,8 +283,25 @@ struct SpatialWorkspaceView: View {
   ) -> some View {
     #if os(iOS)
       if presence.mode == .board && !settling {
-        Button {
-          createNotebook(presence: presence, viewport: viewport)
+        Menu {
+          Button {
+            createItem(
+              kind: .notebook,
+              presence: presence,
+              viewport: viewport
+            )
+          } label: {
+            Label("Тетрадь", systemImage: "book.closed")
+          }
+          Button {
+            createItem(
+              kind: .document,
+              presence: presence,
+              viewport: viewport
+            )
+          } label: {
+            Label("Документ", systemImage: "doc.text")
+          }
         } label: {
           Image(systemName: "plus")
             .font(.system(size: 21, weight: .medium))
@@ -288,8 +310,8 @@ struct SpatialWorkspaceView: View {
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Создать тетрадь")
-        .accessibilityIdentifier("create-notebook")
+        .accessibilityLabel("Создать")
+        .accessibilityIdentifier("create-workspace-item")
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
         .padding(.trailing, 22)
         .padding(.bottom, 20)
@@ -329,15 +351,15 @@ struct SpatialWorkspaceView: View {
   }
 
   private func beginTextEditing(
-    on notebookID: UUID,
+    on itemID: UUID,
     at point: SpatialPoint
   ) {
     guard model.presence?.mode == .cover,
-      model.presence?.focusedNotebookID == notebookID,
+      model.presence?.focusedItemID == itemID,
       let board = model.board
     else { return }
     let elements = board.elements.filter {
-      $0.surface == .cover(notebookID)
+      $0.surface == .cover(itemID)
     }
     if let text = elements.reversed().first(where: {
       $0.kind == .nativeText && $0.frame.contains(point)
@@ -346,7 +368,7 @@ struct SpatialWorkspaceView: View {
       return
     }
     guard !elements.contains(where: { $0.frame.contains(point) }),
-      let elementID = model.addNativeText(on: notebookID, at: point)
+      let elementID = model.addNativeText(on: itemID, at: point)
     else { return }
     editingSpatialTextID = elementID
   }
@@ -371,19 +393,19 @@ struct SpatialWorkspaceView: View {
     #endif
   }
 
-  private func renderedNotebooks(
+  private func renderedItems(
     presence: SessionPresence
-  ) -> [RenderedNotebook] {
+  ) -> [RenderedWorkspaceItem] {
     guard let board = model.board, let workspace = model.workspace else {
       return []
     }
-    let notebooks = Dictionary(
-      uniqueKeysWithValues: workspace.notebooks.map { ($0.id, $0) }
+    let items = Dictionary(
+      uniqueKeysWithValues: workspace.items.map { ($0.id, $0) }
     )
-    var result: [RenderedNotebook] = board.freeNotebooks.compactMap { placement in
-      notebooks[placement.notebookID].map {
-        RenderedNotebook(
-          notebook: $0,
+    var result: [RenderedWorkspaceItem] = board.freeItems.compactMap { placement in
+      items[placement.itemID].map {
+        RenderedWorkspaceItem(
+          item: $0,
           center: placement.center,
           zIndex: Double(placement.zIndex),
           stackID: nil
@@ -394,22 +416,22 @@ struct SpatialWorkspaceView: View {
     for stack in board.stacks {
       let focusedMemberID = presence.mode == .board
         ? nil
-        : presence.focusedNotebookID.flatMap { notebookID in
-          stack.notebookIDs.contains(notebookID) ? notebookID : nil
+        : presence.focusedItemID.flatMap { itemID in
+          stack.itemIDs.contains(itemID) ? itemID : nil
         }
-      for (index, notebookID) in stack.notebookIDs.enumerated() {
-        guard focusedMemberID == nil || focusedMemberID == notebookID,
-          let notebook = notebooks[notebookID],
-          let center = NotebookStackPresentation.boardCenter(
-            of: notebookID,
+      for (index, itemID) in stack.itemIDs.enumerated() {
+        guard focusedMemberID == nil || focusedMemberID == itemID,
+          let item = items[itemID],
+          let center = WorkspaceItemStackPresentation.boardCenter(
+            of: itemID,
             in: stack,
             cameraScale: presence.camera.scale,
             viewport: presence.viewport
           )
         else { continue }
         result.append(
-          RenderedNotebook(
-            notebook: notebook,
+          RenderedWorkspaceItem(
+            item: item,
             center: center,
             zIndex: Double(stack.zIndex) + Double(index) / 100,
             stackID: stack.id
@@ -420,34 +442,37 @@ struct SpatialWorkspaceView: View {
     return result.sorted { $0.zIndex < $1.zIndex }
   }
 
-  private func page(for notebook: Notebook) -> PageDocument? {
+  private func page(for item: WorkspaceItem) -> PageDocument? {
+    guard item.kind == .notebook, let firstPageID = item.pageIDs.first else {
+      return nil
+    }
     let pageID: UUID
-    if notebook.id == model.workspace?.selectedNotebookID,
-      notebook.pageIDs.contains(model.workspace?.selectedPageID ?? UUID())
+    if item.id == model.workspace?.selectedItemID,
+      item.pageIDs.contains(model.workspace?.selectedPageID ?? UUID())
     {
-      pageID = model.workspace?.selectedPageID ?? notebook.pageIDs[0]
+      pageID = model.workspace?.selectedPageID ?? firstPageID
     } else {
-      pageID = notebook.pageIDs[0]
+      pageID = firstPageID
     }
     return model.pages[pageID]
   }
 
-  private func preparesPage(
-    _ notebookID: UUID,
+  private func preparesContent(
+    _ itemID: UUID,
     presence: SessionPresence
   ) -> Bool {
     if let gesture = cameraGesture,
-      let candidate = gesture.candidateNotebookID,
+      let candidate = gesture.candidateItemID,
       presence.camera.scale >= coverFocusScale(viewport: presence.viewport)
         * NotebookOpeningIntent.pagePreparationScaleRatio
     {
-      return candidate == notebookID
+      return candidate == itemID
     }
-    if let focusedNotebookID = presence.focusedNotebookID {
-      return focusedNotebookID == notebookID
+    if let focusedItemID = presence.focusedItemID {
+      return focusedItemID == itemID
     }
     #if os(iOS)
-      return model.workspace?.selectedNotebookID == notebookID
+      return model.workspace?.selectedItemID == itemID
     #else
       return false
     #endif
@@ -457,15 +482,15 @@ struct SpatialWorkspaceView: View {
     switch phase {
     case .began(let centroid, let isOpeningApproach):
       interruptSettlementForInput()
-      selectedNotebookID = nil
+      selectedItemID = nil
       editingSpatialTextID = nil
       guard let presence = model.presence else { return }
-      let focusedNotebookID = presence.mode == .board
+      let focusedItemID = presence.mode == .board
         ? nil
-        : presence.focusedNotebookID
-      let candidate = focusedNotebookID
+        : presence.focusedItemID
+      let candidate = focusedItemID
         ?? focusCandidate(at: centroid, presence: presence)
-      pageGestureActive = presence.mode == .page
+      contentGestureActive = presence.mode == .page || presence.mode == .document
       cameraGesture = CameraGestureSnapshot(
         presence: presence,
         baselineCamera: presence.camera,
@@ -473,16 +498,16 @@ struct SpatialWorkspaceView: View {
         baselineMagnification: 1,
         lastMagnification: 1,
         lastCentroid: centroid,
-        candidateNotebookID: candidate,
+        candidateItemID: candidate,
         isApproaching: isOpeningApproach,
-        boardEngagement: focusedNotebookID.map {
+        boardEngagement: focusedItemID.map {
           let coverScale = coverFocusScale(viewport: presence.viewport)
           let fallback = presence.mode == .cover
             && presence.openProgress <= 0.001
             ? presence.camera.scale
             : coverScale * NotebookOpeningIntent.entryScaleRatio
           return CameraGestureSnapshot.BoardEngagement(
-            notebookID: $0,
+            itemID: $0,
             openingScale: NotebookOpeningTransition.openingScale(
               cameraScale: presence.camera.scale,
               pageScale: fitScale(viewport: presence.viewport),
@@ -507,7 +532,7 @@ struct SpatialWorkspaceView: View {
       )
       settleMagnification(velocity: velocity)
     case .cancelled:
-      pageGestureActive = false
+      contentGestureActive = false
       cancelMagnification()
     }
   }
@@ -620,7 +645,7 @@ struct SpatialWorkspaceView: View {
         snapshot.boardEngagement = nil
         snapshot.dockingStrength = 0
       } else {
-        snapshot.candidateNotebookID = boardEngagement.notebookID
+        snapshot.candidateItemID = boardEngagement.itemID
       }
     }
 
@@ -634,8 +659,8 @@ struct SpatialWorkspaceView: View {
         at: centroid,
         presence: liveBoardPresence
       ) {
-        snapshot.candidateNotebookID = detected
-      } else if let retained = snapshot.candidateNotebookID,
+        snapshot.candidateItemID = detected
+      } else if let retained = snapshot.candidateItemID,
         selectionStrength(
           for: retained,
           at: centroid,
@@ -643,12 +668,12 @@ struct SpatialWorkspaceView: View {
           halo: NotebookOpeningIntent.candidateRetentionHalo
         ) <= 0
       {
-        snapshot.candidateNotebookID = nil
+        snapshot.candidateItemID = nil
       }
     }
 
-    let attractionTarget = snapshot.boardEngagement?.notebookID
-      ?? snapshot.candidateNotebookID
+    let attractionTarget = snapshot.boardEngagement?.itemID
+      ?? snapshot.candidateItemID
     if let attractionTarget,
       let center = model.board?.focusedCenter(of: attractionTarget)
     {
@@ -670,7 +695,7 @@ struct SpatialWorkspaceView: View {
     }
 
     if snapshot.boardEngagement == nil,
-      let candidate = snapshot.candidateNotebookID,
+      let candidate = snapshot.candidateItemID,
       NotebookOpeningIntent.shouldEngage(
         isApproaching: snapshot.isApproaching,
         cameraScale: camera.scale,
@@ -678,14 +703,14 @@ struct SpatialWorkspaceView: View {
       )
     {
       snapshot.boardEngagement = CameraGestureSnapshot.BoardEngagement(
-        notebookID: candidate,
+        itemID: candidate,
         openingScale: camera.scale
       )
-      model.selectNotebook(candidate)
+      model.selectItem(candidate)
     }
 
     let engagement = snapshot.boardEngagement
-    let candidate = engagement?.notebookID
+    let candidate = engagement?.itemID
     let open: Double
     if let engagement {
       open = NotebookOpeningTransition.progress(
@@ -705,7 +730,7 @@ struct SpatialWorkspaceView: View {
         mode: mode,
         camera: camera,
         viewport: viewport,
-        focusedNotebookID: candidate,
+        focusedItemID: candidate,
         openProgress: open
       ),
       settled: false
@@ -719,24 +744,24 @@ struct SpatialWorkspaceView: View {
     cameraGesture = nil
     let viewport = presence.viewport
     let pageScale = fitScale(viewport: viewport)
-    if let notebookID = presence.focusedNotebookID,
+    if let itemID = presence.focusedItemID,
       NotebookDockingField.shouldDock(
         strength: snapshot.dockingStrength,
         isApproaching: snapshot.isApproaching,
         velocity: Double(velocity)
       ),
-      let center = model.board?.focusedCenter(of: notebookID)
+      let center = model.board?.focusedCenter(of: itemID)
     {
       let target = SessionPresence(
-        mode: .page,
+        mode: openMode(for: itemID),
         camera: SpatialCamera(center: center, scale: pageScale),
         viewport: viewport,
-        focusedNotebookID: notebookID,
+        focusedItemID: itemID,
         openProgress: 1
       )
       animateSettlement(to: target, duration: 0.2)
     } else {
-      pageGestureActive = false
+      contentGestureActive = false
       model.updatePresence(presence, settled: true)
     }
   }
@@ -765,7 +790,7 @@ struct SpatialWorkspaceView: View {
         mode: start.mode,
         camera: camera,
         viewport: viewport,
-        focusedNotebookID: start.focusedNotebookID,
+        focusedItemID: start.focusedItemID,
         openProgress: start.openProgress
       ),
       settled: false
@@ -787,7 +812,7 @@ struct SpatialWorkspaceView: View {
     at centroid: CGPoint,
     presence: SessionPresence
   ) -> UUID? {
-    renderedNotebooks(presence: presence)
+    renderedItems(presence: presence)
       .reversed()
       .compactMap { rendered -> (UUID, Double)? in
         let strength = selectionStrength(
@@ -801,13 +826,13 @@ struct SpatialWorkspaceView: View {
   }
 
   private func selectionStrength(
-    for notebookID: UUID,
+    for itemID: UUID,
     at centroid: CGPoint,
     presence: SessionPresence,
     halo: Double = NotebookOpeningIntent.selectionHalo
   ) -> Double {
-    guard let rendered = renderedNotebooks(presence: presence)
-      .first(where: { $0.id == notebookID })
+    guard let rendered = renderedItems(presence: presence)
+      .first(where: { $0.id == itemID })
     else { return 0 }
     let screen = presence.camera.worldToScreen(
       rendered.center,
@@ -827,21 +852,21 @@ struct SpatialWorkspaceView: View {
     )
   }
 
-  private func openNotebook(
-    _ notebookID: UUID,
+  private func openItem(
+    _ itemID: UUID,
     viewport: SpatialPoint
   ) {
     guard !settling,
       cameraGesture == nil,
       model.presence != nil,
-      let center = model.board?.focusedCenter(of: notebookID)
+      let center = model.board?.focusedCenter(of: itemID)
     else { return }
-    model.selectNotebook(notebookID)
+    model.selectItem(itemID)
     let target = SessionPresence(
-      mode: .page,
+      mode: openMode(for: itemID),
       camera: SpatialCamera(center: center, scale: fitScale(viewport: viewport)),
       viewport: viewport,
-      focusedNotebookID: notebookID,
+      focusedItemID: itemID,
       openProgress: 1
     )
     animateSettlement(to: target, duration: 0.3)
@@ -859,20 +884,28 @@ struct SpatialWorkspaceView: View {
     settlementTask = Task { @MainActor in
       try? await Task.sleep(for: .seconds(duration + 0.02))
       guard !Task.isCancelled else { return }
-      pageGestureActive = false
+      contentGestureActive = false
       settling = false
       settlementTask = nil
     }
   }
 
-  private func createNotebook(
+  private func createItem(
+    kind: WorkspaceItemKind,
     presence: SessionPresence,
     viewport: SpatialPoint
   ) {
-    selectedNotebookID = nil
-    let offset = Double(model.workspace?.notebooks.count ?? 0) * 28
+    selectedItemID = nil
+    let offset = Double(model.workspace?.items.count ?? 0) * 28
     let center = presence.camera.center.offsetBy(x: offset, y: offset)
-    guard let notebookID = model.createNotebook(at: center) else { return }
+    let itemID: UUID?
+    switch kind {
+    case .notebook:
+      itemID = model.createNotebook(at: center)
+    case .document:
+      itemID = model.createDocument(at: center)
+    }
+    guard let itemID else { return }
     let target = SessionPresence(
       mode: .cover,
       camera: SpatialCamera(
@@ -880,36 +913,42 @@ struct SpatialWorkspaceView: View {
         scale: coverFocusScale(viewport: viewport)
       ),
       viewport: viewport,
-      focusedNotebookID: notebookID,
+      focusedItemID: itemID,
       openProgress: 0
     )
     animateSettlement(to: target, duration: 0.42)
   }
 
-  private func dropNotebook(
-    _ notebookID: UUID,
+  private func openMode(for itemID: UUID) -> WorkspaceSemanticMode {
+    model.workspace?.items.first(where: { $0.id == itemID })?.kind == .document
+      ? .document
+      : .page
+  }
+
+  private func dropItem(
+    _ itemID: UUID,
     at center: WorldPoint,
     presence: SessionPresence
   ) {
-    if model.board?.stack(containing: notebookID) != nil {
-      model.unstackNotebook(notebookID, at: center)
+    if model.board?.stack(containing: itemID) != nil {
+      model.unstackItem(itemID, at: center)
     } else {
-      model.moveNotebook(notebookID, to: center)
+      model.moveItem(itemID, to: center)
     }
 
-    guard let moving = renderedNotebooks(presence: presence)
-      .first(where: { $0.id == notebookID })
+    guard let moving = renderedItems(presence: presence)
+      .first(where: { $0.id == itemID })
     else { return }
-    let target = renderedNotebooks(presence: presence)
+    let target = renderedItems(presence: presence)
       .reversed()
       .first { candidate in
-        guard candidate.id != notebookID else { return false }
+        guard candidate.id != itemID else { return false }
         let delta = center.delta(to: candidate.center)
         return abs(delta.x) <= NotebookGeometry.width * 0.6
           && abs(delta.y) <= NotebookGeometry.height * 0.6
       }
     if let target {
-      _ = model.stackNotebook(moving.id, onto: target.id)
+      _ = model.stackItem(moving.id, onto: target.id)
     }
   }
 
@@ -922,17 +961,19 @@ struct SpatialWorkspaceView: View {
   }
 }
 
-private struct NotebookSceneItem: View {
+private struct WorkspaceSceneItem: View {
   @Environment(NotebookAppModel.self) private var model
 
-  let rendered: RenderedNotebook
+  let rendered: RenderedWorkspaceItem
   let page: PageDocument?
+  let document: DocumentDocument?
+  let documentState: DocumentStateJournal?
   let camera: SpatialCamera
   let viewport: SpatialPoint
   let isFocused: Bool
-  let preparesPage: Bool
+  let preparesContent: Bool
   let openProgress: Double
-  let pageIsInteractive: Bool
+  let contentIsInteractive: Bool
   let isSelected: Bool
   let isLifted: Bool
   let editingTextID: String?
@@ -950,53 +991,13 @@ private struct NotebookSceneItem: View {
   var body: some View {
     let screen = camera.worldToScreen(rendered.center, viewport: viewport)
     let scale = camera.scale
-    let pageContentIsLive = openProgress > 0.001 || pageIsInteractive
+    let contentIsLive = openProgress > 0.001 || contentIsInteractive
     ZStack {
-      if preparesPage, let page {
-        PageSurface(
-          page: page,
-          isInteractive: pageIsInteractive,
-          isVisible: pageContentIsLive
-        )
-          .allowsHitTesting(pageIsInteractive)
+      if rendered.item.kind == .notebook {
+        notebookContents(isLive: contentIsLive)
+      } else {
+        documentContents(isLive: contentIsLive)
       }
-
-      ZStack {
-        NotebookCoverView(
-          notebook: rendered.notebook,
-          spatialInkSurfaces: spatialInkSurfaces,
-          elements: model.board?.elements.filter {
-            $0.surface == .cover(rendered.id)
-          } ?? [],
-          editingTextID: editingTextID,
-          onTap: handleTap,
-          onLiftChanged: { lifted in
-            if lifted {
-              beginLift()
-            } else {
-              endLift()
-            }
-          },
-          onTranslationChanged: { translation in
-            dragTranslation = translation
-          },
-          onTranslationEnded: { translation in
-            finishMove(translation: translation, scale: scale)
-          },
-          onTextEditingEnded: onTextEditingEnded
-        )
-        .opacity(openProgress <= 0.5 ? 1 : 0)
-
-        NotebookCoverBackView()
-          .opacity(openProgress > 0.5 ? 1 : 0)
-      }
-      .rotation3DEffect(
-        .degrees(-178 * openProgress),
-        axis: (x: 0, y: 1, z: 0),
-        anchor: .leading,
-        perspective: 0.62
-      )
-      .allowsHitTesting(openProgress < 0.12)
     }
     .frame(
       width: NotebookGeometry.width,
@@ -1027,10 +1028,98 @@ private struct NotebookSceneItem: View {
     )
     .animation(.spring(duration: 0.18, bounce: 0.18), value: isLifted)
     .accessibilityElement(children: .contain)
-    .accessibilityIdentifier("notebook-\(rendered.id.uuidString.lowercased())")
+    .accessibilityIdentifier(
+      "workspace-item-\(rendered.id.uuidString.lowercased())"
+    )
     .accessibilityAddTraits(.isButton)
     .accessibilityValue(
       isLifted ? "Готова к перемещению" : (isSelected ? "Выбрана" : "")
+    )
+  }
+
+  @ViewBuilder
+  private func notebookContents(isLive: Bool) -> some View {
+    if preparesContent, let page {
+      PageSurface(
+        page: page,
+        isInteractive: contentIsInteractive,
+        isVisible: isLive
+      )
+      .allowsHitTesting(contentIsInteractive)
+    }
+
+    ZStack {
+      itemCover
+        .opacity(openProgress <= 0.5 ? 1 : 0)
+      NotebookCoverBackView()
+        .opacity(openProgress > 0.5 ? 1 : 0)
+    }
+    .rotation3DEffect(
+      .degrees(-178 * openProgress),
+      axis: (x: 0, y: 1, z: 0),
+      anchor: .leading,
+      perspective: 0.62
+    )
+    .allowsHitTesting(openProgress < 0.12)
+  }
+
+  @ViewBuilder
+  private func documentContents(isLive: Bool) -> some View {
+    if preparesContent, let document, let documentState {
+      DocumentWebView(
+        document: document,
+        state: documentState,
+        isInteractive: contentIsInteractive,
+        onSourceChange: { blockID, source in
+          model.replaceDocumentBlockSource(
+            documentID: document.id,
+            blockID: blockID,
+            source: source
+          )
+        },
+        onStateChange: { blockID, value in
+          model.commitDocumentState(
+            documentID: document.id,
+            blockID: blockID,
+            value: value
+          )
+        }
+      )
+      .background(Color(red: 0.985, green: 0.98, blue: 0.955))
+      .clipShape(
+        RoundedRectangle(
+          cornerRadius: NotebookGeometry.cornerRadius,
+          style: .continuous
+        )
+      )
+      .opacity(isLive ? 1 : 0)
+      .allowsHitTesting(contentIsInteractive)
+    }
+    itemCover
+      .opacity(max(0, 1 - openProgress * 2.4))
+      .scaleEffect(1 - openProgress * 0.015)
+      .allowsHitTesting(openProgress < 0.12)
+  }
+
+  private var itemCover: some View {
+    WorkspaceItemCoverView(
+      item: rendered.item,
+      spatialInkSurfaces: spatialInkSurfaces,
+      elements: model.board?.elements.filter {
+        $0.surface == .cover(rendered.id)
+      } ?? [],
+      editingTextID: editingTextID,
+      onTap: handleTap,
+      onLiftChanged: { lifted in
+        if lifted { beginLift() } else { endLift() }
+      },
+      onTranslationChanged: { translation in
+        dragTranslation = translation
+      },
+      onTranslationEnded: { translation in
+        finishMove(translation: translation, scale: camera.scale)
+      },
+      onTextEditingEnded: onTextEditingEnded
     )
   }
 
@@ -1041,7 +1130,10 @@ private struct NotebookSceneItem: View {
       onTextEditingEnded(editingTextID)
     }
     guard tapCount >= 2 else { return }
-    if isFocused, model.presence?.mode == .cover {
+    if rendered.item.kind == .notebook,
+      isFocused,
+      model.presence?.mode == .cover
+    {
       onEditText(
         rendered.id,
         SpatialPoint(x: location.x, y: location.y)
@@ -1076,10 +1168,10 @@ private struct NotebookSceneItem: View {
   }
 }
 
-private struct NotebookCoverView: View {
+private struct WorkspaceItemCoverView: View {
   @Environment(NotebookAppModel.self) private var model
 
-  let notebook: Notebook
+  let item: WorkspaceItem
   let spatialInkSurfaces: SpatialInkSurfaceRegistry
   let elements: [SpatialElement]
   let editingTextID: String?
@@ -1091,29 +1183,24 @@ private struct NotebookCoverView: View {
 
   var body: some View {
     ZStack(alignment: .topLeading) {
-      RoundedRectangle(
-        cornerRadius: NotebookGeometry.cornerRadius,
-        style: .continuous
-      )
-        .fill(Color(red: 0.945, green: 0.93, blue: 0.875))
-      RoundedRectangle(
-        cornerRadius: NotebookGeometry.cornerRadius,
-        style: .continuous
-      )
-        .stroke(Color.black.opacity(0.08), lineWidth: 2)
-      Rectangle()
-        .fill(Color.black.opacity(0.055))
-        .frame(width: 18)
-        .padding(.vertical, 2)
-        .padding(.leading, 24)
+      coverBackground
 
-      if !notebook.title.isEmpty {
-        Text(notebook.title)
-          .font(.system(size: 38, weight: .medium, design: .rounded))
+      if !item.title.isEmpty {
+        Text(item.title)
+          .font(
+            .system(
+              size: item.kind == .document ? 42 : 38,
+              weight: .medium,
+              design: item.kind == .document ? .serif : .rounded
+            )
+          )
           .foregroundStyle(Color.black.opacity(0.64))
           .lineLimit(3)
           .frame(width: 570, alignment: .leading)
-          .offset(x: 126, y: 170)
+          .offset(
+            x: item.kind == .document ? 96 : 126,
+            y: item.kind == .document ? 142 : 170
+          )
       }
 
       ForEach(elements) { element in
@@ -1143,7 +1230,7 @@ private struct NotebookCoverView: View {
 
       #if os(iOS)
         SpatialInkSurfaceView(
-          surface: .cover(notebook.id),
+          surface: .cover(item.id),
           journal: model.spatialInk,
           registry: spatialInkSurfaces
         )
@@ -1151,7 +1238,7 @@ private struct NotebookCoverView: View {
       #elseif os(macOS)
         SpatialInkSurfaceView(
           drawing: SpatialInkDrawingComposer.drawing(
-            for: .cover(notebook.id),
+            for: .cover(item.id),
             in: model.spatialInk
           )
         )
@@ -1174,6 +1261,57 @@ private struct NotebookCoverView: View {
         style: .continuous
       )
     )
+  }
+
+  @ViewBuilder
+  private var coverBackground: some View {
+    if item.kind == .notebook {
+      RoundedRectangle(
+        cornerRadius: NotebookGeometry.cornerRadius,
+        style: .continuous
+      )
+      .fill(Color(red: 0.945, green: 0.93, blue: 0.875))
+      RoundedRectangle(
+        cornerRadius: NotebookGeometry.cornerRadius,
+        style: .continuous
+      )
+      .stroke(Color.black.opacity(0.08), lineWidth: 2)
+      Rectangle()
+        .fill(Color.black.opacity(0.055))
+        .frame(width: 18)
+        .padding(.vertical, 2)
+        .padding(.leading, 24)
+    } else {
+      RoundedRectangle(
+        cornerRadius: NotebookGeometry.cornerRadius,
+        style: .continuous
+      )
+      .fill(Color(red: 0.987, green: 0.982, blue: 0.958))
+      RoundedRectangle(
+        cornerRadius: NotebookGeometry.cornerRadius,
+        style: .continuous
+      )
+      .stroke(Color.black.opacity(0.1), lineWidth: 1.5)
+      VStack(alignment: .leading, spacing: 22) {
+        Text("DOCUMENT")
+          .font(.system(size: 18, weight: .semibold, design: .rounded))
+          .tracking(4)
+          .foregroundStyle(Color.black.opacity(0.28))
+        ForEach(0..<7, id: \.self) { index in
+          Capsule()
+            .fill(Color.black.opacity(index == 0 ? 0.12 : 0.075))
+            .frame(width: index == 6 ? 360 : 590, height: 3)
+        }
+      }
+      .offset(x: 96, y: item.title.isEmpty ? 138 : 300)
+      Path { path in
+        path.move(to: CGPoint(x: 724, y: 0))
+        path.addLine(to: CGPoint(x: 834, y: 110))
+        path.addLine(to: CGPoint(x: 834, y: 0))
+        path.closeSubpath()
+      }
+      .fill(Color.black.opacity(0.045))
+    }
   }
 
   private var interactionPassthroughFrames: [CGRect] {

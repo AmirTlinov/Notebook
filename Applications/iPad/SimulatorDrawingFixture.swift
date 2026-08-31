@@ -14,6 +14,7 @@
     static let stackArgument = "--notebook-stacked-page-fixture"
     static let lowerStackArgument = "--notebook-stacked-lower-page-fixture"
     static let stackBoardArgument = "--notebook-stacked-board-fixture"
+    static let documentArgument = "--notebook-document-runtime-fixture"
 
     static var isRequested: Bool {
       ProcessInfo.processInfo.arguments.contains(launchArgument)
@@ -41,8 +42,13 @@
       let startsOnStackBoard = ProcessInfo.processInfo.arguments.contains(
         stackBoardArgument
       )
+      let startsInDocument = ProcessInfo.processInfo.arguments.contains(
+        documentArgument
+      )
       let fixtureName: String
-      if startsInStack {
+      if startsInDocument {
+        fixtureName = "DocumentRuntime"
+      } else if startsInStack {
         fixtureName = startsOnStackBoard
           ? "StackedBoard"
           : (selectsLowerStackMember
@@ -73,7 +79,7 @@
         let actor = UUID(
           uuidString: "7E7A1000-0000-4000-8000-000000000001"
         )!
-        let notebookID = UUID(
+        let itemID = UUID(
           uuidString: "7E7A1000-0000-4000-8000-000000000002"
         )!
         let pageID = UUID(
@@ -83,7 +89,7 @@
         let initial = WorkspaceIndex.initial(
           actor: actor,
           pageSize: size,
-          notebookID: notebookID,
+          itemID: itemID,
           pageID: pageID
         )
         var index = initial.index
@@ -94,7 +100,64 @@
           drawingData: denseDrawing(size: size).dataRepresentation()
         )
         try store.savePage(page)
-        if startsInStack {
+        if startsInDocument {
+          let documentID = UUID(
+            uuidString: "7E7A1000-0000-4000-8000-000000000006"
+          )!
+          guard index.createDocument(
+            title: "Живая математика",
+            actor: actor,
+            documentID: documentID
+          ) != nil else {
+            fatalError("Не удалось создать документ проверки")
+          }
+          let document = DocumentDocument(
+            id: documentID,
+            actor: actor,
+            blocks: [
+              .markdown(
+                id: "introduction",
+                source: "# Живая математика\n\nДокумент соединяет текст, формулы и управление."
+              ),
+              .latex(
+                id: "equation",
+                source: #"\begin{aligned} f(x) &= x^2 \\ f'(x) &= 2x \end{aligned}"#
+              ),
+              .interactive(
+                id: "square",
+                html: "<label for='x'>x = <output id='value'>3</output></label><input id='x' type='range' min='0' max='10' value='3'><p>x² = <strong id='square'>9</strong></p>",
+                css: "body{font:22px -apple-system;padding:18px}input{width:100%}",
+                javaScript: "const x=document.querySelector('#x');const value=document.querySelector('#value');const square=document.querySelector('#square');x.addEventListener('input',()=>{value.textContent=x.value;square.textContent=Number(x.value)**2;notebook.commit({x:Number(x.value)})});",
+                initialState: .object(["x": .number(3)]),
+                height: 190
+              ),
+            ]
+          )
+          let state = DocumentStateJournal(id: documentID, actor: actor)
+          let board = BoardDocument.initial(
+            itemIDs: [itemID, documentID],
+            actor: actor
+          )
+          guard let center = board.focusedCenter(of: documentID) else {
+            fatalError("Не удалось получить центр документа проверки")
+          }
+          let viewport = SpatialPoint(x: size.width, y: size.height)
+          try store.saveDocument(document)
+          try store.saveDocumentState(state)
+          try store.saveBoard(board, itemIDs: Set([itemID, documentID]))
+          try store.savePresence(
+            SessionPresence(
+              mode: .document,
+              camera: SpatialCamera(
+                center: center,
+                scale: NotebookPresentation.fitScale(viewport: viewport)
+              ),
+              viewport: viewport,
+              focusedItemID: documentID,
+              openProgress: 1
+            )
+          )
+        } else if startsInStack {
           let upperNotebookID = UUID(
             uuidString: "7E7A1000-0000-4000-8000-000000000004"
           )!
@@ -105,32 +168,32 @@
             title: "Notebook 2",
             actor: actor,
             pageSize: size,
-            notebookID: upperNotebookID,
+            itemID: upperNotebookID,
             pageID: upperPageID
           ) else {
             fatalError("Не удалось создать верхнюю тетрадь проверки")
           }
           if selectsLowerStackMember {
-            _ = index.selectNotebook(notebookID, actor: actor)
+            _ = index.selectItem(itemID, actor: actor)
           }
           var board = BoardDocument.initial(
-            notebookIDs: [notebookID, upperNotebookID],
+            itemIDs: [itemID, upperNotebookID],
             actor: actor
           )
           guard board.createStack(
             moving: upperNotebookID,
-            onto: notebookID,
+            onto: itemID,
             actor: actor
           ) != nil else {
             fatalError("Не удалось создать стопку проверки")
           }
-          let selectedNotebookID = selectsLowerStackMember
-            ? notebookID
+          let selectedItemID = selectsLowerStackMember
+            ? itemID
             : upperNotebookID
           guard let focusedCenter = board.focusedCenter(
-            of: selectedNotebookID
+            of: selectedItemID
           ), let stackCenter = board.stack(
-            containing: selectedNotebookID
+            containing: selectedItemID
           )?.center else {
             fatalError("Не удалось получить центр тетради в стопке")
           }
@@ -138,7 +201,7 @@
           try store.savePage(upper.page)
           try store.saveBoard(
             board,
-            notebookIDs: Set([notebookID, upperNotebookID])
+            itemIDs: Set([itemID, upperNotebookID])
           )
           try store.savePresence(
             startsOnStackBoard
@@ -157,16 +220,16 @@
                   scale: NotebookPresentation.fitScale(viewport: viewport)
                 ),
                 viewport: viewport,
-                focusedNotebookID: selectedNotebookID,
+                focusedItemID: selectedItemID,
                 openProgress: 1
               )
           )
         } else if startsAtCover {
           let board = BoardDocument.initial(
-            notebookIDs: [notebookID],
+            itemIDs: [itemID],
             actor: actor
           )
-          let center = board.placement(of: notebookID)?.center
+          let center = board.placement(of: itemID)?.center
             ?? WorldPoint(x: 0, y: 0)
           let viewport = SpatialPoint(x: size.width, y: size.height)
           let coverScale = NotebookPresentation.coverScale(viewport: viewport)
@@ -176,7 +239,7 @@
               y: -70 / coverScale
             )
             : center
-          try store.saveBoard(board, notebookIDs: Set([notebookID]))
+          try store.saveBoard(board, itemIDs: Set([itemID]))
           try store.savePresence(
             SessionPresence(
               mode: .cover,
@@ -185,7 +248,7 @@
                 scale: coverScale
               ),
               viewport: viewport,
-              focusedNotebookID: notebookID,
+              focusedItemID: itemID,
               openProgress: 0
             )
           )
@@ -218,7 +281,7 @@
             tool: .pen,
             spans: [
               SpatialInkSpan(
-                surface: .cover(notebookID),
+                surface: .cover(itemID),
                 samples: samples
               )
             ],

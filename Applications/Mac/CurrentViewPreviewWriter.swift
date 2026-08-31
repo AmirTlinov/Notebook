@@ -13,11 +13,22 @@ enum CurrentViewPreviewWriter {
     spatialInk: SpatialInkJournal,
     presence: SessionPresence,
     page: PageDocument?,
+    document: DocumentDocument?,
+    documentState: DocumentStateJournal?,
     pngURL: URL,
     receiptURL: URL
   ) throws {
+    if let document, let documentState,
+      DocumentSnapshotCache.shared.image(
+        for: document,
+        state: documentState
+      ) == nil
+    {
+      throw PreviewError.documentSnapshotPending
+    }
     let content = SpatialWorkspaceView()
       .environment(model)
+      .environment(\.rendersDocumentSnapshot, true)
       .frame(width: viewport.width, height: viewport.height)
     let renderer = ImageRenderer(content: content)
     renderer.proposedSize = ProposedViewSize(viewport)
@@ -37,6 +48,8 @@ enum CurrentViewPreviewWriter {
       presence: presence,
       renderViewport: SpatialPoint(x: viewport.width, y: viewport.height),
       page: page,
+      document: document,
+      documentState: documentState,
       pngSHA256: digest
     )
     guard receipt.isValid else { throw PreviewError.invalidReceipt }
@@ -54,6 +67,7 @@ enum CurrentViewPreviewWriter {
   }
 
   private enum PreviewError: Error {
+    case documentSnapshotPending
     case invalidReceipt
     case pngEncoding
   }

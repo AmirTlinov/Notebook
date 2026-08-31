@@ -3,7 +3,7 @@ export interface VersionStamp {
   actor: string;
 }
 
-interface PageSize {
+export interface PageSize {
   width: number;
   height: number;
 }
@@ -15,7 +15,6 @@ export interface PageRect {
   height: number;
 }
 
-type AgentElementKind = "markdown" | "web";
 export type JSONValue =
   | null
   | boolean
@@ -23,6 +22,8 @@ export type JSONValue =
   | string
   | JSONValue[]
   | { [key: string]: JSONValue };
+
+export type AgentElementKind = "markdown" | "web";
 
 export interface AgentElement {
   id: string;
@@ -36,7 +37,7 @@ export interface AgentElement {
 }
 
 export interface PageDocument {
-  format: number;
+  format: 1;
   id: string;
   size: PageSize;
   drawingData: string;
@@ -45,17 +46,54 @@ export interface PageDocument {
   agentStamp: VersionStamp;
 }
 
-export interface Notebook {
+export type WorkspaceItemKind = "notebook" | "document";
+
+export interface WorkspaceItem {
   id: string;
+  kind: WorkspaceItemKind;
   title: string;
   pageIDs: string[];
 }
 
 export interface WorkspaceIndex {
-  format: number;
-  notebooks: Notebook[];
-  selectedNotebookID: string;
-  selectedPageID: string;
+  format: 2;
+  items: WorkspaceItem[];
+  selectedItemID: string;
+  selectedPageID?: string;
+  stamp: VersionStamp;
+}
+
+export type DocumentBlockKind = "markdown" | "latex" | "interactive";
+
+export interface DocumentBlock {
+  id: string;
+  kind: DocumentBlockKind;
+  source: string;
+  html: string;
+  css: string;
+  javaScript: string;
+  initialState: JSONValue;
+  height: number;
+}
+
+export interface DocumentDocument {
+  format: 1;
+  id: string;
+  preamble: string;
+  blocks: DocumentBlock[];
+  contentStamp: VersionStamp;
+}
+
+export interface DocumentStateRecord {
+  id: string;
+  value: JSONValue;
+  stamp: VersionStamp;
+}
+
+export interface DocumentStateJournal {
+  format: 1;
+  id: string;
+  records: DocumentStateRecord[];
   stamp: VersionStamp;
 }
 
@@ -107,29 +145,30 @@ export interface SpatialElement {
   stamp: VersionStamp;
 }
 
-export interface FreeNotebookPlacement {
-  notebookID: string;
+export interface FreeItemPlacement {
+  itemID: string;
   center: WorldPoint;
   zIndex: number;
   stamp: VersionStamp;
 }
 
-export interface NotebookStack {
+export interface WorkspaceItemStack {
   id: string;
   center: WorldPoint;
   zIndex: number;
-  notebookIDs: string[];
+  itemIDs: string[];
   stamp: VersionStamp;
 }
 
-export const maximumStackNotebookCount = 5;
+export const maximumStackItemCount = 5;
 export const minimumCameraScale = 0.0125;
 export const maximumCameraScale = 4;
+export const canonicalPageSize: PageSize = { width: 834, height: 1_194 };
 
 export interface BoardDocument {
-  format: number;
-  freeNotebooks: FreeNotebookPlacement[];
-  stacks: NotebookStack[];
+  format: 2;
+  freeItems: FreeItemPlacement[];
+  stacks: WorkspaceItemStack[];
   elements: SpatialElement[];
   stamp: VersionStamp;
 }
@@ -161,22 +200,22 @@ export interface SpatialInkAction {
 }
 
 export interface SpatialInkJournal {
-  format: number;
+  format: 1;
   actions: SpatialInkAction[];
   stamp: VersionStamp;
 }
 
 export interface SessionPresence {
-  format: number;
-  mode: "board" | "cover" | "page";
+  format: 2;
+  mode: "board" | "cover" | "page" | "document";
   camera: SpatialCamera;
   viewport: SpatialPoint;
-  focusedNotebookID?: string;
+  focusedItemID?: string;
   openProgress: number;
 }
 
 export interface CurrentViewReceipt {
-  format: number;
+  format: 2;
   workspaceStamp: VersionStamp;
   boardStamp: VersionStamp;
   spatialInkStamp: VersionStamp;
@@ -187,6 +226,11 @@ export interface CurrentViewReceipt {
     pageID: string;
     drawingStamp: VersionStamp;
     agentStamp: VersionStamp;
+  };
+  document?: {
+    documentID: string;
+    contentStamp: VersionStamp;
+    stateStamp: VersionStamp;
   };
 }
 
@@ -201,5 +245,19 @@ export function publicPage(page: PageDocument): object {
     drawingRevision: revision(page.drawingStamp),
     agentRevision: revision(page.agentStamp),
     elements: page.elements,
+  };
+}
+
+export function publicDocument(
+  document: DocumentDocument,
+  state: DocumentStateJournal,
+): object {
+  return {
+    id: document.id,
+    contentRevision: revision(document.contentStamp),
+    stateRevision: revision(state.stamp),
+    preamble: document.preamble,
+    blocks: document.blocks,
+    state: Object.fromEntries(state.records.map((record) => [record.id, record.value])),
   };
 }

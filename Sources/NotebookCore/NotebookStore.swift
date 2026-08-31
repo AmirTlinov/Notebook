@@ -36,6 +36,14 @@ public struct NotebookStore: Sendable {
     root.appendingPathComponent("pages", isDirectory: true)
   }
 
+  public var documentsURL: URL {
+    root.appendingPathComponent("documents", isDirectory: true)
+  }
+
+  public var documentStatesURL: URL {
+    root.appendingPathComponent("document-states", isDirectory: true)
+  }
+
   public var boardURL: URL {
     root.appendingPathComponent("board.json")
   }
@@ -64,12 +72,38 @@ public struct NotebookStore: Sendable {
     pagesURL.appendingPathComponent(id.uuidString.lowercased() + ".json")
   }
 
+  public func documentURL(_ id: UUID) -> URL {
+    documentsURL.appendingPathComponent(id.uuidString.lowercased() + ".json")
+  }
+
+  public func documentStateURL(_ id: UUID) -> URL {
+    documentStatesURL.appendingPathComponent(id.uuidString.lowercased() + ".json")
+  }
+
   public func previewURL(_ id: UUID) -> URL {
     previewsURL.appendingPathComponent(id.uuidString.lowercased() + ".png")
   }
 
-  public func previewRevisionURL(_ id: UUID) -> URL {
-    previewsURL.appendingPathComponent(id.uuidString.lowercased() + ".revision")
+  public func previewInkURL(_ id: UUID) -> URL {
+    previewsURL.appendingPathComponent(id.uuidString.lowercased() + ".ink.png")
+  }
+
+  public func previewVisionReceiptURL(_ id: UUID) -> URL {
+    previewsURL.appendingPathComponent(id.uuidString.lowercased() + ".vision.json")
+  }
+
+  public func previewRegionsURL(_ id: UUID) -> URL {
+    previewsURL.appendingPathComponent(
+      id.uuidString.lowercased() + ".regions",
+      isDirectory: true
+    )
+  }
+
+  public func previewVisionHistoryURL(_ id: UUID) -> URL {
+    previewsURL.appendingPathComponent(
+      id.uuidString.lowercased() + ".vision-history",
+      isDirectory: true
+    )
   }
 
   public func prepare() throws {
@@ -81,6 +115,14 @@ public struct NotebookStore: Sendable {
     }
     try FileManager.default.createDirectory(
       at: pagesURL,
+      withIntermediateDirectories: true
+    )
+    try FileManager.default.createDirectory(
+      at: documentsURL,
+      withIntermediateDirectories: true
+    )
+    try FileManager.default.createDirectory(
+      at: documentStatesURL,
       withIntermediateDirectories: true
     )
     try FileManager.default.createDirectory(
@@ -119,21 +161,24 @@ public struct NotebookStore: Sendable {
     try prepare()
     if FileManager.default.fileExists(atPath: indexURL.path) {
       let index = try loadIndex()
-      let pages = try Dictionary(
-        uniqueKeysWithValues: index.notebooks
-          .flatMap(\.pageIDs)
-          .map { id in (id, try loadPage(id)) }
-      )
+      // Decoding format 1 performs the one-time semantic migration. Writing
+      // the decoded owner here removes the replaced path immediately.
+      try saveIndex(index)
+      var pages: [UUID: PageDocument] = [:]
+      for id in index.items.flatMap(\.pageIDs)
+      where FileManager.default.fileExists(atPath: pageURL(id).path) {
+        pages[id] = try loadPage(id)
+      }
       return (index, pages)
     }
     let initial = WorkspaceIndex.initial(
       actor: actor,
       pageSize: pageSize,
-      notebookID: initialNotebookID,
+      itemID: initialNotebookID,
       pageID: initialPageID
     )
     let board = BoardDocument.initial(
-      notebookIDs: [initialNotebookID],
+      itemIDs: [initialNotebookID],
       actor: actor
     )
     try saveWorkspaceBundle(
@@ -158,31 +203,46 @@ public struct NotebookStore: Sendable {
     actor: UUID
   ) throws -> BoardDocument {
     try prepare()
-    let notebookIDs = Set(workspace.notebooks.map(\.id))
+    let itemIDs = Set(workspace.items.map(\.id))
     if FileManager.default.fileExists(atPath: boardURL.path) {
-      let board = try decoder.decode(
+      let data = try Data(contentsOf: boardURL)
+      var board = try decoder.decode(
         BoardDocument.self,
-        from: Data(contentsOf: boardURL)
+        from: data
       )
-      guard board.isValid(notebookIDs: notebookIDs) else {
+      let repairedItems = board.reconcileItems(
+        workspace.items.map(\.id),
+        actor: actor
+      )
+      guard board.isValid(itemIDs: itemIDs) else {
         throw corruptFile(at: boardURL)
+      }
+      if repairedItems
+        || storedFormat(in: data) != BoardDocument.formatVersion
+      {
+        try saveBoard(board, itemIDs: itemIDs)
       }
       return board
     }
     let board = BoardDocument.initial(
-      notebookIDs: workspace.notebooks.map(\.id),
+      itemIDs: workspace.items.map(\.id),
       actor: actor
     )
-    try saveBoard(board, notebookIDs: notebookIDs)
+    try saveBoard(board, itemIDs: itemIDs)
     return board
   }
 
-  public func loadBoard(notebookIDs: Set<UUID>) throws -> BoardDocument {
+  private func storedFormat(in data: Data) -> Int? {
+    struct FormatEnvelope: Decodable { let format: Int }
+    return try? decoder.decode(FormatEnvelope.self, from: data).format
+  }
+
+  public func loadBoard(itemIDs: Set<UUID>) throws -> BoardDocument {
     let board = try decoder.decode(
       BoardDocument.self,
       from: Data(contentsOf: boardURL)
     )
-    guard board.isValid(notebookIDs: notebookIDs) else {
+    guard board.isValid(itemIDs: itemIDs) else {
       throw corruptFile(at: boardURL)
     }
     return board
@@ -229,6 +289,48 @@ public struct NotebookStore: Sendable {
     return page
   }
 
+  public func loadDocument(_ id: UUID) throws -> DocumentDocument {
+    let document = try decoder.decode(
+      DocumentDocument.self,
+      from: Data(contentsOf: documentURL(id))
+    )
+    guard document.id == id, document.isValid else {
+      throw corruptFile(at: documentURL(id))
+    }
+    return document
+  }
+
+  public func loadDocumentState(_ id: UUID) throws -> DocumentStateJournal {
+    let journal = try decoder.decode(
+      DocumentStateJournal.self,
+      from: Data(contentsOf: documentStateURL(id))
+    )
+    guard journal.id == id, journal.isValid else {
+      throw corruptFile(at: documentStateURL(id))
+    }
+    return journal
+  }
+
+  public func loadAvailableDocuments(
+    workspace: WorkspaceIndex
+  ) throws -> (
+    documents: [UUID: DocumentDocument],
+    states: [UUID: DocumentStateJournal]
+  ) {
+    try prepare()
+    var documents: [UUID: DocumentDocument] = [:]
+    var states: [UUID: DocumentStateJournal] = [:]
+    for item in workspace.items where item.kind == .document {
+      if FileManager.default.fileExists(atPath: documentURL(item.id).path) {
+        documents[item.id] = try loadDocument(item.id)
+      }
+      if FileManager.default.fileExists(atPath: documentStateURL(item.id).path) {
+        states[item.id] = try loadDocumentState(item.id)
+      }
+    }
+    return (documents, states)
+  }
+
   public func saveIndex(_ index: WorkspaceIndex) throws {
     guard index.isValid else { throw corruptFile(at: indexURL) }
     try prepare()
@@ -239,9 +341,9 @@ public struct NotebookStore: Sendable {
 
   public func saveBoard(
     _ board: BoardDocument,
-    notebookIDs: Set<UUID>
+    itemIDs: Set<UUID>
   ) throws {
-    guard board.isValid(notebookIDs: notebookIDs) else {
+    guard board.isValid(itemIDs: itemIDs) else {
       throw corruptFile(at: boardURL)
     }
     try prepare()
@@ -253,9 +355,9 @@ public struct NotebookStore: Sendable {
   @discardableResult
   public func saveMergedBoard(
     _ board: BoardDocument,
-    notebookIDs: Set<UUID>
+    itemIDs: Set<UUID>
   ) throws -> BoardDocument {
-    guard board.isValid(notebookIDs: notebookIDs) else {
+    guard board.isValid(itemIDs: itemIDs) else {
       throw corruptFile(at: boardURL)
     }
     try prepare()
@@ -266,10 +368,10 @@ public struct NotebookStore: Sendable {
           BoardDocument.self,
           from: Data(contentsOf: boardURL)
         )
-        guard disk.isValid(notebookIDs: notebookIDs) else {
+        guard disk.isValid(itemIDs: itemIDs) else {
           throw corruptFile(at: boardURL)
         }
-        _ = resolved.merge(disk, notebookIDs: notebookIDs)
+        _ = resolved.merge(disk, itemIDs: itemIDs)
       }
       try encoder.encode(resolved).write(to: boardURL, options: [.atomic])
       return resolved
@@ -324,10 +426,10 @@ public struct NotebookStore: Sendable {
     page: PageDocument,
     board: BoardDocument
   ) throws {
-    let notebookIDs = Set(index.notebooks.map(\.id))
+    let itemIDs = Set(index.items.map(\.id))
     guard index.isValid, page.isValid,
-      board.isValid(notebookIDs: notebookIDs),
-      index.notebooks.flatMap(\.pageIDs).contains(page.id)
+      board.isValid(itemIDs: itemIDs),
+      index.items.flatMap(\.pageIDs).contains(page.id)
     else { throw corruptFile(at: indexURL) }
     try prepare()
     try withMutationLock {
@@ -340,27 +442,223 @@ public struct NotebookStore: Sendable {
     }
   }
 
+  /// A document is discoverable only after its source, state and placement
+  /// exist. This is the same dependency-first publication as a notebook page.
+  public func saveDocumentWorkspaceBundle(
+    index: WorkspaceIndex,
+    document: DocumentDocument,
+    state: DocumentStateJournal,
+    board: BoardDocument
+  ) throws {
+    let itemIDs = Set(index.items.map(\.id))
+    guard index.isValid,
+      document.isValid,
+      state.isValid,
+      document.id == state.id,
+      index.items.contains(where: {
+        $0.id == document.id && $0.kind == .document
+      }),
+      board.isValid(itemIDs: itemIDs)
+    else { throw corruptFile(at: indexURL) }
+    try prepare()
+    try withMutationLock {
+      try encoder.encode(document).write(
+        to: documentURL(document.id),
+        options: [.atomic]
+      )
+      try encoder.encode(state).write(
+        to: documentStateURL(state.id),
+        options: [.atomic]
+      )
+      try encoder.encode(board).write(to: boardURL, options: [.atomic])
+      try encoder.encode(index).write(to: indexURL, options: [.atomic])
+    }
+  }
+
   /// Deletion publishes the smaller catalog first. During the following file
-  /// writes an older board may contain an invisible orphan, but no reader can
-  /// discover a notebook whose pages are already gone.
+  /// write an older board may contain an invisible orphan, but no reader can
+  /// discover an item whose content is already gone.
   public func deleteWorkspaceBundle(
     index: WorkspaceIndex,
     board: BoardDocument,
-    pageIDs: [UUID]
+    pageIDs: [UUID],
+    documentIDs: [UUID] = []
   ) throws {
-    let notebookIDs = Set(index.notebooks.map(\.id))
+    let itemIDs = Set(index.items.map(\.id))
     guard index.isValid,
-      board.isValid(notebookIDs: notebookIDs)
+      board.isValid(itemIDs: itemIDs)
     else { throw corruptFile(at: indexURL) }
     try prepare()
     try withMutationLock {
       try encoder.encode(index).write(to: indexURL, options: [.atomic])
       try encoder.encode(board).write(to: boardURL, options: [.atomic])
-      for pageID in pageIDs {
-        try? FileManager.default.removeItem(at: pageURL(pageID))
-        try? FileManager.default.removeItem(at: previewURL(pageID))
-        try? FileManager.default.removeItem(at: previewRevisionURL(pageID))
+      removeContentFiles(pageIDs: pageIDs, documentIDs: documentIDs)
+    }
+  }
+
+  /// Publishes a catalog received from the peer without exposing a reference
+  /// whose content or board owner is absent. Creation writes the board before
+  /// the catalog; deletion writes the catalog before the smaller board. A
+  /// snapshot that both adds and removes items passes through a temporary
+  /// union board, so either catalog remains readable during the hand-off.
+  public func publishRemoteWorkspace(
+    index: WorkspaceIndex,
+    board: BoardDocument,
+    actor: UUID
+  ) throws {
+    let incomingItemIDs = Set(index.items.map(\.id))
+    guard index.isValid,
+      Set(board.itemIDs) == incomingItemIDs,
+      board.isValid(itemIDs: incomingItemIDs)
+    else {
+      throw corruptFile(at: indexURL)
+    }
+    try prepare()
+    try withMutationLock {
+      let current = try decoder.decode(
+        WorkspaceIndex.self,
+        from: Data(contentsOf: indexURL)
+      )
+      guard current.isValid else { throw corruptFile(at: indexURL) }
+      let currentItemIDs = Set(current.items.map(\.id))
+      let added = incomingItemIDs.subtracting(currentItemIDs)
+      let removed = currentItemIDs.subtracting(incomingItemIDs)
+
+      if !added.isEmpty && !removed.isEmpty {
+        var bridge = board
+        let placed = bridge.placeMissingItems(
+          current.items.map(\.id),
+          actor: actor
+        )
+        guard (placed || currentItemIDs.isSubset(of: Set(bridge.itemIDs))),
+          bridge.isValid(itemIDs: currentItemIDs.union(incomingItemIDs))
+        else { throw corruptFile(at: boardURL) }
+        try encoder.encode(bridge).write(to: boardURL, options: [.atomic])
+        try encoder.encode(index).write(to: indexURL, options: [.atomic])
+        try encoder.encode(board).write(to: boardURL, options: [.atomic])
+      } else if !removed.isEmpty {
+        try encoder.encode(index).write(to: indexURL, options: [.atomic])
+        try encoder.encode(board).write(to: boardURL, options: [.atomic])
+      } else {
+        try encoder.encode(board).write(to: boardURL, options: [.atomic])
+        try encoder.encode(index).write(to: indexURL, options: [.atomic])
       }
+
+      let incomingPageIDs = Set(index.items.flatMap(\.pageIDs))
+      let removedPageIDs = current.items.flatMap(\.pageIDs).filter {
+        !incomingPageIDs.contains($0)
+      }
+      let incomingDocumentIDs = Set(index.items.compactMap { item in
+        item.kind == .document ? item.id : nil
+      })
+      let removedDocumentIDs = current.items.compactMap { item in
+        item.kind == .document && !incomingDocumentIDs.contains(item.id)
+          ? item.id
+          : nil
+      }
+      removeContentFiles(
+        pageIDs: removedPageIDs,
+        documentIDs: removedDocumentIDs
+      )
+    }
+  }
+
+  public func saveDocument(_ document: DocumentDocument) throws {
+    guard document.isValid else { throw corruptFile(at: documentURL(document.id)) }
+    try prepare()
+    try withMutationLock {
+      try encoder.encode(document).write(
+        to: documentURL(document.id),
+        options: [.atomic]
+      )
+    }
+  }
+
+  @discardableResult
+  public func saveMergedDocument(
+    _ document: DocumentDocument
+  ) throws -> DocumentDocument {
+    guard document.isValid else { throw corruptFile(at: documentURL(document.id)) }
+    try prepare()
+    return try withMutationLock {
+      let index = try decoder.decode(
+        WorkspaceIndex.self,
+        from: Data(contentsOf: indexURL)
+      )
+      guard index.isValid,
+        index.items.contains(where: {
+          $0.id == document.id && $0.kind == .document
+        })
+      else { throw CocoaError(.fileNoSuchFile) }
+      var resolved = document
+      let url = documentURL(document.id)
+      if FileManager.default.fileExists(atPath: url.path) {
+        let disk = try decoder.decode(DocumentDocument.self, from: Data(contentsOf: url))
+        guard disk.id == document.id, disk.isValid else { throw corruptFile(at: url) }
+        _ = resolved.merge(disk)
+      }
+      try encoder.encode(resolved).write(to: url, options: [.atomic])
+      return resolved
+    }
+  }
+
+  public func saveDocumentState(_ state: DocumentStateJournal) throws {
+    guard state.isValid else { throw corruptFile(at: documentStateURL(state.id)) }
+    try prepare()
+    try withMutationLock {
+      try encoder.encode(state).write(
+        to: documentStateURL(state.id),
+        options: [.atomic]
+      )
+    }
+  }
+
+  @discardableResult
+  public func saveMergedDocumentState(
+    _ state: DocumentStateJournal
+  ) throws -> DocumentStateJournal {
+    guard state.isValid else { throw corruptFile(at: documentStateURL(state.id)) }
+    try prepare()
+    return try withMutationLock {
+      let index = try decoder.decode(
+        WorkspaceIndex.self,
+        from: Data(contentsOf: indexURL)
+      )
+      guard index.isValid,
+        index.items.contains(where: {
+          $0.id == state.id && $0.kind == .document
+        })
+      else { throw CocoaError(.fileNoSuchFile) }
+      var resolved = state
+      let url = documentStateURL(state.id)
+      if FileManager.default.fileExists(atPath: url.path) {
+        let disk = try decoder.decode(
+          DocumentStateJournal.self,
+          from: Data(contentsOf: url)
+        )
+        guard disk.id == state.id, disk.isValid else { throw corruptFile(at: url) }
+        _ = resolved.merge(disk)
+      }
+      try encoder.encode(resolved).write(to: url, options: [.atomic])
+      return resolved
+    }
+  }
+
+  private func removeContentFiles(
+    pageIDs: [UUID],
+    documentIDs: [UUID]
+  ) {
+    for pageID in pageIDs {
+      try? FileManager.default.removeItem(at: pageURL(pageID))
+      try? FileManager.default.removeItem(at: previewURL(pageID))
+      try? FileManager.default.removeItem(at: previewInkURL(pageID))
+      try? FileManager.default.removeItem(at: previewVisionReceiptURL(pageID))
+      try? FileManager.default.removeItem(at: previewRegionsURL(pageID))
+      try? FileManager.default.removeItem(at: previewVisionHistoryURL(pageID))
+    }
+    for documentID in documentIDs {
+      try? FileManager.default.removeItem(at: documentURL(documentID))
+      try? FileManager.default.removeItem(at: documentStateURL(documentID))
     }
   }
 
@@ -385,7 +683,7 @@ public struct NotebookStore: Sendable {
           from: Data(contentsOf: indexURL)
         )
         guard index.isValid,
-          index.notebooks.contains(where: { $0.pageIDs.contains(page.id) })
+          index.items.contains(where: { $0.pageIDs.contains(page.id) })
         else {
           throw CocoaError(
             .fileNoSuchFile,

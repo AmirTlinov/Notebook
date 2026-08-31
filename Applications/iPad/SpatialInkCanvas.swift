@@ -6,7 +6,7 @@ import UIKit
 struct SpatialInkCanvas: UIViewRepresentable {
   let camera: SpatialCamera
   let viewport: SpatialPoint
-  let notebooks: [SpatialNotebookSurface]
+  let items: [SpatialWorkspaceItemSurface]
   let journal: SpatialInkJournal?
   let penStyle: PenStyle
   let eraserStyle: EraserStyle
@@ -34,7 +34,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       view: view,
       camera: camera,
       viewport: viewport,
-      notebooks: notebooks,
+      items: items,
       journal: journal,
       penStyle: penStyle,
       eraserStyle: eraserStyle,
@@ -52,7 +52,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       view: view,
       camera: camera,
       viewport: viewport,
-      notebooks: notebooks,
+      items: items,
       journal: journal,
       penStyle: penStyle,
       eraserStyle: eraserStyle,
@@ -92,7 +92,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
 
     private var camera = SpatialCamera()
     private var viewport = SpatialPoint(x: 1, y: 1)
-    private var notebooks: [SpatialNotebookSurface] = []
+    private var items: [SpatialWorkspaceItemSurface] = []
     private var journal: SpatialInkJournal?
     private var penStyle = PenStyle.standard
     private var eraserStyle = EraserStyle.standard
@@ -134,7 +134,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       view: SpatialInkContainerView,
       camera: SpatialCamera,
       viewport: SpatialPoint,
-      notebooks: [SpatialNotebookSurface],
+      items: [SpatialWorkspaceItemSurface],
       journal: SpatialInkJournal?,
       penStyle: PenStyle,
       eraserStyle: EraserStyle,
@@ -151,7 +151,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       self.view = view
       self.camera = camera
       self.viewport = viewport
-      self.notebooks = notebooks.sorted { $0.zIndex < $1.zIndex }
+      self.items = items.sorted { $0.zIndex < $1.zIndex }
       self.journal = journal
       self.penStyle = penStyle
       self.eraserStyle = eraserStyle
@@ -620,8 +620,8 @@ struct SpatialInkCanvas: UIViewRepresentable {
     }
 
     private func screenSurfaces() -> [SpatialScreenSurface] {
-      notebooks.map { notebook in
-        let center = camera.worldToScreen(notebook.center, viewport: viewport)
+      items.map { item in
+        let center = camera.worldToScreen(item.center, viewport: viewport)
         let rect = CGRect(
           x: center.x - NotebookGeometry.width * camera.scale / 2,
           y: center.y - NotebookGeometry.height * camera.scale / 2,
@@ -629,9 +629,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
           height: NotebookGeometry.height * camera.scale
         )
         return SpatialScreenSurface(
-          id: .cover(notebook.notebookID),
+          id: .cover(item.itemID),
           frame: rect,
-          zIndex: notebook.zIndex
+          zIndex: item.zIndex
         )
       }
     }
@@ -642,10 +642,10 @@ struct SpatialInkCanvas: UIViewRepresentable {
     ) -> SpatialInkSample {
       let local: SpatialPoint
       if surface.kind == .cover,
-        let notebookID = surface.ownerID,
-        let notebook = notebooks.first(where: { $0.notebookID == notebookID })
+        let itemID = surface.ownerID,
+        let item = items.first(where: { $0.itemID == itemID })
       {
-        let center = camera.worldToScreen(notebook.center, viewport: viewport)
+        let center = camera.worldToScreen(item.center, viewport: viewport)
         local = SpatialPoint(
           x: (point.location.x - center.x) / camera.scale
             + NotebookGeometry.width / 2,
@@ -685,10 +685,10 @@ struct SpatialInkCanvas: UIViewRepresentable {
       on surface: SurfaceID
     ) -> PKStrokePoint {
       guard surface.kind == .cover,
-        let notebookID = surface.ownerID,
-        let notebook = notebooks.first(where: { $0.notebookID == notebookID })
+        let itemID = surface.ownerID,
+        let item = items.first(where: { $0.itemID == itemID })
       else { return point }
-      let center = camera.worldToScreen(notebook.center, viewport: viewport)
+      let center = camera.worldToScreen(item.center, viewport: viewport)
       return PKStrokePoint(
         location: CGPoint(
           x: (point.location.x - center.x) / camera.scale

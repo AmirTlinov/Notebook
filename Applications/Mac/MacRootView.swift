@@ -1,13 +1,10 @@
+import Combine
 import SwiftUI
 import NotebookCore
 
 private struct PreviewKey: Hashable {
   let pageID: UUID
   let drawingStamp: VersionStamp
-
-  var revision: String {
-    "\(drawingStamp.counter)@\(drawingStamp.actor.uuidString.lowercased())"
-  }
 }
 
 private struct CurrentViewKey: Hashable {
@@ -18,12 +15,16 @@ private struct CurrentViewKey: Hashable {
   let presencePhase: PresencePhase
   let pageDrawingStamp: VersionStamp?
   let pageAgentStamp: VersionStamp?
+  let documentContentStamp: VersionStamp?
+  let documentStateStamp: VersionStamp?
+  let documentSnapshotGeneration: Int
   let width: Int
   let height: Int
 }
 
 struct MacRootView: View {
   @Environment(NotebookAppModel.self) private var model
+  @State private var documentSnapshotGeneration = 0
 
   var body: some View {
     GeometryReader { geometry in
@@ -42,23 +43,25 @@ struct MacRootView: View {
           guard !Task.isCancelled, let page = model.pages[key.pageID] else {
             return
           }
-          let revisionURL = model.store.previewRevisionURL(page.id)
-          let renderedRevision = try? String(
-            contentsOf: revisionURL,
-            encoding: .utf8
-          ).trimmingCharacters(in: .whitespacesAndNewlines)
-          let previewExists = FileManager.default.fileExists(
-            atPath: model.store.previewURL(page.id).path
-          )
-          guard !previewExists || renderedRevision != key.revision else {
+          guard !PagePreviewWriter.hasCurrentArtifacts(
+            for: page,
+            store: model.store
+          ) else {
             continue
           }
           try? PagePreviewWriter.write(
             page,
-            to: model.store.previewURL(page.id)
+            store: model.store
           )
           await Task.yield()
         }
+      }
+      .onReceive(
+        NotificationCenter.default.publisher(
+          for: DocumentSnapshotCache.didChange
+        )
+      ) { _ in
+        documentSnapshotGeneration &+= 1
       }
   }
 
@@ -74,9 +77,13 @@ struct MacRootView: View {
       let spatialInk = model.spatialInk,
       let presence = model.presence
     else { return nil }
-    let page = presence.focusedNotebookID == workspace.selectedNotebookID
+    let page = presence.focusedItemID == workspace.selectedItemID
       ? model.activePage
       : nil
+    let document = presence.focusedItemID == workspace.selectedItemID
+      ? model.activeDocument
+      : nil
+    let documentState = document.flatMap { model.documentStates[$0.id] }
     return CurrentViewKey(
       workspaceStamp: workspace.stamp,
       boardStamp: board.stamp,
@@ -85,6 +92,9 @@ struct MacRootView: View {
       presencePhase: model.presencePhase,
       pageDrawingStamp: page?.drawingStamp,
       pageAgentStamp: page?.agentStamp,
+      documentContentStamp: document?.contentStamp,
+      documentStateStamp: documentState?.stamp,
+      documentSnapshotGeneration: documentSnapshotGeneration,
       width: max(1, Int(viewport.width.rounded())),
       height: max(1, Int(viewport.height.rounded()))
     )
@@ -98,6 +108,13 @@ struct MacRootView: View {
       let spatialInk = model.spatialInk,
       let presence = model.presence
     else { return }
+    let focusedIsSelected = presence.focusedItemID == workspace.selectedItemID
+    let page = focusedIsSelected ? model.activePage : nil
+    let document = focusedIsSelected ? model.activeDocument : nil
+    let documentState = document.flatMap { model.documentStates[$0.id] }
+    guard presence.mode != .document
+      || (document != nil && documentState != nil)
+    else { return }
     try? CurrentViewPreviewWriter.write(
       model: model,
       viewport: viewport,
@@ -105,9 +122,9 @@ struct MacRootView: View {
       board: board,
       spatialInk: spatialInk,
       presence: presence,
-      page: presence.focusedNotebookID == workspace.selectedNotebookID
-        ? model.activePage
-        : nil,
+      page: page,
+      document: document,
+      documentState: documentState,
       pngURL: model.store.currentViewPreviewURL,
       receiptURL: model.store.currentViewRevisionURL
     )

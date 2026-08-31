@@ -10,7 +10,7 @@ import {
   getDefaultEnvironment,
 } from "@modelcontextprotocol/client/stdio";
 
-import { appActor, notebookID, pageID, writeFixture } from "./fixture.js";
+import { appActor, itemID, pageID, writeFixture } from "./fixture.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const mcpRoot = join(here, "..");
@@ -31,19 +31,26 @@ try {
     listed.tools.map((tool) => tool.name).sort(),
     [
       "notebook_context",
+      "notebook_create_document",
       "notebook_create_notebook",
+      "notebook_export_document",
       "notebook_move_nodes",
+      "notebook_page_map",
+      "notebook_patch_document",
       "notebook_put_markdown",
       "notebook_put_spatial_markdown",
       "notebook_put_spatial_web",
       "notebook_put_web",
       "notebook_read_board",
+      "notebook_read_document",
       "notebook_read_notebook",
       "notebook_read_page",
       "notebook_remove_elements",
       "notebook_remove_spatial_elements",
-      "notebook_rename_notebook",
+      "notebook_rename_item",
       "notebook_render_page",
+      "notebook_render_region",
+      "notebook_render_regions",
       "notebook_render_view",
       "notebook_stack_nodes",
     ],
@@ -54,6 +61,11 @@ try {
   assert.match(JSON.stringify(context.structuredContent), /Notebook 1/);
   assert.match(JSON.stringify(context.structuredContent), /shortID/);
   assert.match(JSON.stringify(context.structuredContent), /screenFrame/);
+  assert.equal(
+    (context.structuredContent as { workspaceRevision: string })
+      .workspaceRevision,
+    `0@${appActor}`,
+  );
 
   const currentView = await client.callTool({
     name: "notebook_render_view",
@@ -77,7 +89,7 @@ try {
     name: "notebook_put_spatial_markdown",
     arguments: {
       expected_revision: `0@${appActor}`,
-      surface: { kind: "cover", notebook_id: notebookID },
+      surface: { kind: "cover", item_id: itemID },
       id: "cover-note",
       frame: { x: 80, y: 360, width: 420, height: 180 },
       markdown: "# На обложке",
@@ -85,6 +97,9 @@ try {
   });
   assert.equal(spatialChanged.isError, undefined);
   assert.match(JSON.stringify(spatialChanged.structuredContent), /cover-note/);
+  const spatialRevision = (
+    spatialChanged.structuredContent as { boardRevision: string }
+  ).boardRevision;
 
   const changed = await client.callTool({
     name: "notebook_put_markdown",
@@ -105,6 +120,75 @@ try {
   assert.equal(rendered.isError, undefined);
   assert.ok(rendered.content.some((block) => block.type === "image"));
 
+  const pageMap = await client.callTool({
+    name: "notebook_page_map",
+    arguments: {},
+  });
+  assert.equal(pageMap.isError, undefined);
+  const map = pageMap.structuredContent as {
+    drawingRevision: string;
+    regions: Array<{ id: string }>;
+  };
+  assert.equal(map.regions[0]?.id, "r00-00-01-01");
+
+  const unchangedMap = await client.callTool({
+    name: "notebook_page_map",
+    arguments: { since_drawing_revision: map.drawingRevision },
+  });
+  assert.equal(unchangedMap.isError, undefined);
+  assert.deepEqual(
+    (unchangedMap.structuredContent as {
+      delta: { available: boolean; changedRegionIDs: string[]; unchangedRegionIDs: string[] };
+    }).delta,
+    {
+      fromDrawingRevision: map.drawingRevision,
+      available: true,
+      changedRegionIDs: [],
+      removedRegionIDs: [],
+      unchangedRegionIDs: ["r00-00-01-01"],
+    },
+  );
+
+  const region = await client.callTool({
+    name: "notebook_render_region",
+    arguments: {
+      expected_drawing_revision: map.drawingRevision,
+      region_id: "r00-00-01-01",
+      mode: "ink",
+    },
+  });
+  assert.equal(region.isError, undefined);
+  assert.equal(region.content.filter((block) => block.type === "image").length, 1);
+
+  const regions = await client.callTool({
+    name: "notebook_render_regions",
+    arguments: {
+      expected_drawing_revision: map.drawingRevision,
+      region_ids: ["r00-00-01-01"],
+    },
+  });
+  assert.equal(regions.isError, undefined);
+  assert.equal(regions.content.filter((block) => block.type === "image").length, 1);
+
+  const regionPath = join(
+    storeRoot,
+    "previews",
+    `${pageID}.regions`,
+    "r00-00-01-01.faithful.png",
+  );
+  const regionPNG = await readFile(regionPath);
+  await writeFile(regionPath, Buffer.from("updating"));
+  const mismatchedRegion = await client.callTool({
+    name: "notebook_render_region",
+    arguments: {
+      expected_drawing_revision: map.drawingRevision,
+      region_id: "r00-00-01-01",
+    },
+  });
+  assert.equal(mismatchedRegion.isError, true);
+  assert.match(JSON.stringify(mismatchedRegion.content), /квитанция обновляются/);
+  await writeFile(regionPath, regionPNG);
+
   const pagePath = join(storeRoot, "pages", `${pageID}.json`);
   const page = JSON.parse(await readFile(pagePath, "utf8")) as {
     drawingStamp: { counter: number };
@@ -118,9 +202,65 @@ try {
   assert.equal(stalePreview.isError, true);
   assert.match(JSON.stringify(stalePreview.content), /догоняет новый штрих/);
 
+  const createdDocument = await client.callTool({
+    name: "notebook_create_document",
+    arguments: {
+      expected_workspace_revision: `0@${appActor}`,
+      expected_board_revision: spatialRevision,
+      title: "MCP Document",
+      center: { tileX: 0, tileY: 0, localX: 600, localY: 700 },
+      blocks: [
+        { id: "body", kind: "markdown", source: "# Документ\n\nФормула $x_1$." },
+        { id: "math", kind: "latex", source: "E=mc^2" },
+        {
+          id: "counter",
+          kind: "interactive",
+          html: "<button id='counter'>0</button>",
+          javascript: "document.querySelector('#counter').onclick = () => notebook.commit({ count: (notebook.state.count || 0) + 1 });",
+          initial_state: { count: 0 },
+          height: 160,
+        },
+      ],
+    },
+  });
+  assert.equal(createdDocument.isError, undefined);
+  const createdReceipt = createdDocument.structuredContent as {
+    documentID: string;
+    contentRevision: string;
+  };
+
+  const readDocument = await client.callTool({
+    name: "notebook_read_document",
+    arguments: { document_id: createdReceipt.documentID },
+  });
+  assert.equal(readDocument.isError, undefined);
+  assert.match(JSON.stringify(readDocument.structuredContent), /counter/);
+
+  const patchedDocument = await client.callTool({
+    name: "notebook_patch_document",
+    arguments: {
+      document_id: createdReceipt.documentID,
+      expected_revision: createdReceipt.contentRevision,
+      preamble: "\\usepackage{microtype}",
+      blocks: [
+        { id: "body", kind: "markdown", source: "# Готовый документ" },
+        { id: "math", kind: "latex", source: "\\[E=mc^2\\]" },
+      ],
+    },
+  });
+  assert.equal(patchedDocument.isError, undefined);
+  assert.match(JSON.stringify(patchedDocument.structuredContent), /Готовый документ/);
+
+  const exportedDocument = await client.callTool({
+    name: "notebook_export_document",
+    arguments: { document_id: createdReceipt.documentID },
+  });
+  assert.equal(exportedDocument.isError, undefined);
+  assert.match(JSON.stringify(exportedDocument.structuredContent), /pdfSHA256/);
+
   await client.close();
   process.stdout.write(
-    "MCP smoke passed: list, read, mutate, fresh image, and stale-image rejection work.\n",
+    "MCP smoke passed: page map, region batches, notebook and document mutation, PDF export, and stale-image rejection work.\n",
   );
 } finally {
   await rm(storeRoot, { recursive: true, force: true });

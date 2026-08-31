@@ -26,6 +26,9 @@ targets:
       - path: Shared
       - path: iPad
       - path: Assets.xcassets
+      - path: WebResources
+        type: folder
+        buildPhase: resources
     dependencies:
       - package: NotebookCore
         product: NotebookCore
@@ -103,6 +106,9 @@ targets:
       - path: Shared
       - path: Mac
       - path: Assets.xcassets
+      - path: WebResources
+        type: folder
+        buildPhase: resources
     dependencies:
       - package: NotebookCore
         product: NotebookCore

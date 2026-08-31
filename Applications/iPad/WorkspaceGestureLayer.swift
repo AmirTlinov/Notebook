@@ -3,7 +3,7 @@ import UIKit
 
 struct WorkspaceGestureLayer: UIViewRepresentable {
   let isEnabled: Bool
-  let isPageOpen: Bool
+  let allowsPageNavigation: Bool
   let pencilInputGate: PencilInputGate
   let onCamera: (WorkspaceMagnificationPhase) -> Void
   let onNavigate: (Int) -> Void
@@ -11,7 +11,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
 
   func makeCoordinator() -> Coordinator {
     Coordinator(
-      isPageOpen: isPageOpen,
+      allowsPageNavigation: allowsPageNavigation,
       isEnabled: isEnabled,
       pencilInputGate: pencilInputGate,
       onCamera: onCamera,
@@ -34,7 +34,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     context.coordinator.onCamera = onCamera
     context.coordinator.onNavigate = onNavigate
     context.coordinator.onUndo = onUndo
-    context.coordinator.isPageOpen = isPageOpen
+    context.coordinator.allowsPageNavigation = allowsPageNavigation
     context.coordinator.isEnabled = isEnabled
     context.coordinator.pencilInputGate = pencilInputGate
     if let window = view.window {
@@ -48,8 +48,8 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
 
   @MainActor
   final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-    var isPageOpen: Bool {
-      didSet { recognizer?.isPageOpen = isPageOpen }
+    var allowsPageNavigation: Bool {
+      didSet { recognizer?.allowsPageNavigation = allowsPageNavigation }
     }
     var isEnabled: Bool {
       didSet {
@@ -69,14 +69,14 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     private var repeatTask: Task<Void, Never>?
 
     init(
-      isPageOpen: Bool,
+      allowsPageNavigation: Bool,
       isEnabled: Bool,
       pencilInputGate: PencilInputGate,
       onCamera: @escaping (WorkspaceMagnificationPhase) -> Void,
       onNavigate: @escaping (Int) -> Void,
       onUndo: @escaping () -> Void
     ) {
-      self.isPageOpen = isPageOpen
+      self.allowsPageNavigation = allowsPageNavigation
       self.isEnabled = isEnabled
       self.pencilInputGate = pencilInputGate
       self.onCamera = onCamera
@@ -103,7 +103,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       recognizer.cancelsTouchesInView = true
       recognizer.delaysTouchesBegan = false
       recognizer.delaysTouchesEnded = false
-      recognizer.isPageOpen = isPageOpen
+      recognizer.allowsPageNavigation = allowsPageNavigation
       recognizer.pencilInputGate = pencilInputGate
       recognizer.isEnabled = isEnabled
       recognizer.delegate = self
@@ -128,7 +128,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
         onUndo()
         startRepeating()
       case .began where recognizer.intent == .magnification
-        || (recognizer.intent == .navigation && !isPageOpen):
+        || (recognizer.intent == .navigation && !allowsPageNavigation):
         repeatTask?.cancel()
         onCamera(
           .began(
@@ -146,7 +146,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
           )
         )
       case .changed where recognizer.intent == .magnification
-        || (recognizer.intent == .navigation && !isPageOpen):
+        || (recognizer.intent == .navigation && !allowsPageNavigation):
         onCamera(
           .changed(
             scale: recognizer.magnification,
@@ -162,7 +162,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
         case .tap:
           onUndo()
         case .navigation:
-          if isPageOpen, let decision = recognizer.navigationDecision {
+          if allowsPageNavigation, let decision = recognizer.navigationDecision {
             onNavigate(decision.direction)
           } else {
             finishCamera(recognizer)
@@ -176,7 +176,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
         repeatTask?.cancel()
         repeatTask = nil
         if recognizer.intent == .magnification
-          || (recognizer.intent == .navigation && !isPageOpen)
+          || (recognizer.intent == .navigation && !allowsPageNavigation)
         {
           onCamera(.cancelled)
         }

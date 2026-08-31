@@ -13,12 +13,12 @@ final class PresenceOwnershipTests: XCTestCase {
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     model.start(pageSize: PageSize(width: 834, height: 1_194))
     let stable = try store.loadPresence()
-    let notebookID = try XCTUnwrap(model.workspace?.selectedNotebookID)
+    let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
     let active = SessionPresence(
       mode: .cover,
       camera: SpatialCamera(center: stable.camera.center, scale: 0.84),
       viewport: stable.viewport,
-      focusedNotebookID: notebookID,
+      focusedItemID: itemID,
       openProgress: 0.5
     )
 
@@ -38,13 +38,13 @@ final class PresenceOwnershipTests: XCTestCase {
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     model.start(pageSize: PageSize(width: 834, height: 1_194))
-    let notebookID = try XCTUnwrap(model.workspace?.selectedNotebookID)
-    let center = try XCTUnwrap(model.board?.placement(of: notebookID)?.center)
+    let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
+    let center = try XCTUnwrap(model.board?.placement(of: itemID)?.center)
     let broken = SessionPresence(
       mode: .page,
       camera: SpatialCamera(center: center, scale: 0.487_891_719_906_063),
       viewport: SpatialPoint(x: 834, y: 1_194),
-      focusedNotebookID: notebookID,
+      focusedItemID: itemID,
       openProgress: 1
     )
 
@@ -86,7 +86,7 @@ final class PresenceOwnershipTests: XCTestCase {
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     model.start(pageSize: PageSize(width: 834, height: 1_194))
-    let notebookID = try XCTUnwrap(model.workspace?.selectedNotebookID)
+    let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
     let partial = SessionPresence(
       mode: .cover,
       camera: SpatialCamera(
@@ -94,7 +94,7 @@ final class PresenceOwnershipTests: XCTestCase {
         scale: 0.86
       ),
       viewport: SpatialPoint(x: 834, y: 1_194),
-      focusedNotebookID: notebookID,
+      focusedItemID: itemID,
       openProgress: 0.55
     )
 
@@ -120,18 +120,18 @@ final class PresenceOwnershipTests: XCTestCase {
     var initial = WorkspaceIndex.initial(
       actor: actor,
       pageSize: size,
-      notebookID: lowerID,
+      itemID: lowerID,
       pageID: lowerPageID
     )
     let upper = try XCTUnwrap(initial.index.createNotebook(
       title: "Upper",
       actor: actor,
       pageSize: size,
-      notebookID: upperID,
+      itemID: upperID,
       pageID: upperPageID
     ))
     var board = BoardDocument.initial(
-      notebookIDs: [lowerID, upperID],
+      itemIDs: [lowerID, upperID],
       actor: actor
     )
     XCTAssertNotNil(board.createStack(
@@ -143,14 +143,14 @@ final class PresenceOwnershipTests: XCTestCase {
     let expectedCenter = try XCTUnwrap(board.focusedCenter(of: upperID))
     try store.savePage(initial.page)
     try store.savePage(upper.page)
-    try store.saveBoard(board, notebookIDs: Set([lowerID, upperID]))
+    try store.saveBoard(board, itemIDs: Set([lowerID, upperID]))
     try store.saveIndex(initial.index)
     try store.savePresence(
       SessionPresence(
         mode: .page,
         camera: SpatialCamera(center: stackCenter, scale: 1),
         viewport: SpatialPoint(x: size.width, y: size.height),
-        focusedNotebookID: upperID,
+        focusedItemID: upperID,
         openProgress: 1
       )
     )
@@ -160,5 +160,42 @@ final class PresenceOwnershipTests: XCTestCase {
 
     XCTAssertEqual(model.presence?.camera.center, expectedCenter)
     XCTAssertNotEqual(expectedCenter, stackCenter)
+  }
+
+  @MainActor
+  func testExternalCatalogAndBoardChangeMoveCameraToTheSelectedItem() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = NotebookStore(root: root)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    let size = PageSize(width: 834, height: 1_194)
+    model.start(pageSize: size)
+    var workspace = try XCTUnwrap(model.workspace)
+    var board = try XCTUnwrap(model.board)
+    let created = try XCTUnwrap(workspace.createNotebook(
+      title: "Новая",
+      actor: UUID(),
+      pageSize: size
+    ))
+    let expectedCenter = WorldPoint(x: 2_400, y: -1_200)
+    XCTAssertTrue(board.addItem(
+      created.item.id,
+      near: expectedCenter,
+      actor: UUID()
+    ))
+    try store.saveWorkspaceBundle(
+      index: workspace,
+      page: created.page,
+      board: board
+    )
+
+    model.reloadExternalChanges()
+
+    XCTAssertEqual(model.workspace?.selectedItemID, created.item.id)
+    XCTAssertEqual(model.presence?.focusedItemID, created.item.id)
+    XCTAssertEqual(model.presence?.camera.center, expectedCenter)
+    XCTAssertEqual(model.presence?.mode, .page)
   }
 }
