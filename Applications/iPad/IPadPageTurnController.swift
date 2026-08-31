@@ -209,7 +209,6 @@ final class IPadPageTurnController: UIViewController,
     retainNeededControllers()
     refreshRenderedPages()
     refreshControllerState()
-    remountDetachedNeighboursAfterUIKitSettles()
 
     if completed, displayedIndex != selectedIndex {
       onCommit(displayedIndex)
@@ -227,6 +226,7 @@ final class IPadPageTurnController: UIViewController,
     guard isViewLoaded, !hasInstalledPage else { return }
     hasInstalledPage = true
     let controller = controllerForPage(at: displayedIndex)
+    transferToPageViewController(controller)
     pageViewController.setViewControllers(
       [controller],
       direction: .forward,
@@ -245,6 +245,7 @@ final class IPadPageTurnController: UIViewController,
     hasInstalledPage = true
 
     let controller = controllerForPage(at: displayedIndex)
+    transferToPageViewController(controller)
     pageViewController.setViewControllers(
       [controller],
       direction: .forward,
@@ -256,7 +257,6 @@ final class IPadPageTurnController: UIViewController,
     retainNeededControllers()
     refreshRenderedPages()
     refreshControllerState()
-    remountDetachedNeighboursAfterUIKitSettles()
   }
 
   private func preparedController(
@@ -266,7 +266,7 @@ final class IPadPageTurnController: UIViewController,
     let controller = controllerForPage(at: index)
     mountForPrewarming(controller)
     guard readyPages[index] == true else { return nil }
-    detachFromPrewarming(controller)
+    transferToPageViewController(controller)
     return controller
   }
 
@@ -308,6 +308,7 @@ final class IPadPageTurnController: UIViewController,
 
     for index in Array(controllers.keys) where !required.contains(index) {
       guard let controller = controllers[index],
+        controller.containmentOwner != .pageViewController,
         controller.parent == nil || controller.parent === self
       else {
         continue
@@ -322,9 +323,11 @@ final class IPadPageTurnController: UIViewController,
     _ controller: IPadIndexedPageHostingController
   ) {
     guard controller.pageIndex != displayedIndex,
+      controller.containmentOwner == .detached,
       controller.parent == nil,
       controller.view.superview !== prewarmView
     else { return }
+    controller.containmentOwner = .prewarming
     addChild(controller)
     prewarmView.addSubview(controller.view)
     controller.view.frame = prewarmView.bounds
@@ -401,7 +404,7 @@ final class IPadPageTurnController: UIViewController,
       target > displayedIndex ? .forward : .reverse
     setTransitioning(true)
     refreshControllerState()
-    detachFromPrewarming(targetController)
+    transferToPageViewController(targetController)
 
     if adjacent {
       pageViewController.setViewControllers(
@@ -436,7 +439,6 @@ final class IPadPageTurnController: UIViewController,
     retainNeededControllers()
     refreshRenderedPages()
     refreshControllerState()
-    remountDetachedNeighboursAfterUIKitSettles()
     runPendingExternalSelection()
   }
 
@@ -450,25 +452,29 @@ final class IPadPageTurnController: UIViewController,
     requestExternalSelection(target)
   }
 
-  private func remountDetachedNeighboursAfterUIKitSettles() {
-    Task { @MainActor [weak self] in
-      await Task.yield()
-      guard let self else { return }
-      retainNeededControllers()
-      refreshControllerState()
+  private func transferToPageViewController(
+    _ controller: IPadIndexedPageHostingController
+  ) {
+    switch controller.containmentOwner {
+    case .pageViewController:
+      return
+    case .prewarming:
+      detachFromPrewarming(controller)
+    case .detached:
+      break
     }
+    controller.containmentOwner = .pageViewController
   }
 
   private func detachFromPrewarming(
     _ controller: IPadIndexedPageHostingController
   ) {
-    guard controller.parent === self
-      || (controller.parent == nil && controller.view.superview === prewarmView)
-    else { return }
+    guard controller.containmentOwner == .prewarming else { return }
     let wasChild = controller.parent === self
     if wasChild { controller.willMove(toParent: nil) }
     controller.view.removeFromSuperview()
     if wasChild { controller.removeFromParent() }
+    controller.containmentOwner = .detached
   }
 
   private func configureSystemGestures() {
@@ -519,6 +525,7 @@ private final class IPadIndexedPageHostingController:
 {
   let pageIndex: Int
   let hostID = UUID()
+  var containmentOwner = IPadPageHostContainmentOwner.detached
 
   init(pageIndex: Int, rootView: AnyView) {
     self.pageIndex = pageIndex
@@ -529,4 +536,10 @@ private final class IPadIndexedPageHostingController:
   required init?(coder aDecoder: NSCoder) {
     fatalError("init(coder:) is not supported")
   }
+}
+
+private enum IPadPageHostContainmentOwner {
+  case detached
+  case prewarming
+  case pageViewController
 }

@@ -66,6 +66,60 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
   }
 
   @MainActor
+  func testIPadReverseCandidateRemainsOwnedByThePageController() throws {
+    let controller = IPadPageTurnController()
+    let ownerID = UUID()
+    let renderPage:
+      @MainActor (Int, Bool, PageTurnReadiness) -> AnyView = {
+        index, _, readiness in
+        readiness(true)
+        return AnyView(Text("Page \(index)"))
+      }
+    controller.update(
+      ownerID: ownerID,
+      pageCount: 3,
+      selectedIndex: 1,
+      navigationIsEnabled: true,
+      pageIsInteractive: true,
+      canBeginNavigation: { true },
+      page: renderPage,
+      onCommit: { _ in },
+      onTransitioningChange: { _ in }
+    )
+    controller.loadViewIfNeeded()
+
+    let current = try XCTUnwrap(
+      controller.pageViewController.viewControllers?.first
+    )
+    let reverseCandidate = try XCTUnwrap(
+      controller.pageViewController(
+        controller.pageViewController,
+        viewControllerBefore: current
+      )
+    )
+    XCTAssertNil(reverseCandidate.parent)
+
+    // SwiftUI can update the representable while UIKit still holds this
+    // candidate for a page curl. The outer container must not adopt it again.
+    controller.update(
+      ownerID: ownerID,
+      pageCount: 3,
+      selectedIndex: 1,
+      navigationIsEnabled: true,
+      pageIsInteractive: true,
+      canBeginNavigation: { true },
+      page: renderPage,
+      onCommit: { _ in },
+      onTransitioningChange: { _ in }
+    )
+
+    XCTAssertNil(
+      reverseCandidate.parent,
+      "Переданная UIKit страница не должна снова становиться дочерней у prewarm-контейнера"
+    )
+  }
+
+  @MainActor
   func testPencilInvalidatesAnAlreadyStartedFingerSequence() throws {
     let gate = PencilInputGate()
     let fingerRevision = try XCTUnwrap(gate.beginFingerSequence())

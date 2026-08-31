@@ -137,7 +137,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     )
   }
 
-  func testNotebookPageTurnCommitsThePageThatLands() {
+  func testNotebookPageTurnCommitsBothDirections() {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication()
@@ -153,6 +153,14 @@ final class DrawingResponsivenessTests: XCTestCase {
       object: surface
     )
     wait(for: [landed], timeout: 3)
+
+    surface.swipeRight()
+    let returned = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value BEGINSWITH 'Страница 1 из '"),
+      object: surface
+    )
+    wait(for: [returned], timeout: 3)
+    XCTAssertEqual(app.state, .runningForeground)
   }
 
   func testDocumentUsesTheSamePageTurnSurface() {
