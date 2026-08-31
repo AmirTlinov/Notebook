@@ -193,7 +193,7 @@ final class DrawingOwnershipTests: XCTestCase {
     var counter: UInt64 = 0
     let delivered = expectation(description: "local drawing serialized")
     let coordinator = PencilCanvasView.Coordinator(
-      pageInputGate: PageInputGate(),
+      pencilInputGate: PencilInputGate(),
       reserveAction: { _ in
         counter += 1
         return VersionStamp(counter: counter, actor: actorID)

@@ -629,6 +629,40 @@ func crossSurfaceInkIsOneUndoAction() {
   #expect(journal.actions[0].isActive == false)
 }
 
+@Test("Записанный ластик остаётся активным после старого сетевого снимка")
+func staleSpatialSnapshotKeepsCommittedEraserActive() {
+  let actor = UUID()
+  let sample = SpatialInkSample(
+    point: .zero,
+    worldPoint: .zero,
+    timeOffset: 0,
+    width: 24,
+    opacity: 1,
+    force: 1,
+    azimuth: 0,
+    altitude: 1
+  )
+  var current = SpatialInkJournal(
+    stamp: VersionStamp(counter: 0, actor: actor)
+  )
+  #expect(current.append(
+    tool: .pen,
+    spans: [SpatialInkSpan(surface: .board, samples: [sample])],
+    actor: actor
+  ) != nil)
+  let stale = current
+  let eraser = current.append(
+    tool: .eraser,
+    spans: [SpatialInkSpan(surface: .board, samples: [sample])],
+    actor: actor
+  )
+
+  #expect(eraser != nil)
+  #expect(current.merge(stale) == false)
+  #expect(current.actions.last?.tool == .eraser)
+  #expect(current.actions.last?.isActive == true)
+}
+
 @Test("Хранилище создаёт пространственный слой для существующих тетрадей")
 func storeCreatesBoardBesideExistingWorkspace() throws {
   let root = FileManager.default.temporaryDirectory

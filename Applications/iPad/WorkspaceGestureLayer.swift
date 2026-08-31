@@ -4,6 +4,7 @@ import UIKit
 struct WorkspaceGestureLayer: UIViewRepresentable {
   let isEnabled: Bool
   let isPageOpen: Bool
+  let pencilInputGate: PencilInputGate
   let onCamera: (WorkspaceMagnificationPhase) -> Void
   let onNavigate: (Int) -> Void
   let onUndo: () -> Void
@@ -12,6 +13,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     Coordinator(
       isPageOpen: isPageOpen,
       isEnabled: isEnabled,
+      pencilInputGate: pencilInputGate,
       onCamera: onCamera,
       onNavigate: onNavigate,
       onUndo: onUndo
@@ -34,6 +36,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     context.coordinator.onUndo = onUndo
     context.coordinator.isPageOpen = isPageOpen
     context.coordinator.isEnabled = isEnabled
+    context.coordinator.pencilInputGate = pencilInputGate
     if let window = view.window {
       context.coordinator.install(on: window, inside: view)
     }
@@ -56,6 +59,9 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     var onCamera: (WorkspaceMagnificationPhase) -> Void
     var onNavigate: (Int) -> Void
     var onUndo: () -> Void
+    var pencilInputGate: PencilInputGate {
+      didSet { recognizer?.pencilInputGate = pencilInputGate }
+    }
 
     private weak var hostView: UIView?
     private weak var sceneView: UIView?
@@ -65,12 +71,14 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     init(
       isPageOpen: Bool,
       isEnabled: Bool,
+      pencilInputGate: PencilInputGate,
       onCamera: @escaping (WorkspaceMagnificationPhase) -> Void,
       onNavigate: @escaping (Int) -> Void,
       onUndo: @escaping () -> Void
     ) {
       self.isPageOpen = isPageOpen
       self.isEnabled = isEnabled
+      self.pencilInputGate = pencilInputGate
       self.onCamera = onCamera
       self.onNavigate = onNavigate
       self.onUndo = onUndo
@@ -96,6 +104,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       recognizer.delaysTouchesBegan = false
       recognizer.delaysTouchesEnded = false
       recognizer.isPageOpen = isPageOpen
+      recognizer.pencilInputGate = pencilInputGate
       recognizer.isEnabled = isEnabled
       recognizer.delegate = self
       hostView.addGestureRecognizer(recognizer)

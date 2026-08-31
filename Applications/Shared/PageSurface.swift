@@ -28,7 +28,7 @@ struct PageSurface: View {
             penStyle: model.penStyle,
             eraserStyle: model.eraserStyle,
             drawingTool: model.drawingTool,
-            pageInputGate: model.pageInputGate,
+            pencilInputGate: model.pencilInputGate,
             reserveAction: model.reserveDrawingAction,
             commitAction: { data, previousData, pageID, stamp in
               model.commitDrawingAction(

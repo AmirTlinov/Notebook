@@ -16,7 +16,7 @@ enum TwoFingerMotionIntent: Equatable {
 /// first hardware sample can steal the sequence as a pinch.
 enum TwoFingerIntentArbiter {
   static let activationTravel: CGFloat = 14
-  static let magnificationActivation: CGFloat = 0.045
+  static let magnificationActivation: CGFloat = 0.01
   static let evidenceDelay: TimeInterval = 0.055
   static let participatingTravel: CGFloat = 4
 
@@ -66,6 +66,39 @@ enum TwoFingerIntentArbiter {
   }
 }
 
+/// Undo owns a quiet two-finger contact. Once the pair travels like a pinch or
+/// a swipe, that observed motion keeps its meaning through release.
+enum TwoFingerUndoClassifier {
+  static let maximumFingerTravel: CGFloat = 8
+  static let maximumCentroidTravel: CGFloat = 4
+  static let maximumRelativeTravel: CGFloat = 3.5
+  static let maximumTapDuration: TimeInterval = 0.26
+
+  static func remainsStationary(
+    maximumFingerTravel: CGFloat,
+    maximumCentroidTravel: CGFloat,
+    maximumRelativeTravel: CGFloat
+  ) -> Bool {
+    maximumFingerTravel <= Self.maximumFingerTravel
+      && maximumCentroidTravel <= Self.maximumCentroidTravel
+      && maximumRelativeTravel <= Self.maximumRelativeTravel
+  }
+
+  static func isTap(
+    maximumFingerTravel: CGFloat,
+    maximumCentroidTravel: CGFloat,
+    maximumRelativeTravel: CGFloat,
+    elapsed: TimeInterval
+  ) -> Bool {
+    elapsed <= maximumTapDuration
+      && remainsStationary(
+        maximumFingerTravel: maximumFingerTravel,
+        maximumCentroidTravel: maximumCentroidTravel,
+        maximumRelativeTravel: maximumRelativeTravel
+      )
+  }
+}
+
 enum TwoFingerGestureClassifier {
   static let navigationDistance: CGFloat = 44
   static let navigationSpeed: CGFloat = 520
@@ -111,7 +144,6 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   }
 
   private static let holdDelay = Duration.milliseconds(340)
-  private static let tapMovement: CGFloat = 16
   private static let velocityWindow: TimeInterval = 0.08
 
   private struct CentroidSample {
@@ -127,7 +159,10 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   private var centroidSamples: [CentroidSample] = []
   private var holdTask: Task<Void, Never>?
   private var maximumFingerMovement: CGFloat = 0
+  private var maximumCentroidMovement: CGFloat = 0
+  private var maximumRelativeMovement: CGFloat = 0
   private var magnificationSamples: [(timestamp: TimeInterval, value: CGFloat)] = []
+  private var fingerSequenceRevision: UInt64?
 
   private(set) var intent = Intent.undecided
   private(set) var translation = CGPoint.zero
@@ -140,6 +175,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   private(set) var centroid = CGPoint.zero
 
   var isPageOpen = false
+  weak var pencilInputGate: PencilInputGate?
 
   var startCentroidValue: CGPoint { startCentroid ?? centroid }
   var gestureElapsed: TimeInterval {
@@ -158,6 +194,17 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
       finishAsInvalid()
       return
     }
+    if fingerSequenceRevision == nil {
+      guard let revision = pencilInputGate?.beginFingerSequence() else {
+        finishAsInvalid()
+        return
+      }
+      fingerSequenceRevision = revision
+    }
+    guard fingerSequenceIsAccepted else {
+      finishAsInvalid()
+      return
+    }
     guard activeTouches.count == 2, startCentroid == nil else { return }
     beginTrackingPair()
   }
@@ -167,6 +214,10 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     with event: UIEvent
   ) {
     guard startCentroid != nil else { return }
+    guard fingerSequenceIsAccepted else {
+      finishAsInvalid()
+      return
+    }
     updateMetrics()
 
     switch intent {
@@ -193,6 +244,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
         intent = .magnification
         state = .began
       case .undecided:
+        if !undoContactRemainsStationary { cancelHold() }
         break
       }
     case .magnification where state == .began || state == .changed:
@@ -214,6 +266,10 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
       state = .failed
       return
     }
+    guard fingerSequenceIsAccepted else {
+      finishAsInvalid()
+      return
+    }
     updateMetrics()
     cancelHold()
     navigationDecision = TwoFingerGestureClassifier.navigation(
@@ -229,7 +285,12 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
       state = .ended
     case .magnification:
       state = .ended
-    case .undecided where maximumFingerMovement <= Self.tapMovement:
+    case .undecided where TwoFingerUndoClassifier.isTap(
+      maximumFingerTravel: maximumFingerMovement,
+      maximumCentroidTravel: maximumCentroidMovement,
+      maximumRelativeTravel: maximumRelativeMovement,
+      elapsed: gestureElapsed
+    ):
       intent = .tap
       state = .recognized
     case .undecided where navigationDecision != nil:
@@ -262,6 +323,8 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     startDistance = nil
     centroidSamples.removeAll(keepingCapacity: true)
     maximumFingerMovement = 0
+    maximumCentroidMovement = 0
+    maximumRelativeMovement = 0
     intent = .undecided
     translation = .zero
     velocity = .zero
@@ -272,6 +335,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     isOpeningApproach = false
     centroid = .zero
     magnificationSamples.removeAll(keepingCapacity: true)
+    fingerSequenceRevision = nil
   }
 
   private func beginTrackingPair() {
@@ -290,7 +354,8 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
         let self,
         state == .possible,
         activeTouches.count == 2,
-        maximumFingerMovement <= Self.tapMovement
+        fingerSequenceIsAccepted,
+        undoContactRemainsStationary
       else { return }
       intent = .hold
       state = .began
@@ -327,6 +392,10 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
       x: current.x - startCentroid.x,
       y: current.y - startCentroid.y
     )
+    maximumCentroidMovement = max(
+      maximumCentroidMovement,
+      hypot(translation.x, translation.y)
+    )
 
     fingerDisplacements = startLocations.compactMap { identifier, start in
       guard let touch = activeTouches[identifier] else { return nil }
@@ -340,6 +409,15 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
         hypot(displacement.x, displacement.y)
       )
       return displacement
+    }
+    if fingerDisplacements.count == 2 {
+      maximumRelativeMovement = max(
+        maximumRelativeMovement,
+        hypot(
+          fingerDisplacements[1].x - fingerDisplacements[0].x,
+          fingerDisplacements[1].y - fingerDisplacements[0].y
+        ) / 2
+      )
     }
 
     let timestamp = currentTimestamp()
@@ -407,6 +485,20 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   private func cancelHold() {
     holdTask?.cancel()
     holdTask = nil
+  }
+
+  private var fingerSequenceIsAccepted: Bool {
+    guard let fingerSequenceRevision else { return false }
+    return pencilInputGate?.acceptsFingerSequence(fingerSequenceRevision)
+      == true
+  }
+
+  private var undoContactRemainsStationary: Bool {
+    TwoFingerUndoClassifier.remainsStationary(
+      maximumFingerTravel: maximumFingerMovement,
+      maximumCentroidTravel: maximumCentroidMovement,
+      maximumRelativeTravel: maximumRelativeMovement
+    )
   }
 
 }

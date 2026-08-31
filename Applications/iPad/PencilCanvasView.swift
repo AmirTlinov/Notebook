@@ -10,13 +10,13 @@ struct PencilCanvasView: UIViewRepresentable {
   let penStyle: PenStyle
   let eraserStyle: EraserStyle
   let drawingTool: DrawingTool
-  let pageInputGate: PageInputGate
+  let pencilInputGate: PencilInputGate
   let reserveAction: (UUID) -> VersionStamp?
   let commitAction: (Data, Data, UUID, VersionStamp) -> Data?
 
   func makeCoordinator() -> Coordinator {
     Coordinator(
-      pageInputGate: pageInputGate,
+      pencilInputGate: pencilInputGate,
       reserveAction: reserveAction,
       commitAction: commitAction
     )
@@ -38,7 +38,7 @@ struct PencilCanvasView: UIViewRepresentable {
 
   func updateUIView(_ paper: PaperCanvasContainerView, context: Context) {
     paper.setInputEnabled(isInputEnabled)
-    context.coordinator.pageInputGate = pageInputGate
+    context.coordinator.use(pencilInputGate)
     context.coordinator.reserveAction = reserveAction
     context.coordinator.commitAction = commitAction
     context.coordinator.apply(
@@ -50,12 +50,21 @@ struct PencilCanvasView: UIViewRepresentable {
     context.coordinator.apply(drawingData, pageID: pageID, to: paper)
   }
 
+  static func dismantleUIView(
+    _ paper: PaperCanvasContainerView,
+    coordinator: Coordinator
+  ) {
+    coordinator.detach(from: paper)
+  }
+
   @MainActor
   final class Coordinator: NSObject {
-    var pageInputGate: PageInputGate
     var reserveAction: (UUID) -> VersionStamp?
     var commitAction: (Data, Data, UUID, VersionStamp) -> Data?
 
+    private let inputSourceID = UUID()
+    private var pencilInputGate: PencilInputGate
+    private var pencilActionIsActive = false
     private var pageID: UUID?
     private var modelDrawingData: Data?
     private var appliedDrawing = PKDrawing()
@@ -67,16 +76,19 @@ struct PencilCanvasView: UIViewRepresentable {
     private var localDrawingData: [UUID: Data] = [:]
 
     init(
-      pageInputGate: PageInputGate,
+      pencilInputGate: PencilInputGate,
       reserveAction: @escaping (UUID) -> VersionStamp?,
       commitAction: @escaping (Data, Data, UUID, VersionStamp) -> Data?
     ) {
-      self.pageInputGate = pageInputGate
+      self.pencilInputGate = pencilInputGate
       self.reserveAction = reserveAction
       self.commitAction = commitAction
     }
 
     func attach(to paper: PaperCanvasContainerView) {
+      paper.touchView.onActionActivityChange = { [weak self] active in
+        self?.setPencilActionActive(active)
+      }
       paper.touchView.onDrawingChange = { [weak self, weak paper] drawing in
         guard let self,
           let pageID,
@@ -107,7 +119,8 @@ struct PencilCanvasView: UIViewRepresentable {
           )
         }
       }
-      pageInputGate.register { [weak self, weak paper] completion in
+      pencilInputGate.registerPageFinisher {
+        [weak self, weak paper] completion in
         guard let self, let paper else {
           completion()
           return
@@ -115,6 +128,33 @@ struct PencilCanvasView: UIViewRepresentable {
         paper.touchView.finishCurrentAction {
           self.afterLocalDeliveries(on: self.pageID, perform: completion)
         }
+      }
+    }
+
+    func use(_ gate: PencilInputGate) {
+      guard pencilInputGate !== gate else { return }
+      if pencilActionIsActive {
+        pencilInputGate.endPencilAction(source: inputSourceID)
+      }
+      pencilInputGate = gate
+      if pencilActionIsActive {
+        pencilInputGate.beginPencilAction(source: inputSourceID)
+      }
+    }
+
+    func detach(from paper: PaperCanvasContainerView) {
+      paper.touchView.onActionActivityChange = nil
+      paper.touchView.onDrawingChange = nil
+      setPencilActionActive(false)
+    }
+
+    private func setPencilActionActive(_ active: Bool) {
+      guard pencilActionIsActive != active else { return }
+      pencilActionIsActive = active
+      if active {
+        pencilInputGate.beginPencilAction(source: inputSourceID)
+      } else {
+        pencilInputGate.endPencilAction(source: inputSourceID)
       }
     }
 
@@ -286,6 +326,7 @@ final class PaperCanvasContainerView: UIView {
 @MainActor
 final class PaperInputView: UIView {
   var onDrawingChange: ((PKDrawing) -> Void)?
+  var onActionActivityChange: ((Bool) -> Void)?
   var presentActivePen: ((ActiveInkStroke) -> Void)?
   var commitActivePen: ((PKDrawing) -> Void)?
   var presentActiveEraser: ((ActiveEraserStroke) -> Void)?
@@ -329,6 +370,7 @@ final class PaperInputView: UIView {
   private var filteredPenForces: [CGFloat] = []
   private var pendingForceEstimates: [NSNumber: Int] = [:]
   private var actionHasEnded = false
+  private var reportsPencilActivity = false
 
   private var finalizationTask: Task<Void, Never>?
   private var eraserTask: Task<Void, Never>?
@@ -473,6 +515,8 @@ final class PaperInputView: UIView {
 
     activeTouch = touch
     actionTool = drawingTool
+    reportsPencilActivity = touch.type == .pencil
+    if reportsPencilActivity { onActionActivityChange?(true) }
     actionPenStyle = penStyle
     actionEraserStyle = eraserStyle
     actionBaseDrawing = drawing
@@ -921,6 +965,7 @@ final class PaperInputView: UIView {
   }
 
   private func clearAction() {
+    let reportedPencilActivity = reportsPencilActivity
     clearActiveAction?()
     activeTouch = nil
     actionTool = nil
@@ -934,6 +979,8 @@ final class PaperInputView: UIView {
     pendingForceEstimates = [:]
     actionHasEnded = false
     actionCompletions = []
+    reportsPencilActivity = false
+    if reportedPencilActivity { onActionActivityChange?(false) }
   }
 
   private func updateAccessibilityValue() {

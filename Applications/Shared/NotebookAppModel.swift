@@ -2,23 +2,45 @@ import Foundation
 import Observation
 import NotebookCore
 
-typealias PageInputCompletion = @MainActor @Sendable () -> Void
-typealias PageInputFinisher = (@escaping PageInputCompletion) -> Void
+typealias PencilInputCompletion = @MainActor @Sendable () -> Void
+typealias PencilInputFinisher = (@escaping PencilInputCompletion) -> Void
 
 @MainActor
-final class PageInputGate {
-  private var finisher: PageInputFinisher?
+final class PencilInputGate {
+  private var pageFinisher: PencilInputFinisher?
+  private var activePencilSources: Set<UUID> = []
+  private var fingerSequenceRevision: UInt64 = 0
 
-  func register(_ finisher: @escaping PageInputFinisher) {
-    self.finisher = finisher
+  func registerPageFinisher(_ finisher: @escaping PencilInputFinisher) {
+    pageFinisher = finisher
   }
 
-  func perform(_ action: @escaping PageInputCompletion) {
-    if let finisher {
-      finisher(action)
+  func performAfterPageInput(_ action: @escaping PencilInputCompletion) {
+    if let pageFinisher {
+      pageFinisher(action)
     } else {
       action()
     }
+  }
+
+  /// Pencil owns the surface from contact to lift. A later finger command may
+  /// wait for the page finisher, while any pair overlapping this contact stays
+  /// part of the hand movement rather than becoming a second command.
+  func beginPencilAction(source: UUID) {
+    guard activePencilSources.insert(source).inserted else { return }
+    fingerSequenceRevision &+= 1
+  }
+
+  func endPencilAction(source: UUID) {
+    activePencilSources.remove(source)
+  }
+
+  func beginFingerSequence() -> UInt64? {
+    activePencilSources.isEmpty ? fingerSequenceRevision : nil
+  }
+
+  func acceptsFingerSequence(_ revision: UInt64) -> Bool {
+    activePencilSources.isEmpty && revision == fingerSequenceRevision
   }
 }
 
@@ -53,7 +75,7 @@ final class NotebookAppModel {
 
   let store: NotebookStore
   let actorID: UUID
-  let pageInputGate = PageInputGate()
+  let pencilInputGate = PencilInputGate()
 
   private var pageSize = defaultPageSize
   private var started = false
@@ -388,8 +410,8 @@ final class NotebookAppModel {
     showCue("Отменено")
   }
 
-  func afterPageInput(_ action: @escaping PageInputCompletion) {
-    pageInputGate.perform(action)
+  func afterPageInput(_ action: @escaping PencilInputCompletion) {
+    pencilInputGate.performAfterPageInput(action)
   }
 
   func addNativeText(on notebookID: UUID, at point: SpatialPoint) -> String? {

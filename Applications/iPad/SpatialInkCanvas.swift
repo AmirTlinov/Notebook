@@ -12,11 +12,16 @@ struct SpatialInkCanvas: UIViewRepresentable {
   let eraserStyle: EraserStyle
   let drawingTool: DrawingTool
   let surfaceRegistry: SpatialInkSurfaceRegistry
+  let pencilInputGate: PencilInputGate
   let onCommit: (SpatialInkTool, SpatialInkColor, [SpatialInkSpan]) -> Void
   let isEnabled: Bool
 
   func makeCoordinator() -> Coordinator {
-    Coordinator(surfaceRegistry: surfaceRegistry, onCommit: onCommit)
+    Coordinator(
+      surfaceRegistry: surfaceRegistry,
+      pencilInputGate: pencilInputGate,
+      onCommit: onCommit
+    )
   }
 
   func makeUIView(context: Context) -> SpatialInkContainerView {
@@ -35,6 +40,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       eraserStyle: eraserStyle,
       drawingTool: drawingTool,
       surfaceRegistry: surfaceRegistry,
+      pencilInputGate: pencilInputGate,
       isEnabled: isEnabled,
       onCommit: onCommit
     )
@@ -52,6 +58,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       eraserStyle: eraserStyle,
       drawingTool: drawingTool,
       surfaceRegistry: surfaceRegistry,
+      pencilInputGate: pencilInputGate,
       isEnabled: isEnabled,
       onCommit: onCommit
     )
@@ -73,6 +80,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
     }
 
     private var surfaceRegistry: SpatialInkSurfaceRegistry
+    private let inputSourceID = UUID()
+    private var pencilInputGate: PencilInputGate
+    private var pencilActionIsActive = false
     private weak var view: SpatialInkContainerView?
     private weak var window: UIWindow?
     private var recognizer: SpatialPencilGestureRecognizer?
@@ -108,6 +118,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
 
     init(
       surfaceRegistry: SpatialInkSurfaceRegistry,
+      pencilInputGate: PencilInputGate,
       onCommit: @escaping (
         SpatialInkTool,
         SpatialInkColor,
@@ -115,6 +126,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       ) -> Void
     ) {
       self.surfaceRegistry = surfaceRegistry
+      self.pencilInputGate = pencilInputGate
       self.onCommit = onCommit
     }
 
@@ -128,6 +140,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       eraserStyle: EraserStyle,
       drawingTool: DrawingTool,
       surfaceRegistry: SpatialInkSurfaceRegistry,
+      pencilInputGate: PencilInputGate,
       isEnabled: Bool,
       onCommit: @escaping (
         SpatialInkTool,
@@ -147,6 +160,15 @@ struct SpatialInkCanvas: UIViewRepresentable {
         self.surfaceRegistry.unregister(view.inkView, for: .board)
         self.surfaceRegistry = surfaceRegistry
         appliedSignature = nil
+      }
+      if self.pencilInputGate !== pencilInputGate {
+        if pencilActionIsActive {
+          self.pencilInputGate.endPencilAction(source: inputSourceID)
+        }
+        self.pencilInputGate = pencilInputGate
+        if pencilActionIsActive {
+          self.pencilInputGate.beginPencilAction(source: inputSourceID)
+        }
       }
       self.isEnabled = isEnabled
       self.onCommit = onCommit
@@ -226,6 +248,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
 
     private func beginAction(touch: UITouch, event: UIEvent) {
       cancelAction()
+      setPencilActionActive(touch.type == .pencil)
       actionTool = drawingTool
       actionPenStyle = penStyle
       actionEraserStyle = eraserStyle
@@ -298,6 +321,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         cancelAction()
         return
       }
+      defer { setPencilActionActive(false) }
       activePen?.replacePredictions(with: [])
       finishCurrentSegment()
       let spans = splitIntoSurfaceSpans(actionSamples)
@@ -361,6 +385,17 @@ struct SpatialInkCanvas: UIViewRepresentable {
           stableLayers(for: surface),
           to: surface
         )
+      }
+      setPencilActionActive(false)
+    }
+
+    private func setPencilActionActive(_ active: Bool) {
+      guard pencilActionIsActive != active else { return }
+      pencilActionIsActive = active
+      if active {
+        pencilInputGate.beginPencilAction(source: inputSourceID)
+      } else {
+        pencilInputGate.endPencilAction(source: inputSourceID)
       }
     }
 

@@ -124,6 +124,7 @@ struct SpatialWorkspaceView: View {
             eraserStyle: model.eraserStyle,
             drawingTool: model.drawingTool,
             surfaceRegistry: spatialInkSurfaces,
+            pencilInputGate: model.pencilInputGate,
             onCommit: model.appendSpatialInk,
             isEnabled: presence.mode != .page && !pageGestureActive
               && editingSpatialTextID == nil
@@ -188,6 +189,7 @@ struct SpatialWorkspaceView: View {
           WorkspaceGestureLayer(
             isEnabled: true,
             isPageOpen: presence.mode == .page,
+            pencilInputGate: model.pencilInputGate,
             onCamera: handleWorkspaceMagnification,
             onNavigate: { direction in
               model.afterPageInput { model.turnPage(direction) }

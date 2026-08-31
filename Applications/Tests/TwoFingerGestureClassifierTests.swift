@@ -2,6 +2,61 @@ import XCTest
 @testable import Notebook
 
 final class TwoFingerGestureClassifierTests: XCTestCase {
+  @MainActor
+  func testPencilInvalidatesAnAlreadyStartedFingerSequence() throws {
+    let gate = PencilInputGate()
+    let fingerRevision = try XCTUnwrap(gate.beginFingerSequence())
+    let pencilSource = UUID()
+
+    gate.beginPencilAction(source: pencilSource)
+    XCTAssertFalse(gate.acceptsFingerSequence(fingerRevision))
+    XCTAssertNil(gate.beginFingerSequence())
+
+    gate.endPencilAction(source: pencilSource)
+    XCTAssertFalse(
+      gate.acceptsFingerSequence(fingerRevision),
+      "Пересёкшуюся пару должен целиком завершить владелец Pencil"
+    )
+    XCTAssertNotNil(gate.beginFingerSequence())
+  }
+
+  func testSmallDeliberatePinchBelongsToTheCamera() {
+    let intent = TwoFingerIntentArbiter.resolve(
+      isPageOpen: true,
+      translation: .zero,
+      fingerDisplacements: [
+        CGPoint(x: -4, y: 0),
+        CGPoint(x: 4, y: 0),
+      ],
+      magnification: 1.025,
+      elapsed: 0.08
+    )
+
+    XCTAssertEqual(intent, .magnification)
+  }
+
+  func testReleasedPinchRetainsItsMotionIdentity() {
+    XCTAssertFalse(
+      TwoFingerUndoClassifier.isTap(
+        maximumFingerTravel: 5,
+        maximumCentroidTravel: 0,
+        maximumRelativeTravel: 5,
+        elapsed: 0.12
+      )
+    )
+  }
+
+  func testQuietTwoFingerTapStillOwnsUndo() {
+    XCTAssertTrue(
+      TwoFingerUndoClassifier.isTap(
+        maximumFingerTravel: 2.5,
+        maximumCentroidTravel: 1.5,
+        maximumRelativeTravel: 1.2,
+        elapsed: 0.14
+      )
+    )
+  }
+
   func testMagnificationDirectionSurvivesGestureAcquisition() {
     XCTAssertTrue(
       TwoFingerIntentArbiter.isOpeningApproach(magnification: 1.05)
@@ -230,6 +285,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
     let controller = WorkspaceGestureLayer.Coordinator(
       isPageOpen: true,
       isEnabled: true,
+      pencilInputGate: PencilInputGate(),
       onCamera: { _ in },
       onNavigate: { _ in },
       onUndo: {}
