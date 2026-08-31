@@ -1,9 +1,15 @@
 import XCTest
+
 @testable import Notebook
 
 final class TwoFingerGestureClassifierTests: XCTestCase {
-  func testPageCurlShadersAreAvailableInTheIPadBundle() {
-    XCTAssertTrue(PageCurlMetalSupport.isAvailable)
+  @MainActor
+  func testIPadPageTurnUsesTheSystemPageCurl() {
+    let controller = PageTurnPlatformContract.makePageViewController()
+
+    XCTAssertEqual(controller.transitionStyle, .pageCurl)
+    XCTAssertEqual(controller.navigationOrientation, .horizontal)
+    XCTAssertFalse(controller.isDoubleSided)
   }
 
   @MainActor
@@ -26,7 +32,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
 
   func testSmallDeliberatePinchBelongsToTheCamera() {
     let intent = TwoFingerIntentArbiter.resolve(
-      allowsPageNavigation: true,
+      defersHorizontalMotionToPageTurn: true,
       translation: .zero,
       fingerDisplacements: [
         CGPoint(x: -4, y: 0),
@@ -72,7 +78,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
 
   func testNoisyHorizontalPageSwipeOwnsTheGestureBeforePinch() {
     let intent = TwoFingerIntentArbiter.resolve(
-      allowsPageNavigation: true,
+      defersHorizontalMotionToPageTurn: true,
       translation: CGPoint(x: -10, y: 0),
       fingerDisplacements: [
         CGPoint(x: -5, y: 0),
@@ -87,7 +93,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
 
   func testTwelvePointCoherentTravelAcquiresThePageRail() {
     let acquired = TwoFingerIntentArbiter.resolve(
-      allowsPageNavigation: true,
+      defersHorizontalMotionToPageTurn: true,
       translation: CGPoint(x: -12, y: 0),
       fingerDisplacements: [
         CGPoint(x: -12, y: 0),
@@ -97,7 +103,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
       elapsed: 0.03
     )
     let waiting = TwoFingerIntentArbiter.resolve(
-      allowsPageNavigation: true,
+      defersHorizontalMotionToPageTurn: true,
       translation: CGPoint(x: -11.9, y: 0),
       fingerDisplacements: [
         CGPoint(x: -11.9, y: 0),
@@ -113,7 +119,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
 
   func testTruePinchWithDriftingCentroidOwnsTheCamera() {
     let intent = TwoFingerIntentArbiter.resolve(
-      allowsPageNavigation: true,
+      defersHorizontalMotionToPageTurn: true,
       translation: CGPoint(x: 10, y: 4),
       fingerDisplacements: [
         CGPoint(x: -36, y: 2),
@@ -128,7 +134,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
 
   func testFirstMovingFingerWaitsForEvidence() {
     let intent = TwoFingerIntentArbiter.resolve(
-      allowsPageNavigation: true,
+      defersHorizontalMotionToPageTurn: true,
       translation: CGPoint(x: -8, y: 0),
       fingerDisplacements: [
         CGPoint(x: -16, y: 0),
@@ -143,7 +149,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
 
   func testAnchoredPinchStartsAfterTheEvidenceWindow() {
     let intent = TwoFingerIntentArbiter.resolve(
-      allowsPageNavigation: true,
+      defersHorizontalMotionToPageTurn: true,
       translation: CGPoint(x: 8, y: 0),
       fingerDisplacements: [
         .zero,
@@ -154,316 +160,6 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
     )
 
     XCTAssertEqual(intent, .magnification)
-  }
-
-  func testTwoFingersMovingLeftTurnToTheNextPage() {
-    let decision = TwoFingerGestureClassifier.navigation(
-      translation: CGPoint(x: -60, y: 4),
-      velocity: CGPoint(x: -300, y: 10),
-      fingerDisplacements: [
-        CGPoint(x: -58, y: 2),
-        CGPoint(x: -62, y: 6),
-      ]
-    )
-
-    XCTAssertEqual(
-      decision,
-      TwoFingerNavigationDecision(direction: 1)
-    )
-  }
-
-  func testFastShortSwipeStillNavigates() {
-    let decision = TwoFingerGestureClassifier.navigation(
-      translation: CGPoint(x: 28, y: 2),
-      velocity: CGPoint(x: 700, y: 20),
-      fingerDisplacements: [
-        CGPoint(x: 26, y: 1),
-        CGPoint(x: 30, y: 3),
-      ]
-    )
-
-    XCTAssertEqual(
-      decision,
-      TwoFingerNavigationDecision(direction: -1)
-    )
-  }
-
-  func testShortFlickUsesItsVelocityDirection() {
-    let decision = TwoFingerGestureClassifier.navigation(
-      translation: CGPoint(x: 12, y: 1),
-      velocity: CGPoint(x: -700, y: 10),
-      fingerDisplacements: [
-        CGPoint(x: 9, y: 1),
-        CGPoint(x: 11, y: 1),
-      ]
-    )
-
-    XCTAssertEqual(
-      decision,
-      TwoFingerNavigationDecision(direction: 1)
-    )
-  }
-
-  func testVerticalSwipeLeavesNotebookNavigationToTheBoard() {
-    let decision = TwoFingerGestureClassifier.navigation(
-      translation: CGPoint(x: 3, y: -52),
-      velocity: CGPoint(x: 20, y: -280),
-      fingerDisplacements: [
-        CGPoint(x: 2, y: -49),
-        CGPoint(x: 4, y: -55),
-      ]
-    )
-
-    XCTAssertNil(decision)
-  }
-
-  func testPinchDoesNotNavigate() {
-    XCTAssertNil(
-      TwoFingerGestureClassifier.navigation(
-        translation: CGPoint(x: 0, y: 0),
-        velocity: CGPoint(x: 900, y: 0),
-        fingerDisplacements: [
-          CGPoint(x: -50, y: 0),
-          CGPoint(x: 50, y: 0),
-        ]
-      )
-    )
-  }
-
-  func testOneMovingFingerDoesNotNavigate() {
-    XCTAssertNil(
-      TwoFingerGestureClassifier.navigation(
-        translation: CGPoint(x: -55, y: 0),
-        velocity: CGPoint(x: -700, y: 0),
-        fingerDisplacements: [
-          CGPoint(x: -110, y: 0),
-          CGPoint.zero,
-        ]
-      )
-    )
-  }
-
-  func testPageTracksTheFingerOneToOneAfterIntentAcquisition() {
-    let position = PageMotionPhysics.trackedPosition(
-      origin: 0,
-      translation: -250,
-      extent: 1_000,
-      availability: PageMotionAvailability(previous: true, next: true)
-    )
-
-    XCTAssertEqual(position, -0.25, accuracy: 0.000_1)
-  }
-
-  func testUnavailablePageHasAVisibleButBoundedPaperEdge() {
-    let position = PageMotionPhysics.trackedPosition(
-      origin: 0,
-      translation: 500,
-      extent: 1_000,
-      availability: PageMotionAvailability(previous: false, next: true)
-    )
-
-    XCTAssertGreaterThan(position, 0)
-    XCTAssertLessThanOrEqual(position, PageMotionPhysics.edgeTravel)
-  }
-
-  func testSlowShortPageMoveReturnsToItsOwner() {
-    let target = PageMotionPhysics.settlementTarget(
-      position: -0.2,
-      velocity: -0.1,
-      availability: PageMotionAvailability(previous: true, next: true)
-    )
-
-    XCTAssertEqual(target, 0)
-  }
-
-  func testShortFastFlickCommitsTheNextPage() {
-    let target = PageMotionPhysics.settlementTarget(
-      position: -0.14,
-      velocity: -1,
-      availability: PageMotionAvailability(previous: true, next: true)
-    )
-
-    XCTAssertEqual(target, -1)
-  }
-
-  func testClassifierSpeedStillProducesAVisiblePageFlick() {
-    let target = PageMotionPhysics.settlementTarget(
-      position: -28.0 / 834.0,
-      velocity: -700.0 / 834.0,
-      availability: PageMotionAvailability(previous: true, next: true)
-    )
-
-    XCTAssertEqual(target, -1)
-  }
-
-  func testReleaseProjectionRespectsAReversal() {
-    let target = PageMotionPhysics.settlementTarget(
-      position: -0.48,
-      velocity: 1.2,
-      availability: PageMotionAvailability(previous: true, next: true)
-    )
-
-    XCTAssertEqual(target, 0)
-  }
-
-  func testCriticalSettlementStartsWithoutADiscontinuityAndConverges() {
-    let settlement = PageMotionSettlement(
-      start: -0.43,
-      target: -1,
-      initialVelocity: -0.7,
-      angularFrequency: 22,
-      maximumDuration: 0.30
-    )
-
-    XCTAssertEqual(settlement.sample(at: 0).position, -0.43, accuracy: 0.000_1)
-    XCTAssertEqual(settlement.sample(at: 0).velocity, -0.7, accuracy: 0.000_1)
-    XCTAssertEqual(settlement.sample(at: 0.30).position, -1, accuracy: 0.02)
-  }
-
-  func testNextCurlBendsCurrentSheetOverNextTexture() {
-    let projection = PageCurlProjection.resolve(
-      position: -0.42,
-      hasPrevious: true,
-      hasNext: true
-    )
-
-    XCTAssertEqual(projection?.progress, 0.42)
-    XCTAssertEqual(projection?.direction, -1)
-    XCTAssertEqual(projection?.base, .next)
-    XCTAssertEqual(projection?.moving, .current)
-  }
-
-  func testPreviousCurlLaysPreviousSheetOverCurrentTexture() {
-    let projection = PageCurlProjection.resolve(
-      position: 0.37,
-      hasPrevious: true,
-      hasNext: true
-    )
-
-    XCTAssertEqual(projection?.progress, 0.37)
-    XCTAssertEqual(projection?.direction, 1)
-    XCTAssertEqual(projection?.base, .current)
-    XCTAssertEqual(projection?.moving, .previous)
-  }
-
-  func testCurlDoesNotInventAMissingBoundarySheet() {
-    XCTAssertNil(PageCurlProjection.resolve(
-      position: 0.05,
-      hasPrevious: false,
-      hasNext: true
-    ))
-  }
-
-  @MainActor
-  func testPageMotionCommitsSelectionExactlyOnceAfterSettlement() async {
-    let controller = PageMotionController()
-    var commits: [Int] = []
-    var finishes = 0
-    let availability = PageMotionAvailability(previous: true, next: true)
-    controller.begin(
-      PageNavigationSample(translation: 0, velocity: 0, gripY: 0.23),
-      extent: 1_000,
-      availability: availability,
-      onCommit: { commits.append($0) },
-      onFinish: { finishes += 1 }
-    )
-    XCTAssertEqual(controller.gripY, 0.23)
-    controller.end(
-      PageNavigationSample(translation: -420, velocity: -250),
-      reduceMotion: false
-    )
-
-    try? await Task.sleep(for: .milliseconds(450))
-
-    XCTAssertEqual(commits, [1])
-    XCTAssertEqual(finishes, 1)
-    XCTAssertEqual(controller.phase, .idle)
-    XCTAssertEqual(controller.position, 0)
-  }
-
-  @MainActor
-  func testNewGestureInterruptsSettlementAtItsPresentedPosition() async {
-    let controller = PageMotionController()
-    let availability = PageMotionAvailability(previous: true, next: true)
-    controller.begin(
-      PageNavigationSample(translation: 0, velocity: 0),
-      extent: 1_000,
-      availability: availability,
-      onCommit: { _ in },
-      onFinish: {}
-    )
-    controller.end(
-      PageNavigationSample(translation: -420, velocity: -250),
-      reduceMotion: false
-    )
-    try? await Task.sleep(for: .milliseconds(45))
-    let presented = controller.position
-
-    controller.begin(
-      PageNavigationSample(translation: 0, velocity: 0),
-      extent: 1_000,
-      availability: availability,
-      onCommit: { _ in },
-      onFinish: {}
-    )
-
-    XCTAssertEqual(controller.position, presented, accuracy: 0.000_1)
-    controller.reset()
-  }
-
-  @MainActor
-  func testKeyboardStepUsesTheSameSingleCommitSettlement() async {
-    let controller = PageMotionController()
-    var commits: [Int] = []
-    var finishes = 0
-
-    controller.select(
-      direction: 1,
-      availability: PageMotionAvailability(previous: true, next: true),
-      reduceMotion: false,
-      onCommit: { commits.append($0) },
-      onFinish: { finishes += 1 }
-    )
-    try? await Task.sleep(for: .milliseconds(360))
-
-    XCTAssertEqual(commits, [1])
-    XCTAssertEqual(finishes, 1)
-    XCTAssertEqual(controller.phase, .idle)
-  }
-
-  @MainActor
-  func testCommittedAdjacentSelectionOnlyPresentsAndNeverCommitsAgain() async {
-    let controller = PageMotionController()
-    var finishes = 0
-
-    controller.presentCommittedChange(
-      from: 1,
-      reduceMotion: false,
-      onFinish: { finishes += 1 }
-    )
-    XCTAssertEqual(controller.position, 1)
-    try? await Task.sleep(for: .milliseconds(360))
-
-    XCTAssertEqual(finishes, 1)
-    XCTAssertEqual(controller.phase, .idle)
-    XCTAssertEqual(controller.position, 0)
-  }
-
-  @MainActor
-  func testUnobservedJumpUsesOneCompactDissolve() async {
-    let controller = PageMotionController()
-    var finishes = 0
-
-    controller.presentDissolve(duration: 0.08) {
-      finishes += 1
-    }
-    XCTAssertEqual(controller.presentation, .dissolve)
-    XCTAssertEqual(controller.dissolveProgress, 0)
-    try? await Task.sleep(for: .milliseconds(130))
-
-    XCTAssertEqual(finishes, 1)
-    XCTAssertEqual(controller.phase, .idle)
-    XCTAssertEqual(controller.dissolveProgress, 1)
   }
 
   func testFastBoardSampleIsSplitAroundCrossedCover() {
@@ -480,11 +176,13 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
       ]
     )
 
-    XCTAssertEqual(intervals.map(\.surface), [
-      .board,
-      .cover(itemID),
-      .board,
-    ])
+    XCTAssertEqual(
+      intervals.map(\.surface),
+      [
+        .board,
+        .cover(itemID),
+        .board,
+      ])
     XCTAssertEqual(intervals[0].upperBound, 1.0 / 3.0, accuracy: 0.0001)
     XCTAssertEqual(intervals[1].upperBound, 2.0 / 3.0, accuracy: 0.0001)
   }
@@ -536,11 +234,10 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
     let scene = UIView(frame: host.bounds)
     host.addSubview(scene)
     let controller = WorkspaceGestureLayer.Coordinator(
-      allowsPageNavigation: true,
+      defersHorizontalMotionToPageTurn: true,
       isEnabled: true,
       pencilInputGate: PencilInputGate(),
       onCamera: { _ in },
-      onPageNavigation: { _ in },
       onUndo: {}
     )
 

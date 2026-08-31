@@ -1,43 +1,43 @@
-import SwiftUI
 import NotebookCore
+import SwiftUI
 import WebKit
 
 #if os(iOS)
-struct AgentWebElementView: UIViewRepresentable {
-  let element: AgentElement
-  let onState: (JSONValue) -> Void
+  struct AgentWebElementView: UIViewRepresentable {
+    let element: AgentElement
+    let onState: (JSONValue) -> Void
 
-  func makeCoordinator() -> AgentWebCoordinator {
-    AgentWebCoordinator(onState: onState)
-  }
+    func makeCoordinator() -> AgentWebCoordinator {
+      AgentWebCoordinator(onState: onState)
+    }
 
-  func makeUIView(context: Context) -> WKWebView {
-    AgentWebCoordinator.makeWebView(coordinator: context.coordinator)
-  }
+    func makeUIView(context: Context) -> WKWebView {
+      AgentWebCoordinator.makeWebView(coordinator: context.coordinator)
+    }
 
-  func updateUIView(_ webView: WKWebView, context: Context) {
-    context.coordinator.onState = onState
-    context.coordinator.load(element, in: webView)
+    func updateUIView(_ webView: WKWebView, context: Context) {
+      context.coordinator.onState = onState
+      context.coordinator.load(element, in: webView)
+    }
   }
-}
 #else
-struct AgentWebElementView: NSViewRepresentable {
-  let element: AgentElement
-  let onState: (JSONValue) -> Void
+  struct AgentWebElementView: NSViewRepresentable {
+    let element: AgentElement
+    let onState: (JSONValue) -> Void
 
-  func makeCoordinator() -> AgentWebCoordinator {
-    AgentWebCoordinator(onState: onState)
-  }
+    func makeCoordinator() -> AgentWebCoordinator {
+      AgentWebCoordinator(onState: onState)
+    }
 
-  func makeNSView(context: Context) -> WKWebView {
-    AgentWebCoordinator.makeWebView(coordinator: context.coordinator)
-  }
+    func makeNSView(context: Context) -> WKWebView {
+      AgentWebCoordinator.makeWebView(coordinator: context.coordinator)
+    }
 
-  func updateNSView(_ webView: WKWebView, context: Context) {
-    context.coordinator.onState = onState
-    context.coordinator.load(element, in: webView)
+    func updateNSView(_ webView: WKWebView, context: Context) {
+      context.coordinator.onState = onState
+      context.coordinator.load(element, in: webView)
+    }
   }
-}
 #endif
 
 @MainActor
@@ -50,7 +50,6 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   }
 
   var onState: (JSONValue) -> Void
-  var onNavigationCompletion: ((WKWebView, Bool) -> Void)?
   private var loadedSignature: DocumentSignature?
 
   init(onState: @escaping (JSONValue) -> Void) {
@@ -74,10 +73,10 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     didReceive message: WKScriptMessage
   ) {
     guard message.name == "notebook",
-          let object = message.body as? [String: Any],
-          object["kind"] as? String == "state",
-          let state = object["value"],
-          let value = Self.decodeState(state)
+      let object = message.body as? [String: Any],
+      object["kind"] as? String == "state",
+      let state = object["value"],
+      let value = Self.decodeState(state)
     else { return }
     onState(value)
   }
@@ -91,33 +90,9 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     decisionHandler(scheme == nil || scheme == "about" ? .allow : .cancel)
   }
 
-  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-    let completion = onNavigationCompletion
-    onNavigationCompletion = nil
-    completion?(webView, true)
-  }
-
-  func webView(
-    _ webView: WKWebView,
-    didFail navigation: WKNavigation!,
-    withError error: any Error
-  ) {
-    let completion = onNavigationCompletion
-    onNavigationCompletion = nil
-    completion?(webView, false)
-  }
-
-  func webView(
-    _ webView: WKWebView,
-    didFailProvisionalNavigation navigation: WKNavigation!,
-    withError error: any Error
-  ) {
-    let completion = onNavigationCompletion
-    onNavigationCompletion = nil
-    completion?(webView, false)
-  }
-
-  static func makeWebView(coordinator: AgentWebCoordinator) -> WKWebView {
+  fileprivate static func makeWebView(
+    coordinator: AgentWebCoordinator
+  ) -> WKWebView {
     let controller = WKUserContentController()
     controller.add(coordinator, name: "notebook")
     let configuration = WKWebViewConfiguration()
@@ -148,31 +123,31 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       options: [.caseInsensitive]
     )
     return """
-    <!doctype html>
-    <html><head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; media-src data: blob:; font-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none';">
-    <style>
-      :root { color-scheme: light; }
-      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
-      body { box-sizing: border-box; color: #171714; font: 17px/1.42 -apple-system, BlinkMacSystemFont, sans-serif; }
-      *, *::before, *::after { box-sizing: border-box; }
-      \(element.css)
-    </style>
-    <script>
-      window.notebook = Object.freeze({
-        state: \(state),
-        commit(value) {
-          window.webkit.messageHandlers.notebook.postMessage({ kind: 'state', value });
-        }
-      });
-    </script>
-    </head><body>
-    \(element.html)
-    <script>\(element.javaScript)</script>
-    </body></html>
-    """
+      <!doctype html>
+      <html><head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; media-src data: blob:; font-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none';">
+      <style>
+        :root { color-scheme: light; }
+        html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
+        body { box-sizing: border-box; color: #171714; font: 17px/1.42 -apple-system, BlinkMacSystemFont, sans-serif; }
+        *, *::before, *::after { box-sizing: border-box; }
+        \(element.css)
+      </style>
+      <script>
+        window.notebook = Object.freeze({
+          state: \(state),
+          commit(value) {
+            window.webkit.messageHandlers.notebook.postMessage({ kind: 'state', value });
+          }
+        });
+      </script>
+      </head><body>
+      \(element.html)
+      <script>\(element.javaScript)</script>
+      </body></html>
+      """
   }
 
   private static func json(_ value: JSONValue) -> String {
@@ -181,10 +156,12 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   }
 
   static func decodeState(_ object: Any) -> JSONValue? {
-    guard let data = try? JSONSerialization.data(
-      withJSONObject: object,
-      options: [.fragmentsAllowed]
-    ) else { return nil }
+    guard
+      let data = try? JSONSerialization.data(
+        withJSONObject: object,
+        options: [.fragmentsAllowed]
+      )
+    else { return nil }
     return try? JSONDecoder().decode(JSONValue.self, from: data)
   }
 }

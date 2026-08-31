@@ -137,6 +137,49 @@ final class DrawingResponsivenessTests: XCTestCase {
     )
   }
 
+  func testNotebookPageCurlCommitsThePageThatLands() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    app.launch()
+
+    let surface = app.otherElements["page-turn-surface"]
+    XCTAssertTrue(surface.waitForExistence(timeout: 5))
+    surface.swipeLeft()
+
+    let landed = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value BEGINSWITH 'Страница 2 из '"),
+      object: surface
+    )
+    wait(for: [landed], timeout: 3)
+  }
+
+  func testDocumentUsesTheSamePageTurnSurface() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-document-runtime-fixture",
+    ]
+    app.launch()
+
+    let surface = app.otherElements["page-turn-surface"]
+    XCTAssertTrue(surface.waitForExistence(timeout: 8))
+    let secondPhysicalPage = app.otherElements.matching(
+      NSPredicate(format: "label BEGINSWITH 'Страница 2 из '")
+    ).firstMatch
+    XCTAssertTrue(secondPhysicalPage.waitForExistence(timeout: 8))
+    surface.swipeLeft()
+
+    let landed = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value BEGINSWITH 'Страница 2 из '"),
+      object: surface
+    )
+    wait(for: [landed], timeout: 3)
+  }
+
   func testPageFitSurvivesPortraitLandscapePortrait() async throws {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait

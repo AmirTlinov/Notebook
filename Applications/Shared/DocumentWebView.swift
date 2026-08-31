@@ -1,80 +1,78 @@
+import NotebookCore
 import SwiftUI
 import WebKit
-import NotebookCore
 
 #if os(macOS)
-@MainActor
-final class DocumentSnapshotCache {
-  static let shared = DocumentSnapshotCache()
-  static let didChange = Notification.Name("NotebookDocumentSnapshotDidChange")
-  private static let capacity = 8
+  @MainActor
+  final class DocumentSnapshotCache {
+    static let shared = DocumentSnapshotCache()
+    static let didChange = Notification.Name("NotebookDocumentSnapshotDidChange")
+    private static let capacity = 8
 
-  private struct Entry {
-    let token: String
-    let image: NSImage
-  }
-
-  private var entries: [UUID: Entry] = [:]
-  private var order: [UUID] = []
-
-  func image(
-    for document: DocumentDocument,
-    state: DocumentStateJournal,
-    pageIndex: Int
-  ) -> NSImage? {
-    let entry = entries[document.id]
-    return entry?.token == Self.token(
-      document: document,
-      state: state,
-      pageIndex: pageIndex
-    )
-      ? entry?.image
-      : nil
-  }
-
-  func store(image: NSImage, documentID: UUID, token: String) {
-    entries[documentID] = Entry(token: token, image: image)
-    order.removeAll { $0 == documentID }
-    order.append(documentID)
-    while order.count > Self.capacity, let oldest = order.first {
-      order.removeFirst()
-      entries[oldest] = nil
+    private struct Entry {
+      let token: String
+      let image: NSImage
     }
-    NotificationCenter.default.post(name: Self.didChange, object: documentID)
+
+    private var entries: [UUID: Entry] = [:]
+    private var order: [UUID] = []
+
+    func image(
+      for document: DocumentDocument,
+      state: DocumentStateJournal,
+      pageIndex: Int
+    ) -> NSImage? {
+      let entry = entries[document.id]
+      return entry?.token
+        == Self.token(
+          document: document,
+          state: state,
+          pageIndex: pageIndex
+        )
+        ? entry?.image
+        : nil
+    }
+
+    func store(image: NSImage, documentID: UUID, token: String) {
+      entries[documentID] = Entry(token: token, image: image)
+      order.removeAll { $0 == documentID }
+      order.append(documentID)
+      while order.count > Self.capacity, let oldest = order.first {
+        order.removeFirst()
+        entries[oldest] = nil
+      }
+      NotificationCenter.default.post(name: Self.didChange, object: documentID)
+    }
+
+    nonisolated static func token(
+      document: DocumentDocument,
+      state: DocumentStateJournal,
+      pageIndex: Int
+    ) -> String {
+      precondition(document.id == state.id)
+      precondition(pageIndex >= 0)
+      return
+        "\(document.contentStamp.counter)@\(document.contentStamp.actor.uuidString.lowercased())|\(state.stamp.counter)@\(state.stamp.actor.uuidString.lowercased())|page:\(pageIndex)"
+    }
   }
 
-  nonisolated static func token(
-    document: DocumentDocument,
-    state: DocumentStateJournal,
-    pageIndex: Int
-  ) -> String {
-    precondition(document.id == state.id)
-    precondition(pageIndex >= 0)
-    return "\(document.contentStamp.counter)@\(document.contentStamp.actor.uuidString.lowercased())|\(state.stamp.counter)@\(state.stamp.actor.uuidString.lowercased())|page:\(pageIndex)"
+  private struct DocumentSnapshotRenderingKey: EnvironmentKey {
+    static let defaultValue = false
   }
-}
 
-private struct DocumentSnapshotRenderingKey: EnvironmentKey {
-  static let defaultValue = false
-}
-
-extension EnvironmentValues {
-  var rendersDocumentSnapshot: Bool {
-    get { self[DocumentSnapshotRenderingKey.self] }
-    set { self[DocumentSnapshotRenderingKey.self] = newValue }
+  extension EnvironmentValues {
+    var rendersDocumentSnapshot: Bool {
+      get { self[DocumentSnapshotRenderingKey.self] }
+      set { self[DocumentSnapshotRenderingKey.self] = newValue }
+    }
   }
-}
 #endif
 
 struct DocumentPageLayout: Equatable, Sendable {
   let pageCount: Int
-  let currentPage: Int
-  let stride: Double
 
-  init(pageCount: Int, currentPage: Int, stride: Double) {
+  init(pageCount: Int) {
     self.pageCount = max(1, pageCount)
-    self.currentPage = min(max(0, currentPage), max(1, pageCount) - 1)
-    self.stride = max(1, stride)
   }
 }
 
@@ -87,8 +85,7 @@ struct DocumentWebView: View {
   let state: DocumentStateJournal
   let isInteractive: Bool
   let selectedPageIndex: Int
-  let pagePosition: Double?
-  let usesExternalPaging: Bool
+  let capturesSnapshot: Bool
   let onPageLayout: (DocumentPageLayout) -> Void
   let onSourceChange: (String, String) -> Void
   let onStateChange: (String, JSONValue) -> Void
@@ -119,8 +116,7 @@ struct DocumentWebView: View {
       state: state,
       isInteractive: isInteractive,
       selectedPageIndex: selectedPageIndex,
-      pagePosition: pagePosition,
-      usesExternalPaging: usesExternalPaging,
+      capturesSnapshot: capturesSnapshot,
       onPageLayout: onPageLayout,
       onSourceChange: onSourceChange,
       onStateChange: onStateChange
@@ -149,15 +145,13 @@ private struct DocumentRuntimePayload: Codable {
   let blocks: [DocumentBlock]
   let states: [String: JSONValue]
   let editable: Bool
-  let externalPaging: Bool
   let renderToken: String
 
   init(
     document: DocumentDocument,
     state: DocumentStateJournal,
     editable: Bool,
-    selectedPageIndex: Int,
-    externalPaging: Bool
+    selectedPageIndex: Int
   ) {
     documentID = document.id
     paper = Paper(document.paperSize)
@@ -166,7 +160,6 @@ private struct DocumentRuntimePayload: Codable {
       uniqueKeysWithValues: state.records.map { ($0.id, $0.value) }
     )
     self.editable = editable
-    self.externalPaging = externalPaging
     #if os(macOS)
       renderToken = DocumentSnapshotCache.token(
         document: document,
@@ -174,7 +167,8 @@ private struct DocumentRuntimePayload: Codable {
         pageIndex: selectedPageIndex
       )
     #else
-      renderToken = "\(document.contentStamp.counter)@\(document.contentStamp.actor.uuidString.lowercased())|\(state.stamp.counter)@\(state.stamp.actor.uuidString.lowercased())"
+      renderToken =
+        "\(document.contentStamp.counter)@\(document.contentStamp.actor.uuidString.lowercased())|\(state.stamp.counter)@\(state.stamp.actor.uuidString.lowercased())"
     #endif
   }
 }
@@ -183,20 +177,20 @@ private struct DocumentRuntimePayloadKey: Equatable {
   let contentStamp: VersionStamp
   let stateStamp: VersionStamp
   let editable: Bool
-  let externalPaging: Bool
+  let capturesSnapshot: Bool
   let snapshotPageIndex: Int
 
   init(
     document: DocumentDocument,
     state: DocumentStateJournal,
     editable: Bool,
-    externalPaging: Bool,
+    capturesSnapshot: Bool,
     selectedPageIndex: Int
   ) {
     contentStamp = document.contentStamp
     stateStamp = state.stamp
     self.editable = editable
-    self.externalPaging = externalPaging
+    self.capturesSnapshot = capturesSnapshot
     #if os(macOS)
       snapshotPageIndex = selectedPageIndex
     #else
@@ -215,11 +209,11 @@ private final class DocumentWebCoordinator: NSObject,
   var payload: DocumentRuntimePayload?
   var payloadKey: DocumentRuntimePayloadKey?
   var lastAppliedData: Data?
-  var requestedPagePosition: Double?
-  var appliedPagePosition: Double?
-  var pagePositionUpdateIsRunning = false
-  var pageStride: Double?
+  var requestedPageIndex: Int?
+  var appliedPageIndex: Int?
+  var pageIndexUpdateIsRunning = false
   var pageCount = 1
+  var capturesSnapshot = false
   var onPageLayout: (DocumentPageLayout) -> Void
   var onSourceChange: (String, String) -> Void
   var onStateChange: (String, JSONValue) -> Void
@@ -242,8 +236,7 @@ private final class DocumentWebCoordinator: NSObject,
     state: DocumentStateJournal,
     editable: Bool,
     selectedPageIndex: Int,
-    pagePosition: Double?,
-    usesExternalPaging: Bool,
+    capturesSnapshot: Bool,
     onPageLayout: @escaping (DocumentPageLayout) -> Void,
     onSourceChange: @escaping (String, String) -> Void,
     onStateChange: @escaping (String, JSONValue) -> Void
@@ -251,12 +244,13 @@ private final class DocumentWebCoordinator: NSObject,
     self.onPageLayout = onPageLayout
     self.onSourceChange = onSourceChange
     self.onStateChange = onStateChange
-    requestedPagePosition = pagePosition
+    requestedPageIndex = max(0, selectedPageIndex)
+    self.capturesSnapshot = capturesSnapshot
     let nextKey = DocumentRuntimePayloadKey(
       document: document,
       state: state,
       editable: editable,
-      externalPaging: usesExternalPaging,
+      capturesSnapshot: capturesSnapshot,
       selectedPageIndex: selectedPageIndex
     )
     if payloadKey != nextKey {
@@ -265,12 +259,11 @@ private final class DocumentWebCoordinator: NSObject,
         document: document,
         state: state,
         editable: editable,
-        selectedPageIndex: selectedPageIndex,
-        externalPaging: usesExternalPaging
+        selectedPageIndex: selectedPageIndex
       )
       applyIfReady()
     }
-    applyPagePositionIfReady()
+    applyPageIndexIfReady()
   }
 
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -314,25 +307,17 @@ private final class DocumentWebCoordinator: NSObject,
       guard let renderToken = body["renderToken"] as? String,
         renderToken == payload.renderToken
       else { return }
-      if let pageCount = (body["pageCount"] as? NSNumber)?.intValue,
-        let currentPage = (body["currentPage"] as? NSNumber)?.intValue,
-        let stride = (body["stride"] as? NSNumber)?.doubleValue
-      {
-        pageStride = stride
+      if let pageCount = (body["pageCount"] as? NSNumber)?.intValue {
         self.pageCount = max(1, pageCount)
         onPageLayout(
-          DocumentPageLayout(
-            pageCount: pageCount,
-            currentPage: currentPage,
-            stride: stride
-          )
+          DocumentPageLayout(pageCount: pageCount)
         )
       }
-      appliedPagePosition = nil
+      appliedPageIndex = nil
       #if os(macOS)
-        pendingSnapshotPayload = payload
+        pendingSnapshotPayload = capturesSnapshot ? payload : nil
       #endif
-      applyPagePositionIfReady()
+      applyPageIndexIfReady()
       #if os(macOS)
         capturePendingSnapshotIfReady()
       #endif
@@ -373,42 +358,23 @@ private final class DocumentWebCoordinator: NSObject,
     }
   }
 
-  private func applyPagePositionIfReady() {
-    guard isReady, !pagePositionUpdateIsRunning,
+  private func applyPageIndexIfReady() {
+    guard isReady, !pageIndexUpdateIsRunning,
       let webView,
-      let requestedPagePosition,
-      requestedPagePosition.isFinite,
-      appliedPagePosition.map({ abs($0 - requestedPagePosition) > 0.000_1 })
-        ?? true
+      let requestedPageIndex,
+      appliedPageIndex != requestedPageIndex
     else { return }
 
-    #if os(iOS)
-      if payload?.externalPaging == true, let pageStride {
-        let maximum = Double(max(0, pageCount - 1))
-        let value = min(max(0, requestedPagePosition), maximum)
-        let edgePosition = requestedPagePosition - value
-        webView.scrollView.setContentOffset(
-          CGPoint(x: CGFloat(value * pageStride), y: 0),
-          animated: false
-        )
-        webView.scrollView.transform = CGAffineTransform(
-          translationX: CGFloat(-edgePosition * pageStride),
-          y: 0
-        )
-        appliedPagePosition = requestedPagePosition
-        return
-      }
-    #endif
-    let value = max(0, requestedPagePosition)
-    pagePositionUpdateIsRunning = true
+    let value = min(max(0, requestedPageIndex), max(0, pageCount - 1))
+    pageIndexUpdateIsRunning = true
     webView.evaluateJavaScript(
-      "window.notebookRenderer?.setPagePosition(\(value))"
+      "window.notebookRenderer?.setPageIndex(\(value))"
     ) { [weak self] _, _ in
       Task { @MainActor [weak self] in
         guard let self else { return }
-        appliedPagePosition = value
-        pagePositionUpdateIsRunning = false
-        applyPagePositionIfReady()
+        appliedPageIndex = value
+        pageIndexUpdateIsRunning = false
+        applyPageIndexIfReady()
         #if os(macOS)
           DispatchQueue.main.asyncAfter(deadline: .now() + 0.035) { [weak self] in
             self?.capturePendingSnapshotIfReady()
@@ -420,12 +386,11 @@ private final class DocumentWebCoordinator: NSObject,
 
   #if os(macOS)
     private func capturePendingSnapshotIfReady() {
-      guard !pagePositionUpdateIsRunning,
+      guard capturesSnapshot, !pageIndexUpdateIsRunning,
         let payload = pendingSnapshotPayload
       else { return }
-      if let requestedPagePosition {
-        guard let appliedPagePosition,
-          abs(appliedPagePosition - requestedPagePosition) <= 0.000_1
+      if let requestedPageIndex {
+        guard appliedPageIndex == requestedPageIndex
         else { return }
       }
       pendingSnapshotPayload = nil
@@ -494,10 +459,12 @@ private enum DocumentWebViewFactory {
       forResource: "document-shell",
       withExtension: "html",
       subdirectory: "WebResources"
-    ) ?? Bundle.main.url(
-      forResource: "document-shell",
-      withExtension: "html"
-    ) {
+    )
+      ?? Bundle.main.url(
+        forResource: "document-shell",
+        withExtension: "html"
+      )
+    {
       webView.loadFileURL(
         shellURL,
         allowingReadAccessTo: shellURL.deletingLastPathComponent()
@@ -513,102 +480,98 @@ private enum DocumentWebViewFactory {
 }
 
 #if os(iOS)
-private struct PlatformDocumentWebView: UIViewRepresentable {
-  let document: DocumentDocument
-  let state: DocumentStateJournal
-  let isInteractive: Bool
-  let selectedPageIndex: Int
-  let pagePosition: Double?
-  let usesExternalPaging: Bool
-  let onPageLayout: (DocumentPageLayout) -> Void
-  let onSourceChange: (String, String) -> Void
-  let onStateChange: (String, JSONValue) -> Void
+  private struct PlatformDocumentWebView: UIViewRepresentable {
+    let document: DocumentDocument
+    let state: DocumentStateJournal
+    let isInteractive: Bool
+    let selectedPageIndex: Int
+    let capturesSnapshot: Bool
+    let onPageLayout: (DocumentPageLayout) -> Void
+    let onSourceChange: (String, String) -> Void
+    let onStateChange: (String, JSONValue) -> Void
 
-  func makeCoordinator() -> DocumentWebCoordinator {
-    DocumentWebCoordinator(
-      onPageLayout: onPageLayout,
-      onSourceChange: onSourceChange,
-      onStateChange: onStateChange
-    )
-  }
+    func makeCoordinator() -> DocumentWebCoordinator {
+      DocumentWebCoordinator(
+        onPageLayout: onPageLayout,
+        onSourceChange: onSourceChange,
+        onStateChange: onStateChange
+      )
+    }
 
-  func makeUIView(context: Context) -> WKWebView {
-    DocumentWebViewFactory.make(coordinator: context.coordinator)
-  }
+    func makeUIView(context: Context) -> WKWebView {
+      DocumentWebViewFactory.make(coordinator: context.coordinator)
+    }
 
-  func updateUIView(_ view: WKWebView, context: Context) {
-    context.coordinator.update(
-      document: document,
-      state: state,
-      editable: isInteractive,
-      selectedPageIndex: selectedPageIndex,
-      pagePosition: pagePosition,
-      usesExternalPaging: usesExternalPaging,
-      onPageLayout: onPageLayout,
-      onSourceChange: onSourceChange,
-      onStateChange: onStateChange
-    )
-    view.isUserInteractionEnabled = isInteractive
-  }
+    func updateUIView(_ view: WKWebView, context: Context) {
+      context.coordinator.update(
+        document: document,
+        state: state,
+        editable: isInteractive,
+        selectedPageIndex: selectedPageIndex,
+        capturesSnapshot: capturesSnapshot,
+        onPageLayout: onPageLayout,
+        onSourceChange: onSourceChange,
+        onStateChange: onStateChange
+      )
+      view.isUserInteractionEnabled = isInteractive
+    }
 
-  static func dismantleUIView(
-    _ view: WKWebView,
-    coordinator: DocumentWebCoordinator
-  ) {
-    view.configuration.userContentController.removeScriptMessageHandler(
-      forName: "notebook"
-    )
-    view.navigationDelegate = nil
-    coordinator.webView = nil
+    static func dismantleUIView(
+      _ view: WKWebView,
+      coordinator: DocumentWebCoordinator
+    ) {
+      view.configuration.userContentController.removeScriptMessageHandler(
+        forName: "notebook"
+      )
+      view.navigationDelegate = nil
+      coordinator.webView = nil
+    }
   }
-}
 #elseif os(macOS)
-private struct PlatformDocumentWebView: NSViewRepresentable {
-  let document: DocumentDocument
-  let state: DocumentStateJournal
-  let isInteractive: Bool
-  let selectedPageIndex: Int
-  let pagePosition: Double?
-  let usesExternalPaging: Bool
-  let onPageLayout: (DocumentPageLayout) -> Void
-  let onSourceChange: (String, String) -> Void
-  let onStateChange: (String, JSONValue) -> Void
+  private struct PlatformDocumentWebView: NSViewRepresentable {
+    let document: DocumentDocument
+    let state: DocumentStateJournal
+    let isInteractive: Bool
+    let selectedPageIndex: Int
+    let capturesSnapshot: Bool
+    let onPageLayout: (DocumentPageLayout) -> Void
+    let onSourceChange: (String, String) -> Void
+    let onStateChange: (String, JSONValue) -> Void
 
-  func makeCoordinator() -> DocumentWebCoordinator {
-    DocumentWebCoordinator(
-      onPageLayout: onPageLayout,
-      onSourceChange: onSourceChange,
-      onStateChange: onStateChange
-    )
-  }
+    func makeCoordinator() -> DocumentWebCoordinator {
+      DocumentWebCoordinator(
+        onPageLayout: onPageLayout,
+        onSourceChange: onSourceChange,
+        onStateChange: onStateChange
+      )
+    }
 
-  func makeNSView(context: Context) -> WKWebView {
-    DocumentWebViewFactory.make(coordinator: context.coordinator)
-  }
+    func makeNSView(context: Context) -> WKWebView {
+      DocumentWebViewFactory.make(coordinator: context.coordinator)
+    }
 
-  func updateNSView(_ view: WKWebView, context: Context) {
-    context.coordinator.update(
-      document: document,
-      state: state,
-      editable: isInteractive,
-      selectedPageIndex: selectedPageIndex,
-      pagePosition: pagePosition,
-      usesExternalPaging: usesExternalPaging,
-      onPageLayout: onPageLayout,
-      onSourceChange: onSourceChange,
-      onStateChange: onStateChange
-    )
-  }
+    func updateNSView(_ view: WKWebView, context: Context) {
+      context.coordinator.update(
+        document: document,
+        state: state,
+        editable: isInteractive,
+        selectedPageIndex: selectedPageIndex,
+        capturesSnapshot: capturesSnapshot,
+        onPageLayout: onPageLayout,
+        onSourceChange: onSourceChange,
+        onStateChange: onStateChange
+      )
+    }
 
-  static func dismantleNSView(
-    _ view: WKWebView,
-    coordinator: DocumentWebCoordinator
-  ) {
-    view.configuration.userContentController.removeScriptMessageHandler(
-      forName: "notebook"
-    )
-    view.navigationDelegate = nil
-    coordinator.webView = nil
+    static func dismantleNSView(
+      _ view: WKWebView,
+      coordinator: DocumentWebCoordinator
+    ) {
+      view.configuration.userContentController.removeScriptMessageHandler(
+        forName: "notebook"
+      )
+      view.navigationDelegate = nil
+      coordinator.webView = nil
+    }
   }
-}
 #endif

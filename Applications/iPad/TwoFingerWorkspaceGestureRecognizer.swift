@@ -1,9 +1,5 @@
 import UIKit
 
-struct TwoFingerNavigationDecision: Equatable {
-  let direction: Int
-}
-
 enum TwoFingerMotionIntent: Equatable {
   case undecided
   case navigation
@@ -25,7 +21,7 @@ enum TwoFingerIntentArbiter {
   }
 
   static func resolve(
-    allowsPageNavigation: Bool,
+    defersHorizontalMotionToPageTurn: Bool,
     translation: CGPoint,
     fingerDisplacements: [CGPoint],
     magnification: CGFloat,
@@ -38,26 +34,30 @@ enum TwoFingerIntentArbiter {
     let secondTravel = hypot(second.x, second.y)
     let maximumTravel = max(firstTravel, secondTravel)
     let bothParticipate = min(firstTravel, secondTravel) >= participatingTravel
-    let coherent = bothParticipate
+    let coherent =
+      bothParticipate
       && first.x * second.x + first.y * second.y > 0
     let horizontal = abs(translation.x) >= abs(translation.y)
-    let horizontalAgreement = first.x * second.x > 0
+    let horizontalAgreement =
+      first.x * second.x > 0
       && min(abs(first.x), abs(second.x)) >= participatingTravel
 
     if maximumTravel >= activationTravel, coherent,
-      (!allowsPageNavigation || (horizontal && horizontalAgreement))
+      !defersHorizontalMotionToPageTurn || (horizontal && horizontalAgreement)
     {
       return .navigation
     }
 
     let scaleEvidence = abs(log(max(magnification, 0.001)))
     guard scaleEvidence >= magnificationActivation else { return .undecided }
-    let differentialTravel = hypot(
-      second.x - first.x,
-      second.y - first.y
-    ) / 2
+    let differentialTravel =
+      hypot(
+        second.x - first.x,
+        second.y - first.y
+      ) / 2
     let centroidTravel = hypot(translation.x, translation.y)
-    let radialMotionOwnsTheGesture = differentialTravel
+    let radialMotionOwnsTheGesture =
+      differentialTravel
       >= max(participatingTravel, centroidTravel * 0.8)
     guard radialMotionOwnsTheGesture,
       bothParticipate || elapsed >= evidenceDelay
@@ -99,40 +99,6 @@ enum TwoFingerUndoClassifier {
   }
 }
 
-enum TwoFingerGestureClassifier {
-  static let navigationDistance: CGFloat = 44
-  static let navigationSpeed: CGFloat = 520
-  static let minimumFingerTravel: CGFloat = 8
-
-  static func navigation(
-    translation: CGPoint,
-    velocity: CGPoint,
-    fingerDisplacements: [CGPoint]
-  ) -> TwoFingerNavigationDecision? {
-    guard fingerDisplacements.count == 2 else { return nil }
-    guard abs(translation.x) >= abs(translation.y) else { return nil }
-    let distance = translation.x
-    let speed = velocity.x
-    guard abs(distance) >= navigationDistance
-      || abs(speed) >= navigationSpeed
-    else { return nil }
-
-    let fingerTravel = fingerDisplacements.map {
-      $0.x
-    }
-    guard fingerTravel[0] * fingerTravel[1] > 0,
-      fingerTravel.allSatisfy({ abs($0) >= minimumFingerTravel })
-    else { return nil }
-
-    let directionValue = abs(distance) >= navigationDistance
-      ? distance
-      : speed
-    return TwoFingerNavigationDecision(
-      direction: directionValue < 0 ? 1 : -1
-    )
-  }
-}
-
 @MainActor
 final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   enum Intent {
@@ -168,13 +134,12 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   private(set) var translation = CGPoint.zero
   private(set) var velocity = CGPoint.zero
   private(set) var fingerDisplacements: [CGPoint] = []
-  private(set) var navigationDecision: TwoFingerNavigationDecision?
   private(set) var magnification: CGFloat = 1
   private(set) var magnificationVelocity: CGFloat = 0
   private(set) var isOpeningApproach = false
   private(set) var centroid = CGPoint.zero
 
-  var allowsPageNavigation = false
+  var defersHorizontalMotionToPageTurn = false
   weak var pencilInputGate: PencilInputGate?
 
   var startCentroidValue: CGPoint { startCentroid ?? centroid }
@@ -223,7 +188,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     switch intent {
     case .undecided:
       let motionIntent = TwoFingerIntentArbiter.resolve(
-        allowsPageNavigation: allowsPageNavigation,
+        defersHorizontalMotionToPageTurn: defersHorizontalMotionToPageTurn,
         translation: translation,
         fingerDisplacements: fingerDisplacements,
         magnification: magnification,
@@ -232,6 +197,10 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
       switch motionIntent {
       case .navigation:
         cancelHold()
+        if defersHorizontalMotionToPageTurn {
+          state = .failed
+          return
+        }
         intent = .navigation
         state = .began
       case .magnification:
@@ -272,10 +241,12 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     }
     updateMetrics()
     cancelHold()
-    navigationDecision = TwoFingerGestureClassifier.navigation(
+    let releaseIntent = TwoFingerIntentArbiter.resolve(
+      defersHorizontalMotionToPageTurn: defersHorizontalMotionToPageTurn,
       translation: translation,
-      velocity: velocity,
-      fingerDisplacements: fingerDisplacements
+      fingerDisplacements: fingerDisplacements,
+      magnification: magnification,
+      elapsed: gestureElapsed
     )
 
     switch intent {
@@ -285,7 +256,8 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
       state = .ended
     case .magnification:
       state = .ended
-    case .undecided where TwoFingerUndoClassifier.isTap(
+    case .undecided
+    where TwoFingerUndoClassifier.isTap(
       maximumFingerTravel: maximumFingerMovement,
       maximumCentroidTravel: maximumCentroidMovement,
       maximumRelativeTravel: maximumRelativeMovement,
@@ -293,9 +265,13 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     ):
       intent = .tap
       state = .recognized
-    case .undecided where navigationDecision != nil:
-      intent = .navigation
-      state = .recognized
+    case .undecided where releaseIntent == .navigation:
+      if defersHorizontalMotionToPageTurn {
+        state = .failed
+      } else {
+        intent = .navigation
+        state = .recognized
+      }
     case .tap, .undecided:
       state = .failed
     }
@@ -329,7 +305,6 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     translation = .zero
     velocity = .zero
     fingerDisplacements = []
-    navigationDecision = nil
     magnification = 1
     magnificationVelocity = 0
     isOpeningApproach = false

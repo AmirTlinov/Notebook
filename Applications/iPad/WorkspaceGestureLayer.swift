@@ -3,19 +3,17 @@ import UIKit
 
 struct WorkspaceGestureLayer: UIViewRepresentable {
   let isEnabled: Bool
-  let allowsPageNavigation: Bool
+  let defersHorizontalMotionToPageTurn: Bool
   let pencilInputGate: PencilInputGate
   let onCamera: (WorkspaceMagnificationPhase) -> Void
-  let onPageNavigation: (PageNavigationPhase) -> Void
   let onUndo: () -> Void
 
   func makeCoordinator() -> Coordinator {
     Coordinator(
-      allowsPageNavigation: allowsPageNavigation,
+      defersHorizontalMotionToPageTurn: defersHorizontalMotionToPageTurn,
       isEnabled: isEnabled,
       pencilInputGate: pencilInputGate,
       onCamera: onCamera,
-      onPageNavigation: onPageNavigation,
       onUndo: onUndo
     )
   }
@@ -32,9 +30,9 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
 
   func updateUIView(_ view: GestureAnchorView, context: Context) {
     context.coordinator.onCamera = onCamera
-    context.coordinator.onPageNavigation = onPageNavigation
     context.coordinator.onUndo = onUndo
-    context.coordinator.allowsPageNavigation = allowsPageNavigation
+    context.coordinator.defersHorizontalMotionToPageTurn =
+      defersHorizontalMotionToPageTurn
     context.coordinator.isEnabled = isEnabled
     context.coordinator.pencilInputGate = pencilInputGate
     if let window = view.window {
@@ -48,8 +46,11 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
 
   @MainActor
   final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-    var allowsPageNavigation: Bool {
-      didSet { recognizer?.allowsPageNavigation = allowsPageNavigation }
+    var defersHorizontalMotionToPageTurn: Bool {
+      didSet {
+        recognizer?.defersHorizontalMotionToPageTurn =
+          defersHorizontalMotionToPageTurn
+      }
     }
     var isEnabled: Bool {
       didSet {
@@ -57,7 +58,6 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       }
     }
     var onCamera: (WorkspaceMagnificationPhase) -> Void
-    var onPageNavigation: (PageNavigationPhase) -> Void
     var onUndo: () -> Void
     var pencilInputGate: PencilInputGate {
       didSet { recognizer?.pencilInputGate = pencilInputGate }
@@ -69,18 +69,17 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     private var repeatTask: Task<Void, Never>?
 
     init(
-      allowsPageNavigation: Bool,
+      defersHorizontalMotionToPageTurn: Bool,
       isEnabled: Bool,
       pencilInputGate: PencilInputGate,
       onCamera: @escaping (WorkspaceMagnificationPhase) -> Void,
-      onPageNavigation: @escaping (PageNavigationPhase) -> Void,
       onUndo: @escaping () -> Void
     ) {
-      self.allowsPageNavigation = allowsPageNavigation
+      self.defersHorizontalMotionToPageTurn =
+        defersHorizontalMotionToPageTurn
       self.isEnabled = isEnabled
       self.pencilInputGate = pencilInputGate
       self.onCamera = onCamera
-      self.onPageNavigation = onPageNavigation
       self.onUndo = onUndo
     }
 
@@ -103,7 +102,8 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       recognizer.cancelsTouchesInView = true
       recognizer.delaysTouchesBegan = false
       recognizer.delaysTouchesEnded = false
-      recognizer.allowsPageNavigation = allowsPageNavigation
+      recognizer.defersHorizontalMotionToPageTurn =
+        defersHorizontalMotionToPageTurn
       recognizer.pencilInputGate = pencilInputGate
       recognizer.isEnabled = isEnabled
       recognizer.delegate = self
@@ -127,12 +127,9 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       case .began where recognizer.intent == .hold:
         onUndo()
         startRepeating()
-      case .began where recognizer.intent == .navigation
-        && allowsPageNavigation:
-        repeatTask?.cancel()
-        onPageNavigation(.began(pageSample(from: recognizer)))
-      case .began where recognizer.intent == .magnification
-        || (recognizer.intent == .navigation && !allowsPageNavigation):
+      case .began
+      where recognizer.intent == .magnification
+        || recognizer.intent == .navigation:
         repeatTask?.cancel()
         onCamera(
           .began(
@@ -149,11 +146,9 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
             centroid: recognizer.centroid
           )
         )
-      case .changed where recognizer.intent == .navigation
-        && allowsPageNavigation:
-        onPageNavigation(.changed(pageSample(from: recognizer)))
-      case .changed where recognizer.intent == .magnification
-        || (recognizer.intent == .navigation && !allowsPageNavigation):
+      case .changed
+      where recognizer.intent == .magnification
+        || recognizer.intent == .navigation:
         onCamera(
           .changed(
             scale: recognizer.magnification,
@@ -169,11 +164,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
         case .tap:
           onUndo()
         case .navigation:
-          if allowsPageNavigation {
-            onPageNavigation(.ended(pageSample(from: recognizer)))
-          } else {
-            finishCamera(recognizer)
-          }
+          finishCamera(recognizer)
         case .magnification:
           finishCamera(recognizer)
         case .hold, .undecided:
@@ -182,10 +173,8 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       case .cancelled, .failed:
         repeatTask?.cancel()
         repeatTask = nil
-        if recognizer.intent == .navigation && allowsPageNavigation {
-          onPageNavigation(.cancelled)
-        } else if recognizer.intent == .magnification
-          || (recognizer.intent == .navigation && !allowsPageNavigation)
+        if recognizer.intent == .magnification
+          || recognizer.intent == .navigation
         {
           onCamera(.cancelled)
         }
@@ -213,17 +202,6 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
           elapsed: recognizer.gestureElapsed,
           centroid: recognizer.centroid
         )
-      )
-    }
-
-    private func pageSample(
-      from recognizer: TwoFingerPaperGestureRecognizer
-    ) -> PageNavigationSample {
-      let height = max(sceneView?.bounds.height ?? 1, 1)
-      return PageNavigationSample(
-        translation: recognizer.translation.x,
-        velocity: recognizer.velocity.x,
-        gripY: recognizer.startCentroidValue.y / height
       )
     }
 
@@ -591,7 +569,8 @@ final class NotebookInteractionTouchView: UIView {
   ) {
     let wasLifted = isLifted
     let translation = latestTranslation
-    let wasTap = acceptTap && !wasLifted
+    let wasTap =
+      acceptTap && !wasLifted
       && maximumTravel <= Self.movementTolerance
     liftWorkItem?.cancel()
     liftWorkItem = nil
