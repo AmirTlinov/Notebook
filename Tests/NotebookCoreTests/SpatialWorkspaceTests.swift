@@ -402,17 +402,15 @@ func pageDockingFollowsTheCurrentPinchDirection() {
     currentStrength: strength,
     startingStrength: 0
   )
-  let captured = NotebookDockingField.isCaptured(
-    correction: correction,
-    wasCaptured: false
-  )
-  #expect(captured)
+  #expect(correction.scaleWeight > 0)
   #expect(NotebookDockingField.shouldDock(
-    isCaptured: captured,
+    openProgress: 0.08,
+    isApproaching: true,
     releaseVelocity: 0
   ))
   #expect(!NotebookDockingField.shouldDock(
-    isCaptured: captured,
+    openProgress: 0.08,
+    isApproaching: false,
     releaseVelocity: -0.2
   ))
 }
@@ -429,7 +427,7 @@ func dockingCorrectionStartsFromTheCurrentVisibleCamera() {
   )
   #expect(closer.centerWeight > closer.scaleWeight)
   #expect(closer.scaleWeight > 0)
-  #expect(closer.depthProgress < 1)
+  #expect(closer.scaleWeight < 1)
   #expect(NotebookDockingField.approachCorrection(
     currentStrength: 0.7,
     startingStrength: 0.85
@@ -440,7 +438,6 @@ func dockingCorrectionStartsFromTheCurrentVisibleCamera() {
   )
   #expect(complete.centerWeight == 1)
   #expect(complete.scaleWeight == 1)
-  #expect(complete.depthProgress == 1)
 }
 
 @Test("Продолженный магнит приходит в ту же камеру, что и один жест")
@@ -496,13 +493,13 @@ func coverEngagementContinuesTheApproachCorrection() {
     startingStrength: gestureStartStrength
   )
   let firstOpeningFrame = NotebookDockingField.openingCorrection(
-    currentStrength: entryStrength,
-    entryStrength: entryStrength,
+    currentProgress: 0,
+    startingProgress: 0,
     continuingFrom: visibleAtEntry
   )
   let nextOpeningFrame = NotebookDockingField.openingCorrection(
-    currentStrength: entryStrength + 0.04,
-    entryStrength: entryStrength,
+    currentProgress: 0.04,
+    startingProgress: 0,
     continuingFrom: visibleAtEntry
   )
   let reversedApproach = NotebookDockingField.approachCorrection(
@@ -530,17 +527,14 @@ func openingCoverPullsTheCameraTowardThePaper() {
     center: startingCamera.center,
     scale: coverScale * 1.05
   )
-  let startingStrength = NotebookDockingField.strength(
-    camera: startingCamera,
-    viewport: viewport
-  )
-  let currentStrength = NotebookDockingField.strength(
-    camera: rawCamera,
-    viewport: viewport
+  let rawOpeningProgress = NotebookOpeningTransition.progress(
+    cameraScale: rawCamera.scale,
+    openingScale: startingCamera.scale,
+    pageScale: NotebookPresentation.fitScale(viewport: viewport)
   )
   let correction = NotebookDockingField.openingCorrection(
-    currentStrength: currentStrength,
-    entryStrength: startingStrength,
+    currentProgress: rawOpeningProgress,
+    startingProgress: 0,
     continuingFrom: .zero
   )
   let attracted = NotebookDockingField.attractedCamera(
@@ -558,107 +552,79 @@ func openingCoverPullsTheCameraTowardThePaper() {
     attracted.center.delta(to: target).y
   )
 
-  #expect(correction.centerWeight > 0.3)
+  #expect(correction.centerWeight > 0.15)
   #expect(correction.scaleWeight == correction.centerWeight)
-  #expect(correction.scaleWeight > 0.3)
-  #expect(remainingError < originalError * 0.7)
-  #expect(attracted.scale > rawCamera.scale * 1.07)
+  #expect(remainingError < originalError * 0.85)
+  #expect(attracted.scale > rawCamera.scale * 1.04)
 }
 
-@Test("Малый щипок остаётся свободным, а намеренный попадает в магнит")
-func openingCaptureHasAnIntentionalBasin() {
-  let viewport = SpatialPoint(x: 834, y: 1_194)
-  let coverScale = NotebookPresentation.coverScale(viewport: viewport)
-  let start = SpatialCamera(center: .zero, scale: coverScale)
-  let entryStrength = NotebookDockingField.strength(
-    camera: start,
-    viewport: viewport
+@Test("Притяжение начинается вместе с раскрытием и растёт без второй ямки")
+func openingPullFollowsTheCoverProgress() {
+  let firstVisible = NotebookDockingField.openingCorrection(
+    currentProgress: 0.01,
+    startingProgress: 0,
+    continuingFrom: .zero
   )
-  func correction(at magnification: Double) -> NotebookDockingCorrection {
-    let camera = SpatialCamera(
-      center: .zero,
-      scale: coverScale * magnification
-    )
-    return NotebookDockingField.openingCorrection(
-      currentStrength: NotebookDockingField.strength(
-        camera: camera,
-        viewport: viewport
-      ),
-      entryStrength: entryStrength,
-      continuingFrom: .zero
-    )
-  }
+  let halfway = NotebookDockingField.openingCorrection(
+    currentProgress: 0.5,
+    startingProgress: 0,
+    continuingFrom: .zero
+  )
+  let resumed = NotebookDockingField.openingCorrection(
+    currentProgress: 0.5,
+    startingProgress: 0.5,
+    continuingFrom: .zero
+  )
 
-  let accidental = correction(at: 1.02)
-  let intentional = correction(at: 1.05)
-  #expect(accidental.depthProgress < NotebookDockingField.captureEntryProgress)
-  #expect(intentional.depthProgress > NotebookDockingField.captureEntryProgress)
-  #expect(!NotebookDockingField.isCaptured(
-    correction: accidental,
-    wasCaptured: false
-  ))
-  #expect(NotebookDockingField.isCaptured(
-    correction: intentional,
-    wasCaptured: false
-  ))
-  #expect(NotebookDockingField.shouldDock(
-    isCaptured: true,
+  #expect(firstVisible.scaleWeight > 0)
+  #expect(firstVisible.scaleWeight < halfway.scaleWeight)
+  #expect(halfway.centerWeight == halfway.scaleWeight)
+  #expect(resumed == .zero)
+}
+
+@Test("Первое видимое раскрытие доезжает, а обратный щипок остаётся у руки")
+func openingReleaseUsesTheCurrentDirection() {
+  #expect(!NotebookDockingField.shouldDock(
+    openProgress: 0,
+    isApproaching: true,
     releaseVelocity: 0
   ))
-}
-
-@Test("Захват переживает дрожание и отпускает явный обратный щипок")
-func openingCaptureUsesHysteresis() {
-  let boundaryNoise = NotebookDockingCorrection(
-    centerWeight: 0.14,
-    scaleWeight: 0.14
-  )
-  let deliberateReverse = NotebookDockingCorrection(
-    centerWeight: 0.1,
-    scaleWeight: 0.1
-  )
-
-  #expect(!NotebookDockingField.isCaptured(
-    correction: boundaryNoise,
-    wasCaptured: false
+  #expect(NotebookDockingField.shouldDock(
+    openProgress: 0.01,
+    isApproaching: true,
+    releaseVelocity: 0
   ))
-  #expect(NotebookDockingField.isCaptured(
-    correction: boundaryNoise,
-    wasCaptured: true
+  #expect(!NotebookDockingField.shouldDock(
+    openProgress: 0.2,
+    isApproaching: false,
+    releaseVelocity: 0
   ))
-  #expect(!NotebookDockingField.isCaptured(
-    correction: deliberateReverse,
-    wasCaptured: true
+  #expect(!NotebookDockingField.shouldDock(
+    openProgress: 0.2,
+    isApproaching: true,
+    releaseVelocity: -0.2
   ))
 }
 
-@Test("Глубокий или быстрый захват доезжает короче")
-func capturedDockSettlementKeepsReleaseEnergy() {
-  let edge = NotebookDockingCorrection(
-    centerWeight: NotebookDockingField.captureEntryProgress,
-    scaleWeight: NotebookDockingField.captureEntryProgress
-  )
-  let deep = NotebookDockingCorrection(
-    centerWeight: 0.75,
-    scaleWeight: 0.75
-  )
+@Test("Чем ближе раскрытие, тем короче оставшийся путь")
+func openingSettlementKeepsReleaseEnergy() {
   let edgeDuration = NotebookDockingField.settlementDuration(
-    correction: edge,
+    openProgress: 0.01,
     releaseVelocity: 0
   )
   let deepDuration = NotebookDockingField.settlementDuration(
-    correction: deep,
+    openProgress: 0.75,
     releaseVelocity: 0
   )
   let thrownDuration = NotebookDockingField.settlementDuration(
-    correction: deep,
+    openProgress: 0.75,
     releaseVelocity: 1
   )
 
-  #expect(edgeDuration == 0.26)
+  #expect(edgeDuration <= 0.42)
   #expect(deepDuration < edgeDuration)
   #expect(thrownDuration < deepDuration)
-  #expect(thrownDuration >= 0.15)
+  #expect(thrownDuration >= 0.18)
 }
 
 @Test("Угол листа равен восьми физическим миллиметрам")

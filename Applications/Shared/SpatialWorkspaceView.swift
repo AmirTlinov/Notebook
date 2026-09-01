@@ -11,7 +11,8 @@ private struct CameraGestureSnapshot {
   struct BoardEngagement {
     let itemID: UUID
     let openingScale: Double
-    let dockingEntryStrength: Double
+    let rawOpeningScale: Double
+    let dockingEntryProgress: Double
     let dockingEntryCorrection: NotebookDockingCorrection
   }
 
@@ -23,7 +24,7 @@ private struct CameraGestureSnapshot {
   var isApproaching: Bool
   var boardEngagement: BoardEngagement?
   var dockingCorrection: NotebookDockingCorrection
-  var dockingIsCaptured: Bool
+  var openingWasVisible: Bool
 }
 
 struct RenderedWorkspaceItem: Identifiable {
@@ -52,7 +53,7 @@ struct SpatialWorkspaceView: View {
   @State private var settlementTask: Task<Void, Never>?
   @State private var spatialInkSurfaces = SpatialInkSurfaceRegistry()
   #if os(iOS)
-    @State private var dockingFeedback = UIImpactFeedbackGenerator(style: .soft)
+    @State private var openingFeedback = UIImpactFeedbackGenerator(style: .soft)
   #endif
 
   var body: some View {
@@ -539,7 +540,7 @@ struct SpatialWorkspaceView: View {
     case .began(let centroid, let isOpeningApproach):
       interruptSettlementForInput()
       #if os(iOS)
-        dockingFeedback.prepare()
+        openingFeedback.prepare()
       #endif
       selectedItemID = nil
       editingSpatialTextID = nil
@@ -562,6 +563,27 @@ struct SpatialWorkspaceView: View {
           viewport: presence.viewport
         )
       }
+      let boardEngagement = focusedItemID.map {
+        let coverScale = coverFocusScale(viewport: presence.viewport)
+        let fallback =
+          presence.mode == .cover
+            && presence.openProgress <= 0
+          ? presence.camera.scale
+          : coverScale * NotebookOpeningIntent.entryScaleRatio
+        let openingScale = NotebookOpeningTransition.openingScale(
+          cameraScale: presence.camera.scale,
+          pageScale: fitScale(viewport: presence.viewport),
+          progress: presence.openProgress,
+          fallback: fallback
+        )
+        return CameraGestureSnapshot.BoardEngagement(
+          itemID: $0,
+          openingScale: openingScale,
+          rawOpeningScale: openingScale,
+          dockingEntryProgress: presence.openProgress,
+          dockingEntryCorrection: .zero
+        )
+      }
       cameraGesture = CameraGestureSnapshot(
         presence: presence,
         trajectory: CameraGestureTrajectory(
@@ -574,27 +596,10 @@ struct SpatialWorkspaceView: View {
         candidateItemID: candidate,
         dockingStartStrength: dockingStartStrength,
         isApproaching: isOpeningApproach,
-        boardEngagement: focusedItemID.map {
-          let coverScale = coverFocusScale(viewport: presence.viewport)
-          let fallback =
-            presence.mode == .cover
-              && presence.openProgress <= 0.001
-            ? presence.camera.scale
-            : coverScale * NotebookOpeningIntent.entryScaleRatio
-          return CameraGestureSnapshot.BoardEngagement(
-            itemID: $0,
-            openingScale: NotebookOpeningTransition.openingScale(
-              cameraScale: presence.camera.scale,
-              pageScale: fitScale(viewport: presence.viewport),
-              progress: presence.openProgress,
-              fallback: fallback
-            ),
-            dockingEntryStrength: dockingStartStrength,
-            dockingEntryCorrection: .zero
-          )
-        },
+        boardEngagement: boardEngagement,
         dockingCorrection: .zero,
-        dockingIsCaptured: false
+        openingWasVisible:
+          presence.openProgress > 0
       )
     case .changed(let scale, let velocity, _, let centroid):
       updateMagnification(
@@ -679,15 +684,16 @@ struct SpatialWorkspaceView: View {
       snapshot.boardEngagement == nil
       ? SpatialCamera.maximumScale
       : pageScale
-    var camera = snapshot.trajectory.camera(
+    let rawCamera = snapshot.trajectory.camera(
       at: scale,
       centroid: centroid,
       maximumScale: maximumScale
     )
+    var camera = rawCamera
 
     if let boardEngagement = snapshot.boardEngagement {
       if NotebookOpeningIntent.shouldDisengage(
-        cameraScale: camera.scale,
+        cameraScale: rawCamera.scale,
         coverScale: coverScale
       ) {
         snapshot.boardEngagement = nil
@@ -736,7 +742,7 @@ struct SpatialWorkspaceView: View {
       snapshot.boardEngagement?.itemID
       ?? snapshot.candidateItemID
     let dockingStrength = NotebookDockingField.strength(
-      camera: camera,
+      camera: rawCamera,
       viewport: viewport
     )
     if let attractionTarget,
@@ -744,11 +750,16 @@ struct SpatialWorkspaceView: View {
     {
       let correction: NotebookDockingCorrection
       if let engagement = snapshot.boardEngagement,
-        dockingStrength > engagement.dockingEntryStrength
+        rawCamera.scale >= engagement.rawOpeningScale
       {
+        let rawOpeningProgress = NotebookOpeningTransition.progress(
+          cameraScale: rawCamera.scale,
+          openingScale: engagement.rawOpeningScale,
+          pageScale: pageScale
+        )
         correction = NotebookDockingField.openingCorrection(
-          currentStrength: dockingStrength,
-          entryStrength: engagement.dockingEntryStrength,
+          currentProgress: rawOpeningProgress,
+          startingProgress: engagement.dockingEntryProgress,
           continuingFrom: engagement.dockingEntryCorrection
         )
       } else {
@@ -779,20 +790,11 @@ struct SpatialWorkspaceView: View {
       snapshot.boardEngagement = CameraGestureSnapshot.BoardEngagement(
         itemID: candidate,
         openingScale: camera.scale,
-        dockingEntryStrength: dockingStrength,
+        rawOpeningScale: rawCamera.scale,
+        dockingEntryProgress: 0,
         dockingEntryCorrection: snapshot.dockingCorrection
       )
       model.selectItem(candidate)
-    }
-
-    let wasCaptured = snapshot.dockingIsCaptured
-    snapshot.dockingIsCaptured = snapshot.boardEngagement != nil
-      && NotebookDockingField.isCaptured(
-        correction: snapshot.dockingCorrection,
-        wasCaptured: wasCaptured
-      )
-    if snapshot.dockingIsCaptured && !wasCaptured {
-      performDockingCaptureFeedback()
     }
 
     let engagement = snapshot.boardEngagement
@@ -806,6 +808,11 @@ struct SpatialWorkspaceView: View {
       )
     } else {
       open = 0
+    }
+    let openingWasVisible = snapshot.openingWasVisible
+    snapshot.openingWasVisible = open > 0
+    if snapshot.openingWasVisible && !openingWasVisible {
+      performOpeningFeedback()
     }
     let mode: WorkspaceSemanticMode = candidate == nil ? .board : .cover
     snapshot.lastMagnification = scale
@@ -837,7 +844,8 @@ struct SpatialWorkspaceView: View {
       let itemID = presence.focusedItemID,
       engagement.itemID == itemID,
       NotebookDockingField.shouldDock(
-        isCaptured: snapshot.dockingIsCaptured,
+        openProgress: presence.openProgress,
+        isApproaching: snapshot.isApproaching,
         releaseVelocity: Double(velocity)
       ),
       let center = model.board?.focusedCenter(of: itemID)
@@ -856,7 +864,7 @@ struct SpatialWorkspaceView: View {
       animateSettlement(
         to: target,
         duration: NotebookDockingField.settlementDuration(
-          correction: snapshot.dockingCorrection,
+          openProgress: presence.openProgress,
           releaseVelocity: Double(velocity)
         ),
         bounce: 0.025
@@ -999,10 +1007,10 @@ struct SpatialWorkspaceView: View {
     }
   }
 
-  private func performDockingCaptureFeedback() {
+  private func performOpeningFeedback() {
     #if os(iOS)
-      dockingFeedback.impactOccurred(intensity: 0.6)
-      dockingFeedback.prepare()
+      openingFeedback.impactOccurred(intensity: 0.6)
+      openingFeedback.prepare()
     #elseif os(macOS)
       NSHapticFeedbackManager.defaultPerformer.perform(
         .alignment,

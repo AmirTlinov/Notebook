@@ -576,7 +576,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     add(proof)
   }
 
-  func testSmallOpeningReleaseStaysOutsideTheMagneticCapture() async throws {
+  func testUnrevealedCoverKeepsTheReleasedBoardCamera() async throws {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = [
@@ -598,32 +598,21 @@ final class DrawingResponsivenessTests: XCTestCase {
     let coverOffset = abs(coverFrame.midX - window.frame.midX)
     XCTAssertGreaterThan(coverOffset, 80)
 
-    notebook.pinch(withScale: 1.04, velocity: 0.1)
+    notebook.pinch(withScale: 1.005, velocity: 0.05)
     try await Task.sleep(for: .milliseconds(300))
     let releasedFrame = notebook.frame
-    let releasedOffset = abs(releasedFrame.midX - window.frame.midX)
 
-    XCTAssertGreaterThan(
-      releasedFrame.width,
-      coverFrame.width * 1.01,
-      "Даже до захвата поле должно заметно усиливать движение пальцев"
-    )
-    XCTAssertGreaterThan(releasedFrame.height, coverFrame.height * 1.01)
-    XCTAssertLessThan(
-      releasedOffset,
-      coverOffset * 0.99,
-      "Один магнит должен одновременно исправлять центр и глубину"
-    )
-    XCTAssertGreaterThan(releasedOffset, 20)
+    XCTAssertEqual(releasedFrame.width, coverFrame.width, accuracy: 3)
+    XCTAssertEqual(releasedFrame.height, coverFrame.height, accuracy: 3)
     XCTAssertFalse(app.otherElements["paper-input"].exists)
 
     let proof = XCTAttachment(screenshot: app.screenshot())
-    proof.name = "physical-cover-partial-open"
+    proof.name = "unrevealed-cover-keeps-board-camera"
     proof.lifetime = .keepAlways
     add(proof)
   }
 
-  func testCapturedOpeningReleaseFinishesTheDock() async throws {
+  func testFirstVisibleOpeningReleaseFinishesTheDock() async throws {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = [
@@ -641,18 +630,18 @@ final class DrawingResponsivenessTests: XCTestCase {
     let window = app.windows.firstMatch
     XCTAssertTrue(notebook.waitForExistence(timeout: 3))
     XCTAssertTrue(window.exists)
-    notebook.pinch(withScale: 1.05, velocity: 0.2)
+    notebook.pinch(withScale: 1.04, velocity: 0.15)
 
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(
       paper.waitForExistence(timeout: 3),
-      "После отпускания внутри магнитной ямы камера должна сама открыть лист"
+      "Первое видимое раскрытие должно само завершить путь после отпускания"
     )
     try await Task.sleep(for: .milliseconds(320))
     assertFittedAndCentered(paper.frame, in: window.frame)
 
     let proof = XCTAttachment(screenshot: app.screenshot())
-    proof.name = "captured-cover-completes-dock"
+    proof.name = "first-visible-opening-completes-dock"
     proof.lifetime = .keepAlways
     add(proof)
   }
