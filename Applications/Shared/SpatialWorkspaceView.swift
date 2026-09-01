@@ -1077,6 +1077,8 @@ private struct WorkspaceSceneItem: View {
     let screen = camera.worldToScreen(rendered.center, viewport: viewport)
     let scale = camera.scale
     let contentIsLive = openProgress > 0.001 || contentIsInteractive
+    let restingShadowVisibility =
+      CoverOpeningPhysics.restingShadowVisibility(openProgress)
     ZStack {
       if rendered.item.kind == .notebook {
         notebookContents(isLive: contentIsLive)
@@ -1107,7 +1109,9 @@ private struct WorkspaceSceneItem: View {
     .offset(y: isLifted ? -8 : 0)
     .position(x: screen.x, y: screen.y)
     .shadow(
-      color: .black.opacity((isLifted ? 0.28 : 0.13) * (1 - openProgress)),
+      color: .black.opacity(
+        (isLifted ? 0.28 : 0.13) * restingShadowVisibility
+      ),
       radius: isLifted ? 24 : max(3, 18 * scale),
       y: isLifted ? 15 : max(2, 8 * scale)
     )

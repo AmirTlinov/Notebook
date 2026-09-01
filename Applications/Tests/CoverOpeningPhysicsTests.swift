@@ -34,6 +34,26 @@ final class CoverOpeningPhysicsTests: XCTestCase {
     XCTAssertEqual(doubled, regular * 2, accuracy: 0.001)
   }
 
+  func testRestingShadowHandsSheetLightingToCurl() {
+    XCTAssertEqual(CoverOpeningPhysics.restingShadowVisibility(0), 1)
+    XCTAssertEqual(
+      CoverOpeningPhysics.restingShadowVisibility(
+        CoverOpeningPhysics.shadowHandoffProgress / 2
+      ),
+      0.5,
+      accuracy: 0.001
+    )
+    XCTAssertEqual(
+      CoverOpeningPhysics.restingShadowVisibility(
+        CoverOpeningPhysics.shadowHandoffProgress
+      ),
+      0
+    )
+    XCTAssertEqual(CoverOpeningPhysics.restingShadowVisibility(1), 0)
+    XCTAssertEqual(CoverOpeningPhysics.systemShadowSize, 0)
+    XCTAssertEqual(CoverOpeningPhysics.systemShadowAmount, 0)
+  }
+
   func testCurlCanvasCarriesTheCoverOutsideTheNotebookFrame() {
     let sheetSize = CGSize(width: 834, height: 1_194)
     let layout = CoverCurlLayout(sheetSize: sheetSize)

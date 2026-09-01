@@ -123,8 +123,9 @@ enum CoverOpeningPhysics {
   static let liveCoverLimit = 0.001
   static let warmCoverOpacity: CGFloat = 0.001
   static let curlRadiusRatio = 0.075
-  static let shadowSize: Float = 0.32
-  static let shadowAmount: Float = 0.46
+  static let shadowHandoffProgress = 0.08
+  static let systemShadowSize: Float = 0
+  static let systemShadowAmount: Float = 0
 
   static func clamped(_ progress: Double) -> Double {
     min(max(progress, 0), 1)
@@ -141,11 +142,23 @@ enum CoverOpeningPhysics {
   static func curlRadius(for extent: CGRect) -> Float {
     Float(max(1, min(extent.width, extent.height) * curlRadiusRatio))
   }
+
+  /// The resting card shadow belongs to the board. Once the cover starts
+  /// bending, Core Image's own lighting describes the sheet instead. A short
+  /// smooth handoff prevents both renderers from outlining the same rectangle.
+  static func restingShadowVisibility(_ progress: Double) -> Double {
+    let handoff = min(
+      clamped(progress) / shadowHandoffProgress,
+      1
+    )
+    let eased = handoff * handoff * (3 - 2 * handoff)
+    return 1 - eased
+  }
 }
 
 /// Gives the curling cover room to travel while the notebook keeps owning its
 /// canonical sheet-sized frame. The opening side reserves one whole cover;
-/// the smaller margins carry the filter's bend and shadow without turning
+/// the smaller margins carry the filter's bend without turning
 /// those pixels into workspace geometry or a new hit target.
 struct CoverCurlLayout: Equatable {
   static let openingTravelRatio = 1.0
@@ -603,9 +616,9 @@ struct CoverSnapshotLifecycle {
   }
 #endif
 
-/// GPU executor for the physical sheet. Core Image owns curl geometry,
-/// backside illumination, and cast shadow; this view only supplies the frozen
-/// cover pixels and the camera-owned progress value.
+/// GPU executor for the physical sheet. Core Image owns curl geometry and
+/// backside illumination; this view supplies the frozen cover pixels, clears
+/// every drawable, and presents the camera-owned progress value.
 @MainActor
 private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
   private let commandQueue: (any MTLCommandQueue)?
@@ -711,11 +724,17 @@ private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
     filter.time = Float(progress)
     filter.angle = .pi
     filter.radius = CoverOpeningPhysics.curlRadius(for: sheetExtent)
-    filter.shadowSize = CoverOpeningPhysics.shadowSize
-    filter.shadowAmount = CoverOpeningPhysics.shadowAmount
+    // CIPageCurlWithShadowTransition's cast shadow includes its opaque output
+    // extent. The fold's own lighting is the visual owner while the sheet moves,
+    // so these values keep the surrounding Metal canvas transparent.
+    filter.shadowSize = CoverOpeningPhysics.systemShadowSize
+    filter.shadowAmount = CoverOpeningPhysics.systemShadowAmount
     filter.shadowExtent = canvasExtent
 
     guard let output = filter.outputImage?.cropped(to: canvasExtent) else {
+      return
+    }
+    guard clear(texture: drawable.texture, with: commandBuffer) else {
       return
     }
     imageContext.render(
@@ -731,6 +750,27 @@ private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
     mustSignal = false
     commandBuffer.present(drawable)
     commandBuffer.commit()
+  }
+
+  private func clear(
+    texture: any MTLTexture,
+    with commandBuffer: any MTLCommandBuffer
+  ) -> Bool {
+    let descriptor = MTLRenderPassDescriptor()
+    guard let attachment = descriptor.colorAttachments[0] else {
+      return false
+    }
+    attachment.texture = texture
+    attachment.loadAction = .clear
+    attachment.storeAction = .store
+    attachment.clearColor = clearColor
+    guard
+      let encoder = commandBuffer.makeRenderCommandEncoder(
+        descriptor: descriptor
+      )
+    else { return false }
+    encoder.endEncoding()
+    return true
   }
 
   private func placedCoverImage(in sheetExtent: CGRect) -> CIImage? {

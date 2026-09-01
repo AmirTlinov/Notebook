@@ -622,6 +622,27 @@ final class DrawingResponsivenessTests: XCTestCase {
       0.005,
       "Чернила обложки должны остаться на изгибающемся физическом листе"
     )
+    let technicalBand = CGRect(
+      x: notebook.frame.minX + notebook.frame.width * 0.29,
+      y: notebook.frame.minY - 12,
+      width: notebook.frame.width * 0.36,
+      height: 9
+    )
+    let window = app.windows.firstMatch
+    XCTAssertTrue(window.exists)
+    XCTAssertLessThan(
+      opaqueGrayPixelShare(
+        in: screenshot,
+        normalizedRect: CGRect(
+          x: (technicalBand.minX - window.frame.minX) / window.frame.width,
+          y: (technicalBand.minY - window.frame.minY) / window.frame.height,
+          width: technicalBand.width / window.frame.width,
+          height: technicalBand.height / window.frame.height
+        )
+      ),
+      0.05,
+      "The physical curl keeps its overscan transparent around the fold"
+    )
     let proof = XCTAttachment(screenshot: screenshot)
     proof.name = "cover-ink-on-physical-curl"
     proof.lifetime = .keepAlways
@@ -869,6 +890,24 @@ final class DrawingResponsivenessTests: XCTestCase {
         && green >= 243
         && blue <= 243
         && red >= blue + 4
+    }
+  }
+
+  private func opaqueGrayPixelShare(
+    in screenshot: XCUIScreenshot,
+    normalizedRect: CGRect
+  ) -> Double {
+    pixelShare(in: screenshot, normalizedRect: normalizedRect) {
+      red,
+      green,
+      blue,
+      alpha in
+      let darkest = min(red, green, blue)
+      let lightest = max(red, green, blue)
+      return alpha > 240
+        && darkest >= 120
+        && lightest <= 200
+        && lightest - darkest <= 20
     }
   }
 
