@@ -103,9 +103,10 @@ final class CoverOpeningPhysicsTests: XCTestCase {
     var lifecycle = CoverSnapshotLifecycle()
 
     lifecycle.update(ownerID: ownerID, progress: 0, revision: revision)
-    lifecycle.settleAtClosedEndpoint()
-    lifecycle.update(ownerID: ownerID, progress: 0.42, revision: revision)
     lifecycle.storeCapturedCover(snapshot)
+    lifecycle.settleAtClosedEndpoint(keepingPreparedSnapshot: true)
+    lifecycle.update(ownerID: ownerID, progress: 0.42, revision: revision)
+    XCTAssertTrue(lifecycle.capturedCover === snapshot)
     lifecycle.update(ownerID: ownerID, progress: 1, revision: revision)
     lifecycle.settleAtOpenEndpoint()
     lifecycle.update(ownerID: ownerID, progress: 0.58, revision: revision)
@@ -121,15 +122,39 @@ final class CoverOpeningPhysicsTests: XCTestCase {
     var lifecycle = CoverSnapshotLifecycle()
 
     lifecycle.update(ownerID: ownerID, progress: 0, revision: firstRevision)
-    lifecycle.settleAtClosedEndpoint()
-    lifecycle.update(ownerID: ownerID, progress: 0.35, revision: firstRevision)
     lifecycle.storeCapturedCover(snapshot)
+    lifecycle.settleAtClosedEndpoint(keepingPreparedSnapshot: true)
+    lifecycle.update(ownerID: ownerID, progress: 0.35, revision: firstRevision)
     lifecycle.update(ownerID: ownerID, progress: 0.7, revision: secondRevision)
 
     XCTAssertTrue(lifecycle.capturedCover === snapshot)
 
     lifecycle.update(ownerID: ownerID, progress: 1, revision: secondRevision)
     lifecycle.settleAtOpenEndpoint()
+    XCTAssertNil(lifecycle.capturedCover)
+  }
+
+  func testClosedCoverKeepsOnlyAnArmedCurrentSnapshot() {
+    let ownerID = UUID()
+    let firstRevision = revision(title: "Cover A")
+    let secondRevision = revision(title: "Cover B")
+    let firstSnapshot = snapshot()
+    let secondSnapshot = snapshot()
+    var lifecycle = CoverSnapshotLifecycle()
+
+    lifecycle.update(ownerID: ownerID, progress: 0, revision: firstRevision)
+    lifecycle.storeCapturedCover(firstSnapshot)
+    lifecycle.settleAtClosedEndpoint(keepingPreparedSnapshot: true)
+    XCTAssertFalse(lifecycle.needsCurrentSnapshot)
+    XCTAssertTrue(lifecycle.capturedCover === firstSnapshot)
+
+    lifecycle.update(ownerID: ownerID, progress: 0, revision: secondRevision)
+    lifecycle.settleAtClosedEndpoint(keepingPreparedSnapshot: true)
+    XCTAssertTrue(lifecycle.needsCurrentSnapshot)
+    XCTAssertNil(lifecycle.capturedCover)
+
+    lifecycle.storeCapturedCover(secondSnapshot)
+    lifecycle.settleAtClosedEndpoint(keepingPreparedSnapshot: false)
     XCTAssertNil(lifecycle.capturedCover)
   }
 

@@ -158,6 +158,10 @@ struct SpatialWorkspaceView: View {
             camera: presence.camera,
             viewport: viewport,
             isFocused: presence.focusedItemID == rendered.id,
+            preparesCoverMotion: presence.focusedItemID == rendered.id
+              || cameraGesture?.candidateItemID == rendered.id
+              || selectedItemID == rendered.id
+              || model.workspace?.selectedItemID == rendered.id,
             preparesContent: preparesContent(
               rendered.id,
               presence: presence
@@ -794,7 +798,6 @@ struct SpatialWorkspaceView: View {
         dockingEntryProgress: 0,
         dockingEntryCorrection: snapshot.dockingCorrection
       )
-      model.selectItem(candidate)
     }
 
     let engagement = snapshot.boardEngagement
@@ -850,6 +853,7 @@ struct SpatialWorkspaceView: View {
       ),
       let center = model.board?.focusedCenter(of: itemID)
     {
+      model.selectItem(itemID)
       let target = SessionPresence(
         mode: openMode(for: itemID),
         camera: SpatialCamera(center: center, scale: pageScale),
@@ -1114,6 +1118,7 @@ private struct WorkspaceSceneItem: View {
   let camera: SpatialCamera
   let viewport: SpatialPoint
   let isFocused: Bool
+  let preparesCoverMotion: Bool
   let preparesContent: Bool
   let openProgress: Double
   let contentIsInteractive: Bool
@@ -1223,7 +1228,8 @@ private struct WorkspaceSceneItem: View {
       ownerID: rendered.id,
       progress: openProgress,
       revision: coverRenderingRevision,
-      backsideColor: .notebook
+      backsideColor: .notebook,
+      preparesCoverMotion: preparesCoverMotion
     ) {
       itemCover
     }
@@ -1265,7 +1271,8 @@ private struct WorkspaceSceneItem: View {
       ownerID: rendered.id,
       progress: openProgress,
       revision: coverRenderingRevision,
-      backsideColor: .document
+      backsideColor: .document,
+      preparesCoverMotion: preparesCoverMotion
     ) {
       itemCover
     }

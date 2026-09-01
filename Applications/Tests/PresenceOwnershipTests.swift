@@ -198,4 +198,30 @@ final class PresenceOwnershipTests: XCTestCase {
     XCTAssertEqual(model.presence?.camera.center, expectedCenter)
     XCTAssertEqual(model.presence?.mode, .page)
   }
+
+  @MainActor
+  func testItemSelectionChangesMemoryBeforeItsDurableWrite() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = NotebookStore(root: root)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    let size = PageSize(width: 834, height: 1_194)
+    model.start(pageSize: size)
+    let originalID = try XCTUnwrap(model.workspace?.selectedItemID)
+    let createdID = try XCTUnwrap(
+      model.createNotebook(at: WorldPoint(x: 1_200, y: 0))
+    )
+    XCTAssertEqual(try store.loadIndex().selectedItemID, createdID)
+
+    model.selectItem(originalID)
+
+    XCTAssertEqual(model.workspace?.selectedItemID, originalID)
+    for _ in 0..<100 {
+      if try store.loadIndex().selectedItemID == originalID { return }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTFail("The deferred selection was not written")
+  }
 }

@@ -22,6 +22,7 @@ struct CoverOpeningSurface<Cover: View>: View {
   let progress: Double
   let revision: CoverRenderingRevision
   let backsideColor: CoverBacksideColor
+  let preparesCoverMotion: Bool
   let cover: Cover
 
   init(
@@ -29,12 +30,14 @@ struct CoverOpeningSurface<Cover: View>: View {
     progress: Double,
     revision: CoverRenderingRevision,
     backsideColor: CoverBacksideColor,
+    preparesCoverMotion: Bool,
     @ViewBuilder cover: () -> Cover
   ) {
     self.ownerID = ownerID
     self.progress = progress
     self.revision = revision
     self.backsideColor = backsideColor
+    self.preparesCoverMotion = preparesCoverMotion
     self.cover = cover()
   }
 
@@ -44,6 +47,7 @@ struct CoverOpeningSurface<Cover: View>: View {
       progress: progress,
       revision: revision,
       backsideColor: backsideColor,
+      preparesCoverMotion: preparesCoverMotion,
       cornerRadius: NotebookGeometry.cornerRadius,
       cover: AnyView(cover.environment(model))
     )
@@ -122,6 +126,7 @@ enum CoverOpeningPhysics {
   static let endpointTolerance = 0.001
   static let liveCoverLimit = 0.001
   static let warmCoverOpacity: CGFloat = 0.001
+  static let warmCurlOpacity: CGFloat = 0.001
   static let curlRadiusRatio = 0.075
   static let shadowHandoffProgress = 0.08
   static let systemShadowSize: Float = 0
@@ -222,7 +227,10 @@ struct CoverSnapshotLifecycle {
 
   private var ownerID: UUID?
   private var capturedRevision: CoverRenderingRevision?
-  private var previousProgress = 0.0
+
+  var needsCurrentSnapshot: Bool {
+    capturedCover == nil || capturedRevision != revision
+  }
 
   mutating func update(
     ownerID: UUID,
@@ -234,22 +242,17 @@ struct CoverSnapshotLifecycle {
     if ownerChanged {
       self.ownerID = ownerID
       clearCapture()
-      previousProgress = resolvedProgress
     }
 
     self.revision = revision
     self.progress = resolvedProgress
-    if ownerChanged
-      || (CoverOpeningPhysics.isClosed(previousProgress)
-        && !CoverOpeningPhysics.isClosed(resolvedProgress))
-    {
-      clearCapture()
-    }
-    previousProgress = resolvedProgress
   }
 
-  mutating func settleAtClosedEndpoint() {
-    clearCapture()
+  mutating func settleAtClosedEndpoint(keepingPreparedSnapshot: Bool) {
+    guard keepingPreparedSnapshot, capturedRevision == revision else {
+      clearCapture()
+      return
+    }
   }
 
   mutating func settleAtOpenEndpoint() {
@@ -274,6 +277,7 @@ struct CoverSnapshotLifecycle {
     let progress: Double
     let revision: CoverRenderingRevision
     let backsideColor: CoverBacksideColor
+    let preparesCoverMotion: Bool
     let cornerRadius: CGFloat
     let cover: AnyView
 
@@ -290,6 +294,7 @@ struct CoverSnapshotLifecycle {
         progress: progress,
         revision: revision,
         backsideColor: backsideColor,
+        preparesCoverMotion: preparesCoverMotion,
         cornerRadius: cornerRadius,
         cover: cover
       )
@@ -303,6 +308,7 @@ struct CoverSnapshotLifecycle {
 
     private var lifecycle = CoverSnapshotLifecycle()
     private var backsideColor = CoverBacksideColor.notebook
+    private var preparesCoverMotion = false
     private var cornerRadius: CGFloat = 0
 
     override func viewDidLoad() {
@@ -331,6 +337,7 @@ struct CoverSnapshotLifecycle {
       progress: Double,
       revision: CoverRenderingRevision,
       backsideColor: CoverBacksideColor,
+      preparesCoverMotion: Bool,
       cornerRadius: CGFloat,
       cover: AnyView
     ) {
@@ -341,6 +348,7 @@ struct CoverSnapshotLifecycle {
       )
       coverHost.rootView = cover
       self.backsideColor = backsideColor
+      self.preparesCoverMotion = preparesCoverMotion
       self.cornerRadius = cornerRadius
 
       guard isViewLoaded else { return }
@@ -351,12 +359,14 @@ struct CoverSnapshotLifecycle {
     private func renderCurrentState() {
       guard let curlLayout = layoutSurfaces() else { return }
       if CoverOpeningPhysics.isClosed(lifecycle.progress) {
-        lifecycle.settleAtClosedEndpoint()
+        lifecycle.settleAtClosedEndpoint(
+          keepingPreparedSnapshot: preparesCoverMotion
+        )
         resetCoverHostGeometry()
         coverHost.view.isHidden = false
         coverHost.view.alpha = 1
         coverHost.view.isUserInteractionEnabled = true
-        curlView.isHidden = true
+        prepareRestingCoverIfNeeded(at: endpointWarmProgress)
         return
       }
       if CoverOpeningPhysics.isOpen(lifecycle.progress) {
@@ -368,7 +378,7 @@ struct CoverSnapshotLifecycle {
         coverHost.view.isHidden = false
         coverHost.view.alpha = CoverOpeningPhysics.warmCoverOpacity
         coverHost.view.isUserInteractionEnabled = false
-        curlView.isHidden = true
+        prepareRestingCoverIfNeeded(at: 1 - endpointWarmProgress)
         return
       }
 
@@ -383,6 +393,7 @@ struct CoverSnapshotLifecycle {
       coverHost.view.isHidden = true
       coverHost.view.isUserInteractionEnabled = false
       curlView.isHidden = false
+      curlView.alpha = 1
       curlView.update(
         cover: capturedCover,
         progress: lifecycle.progress,
@@ -402,6 +413,36 @@ struct CoverSnapshotLifecycle {
         curlView.frame = layout.canvasFrameAroundSheet
       }
       return layout
+    }
+
+    private var endpointWarmProgress: Double {
+      CoverOpeningPhysics.endpointTolerance * 2
+    }
+
+    private func prepareRestingCoverIfNeeded(at progress: Double) {
+      guard preparesCoverMotion else {
+        curlView.isHidden = true
+        return
+      }
+      if lifecycle.needsCurrentSnapshot {
+        lifecycle.storeCapturedCover(captureCover())
+      }
+      guard let capturedCover = lifecycle.capturedCover,
+        let layout = layoutSurfaces()
+      else { return }
+      // A hidden CAMetalLayer allocates its first drawable inside the person's
+      // gesture. Render one practically invisible endpoint frame while the
+      // cover rests so texture allocation and the exact Core Image graph are
+      // already warm when the sheet first bends.
+      curlView.isHidden = false
+      curlView.alpha = CoverOpeningPhysics.warmCurlOpacity
+      curlView.update(
+        cover: capturedCover,
+        progress: progress,
+        backsideColor: backsideColor,
+        cornerRadius: cornerRadius,
+        layout: layout
+      )
     }
 
     private func captureCover() -> CGImage? {
@@ -454,6 +495,7 @@ struct CoverSnapshotLifecycle {
     let progress: Double
     let revision: CoverRenderingRevision
     let backsideColor: CoverBacksideColor
+    let preparesCoverMotion: Bool
     let cornerRadius: CGFloat
     let cover: AnyView
 
@@ -467,6 +509,7 @@ struct CoverSnapshotLifecycle {
         progress: progress,
         revision: revision,
         backsideColor: backsideColor,
+        preparesCoverMotion: preparesCoverMotion,
         cornerRadius: cornerRadius,
         cover: cover
       )
@@ -480,6 +523,7 @@ struct CoverSnapshotLifecycle {
 
     private var lifecycle = CoverSnapshotLifecycle()
     private var backsideColor = CoverBacksideColor.notebook
+    private var preparesCoverMotion = false
     private var cornerRadius: CGFloat = 0
 
     override init(frame frameRect: NSRect) {
@@ -509,6 +553,7 @@ struct CoverSnapshotLifecycle {
       progress: Double,
       revision: CoverRenderingRevision,
       backsideColor: CoverBacksideColor,
+      preparesCoverMotion: Bool,
       cornerRadius: CGFloat,
       cover: AnyView
     ) {
@@ -519,6 +564,7 @@ struct CoverSnapshotLifecycle {
       )
       coverHost.rootView = cover
       self.backsideColor = backsideColor
+      self.preparesCoverMotion = preparesCoverMotion
       self.cornerRadius = cornerRadius
 
       needsLayout = true
@@ -528,11 +574,13 @@ struct CoverSnapshotLifecycle {
     private func renderCurrentState() {
       guard let curlLayout = layoutSurfaces() else { return }
       if CoverOpeningPhysics.isClosed(lifecycle.progress) {
-        lifecycle.settleAtClosedEndpoint()
+        lifecycle.settleAtClosedEndpoint(
+          keepingPreparedSnapshot: preparesCoverMotion
+        )
         resetCoverHostGeometry()
         coverHost.isHidden = false
         coverHost.alphaValue = 1
-        curlView.isHidden = true
+        prepareRestingCoverIfNeeded(at: endpointWarmProgress)
         return
       }
       if CoverOpeningPhysics.isOpen(lifecycle.progress) {
@@ -540,7 +588,7 @@ struct CoverSnapshotLifecycle {
         resetCoverHostGeometry()
         coverHost.isHidden = false
         coverHost.alphaValue = CoverOpeningPhysics.warmCoverOpacity
-        curlView.isHidden = true
+        prepareRestingCoverIfNeeded(at: 1 - endpointWarmProgress)
         return
       }
 
@@ -554,6 +602,7 @@ struct CoverSnapshotLifecycle {
 
       coverHost.isHidden = true
       curlView.isHidden = false
+      curlView.alphaValue = 1
       curlView.update(
         cover: capturedCover,
         progress: lifecycle.progress,
@@ -573,6 +622,32 @@ struct CoverSnapshotLifecycle {
         curlView.frame = layout.canvasFrameAroundSheet
       }
       return layout
+    }
+
+    private var endpointWarmProgress: Double {
+      CoverOpeningPhysics.endpointTolerance * 2
+    }
+
+    private func prepareRestingCoverIfNeeded(at progress: Double) {
+      guard preparesCoverMotion else {
+        curlView.isHidden = true
+        return
+      }
+      if lifecycle.needsCurrentSnapshot {
+        lifecycle.storeCapturedCover(captureCover())
+      }
+      guard let capturedCover = lifecycle.capturedCover,
+        let layout = layoutSurfaces()
+      else { return }
+      curlView.isHidden = false
+      curlView.alphaValue = CoverOpeningPhysics.warmCurlOpacity
+      curlView.update(
+        cover: capturedCover,
+        progress: progress,
+        backsideColor: backsideColor,
+        cornerRadius: cornerRadius,
+        layout: layout
+      )
     }
 
     private func captureCover() -> CGImage? {
@@ -616,6 +691,57 @@ struct CoverSnapshotLifecycle {
   }
 #endif
 
+/// One shared Core Image executor compiles the physical curl before a finger
+/// can ask for it. Individual covers keep their own drawable and in-flight
+/// limit, while the expensive Metal context and filter program are prepared
+/// once outside the interactive frame.
+private final class CoverCurlGPU: @unchecked Sendable {
+  static let shared = CoverCurlGPU()
+
+  let device: (any MTLDevice)?
+  let commandQueue: (any MTLCommandQueue)?
+  let imageContext: CIContext?
+
+  private init() {
+    let device = MTLCreateSystemDefaultDevice()
+    self.device = device
+    commandQueue = device?.makeCommandQueue()
+    imageContext = device.map {
+      CIContext(
+        mtlDevice: $0,
+        options: [
+          .cacheIntermediates: false,
+          .workingColorSpace: NSNull(),
+        ]
+      )
+    }
+    let imageContext = imageContext
+    DispatchQueue.global(qos: .userInitiated).async {
+      Self.prepareCurlProgram(in: imageContext)
+    }
+  }
+
+  private static func prepareCurlProgram(in context: CIContext?) {
+    guard let context else { return }
+    let extent = CGRect(x: 0, y: 0, width: 64, height: 64)
+    let input = CIImage(color: CIColor(red: 1, green: 1, blue: 1))
+      .cropped(to: extent)
+    let filter = CIFilter.pageCurlWithShadowTransition()
+    filter.inputImage = input
+    filter.targetImage = CIImage(color: .clear).cropped(to: extent)
+    filter.backsideImage = input
+    filter.extent = extent
+    filter.time = 0.01
+    filter.angle = .pi
+    filter.radius = 4
+    filter.shadowSize = CoverOpeningPhysics.systemShadowSize
+    filter.shadowAmount = CoverOpeningPhysics.systemShadowAmount
+    filter.shadowExtent = extent
+    guard let output = filter.outputImage?.cropped(to: extent) else { return }
+    _ = context.createCGImage(output, from: extent)
+  }
+}
+
 /// GPU executor for the physical sheet. Core Image owns curl geometry and
 /// backside illumination; this view supplies the frozen cover pixels, clears
 /// every drawable, and presents the camera-owned progress value.
@@ -631,19 +757,13 @@ private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
   private var backsideColor = CoverBacksideColor.notebook
   private var cornerRadius: CGFloat = 0
   private var curlLayout: CoverCurlLayout?
+  private var sourceCover: CGImage?
 
   override init(frame frameRect: CGRect, device: (any MTLDevice)? = nil) {
-    let metalDevice = device ?? MTLCreateSystemDefaultDevice()
-    commandQueue = metalDevice?.makeCommandQueue()
-    imageContext = metalDevice.map {
-      CIContext(
-        mtlDevice: $0,
-        options: [
-          .cacheIntermediates: false,
-          .workingColorSpace: NSNull(),
-        ]
-      )
-    }
+    let gpu = CoverCurlGPU.shared
+    let metalDevice = device ?? gpu.device
+    commandQueue = gpu.commandQueue
+    imageContext = gpu.imageContext
     super.init(frame: frameRect, device: metalDevice)
 
     delegate = self
@@ -679,8 +799,16 @@ private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
     cornerRadius: CGFloat,
     layout: CoverCurlLayout
   ) {
+    let resolvedProgress = CoverOpeningPhysics.clamped(progress)
+    let changed = sourceCover.map { $0 !== cover } ?? true
+      || self.progress != resolvedProgress
+      || self.backsideColor != backsideColor
+      || self.cornerRadius != cornerRadius
+      || curlLayout != layout
+    guard changed else { return }
+    sourceCover = cover
     coverImage = CIImage(cgImage: cover)
-    self.progress = CoverOpeningPhysics.clamped(progress)
+    self.progress = resolvedProgress
     self.backsideColor = backsideColor
     self.cornerRadius = cornerRadius
     curlLayout = layout

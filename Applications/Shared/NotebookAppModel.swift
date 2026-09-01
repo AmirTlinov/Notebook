@@ -350,8 +350,8 @@ final class NotebookAppModel {
       workspace.selectItem(itemID, actor: actorID)
     else { return }
     self.workspace = workspace
-    try? store.saveIndex(workspace)
     sync.send(.index(workspace))
+    scheduleWorkspaceSelectionSave(workspace, createdPage: nil)
   }
 
   @discardableResult
