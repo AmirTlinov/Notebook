@@ -3,12 +3,16 @@ import SwiftUI
 
 #if os(iOS)
   import UIKit
+#elseif os(macOS)
+  import AppKit
 #endif
 
 private struct CameraGestureSnapshot {
   struct BoardEngagement {
     let itemID: UUID
     let openingScale: Double
+    let dockingEntryStrength: Double
+    let dockingEntryCorrection: NotebookDockingCorrection
   }
 
   let presence: SessionPresence
@@ -19,6 +23,7 @@ private struct CameraGestureSnapshot {
   var isApproaching: Bool
   var boardEngagement: BoardEngagement?
   var dockingCorrection: NotebookDockingCorrection
+  var dockingIsCaptured: Bool
 }
 
 struct RenderedWorkspaceItem: Identifiable {
@@ -46,6 +51,9 @@ struct SpatialWorkspaceView: View {
   @State private var settling = false
   @State private var settlementTask: Task<Void, Never>?
   @State private var spatialInkSurfaces = SpatialInkSurfaceRegistry()
+  #if os(iOS)
+    @State private var dockingFeedback = UIImpactFeedbackGenerator(style: .soft)
+  #endif
 
   var body: some View {
     GeometryReader { geometry in
@@ -530,6 +538,9 @@ struct SpatialWorkspaceView: View {
     switch phase {
     case .began(let centroid, let isOpeningApproach):
       interruptSettlementForInput()
+      #if os(iOS)
+        dockingFeedback.prepare()
+      #endif
       selectedItemID = nil
       editingSpatialTextID = nil
       guard let presence = model.presence else { return }
@@ -577,10 +588,13 @@ struct SpatialWorkspaceView: View {
               pageScale: fitScale(viewport: presence.viewport),
               progress: presence.openProgress,
               fallback: fallback
-            )
+            ),
+            dockingEntryStrength: dockingStartStrength,
+            dockingEntryCorrection: .zero
           )
         },
-        dockingCorrection: .zero
+        dockingCorrection: .zero,
+        dockingIsCaptured: false
       )
     case .changed(let scale, let velocity, _, let centroid):
       updateMagnification(
@@ -721,17 +735,28 @@ struct SpatialWorkspaceView: View {
     let attractionTarget =
       snapshot.boardEngagement?.itemID
       ?? snapshot.candidateItemID
+    let dockingStrength = NotebookDockingField.strength(
+      camera: camera,
+      viewport: viewport
+    )
     if let attractionTarget,
       let center = model.board?.focusedCenter(of: attractionTarget)
     {
-      let dockingStrength = NotebookDockingField.strength(
-        camera: camera,
-        viewport: viewport
-      )
-      let correction = NotebookDockingField.correction(
-        currentStrength: dockingStrength,
-        startingStrength: snapshot.dockingStartStrength
-      )
+      let correction: NotebookDockingCorrection
+      if let engagement = snapshot.boardEngagement,
+        dockingStrength > engagement.dockingEntryStrength
+      {
+        correction = NotebookDockingField.openingCorrection(
+          currentStrength: dockingStrength,
+          entryStrength: engagement.dockingEntryStrength,
+          continuingFrom: engagement.dockingEntryCorrection
+        )
+      } else {
+        correction = NotebookDockingField.approachCorrection(
+          currentStrength: dockingStrength,
+          startingStrength: snapshot.dockingStartStrength
+        )
+      }
       snapshot.dockingCorrection = correction
       camera = NotebookDockingField.attractedCamera(
         camera,
@@ -753,9 +778,21 @@ struct SpatialWorkspaceView: View {
     {
       snapshot.boardEngagement = CameraGestureSnapshot.BoardEngagement(
         itemID: candidate,
-        openingScale: camera.scale
+        openingScale: camera.scale,
+        dockingEntryStrength: dockingStrength,
+        dockingEntryCorrection: snapshot.dockingCorrection
       )
       model.selectItem(candidate)
+    }
+
+    let wasCaptured = snapshot.dockingIsCaptured
+    snapshot.dockingIsCaptured = snapshot.boardEngagement != nil
+      && NotebookDockingField.isCaptured(
+        correction: snapshot.dockingCorrection,
+        wasCaptured: wasCaptured
+      )
+    if snapshot.dockingIsCaptured && !wasCaptured {
+      performDockingCaptureFeedback()
     }
 
     let engagement = snapshot.boardEngagement
@@ -796,11 +833,12 @@ struct SpatialWorkspaceView: View {
     cameraGesture = nil
     let viewport = presence.viewport
     let pageScale = fitScale(viewport: viewport)
-    if let itemID = presence.focusedItemID,
+    if let engagement = snapshot.boardEngagement,
+      let itemID = presence.focusedItemID,
+      engagement.itemID == itemID,
       NotebookDockingField.shouldDock(
-        correction: snapshot.dockingCorrection,
-        isApproaching: snapshot.isApproaching,
-        velocity: Double(velocity)
+        isCaptured: snapshot.dockingIsCaptured,
+        releaseVelocity: Double(velocity)
       ),
       let center = model.board?.focusedCenter(of: itemID)
     {
@@ -815,7 +853,14 @@ struct SpatialWorkspaceView: View {
           from: snapshot.presence
         )
       )
-      animateSettlement(to: target, duration: 0.2)
+      animateSettlement(
+        to: target,
+        duration: NotebookDockingField.settlementDuration(
+          correction: snapshot.dockingCorrection,
+          releaseVelocity: Double(velocity)
+        ),
+        bounce: 0.025
+      )
     } else {
       contentGestureActive = false
       model.updatePresence(presence, settled: true)
@@ -937,11 +982,12 @@ struct SpatialWorkspaceView: View {
 
   private func animateSettlement(
     to target: SessionPresence,
-    duration: TimeInterval
+    duration: TimeInterval,
+    bounce: Double = 0.08
   ) {
     settlementTask?.cancel()
     settling = true
-    withAnimation(.spring(duration: duration, bounce: 0.08)) {
+    withAnimation(.spring(duration: duration, bounce: bounce)) {
       model.updatePresence(target, settled: true)
     }
     settlementTask = Task { @MainActor in
@@ -951,6 +997,18 @@ struct SpatialWorkspaceView: View {
       settling = false
       settlementTask = nil
     }
+  }
+
+  private func performDockingCaptureFeedback() {
+    #if os(iOS)
+      dockingFeedback.impactOccurred(intensity: 0.6)
+      dockingFeedback.prepare()
+    #elseif os(macOS)
+      NSHapticFeedbackManager.defaultPerformer.perform(
+        .alignment,
+        performanceTime: .now
+      )
+    #endif
   }
 
   private func createItem(

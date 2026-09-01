@@ -321,31 +321,37 @@ public enum NotebookOpeningTransition {
 
 /// Turns an approached notebook into one continuous camera target. The pinch
 /// supplies the raw path; once a candidate is visibly near, this field adds a
-/// pull toward its center and full-page scale. Centering leads the scale
-/// correction, so an opening cover finds the middle of the screen without an
-/// automatic zoom taking control away from the fingers.
+/// pull toward its center and full-page scale. Centering leads during the board
+/// approach; after the cover joins the gesture, center and depth converge
+/// together toward the paper.
 public struct NotebookDockingCorrection: Equatable, Sendable {
   public let centerWeight: Double
   public let scaleWeight: Double
 
   public static let zero = Self(centerWeight: 0, scaleWeight: 0)
 
-  /// Keeps the existing release threshold expressed in the field's semantic
-  /// strength rather than tying it to either visual response curve.
-  public var completion: Double {
-    sqrt(scaleWeight)
+  /// Fraction of the remaining logarithmic distance to the full page that is
+  /// already absorbed by the field. This is also the physical capture
+  /// coordinate used at release.
+  public var depthProgress: Double {
+    scaleWeight
   }
 }
 
 public enum NotebookDockingField {
   public static let fieldStartScaleRatio = 0.52
   public static let fullStrengthScaleRatio = 0.96
-  public static let commitStrength = 0.92
+  /// Once the field owns this much of the remaining depth, releasing the
+  /// fingers lets the same camera spring finish the dock.
+  public static let captureEntryProgress = 0.18
+  /// A smaller exit threshold prevents a captured cover from chattering at the
+  /// boundary while still letting a deliberate reverse pinch release it.
+  public static let captureExitProgress = 0.12
 
-  /// The center is allowed to arrive before the automatic scale correction.
-  /// This exponent gives the cover a clear magnetic pull while preserving a
-  /// gentle, reversible first frame at the beginning of a pinch.
-  private static let centeringResponse = 1.5
+  /// During the board approach the center leads the depth. Once the cover has
+  /// joined the pinch, both dimensions use this response and the camera is
+  /// visibly pulled into the paper.
+  private static let openingResponse = 1.5
 
   public static func strength(
     camera: SpatialCamera,
@@ -388,38 +394,95 @@ public enum NotebookDockingField {
   /// visible in its starting camera. The remaining field then grows and fades
   /// as a pure function of the current raw camera, so reversing the fingers
   /// retraces the same path.
-  public static func correction(
+  public static func approachCorrection(
     currentStrength: Double,
     startingStrength: Double
   ) -> NotebookDockingCorrection {
-    guard currentStrength.isFinite, startingStrength.isFinite else {
-      return .zero
-    }
-    let current = min(max(currentStrength, 0), 1)
-    let starting = min(max(startingStrength, 0), 1)
-    guard current > starting, starting < 1 else { return .zero }
+    guard let strengths = normalizedStrengths(
+      current: currentStrength,
+      starting: startingStrength
+    ) else { return .zero }
 
     return NotebookDockingCorrection(
       centerWeight: remainingWeight(
-        current: 1 - pow(1 - current, centeringResponse),
-        starting: 1 - pow(1 - starting, centeringResponse)
+        current: openingWeight(strengths.current),
+        starting: openingWeight(strengths.starting)
       ),
       scaleWeight: remainingWeight(
-        current: current * current,
-        starting: starting * starting
+        current: strengths.current * strengths.current,
+        starting: strengths.starting * strengths.starting
       )
     )
   }
 
-  public static func shouldDock(
+  /// Continues from the exact correction visible when the cover joined the
+  /// gesture. At the entry strength this returns `base` exactly; after it,
+  /// center and logarithmic scale are absorbed together by one reversible
+  /// field.
+  public static func openingCorrection(
+    currentStrength: Double,
+    entryStrength: Double,
+    continuingFrom base: NotebookDockingCorrection
+  ) -> NotebookDockingCorrection {
+    guard let strengths = normalizedStrengths(
+      current: currentStrength,
+      starting: entryStrength
+    ) else { return base }
+    let pull = remainingWeight(
+      current: openingWeight(strengths.current),
+      starting: openingWeight(strengths.starting)
+    )
+    return compose(
+      base,
+      with: NotebookDockingCorrection(
+        centerWeight: pull,
+        scaleWeight: pull
+      )
+    )
+  }
+
+  public static func isCaptured(
     correction: NotebookDockingCorrection,
-    isApproaching: Bool,
-    velocity: Double
+    wasCaptured: Bool
   ) -> Bool {
-    correction.completion.isFinite && velocity.isFinite
-      && correction.completion >= commitStrength
-      && isApproaching
-      && velocity >= -0.05
+    let progress = correction.depthProgress
+    guard progress.isFinite else { return false }
+    let threshold = wasCaptured
+      ? captureExitProgress
+      : captureEntryProgress
+    return progress >= threshold
+  }
+
+  public static func shouldDock(
+    isCaptured: Bool,
+    releaseVelocity: Double
+  ) -> Bool {
+    isCaptured && releaseVelocity.isFinite && releaseVelocity >= -0.12
+  }
+
+  /// The camera lands quickly from a deep capture and leaves a little more
+  /// travel when the fingers release at the edge of the basin. Velocity feeds
+  /// the same spring rather than starting a second animation owner.
+  public static func settlementDuration(
+    correction: NotebookDockingCorrection,
+    releaseVelocity: Double
+  ) -> Double {
+    guard correction.depthProgress.isFinite, releaseVelocity.isFinite else {
+      return 0.26
+    }
+    let capturedProgress = min(
+      max(
+        (correction.depthProgress - captureEntryProgress)
+          / (1 - captureEntryProgress),
+        0
+      ),
+      1
+    )
+    let approachingVelocity = min(max(releaseVelocity, 0), 2) / 2
+    return min(
+      max(0.26 - capturedProgress * 0.08 - approachingVelocity * 0.03, 0.15),
+      0.26
+    )
   }
 
   private static func remainingWeight(
@@ -428,6 +491,33 @@ public enum NotebookDockingField {
   ) -> Double {
     guard starting < 1, current > starting else { return 0 }
     return (current - starting) / (1 - starting)
+  }
+
+  private static func normalizedStrengths(
+    current: Double,
+    starting: Double
+  ) -> (current: Double, starting: Double)? {
+    guard current.isFinite, starting.isFinite else { return nil }
+    let current = min(max(current, 0), 1)
+    let starting = min(max(starting, 0), 1)
+    guard current > starting, starting < 1 else { return nil }
+    return (current, starting)
+  }
+
+  private static func openingWeight(_ strength: Double) -> Double {
+    1 - pow(1 - strength, openingResponse)
+  }
+
+  private static func compose(
+    _ base: NotebookDockingCorrection,
+    with added: NotebookDockingCorrection
+  ) -> NotebookDockingCorrection {
+    NotebookDockingCorrection(
+      centerWeight: 1
+        - (1 - base.centerWeight) * (1 - added.centerWeight),
+      scaleWeight: 1
+        - (1 - base.scaleWeight) * (1 - added.scaleWeight)
+    )
   }
 
   private static func smoothstep(

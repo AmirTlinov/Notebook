@@ -40,7 +40,7 @@ final class CameraGestureTrajectoryTests: XCTestCase {
         raw,
         toward: .zero,
         viewport: viewport,
-        correction: NotebookDockingField.correction(
+        correction: NotebookDockingField.approachCorrection(
           currentStrength: fieldStrength,
           startingStrength: startingStrength
         )
@@ -125,7 +125,7 @@ final class CameraGestureTrajectoryTests: XCTestCase {
       raw,
       toward: .zero,
       viewport: viewport,
-      correction: NotebookDockingField.correction(
+      correction: NotebookDockingField.approachCorrection(
         currentStrength: fieldStrength,
         startingStrength: startingStrength
       )

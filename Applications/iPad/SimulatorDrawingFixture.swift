@@ -10,6 +10,7 @@
     static let mixedInputArgument = "--notebook-simulator-mixed-input"
     static let coverArgument = "--notebook-nearby-cover-fixture"
     static let coverEraserArgument = "--notebook-cover-eraser-fixture"
+    static let partialCoverArgument = "--notebook-partial-cover-fixture"
     static let offCenterCoverArgument = "--notebook-off-center-cover-fixture"
     static let stackArgument = "--notebook-stacked-page-fixture"
     static let lowerStackArgument = "--notebook-stacked-lower-page-fixture"
@@ -27,8 +28,12 @@
         coverArgument
       ) || ProcessInfo.processInfo.arguments.contains(offCenterCoverArgument)
         || ProcessInfo.processInfo.arguments.contains(coverEraserArgument)
+        || ProcessInfo.processInfo.arguments.contains(partialCoverArgument)
       let startsWithCoverEraser = ProcessInfo.processInfo.arguments.contains(
         coverEraserArgument
+      )
+      let startsWithPartialCover = ProcessInfo.processInfo.arguments.contains(
+        partialCoverArgument
       )
       let startsOffCenterCover = ProcessInfo.processInfo.arguments.contains(
         offCenterCoverArgument
@@ -59,11 +64,13 @@
             ? "StackedLowerPage"
             : "StackedUpperPage")
       } else if startsAtCover {
-        fixtureName = startsWithCoverEraser
-          ? "CoverEraser"
-          : (startsOffCenterCover
-            ? "OffCenterCoverTransition"
-            : "NearbyCoverTransition")
+        fixtureName = startsWithPartialCover
+          ? "PartialCover"
+          : (startsWithCoverEraser
+            ? "CoverEraser"
+            : (startsOffCenterCover
+              ? "OffCenterCoverTransition"
+              : "NearbyCoverTransition"))
       } else if ProcessInfo.processInfo.arguments.contains(
         fingerGestureArgument
       ) {
@@ -244,6 +251,12 @@
             ?? WorldPoint(x: 0, y: 0)
           let viewport = SpatialPoint(x: size.width, y: size.height)
           let coverScale = NotebookPresentation.coverScale(viewport: viewport)
+          let openProgress = startsWithPartialCover ? 0.18 : 0
+          let cameraScale = exp(
+            log(coverScale) * (1 - openProgress)
+              + log(NotebookPresentation.fitScale(viewport: viewport))
+                * openProgress
+          )
           let cameraCenter = startsOffCenterCover
             ? center.offsetBy(
               x: 100 / coverScale,
@@ -256,11 +269,11 @@
               mode: .cover,
               camera: SpatialCamera(
                 center: cameraCenter,
-                scale: coverScale
+                scale: cameraScale
               ),
               viewport: viewport,
               focusedItemID: itemID,
-              openProgress: 0
+              openProgress: openProgress
             )
           )
         }
