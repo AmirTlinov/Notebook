@@ -1128,6 +1128,7 @@ private struct WorkspaceSceneItem: View {
         ownerID: rendered.id,
         pageCount: rendered.item.pageIDs.count + 1,
         selectedIndex: notebookSelectedPageIndex,
+        allowsTrailingPageCreation: true,
         navigationIsEnabled: pageNavigationIsEnabled,
         pageIsInteractive: contentIsInteractive,
         canBeginNavigation: {
@@ -1169,6 +1170,7 @@ private struct WorkspaceSceneItem: View {
         ownerID: rendered.id,
         pageCount: max(documentPageCount, documentPageIndex + 1),
         selectedIndex: documentPageIndex,
+        allowsTrailingPageCreation: false,
         navigationIsEnabled: pageNavigationIsEnabled,
         pageIsInteractive: contentIsInteractive,
         canBeginNavigation: { true },
@@ -1277,15 +1279,11 @@ private struct WorkspaceSceneItem: View {
   }
 
   private func commitNotebookPage(_ targetIndex: Int) {
-    let currentIndex = notebookSelectedPageIndex
-    let direction = targetIndex - currentIndex
-    guard abs(direction) == 1 else { return }
-    model.afterPageInput {
-      guard model.workspace?.selectedItemID == rendered.id,
-        model.turnPage(direction) != nil
-      else { return }
-      announcePage(targetIndex + 1)
-    }
+    guard model.selectNotebookPage(
+      targetIndex,
+      notebookID: rendered.id
+    ) != nil else { return }
+    announcePage(targetIndex + 1)
   }
 
   private func commitDocumentPage(_ targetIndex: Int) {

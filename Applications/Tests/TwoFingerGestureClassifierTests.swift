@@ -4,6 +4,40 @@ import XCTest
 @testable import Notebook
 
 final class TwoFingerGestureClassifierTests: XCTestCase {
+  func testPageTurnPreparesTheSheetBeyondTheCurrentLanding() {
+    XCTAssertEqual(
+      PageTurnPrewarmWindow.indices(
+        displayedIndex: 2,
+        anticipatedIndex: 3,
+        lastDirection: nil,
+        pageCount: 8
+      ),
+      Set([1, 2, 3, 4])
+    )
+    XCTAssertEqual(
+      PageTurnPrewarmWindow.indices(
+        displayedIndex: 3,
+        anticipatedIndex: nil,
+        lastDirection: 1,
+        pageCount: 8
+      ),
+      Set([2, 3, 4, 5])
+    )
+  }
+
+  func testLateModelAcknowledgementsCannotRewindRapidLandings() {
+    var selection = PageTurnSelectionTracker(displayedIndex: 0)
+    selection.recordLocalLanding(at: 1)
+    selection.recordLocalLanding(at: 2)
+
+    XCTAssertNil(selection.externalTarget(forModelIndex: 0))
+    XCTAssertEqual(selection.displayedIndex, 2)
+    XCTAssertNil(selection.externalTarget(forModelIndex: 1))
+    XCTAssertEqual(selection.displayedIndex, 2)
+    XCTAssertNil(selection.externalTarget(forModelIndex: 2))
+    XCTAssertFalse(selection.awaitsLocalAcknowledgement)
+  }
+
   @MainActor
   func testIPadPageTurnUsesTheSystemPageCurl() {
     let controller = IPadPageTurnController()
@@ -15,6 +49,103 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
       .horizontal
     )
     XCTAssertFalse(controller.pageViewController.isDoubleSided)
+  }
+
+  @MainActor
+  func testIPadCurlPrewarmsTheFollowingLivePageBeforeLanding() throws {
+    let controller = IPadPageTurnController()
+    let ownerID = UUID()
+    let renderPage:
+      @MainActor (Int, Bool, PageTurnReadiness) -> AnyView = {
+        index, _, readiness in
+        readiness(true)
+        return AnyView(Text("Page \(index)"))
+      }
+    controller.update(
+      ownerID: ownerID,
+      pageCount: 5,
+      selectedIndex: 1,
+      navigationIsEnabled: true,
+      pageIsInteractive: true,
+      canBeginNavigation: { true },
+      page: renderPage,
+      onCommit: { _ in },
+      onTransitioningChange: { _ in }
+    )
+    controller.loadViewIfNeeded()
+    let current = try XCTUnwrap(
+      controller.pageViewController.viewControllers?.first
+    )
+    let target = try XCTUnwrap(
+      controller.pageViewController(
+        controller.pageViewController,
+        viewControllerAfter: current
+      )
+    )
+
+    controller.pageViewController(
+      controller.pageViewController,
+      willTransitionTo: [target]
+    )
+
+    XCTAssertNotNil(
+      controller.cachedPageIdentities[3],
+      "Пока лист 2 ещё в руке, лист 3 уже должен показать первый живой кадр"
+    )
+  }
+
+  @MainActor
+  func testTrailingNotebookLandingExposesTheNextBlankSheetImmediately() throws {
+    let controller = IPadPageTurnController()
+    let ownerID = UUID()
+    let renderPage:
+      @MainActor (Int, Bool, PageTurnReadiness) -> AnyView = {
+        index, _, readiness in
+        readiness(true)
+        return AnyView(Text("Page \(index)"))
+      }
+    controller.update(
+      ownerID: ownerID,
+      pageCount: 2,
+      selectedIndex: 0,
+      allowsTrailingPageCreation: true,
+      navigationIsEnabled: true,
+      pageIsInteractive: true,
+      canBeginNavigation: { true },
+      page: renderPage,
+      onCommit: { _ in },
+      onTransitioningChange: { _ in }
+    )
+    controller.loadViewIfNeeded()
+    let current = try XCTUnwrap(
+      controller.pageViewController.viewControllers?.first
+    )
+    let target = try XCTUnwrap(
+      controller.pageViewController(
+        controller.pageViewController,
+        viewControllerAfter: current
+      )
+    )
+    controller.pageViewController(
+      controller.pageViewController,
+      willTransitionTo: [target]
+    )
+    controller.pageViewController.setViewControllers(
+      [target],
+      direction: .forward,
+      animated: false
+    )
+    controller.pageViewController(
+      controller.pageViewController,
+      didFinishAnimating: true,
+      previousViewControllers: [current],
+      transitionCompleted: true
+    )
+
+    XCTAssertNotNil(
+      controller.cachedPageIdentities[2],
+      "Новый чистый лист должен существовать до следующего движения пальца"
+    )
   }
 
   @MainActor

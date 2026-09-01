@@ -37,7 +37,8 @@ final class IPadPageTurnController: UIViewController,
   private var ownerID: UUID?
   private var pageCount = 1
   private var selectedIndex = 0
-  private(set) var displayedIndex = 0
+  private var selection = PageTurnSelectionTracker(displayedIndex: 0)
+  private var allowsTrailingPageCreation = false
   private var navigationIsEnabled = false
   private var pageIsInteractive = false
   private var canBeginNavigation: @MainActor () -> Bool = { true }
@@ -56,8 +57,11 @@ final class IPadPageTurnController: UIViewController,
   private var hasInstalledPage = false
   private var isTransitioning = false
   private var pendingExternalIndex: Int?
-  private var pendingModelCommit: (source: Int, target: Int)?
+  private var anticipatedIndex: Int?
+  private var lastTurnDirection: Int?
   private var transitionRevision: UInt64 = 0
+
+  var displayedIndex: Int { selection.displayedIndex }
 
   override func viewDidLoad() {
     super.viewDidLoad()
@@ -97,6 +101,7 @@ final class IPadPageTurnController: UIViewController,
     ownerID: UUID,
     pageCount: Int,
     selectedIndex: Int,
+    allowsTrailingPageCreation: Bool = false,
     navigationIsEnabled: Bool,
     pageIsInteractive: Bool,
     canBeginNavigation: @escaping @MainActor () -> Bool,
@@ -111,7 +116,13 @@ final class IPadPageTurnController: UIViewController,
   ) {
     let ownerChanged = self.ownerID != ownerID
     self.ownerID = ownerID
-    self.pageCount = max(1, pageCount)
+    self.allowsTrailingPageCreation = allowsTrailingPageCreation
+    let reportedPageCount = max(1, pageCount)
+    self.pageCount =
+      !ownerChanged && allowsTrailingPageCreation
+        && selection.awaitsLocalAcknowledgement
+      ? max(self.pageCount, reportedPageCount)
+      : reportedPageCount
     self.selectedIndex = min(max(0, selectedIndex), self.pageCount - 1)
     self.navigationIsEnabled = navigationIsEnabled
     self.pageIsInteractive = pageIsInteractive
@@ -124,21 +135,14 @@ final class IPadPageTurnController: UIViewController,
       transitionRevision &+= 1
       setTransitioning(false)
       pendingExternalIndex = nil
-      pendingModelCommit = nil
-      displayedIndex = self.selectedIndex
+      anticipatedIndex = nil
+      lastTurnDirection = nil
+      selection.reset(to: self.selectedIndex)
       if isViewLoaded { replaceOwnerPages() }
-    } else if let pendingModelCommit {
-      if self.selectedIndex == pendingModelCommit.target {
-        self.pendingModelCommit = nil
-        if displayedIndex != self.selectedIndex {
-          requestExternalSelection(self.selectedIndex)
-        }
-      } else if self.selectedIndex != pendingModelCommit.source {
-        self.pendingModelCommit = nil
-        requestExternalSelection(self.selectedIndex)
-      }
-    } else if displayedIndex != self.selectedIndex {
-      requestExternalSelection(self.selectedIndex)
+    } else if let target = selection.externalTarget(
+      forModelIndex: self.selectedIndex
+    ) {
+      requestExternalSelection(target)
     }
 
     guard isViewLoaded else { return }
@@ -180,6 +184,8 @@ final class IPadPageTurnController: UIViewController,
       cancelSystemGestures()
       return
     }
+    anticipatedIndex = target.pageIndex
+    retainNeededControllers()
     setTransitioning(true)
     refreshControllerState()
   }
@@ -195,15 +201,26 @@ final class IPadPageTurnController: UIViewController,
         as? IPadIndexedPageHostingController
     {
       let source = displayedIndex
-      displayedIndex = visible.pageIndex
-      if displayedIndex != selectedIndex {
-        pendingModelCommit = (source: source, target: displayedIndex)
+      let target = visible.pageIndex
+      if target == selectedIndex {
+        selection.recordExternalLanding(at: target)
+      } else {
+        selection.recordLocalLanding(at: target)
       }
+      if allowsTrailingPageCreation, target == pageCount - 1,
+        pageCount < Int.max
+      {
+        pageCount += 1
+      }
+      lastTurnDirection = target == source ? nil : (target > source ? 1 : -1)
     } else if let previous = previousViewControllers.first
       as? IPadIndexedPageHostingController
     {
-      displayedIndex = previous.pageIndex
+      if previous.pageIndex != displayedIndex {
+        selection.recordExternalLanding(at: previous.pageIndex)
+      }
     }
+    anticipatedIndex = nil
 
     setTransitioning(false)
     retainNeededControllers()
@@ -294,11 +311,12 @@ final class IPadPageTurnController: UIViewController,
 
   private func retainNeededControllers() {
     guard isViewLoaded else { return }
-    var required = Set<Int>()
-    for index in (displayedIndex - 1)...(displayedIndex + 1)
-    where index >= 0 && index < pageCount {
-      required.insert(index)
-    }
+    var required = PageTurnPrewarmWindow.indices(
+      displayedIndex: displayedIndex,
+      anticipatedIndex: anticipatedIndex,
+      lastDirection: lastTurnDirection,
+      pageCount: pageCount
+    )
     if let pendingExternalIndex { required.insert(clamped(pendingExternalIndex)) }
 
     for index in required {
@@ -397,6 +415,8 @@ final class IPadPageTurnController: UIViewController,
     }
 
     pendingExternalIndex = nil
+    anticipatedIndex = target
+    retainNeededControllers()
     transitionRevision &+= 1
     let revision = transitionRevision
     let adjacent = abs(target - displayedIndex) == 1
@@ -434,7 +454,12 @@ final class IPadPageTurnController: UIViewController,
   }
 
   private func completeExternalSelection(_ target: Int, finished: Bool) {
-    if finished { displayedIndex = target }
+    if finished {
+      let source = displayedIndex
+      selection.recordExternalLanding(at: target)
+      lastTurnDirection = target > source ? 1 : -1
+    }
+    anticipatedIndex = nil
     setTransitioning(false)
     retainNeededControllers()
     refreshRenderedPages()
@@ -443,7 +468,7 @@ final class IPadPageTurnController: UIViewController,
   }
 
   private func runPendingExternalSelection() {
-    guard pendingModelCommit == nil else { return }
+    guard !selection.awaitsLocalAcknowledgement else { return }
     let target = pendingExternalIndex ?? selectedIndex
     guard target != displayedIndex else {
       pendingExternalIndex = nil

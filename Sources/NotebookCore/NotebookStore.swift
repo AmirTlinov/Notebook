@@ -339,6 +339,42 @@ public struct NotebookStore: Sendable {
     }
   }
 
+  /// Persists a page landing without putting filesystem latency on the hand.
+  /// The caller may run this off the main actor. Under the store lock the
+  /// newest catalog wins, and a newly created page is written before the first
+  /// catalog that can expose it.
+  @discardableResult
+  public func saveWorkspaceSelection(
+    index: WorkspaceIndex,
+    createdPage: PageDocument?
+  ) throws -> WorkspaceIndex {
+    guard index.isValid else { throw corruptFile(at: indexURL) }
+    if let createdPage {
+      guard createdPage.isValid,
+        index.items.contains(where: { $0.pageIDs.contains(createdPage.id) })
+      else { throw corruptFile(at: indexURL) }
+    }
+    try prepare()
+    return try withMutationLock {
+      var resolved = index
+      if FileManager.default.fileExists(atPath: indexURL.path) {
+        let disk = try decoder.decode(
+          WorkspaceIndex.self,
+          from: Data(contentsOf: indexURL)
+        )
+        guard disk.isValid else { throw corruptFile(at: indexURL) }
+        _ = resolved.merge(disk)
+      }
+      if let createdPage,
+        resolved.items.contains(where: { $0.pageIDs.contains(createdPage.id) })
+      {
+        try writePage(createdPage)
+      }
+      try encoder.encode(resolved).write(to: indexURL, options: [.atomic])
+      return resolved
+    }
+  }
+
   public func saveBoard(
     _ board: BoardDocument,
     itemIDs: Set<UUID>

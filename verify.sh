@@ -5,8 +5,13 @@ ROOT=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
 DERIVED=$(mktemp -d "${TMPDIR:-/tmp}/notebook-derived.XXXXXX")
 SIMULATOR_ID=""
 SHUTDOWN_SIMULATOR=false
+MAC_SMOKE_PID=""
 
 cleanup() {
+  if [[ -n "$MAC_SMOKE_PID" ]]; then
+    kill "$MAC_SMOKE_PID" >/dev/null 2>&1 || true
+    wait "$MAC_SMOKE_PID" >/dev/null 2>&1 || true
+  fi
   if [[ "$SHUTDOWN_SIMULATOR" == true && -n "$SIMULATOR_ID" ]]; then
     xcrun simctl shutdown "$SIMULATOR_ID" >/dev/null 2>&1 || true
   fi
@@ -130,6 +135,22 @@ xcodebuild \
   -derivedDataPath "$DERIVED/mac" \
   CODE_SIGNING_ALLOWED=NO \
   build
+MAC_SMOKE_APP="$DERIVED/mac/Build/Products/Debug/Notebook.app"
+MAC_SMOKE_LOG="$DERIVED/mac-document-launch.log"
+"$MAC_SMOKE_APP/Contents/MacOS/Notebook" \
+  --notebook-mac-document-launch-fixture \
+  >"$MAC_SMOKE_LOG" 2>&1 &
+MAC_SMOKE_PID=$!
+sleep 5
+if ! kill -0 "$MAC_SMOKE_PID" >/dev/null 2>&1; then
+  cat "$MAC_SMOKE_LOG" >&2
+  printf '%s\n' \
+    'Mac должен открыть живой многостраничный WebKit-документ.' >&2
+  exit 1
+fi
+kill "$MAC_SMOKE_PID" >/dev/null 2>&1 || true
+wait "$MAC_SMOKE_PID" >/dev/null 2>&1 || true
+MAC_SMOKE_PID=""
 xcodebuild \
   -quiet \
   -project Notebook.xcodeproj \

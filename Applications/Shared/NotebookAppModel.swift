@@ -7,16 +7,37 @@ typealias PencilInputFinisher = (@escaping PencilInputCompletion) -> Void
 
 @MainActor
 final class PencilInputGate {
-  private var pageFinisher: PencilInputFinisher?
+  private var pageFinishers: [UUID: PencilInputFinisher] = [:]
+  private var currentPageSource: UUID?
   private var activePencilSources: Set<UUID> = []
   private var fingerSequenceRevision: UInt64 = 0
 
-  func registerPageFinisher(_ finisher: @escaping PencilInputFinisher) {
-    pageFinisher = finisher
+  func registerPageFinisher(
+    source: UUID,
+    _ finisher: @escaping PencilInputFinisher
+  ) {
+    pageFinishers[source] = finisher
+  }
+
+  func unregisterPageFinisher(source: UUID) {
+    pageFinishers[source] = nil
+    if currentPageSource == source { currentPageSource = nil }
+  }
+
+  /// Several live sheets may be mounted for a curl, but only the sheet that
+  /// currently accepts Pencil is allowed to delay a following command.
+  func setCurrentPageSource(_ source: UUID, isCurrent: Bool) {
+    if isCurrent {
+      currentPageSource = source
+    } else if currentPageSource == source {
+      currentPageSource = nil
+    }
   }
 
   func performAfterPageInput(_ action: @escaping PencilInputCompletion) {
-    if let pageFinisher {
+    if let currentPageSource,
+      let pageFinisher = pageFinishers[currentPageSource]
+    {
       pageFinisher(action)
     } else {
       action()
@@ -51,6 +72,11 @@ final class NotebookAppModel {
     case loading
     case ready
     case failed(String)
+  }
+
+  private enum PresencePersistence {
+    case immediate
+    case deferred
   }
 
   static let initialNotebookID = UUID(
@@ -92,6 +118,8 @@ final class NotebookAppModel {
   private var stagedRemoteIndex: WorkspaceIndex?
   private var stagedRemoteBoard: BoardDocument?
   private var spatialInkSaveTask: Task<Void, Never>?
+  private var workspaceSelectionSaveTail: Task<Void, Never>?
+  private var presenceSaveTail: Task<Void, Never>?
   private var cueTask: Task<Void, Never>?
   private var pencilUndoHistory = PencilUndoHistory()
   private var reservedDrawingCounters: [UUID: UInt64] = [:]
@@ -219,23 +247,31 @@ final class NotebookAppModel {
   }
 
   @discardableResult
-  func turnPage(_ direction: Int) -> Int? {
-    guard var workspace else { return nil }
-    let created = workspace.turnPage(
-      by: direction,
-      actor: actorID,
-      pageSize: pageSize
-    )
-    guard workspace != self.workspace else { return nil }
-    if let created {
-      pages[created.id] = created
-      try? store.savePage(created)
-      sync.send(.page(created))
+  func selectNotebookPage(
+    _ pageIndex: Int,
+    notebookID: UUID
+  ) -> Int? {
+    guard var workspace,
+      let selection = workspace.selectPage(
+        at: pageIndex,
+        in: notebookID,
+        actor: actorID,
+        pageSize: pageSize
+      )
+    else { return nil }
+    if let createdPage = selection.createdPage {
+      pages[createdPage.id] = createdPage
     }
     self.workspace = workspace
-    try? store.saveIndex(workspace)
+    if let createdPage = selection.createdPage {
+      sync.send(.page(createdPage))
+    }
     sync.send(.index(workspace))
-    return workspace.selectedPageIndex
+    scheduleWorkspaceSelectionSave(
+      workspace,
+      createdPage: selection.createdPage
+    )
+    return selection.pageIndex
   }
 
   @discardableResult
@@ -414,6 +450,18 @@ final class NotebookAppModel {
   }
 
   func updatePresence(_ presence: SessionPresence, settled: Bool) {
+    applyPresence(
+      presence,
+      settled: settled,
+      persistence: .immediate
+    )
+  }
+
+  private func applyPresence(
+    _ presence: SessionPresence,
+    settled: Bool,
+    persistence: PresencePersistence
+  ) {
     guard presence.isValid else { return }
     let resolved: SessionPresence
     if settled, let workspace {
@@ -436,10 +484,10 @@ final class NotebookAppModel {
       sync.send(.presence(envelope))
       if settled {
         lastSettledPresenceEnvelope = envelope
-        try? store.savePresence(resolved)
+        persistPresence(resolved, using: persistence)
       }
     #else
-      if settled { try? store.savePresence(resolved) }
+      if settled { persistPresence(resolved, using: persistence) }
     #endif
   }
 
@@ -462,7 +510,7 @@ final class NotebookAppModel {
       presence.documentPageIndex != pageIndex
     else { return nil }
 
-    updatePresence(
+    applyPresence(
       SessionPresence(
         mode: presence.mode,
         camera: presence.camera,
@@ -471,7 +519,8 @@ final class NotebookAppModel {
         openProgress: presence.openProgress,
         documentPageIndex: pageIndex
       ),
-      settled: true
+      settled: true,
+      persistence: .deferred
     )
     #if os(macOS)
       if publishesRequest {
@@ -1091,6 +1140,44 @@ final class NotebookAppModel {
         spatialInk = resolved
       }
       spatialInkSaveTask = nil
+    }
+  }
+
+  private func scheduleWorkspaceSelectionSave(
+    _ workspace: WorkspaceIndex,
+    createdPage: PageDocument?
+  ) {
+    let previous = workspaceSelectionSaveTail
+    let store = store
+    workspaceSelectionSaveTail = Task.detached(priority: .utility) {
+      if let previous { await previous.value }
+      guard !Task.isCancelled else { return }
+      _ = try? store.saveWorkspaceSelection(
+        index: workspace,
+        createdPage: createdPage
+      )
+    }
+  }
+
+  private func schedulePresenceSave(_ presence: SessionPresence) {
+    let previous = presenceSaveTail
+    let store = store
+    presenceSaveTail = Task.detached(priority: .utility) {
+      if let previous { await previous.value }
+      guard !Task.isCancelled else { return }
+      try? store.savePresence(presence)
+    }
+  }
+
+  private func persistPresence(
+    _ presence: SessionPresence,
+    using persistence: PresencePersistence
+  ) {
+    switch persistence {
+    case .immediate:
+      try? store.savePresence(presence)
+    case .deferred:
+      schedulePresenceSave(presence)
     }
   }
 

@@ -226,8 +226,9 @@ func documentSelectionHasNoNotebookPage() throws {
   #expect(workspace.selectedItemID == document.id)
   #expect(workspace.selectedPageID == nil)
   #expect(workspace.isValid)
-  #expect(workspace.turnPage(
-    by: 1,
+  #expect(workspace.selectPage(
+    at: 0,
+    in: document.id,
     actor: legacyActor,
     pageSize: initial.page.size
   ) == nil)

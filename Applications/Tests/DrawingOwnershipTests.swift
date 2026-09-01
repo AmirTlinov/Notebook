@@ -216,6 +216,36 @@ final class DrawingOwnershipTests: XCTestCase {
   }
 
   @MainActor
+  func testPrewarmedSheetCannotReplaceTheCurrentPageFinisher() {
+    let gate = PencilInputGate()
+    let current = UUID()
+    let neighbour = UUID()
+    var events: [String] = []
+
+    gate.registerPageFinisher(source: current) { completion in
+      events.append("current")
+      completion()
+    }
+    gate.setCurrentPageSource(current, isCurrent: true)
+    gate.registerPageFinisher(source: neighbour) { completion in
+      events.append("neighbour")
+      completion()
+    }
+    gate.setCurrentPageSource(neighbour, isCurrent: false)
+
+    gate.performAfterPageInput { events.append("action") }
+    XCTAssertEqual(events, ["current", "action"])
+
+    gate.setCurrentPageSource(current, isCurrent: false)
+    gate.setCurrentPageSource(neighbour, isCurrent: true)
+    gate.performAfterPageInput { events.append("next action") }
+    XCTAssertEqual(
+      events,
+      ["current", "action", "neighbour", "next action"]
+    )
+  }
+
+  @MainActor
   func testRemoteDrawingWinsWhenItIsNewerThanAReservedLocalAction() throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)

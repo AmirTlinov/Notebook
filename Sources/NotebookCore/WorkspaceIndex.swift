@@ -52,6 +52,28 @@ public struct WorkspaceItem: Codable, Equatable, Identifiable, Sendable {
   }
 }
 
+/// The exact durable consequence of selecting a notebook sheet. Existing
+/// sheets return only their identity; selecting the one provisional sheet at
+/// the end also returns the new page that must be published before the index.
+public struct WorkspacePageSelection: Equatable, Sendable {
+  public let itemID: UUID
+  public let pageIndex: Int
+  public let pageID: UUID
+  public let createdPage: PageDocument?
+
+  public init(
+    itemID: UUID,
+    pageIndex: Int,
+    pageID: UUID,
+    createdPage: PageDocument?
+  ) {
+    self.itemID = itemID
+    self.pageIndex = pageIndex
+    self.pageID = pageID
+    self.createdPage = createdPage
+  }
+}
+
 public struct WorkspaceIndex: Codable, Equatable, Sendable {
   public static let formatVersion = 2
   public static let maximumTitleLength = 240
@@ -237,31 +259,48 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
   }
 
   @discardableResult
-  public mutating func turnPage(
-    by direction: Int,
+  public mutating func selectPage(
+    at pageIndex: Int,
+    in itemID: UUID,
     actor: UUID,
     pageSize: PageSize
-  ) -> PageDocument? {
-    precondition(direction == -1 || direction == 1)
-    guard selectedItem.kind == .notebook,
-      let selectedPageID,
-      let nextStamp = stamp.advanced(by: actor)
+  ) -> WorkspacePageSelection? {
+    guard pageIndex >= 0,
+      selectedItemID == itemID,
+      selectedItem.kind == .notebook,
+      let selectedPageID
     else { return nil }
     let itemIndex = selectedItemIndex
-    guard let pageIndex = items[itemIndex].pageIDs.firstIndex(of: selectedPageID)
+    guard let currentIndex = items[itemIndex].pageIDs.firstIndex(
+      of: selectedPageID
+    ),
+      pageIndex != currentIndex,
+      pageIndex <= items[itemIndex].pageIDs.count,
+      let nextStamp = stamp.advanced(by: actor)
     else { return nil }
-    let target = pageIndex + direction
-    if target >= 0 && target < items[itemIndex].pageIDs.count {
-      self.selectedPageID = items[itemIndex].pageIDs[target]
+
+    if pageIndex < items[itemIndex].pageIDs.count {
+      let pageID = items[itemIndex].pageIDs[pageIndex]
+      self.selectedPageID = pageID
       stamp = nextStamp
-      return nil
+      return WorkspacePageSelection(
+        itemID: itemID,
+        pageIndex: pageIndex,
+        pageID: pageID,
+        createdPage: nil
+      )
     }
-    guard direction > 0 else { return nil }
+
     let page = PageDocument(size: pageSize, actor: actor)
     items[itemIndex].pageIDs.append(page.id)
     self.selectedPageID = page.id
     stamp = nextStamp
-    return page
+    return WorkspacePageSelection(
+      itemID: itemID,
+      pageIndex: pageIndex,
+      pageID: page.id,
+      createdPage: page
+    )
   }
 
   public mutating func merge(_ other: Self) -> Bool {

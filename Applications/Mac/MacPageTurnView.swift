@@ -29,7 +29,8 @@ final class MacPageTurnView: NSView {
   private var ownerID: UUID?
   private var pageCount = 1
   private var selectedIndex = 0
-  private(set) var displayedIndex = 0
+  private var selection = PageTurnSelectionTracker(displayedIndex: 0)
+  private var allowsTrailingPageCreation = false
   private var navigationIsEnabled = false
   private var pageIsInteractive = false
   private var canBeginNavigation: @MainActor () -> Bool = { true }
@@ -52,12 +53,15 @@ final class MacPageTurnView: NSView {
   private var movingPageIndex: Int?
   private var pendingGestureIndex: Int?
   private var pendingExternalIndex: Int?
-  private var pendingModelCommit: (source: Int, target: Int)?
+  private var anticipatedIndex: Int?
+  private var lastTurnDirection: Int?
   private var eventMonitor: Any?
   private var syntheticEndTask: Task<Void, Never>?
   private var transitionRevision: UInt64 = 0
   private var consumesMomentum = false
   private var isTransitioning = false
+
+  var displayedIndex: Int { selection.displayedIndex }
 
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
@@ -127,6 +131,7 @@ final class MacPageTurnView: NSView {
     ownerID: UUID,
     pageCount: Int,
     selectedIndex: Int,
+    allowsTrailingPageCreation: Bool = false,
     navigationIsEnabled: Bool,
     pageIsInteractive: Bool,
     canBeginNavigation: @escaping @MainActor () -> Bool,
@@ -141,7 +146,13 @@ final class MacPageTurnView: NSView {
   ) {
     let ownerChanged = self.ownerID != ownerID
     self.ownerID = ownerID
-    self.pageCount = max(1, pageCount)
+    self.allowsTrailingPageCreation = allowsTrailingPageCreation
+    let reportedPageCount = max(1, pageCount)
+    self.pageCount =
+      !ownerChanged && allowsTrailingPageCreation
+        && selection.awaitsLocalAcknowledgement
+      ? max(self.pageCount, reportedPageCount)
+      : reportedPageCount
     self.selectedIndex = min(max(0, selectedIndex), self.pageCount - 1)
     self.navigationIsEnabled = navigationIsEnabled
     self.pageIsInteractive = pageIsInteractive
@@ -158,22 +169,15 @@ final class MacPageTurnView: NSView {
       progress = 0
       pendingExternalIndex = nil
       pendingGestureIndex = nil
-      pendingModelCommit = nil
-      displayedIndex = self.selectedIndex
+      anticipatedIndex = nil
+      lastTurnDirection = nil
+      selection.reset(to: self.selectedIndex)
       removeAllPageHosts()
       resetStage()
-    } else if let pendingModelCommit {
-      if self.selectedIndex == pendingModelCommit.target {
-        self.pendingModelCommit = nil
-        if displayedIndex != self.selectedIndex {
-          requestExternalSelection(self.selectedIndex)
-        }
-      } else if self.selectedIndex != pendingModelCommit.source {
-        self.pendingModelCommit = nil
-        requestExternalSelection(self.selectedIndex)
-      }
-    } else if displayedIndex != self.selectedIndex {
-      requestExternalSelection(self.selectedIndex)
+    } else if let target = selection.externalTarget(
+      forModelIndex: self.selectedIndex
+    ) {
+      requestExternalSelection(target)
     }
 
     removeDistantPageHosts()
@@ -275,6 +279,7 @@ final class MacPageTurnView: NSView {
     case .idle:
       state = .pending(delta: 0)
       progress = 0
+      anticipatedIndex = nil
     case .pending, .waiting, .dragging:
       break
     }
@@ -307,6 +312,7 @@ final class MacPageTurnView: NSView {
         state = .idle
         return
       }
+      anticipateTurn(to: target)
       if readyPages[target] == true {
         beginDragging(forward: forward, initialDelta: total)
       } else {
@@ -415,6 +421,8 @@ final class MacPageTurnView: NSView {
     switch state {
     case .pending:
       state = .idle
+      anticipatedIndex = nil
+      retainNearbyPageHosts()
     case .waiting(let forward):
       let target = displayedIndex + (forward ? 1 : -1)
       let commits = PageTurnDecision.commits(
@@ -428,7 +436,9 @@ final class MacPageTurnView: NSView {
         pendingGestureIndex = target
         runPendingGestureTurn()
       } else {
+        anticipatedIndex = nil
         setTransitioning(false)
+        retainNearbyPageHosts()
         refreshPageHosts()
         showRestingPage()
       }
@@ -448,11 +458,15 @@ final class MacPageTurnView: NSView {
     switch state {
     case .pending:
       state = .idle
+      anticipatedIndex = nil
+      retainNearbyPageHosts()
     case .waiting:
       state = .idle
       progress = 0
       velocity = 0
+      anticipatedIndex = nil
       setTransitioning(false)
+      retainNearbyPageHosts()
       refreshPageHosts()
       showRestingPage()
     case .dragging:
@@ -535,18 +549,30 @@ final class MacPageTurnView: NSView {
 
   private func finish(forward: Bool, commits: Bool, notifies: Bool) {
     let source = displayedIndex
-    if commits { displayedIndex += forward ? 1 : -1 }
+    if commits {
+      let target = source + (forward ? 1 : -1)
+      if notifies, target != selectedIndex {
+        selection.recordLocalLanding(at: target)
+      } else {
+        selection.recordExternalLanding(at: target)
+      }
+      if allowsTrailingPageCreation, target == pageCount - 1,
+        pageCount < Int.max
+      {
+        pageCount += 1
+      }
+      lastTurnDirection = forward ? 1 : -1
+    }
+    anticipatedIndex = nil
     restoreMovingPage()
     resetStage()
     state = .idle
     progress = 0
     velocity = 0
+    removeDistantPageHosts()
     retainNearbyPageHosts()
     refreshPageHosts()
     showRestingPage()
-    if commits, notifies {
-      pendingModelCommit = (source: source, target: displayedIndex)
-    }
     setTransitioning(false)
     if commits, notifies { onCommit(displayedIndex) }
     runPendingExternalSelection()
@@ -571,6 +597,7 @@ final class MacPageTurnView: NSView {
       pendingExternalIndex = nil
       return
     }
+    anticipateTurn(to: target)
     guard case .idle = state, readyPages[target] == true else {
       pendingExternalIndex = target
       return
@@ -578,7 +605,7 @@ final class MacPageTurnView: NSView {
     guard abs(target - displayedIndex) == 1 else {
       crossfade(to: target)
       if notifies {
-        pendingModelCommit = (source: selectedIndex, target: target)
+        selection.recordLocalLanding(at: target)
         onCommit(target)
       }
       return
@@ -598,7 +625,10 @@ final class MacPageTurnView: NSView {
   private func crossfade(to target: Int) {
     transitionRevision &+= 1
     setTransitioning(true)
-    displayedIndex = clamped(target)
+    selection.recordExternalLanding(at: clamped(target))
+    anticipatedIndex = nil
+    lastTurnDirection = nil
+    removeDistantPageHosts()
     retainNearbyPageHosts()
     refreshPageHosts()
     let transition = CATransition()
@@ -611,7 +641,7 @@ final class MacPageTurnView: NSView {
   }
 
   private func runPendingExternalSelection() {
-    guard pendingModelCommit == nil else { return }
+    guard !selection.awaitsLocalAcknowledgement else { return }
     let target = pendingExternalIndex ?? selectedIndex
     guard target != displayedIndex else {
       pendingExternalIndex = nil
@@ -650,23 +680,16 @@ final class MacPageTurnView: NSView {
   }
 
   private func retainNearbyPageHosts() {
-    guard case .idle = state else { return }
-    let lower = max(0, displayedIndex - 1)
-    let upper = min(pageCount - 1, displayedIndex + 1)
-    guard lower <= upper else { return }
-    for index in lower...upper {
+    for index in retainedPageIndices() {
       let host = hostForPage(at: index)
-      attachToRestingStack(host)
+      if index != movingPageIndex { attachToRestingStack(host) }
       host.frame = pagesView.bounds
-      host.layoutSubtreeIfNeeded()
     }
   }
 
   private func removeDistantPageHosts() {
     guard case .idle = state else { return }
-    let retained = Set(
-      max(0, displayedIndex - 1)...min(pageCount - 1, displayedIndex + 1)
-    )
+    let retained = retainedPageIndices()
     for index in Array(pageHosts.keys) where !retained.contains(index) {
       removePageHost(at: index)
     }
@@ -681,6 +704,27 @@ final class MacPageTurnView: NSView {
 
   private func removeAllPageHosts() {
     for index in Array(pageHosts.keys) { removePageHost(at: index) }
+  }
+
+  private func anticipateTurn(to target: Int) {
+    anticipatedIndex = target
+    retainNearbyPageHosts()
+  }
+
+  private func retainedPageIndices() -> Set<Int> {
+    var retained = PageTurnPrewarmWindow.indices(
+      displayedIndex: displayedIndex,
+      anticipatedIndex: anticipatedIndex,
+      lastDirection: lastTurnDirection,
+      pageCount: pageCount
+    )
+    if let pendingExternalIndex {
+      retained.insert(clamped(pendingExternalIndex))
+    }
+    if let pendingGestureIndex {
+      retained.insert(clamped(pendingGestureIndex))
+    }
+    return retained
   }
 
   private func refreshPageHosts() {

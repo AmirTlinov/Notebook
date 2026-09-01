@@ -112,6 +112,28 @@ final class NearbySyncTests: XCTestCase {
     XCTAssertEqual(queue.messages, [.presence(settled), .presence(nextGesture)])
   }
 
+  func testRapidSettledPagesKeepOnlyTheLatestUnsentPresence() {
+    var queue = WireSendQueue()
+    let sessionID = UUID()
+    let first = envelope(
+      sessionID: sessionID,
+      sequence: 10,
+      phase: .settled,
+      centerX: 10
+    )
+    let latest = envelope(
+      sessionID: sessionID,
+      sequence: 11,
+      phase: .settled,
+      centerX: 20
+    )
+
+    queue.enqueue(.presence(first))
+    queue.enqueue(.presence(latest))
+
+    XCTAssertEqual(queue.messages, [.presence(latest)])
+  }
+
   func testPendingFullDrawingKeepsOnlyTheNewestRevision() {
     var queue = WireSendQueue()
     let pageID = UUID()
@@ -131,6 +153,55 @@ final class NearbySyncTests: XCTestCase {
     queue.enqueue(newest)
 
     XCTAssertEqual(queue.messages, [newest])
+  }
+
+  func testConsecutivePageSelectionsSendOnlyTheNewestCatalogSnapshot() throws {
+    let actor = UUID()
+    let size = PageSize(width: 834, height: 1_194)
+    var index = WorkspaceIndex.initial(actor: actor, pageSize: size).index
+    let itemID = index.selectedItemID
+    _ = try XCTUnwrap(index.selectPage(
+      at: 1,
+      in: itemID,
+      actor: actor,
+      pageSize: size
+    ))
+    _ = try XCTUnwrap(index.selectPage(
+      at: 0,
+      in: itemID,
+      actor: actor,
+      pageSize: size
+    ))
+    let older = index
+    _ = try XCTUnwrap(index.selectPage(
+      at: 1,
+      in: itemID,
+      actor: actor,
+      pageSize: size
+    ))
+
+    var queue = WireSendQueue()
+    queue.enqueue(.index(older))
+    queue.enqueue(.index(index))
+
+    XCTAssertEqual(queue.messages, [.index(index)])
+  }
+
+  func testRapidDocumentRequestsKeepOnlyTheLatestUnsentSheet() {
+    let documentID = UUID()
+    let latest = DocumentPageSelectionRequest(
+      documentID: documentID,
+      pageIndex: 4
+    )
+    var queue = WireSendQueue()
+    queue.enqueue(
+      .documentPageSelection(
+        DocumentPageSelectionRequest(documentID: documentID, pageIndex: 3)
+      )
+    )
+    queue.enqueue(.documentPageSelection(latest))
+
+    XCTAssertEqual(queue.messages, [.documentPageSelection(latest)])
   }
 
   func testOneMacSeenThroughManyInterfacesIsOnePeer() {

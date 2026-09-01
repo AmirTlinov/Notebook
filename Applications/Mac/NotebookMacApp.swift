@@ -9,7 +9,13 @@ struct NotebookMacApp: App {
     let isRunningTests = ProcessInfo.processInfo.environment[
       "XCTestConfigurationFilePath"
     ] != nil
-    let model = NotebookAppModel(startsNearbySync: !isRunningTests)
+    #if DEBUG
+      let model = MacDocumentLaunchFixture.isRequested
+        ? MacDocumentLaunchFixture.makeModel()
+        : NotebookAppModel(startsNearbySync: !isRunningTests)
+    #else
+      let model = NotebookAppModel(startsNearbySync: !isRunningTests)
+    #endif
     if !isRunningTests {
       model.start(pageSize: NotebookAppModel.defaultPageSize)
     }

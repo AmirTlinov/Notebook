@@ -32,6 +32,117 @@ final class PageTurnReadiness {
   }
 }
 
+/// Chooses the small set of live pages that must already have a first frame.
+///
+/// The current page keeps both immediate neighbours. Once a turn has a
+/// direction, the page beyond its landing point is prepared during the turn,
+/// rather than after the landing. This is the difference between a continuous
+/// stack of paper and a stack that pauses to manufacture its next sheet.
+enum PageTurnPrewarmWindow {
+  static func indices(
+    displayedIndex: Int,
+    anticipatedIndex: Int?,
+    lastDirection: Int?,
+    pageCount: Int
+  ) -> Set<Int> {
+    guard pageCount > 0 else { return [] }
+    var result = Set<Int>()
+    insert(displayedIndex - 1, pageCount: pageCount, into: &result)
+    insert(displayedIndex, pageCount: pageCount, into: &result)
+    insert(displayedIndex + 1, pageCount: pageCount, into: &result)
+
+    if let anticipatedIndex {
+      insert(anticipatedIndex, pageCount: pageCount, into: &result)
+      let direction = sign(anticipatedIndex - displayedIndex)
+      if direction != 0 {
+        insert(
+          anticipatedIndex + direction,
+          pageCount: pageCount,
+          into: &result
+        )
+      }
+    } else if let lastDirection, sign(lastDirection) != 0 {
+      insert(
+        displayedIndex + sign(lastDirection) * 2,
+        pageCount: pageCount,
+        into: &result
+      )
+    }
+    return result
+  }
+
+  private static func insert(
+    _ index: Int,
+    pageCount: Int,
+    into result: inout Set<Int>
+  ) {
+    guard index >= 0, index < pageCount else { return }
+    result.insert(index)
+  }
+
+  private static func sign(_ value: Int) -> Int {
+    value == 0 ? 0 : (value > 0 ? 1 : -1)
+  }
+}
+
+/// Keeps the page under the hand authoritative while its durable selection
+/// catches up. Several quick landings may be acknowledged one by one; an old
+/// acknowledgement must never pull the visible stack backwards.
+struct PageTurnSelectionTracker {
+  private(set) var displayedIndex: Int
+  private(set) var pendingLocalTargets: [Int] = []
+  private var localOrigin: Int?
+
+  init(displayedIndex: Int) {
+    self.displayedIndex = displayedIndex
+  }
+
+  var awaitsLocalAcknowledgement: Bool {
+    !pendingLocalTargets.isEmpty
+  }
+
+  mutating func reset(to index: Int) {
+    displayedIndex = index
+    clearPendingLandings()
+  }
+
+  mutating func recordLocalLanding(at index: Int) {
+    guard index != displayedIndex else { return }
+    if pendingLocalTargets.isEmpty { localOrigin = displayedIndex }
+    displayedIndex = index
+    pendingLocalTargets.append(index)
+  }
+
+  mutating func recordExternalLanding(at index: Int) {
+    displayedIndex = index
+    clearPendingLandings()
+  }
+
+  /// Returns a visual target only when the model change came from somewhere
+  /// other than the still-being-acknowledged local page turns.
+  mutating func externalTarget(forModelIndex modelIndex: Int) -> Int? {
+    if modelIndex == displayedIndex {
+      clearPendingLandings()
+      return nil
+    }
+    if !pendingLocalTargets.isEmpty {
+      if modelIndex == localOrigin { return nil }
+      if let acknowledged = pendingLocalTargets.firstIndex(of: modelIndex) {
+        pendingLocalTargets.removeFirst(acknowledged + 1)
+        if pendingLocalTargets.isEmpty { localOrigin = nil }
+        return nil
+      }
+    }
+    clearPendingLandings()
+    return modelIndex
+  }
+
+  private mutating func clearPendingLandings() {
+    pendingLocalTargets.removeAll(keepingCapacity: true)
+    localOrigin = nil
+  }
+}
+
 /// The only owner of a page turn. Notebook and document code provide pages and
 /// accept a completed selection; they never animate or replace a page.
 ///
@@ -44,6 +155,7 @@ struct PageTurnSurface: View {
   let ownerID: UUID
   let pageCount: Int
   let selectedIndex: Int
+  let allowsTrailingPageCreation: Bool
   let navigationIsEnabled: Bool
   let pageIsInteractive: Bool
   let canBeginNavigation: @MainActor () -> Bool
@@ -70,6 +182,7 @@ struct PageTurnSurface: View {
           ownerID: ownerID,
           pageCount: max(1, pageCount),
           selectedIndex: clampedSelectedIndex,
+          allowsTrailingPageCreation: allowsTrailingPageCreation,
           navigationIsEnabled: navigationIsEnabled,
           pageIsInteractive: pageIsInteractive,
           canBeginNavigation: canBeginNavigation,
@@ -102,6 +215,7 @@ enum PageTurnDecision {
     let ownerID: UUID
     let pageCount: Int
     let selectedIndex: Int
+    let allowsTrailingPageCreation: Bool
     let navigationIsEnabled: Bool
     let pageIsInteractive: Bool
     let canBeginNavigation: @MainActor () -> Bool
@@ -132,6 +246,7 @@ enum PageTurnDecision {
         ownerID: ownerID,
         pageCount: pageCount,
         selectedIndex: selectedIndex,
+        allowsTrailingPageCreation: allowsTrailingPageCreation,
         navigationIsEnabled: navigationIsEnabled,
         pageIsInteractive: pageIsInteractive,
         canBeginNavigation: canBeginNavigation,
@@ -146,6 +261,7 @@ enum PageTurnDecision {
     let ownerID: UUID
     let pageCount: Int
     let selectedIndex: Int
+    let allowsTrailingPageCreation: Bool
     let navigationIsEnabled: Bool
     let pageIsInteractive: Bool
     let canBeginNavigation: @MainActor () -> Bool
@@ -173,6 +289,7 @@ enum PageTurnDecision {
         ownerID: ownerID,
         pageCount: pageCount,
         selectedIndex: selectedIndex,
+        allowsTrailingPageCreation: allowsTrailingPageCreation,
         navigationIsEnabled: navigationIsEnabled,
         pageIsInteractive: pageIsInteractive,
         canBeginNavigation: canBeginNavigation,

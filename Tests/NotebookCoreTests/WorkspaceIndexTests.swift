@@ -147,19 +147,127 @@ func pageTurnCreatesOnePage() {
   )
   var index = initial.index
 
-  let created = index.turnPage(
-    by: 1,
+  let created = index.selectPage(
+    at: 1,
+    in: index.selectedItemID,
     actor: actor,
     pageSize: initial.page.size
   )
-  #expect(created != nil)
+  #expect(created?.createdPage != nil)
   #expect(index.selectedItem.pageIDs.count == 2)
-  #expect(index.selectedPageID == created?.id)
+  #expect(index.selectedPageID == created?.pageID)
 
-  _ = index.turnPage(by: -1, actor: actor, pageSize: initial.page.size)
-  let reopened = index.turnPage(by: 1, actor: actor, pageSize: initial.page.size)
-  #expect(reopened == nil)
+  _ = index.selectPage(
+    at: 0,
+    in: index.selectedItemID,
+    actor: actor,
+    pageSize: initial.page.size
+  )
+  let reopened = index.selectPage(
+    at: 1,
+    in: index.selectedItemID,
+    actor: actor,
+    pageSize: initial.page.size
+  )
+  #expect(reopened?.createdPage == nil)
   #expect(index.selectedItem.pageIDs.count == 2)
+}
+
+@Test("Абсолютная посадка листа не зависит от запоздавшего текущего индекса")
+func absolutePageSelectionLandsOnTheRequestedSheet() throws {
+  let actor = UUID()
+  let size = PageSize(width: 834, height: 1_194)
+  let initial = WorkspaceIndex.initial(actor: actor, pageSize: size)
+  var index = initial.index
+  let itemID = index.selectedItemID
+
+  let secondResult = index.selectPage(
+    at: 1,
+    in: itemID,
+    actor: actor,
+    pageSize: size
+  )
+  _ = try #require(secondResult)
+  let thirdResult = index.selectPage(
+    at: 2,
+    in: itemID,
+    actor: actor,
+    pageSize: size
+  )
+  let third = try #require(thirdResult)
+  let firstResult = index.selectPage(
+    at: 0,
+    in: itemID,
+    actor: actor,
+    pageSize: size
+  )
+  _ = try #require(firstResult)
+
+  let landingResult = index.selectPage(
+    at: 2,
+    in: itemID,
+    actor: actor,
+    pageSize: size
+  )
+  let landing = try #require(landingResult)
+  #expect(landing.pageID == third.pageID)
+  #expect(landing.createdPage == nil)
+  #expect(index.selectedPageIndex == 2)
+}
+
+@Test("Запоздавшая запись посадки не возвращает каталог на старый лист")
+func stalePageSelectionPersistenceCannotRewindTheWorkspace() throws {
+  let root = FileManager.default.temporaryDirectory
+    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let actor = UUID()
+  let size = PageSize(width: 834, height: 1_194)
+  let initial = WorkspaceIndex.initial(actor: actor, pageSize: size)
+  let store = NotebookStore(root: root)
+  let board = BoardDocument.initial(
+    itemIDs: [initial.index.selectedItemID],
+    actor: actor
+  )
+  try store.saveWorkspaceBundle(
+    index: initial.index,
+    page: initial.page,
+    board: board
+  )
+
+  var firstLanding = initial.index
+  let itemID = firstLanding.selectedItemID
+  let secondPageResult = firstLanding.selectPage(
+    at: 1,
+    in: itemID,
+    actor: actor,
+    pageSize: size
+  )
+  let secondPage = try #require(secondPageResult)
+  _ = try store.saveWorkspaceSelection(
+    index: firstLanding,
+    createdPage: secondPage.createdPage
+  )
+
+  var latestLanding = firstLanding
+  let thirdPageResult = latestLanding.selectPage(
+    at: 2,
+    in: itemID,
+    actor: actor,
+    pageSize: size
+  )
+  let thirdPage = try #require(thirdPageResult)
+  _ = try store.saveWorkspaceSelection(
+    index: latestLanding,
+    createdPage: thirdPage.createdPage
+  )
+  _ = try store.saveWorkspaceSelection(
+    index: firstLanding,
+    createdPage: nil
+  )
+
+  let persisted = try store.loadIndex()
+  #expect(persisted.selectedPageID == thirdPage.pageID)
+  #expect(try store.loadPage(thirdPage.pageID).id == thirdPage.pageID)
 }
 
 @Test("Обложка может жить без печатного названия и сохраняет устойчивый UUID")
@@ -350,7 +458,12 @@ func exhaustedVersionDoesNotCrashOrMutate() {
     )
   )
   let before = index
-  #expect(index.turnPage(by: 1, actor: actor, pageSize: size) == nil)
+  #expect(index.selectPage(
+    at: 1,
+    in: itemID,
+    actor: actor,
+    pageSize: size
+  ) == nil)
   #expect(index == before)
 }
 

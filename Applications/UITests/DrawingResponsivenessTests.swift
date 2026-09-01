@@ -172,6 +172,29 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(app.state, .runningForeground)
   }
 
+  func testNotebookAcceptsTheNextTurnAsSoonAsThePreviousSheetLands() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    app.launch()
+
+    let surface = app.otherElements["page-turn-surface"]
+    XCTAssertTrue(surface.waitForExistence(timeout: 5))
+    surface.swipeLeft()
+    Thread.sleep(forTimeInterval: 0.25)
+    surface.swipeLeft()
+    Thread.sleep(forTimeInterval: 0.25)
+    surface.swipeLeft()
+
+    let landed = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value BEGINSWITH 'Страница 4 из '"),
+      object: surface
+    )
+    wait(for: [landed], timeout: 3)
+    XCTAssertEqual(app.state, .runningForeground)
+  }
+
   func testDocumentPageTurnShowsTheCommittedPhysicalPage() async throws {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait

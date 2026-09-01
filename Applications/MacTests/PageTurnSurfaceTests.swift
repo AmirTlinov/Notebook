@@ -29,6 +29,7 @@ final class PageTurnSurfaceTests: XCTestCase {
       ownerID: UUID(),
       pageCount: 2,
       selectedIndex: 1,
+      allowsTrailingPageCreation: false,
       navigationIsEnabled: true,
       pageIsInteractive: true,
       canBeginNavigation: { true },

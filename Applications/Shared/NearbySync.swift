@@ -57,6 +57,14 @@ struct WireSendQueue {
       pending.sessionID == incoming.sessionID
     {
       storage[storage.count - 1] = message
+    } else if case .presence(let incoming) = message,
+      incoming.phase == .settled,
+      head < storage.count,
+      case .presence(let pending) = storage[storage.count - 1],
+      pending.phase == .settled,
+      pending.sessionID == incoming.sessionID
+    {
+      storage[storage.count - 1] = message
     } else if case .drawing(let incomingPageID, _, _) = message,
       head < storage.count,
       case .drawing(let pendingPageID, _, _) = storage[storage.count - 1],
@@ -73,6 +81,21 @@ struct WireSendQueue {
       head < storage.count,
       case .documentState(let pending) = storage[storage.count - 1],
       pending.id == incoming.id
+    {
+      storage[storage.count - 1] = message
+    } else if case .index(let incoming) = message,
+      head < storage.count,
+      case .index(let pending) = storage[storage.count - 1],
+      pending.items == incoming.items
+    {
+      // Consecutive selections over the same catalog are snapshots, not an
+      // operation log. Only the newest sheet matters to a peer that has not
+      // sent the previous frame yet. Topology changes retain their ordering.
+      storage[storage.count - 1] = message
+    } else if case .documentPageSelection(let incoming) = message,
+      head < storage.count,
+      case .documentPageSelection(let pending) = storage[storage.count - 1],
+      pending.documentID == incoming.documentID
     {
       storage[storage.count - 1] = message
     } else {
