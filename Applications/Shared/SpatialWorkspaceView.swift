@@ -12,12 +12,10 @@ private struct CameraGestureSnapshot {
   }
 
   let presence: SessionPresence
-  var baselineCamera: SpatialCamera
-  var baselineCentroid: CGPoint
-  var baselineMagnification: CGFloat
+  let trajectory: CameraGestureTrajectory
   var lastMagnification: CGFloat
-  var lastCentroid: CGPoint
   var candidateItemID: UUID?
+  var dockingStartStrength: Double
   var isApproaching: Bool
   var boardEngagement: BoardEngagement?
   var dockingStrength: Double
@@ -542,15 +540,28 @@ struct SpatialWorkspaceView: View {
       let candidate =
         focusedItemID
         ?? focusCandidate(at: centroid, presence: presence)
-      contentGestureActive = presence.mode == .page || presence.mode == .document
+      contentGestureActive =
+        presence.mode == .page || presence.mode == .document
+      let dockingStartStrength: Double
+      if candidate == nil {
+        dockingStartStrength = 0
+      } else {
+        dockingStartStrength = NotebookDockingField.strength(
+          camera: presence.camera,
+          viewport: presence.viewport
+        )
+      }
       cameraGesture = CameraGestureSnapshot(
         presence: presence,
-        baselineCamera: presence.camera,
-        baselineCentroid: centroid,
-        baselineMagnification: 1,
+        trajectory: CameraGestureTrajectory(
+          startingCamera: presence.camera,
+          startingCentroid: centroid,
+          startingMagnification: 1,
+          viewport: presence.viewport
+        ),
         lastMagnification: 1,
-        lastCentroid: centroid,
         candidateItemID: candidate,
+        dockingStartStrength: dockingStartStrength,
         isApproaching: isOpeningApproach,
         boardEngagement: focusedItemID.map {
           let coverScale = coverFocusScale(viewport: presence.viewport)
@@ -644,50 +655,21 @@ struct SpatialWorkspaceView: View {
     let viewport = snapshot.presence.viewport
     let pageScale = fitScale(viewport: viewport)
     let coverScale = coverFocusScale(viewport: viewport)
-    let magnification = Double(scale)
     let directionThreshold: CGFloat = 0.000_5
     let directionDelta = scale - snapshot.lastMagnification
-    let directionChanged: Bool
     if abs(directionDelta) > directionThreshold {
-      let currentDirection = directionDelta > 0
-      directionChanged = currentDirection != snapshot.isApproaching
-      snapshot.isApproaching = currentDirection
-    } else {
-      directionChanged = false
+      snapshot.isApproaching = directionDelta > 0
     }
 
     let maximumScale =
       snapshot.boardEngagement == nil
       ? SpatialCamera.maximumScale
       : pageScale
-    var camera: SpatialCamera
-    if directionChanged, let displayedCamera = model.presence?.camera {
-      camera = displayedCamera.pinched(
-        by: magnification / max(Double(snapshot.lastMagnification), 0.001),
-        from: SpatialPoint(
-          x: snapshot.lastCentroid.x,
-          y: snapshot.lastCentroid.y
-        ),
-        to: SpatialPoint(x: centroid.x, y: centroid.y),
-        viewport: viewport,
-        maximumScale: maximumScale
-      )
-      snapshot.baselineCamera = camera
-      snapshot.baselineCentroid = centroid
-      snapshot.baselineMagnification = scale
-    } else {
-      camera = snapshot.baselineCamera.pinched(
-        by: magnification
-          / max(Double(snapshot.baselineMagnification), 0.001),
-        from: SpatialPoint(
-          x: snapshot.baselineCentroid.x,
-          y: snapshot.baselineCentroid.y
-        ),
-        to: SpatialPoint(x: centroid.x, y: centroid.y),
-        viewport: viewport,
-        maximumScale: maximumScale
-      )
-    }
+    var camera = snapshot.trajectory.camera(
+      at: scale,
+      centroid: centroid,
+      maximumScale: maximumScale
+    )
 
     if let boardEngagement = snapshot.boardEngagement {
       if NotebookOpeningIntent.shouldDisengage(
@@ -707,20 +689,32 @@ struct SpatialWorkspaceView: View {
         camera: camera,
         viewport: viewport
       )
-      if let detected = focusCandidate(
-        at: centroid,
-        presence: liveBoardPresence
-      ) {
-        snapshot.candidateItemID = detected
-      } else if let retained = snapshot.candidateItemID,
-        selectionStrength(
+      let retainedCandidate = snapshot.candidateItemID.flatMap {
+        retained -> UUID? in
+        let strength = selectionStrength(
           for: retained,
           at: centroid,
           presence: liveBoardPresence,
           halo: NotebookOpeningIntent.candidateRetentionHalo
-        ) <= 0
-      {
-        snapshot.candidateItemID = nil
+        )
+        return strength > 0 ? retained : nil
+      }
+      let nextCandidate =
+        retainedCandidate
+        ?? focusCandidate(
+          at: centroid,
+          presence: liveBoardPresence
+        )
+      if nextCandidate != snapshot.candidateItemID {
+        snapshot.candidateItemID = nextCandidate
+        if nextCandidate == nil {
+          snapshot.dockingStartStrength = 0
+        } else {
+          snapshot.dockingStartStrength = NotebookDockingField.strength(
+            camera: camera,
+            viewport: viewport
+          )
+        }
       }
     }
 
@@ -734,15 +728,17 @@ struct SpatialWorkspaceView: View {
         camera: camera,
         viewport: viewport
       )
-      snapshot.dockingStrength = dockingStrength
-      if snapshot.isApproaching {
-        camera = NotebookDockingField.attractedCamera(
-          camera,
-          toward: center,
-          viewport: viewport,
-          strength: dockingStrength
-        )
-      }
+      let correctionStrength = NotebookDockingField.correctionStrength(
+        currentStrength: dockingStrength,
+        startingStrength: snapshot.dockingStartStrength
+      )
+      snapshot.dockingStrength = correctionStrength
+      camera = NotebookDockingField.attractedCamera(
+        camera,
+        toward: center,
+        viewport: viewport,
+        strength: correctionStrength
+      )
     } else {
       snapshot.dockingStrength = 0
     }
@@ -776,7 +772,6 @@ struct SpatialWorkspaceView: View {
     }
     let mode: WorkspaceSemanticMode = candidate == nil ? .board : .cover
     snapshot.lastMagnification = scale
-    snapshot.lastCentroid = centroid
     cameraGesture = snapshot
     model.updatePresence(
       SessionPresence(

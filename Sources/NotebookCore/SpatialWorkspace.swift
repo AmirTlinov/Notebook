@@ -363,6 +363,21 @@ public enum NotebookDockingField {
     )
   }
 
+  /// Starts a new gesture without re-applying a correction that is already
+  /// visible in its starting camera. The remaining field then grows and fades
+  /// as a pure function of the current raw camera, so reversing the fingers
+  /// retraces the same path.
+  public static func correctionStrength(
+    currentStrength: Double,
+    startingStrength: Double
+  ) -> Double {
+    guard currentStrength.isFinite, startingStrength.isFinite else { return 0 }
+    let currentWeight = pow(min(max(currentStrength, 0), 1), 2)
+    let startingWeight = pow(min(max(startingStrength, 0), 1), 2)
+    guard startingWeight < 1, currentWeight > startingWeight else { return 0 }
+    return sqrt((currentWeight - startingWeight) / (1 - startingWeight))
+  }
+
   public static func shouldDock(
     strength: Double,
     isApproaching: Bool,

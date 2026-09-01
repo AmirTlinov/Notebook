@@ -398,6 +398,28 @@ func pageDockingFollowsTheCurrentPinchDirection() {
   ))
 }
 
+@Test("Новый щипок не применяет уже видимое притяжение второй раз")
+func dockingCorrectionStartsFromTheCurrentVisibleCamera() {
+  #expect(NotebookDockingField.correctionStrength(
+    currentStrength: 0.7,
+    startingStrength: 0.7
+  ) == 0)
+  let closer = NotebookDockingField.correctionStrength(
+    currentStrength: 0.85,
+    startingStrength: 0.7
+  )
+  #expect(closer > 0)
+  #expect(closer < 1)
+  #expect(NotebookDockingField.correctionStrength(
+    currentStrength: 0.7,
+    startingStrength: 0.85
+  ) == 0)
+  #expect(NotebookDockingField.correctionStrength(
+    currentStrength: 1,
+    startingStrength: 0.7
+  ) == 1)
+}
+
 @Test("Угол листа равен восьми физическим миллиметрам")
 func notebookCornerMatchesTheFullSizeIPadSilhouette() {
   #expect(
