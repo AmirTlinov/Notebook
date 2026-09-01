@@ -4,6 +4,57 @@ import XCTest
 
 final class MacModelLifecycleTests: XCTestCase {
   @MainActor
+  func testVisualReadoutPublishesWithoutAMountedWindow() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = NotebookStore(root: root)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    model.start(pageSize: NotebookAppModel.defaultPageSize)
+
+    let clock = ContinuousClock()
+    var deadline = clock.now + .seconds(3)
+    while !FileManager.default.fileExists(
+      atPath: store.currentViewRevisionURL.path
+    ), clock.now < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+
+    var receipt = try JSONDecoder().decode(
+      CurrentViewReceipt.self,
+      from: Data(contentsOf: store.currentViewRevisionURL)
+    )
+    XCTAssertEqual(receipt.workspaceStamp, model.workspace?.stamp)
+    XCTAssertEqual(receipt.presence, model.presence)
+    XCTAssertEqual(
+      receipt.renderViewport,
+      SpatialPoint(
+        x: NotebookAppModel.defaultPageSize.width,
+        y: NotebookAppModel.defaultPageSize.height
+      )
+    )
+
+    var changed = try XCTUnwrap(model.board)
+    let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
+    XCTAssertTrue(
+      changed.moveItem(itemID, to: WorldPoint(x: 700, y: 900), actor: UUID())
+    )
+    try store.saveBoard(changed, itemIDs: [itemID])
+    deadline = clock.now + .seconds(3)
+    repeat {
+      try await Task.sleep(for: .milliseconds(20))
+      receipt = try JSONDecoder().decode(
+        CurrentViewReceipt.self,
+        from: Data(contentsOf: store.currentViewRevisionURL)
+      )
+    } while receipt.boardStamp != changed.stamp && clock.now < deadline
+
+    XCTAssertEqual(model.board?.stamp, changed.stamp)
+    XCTAssertEqual(receipt.boardStamp, changed.stamp)
+  }
+
+  @MainActor
   func testMCPStyleFileChangeReloadsWithoutAMountedWindow() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)

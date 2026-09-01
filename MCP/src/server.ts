@@ -133,6 +133,7 @@ export function createServer(store = new NotebookStore()): McpServer {
         focusedItemID: presence.focusedItemID ?? null,
         focusedStackID,
         openProgress: presence.openProgress,
+        documentPageIndex: presence.documentPageIndex,
         item: {
           id: item.id,
           kind: item.kind,
@@ -301,6 +302,7 @@ export function createServer(store = new NotebookStore()): McpServer {
         data: {
           mode: presence.mode,
           focusedItemID: presence.focusedItemID ?? null,
+          documentPageIndex: presence.documentPageIndex,
           pageID: receipt.page?.pageID ?? null,
           documentID: receipt.document?.documentID ?? null,
           viewport: receipt.renderViewport,

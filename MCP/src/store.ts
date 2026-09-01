@@ -727,17 +727,25 @@ function migrateBoard(value: unknown): unknown {
 }
 
 function migratePresence(value: unknown): unknown {
-  if (!isRecord(value) || value.format !== 1) return value;
-  return {
-    format: 2,
-    mode: value.mode,
-    camera: value.camera,
-    viewport: value.viewport,
-    ...(typeof value.focusedNotebookID === "string"
-      ? { focusedItemID: value.focusedNotebookID }
-      : {}),
-    openProgress: value.openProgress,
-  };
+  if (!isRecord(value)) return value;
+  if (value.format === 3) return value;
+  if (value.format === 2) {
+    return { ...value, format: 3, documentPageIndex: 0 };
+  }
+  if (value.format === 1) {
+    return {
+      format: 3,
+      mode: value.mode,
+      camera: value.camera,
+      viewport: value.viewport,
+      ...(typeof value.focusedNotebookID === "string"
+        ? { focusedItemID: value.focusedNotebookID }
+        : {}),
+      openProgress: value.openProgress,
+      documentPageIndex: 0,
+    };
+  }
+  return value;
 }
 
 function selectedItem(workspace: WorkspaceIndex): WorkspaceItem {
@@ -1054,7 +1062,7 @@ function validateSpatialInkSpan(value: unknown): void {
 }
 
 function validatePresence(value: unknown): asserts value is SessionPresence {
-  if (!isRecord(value) || value.format !== 2) {
+  if (!isRecord(value) || value.format !== 3) {
     throw new StoreError("Текущий контекст поврежден.");
   }
   if (value.mode !== "board" && value.mode !== "cover" && value.mode !== "page"
@@ -1078,6 +1086,15 @@ function validatePresence(value: unknown): asserts value is SessionPresence {
   }
   if (value.mode !== "board" && typeof value.focusedItemID !== "string") {
     throw new StoreError("Открытый элемент должен указывать своего владельца.");
+  }
+  if (typeof value.documentPageIndex !== "number"
+    || !Number.isSafeInteger(value.documentPageIndex)
+    || value.documentPageIndex < 0) {
+    throw new StoreError("Номер страницы документа поврежден.");
+  }
+  if (value.mode !== "cover" && value.mode !== "document"
+    && value.documentPageIndex !== 0) {
+    throw new StoreError("Номер страницы принадлежит только документу.");
   }
 }
 

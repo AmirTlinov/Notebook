@@ -274,7 +274,7 @@ test("migrates a version-one continuous document to paginated A4", async () => {
   });
 });
 
-test("reads legacy notebook, board, and presence files through version two owners", async () => {
+test("reads legacy notebook and board files through their current owners", async () => {
   await withStore(async (store, root) => {
     const [workspace, board, presence] = await Promise.all([
       store.readWorkspace(),
@@ -324,8 +324,28 @@ test("reads legacy notebook, board, and presence files through version two owner
     assert.equal(migratedWorkspace.items[0]?.kind, "notebook");
     assert.equal(migratedBoard.format, 2);
     assert.equal(migratedBoard.freeItems[0]?.itemID, itemID);
-    assert.equal(migratedPresence.format, 2);
+    assert.equal(migratedPresence.format, 3);
     assert.equal(migratedPresence.focusedItemID, itemID);
+    assert.equal(migratedPresence.documentPageIndex, 0);
+  });
+});
+
+test("migrates version-two presence to the first document page", async () => {
+  await withStore(async (store, root) => {
+    const presence = await store.readPresence();
+    await writeFile(join(root, "last-context.json"), JSON.stringify({
+      format: 2,
+      mode: presence.mode,
+      camera: presence.camera,
+      viewport: presence.viewport,
+      focusedItemID: presence.focusedItemID,
+      openProgress: presence.openProgress,
+    }));
+
+    const migrated = await store.readPresence();
+
+    assert.equal(migrated.format, 3);
+    assert.equal(migrated.documentPageIndex, 0);
   });
 });
 

@@ -66,6 +66,11 @@ try {
       .workspaceRevision,
     `0@${appActor}`,
   );
+  assert.equal(
+    (context.structuredContent as { documentPageIndex: number })
+      .documentPageIndex,
+    0,
+  );
 
   const currentView = await client.callTool({
     name: "notebook_render_view",
@@ -73,6 +78,11 @@ try {
   });
   assert.equal(currentView.isError, undefined);
   assert.ok(currentView.content.some((block) => block.type === "image"));
+  assert.equal(
+    (currentView.structuredContent as { documentPageIndex: number })
+      .documentPageIndex,
+    0,
+  );
 
   const currentViewPath = join(storeRoot, "previews", "current-view.png");
   const currentViewPNG = await readFile(currentViewPath);

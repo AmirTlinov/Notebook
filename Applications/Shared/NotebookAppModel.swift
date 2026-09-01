@@ -135,6 +135,8 @@ final class NotebookAppModel {
     /// the iPad while the Mac app is still running.
     private var externalChangeWatcher: DirectoryWatcher?
     private var externalReloadRetry: Task<Void, Never>?
+    /// Agent vision follows the process-level mirror, not a disposable window.
+    private var previewPublisher: MacPreviewPublisher?
   #endif
 
   init(
@@ -237,6 +239,7 @@ final class NotebookAppModel {
       loadState = .ready
       #if os(macOS)
         startExternalChangeObservation()
+        startPreviewPublication()
       #endif
       if startsNearbySync {
         sync.start()
@@ -929,6 +932,13 @@ final class NotebookAppModel {
   }
 
   #if os(macOS)
+    private func startPreviewPublication() {
+      guard previewPublisher == nil else { return }
+      let publisher = MacPreviewPublisher(model: self)
+      publisher.start()
+      previewPublisher = publisher
+    }
+
     private func startExternalChangeObservation() {
       guard externalChangeWatcher == nil else { return }
       let watcher = DirectoryWatcher(urls: [

@@ -64,7 +64,7 @@ export async function writeFixture(root: string): Promise<void> {
     stamp: { counter: 0, actor: appActor },
   };
   const presence: SessionPresence = {
-    format: 2,
+    format: 3,
     mode: "page",
     camera: {
       center: { tileX: 0, tileY: 0, localX: 0, localY: 0 },
@@ -73,6 +73,7 @@ export async function writeFixture(root: string): Promise<void> {
     viewport: { x: 834, y: 1_194 },
     focusedItemID: itemID,
     openProgress: 1,
+    documentPageIndex: 0,
   };
   const currentViewReceipt: CurrentViewReceipt = {
     format: 2,

@@ -208,12 +208,13 @@ export interface SpatialInkJournal {
 }
 
 export interface SessionPresence {
-  format: 2;
+  format: 3;
   mode: "board" | "cover" | "page" | "document";
   camera: SpatialCamera;
   viewport: SpatialPoint;
   focusedItemID?: string;
   openProgress: number;
+  documentPageIndex: number;
 }
 
 export interface CurrentViewReceipt {
