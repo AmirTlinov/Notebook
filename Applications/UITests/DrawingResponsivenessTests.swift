@@ -640,14 +640,43 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     let page = app.otherElements["page-turn-surface"]
     XCTAssertTrue(page.waitForExistence(timeout: 8))
-    page.pinch(withScale: 0.75, velocity: -0.6)
+    page.pinch(withScale: 0.9, velocity: -0.25)
     try await Task.sleep(for: .milliseconds(400))
 
     let cover = app.otherElements["cover-opening-surface"]
     XCTAssertTrue(cover.waitForExistence(timeout: 3))
+    let document = app.descendants(matching: .any)
+      .matching(
+        identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000006"
+      )
+      .firstMatch
+    let window = app.windows.firstMatch
+    XCTAssertTrue(document.exists)
+    XCTAssertTrue(window.exists)
     XCTAssertEqual(app.state, .runningForeground)
-    let proof = XCTAttachment(screenshot: app.screenshot())
-    proof.name = "document-cover-physical-curl"
+    let screenshot = app.screenshot()
+    let openingSideWidth = min(
+      document.frame.minX - window.frame.minX,
+      document.frame.width * 0.2
+    )
+    XCTAssertGreaterThan(openingSideWidth, 16)
+    XCTAssertGreaterThan(
+      warmPaperPixelShare(
+        in: screenshot,
+        normalizedRect: CGRect(
+          x: (document.frame.minX - openingSideWidth - window.frame.minX)
+            / window.frame.width,
+          y: (document.frame.minY + document.frame.height * 0.12
+            - window.frame.minY) / window.frame.height,
+          width: openingSideWidth / window.frame.width,
+          height: document.frame.height * 0.76 / window.frame.height
+        )
+      ),
+      0.5,
+      "The curling cover must remain visible after it crosses the notebook frame"
+    )
+    let proof = XCTAttachment(screenshot: screenshot)
+    proof.name = "document-cover-outside-notebook-frame"
     proof.lifetime = .keepAlways
     add(proof)
   }
@@ -817,6 +846,37 @@ final class DrawingResponsivenessTests: XCTestCase {
     in screenshot: XCUIScreenshot,
     normalizedRect: CGRect
   ) -> Double {
+    pixelShare(in: screenshot, normalizedRect: normalizedRect) {
+      red,
+      green,
+      blue,
+      _ in
+      max(red, green, blue) < 45
+    }
+  }
+
+  private func warmPaperPixelShare(
+    in screenshot: XCUIScreenshot,
+    normalizedRect: CGRect
+  ) -> Double {
+    pixelShare(in: screenshot, normalizedRect: normalizedRect) {
+      red,
+      green,
+      blue,
+      alpha in
+      alpha > 240
+        && red >= 245
+        && green >= 243
+        && blue <= 243
+        && red >= blue + 4
+    }
+  }
+
+  private func pixelShare(
+    in screenshot: XCUIScreenshot,
+    normalizedRect: CGRect,
+    matching predicate: (UInt8, UInt8, UInt8, UInt8) -> Bool
+  ) -> Double {
     guard let image = screenshot.image.cgImage else {
       XCTFail("Снимок проверки должен содержать растровое изображение")
       return 0
@@ -868,13 +928,18 @@ final class DrawingResponsivenessTests: XCTestCase {
       return 0
     }
 
-    var darkPixels = 0
+    var matchingPixels = 0
     for offset in stride(from: 0, to: pixels.count, by: bytesPerPixel) {
-      if max(pixels[offset], pixels[offset + 1], pixels[offset + 2]) < 45 {
-        darkPixels += 1
+      if predicate(
+        pixels[offset],
+        pixels[offset + 1],
+        pixels[offset + 2],
+        pixels[offset + 3]
+      ) {
+        matchingPixels += 1
       }
     }
-    return Double(darkPixels) / Double(crop.width * crop.height)
+    return Double(matchingPixels) / Double(crop.width * crop.height)
   }
 
   func testPenCommitsOneStrokeAndKeepsThePaperResponsive() {

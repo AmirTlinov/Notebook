@@ -143,6 +143,62 @@ enum CoverOpeningPhysics {
   }
 }
 
+/// Gives the curling cover room to travel while the notebook keeps owning its
+/// canonical sheet-sized frame. The opening side reserves one whole cover;
+/// the smaller margins carry the filter's bend and shadow without turning
+/// those pixels into workspace geometry or a new hit target.
+struct CoverCurlLayout: Equatable {
+  static let openingTravelRatio = 1.0
+  static let shadowMarginRatio = 0.04
+
+  let sheetSize: CGSize
+  let shadowMargin: CGFloat
+
+  init(sheetSize: CGSize) {
+    precondition(sheetSize.width > 0 && sheetSize.height > 0)
+    self.sheetSize = sheetSize
+    shadowMargin = min(sheetSize.width, sheetSize.height) * Self.shadowMarginRatio
+  }
+
+  var sheetFrame: CGRect {
+    CGRect(
+      x: sheetSize.width * Self.openingTravelRatio + shadowMargin,
+      y: shadowMargin,
+      width: sheetSize.width,
+      height: sheetSize.height
+    )
+  }
+
+  var canvasSize: CGSize {
+    CGSize(
+      width: sheetFrame.maxX + shadowMargin,
+      height: sheetFrame.maxY + shadowMargin
+    )
+  }
+
+  /// The Metal canvas is a child of the sheet-sized platform view. Its origin
+  /// is shifted so the sheet inside the canvas remains exactly at `(0, 0)`.
+  var canvasFrameAroundSheet: CGRect {
+    CGRect(
+      x: -sheetFrame.minX,
+      y: -sheetFrame.minY,
+      width: canvasSize.width,
+      height: canvasSize.height
+    )
+  }
+
+  func sheetExtent(inDrawableSize drawableSize: CGSize) -> CGRect {
+    let scaleX = drawableSize.width / canvasSize.width
+    let scaleY = drawableSize.height / canvasSize.height
+    return CGRect(
+      x: sheetFrame.minX * scaleX,
+      y: sheetFrame.minY * scaleY,
+      width: sheetFrame.width * scaleX,
+      height: sheetFrame.height * scaleY
+    )
+  }
+}
+
 /// Keeps one frozen cover for one physical curl. Content that arrives while
 /// the sheet is moving waits for an endpoint instead of replacing pixels in
 /// the person's hand halfway through the gesture.
@@ -254,8 +310,6 @@ struct CoverSnapshotLifecycle {
 
     override func viewDidLayoutSubviews() {
       super.viewDidLayoutSubviews()
-      coverHost.view.frame = view.bounds
-      curlView.frame = view.bounds
       renderCurrentState()
     }
 
@@ -282,7 +336,7 @@ struct CoverSnapshotLifecycle {
     }
 
     private func renderCurrentState() {
-      guard !view.bounds.isEmpty else { return }
+      guard let curlLayout = layoutSurfaces() else { return }
       if CoverOpeningPhysics.isClosed(lifecycle.progress) {
         lifecycle.settleAtClosedEndpoint()
         resetCoverHostGeometry()
@@ -320,8 +374,21 @@ struct CoverSnapshotLifecycle {
         cover: capturedCover,
         progress: lifecycle.progress,
         backsideColor: backsideColor,
-        cornerRadius: cornerRadius
+        cornerRadius: cornerRadius,
+        layout: curlLayout
       )
+    }
+
+    private func layoutSurfaces() -> CoverCurlLayout? {
+      guard view.bounds.width > 0, view.bounds.height > 0 else { return nil }
+      if coverHost.view.frame != view.bounds {
+        coverHost.view.frame = view.bounds
+      }
+      let layout = CoverCurlLayout(sheetSize: view.bounds.size)
+      if curlView.frame != layout.canvasFrameAroundSheet {
+        curlView.frame = layout.canvasFrameAroundSheet
+      }
+      return layout
     }
 
     private func captureCover() -> CGImage? {
@@ -421,8 +488,6 @@ struct CoverSnapshotLifecycle {
 
     override func layout() {
       super.layout()
-      coverHost.frame = bounds
-      curlView.frame = bounds
       renderCurrentState()
     }
 
@@ -448,7 +513,7 @@ struct CoverSnapshotLifecycle {
     }
 
     private func renderCurrentState() {
-      guard !bounds.isEmpty else { return }
+      guard let curlLayout = layoutSurfaces() else { return }
       if CoverOpeningPhysics.isClosed(lifecycle.progress) {
         lifecycle.settleAtClosedEndpoint()
         resetCoverHostGeometry()
@@ -480,8 +545,21 @@ struct CoverSnapshotLifecycle {
         cover: capturedCover,
         progress: lifecycle.progress,
         backsideColor: backsideColor,
-        cornerRadius: cornerRadius
+        cornerRadius: cornerRadius,
+        layout: curlLayout
       )
+    }
+
+    private func layoutSurfaces() -> CoverCurlLayout? {
+      guard bounds.width > 0, bounds.height > 0 else { return nil }
+      if coverHost.frame != bounds {
+        coverHost.frame = bounds
+      }
+      let layout = CoverCurlLayout(sheetSize: bounds.size)
+      if curlView.frame != layout.canvasFrameAroundSheet {
+        curlView.frame = layout.canvasFrameAroundSheet
+      }
+      return layout
     }
 
     private func captureCover() -> CGImage? {
@@ -533,12 +611,13 @@ private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
   private let commandQueue: (any MTLCommandQueue)?
   private let imageContext: CIContext?
   private let outputColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
-  private let inFlightSemaphore = DispatchSemaphore(value: 3)
+  private let inFlightSemaphore = DispatchSemaphore(value: 2)
 
   private var coverImage: CIImage?
   private var progress = 0.0
   private var backsideColor = CoverBacksideColor.notebook
   private var cornerRadius: CGFloat = 0
+  private var curlLayout: CoverCurlLayout?
 
   override init(frame frameRect: CGRect, device: (any MTLDevice)? = nil) {
     let metalDevice = device ?? MTLCreateSystemDefaultDevice()
@@ -566,10 +645,12 @@ private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
       isOpaque = false
       backgroundColor = .clear
       layer.isOpaque = false
+      (layer as? CAMetalLayer)?.maximumDrawableCount = 2
     #elseif os(macOS)
       wantsLayer = true
       layer?.isOpaque = false
       layer?.backgroundColor = NSColor.clear.cgColor
+      (layer as? CAMetalLayer)?.maximumDrawableCount = 2
     #endif
   }
 
@@ -582,12 +663,14 @@ private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
     cover: CGImage,
     progress: Double,
     backsideColor: CoverBacksideColor,
-    cornerRadius: CGFloat
+    cornerRadius: CGFloat,
+    layout: CoverCurlLayout
   ) {
     coverImage = CIImage(cgImage: cover)
     self.progress = CoverOpeningPhysics.clamped(progress)
     self.backsideColor = backsideColor
     self.cornerRadius = cornerRadius
+    curlLayout = layout
     setNeedsDisplay(bounds)
   }
 
@@ -610,35 +693,36 @@ private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
 
     guard drawableSize.width > 0,
       drawableSize.height > 0,
-      let input = fittedCoverImage(),
+      let curlLayout,
       let commandQueue,
       let commandBuffer = commandQueue.makeCommandBuffer(),
       let drawable = currentDrawable,
       let imageContext
     else { return }
 
-    let extent = CGRect(origin: .zero, size: drawableSize)
+    let canvasExtent = CGRect(origin: .zero, size: drawableSize)
+    let sheetExtent = curlLayout.sheetExtent(inDrawableSize: drawableSize)
+    guard let input = placedCoverImage(in: sheetExtent) else { return }
     let filter = CIFilter.pageCurlWithShadowTransition()
     filter.inputImage = input
-    filter.targetImage = CIImage(color: .clear).cropped(to: extent)
-    filter.backsideImage = roundedBacksideImage(extent: extent)
-    filter.extent = extent
+    filter.targetImage = CIImage(color: .clear).cropped(to: sheetExtent)
+    filter.backsideImage = roundedBacksideImage(extent: sheetExtent)
+    filter.extent = sheetExtent
     filter.time = Float(progress)
     filter.angle = .pi
-    filter.radius = CoverOpeningPhysics.curlRadius(for: extent)
+    filter.radius = CoverOpeningPhysics.curlRadius(for: sheetExtent)
     filter.shadowSize = CoverOpeningPhysics.shadowSize
     filter.shadowAmount = CoverOpeningPhysics.shadowAmount
-    filter.shadowExtent = extent.insetBy(
-      dx: -extent.width * 0.12,
-      dy: -extent.height * 0.08
-    )
+    filter.shadowExtent = canvasExtent
 
-    guard let output = filter.outputImage?.cropped(to: extent) else { return }
+    guard let output = filter.outputImage?.cropped(to: canvasExtent) else {
+      return
+    }
     imageContext.render(
       output,
       to: drawable.texture,
       commandBuffer: commandBuffer,
-      bounds: extent,
+      bounds: canvasExtent,
       colorSpace: outputColorSpace
     )
     commandBuffer.addCompletedHandler { [inFlightSemaphore] _ in
@@ -649,26 +733,29 @@ private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
     commandBuffer.commit()
   }
 
-  private func fittedCoverImage() -> CIImage? {
+  private func placedCoverImage(in sheetExtent: CGRect) -> CIImage? {
     guard let coverImage else { return nil }
-    let target = CGSize(
-      width: max(drawableSize.width, 1),
-      height: max(drawableSize.height, 1)
-    )
     let source = coverImage.extent.size
     guard source.width > 0, source.height > 0 else { return nil }
-    let transform = CGAffineTransform(
-      scaleX: target.width / source.width,
-      y: target.height / source.height
+    let scaled = coverImage.transformed(
+      by: CGAffineTransform(
+        scaleX: sheetExtent.width / source.width,
+        y: sheetExtent.height / source.height
+      )
     )
-    return coverImage.transformed(by: transform).cropped(
-      to: CGRect(origin: .zero, size: target)
+    return scaled.transformed(
+      by: CGAffineTransform(
+        translationX: sheetExtent.minX - scaled.extent.minX,
+        y: sheetExtent.minY - scaled.extent.minY
+      )
+    ).cropped(
+      to: sheetExtent
     )
   }
 
   private func roundedBacksideImage(extent: CGRect) -> CIImage {
     let color = CIImage(color: backsideColor.ciColor).cropped(to: extent)
-    let radius = cornerRadius * extent.width / max(bounds.width, 1)
+    let radius = cornerRadius * extent.width / curlLayoutSheetWidth
     let generator = CIFilter.roundedRectangleGenerator()
     generator.extent = extent
     generator.radius = Float(max(0, radius))
@@ -683,5 +770,9 @@ private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
         kCIInputMaskImageKey: mask,
       ]
     )
+  }
+
+  private var curlLayoutSheetWidth: CGFloat {
+    max(curlLayout?.sheetSize.width ?? 0, 1)
   }
 }

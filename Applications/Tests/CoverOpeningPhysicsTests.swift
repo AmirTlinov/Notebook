@@ -34,6 +34,48 @@ final class CoverOpeningPhysicsTests: XCTestCase {
     XCTAssertEqual(doubled, regular * 2, accuracy: 0.001)
   }
 
+  func testCurlCanvasCarriesTheCoverOutsideTheNotebookFrame() {
+    let sheetSize = CGSize(width: 834, height: 1_194)
+    let layout = CoverCurlLayout(sheetSize: sheetSize)
+
+    XCTAssertEqual(layout.sheetFrame.size, sheetSize)
+    XCTAssertGreaterThan(
+      layout.sheetFrame.minX,
+      sheetSize.width,
+      "The opening side needs one full cover plus room for its shadow"
+    )
+    XCTAssertEqual(
+      layout.canvasFrameAroundSheet.minX + layout.sheetFrame.minX,
+      0,
+      accuracy: 0.001
+    )
+    XCTAssertEqual(
+      layout.canvasFrameAroundSheet.minY + layout.sheetFrame.minY,
+      0,
+      accuracy: 0.001
+    )
+  }
+
+  func testCurlCanvasKeepsTheSheetFrameExactAtRetinaScale() {
+    let layout = CoverCurlLayout(
+      sheetSize: CGSize(width: 834, height: 1_194)
+    )
+    let drawable = CGSize(
+      width: layout.canvasSize.width * 2,
+      height: layout.canvasSize.height * 2
+    )
+
+    XCTAssertEqual(
+      layout.sheetExtent(inDrawableSize: drawable),
+      CGRect(
+        x: layout.sheetFrame.minX * 2,
+        y: layout.sheetFrame.minY * 2,
+        width: 1_668,
+        height: 2_388
+      )
+    )
+  }
+
   func testOneFrozenCoverSurvivesOpeningAndImmediateReversal() {
     let ownerID = UUID()
     let revision = revision(title: "Cover A")
