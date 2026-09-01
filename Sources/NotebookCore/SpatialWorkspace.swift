@@ -321,12 +321,31 @@ public enum NotebookOpeningTransition {
 
 /// Turns an approached notebook into one continuous camera target. The pinch
 /// supplies the raw path; once a candidate is visibly near, this field adds a
-/// small pull toward its center and full-page scale. The pull grows smoothly
-/// with apparent notebook size and becomes exact only beside the page.
+/// pull toward its center and full-page scale. Centering leads the scale
+/// correction, so an opening cover finds the middle of the screen without an
+/// automatic zoom taking control away from the fingers.
+public struct NotebookDockingCorrection: Equatable, Sendable {
+  public let centerWeight: Double
+  public let scaleWeight: Double
+
+  public static let zero = Self(centerWeight: 0, scaleWeight: 0)
+
+  /// Keeps the existing release threshold expressed in the field's semantic
+  /// strength rather than tying it to either visual response curve.
+  public var completion: Double {
+    sqrt(scaleWeight)
+  }
+}
+
 public enum NotebookDockingField {
   public static let fieldStartScaleRatio = 0.52
   public static let fullStrengthScaleRatio = 0.96
   public static let commitStrength = 0.92
+
+  /// The center is allowed to arrive before the automatic scale correction.
+  /// This exponent gives the cover a clear magnetic pull while preserving a
+  /// gentle, reversible first frame at the beginning of a pinch.
+  private static let centeringResponse = 1.5
 
   public static func strength(
     camera: SpatialCamera,
@@ -345,19 +364,21 @@ public enum NotebookDockingField {
     _ camera: SpatialCamera,
     toward notebookCenter: WorldPoint,
     viewport: SpatialPoint,
-    strength: Double
+    correction: NotebookDockingCorrection
   ) -> SpatialCamera {
-    guard strength.isFinite, strength > 0 else { return camera }
-    let weight = pow(min(strength, 1), 2)
+    guard correction.centerWeight > 0 || correction.scaleWeight > 0 else {
+      return camera
+    }
     let delta = camera.center.delta(to: notebookCenter)
     let targetScale = NotebookPresentation.fitScale(viewport: viewport)
     let resolvedScale = exp(
-      log(camera.scale) + (log(targetScale) - log(camera.scale)) * weight
+      log(camera.scale)
+        + (log(targetScale) - log(camera.scale)) * correction.scaleWeight
     )
     return SpatialCamera(
       center: camera.center.offsetBy(
-        x: delta.x * weight,
-        y: delta.y * weight
+        x: delta.x * correction.centerWeight,
+        y: delta.y * correction.centerWeight
       ),
       scale: resolvedScale
     )
@@ -367,26 +388,46 @@ public enum NotebookDockingField {
   /// visible in its starting camera. The remaining field then grows and fades
   /// as a pure function of the current raw camera, so reversing the fingers
   /// retraces the same path.
-  public static func correctionStrength(
+  public static func correction(
     currentStrength: Double,
     startingStrength: Double
-  ) -> Double {
-    guard currentStrength.isFinite, startingStrength.isFinite else { return 0 }
-    let currentWeight = pow(min(max(currentStrength, 0), 1), 2)
-    let startingWeight = pow(min(max(startingStrength, 0), 1), 2)
-    guard startingWeight < 1, currentWeight > startingWeight else { return 0 }
-    return sqrt((currentWeight - startingWeight) / (1 - startingWeight))
+  ) -> NotebookDockingCorrection {
+    guard currentStrength.isFinite, startingStrength.isFinite else {
+      return .zero
+    }
+    let current = min(max(currentStrength, 0), 1)
+    let starting = min(max(startingStrength, 0), 1)
+    guard current > starting, starting < 1 else { return .zero }
+
+    return NotebookDockingCorrection(
+      centerWeight: remainingWeight(
+        current: 1 - pow(1 - current, centeringResponse),
+        starting: 1 - pow(1 - starting, centeringResponse)
+      ),
+      scaleWeight: remainingWeight(
+        current: current * current,
+        starting: starting * starting
+      )
+    )
   }
 
   public static func shouldDock(
-    strength: Double,
+    correction: NotebookDockingCorrection,
     isApproaching: Bool,
     velocity: Double
   ) -> Bool {
-    strength.isFinite && velocity.isFinite
-      && strength >= commitStrength
+    correction.completion.isFinite && velocity.isFinite
+      && correction.completion >= commitStrength
       && isApproaching
       && velocity >= -0.05
+  }
+
+  private static func remainingWeight(
+    current: Double,
+    starting: Double
+  ) -> Double {
+    guard starting < 1, current > starting else { return 0 }
+    return (current - starting) / (1 - starting)
   }
 
   private static func smoothstep(

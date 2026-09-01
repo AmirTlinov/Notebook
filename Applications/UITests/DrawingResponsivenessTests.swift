@@ -605,7 +605,11 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     XCTAssertGreaterThan(releasedFrame.width, coverFrame.width * 1.02)
     XCTAssertGreaterThan(releasedFrame.height, coverFrame.height * 1.02)
-    XCTAssertLessThan(releasedOffset, coverOffset - 5)
+    XCTAssertLessThan(
+      releasedOffset,
+      coverOffset * 0.8,
+      "С началом раскрытия камера должна заметно исправлять центр раньше масштаба"
+    )
     XCTAssertGreaterThan(releasedOffset, 20)
     XCTAssertFalse(app.otherElements["paper-input"].exists)
 

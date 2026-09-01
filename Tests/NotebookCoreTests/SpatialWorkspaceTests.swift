@@ -323,19 +323,28 @@ func pageDockingFieldGrowsThroughoutTheApproach() {
     approaching,
     toward: .zero,
     viewport: viewport,
-    strength: approachingStrength
+    correction: NotebookDockingField.correction(
+      currentStrength: approachingStrength,
+      startingStrength: 0
+    )
   )
   let coverCamera = NotebookDockingField.attractedCamera(
     focusedCover,
     toward: .zero,
     viewport: viewport,
-    strength: coverStrength
+    correction: NotebookDockingField.correction(
+      currentStrength: coverStrength,
+      startingStrength: 0
+    )
   )
   let nearbyCamera = NotebookDockingField.attractedCamera(
     nearby,
     toward: .zero,
     viewport: viewport,
-    strength: nearbyStrength
+    correction: NotebookDockingField.correction(
+      currentStrength: nearbyStrength,
+      startingStrength: 0
+    )
   )
   func distanceToTarget(_ point: WorldPoint) -> Double {
     let delta = point.delta(to: .zero)
@@ -372,7 +381,10 @@ func pageDockingFollowsTheCurrentPinchDirection() {
     camera,
     toward: notebookCenter,
     viewport: viewport,
-    strength: strength
+    correction: NotebookDockingField.correction(
+      currentStrength: strength,
+      startingStrength: 0
+    )
   )
 
   #expect(attracted.scale > camera.scale)
@@ -387,12 +399,18 @@ func pageDockingFollowsTheCurrentPinchDirection() {
       ) * 0.1
   )
   #expect(NotebookDockingField.shouldDock(
-    strength: strength,
+    correction: NotebookDockingField.correction(
+      currentStrength: strength,
+      startingStrength: 0
+    ),
     isApproaching: true,
     velocity: 0
   ))
   #expect(!NotebookDockingField.shouldDock(
-    strength: strength,
+    correction: NotebookDockingField.correction(
+      currentStrength: strength,
+      startingStrength: 0
+    ),
     isApproaching: false,
     velocity: -0.2
   ))
@@ -400,24 +418,118 @@ func pageDockingFollowsTheCurrentPinchDirection() {
 
 @Test("Новый щипок не применяет уже видимое притяжение второй раз")
 func dockingCorrectionStartsFromTheCurrentVisibleCamera() {
-  #expect(NotebookDockingField.correctionStrength(
+  #expect(NotebookDockingField.correction(
     currentStrength: 0.7,
     startingStrength: 0.7
-  ) == 0)
-  let closer = NotebookDockingField.correctionStrength(
+  ) == .zero)
+  let closer = NotebookDockingField.correction(
     currentStrength: 0.85,
     startingStrength: 0.7
   )
-  #expect(closer > 0)
-  #expect(closer < 1)
-  #expect(NotebookDockingField.correctionStrength(
+  #expect(closer.centerWeight > closer.scaleWeight)
+  #expect(closer.scaleWeight > 0)
+  #expect(closer.completion < 1)
+  #expect(NotebookDockingField.correction(
     currentStrength: 0.7,
     startingStrength: 0.85
-  ) == 0)
-  #expect(NotebookDockingField.correctionStrength(
+  ) == .zero)
+  let complete = NotebookDockingField.correction(
     currentStrength: 1,
     startingStrength: 0.7
-  ) == 1)
+  )
+  #expect(complete.centerWeight == 1)
+  #expect(complete.scaleWeight == 1)
+  #expect(complete.completion == 1)
+}
+
+@Test("Продолженный магнит приходит в ту же камеру, что и один жест")
+func resumedDockingComposesWithoutASecondAttraction() {
+  let viewport = SpatialPoint(x: 834, y: 1_194)
+  let target = WorldPoint.zero
+  let raw = SpatialCamera(
+    center: WorldPoint(x: 180, y: -95),
+    scale: 0.7
+  )
+  let firstStrength = 0.56
+  let finalStrength = 0.84
+  let first = NotebookDockingField.attractedCamera(
+    raw,
+    toward: target,
+    viewport: viewport,
+    correction: NotebookDockingField.correction(
+      currentStrength: firstStrength,
+      startingStrength: 0
+    )
+  )
+  let resumed = NotebookDockingField.attractedCamera(
+    first,
+    toward: target,
+    viewport: viewport,
+    correction: NotebookDockingField.correction(
+      currentStrength: finalStrength,
+      startingStrength: firstStrength
+    )
+  )
+  let direct = NotebookDockingField.attractedCamera(
+    raw,
+    toward: target,
+    viewport: viewport,
+    correction: NotebookDockingField.correction(
+      currentStrength: finalStrength,
+      startingStrength: 0
+    )
+  )
+  let centerDifference = resumed.center.delta(to: direct.center)
+
+  #expect(abs(centerDifference.x) < 0.000_001)
+  #expect(abs(centerDifference.y) < 0.000_001)
+  #expect(abs(resumed.scale - direct.scale) < 0.000_001)
+}
+
+@Test("Раскрытие раньше исправляет центр, чем автоматически доводит масштаб")
+func openingCoverIsMagnetizedWithoutAggressiveAutomaticZoom() {
+  let viewport = SpatialPoint(x: 834, y: 1_194)
+  let target = WorldPoint.zero
+  let coverScale = NotebookPresentation.coverScale(viewport: viewport)
+  let startingCamera = SpatialCamera(
+    center: WorldPoint(x: 100 / coverScale, y: -70 / coverScale),
+    scale: coverScale
+  )
+  let rawCamera = SpatialCamera(
+    center: startingCamera.center,
+    scale: coverScale * 1.05
+  )
+  let startingStrength = NotebookDockingField.strength(
+    camera: startingCamera,
+    viewport: viewport
+  )
+  let currentStrength = NotebookDockingField.strength(
+    camera: rawCamera,
+    viewport: viewport
+  )
+  let correction = NotebookDockingField.correction(
+    currentStrength: currentStrength,
+    startingStrength: startingStrength
+  )
+  let attracted = NotebookDockingField.attractedCamera(
+    rawCamera,
+    toward: target,
+    viewport: viewport,
+    correction: correction
+  )
+  let originalError = hypot(
+    rawCamera.center.delta(to: target).x,
+    rawCamera.center.delta(to: target).y
+  )
+  let remainingError = hypot(
+    attracted.center.delta(to: target).x,
+    attracted.center.delta(to: target).y
+  )
+
+  #expect(correction.centerWeight > 0.3)
+  #expect(correction.scaleWeight < 0.16)
+  #expect(remainingError < originalError * 0.7)
+  #expect(attracted.scale < rawCamera.scale * 1.05)
 }
 
 @Test("Угол листа равен восьми физическим миллиметрам")

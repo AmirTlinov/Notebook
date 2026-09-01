@@ -18,7 +18,7 @@ private struct CameraGestureSnapshot {
   var dockingStartStrength: Double
   var isApproaching: Bool
   var boardEngagement: BoardEngagement?
-  var dockingStrength: Double
+  var dockingCorrection: NotebookDockingCorrection
 }
 
 struct RenderedWorkspaceItem: Identifiable {
@@ -580,7 +580,7 @@ struct SpatialWorkspaceView: View {
             )
           )
         },
-        dockingStrength: 0
+        dockingCorrection: .zero
       )
     case .changed(let scale, let velocity, _, let centroid):
       updateMagnification(
@@ -677,7 +677,7 @@ struct SpatialWorkspaceView: View {
         coverScale: coverScale
       ) {
         snapshot.boardEngagement = nil
-        snapshot.dockingStrength = 0
+        snapshot.dockingCorrection = .zero
       } else {
         snapshot.candidateItemID = boardEngagement.itemID
       }
@@ -728,19 +728,19 @@ struct SpatialWorkspaceView: View {
         camera: camera,
         viewport: viewport
       )
-      let correctionStrength = NotebookDockingField.correctionStrength(
+      let correction = NotebookDockingField.correction(
         currentStrength: dockingStrength,
         startingStrength: snapshot.dockingStartStrength
       )
-      snapshot.dockingStrength = correctionStrength
+      snapshot.dockingCorrection = correction
       camera = NotebookDockingField.attractedCamera(
         camera,
         toward: center,
         viewport: viewport,
-        strength: correctionStrength
+        correction: correction
       )
     } else {
-      snapshot.dockingStrength = 0
+      snapshot.dockingCorrection = .zero
     }
 
     if snapshot.boardEngagement == nil,
@@ -798,7 +798,7 @@ struct SpatialWorkspaceView: View {
     let pageScale = fitScale(viewport: viewport)
     if let itemID = presence.focusedItemID,
       NotebookDockingField.shouldDock(
-        strength: snapshot.dockingStrength,
+        correction: snapshot.dockingCorrection,
         isApproaching: snapshot.isApproaching,
         velocity: Double(velocity)
       ),
