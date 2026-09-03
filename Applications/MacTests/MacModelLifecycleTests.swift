@@ -6,6 +6,60 @@ import XCTest
 
 final class MacModelLifecycleTests: XCTestCase {
   @MainActor
+  func testElementEditingSessionIsTheSingleTransientOwner() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let model = NotebookAppModel(
+      store: NotebookStore(root: root),
+      startsNearbySync: false
+    )
+    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let page = try XCTUnwrap(model.activePage)
+    let pageReference = EditableElementReference.page(
+      pageID: page.id,
+      elementID: "page-element"
+    )
+    let boardReference = EditableElementReference.spatial(
+      elementID: "board-element"
+    )
+
+    model.selectElementTool()
+    model.selectElement(pageReference)
+    model.updateElementDrag(
+      pageReference,
+      translation: SpatialPoint(x: 32, y: 48)
+    )
+    XCTAssertEqual(model.elementEditingSession.selection, pageReference)
+    XCTAssertEqual(
+      model.elementEditingSession.translation,
+      SpatialPoint(x: 32, y: 48)
+    )
+
+    model.selectElement(boardReference)
+    XCTAssertEqual(model.elementEditingSession.selection, boardReference)
+    XCTAssertEqual(model.elementEditingSession.translation, .zero)
+
+    model.updateElementDrag(
+      pageReference,
+      translation: SpatialPoint(x: 500, y: 500)
+    )
+    XCTAssertEqual(model.elementEditingSession.selection, boardReference)
+    XCTAssertEqual(model.elementEditingSession.translation, .zero)
+
+    model.finishElementDrag(
+      pageReference,
+      translation: SpatialPoint(x: 500, y: 500)
+    )
+    XCTAssertEqual(model.elementEditingSession.selection, boardReference)
+
+    model.selectDrawingTool(.eraser)
+    XCTAssertFalse(model.isElementEditingEnabled)
+    XCTAssertEqual(model.elementEditingSession, ElementEditingSession())
+  }
+
+  @MainActor
   func testPersonCanMoveAndRemoveAgentElements() throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)

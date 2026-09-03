@@ -129,16 +129,13 @@ enum WorkspaceSceneProjection {
             },
             editingTextID: nil,
             isElementEditingEnabled: false,
-            selectedElementID: nil,
             rendersSettledSnapshot: true,
             onTap: { _, _ in },
             onLiftChanged: { _ in },
             onTranslationChanged: { _ in },
             onTranslationEnded: { _ in },
             onTextEditingEnded: { _ in },
-            onSelectElement: { _ in },
-            onMoveElement: { _, _ in },
-            onDeleteElement: { _ in }
+            onElementSelected: {}
           )
           .scaleEffect(presence.camera.scale)
           .position(x: screen.x, y: screen.y)
@@ -189,7 +186,6 @@ struct SpatialWorkspaceView: View {
   @State private var cameraGesture: CameraGestureSnapshot?
   @State private var panStart: SessionPresence?
   @State private var selectedItemID: UUID?
-  @State private var selectedSpatialElementID: String?
   @State private var liftedItemID: UUID?
   @State private var editingSpatialTextID: String?
   @State private var contentGestureActive = false
@@ -237,13 +233,13 @@ struct SpatialWorkspaceView: View {
             onTap: {
               withAnimation(.easeOut(duration: 0.12)) {
                 selectedItemID = nil
-                selectedSpatialElementID = nil
               }
+              model.clearElementSelection()
               editingSpatialTextID = nil
             },
             onBegan: {
               selectedItemID = nil
-              selectedSpatialElementID = nil
+              model.clearElementSelection()
               editingSpatialTextID = nil
               panStart = presence
             },
@@ -334,7 +330,6 @@ struct SpatialWorkspaceView: View {
               && cameraGesture == nil
               && !settling
               && (!model.isElementEditingEnabled || presence.mode == .document),
-            selectedSpatialElementID: selectedSpatialElementID,
             isSelected: selectedItemID == rendered.id,
             isLifted: liftedItemID == rendered.id,
             editingTextID: editingSpatialTextID,
@@ -367,26 +362,8 @@ struct SpatialWorkspaceView: View {
                 editingSpatialTextID = nil
               }
             },
-            onSelectSpatialElement: { elementID in
-              selectedSpatialElementID = elementID
+            onElementSelected: {
               selectedItemID = nil
-            },
-            onMoveSpatialElement: { elementID, translation in
-              _ = model.moveSpatialElement(
-                elementID: elementID,
-                by: SpatialPoint(
-                  x: translation.width,
-                  y: translation.height
-                )
-              )
-            },
-            onDeleteSpatialElement: { elementID in
-              guard model.removeSpatialElement(elementID: elementID) else {
-                return
-              }
-              if selectedSpatialElementID == elementID {
-                selectedSpatialElementID = nil
-              }
             },
             onPageTurnStateChange: { active in
               pageTurnIsActive = active
@@ -428,14 +405,14 @@ struct SpatialWorkspaceView: View {
         publishViewportIfNeeded(viewport)
       }
       .onChange(of: presence.mode) { _, mode in
-        selectedSpatialElementID = nil
+        model.clearElementSelection()
         if mode != .cover { editingSpatialTextID = nil }
         if mode != .page && mode != .document {
           pageTurnIsActive = false
         }
       }
       .onChange(of: presence.focusedItemID) { _, itemID in
-        selectedSpatialElementID = nil
+        model.clearElementSelection()
         if itemID == nil { editingSpatialTextID = nil }
         pageTurnIsActive = false
       }
@@ -449,10 +426,7 @@ struct SpatialWorkspaceView: View {
         bufferedCameraPhases = []
         settling = false
         editingSpatialTextID = nil
-        selectedSpatialElementID = nil
-      }
-      .onChange(of: model.isElementEditingEnabled) { _, enabled in
-        if !enabled { selectedSpatialElementID = nil }
+        model.clearElementSelection()
       }
     }
   }
@@ -567,6 +541,7 @@ struct SpatialWorkspaceView: View {
     if let board = model.board {
       ForEach(board.elements.filter { $0.surface.kind == .board }) { element in
         if let worldOrigin = element.worldOrigin {
+          let reference = EditableElementReference.spatial(elementID: element.id)
           let base = presence.camera.worldToScreen(
             worldOrigin,
             viewport: viewport
@@ -577,27 +552,20 @@ struct SpatialWorkspaceView: View {
           )
           EditableElementContainer(
             isEditingEnabled: model.isElementEditingEnabled,
-            isSelected: selectedSpatialElementID == element.id,
+            isSelected: model.elementEditingSession.selection == reference,
             coordinateScale: presence.camera.scale,
+            translation: elementTranslation(for: reference),
             onSelect: {
-              selectedSpatialElementID = element.id
+              model.selectElement(reference)
               selectedItemID = nil
             },
-            onMove: { translation in
-              _ = model.moveSpatialElement(
-                elementID: element.id,
-                by: SpatialPoint(
-                  x: translation.width,
-                  y: translation.height
-                )
-              )
+            onDragChanged: { translation in
+              model.updateElementDrag(reference, translation: translation)
             },
-            onDelete: {
-              guard model.removeSpatialElement(elementID: element.id) else {
-                return
-              }
-              selectedSpatialElementID = nil
-            }
+            onDragEnded: { translation in
+              model.finishElementDrag(reference, translation: translation)
+            },
+            onDelete: { model.deleteElement(reference) }
           ) {
             SpatialElementContent(element: element)
           }
@@ -612,6 +580,15 @@ struct SpatialWorkspaceView: View {
         }
       }
     }
+  }
+
+  private func elementTranslation(
+    for reference: EditableElementReference
+  ) -> SpatialPoint {
+    guard model.elementEditingSession.selection == reference else {
+      return .zero
+    }
+    return model.elementEditingSession.translation
   }
 
   private func beginTextEditing(
@@ -1293,7 +1270,6 @@ private struct WorkspaceSceneItem: View {
   let openProgress: Double
   let contentIsInteractive: Bool
   let pageNavigationIsEnabled: Bool
-  let selectedSpatialElementID: String?
   let isSelected: Bool
   let isLifted: Bool
   let editingTextID: String?
@@ -1304,9 +1280,7 @@ private struct WorkspaceSceneItem: View {
   let onOpen: (UUID) -> Void
   let onEditText: (UUID, SpatialPoint) -> Void
   let onTextEditingEnded: (String) -> Void
-  let onSelectSpatialElement: (String) -> Void
-  let onMoveSpatialElement: (String, CGSize) -> Void
-  let onDeleteSpatialElement: (String) -> Void
+  let onElementSelected: () -> Void
   let onPageTurnStateChange: @MainActor @Sendable (Bool) -> Void
   let onDocumentPageLayout: (DocumentPageLayout) -> Void
 
@@ -1557,7 +1531,6 @@ private struct WorkspaceSceneItem: View {
       elements: coverElements,
       editingTextID: editingTextID,
       isElementEditingEnabled: model.isElementEditingEnabled,
-      selectedElementID: selectedSpatialElementID,
       rendersSettledSnapshot: false,
       onTap: handleTap,
       onLiftChanged: { lifted in
@@ -1570,9 +1543,7 @@ private struct WorkspaceSceneItem: View {
         finishMove(translation: translation, scale: camera.scale)
       },
       onTextEditingEnded: onTextEditingEnded,
-      onSelectElement: onSelectSpatialElement,
-      onMoveElement: onMoveSpatialElement,
-      onDeleteElement: onDeleteSpatialElement
+      onElementSelected: onElementSelected
     )
   }
 
@@ -1643,16 +1614,13 @@ private struct WorkspaceItemCoverView: View {
   let elements: [SpatialElement]
   let editingTextID: String?
   let isElementEditingEnabled: Bool
-  let selectedElementID: String?
   let rendersSettledSnapshot: Bool
   let onTap: (CGPoint, Int) -> Void
   let onLiftChanged: (Bool) -> Void
   let onTranslationChanged: (CGSize) -> Void
   let onTranslationEnded: (CGSize) -> Void
   let onTextEditingEnded: (String) -> Void
-  let onSelectElement: (String) -> Void
-  let onMoveElement: (String, CGSize) -> Void
-  let onDeleteElement: (String) -> Void
+  let onElementSelected: () -> Void
 
   var body: some View {
     ZStack(alignment: .topLeading) {
@@ -1677,13 +1645,23 @@ private struct WorkspaceItemCoverView: View {
       }
 
       ForEach(elements) { element in
+        let reference = EditableElementReference.spatial(elementID: element.id)
         EditableElementContainer(
           isEditingEnabled: isElementEditingEnabled,
-          isSelected: selectedElementID == element.id,
+          isSelected: model.elementEditingSession.selection == reference,
           coordinateScale: 1,
-          onSelect: { onSelectElement(element.id) },
-          onMove: { onMoveElement(element.id, $0) },
-          onDelete: { onDeleteElement(element.id) }
+          translation: elementTranslation(for: reference),
+          onSelect: {
+            model.selectElement(reference)
+            onElementSelected()
+          },
+          onDragChanged: { translation in
+            model.updateElementDrag(reference, translation: translation)
+          },
+          onDragEnded: { translation in
+            model.finishElementDrag(reference, translation: translation)
+          },
+          onDelete: { model.deleteElement(reference) }
         ) {
           Group {
             #if os(macOS)
@@ -1759,6 +1737,15 @@ private struct WorkspaceItemCoverView: View {
         style: .continuous
       )
     )
+  }
+
+  private func elementTranslation(
+    for reference: EditableElementReference
+  ) -> SpatialPoint {
+    guard model.elementEditingSession.selection == reference else {
+      return .zero
+    }
+    return model.elementEditingSession.translation
   }
 
   @ViewBuilder

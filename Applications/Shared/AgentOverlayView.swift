@@ -2,37 +2,42 @@ import NotebookCore
 import SwiftUI
 
 struct AgentOverlayView: View {
+  @Environment(NotebookAppModel.self) private var model
+
+  let pageID: UUID
   let elements: [AgentElement]
   let isElementEditingEnabled: Bool
-  let onMove: (String, CGSize) -> Void
-  let onDelete: (String) -> Void
   let onRenderReady: (Bool) -> Void
   let onState: (String, JSONValue) -> Void
 
   @State private var readyElementIDs: Set<String> = []
-  @State private var selectedElementID: String?
 
   var body: some View {
     ZStack(alignment: .topLeading) {
       if isElementEditingEnabled {
         Color.clear
           .contentShape(Rectangle())
-          .onTapGesture { selectedElementID = nil }
+          .onTapGesture { model.clearElementSelection() }
       }
 
       ForEach(elements) { element in
+        let reference = EditableElementReference.page(
+          pageID: pageID,
+          elementID: element.id
+        )
         EditableElementContainer(
           isEditingEnabled: isElementEditingEnabled,
-          isSelected: selectedElementID == element.id,
+          isSelected: model.elementEditingSession.selection == reference,
           coordinateScale: 1,
-          onSelect: { selectedElementID = element.id },
-          onMove: { translation in
-            onMove(element.id, translation)
+          translation: translation(for: reference),
+          onSelect: { model.selectElement(reference) },
+          onDragChanged: { translation in
+            model.updateElementDrag(reference, translation: translation)
           },
-          onDelete: {
-            selectedElementID = nil
-            onDelete(element.id)
-          }
+          onDragEnded: { translation in
+            model.finishElementDrag(reference, translation: translation)
+          },
+          onDelete: { model.deleteElement(reference) }
         ) {
           AgentWebElementView(
             element: element,
@@ -58,14 +63,24 @@ struct AgentOverlayView: View {
     .onChange(of: elements) { _, updatedElements in
       let liveIDs = Set(updatedElements.map(\.id))
       readyElementIDs.formIntersection(liveIDs)
-      if let selectedElementID, !liveIDs.contains(selectedElementID) {
-        self.selectedElementID = nil
+      if case .page(let selectedPageID, let selectedElementID) =
+        model.elementEditingSession.selection,
+        selectedPageID == pageID,
+        !liveIDs.contains(selectedElementID)
+      {
+        model.clearElementSelection()
       }
       publishReadiness()
     }
-    .onChange(of: isElementEditingEnabled) { _, enabled in
-      if !enabled { selectedElementID = nil }
+  }
+
+  private func translation(
+    for reference: EditableElementReference
+  ) -> SpatialPoint {
+    guard model.elementEditingSession.selection == reference else {
+      return .zero
     }
+    return model.elementEditingSession.translation
   }
 
   private func setElement(_ id: String, ready: Bool) {

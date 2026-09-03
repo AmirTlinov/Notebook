@@ -1,18 +1,17 @@
+import NotebookCore
 import SwiftUI
 
-/// Gives a person temporary ownership of an agent-authored element. The normal
-/// content keeps its own taps until the element tool is selected; that tool
-/// then owns selection, movement and deletion in one visible layer.
+/// A stateless projection of the shared editing session around one element.
 struct EditableElementContainer<Content: View>: View {
   let isEditingEnabled: Bool
   let isSelected: Bool
   let coordinateScale: Double
+  let translation: SpatialPoint
   let onSelect: () -> Void
-  let onMove: (CGSize) -> Void
+  let onDragChanged: (SpatialPoint) -> Void
+  let onDragEnded: (SpatialPoint) -> Void
   let onDelete: () -> Void
   @ViewBuilder let content: Content
-
-  @State private var dragTranslation = CGSize.zero
 
   var body: some View {
     ZStack(alignment: .topTrailing) {
@@ -50,28 +49,31 @@ struct EditableElementContainer<Content: View>: View {
         }
       }
     }
-    .offset(dragTranslation)
+    .offset(
+      x: translation.x * coordinateScale,
+      y: translation.y * coordinateScale
+    )
     .zIndex(isSelected ? 1_000 : 0)
-    .onChange(of: isEditingEnabled) { _, enabled in
-      if !enabled { dragTranslation = .zero }
-    }
   }
 
   private var moveGesture: some Gesture {
     DragGesture(minimumDistance: 3)
       .onChanged { value in
         onSelect()
-        dragTranslation = value.translation
+        onDragChanged(logicalTranslation(value.translation))
       }
       .onEnded { value in
-        let scale = max(coordinateScale, 0.001)
-        let logical = CGSize(
-          width: value.translation.width / scale,
-          height: value.translation.height / scale
-        )
-        dragTranslation = .zero
-        guard hypot(logical.width, logical.height) >= 1 else { return }
-        onMove(logical)
+        let logical = logicalTranslation(value.translation)
+        guard hypot(logical.x, logical.y) >= 1 else { return }
+        onDragEnded(logical)
       }
+  }
+
+  private func logicalTranslation(_ translation: CGSize) -> SpatialPoint {
+    let scale = max(coordinateScale, 0.001)
+    return SpatialPoint(
+      x: translation.width / scale,
+      y: translation.height / scale
+    )
   }
 }

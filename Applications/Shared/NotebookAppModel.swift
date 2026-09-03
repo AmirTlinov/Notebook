@@ -101,6 +101,7 @@ final class NotebookAppModel {
   private(set) var eraserStyle: EraserStyle
   private(set) var drawingTool: DrawingTool = .pen
   private(set) var isElementEditingEnabled = false
+  private(set) var elementEditingSession = ElementEditingSession()
 
   let store: NotebookStore
   let actorID: UUID
@@ -721,7 +722,7 @@ final class NotebookAppModel {
   }
 
   func selectPenColor(_ color: PenColor) {
-    isElementEditingEnabled = false
+    endElementEditing()
     drawingTool = .pen
     guard color != penStyle.color else { return }
     penStyle = PenStyle(
@@ -733,7 +734,7 @@ final class NotebookAppModel {
   }
 
   func selectPenWidth(_ width: Double) {
-    isElementEditingEnabled = false
+    endElementEditing()
     drawingTool = .pen
     let next = PenStyle(
       color: penStyle.color,
@@ -746,7 +747,7 @@ final class NotebookAppModel {
   }
 
   func selectPenMinimumOpacity(_ minimumOpacity: Double) {
-    isElementEditingEnabled = false
+    endElementEditing()
     drawingTool = .pen
     let next = PenStyle(
       color: penStyle.color,
@@ -759,7 +760,7 @@ final class NotebookAppModel {
   }
 
   func selectEraserWidth(_ maximumWidth: Double) {
-    isElementEditingEnabled = false
+    endElementEditing()
     drawingTool = .eraser
     let next = EraserStyle(maximumWidth: maximumWidth)
     guard next != eraserStyle else { return }
@@ -768,12 +769,74 @@ final class NotebookAppModel {
   }
 
   func selectDrawingTool(_ tool: DrawingTool) {
-    isElementEditingEnabled = false
+    endElementEditing()
     drawingTool = tool
   }
 
   func selectElementTool() {
     isElementEditingEnabled = true
+    elementEditingSession = ElementEditingSession()
+  }
+
+  func selectElement(_ reference: EditableElementReference) {
+    guard isElementEditingEnabled else { return }
+    guard elementEditingSession.selection != reference else { return }
+    elementEditingSession = ElementEditingSession(selection: reference)
+  }
+
+  func updateElementDrag(
+    _ reference: EditableElementReference,
+    translation: SpatialPoint
+  ) {
+    guard isElementEditingEnabled,
+      elementEditingSession.selection == reference
+    else { return }
+    elementEditingSession = ElementEditingSession(
+      selection: reference,
+      translation: translation
+    )
+  }
+
+  func finishElementDrag(
+    _ reference: EditableElementReference,
+    translation: SpatialPoint
+  ) {
+    guard isElementEditingEnabled,
+      elementEditingSession.selection == reference
+    else { return }
+    elementEditingSession = ElementEditingSession(selection: reference)
+    switch reference {
+    case .page(let pageID, let elementID):
+      _ = movePageElement(
+        pageID: pageID,
+        elementID: elementID,
+        by: translation
+      )
+    case .spatial(let elementID):
+      _ = moveSpatialElement(elementID: elementID, by: translation)
+    }
+  }
+
+  func deleteElement(_ reference: EditableElementReference) {
+    guard isElementEditingEnabled,
+      elementEditingSession.selection == reference
+    else { return }
+    elementEditingSession = ElementEditingSession()
+    switch reference {
+    case .page(let pageID, let elementID):
+      _ = removePageElement(pageID: pageID, elementID: elementID)
+    case .spatial(let elementID):
+      _ = removeSpatialElement(elementID: elementID)
+    }
+  }
+
+  func clearElementSelection() {
+    elementEditingSession = ElementEditingSession()
+  }
+
+  private func endElementEditing() {
+    isElementEditingEnabled = false
+    elementEditingSession = ElementEditingSession()
   }
 
   func commitElementState(elementID: String, state: JSONValue) {
