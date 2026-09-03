@@ -1,4 +1,5 @@
 import NotebookCore
+import PencilKit
 import XCTest
 @testable import Notebook
 
@@ -82,6 +83,70 @@ final class MacModelLifecycleTests: XCTestCase {
 
     XCTAssertEqual(model.board?.stamp, changed.stamp)
     XCTAssertEqual(model.board?.focusedCenter(of: itemID), center)
+  }
+
+  @MainActor
+  func testVisualReadoutReachesFinalPageAfterABurst() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = NotebookStore(root: root)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let page = try XCTUnwrap(model.activePage)
+    let actor = UUID()
+    var finalStamp = page.drawingStamp
+
+    for counter in 1 ... 24 {
+      finalStamp = VersionStamp(counter: UInt64(counter), actor: actor)
+      let points = [
+        PKStrokePoint(
+          location: CGPoint(x: 20, y: 20),
+          timeOffset: 0,
+          size: CGSize(width: 4, height: 4),
+          opacity: 1,
+          force: 1,
+          azimuth: 0,
+          altitude: .pi / 2
+        ),
+        PKStrokePoint(
+          location: CGPoint(x: 40 + counter, y: 40),
+          timeOffset: 0.1,
+          size: CGSize(width: 4, height: 4),
+          opacity: 1,
+          force: 1,
+          azimuth: 0,
+          altitude: .pi / 2
+        ),
+      ]
+      let drawing = PKDrawing(strokes: [
+        PKStroke(
+          ink: PKInk(.monoline, color: .black),
+          path: PKStrokePath(controlPoints: points, creationDate: Date())
+        ),
+      ])
+      model.receivePeerMessage(.drawing(
+        pageID: page.id,
+        data: drawing.dataRepresentation(),
+        stamp: finalStamp
+      ))
+      await Task.yield()
+    }
+
+    let clock = ContinuousClock()
+    let deadline = clock.now + .seconds(5)
+    var receipt: PageVisionReceipt?
+    repeat {
+      try await Task.sleep(for: .milliseconds(20))
+      receipt = try? JSONDecoder().decode(
+        PageVisionReceipt.self,
+        from: Data(contentsOf: store.previewVisionReceiptURL(page.id))
+      )
+    } while receipt?.drawingStamp != finalStamp && clock.now < deadline
+
+    XCTAssertEqual(model.pages[page.id]?.drawingStamp, finalStamp)
+    XCTAssertEqual(receipt?.drawingStamp, finalStamp)
   }
 
   @MainActor

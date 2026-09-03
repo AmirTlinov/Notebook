@@ -56,7 +56,7 @@ test("rejects a receipt from the previous drawing revision", async () => {
       readFreshPageVision(store, await store.readPage(pageID)),
       (error: unknown) =>
         error instanceof StoreError &&
-        /догоняет новый штрих/.test(error.message),
+        /не означает, что Амир сейчас рисует/.test(error.message),
     );
   });
 });

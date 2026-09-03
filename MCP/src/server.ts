@@ -265,7 +265,7 @@ export function createServer(store = new NotebookStore()): McpServer {
         if (!sameStamp(page.drawingStamp, receipt.page.drawingStamp)
           || !sameStamp(page.agentStamp, receipt.page.agentStamp)) {
           throw new StoreError(
-            "Изображение текущего вида догоняет новый лист. Повторите notebook_render_view через мгновение.",
+            "Изображение текущего листа еще собирается в фоне. Это не означает, что Амир сейчас рисует. Повторите notebook_render_view через мгновение.",
           );
         }
       }
@@ -277,7 +277,7 @@ export function createServer(store = new NotebookStore()): McpServer {
         if (!sameStamp(document.contentStamp, receipt.document.contentStamp)
           || !sameStamp(state.stamp, receipt.document.stateStamp)) {
           throw new StoreError(
-            "Изображение текущего вида догоняет новый документ. Повторите notebook_render_view через мгновение.",
+            "Изображение текущего документа еще собирается в фоне. Это не означает, что Амир сейчас его меняет. Повторите notebook_render_view через мгновение.",
           );
         }
       }
@@ -981,7 +981,7 @@ function assertFreshCurrentView(
     || !sameStamp(receipt.spatialInkStamp, spatialInkStamp)
     || !isDeepStrictEqual(receipt.presence, presence)) {
     throw new StoreError(
-      "Изображение текущего вида догоняет изменения. Повторите notebook_render_view через мгновение.",
+      "Изображение текущего вида еще собирается в фоне. Это не означает, что Амир сейчас что-то меняет. Повторите notebook_render_view через мгновение.",
     );
   }
 }

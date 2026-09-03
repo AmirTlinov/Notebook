@@ -210,7 +210,10 @@ try {
     arguments: {},
   });
   assert.equal(stalePreview.isError, true);
-  assert.match(JSON.stringify(stalePreview.content), /догоняет новый штрих/);
+  assert.match(
+    JSON.stringify(stalePreview.content),
+    /не означает, что Амир сейчас рисует/,
+  );
 
   const createdDocument = await client.callTool({
     name: "notebook_create_document",

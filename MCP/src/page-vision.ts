@@ -261,7 +261,7 @@ export async function readFreshPageVision(
     receipt.pageSize.height !== page.size.height
   ) {
     throw new StoreError(
-      "Карта листа догоняет новый штрих. Повторите notebook_page_map через мгновение.",
+      "Визуальная карта листа еще собирается в фоне. Это не означает, что Амир сейчас рисует. Повторите notebook_page_map через мгновение.",
     );
   }
   if (expectedDrawingRevision && expectedDrawingRevision !== currentRevision) {
