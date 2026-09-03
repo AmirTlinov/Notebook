@@ -28,7 +28,7 @@ struct PageSurface: View {
           PencilCanvasView(
             pageID: page.id,
             drawingData: page.drawingData,
-            isInputEnabled: isInteractive,
+            isInputEnabled: isInteractive && !model.isElementEditingEnabled,
             penStyle: model.penStyle,
             eraserStyle: model.eraserStyle,
             drawingTool: model.drawingTool,
@@ -57,6 +57,23 @@ struct PageSurface: View {
         #endif
         AgentOverlayView(
           elements: page.elements,
+          isElementEditingEnabled: model.isElementEditingEnabled && isInteractive,
+          onMove: { elementID, translation in
+            _ = model.movePageElement(
+              pageID: page.id,
+              elementID: elementID,
+              by: SpatialPoint(
+                x: translation.width,
+                y: translation.height
+              )
+            )
+          },
+          onDelete: { elementID in
+            _ = model.removePageElement(
+              pageID: page.id,
+              elementID: elementID
+            )
+          },
           onRenderReady: { ready in
             overlayIsReady = ready
             publishReadiness(ink: inkIsReady, overlay: ready)

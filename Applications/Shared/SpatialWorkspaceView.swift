@@ -128,12 +128,17 @@ enum WorkspaceSceneProjection {
               $0.surface == .cover(rendered.id)
             },
             editingTextID: nil,
+            isElementEditingEnabled: false,
+            selectedElementID: nil,
             rendersSettledSnapshot: true,
             onTap: { _, _ in },
             onLiftChanged: { _ in },
             onTranslationChanged: { _ in },
             onTranslationEnded: { _ in },
-            onTextEditingEnded: { _ in }
+            onTextEditingEnded: { _ in },
+            onSelectElement: { _ in },
+            onMoveElement: { _, _ in },
+            onDeleteElement: { _ in }
           )
           .scaleEffect(presence.camera.scale)
           .position(x: screen.x, y: screen.y)
@@ -184,6 +189,7 @@ struct SpatialWorkspaceView: View {
   @State private var cameraGesture: CameraGestureSnapshot?
   @State private var panStart: SessionPresence?
   @State private var selectedItemID: UUID?
+  @State private var selectedSpatialElementID: String?
   @State private var liftedItemID: UUID?
   @State private var editingSpatialTextID: String?
   @State private var contentGestureActive = false
@@ -231,11 +237,13 @@ struct SpatialWorkspaceView: View {
             onTap: {
               withAnimation(.easeOut(duration: 0.12)) {
                 selectedItemID = nil
+                selectedSpatialElementID = nil
               }
               editingSpatialTextID = nil
             },
             onBegan: {
               selectedItemID = nil
+              selectedSpatialElementID = nil
               editingSpatialTextID = nil
               panStart = presence
             },
@@ -250,6 +258,7 @@ struct SpatialWorkspaceView: View {
         #endif
 
         boardElements(presence: presence, viewport: viewport)
+          .zIndex(model.isElementEditingEnabled ? 8_000 : 0)
 
         #if os(macOS)
           SpatialInkSurfaceView(
@@ -284,6 +293,7 @@ struct SpatialWorkspaceView: View {
             isEnabled: (presence.mode == .board || presence.mode == .cover)
               && !contentGestureActive
               && editingSpatialTextID == nil
+              && !model.isElementEditingEnabled
           )
           .allowsHitTesting(false)
         #endif
@@ -322,7 +332,9 @@ struct SpatialWorkspaceView: View {
               && (presence.mode == .page || presence.mode == .document)
               && presence.openProgress >= 0.999
               && cameraGesture == nil
-              && !settling,
+              && !settling
+              && (!model.isElementEditingEnabled || presence.mode == .document),
+            selectedSpatialElementID: selectedSpatialElementID,
             isSelected: selectedItemID == rendered.id,
             isLifted: liftedItemID == rendered.id,
             editingTextID: editingSpatialTextID,
@@ -353,6 +365,27 @@ struct SpatialWorkspaceView: View {
             onTextEditingEnded: { elementID in
               if editingSpatialTextID == elementID {
                 editingSpatialTextID = nil
+              }
+            },
+            onSelectSpatialElement: { elementID in
+              selectedSpatialElementID = elementID
+              selectedItemID = nil
+            },
+            onMoveSpatialElement: { elementID, translation in
+              _ = model.moveSpatialElement(
+                elementID: elementID,
+                by: SpatialPoint(
+                  x: translation.width,
+                  y: translation.height
+                )
+              )
+            },
+            onDeleteSpatialElement: { elementID in
+              guard model.removeSpatialElement(elementID: elementID) else {
+                return
+              }
+              if selectedSpatialElementID == elementID {
+                selectedSpatialElementID = nil
               }
             },
             onPageTurnStateChange: { active in
@@ -395,12 +428,14 @@ struct SpatialWorkspaceView: View {
         publishViewportIfNeeded(viewport)
       }
       .onChange(of: presence.mode) { _, mode in
+        selectedSpatialElementID = nil
         if mode != .cover { editingSpatialTextID = nil }
         if mode != .page && mode != .document {
           pageTurnIsActive = false
         }
       }
       .onChange(of: presence.focusedItemID) { _, itemID in
+        selectedSpatialElementID = nil
         if itemID == nil { editingSpatialTextID = nil }
         pageTurnIsActive = false
       }
@@ -414,6 +449,10 @@ struct SpatialWorkspaceView: View {
         bufferedCameraPhases = []
         settling = false
         editingSpatialTextID = nil
+        selectedSpatialElementID = nil
+      }
+      .onChange(of: model.isElementEditingEnabled) { _, enabled in
+        if !enabled { selectedSpatialElementID = nil }
       }
     }
   }
@@ -423,7 +462,8 @@ struct SpatialWorkspaceView: View {
     presence: SessionPresence,
     viewport: SpatialPoint
   ) -> some View {
-    if presence.mode == .board || presence.mode == .cover,
+    if !model.isElementEditingEnabled,
+      presence.mode == .board || presence.mode == .cover,
       liftedItemID == nil,
       let selectedItemID,
       let rendered = renderedItems(presence: presence).first(where: {
@@ -535,7 +575,32 @@ struct SpatialWorkspaceView: View {
             x: base.x + element.frame.x * presence.camera.scale,
             y: base.y + element.frame.y * presence.camera.scale
           )
-          SpatialElementContent(element: element)
+          EditableElementContainer(
+            isEditingEnabled: model.isElementEditingEnabled,
+            isSelected: selectedSpatialElementID == element.id,
+            coordinateScale: presence.camera.scale,
+            onSelect: {
+              selectedSpatialElementID = element.id
+              selectedItemID = nil
+            },
+            onMove: { translation in
+              _ = model.moveSpatialElement(
+                elementID: element.id,
+                by: SpatialPoint(
+                  x: translation.width,
+                  y: translation.height
+                )
+              )
+            },
+            onDelete: {
+              guard model.removeSpatialElement(elementID: element.id) else {
+                return
+              }
+              selectedSpatialElementID = nil
+            }
+          ) {
+            SpatialElementContent(element: element)
+          }
             .frame(
               width: element.frame.width * presence.camera.scale,
               height: element.frame.height * presence.camera.scale
@@ -1228,6 +1293,7 @@ private struct WorkspaceSceneItem: View {
   let openProgress: Double
   let contentIsInteractive: Bool
   let pageNavigationIsEnabled: Bool
+  let selectedSpatialElementID: String?
   let isSelected: Bool
   let isLifted: Bool
   let editingTextID: String?
@@ -1238,6 +1304,9 @@ private struct WorkspaceSceneItem: View {
   let onOpen: (UUID) -> Void
   let onEditText: (UUID, SpatialPoint) -> Void
   let onTextEditingEnded: (String) -> Void
+  let onSelectSpatialElement: (String) -> Void
+  let onMoveSpatialElement: (String, CGSize) -> Void
+  let onDeleteSpatialElement: (String) -> Void
   let onPageTurnStateChange: @MainActor @Sendable (Bool) -> Void
   let onDocumentPageLayout: (DocumentPageLayout) -> Void
 
@@ -1487,6 +1556,8 @@ private struct WorkspaceSceneItem: View {
       spatialInkSurfaces: spatialInkSurfaces,
       elements: coverElements,
       editingTextID: editingTextID,
+      isElementEditingEnabled: model.isElementEditingEnabled,
+      selectedElementID: selectedSpatialElementID,
       rendersSettledSnapshot: false,
       onTap: handleTap,
       onLiftChanged: { lifted in
@@ -1498,7 +1569,10 @@ private struct WorkspaceSceneItem: View {
       onTranslationEnded: { translation in
         finishMove(translation: translation, scale: camera.scale)
       },
-      onTextEditingEnded: onTextEditingEnded
+      onTextEditingEnded: onTextEditingEnded,
+      onSelectElement: onSelectSpatialElement,
+      onMoveElement: onMoveSpatialElement,
+      onDeleteElement: onDeleteSpatialElement
     )
   }
 
@@ -1568,12 +1642,17 @@ private struct WorkspaceItemCoverView: View {
   let spatialInkSurfaces: SpatialInkSurfaceRegistry
   let elements: [SpatialElement]
   let editingTextID: String?
+  let isElementEditingEnabled: Bool
+  let selectedElementID: String?
   let rendersSettledSnapshot: Bool
   let onTap: (CGPoint, Int) -> Void
   let onLiftChanged: (Bool) -> Void
   let onTranslationChanged: (CGSize) -> Void
   let onTranslationEnded: (CGSize) -> Void
   let onTextEditingEnded: (String) -> Void
+  let onSelectElement: (String) -> Void
+  let onMoveElement: (String, CGSize) -> Void
+  let onDeleteElement: (String) -> Void
 
   var body: some View {
     ZStack(alignment: .topLeading) {
@@ -1598,42 +1677,53 @@ private struct WorkspaceItemCoverView: View {
       }
 
       ForEach(elements) { element in
-        Group {
-          #if os(macOS)
-            if rendersSettledSnapshot {
-              SettledSpatialElementContent(element: element)
-            } else {
+        EditableElementContainer(
+          isEditingEnabled: isElementEditingEnabled,
+          isSelected: selectedElementID == element.id,
+          coordinateScale: 1,
+          onSelect: { onSelectElement(element.id) },
+          onMove: { onMoveElement(element.id, $0) },
+          onDelete: { onDeleteElement(element.id) }
+        ) {
+          Group {
+            #if os(macOS)
+              if rendersSettledSnapshot {
+                SettledSpatialElementContent(element: element)
+              } else {
+                SpatialElementContent(
+                  element: element,
+                  isTextEditing: editingTextID == element.id,
+                  onTextEditingEnded: { onTextEditingEnded(element.id) }
+                )
+              }
+            #else
               SpatialElementContent(
                 element: element,
                 isTextEditing: editingTextID == element.id,
                 onTextEditingEnded: { onTextEditingEnded(element.id) }
               )
-            }
-          #else
-            SpatialElementContent(
-              element: element,
-              isTextEditing: editingTextID == element.id,
-              onTextEditingEnded: { onTextEditingEnded(element.id) }
-            )
-          #endif
+            #endif
+          }
         }
         .frame(width: element.frame.width, height: element.frame.height)
         .offset(x: element.frame.x, y: element.frame.y)
       }
 
       #if os(iOS)
-        NotebookInteractionView(
-          passthroughFrames: interactionPassthroughFrames,
-          onTap: onTap,
-          onLiftChanged: onLiftChanged,
-          onTranslationChanged: onTranslationChanged,
-          onTranslationEnded: onTranslationEnded
-        )
-        .frame(
-          width: NotebookGeometry.width,
-          height: NotebookGeometry.height
-        )
-        .accessibilityHidden(true)
+        if !isElementEditingEnabled {
+          NotebookInteractionView(
+            passthroughFrames: interactionPassthroughFrames,
+            onTap: onTap,
+            onLiftChanged: onLiftChanged,
+            onTranslationChanged: onTranslationChanged,
+            onTranslationEnded: onTranslationEnded
+          )
+          .frame(
+            width: NotebookGeometry.width,
+            height: NotebookGeometry.height
+          )
+          .accessibilityHidden(true)
+        }
       #endif
 
       #if os(iOS)

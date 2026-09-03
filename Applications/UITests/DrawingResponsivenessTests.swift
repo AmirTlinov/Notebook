@@ -4,6 +4,55 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testPersonMovesAndDeletesAnAgentElement() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-agent-element-fixture",
+    ]
+    app.launch()
+
+    let sharedElement = app.otherElements["agent-element-shared-element"]
+    XCTAssertTrue(sharedElement.waitForExistence(timeout: 8))
+    let initialFrame = sharedElement.frame
+
+    let controls = app.buttons["pen-controls-toggle"]
+    XCTAssertTrue(controls.waitForExistence(timeout: 3))
+    controls.tap()
+    let elementTool = app.buttons["element-editing-tool"]
+    XCTAssertTrue(elementTool.waitForExistence(timeout: 3))
+    elementTool.tap()
+
+    sharedElement.tap()
+    let delete = app.buttons["delete-agent-element"]
+    XCTAssertTrue(
+      delete.waitForExistence(timeout: 3),
+      "Выбранный общий элемент должен показать действие удаления"
+    )
+
+    sharedElement.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+      .press(
+        forDuration: 0.05,
+        thenDragTo: sharedElement.coordinate(
+          withNormalizedOffset: CGVector(dx: 0.72, dy: 0.68)
+        ),
+        withVelocity: .slow,
+        thenHoldForDuration: 0
+      )
+    XCTAssertGreaterThan(
+      sharedElement.frame.midX,
+      initialFrame.midX + 20,
+      "Палец должен перемещать элемент в том же листе"
+    )
+
+    app.buttons["delete-agent-element"].tap()
+    XCTAssertFalse(
+      sharedElement.waitForExistence(timeout: 2),
+      "Удаление должно убрать общий элемент с листа"
+    )
+  }
+
   func testDocumentTextOpensMarkdownEditorOnDoubleTap() async throws {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait

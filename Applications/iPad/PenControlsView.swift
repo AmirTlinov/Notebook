@@ -9,13 +9,16 @@ struct PenControlsView: View {
       if isExpanded {
         colorChoices
         eraserChoice
+        elementChoice
         Rectangle()
           .fill(.primary.opacity(0.12))
           .frame(width: 1, height: 24)
 
-        widthControl
-        if model.drawingTool == .pen {
-          opacityControl
+        if !model.isElementEditingEnabled {
+          widthControl
+          if model.drawingTool == .pen {
+            opacityControl
+          }
         }
       }
 
@@ -98,6 +101,32 @@ struct PenControlsView: View {
       model.drawingTool == .eraser ? .isSelected : []
     )
     .accessibilityIdentifier("drawing-tool-eraser")
+  }
+
+  private var elementChoice: some View {
+    Button {
+      model.selectElementTool()
+    } label: {
+      ZStack {
+        Circle()
+          .fill(
+            model.isElementEditingEnabled
+              ? Color.accentColor.opacity(0.16)
+              : .clear
+          )
+          .frame(width: 31, height: 31)
+        Image(systemName: "square.dashed")
+          .font(.system(size: 16, weight: .semibold))
+          .foregroundStyle(model.isElementEditingEnabled ? Color.accentColor : .primary)
+      }
+      .frame(width: 36, height: 36)
+      .contentShape(Circle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel("Элементы")
+    .accessibilityHint("Выберите, переместите или удалите элемент на листе")
+    .accessibilityAddTraits(model.isElementEditingEnabled ? .isSelected : [])
+    .accessibilityIdentifier("element-editing-tool")
   }
 
   @ViewBuilder
@@ -194,11 +223,15 @@ struct PenControlsView: View {
 
   private var controlIcon: String {
     if isExpanded { return "xmark" }
+    if model.isElementEditingEnabled { return "square.dashed" }
     return model.drawingTool == .pen ? "pencil.tip" : "eraser.fill"
   }
 
   private var controlColor: Color {
-    model.drawingTool == .pen ? model.penStyle.color.displayColor : .primary
+    if model.isElementEditingEnabled { return .accentColor }
+    return model.drawingTool == .pen
+      ? model.penStyle.color.displayColor
+      : .primary
   }
 
   private var eraserPreviewWidth: CGFloat {

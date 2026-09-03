@@ -105,6 +105,19 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
       state: state
     )
   }
+
+  public func updating(frame: PageRect) -> Self {
+    Self(
+      id: id,
+      kind: kind,
+      frame: frame,
+      source: source,
+      html: html,
+      css: css,
+      javaScript: javaScript,
+      state: state
+    )
+  }
 }
 
 public struct PageDocument: Codable, Equatable, Identifiable, Sendable {

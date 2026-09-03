@@ -6,6 +6,88 @@ import XCTest
 
 final class MacModelLifecycleTests: XCTestCase {
   @MainActor
+  func testPersonCanMoveAndRemoveAgentElements() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = NotebookStore(root: root)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let page = try XCTUnwrap(model.activePage)
+    let remoteActor = UUID()
+    let pageElement = AgentElement(
+      id: "shared-shape",
+      kind: .web,
+      frame: PageRect(x: 100, y: 120, width: 240, height: 180),
+      source: "",
+      html: "<svg></svg>"
+    )
+    model.receivePeerMessage(
+      .elements(
+        pageID: page.id,
+        elements: [pageElement],
+        stamp: VersionStamp(counter: 1, actor: remoteActor)
+      )
+    )
+
+    XCTAssertTrue(
+      model.movePageElement(
+        pageID: page.id,
+        elementID: pageElement.id,
+        by: SpatialPoint(x: 10_000, y: -10_000)
+      )
+    )
+    let movedPageElement = try XCTUnwrap(
+      model.pages[page.id]?.elements.first
+    )
+    XCTAssertEqual(movedPageElement.frame.x, page.size.width - 240)
+    XCTAssertEqual(movedPageElement.frame.y, 0)
+
+    let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
+    var board = try XCTUnwrap(model.board)
+    let coverElement = SpatialElement(
+      id: "shared-cover-shape",
+      surface: .cover(itemID),
+      kind: .web,
+      frame: SpatialRect(x: 90, y: 110, width: 260, height: 190),
+      source: "",
+      html: "<svg></svg>",
+      stamp: VersionStamp(counter: 0, actor: remoteActor)
+    )
+    XCTAssertTrue(
+      board.upsertElement(coverElement, expected: nil, actor: remoteActor)
+    )
+    model.receivePeerMessage(.board(board))
+
+    XCTAssertTrue(
+      model.moveSpatialElement(
+        elementID: coverElement.id,
+        by: SpatialPoint(x: -10_000, y: 10_000)
+      )
+    )
+    let movedCoverElement = try XCTUnwrap(
+      model.board?.elements.first(where: { $0.id == coverElement.id })
+    )
+    XCTAssertEqual(movedCoverElement.frame.x, 0)
+    XCTAssertEqual(
+      movedCoverElement.frame.y,
+      NotebookGeometry.height - coverElement.frame.height
+    )
+
+    XCTAssertTrue(
+      model.removePageElement(pageID: page.id, elementID: pageElement.id)
+    )
+    XCTAssertTrue(model.pages[page.id]?.elements.isEmpty == true)
+    XCTAssertTrue(model.removeSpatialElement(elementID: coverElement.id))
+    XCTAssertTrue(model.board?.elements.isEmpty == true)
+    XCTAssertTrue(try store.loadPage(page.id).elements.isEmpty)
+    XCTAssertTrue(
+      try store.loadBoard(itemIDs: [itemID]).elements.isEmpty
+    )
+  }
+
+  @MainActor
   func testSettledPageReadoutUsesTheVerifiedPageRaster() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)

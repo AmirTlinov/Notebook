@@ -17,6 +17,7 @@
     static let stackBoardArgument = "--notebook-stacked-board-fixture"
     static let documentArgument = "--notebook-document-runtime-fixture"
     static let documentPageArgument = "--notebook-document-page-three-fixture"
+    static let agentElementArgument = "--notebook-agent-element-fixture"
 
     static var isRequested: Bool {
       ProcessInfo.processInfo.arguments.contains(launchArgument)
@@ -54,6 +55,9 @@
       let startsOnLaterDocumentPage = ProcessInfo.processInfo.arguments.contains(
         documentPageArgument
       )
+      let startsWithAgentElement = ProcessInfo.processInfo.arguments.contains(
+        agentElementArgument
+      )
       let fixtureName: String
       if startsInDocument {
         fixtureName = "DocumentRuntime"
@@ -75,6 +79,8 @@
         fingerGestureArgument
       ) {
         fixtureName = "SpatialTransition"
+      } else if startsWithAgentElement {
+        fixtureName = "AgentElementEditing"
       } else {
         fixtureName = "DrawingResponsiveness"
       }
@@ -108,7 +114,19 @@
           id: pageID,
           size: size,
           actor: actor,
-          drawingData: denseDrawing(size: size).dataRepresentation()
+          drawingData: denseDrawing(size: size).dataRepresentation(),
+          elements: startsWithAgentElement
+            ? [
+              AgentElement(
+                id: "shared-element",
+                kind: .web,
+                frame: PageRect(x: 180, y: 280, width: 360, height: 220),
+                source: "",
+                html: "<div role='img' aria-label='Общий элемент'>Общий элемент</div>",
+                css: "body{display:grid;place-items:center;font:700 32px -apple-system;color:#263746;background:#f6c85f;border:5px solid #263746;border-radius:28px}"
+              )
+            ]
+            : []
         )
         try store.savePage(page)
         if startsInDocument {

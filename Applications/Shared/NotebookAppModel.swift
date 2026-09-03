@@ -100,6 +100,7 @@ final class NotebookAppModel {
   private(set) var penStyle: PenStyle
   private(set) var eraserStyle: EraserStyle
   private(set) var drawingTool: DrawingTool = .pen
+  private(set) var isElementEditingEnabled = false
 
   let store: NotebookStore
   let actorID: UUID
@@ -720,6 +721,7 @@ final class NotebookAppModel {
   }
 
   func selectPenColor(_ color: PenColor) {
+    isElementEditingEnabled = false
     drawingTool = .pen
     guard color != penStyle.color else { return }
     penStyle = PenStyle(
@@ -731,6 +733,7 @@ final class NotebookAppModel {
   }
 
   func selectPenWidth(_ width: Double) {
+    isElementEditingEnabled = false
     drawingTool = .pen
     let next = PenStyle(
       color: penStyle.color,
@@ -743,6 +746,7 @@ final class NotebookAppModel {
   }
 
   func selectPenMinimumOpacity(_ minimumOpacity: Double) {
+    isElementEditingEnabled = false
     drawingTool = .pen
     let next = PenStyle(
       color: penStyle.color,
@@ -755,6 +759,7 @@ final class NotebookAppModel {
   }
 
   func selectEraserWidth(_ maximumWidth: Double) {
+    isElementEditingEnabled = false
     drawingTool = .eraser
     let next = EraserStyle(maximumWidth: maximumWidth)
     guard next != eraserStyle else { return }
@@ -763,7 +768,12 @@ final class NotebookAppModel {
   }
 
   func selectDrawingTool(_ tool: DrawingTool) {
+    isElementEditingEnabled = false
     drawingTool = tool
+  }
+
+  func selectElementTool() {
+    isElementEditingEnabled = true
   }
 
   func commitElementState(elementID: String, state: JSONValue) {
@@ -787,6 +797,129 @@ final class NotebookAppModel {
         stamp: page.agentStamp
       )
     )
+  }
+
+  @discardableResult
+  func movePageElement(
+    pageID: UUID,
+    elementID: String,
+    by translation: SpatialPoint
+  ) -> Bool {
+    let moved = mutatePageElements(pageID: pageID) { page, elements in
+      guard let index = elements.firstIndex(where: { $0.id == elementID }) else {
+        return false
+      }
+      let element = elements[index]
+      let x = min(
+        max(element.frame.x + translation.x, 0),
+        page.size.width - element.frame.width
+      )
+      let y = min(
+        max(element.frame.y + translation.y, 0),
+        page.size.height - element.frame.height
+      )
+      let frame = PageRect(
+        x: x,
+        y: y,
+        width: element.frame.width,
+        height: element.frame.height
+      )
+      guard frame != element.frame else { return false }
+      elements[index] = element.updating(frame: frame)
+      return true
+    }
+    if moved { showCue("Элемент перемещён") }
+    return moved
+  }
+
+  @discardableResult
+  func removePageElement(pageID: UUID, elementID: String) -> Bool {
+    let removed = mutatePageElements(pageID: pageID) { _, elements in
+      let count = elements.count
+      elements.removeAll { $0.id == elementID }
+      return elements.count != count
+    }
+    if removed { showCue("Элемент удалён") }
+    return removed
+  }
+
+  @discardableResult
+  func moveSpatialElement(
+    elementID: String,
+    by translation: SpatialPoint
+  ) -> Bool {
+    guard var board, let workspace else { return false }
+    let itemIDs = Set(workspace.items.map(\.id))
+    if let disk = try? store.loadBoard(itemIDs: itemIDs) {
+      _ = board.merge(disk, itemIDs: itemIDs)
+    }
+    guard let index = board.elements.firstIndex(where: { $0.id == elementID }) else {
+      return false
+    }
+    var element = board.elements[index]
+    let expected = element.stamp
+    let proposedX = element.frame.x + translation.x
+    let proposedY = element.frame.y + translation.y
+    let x: Double
+    let y: Double
+    if element.surface.kind == .cover {
+      x = min(max(proposedX, 0), NotebookGeometry.width - element.frame.width)
+      y = min(max(proposedY, 0), NotebookGeometry.height - element.frame.height)
+    } else {
+      x = proposedX
+      y = proposedY
+    }
+    let frame = SpatialRect(
+      x: x,
+      y: y,
+      width: element.frame.width,
+      height: element.frame.height
+    )
+    guard frame != element.frame,
+      element.update(frame: frame, actor: actorID),
+      board.upsertElement(element, expected: expected, actor: actorID)
+    else { return false }
+    persistBoard(board)
+    showCue("Элемент перемещён")
+    return true
+  }
+
+  @discardableResult
+  func removeSpatialElement(elementID: String) -> Bool {
+    guard var board, let workspace else { return false }
+    let itemIDs = Set(workspace.items.map(\.id))
+    if let disk = try? store.loadBoard(itemIDs: itemIDs) {
+      _ = board.merge(disk, itemIDs: itemIDs)
+    }
+    guard board.removeElements(ids: [elementID], actor: actorID) == 1 else {
+      return false
+    }
+    persistBoard(board)
+    showCue("Элемент удалён")
+    return true
+  }
+
+  private func mutatePageElements(
+    pageID: UUID,
+    mutation: (PageDocument, inout [AgentElement]) -> Bool
+  ) -> Bool {
+    guard var page = pages[pageID] else { return false }
+    if let disk = try? store.loadPage(pageID) {
+      _ = page.merge(disk)
+    }
+    var elements = page.elements
+    guard mutation(page, &elements),
+      page.replaceElements(elements, actor: actorID)
+    else { return false }
+    let resolved = persistMerged(page)
+    sync.send(
+      .elements(
+        pageID: resolved.id,
+        elements: resolved.elements,
+        stamp: resolved.agentStamp
+      )
+    )
+    return true
   }
 
   func replaceDocumentBlockSource(
