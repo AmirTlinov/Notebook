@@ -217,24 +217,39 @@ export interface SessionPresence {
   documentPageIndex: number;
 }
 
+export type CurrentViewSurfaceRevision =
+  | { kind: "board" }
+  | { kind: "cover"; itemID: string }
+  | {
+    kind: "page";
+    itemID: string;
+    revision: {
+      pageID: string;
+      drawingStamp: VersionStamp;
+      agentStamp: VersionStamp;
+    };
+    snapshotPNG_SHA256: string;
+  }
+  | {
+    kind: "document";
+    revision: {
+      documentID: string;
+      contentStamp: VersionStamp;
+      stateStamp: VersionStamp;
+    };
+    pageIndex: number;
+    snapshotPNG_SHA256: string;
+  };
+
 export interface CurrentViewReceipt {
-  format: 2;
+  format: 3;
   workspaceStamp: VersionStamp;
   boardStamp: VersionStamp;
   spatialInkStamp: VersionStamp;
   presence: SessionPresence;
   renderViewport: SpatialPoint;
+  surface: CurrentViewSurfaceRevision;
   pngSHA256: string;
-  page?: {
-    pageID: string;
-    drawingStamp: VersionStamp;
-    agentStamp: VersionStamp;
-  };
-  document?: {
-    documentID: string;
-    contentStamp: VersionStamp;
-    stateStamp: VersionStamp;
-  };
 }
 
 export function revision(stamp: VersionStamp): string {
@@ -247,7 +262,16 @@ export function publicPage(page: PageDocument): object {
     size: page.size,
     drawingRevision: revision(page.drawingStamp),
     agentRevision: revision(page.agentStamp),
-    elements: page.elements,
+    elements: page.elements.map((element) => ({
+      id: element.id,
+      kind: element.kind,
+      frame: element.frame,
+      source: element.source,
+      html: element.html,
+      css: element.css,
+      javascript: element.javaScript,
+      state: element.state,
+    })),
   };
 }
 
@@ -261,7 +285,21 @@ export function publicDocument(
     contentRevision: revision(document.contentStamp),
     stateRevision: revision(state.stamp),
     preamble: document.preamble,
-    blocks: document.blocks,
+    blocks: document.blocks.map((block) => block.kind === "interactive"
+      ? {
+          id: block.id,
+          kind: block.kind,
+          html: block.html,
+          css: block.css,
+          javascript: block.javaScript,
+          initial_state: block.initialState,
+          height: block.height,
+        }
+      : {
+          id: block.id,
+          kind: block.kind,
+          source: block.source,
+        }),
     state: Object.fromEntries(state.records.map((record) => [record.id, record.value])),
   };
 }

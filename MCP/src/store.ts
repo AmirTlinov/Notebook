@@ -1099,7 +1099,7 @@ function validatePresence(value: unknown): asserts value is SessionPresence {
 }
 
 function validateCurrentViewReceipt(value: unknown): asserts value is CurrentViewReceipt {
-  if (!isRecord(value) || value.format !== 2) {
+  if (!isRecord(value) || value.format !== 3) {
     throw new StoreError("Квитанция текущего вида повреждена.");
   }
   validateStamp(value.workspaceStamp, "receipt.workspaceStamp");
@@ -1113,32 +1113,66 @@ function validateCurrentViewReceipt(value: unknown): asserts value is CurrentVie
   if (typeof value.pngSHA256 !== "string" || !/^[0-9a-f]{64}$/.test(value.pngSHA256)) {
     throw new StoreError("Отпечаток текущего изображения поврежден.");
   }
-  if (value.page !== undefined && value.page !== null) {
-    if (!isRecord(value.page) || typeof value.page.pageID !== "string") {
+  validateCurrentViewSurface(value.surface, value.presence);
+}
+
+function validateCurrentViewSurface(
+  value: unknown,
+  presence: SessionPresence,
+): void {
+  if (!isRecord(value) || typeof value.kind !== "string") {
+    throw new StoreError("Поверхность текущего изображения повреждена.");
+  }
+  if (value.kind !== presence.mode) {
+    throw new StoreError("Поверхность не совпадает с текущим режимом.");
+  }
+  if (value.kind === "board") return;
+  if (value.kind === "cover") {
+    if (typeof value.itemID !== "string") {
+      throw new StoreError("Квитанция обложки повреждена.");
+    }
+    assertUUID(value.itemID, "receipt.surface.itemID");
+    if (presence.focusedItemID?.toLowerCase() !== value.itemID.toLowerCase()) {
+      throw new StoreError("Квитанция описывает другую обложку.");
+    }
+    return;
+  }
+  if (value.kind === "page") {
+    if (typeof value.itemID !== "string"
+      || !isRecord(value.revision)
+      || typeof value.revision.pageID !== "string") {
       throw new StoreError("Квитанция листа повреждена.");
     }
-    assertUUID(value.page.pageID, "receipt.page.pageID");
-    validateStamp(value.page.drawingStamp, "receipt.page.drawingStamp");
-    validateStamp(value.page.agentStamp, "receipt.page.agentStamp");
+    assertUUID(value.itemID, "receipt.surface.itemID");
+    if (presence.focusedItemID?.toLowerCase() !== value.itemID.toLowerCase()) {
+      throw new StoreError("Квитанция описывает лист другой тетради.");
+    }
+    assertUUID(value.revision.pageID, "receipt.surface.revision.pageID");
+    validateStamp(value.revision.drawingStamp, "receipt.surface.revision.drawingStamp");
+    validateStamp(value.revision.agentStamp, "receipt.surface.revision.agentStamp");
+    validateSHA256(value.snapshotPNG_SHA256, "снимка листа");
+    return;
   }
-  if (value.document !== undefined && value.document !== null) {
-    if (!isRecord(value.document) || typeof value.document.documentID !== "string") {
+  if (value.kind === "document") {
+    if (!isRecord(value.revision)
+      || typeof value.revision.documentID !== "string") {
       throw new StoreError("Квитанция документа повреждена.");
     }
-    assertUUID(value.document.documentID, "receipt.document.documentID");
-    validateStamp(value.document.contentStamp, "receipt.document.contentStamp");
-    validateStamp(value.document.stateStamp, "receipt.document.stateStamp");
+    assertUUID(value.revision.documentID, "receipt.surface.revision.documentID");
+    validateStamp(value.revision.contentStamp, "receipt.surface.revision.contentStamp");
+    validateStamp(value.revision.stateStamp, "receipt.surface.revision.stateStamp");
+    if (!Number.isSafeInteger(value.pageIndex) || value.pageIndex !== presence.documentPageIndex) {
+      throw new StoreError("Квитанция описывает другой лист документа.");
+    }
+    validateSHA256(value.snapshotPNG_SHA256, "снимка документа");
+    return;
   }
-  if (value.presence.mode === "page" && (value.page === undefined || value.page === null)) {
-    throw new StoreError("Квитанция открытого листа должна содержать его версию.");
-  }
-  if (value.presence.mode === "document"
-    && (value.document === undefined || value.document === null)) {
-    throw new StoreError("Квитанция открытого документа должна содержать его версию.");
-  }
-  if (value.page !== undefined && value.page !== null
-    && value.document !== undefined && value.document !== null) {
-    throw new StoreError("Квитанция не может описывать лист и документ одновременно.");
+  throw new StoreError("Тип поверхности текущего изображения неизвестен.");
+}
+
+function validateSHA256(value: unknown, owner: string): void {
+  if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value)) {
+    throw new StoreError(`Отпечаток ${owner} поврежден.`);
   }
 }
 

@@ -36,6 +36,148 @@ struct RenderedWorkspaceItem: Identifiable {
   var id: UUID { item.id }
 }
 
+enum WorkspaceSceneProjection {
+  static func items(
+    workspace: WorkspaceIndex,
+    board: BoardDocument,
+    presence: SessionPresence
+  ) -> [RenderedWorkspaceItem] {
+    let items = Dictionary(
+      uniqueKeysWithValues: workspace.items.map { ($0.id, $0) }
+    )
+    var result: [RenderedWorkspaceItem] = board.freeItems.compactMap { placement in
+      items[placement.itemID].map {
+        RenderedWorkspaceItem(
+          item: $0,
+          center: placement.center,
+          zIndex: Double(placement.zIndex),
+          stackID: nil
+        )
+      }
+    }
+
+    for stack in board.stacks {
+      let focusedMemberID = presence.mode == .board
+        ? nil
+        : presence.focusedItemID.flatMap { itemID in
+          stack.itemIDs.contains(itemID) ? itemID : nil
+        }
+      for (index, itemID) in stack.itemIDs.enumerated() {
+        guard focusedMemberID == nil || focusedMemberID == itemID,
+          let item = items[itemID],
+          let center = WorkspaceItemStackPresentation.boardCenter(
+            of: itemID,
+            in: stack,
+            cameraScale: presence.camera.scale,
+            viewport: presence.viewport
+          )
+        else { continue }
+        result.append(
+          RenderedWorkspaceItem(
+            item: item,
+            center: center,
+            zIndex: Double(stack.zIndex) + Double(index) / 100,
+            stackID: stack.id
+          )
+        )
+      }
+    }
+    return result.sorted { $0.zIndex < $1.zIndex }
+  }
+}
+
+#if os(macOS)
+  /// A settled read model. It contains no gesture surface, cover transition,
+  /// page-turn controller, Metal drawable, or live WebKit view.
+  struct SettledSpatialWorkspaceView: View {
+    @Environment(NotebookAppModel.self) private var model
+
+    let workspace: WorkspaceIndex
+    let board: BoardDocument
+    let spatialInk: SpatialInkJournal
+    let presence: SessionPresence
+
+    var body: some View {
+      let rendered = WorkspaceSceneProjection.items(
+        workspace: workspace,
+        board: board,
+        presence: presence
+      )
+      ZStack {
+        SpatialBoardGrid(camera: presence.camera)
+        settledBoardElements
+        SpatialInkSurfaceView(
+          drawing: SpatialInkDrawingComposer.boardDrawing(
+            in: spatialInk,
+            camera: presence.camera,
+            viewport: presence.viewport
+          )
+        )
+        .frame(width: presence.viewport.x, height: presence.viewport.y)
+        .allowsHitTesting(false)
+
+        ForEach(rendered) { rendered in
+          let screen = presence.camera.worldToScreen(
+            rendered.center,
+            viewport: presence.viewport
+          )
+          WorkspaceItemCoverView(
+            item: rendered.item,
+            spatialInkSurfaces: SpatialInkSurfaceRegistry(),
+            elements: board.elements.filter {
+              $0.surface == .cover(rendered.id)
+            },
+            editingTextID: nil,
+            rendersSettledSnapshot: true,
+            onTap: { _, _ in },
+            onLiftChanged: { _ in },
+            onTranslationChanged: { _ in },
+            onTranslationEnded: { _ in },
+            onTextEditingEnded: { _ in }
+          )
+          .scaleEffect(presence.camera.scale)
+          .position(x: screen.x, y: screen.y)
+          .shadow(
+            color: .black.opacity(0.13),
+            radius: max(3, 18 * presence.camera.scale),
+            y: max(2, 8 * presence.camera.scale)
+          )
+          .zIndex(rendered.zIndex)
+        }
+      }
+      .frame(width: presence.viewport.x, height: presence.viewport.y)
+      .clipped()
+      .allowsHitTesting(false)
+      .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var settledBoardElements: some View {
+      ForEach(board.elements.filter { $0.surface.kind == .board }) { element in
+        if let worldOrigin = element.worldOrigin {
+          let base = presence.camera.worldToScreen(
+            worldOrigin,
+            viewport: presence.viewport
+          )
+          let origin = CGPoint(
+            x: base.x + element.frame.x * presence.camera.scale,
+            y: base.y + element.frame.y * presence.camera.scale
+          )
+          SettledSpatialElementContent(element: element)
+            .frame(
+              width: element.frame.width * presence.camera.scale,
+              height: element.frame.height * presence.camera.scale
+            )
+            .position(
+              x: origin.x + element.frame.width * presence.camera.scale / 2,
+              y: origin.y + element.frame.height * presence.camera.scale / 2
+            )
+        }
+      }
+    }
+  }
+#endif
+
 struct SpatialWorkspaceView: View {
   @Environment(NotebookAppModel.self) private var model
 
@@ -456,48 +598,11 @@ struct SpatialWorkspaceView: View {
     guard let board = model.board, let workspace = model.workspace else {
       return []
     }
-    let items = Dictionary(
-      uniqueKeysWithValues: workspace.items.map { ($0.id, $0) }
+    return WorkspaceSceneProjection.items(
+      workspace: workspace,
+      board: board,
+      presence: presence
     )
-    var result: [RenderedWorkspaceItem] = board.freeItems.compactMap { placement in
-      items[placement.itemID].map {
-        RenderedWorkspaceItem(
-          item: $0,
-          center: placement.center,
-          zIndex: Double(placement.zIndex),
-          stackID: nil
-        )
-      }
-    }
-
-    for stack in board.stacks {
-      let focusedMemberID =
-        presence.mode == .board
-        ? nil
-        : presence.focusedItemID.flatMap { itemID in
-          stack.itemIDs.contains(itemID) ? itemID : nil
-        }
-      for (index, itemID) in stack.itemIDs.enumerated() {
-        guard focusedMemberID == nil || focusedMemberID == itemID,
-          let item = items[itemID],
-          let center = WorkspaceItemStackPresentation.boardCenter(
-            of: itemID,
-            in: stack,
-            cameraScale: presence.camera.scale,
-            viewport: presence.viewport
-          )
-        else { continue }
-        result.append(
-          RenderedWorkspaceItem(
-            item: item,
-            center: center,
-            zIndex: Double(stack.zIndex) + Double(index) / 100,
-            stackID: stack.id
-          )
-        )
-      }
-    }
-    return result.sorted { $0.zIndex < $1.zIndex }
   }
 
   private func acceptDocumentPageLayout(
@@ -1382,6 +1487,7 @@ private struct WorkspaceSceneItem: View {
       spatialInkSurfaces: spatialInkSurfaces,
       elements: coverElements,
       editingTextID: editingTextID,
+      rendersSettledSnapshot: false,
       onTap: handleTap,
       onLiftChanged: { lifted in
         if lifted { beginLift() } else { endLift() }
@@ -1462,6 +1568,7 @@ private struct WorkspaceItemCoverView: View {
   let spatialInkSurfaces: SpatialInkSurfaceRegistry
   let elements: [SpatialElement]
   let editingTextID: String?
+  let rendersSettledSnapshot: Bool
   let onTap: (CGPoint, Int) -> Void
   let onLiftChanged: (Bool) -> Void
   let onTranslationChanged: (CGSize) -> Void
@@ -1491,11 +1598,25 @@ private struct WorkspaceItemCoverView: View {
       }
 
       ForEach(elements) { element in
-        SpatialElementContent(
-          element: element,
-          isTextEditing: editingTextID == element.id,
-          onTextEditingEnded: { onTextEditingEnded(element.id) }
-        )
+        Group {
+          #if os(macOS)
+            if rendersSettledSnapshot {
+              SettledSpatialElementContent(element: element)
+            } else {
+              SpatialElementContent(
+                element: element,
+                isTextEditing: editingTextID == element.id,
+                onTextEditingEnded: { onTextEditingEnded(element.id) }
+              )
+            }
+          #else
+            SpatialElementContent(
+              element: element,
+              isTextEditing: editingTextID == element.id,
+              onTextEditingEnded: { onTextEditingEnded(element.id) }
+            )
+          #endif
+        }
         .frame(width: element.frame.width, height: element.frame.height)
         .offset(x: element.frame.x, y: element.frame.y)
       }
@@ -1652,24 +1773,70 @@ private struct SpatialElementContent: View {
   }
 
   private var agentElement: AgentElement {
-    AgentElement(
-      id: element.id,
-      kind: element.kind == .markdown ? .markdown : .web,
-      frame: PageRect(
-        x: 0,
-        y: 0,
-        width: element.frame.width,
-        height: element.frame.height
-      ),
-      source: element.source,
-      html: element.html,
-      css: element.css,
-      javaScript: element.javaScript,
-      state: element.state
-    )
+    agentElementSnapshotSource(element)
   }
 
 }
+
+func agentElementSnapshotSource(_ element: SpatialElement) -> AgentElement {
+  AgentElement(
+    id: element.id,
+    kind: element.kind == .markdown ? .markdown : .web,
+    frame: PageRect(
+      x: 0,
+      y: 0,
+      width: element.frame.width,
+      height: element.frame.height
+    ),
+    source: element.source,
+    html: element.html,
+    css: element.css,
+    javaScript: element.javaScript,
+    state: element.state
+  )
+}
+
+#if os(macOS)
+  private struct SettledSpatialElementContent: View {
+    let element: SpatialElement
+
+    var body: some View {
+      if element.kind == .nativeText {
+        Text(element.source)
+          .font(
+            .system(
+              size: element.textStyle.fontSize,
+              weight: fontWeight(element.textStyle.weight)
+            )
+          )
+          .foregroundStyle(
+            Color(
+              red: element.textStyle.red,
+              green: element.textStyle.green,
+              blue: element.textStyle.blue,
+              opacity: element.textStyle.alpha
+            )
+          )
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+      } else if let image = AgentElementSnapshotCache.shared.image(
+        for: agentElementSnapshotSource(element)
+      ) {
+        Image(nsImage: image)
+          .resizable()
+      }
+    }
+
+    private func fontWeight(_ value: Double) -> Font.Weight {
+      switch value {
+      case ..<0.2: .light
+      case ..<0.4: .regular
+      case ..<0.6: .medium
+      case ..<0.8: .semibold
+      default: .bold
+      }
+    }
+  }
+#endif
 
 private struct NativeTextElementView: View {
   @Environment(NotebookAppModel.self) private var model

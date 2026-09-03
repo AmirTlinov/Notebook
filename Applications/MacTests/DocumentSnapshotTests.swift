@@ -5,6 +5,29 @@ import XCTest
 
 final class DocumentSnapshotTests: XCTestCase {
   @MainActor
+  func testAgentSnapshotBelongsToExactElementSourceAndState() {
+    let image = NSImage(size: NSSize(width: 240, height: 120))
+    let element = AgentElement(
+      id: "counter",
+      kind: .web,
+      frame: PageRect(x: 20, y: 30, width: 240, height: 120),
+      source: "<button>0</button>",
+      html: "<button>0</button>",
+      javaScript: "",
+      state: .object(["count": .number(0)])
+    )
+
+    AgentElementSnapshotCache.shared.store(image, for: element)
+    XCTAssertNotNil(AgentElementSnapshotCache.shared.image(for: element))
+    XCTAssertNil(
+      AgentElementSnapshotCache.shared.image(
+        for: element.updating(state: .object(["count": .number(1)]))
+      ),
+      "Снимок прежнего состояния не должен подписывать новый составной лист"
+    )
+  }
+
+  @MainActor
   func testSnapshotBelongsToExactContentAndStateRevisions() throws {
     let actor = UUID()
     var document = DocumentDocument(

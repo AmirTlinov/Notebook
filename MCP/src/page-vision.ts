@@ -102,6 +102,8 @@ const pageSelection = {
     .uuid()
     .optional()
     .describe("UUID страницы; по умолчанию текущая страница."),
+  notebook_id: z.uuid().optional().describe("UUID тетради для выбора по номеру."),
+  page_number: z.number().int().positive().optional().describe("Номер листа от 1."),
 };
 const expectedRevision = {
   expected_drawing_revision: z
@@ -135,9 +137,9 @@ export function registerPageVisionTools(
         "Call this before requesting detail images; erased PKStroke paths are excluded.",
       inputSchema: z.object({ ...pageSelection, ...sinceRevision }),
     },
-    ({ page_id, since_drawing_revision }) =>
+    ({ page_id, notebook_id, page_number, since_drawing_revision }) =>
       visionSafely(async () => {
-        const page = await resolvePage(store, page_id);
+        const page = await resolvePage(store, page_id, notebook_id, page_number);
         const receipt = await readFreshPageVision(store, page);
         const previous = since_drawing_revision
           ? await readHistoricalPageVision(
@@ -165,9 +167,16 @@ export function registerPageVisionTools(
         mode: z.enum(["faithful", "ink"]).default("faithful"),
       }),
     },
-    ({ page_id, expected_drawing_revision, region_id, mode }) =>
+    ({
+      page_id,
+      notebook_id,
+      page_number,
+      expected_drawing_revision,
+      region_id,
+      mode,
+    }) =>
       visionImageSafely(async () => {
-        const page = await resolvePage(store, page_id);
+        const page = await resolvePage(store, page_id, notebook_id, page_number);
         const receipt = await readFreshPageVision(
           store,
           page,
@@ -195,12 +204,19 @@ export function registerPageVisionTools(
         mode: z.enum(["faithful", "ink"]).default("faithful"),
       }),
     },
-    ({ page_id, expected_drawing_revision, region_ids, mode }) =>
+    ({
+      page_id,
+      notebook_id,
+      page_number,
+      expected_drawing_revision,
+      region_ids,
+      mode,
+    }) =>
       visionImageSafely(async () => {
         if (new Set(region_ids).size !== region_ids.length) {
           throw new StoreError("Каждую область достаточно запросить один раз.");
         }
-        const page = await resolvePage(store, page_id);
+        const page = await resolvePage(store, page_id, notebook_id, page_number);
         const receipt = await readFreshPageVision(
           store,
           page,
@@ -633,9 +649,40 @@ function publicRenderedRegions(
 
 async function resolvePage(
   store: NotebookStore,
-  requestedID: string | undefined,
+  pageID: string | undefined,
+  notebookID: string | undefined,
+  pageNumber: number | undefined,
 ): Promise<PageDocument> {
-  return store.readWorkspacePage(requestedID);
+  if (pageID && (notebookID || pageNumber)) {
+    throw new StoreError("Выберите лист либо по page_id, либо по номеру в тетради.");
+  }
+  if (pageNumber && !notebookID) {
+    throw new StoreError("Для page_number нужен notebook_id.");
+  }
+  if (pageID) return store.readWorkspacePage(pageID);
+  if (!notebookID) return store.readWorkspacePage();
+  const workspace = await store.readWorkspace();
+  const notebook = workspace.items.find((item) =>
+    item.kind === "notebook" && sameID(item.id, notebookID)
+  );
+  if (!notebook || notebook.kind !== "notebook") {
+    throw new StoreError("Тетрадь не найдена.");
+  }
+  const index = pageNumber === undefined
+    ? (sameID(workspace.selectedItemID, notebook.id)
+      ? Math.max(0, notebook.pageIDs.findIndex((id) =>
+          workspace.selectedPageID !== undefined
+            && sameID(id, workspace.selectedPageID)
+        ))
+      : 0)
+    : pageNumber - 1;
+  const selectedID = notebook.pageIDs[index];
+  if (!selectedID) {
+    throw new StoreError(
+      `У тетради ${notebook.pageIDs.length} листов; листа ${pageNumber} нет.`,
+    );
+  }
+  return store.readPage(selectedID);
 }
 
 function findRegion(
@@ -784,11 +831,20 @@ async function visionImageSafely(
 
 function visionError(error: unknown): {
   content: Array<{ type: "text"; text: string }>;
+  structuredContent: object;
   isError: true;
 } {
   const message = error instanceof Error ? error.message : String(error);
+  const pending = /собирается|создана|обновляются|обновляется/.test(message);
+  const data = {
+    status: pending ? "pending" : "error",
+    code: pending ? "snapshot_pending" : "operation_failed",
+    message,
+    retryAfterMilliseconds: pending ? 500 : null,
+  };
   return {
-    content: [{ type: "text", text: message }],
+    content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+    structuredContent: data,
     isError: true,
   };
 }

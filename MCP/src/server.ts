@@ -12,6 +12,8 @@ import type {
   BoardDocument,
   CurrentViewReceipt,
   DocumentBlock,
+  DocumentDocument,
+  DocumentStateJournal,
   JSONValue,
   PageDocument,
   SessionPresence,
@@ -20,6 +22,7 @@ import type {
   VersionStamp,
   WorldPoint,
   WorkspaceIndex,
+  WorkspaceItem,
 } from "./domain.js";
 import {
   maximumStackItemCount,
@@ -53,6 +56,8 @@ const frameSchema = z.object({
 
 const pageSelection = {
   page_id: z.uuid().optional().describe("UUID страницы; по умолчанию текущая страница."),
+  notebook_id: z.uuid().optional().describe("UUID тетради для выбора по номеру."),
+  page_number: z.number().int().positive().optional().describe("Номер листа от 1."),
 };
 
 const documentSelection = {
@@ -104,20 +109,30 @@ export function createServer(store = new NotebookStore()): McpServer {
   const server = new McpServer({ name: "notebook", version: "0.1.0" });
 
   server.registerTool(
-    "notebook_context",
+    "notebook_observe",
     {
-      title: "Current Notebook workspace context",
+      title: "Observe Amir's settled Notebook view",
       description:
-        "Read the selected notebook page or document on this Mac. Call this first to locate what Amir sees.",
+        "Return one verified settled image with its selected item, compact Pencil map, and joined board nodes. Call this first.",
       inputSchema: z.object({}),
     },
     () => safely(async () => {
       const current = await store.readCurrent();
       const { workspace, presence, item } = current;
-      const [board, spatialInk] = await Promise.all([
+      const [board, spatialInk, receipt] = await Promise.all([
         store.readBoard(workspace),
         store.readSpatialInk(),
+        store.readCurrentViewReceipt(),
       ]);
+      assertFreshCurrentView(
+        receipt,
+        workspace.stamp,
+        board.stamp,
+        spatialInk.stamp,
+        presence,
+      );
+      await assertCurrentSurfaceSource(store, receipt);
+      const png = await readCurrentViewPNG(store, receipt);
       const itemIndex = workspace.items.findIndex(
         (candidate) => sameID(candidate.id, item.id),
       );
@@ -126,43 +141,44 @@ export function createServer(store = new NotebookStore()): McpServer {
           (itemID) => sameID(itemID, presence.focusedItemID!),
         ))?.id ?? null
         : null;
+      const content = current.kind === "notebook"
+        ? await observedPage(store, current.page, item)
+        : observedDocument(current.document, current.state);
       return {
-        mode: presence.mode,
-        camera: presence.camera,
-        viewport: presence.viewport,
-        focusedItemID: presence.focusedItemID ?? null,
-        focusedStackID,
-        openProgress: presence.openProgress,
-        documentPageIndex: presence.documentPageIndex,
-        item: {
-          id: item.id,
-          kind: item.kind,
-          title: item.title,
-          identity: itemIdentity(item, board, spatialInk),
-          number: itemIndex + 1,
-          count: workspace.items.length,
+        data: {
+          status: "ready",
+          mode: presence.mode,
+          camera: presence.camera,
+          viewport: presence.viewport,
+          focusedItemID: presence.focusedItemID ?? null,
+          focusedStackID,
+          openProgress: presence.openProgress,
+          documentPageIndex: presence.documentPageIndex,
+          item: {
+            id: item.id,
+            kind: item.kind,
+            title: item.title || null,
+            identity: itemIdentity(item, board, spatialInk),
+            number: itemIndex + 1,
+            count: workspace.items.length,
+          },
+          content,
+          revisions: {
+            workspace: revision(workspace.stamp),
+            board: revision(board.stamp),
+            spatialInk: revision(spatialInk.stamp),
+          },
+          nodes: joinedBoardNodes(workspace, board, spatialInk),
+          visibleItems: visibleItems(workspace, board, spatialInk, presence),
+          appliedPencilActionCount: spatialInk.actions.filter(
+            (action) => action.isActive,
+          ).length,
+          surface: receipt.surface,
+          pixelEncoding: "image/png",
         },
-        content: current.kind === "notebook"
-          ? {
-            kind: "page",
-            id: current.page.id,
-            number: item.pageIDs.findIndex(
-              (pageID) => sameID(pageID, current.page.id),
-            ) + 1,
-            count: item.pageIDs.length,
-            size: current.page.size,
-            drawingRevision: revision(current.page.drawingStamp),
-            agentRevision: revision(current.page.agentStamp),
-          }
-          : { kind: "document", ...publicDocument(current.document, current.state) },
-        workspaceRevision: revision(workspace.stamp),
-        boardRevision: revision(board.stamp),
-        spatialInkRevision: revision(spatialInk.stamp),
-        visibleItems: visibleItems(workspace, board, spatialInk, presence),
-        visualIdentityGuide:
-          "Для тетради без печатного названия сопоставьте её screenFrame с рисунком в notebook_render_view; shortID остаётся стабильной ссылкой.",
+        image: png.toString("base64"),
       };
-    }),
+    }, true),
   );
 
   server.registerTool(
@@ -171,7 +187,7 @@ export function createServer(store = new NotebookStore()): McpServer {
       title: "Read the infinite Notebook board",
       description:
         "Read every free notebook or document, stack, and agent-authored board or cover element. "
-        + "Use notebook_render_view to see Pencil ink.",
+        + "Use notebook_observe for the settled visual context.",
       inputSchema: z.object({}),
     },
     () => safely(async () => {
@@ -184,13 +200,11 @@ export function createServer(store = new NotebookStore()): McpServer {
         workspaceRevision: revision(workspace.stamp),
         boardRevision: revision(board.stamp),
         spatialInkRevision: revision(spatialInk.stamp),
-        freeItems: board.freeItems,
-        stacks: board.stacks,
-        elements: board.elements,
-        items: workspace.items.map((item) =>
-          itemIdentity(item, board, spatialInk)
-        ),
-        activePencilActions: spatialInk.actions.filter((action) => action.isActive).length,
+        nodes: joinedBoardNodes(workspace, board, spatialInk),
+        elements: board.elements.map(publicSpatialElement),
+        appliedPencilActionCount: spatialInk.actions.filter(
+          (action) => action.isActive,
+        ).length,
       };
     }),
   );
@@ -219,19 +233,35 @@ export function createServer(store = new NotebookStore()): McpServer {
       const stack = board.stacks.find(
         (candidate) => candidate.itemIDs.some((id) => sameID(id, notebook.id)),
       );
+      const pages = await Promise.all(notebook.pageIDs.map(async (pageID, index) => {
+        const page = await store.readPage(pageID);
+        return {
+          number: index + 1,
+          id: page.id,
+          size: page.size,
+          drawingRevision: revision(page.drawingStamp),
+          agentRevision: revision(page.agentStamp),
+          agentElementCount: page.elements.length,
+        };
+      }));
       return {
-        notebook,
+        notebook: {
+          id: notebook.id,
+          title: notebook.title || null,
+          pageCount: notebook.pageIDs.length,
+        },
         identity: itemIdentity(notebook, board, spatialInk),
         selectedPageID: sameID(workspace.selectedItemID, notebook.id)
           ? workspace.selectedPageID
           : null,
         placement: placement ?? null,
         stack: stack ?? null,
+        pages,
         coverElements: board.elements.filter(
           (element) => element.surface.kind === "cover"
             && sameID(element.surface.ownerID!, notebook.id),
-        ),
-        activeCoverPencilActions: spatialInk.actions.filter(
+        ).map(publicSpatialElement),
+        appliedCoverPencilActionCount: spatialInk.actions.filter(
           (action) => action.isActive && action.spans.some(
             (span) => span.surface.kind === "cover"
               && sameID(span.surface.ownerID!, notebook.id),
@@ -241,79 +271,6 @@ export function createServer(store = new NotebookStore()): McpServer {
         boardRevision: revision(board.stamp),
       };
     }),
-  );
-
-  server.registerTool(
-    "notebook_render_view",
-    {
-      title: "See what Amir currently sees",
-      description:
-        "Return a fresh PNG of the current board, cover transition, or page on the Mac mirror.",
-      inputSchema: z.object({}),
-    },
-    () => safely(async () => {
-      const [workspace, spatialInk, presence, receipt] = await Promise.all([
-        store.readWorkspace(),
-        store.readSpatialInk(),
-        store.readPresence(),
-        store.readCurrentViewReceipt(),
-      ]);
-      const board = await store.readBoard(workspace);
-      assertFreshCurrentView(receipt, workspace.stamp, board.stamp, spatialInk.stamp, presence);
-      if (receipt.page) {
-        const page = await store.readPage(receipt.page.pageID);
-        if (!sameStamp(page.drawingStamp, receipt.page.drawingStamp)
-          || !sameStamp(page.agentStamp, receipt.page.agentStamp)) {
-          throw new StoreError(
-            "Изображение текущего листа еще собирается в фоне. Это не означает, что Амир сейчас рисует. Повторите notebook_render_view через мгновение.",
-          );
-        }
-      }
-      if (receipt.document) {
-        const [document, state] = await Promise.all([
-          store.readDocument(receipt.document.documentID),
-          store.readDocumentState(receipt.document.documentID),
-        ]);
-        if (!sameStamp(document.contentStamp, receipt.document.contentStamp)
-          || !sameStamp(state.stamp, receipt.document.stateStamp)) {
-          throw new StoreError(
-            "Изображение текущего документа еще собирается в фоне. Это не означает, что Амир сейчас его меняет. Повторите notebook_render_view через мгновение.",
-          );
-        }
-      }
-      let png: Buffer;
-      try {
-        png = await readFile(store.currentViewPath);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
-          throw new StoreError(
-            "Текущий вид еще не создан. Откройте Notebook на Mac и оставьте его запущенным.",
-          );
-        }
-        throw error;
-      }
-      const pngSHA256 = createHash("sha256").update(png).digest("hex");
-      if (pngSHA256 !== receipt.pngSHA256) {
-        throw new StoreError(
-          "Изображение текущего вида и его квитанция обновляются. Повторите notebook_render_view через мгновение.",
-        );
-      }
-      return {
-        data: {
-          mode: presence.mode,
-          focusedItemID: presence.focusedItemID ?? null,
-          documentPageIndex: presence.documentPageIndex,
-          pageID: receipt.page?.pageID ?? null,
-          documentID: receipt.document?.documentID ?? null,
-          viewport: receipt.renderViewport,
-          workspaceRevision: revision(workspace.stamp),
-          boardRevision: revision(board.stamp),
-          spatialInkRevision: revision(spatialInk.stamp),
-          pixelEncoding: "image/png",
-        },
-        image: png.toString("base64"),
-      };
-    }, true),
   );
 
   server.registerTool(
@@ -626,16 +583,33 @@ export function createServer(store = new NotebookStore()): McpServer {
     {
       title: "Read a document",
       description:
-        "Read ordered Markdown, LaTeX, interactive source, and the separately merged interactive state.",
-      inputSchema: z.object(documentSelection),
+        "Return a compact ordered outline by default. Set block_id for one complete block or include_source for the full document.",
+      inputSchema: z.object({
+        ...documentSelection,
+        block_id: z.string().trim().min(1).max(120).optional(),
+        include_source: z.boolean().default(false),
+      }),
     },
-    ({ document_id }) => safely(async () => {
+    ({ document_id, block_id, include_source }) => safely(async () => {
       const documentID = await resolveDocumentID(store, document_id);
       const [document, state] = await Promise.all([
         store.readDocument(documentID),
         store.readDocumentState(documentID),
       ]);
-      return publicDocument(document, state);
+      if (block_id) {
+        const block = document.blocks.find((candidate) => candidate.id === block_id);
+        if (!block) throw new StoreError(`Блок не найден: ${block_id}`);
+        const value = state.records.find((record) => record.id === block.id)?.value;
+        return {
+          documentID: document.id,
+          contentRevision: revision(document.contentStamp),
+          stateRevision: revision(state.stamp),
+          block: publicDocumentBlock(block, value),
+        };
+      }
+      return include_source
+        ? publicDocument(document, state)
+        : observedDocument(document, state);
     }),
   );
 
@@ -661,7 +635,7 @@ export function createServer(store = new NotebookStore()): McpServer {
         preamble,
         blocks: blocks.map(inputDocumentBlock),
       });
-      return publicDocument(changed.document, changed.state);
+      return observedDocument(changed.document, changed.state);
     }),
   );
 
@@ -693,8 +667,13 @@ export function createServer(store = new NotebookStore()): McpServer {
         "Call notebook_render_page to see Pencil handwriting.",
       inputSchema: z.object(pageSelection),
     },
-    ({ page_id }) => safely(async () => {
-      const page = await store.readWorkspacePage(page_id);
+    ({ page_id, notebook_id, page_number }) => safely(async () => {
+      const page = await resolvePageSelection(
+        store,
+        page_id,
+        notebook_id,
+        page_number,
+      );
       return publicPage(page);
     }),
   );
@@ -709,8 +688,13 @@ export function createServer(store = new NotebookStore()): McpServer {
         "Agent-authored web layers are returned as source by notebook_read_page.",
       inputSchema: z.object(pageSelection),
     },
-    ({ page_id }) => safely(async () => {
-      const page = await store.readWorkspacePage(page_id);
+    ({ page_id, notebook_id, page_number }) => safely(async () => {
+      const page = await resolvePageSelection(
+        store,
+        page_id,
+        notebook_id,
+        page_number,
+      );
       const receipt = await readFreshPageVision(store, page);
       const png = await readVerifiedPageOverview(store, receipt, "faithful");
       return {
@@ -740,7 +724,22 @@ export function createServer(store = new NotebookStore()): McpServer {
         css: z.string().default(""),
       }),
     },
-    ({ page_id, expected_revision, id, frame, markdown, css }) => safely(async () => {
+    ({
+      page_id,
+      notebook_id,
+      page_number,
+      expected_revision,
+      id,
+      frame,
+      markdown,
+      css,
+    }) => safely(async () => {
+      const selectedPage = await resolvePageSelection(
+        store,
+        page_id,
+        notebook_id,
+        page_number,
+      );
       const element: AgentElement = {
         id,
         kind: "markdown",
@@ -752,7 +751,7 @@ export function createServer(store = new NotebookStore()): McpServer {
         state: {},
       };
       const page = await store.replaceElements({
-        pageID: page_id,
+        pageID: selectedPage.id,
         expectedRevision: expected_revision,
         transform: (elements, currentPage) => {
           assertFrame(frame, currentPage);
@@ -782,8 +781,25 @@ export function createServer(store = new NotebookStore()): McpServer {
         state: z.json().default({}),
       }),
     },
-    ({ page_id, expected_revision, id, frame, html, css, javascript, state }) =>
+    ({
+      page_id,
+      notebook_id,
+      page_number,
+      expected_revision,
+      id,
+      frame,
+      html,
+      css,
+      javascript,
+      state,
+    }) =>
       safely(async () => {
+        const selectedPage = await resolvePageSelection(
+          store,
+          page_id,
+          notebook_id,
+          page_number,
+        );
         assertJavaScript(javascript);
         const element: AgentElement = {
           id,
@@ -796,7 +812,7 @@ export function createServer(store = new NotebookStore()): McpServer {
           state: state as JSONValue,
         };
         const page = await store.replaceElements({
-          pageID: page_id,
+          pageID: selectedPage.id,
           expectedRevision: expected_revision,
           transform: (elements, currentPage) => {
             assertFrame(frame, currentPage);
@@ -818,11 +834,17 @@ export function createServer(store = new NotebookStore()): McpServer {
         ids: z.array(z.string().trim().min(1)).min(1),
       }),
     },
-    ({ page_id, expected_revision, ids }) => safely(async () => {
+    ({ page_id, notebook_id, page_number, expected_revision, ids }) => safely(async () => {
+      const selectedPage = await resolvePageSelection(
+        store,
+        page_id,
+        notebook_id,
+        page_number,
+      );
       const remove = new Set(ids);
       let removed = 0;
       const page = await store.replaceElements({
-        pageID: page_id,
+        pageID: selectedPage.id,
         expectedRevision: expected_revision,
         transform: (elements) => elements.filter((element) => {
           if (!remove.has(element.id)) return true;
@@ -969,6 +991,228 @@ function itemIdentity(
   };
 }
 
+function publicSpatialElement(element: SpatialElement): object {
+  return {
+    id: element.id,
+    surface: element.surface.kind === "cover"
+      ? { kind: "cover", item_id: element.surface.ownerID }
+      : { kind: "board" },
+    kind: element.kind,
+    frame: element.frame,
+    world_origin: element.worldOrigin ?? null,
+    source: element.source,
+    html: element.html,
+    css: element.css,
+    javascript: element.javaScript,
+    state: element.state,
+    text_style: element.textStyle,
+    revision: revision(element.stamp),
+  };
+}
+
+async function observedPage(
+  store: NotebookStore,
+  page: PageDocument,
+  item: WorkspaceItem,
+): Promise<object> {
+  const vision = await readFreshPageVision(store, page);
+  const occupied = vision.occupiedCells;
+  const columns = occupied.map((cell) => cell.column);
+  const rows = occupied.map((cell) => cell.row);
+  return {
+    kind: "page",
+    selector: {
+      itemID: item.id,
+      pageID: page.id,
+      pageNumber: item.pageIDs.findIndex((id) => sameID(id, page.id)) + 1,
+      pageCount: item.pageIDs.length,
+    },
+    size: page.size,
+    drawingRevision: revision(page.drawingStamp),
+    agentRevision: revision(page.agentStamp),
+    agentElements: page.elements.map((element) => ({
+      id: element.id,
+      kind: element.kind,
+      frame: element.frame,
+    })),
+    pencilMap: {
+      blank: vision.regions.length === 0,
+      occupiedCellCount: occupied.length,
+      occupiedCellBounds: occupied.length === 0
+        ? null
+        : {
+            column: Math.min(...columns),
+            row: Math.min(...rows),
+            width: Math.max(...columns) - Math.min(...columns) + 1,
+            height: Math.max(...rows) - Math.min(...rows) + 1,
+          },
+      visibleInkBounds: vision.visibleInkBounds ?? null,
+      regions: vision.regions.map((region) => ({
+        id: region.id,
+        contentCells: region.contentCells,
+        inkPixelCount: region.inkPixelCount,
+      })),
+    },
+  };
+}
+
+function observedDocument(
+  document: DocumentDocument,
+  state: DocumentStateJournal,
+): object {
+  const stateByID = new Map(state.records.map((record) => [record.id, record.value]));
+  return {
+    kind: "document",
+    id: document.id,
+    paperSize: document.paperSize,
+    contentRevision: revision(document.contentStamp),
+    stateRevision: revision(state.stamp),
+    preambleCharacterCount: document.preamble.length,
+    blocks: document.blocks.map((block) => ({
+      id: block.id,
+      kind: block.kind,
+      sourcePreview: block.kind === "interactive"
+        ? textPreview(block.html)
+        : textPreview(block.source),
+      sourceCharacterCount: block.kind === "interactive"
+        ? block.html.length
+        : block.source.length,
+      height: block.kind === "interactive" ? block.height : null,
+      hasCSS: block.kind === "interactive" && block.css.length > 0,
+      hasJavaScript: block.kind === "interactive" && block.javaScript.length > 0,
+      state: block.kind === "interactive"
+        ? stateByID.get(block.id) ?? block.initialState
+        : null,
+    })),
+  };
+}
+
+function publicDocumentBlock(
+  block: DocumentBlock,
+  state: JSONValue | undefined,
+): object {
+  if (block.kind === "interactive") {
+    return {
+      id: block.id,
+      kind: block.kind,
+      html: block.html,
+      css: block.css,
+      javascript: block.javaScript,
+      initial_state: block.initialState,
+      state: state ?? block.initialState,
+      height: block.height,
+    };
+  }
+  return {
+    id: block.id,
+    kind: block.kind,
+    source: block.source,
+  };
+}
+
+function textPreview(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length <= 160 ? normalized : `${normalized.slice(0, 157)}...`;
+}
+
+function joinedBoardNodes(
+  workspace: WorkspaceIndex,
+  board: BoardDocument,
+  spatialInk: Awaited<ReturnType<NotebookStore["readSpatialInk"]>>,
+): object[] {
+  const items = new Map(
+    workspace.items.map((item) => [item.id.toLowerCase(), item]),
+  );
+  const free = board.freeItems.map((placement) => {
+    const item = items.get(placement.itemID.toLowerCase())!;
+    return {
+      kind: "item",
+      id: item.id,
+      identity: itemIdentity(item, board, spatialInk),
+      center: placement.center,
+      zIndex: placement.zIndex,
+      stackID: null,
+    };
+  });
+  const stacks = board.stacks.map((stack) => ({
+    kind: "stack",
+    id: stack.id,
+    center: stack.center,
+    zIndex: stack.zIndex,
+    items: stack.itemIDs.map((itemID) => {
+      const item = items.get(itemID.toLowerCase())!;
+      return itemIdentity(item, board, spatialInk);
+    }),
+  }));
+  return [...free, ...stacks].sort((first, second) =>
+    (first.zIndex as number) - (second.zIndex as number)
+  );
+}
+
+async function assertCurrentSurfaceSource(
+  store: NotebookStore,
+  receipt: CurrentViewReceipt,
+): Promise<void> {
+  if (receipt.surface.kind === "page") {
+    const surface = receipt.surface;
+    const [page, workspace] = await Promise.all([
+      store.readPage(surface.revision.pageID),
+      store.readWorkspace(),
+    ]);
+    const owner = workspace.items.find((item) =>
+      item.kind === "notebook"
+        && sameID(item.id, surface.itemID)
+        && item.pageIDs.some((pageID) =>
+          sameID(pageID, surface.revision.pageID)
+        )
+    );
+    if (!owner) {
+      throw new StoreError("Квитанция связывает лист с другой тетрадью.");
+    }
+    if (!sameStamp(page.drawingStamp, surface.revision.drawingStamp)
+      || !sameStamp(page.agentStamp, surface.revision.agentStamp)) {
+      throw new StoreError(
+        "Снимок листа еще собирается в фоне. Повторите notebook_observe через мгновение.",
+      );
+    }
+  }
+  if (receipt.surface.kind === "document") {
+    const [document, state] = await Promise.all([
+      store.readDocument(receipt.surface.revision.documentID),
+      store.readDocumentState(receipt.surface.revision.documentID),
+    ]);
+    if (!sameStamp(document.contentStamp, receipt.surface.revision.contentStamp)
+      || !sameStamp(state.stamp, receipt.surface.revision.stateStamp)) {
+      throw new StoreError(
+        "Снимок документа еще собирается в фоне. Повторите notebook_observe через мгновение.",
+      );
+    }
+  }
+}
+
+async function readCurrentViewPNG(
+  store: NotebookStore,
+  receipt: CurrentViewReceipt,
+): Promise<Buffer> {
+  let png: Buffer;
+  try {
+    png = await readFile(store.currentViewPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      throw new StoreError(
+        "Текущий вид еще создается. Notebook на Mac должен оставаться запущенным.",
+      );
+    }
+    throw error;
+  }
+  if (createHash("sha256").update(png).digest("hex") !== receipt.pngSHA256) {
+    throw new StoreError(
+      "Снимок и его квитанция обновляются. Повторите notebook_observe через мгновение.",
+    );
+  }
+  return png;
+}
+
 function assertFreshCurrentView(
   receipt: CurrentViewReceipt,
   workspaceStamp: VersionStamp,
@@ -981,7 +1225,7 @@ function assertFreshCurrentView(
     || !sameStamp(receipt.spatialInkStamp, spatialInkStamp)
     || !isDeepStrictEqual(receipt.presence, presence)) {
     throw new StoreError(
-      "Изображение текущего вида еще собирается в фоне. Это не означает, что Амир сейчас что-то меняет. Повторите notebook_render_view через мгновение.",
+      "Снимок текущего вида еще собирается в фоне. Повторите notebook_observe через мгновение.",
     );
   }
 }
@@ -1121,6 +1365,45 @@ function inputDocumentBlock(
     initialState: {},
     height: 320,
   };
+}
+
+async function resolvePageSelection(
+  store: NotebookStore,
+  pageID: string | undefined,
+  notebookID: string | undefined,
+  pageNumber: number | undefined,
+): Promise<PageDocument> {
+  if (pageID && (notebookID || pageNumber)) {
+    throw new StoreError("Выберите лист либо по page_id, либо по номеру в тетради.");
+  }
+  if (pageNumber && !notebookID) {
+    throw new StoreError("Для page_number нужен notebook_id.");
+  }
+  if (pageID) return store.readWorkspacePage(pageID);
+  if (!notebookID) return store.readWorkspacePage();
+
+  const workspace = await store.readWorkspace();
+  const notebook = workspace.items.find((item) =>
+    item.kind === "notebook" && sameID(item.id, notebookID)
+  );
+  if (!notebook || notebook.kind !== "notebook") {
+    throw new StoreError("Тетрадь не найдена.");
+  }
+  const index = pageNumber === undefined
+    ? (sameID(workspace.selectedItemID, notebook.id)
+      ? Math.max(0, notebook.pageIDs.findIndex((id) =>
+          workspace.selectedPageID !== undefined
+            && sameID(id, workspace.selectedPageID)
+        ))
+      : 0)
+    : pageNumber - 1;
+  const selectedID = notebook.pageIDs[index];
+  if (!selectedID) {
+    throw new StoreError(
+      `У тетради ${notebook.pageIDs.length} листов; листа ${pageNumber} нет.`,
+    );
+  }
+  return store.readPage(selectedID);
 }
 
 async function resolveDocumentID(
@@ -1314,8 +1597,16 @@ async function safely(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const pending = /собирается|создается|обновляются|обновляется/.test(message);
+    const data = {
+      status: pending ? "pending" : "error",
+      code: pending ? "snapshot_pending" : "operation_failed",
+      message,
+      retryAfterMilliseconds: pending ? 500 : null,
+    };
     return {
-      content: [{ type: "text", text: message }],
+      content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+      structuredContent: data,
       isError: true,
     };
   }

@@ -30,11 +30,11 @@ try {
   assert.deepEqual(
     listed.tools.map((tool) => tool.name).sort(),
     [
-      "notebook_context",
       "notebook_create_document",
       "notebook_create_notebook",
       "notebook_export_document",
       "notebook_move_nodes",
+      "notebook_observe",
       "notebook_page_map",
       "notebook_patch_document",
       "notebook_put_markdown",
@@ -51,35 +51,25 @@ try {
       "notebook_render_page",
       "notebook_render_region",
       "notebook_render_regions",
-      "notebook_render_view",
       "notebook_stack_nodes",
     ],
   );
 
-  const context = await client.callTool({ name: "notebook_context", arguments: {} });
-  assert.equal(context.isError, undefined);
-  assert.match(JSON.stringify(context.structuredContent), /Notebook 1/);
-  assert.match(JSON.stringify(context.structuredContent), /shortID/);
-  assert.match(JSON.stringify(context.structuredContent), /screenFrame/);
+  const observation = await client.callTool({ name: "notebook_observe", arguments: {} });
+  assert.equal(observation.isError, undefined);
+  assert.match(JSON.stringify(observation.structuredContent), /Notebook 1/);
+  assert.match(JSON.stringify(observation.structuredContent), /shortID/);
+  assert.match(JSON.stringify(observation.structuredContent), /screenFrame/);
+  assert.match(JSON.stringify(observation.structuredContent), /pencilMap/);
+  assert.ok(observation.content.some((block) => block.type === "image"));
   assert.equal(
-    (context.structuredContent as { workspaceRevision: string })
-      .workspaceRevision,
+    (observation.structuredContent as {
+      revisions: { workspace: string };
+    }).revisions.workspace,
     `0@${appActor}`,
   );
   assert.equal(
-    (context.structuredContent as { documentPageIndex: number })
-      .documentPageIndex,
-    0,
-  );
-
-  const currentView = await client.callTool({
-    name: "notebook_render_view",
-    arguments: {},
-  });
-  assert.equal(currentView.isError, undefined);
-  assert.ok(currentView.content.some((block) => block.type === "image"));
-  assert.equal(
-    (currentView.structuredContent as { documentPageIndex: number })
+    (observation.structuredContent as { documentPageIndex: number })
       .documentPageIndex,
     0,
   );
@@ -88,7 +78,7 @@ try {
   const currentViewPNG = await readFile(currentViewPath);
   await writeFile(currentViewPath, Buffer.from("updating"));
   const mismatchedCurrentView = await client.callTool({
-    name: "notebook_render_view",
+    name: "notebook_observe",
     arguments: {},
   });
   assert.equal(mismatchedCurrentView.isError, true);
@@ -132,7 +122,7 @@ try {
 
   const pageMap = await client.callTool({
     name: "notebook_page_map",
-    arguments: {},
+    arguments: { notebook_id: itemID, page_number: 1 },
   });
   assert.equal(pageMap.isError, undefined);
   const map = pageMap.structuredContent as {
@@ -280,7 +270,7 @@ try {
 
   await client.close();
   process.stdout.write(
-    "MCP smoke passed: page map, region batches, notebook and document mutation, PDF export, and stale-image rejection work.\n",
+    "MCP smoke passed: one-call observation, numbered page selection, region batches, document outlines, mutation, PDF export, and stale-image rejection work.\n",
   );
 } finally {
   await rm(storeRoot, { recursive: true, force: true });

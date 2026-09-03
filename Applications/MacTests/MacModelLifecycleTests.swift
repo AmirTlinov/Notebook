@@ -1,9 +1,62 @@
+import AppKit
 import NotebookCore
 import PencilKit
 import XCTest
 @testable import Notebook
 
 final class MacModelLifecycleTests: XCTestCase {
+  @MainActor
+  func testSettledPageReadoutUsesTheVerifiedPageRaster() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = NotebookStore(root: root)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let page = try XCTUnwrap(model.activePage)
+    let clock = ContinuousClock()
+    let deadline = clock.now + .seconds(4)
+    var current: CurrentViewReceipt?
+    var vision: PageVisionReceipt?
+    repeat {
+      try await Task.sleep(for: .milliseconds(20))
+      current = try? JSONDecoder().decode(
+        CurrentViewReceipt.self,
+        from: Data(contentsOf: store.currentViewRevisionURL)
+      )
+      vision = try? JSONDecoder().decode(
+        PageVisionReceipt.self,
+        from: Data(contentsOf: store.previewVisionReceiptURL(page.id))
+      )
+    } while (current == nil || vision == nil) && clock.now < deadline
+
+    let receipt = try XCTUnwrap(current)
+    let pageVision = try XCTUnwrap(vision)
+    guard case .page(_, let revision, let snapshotHash) = receipt.surface else {
+      return XCTFail("Текущий вид должен принадлежать листу")
+    }
+    XCTAssertEqual(revision.pageID, page.id)
+    XCTAssertEqual(snapshotHash, pageVision.previewPNG_SHA256)
+
+    let data = try Data(contentsOf: store.currentViewPreviewURL)
+    let bitmap = try XCTUnwrap(NSBitmapImageRep(data: data))
+    var saturatedRedPixels = 0
+    for y in stride(from: 0, to: bitmap.pixelsHigh, by: 16) {
+      for x in stride(from: 0, to: bitmap.pixelsWide, by: 16) {
+        guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)
+        else { continue }
+        if color.redComponent > 0.8,
+          color.greenComponent < 0.3,
+          color.blueComponent < 0.3
+        {
+          saturatedRedPixels += 1
+        }
+      }
+    }
+    XCTAssertEqual(saturatedRedPixels, 0)
+  }
+
   @MainActor
   func testVisualReadoutPublishesWithoutAMountedWindow() async throws {
     let root = FileManager.default.temporaryDirectory

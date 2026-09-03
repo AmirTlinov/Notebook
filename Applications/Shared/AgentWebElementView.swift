@@ -26,6 +26,34 @@ import WebKit
     }
   }
 #else
+  @MainActor
+  final class AgentElementSnapshotCache {
+    static let shared = AgentElementSnapshotCache()
+    static let didChange = Notification.Name("NotebookAgentElementSnapshotDidChange")
+
+    private struct Entry {
+      let element: AgentElement
+      let image: NSImage
+    }
+
+    private var entries: [String: [Entry]] = [:]
+
+    func image(for element: AgentElement) -> NSImage? {
+      entries[element.id]?.last(where: { $0.element == element })?.image
+    }
+
+    func store(_ image: NSImage, for element: AgentElement) {
+      var matchingID = entries[element.id] ?? []
+      matchingID.removeAll { $0.element == element }
+      matchingID.append(Entry(element: element, image: image))
+      entries[element.id] = Array(matchingID.suffix(8))
+      NotificationCenter.default.post(
+        name: Self.didChange,
+        object: element.id
+      )
+    }
+  }
+
   struct AgentWebElementView: NSViewRepresentable {
     let element: AgentElement
     let onRenderReady: (Bool) -> Void
@@ -65,6 +93,9 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private var loadedSignature: DocumentSignature?
   private var activeNavigation: WKNavigation?
   private var renderRevision: UInt64 = 0
+  #if os(macOS)
+    private var loadedElement: AgentElement?
+  #endif
 
   init(
     onRenderReady: @escaping (Bool) -> Void = { _ in },
@@ -88,6 +119,9 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     )
     guard signature != loadedSignature else { return }
     loadedSignature = signature
+    #if os(macOS)
+      loadedElement = element
+    #endif
     renderRevision &+= 1
     setRenderReady(false)
     activeNavigation = webView.loadHTMLString(
@@ -134,9 +168,28 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       completionHandler: { [weak self] _ in
         guard let self, renderRevision == revision else { return }
         setRenderReady(true)
+        #if os(macOS)
+          captureSnapshot(of: webView, revision: revision)
+        #endif
       }
     )
   }
+
+  #if os(macOS)
+    private func captureSnapshot(of webView: WKWebView, revision: UInt64) {
+      guard let element = loadedElement else { return }
+      let configuration = WKSnapshotConfiguration()
+      configuration.afterScreenUpdates = true
+      webView.takeSnapshot(with: configuration) { [weak self] image, _ in
+        guard let self,
+          renderRevision == revision,
+          loadedElement == element,
+          let image
+        else { return }
+        AgentElementSnapshotCache.shared.store(image, for: element)
+      }
+    }
+  #endif
 
   func webView(
     _ webView: WKWebView,

@@ -548,16 +548,29 @@ func currentViewReceiptOwnsDocumentRevisions() {
     spatialInk: ink,
     presence: presence,
     renderViewport: presence.viewport,
-    page: nil,
-    document: document,
-    documentState: state,
+    surface: .document(
+      revision: CurrentViewDocumentRevision(
+        document: document,
+        state: state
+      ),
+      pageIndex: 0,
+      snapshotPNG_SHA256: String(repeating: "b", count: 64)
+    ),
     pngSHA256: String(repeating: "a", count: 64)
   )
 
   #expect(receipt.isValid)
-  #expect(receipt.document?.documentID == documentID)
-  #expect(receipt.document?.contentStamp == document.contentStamp)
-  #expect(receipt.document?.stateStamp == state.stamp)
+  guard case .document(let revision, let pageIndex, let snapshotHash) =
+    receipt.surface
+  else {
+    Issue.record("Квитанция потеряла поверхность документа")
+    return
+  }
+  #expect(revision.documentID == documentID)
+  #expect(revision.contentStamp == document.contentStamp)
+  #expect(revision.stateStamp == state.stamp)
+  #expect(pageIndex == 0)
+  #expect(snapshotHash == String(repeating: "b", count: 64))
 }
 
 @Test("Wire переносит исходник и состояние документа как разных владельцев")

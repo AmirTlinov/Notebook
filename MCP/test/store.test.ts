@@ -69,11 +69,11 @@ test("reads one-owner board, spatial ink, and current presence", async () => {
   });
 });
 
-test("requires the rendered page revision while the page is open", async () => {
+test("requires the typed surface revision for the settled view", async () => {
   await withStore(async (store, root) => {
     const receiptPath = join(root, "previews", "current-view.revision");
     const receipt = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, unknown>;
-    delete receipt.page;
+    delete receipt.surface;
     await writeFile(receiptPath, JSON.stringify(receipt));
 
     await assert.rejects(store.readCurrentViewReceipt(), StoreError);

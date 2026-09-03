@@ -18,6 +18,7 @@ export const pageID = "7e7a0000-0000-4000-8000-000000000002";
 export const appActor = "7e7a0000-0000-4000-8000-000000000003";
 
 const previewPNG = grayscalePNG(1_668, 2_388, 255);
+const currentViewPNG = grayscalePNG(700, 900, 96);
 const regionPNG = grayscalePNG(52, 52, 0);
 
 export async function writeFixture(root: string): Promise<void> {
@@ -76,17 +77,22 @@ export async function writeFixture(root: string): Promise<void> {
     documentPageIndex: 0,
   };
   const currentViewReceipt: CurrentViewReceipt = {
-    format: 2,
+    format: 3,
     workspaceStamp: workspace.stamp,
     boardStamp: board.stamp,
     spatialInkStamp: spatialInk.stamp,
     presence,
     renderViewport: { x: 700, y: 900 },
-    pngSHA256: createHash("sha256").update(previewPNG).digest("hex"),
-    page: {
-      pageID,
-      drawingStamp: page.drawingStamp,
-      agentStamp: page.agentStamp,
+    pngSHA256: createHash("sha256").update(currentViewPNG).digest("hex"),
+    surface: {
+      kind: "page",
+      itemID,
+      revision: {
+        pageID,
+        drawingStamp: page.drawingStamp,
+        agentStamp: page.agentStamp,
+      },
+      snapshotPNG_SHA256: createHash("sha256").update(previewPNG).digest("hex"),
     },
   };
   const previewSHA256 = createHash("sha256").update(previewPNG).digest("hex");
@@ -141,7 +147,7 @@ export async function writeFixture(root: string): Promise<void> {
       regionPNG,
     );
   }
-  await writeFile(join(root, "previews", "current-view.png"), previewPNG);
+  await writeFile(join(root, "previews", "current-view.png"), currentViewPNG);
   await writeFile(
     join(root, "previews", "current-view.revision"),
     JSON.stringify(currentViewReceipt),

@@ -18,7 +18,7 @@
 | Форма физической тетради | [SwiftUI `RoundedRectangle`](https://developer.apple.com/documentation/swiftui/roundedrectangle) | Стиль `continuous` создаёт единую плавную кривую угла | Лист, лицевая и обратная стороны обложки используют визуально откалиброванный радиус `0,8 см` и одну `continuous`-форму |
 | Чистое касание бумаги | [UIKit: Handling touches in your view](https://developer.apple.com/documentation/uikit/handling-touches-in-your-view) | Обычный `UIView` различает прямое касание и Pencil | Верхний `PaperInputView` забирает касания; один палец заканчивается пустым действием, два идут жестам, Pencil идёт ручке; под ним находится неинтерактивный `InkCanvasView` без текстового меню |
 | Цвет бумаги | [`NSAppearance.performAsCurrentDrawingAppearance`](https://developer.apple.com/documentation/appkit/nsappearance/performascurrentdrawingappearance(_:)) | Рендер можно выполнить в явно выбранной светлой теме | `PaperInkRenderer` одинаково сохраняет тёмные чернила в окне Mac и в PNG для агента |
-| Точный текущий вид | [SwiftUI `ImageRenderer`](https://developer.apple.com/documentation/swiftui/imagerenderer) и [`WKWebView.takeSnapshot`](https://developer.apple.com/documentation/webkit/wkwebview/takesnapshot(with:completionhandler:)) | SwiftUI-сцену можно вывести в платформенное изображение, а WebKit обязан заранее дать растр своего отдельного процесса | `DocumentSnapshotCache` связывает WebKit-кадр с `contentStamp + stateStamp + documentPageIndex`; Mac пишет `current-view.png` только для завершённой сцены и MCP сверяет версии всех владельцев и SHA-256 самих PNG-байтов |
+| Точный текущий вид | [SwiftUI `ImageRenderer`](https://developer.apple.com/documentation/swiftui/imagerenderer) и [`WKWebView.takeSnapshot`](https://developer.apple.com/documentation/webkit/wkwebview/takesnapshot(with:completionhandler:)) | Завершённую проекцию можно вывести в платформенное изображение, а WebKit обязан заранее дать растр своего отдельного процесса | `SettledSceneSnapshot` выбирает доску, обложку, составной лист либо документ без жестов и переходов; типизированная квитанция связывает точный растр листа или документа с владельцами и итоговым `current-view.png` |
 | Увеличение рукописи | [`PKDrawing.image`](https://developer.apple.com/documentation/pencilkit/pkdrawing-swift.struct/image(from:scale:)) и `NSBitmapImageRep` | Итоговый растр уже применяет `mask` и `maskedPathRanges`, а физическая клетка даёт общую координату человеку и агенту | `PageVisionRenderer` извлекает занятые клетки из альфа-пикселей, ограничивает детальное окно двенадцатью клетками и связывает обзор, карту и увеличения одной SHA-квитанцией |
 | Прямая связь iPad и Mac | [Network.framework](https://developer.apple.com/documentation/technotes/tn3151-choosing-the-right-networking-api) | Network — основной API Apple для TCP, Bonjour и peer-to-peer Wi-Fi | Mac публикует `_notebook._tcp`; iPad группирует интерфейсные адреса одного имени и держит на этот Mac один двусторонний канал |
 | Типизированные сообщения | [WWDC25: structured concurrency with Network](https://developer.apple.com/videos/play/wwdc2025/250/) | `Coder` кадрирует `Codable`-сообщения для `NetworkConnection` | `OrderedWireSender` передаёт `WireMessage` по порядку; активные кадры камеры и ожидающие полные рисунки схлопываются, а завершённая камера остаётся границей состояния |
@@ -533,9 +533,10 @@ settled 19 -> live Mac window + last-context.json + delayed MCP PNG
 отправки остаётся последний. Так же сходятся последовательные выборы листа при
 неизменном каталоге и запросы страницы одного документа. Два ещё не отправленных
 полных рисунка одного листа, два исходника одного документа или два состояния
-оставляют самую новую ревизию. Mac
-принимает только возрастающий `sequence`, сохраняет полученное содержимое и
-строит тяжёлые PNG после короткой паузы:
+оставляют самую новую ревизию. Mac принимает только возрастающий `sequence`,
+сохраняет полученное содержимое и строит тяжёлые PNG после короткой паузы. Один
+`PreviewReconciler` хранит желаемую, опубликованную, выполняемую версии и
+последнюю ошибку:
 220 мс для текущей сцены и 420 мс для отдельного листа. Промежуточный жест вообще
 не запускает MCP-рендер, потому что его квитанция всё равно не совпала бы с
 устойчивым файлом. Раз в секунду тот же `MacPreviewPublisher` сверяет последнюю
