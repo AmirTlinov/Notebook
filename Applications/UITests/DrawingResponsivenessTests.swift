@@ -1125,6 +1125,23 @@ final class DrawingResponsivenessTests: XCTestCase {
       "Ластик не должен ставить вычисление всего рисунка в очередь UI"
     )
 
+    let secondStarted = ContinuousClock.now
+    paper.coordinate(
+      withNormalizedOffset: CGVector(dx: 0.12, dy: 0.68)
+    ).press(
+      forDuration: 0.04,
+      thenDragTo: paper.coordinate(
+        withNormalizedOffset: CGVector(dx: 0.88, dy: 0.76)
+      ),
+      withVelocity: .fast,
+      thenHoldForDuration: 0
+    )
+    XCTAssertLessThan(
+      ContinuousClock.now - secondStarted,
+      .seconds(4),
+      "Второй жест ластика должен начаться сразу после подъёма Pencil"
+    )
+
     let responseStarted = ContinuousClock.now
     controls.tap()
     let controlsClosed = XCTNSPredicateExpectation(
@@ -1134,11 +1151,11 @@ final class DrawingResponsivenessTests: XCTestCase {
     wait(for: [controlsClosed], timeout: 2)
     XCTAssertLessThan(ContinuousClock.now - responseStarted, .seconds(2))
 
-    let drawingChanged = XCTNSPredicateExpectation(
-      predicate: NSPredicate(format: "value != %@", initialValue),
+    let bothErasersLanded = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value BEGINSWITH '2'"),
       object: paper
     )
-    wait(for: [drawingChanged], timeout: 2)
+    wait(for: [bothErasersLanded], timeout: 2)
   }
 
   func testErasureIsCommittedBeforeLeavingAndReopeningTheNotebook() {

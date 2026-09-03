@@ -3,6 +3,23 @@ import PencilKit
 import SwiftUI
 import UIKit
 
+/// One finished Pencil gesture, independent of the page snapshot it will
+/// eventually modify. The coordinator applies these mutations in order after
+/// the hand has already been released for the next gesture.
+enum PageDrawingMutation: @unchecked Sendable {
+  case pen(PKStroke)
+  case eraser(PKStrokePath)
+
+  func apply(to drawing: PKDrawing) -> PKDrawing {
+    switch self {
+    case .pen(let stroke):
+      PKDrawing(strokes: drawing.strokes + [stroke])
+    case .eraser(let path):
+      drawing.erasingPath(path)
+    }
+  }
+}
+
 struct PencilCanvasView: UIViewRepresentable {
   let pageID: UUID
   let drawingData: Data
@@ -102,37 +119,62 @@ struct PencilCanvasView: UIViewRepresentable {
       paper.touchView.onActionActivityChange = { [weak self] active in
         self?.setPencilActionActive(active)
       }
-      paper.touchView.onDrawingChange = { [weak self, weak paper] drawing in
-        guard let self,
-          let pageID,
-          let stamp = reserveAction(pageID)
-        else {
-          self?.restoreModelDrawing(on: paper)
-          return
-        }
-        appliedDrawing = drawing
-        if pendingLocalDeliveries[pageID, default: 0] == 0 {
-          localDrawingData[pageID] = modelDrawingData ?? Data()
-        }
-        pendingLocalDeliveries[pageID, default: 0] += 1
-        let previous = serializationTails[pageID]
-        let deliver = commitAction
-        serializationTails[pageID] = Task { [self] in
-          await previous?.value
-          let previousData = localDrawingData[pageID] ?? Data()
-          let data = await Task.detached(priority: .utility) {
-            drawing.dataRepresentation()
-          }.value
-          localDrawingData[pageID] = data
-          let acceptedData = deliver(data, previousData, pageID, stamp)
-          completeLocalDelivery(
-            on: pageID,
-            acceptedData: acceptedData,
-            paper: paper
-          )
-        }
+      paper.touchView.onDrawingMutation = { [weak self, weak paper] mutation in
+        guard let self, let paper else { return }
+        commit(mutation, on: paper)
       }
       registerPageFinisher(on: paper)
+    }
+
+    /// The touch owner ends at Pencil-up. This task owns the slower PencilKit
+    /// mutation and file delivery from that point onward, so a following
+    /// gesture can begin immediately while completed actions stay ordered.
+    func commit(
+      _ mutation: PageDrawingMutation,
+      on paper: PaperCanvasContainerView
+    ) {
+      guard let pageID,
+        let stamp = reserveAction(pageID)
+      else {
+        restoreModelDrawing(on: paper)
+        return
+      }
+      if pendingLocalDeliveries[pageID, default: 0] == 0 {
+        localDrawingData[pageID] = modelDrawingData ?? Data()
+      }
+      pendingLocalDeliveries[pageID, default: 0] += 1
+      let previous = serializationTails[pageID]
+      let deliver = commitAction
+      serializationTails[pageID] = Task { [self, weak paper] in
+        await previous?.value
+        let previousData = localDrawingData[pageID] ?? Data()
+        let baseDrawing = Self.drawing(from: previousData)
+        let (drawing, data) = await Task.detached(priority: .userInitiated) {
+          let drawing = mutation.apply(to: baseDrawing)
+          return (drawing, drawing.dataRepresentation())
+        }.value
+
+        if pageID == self.pageID {
+          appliedDrawing = drawing
+          paper?.touchView.acceptCommittedDrawing(drawing)
+        }
+        let acceptedData = deliver(data, previousData, pageID, stamp)
+        if let acceptedData {
+          localDrawingData[pageID] = acceptedData
+          if pageID == self.pageID {
+            let acceptedDrawing = Self.drawing(from: acceptedData)
+            appliedDrawing = acceptedDrawing
+            paper?.touchView.acceptCommittedDrawing(acceptedDrawing)
+          }
+        } else {
+          localDrawingData[pageID] = data
+        }
+        completeLocalDelivery(
+          on: pageID,
+          acceptedData: acceptedData,
+          paper: paper
+        )
+      }
     }
 
     private func registerPageFinisher(on paper: PaperCanvasContainerView) {
@@ -180,7 +222,7 @@ struct PencilCanvasView: UIViewRepresentable {
 
     func detach(from paper: PaperCanvasContainerView) {
       paper.touchView.onActionActivityChange = nil
-      paper.touchView.onDrawingChange = nil
+      paper.touchView.onDrawingMutation = nil
       pencilInputGate.setCurrentPageSource(
         inputSourceID,
         isCurrent: false
@@ -326,14 +368,14 @@ final class PaperCanvasContainerView: UIView {
     touchView.presentActivePen = { [weak inkView] stroke in
       inkView?.displayActiveStroke(stroke)
     }
-    touchView.commitActivePen = { [weak inkView] drawing in
-      inkView?.commitActiveStroke(in: drawing)
+    touchView.commitActivePen = { [weak inkView] in
+      inkView?.commitActiveStroke()
     }
     touchView.presentActiveEraser = { [weak inkView] stroke in
       inkView?.displayActiveEraser(stroke)
     }
-    touchView.commitActiveEraser = { [weak inkView] drawing in
-      inkView?.commitActiveEraser(in: drawing)
+    touchView.commitActiveEraser = { [weak inkView] in
+      inkView?.commitActiveEraser()
     }
     touchView.clearActiveAction = { [weak inkView] in
       inkView?.clearActiveAction()
@@ -368,12 +410,12 @@ final class PaperCanvasContainerView: UIView {
 
 @MainActor
 final class PaperInputView: UIView {
-  var onDrawingChange: ((PKDrawing) -> Void)?
+  var onDrawingMutation: ((PageDrawingMutation) -> Void)?
   var onActionActivityChange: ((Bool) -> Void)?
   var presentActivePen: ((ActiveInkStroke) -> Void)?
-  var commitActivePen: ((PKDrawing) -> Void)?
+  var commitActivePen: (() -> Void)?
   var presentActiveEraser: ((ActiveEraserStroke) -> Void)?
-  var commitActiveEraser: ((PKDrawing) -> Void)?
+  var commitActiveEraser: (() -> Void)?
   var clearActiveAction: (() -> Void)?
 
   var hasActiveAction: Bool { actionTool != nil }
@@ -400,7 +442,6 @@ final class PaperInputView: UIView {
   private var actionTool: DrawingTool?
   private var actionPenStyle: PenStyle?
   private var actionEraserStyle: EraserStyle?
-  private var actionBaseDrawing = PKDrawing()
   private var actionCreationDate = Date()
   private var actionPathID = UUID()
   private var actionStrokeID = UUID()
@@ -416,7 +457,6 @@ final class PaperInputView: UIView {
   private var reportsPencilActivity = false
 
   private var finalizationTask: Task<Void, Never>?
-  private var eraserTask: Task<Void, Never>?
   private var actionCompletions: [() -> Void] = []
 
   override init(frame: CGRect) {
@@ -442,6 +482,13 @@ final class PaperInputView: UIView {
 
   func apply(_ drawing: PKDrawing) {
     cancelCurrentAction()
+    self.drawing = drawing
+    updateAccessibilityValue()
+  }
+
+  /// Accepts the durable result without replacing the exact Metal mesh that
+  /// was already committed under the person's hand.
+  func acceptCommittedDrawing(_ drawing: PKDrawing) {
     self.drawing = drawing
     updateAccessibilityValue()
   }
@@ -549,10 +596,6 @@ final class PaperInputView: UIView {
 
   private func beginAction(with touch: UITouch, event: UIEvent?) {
     if actionTool != nil {
-      guard actionTool != .eraser else {
-        finalizeAction()
-        return
-      }
       finalizeAction()
     }
 
@@ -562,7 +605,6 @@ final class PaperInputView: UIView {
     if reportsPencilActivity { onActionActivityChange?(true) }
     actionPenStyle = penStyle
     actionEraserStyle = eraserStyle
-    actionBaseDrawing = drawing
     actionCreationDate = Date()
     actionPathID = UUID()
     actionStrokeID = UUID()
@@ -899,11 +941,17 @@ final class PaperInputView: UIView {
     }
   }
 
-  private func actionDrawing() -> PKDrawing {
-    guard actionTool == .pen, let stroke = penStroke() else {
-      return actionBaseDrawing
+  private func actionMutation() -> PageDrawingMutation? {
+    switch actionTool {
+    case .pen:
+      guard let stroke = penStroke() else { return nil }
+      return .pen(stroke)
+    case .eraser:
+      guard !samples.isEmpty else { return nil }
+      return .eraser(eraserPath())
+    case nil:
+      return nil
     }
-    return PKDrawing(strokes: actionBaseDrawing.strokes + [stroke])
   }
 
   private func penStroke() -> PKStroke? {
@@ -933,28 +981,6 @@ final class PaperInputView: UIView {
     )
   }
 
-  private func startEraserFinalComputation() {
-    guard actionTool == .eraser,
-      !samples.isEmpty,
-      eraserTask == nil
-    else { return }
-
-    let baseDrawing = actionBaseDrawing
-    let path = eraserPath()
-    let pathID = actionPathID
-    eraserTask = Task { [weak self] in
-      let result = await Task.detached(priority: .userInitiated) {
-        baseDrawing.erasingPath(path)
-      }.value
-      guard !Task.isCancelled, let self,
-        actionTool == .eraser,
-        actionPathID == pathID
-      else { return }
-      eraserTask = nil
-      finishAction(with: result)
-    }
-  }
-
   private func scheduleFinalization() {
     finalizationTask?.cancel()
     finalizationTask = Task { [weak self] in
@@ -968,32 +994,31 @@ final class PaperInputView: UIView {
     guard actionTool != nil else { return }
     finalizationTask?.cancel()
     finalizationTask = nil
-
-    if actionTool == .eraser {
-      finishEraserWhenReady()
+    guard let mutation = actionMutation() else {
+      finishActionWithoutMutation()
       return
     }
-
-    finishAction(with: actionDrawing())
+    finishAction(with: mutation)
   }
 
-  private func finishEraserWhenReady() {
-    actionHasEnded = true
-    guard eraserTask == nil else { return }
-    startEraserFinalComputation()
-  }
-
-  private func finishAction(with finalDrawing: PKDrawing) {
+  private func finishAction(with mutation: PageDrawingMutation) {
     let completions = actionCompletions
-    drawing = finalDrawing
-    updateAccessibilityValue()
-    if actionTool == .pen {
-      commitActivePen?(finalDrawing)
-    } else {
-      commitActiveEraser?(finalDrawing)
+    let tool = actionTool
+    if tool == .pen {
+      commitActivePen?()
+    } else if tool == .eraser {
+      commitActiveEraser?()
     }
     clearAction()
-    onDrawingChange?(finalDrawing)
+    onDrawingMutation?(mutation)
+    for completion in completions {
+      completion()
+    }
+  }
+
+  private func finishActionWithoutMutation() {
+    let completions = actionCompletions
+    clearAction()
     for completion in completions {
       completion()
     }
@@ -1002,8 +1027,6 @@ final class PaperInputView: UIView {
   private func cancelCurrentAction() {
     finalizationTask?.cancel()
     finalizationTask = nil
-    eraserTask?.cancel()
-    eraserTask = nil
     clearAction()
   }
 

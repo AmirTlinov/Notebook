@@ -339,10 +339,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   /// Moves the exact active mesh into the page. No second renderer and no
   /// visual replacement are involved.
-  func commitActiveStroke(in drawing: PKDrawing) {
+  func commitActiveStroke() {
     if let activeInkStroke,
-      !activeInkStroke.measuredPoints.isEmpty,
-      drawing.strokes.count == committedStrokeCount + 1
+      !activeInkStroke.measuredPoints.isEmpty
     {
       let components = activeInkStroke.style.color.components
       var vertices: [Vertex] = []
@@ -357,12 +356,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         to: &vertices
       )
       appendCommitted(vertices, operation: .ink)
-      committedStrokeCount = drawing.strokes.count
-    } else {
-      committedVertices = makeVertices(for: drawing)
-      committedBuffer = nil
-      committedBatches.removeAll(keepingCapacity: true)
-      committedStrokeCount = drawing.strokes.count
+      committedStrokeCount += 1
     }
     discardActiveAction()
     requestFrame()
@@ -370,7 +364,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   /// Keeps the exact Metal eraser gesture in the action order. The PencilKit
   /// result is persistence for Mac and reload, not a second live renderer.
-  func commitActiveEraser(in drawing: PKDrawing) {
+  func commitActiveEraser() {
     if let activeEraserStroke,
       !activeEraserStroke.measuredPoints.isEmpty
     {
@@ -381,7 +375,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         to: &vertices
       )
       appendCommitted(vertices, operation: .erase)
-      committedStrokeCount = drawing.strokes.count
     }
     discardActiveAction()
     requestFrame()

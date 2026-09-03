@@ -187,7 +187,6 @@ final class DrawingOwnershipTests: XCTestCase {
   @MainActor
   func testARepeatedModelSnapshotCannotReplaceANewerLocalDrawing() async {
     let base = PKDrawing(strokes: [stroke(y: 20)])
-    let local = PKDrawing(strokes: [stroke(y: 20), stroke(y: 40)])
     let pageID = UUID()
     let actorID = UUID()
     var counter: UInt64 = 0
@@ -207,12 +206,64 @@ final class DrawingOwnershipTests: XCTestCase {
     coordinator.attach(to: paper)
     coordinator.apply(base.dataRepresentation(), pageID: pageID, to: paper)
 
-    paper.apply(local)
-    paper.touchView.onDrawingChange?(local)
+    coordinator.commit(.pen(stroke(y: 40)), on: paper)
     coordinator.apply(base.dataRepresentation(), pageID: pageID, to: paper)
 
-    XCTAssertEqual(paper.touchView.accessibilityValue, "2 штрихов")
     await fulfillment(of: [delivered], timeout: 2)
+    XCTAssertEqual(paper.touchView.accessibilityValue, "2 штрихов")
+  }
+
+  @MainActor
+  func testFinishedErasersQueueWithoutHoldingTheNextPencilGesture() async throws {
+    let base = PKDrawing(strokes: [stroke(y: 20), stroke(y: 60)])
+    let pageID = UUID()
+    let actorID = UUID()
+    var counter: UInt64 = 0
+    var finalData = Data()
+    let delivered = expectation(description: "both erasers serialized")
+    delivered.expectedFulfillmentCount = 2
+    let coordinator = PencilCanvasView.Coordinator(
+      pencilInputGate: PencilInputGate(),
+      reserveAction: { _ in
+        counter += 1
+        return VersionStamp(counter: counter, actor: actorID)
+      },
+      commitAction: { data, _, _, _ in
+        finalData = data
+        delivered.fulfill()
+        return data
+      }
+    )
+    let paper = PaperCanvasContainerView()
+    coordinator.attach(to: paper)
+    coordinator.apply(base.dataRepresentation(), pageID: pageID, to: paper)
+
+    let first = PKStrokePath(
+      controlPoints: [
+        point(x: 0, y: 20, width: 30),
+        point(x: 110, y: 20, width: 30),
+      ],
+      creationDate: Date()
+    )
+    let second = PKStrokePath(
+      controlPoints: [
+        point(x: 0, y: 60, width: 30),
+        point(x: 110, y: 60, width: 30),
+      ],
+      creationDate: Date()
+    )
+
+    coordinator.commit(.eraser(first), on: paper)
+    coordinator.commit(.eraser(second), on: paper)
+    XCTAssertEqual(
+      counter,
+      2,
+      "Pencil-up must enqueue the next action before durable work finishes"
+    )
+
+    await fulfillment(of: [delivered], timeout: 2)
+    let drawing = try PKDrawing(data: finalData)
+    XCTAssertTrue(drawing.strokes.isEmpty)
   }
 
   @MainActor
