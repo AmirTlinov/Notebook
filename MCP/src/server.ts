@@ -113,10 +113,10 @@ export function createServer(store = new NotebookStore()): McpServer {
     {
       title: "Observe Amir's settled Notebook view",
       description:
-        "Return one verified settled image with its selected item, compact Pencil map, and joined board nodes. Call this first.",
+        "Wait briefly for publication, then return one verified settled image with its selected item, compact Pencil map, and joined board nodes. Call this first.",
       inputSchema: z.object({}),
     },
-    () => safely(async () => {
+    () => safely(() => waitForSettledSnapshot(async () => {
       const current = await store.readCurrent();
       const { workspace, presence, item } = current;
       const [board, spatialInk, receipt] = await Promise.all([
@@ -178,7 +178,7 @@ export function createServer(store = new NotebookStore()): McpServer {
         },
         image: png.toString("base64"),
       };
-    }, true),
+    }), true),
   );
 
   server.registerTool(
@@ -1569,6 +1569,33 @@ function assertJavaScript(source: string): void {
 
 type ToolData = object;
 
+const snapshotPendingPattern =
+  /собирается|создается|обновляются|обновляется/;
+
+export async function waitForSettledSnapshot<T>(
+  operation: () => Promise<T>,
+  options: {
+    timeoutMilliseconds?: number;
+    pollMilliseconds?: number;
+  } = {},
+): Promise<T> {
+  const timeoutMilliseconds = options.timeoutMilliseconds ?? 4_000;
+  const pollMilliseconds = options.pollMilliseconds ?? 100;
+  const deadline = Date.now() + timeoutMilliseconds;
+  while (true) {
+    try {
+      return await operation();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const remaining = deadline - Date.now();
+      if (!snapshotPendingPattern.test(message) || remaining <= 0) throw error;
+      await new Promise((resolve) => {
+        setTimeout(resolve, Math.min(pollMilliseconds, remaining));
+      });
+    }
+  }
+}
+
 async function safely(
   operation: () => Promise<ToolData | { data: ToolData; image: string }>,
   hasImage = false,
@@ -1597,7 +1624,7 @@ async function safely(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const pending = /собирается|создается|обновляются|обновляется/.test(message);
+    const pending = snapshotPendingPattern.test(message);
     const data = {
       status: pending ? "pending" : "error",
       code: pending ? "snapshot_pending" : "operation_failed",

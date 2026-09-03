@@ -77,13 +77,18 @@ try {
   const currentViewPath = join(storeRoot, "previews", "current-view.png");
   const currentViewPNG = await readFile(currentViewPath);
   await writeFile(currentViewPath, Buffer.from("updating"));
-  const mismatchedCurrentView = await client.callTool({
+  const repairedAt = Date.now();
+  const repair = setTimeout(() => {
+    void writeFile(currentViewPath, currentViewPNG);
+  }, 180);
+  const settledCurrentView = await client.callTool({
     name: "notebook_observe",
     arguments: {},
   });
-  assert.equal(mismatchedCurrentView.isError, true);
-  assert.match(JSON.stringify(mismatchedCurrentView.content), /квитанция обновляются/);
-  await writeFile(currentViewPath, currentViewPNG);
+  clearTimeout(repair);
+  assert.equal(settledCurrentView.isError, undefined);
+  assert.ok(Date.now() - repairedAt >= 150);
+  assert.ok(settledCurrentView.content.some((block) => block.type === "image"));
 
   const spatialChanged = await client.callTool({
     name: "notebook_put_spatial_markdown",
@@ -270,7 +275,7 @@ try {
 
   await client.close();
   process.stdout.write(
-    "MCP smoke passed: one-call observation, numbered page selection, region batches, document outlines, mutation, PDF export, and stale-image rejection work.\n",
+    "MCP smoke passed: one-call settled observation, numbered page selection, region batches, document outlines, mutation, and PDF export work.\n",
   );
 } finally {
   await rm(storeRoot, { recursive: true, force: true });
