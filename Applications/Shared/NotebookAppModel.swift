@@ -483,12 +483,9 @@ final class NotebookAppModel {
         in: presence.boardID,
         to: center,
         actor: actorID
-      ),
-      let workspace
+      )
     else { return }
-    boardHierarchy = board
-    try? store.saveBoard(board, items: workspace.items)
-    sync.send(.board(board))
+    persistBoard(board)
   }
 
   @discardableResult
@@ -499,14 +496,9 @@ final class NotebookAppModel {
         onto: targetID,
         in: presence.boardID,
         actor: actorID
-      ), let workspace
+      )
     else { return nil }
-    boardHierarchy = board
-    try? store.saveBoard(
-      board,
-      items: workspace.items
-    )
-    sync.send(.board(board))
+    persistBoard(board)
     showCue("Стопка")
     return stackID
   }
@@ -518,15 +510,9 @@ final class NotebookAppModel {
         in: presence.boardID,
         at: center,
         actor: actorID
-      ),
-      let workspace
+      )
     else { return }
-    boardHierarchy = board
-    try? store.saveBoard(
-      board,
-      items: workspace.items
-    )
-    sync.send(.board(board))
+    persistBoard(board)
   }
 
   func updatePresence(_ presence: SessionPresence, settled: Bool) {
@@ -567,8 +553,7 @@ final class NotebookAppModel {
   func leaveBoard() -> Bool {
     guard var hierarchy = boardHierarchy, let presence,
       let parentID = hierarchy.parentBoardID(of: presence.boardID),
-      let center = hierarchy.focusedCenter(of: presence.boardID, in: parentID),
-      let workspace
+      let center = hierarchy.focusedCenter(of: presence.boardID, in: parentID)
     else { return false }
     let portalCamera = BoardPortalProjection.portalCamera(
       from: presence.camera,
@@ -579,9 +564,7 @@ final class NotebookAppModel {
       for: presence.boardID,
       actor: actorID
     ) {
-      boardHierarchy = hierarchy
-      try? store.saveBoard(hierarchy, items: workspace.items)
-      sync.send(.board(hierarchy))
+      persistBoard(hierarchy)
     }
     selectItem(presence.boardID)
     updatePresence(
@@ -1920,10 +1903,15 @@ final class NotebookAppModel {
     let exactBoards = boardCandidates.filter {
       Set($0.itemIDs) == expectedItemIDs
     }
-    guard let candidateBoard = (exactBoards.isEmpty
+    guard var candidateBoard = (exactBoards.isEmpty
       ? boardCandidates
       : exactBoards
     ).max(by: { $0.stamp < $1.stamp }) else { return }
+    if var current = boardHierarchy {
+      _ = current.merge(candidateBoard, items: incoming.items)
+      guard current.isValid(items: incoming.items) else { return }
+      candidateBoard = current
+    }
 
     var resolvedPages: [UUID: PageDocument] = [:]
     for id in pageIDs {

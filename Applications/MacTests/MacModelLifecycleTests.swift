@@ -6,6 +6,105 @@ import XCTest
 
 final class MacModelLifecycleTests: XCTestCase {
   @MainActor
+  func testIncomingCatalogPreservesIndependentLocalBoardAndPortalEdits() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = NotebookStore(root: root)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let childID = try XCTUnwrap(model.createBoard(at: .zero))
+    model.enterBoard(childID)
+    let notebookID = try XCTUnwrap(model.createNotebook(at: .zero))
+    var incomingIndex = try XCTUnwrap(model.workspace)
+    var incomingBoard = try XCTUnwrap(model.boardHierarchy)
+    let actor = UUID()
+    let documentItem = try XCTUnwrap(incomingIndex.createDocument(
+      title: "Remote document",
+      actor: actor
+    ))
+    XCTAssertTrue(incomingBoard.addItem(
+      documentItem.id,
+      to: incomingIndex.rootBoardID,
+      near: .zero,
+      actor: actor
+    ))
+    let movedCenter = WorldPoint(x: 370, y: -240)
+    model.moveItem(notebookID, to: movedCenter)
+    let childPresence = SessionPresence(
+      boardID: childID,
+      mode: .board,
+      camera: SpatialCamera(center: movedCenter, scale: 0.51),
+      viewport: SpatialPoint(x: 834, y: 1_194)
+    )
+    model.updatePresence(childPresence, settled: true)
+    XCTAssertTrue(model.leaveBoard())
+    // Selection on exit advances the local catalog. Give the remote catalog
+    // the later selection while keeping its independently captured board.
+    XCTAssertTrue(incomingIndex.selectItem(childID, actor: actor))
+    XCTAssertTrue(incomingIndex.selectItem(documentItem.id, actor: actor))
+    XCTAssertGreaterThan(incomingIndex.stamp, model.workspace!.stamp)
+
+    model.receivePeerMessage(.board(incomingBoard))
+    model.receivePeerMessage(.document(DocumentDocument(
+      id: documentItem.id,
+      actor: actor,
+      blocks: [.markdown(id: "body", source: "# Delivered")]
+    )))
+    model.receivePeerMessage(.documentState(DocumentStateJournal(
+      id: documentItem.id,
+      actor: actor
+    )))
+    model.receivePeerMessage(.index(incomingIndex))
+
+    XCTAssertEqual(model.workspace, incomingIndex)
+    let published = try store.loadBoard(items: incomingIndex.items)
+    XCTAssertEqual(model.boardHierarchy, published)
+    XCTAssertEqual(published.board(childID)?.focusedCenter(of: notebookID), movedCenter)
+    XCTAssertEqual(published.portalCamera(childID), childPresence.camera)
+  }
+
+  @MainActor
+  func testPortalExitMergesAnIndependentBoardEditAlreadyOnDisk() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = NotebookStore(root: root)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let notebookID = try XCTUnwrap(model.workspace?.selectedItemID)
+    let childID = try XCTUnwrap(model.createBoard(at: .zero))
+    model.enterBoard(childID)
+    var diskBoard = try XCTUnwrap(model.boardHierarchy)
+    let workspace = try XCTUnwrap(model.workspace)
+    let movedCenter = WorldPoint(x: 1_400, y: 320)
+    XCTAssertTrue(diskBoard.moveItem(
+      notebookID,
+      in: workspace.rootBoardID,
+      to: movedCenter,
+      actor: UUID()
+    ))
+    try store.saveBoard(diskBoard, items: workspace.items)
+    model.updatePresence(SessionPresence(
+      boardID: childID,
+      mode: .board,
+      camera: SpatialCamera(center: WorldPoint(x: 90, y: 120), scale: 0.7),
+      viewport: SpatialPoint(x: 834, y: 1_194)
+    ), settled: true)
+
+    XCTAssertTrue(model.leaveBoard())
+
+    let published = try store.loadBoard(items: workspace.items)
+    XCTAssertEqual(model.boardHierarchy, published)
+    XCTAssertEqual(
+      published.board(workspace.rootBoardID)?.focusedCenter(of: notebookID),
+      movedCenter
+    )
+  }
+
+  @MainActor
   func testElementEditingSessionIsTheSingleTransientOwner() throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
