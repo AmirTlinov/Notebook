@@ -4,6 +4,31 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testEraserIsASeparateCircleBesideThePen() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    app.launch()
+
+    let pen = app.buttons["pen-controls-toggle"]
+    let eraser = app.buttons["drawing-tool-eraser"]
+    XCTAssertTrue(pen.waitForExistence(timeout: 5))
+    XCTAssertTrue(
+      eraser.waitForExistence(timeout: 2),
+      "Ластик должен быть доступен рядом с ручкой без раскрытия настроек"
+    )
+    XCTAssertEqual(pen.frame.width, pen.frame.height, accuracy: 1)
+    XCTAssertEqual(eraser.frame.width, eraser.frame.height, accuracy: 1)
+    XCTAssertEqual(pen.frame.width, eraser.frame.width, accuracy: 1)
+    XCTAssertFalse(pen.frame.intersects(eraser.frame))
+    XCTAssertEqual(pen.frame.midY, eraser.frame.midY, accuracy: 1)
+    XCTAssertLessThanOrEqual(
+      abs(eraser.frame.minX - pen.frame.maxX),
+      10,
+      "Ластик должен стоять отдельным кружком непосредственно рядом с ручкой"
+    )
+  }
+
   func testPersonMovesAndDeletesAnAgentElement() {
     continueAfterFailure = false
     let app = XCUIApplication()
@@ -1315,7 +1340,6 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     let controls = app.buttons["pen-controls-toggle"]
     XCTAssertTrue(controls.waitForExistence(timeout: 5))
-    controls.tap()
     let eraser = app.buttons["drawing-tool-eraser"]
     XCTAssertTrue(eraser.waitForExistence(timeout: 2))
     eraser.tap()

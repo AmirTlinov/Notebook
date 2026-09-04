@@ -6,40 +6,46 @@ struct PenControlsView: View {
 
   var body: some View {
     HStack(spacing: 8) {
-      if isExpanded {
-        colorChoices
-        eraserChoice
-        elementChoice
-        Rectangle()
-          .fill(.primary.opacity(0.12))
-          .frame(width: 1, height: 24)
+      HStack(spacing: 8) {
+        if isExpanded {
+          colorChoices
+          elementChoice
+          Rectangle()
+            .fill(.primary.opacity(0.12))
+            .frame(width: 1, height: 24)
 
-        if !model.isElementEditingEnabled {
-          widthControl
-          if model.drawingTool == .pen {
-            opacityControl
+          if !model.isElementEditingEnabled {
+            widthControl
+            if model.drawingTool == .pen {
+              opacityControl
+            }
           }
         }
-      }
 
-      Button {
-        withAnimation(.smooth(duration: 0.18)) {
-          isExpanded.toggle()
+        Button {
+          if !isExpanded {
+            model.selectDrawingTool(.pen)
+          }
+          withAnimation(.smooth(duration: 0.18)) {
+            isExpanded.toggle()
+          }
+        } label: {
+          Image(systemName: controlIcon)
+            .font(.system(size: 18, weight: .medium))
+            .foregroundStyle(controlColor)
+            .frame(width: 44, height: 44)
+            .contentShape(Circle())
         }
-      } label: {
-        Image(systemName: controlIcon)
-          .font(.system(size: 18, weight: .medium))
-          .foregroundStyle(controlColor)
-          .frame(width: 44, height: 44)
-          .contentShape(Circle())
+        .buttonStyle(.plain)
+        .accessibilityLabel(isExpanded ? "Закрыть выбор ручки" : "Настроить ручку")
+        .accessibilityIdentifier("pen-controls-toggle")
       }
-      .buttonStyle(.plain)
-      .accessibilityLabel(isExpanded ? "Закрыть выбор ручки" : "Настроить ручку")
-      .accessibilityIdentifier("pen-controls-toggle")
+      .padding(isExpanded ? 7 : 0)
+      .background(.ultraThinMaterial, in: Capsule())
+      .shadow(color: .black.opacity(0.1), radius: 10, y: 3)
+
+      eraserChoice
     }
-    .padding(isExpanded ? 7 : 0)
-    .background(.ultraThinMaterial, in: Capsule())
-    .shadow(color: .black.opacity(0.1), radius: 10, y: 3)
   }
 
   private var colorChoices: some View {
@@ -92,7 +98,7 @@ struct PenControlsView: View {
           .font(.system(size: 16, weight: .medium))
           .foregroundStyle(.primary)
       }
-      .frame(width: 36, height: 36)
+      .frame(width: 44, height: 44)
       .contentShape(Circle())
     }
     .buttonStyle(.plain)
@@ -101,6 +107,21 @@ struct PenControlsView: View {
       model.drawingTool == .eraser ? .isSelected : []
     )
     .accessibilityIdentifier("drawing-tool-eraser")
+    .background(.ultraThinMaterial, in: Circle())
+    .shadow(color: .black.opacity(0.1), radius: 10, y: 3)
+  }
+
+  private var controlIcon: String {
+    if isExpanded { return "xmark" }
+    if model.isElementEditingEnabled { return "square.dashed" }
+    return "pencil.tip"
+  }
+
+  private var controlColor: Color {
+    if model.isElementEditingEnabled { return .accentColor }
+    return model.drawingTool == .pen
+      ? model.penStyle.color.displayColor
+      : .primary
   }
 
   private var elementChoice: some View {
@@ -219,19 +240,6 @@ struct PenControlsView: View {
       )
       .accessibilityIdentifier("pen-minimum-opacity")
     }
-  }
-
-  private var controlIcon: String {
-    if isExpanded { return "xmark" }
-    if model.isElementEditingEnabled { return "square.dashed" }
-    return model.drawingTool == .pen ? "pencil.tip" : "eraser.fill"
-  }
-
-  private var controlColor: Color {
-    if model.isElementEditingEnabled { return .accentColor }
-    return model.drawingTool == .pen
-      ? model.penStyle.color.displayColor
-      : .primary
   }
 
   private var eraserPreviewWidth: CGFloat {
