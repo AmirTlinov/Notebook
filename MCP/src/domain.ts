@@ -179,6 +179,8 @@ export interface BoardDocument {
 export interface BoardNode {
   id: string;
   board: BoardDocument;
+  portalCamera?: SpatialCamera;
+  portalStamp?: VersionStamp;
 }
 
 export interface BoardHierarchy {

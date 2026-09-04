@@ -448,6 +448,47 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.buttons["leave-nested-board"].tap()
     XCTAssertTrue(app.buttons["leave-nested-board"].waitForNonExistence(timeout: 2))
     XCTAssertTrue(app.buttons["create-workspace-item"].exists)
+    let portalProof = XCTAttachment(screenshot: app.screenshot())
+    portalProof.name = "nested-board-live-portal"
+    portalProof.lifetime = .keepAlways
+    add(portalProof)
+  }
+
+  func testPinchEntersAndLeavesALiveBoardPortal() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-simulator-finger-gestures",
+    ]
+    app.launch()
+
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 5))
+    paper.pinch(withScale: 0.28, velocity: -2)
+    XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
+    app.buttons["create-workspace-item"].tap()
+    let createBoard = app.buttons["create-nested-board"]
+    XCTAssertTrue(createBoard.waitForExistence(timeout: 2))
+    createBoard.tap()
+
+    let portals = app.descendants(matching: .any).matching(
+      NSPredicate(format: "identifier BEGINSWITH 'workspace-item-'")
+    )
+    let portal = portals.element(boundBy: portals.count - 1)
+    XCTAssertTrue(portal.waitForExistence(timeout: 3))
+    portal.pinch(withScale: 4, velocity: 2)
+    XCTAssertTrue(
+      app.buttons["leave-nested-board"].waitForExistence(timeout: 4),
+      "Щипок наружу должен продолжить окно портала во вложенную доску"
+    )
+
+    app.windows.firstMatch.pinch(withScale: 0.55, velocity: -2)
+    XCTAssertTrue(
+      app.buttons["leave-nested-board"].waitForNonExistence(timeout: 4),
+      "Сильный щипок внутрь на пустой дочерней доске должен вернуть портал"
+    )
+    XCTAssertTrue(app.buttons["create-workspace-item"].exists)
   }
 
   func testDoubleTapCreatesAndReopensTextOnAFocusedCover() {

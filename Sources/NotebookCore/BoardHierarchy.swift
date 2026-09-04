@@ -3,14 +3,56 @@ import Foundation
 public struct BoardNode: Codable, Equatable, Identifiable, Sendable {
   public let id: UUID
   public private(set) var board: BoardDocument
+  /// The child camera seen through this node's portal, expressed in the
+  /// portal's canonical 834 x 1194 viewport. It is independent from board
+  /// content so moving a notebook and leaving the board can converge.
+  public private(set) var portalCamera: SpatialCamera
+  public private(set) var portalStamp: VersionStamp
 
-  public init(id: UUID, board: BoardDocument) {
+  public init(
+    id: UUID,
+    board: BoardDocument,
+    portalCamera: SpatialCamera = SpatialCamera(),
+    portalStamp: VersionStamp? = nil
+  ) {
     self.id = id
     self.board = board
+    self.portalCamera = portalCamera
+    self.portalStamp = portalStamp
+      ?? VersionStamp(counter: 0, actor: board.stamp.actor)
   }
 
   mutating func replace(with board: BoardDocument) {
     self.board = board
+  }
+
+  mutating func replacePortal(
+    camera: SpatialCamera,
+    stamp: VersionStamp
+  ) {
+    portalCamera = camera
+    portalStamp = stamp
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id
+    case board
+    case portalCamera
+    case portalStamp
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(UUID.self, forKey: .id)
+    board = try container.decode(BoardDocument.self, forKey: .board)
+    portalCamera = try container.decodeIfPresent(
+      SpatialCamera.self,
+      forKey: .portalCamera
+    ) ?? SpatialCamera()
+    portalStamp = try container.decodeIfPresent(
+      VersionStamp.self,
+      forKey: .portalStamp
+    ) ?? VersionStamp(counter: 0, actor: board.stamp.actor)
   }
 }
 
@@ -55,6 +97,10 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
 
   public func board(_ boardID: UUID) -> BoardDocument? {
     boards.first(where: { $0.id == boardID })?.board
+  }
+
+  public func portalCamera(_ boardID: UUID) -> SpatialCamera? {
+    boards.first(where: { $0.id == boardID })?.portalCamera
   }
 
   public var itemIDs: [UUID] {
@@ -182,6 +228,27 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
     }
   }
 
+  /// Remembers the exact child view shown by its parent portal. The camera is
+  /// canonical presentation state; board content keeps its own revision.
+  @discardableResult
+  public mutating func updatePortalCamera(
+    _ camera: SpatialCamera,
+    for boardID: UUID,
+    actor: UUID
+  ) -> Bool {
+    guard boardID != rootBoardID,
+      camera.isValid,
+      let boardIndex = index(of: boardID),
+      boards[boardIndex].portalCamera != camera
+    else { return false }
+    let counter = max(stamp.counter, boards[boardIndex].portalStamp.counter)
+    guard counter < VersionStamp.maximumCounter else { return false }
+    let next = VersionStamp(counter: counter + 1, actor: actor)
+    boards[boardIndex].replacePortal(camera: camera, stamp: next)
+    stamp = next
+    return true
+  }
+
   @discardableResult
   public mutating func createStack(
     moving movingID: UUID,
@@ -286,11 +353,22 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
     var candidate = other
     for index in candidate.boards.indices {
       let incoming = candidate.boards[index]
-      guard let current = boards.first(where: { $0.id == incoming.id }),
-        Set(current.board.itemIDs) == Set(incoming.board.itemIDs),
+      guard let current = boards.first(where: { $0.id == incoming.id }) else {
+        continue
+      }
+      var resolved = incoming
+      if Set(current.board.itemIDs) == Set(incoming.board.itemIDs),
         incoming.board.stamp < current.board.stamp
-      else { continue }
-      candidate.boards[index] = current
+      {
+        resolved.replace(with: current.board)
+      }
+      if incoming.portalStamp < current.portalStamp {
+        resolved.replacePortal(
+          camera: current.portalCamera,
+          stamp: current.portalStamp
+        )
+      }
+      candidate.boards[index] = resolved
     }
     if candidate.stamp < stamp { candidate.stamp = stamp }
     if !candidate.isValid(items: items) {
@@ -331,7 +409,11 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
 
     for node in boards {
       let localIDs = Set(node.board.itemIDs)
-      guard node.board.isValid(itemIDs: localIDs) else { return false }
+      guard node.board.isValid(itemIDs: localIDs),
+        node.portalCamera.isValid,
+        node.portalStamp.counter <= VersionStamp.maximumCounter,
+        !(stamp < node.portalStamp)
+      else { return false }
       for element in node.board.elements {
         if element.surface.kind == .board {
           guard element.surface == .board(node.id) else { return false }

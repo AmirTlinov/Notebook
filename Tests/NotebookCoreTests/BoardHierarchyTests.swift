@@ -2,6 +2,75 @@ import Foundation
 import Testing
 @testable import NotebookCore
 
+@Test("Граница портала и открытая дочерняя доска показывают одну точку")
+func boardPortalBoundaryKeepsTheSameProjection() {
+  let viewport = SpatialPoint(x: 1_366, y: 1_024)
+  let portalCenter = WorldPoint(x: 7_200, y: -3_400)
+  let childPoint = WorldPoint(x: 480, y: -260)
+  let portalCamera = SpatialCamera(
+    center: WorldPoint(x: 125, y: -90),
+    scale: 0.31
+  )
+  let previewPoint = portalCamera.worldToScreen(
+    childPoint,
+    viewport: BoardPortalProjection.viewport
+  )
+  let pointInsideParent = portalCenter.offsetBy(
+    x: previewPoint.x - NotebookGeometry.width / 2,
+    y: previewPoint.y - NotebookGeometry.height / 2
+  )
+  let boundaryCamera = BoardPortalProjection.parentBoundaryCamera(
+    portalCenter: portalCenter,
+    viewport: viewport
+  )
+  let portalScreenPoint = boundaryCamera.worldToScreen(
+    pointInsideParent,
+    viewport: viewport
+  )
+  let childCamera = BoardPortalProjection.entryCamera(
+    portalCamera: portalCamera,
+    viewport: viewport
+  )
+  let childScreenPoint = childCamera.worldToScreen(
+    childPoint,
+    viewport: viewport
+  )
+
+  #expect(abs(portalScreenPoint.x - childScreenPoint.x) < 0.000_001)
+  #expect(abs(portalScreenPoint.y - childScreenPoint.y) < 0.000_001)
+  let restored = BoardPortalProjection.portalCamera(
+    from: childCamera,
+    viewport: viewport
+  )
+  #expect(restored.center == portalCamera.center)
+  #expect(abs(restored.scale - portalCamera.scale) < 0.000_001)
+}
+
+@Test("Портал заранее учитывает предел камеры после поворота экрана")
+func boardPortalResolvesMaximumZoomBeforeHandoff() {
+  let viewport = SpatialPoint(x: 1_366, y: 1_024)
+  let stored = SpatialCamera(
+    center: WorldPoint(x: 90, y: 140),
+    scale: SpatialCamera.maximumScale
+  )
+  let resolved = BoardPortalProjection.resolvedPortalCamera(
+    stored,
+    viewport: viewport
+  )
+  let entered = BoardPortalProjection.entryCamera(
+    portalCamera: stored,
+    viewport: viewport
+  )
+
+  #expect(abs(entered.scale - SpatialCamera.maximumScale) < 0.000_001)
+  #expect(
+    abs(
+      resolved.scale * BoardPortalProjection.fillScale(viewport: viewport)
+        - entered.scale
+    ) < 0.000_001
+  )
+}
+
 @Test("Плоское дерево проходит тысячу вложенных досок без рекурсивного JSON")
 func boardHierarchySupportsDeepNesting() throws {
   let actor = UUID()
@@ -252,6 +321,73 @@ func boardHierarchyMergesDisjointBoards() throws {
     left.board(secondBoard.id)?.focusedCenter(of: secondNotebook.item.id)
       == secondCenter
   )
+}
+
+@Test("Камера портала и содержимое дочерней доски сходятся независимо")
+func portalCameraMergesIndependentlyFromBoardContent() throws {
+  let actor = UUID()
+  let initial = WorkspaceIndex.initial(
+    actor: actor,
+    pageSize: PageSize(width: 834, height: 1_194)
+  )
+  var workspace = initial.index
+  var base = BoardHierarchy.initial(
+    rootBoardID: workspace.rootBoardID,
+    itemIDs: workspace.items.map(\.id),
+    actor: actor
+  )
+  let boardCreation = workspace.createBoard(title: "Портал", actor: actor)
+  let boardItem = try #require(boardCreation)
+  let boardWasCreated = base.createBoard(
+    boardItem.id,
+    in: workspace.rootBoardID,
+    near: .zero,
+    actor: actor
+  )
+  #expect(boardWasCreated)
+  let nestedCreation = workspace.createNotebook(
+    title: "Внутри",
+    actor: actor,
+    pageSize: initial.page.size
+  )
+  let nested = try #require(nestedCreation)
+  let nestedWasAdded = base.addItem(
+    nested.item.id,
+    to: boardItem.id,
+    near: .zero,
+    actor: actor
+  )
+  #expect(nestedWasAdded)
+
+  var portalSide = base
+  var contentSide = base
+  let portalCamera = SpatialCamera(
+    center: WorldPoint(x: 420, y: -180),
+    scale: 0.36
+  )
+  let portalWasUpdated = portalSide.updatePortalCamera(
+    portalCamera,
+    for: boardItem.id,
+    actor: actor
+  )
+  #expect(portalWasUpdated)
+  let movedCenter = WorldPoint(x: -700, y: 330)
+  let contentWasMoved = contentSide.moveItem(
+    nested.item.id,
+    in: boardItem.id,
+    to: movedCenter,
+    actor: actor
+  )
+  #expect(contentWasMoved)
+
+  let merged = portalSide.merge(contentSide, items: workspace.items)
+  #expect(merged)
+  #expect(portalSide.portalCamera(boardItem.id) == portalCamera)
+  #expect(
+    portalSide.board(boardItem.id)?.focusedCenter(of: nested.item.id)
+      == movedCenter
+  )
+  #expect(portalSide.isValid(items: workspace.items))
 }
 
 @Test("Новый предмет на одной доске не стирает новое движение на другой")

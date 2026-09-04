@@ -550,31 +550,55 @@ final class NotebookAppModel {
       SessionPresence(
         boardID: boardID,
         mode: .board,
-        camera: SpatialCamera(),
+        camera: BoardPortalProjection.entryCamera(
+          portalCamera: hierarchy.portalCamera(boardID) ?? SpatialCamera(),
+          viewport: presence.viewport
+        ),
         viewport: presence.viewport
       ),
       settled: true
     )
   }
 
-  func leaveBoard() {
-    guard let hierarchy = boardHierarchy, let presence,
+  /// Moves ownership to the parent at the one frame where the child and its
+  /// portal are the same projection. The view can then continue zooming out
+  /// without a visual cut.
+  @discardableResult
+  func leaveBoard() -> Bool {
+    guard var hierarchy = boardHierarchy, let presence,
       let parentID = hierarchy.parentBoardID(of: presence.boardID),
-      let center = hierarchy.focusedCenter(of: presence.boardID, in: parentID)
-    else { return }
+      let center = hierarchy.focusedCenter(of: presence.boardID, in: parentID),
+      let workspace
+    else { return false }
+    let portalCamera = BoardPortalProjection.portalCamera(
+      from: presence.camera,
+      viewport: presence.viewport
+    )
+    if hierarchy.updatePortalCamera(
+      portalCamera,
+      for: presence.boardID,
+      actor: actorID
+    ) {
+      boardHierarchy = hierarchy
+      try? store.saveBoard(hierarchy, items: workspace.items)
+      sync.send(.board(hierarchy))
+    }
     selectItem(presence.boardID)
     updatePresence(
       SessionPresence(
         boardID: parentID,
-        mode: .board,
-        camera: SpatialCamera(
-          center: center,
-          scale: NotebookPresentation.fitScale(viewport: presence.viewport)
+        mode: .cover,
+        camera: BoardPortalProjection.parentBoundaryCamera(
+          portalCenter: center,
+          viewport: presence.viewport
         ),
-        viewport: presence.viewport
+        viewport: presence.viewport,
+        focusedItemID: presence.boardID,
+        openProgress: 1
       ),
       settled: true
     )
+    return true
   }
 
   private func applyPresence(

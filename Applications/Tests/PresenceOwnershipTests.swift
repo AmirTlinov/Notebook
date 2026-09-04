@@ -4,6 +4,60 @@ import XCTest
 
 final class PresenceOwnershipTests: XCTestCase {
   @MainActor
+  func testPortalExitAndReentryKeepTheExactChildCamera() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = NotebookStore(root: root)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    let viewport = SpatialPoint(x: 1_366, y: 1_024)
+    model.start(pageSize: PageSize(width: viewport.x, height: viewport.y))
+    let boardID = try XCTUnwrap(model.createBoard(at: .zero))
+    model.enterBoard(boardID)
+    let inspected = SessionPresence(
+      boardID: boardID,
+      mode: .board,
+      camera: SpatialCamera(
+        center: WorldPoint(x: 370, y: -240),
+        scale: 0.51
+      ),
+      viewport: viewport
+    )
+    model.updatePresence(inspected, settled: true)
+
+    XCTAssertTrue(model.leaveBoard())
+    XCTAssertEqual(model.presence?.mode, .cover)
+    XCTAssertEqual(model.presence?.focusedItemID, boardID)
+    XCTAssertEqual(
+      try XCTUnwrap(model.presence?.camera.scale),
+      BoardPortalProjection.fillScale(viewport: viewport),
+      accuracy: 0.000_001
+    )
+
+    model.enterBoard(boardID)
+
+    XCTAssertEqual(model.presence?.boardID, boardID)
+    XCTAssertEqual(model.presence?.mode, .board)
+    XCTAssertEqual(model.presence?.camera.center, inspected.camera.center)
+    XCTAssertEqual(
+      try XCTUnwrap(model.presence?.camera.scale),
+      inspected.camera.scale,
+      accuracy: 0.000_001
+    )
+    let persisted = try store.loadBoard(
+      items: try store.loadIndex().items
+    )
+    XCTAssertEqual(
+      persisted.portalCamera(boardID),
+      BoardPortalProjection.portalCamera(
+        from: inspected.camera,
+        viewport: viewport
+      )
+    )
+  }
+
+  @MainActor
   func testActiveCameraFrameDoesNotReplaceTheDurableContext() throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)

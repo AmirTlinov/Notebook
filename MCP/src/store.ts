@@ -527,6 +527,11 @@ export class NotebookStore {
       parent.stamp = boardStamp;
       hierarchy.boards.push({
         id: boardID,
+        portalCamera: {
+          center: { tileX: 0, tileY: 0, localX: 0, localY: 0 },
+          scale: 0.22,
+        },
+        portalStamp: { counter: 0, actor },
         board: {
           format: 2,
           freeItems: [],
@@ -1188,6 +1193,24 @@ function validateBoardHierarchy(
       throw new StoreError("Узел доски повреждён.");
     }
     assertUUID(node.id, "boardNode.id");
+    if (node.portalCamera !== undefined) {
+      if (!isRecord(node.portalCamera)) {
+        throw new StoreError("Камера портала повреждена.");
+      }
+      validateWorldPoint(node.portalCamera.center, "boardNode.portalCamera.center");
+      if (typeof node.portalCamera.scale !== "number"
+        || !Number.isFinite(node.portalCamera.scale)
+        || node.portalCamera.scale < minimumCameraScale
+        || node.portalCamera.scale > maximumCameraScale) {
+        throw new StoreError("Масштаб портала поврежден.");
+      }
+    }
+    if (node.portalStamp !== undefined) {
+      validateStamp(node.portalStamp, "boardNode.portalStamp");
+      if (compareStamp(node.portalStamp as VersionStamp, value.stamp as VersionStamp) > 0) {
+        throw new StoreError("Камера портала новее иерархии.");
+      }
+    }
     const nodeID = node.id.toLowerCase();
     if (nodeIDs.has(nodeID)) throw new StoreError("Повторяется id доски.");
     nodeIDs.add(nodeID);
