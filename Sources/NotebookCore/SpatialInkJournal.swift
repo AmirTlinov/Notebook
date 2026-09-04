@@ -168,6 +168,17 @@ public struct SpatialInkJournal: Codable, Equatable, Sendable {
     precondition(isValid)
   }
 
+  /// Active pen actions retain editable content even when a later eraser
+  /// covers their pixels. Undo must remain able to recover that content.
+  public func containsEditableInk(on surface: SurfaceID) -> Bool {
+    actions.contains { action in
+      action.isActive && action.tool == .pen
+        && action.spans.contains { span in
+          span.surface == surface && span.samples.contains { $0.opacity > 0 }
+        }
+    }
+  }
+
   @discardableResult
   public mutating func append(
     tool: SpatialInkTool,

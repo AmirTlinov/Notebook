@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 public struct BoardNode: Codable, Equatable, Identifiable, Sendable {
   public let id: UUID
@@ -6,13 +7,13 @@ public struct BoardNode: Codable, Equatable, Identifiable, Sendable {
   /// The child camera seen through this node's portal, expressed in the
   /// portal's canonical 834 x 1194 viewport. It is independent from board
   /// content so moving a notebook and leaving the board can converge.
-  public private(set) var portalCamera: SpatialCamera
+  public private(set) var portalCamera: BoardPortalCamera
   public private(set) var portalStamp: VersionStamp
 
   public init(
     id: UUID,
     board: BoardDocument,
-    portalCamera: SpatialCamera = SpatialCamera(),
+    portalCamera: BoardPortalCamera = BoardPortalCamera(),
     portalStamp: VersionStamp? = nil
   ) {
     self.id = id
@@ -27,7 +28,7 @@ public struct BoardNode: Codable, Equatable, Identifiable, Sendable {
   }
 
   mutating func replacePortal(
-    camera: SpatialCamera,
+    camera: BoardPortalCamera,
     stamp: VersionStamp
   ) {
     portalCamera = camera
@@ -46,9 +47,9 @@ public struct BoardNode: Codable, Equatable, Identifiable, Sendable {
     id = try container.decode(UUID.self, forKey: .id)
     board = try container.decode(BoardDocument.self, forKey: .board)
     portalCamera = try container.decodeIfPresent(
-      SpatialCamera.self,
+      BoardPortalCamera.self,
       forKey: .portalCamera
-    ) ?? SpatialCamera()
+    ) ?? BoardPortalCamera()
     portalStamp = try container.decodeIfPresent(
       VersionStamp.self,
       forKey: .portalStamp
@@ -99,12 +100,28 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
     boards.first(where: { $0.id == boardID })?.board
   }
 
-  public func portalCamera(_ boardID: UUID) -> SpatialCamera? {
+  public func portalCamera(_ boardID: UUID) -> BoardPortalCamera? {
     boards.first(where: { $0.id == boardID })?.portalCamera
   }
 
   public var itemIDs: [UUID] {
     boards.flatMap { $0.board.itemIDs }
+  }
+
+  /// Identity of the complete converged tree. The Lamport clock orders local
+  /// mutations; this frontier names every independently merged content and
+  /// portal owner, including insertion and removal of a board.
+  public var revision: String {
+    let nodes = boards.sorted { $0.id.uuidString < $1.id.uuidString }
+    let rows = nodes.map { node in
+      "\(node.id.uuidString.lowercased()):"
+        + "\(node.board.stamp.counter)@\(node.board.stamp.actor.uuidString.lowercased()):"
+        + "\(node.portalStamp.counter)@\(node.portalStamp.actor.uuidString.lowercased())"
+    }
+    let source = (["board-v1", rootBoardID.uuidString.lowercased()] + rows)
+      .joined(separator: "\n") + "\n"
+    return SHA256.hash(data: Data(source.utf8))
+      .map { String(format: "%02x", $0) }.joined()
   }
 
   public func parentBoardID(of boardID: UUID) -> UUID? {
@@ -232,7 +249,7 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
   /// canonical presentation state; board content keeps its own revision.
   @discardableResult
   public mutating func updatePortalCamera(
-    _ camera: SpatialCamera,
+    _ camera: BoardPortalCamera,
     for boardID: UUID,
     actor: UUID
   ) -> Bool {
@@ -289,11 +306,11 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
     _ itemID: UUID,
     from boardID: UUID,
     kind: WorkspaceItemKind,
+    spatialInk: SpatialInkJournal,
     actor: UUID
   ) -> Bool {
     if kind == .board {
-      guard let childIndex = index(of: itemID),
-        boards[childIndex].board.itemIDs.isEmpty
+      guard isEmpty(itemID, spatialInk: spatialInk)
       else { return false }
     }
     guard mutateBoard(boardID, actor: actor, mutation: {
@@ -305,6 +322,12 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
       boards.remove(at: childIndex)
     }
     return true
+  }
+
+  public func isEmpty(_ boardID: UUID, spatialInk: SpatialInkJournal) -> Bool {
+    guard let board = board(boardID) else { return false }
+    return board.itemIDs.isEmpty && board.elements.isEmpty
+      && !spatialInk.containsEditableInk(on: .board(boardID))
   }
 
   @discardableResult

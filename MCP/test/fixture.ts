@@ -1,3 +1,4 @@
+import { boardHierarchyRevision } from "../src/domain.js";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -88,9 +89,9 @@ export async function writeFixture(root: string): Promise<void> {
     documentPageIndex: 0,
   };
   const currentViewReceipt: CurrentViewReceipt = {
-    format: 4,
+    format: 5,
     workspaceStamp: workspace.stamp,
-    boardStamp: board.stamp,
+    boardRevision: boardHierarchyRevision(board),
     spatialInkStamp: spatialInk.stamp,
     presence,
     renderViewport: { x: 700, y: 900 },

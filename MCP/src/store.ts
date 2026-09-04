@@ -139,7 +139,7 @@ export class NotebookStore {
       sameID(candidate.id, resolvedBoardID)
     );
     if (!node) throw new StoreError("Текущая вложенная доска не найдена.");
-    return { ...structuredClone(node.board), stamp: hierarchy.stamp };
+    return structuredClone(node.board);
   }
 
   async readItemBoard(
@@ -155,11 +155,12 @@ export class NotebookStore {
       )
     );
     if (!node) throw new StoreError("Предмет не принадлежит живой доске.");
-    return { ...structuredClone(node.board), stamp: hierarchy.stamp };
+    return structuredClone(node.board);
   }
 
   async readSpatialInk(): Promise<SpatialInkJournal> {
-    const journal = await readJSON<unknown>(this.spatialInkPath, "spatial ink");
+    const stored = await readJSON<unknown>(this.spatialInkPath, "spatial ink");
+    const journal = migrateSpatialInk(stored);
     validateSpatialInk(journal);
     return journal;
   }
@@ -349,11 +350,8 @@ export class NotebookStore {
         sameID(node.id, presence.boardID)
       );
       if (nodeIndex < 0) throw new StoreError("Текущая вложенная доска не найдена.");
-      const board = {
-        ...structuredClone(hierarchy.boards[nodeIndex]!.board),
-        stamp: hierarchy.stamp,
-      };
-      assertExpectedRevision(args.expectedRevision, hierarchy.stamp, "Доска");
+      const board = structuredClone(hierarchy.boards[nodeIndex]!.board);
+      assertExpectedRevision(args.expectedRevision, board.stamp, "Доска");
       const actor = await this.readActorID();
       const transformed = args.transform(
         structuredClone(board),
@@ -413,10 +411,7 @@ export class NotebookStore {
         sameID(node.id, presence.boardID)
       );
       if (nodeIndex < 0) throw new StoreError("Текущая вложенная доска не найдена.");
-      const board = {
-        ...structuredClone(hierarchy.boards[nodeIndex]!.board),
-        stamp: hierarchy.stamp,
-      };
+      const board = structuredClone(hierarchy.boards[nodeIndex]!.board);
       assertExpectedRevision(
         args.expectedWorkspaceRevision,
         workspace.stamp,
@@ -457,7 +452,7 @@ export class NotebookStore {
       workspace.selectedPageID = pageID;
       workspace.stamp = advance(workspace.stamp, actor, "версии workspace");
 
-      const boardStamp = advance(board.stamp, actor, "версии доски");
+      const boardStamp = advance(hierarchy.stamp, actor, "версии доски");
       board.freeItems.push({
         itemID,
         center: args.center,
@@ -501,7 +496,11 @@ export class NotebookStore {
         workspace.stamp,
         "Workspace",
       );
-      assertExpectedRevision(args.expectedBoardRevision, hierarchy.stamp, "Доска");
+      assertExpectedRevision(
+        args.expectedBoardRevision,
+        hierarchy.boards[parentIndex]!.board.stamp,
+        "Доска",
+      );
       validateWorldPoint(args.center, "center");
 
       const actor = await this.readActorID();
@@ -549,7 +548,7 @@ export class NotebookStore {
       await atomicJSON(this.indexPath, workspace);
       return {
         workspace,
-        board: { ...structuredClone(parent), stamp: hierarchy.stamp },
+        board: structuredClone(parent),
         boardID,
         parentBoardID: presence.boardID,
       };
@@ -579,10 +578,7 @@ export class NotebookStore {
         sameID(node.id, presence.boardID)
       );
       if (nodeIndex < 0) throw new StoreError("Текущая вложенная доска не найдена.");
-      const board = {
-        ...structuredClone(hierarchy.boards[nodeIndex]!.board),
-        stamp: hierarchy.stamp,
-      };
+      const board = structuredClone(hierarchy.boards[nodeIndex]!.board);
       assertExpectedRevision(
         args.expectedWorkspaceRevision,
         workspace.stamp,
@@ -621,7 +617,7 @@ export class NotebookStore {
       delete workspace.selectedPageID;
       workspace.stamp = advance(workspace.stamp, actor, "версии workspace");
 
-      const boardStamp = advance(board.stamp, actor, "версии доски");
+      const boardStamp = advance(hierarchy.stamp, actor, "версии доски");
       board.freeItems.push({
         itemID,
         center: args.center,
@@ -921,6 +917,26 @@ function migrateBoardSurfaceOwners(
   };
 }
 
+// Before nested boards, an omitted board owner named the permanent root.
+// Explicit owners, cover owners, samples, action IDs and stamps retain their values.
+function migrateSpatialInk(value: unknown): unknown {
+  if (!isRecord(value) || value.format !== 1 || !Array.isArray(value.actions)) return value;
+  return {
+    ...value,
+    actions: value.actions.map((action) => isRecord(action) && Array.isArray(action.spans)
+      ? {
+        ...action,
+        spans: action.spans.map((span) => isRecord(span)
+          && isRecord(span.surface)
+          && span.surface.kind === "board"
+          && span.surface.ownerID == null
+          ? { ...span, surface: { ...span.surface, ownerID: ROOT_BOARD_ID } }
+          : span),
+      }
+      : action),
+  };
+}
+
 function migratePresence(value: unknown): unknown {
   if (!isRecord(value)) return value;
   if (value.format === 4) return value;
@@ -1200,8 +1216,7 @@ function validateBoardHierarchy(
       validateWorldPoint(node.portalCamera.center, "boardNode.portalCamera.center");
       if (typeof node.portalCamera.scale !== "number"
         || !Number.isFinite(node.portalCamera.scale)
-        || node.portalCamera.scale < minimumCameraScale
-        || node.portalCamera.scale > maximumCameraScale) {
+        || node.portalCamera.scale <= 0) {
         throw new StoreError("Масштаб портала поврежден.");
       }
     }
@@ -1404,11 +1419,13 @@ function validatePresence(value: unknown): asserts value is SessionPresence {
 }
 
 function validateCurrentViewReceipt(value: unknown): asserts value is CurrentViewReceipt {
-  if (!isRecord(value) || value.format !== 4) {
+  if (!isRecord(value) || value.format !== 5) {
     throw new StoreError("Квитанция текущего вида повреждена.");
   }
   validateStamp(value.workspaceStamp, "receipt.workspaceStamp");
-  validateStamp(value.boardStamp, "receipt.boardStamp");
+  if (typeof value.boardRevision !== "string" || !/^[0-9a-f]{64}$/.test(value.boardRevision)) {
+    throw new StoreError("Версия дерева в квитанции повреждена.");
+  }
   validateStamp(value.spatialInkStamp, "receipt.spatialInkStamp");
   validatePresence(value.presence);
   if (!isSpatialPoint(value.renderViewport)

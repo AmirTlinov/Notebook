@@ -62,7 +62,9 @@ final class MacModelLifecycleTests: XCTestCase {
     let published = try store.loadBoard(items: incomingIndex.items)
     XCTAssertEqual(model.boardHierarchy, published)
     XCTAssertEqual(published.board(childID)?.focusedCenter(of: notebookID), movedCenter)
-    XCTAssertEqual(published.portalCamera(childID), childPresence.camera)
+    XCTAssertEqual(published.portalCamera(childID), BoardPortalProjection.portalCamera(
+      from: childPresence.camera, viewport: childPresence.viewport
+    ))
   }
 
   @MainActor
@@ -352,10 +354,10 @@ final class MacModelLifecycleTests: XCTestCase {
         CurrentViewReceipt.self,
         from: Data(contentsOf: store.currentViewRevisionURL)
       )
-    } while receipt.boardStamp != changed.stamp && clock.now < deadline
+    } while receipt.boardRevision != changed.revision && clock.now < deadline
 
     XCTAssertEqual(model.boardHierarchy?.stamp, changed.stamp)
-    XCTAssertEqual(receipt.boardStamp, changed.stamp)
+    XCTAssertEqual(receipt.boardRevision, changed.revision)
   }
 
   @MainActor

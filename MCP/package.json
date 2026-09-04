@@ -10,7 +10,8 @@
   "scripts": {
     "check": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
-    "smoke": "tsx test/smoke.ts"
+    "smoke": "tsx test/smoke.ts",
+    "smoke:installed": "tsx test/installed-smoke.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",

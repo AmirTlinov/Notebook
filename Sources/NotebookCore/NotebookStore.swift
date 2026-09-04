@@ -1,5 +1,10 @@
 import Foundation
 
+public enum NotebookStoreError: Error {
+  case boardContainsContent(UUID)
+  case workspaceChanged
+}
+
 public struct NotebookStore: Sendable {
   private static let lockName = ".mutation-lock"
   private static let legacyDirectoryName = "Tetrad"
@@ -535,20 +540,38 @@ public struct NotebookStore: Sendable {
   /// Deletion publishes the smaller catalog first. During the following file
   /// write an older board may contain an invisible orphan, but no reader can
   /// discover an item whose content is already gone.
+  @discardableResult
   public func deleteWorkspaceBundle(
+    expectedIndex: WorkspaceIndex,
     index: WorkspaceIndex,
     board: BoardHierarchy,
     pageIDs: [UUID],
     documentIDs: [UUID] = []
-  ) throws {
+  ) throws -> BoardHierarchy {
     guard index.isValid,
       board.isValid(items: index.items)
     else { throw corruptFile(at: indexURL) }
     try prepare()
-    try withMutationLock {
+    return try withMutationLock {
+      let current = try loadIndex()
+      guard current.rootBoardID == expectedIndex.rootBoardID,
+        current.items == expectedIndex.items else { throw NotebookStoreError.workspaceChanged }
+      var resolved = try loadBoard(items: current.items)
+      let ink = FileManager.default.fileExists(atPath: spatialInkURL.path)
+        ? try loadSpatialInk()
+        : SpatialInkJournal(stamp: VersionStamp(counter: 0, actor: current.stamp.actor))
+      let retained = Set(index.items.map(\.id))
+      for item in current.items where item.kind == .board && !retained.contains(item.id) {
+        guard resolved.isEmpty(item.id, spatialInk: ink) else {
+          throw NotebookStoreError.boardContainsContent(item.id)
+        }
+      }
+      _ = resolved.merge(board, items: index.items)
+      guard resolved.isValid(items: index.items) else { throw corruptFile(at: boardURL) }
       try encoder.encode(index).write(to: indexURL, options: [.atomic])
-      try encoder.encode(board).write(to: boardURL, options: [.atomic])
+      try encoder.encode(resolved).write(to: boardURL, options: [.atomic])
       removeContentFiles(pageIDs: pageIDs, documentIDs: documentIDs)
+      return resolved
     }
   }
 

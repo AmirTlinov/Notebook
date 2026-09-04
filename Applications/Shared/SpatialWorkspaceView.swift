@@ -38,6 +38,41 @@ struct RenderedWorkspaceItem: Identifiable {
 }
 
 enum WorkspaceSceneProjection {
+  static let portalPasses = 32
+
+  static func showsPortal(pixelScale: Double, remainingPasses: Int) -> Bool {
+    remainingPasses > 0 && NotebookGeometry.width * pixelScale >= 8
+  }
+
+  /// The snapshot publisher walks the same finite portal projection as the view.
+  /// Every visible web layer must have its exact source/state raster ready.
+  static func snapshotElements(
+    workspace: WorkspaceIndex, hierarchy: BoardHierarchy, presence: SessionPresence
+  ) -> [SpatialElement] {
+    guard let board = hierarchy.board(presence.boardID) else { return [] }
+    var result = board.elements
+    var pending = items(workspace: workspace, board: board, presence: presence)
+      .filter { $0.item.kind == .board }
+      .map { ($0.id, 1.0, portalPasses) }
+    while let (id, pixelScale, passes) = pending.popLast() {
+      guard showsPortal(pixelScale: pixelScale, remainingPasses: passes),
+        let child = hierarchy.board(id), let portal = hierarchy.portalCamera(id)
+      else { continue }
+      result.append(contentsOf: child.elements)
+      let camera = BoardPortalProjection.entryCamera(
+        portalCamera: portal, viewport: presence.viewport
+      )
+      let childPresence = SessionPresence(boardID: id, mode: .board,
+        camera: camera,
+        viewport: BoardPortalProjection.renderViewport(viewport: presence.viewport))
+      let childScale = pixelScale * camera.scale
+        / BoardPortalProjection.fillScale(viewport: presence.viewport)
+      pending.append(contentsOf: items(workspace: workspace, board: child, presence: childPresence)
+        .filter { $0.item.kind == .board }.map { ($0.id, childScale, passes - 1) })
+    }
+    return result
+  }
+
   static func items(
     workspace: WorkspaceIndex,
     board: BoardDocument,
@@ -170,6 +205,8 @@ enum WorkspaceSceneProjection {
             y: base.y + element.frame.y * presence.camera.scale
           )
           SettledSpatialElementContent(element: element)
+            .frame(width: element.frame.width, height: element.frame.height)
+            .scaleEffect(presence.camera.scale)
             .frame(
               width: element.frame.width * presence.camera.scale,
               height: element.frame.height * presence.camera.scale
@@ -1789,24 +1826,26 @@ private struct WorkspaceSceneItem: View {
 /// cover. It uses the same camera that becomes active at handoff. Recursive
 /// drawing follows a pixel threshold and a finite frame budget; the durable
 /// hierarchy itself has no depth bound.
-private struct BoardPortalPreview: View {
+struct BoardPortalPreview: View {
   @Environment(NotebookAppModel.self) private var model
 
   let boardID: UUID
   let pixelScale: Double
   let remainingPortalPasses: Int
   let transitionViewport: SpatialPoint
+  var rendersSettledSnapshot = false
 
   var body: some View {
     if let workspace = model.workspace,
       let hierarchy = model.boardHierarchy,
       let board = hierarchy.board(boardID)
     {
-      let camera = BoardPortalProjection.resolvedPortalCamera(
-        hierarchy.portalCamera(boardID) ?? SpatialCamera(),
+      let camera = BoardPortalProjection.entryCamera(
+        portalCamera: hierarchy.portalCamera(boardID) ?? BoardPortalCamera(),
         viewport: transitionViewport
       )
-      let viewport = BoardPortalProjection.viewport
+      let viewport = BoardPortalProjection.renderViewport(viewport: transitionViewport)
+      let fill = BoardPortalProjection.fillScale(viewport: transitionViewport)
       let presence = SessionPresence(
         boardID: boardID,
         mode: .board,
@@ -1826,7 +1865,19 @@ private struct BoardPortalPreview: View {
           element in
           if let origin = element.worldOrigin {
             let screen = camera.worldToScreen(origin, viewport: viewport)
-            PortalElementPreview(element: element)
+            Group {
+              #if os(macOS)
+                if rendersSettledSnapshot {
+                  SettledSpatialElementContent(element: element)
+                } else {
+                  SpatialElementContent(element: element, commitsState: false)
+                }
+              #else
+                SpatialElementContent(element: element, commitsState: false)
+              #endif
+            }
+              .frame(width: element.frame.width, height: element.frame.height)
+              .scaleEffect(camera.scale)
               .frame(
                 width: element.frame.width * camera.scale,
                 height: element.frame.height * camera.scale
@@ -1840,23 +1891,33 @@ private struct BoardPortalPreview: View {
           }
         }
 
-        PortalInkPreview(
-          drawing: SpatialInkDrawingComposer.boardDrawing(
-            board: .board(boardID),
-            in: model.spatialInk,
-            camera: camera,
-            viewport: viewport
+        #if os(iOS)
+          PortalBoardInkView(
+            boardID: boardID, journal: model.spatialInk,
+            camera: camera, viewport: viewport
           )
-        )
+        #else
+          SpatialInkSurfaceView(drawing: SpatialInkDrawingComposer.boardDrawing(
+            board: .board(boardID), in: model.spatialInk,
+            camera: camera, viewport: viewport
+          ))
+        #endif
 
         ForEach(rendered) { item in
           let screen = camera.worldToScreen(item.center, viewport: viewport)
-          PortalItemPreview(
+          WorkspaceItemCoverView(
             item: item.item,
-            board: board,
-            pixelScale: pixelScale * camera.scale,
-            remainingPortalPasses: remainingPortalPasses,
-            transitionViewport: transitionViewport
+            spatialInkSurfaces: SpatialInkSurfaceRegistry(),
+            elements: board.elements.filter { $0.surface == .cover(item.id) },
+            editingTextID: nil, isElementEditingEnabled: false,
+            rendersSettledSnapshot: rendersSettledSnapshot,
+            portalOpenProgress: 0, portalViewport: transitionViewport,
+            onTap: { _, _ in }, onLiftChanged: { _ in },
+            onTranslationChanged: { _ in }, onTranslationEnded: { _ in },
+            onTextEditingEnded: { _ in }, onElementSelected: {},
+            isPortalProjection: true,
+            portalPixelScale: pixelScale * camera.scale / fill,
+            remainingPortalPasses: remainingPortalPasses - 1
           )
           .frame(
             width: NotebookGeometry.width,
@@ -1865,178 +1926,21 @@ private struct BoardPortalPreview: View {
           .scaleEffect(camera.scale)
           .position(x: screen.x, y: screen.y)
           .shadow(
-            color: .black.opacity(0.12),
-            radius: max(2, 14 * camera.scale),
-            y: max(1, 6 * camera.scale)
+            color: .black.opacity(0.13),
+            radius: max(3, 18 * camera.scale),
+            y: max(2, 8 * camera.scale)
           )
           .zIndex(item.zIndex)
         }
       }
       .frame(width: viewport.x, height: viewport.y)
+      .scaleEffect(1 / fill)
+      .frame(width: NotebookGeometry.width, height: NotebookGeometry.height)
       .clipped()
       .allowsHitTesting(false)
       .accessibilityHidden(true)
     } else {
       Color(red: 0.94, green: 0.95, blue: 0.945)
-    }
-  }
-}
-
-private struct PortalItemPreview: View {
-  @Environment(NotebookAppModel.self) private var model
-
-  let item: WorkspaceItem
-  let board: BoardDocument
-  let pixelScale: Double
-  let remainingPortalPasses: Int
-  let transitionViewport: SpatialPoint
-
-  var body: some View {
-    ZStack(alignment: .topLeading) {
-      if item.kind == .board {
-        nestedBoard
-      } else {
-        itemBackground
-        if !item.title.isEmpty {
-          Text(item.title)
-            .font(
-              .system(
-                size: item.kind == .document ? 42 : 38,
-                weight: .medium,
-                design: item.kind == .document ? .serif : .rounded
-              )
-            )
-            .foregroundStyle(Color.black.opacity(0.64))
-            .lineLimit(3)
-            .frame(width: 570, alignment: .leading)
-            .offset(
-              x: item.kind == .document ? 96 : 126,
-              y: item.kind == .document ? 142 : 170
-            )
-        }
-      }
-
-      ForEach(board.elements.filter { $0.surface == .cover(item.id) }) {
-        element in
-        PortalElementPreview(element: element)
-          .frame(width: element.frame.width, height: element.frame.height)
-          .offset(x: element.frame.x, y: element.frame.y)
-      }
-
-      PortalInkPreview(
-        drawing: SpatialInkDrawingComposer.drawing(
-          for: .cover(item.id),
-          in: model.spatialInk
-        )
-      )
-    }
-    .frame(width: NotebookGeometry.width, height: NotebookGeometry.height)
-    .clipShape(
-      RoundedRectangle(
-        cornerRadius: NotebookGeometry.cornerRadius,
-        style: .continuous
-      )
-    )
-  }
-
-  @ViewBuilder
-  private var nestedBoard: some View {
-    let projectedWidth = NotebookGeometry.width * pixelScale
-    if remainingPortalPasses > 0, projectedWidth >= 8 {
-      AnyView(
-        BoardPortalPreview(
-          boardID: item.id,
-          pixelScale: pixelScale,
-          remainingPortalPasses: remainingPortalPasses - 1,
-          transitionViewport: transitionViewport
-        )
-      )
-    } else {
-      Color(red: 0.9, green: 0.93, blue: 0.925)
-    }
-  }
-
-  @ViewBuilder
-  private var itemBackground: some View {
-    if item.kind == .notebook {
-      RoundedRectangle(
-        cornerRadius: NotebookGeometry.cornerRadius,
-        style: .continuous
-      )
-      .fill(Color(red: 0.94, green: 0.92, blue: 0.82))
-    } else {
-      RoundedRectangle(
-        cornerRadius: NotebookGeometry.cornerRadius,
-        style: .continuous
-      )
-      .fill(Color(red: 0.985, green: 0.98, blue: 0.955))
-    }
-  }
-}
-
-private struct PortalElementPreview: View {
-  let element: SpatialElement
-
-  var body: some View {
-    if element.kind == .nativeText {
-      Text(element.source)
-        .font(
-          .system(
-            size: element.textStyle.fontSize,
-            weight: fontWeight(element.textStyle.weight)
-          )
-        )
-        .foregroundStyle(
-          Color(
-            red: element.textStyle.red,
-            green: element.textStyle.green,
-            blue: element.textStyle.blue,
-            opacity: element.textStyle.alpha
-          )
-        )
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    } else {
-      Text(element.source.isEmpty ? element.html : element.source)
-        .font(.system(size: 22, design: .rounded))
-        .foregroundStyle(Color.black.opacity(0.72))
-        .lineLimit(8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-  }
-
-  private func fontWeight(_ value: Double) -> Font.Weight {
-    switch value {
-    case ..<0.2: .light
-    case ..<0.4: .regular
-    case ..<0.6: .medium
-    case ..<0.8: .semibold
-    default: .bold
-    }
-  }
-}
-
-private struct PortalInkPreview: View {
-  let drawing: PKDrawing
-
-  var body: some View {
-    let bounds = CGRect(
-      x: 0,
-      y: 0,
-      width: NotebookGeometry.width,
-      height: NotebookGeometry.height
-    )
-    if drawing.strokes.isEmpty {
-      Color.clear
-    } else {
-      #if os(iOS)
-        Image(uiImage: drawing.image(from: bounds, scale: 1))
-          .resizable()
-          .interpolation(.high)
-      #elseif os(macOS)
-        Image(nsImage: drawing.image(from: bounds, scale: 1))
-          .resizable()
-          .interpolation(.high)
-      #endif
     }
   }
 }
@@ -2058,6 +1962,9 @@ private struct WorkspaceItemCoverView: View {
   let onTranslationEnded: (CGSize) -> Void
   let onTextEditingEnded: (String) -> Void
   let onElementSelected: () -> Void
+  var isPortalProjection = false
+  var portalPixelScale: Double = 1
+  var remainingPortalPasses = WorkspaceSceneProjection.portalPasses
 
   var body: some View {
     ZStack(alignment: .topLeading) {
@@ -2107,6 +2014,7 @@ private struct WorkspaceItemCoverView: View {
               } else {
                 SpatialElementContent(
                   element: element,
+                  commitsState: !isPortalProjection,
                   isTextEditing: editingTextID == element.id,
                   onTextEditingEnded: { onTextEditingEnded(element.id) }
                 )
@@ -2114,6 +2022,7 @@ private struct WorkspaceItemCoverView: View {
             #else
               SpatialElementContent(
                 element: element,
+                commitsState: !isPortalProjection,
                 isTextEditing: editingTextID == element.id,
                 onTextEditingEnded: { onTextEditingEnded(element.id) }
               )
@@ -2126,7 +2035,7 @@ private struct WorkspaceItemCoverView: View {
       }
 
       #if os(iOS)
-        if !isElementEditingEnabled {
+        if !isElementEditingEnabled && !isPortalProjection {
           NotebookInteractionView(
             passthroughFrames: interactionPassthroughFrames,
             onTap: onTap,
@@ -2201,12 +2110,19 @@ private struct WorkspaceItemCoverView: View {
   @ViewBuilder
   private var coverBackground: some View {
     if item.kind == .board {
-      BoardPortalPreview(
-        boardID: item.id,
-        pixelScale: 1,
-        remainingPortalPasses: 32,
-        transitionViewport: portalViewport
-      )
+      if WorkspaceSceneProjection.showsPortal(
+        pixelScale: portalPixelScale, remainingPasses: remainingPortalPasses
+      ) {
+        AnyView(BoardPortalPreview(
+          boardID: item.id,
+          pixelScale: portalPixelScale,
+          remainingPortalPasses: remainingPortalPasses,
+          transitionViewport: portalViewport,
+          rendersSettledSnapshot: rendersSettledSnapshot
+        ))
+      } else {
+        Color(red: 0.9, green: 0.93, blue: 0.925)
+      }
       RoundedRectangle(
         cornerRadius: portalCornerRadius,
         style: .continuous
@@ -2279,18 +2195,22 @@ private struct WorkspaceItemCoverView: View {
   }
 }
 
-private struct SpatialElementContent: View {
+struct SpatialElementContent: View {
   @Environment(NotebookAppModel.self) private var model
+  @State private var readyElement: AgentElement?
   let element: SpatialElement
+  let commitsState: Bool
   let isTextEditing: Bool
   let onTextEditingEnded: () -> Void
 
   init(
     element: SpatialElement,
+    commitsState: Bool = true,
     isTextEditing: Bool = false,
     onTextEditingEnded: @escaping () -> Void = {}
   ) {
     self.element = element
+    self.commitsState = commitsState
     self.isTextEditing = isTextEditing
     self.onTextEditingEnded = onTextEditingEnded
   }
@@ -2304,13 +2224,28 @@ private struct SpatialElementContent: View {
         onEditingEnded: onTextEditingEnded
       )
     case .markdown, .web:
-      AgentWebElementView(
-        element: agentElement,
-        onRenderReady: { _ in },
-        onState: { state in
-          model.commitSpatialElementState(elementID: element.id, state: state)
+      let source = agentElement
+      ZStack {
+        if readyElement != source, let image = AgentElementSnapshotCache.shared.image(for: source) {
+          #if os(iOS)
+            Image(uiImage: image).resizable()
+          #else
+            Image(nsImage: image).resizable()
+          #endif
         }
-      )
+        AgentWebElementView(
+          element: source,
+          onRenderReady: { ready in
+            let next = ready ? source : nil
+            if readyElement != next { readyElement = next }
+          },
+          onState: { state in
+            if commitsState { model.commitSpatialElementState(elementID: element.id, state: state) }
+          }
+        )
+        .opacity(readyElement == source ? 1 : 0)
+        .allowsHitTesting(readyElement == source && commitsState)
+      }
     }
   }
 

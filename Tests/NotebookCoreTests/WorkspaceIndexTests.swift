@@ -326,16 +326,19 @@ func storeDeletesOneCompleteNotebookBundle() throws {
   let pageURL = store.pageURL(created.page.id)
   #expect(FileManager.default.fileExists(atPath: pageURL.path))
 
+  let expectedIndex = index
   let removed = index.deleteItem(created.item.id, actor: actor)
   _ = try #require(removed)
   let removedFromBoard = board.deleteItem(
     created.item.id,
     from: index.rootBoardID,
     kind: .notebook,
+    spatialInk: SpatialInkJournal(stamp: VersionStamp(counter: 0, actor: actor)),
     actor: actor
   )
   #expect(removedFromBoard)
   try store.deleteWorkspaceBundle(
+    expectedIndex: expectedIndex,
     index: index,
     board: board,
     pageIDs: created.item.pageIDs

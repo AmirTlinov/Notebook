@@ -411,9 +411,10 @@ final class NotebookAppModel {
 
   @discardableResult
   func deleteItem(_ itemID: UUID) -> Bool {
-    guard var workspace, var board = boardHierarchy, let presence else {
+    guard var workspace, var board = boardHierarchy, let presence, let spatialInk else {
       return false
     }
+    let expectedIndex = workspace
     guard let removed = workspace.deleteItem(itemID, actor: actorID) else {
       showCue("Один рабочий элемент должен остаться")
       return false
@@ -422,6 +423,7 @@ final class NotebookAppModel {
       itemID,
       from: presence.boardID,
       kind: removed.kind,
+      spatialInk: spatialInk,
       actor: actorID
     ) else {
       if removed.kind == .board { showCue("Сначала очистите вложенную доску") }
@@ -429,12 +431,21 @@ final class NotebookAppModel {
     }
 
     do {
-      try store.deleteWorkspaceBundle(
+      board = try store.deleteWorkspaceBundle(
+        expectedIndex: expectedIndex,
         index: workspace,
         board: board,
         pageIDs: removed.pageIDs,
         documentIDs: removed.kind == .document ? [removed.id] : []
       )
+    } catch NotebookStoreError.workspaceChanged {
+      reloadExternalChanges()
+      showCue("Каталог обновился. Повторите удаление")
+      return false
+    } catch NotebookStoreError.boardContainsContent {
+      reloadExternalChanges()
+      showCue("Сначала очистите вложенную доску")
+      return false
     } catch {
       showCue("Не удалось удалить элемент")
       return false
@@ -537,7 +548,7 @@ final class NotebookAppModel {
         boardID: boardID,
         mode: .board,
         camera: BoardPortalProjection.entryCamera(
-          portalCamera: hierarchy.portalCamera(boardID) ?? SpatialCamera(),
+          portalCamera: hierarchy.portalCamera(boardID) ?? BoardPortalCamera(),
           viewport: presence.viewport
         ),
         viewport: presence.viewport

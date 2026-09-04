@@ -25,6 +25,7 @@ import type {
   WorkspaceItem,
 } from "./domain.js";
 import {
+  boardHierarchyRevision,
   maximumStackItemCount,
   publicDocument,
   publicPage,
@@ -119,15 +120,17 @@ export function createServer(store = new NotebookStore()): McpServer {
     () => safely(() => waitForSettledSnapshot(async () => {
       const current = await store.readCurrent();
       const { workspace, presence, item } = current;
-      const [board, spatialInk, receipt] = await Promise.all([
-        store.readBoard(workspace),
+      const [hierarchy, spatialInk, receipt] = await Promise.all([
+        store.readBoardHierarchy(workspace),
         store.readSpatialInk(),
         store.readCurrentViewReceipt(),
       ]);
+      const board = hierarchy.boards.find((node) => sameID(node.id, presence.boardID))?.board;
+      if (!board) throw new StoreError("Текущая доска ожидает публикации.");
       assertFreshCurrentView(
         receipt,
         workspace.stamp,
-        board.stamp,
+        boardHierarchyRevision(hierarchy),
         spatialInk.stamp,
         presence,
       );
@@ -1259,12 +1262,12 @@ async function readCurrentViewPNG(
 function assertFreshCurrentView(
   receipt: CurrentViewReceipt,
   workspaceStamp: VersionStamp,
-  boardStamp: VersionStamp,
+  boardRevision: string,
   spatialInkStamp: VersionStamp,
   presence: SessionPresence,
 ): void {
   if (!sameStamp(receipt.workspaceStamp, workspaceStamp)
-    || !sameStamp(receipt.boardStamp, boardStamp)
+    || receipt.boardRevision !== boardRevision
     || !sameStamp(receipt.spatialInkStamp, spatialInkStamp)
     || !isDeepStrictEqual(receipt.presence, presence)) {
     throw new StoreError(

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export interface VersionStamp {
   counter: number;
   actor: string;
@@ -190,6 +192,19 @@ export interface BoardHierarchy {
   stamp: VersionStamp;
 }
 
+export function boardHierarchyRevision(hierarchy: BoardHierarchy): string {
+  const rows = [...hierarchy.boards]
+    .sort((a, b) => {
+      const left = a.id.toLowerCase();
+      const right = b.id.toLowerCase();
+      return left < right ? -1 : left > right ? 1 : 0;
+    })
+    .map((node) => `${node.id.toLowerCase()}:${revision(node.board.stamp)}:`
+      + revision(node.portalStamp ?? { counter: 0, actor: node.board.stamp.actor }));
+  const source = ["board-v1", hierarchy.rootBoardID.toLowerCase(), ...rows].join("\n") + "\n";
+  return createHash("sha256").update(source).digest("hex");
+}
+
 export interface SpatialInkSample {
   point: SpatialPoint;
   worldPoint?: WorldPoint;
@@ -258,9 +273,9 @@ export type CurrentViewSurfaceRevision =
   };
 
 export interface CurrentViewReceipt {
-  format: 4;
+  format: 5;
   workspaceStamp: VersionStamp;
-  boardStamp: VersionStamp;
+  boardRevision: string;
   spatialInkStamp: VersionStamp;
   presence: SessionPresence;
   renderViewport: SpatialPoint;

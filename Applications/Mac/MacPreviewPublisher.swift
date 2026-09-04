@@ -10,7 +10,7 @@ private struct PreviewPageKey: Hashable {
 
 private struct PreviewCurrentViewKey: Hashable {
   let workspaceStamp: VersionStamp
-  let boardStamp: VersionStamp
+  let boardRevision: String
   let spatialInkStamp: VersionStamp
   let presence: SessionPresence
   let presencePhase: PresencePhase
@@ -25,6 +25,7 @@ private struct PreviewPublicationSlot<Key: Equatable> {
   private(set) var desired: Key?
   private(set) var published: Key?
   private(set) var pending: Key?
+  private(set) var generation: UInt64 = 0
   private(set) var lastError: String?
 
   mutating func request(_ key: Key) -> Bool {
@@ -32,13 +33,15 @@ private struct PreviewPublicationSlot<Key: Equatable> {
     return key != published && key != pending
   }
 
-  mutating func begin(_ key: Key) {
+  mutating func begin(_ key: Key) -> UInt64 {
     desired = key
     pending = key
+    generation &+= 1
+    return generation
   }
 
-  mutating func finish(_ key: Key, error: (any Error)?) {
-    guard pending == key else { return }
+  mutating func finish(_ key: Key, generation: UInt64, error: (any Error)?) {
+    guard pending == key, self.generation == generation else { return }
     if let error {
       lastError = String(describing: error)
     } else {
@@ -66,7 +69,7 @@ private enum PreviewPublicationError: Error {
 /// mirror must not make the iPad invisible to an agent.
 @MainActor
 final class MacPreviewPublisher {
-  private unowned let model: NotebookAppModel
+  private weak var model: NotebookAppModel?
   private let currentViewDelay: Duration
   private let pagePreviewDelay: Duration
   private let reconciliationInterval: Duration
@@ -89,6 +92,12 @@ final class MacPreviewPublisher {
     self.currentViewDelay = currentViewDelay
     self.pagePreviewDelay = pagePreviewDelay
     self.reconciliationInterval = reconciliationInterval
+  }
+
+  deinit {
+    currentViewTask?.cancel()
+    pagePreviewTask?.cancel()
+    reconciliationTask?.cancel()
   }
 
   func start() {
@@ -155,7 +164,8 @@ final class MacPreviewPublisher {
   }
 
   private var pageKeys: [PreviewPageKey] {
-    model.pages.values
+    guard let model else { return [] }
+    return model.pages.values
       .map {
         PreviewPageKey(pageID: $0.id, drawingStamp: $0.drawingStamp)
       }
@@ -163,7 +173,7 @@ final class MacPreviewPublisher {
   }
 
   private func makeCurrentViewKey() -> PreviewCurrentViewKey? {
-    guard let workspace = model.workspace,
+    guard let model, let workspace = model.workspace,
       let board = model.boardHierarchy,
       let spatialInk = model.spatialInk,
       let presence = model.presence
@@ -174,7 +184,7 @@ final class MacPreviewPublisher {
     let documentState = document.flatMap { model.documentStates[$0.id] }
     return PreviewCurrentViewKey(
       workspaceStamp: workspace.stamp,
-      boardStamp: board.stamp,
+      boardRevision: board.revision,
       spatialInkStamp: spatialInk.stamp,
       presence: presence,
       presencePhase: model.presencePhase,
@@ -190,47 +200,55 @@ final class MacPreviewPublisher {
     guard let key, key.presencePhase == .settled else { return }
     guard reconciler.currentView.request(key) else { return }
     currentViewTask?.cancel()
-    reconciler.currentView.begin(key)
+    let generation = reconciler.currentView.begin(key)
     currentViewTask = Task { [weak self] in
       try? await Task.sleep(for: self?.currentViewDelay ?? .zero)
       guard let self else { return }
       guard !Task.isCancelled,
-        model.presencePhase == .settled,
+        model?.presencePhase == .settled,
         makeCurrentViewKey() == key
       else {
-        finishCurrentViewPublication(key, error: PreviewPublicationError.sourceChanged)
+        finishCurrentViewPublication(key, generation: generation, error: PreviewPublicationError.sourceChanged)
         return
       }
-      finishCurrentViewPublication(
-        key,
-        error: writeCurrentView()
-      )
+      do {
+        try await AgentElementSnapshotCache.shared.prepare(snapshotElements())
+        guard !Task.isCancelled, makeCurrentViewKey() == key else {
+          throw PreviewPublicationError.sourceChanged
+        }
+        finishCurrentViewPublication(key, generation: generation, error: writeCurrentView())
+      } catch {
+        finishCurrentViewPublication(key, generation: generation, error: error)
+      }
     }
   }
 
   private func finishCurrentViewPublication(
     _ key: PreviewCurrentViewKey,
+    generation: UInt64,
     error: (any Error)?
   ) {
-    reconciler.currentView.finish(key, error: error)
+    guard reconciler.currentView.pending == key,
+      reconciler.currentView.generation == generation else { return }
+    reconciler.currentView.finish(key, generation: generation, error: error)
     currentViewTask = nil
   }
 
   private func schedulePagePreviews(for keys: [PreviewPageKey]) {
     guard reconciler.pages.request(keys) else { return }
     pagePreviewTask?.cancel()
-    reconciler.pages.begin(keys)
+    let generation = reconciler.pages.begin(keys)
     pagePreviewTask = Task { [weak self] in
       try? await Task.sleep(for: self?.pagePreviewDelay ?? .zero)
       guard let self else { return }
       guard !Task.isCancelled, pageKeys == keys else {
-        finishPagePublication(keys, error: PreviewPublicationError.sourceChanged)
+        finishPagePublication(keys, generation: generation, error: PreviewPublicationError.sourceChanged)
         return
       }
       var publicationError: (any Error)?
       for key in keys {
         guard !Task.isCancelled,
-          let page = model.pages[key.pageID],
+          let model, let page = model.pages[key.pageID],
           page.drawingStamp == key.drawingStamp
         else {
           publicationError = PreviewPublicationError.sourceChanged
@@ -249,6 +267,7 @@ final class MacPreviewPublisher {
       }
       finishPagePublication(
         keys,
+        generation: generation,
         error: publicationError
       )
     }
@@ -256,14 +275,32 @@ final class MacPreviewPublisher {
 
   private func finishPagePublication(
     _ keys: [PreviewPageKey],
+    generation: UInt64,
     error: (any Error)?
   ) {
-    reconciler.pages.finish(keys, error: error)
+    guard reconciler.pages.pending == keys,
+      reconciler.pages.generation == generation else { return }
+    reconciler.pages.finish(keys, generation: generation, error: error)
     pagePreviewTask = nil
   }
 
+  private func snapshotElements() -> [AgentElement] {
+    guard let model, let workspace = model.workspace, let hierarchy = model.boardHierarchy,
+      let presence = model.presence else { return [] }
+    switch presence.mode {
+    case .board, .cover:
+      return WorkspaceSceneProjection.snapshotElements(
+        workspace: workspace, hierarchy: hierarchy, presence: presence
+      ).filter { $0.kind != .nativeText }.map(agentElementSnapshotSource)
+    case .page:
+      return model.activePage?.elements ?? []
+    case .document:
+      return []
+    }
+  }
+
   private func writeCurrentView() -> (any Error)? {
-    guard let workspace = model.workspace,
+    guard let model, let workspace = model.workspace,
       let board = model.boardHierarchy,
       let spatialInk = model.spatialInk,
       let presence = model.presence,

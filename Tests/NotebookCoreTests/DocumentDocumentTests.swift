@@ -432,16 +432,19 @@ func storePublishesAndDeletesDocumentBundle() throws {
   #expect(try store.loadDocumentState(item.id) == state)
   #expect(FileManager.default.fileExists(atPath: store.documentURL(item.id).path))
 
+  let expectedIndex = workspace
   let deletion = workspace.deleteItem(item.id, actor: legacyActor)
   let removed = try #require(deletion)
   let removedFromBoard = board.deleteItem(
     item.id,
     from: workspace.rootBoardID,
     kind: .document,
+    spatialInk: SpatialInkJournal(stamp: VersionStamp(counter: 0, actor: legacyActor)),
     actor: legacyActor
   )
   #expect(removedFromBoard)
   try store.deleteWorkspaceBundle(
+    expectedIndex: expectedIndex,
     index: workspace,
     board: board,
     pageIDs: removed.pageIDs,
@@ -500,6 +503,7 @@ func remoteMixedCatalogPublicationCleansReplacedContent() throws {
     documentItem.id,
     from: incoming.rootBoardID,
     kind: .document,
+    spatialInk: SpatialInkJournal(stamp: VersionStamp(counter: 0, actor: legacyActor)),
     actor: legacyActor
   )
   #expect(deletedFromBoard)

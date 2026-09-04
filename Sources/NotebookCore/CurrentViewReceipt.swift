@@ -139,11 +139,11 @@ extension CurrentViewSurfaceRevision: Codable {
 /// Exact source versions and raster dependency used for
 /// `previews/current-view.png`.
 public struct CurrentViewReceipt: Codable, Equatable, Sendable {
-  public static let formatVersion = 4
+  public static let formatVersion = 5
 
   public let format: Int
   public let workspaceStamp: VersionStamp
-  public let boardStamp: VersionStamp
+  public let boardRevision: String
   public let spatialInkStamp: VersionStamp
   public let presence: SessionPresence
   public let renderViewport: SpatialPoint
@@ -162,7 +162,7 @@ public struct CurrentViewReceipt: Codable, Equatable, Sendable {
     precondition(renderViewport.x > 0 && renderViewport.y > 0)
     format = Self.formatVersion
     workspaceStamp = workspace.stamp
-    boardStamp = board.stamp
+    boardRevision = board.revision
     spatialInkStamp = spatialInk.stamp
     self.presence = presence
     self.renderViewport = renderViewport
@@ -172,6 +172,8 @@ public struct CurrentViewReceipt: Codable, Equatable, Sendable {
 
   public var isValid: Bool {
     format == Self.formatVersion && presence.isValid
+      && boardRevision.count == 64
+      && boardRevision.allSatisfy { $0.isHexDigit && !$0.isUppercase }
       && renderViewport.isValid
       && renderViewport.x > 0 && renderViewport.y > 0
       && surfaceMatchesPresence

@@ -1,5 +1,22 @@
 import Foundation
 
+/// A child's view expressed in the fixed portal viewport. Its scale is a
+/// ratio, so it can lie outside the limits of an active screen camera.
+public struct BoardPortalCamera: Codable, Equatable, Sendable {
+  public let center: WorldPoint
+  public let scale: Double
+
+  public init(center: WorldPoint = .zero, scale: Double = 0.22) {
+    precondition(center.isValid && scale.isFinite && scale > 0)
+    self.center = center
+    self.scale = scale
+  }
+
+  public var isValid: Bool {
+    center.isValid && scale.isFinite && scale > 0
+  }
+}
+
 /// One geometric contract joins a portal window to the child board behind it.
 /// The portal owns a canonical camera; entering only expresses that same
 /// camera in the current viewport.
@@ -20,7 +37,7 @@ public enum BoardPortalProjection {
   }
 
   public static func entryCamera(
-    portalCamera: SpatialCamera,
+    portalCamera: BoardPortalCamera,
     viewport: SpatialPoint
   ) -> SpatialCamera {
     let resolved = resolvedPortalCamera(
@@ -29,7 +46,10 @@ public enum BoardPortalProjection {
     )
     return SpatialCamera(
       center: resolved.center,
-      scale: resolved.scale * fillScale(viewport: viewport)
+      scale: min(
+        SpatialCamera.maximumScale,
+        max(SpatialCamera.minimumScale, resolved.scale * fillScale(viewport: viewport))
+      )
     )
   }
 
@@ -37,13 +57,13 @@ public enum BoardPortalProjection {
   /// through a wider viewport. Resolve the portal itself to the camera limit
   /// so its boundary frame and the entered child remain identical.
   public static func resolvedPortalCamera(
-    _ portalCamera: SpatialCamera,
+    _ portalCamera: BoardPortalCamera,
     viewport: SpatialPoint
-  ) -> SpatialCamera {
-    SpatialCamera(
+  ) -> BoardPortalCamera {
+    BoardPortalCamera(
       center: portalCamera.center,
       scale: min(
-        portalCamera.scale,
+        max(portalCamera.scale, SpatialCamera.minimumScale / fillScale(viewport: viewport)),
         SpatialCamera.maximumScale / fillScale(viewport: viewport)
       )
     )
@@ -52,11 +72,19 @@ public enum BoardPortalProjection {
   public static func portalCamera(
     from camera: SpatialCamera,
     viewport: SpatialPoint
-  ) -> SpatialCamera {
-    SpatialCamera(
+  ) -> BoardPortalCamera {
+    BoardPortalCamera(
       center: camera.center,
       scale: camera.scale / fillScale(viewport: viewport)
     )
+  }
+
+  /// The preview renders through a legal active camera on this larger canvas,
+  /// then scales down into the canonical portal. Its centered crop is exactly
+  /// the viewport exposed at handoff, including the minimum camera scale.
+  public static func renderViewport(viewport: SpatialPoint) -> SpatialPoint {
+    let fill = fillScale(viewport: viewport)
+    return SpatialPoint(x: Self.viewport.x * fill, y: Self.viewport.y * fill)
   }
 
   public static func parentBoundaryCamera(

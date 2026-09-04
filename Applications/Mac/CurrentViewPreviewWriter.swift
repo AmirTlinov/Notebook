@@ -115,7 +115,9 @@ enum CurrentViewPreviewWriter {
     }
     let snapshot = try makeSnapshot(
       presence: presence,
-      board: activeBoard,
+      spatialElements: WorkspaceSceneProjection.snapshotElements(
+        workspace: workspace, hierarchy: board, presence: presence
+      ),
       page: page,
       document: document,
       documentState: documentState
@@ -160,20 +162,20 @@ enum CurrentViewPreviewWriter {
   @MainActor
   private static func makeSnapshot(
     presence: SessionPresence,
-    board: BoardDocument,
+    spatialElements: [SpatialElement],
     page: PageDocument?,
     document: DocumentDocument?,
     documentState: DocumentStateJournal?
   ) throws -> SettledSceneSnapshot {
     switch presence.mode {
     case .board:
-      try requireSpatialElementSnapshots(board.elements)
+      try requireSpatialElementSnapshots(spatialElements)
       return .board(boardID: presence.boardID)
     case .cover:
       guard let itemID = presence.focusedItemID else {
         throw PreviewError.invalidSurface
       }
-      try requireSpatialElementSnapshots(board.elements)
+      try requireSpatialElementSnapshots(spatialElements)
       return .cover(itemID: itemID)
     case .page:
       guard let page, let itemID = presence.focusedItemID else {

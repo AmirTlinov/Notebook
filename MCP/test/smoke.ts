@@ -10,6 +10,7 @@ import {
   getDefaultEnvironment,
 } from "@modelcontextprotocol/client/stdio";
 
+import { boardHierarchyRevision } from "../src/domain.js";
 import { appActor, itemID, pageID, writeFixture } from "./fixture.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -74,6 +75,29 @@ try {
       .documentPageIndex,
     0,
   );
+
+  // The converged node frontier can change while the aggregate clock stays put.
+  const boardPath = join(storeRoot, "board.json");
+  const receiptPath = join(storeRoot, "previews", "current-view.revision");
+  const originalBoard = await readFile(boardPath, "utf8");
+  const originalReceipt = await readFile(receiptPath, "utf8");
+  const tree = JSON.parse(originalBoard);
+  tree.stamp.counter = 10;
+  await writeFile(boardPath, JSON.stringify(tree));
+  const sameContent = await client.callTool({ name: "notebook_observe", arguments: {} });
+  assert.equal(sameContent.isError, undefined);
+  tree.boards[0].portalStamp = { counter: 1, actor: appActor };
+  await writeFile(boardPath, JSON.stringify(tree));
+  const staleTree = await client.callTool({ name: "notebook_observe", arguments: {} });
+  assert.equal(staleTree.isError, true);
+  assert.match(JSON.stringify(staleTree), /snapshot_pending/);
+  const freshReceipt = JSON.parse(originalReceipt);
+  freshReceipt.boardRevision = boardHierarchyRevision(tree);
+  await writeFile(receiptPath, JSON.stringify(freshReceipt));
+  const freshTree = await client.callTool({ name: "notebook_observe", arguments: {} });
+  assert.equal(freshTree.isError, undefined);
+  await writeFile(boardPath, originalBoard);
+  await writeFile(receiptPath, originalReceipt);
 
   const currentViewPath = join(storeRoot, "previews", "current-view.png");
   const currentViewPNG = await readFile(currentViewPath);

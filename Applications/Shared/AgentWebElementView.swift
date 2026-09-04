@@ -1,4 +1,5 @@
 import NotebookCore
+import Observation
 import SwiftUI
 import WebKit
 
@@ -26,34 +27,6 @@ import WebKit
     }
   }
 #else
-  @MainActor
-  final class AgentElementSnapshotCache {
-    static let shared = AgentElementSnapshotCache()
-    static let didChange = Notification.Name("NotebookAgentElementSnapshotDidChange")
-
-    private struct Entry {
-      let element: AgentElement
-      let image: NSImage
-    }
-
-    private var entries: [String: [Entry]] = [:]
-
-    func image(for element: AgentElement) -> NSImage? {
-      entries[element.id]?.last(where: { $0.element == element })?.image
-    }
-
-    func store(_ image: NSImage, for element: AgentElement) {
-      var matchingID = entries[element.id] ?? []
-      matchingID.removeAll { $0.element == element }
-      matchingID.append(Entry(element: element, image: image))
-      entries[element.id] = Array(matchingID.suffix(8))
-      NotificationCenter.default.post(
-        name: Self.didChange,
-        object: element.id
-      )
-    }
-  }
-
   struct AgentWebElementView: NSViewRepresentable {
     let element: AgentElement
     let onRenderReady: (Bool) -> Void
@@ -78,24 +51,84 @@ import WebKit
   }
 #endif
 
+#if os(iOS)
+typealias AgentSnapshotImage = UIImage
+#else
+typealias AgentSnapshotImage = NSImage
+#endif
+
 @MainActor
-final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
-  private struct DocumentSignature: Equatable {
-    let html: String
-    let css: String
-    let javaScript: String
-    let state: JSONValue
+@Observable
+final class AgentElementSnapshotCache {
+    static let shared = AgentElementSnapshotCache()
+    static let didChange = Notification.Name("NotebookAgentElementSnapshotDidChange")
+
+    private struct Entry {
+      let element: AgentElement
+      let image: AgentSnapshotImage
+    }
+
+    private var entries: [String: [Entry]] = [:]
+
+    func image(for element: AgentElement) -> AgentSnapshotImage? {
+      entries[element.id]?.last(where: { $0.element == element })?.image
+    }
+
+    #if os(macOS)
+    /// The publisher owns this temporary, window-backed WebKit render. It uses
+    /// the same coordinator as the live element and accepts only its exact raster.
+    func prepare(_ elements: [AgentElement]) async throws {
+      for element in elements where image(for: element) == nil {
+        try Task.checkCancellation()
+        let coordinator = AgentWebCoordinator(onState: { _ in })
+        let webView = AgentWebCoordinator.makeWebView(coordinator: coordinator)
+        let size = NSSize(width: element.frame.width, height: element.frame.height)
+        let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: -20_000, y: -20_000), size: size),
+          styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = webView
+        window.orderBack(nil)
+        defer {
+          webView.stopLoading()
+          webView.configuration.userContentController.removeScriptMessageHandler(forName: "notebook")
+          window.orderOut(nil)
+          window.close()
+        }
+        coordinator.load(element, in: webView)
+        let clock = ContinuousClock()
+        let deadline = clock.now + .seconds(8)
+        while image(for: element) == nil {
+          try await Task.sleep(for: .milliseconds(20))
+          guard clock.now < deadline else { throw SnapshotError.pending(element.id) }
+        }
+      }
+    }
+
+    enum SnapshotError: Error { case pending(String) }
+
+    #endif
+
+    func store(_ image: AgentSnapshotImage, for element: AgentElement) {
+      var matchingID = entries[element.id] ?? []
+      matchingID.removeAll { $0.element == element }
+      matchingID.append(Entry(element: element, image: image))
+      entries[element.id] = Array(matchingID.suffix(8))
+      NotificationCenter.default.post(
+        name: Self.didChange,
+        object: element.id
+      )
+    }
   }
 
+
+@MainActor
+final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
   var onState: (JSONValue) -> Void
   private var onRenderReady: (Bool) -> Void
   private var renderIsReady = false
-  private var loadedSignature: DocumentSignature?
   private var activeNavigation: WKNavigation?
   private var renderRevision: UInt64 = 0
-  #if os(macOS)
-    private var loadedElement: AgentElement?
-  #endif
+  private var loadedElement: AgentElement?
 
   init(
     onRenderReady: @escaping (Bool) -> Void = { _ in },
@@ -107,21 +140,14 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
 
   func use(onRenderReady: @escaping (Bool) -> Void) {
     self.onRenderReady = onRenderReady
-    publishRenderReadiness(renderIsReady)
   }
 
   func load(_ element: AgentElement, in webView: WKWebView) {
-    let signature = DocumentSignature(
-      html: element.html,
-      css: element.css,
-      javaScript: element.javaScript,
-      state: element.state
-    )
-    guard signature != loadedSignature else { return }
-    loadedSignature = signature
-    #if os(macOS)
-      loadedElement = element
-    #endif
+    guard loadedElement != element else {
+      publishRenderReadiness(renderIsReady)
+      return
+    }
+    loadedElement = element
     renderRevision &+= 1
     setRenderReady(false)
     activeNavigation = webView.loadHTMLString(
@@ -155,11 +181,22 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     guard navigation === activeNavigation else { return }
     let revision = renderRevision
+    #if os(iOS)
+      let frameReadiness = """
+        await new Promise(resolve => requestAnimationFrame(
+          () => requestAnimationFrame(resolve)
+        ));
+        """
+    #else
+      // WKSnapshotConfiguration.afterScreenUpdates supplies the finished Mac
+      // frame, including an occluded publication window where RAF is suspended.
+      let frameReadiness = ""
+    #endif
     webView.callAsyncJavaScript(
       """
-      await new Promise(resolve => requestAnimationFrame(
-        () => requestAnimationFrame(resolve)
-      ));
+      await document.fonts.ready;
+      await Promise.all([...document.images].map(image => image.decode().catch(() => {})));
+      \(frameReadiness)
       return true;
       """,
       arguments: [:],
@@ -167,16 +204,15 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       in: .page,
       completionHandler: { [weak self] _ in
         guard let self, renderRevision == revision else { return }
-        setRenderReady(true)
-        #if os(macOS)
-          captureSnapshot(of: webView, revision: revision)
+        #if os(iOS)
+          setRenderReady(true)
         #endif
+        captureSnapshot(of: webView, revision: revision)
       }
     )
   }
 
-  #if os(macOS)
-    private func captureSnapshot(of webView: WKWebView, revision: UInt64) {
+  private func captureSnapshot(of webView: WKWebView, revision: UInt64) {
       guard let element = loadedElement else { return }
       let configuration = WKSnapshotConfiguration()
       configuration.afterScreenUpdates = true
@@ -187,9 +223,9 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
           let image
         else { return }
         AgentElementSnapshotCache.shared.store(image, for: element)
+        setRenderReady(true)
       }
     }
-  #endif
 
   func webView(
     _ webView: WKWebView,
@@ -220,7 +256,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     Task { @MainActor in handler(ready) }
   }
 
-  fileprivate static func makeWebView(
+  static func makeWebView(
     coordinator: AgentWebCoordinator
   ) -> WKWebView {
     let controller = WKUserContentController()

@@ -10,7 +10,7 @@ import type {
   BoardDocument,
   WorkspaceIndex,
 } from "../src/domain.js";
-import { revision } from "../src/domain.js";
+import { boardHierarchyRevision, revision } from "../src/domain.js";
 import {
   ConflictError,
   StoreError,
@@ -18,7 +18,7 @@ import {
   migrateLegacyStore,
   nextVersionStamp,
 } from "../src/store.js";
-import { appActor, itemID, pageID, writeFixture } from "./fixture.js";
+import { appActor, itemID, pageID, rootBoardID, writeFixture } from "./fixture.js";
 
 async function withStore(
   body: (store: NotebookStore, root: string) => Promise<void>,
@@ -219,7 +219,7 @@ test("creates content inside the active nested board", async () => {
       title: "Глубоко",
       center: { tileX: 0, tileY: 0, localX: 300, localY: 200 },
       expectedWorkspaceRevision: revision(stamp),
-      expectedBoardRevision: revision(stamp),
+      expectedBoardRevision: revision((await store.readBoard()).stamp),
     });
     const storedHierarchy: BoardHierarchy = await store.readBoardHierarchy(
       created.workspace,
@@ -256,7 +256,7 @@ test("reads a notebook from its owner board rather than the active board", async
       title: "Глубоко",
       center: { tileX: 0, tileY: 0, localX: 250, localY: 350 },
       expectedWorkspaceRevision: revision(nested.workspace.stamp),
-      expectedBoardRevision: revision(nested.board.stamp),
+      expectedBoardRevision: revision((await store.readBoard()).stamp),
     });
 
     presence.boardID = nested.parentBoardID;
@@ -703,5 +703,67 @@ test("rejects a non-finite number inside interactive state", async () => {
     await writeFile(path, encoded);
 
     await assert.rejects(store.readPage(pageID), StoreError);
+  });
+});
+
+
+test("tree identity matches the Swift frontier and includes every portal", async () => {
+  await withStore(async (store) => {
+    const tree = await store.readBoardHierarchy();
+    assert.equal(boardHierarchyRevision(tree), "480b5648900dd575275f5bb02828bc85d5d49a3ced16ad2f16d3ef6158103eb5");
+    const old = boardHierarchyRevision(tree);
+    tree.stamp = { counter: 20, actor: appActor };
+    assert.equal(boardHierarchyRevision(tree), old);
+    tree.boards[0]!.portalStamp = { counter: 1, actor: appActor };
+    assert.notEqual(boardHierarchyRevision(tree), old);
+  });
+});
+
+test("a board edit uses its owner's revision while the tree clock advances", async () => {
+  await withStore(async (store, root) => {
+    const hierarchy = await store.readBoardHierarchy();
+    hierarchy.stamp = { counter: 10, actor: appActor };
+    await writeFile(join(root, "board.json"), JSON.stringify(hierarchy));
+    const old = await store.readBoard();
+    const changed = await store.replaceBoard({
+      expectedRevision: revision(old.stamp),
+      transform: (board) => {
+        board.freeItems[0]!.center.localX = 42;
+        return board;
+      },
+    });
+    assert.equal(changed.stamp.counter, 11);
+    const newer = await store.readBoardHierarchy();
+    newer.boards[0]!.board.stamp = { counter: 12, actor: appActor };
+    newer.stamp = { counter: 20, actor: appActor };
+    await writeFile(join(root, "board.json"), JSON.stringify(newer));
+    await assert.rejects(store.replaceBoard({
+      expectedRevision: revision(changed.stamp), transform: (board) => board,
+    }), ConflictError);
+  });
+});
+
+
+test("legacy root ink gains its permanent board owner while retaining every action", async () => {
+  await withStore(async (store, root) => {
+    const stamp = { counter: 1, actor: appActor };
+    const point = { point: { x: 0, y: 0 }, worldPoint: { tileX: 0, tileY: 0, localX: 15, localY: 20 },
+      timeOffset: 0, width: 4, opacity: 1, force: 1, azimuth: 0, altitude: 1 };
+    const legacy = { format: 1, stamp, actions: [{
+      id: itemID, tool: "pen", color: { red: 0, green: 0, blue: 0 }, stamp, stateStamp: stamp, isActive: true,
+      spans: [{ surface: { kind: "board" }, samples: [point] }, {
+        surface: { kind: "cover", ownerID: itemID },
+        samples: [{ ...point, worldPoint: undefined }],
+      }],
+    }] };
+    await writeFile(join(root, "spatial-ink.json"), JSON.stringify(legacy));
+    const resolved = await store.readSpatialInk();
+    const expected = JSON.parse(JSON.stringify(legacy));
+    expected.actions[0].spans[0].surface.ownerID = rootBoardID;
+    assert.deepEqual(resolved, expected);
+    assert.deepEqual(JSON.parse(await readFile(join(root, "spatial-ink.json"), "utf8")), JSON.parse(JSON.stringify(legacy)));
+    expected.actions[0].spans[0].surface.ownerID = 42;
+    await writeFile(join(root, "spatial-ink.json"), JSON.stringify(expected));
+    await assert.rejects(store.readSpatialInk(), StoreError);
   });
 });

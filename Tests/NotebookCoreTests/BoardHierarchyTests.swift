@@ -7,11 +7,11 @@ func boardPortalBoundaryKeepsTheSameProjection() {
   let viewport = SpatialPoint(x: 1_366, y: 1_024)
   let portalCenter = WorldPoint(x: 7_200, y: -3_400)
   let childPoint = WorldPoint(x: 480, y: -260)
-  let portalCamera = SpatialCamera(
+  let portalCamera = BoardPortalCamera(
     center: WorldPoint(x: 125, y: -90),
     scale: 0.31
   )
-  let previewPoint = portalCamera.worldToScreen(
+  let previewPoint = SpatialCamera(center: portalCamera.center, scale: portalCamera.scale).worldToScreen(
     childPoint,
     viewport: BoardPortalProjection.viewport
   )
@@ -49,7 +49,7 @@ func boardPortalBoundaryKeepsTheSameProjection() {
 @Test("Портал заранее учитывает предел камеры после поворота экрана")
 func boardPortalResolvesMaximumZoomBeforeHandoff() {
   let viewport = SpatialPoint(x: 1_366, y: 1_024)
-  let stored = SpatialCamera(
+  let stored = BoardPortalCamera(
     center: WorldPoint(x: 90, y: 140),
     scale: SpatialCamera.maximumScale
   )
@@ -186,6 +186,7 @@ func nestedBoardDeletionRequiresEmptyChild() throws {
     boardItem.id,
     from: workspace.rootBoardID,
     kind: .board,
+    spatialInk: SpatialInkJournal(stamp: VersionStamp(counter: 0, actor: actor)),
     actor: actor
   )
   #expect(!prematureDeletion)
@@ -193,6 +194,7 @@ func nestedBoardDeletionRequiresEmptyChild() throws {
     nested.item.id,
     from: boardItem.id,
     kind: .notebook,
+    spatialInk: SpatialInkJournal(stamp: VersionStamp(counter: 0, actor: actor)),
     actor: actor
   )
   #expect(nestedWasDeleted)
@@ -202,6 +204,7 @@ func nestedBoardDeletionRequiresEmptyChild() throws {
     boardItem.id,
     from: workspace.rootBoardID,
     kind: .board,
+    spatialInk: SpatialInkJournal(stamp: VersionStamp(counter: 0, actor: actor)),
     actor: actor
   )
   #expect(boardWasDeleted)
@@ -361,7 +364,7 @@ func portalCameraMergesIndependentlyFromBoardContent() throws {
 
   var portalSide = base
   var contentSide = base
-  let portalCamera = SpatialCamera(
+  let portalCamera = BoardPortalCamera(
     center: WorldPoint(x: 420, y: -180),
     scale: 0.36
   )

@@ -167,6 +167,7 @@ final class AgentStateTests: XCTestCase {
       documentID,
       from: remoteIndex.rootBoardID,
       kind: .document,
+      spatialInk: SpatialInkJournal(stamp: VersionStamp(counter: 0, actor: actor)),
       actor: actor
     ))
 
