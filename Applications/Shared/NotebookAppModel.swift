@@ -92,7 +92,7 @@ final class NotebookAppModel {
   private(set) var pages: [UUID: PageDocument] = [:]
   private(set) var documents: [UUID: DocumentDocument] = [:]
   private(set) var documentStates: [UUID: DocumentStateJournal] = [:]
-  private(set) var board: BoardDocument?
+  private(set) var boardHierarchy: BoardHierarchy?
   private(set) var spatialInk: SpatialInkJournal?
   private(set) var presence: SessionPresence?
   private(set) var presencePhase = PresencePhase.settled
@@ -118,7 +118,7 @@ final class NotebookAppModel {
   private var stagedRemoteDocuments: [UUID: DocumentDocument] = [:]
   private var stagedRemoteDocumentStates: [UUID: DocumentStateJournal] = [:]
   private var stagedRemoteIndex: WorkspaceIndex?
-  private var stagedRemoteBoard: BoardDocument?
+  private var stagedRemoteBoard: BoardHierarchy?
   private var spatialInkSaveTask: Task<Void, Never>?
   private var workspaceSelectionSaveTail: Task<Void, Never>?
   private var presenceSaveTail: Task<Void, Never>?
@@ -175,6 +175,13 @@ final class NotebookAppModel {
     return pages[pageID]
   }
 
+  var board: BoardDocument? {
+    guard let boardHierarchy else { return nil }
+    return boardHierarchy.board(
+      presence?.boardID ?? workspace?.rootBoardID ?? WorkspaceRoot.boardID
+    )
+  }
+
   var activeItem: WorkspaceItem? {
     workspace?.selectedItem
   }
@@ -211,14 +218,14 @@ final class NotebookAppModel {
       )
       documents = storedDocuments.documents
       documentStates = storedDocuments.states
-      board = try store.loadOrCreateBoard(
+      boardHierarchy = try store.loadOrCreateBoard(
         workspace: stored.0,
         actor: actorID
       )
       spatialInk = try store.loadOrCreateSpatialInk(actor: actorID)
       presence = initialPresence(
         workspace: stored.0,
-        board: board,
+        board: boardHierarchy,
         viewport: pageSize
       )
       if let diskPresence = try? store.loadPresence(),
@@ -227,7 +234,7 @@ final class NotebookAppModel {
         presence = settledPresence(
           from: diskPresence,
           workspace: stored.0,
-          board: board,
+          board: boardHierarchy,
           viewport: SpatialPoint(x: pageSize.width, y: pageSize.height)
         )
       }
@@ -281,12 +288,19 @@ final class NotebookAppModel {
 
   @discardableResult
   func createNotebook(at center: WorldPoint) -> UUID? {
-    guard var workspace, var board else { return nil }
+    guard var workspace, var board = boardHierarchy, let presence else {
+      return nil
+    }
     guard let created = workspace.createNotebook(
       title: "",
       actor: actorID,
       pageSize: pageSize
-    ), board.addItem(created.item.id, near: center, actor: actorID)
+    ), board.addItem(
+      created.item.id,
+      to: presence.boardID,
+      near: center,
+      actor: actorID
+    )
     else { return nil }
 
     do {
@@ -301,7 +315,7 @@ final class NotebookAppModel {
     }
 
     self.workspace = workspace
-    self.board = board
+    boardHierarchy = board
     pages[created.page.id] = created.page
     sync.send(.page(created.page))
     sync.send(.board(board))
@@ -315,9 +329,14 @@ final class NotebookAppModel {
     at center: WorldPoint,
     paperSize: DocumentPaperSize
   ) -> UUID? {
-    guard var workspace, var board,
+    guard var workspace, var board = boardHierarchy, let presence,
       let item = workspace.createDocument(title: "", actor: actorID),
-      board.addItem(item.id, near: center, actor: actorID)
+      board.addItem(
+        item.id,
+        to: presence.boardID,
+        near: center,
+        actor: actorID
+      )
     else { return nil }
 
     let document = DocumentDocument(
@@ -339,7 +358,7 @@ final class NotebookAppModel {
     }
 
     self.workspace = workspace
-    self.board = board
+    boardHierarchy = board
     documents[item.id] = document
     documentStates[item.id] = state
     sync.send(.document(document))
@@ -347,6 +366,37 @@ final class NotebookAppModel {
     sync.send(.board(board))
     sync.send(.index(workspace))
     showCue("Новый документ")
+    return item.id
+  }
+
+  @discardableResult
+  func createBoard(at center: WorldPoint) -> UUID? {
+    guard var workspace, var hierarchy = boardHierarchy, let presence,
+      let item = workspace.createBoard(title: "", actor: actorID),
+      hierarchy.createBoard(
+        item.id,
+        in: presence.boardID,
+        near: center,
+        actor: actorID
+      )
+    else { return nil }
+
+    do {
+      try store.saveBoardWorkspaceBundle(
+        index: workspace,
+        board: hierarchy,
+        boardID: item.id
+      )
+    } catch {
+      showCue("Не удалось создать доску")
+      return nil
+    }
+
+    self.workspace = workspace
+    boardHierarchy = hierarchy
+    sync.send(.board(hierarchy))
+    sync.send(.index(workspace))
+    showCue("Новая доска")
     return item.id
   }
 
@@ -361,12 +411,22 @@ final class NotebookAppModel {
 
   @discardableResult
   func deleteItem(_ itemID: UUID) -> Bool {
-    guard var workspace, var board else { return false }
+    guard var workspace, var board = boardHierarchy, let presence else {
+      return false
+    }
     guard let removed = workspace.deleteItem(itemID, actor: actorID) else {
       showCue("Один рабочий элемент должен остаться")
       return false
     }
-    guard board.deleteItem(itemID, actor: actorID) else { return false }
+    guard board.deleteItem(
+      itemID,
+      from: presence.boardID,
+      kind: removed.kind,
+      actor: actorID
+    ) else {
+      if removed.kind == .board { showCue("Сначала очистите вложенную доску") }
+      return false
+    }
 
     do {
       try store.deleteWorkspaceBundle(
@@ -393,13 +453,14 @@ final class NotebookAppModel {
     stagedRemoteDocuments[removed.id] = nil
     stagedRemoteDocumentStates[removed.id] = nil
     self.workspace = workspace
-    self.board = board
+    boardHierarchy = board
     sync.send(.board(board))
     sync.send(.index(workspace))
 
-    if let presence, presence.focusedItemID == itemID {
+    if presence.focusedItemID == itemID {
       updatePresence(
         SessionPresence(
+          boardID: presence.boardID,
           mode: .board,
           camera: presence.camera,
           viewport: presence.viewport
@@ -407,34 +468,43 @@ final class NotebookAppModel {
         settled: true
       )
     }
-    showCue(removed.kind == .document ? "Документ удалён" : "Тетрадь удалена")
+    switch removed.kind {
+    case .notebook: showCue("Тетрадь удалена")
+    case .document: showCue("Документ удалён")
+    case .board: showCue("Доска удалена")
+    }
     return true
   }
 
   func moveItem(_ itemID: UUID, to center: WorldPoint) {
-    guard var board,
-      board.moveItem(itemID, to: center, actor: actorID),
+    guard var board = boardHierarchy, let presence,
+      board.moveItem(
+        itemID,
+        in: presence.boardID,
+        to: center,
+        actor: actorID
+      ),
       let workspace
     else { return }
-    self.board = board
-    let itemIDs = Set(workspace.items.map(\.id))
-    try? store.saveBoard(board, itemIDs: itemIDs)
+    boardHierarchy = board
+    try? store.saveBoard(board, items: workspace.items)
     sync.send(.board(board))
   }
 
   @discardableResult
   func stackItem(_ movingID: UUID, onto targetID: UUID) -> UUID? {
-    guard var board,
+    guard var board = boardHierarchy, let presence,
       let stackID = board.createStack(
         moving: movingID,
         onto: targetID,
+        in: presence.boardID,
         actor: actorID
       ), let workspace
     else { return nil }
-    self.board = board
+    boardHierarchy = board
     try? store.saveBoard(
       board,
-      itemIDs: Set(workspace.items.map(\.id))
+      items: workspace.items
     )
     sync.send(.board(board))
     showCue("Стопка")
@@ -442,14 +512,19 @@ final class NotebookAppModel {
   }
 
   func unstackItem(_ itemID: UUID, at center: WorldPoint) {
-    guard var board,
-      board.unstackItem(itemID, at: center, actor: actorID),
+    guard var board = boardHierarchy, let presence,
+      board.unstackItem(
+        itemID,
+        in: presence.boardID,
+        at: center,
+        actor: actorID
+      ),
       let workspace
     else { return }
-    self.board = board
+    boardHierarchy = board
     try? store.saveBoard(
       board,
-      itemIDs: Set(workspace.items.map(\.id))
+      items: workspace.items
     )
     sync.send(.board(board))
   }
@@ -459,6 +534,46 @@ final class NotebookAppModel {
       presence,
       settled: settled,
       persistence: .immediate
+    )
+  }
+
+  func enterBoard(_ boardID: UUID) {
+    guard let workspace, let hierarchy = boardHierarchy,
+      workspace.items.contains(where: {
+        $0.id == boardID && $0.kind == .board
+      }),
+      hierarchy.board(boardID) != nil,
+      let presence
+    else { return }
+    selectItem(boardID)
+    updatePresence(
+      SessionPresence(
+        boardID: boardID,
+        mode: .board,
+        camera: SpatialCamera(),
+        viewport: presence.viewport
+      ),
+      settled: true
+    )
+  }
+
+  func leaveBoard() {
+    guard let hierarchy = boardHierarchy, let presence,
+      let parentID = hierarchy.parentBoardID(of: presence.boardID),
+      let center = hierarchy.focusedCenter(of: presence.boardID, in: parentID)
+    else { return }
+    selectItem(presence.boardID)
+    updatePresence(
+      SessionPresence(
+        boardID: parentID,
+        mode: .board,
+        camera: SpatialCamera(
+          center: center,
+          scale: NotebookPresentation.fitScale(viewport: presence.viewport)
+        ),
+        viewport: presence.viewport
+      ),
+      settled: true
     )
   }
 
@@ -473,7 +588,7 @@ final class NotebookAppModel {
       resolved = settledPresence(
         from: presence,
         workspace: workspace,
-        board: board,
+        board: boardHierarchy,
         viewport: presence.viewport
       )
     } else {
@@ -517,6 +632,7 @@ final class NotebookAppModel {
 
     applyPresence(
       SessionPresence(
+        boardID: presence.boardID,
         mode: presence.mode,
         camera: presence.camera,
         viewport: presence.viewport,
@@ -567,7 +683,10 @@ final class NotebookAppModel {
       return
     }
     guard var journal = spatialInk else { return }
-    let surface: SurfaceID? = presence?.focusedItemID.map(SurfaceID.cover)
+    let surface: SurfaceID? = presence.flatMap { presence in
+      presence.focusedItemID.map(SurfaceID.cover)
+        ?? .board(presence.boardID)
+    }
     guard journal.undoLast(actor: actorID, touching: surface) != nil
       || (surface != nil && journal.undoLast(actor: actorID) != nil)
     else { return }
@@ -582,7 +701,10 @@ final class NotebookAppModel {
   }
 
   func addNativeText(on itemID: UUID, at point: SpatialPoint) -> String? {
-    guard var board, board.itemIDs.contains(itemID) else { return nil }
+    guard var hierarchy = boardHierarchy, let presence,
+      let board = hierarchy.board(presence.boardID),
+      board.itemIDs.contains(itemID)
+    else { return nil }
     let width = 420.0
     let height = 120.0
     let origin = SpatialPoint(
@@ -603,15 +725,21 @@ final class NotebookAppModel {
       source: "",
       stamp: VersionStamp(counter: 0, actor: actorID)
     )
-    guard board.upsertElement(element, expected: nil, actor: actorID) else {
+    guard hierarchy.upsertElement(
+      element,
+      in: presence.boardID,
+      expected: nil,
+      actor: actorID
+    ) else {
       return nil
     }
-    persistBoard(board)
+    persistBoard(hierarchy)
     return id
   }
 
   func updateNativeText(elementID: String, text: String) {
-    guard var board,
+    guard var hierarchy = boardHierarchy, let presence,
+      let board = hierarchy.board(presence.boardID),
       let index = board.elements.firstIndex(where: {
         $0.id == elementID && $0.kind == .nativeText
       })
@@ -620,25 +748,35 @@ final class NotebookAppModel {
     guard element.source != text else { return }
     let expected = element.stamp
     guard element.update(source: text, actor: actorID),
-      board.upsertElement(element, expected: expected, actor: actorID)
+      hierarchy.upsertElement(
+        element,
+        in: presence.boardID,
+        expected: expected,
+        actor: actorID
+      )
     else { return }
-    persistBoard(board)
+    persistBoard(hierarchy)
   }
 
   /// Ends the editor's ownership of one native text element. A blank draft has
   /// no visible meaning, so ending its edit removes it from the cover and from
   /// the durable board in the same mutation.
   func finishNativeTextEditing(elementID: String, text: String) {
-    guard var board,
+    guard var hierarchy = boardHierarchy, let presence,
+      let board = hierarchy.board(presence.boardID),
       let element = board.elements.first(where: {
         $0.id == elementID && $0.kind == .nativeText
       })
     else { return }
     if text.isEmpty {
-      guard board.removeElements(ids: [elementID], actor: actorID) == 1 else {
+      guard hierarchy.removeElements(
+        ids: [elementID],
+        from: presence.boardID,
+        actor: actorID
+      ) == 1 else {
         return
       }
-      persistBoard(board)
+      persistBoard(hierarchy)
       return
     }
     guard element.source != text else { return }
@@ -646,15 +784,21 @@ final class NotebookAppModel {
   }
 
   func commitSpatialElementState(elementID: String, state: JSONValue) {
-    guard var board,
+    guard var hierarchy = boardHierarchy, let presence,
+      let board = hierarchy.board(presence.boardID),
       let index = board.elements.firstIndex(where: { $0.id == elementID })
     else { return }
     var element = board.elements[index]
     let expected = element.stamp
     guard element.update(state: state, actor: actorID),
-      board.upsertElement(element, expected: expected, actor: actorID)
+      hierarchy.upsertElement(
+        element,
+        in: presence.boardID,
+        expected: expected,
+        actor: actorID
+      )
     else { return }
-    persistBoard(board)
+    persistBoard(hierarchy)
   }
 
   func reserveDrawingAction(pageID: UUID) -> VersionStamp? {
@@ -911,11 +1055,13 @@ final class NotebookAppModel {
     elementID: String,
     by translation: SpatialPoint
   ) -> Bool {
-    guard var board, let workspace else { return false }
-    let itemIDs = Set(workspace.items.map(\.id))
-    if let disk = try? store.loadBoard(itemIDs: itemIDs) {
-      _ = board.merge(disk, itemIDs: itemIDs)
+    guard var hierarchy = boardHierarchy, let workspace, let presence else {
+      return false
     }
+    if let disk = try? store.loadBoard(items: workspace.items) {
+      _ = hierarchy.merge(disk, items: workspace.items)
+    }
+    guard let board = hierarchy.board(presence.boardID) else { return false }
     guard let index = board.elements.firstIndex(where: { $0.id == elementID }) else {
       return false
     }
@@ -940,24 +1086,34 @@ final class NotebookAppModel {
     )
     guard frame != element.frame,
       element.update(frame: frame, actor: actorID),
-      board.upsertElement(element, expected: expected, actor: actorID)
+      hierarchy.upsertElement(
+        element,
+        in: presence.boardID,
+        expected: expected,
+        actor: actorID
+      )
     else { return false }
-    persistBoard(board)
+    persistBoard(hierarchy)
     showCue("Элемент перемещён")
     return true
   }
 
   @discardableResult
   func removeSpatialElement(elementID: String) -> Bool {
-    guard var board, let workspace else { return false }
-    let itemIDs = Set(workspace.items.map(\.id))
-    if let disk = try? store.loadBoard(itemIDs: itemIDs) {
-      _ = board.merge(disk, itemIDs: itemIDs)
-    }
-    guard board.removeElements(ids: [elementID], actor: actorID) == 1 else {
+    guard var hierarchy = boardHierarchy, let workspace, let presence else {
       return false
     }
-    persistBoard(board)
+    if let disk = try? store.loadBoard(items: workspace.items) {
+      _ = hierarchy.merge(disk, items: workspace.items)
+    }
+    guard hierarchy.removeElements(
+      ids: [elementID],
+      from: presence.boardID,
+      actor: actorID
+    ) == 1 else {
+      return false
+    }
+    persistBoard(hierarchy)
     showCue("Элемент удалён")
     return true
   }
@@ -1028,16 +1184,15 @@ final class NotebookAppModel {
         workspace = diskIndex
         reconcileWorkspace(with: diskIndex)
       }
-      let itemIDs = Set(diskIndex.items.map(\.id))
-      let diskBoard = try store.loadBoard(itemIDs: itemIDs)
-      if var currentBoard = board {
-        if currentBoard.merge(diskBoard, itemIDs: itemIDs) {
-          board = currentBoard
+      let diskBoard = try store.loadBoard(items: diskIndex.items)
+      if var currentBoard = boardHierarchy {
+        if currentBoard.merge(diskBoard, items: diskIndex.items) {
+          boardHierarchy = currentBoard
           reconcilePresence(with: diskIndex, board: currentBoard)
           sync.send(.board(currentBoard))
         }
       } else {
-        board = diskBoard
+        boardHierarchy = diskBoard
         reconcilePresence(with: diskIndex, board: diskBoard)
         sync.send(.board(diskBoard))
       }
@@ -1210,21 +1365,20 @@ final class NotebookAppModel {
       }
     case .board(let incoming):
       guard let workspace else { return }
-      let itemIDs = Set(workspace.items.map(\.id))
-      if var current = board {
-        if current.merge(incoming, itemIDs: itemIDs) {
-          board = (try? store.saveMergedBoard(
+      if var current = boardHierarchy {
+        if current.merge(incoming, items: workspace.items) {
+          boardHierarchy = (try? store.saveMergedBoard(
             current,
-            itemIDs: itemIDs
+            items: workspace.items
           )) ?? current
-          reconcilePresence(with: workspace, board: board)
+          reconcilePresence(with: workspace, board: boardHierarchy)
         } else {
           stageRemoteBoard(incoming)
         }
       } else {
-        if incoming.isValid(itemIDs: itemIDs) {
-          board = incoming
-          try? store.saveBoard(incoming, itemIDs: itemIDs)
+        if incoming.isValid(items: workspace.items) {
+          boardHierarchy = incoming
+          try? store.saveBoard(incoming, items: workspace.items)
           reconcilePresence(with: workspace, board: incoming)
         } else {
           stageRemoteBoard(incoming)
@@ -1248,7 +1402,7 @@ final class NotebookAppModel {
           ? settledPresence(
             from: envelope.presence,
             workspace: workspace,
-            board: board,
+            board: boardHierarchy,
             viewport: envelope.presence.viewport
           )
           : envelope.presence
@@ -1296,7 +1450,7 @@ final class NotebookAppModel {
         sync.send(.documentState(state))
       }
     }
-    if let board { sync.send(.board(board)) }
+    if let boardHierarchy { sync.send(.board(boardHierarchy)) }
     sync.send(.index(workspace))
     #if os(iOS)
       if let lastSettledPresenceEnvelope {
@@ -1387,14 +1541,13 @@ final class NotebookAppModel {
     }
   }
 
-  private func persistBoard(_ board: BoardDocument) {
+  private func persistBoard(_ board: BoardHierarchy) {
     guard let workspace else { return }
-    let itemIDs = Set(workspace.items.map(\.id))
     let resolved = (try? store.saveMergedBoard(
       board,
-      itemIDs: itemIDs
+      items: workspace.items
     )) ?? board
-    self.board = resolved
+    boardHierarchy = resolved
     sync.send(.board(resolved))
   }
 
@@ -1423,17 +1576,28 @@ final class NotebookAppModel {
 
   private func initialPresence(
     workspace: WorkspaceIndex,
-    board: BoardDocument?,
+    board: BoardHierarchy?,
     viewport: PageSize
   ) -> SessionPresence {
     let item = workspace.selectedItem
     let itemID = item.id
-    let center = board?.focusedCenter(of: itemID) ?? .zero
     let viewportPoint = SpatialPoint(x: viewport.width, y: viewport.height)
+    if item.kind == .board, board?.board(itemID) != nil {
+      return SessionPresence(
+        boardID: itemID,
+        mode: .board,
+        camera: SpatialCamera(),
+        viewport: viewportPoint
+      )
+    }
+    let ownerBoardID = board?.ownerBoardID(of: itemID)
+      ?? workspace.rootBoardID
+    let center = board?.focusedCenter(of: itemID, in: ownerBoardID) ?? .zero
     let fit = NotebookPresentation.fitScale(
       viewport: viewportPoint
     )
     return SessionPresence(
+      boardID: ownerBoardID,
       mode: item.kind == .document ? .document : .page,
       camera: SpatialCamera(center: center, scale: fit),
       viewport: viewportPoint,
@@ -1445,22 +1609,36 @@ final class NotebookAppModel {
   private func settledPresence(
     from presence: SessionPresence,
     workspace: WorkspaceIndex,
-    board: BoardDocument?,
+    board: BoardHierarchy?,
     viewport: SpatialPoint
   ) -> SessionPresence {
     let adapted = presence.adapted(to: viewport)
+    guard board?.board(presence.boardID) != nil else {
+      return SessionPresence(
+        boardID: workspace.rootBoardID,
+        mode: .board,
+        camera: SpatialCamera(),
+        viewport: viewport
+      )
+    }
     let itemID = presence.focusedItemID
     let itemCenter = itemID.flatMap { id in
-      board?.focusedCenter(of: id)
+      board?.focusedCenter(of: id, in: presence.boardID)
     }
+    let focusedItem = itemID.flatMap { id in
+      workspace.items.first(where: { $0.id == id })
+    }
+    let modeMatchesFocusedItem =
+      (presence.mode == .page && focusedItem?.kind == .notebook)
+      || (presence.mode == .document && focusedItem?.kind == .document)
 
     if presence.mode == .page || presence.mode == .document,
       let itemID,
       let itemCenter,
-      let item = workspace.items.first(where: { $0.id == itemID }),
-      (presence.mode == .page) == (item.kind == .notebook)
+      modeMatchesFocusedItem
     {
       return SessionPresence(
+        boardID: presence.boardID,
         mode: presence.mode,
         camera: SpatialCamera(
           center: itemCenter,
@@ -1477,12 +1655,14 @@ final class NotebookAppModel {
 
     if presence.mode == .cover,
       let itemID,
-      workspace.items.contains(where: { $0.id == itemID })
+      workspace.items.contains(where: { $0.id == itemID }),
+      board?.ownerBoardID(of: itemID) == presence.boardID
     {
       return adapted
     }
 
     return SessionPresence(
+      boardID: presence.boardID,
       mode: .board,
       camera: adapted.camera,
       viewport: viewport
@@ -1590,7 +1770,7 @@ final class NotebookAppModel {
       }
     }
 
-    reconcilePresence(with: workspace, board: board)
+    reconcilePresence(with: workspace, board: boardHierarchy)
   }
 
   /// Selection lives in the catalog while its screen anchor lives on the
@@ -1598,7 +1778,7 @@ final class NotebookAppModel {
   /// owners together. This keeps a deleted focus from leaving an empty view.
   private func reconcilePresence(
     with workspace: WorkspaceIndex,
-    board: BoardDocument?
+    board: BoardHierarchy?
   ) {
     guard let current = presence else { return }
     let resolved: SessionPresence
@@ -1672,7 +1852,7 @@ final class NotebookAppModel {
     publishStagedWorkspaceIfReady()
   }
 
-  private func stageRemoteBoard(_ incoming: BoardDocument) {
+  private func stageRemoteBoard(_ incoming: BoardHierarchy) {
     if let stagedRemoteBoard,
       stagedRemoteBoard.stamp >= incoming.stamp
     {
@@ -1704,12 +1884,12 @@ final class NotebookAppModel {
     }) else { return }
 
     let expectedItemIDs = Set(incoming.items.map(\.id))
-    var boardCandidates = [BoardDocument]()
-    if let board, board.isValid(itemIDs: expectedItemIDs) {
-      boardCandidates.append(board)
+    var boardCandidates = [BoardHierarchy]()
+    if let boardHierarchy, boardHierarchy.isValid(items: incoming.items) {
+      boardCandidates.append(boardHierarchy)
     }
     if let stagedRemoteBoard,
-      stagedRemoteBoard.isValid(itemIDs: expectedItemIDs)
+      stagedRemoteBoard.isValid(items: incoming.items)
     {
       boardCandidates.append(stagedRemoteBoard)
     }
@@ -1788,7 +1968,7 @@ final class NotebookAppModel {
     }
 
     workspace = incoming
-    board = candidateBoard
+    boardHierarchy = candidateBoard
     for (id, page) in resolvedPages { pages[id] = page }
     for (id, document) in resolvedDocuments { documents[id] = document }
     for (id, state) in resolvedStates { documentStates[id] = state }
@@ -1808,7 +1988,7 @@ final class NotebookAppModel {
       presence = settledPresence(
         from: stored,
         workspace: workspace,
-        board: board,
+        board: boardHierarchy,
         viewport: stored.viewport
       )
       presencePhase = .settled
@@ -1819,7 +1999,10 @@ final class NotebookAppModel {
     _ presence: SessionPresence,
     workspace: WorkspaceIndex
   ) -> Bool {
-    guard presence.isValid else { return false }
+    guard presence.isValid,
+      let hierarchy = boardHierarchy,
+      hierarchy.board(presence.boardID) != nil
+    else { return false }
     if let itemID = presence.focusedItemID,
       !workspace.items.contains(where: { $0.id == itemID })
     {
@@ -1831,6 +2014,9 @@ final class NotebookAppModel {
     if let itemID = presence.focusedItemID,
       let item = workspace.items.first(where: { $0.id == itemID })
     {
+      guard hierarchy.ownerBoardID(of: itemID) == presence.boardID else {
+        return false
+      }
       if presence.mode == .page && item.kind != .notebook { return false }
       if presence.mode == .document && item.kind != .document { return false }
     }

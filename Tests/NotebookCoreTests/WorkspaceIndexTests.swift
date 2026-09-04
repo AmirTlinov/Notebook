@@ -224,7 +224,8 @@ func stalePageSelectionPersistenceCannotRewindTheWorkspace() throws {
   let size = PageSize(width: 834, height: 1_194)
   let initial = WorkspaceIndex.initial(actor: actor, pageSize: size)
   let store = NotebookStore(root: root)
-  let board = BoardDocument.initial(
+  let board = BoardHierarchy.initial(
+    rootBoardID: initial.index.rootBoardID,
     itemIDs: [initial.index.selectedItemID],
     actor: actor
   )
@@ -310,7 +311,12 @@ func storeDeletesOneCompleteNotebookBundle() throws {
     pageSize: loaded.1.values.first!.size
   )
   let created = try #require(creation)
-  let added = board.addItem(created.item.id, near: .zero, actor: actor)
+  let added = board.addItem(
+    created.item.id,
+    to: index.rootBoardID,
+    near: .zero,
+    actor: actor
+  )
   #expect(added)
   try store.saveWorkspaceBundle(
     index: index,
@@ -322,7 +328,12 @@ func storeDeletesOneCompleteNotebookBundle() throws {
 
   let removed = index.deleteItem(created.item.id, actor: actor)
   _ = try #require(removed)
-  let removedFromBoard = board.deleteItem(created.item.id, actor: actor)
+  let removedFromBoard = board.deleteItem(
+    created.item.id,
+    from: index.rootBoardID,
+    kind: .notebook,
+    actor: actor
+  )
   #expect(removedFromBoard)
   try store.deleteWorkspaceBundle(
     index: index,
@@ -331,7 +342,7 @@ func storeDeletesOneCompleteNotebookBundle() throws {
   )
 
   #expect(try store.loadIndex() == index)
-  #expect(try store.loadBoard(itemIDs: Set(index.items.map(\.id))) == board)
+  #expect(try store.loadBoard(items: index.items) == board)
   #expect(!FileManager.default.fileExists(atPath: pageURL.path))
 
   #expect(throws: CocoaError.self) {

@@ -99,7 +99,8 @@ final class MacModelLifecycleTests: XCTestCase {
     XCTAssertEqual(movedPageElement.frame.y, 0)
 
     let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
-    var board = try XCTUnwrap(model.board)
+    var board = try XCTUnwrap(model.boardHierarchy)
+    let boardID = try XCTUnwrap(model.presence?.boardID)
     let coverElement = SpatialElement(
       id: "shared-cover-shape",
       surface: .cover(itemID),
@@ -110,7 +111,12 @@ final class MacModelLifecycleTests: XCTestCase {
       stamp: VersionStamp(counter: 0, actor: remoteActor)
     )
     XCTAssertTrue(
-      board.upsertElement(coverElement, expected: nil, actor: remoteActor)
+      board.upsertElement(
+        coverElement,
+        in: boardID,
+        expected: nil,
+        actor: remoteActor
+      )
     )
     model.receivePeerMessage(.board(board))
 
@@ -137,7 +143,9 @@ final class MacModelLifecycleTests: XCTestCase {
     XCTAssertTrue(model.board?.elements.isEmpty == true)
     XCTAssertTrue(try store.loadPage(page.id).elements.isEmpty)
     XCTAssertTrue(
-      try store.loadBoard(itemIDs: [itemID]).elements.isEmpty
+      try XCTUnwrap(
+        store.loadBoard(items: model.workspace!.items).board(boardID)
+      ).elements.isEmpty
     )
   }
 
@@ -225,12 +233,19 @@ final class MacModelLifecycleTests: XCTestCase {
       )
     )
 
-    var changed = try XCTUnwrap(model.board)
+    var changed = try XCTUnwrap(model.boardHierarchy)
+    let workspace = try XCTUnwrap(model.workspace)
+    let boardID = try XCTUnwrap(model.presence?.boardID)
     let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
     XCTAssertTrue(
-      changed.moveItem(itemID, to: WorldPoint(x: 700, y: 900), actor: UUID())
+      changed.moveItem(
+        itemID,
+        in: boardID,
+        to: WorldPoint(x: 700, y: 900),
+        actor: UUID()
+      )
     )
-    try store.saveBoard(changed, itemIDs: [itemID])
+    try store.saveBoard(changed, items: workspace.items)
     deadline = clock.now + .seconds(3)
     repeat {
       try await Task.sleep(for: .milliseconds(20))
@@ -240,7 +255,7 @@ final class MacModelLifecycleTests: XCTestCase {
       )
     } while receipt.boardStamp != changed.stamp && clock.now < deadline
 
-    XCTAssertEqual(model.board?.stamp, changed.stamp)
+    XCTAssertEqual(model.boardHierarchy?.stamp, changed.stamp)
     XCTAssertEqual(receipt.boardStamp, changed.stamp)
   }
 
@@ -254,23 +269,25 @@ final class MacModelLifecycleTests: XCTestCase {
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     model.start(pageSize: NotebookAppModel.defaultPageSize)
 
-    var changed = try XCTUnwrap(model.board)
+    var changed = try XCTUnwrap(model.boardHierarchy)
+    let workspace = try XCTUnwrap(model.workspace)
+    let boardID = try XCTUnwrap(model.presence?.boardID)
     let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
     let center = WorldPoint(x: 740, y: 960)
     XCTAssertTrue(
-      changed.moveItem(itemID, to: center, actor: UUID())
+      changed.moveItem(itemID, in: boardID, to: center, actor: UUID())
     )
-    try store.saveBoard(changed, itemIDs: [itemID])
+    try store.saveBoard(changed, items: workspace.items)
 
     let clock = ContinuousClock()
     let deadline = clock.now + .seconds(2)
-    while model.board?.stamp != changed.stamp,
+    while model.boardHierarchy?.stamp != changed.stamp,
       clock.now < deadline
     {
       try await Task.sleep(for: .milliseconds(20))
     }
 
-    XCTAssertEqual(model.board?.stamp, changed.stamp)
+    XCTAssertEqual(model.boardHierarchy?.stamp, changed.stamp)
     XCTAssertEqual(model.board?.focusedCenter(of: itemID), center)
   }
 
@@ -349,11 +366,14 @@ final class MacModelLifecycleTests: XCTestCase {
     model.start(pageSize: NotebookAppModel.defaultPageSize)
     let actor = UUID()
     var workspace = try XCTUnwrap(model.workspace)
-    var board = try XCTUnwrap(model.board)
+    var board = try XCTUnwrap(model.boardHierarchy)
+    let boardID = try XCTUnwrap(model.presence?.boardID)
     let item = try XCTUnwrap(
       workspace.createDocument(title: "MCP", actor: actor)
     )
-    XCTAssertTrue(board.addItem(item.id, near: .zero, actor: actor))
+    XCTAssertTrue(
+      board.addItem(item.id, to: boardID, near: .zero, actor: actor)
+    )
     var document = DocumentDocument(
       id: item.id,
       actor: actor,

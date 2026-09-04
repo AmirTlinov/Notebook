@@ -12,8 +12,8 @@ private let legacyPageID = UUID(
   uuidString: "00000000-0000-4000-8000-000000000003"
 )!
 
-@Test("Старый каталог тетрадей становится единым каталогом рабочих элементов")
-func legacyWorkspaceDecodesAsVersionTwo() throws {
+@Test("Старый каталог тетрадей становится каталогом с корневой доской")
+func legacyWorkspaceDecodesWithRootBoard() throws {
   let data = try JSONSerialization.data(withJSONObject: [
     "format": 1,
     "notebooks": [[
@@ -43,7 +43,8 @@ func legacyWorkspaceDecodesAsVersionTwo() throws {
   let object = try #require(
     JSONSerialization.jsonObject(with: encoded) as? [String: Any]
   )
-  #expect(object["format"] as? Int == 2)
+  #expect(object["format"] as? Int == WorkspaceIndex.formatVersion)
+  #expect(object["rootBoardID"] as? String == WorkspaceRoot.boardID.uuidString)
   #expect(object["items"] != nil)
   #expect(object["notebooks"] == nil)
 }
@@ -167,13 +168,15 @@ func legacyBoardRestoresMissingCatalogItems() throws {
   )
 
   #expect(Set(board.itemIDs) == Set(itemIDs))
-  #expect(board.placement(of: itemIDs[0])?.center == .zero)
+  #expect(
+    board.board(workspace.rootBoardID)?.placement(of: itemIDs[0])?.center
+      == .zero
+  )
   let persisted = try JSONSerialization.jsonObject(
     with: Data(contentsOf: store.boardURL)
   ) as? [String: Any]
-  #expect(persisted?["format"] as? Int == BoardDocument.formatVersion)
-  #expect(persisted?["freeItems"] != nil)
-  #expect(persisted?["freeNotebooks"] == nil)
+  #expect(persisted?["format"] as? Int == BoardHierarchy.formatVersion)
+  #expect(persisted?["boards"] != nil)
 }
 
 @Test("Незавершённый сетевой пакет открывает каталог и ждёт содержимое")
@@ -410,7 +413,12 @@ func storePublishesAndDeletesDocumentBundle() throws {
     blocks: [.markdown(id: "body", source: "# Отчёт")]
   )
   let state = DocumentStateJournal(id: item.id, actor: legacyActor)
-  let added = board.addItem(item.id, near: .zero, actor: legacyActor)
+  let added = board.addItem(
+    item.id,
+    to: workspace.rootBoardID,
+    near: .zero,
+    actor: legacyActor
+  )
   #expect(added)
 
   try store.saveDocumentWorkspaceBundle(
@@ -426,7 +434,12 @@ func storePublishesAndDeletesDocumentBundle() throws {
 
   let deletion = workspace.deleteItem(item.id, actor: legacyActor)
   let removed = try #require(deletion)
-  let removedFromBoard = board.deleteItem(item.id, actor: legacyActor)
+  let removedFromBoard = board.deleteItem(
+    item.id,
+    from: workspace.rootBoardID,
+    kind: .document,
+    actor: legacyActor
+  )
   #expect(removedFromBoard)
   try store.deleteWorkspaceBundle(
     index: workspace,
@@ -465,6 +478,7 @@ func remoteMixedCatalogPublicationCleansReplacedContent() throws {
   let documentItem = try #require(documentCreation)
   let addedDocument = currentBoard.addItem(
     documentItem.id,
+    to: current.rootBoardID,
     near: WorldPoint(x: 900, y: 0),
     actor: legacyActor
   )
@@ -484,6 +498,8 @@ func remoteMixedCatalogPublicationCleansReplacedContent() throws {
   let removed = try #require(deletion)
   let deletedFromBoard = incomingBoard.deleteItem(
     documentItem.id,
+    from: incoming.rootBoardID,
+    kind: .document,
     actor: legacyActor
   )
   #expect(deletedFromBoard)
@@ -495,6 +511,7 @@ func remoteMixedCatalogPublicationCleansReplacedContent() throws {
   let newNotebook = try #require(notebookCreation)
   let addedNotebook = incomingBoard.addItem(
     newNotebook.item.id,
+    to: incoming.rootBoardID,
     near: WorldPoint(x: -900, y: 0),
     actor: legacyActor
   )
@@ -510,7 +527,7 @@ func remoteMixedCatalogPublicationCleansReplacedContent() throws {
   #expect(removed.id == documentItem.id)
   #expect(try store.loadIndex() == incoming)
   #expect(Set(try store.loadBoard(
-    itemIDs: Set(incoming.items.map(\.id))
+    items: incoming.items
   ).itemIDs) == Set(incoming.items.map(\.id)))
   #expect(!FileManager.default.fileExists(
     atPath: store.documentURL(documentItem.id).path
@@ -529,7 +546,11 @@ func currentViewReceiptOwnsDocumentRevisions() {
     selectedPageID: nil,
     stamp: VersionStamp(counter: 0, actor: legacyActor)
   )
-  let board = BoardDocument.initial(itemIDs: [documentID], actor: legacyActor)
+  let board = BoardHierarchy.initial(
+    rootBoardID: workspace.rootBoardID,
+    itemIDs: [documentID],
+    actor: legacyActor
+  )
   let ink = SpatialInkJournal(
     stamp: VersionStamp(counter: 0, actor: legacyActor)
   )

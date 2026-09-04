@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 
 import type {
-  BoardDocument,
+  BoardHierarchy,
   CurrentViewReceipt,
   PageDocument,
   SessionPresence,
@@ -16,6 +16,7 @@ import type { PageVisionReceipt } from "../src/page-vision.js";
 export const itemID = "7e7a0000-0000-4000-8000-000000000001";
 export const pageID = "7e7a0000-0000-4000-8000-000000000002";
 export const appActor = "7e7a0000-0000-4000-8000-000000000003";
+export const rootBoardID = "7e7a0000-0000-4000-8000-000000000003";
 
 const previewPNG = grayscalePNG(1_668, 2_388, 255);
 const currentViewPNG = grayscalePNG(700, 900, 96);
@@ -23,7 +24,8 @@ const regionPNG = grayscalePNG(52, 52, 0);
 
 export async function writeFixture(root: string): Promise<void> {
   const workspace: WorkspaceIndex = {
-    format: 2,
+    format: 3,
+    rootBoardID,
     items: [
       {
         id: itemID,
@@ -45,18 +47,26 @@ export async function writeFixture(root: string): Promise<void> {
     elements: [],
     agentStamp: { counter: 0, actor: appActor },
   };
-  const board: BoardDocument = {
-    format: 2,
-    freeItems: [
-      {
-        itemID,
-        center: { tileX: 0, tileY: 0, localX: 0, localY: 0 },
-        zIndex: 0,
+  const board: BoardHierarchy = {
+    format: 1,
+    rootBoardID,
+    boards: [{
+      id: rootBoardID,
+      board: {
+        format: 2,
+        freeItems: [
+          {
+            itemID,
+            center: { tileX: 0, tileY: 0, localX: 0, localY: 0 },
+            zIndex: 0,
+            stamp: { counter: 0, actor: appActor },
+          },
+        ],
+        stacks: [],
+        elements: [],
         stamp: { counter: 0, actor: appActor },
       },
-    ],
-    stacks: [],
-    elements: [],
+    }],
     stamp: { counter: 0, actor: appActor },
   };
   const spatialInk: SpatialInkJournal = {
@@ -65,7 +75,8 @@ export async function writeFixture(root: string): Promise<void> {
     stamp: { counter: 0, actor: appActor },
   };
   const presence: SessionPresence = {
-    format: 3,
+    format: 4,
+    boardID: rootBoardID,
     mode: "page",
     camera: {
       center: { tileX: 0, tileY: 0, localX: 0, localY: 0 },
@@ -77,7 +88,7 @@ export async function writeFixture(root: string): Promise<void> {
     documentPageIndex: 0,
   };
   const currentViewReceipt: CurrentViewReceipt = {
-    format: 3,
+    format: 4,
     workspaceStamp: workspace.stamp,
     boardStamp: board.stamp,
     spatialInkStamp: spatialInk.stamp,

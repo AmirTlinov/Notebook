@@ -46,7 +46,7 @@ export interface PageDocument {
   agentStamp: VersionStamp;
 }
 
-export type WorkspaceItemKind = "notebook" | "document";
+export type WorkspaceItemKind = "notebook" | "document" | "board";
 
 export interface WorkspaceItem {
   id: string;
@@ -56,7 +56,8 @@ export interface WorkspaceItem {
 }
 
 export interface WorkspaceIndex {
-  format: 2;
+  format: 3;
+  rootBoardID: string;
   items: WorkspaceItem[];
   selectedItemID: string;
   selectedPageID?: string;
@@ -118,7 +119,7 @@ export interface SpatialCamera {
 
 export interface SurfaceID {
   kind: "board" | "cover" | "page";
-  ownerID?: string;
+  ownerID: string;
 }
 
 export type SpatialElementKind = "nativeText" | "markdown" | "web";
@@ -175,6 +176,18 @@ export interface BoardDocument {
   stamp: VersionStamp;
 }
 
+export interface BoardNode {
+  id: string;
+  board: BoardDocument;
+}
+
+export interface BoardHierarchy {
+  format: 1;
+  rootBoardID: string;
+  boards: BoardNode[];
+  stamp: VersionStamp;
+}
+
 export interface SpatialInkSample {
   point: SpatialPoint;
   worldPoint?: WorldPoint;
@@ -208,7 +221,8 @@ export interface SpatialInkJournal {
 }
 
 export interface SessionPresence {
-  format: 3;
+  format: 4;
+  boardID: string;
   mode: "board" | "cover" | "page" | "document";
   camera: SpatialCamera;
   viewport: SpatialPoint;
@@ -218,7 +232,7 @@ export interface SessionPresence {
 }
 
 export type CurrentViewSurfaceRevision =
-  | { kind: "board" }
+  | { kind: "board"; boardID: string }
   | { kind: "cover"; itemID: string }
   | {
     kind: "page";
@@ -242,7 +256,7 @@ export type CurrentViewSurfaceRevision =
   };
 
 export interface CurrentViewReceipt {
-  format: 3;
+  format: 4;
   workspaceStamp: VersionStamp;
   boardStamp: VersionStamp;
   spatialInkStamp: VersionStamp;

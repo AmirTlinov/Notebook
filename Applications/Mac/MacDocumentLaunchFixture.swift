@@ -78,12 +78,17 @@
         try store.saveDocument(document)
         try store.saveDocumentState(state)
         try store.saveBoard(
-          board,
-          itemIDs: Set([notebookID, documentID])
+          BoardHierarchy(
+            rootBoardID: index.rootBoardID,
+            boards: [BoardNode(id: index.rootBoardID, board: board)],
+            stamp: board.stamp
+          ),
+          items: index.items
         )
         try store.saveIndex(index)
         try store.savePresence(
           SessionPresence(
+            boardID: index.rootBoardID,
             mode: .document,
             camera: SpatialCamera(
               center: center,

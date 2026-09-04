@@ -164,7 +164,7 @@ final class MacPreviewPublisher {
 
   private func makeCurrentViewKey() -> PreviewCurrentViewKey? {
     guard let workspace = model.workspace,
-      let board = model.board,
+      let board = model.boardHierarchy,
       let spatialInk = model.spatialInk,
       let presence = model.presence
     else { return nil }
@@ -264,7 +264,7 @@ final class MacPreviewPublisher {
 
   private func writeCurrentView() -> (any Error)? {
     guard let workspace = model.workspace,
-      let board = model.board,
+      let board = model.boardHierarchy,
       let spatialInk = model.spatialInk,
       let presence = model.presence,
       presence.viewport.x > 0,

@@ -179,9 +179,17 @@
           let viewport = SpatialPoint(x: size.width, y: size.height)
           try store.saveDocument(document)
           try store.saveDocumentState(state)
-          try store.saveBoard(board, itemIDs: Set([itemID, documentID]))
+          try store.saveBoard(
+            BoardHierarchy(
+              rootBoardID: index.rootBoardID,
+              boards: [BoardNode(id: index.rootBoardID, board: board)],
+              stamp: board.stamp
+            ),
+            items: index.items
+          )
           try store.savePresence(
             SessionPresence(
+              boardID: index.rootBoardID,
               mode: .document,
               camera: SpatialCamera(
                 center: center,
@@ -236,12 +244,17 @@
           let viewport = SpatialPoint(x: size.width, y: size.height)
           try store.savePage(upper.page)
           try store.saveBoard(
-            board,
-            itemIDs: Set([itemID, upperNotebookID])
+            BoardHierarchy(
+              rootBoardID: index.rootBoardID,
+              boards: [BoardNode(id: index.rootBoardID, board: board)],
+              stamp: board.stamp
+            ),
+            items: index.items
           )
           try store.savePresence(
             startsOnStackBoard
               ? SessionPresence(
+                boardID: index.rootBoardID,
                 mode: .board,
                 camera: SpatialCamera(
                   center: stackCenter,
@@ -250,6 +263,7 @@
                 viewport: viewport
               )
               : SessionPresence(
+                boardID: index.rootBoardID,
                 mode: .page,
                 camera: SpatialCamera(
                   center: focusedCenter,
@@ -281,9 +295,17 @@
               y: -70 / coverScale
             )
             : center
-          try store.saveBoard(board, itemIDs: Set([itemID]))
+          try store.saveBoard(
+            BoardHierarchy(
+              rootBoardID: index.rootBoardID,
+              boards: [BoardNode(id: index.rootBoardID, board: board)],
+              stamp: board.stamp
+            ),
+            items: index.items
+          )
           try store.savePresence(
             SessionPresence(
+              boardID: index.rootBoardID,
               mode: .cover,
               camera: SpatialCamera(
                 center: cameraCenter,

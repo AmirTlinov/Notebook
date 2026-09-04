@@ -106,6 +106,7 @@ final class DrawingOwnershipTests: XCTestCase {
     XCTAssertEqual(eraserPoints.map(\.location.x), [60, 260])
 
     let boardLayers = SpatialInkComposer.boardLayers(
+      board: .board,
       journal: journal,
       camera: SpatialCamera(scale: 1),
       viewport: SpatialPoint(

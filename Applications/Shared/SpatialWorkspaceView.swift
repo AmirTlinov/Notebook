@@ -108,6 +108,7 @@ enum WorkspaceSceneProjection {
         settledBoardElements
         SpatialInkSurfaceView(
           drawing: SpatialInkDrawingComposer.boardDrawing(
+            board: .board(presence.boardID),
             in: spatialInk,
             camera: presence.camera,
             viewport: presence.viewport
@@ -259,6 +260,7 @@ struct SpatialWorkspaceView: View {
         #if os(macOS)
           SpatialInkSurfaceView(
             drawing: SpatialInkDrawingComposer.boardDrawing(
+              board: .board(presence.boardID),
               in: model.spatialInk,
               camera: presence.camera,
               viewport: viewport
@@ -270,6 +272,7 @@ struct SpatialWorkspaceView: View {
 
         #if os(iOS)
           SpatialInkCanvas(
+            boardID: presence.boardID,
             camera: presence.camera,
             viewport: viewport,
             items: rendered.map {
@@ -482,6 +485,16 @@ struct SpatialWorkspaceView: View {
         Menu {
           Button {
             createItem(
+              kind: .board,
+              presence: presence,
+              viewport: viewport
+            )
+          } label: {
+            Label("Доска", systemImage: "rectangle.3.group")
+          }
+          .accessibilityIdentifier("create-nested-board")
+          Button {
+            createItem(
               kind: .notebook,
               presence: presence,
               viewport: viewport
@@ -530,6 +543,26 @@ struct SpatialWorkspaceView: View {
         .padding(.bottom, 20)
         .zIndex(10_000)
       }
+      if presence.mode == .board,
+        presence.boardID != model.workspace?.rootBoardID,
+        !settling
+      {
+        Button {
+          model.leaveBoard()
+        } label: {
+          Label("Назад", systemImage: "chevron.left")
+            .font(.system(size: 17, weight: .semibold))
+            .padding(.horizontal, 16)
+            .frame(height: 48)
+            .background(.ultraThinMaterial, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("leave-nested-board")
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.leading, 22)
+        .padding(.top, 18)
+        .zIndex(10_000)
+      }
     #endif
   }
 
@@ -539,7 +572,9 @@ struct SpatialWorkspaceView: View {
     viewport: SpatialPoint
   ) -> some View {
     if let board = model.board {
-      ForEach(board.elements.filter { $0.surface.kind == .board }) { element in
+      ForEach(board.elements.filter {
+        $0.surface == .board(presence.boardID)
+      }) { element in
         if let worldOrigin = element.worldOrigin {
           let reference = EditableElementReference.spatial(elementID: element.id)
           let base = presence.camera.worldToScreen(
@@ -617,6 +652,7 @@ struct SpatialWorkspaceView: View {
   private func normalizedPresence(for viewport: SpatialPoint) -> SessionPresence {
     guard let presence = model.presence else {
       return SessionPresence(
+        boardID: model.workspace?.rootBoardID ?? WorkspaceRoot.boardID,
         mode: .board,
         camera: SpatialCamera(),
         viewport: viewport
@@ -856,6 +892,7 @@ struct SpatialWorkspaceView: View {
 
     if snapshot.boardEngagement == nil {
       let liveBoardPresence = SessionPresence(
+        boardID: snapshot.presence.boardID,
         mode: .board,
         camera: camera,
         viewport: viewport
@@ -969,6 +1006,7 @@ struct SpatialWorkspaceView: View {
     cameraGesture = snapshot
     model.updatePresence(
       SessionPresence(
+        boardID: snapshot.presence.boardID,
         mode: mode,
         camera: camera,
         viewport: viewport,
@@ -1002,6 +1040,7 @@ struct SpatialWorkspaceView: View {
     {
       model.selectItem(itemID)
       let target = SessionPresence(
+        boardID: presence.boardID,
         mode: openMode(for: itemID),
         camera: SpatialCamera(center: center, scale: pageScale),
         viewport: viewport,
@@ -1047,6 +1086,7 @@ struct SpatialWorkspaceView: View {
     camera.pan(screenX: translation.x, screenY: translation.y)
     model.updatePresence(
       SessionPresence(
+        boardID: start.boardID,
         mode: start.mode,
         camera: camera,
         viewport: viewport,
@@ -1076,6 +1116,7 @@ struct SpatialWorkspaceView: View {
     renderedItems(presence: presence)
       .reversed()
       .compactMap { rendered -> (UUID, Double)? in
+        guard rendered.item.kind != .board else { return nil }
         let strength = selectionStrength(
           for: rendered.id,
           at: centroid,
@@ -1123,9 +1164,14 @@ struct SpatialWorkspaceView: View {
       model.presence != nil,
       let center = model.board?.focusedCenter(of: itemID)
     else { return }
+    if model.workspace?.items.first(where: { $0.id == itemID })?.kind == .board {
+      enterBoard(itemID, center: center, viewport: viewport)
+      return
+    }
     let previousPresence = model.presence
     model.selectItem(itemID)
     let target = SessionPresence(
+      boardID: previousPresence?.boardID ?? WorkspaceRoot.boardID,
       mode: openMode(for: itemID),
       camera: SpatialCamera(center: center, scale: fitScale(viewport: viewport)),
       viewport: viewport,
@@ -1137,6 +1183,38 @@ struct SpatialWorkspaceView: View {
       )
     )
     animateSettlement(to: target, duration: 0.3)
+  }
+
+  private func enterBoard(
+    _ itemID: UUID,
+    center: WorldPoint,
+    viewport: SpatialPoint
+  ) {
+    guard let presence = model.presence else { return }
+    settlementTask?.cancel()
+    settling = true
+    model.selectItem(itemID)
+    withAnimation(.easeIn(duration: 0.24)) {
+      model.updatePresence(
+        SessionPresence(
+          boardID: presence.boardID,
+          mode: .cover,
+          camera: SpatialCamera(center: center, scale: fitScale(viewport: viewport)),
+          viewport: viewport,
+          focusedItemID: itemID,
+          openProgress: 0
+        ),
+        settled: true
+      )
+    }
+    settlementTask = Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(250))
+      guard !Task.isCancelled else { return }
+      model.enterBoard(itemID)
+      contentGestureActive = false
+      settling = false
+      settlementTask = nil
+    }
   }
 
   private func animateSettlement(
@@ -1185,9 +1263,12 @@ struct SpatialWorkspaceView: View {
       itemID = model.createNotebook(at: center)
     case .document:
       itemID = model.createDocument(at: center, paperSize: paperSize)
+    case .board:
+      itemID = model.createBoard(at: center)
     }
     guard let itemID else { return }
     let target = SessionPresence(
+      boardID: presence.boardID,
       mode: .cover,
       camera: SpatialCamera(
         center: center,
@@ -1201,9 +1282,11 @@ struct SpatialWorkspaceView: View {
   }
 
   private func openMode(for itemID: UUID) -> WorkspaceSemanticMode {
-    model.workspace?.items.first(where: { $0.id == itemID })?.kind == .document
-      ? .document
-      : .page
+    switch model.workspace?.items.first(where: { $0.id == itemID })?.kind {
+    case .document: return .document
+    case .notebook: return .page
+    case .board, nil: return .board
+    }
   }
 
   private func documentPageIndex(
@@ -1294,7 +1377,9 @@ private struct WorkspaceSceneItem: View {
     let restingShadowVisibility =
       CoverOpeningPhysics.restingShadowVisibility(openProgress)
     ZStack {
-      if rendered.item.kind == .notebook {
+      if rendered.item.kind == .board {
+        itemCover
+      } else if rendered.item.kind == .notebook {
         notebookContents(isLive: contentIsLive)
       } else {
         documentContents(isLive: contentIsLive)
@@ -1626,7 +1711,25 @@ private struct WorkspaceItemCoverView: View {
     ZStack(alignment: .topLeading) {
       coverBackground
 
-      if !item.title.isEmpty {
+      if item.kind == .board {
+        VStack(spacing: 26) {
+          Image(systemName: "rectangle.3.group")
+            .font(.system(size: 74, weight: .light))
+          Text("ДОСКА")
+            .font(.system(size: 26, weight: .semibold, design: .rounded))
+            .tracking(7)
+          if let count = model.boardHierarchy?.board(item.id)?.itemIDs.count {
+            Text(count == 1 ? "1 предмет" : "\(count) предметов")
+              .font(.system(size: 21, weight: .regular, design: .rounded))
+              .foregroundStyle(Color.black.opacity(0.42))
+          }
+        }
+        .foregroundStyle(Color.black.opacity(0.58))
+        .frame(
+          width: NotebookGeometry.width,
+          height: NotebookGeometry.height
+        )
+      } else if !item.title.isEmpty {
         Text(item.title)
           .font(
             .system(
@@ -1750,7 +1853,33 @@ private struct WorkspaceItemCoverView: View {
 
   @ViewBuilder
   private var coverBackground: some View {
-    if item.kind == .notebook {
+    if item.kind == .board {
+      RoundedRectangle(
+        cornerRadius: NotebookGeometry.cornerRadius,
+        style: .continuous
+      )
+      .fill(Color(red: 0.9, green: 0.93, blue: 0.925))
+      RoundedRectangle(
+        cornerRadius: NotebookGeometry.cornerRadius,
+        style: .continuous
+      )
+      .stroke(Color.black.opacity(0.11), lineWidth: 2)
+      Canvas { context, size in
+        var path = Path()
+        let step = 42.0
+        var x = step
+        while x < size.width {
+          var y = step
+          while y < size.height {
+            path.addEllipse(in: CGRect(x: x, y: y, width: 3, height: 3))
+            y += step
+          }
+          x += step
+        }
+        context.fill(path, with: .color(.black.opacity(0.12)))
+      }
+      .padding(24)
+    } else if item.kind == .notebook {
       RoundedRectangle(
         cornerRadius: NotebookGeometry.cornerRadius,
         style: .continuous

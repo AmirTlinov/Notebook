@@ -177,7 +177,8 @@ public struct NotebookStore: Sendable {
       itemID: initialNotebookID,
       pageID: initialPageID
     )
-    let board = BoardDocument.initial(
+    let board = BoardHierarchy.initial(
+      rootBoardID: initial.index.rootBoardID,
       itemIDs: [initialNotebookID],
       actor: actor
     )
@@ -201,34 +202,34 @@ public struct NotebookStore: Sendable {
   public func loadOrCreateBoard(
     workspace: WorkspaceIndex,
     actor: UUID
-  ) throws -> BoardDocument {
+  ) throws -> BoardHierarchy {
     try prepare()
-    let itemIDs = Set(workspace.items.map(\.id))
     if FileManager.default.fileExists(atPath: boardURL.path) {
       let data = try Data(contentsOf: boardURL)
-      var board = try decoder.decode(
-        BoardDocument.self,
-        from: data
+      if let hierarchy = try? decoder.decode(BoardHierarchy.self, from: data),
+        hierarchy.isValid(items: workspace.items)
+      {
+        return hierarchy
+      }
+      var legacy = try decoder.decode(BoardDocument.self, from: data)
+      _ = legacy.reconcileItems(workspace.items.map(\.id), actor: actor)
+      let hierarchy = BoardHierarchy(
+        rootBoardID: workspace.rootBoardID,
+        boards: [BoardNode(id: workspace.rootBoardID, board: legacy)],
+        stamp: legacy.stamp
       )
-      let repairedItems = board.reconcileItems(
-        workspace.items.map(\.id),
-        actor: actor
-      )
-      guard board.isValid(itemIDs: itemIDs) else {
+      guard hierarchy.isValid(items: workspace.items) else {
         throw corruptFile(at: boardURL)
       }
-      if repairedItems
-        || storedFormat(in: data) != BoardDocument.formatVersion
-      {
-        try saveBoard(board, itemIDs: itemIDs)
-      }
-      return board
+      try saveBoard(hierarchy, items: workspace.items)
+      return hierarchy
     }
-    let board = BoardDocument.initial(
+    let board = BoardHierarchy.initial(
+      rootBoardID: workspace.rootBoardID,
       itemIDs: workspace.items.map(\.id),
       actor: actor
     )
-    try saveBoard(board, itemIDs: itemIDs)
+    try saveBoard(board, items: workspace.items)
     return board
   }
 
@@ -237,12 +238,12 @@ public struct NotebookStore: Sendable {
     return try? decoder.decode(FormatEnvelope.self, from: data).format
   }
 
-  public func loadBoard(itemIDs: Set<UUID>) throws -> BoardDocument {
+  public func loadBoard(items: [WorkspaceItem]) throws -> BoardHierarchy {
     let board = try decoder.decode(
-      BoardDocument.self,
+      BoardHierarchy.self,
       from: Data(contentsOf: boardURL)
     )
-    guard board.isValid(itemIDs: itemIDs) else {
+    guard board.isValid(items: items) else {
       throw corruptFile(at: boardURL)
     }
     return board
@@ -376,10 +377,10 @@ public struct NotebookStore: Sendable {
   }
 
   public func saveBoard(
-    _ board: BoardDocument,
-    itemIDs: Set<UUID>
+    _ board: BoardHierarchy,
+    items: [WorkspaceItem]
   ) throws {
-    guard board.isValid(itemIDs: itemIDs) else {
+    guard board.isValid(items: items) else {
       throw corruptFile(at: boardURL)
     }
     try prepare()
@@ -390,10 +391,10 @@ public struct NotebookStore: Sendable {
 
   @discardableResult
   public func saveMergedBoard(
-    _ board: BoardDocument,
-    itemIDs: Set<UUID>
-  ) throws -> BoardDocument {
-    guard board.isValid(itemIDs: itemIDs) else {
+    _ board: BoardHierarchy,
+    items: [WorkspaceItem]
+  ) throws -> BoardHierarchy {
+    guard board.isValid(items: items) else {
       throw corruptFile(at: boardURL)
     }
     try prepare()
@@ -401,13 +402,13 @@ public struct NotebookStore: Sendable {
       var resolved = board
       if FileManager.default.fileExists(atPath: boardURL.path) {
         let disk = try decoder.decode(
-          BoardDocument.self,
+          BoardHierarchy.self,
           from: Data(contentsOf: boardURL)
         )
-        guard disk.isValid(itemIDs: itemIDs) else {
+        guard disk.isValid(items: items) else {
           throw corruptFile(at: boardURL)
         }
-        _ = resolved.merge(disk, itemIDs: itemIDs)
+        _ = resolved.merge(disk, items: items)
       }
       try encoder.encode(resolved).write(to: boardURL, options: [.atomic])
       return resolved
@@ -460,11 +461,10 @@ public struct NotebookStore: Sendable {
   public func saveWorkspaceBundle(
     index: WorkspaceIndex,
     page: PageDocument,
-    board: BoardDocument
+    board: BoardHierarchy
   ) throws {
-    let itemIDs = Set(index.items.map(\.id))
     guard index.isValid, page.isValid,
-      board.isValid(itemIDs: itemIDs),
+      board.isValid(items: index.items),
       index.items.flatMap(\.pageIDs).contains(page.id)
     else { throw corruptFile(at: indexURL) }
     try prepare()
@@ -484,9 +484,8 @@ public struct NotebookStore: Sendable {
     index: WorkspaceIndex,
     document: DocumentDocument,
     state: DocumentStateJournal,
-    board: BoardDocument
+    board: BoardHierarchy
   ) throws {
-    let itemIDs = Set(index.items.map(\.id))
     guard index.isValid,
       document.isValid,
       state.isValid,
@@ -494,7 +493,7 @@ public struct NotebookStore: Sendable {
       index.items.contains(where: {
         $0.id == document.id && $0.kind == .document
       }),
-      board.isValid(itemIDs: itemIDs)
+      board.isValid(items: index.items)
     else { throw corruptFile(at: indexURL) }
     try prepare()
     try withMutationLock {
@@ -511,18 +510,39 @@ public struct NotebookStore: Sendable {
     }
   }
 
+  /// A nested board becomes discoverable only after both its portal placement
+  /// and its empty child owner exist. The hierarchy is written before the
+  /// catalog that names the portal.
+  public func saveBoardWorkspaceBundle(
+    index: WorkspaceIndex,
+    board: BoardHierarchy,
+    boardID: UUID
+  ) throws {
+    guard index.isValid,
+      index.items.contains(where: {
+        $0.id == boardID && $0.kind == .board
+      }),
+      board.board(boardID) != nil,
+      board.isValid(items: index.items)
+    else { throw corruptFile(at: indexURL) }
+    try prepare()
+    try withMutationLock {
+      try encoder.encode(board).write(to: boardURL, options: [.atomic])
+      try encoder.encode(index).write(to: indexURL, options: [.atomic])
+    }
+  }
+
   /// Deletion publishes the smaller catalog first. During the following file
   /// write an older board may contain an invisible orphan, but no reader can
   /// discover an item whose content is already gone.
   public func deleteWorkspaceBundle(
     index: WorkspaceIndex,
-    board: BoardDocument,
+    board: BoardHierarchy,
     pageIDs: [UUID],
     documentIDs: [UUID] = []
   ) throws {
-    let itemIDs = Set(index.items.map(\.id))
     guard index.isValid,
-      board.isValid(itemIDs: itemIDs)
+      board.isValid(items: index.items)
     else { throw corruptFile(at: indexURL) }
     try prepare()
     try withMutationLock {
@@ -539,13 +559,13 @@ public struct NotebookStore: Sendable {
   /// union board, so either catalog remains readable during the hand-off.
   public func publishRemoteWorkspace(
     index: WorkspaceIndex,
-    board: BoardDocument,
+    board: BoardHierarchy,
     actor: UUID
   ) throws {
     let incomingItemIDs = Set(index.items.map(\.id))
     guard index.isValid,
       Set(board.itemIDs) == incomingItemIDs,
-      board.isValid(itemIDs: incomingItemIDs)
+      board.isValid(items: index.items)
     else {
       throw corruptFile(at: indexURL)
     }
@@ -563,11 +583,13 @@ public struct NotebookStore: Sendable {
       if !added.isEmpty && !removed.isEmpty {
         var bridge = board
         let placed = bridge.placeMissingItems(
-          current.items.map(\.id),
+          current.items,
           actor: actor
         )
         guard (placed || currentItemIDs.isSubset(of: Set(bridge.itemIDs))),
-          bridge.isValid(itemIDs: currentItemIDs.union(incomingItemIDs))
+          bridge.isValid(items: current.items + index.items.filter {
+            !currentItemIDs.contains($0.id)
+          })
         else { throw corruptFile(at: boardURL) }
         try encoder.encode(bridge).write(to: boardURL, options: [.atomic])
         try encoder.encode(index).write(to: indexURL, options: [.atomic])

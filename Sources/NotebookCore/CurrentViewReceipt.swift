@@ -28,7 +28,7 @@ public struct CurrentViewDocumentRevision: Codable, Equatable, Sendable {
 /// The one settled surface whose pixels were used for `current-view.png`.
 /// Page and document cases bind the scene to the exact raster dependency.
 public enum CurrentViewSurfaceRevision: Equatable, Sendable {
-  case board
+  case board(boardID: UUID)
   case cover(itemID: UUID)
   case page(
     itemID: UUID,
@@ -62,6 +62,7 @@ extension CurrentViewSurfaceRevision: Codable {
   private enum CodingKeys: String, CodingKey {
     case kind
     case itemID
+    case boardID
     case revision
     case pageIndex
     case snapshotPNG_SHA256
@@ -78,7 +79,9 @@ extension CurrentViewSurfaceRevision: Codable {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     switch try container.decode(Kind.self, forKey: .kind) {
     case .board:
-      self = .board
+      self = .board(
+        boardID: try container.decode(UUID.self, forKey: .boardID)
+      )
     case .cover:
       self = .cover(
         itemID: try container.decode(UUID.self, forKey: .itemID)
@@ -113,8 +116,9 @@ extension CurrentViewSurfaceRevision: Codable {
   public func encode(to encoder: any Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
     switch self {
-    case .board:
+    case .board(let boardID):
       try container.encode(Kind.board, forKey: .kind)
+      try container.encode(boardID, forKey: .boardID)
     case .cover(let itemID):
       try container.encode(Kind.cover, forKey: .kind)
       try container.encode(itemID, forKey: .itemID)
@@ -135,7 +139,7 @@ extension CurrentViewSurfaceRevision: Codable {
 /// Exact source versions and raster dependency used for
 /// `previews/current-view.png`.
 public struct CurrentViewReceipt: Codable, Equatable, Sendable {
-  public static let formatVersion = 3
+  public static let formatVersion = 4
 
   public let format: Int
   public let workspaceStamp: VersionStamp
@@ -148,7 +152,7 @@ public struct CurrentViewReceipt: Codable, Equatable, Sendable {
 
   public init(
     workspace: WorkspaceIndex,
-    board: BoardDocument,
+    board: BoardHierarchy,
     spatialInk: SpatialInkJournal,
     presence: SessionPresence,
     renderViewport: SpatialPoint,
@@ -178,8 +182,8 @@ public struct CurrentViewReceipt: Codable, Equatable, Sendable {
 
   private var surfaceMatchesPresence: Bool {
     switch (presence.mode, surface) {
-    case (.board, .board):
-      return true
+    case (.board, .board(let boardID)):
+      return presence.boardID == boardID
     case (.cover, .cover(let itemID)):
       return presence.focusedItemID == itemID
     case (.page, .page(let itemID, _, _)):

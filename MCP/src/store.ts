@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import type {
   AgentElement,
   BoardDocument,
+  BoardHierarchy,
   CurrentViewReceipt,
   DocumentBlock,
   DocumentDocument,
@@ -16,6 +17,7 @@ import type {
   SessionPresence,
   SpatialElement,
   SpatialInkJournal,
+  SurfaceID,
   VersionStamp,
   WorldPoint,
   WorkspaceIndex,
@@ -33,6 +35,7 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAXIMUM_PAGE_DIMENSION = 2_048;
 const WORLD_TILE_SIZE = (132 / 2.54 / 2) * 256;
+export const ROOT_BOARD_ID = "7e7a0000-0000-4000-8000-000000000003";
 
 export class StoreError extends Error {}
 export class ConflictError extends StoreError {}
@@ -117,12 +120,42 @@ export class NotebookStore {
     return page;
   }
 
-  async readBoard(workspace?: WorkspaceIndex): Promise<BoardDocument> {
+  async readBoardHierarchy(workspace?: WorkspaceIndex): Promise<BoardHierarchy> {
     const resolvedWorkspace = workspace ?? await this.readWorkspace();
     const stored = await readJSON<unknown>(this.boardPath, "board");
-    const board = migrateBoard(stored);
-    validateBoard(board, resolvedWorkspace);
+    const board = migrateBoard(stored, resolvedWorkspace);
+    validateBoardHierarchy(board, resolvedWorkspace);
     return board;
+  }
+
+  async readBoard(
+    workspace?: WorkspaceIndex,
+    boardID?: string,
+  ): Promise<BoardDocument> {
+    const resolvedWorkspace = workspace ?? await this.readWorkspace();
+    const hierarchy = await this.readBoardHierarchy(resolvedWorkspace);
+    const resolvedBoardID = boardID ?? (await this.readPresence()).boardID;
+    const node = hierarchy.boards.find((candidate) =>
+      sameID(candidate.id, resolvedBoardID)
+    );
+    if (!node) throw new StoreError("Текущая вложенная доска не найдена.");
+    return { ...structuredClone(node.board), stamp: hierarchy.stamp };
+  }
+
+  async readItemBoard(
+    itemID: string,
+    workspace?: WorkspaceIndex,
+  ): Promise<BoardDocument> {
+    const resolvedWorkspace = workspace ?? await this.readWorkspace();
+    const hierarchy = await this.readBoardHierarchy(resolvedWorkspace);
+    const node = hierarchy.boards.find((candidate) =>
+      candidate.board.freeItems.some((placement) => sameID(placement.itemID, itemID))
+      || candidate.board.stacks.some((stack) =>
+        stack.itemIDs.some((candidateID) => sameID(candidateID, itemID))
+      )
+    );
+    if (!node) throw new StoreError("Предмет не принадлежит живой доске.");
+    return { ...structuredClone(node.board), stamp: hierarchy.stamp };
   }
 
   async readSpatialInk(): Promise<SpatialInkJournal> {
@@ -184,10 +217,19 @@ export class NotebookStore {
       document: DocumentDocument;
       state: DocumentStateJournal;
     }
+    | {
+      kind: "board";
+      workspace: WorkspaceIndex;
+      presence: SessionPresence;
+      item: WorkspaceItem;
+    }
   > {
     const workspace = await this.readWorkspace();
     const presence = await this.readPresence();
     const item = selectedItem(workspace);
+    if (item.kind === "board") {
+      return { kind: "board", workspace, presence, item };
+    }
     if (item.kind === "document") {
       const [document, state] = await Promise.all([
         this.readDocument(item.id),
@@ -296,18 +338,35 @@ export class NotebookStore {
       board: BoardDocument,
       workspace: WorkspaceIndex,
       actor: string,
+      boardID: string,
     ) => BoardDocument;
   }): Promise<BoardDocument> {
     return this.serializeMutation(() => this.withMutationLock(async () => {
       const workspace = await this.readWorkspace();
-      const board = await this.readBoard(workspace);
-      assertExpectedRevision(args.expectedRevision, board.stamp, "Доска");
+      const hierarchy = await this.readBoardHierarchy(workspace);
+      const presence = await this.readPresence();
+      const nodeIndex = hierarchy.boards.findIndex((node) =>
+        sameID(node.id, presence.boardID)
+      );
+      if (nodeIndex < 0) throw new StoreError("Текущая вложенная доска не найдена.");
+      const board = {
+        ...structuredClone(hierarchy.boards[nodeIndex]!.board),
+        stamp: hierarchy.stamp,
+      };
+      assertExpectedRevision(args.expectedRevision, hierarchy.stamp, "Доска");
       const actor = await this.readActorID();
-      const transformed = args.transform(structuredClone(board), workspace, actor);
+      const transformed = args.transform(
+        structuredClone(board),
+        workspace,
+        actor,
+        presence.boardID,
+      );
       if (JSON.stringify(transformed) === JSON.stringify(board)) return board;
-      transformed.stamp = advance(board.stamp, actor, "версии доски");
-      validateBoard(transformed, workspace);
-      await atomicJSON(this.boardPath, transformed);
+      transformed.stamp = advance(hierarchy.stamp, actor, "версии доски");
+      hierarchy.boards[nodeIndex]!.board = transformed;
+      hierarchy.stamp = transformed.stamp;
+      validateBoardHierarchy(hierarchy, workspace);
+      await atomicJSON(this.boardPath, hierarchy);
       return transformed;
     }));
   }
@@ -348,7 +407,16 @@ export class NotebookStore {
   }> {
     return this.serializeMutation(() => this.withMutationLock(async () => {
       const workspace = await this.readWorkspace();
-      const board = await this.readBoard(workspace);
+      const hierarchy = await this.readBoardHierarchy(workspace);
+      const presence = await this.readPresence();
+      const nodeIndex = hierarchy.boards.findIndex((node) =>
+        sameID(node.id, presence.boardID)
+      );
+      if (nodeIndex < 0) throw new StoreError("Текущая вложенная доска не найдена.");
+      const board = {
+        ...structuredClone(hierarchy.boards[nodeIndex]!.board),
+        stamp: hierarchy.stamp,
+      };
       assertExpectedRevision(
         args.expectedWorkspaceRevision,
         workspace.stamp,
@@ -398,12 +466,88 @@ export class NotebookStore {
       });
       board.stamp = boardStamp;
       validateWorkspace(workspace);
-      validateBoard(board, workspace);
+      hierarchy.boards[nodeIndex]!.board = board;
+      hierarchy.stamp = board.stamp;
+      validateBoardHierarchy(hierarchy, workspace);
 
       await atomicJSON(this.pagePath(pageID), page);
-      await atomicJSON(this.boardPath, board);
+      await atomicJSON(this.boardPath, hierarchy);
       await atomicJSON(this.indexPath, workspace);
       return { workspace, board, page, itemID };
+    }));
+  }
+
+  async createBoard(args: {
+    title: string;
+    center: WorldPoint;
+    expectedWorkspaceRevision: string;
+    expectedBoardRevision: string;
+  }): Promise<{
+    workspace: WorkspaceIndex;
+    board: BoardDocument;
+    boardID: string;
+    parentBoardID: string;
+  }> {
+    return this.serializeMutation(() => this.withMutationLock(async () => {
+      const workspace = await this.readWorkspace();
+      const hierarchy = await this.readBoardHierarchy(workspace);
+      const presence = await this.readPresence();
+      const parentIndex = hierarchy.boards.findIndex((node) =>
+        sameID(node.id, presence.boardID)
+      );
+      if (parentIndex < 0) throw new StoreError("Текущая вложенная доска не найдена.");
+      assertExpectedRevision(
+        args.expectedWorkspaceRevision,
+        workspace.stamp,
+        "Workspace",
+      );
+      assertExpectedRevision(args.expectedBoardRevision, hierarchy.stamp, "Доска");
+      validateWorldPoint(args.center, "center");
+
+      const actor = await this.readActorID();
+      const boardID = randomUUID();
+      workspace.items.push({
+        id: boardID,
+        kind: "board",
+        title: args.title.trim(),
+        pageIDs: [],
+      });
+      workspace.selectedItemID = boardID;
+      delete workspace.selectedPageID;
+      workspace.stamp = advance(workspace.stamp, actor, "версии workspace");
+
+      const boardStamp = advance(hierarchy.stamp, actor, "версии доски");
+      const parent = hierarchy.boards[parentIndex]!.board;
+      parent.freeItems.push({
+        itemID: boardID,
+        center: args.center,
+        zIndex: highestZIndex(parent) + 1,
+        stamp: boardStamp,
+      });
+      parent.stamp = boardStamp;
+      hierarchy.boards.push({
+        id: boardID,
+        board: {
+          format: 2,
+          freeItems: [],
+          stacks: [],
+          elements: [],
+          stamp: { counter: 0, actor },
+        },
+      });
+      hierarchy.stamp = boardStamp;
+      validateWorkspace(workspace);
+      validateBoardHierarchy(hierarchy, workspace);
+
+      // The hierarchy is the new catalog item's dependency: publish it first.
+      await atomicJSON(this.boardPath, hierarchy);
+      await atomicJSON(this.indexPath, workspace);
+      return {
+        workspace,
+        board: { ...structuredClone(parent), stamp: hierarchy.stamp },
+        boardID,
+        parentBoardID: presence.boardID,
+      };
     }));
   }
 
@@ -424,7 +568,16 @@ export class NotebookStore {
   }> {
     return this.serializeMutation(() => this.withMutationLock(async () => {
       const workspace = await this.readWorkspace();
-      const board = await this.readBoard(workspace);
+      const hierarchy = await this.readBoardHierarchy(workspace);
+      const presence = await this.readPresence();
+      const nodeIndex = hierarchy.boards.findIndex((node) =>
+        sameID(node.id, presence.boardID)
+      );
+      if (nodeIndex < 0) throw new StoreError("Текущая вложенная доска не найдена.");
+      const board = {
+        ...structuredClone(hierarchy.boards[nodeIndex]!.board),
+        stamp: hierarchy.stamp,
+      };
       assertExpectedRevision(
         args.expectedWorkspaceRevision,
         workspace.stamp,
@@ -472,11 +625,13 @@ export class NotebookStore {
       });
       board.stamp = boardStamp;
       validateWorkspace(workspace);
-      validateBoard(board, workspace);
+      hierarchy.boards[nodeIndex]!.board = board;
+      hierarchy.stamp = board.stamp;
+      validateBoardHierarchy(hierarchy, workspace);
 
       await atomicJSON(this.documentPath(itemID), document);
       await atomicJSON(this.documentStatePath(itemID), state);
-      await atomicJSON(this.boardPath, board);
+      await atomicJSON(this.boardPath, hierarchy);
       await atomicJSON(this.indexPath, workspace);
       return { workspace, board, document, state, itemID };
     }));
@@ -681,11 +836,16 @@ function validatePage(page: unknown): asserts page is PageDocument {
 }
 
 function migrateWorkspace(value: unknown): unknown {
-  if (!isRecord(value) || value.format !== 1) return value;
-  if (!Array.isArray(value.notebooks)
+  if (!isRecord(value)) return value;
+  if (value.format === 3) return value;
+  if (value.format === 2) {
+    return { ...value, format: 3, rootBoardID: ROOT_BOARD_ID };
+  }
+  if (value.format !== 1 || !Array.isArray(value.notebooks)
     || typeof value.selectedNotebookID !== "string") return value;
   return {
-    format: 2,
+    format: 3,
+    rootBoardID: ROOT_BOARD_ID,
     items: value.notebooks.map((notebook) => isRecord(notebook)
       ? { ...notebook, kind: "notebook" }
       : notebook),
@@ -697,44 +857,83 @@ function migrateWorkspace(value: unknown): unknown {
   };
 }
 
-function migrateBoard(value: unknown): unknown {
-  if (!isRecord(value) || value.format !== 1) return value;
-  if (!Array.isArray(value.freeNotebooks) || !Array.isArray(value.stacks)) {
-    return value;
+function migrateBoard(value: unknown, workspace: WorkspaceIndex): unknown {
+  if (!isRecord(value)) return value;
+  if (value.format === 1 && Array.isArray(value.boards)) return value;
+  let document: unknown = value;
+  if (value.format === 1 && Array.isArray(value.freeNotebooks)
+    && Array.isArray(value.stacks)) {
+    document = {
+      format: 2,
+      freeItems: value.freeNotebooks.map((placement) => isRecord(placement)
+        ? {
+          itemID: placement.notebookID,
+          center: placement.center,
+          zIndex: placement.zIndex,
+          stamp: placement.stamp,
+        }
+        : placement),
+      stacks: value.stacks.map((stack) => isRecord(stack)
+        ? {
+          id: stack.id,
+          center: stack.center,
+          zIndex: stack.zIndex,
+          itemIDs: stack.notebookIDs,
+          stamp: stack.stamp,
+        }
+        : stack),
+      elements: value.elements,
+      stamp: value.stamp,
+    };
   }
+  if (!isRecord(document) || document.format !== 2) return value;
+  const root = workspace.rootBoardID;
   return {
-    format: 2,
-    freeItems: value.freeNotebooks.map((placement) => isRecord(placement)
-      ? {
-        itemID: placement.notebookID,
-        center: placement.center,
-        zIndex: placement.zIndex,
-        stamp: placement.stamp,
-      }
-      : placement),
-    stacks: value.stacks.map((stack) => isRecord(stack)
-      ? {
-        id: stack.id,
-        center: stack.center,
-        zIndex: stack.zIndex,
-        itemIDs: stack.notebookIDs,
-        stamp: stack.stamp,
-      }
-      : stack),
-    elements: value.elements,
-    stamp: value.stamp,
+    format: 1,
+    rootBoardID: root,
+    boards: [{
+      id: root,
+      board: migrateBoardSurfaceOwners(document, root),
+    }],
+    stamp: document.stamp,
+  };
+}
+
+function migrateBoardSurfaceOwners(
+  board: Record<string, unknown>,
+  boardID: string,
+): Record<string, unknown> {
+  return {
+    ...board,
+    elements: Array.isArray(board.elements)
+      ? board.elements.map((element) => isRecord(element)
+        && isRecord(element.surface)
+        && element.surface.kind === "board"
+        && typeof element.surface.ownerID !== "string"
+        ? { ...element, surface: { ...element.surface, ownerID: boardID } }
+        : element)
+      : board.elements,
   };
 }
 
 function migratePresence(value: unknown): unknown {
   if (!isRecord(value)) return value;
-  if (value.format === 3) return value;
+  if (value.format === 4) return value;
+  if (value.format === 3) {
+    return { ...value, format: 4, boardID: ROOT_BOARD_ID };
+  }
   if (value.format === 2) {
-    return { ...value, format: 3, documentPageIndex: 0 };
+    return {
+      ...value,
+      format: 4,
+      boardID: ROOT_BOARD_ID,
+      documentPageIndex: 0,
+    };
   }
   if (value.format === 1) {
     return {
-      format: 3,
+      format: 4,
+      boardID: ROOT_BOARD_ID,
       mode: value.mode,
       camera: value.camera,
       viewport: value.viewport,
@@ -844,7 +1043,7 @@ function validateDocumentState(value: unknown): asserts value is DocumentStateJo
 
 function validateWorkspace(value: unknown): asserts value is WorkspaceIndex {
   if (!isRecord(value)) throw new StoreError("workspace поврежден.");
-  if (value.format !== 2) {
+  if (value.format !== 3) {
     throw new StoreError(`Неизвестный формат workspace: ${String(value.format)}`);
   }
   if (!Array.isArray(value.items) || value.items.length === 0) {
@@ -854,6 +1053,10 @@ function validateWorkspace(value: unknown): asserts value is WorkspaceIndex {
     throw new StoreError("Выбор workspace поврежден.");
   }
   const selectedItemID = value.selectedItemID;
+  if (typeof value.rootBoardID !== "string") {
+    throw new StoreError("Корневая доска workspace повреждена.");
+  }
+  assertUUID(value.rootBoardID, "rootBoardID");
   assertUUID(selectedItemID, "selectedItemID");
   validateOptionalUUID(value.selectedPageID, "selectedPageID");
   validateStamp(value.stamp, "workspace.stamp");
@@ -869,7 +1072,8 @@ function validateWorkspace(value: unknown): asserts value is WorkspaceIndex {
     const itemID = item.id.toLowerCase();
     if (itemIDs.has(itemID)) throw new StoreError(`Повторяется item.id: ${item.id}`);
     itemIDs.add(itemID);
-    if (item.kind !== "notebook" && item.kind !== "document") {
+    if (item.kind !== "notebook" && item.kind !== "document"
+      && item.kind !== "board") {
       throw new StoreError(`Вид элемента ${item.id} повреждён.`);
     }
     if (typeof item.title !== "string" || item.title.length > 240) {
@@ -877,7 +1081,7 @@ function validateWorkspace(value: unknown): asserts value is WorkspaceIndex {
     }
     if (!Array.isArray(item.pageIDs)
       || (item.kind === "notebook" && item.pageIDs.length === 0)
-      || (item.kind === "document" && item.pageIDs.length !== 0)) {
+      || (item.kind !== "notebook" && item.pageIDs.length !== 0)) {
       throw new StoreError(`Листы элемента ${item.id} повреждены.`);
     }
     for (const pageID of item.pageIDs) {
@@ -903,9 +1107,10 @@ function validateWorkspace(value: unknown): asserts value is WorkspaceIndex {
   }
 }
 
-function validateBoard(
+function validateBoardDocument(
   value: unknown,
-  workspace: WorkspaceIndex,
+  expectedItemIDs: Set<string>,
+  boardID: string,
 ): asserts value is BoardDocument {
   if (!isRecord(value) || value.format !== 2) {
     throw new StoreError("Доска повреждена или имеет неизвестный формат.");
@@ -915,9 +1120,6 @@ function validateBoard(
     || !Array.isArray(value.elements)) {
     throw new StoreError("Содержимое доски повреждено.");
   }
-  const expectedItemIDs = new Set(
-    workspace.items.map((item) => item.id.toLowerCase()),
-  );
   const ownedItemIDs = new Set<string>();
   for (const placement of value.freeItems) {
     if (!isRecord(placement) || typeof placement.itemID !== "string") {
@@ -953,15 +1155,88 @@ function validateBoard(
       addOwnedItem(ownedItemIDs, itemID);
     }
   }
-  if ([...expectedItemIDs].some((id) => !ownedItemIDs.has(id))) {
+  if (ownedItemIDs.size !== expectedItemIDs.size
+    || [...expectedItemIDs].some((id) => !ownedItemIDs.has(id))) {
     throw new StoreError("Каждый элемент должен принадлежать доске ровно один раз.");
   }
-  validateSpatialElements(value.elements, ownedItemIDs);
+  validateSpatialElements(value.elements, ownedItemIDs, boardID);
+}
+
+function validateBoardHierarchy(
+  value: unknown,
+  workspace: WorkspaceIndex,
+): asserts value is BoardHierarchy {
+  if (!isRecord(value) || value.format !== 1
+    || typeof value.rootBoardID !== "string" || !Array.isArray(value.boards)) {
+    throw new StoreError("Иерархия досок повреждена.");
+  }
+  assertUUID(value.rootBoardID, "board.rootBoardID");
+  if (!sameID(value.rootBoardID, workspace.rootBoardID)) {
+    throw new StoreError("Корневая доска не совпадает с workspace.");
+  }
+  validateStamp(value.stamp, "boardHierarchy.stamp");
+  const nodeIDs = new Set<string>();
+  const owned = new Set<string>();
+  const parentByBoard = new Map<string, string>();
+  const boardItems = new Set(
+    workspace.items.filter((item) => item.kind === "board")
+      .map((item) => item.id.toLowerCase()),
+  );
+  for (const node of value.boards) {
+    if (!isRecord(node) || typeof node.id !== "string" || !isRecord(node.board)
+      || !Array.isArray(node.board.freeItems) || !Array.isArray(node.board.stacks)) {
+      throw new StoreError("Узел доски повреждён.");
+    }
+    assertUUID(node.id, "boardNode.id");
+    const nodeID = node.id.toLowerCase();
+    if (nodeIDs.has(nodeID)) throw new StoreError("Повторяется id доски.");
+    nodeIDs.add(nodeID);
+    const localIDs = new Set<string>();
+    for (const placement of node.board.freeItems) {
+      if (isRecord(placement) && typeof placement.itemID === "string") {
+        localIDs.add(placement.itemID.toLowerCase());
+      }
+    }
+    for (const stack of node.board.stacks) {
+      if (isRecord(stack) && Array.isArray(stack.itemIDs)) {
+        for (const id of stack.itemIDs) {
+          if (typeof id === "string") localIDs.add(id.toLowerCase());
+        }
+      }
+    }
+    validateBoardDocument(node.board, localIDs, node.id);
+    for (const itemID of localIDs) {
+      if (owned.has(itemID)) throw new StoreError("Предмет принадлежит двум доскам.");
+      owned.add(itemID);
+      if (boardItems.has(itemID)) parentByBoard.set(itemID, nodeID);
+    }
+  }
+  const expected = new Set(workspace.items.map((item) => item.id.toLowerCase()));
+  if (owned.size !== expected.size || [...expected].some((id) => !owned.has(id))) {
+    throw new StoreError("Каждый элемент должен принадлежать одной доске.");
+  }
+  const expectedNodes = new Set([...boardItems, workspace.rootBoardID.toLowerCase()]);
+  if (nodeIDs.size !== expectedNodes.size
+    || [...expectedNodes].some((id) => !nodeIDs.has(id))) {
+    throw new StoreError("Порталы и дочерние доски не совпадают.");
+  }
+  for (const boardID of boardItems) {
+    const seen = new Set<string>();
+    let cursor = boardID;
+    while (!sameID(cursor, workspace.rootBoardID)) {
+      if (seen.has(cursor)) throw new StoreError("Доски образуют цикл.");
+      seen.add(cursor);
+      const parent = parentByBoard.get(cursor);
+      if (!parent) throw new StoreError("Вложенная доска недостижима.");
+      cursor = parent;
+    }
+  }
 }
 
 function validateSpatialElements(
   elements: unknown[],
   itemIDs: Set<string>,
+  boardID: string,
 ): asserts elements is SpatialElement[] {
   const ids = new Set<string>();
   for (const element of elements) {
@@ -971,12 +1246,15 @@ function validateSpatialElements(
     if (ids.has(element.id)) throw new StoreError(`Повторяется id элемента: ${element.id}`);
     ids.add(element.id);
     validateSurface(element.surface, "element.surface");
-    const surface = element.surface as unknown as { kind: "board" | "cover" | "page"; ownerID?: string };
+    const surface = element.surface as unknown as SurfaceID;
     if (surface.kind === "page") {
       throw new StoreError("Листовые элементы должны храниться в файле листа.");
     }
     if (surface.kind === "cover" && !itemIDs.has(surface.ownerID!.toLowerCase())) {
       throw new StoreError("Элемент ссылается на неизвестную обложку.");
+    }
+    if (surface.kind === "board" && !sameID(surface.ownerID, boardID)) {
+      throw new StoreError("Элемент принадлежит другой доске.");
     }
     if (!isFrame(element.frame)) throw new StoreError(`frame элемента ${element.id} поврежден.`);
     assertSpatialFrame(element.frame, surface);
@@ -1062,13 +1340,17 @@ function validateSpatialInkSpan(value: unknown): void {
 }
 
 function validatePresence(value: unknown): asserts value is SessionPresence {
-  if (!isRecord(value) || value.format !== 3) {
+  if (!isRecord(value) || value.format !== 4) {
     throw new StoreError("Текущий контекст поврежден.");
   }
   if (value.mode !== "board" && value.mode !== "cover" && value.mode !== "page"
     && value.mode !== "document") {
     throw new StoreError("Режим текущего контекста поврежден.");
   }
+  if (typeof value.boardID !== "string") {
+    throw new StoreError("Владелец текущей доски повреждён.");
+  }
+  assertUUID(value.boardID, "presence.boardID");
   if (!isRecord(value.camera)) throw new StoreError("Камера повреждена.");
   validateWorldPoint(value.camera.center, "camera.center");
   if (typeof value.camera.scale !== "number" || !Number.isFinite(value.camera.scale)
@@ -1099,7 +1381,7 @@ function validatePresence(value: unknown): asserts value is SessionPresence {
 }
 
 function validateCurrentViewReceipt(value: unknown): asserts value is CurrentViewReceipt {
-  if (!isRecord(value) || value.format !== 3) {
+  if (!isRecord(value) || value.format !== 4) {
     throw new StoreError("Квитанция текущего вида повреждена.");
   }
   validateStamp(value.workspaceStamp, "receipt.workspaceStamp");
@@ -1126,7 +1408,16 @@ function validateCurrentViewSurface(
   if (value.kind !== presence.mode) {
     throw new StoreError("Поверхность не совпадает с текущим режимом.");
   }
-  if (value.kind === "board") return;
+  if (value.kind === "board") {
+    if (typeof value.boardID !== "string") {
+      throw new StoreError("Квитанция доски повреждена.");
+    }
+    assertUUID(value.boardID, "receipt.surface.boardID");
+    if (!sameID(value.boardID, presence.boardID)) {
+      throw new StoreError("Квитанция описывает другую вложенную доску.");
+    }
+    return;
+  }
   if (value.kind === "cover") {
     if (typeof value.itemID !== "string") {
       throw new StoreError("Квитанция обложки повреждена.");
@@ -1240,14 +1531,10 @@ function validateSurface(value: unknown, owner: string): void {
     || (value.kind !== "board" && value.kind !== "cover" && value.kind !== "page")) {
     throw new StoreError(`${owner} поврежден.`);
   }
-  if (value.kind === "board") {
-    if (value.ownerID !== undefined && value.ownerID !== null) {
-      throw new StoreError(`${owner} доски не должен иметь ownerID.`);
-    }
-  } else {
-    if (typeof value.ownerID !== "string") throw new StoreError(`${owner}.ownerID поврежден.`);
-    assertUUID(value.ownerID, `${owner}.ownerID`);
+  if (typeof value.ownerID !== "string") {
+    throw new StoreError(`${owner}.ownerID поврежден.`);
   }
+  assertUUID(value.ownerID, `${owner}.ownerID`);
 }
 
 function validateTextStyle(value: unknown, owner: string): void {

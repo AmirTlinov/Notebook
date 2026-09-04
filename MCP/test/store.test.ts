@@ -6,6 +6,7 @@ import test from "node:test";
 
 import type {
   AgentElement,
+  BoardHierarchy,
   BoardDocument,
   WorkspaceIndex,
 } from "../src/domain.js";
@@ -133,6 +134,141 @@ test("creates a visually identified notebook without a printed title", async () 
     );
     assert.equal(notebook?.title, "");
     assert.equal((await store.readWorkspace()).items.length, 2);
+  });
+});
+
+test("creates an empty nested board with one parent portal", async () => {
+  await withStore(async (store) => {
+    const created = await store.createBoard({
+      title: "Внутри",
+      center: { tileX: 1, tileY: -2, localX: 120, localY: 240 },
+      expectedWorkspaceRevision: `0@${appActor}`,
+      expectedBoardRevision: `0@${appActor}`,
+    });
+    assert.equal(created.parentBoardID, created.workspace.rootBoardID);
+    const item = created.workspace.items.find(
+      (candidate) => candidate.id === created.boardID,
+    );
+    assert.equal(item?.kind, "board");
+    assert.equal(item?.title, "Внутри");
+
+    const hierarchy = await store.readBoardHierarchy(created.workspace);
+    const parent = hierarchy.boards.find(
+      (candidate) => candidate.id === created.parentBoardID,
+    )!;
+    const child = hierarchy.boards.find(
+      (candidate) => candidate.id === created.boardID,
+    )!;
+    assert.ok(parent.board.freeItems.some(
+      (placement) => placement.itemID === created.boardID,
+    ));
+    assert.deepEqual(child.board.freeItems, []);
+    assert.deepEqual(child.board.stacks, []);
+    assert.deepEqual(child.board.elements, []);
+  });
+});
+
+test("creates content inside the active nested board", async () => {
+  await withStore(async (store, root) => {
+    const workspace = await store.readWorkspace();
+    const hierarchy = await store.readBoardHierarchy(workspace);
+    const boardID = "7e7a0000-0000-4000-8000-000000000077";
+    const stamp = { counter: 1, actor: appActor };
+    workspace.items.push({
+      id: boardID,
+      kind: "board",
+      title: "Внутри",
+      pageIDs: [],
+    });
+    workspace.selectedItemID = boardID;
+    delete workspace.selectedPageID;
+    workspace.stamp = stamp;
+    const rootBoard = hierarchy.boards.find((node) =>
+      node.id.toLowerCase() === workspace.rootBoardID.toLowerCase()
+    )!.board;
+    rootBoard.freeItems.push({
+      itemID: boardID,
+      center: { tileX: 0, tileY: 0, localX: 700, localY: 400 },
+      zIndex: 1,
+      stamp,
+    });
+    rootBoard.stamp = stamp;
+    hierarchy.boards.push({
+      id: boardID,
+      board: {
+        format: 2,
+        freeItems: [],
+        stacks: [],
+        elements: [],
+        stamp: { counter: 0, actor: appActor },
+      },
+    });
+    hierarchy.stamp = stamp;
+    const presence = await store.readPresence();
+    presence.boardID = boardID;
+    presence.mode = "board";
+    delete presence.focusedItemID;
+    presence.openProgress = 0;
+    await Promise.all([
+      writeFile(join(root, "workspace.json"), JSON.stringify(workspace)),
+      writeFile(join(root, "board.json"), JSON.stringify(hierarchy)),
+      writeFile(join(root, "last-context.json"), JSON.stringify(presence)),
+    ]);
+
+    const created = await store.createNotebook({
+      title: "Глубоко",
+      center: { tileX: 0, tileY: 0, localX: 300, localY: 200 },
+      expectedWorkspaceRevision: revision(stamp),
+      expectedBoardRevision: revision(stamp),
+    });
+    const storedHierarchy: BoardHierarchy = await store.readBoardHierarchy(
+      created.workspace,
+    );
+    const child = storedHierarchy.boards.find((node) => node.id === boardID)!;
+    const rootNode = storedHierarchy.boards.find(
+      (node) => node.id === created.workspace.rootBoardID,
+    )!;
+    assert.ok(child.board.freeItems.some(
+      (placement) => placement.itemID === created.itemID,
+    ));
+    assert.ok(rootNode.board.freeItems.some(
+      (placement) => placement.itemID === boardID,
+    ));
+    assert.equal(rootNode.board.freeItems.length, 2);
+  });
+});
+
+test("reads a notebook from its owner board rather than the active board", async () => {
+  await withStore(async (store, root) => {
+    const nested = await store.createBoard({
+      title: "Внутри",
+      center: { tileX: 0, tileY: 0, localX: 500, localY: 500 },
+      expectedWorkspaceRevision: `0@${appActor}`,
+      expectedBoardRevision: `0@${appActor}`,
+    });
+    const presence = await store.readPresence();
+    presence.boardID = nested.boardID;
+    presence.mode = "board";
+    delete presence.focusedItemID;
+    presence.openProgress = 0;
+    await writeFile(join(root, "last-context.json"), JSON.stringify(presence));
+    const notebook = await store.createNotebook({
+      title: "Глубоко",
+      center: { tileX: 0, tileY: 0, localX: 250, localY: 350 },
+      expectedWorkspaceRevision: revision(nested.workspace.stamp),
+      expectedBoardRevision: revision(nested.board.stamp),
+    });
+
+    presence.boardID = nested.parentBoardID;
+    presence.mode = "board";
+    await writeFile(join(root, "last-context.json"), JSON.stringify(presence));
+    const owner = await store.readItemBoard(notebook.itemID, notebook.workspace);
+    assert.ok(owner.freeItems.some(
+      (placement) => placement.itemID === notebook.itemID,
+    ));
+    assert.ok(!owner.freeItems.some(
+      (placement) => placement.itemID === nested.boardID,
+    ));
   });
 });
 
@@ -320,11 +456,12 @@ test("reads legacy notebook and board files through their current owners", async
     const migratedWorkspace = await store.readWorkspace();
     const migratedBoard = await store.readBoard(migratedWorkspace);
     const migratedPresence = await store.readPresence();
-    assert.equal(migratedWorkspace.format, 2);
+    assert.equal(migratedWorkspace.format, 3);
     assert.equal(migratedWorkspace.items[0]?.kind, "notebook");
     assert.equal(migratedBoard.format, 2);
     assert.equal(migratedBoard.freeItems[0]?.itemID, itemID);
-    assert.equal(migratedPresence.format, 3);
+    assert.equal(migratedPresence.format, 4);
+    assert.equal(migratedPresence.boardID, migratedWorkspace.rootBoardID);
     assert.equal(migratedPresence.focusedItemID, itemID);
     assert.equal(migratedPresence.documentPageIndex, 0);
   });
@@ -344,18 +481,19 @@ test("migrates version-two presence to the first document page", async () => {
 
     const migrated = await store.readPresence();
 
-    assert.equal(migrated.format, 3);
+    assert.equal(migrated.format, 4);
+    assert.equal(migrated.boardID, "7e7a0000-0000-4000-8000-000000000003");
     assert.equal(migrated.documentPageIndex, 0);
   });
 });
 
-test("accepts a placement staged before the workspace publishes its notebook", async () => {
+test("waits for the catalog when a board placement arrives first", async () => {
   await withStore(async (store, root) => {
     const boardPath = join(root, "board.json");
     const board = JSON.parse(await readFile(boardPath, "utf8")) as {
-      freeItems: Array<Record<string, unknown>>;
+      boards: Array<{ board: { freeItems: Array<Record<string, unknown>> } }>;
     };
-    board.freeItems.push({
+    board.boards[0]!.board.freeItems.push({
       itemID: "7e7a0000-0000-4000-8000-000000000099",
       center: { tileX: 0, tileY: 0, localX: 900, localY: 0 },
       zIndex: 1,
@@ -363,7 +501,7 @@ test("accepts a placement staged before the workspace publishes its notebook", a
     });
     await writeFile(boardPath, JSON.stringify(board));
 
-    assert.equal((await store.readBoard(await store.readWorkspace())).freeItems.length, 2);
+    await assert.rejects(store.readBoard(await store.readWorkspace()), StoreError);
   });
 });
 

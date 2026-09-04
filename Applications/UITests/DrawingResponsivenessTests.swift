@@ -411,6 +411,45 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(paper.frame.height, originalPaperFrame.height, accuracy: 2)
   }
 
+  func testCreatesAndEntersBoardsAtTwoNestedLevels() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-simulator-finger-gestures",
+    ]
+    app.launch()
+
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 5))
+    paper.pinch(withScale: 0.28, velocity: -2)
+    XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
+
+    func createAndEnterBoard() {
+      app.buttons["create-workspace-item"].tap()
+      let createBoard = app.buttons["create-nested-board"]
+      XCTAssertTrue(createBoard.waitForExistence(timeout: 2))
+      createBoard.tap()
+
+      let portals = app.descendants(matching: .any).matching(
+        NSPredicate(format: "identifier BEGINSWITH 'workspace-item-'")
+      )
+      XCTAssertTrue(portals.element(boundBy: portals.count - 1).waitForExistence(timeout: 3))
+      portals.element(boundBy: portals.count - 1).doubleTap()
+      XCTAssertTrue(app.buttons["leave-nested-board"].waitForExistence(timeout: 3))
+      XCTAssertTrue(app.buttons["create-workspace-item"].exists)
+    }
+
+    createAndEnterBoard()
+    createAndEnterBoard()
+
+    app.buttons["leave-nested-board"].tap()
+    XCTAssertTrue(app.buttons["leave-nested-board"].waitForExistence(timeout: 2))
+    app.buttons["leave-nested-board"].tap()
+    XCTAssertTrue(app.buttons["leave-nested-board"].waitForNonExistence(timeout: 2))
+    XCTAssertTrue(app.buttons["create-workspace-item"].exists)
+  }
+
   func testDoubleTapCreatesAndReopensTextOnAFocusedCover() {
     continueAfterFailure = false
     let app = XCUIApplication()

@@ -738,12 +738,18 @@ public struct SurfaceID: Codable, Equatable, Hashable, Sendable {
   public let ownerID: UUID?
 
   public init(kind: SurfaceKind, ownerID: UUID? = nil) {
-    precondition((kind == .board) == (ownerID == nil))
+    precondition(ownerID != nil)
     self.kind = kind
     self.ownerID = ownerID
   }
 
-  public static let board = SurfaceID(kind: .board)
+  public static let board = SurfaceID(
+    kind: .board,
+    ownerID: WorkspaceRoot.boardID
+  )
+  public static func board(_ boardID: UUID) -> Self {
+    Self(kind: .board, ownerID: boardID)
+  }
   public static func cover(_ itemID: UUID) -> Self {
     Self(kind: .cover, ownerID: itemID)
   }
@@ -751,7 +757,27 @@ public struct SurfaceID: Codable, Equatable, Hashable, Sendable {
     Self(kind: .page, ownerID: pageID)
   }
 
-  var isValid: Bool { (kind == .board) == (ownerID == nil) }
+  var isValid: Bool { ownerID != nil }
+
+  private enum CodingKeys: String, CodingKey {
+    case kind
+    case ownerID
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    kind = try container.decode(SurfaceKind.self, forKey: .kind)
+    let storedOwner = try container.decodeIfPresent(UUID.self, forKey: .ownerID)
+    ownerID = kind == .board && storedOwner == nil
+      ? WorkspaceRoot.boardID
+      : storedOwner
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(kind, forKey: .kind)
+    try container.encodeIfPresent(ownerID, forKey: .ownerID)
+  }
 }
 
 public enum SpatialElementKind: String, Codable, Sendable {
@@ -1328,9 +1354,10 @@ public enum WorkspaceSemanticMode: String, Codable, Sendable {
 }
 
 public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
-  public static let formatVersion = 3
+  public static let formatVersion = 4
 
   public let format: Int
+  public let boardID: UUID
   public let mode: WorkspaceSemanticMode
   public let camera: SpatialCamera
   public let viewport: SpatialPoint
@@ -1342,6 +1369,7 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
   public let documentPageIndex: Int
 
   public init(
+    boardID: UUID = WorkspaceRoot.boardID,
     mode: WorkspaceSemanticMode,
     camera: SpatialCamera,
     viewport: SpatialPoint,
@@ -1354,6 +1382,7 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
         && documentPageIndex >= 0
     )
     format = Self.formatVersion
+    self.boardID = boardID
     self.mode = mode
     self.camera = camera
     self.viewport = viewport
@@ -1397,6 +1426,7 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
       resolvedScale = camera.scale * targetFit / sourceFit
     }
     return Self(
+      boardID: boardID,
       mode: mode,
       camera: SpatialCamera(
         center: camera.center,
@@ -1411,6 +1441,7 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case format
+    case boardID
     case mode
     case camera
     case viewport
@@ -1430,6 +1461,17 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
     openProgress = try container.decode(Double.self, forKey: .openProgress)
     switch storedFormat {
     case Self.formatVersion:
+      boardID = try container.decode(UUID.self, forKey: .boardID)
+      focusedItemID = try container.decodeIfPresent(
+        UUID.self,
+        forKey: .focusedItemID
+      )
+      documentPageIndex = try container.decode(
+        Int.self,
+        forKey: .documentPageIndex
+      )
+    case 3:
+      boardID = WorkspaceRoot.boardID
       focusedItemID = try container.decodeIfPresent(
         UUID.self,
         forKey: .focusedItemID
@@ -1439,12 +1481,14 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
         forKey: .documentPageIndex
       )
     case 2:
+      boardID = WorkspaceRoot.boardID
       focusedItemID = try container.decodeIfPresent(
         UUID.self,
         forKey: .focusedItemID
       )
       documentPageIndex = 0
     case 1:
+      boardID = WorkspaceRoot.boardID
       focusedItemID = try container.decodeIfPresent(
         UUID.self,
         forKey: .legacyFocusedNotebookID
@@ -1462,6 +1506,7 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
   public func encode(to encoder: Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
     try container.encode(Self.formatVersion, forKey: .format)
+    try container.encode(boardID, forKey: .boardID)
     try container.encode(mode, forKey: .mode)
     try container.encode(camera, forKey: .camera)
     try container.encode(viewport, forKey: .viewport)

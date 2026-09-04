@@ -30,6 +30,7 @@ try {
   assert.deepEqual(
     listed.tools.map((tool) => tool.name).sort(),
     [
+      "notebook_create_board",
       "notebook_create_document",
       "notebook_create_notebook",
       "notebook_export_document",

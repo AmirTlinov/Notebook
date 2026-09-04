@@ -1,8 +1,15 @@
 import Foundation
 
+public enum WorkspaceRoot {
+  public static let boardID = UUID(
+    uuidString: "7E7A0000-0000-4000-8000-000000000003"
+  )!
+}
+
 public enum WorkspaceItemKind: String, Codable, Equatable, Sendable {
   case notebook
   case document
+  case board
 }
 
 public struct WorkspaceItem: Codable, Equatable, Identifiable, Sendable {
@@ -19,7 +26,7 @@ public struct WorkspaceItem: Codable, Equatable, Identifiable, Sendable {
   ) {
     precondition(
       (kind == .notebook && !pageIDs.isEmpty)
-        || (kind == .document && pageIDs.isEmpty)
+        || ((kind == .document || kind == .board) && pageIDs.isEmpty)
     )
     self.id = id
     self.kind = kind
@@ -42,11 +49,18 @@ public struct WorkspaceItem: Codable, Equatable, Identifiable, Sendable {
     Self(id: id, kind: .document, title: title)
   }
 
+  public static func board(
+    id: UUID = UUID(),
+    title: String
+  ) -> Self {
+    Self(id: id, kind: .board, title: title)
+  }
+
   var isValid: Bool {
     switch kind {
     case .notebook:
       !pageIDs.isEmpty
-    case .document:
+    case .document, .board:
       pageIDs.isEmpty
     }
   }
@@ -75,10 +89,11 @@ public struct WorkspacePageSelection: Equatable, Sendable {
 }
 
 public struct WorkspaceIndex: Codable, Equatable, Sendable {
-  public static let formatVersion = 2
+  public static let formatVersion = 3
   public static let maximumTitleLength = 240
 
   public let format: Int
+  public let rootBoardID: UUID
   public private(set) var items: [WorkspaceItem]
   public private(set) var selectedItemID: UUID
   public private(set) var selectedPageID: UUID?
@@ -88,10 +103,12 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     items: [WorkspaceItem],
     selectedItemID: UUID,
     selectedPageID: UUID?,
-    stamp: VersionStamp
+    stamp: VersionStamp,
+    rootBoardID: UUID = WorkspaceRoot.boardID
   ) {
     precondition(!items.isEmpty)
     format = Self.formatVersion
+    self.rootBoardID = rootBoardID
     self.items = items
     self.selectedItemID = selectedItemID
     self.selectedPageID = selectedPageID
@@ -151,7 +168,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
         item.pageIDs.contains(candidate)
       else { return false }
       selectedPage = candidate
-    case .document:
+    case .document, .board:
       guard pageID == nil else { return false }
       selectedPage = nil
     }
@@ -211,6 +228,26 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     return item
   }
 
+  @discardableResult
+  public mutating func createBoard(
+    title: String,
+    actor: UUID,
+    boardID: UUID = UUID()
+  ) -> WorkspaceItem? {
+    let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard normalized.utf16.count <= Self.maximumTitleLength,
+      boardID != rootBoardID,
+      !items.contains(where: { $0.id == boardID }),
+      let nextStamp = stamp.advanced(by: actor)
+    else { return nil }
+    let item = WorkspaceItem.board(id: boardID, title: normalized)
+    items.append(item)
+    selectedItemID = boardID
+    selectedPageID = nil
+    stamp = nextStamp
+    return item
+  }
+
   /// Removes one item and moves selection to its nearest neighbour. The board
   /// always retains one writable item.
   @discardableResult
@@ -253,7 +290,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     case .notebook:
       guard let selectedPageID else { return false }
       return selected.pageIDs.contains(selectedPageID)
-    case .document:
+    case .document, .board:
       return selectedPageID == nil
     }
   }
@@ -318,6 +355,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     case selectedItemID
     case selectedPageID
     case stamp
+    case rootBoardID
     case notebooks
     case legacySelectedNotebookID = "selectedNotebookID"
   }
@@ -334,6 +372,14 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     switch storedFormat {
     case Self.formatVersion:
       format = Self.formatVersion
+      rootBoardID = try container.decode(UUID.self, forKey: .rootBoardID)
+      items = try container.decode([WorkspaceItem].self, forKey: .items)
+      selectedItemID = try container.decode(UUID.self, forKey: .selectedItemID)
+      selectedPageID = try container.decodeIfPresent(UUID.self, forKey: .selectedPageID)
+      stamp = try container.decode(VersionStamp.self, forKey: .stamp)
+    case 2:
+      format = Self.formatVersion
+      rootBoardID = WorkspaceRoot.boardID
       items = try container.decode([WorkspaceItem].self, forKey: .items)
       selectedItemID = try container.decode(UUID.self, forKey: .selectedItemID)
       selectedPageID = try container.decodeIfPresent(UUID.self, forKey: .selectedPageID)
@@ -344,6 +390,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
         forKey: .notebooks
       )
       format = Self.formatVersion
+      rootBoardID = WorkspaceRoot.boardID
       items = notebooks.map {
         WorkspaceItem.notebook(id: $0.id, title: $0.title, pageIDs: $0.pageIDs)
       }
@@ -365,6 +412,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
   public func encode(to encoder: Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
     try container.encode(Self.formatVersion, forKey: .format)
+    try container.encode(rootBoardID, forKey: .rootBoardID)
     try container.encode(items, forKey: .items)
     try container.encode(selectedItemID, forKey: .selectedItemID)
     try container.encodeIfPresent(selectedPageID, forKey: .selectedPageID)

@@ -40,10 +40,11 @@ final class AgentStateTests: XCTestCase {
       text: "Первая мысль"
     )
 
-    let itemIDs = Set(try XCTUnwrap(model.workspace).items.map(\.id))
-    let saved = try store.loadBoard(itemIDs: itemIDs)
+    let workspace = try XCTUnwrap(model.workspace)
+    let saved = try store.loadBoard(items: workspace.items)
+    let savedBoard = try XCTUnwrap(saved.board(workspace.rootBoardID))
     XCTAssertEqual(
-      saved.elements.first(where: { $0.id == elementID })?.source,
+      savedBoard.elements.first(where: { $0.id == elementID })?.source,
       "Первая мысль"
     )
 
@@ -53,7 +54,8 @@ final class AgentStateTests: XCTestCase {
       $0.id == elementID
     }) ?? true)
     XCTAssertFalse(
-      try store.loadBoard(itemIDs: itemIDs).elements.contains(where: {
+      try store.loadBoard(items: workspace.items)
+        .board(workspace.rootBoardID)!.elements.contains(where: {
         $0.id == elementID
       })
     )
@@ -109,7 +111,7 @@ final class AgentStateTests: XCTestCase {
     model.start(pageSize: PageSize(width: 834, height: 1_194))
     let original = try XCTUnwrap(model.workspace)
     var remoteIndex = original
-    var remoteBoard = try XCTUnwrap(model.board)
+    var remoteBoard = try XCTUnwrap(model.boardHierarchy)
     let remoteActor = UUID()
     let item = try XCTUnwrap(remoteIndex.createDocument(
       title: "Сетевой документ",
@@ -117,6 +119,7 @@ final class AgentStateTests: XCTestCase {
     ))
     XCTAssertTrue(remoteBoard.addItem(
       item.id,
+      to: original.rootBoardID,
       near: WorldPoint(x: 1_200, y: 300),
       actor: remoteActor
     ))
@@ -157,10 +160,15 @@ final class AgentStateTests: XCTestCase {
       model.createDocument(at: .zero, paperSize: .a4)
     )
     var remoteIndex = try XCTUnwrap(model.workspace)
-    var remoteBoard = try XCTUnwrap(model.board)
+    var remoteBoard = try XCTUnwrap(model.boardHierarchy)
     let actor = UUID()
     XCTAssertNotNil(remoteIndex.deleteItem(documentID, actor: actor))
-    XCTAssertTrue(remoteBoard.deleteItem(documentID, actor: actor))
+    XCTAssertTrue(remoteBoard.deleteItem(
+      documentID,
+      from: remoteIndex.rootBoardID,
+      kind: .document,
+      actor: actor
+    ))
 
     model.receivePeerMessage(.board(remoteBoard))
     model.receivePeerMessage(.index(remoteIndex))

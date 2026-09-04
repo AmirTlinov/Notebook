@@ -46,7 +46,8 @@ enum SpatialSurfaceRouter {
   static func intervals(
     from start: CGPoint,
     to end: CGPoint,
-    covers: [SpatialScreenSurface]
+    covers: [SpatialScreenSurface],
+    board: SurfaceID = .board
   ) -> [SpatialSurfaceInterval] {
     var breaks: [CGFloat] = [0, 1]
     for cover in covers {
@@ -71,7 +72,7 @@ enum SpatialSurfaceRouter {
         x: start.x + (end.x - start.x) * midpoint,
         y: start.y + (end.y - start.y) * midpoint
       )
-      let surface = surface(at: point, covers: covers)
+      let surface = surface(at: point, covers: covers, board: board)
       if let last = result.last, last.surface == surface {
         result[result.count - 1] = SpatialSurfaceInterval(
           lowerBound: last.lowerBound,
@@ -93,11 +94,12 @@ enum SpatialSurfaceRouter {
 
   static func surface(
     at point: CGPoint,
-    covers: [SpatialScreenSurface]
+    covers: [SpatialScreenSurface],
+    board: SurfaceID = .board
   ) -> SurfaceID {
     covers
       .filter { $0.frame.contains(point) }
-      .max { $0.zIndex < $1.zIndex }?.id ?? .board
+      .max { $0.zIndex < $1.zIndex }?.id ?? board
   }
 
   private static func intersectionRange(

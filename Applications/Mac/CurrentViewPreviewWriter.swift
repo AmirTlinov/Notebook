@@ -13,7 +13,7 @@ private struct RasterSnapshot {
 }
 
 private enum SettledSceneSnapshot {
-  case board
+  case board(boardID: UUID)
   case cover(itemID: UUID)
   case page(RasterSnapshot, itemID: UUID, CurrentViewPageRevision)
   case document(
@@ -24,8 +24,8 @@ private enum SettledSceneSnapshot {
 
   var receipt: CurrentViewSurfaceRevision {
     switch self {
-    case .board:
-      return .board
+    case .board(let boardID):
+      return .board(boardID: boardID)
     case .cover(let itemID):
       return .cover(itemID: itemID)
     case .page(let snapshot, let itemID, let revision):
@@ -101,7 +101,7 @@ enum CurrentViewPreviewWriter {
     model: NotebookAppModel,
     viewport: CGSize,
     workspace: WorkspaceIndex,
-    board: BoardDocument,
+    board: BoardHierarchy,
     spatialInk: SpatialInkJournal,
     presence: SessionPresence,
     page: PageDocument?,
@@ -110,9 +110,12 @@ enum CurrentViewPreviewWriter {
     pngURL: URL,
     receiptURL: URL
   ) throws {
+    guard let activeBoard = board.board(presence.boardID) else {
+      throw PreviewError.invalidSurface
+    }
     let snapshot = try makeSnapshot(
       presence: presence,
-      board: board,
+      board: activeBoard,
       page: page,
       document: document,
       documentState: documentState
@@ -120,7 +123,7 @@ enum CurrentViewPreviewWriter {
     let content = SettledCurrentView(
       snapshot: snapshot,
       workspace: workspace,
-      board: board,
+      board: activeBoard,
       spatialInk: spatialInk,
       presence: presence
     )
@@ -165,7 +168,7 @@ enum CurrentViewPreviewWriter {
     switch presence.mode {
     case .board:
       try requireSpatialElementSnapshots(board.elements)
-      return .board
+      return .board(boardID: presence.boardID)
     case .cover:
       guard let itemID = presence.focusedItemID else {
         throw PreviewError.invalidSurface

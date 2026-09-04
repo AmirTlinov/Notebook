@@ -143,10 +143,20 @@ final class PresenceOwnershipTests: XCTestCase {
     let expectedCenter = try XCTUnwrap(board.focusedCenter(of: upperID))
     try store.savePage(initial.page)
     try store.savePage(upper.page)
-    try store.saveBoard(board, itemIDs: Set([lowerID, upperID]))
+    try store.saveBoard(
+      BoardHierarchy(
+        rootBoardID: initial.index.rootBoardID,
+        boards: [
+          BoardNode(id: initial.index.rootBoardID, board: board)
+        ],
+        stamp: board.stamp
+      ),
+      items: initial.index.items
+    )
     try store.saveIndex(initial.index)
     try store.savePresence(
       SessionPresence(
+        boardID: initial.index.rootBoardID,
         mode: .page,
         camera: SpatialCamera(center: stackCenter, scale: 1),
         viewport: SpatialPoint(x: size.width, y: size.height),
@@ -173,7 +183,7 @@ final class PresenceOwnershipTests: XCTestCase {
     let size = PageSize(width: 834, height: 1_194)
     model.start(pageSize: size)
     var workspace = try XCTUnwrap(model.workspace)
-    var board = try XCTUnwrap(model.board)
+    var board = try XCTUnwrap(model.boardHierarchy)
     let created = try XCTUnwrap(workspace.createNotebook(
       title: "Новая",
       actor: UUID(),
@@ -182,6 +192,7 @@ final class PresenceOwnershipTests: XCTestCase {
     let expectedCenter = WorldPoint(x: 2_400, y: -1_200)
     XCTAssertTrue(board.addItem(
       created.item.id,
+      to: workspace.rootBoardID,
       near: expectedCenter,
       actor: UUID()
     ))

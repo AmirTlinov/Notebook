@@ -4,6 +4,7 @@ import NotebookCore
 import UIKit
 
 struct SpatialInkCanvas: UIViewRepresentable {
+  let boardID: UUID
   let camera: SpatialCamera
   let viewport: SpatialPoint
   let items: [SpatialWorkspaceItemSurface]
@@ -32,6 +33,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     }
     context.coordinator.update(
       view: view,
+      boardID: boardID,
       camera: camera,
       viewport: viewport,
       items: items,
@@ -50,6 +52,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
   func updateUIView(_ view: SpatialInkContainerView, context: Context) {
     context.coordinator.update(
       view: view,
+      boardID: boardID,
       camera: camera,
       viewport: viewport,
       items: items,
@@ -75,6 +78,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
   final class Coordinator {
     private struct RenderSignature: Equatable {
       let journalStamp: VersionStamp?
+      let board: SurfaceID
       let camera: SpatialCamera
       let viewport: SpatialPoint
     }
@@ -91,6 +95,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private var appliedSignature: RenderSignature?
 
     private var camera = SpatialCamera()
+    private var boardSurface = SurfaceID.board
     private var viewport = SpatialPoint(x: 1, y: 1)
     private var items: [SpatialWorkspaceItemSurface] = []
     private var journal: SpatialInkJournal?
@@ -132,6 +137,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
 
     func update(
       view: SpatialInkContainerView,
+      boardID: UUID,
       camera: SpatialCamera,
       viewport: SpatialPoint,
       items: [SpatialWorkspaceItemSurface],
@@ -149,6 +155,12 @@ struct SpatialInkCanvas: UIViewRepresentable {
       ) -> Void
     ) {
       self.view = view
+      let nextBoardSurface = SurfaceID.board(boardID)
+      if boardSurface != nextBoardSurface {
+        surfaceRegistry.unregister(view.inkView, for: boardSurface)
+        boardSurface = nextBoardSurface
+        appliedSignature = nil
+      }
       self.camera = camera
       self.viewport = viewport
       self.items = items.sorted { $0.zIndex < $1.zIndex }
@@ -157,7 +169,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       self.eraserStyle = eraserStyle
       self.drawingTool = drawingTool
       if self.surfaceRegistry !== surfaceRegistry {
-        self.surfaceRegistry.unregister(view.inkView, for: .board)
+        self.surfaceRegistry.unregister(view.inkView, for: boardSurface)
         self.surfaceRegistry = surfaceRegistry
         appliedSignature = nil
       }
@@ -172,7 +184,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       }
       self.isEnabled = isEnabled
       self.onCommit = onCommit
-      surfaceRegistry.register(view.inkView, for: .board)
+      surfaceRegistry.register(view.inkView, for: boardSurface)
       view.accessibilityValue = "\(journal?.actions.filter(\.isActive).count ?? 0) действий"
       recognizer?.isEnabled = isEnabled
       scheduleRenderIfNeeded()
@@ -186,11 +198,11 @@ struct SpatialInkCanvas: UIViewRepresentable {
       }
       guard self.window !== window else {
         recognizer?.isEnabled = isEnabled
-        surfaceRegistry.register(view.inkView, for: .board)
+        surfaceRegistry.register(view.inkView, for: boardSurface)
         return
       }
       uninstall()
-      surfaceRegistry.register(view.inkView, for: .board)
+      surfaceRegistry.register(view.inkView, for: boardSurface)
       let recognizer = SpatialPencilGestureRecognizer()
       recognizer.allowedTouchTypes = [
         NSNumber(value: UITouch.TouchType.pencil.rawValue)
@@ -223,7 +235,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       window = nil
       cancelAction()
       if let view {
-        surfaceRegistry.unregister(view.inkView, for: .board)
+        surfaceRegistry.unregister(view.inkView, for: boardSurface)
       }
     }
 
@@ -280,7 +292,8 @@ struct SpatialInkCanvas: UIViewRepresentable {
           beginSegment(
             on: SpatialSurfaceRouter.surface(
               at: point.location,
-              covers: screenSurfaces()
+              covers: screenSurfaces(),
+              board: boardSurface
             ),
             with: point
           )
@@ -306,7 +319,8 @@ struct SpatialInkCanvas: UIViewRepresentable {
           .prefix { prediction in
             SpatialSurfaceRouter.surface(
               at: prediction.location,
-              covers: screenSurfaces()
+              covers: screenSurfaces(),
+              board: boardSurface
             ) == currentSurface
           }
           .map { livePoint($0, on: currentSurface) }
@@ -406,7 +420,8 @@ struct SpatialInkCanvas: UIViewRepresentable {
       let intervals = SpatialSurfaceRouter.intervals(
         from: start.location,
         to: end.location,
-        covers: screenSurfaces()
+        covers: screenSurfaces(),
+        board: boardSurface
       )
       for interval in intervals {
         let lower = interpolate(start, end, t: Double(interval.lowerBound))
@@ -553,7 +568,8 @@ struct SpatialInkCanvas: UIViewRepresentable {
       var result: [SpatialInkSpan] = []
       var currentSurface = SpatialSurfaceRouter.surface(
         at: first.location,
-        covers: covers
+        covers: covers,
+        board: boardSurface
       )
       var currentPoints = [convert(first, to: currentSurface)]
       var previousPoint = first
@@ -562,7 +578,8 @@ struct SpatialInkCanvas: UIViewRepresentable {
         let intervals = SpatialSurfaceRouter.intervals(
           from: previousPoint.location,
           to: point.location,
-          covers: covers
+          covers: covers,
+          board: boardSurface
         )
         for interval in intervals {
           if interval.surface != currentSurface {
@@ -709,8 +726,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
     }
 
     private func stableLayers(for surface: SurfaceID) -> [SpatialInkRenderLayer] {
-      if surface == .board {
+      if surface == boardSurface {
         return SpatialInkComposer.boardLayers(
+          board: boardSurface,
           journal: journal,
           camera: camera,
           viewport: viewport
@@ -723,6 +741,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       guard actionTool == nil, let view else { return }
       let signature = RenderSignature(
         journalStamp: journal?.stamp,
+        board: boardSurface,
         camera: camera,
         viewport: viewport
       )
@@ -733,10 +752,12 @@ struct SpatialInkCanvas: UIViewRepresentable {
       let journal = journal
       let camera = camera
       let viewport = viewport
+      let boardSurface = boardSurface
       renderTask?.cancel()
       renderTask = Task { [weak self, weak view] in
         let layers = await Task.detached(priority: .userInitiated) {
           SpatialInkComposer.boardLayers(
+            board: boardSurface,
             journal: journal,
             camera: camera,
             viewport: viewport
@@ -748,7 +769,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
           generation == renderGeneration,
           actionTool == nil
         else { return }
-        surfaceRegistry.applyStable(layers, to: .board, in: view.inkView)
+        surfaceRegistry.applyStable(layers, to: boardSurface, in: view.inkView)
       }
     }
   }
@@ -842,12 +863,13 @@ final class SpatialPencilGestureRecognizer: UIGestureRecognizer {
 
 enum SpatialInkComposer {
   static func boardLayers(
+    board: SurfaceID,
     journal: SpatialInkJournal?,
     camera: SpatialCamera,
     viewport: SpatialPoint
   ) -> [SpatialInkRenderLayer] {
     guard let journal else { return [] }
-    return layers(for: .board, in: journal) { sample in
+    return layers(for: board, in: journal) { sample in
       guard let worldPoint = sample.worldPoint else { return nil }
       let screen = camera.worldToScreen(worldPoint, viewport: viewport)
       return point(

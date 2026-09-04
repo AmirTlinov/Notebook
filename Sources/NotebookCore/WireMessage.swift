@@ -65,7 +65,7 @@ public enum WireMessage: Codable, Equatable, Sendable {
   )
   case document(DocumentDocument)
   case documentState(DocumentStateJournal)
-  case board(BoardDocument)
+  case board(BoardHierarchy)
   case spatialInk(SpatialInkJournal)
   case presence(PresenceEnvelope)
   case documentPageSelection(DocumentPageSelectionRequest)

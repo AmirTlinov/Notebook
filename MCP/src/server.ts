@@ -143,11 +143,22 @@ export function createServer(store = new NotebookStore()): McpServer {
         : null;
       const content = current.kind === "notebook"
         ? await observedPage(store, current.page, item)
-        : observedDocument(current.document, current.state);
+        : current.kind === "document"
+          ? observedDocument(current.document, current.state)
+          : {
+              kind: "board",
+              boardID: presence.boardID,
+              itemCount: board.freeItems.length
+                + board.stacks.reduce(
+                  (count, stack) => count + stack.itemIDs.length,
+                  0,
+                ),
+            };
       return {
         data: {
           status: "ready",
           mode: presence.mode,
+          boardID: presence.boardID,
           camera: presence.camera,
           viewport: presence.viewport,
           focusedItemID: presence.focusedItemID ?? null,
@@ -197,6 +208,7 @@ export function createServer(store = new NotebookStore()): McpServer {
         store.readSpatialInk(),
       ]);
       return {
+        boardID: (await store.readPresence()).boardID,
         workspaceRevision: revision(workspace.stamp),
         boardRevision: revision(board.stamp),
         spatialInkRevision: revision(spatialInk.stamp),
@@ -220,7 +232,7 @@ export function createServer(store = new NotebookStore()): McpServer {
     ({ notebook_id }) => safely(async () => {
       const workspace = await store.readWorkspace();
       const [board, spatialInk] = await Promise.all([
-        store.readBoard(workspace),
+        store.readItemBoard(notebook_id, workspace),
         store.readSpatialInk(),
       ]);
       const notebook = workspace.items.find((candidate) =>
@@ -297,6 +309,37 @@ export function createServer(store = new NotebookStore()): McpServer {
         return {
           itemID: created.itemID,
           pageID: created.page.id,
+          workspaceRevision: revision(created.workspace.stamp),
+          boardRevision: revision(created.board.stamp),
+        };
+      }),
+  );
+
+  server.registerTool(
+    "notebook_create_board",
+    {
+      title: "Create a nested infinite board",
+      description:
+        "Create one empty infinite board as a portal on the current board. The portal and child board share one stable ID.",
+      inputSchema: z.object({
+        expected_workspace_revision: z.string().min(1),
+        expected_board_revision: z.string().min(1),
+        title: z.string().trim().max(240).default(""),
+        center: worldPointSchema,
+      }),
+    },
+    ({ expected_workspace_revision, expected_board_revision, title, center }) =>
+      safely(async () => {
+        const created = await store.createBoard({
+          title,
+          center,
+          expectedWorkspaceRevision: expected_workspace_revision,
+          expectedBoardRevision: expected_board_revision,
+        });
+        return {
+          itemID: created.boardID,
+          boardID: created.boardID,
+          parentBoardID: created.parentBoardID,
           workspaceRevision: revision(created.workspace.stamp),
           boardRevision: revision(created.board.stamp),
         };
@@ -465,13 +508,13 @@ export function createServer(store = new NotebookStore()): McpServer {
     },
     ({ expected_revision, surface, id, frame, world_origin, markdown, css }) =>
       safely(async () => {
-        const surfaceID = inputSurface(surface);
-        assertSpatialPlacement(surfaceID, frame, world_origin);
         const html = await marked.parse(markdown, { async: true, gfm: true });
         const board = await store.replaceBoard({
           expectedRevision: expected_revision,
-          transform: (current, workspace, actor) => {
-            assertKnownSurface(surfaceID, workspace);
+          transform: (current, workspace, actor, boardID) => {
+            const surfaceID = inputSurface(surface, boardID);
+            assertSpatialPlacement(surfaceID, frame, world_origin);
+            assertKnownSurface(surfaceID, workspace, current);
             const stamp = nextVersionStamp(current.stamp, actor);
             const element = spatialElement({
               id,
@@ -523,12 +566,12 @@ export function createServer(store = new NotebookStore()): McpServer {
       state,
     }) => safely(async () => {
       assertJavaScript(javascript);
-      const surfaceID = inputSurface(surface);
-      assertSpatialPlacement(surfaceID, frame, world_origin);
       const board = await store.replaceBoard({
         expectedRevision: expected_revision,
-        transform: (current, workspace, actor) => {
-          assertKnownSurface(surfaceID, workspace);
+        transform: (current, workspace, actor, boardID) => {
+          const surfaceID = inputSurface(surface, boardID);
+          assertSpatialPlacement(surfaceID, frame, world_origin);
+          assertKnownSurface(surfaceID, workspace, current);
           const element = spatialElement({
             id,
             surface: surfaceID,
@@ -996,7 +1039,7 @@ function publicSpatialElement(element: SpatialElement): object {
     id: element.id,
     surface: element.surface.kind === "cover"
       ? { kind: "cover", item_id: element.surface.ownerID }
-      : { kind: "board" },
+      : { kind: "board", board_id: element.surface.ownerID },
     kind: element.kind,
     frame: element.frame,
     world_origin: element.worldOrigin ?? null,
@@ -1333,9 +1376,10 @@ function stackItem(
 
 function inputSurface(
   value: { kind: "board" } | { kind: "cover"; item_id: string },
+  boardID: string,
 ): SurfaceID {
   return value.kind === "board"
-    ? { kind: "board" }
+    ? { kind: "board", ownerID: boardID }
     : { kind: "cover", ownerID: value.item_id };
 }
 
@@ -1441,11 +1485,22 @@ function assertSpatialPlacement(
   }
 }
 
-function assertKnownSurface(surface: SurfaceID, workspace: WorkspaceIndex): void {
-  if (surface.kind === "cover" && !workspace.items.some(
-    (item) => sameID(item.id, surface.ownerID!),
-  )) {
-    throw new StoreError("Обложка не найдена.");
+function assertKnownSurface(
+  surface: SurfaceID,
+  workspace: WorkspaceIndex,
+  board: BoardDocument,
+): void {
+  if (surface.kind === "board") return;
+  const isWorkspaceItem = workspace.items.some(
+    (item) => sameID(item.id, surface.ownerID),
+  );
+  const isOnCurrentBoard = board.freeItems.some(
+    (placement) => sameID(placement.itemID, surface.ownerID),
+  ) || board.stacks.some((stack) =>
+    stack.itemIDs.some((itemID) => sameID(itemID, surface.ownerID))
+  );
+  if (!isWorkspaceItem || !isOnCurrentBoard) {
+    throw new StoreError("Обложка не принадлежит текущей доске.");
   }
 }
 

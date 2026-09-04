@@ -91,11 +91,12 @@ enum SpatialInkDrawingComposer {
   }
 
   static func boardDrawing(
+    board: SurfaceID,
     in journal: SpatialInkJournal?,
     camera: SpatialCamera,
     viewport: SpatialPoint
   ) -> PKDrawing {
-    compose(surface: .board, journal: journal) { sample in
+    compose(surface: board, journal: journal) { sample in
       guard let worldPoint = sample.worldPoint else { return nil }
       let screen = camera.worldToScreen(worldPoint, viewport: viewport)
       return pkPoint(
