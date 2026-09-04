@@ -8,48 +8,6 @@ enum SpatialInkRenderLayer {
   case erase(points: [PKStrokePoint])
 }
 
-struct VisibleInkStrokeRun {
-  let points: [PKStrokePoint]
-  let roundsStart: Bool
-  let roundsEnd: Bool
-}
-
-enum InkStrokeGeometry {
-  private static let endpointTolerance: CGFloat = 0.001
-
-  /// PencilKit keeps the original path after a bitmap erase and clips it with
-  /// a mask. Rendering the raw path would therefore paint erased ink again.
-  static func visibleRuns(for stroke: PKStroke) -> [VisibleInkStrokeRun] {
-    guard !stroke.path.isEmpty else { return [] }
-    guard stroke.mask != nil else {
-      return [
-        VisibleInkStrokeRun(
-          points: Array(stroke.path),
-          roundsStart: true,
-          roundsEnd: true
-        )
-      ]
-    }
-
-    let pathStart: CGFloat = 0
-    let pathEnd = CGFloat(stroke.path.count - 1)
-    return stroke.maskedPathRanges.compactMap { range in
-      let lower = max(pathStart, range.lowerBound)
-      let upper = min(pathEnd, range.upperBound)
-      guard lower <= upper else { return nil }
-
-      let visibleStroke = stroke.substroke(range: lower...upper)
-      let points = Array(visibleStroke.path)
-      guard !points.isEmpty else { return nil }
-      return VisibleInkStrokeRun(
-        points: points,
-        roundsStart: lower <= pathStart + endpointTolerance,
-        roundsEnd: upper >= pathEnd - endpointTolerance
-      )
-    }
-  }
-}
-
 /// One mutable geometry record follows a pen stroke from Pencil-down to disk.
 @MainActor
 final class ActiveInkStroke {
@@ -122,21 +80,36 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     var premultipliedColor: SIMD4<Float>
   }
 
+  private struct StableRasterKey: Equatable {
+    let drawingRevision: UInt64
+    let size: CGSize
+  }
+
+  private struct StableRaster: @unchecked Sendable {
+    let image: CGImage
+  }
+
   private static let capSegments = 12
   private static let framesInFlight = 3
   private static let minimumDistanceSquared: Float = 0.0001
+  nonisolated private static let stableRasterScale: CGFloat = 2
 
   private let commandQueue: (any MTLCommandQueue)?
+  private let stableInkPipelineState: (any MTLRenderPipelineState)?
   private let inkPipelineState: (any MTLRenderPipelineState)?
   private let eraserPipelineState: (any MTLRenderPipelineState)?
+  private let textureLoader: MTKTextureLoader?
   private let inFlightSemaphore = DispatchSemaphore(
     value: InkCanvasView.framesInFlight
   )
 
-  private var committedVertices: [Vertex] = []
-  private var committedBuffer: (any MTLBuffer)?
   private var committedBatches: [CommittedBatch] = []
-  private var committedStrokeCount = 0
+  private var stableDrawing: PKDrawing?
+  private var stableDrawingRevision: UInt64 = 0
+  private var stableTexture: (any MTLTexture)?
+  private var installedStableRasterKey: StableRasterKey?
+  private var pendingStableRasterKey: StableRasterKey?
+  private var stableRasterTask: Task<Void, Never>?
 
   private var activeInkStroke: ActiveInkStroke?
   private var activeEraserStroke: ActiveEraserStroke?
@@ -165,8 +138,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   var committedVertexCount: Int {
-    committedVertices.count
-      + committedBatches.reduce(0) { $0 + $1.vertices.count }
+    committedBatches.reduce(0) { $0 + $1.vertices.count }
   }
 
   var committedEraserVertexCount: Int {
@@ -178,13 +150,37 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   init(frame: CGRect) {
     let device = MTLCreateSystemDefaultDevice()
     commandQueue = device?.makeCommandQueue()
+    textureLoader = device.map(MTKTextureLoader.init(device:))
 
     if let device,
       let library = try? device.makeDefaultLibrary(bundle: .main),
       let vertexFunction = library.makeFunction(name: "paperInkVertex"),
-      let fragmentFunction = library.makeFunction(name: "paperInkFragment")
+      let fragmentFunction = library.makeFunction(name: "paperInkFragment"),
+      let stableVertexFunction = library.makeFunction(name: "stableInkVertex"),
+      let stableFragmentFunction = library.makeFunction(
+        name: "stableInkFragment"
+      )
     {
       let sampleCount = device.supportsTextureSampleCount(4) ? 4 : 1
+      let stableDescriptor = MTLRenderPipelineDescriptor()
+      stableDescriptor.label = "Stable Notebook Ink"
+      stableDescriptor.vertexFunction = stableVertexFunction
+      stableDescriptor.fragmentFunction = stableFragmentFunction
+      stableDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+      stableDescriptor.rasterSampleCount = sampleCount
+
+      let stableAttachment = stableDescriptor.colorAttachments[0]!
+      stableAttachment.isBlendingEnabled = true
+      stableAttachment.rgbBlendOperation = .add
+      stableAttachment.alphaBlendOperation = .add
+      stableAttachment.sourceRGBBlendFactor = .one
+      stableAttachment.sourceAlphaBlendFactor = .one
+      stableAttachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
+      stableAttachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+      stableInkPipelineState = try? device.makeRenderPipelineState(
+        descriptor: stableDescriptor
+      )
+
       let inkDescriptor = MTLRenderPipelineDescriptor()
       inkDescriptor.label = "Notebook Ink"
       inkDescriptor.vertexFunction = vertexFunction
@@ -223,6 +219,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         descriptor: eraserDescriptor
       )
     } else {
+      stableInkPipelineState = nil
       inkPipelineState = nil
       eraserPipelineState = nil
     }
@@ -262,27 +259,54 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     }
     if window != nil {
       isPaused = false
+      scheduleStableRasterIfNeeded()
     }
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    scheduleStableRasterIfNeeded()
   }
 
   /// Replaces the page atomically. This is used for load, undo, and sync.
   func apply(_ drawing: PKDrawing) {
     beginStableContentUpdate()
-    committedVertices = makeVertices(for: drawing)
-    committedBuffer = nil
+    stableRasterTask?.cancel()
+    stableRasterTask = nil
+    stableDrawingRevision &+= 1
+    stableDrawing = drawing
+    stableTexture = nil
+    installedStableRasterKey = nil
+    pendingStableRasterKey = nil
     committedBatches.removeAll(keepingCapacity: true)
-    committedStrokeCount = drawing.strokes.count
     discardActiveAction()
-    requestFrame()
+    scheduleStableRasterIfNeeded()
+  }
+
+  /// Replaces finished live batches only after PencilKit has produced the
+  /// exact durable pixels for the same drawing. A newer active gesture keeps
+  /// the existing base and batches until its own durable drawing settles.
+  func settle(_ drawing: PKDrawing) {
+    beginStableContentUpdate()
+    stableRasterTask?.cancel()
+    stableRasterTask = nil
+    stableDrawingRevision &+= 1
+    stableDrawing = drawing
+    pendingStableRasterKey = nil
+    scheduleStableRasterIfNeeded()
   }
 
   /// Rebuilds one spatial surface from its ordered raw journal actions.
   func applySpatial(_ layers: [SpatialInkRenderLayer]) {
     beginStableContentUpdate()
-    committedVertices.removeAll(keepingCapacity: true)
-    committedBuffer = nil
+    stableRasterTask?.cancel()
+    stableRasterTask = nil
+    stableDrawingRevision &+= 1
+    stableDrawing = nil
+    stableTexture = nil
+    installedStableRasterKey = nil
+    pendingStableRasterKey = nil
     committedBatches.removeAll(keepingCapacity: true)
-    committedStrokeCount = 0
 
     for layer in layers {
       switch layer {
@@ -317,6 +341,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   /// clock, never inside the touch callback.
   func displayActiveStroke(_ stroke: ActiveInkStroke) {
     if activeInkStroke !== stroke {
+      cancelPendingStableRaster()
       activeInkStroke = stroke
       activeEraserStroke = nil
       builtActiveIdentity = nil
@@ -329,6 +354,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   /// produce any visible intermediate drawings while the gesture is active.
   func displayActiveEraser(_ stroke: ActiveEraserStroke) {
     if activeEraserStroke !== stroke {
+      cancelPendingStableRaster()
       activeEraserStroke = stroke
       activeInkStroke = nil
       builtActiveIdentity = nil
@@ -356,7 +382,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         to: &vertices
       )
       appendCommitted(vertices, operation: .ink)
-      committedStrokeCount += 1
     }
     discardActiveAction()
     requestFrame()
@@ -423,6 +448,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     _ view: MTKView,
     drawableSizeWillChange size: CGSize
   ) {
+    scheduleStableRasterIfNeeded()
     requestFrame()
   }
 
@@ -447,9 +473,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       descriptor: descriptor
     ) else { return }
 
-    if committedBuffer == nil, !committedVertices.isEmpty {
-      committedBuffer = makeBuffer(for: committedVertices)
-    }
     for index in committedBatches.indices
       where committedBatches[index].buffer == nil
     {
@@ -458,6 +481,17 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       )
     }
     let active = prepareActiveBuffer(in: frameSlot)
+
+    if let stableTexture, let stableInkPipelineState {
+      encoder.label = "Stable Notebook Ink"
+      encoder.setRenderPipelineState(stableInkPipelineState)
+      encoder.setFragmentTexture(stableTexture, index: 0)
+      encoder.drawPrimitives(
+        type: .triangle,
+        vertexStart: 0,
+        vertexCount: 6
+      )
+    }
 
     if inkPipelineState != nil, eraserPipelineState != nil {
       encoder.label = "Notebook Ink"
@@ -469,12 +503,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         &viewportSize,
         length: MemoryLayout<SIMD2<Float>>.stride,
         index: 1
-      )
-      draw(
-        buffer: committedBuffer,
-        vertexCount: committedVertices.count,
-        operation: .ink,
-        with: encoder
       )
       for batch in committedBatches {
         draw(
@@ -497,7 +525,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
     commandBuffer.present(drawable)
     let presentedRevision: UInt64? =
-      activeInkStroke == nil && activeEraserStroke == nil
+      activeInkStroke == nil
+        && activeEraserStroke == nil
+        && stableRasterIsReady
       ? stableContentRevision : nil
     commandBuffer.addCompletedHandler { [weak self, inFlightSemaphore] _ in
       inFlightSemaphore.signal()
@@ -529,6 +559,121 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private func beginStableContentUpdate() {
     stableContentRevision &+= 1
     onRenderReadinessChange?(false)
+  }
+
+  private var stableRasterIsReady: Bool {
+    guard stableDrawing != nil else { return true }
+    guard let key = desiredStableRasterKey else { return false }
+    return installedStableRasterKey == key
+  }
+
+  private var desiredStableRasterKey: StableRasterKey? {
+    guard stableDrawing != nil,
+      bounds.width > 0,
+      bounds.height > 0
+    else { return nil }
+    return StableRasterKey(
+      drawingRevision: stableDrawingRevision,
+      size: bounds.size
+    )
+  }
+
+  private func cancelPendingStableRaster() {
+    stableRasterTask?.cancel()
+    stableRasterTask = nil
+    pendingStableRasterKey = nil
+  }
+
+  private func scheduleStableRasterIfNeeded() {
+    guard activeInkStroke == nil,
+      activeEraserStroke == nil,
+      let drawing = stableDrawing,
+      let key = desiredStableRasterKey,
+      installedStableRasterKey != key,
+      pendingStableRasterKey != key
+    else { return }
+
+    stableRasterTask?.cancel()
+    pendingStableRasterKey = key
+
+    if drawing.strokes.isEmpty {
+      installStableRaster(nil, for: key)
+      return
+    }
+
+    let rasterBounds = CGRect(origin: .zero, size: key.size)
+    stableRasterTask = Task { [weak self] in
+      let raster = await Task.detached(priority: .userInitiated) {
+        Self.makeStableRaster(
+          from: drawing,
+          bounds: rasterBounds,
+          scale: Self.stableRasterScale
+        )
+      }.value
+      guard let self else { return }
+      guard acceptsStableRaster(for: key),
+        let raster,
+        let texture = await makeTexture(from: raster),
+        acceptsStableRaster(for: key)
+      else {
+        if pendingStableRasterKey == key {
+          stableRasterTask = nil
+          pendingStableRasterKey = nil
+        }
+        return
+      }
+      installStableRaster(texture, for: key)
+    }
+  }
+
+  private func acceptsStableRaster(for key: StableRasterKey) -> Bool {
+    !Task.isCancelled
+      && pendingStableRasterKey == key
+      && desiredStableRasterKey == key
+      && activeInkStroke == nil
+      && activeEraserStroke == nil
+  }
+
+  private func makeTexture(
+    from raster: StableRaster
+  ) async -> (any MTLTexture)? {
+    guard let textureLoader else { return nil }
+    return try? await textureLoader.newTexture(
+      cgImage: raster.image,
+      options: [
+        .SRGB: true,
+        .origin: MTKTextureLoader.Origin.topLeft.rawValue,
+      ]
+    )
+  }
+
+  private func installStableRaster(
+    _ texture: (any MTLTexture)?,
+    for key: StableRasterKey
+  ) {
+    guard desiredStableRasterKey == key,
+      activeInkStroke == nil,
+      activeEraserStroke == nil
+    else { return }
+    stableTexture = texture
+    installedStableRasterKey = key
+    pendingStableRasterKey = nil
+    stableRasterTask = nil
+    committedBatches.removeAll(keepingCapacity: true)
+    requestFrame()
+  }
+
+  nonisolated private static func makeStableRaster(
+    from drawing: PKDrawing,
+    bounds: CGRect,
+    scale: CGFloat
+  ) -> StableRaster? {
+    autoreleasepool {
+      guard let image = drawing.image(from: bounds, scale: scale).cgImage else {
+        return nil
+      }
+      return StableRaster(image: image)
+    }
   }
 
   private func requestFrame() {
@@ -675,24 +820,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       vertexStart: 0,
       vertexCount: vertexCount
     )
-  }
-
-  private func makeVertices(for drawing: PKDrawing) -> [Vertex] {
-    var vertices: [Vertex] = []
-    let pointCount = drawing.strokes.reduce(0) { $0 + $1.path.count }
-    vertices.reserveCapacity(pointCount * 6)
-    for stroke in drawing.strokes {
-      for run in InkStrokeGeometry.visibleRuns(for: stroke) {
-        appendStrokeVertices(
-          points: run.points,
-          color: rgba(for: stroke.ink.color),
-          roundsStart: run.roundsStart,
-          roundsEnd: run.roundsEnd,
-          to: &vertices
-        )
-      }
-    }
-    return vertices
   }
 
   private func makeVertices(
@@ -913,25 +1040,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       vertices.append(vertex(at: first, color: point.premultipliedColor))
       vertices.append(vertex(at: second, color: point.premultipliedColor))
     }
-  }
-
-  private func rgba(for color: UIColor) -> SIMD4<Float> {
-    let resolved = color.resolvedColor(with: traitCollection)
-    var red: CGFloat = 0
-    var green: CGFloat = 0
-    var blue: CGFloat = 0
-    var alpha: CGFloat = 1
-    if resolved.getRed(
-      &red,
-      green: &green,
-      blue: &blue,
-      alpha: &alpha
-    ) {
-      return SIMD4(Float(red), Float(green), Float(blue), Float(alpha))
-    }
-    var white: CGFloat = 0
-    resolved.getWhite(&white, alpha: &alpha)
-    return SIMD4(Float(white), Float(white), Float(white), Float(alpha))
   }
 
   private func vertex(

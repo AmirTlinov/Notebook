@@ -725,12 +725,12 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(app.state, .runningForeground)
     let screenshot = app.screenshot()
     XCTAssertGreaterThan(
-      darkPixelShare(
+      visibleInkPixelShare(
         in: screenshot,
         normalizedRect: CGRect(x: 0.16, y: 0.34, width: 0.26, height: 0.18)
       ),
       0.005,
-      "Чернила обложки должны остаться на изгибающемся физическом листе"
+      "Устойчивые чернила должны остаться видимыми под изгибающейся обложкой"
     )
     let technicalBand = CGRect(
       x: notebook.frame.minX + notebook.frame.width * 0.29,
@@ -986,6 +986,19 @@ final class DrawingResponsivenessTests: XCTestCase {
     }
   }
 
+  private func visibleInkPixelShare(
+    in screenshot: XCUIScreenshot,
+    normalizedRect: CGRect
+  ) -> Double {
+    pixelShare(in: screenshot, normalizedRect: normalizedRect) {
+      red,
+      green,
+      blue,
+      _ in
+      max(red, green, blue) < 180
+    }
+  }
+
   private func warmPaperPixelShare(
     in screenshot: XCUIScreenshot,
     normalizedRect: CGRect
@@ -1089,6 +1102,89 @@ final class DrawingResponsivenessTests: XCTestCase {
       }
     }
     return Double(matchingPixels) / Double(crop.width * crop.height)
+  }
+
+  private func changedPixelShare(
+    from first: XCUIScreenshot,
+    to second: XCUIScreenshot,
+    normalizedRect: CGRect
+  ) -> Double {
+    guard let firstImage = first.image.cgImage,
+      let secondImage = second.image.cgImage,
+      firstImage.width == secondImage.width,
+      firstImage.height == secondImage.height
+    else {
+      XCTFail("Снимки листа должны иметь один размер")
+      return 1
+    }
+    let imageBounds = CGRect(
+      x: 0,
+      y: 0,
+      width: firstImage.width,
+      height: firstImage.height
+    )
+    let pixelRect = CGRect(
+      x: normalizedRect.minX * imageBounds.width,
+      y: normalizedRect.minY * imageBounds.height,
+      width: normalizedRect.width * imageBounds.width,
+      height: normalizedRect.height * imageBounds.height
+    ).integral.intersection(imageBounds)
+    guard !pixelRect.isEmpty,
+      let firstCrop = firstImage.cropping(to: pixelRect),
+      let secondCrop = secondImage.cropping(to: pixelRect),
+      let firstPixels = rgbaPixels(firstCrop),
+      let secondPixels = rgbaPixels(secondCrop)
+    else {
+      XCTFail("Одинаковая область листа должна читаться с обоих снимков")
+      return 1
+    }
+
+    let bytesPerPixel = 4
+    var changedPixels = 0
+    for offset in stride(
+      from: 0,
+      to: firstPixels.count,
+      by: bytesPerPixel
+    ) {
+      let largestChannelChange = (0..<bytesPerPixel).reduce(0) { change, channel in
+        max(
+          change,
+          abs(
+            Int(firstPixels[offset + channel])
+              - Int(secondPixels[offset + channel])
+          )
+        )
+      }
+      if largestChannelChange > 12 { changedPixels += 1 }
+    }
+    return Double(changedPixels)
+      / Double(firstPixels.count / bytesPerPixel)
+  }
+
+  private func rgbaPixels(_ image: CGImage) -> [UInt8]? {
+    let bytesPerPixel = 4
+    let bytesPerRow = image.width * bytesPerPixel
+    var pixels = [UInt8](
+      repeating: 0,
+      count: image.height * bytesPerRow
+    )
+    let rendered = pixels.withUnsafeMutableBytes { buffer -> Bool in
+      guard let context = CGContext(
+        data: buffer.baseAddress,
+        width: image.width,
+        height: image.height,
+        bitsPerComponent: 8,
+        bytesPerRow: bytesPerRow,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+      ) else { return false }
+      context.draw(
+        image,
+        in: CGRect(x: 0, y: 0, width: image.width, height: image.height)
+      )
+      return true
+    }
+    return rendered ? pixels : nil
   }
 
   func testPenCommitsOneStrokeAndKeepsThePaperResponsive() {
@@ -1207,7 +1303,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     wait(for: [bothErasersLanded], timeout: 2)
   }
 
-  func testErasureIsCommittedBeforeLeavingAndReopeningTheNotebook() {
+  func testErasureIsCommittedBeforeLeavingAndReopeningTheNotebook() async throws {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = [
@@ -1241,7 +1337,17 @@ final class DrawingResponsivenessTests: XCTestCase {
       predicate: NSPredicate(format: "value != %@", originalValue ?? ""),
       object: paper
     )
-    wait(for: [erased], timeout: 2)
+    await fulfillment(of: [erased], timeout: 2)
+    try await Task.sleep(for: .milliseconds(700))
+    let beforeClosing = app.screenshot()
+    XCTAssertGreaterThan(
+      visibleInkPixelShare(
+        in: beforeClosing,
+        normalizedRect: CGRect(x: 0.12, y: 0.16, width: 0.76, height: 0.68)
+      ),
+      0.005,
+      "Суд повторного входа должен начинаться с видимых устойчивых чернил"
+    )
 
     paper.pinch(withScale: 0.28, velocity: -2)
     XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
@@ -1255,10 +1361,21 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     let reopened = app.otherElements["paper-input"]
     XCTAssertTrue(reopened.waitForExistence(timeout: 5))
+    try await Task.sleep(for: .milliseconds(700))
     XCTAssertNotEqual(
       reopened.value as? String,
       originalValue,
       "Закрытие должно дождаться сериализации ластика"
+    )
+    let afterReopening = app.screenshot()
+    XCTAssertLessThan(
+      changedPixelShare(
+        from: beforeClosing,
+        to: afterReopening,
+        normalizedRect: CGRect(x: 0.12, y: 0.16, width: 0.76, height: 0.68)
+      ),
+      0.01,
+      "Повторный вход должен показать те же завершённые пиксели листа"
     )
   }
 }

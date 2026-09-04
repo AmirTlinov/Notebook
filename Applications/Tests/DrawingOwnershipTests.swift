@@ -87,7 +87,7 @@ final class DrawingOwnershipTests: XCTestCase {
       in: journal
     )
     XCTAssertTrue(
-      persistedCover.strokes.flatMap(InkStrokeGeometry.visibleRuns).isEmpty,
+      persistedCover.strokes.isEmpty,
       "Тот же ластик должен убрать линию и в сохранённом представлении Mac"
     )
 

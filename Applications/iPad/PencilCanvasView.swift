@@ -316,9 +316,8 @@ struct PencilCanvasView: UIViewRepresentable {
       }
       modelDrawingData = acceptedData
       let acceptedDrawing = Self.drawing(from: acceptedData)
-      guard acceptedDrawing != appliedDrawing else { return }
       appliedDrawing = acceptedDrawing
-      paper.apply(acceptedDrawing)
+      paper.settle(acceptedDrawing)
     }
 
     private func afterLocalDeliveries(
@@ -399,6 +398,11 @@ final class PaperCanvasContainerView: UIView {
   func apply(_ drawing: PKDrawing) {
     inkView.apply(drawing)
     touchView.apply(drawing)
+  }
+
+  func settle(_ drawing: PKDrawing) {
+    inkView.settle(drawing)
+    touchView.acceptCommittedDrawing(drawing)
   }
 
   func setInputEnabled(_ enabled: Bool) {
