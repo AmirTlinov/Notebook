@@ -170,6 +170,14 @@ export const minimumCameraScale = 0.0125;
 export const maximumCameraScale = 4;
 export const canonicalPageSize: PageSize = { width: 834, height: 1_194 };
 
+/** Same physical point conversion as WorkspaceItemGeometry.document in Swift. */
+export function documentSpatialSize(paper: DocumentPaperSize): PageSize {
+  const postScript = paper === "a4"
+    ? { width: 595.275590551, height: 841.88976378 }
+    : { width: 612, height: 792 };
+  return { width: postScript.width * 132 / 72, height: postScript.height * 132 / 72 };
+}
+
 export interface BoardDocument {
   format: 2;
   freeItems: FreeItemPlacement[];
@@ -273,7 +281,7 @@ export type CurrentViewSurfaceRevision =
   };
 
 export interface CurrentViewReceipt {
-  format: 5;
+  format: 6;
   workspaceStamp: VersionStamp;
   boardRevision: string;
   spatialInkStamp: VersionStamp;

@@ -17,6 +17,7 @@
     static let stackBoardArgument = "--notebook-stacked-board-fixture"
     static let documentArgument = "--notebook-document-runtime-fixture"
     static let documentPageArgument = "--notebook-document-page-three-fixture"
+    static let documentLetterArgument = "--notebook-document-letter-fixture"
     static let agentElementArgument = "--notebook-agent-element-fixture"
 
     static var isRequested: Bool {
@@ -143,6 +144,7 @@
           let document = DocumentDocument(
             id: documentID,
             actor: actor,
+            paperSize: ProcessInfo.processInfo.arguments.contains(documentLetterArgument) ? .letter : .a4,
             blocks: [
               .markdown(
                 id: "introduction",
@@ -193,7 +195,7 @@
               mode: .document,
               camera: SpatialCamera(
                 center: center,
-                scale: NotebookPresentation.fitScale(viewport: viewport)
+                scale: WorkspaceItemGeometry.document(document.paperSize).fitScale(viewport: viewport)
               ),
               viewport: viewport,
               focusedItemID: documentID,
@@ -258,7 +260,7 @@
                 mode: .board,
                 camera: SpatialCamera(
                   center: stackCenter,
-                  scale: NotebookPresentation.coverScale(viewport: viewport)
+                  scale: WorkspaceItemGeometry.notebook.coverScale(viewport: viewport)
                 ),
                 viewport: viewport
               )
@@ -267,7 +269,7 @@
                 mode: .page,
                 camera: SpatialCamera(
                   center: focusedCenter,
-                  scale: NotebookPresentation.fitScale(viewport: viewport)
+                  scale: WorkspaceItemGeometry.notebook.fitScale(viewport: viewport)
                 ),
                 viewport: viewport,
                 focusedItemID: selectedItemID,
@@ -282,11 +284,11 @@
           let center = board.placement(of: itemID)?.center
             ?? WorldPoint(x: 0, y: 0)
           let viewport = SpatialPoint(x: size.width, y: size.height)
-          let coverScale = NotebookPresentation.coverScale(viewport: viewport)
+          let coverScale = WorkspaceItemGeometry.notebook.coverScale(viewport: viewport)
           let openProgress = startsWithPartialCover ? 0.18 : 0
           let cameraScale = exp(
             log(coverScale) * (1 - openProgress)
-              + log(NotebookPresentation.fitScale(viewport: viewport))
+              + log(WorkspaceItemGeometry.notebook.fitScale(viewport: viewport))
                 * openProgress
           )
           let cameraCenter = startsOffCenterCover

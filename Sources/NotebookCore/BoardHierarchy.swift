@@ -172,8 +172,8 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
     var changed = false
     for (offset, item) in missing.enumerated() {
       let center = WorldPoint(
-        x: Double(offset % 3 - 1) * NotebookGeometry.width * 1.28,
-        y: Double(offset / 3) * NotebookGeometry.height * 1.18
+        x: Double(offset % 3 - 1) * WorkspaceItemGeometry.notebook.width * 1.28,
+        y: Double(offset / 3) * WorkspaceItemGeometry.notebook.height * 1.18
       )
       if item.kind == .board {
         changed = createBoard(

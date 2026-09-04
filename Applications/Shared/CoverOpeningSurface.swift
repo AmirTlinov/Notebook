@@ -48,7 +48,7 @@ struct CoverOpeningSurface<Cover: View>: View {
       revision: revision,
       backsideColor: backsideColor,
       preparesCoverMotion: preparesCoverMotion,
-      cornerRadius: NotebookGeometry.cornerRadius,
+      cornerRadius: revision.geometry.cornerRadius,
       cover: AnyView(cover.environment(model))
     )
     .allowsHitTesting(progress < CoverOpeningPhysics.liveCoverLimit)
@@ -73,15 +73,18 @@ struct CoverRenderingRevision: Equatable {
   }
 
   let title: String
+  let geometry: WorkspaceItemGeometry
   let elements: [ElementRevision]
   let ink: [InkRevision]
 
   init(
     item: WorkspaceItem,
+    geometry: WorkspaceItemGeometry,
     elements: [SpatialElement],
     journal: SpatialInkJournal?
   ) {
     title = item.title
+    self.geometry = geometry
     self.elements = elements.map {
       ElementRevision(id: $0.id, stamp: $0.stamp)
     }
@@ -104,12 +107,6 @@ struct CoverBacksideColor: Equatable {
   let red: CGFloat
   let green: CGFloat
   let blue: CGFloat
-
-  static let notebook = CoverBacksideColor(
-    red: 0.965,
-    green: 0.955,
-    blue: 0.915
-  )
 
   static let document = CoverBacksideColor(
     red: 0.978,
@@ -307,7 +304,7 @@ struct CoverSnapshotLifecycle {
     private let curlView = CoverCurlMetalView(frame: .zero)
 
     private var lifecycle = CoverSnapshotLifecycle()
-    private var backsideColor = CoverBacksideColor.notebook
+    private var backsideColor = CoverBacksideColor.document
     private var preparesCoverMotion = false
     private var cornerRadius: CGFloat = 0
 
@@ -522,7 +519,7 @@ struct CoverSnapshotLifecycle {
     private let curlView = CoverCurlMetalView(frame: .zero)
 
     private var lifecycle = CoverSnapshotLifecycle()
-    private var backsideColor = CoverBacksideColor.notebook
+    private var backsideColor = CoverBacksideColor.document
     private var preparesCoverMotion = false
     private var cornerRadius: CGFloat = 0
 
@@ -754,7 +751,7 @@ private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
 
   private var coverImage: CIImage?
   private var progress = 0.0
-  private var backsideColor = CoverBacksideColor.notebook
+  private var backsideColor = CoverBacksideColor.document
   private var cornerRadius: CGFloat = 0
   private var curlLayout: CoverCurlLayout?
   private var sourceCover: CGImage?

@@ -139,7 +139,7 @@ extension CurrentViewSurfaceRevision: Codable {
 /// Exact source versions and raster dependency used for
 /// `previews/current-view.png`.
 public struct CurrentViewReceipt: Codable, Equatable, Sendable {
-  public static let formatVersion = 5
+  public static let formatVersion = 6
 
   public let format: Int
   public let workspaceStamp: VersionStamp

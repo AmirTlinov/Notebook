@@ -1,32 +1,5 @@
 import Foundation
 
-public enum NotebookGeometry {
-  public static let width = 834.0
-  public static let height = 1_194.0
-  /// Visually follows the continuous display corner of a full-size iPad while
-  /// leaving the paper slightly squarer than the previous one-centimeter arc.
-  public static let cornerRadius = PhysicalPaper.pointsPerCentimeter * 0.8
-}
-
-/// Converts the fixed physical notebook into a presentation for a particular
-/// viewport. Camera scale is stored relative to this fit, so changing an
-/// aspect ratio and changing it back cannot progressively shrink the scene.
-public enum NotebookPresentation {
-  public static let coverScaleRatio = 0.72
-
-  public static func fitScale(viewport: SpatialPoint) -> Double {
-    precondition(viewport.x > 0 && viewport.y > 0)
-    return min(
-      viewport.x / NotebookGeometry.width,
-      viewport.y / NotebookGeometry.height
-    )
-  }
-
-  public static func coverScale(viewport: SpatialPoint) -> Double {
-    fitScale(viewport: viewport) * coverScaleRatio
-  }
-}
-
 /// A point on the unbounded board. The tile keeps nearby calculations small
 /// even after the camera has travelled far away from the origin.
 public struct WorldPoint: Codable, Equatable, Hashable, Sendable {
@@ -343,10 +316,11 @@ public enum NotebookDockingField {
 
   public static func strength(
     camera: SpatialCamera,
-    viewport: SpatialPoint
+    viewport: SpatialPoint,
+    geometry: WorkspaceItemGeometry
   ) -> Double {
     guard viewport.x > 0, viewport.y > 0 else { return 0 }
-    let pageScale = NotebookPresentation.fitScale(viewport: viewport)
+    let pageScale = geometry.fitScale(viewport: viewport)
     return smoothstep(
       from: fieldStartScaleRatio,
       through: fullStrengthScaleRatio,
@@ -358,13 +332,14 @@ public enum NotebookDockingField {
     _ camera: SpatialCamera,
     toward notebookCenter: WorldPoint,
     viewport: SpatialPoint,
+    geometry: WorkspaceItemGeometry,
     correction: NotebookDockingCorrection
   ) -> SpatialCamera {
     guard correction.centerWeight > 0 || correction.scaleWeight > 0 else {
       return camera
     }
     let delta = camera.center.delta(to: notebookCenter)
-    let targetScale = NotebookPresentation.fitScale(viewport: viewport)
+    let targetScale = geometry.fitScale(viewport: viewport)
     let resolvedScale = exp(
       log(camera.scale)
         + (log(targetScale) - log(camera.scale)) * correction.scaleWeight
@@ -680,9 +655,9 @@ public enum WorkspaceItemStackPresentation {
       let index = stack.itemIDs.firstIndex(of: itemID)
     else { return nil }
     let centered = Double(index) - Double(stack.itemIDs.count - 1) / 2
-    let projectedHeight = NotebookGeometry.height * cameraScale
-    let coverProjectedHeight = NotebookGeometry.height
-      * NotebookPresentation.coverScale(viewport: viewport)
+    let projectedHeight = WorkspaceItemGeometry.notebook.height * cameraScale
+    let coverProjectedHeight = WorkspaceItemGeometry.notebook.height
+      * WorkspaceItemGeometry.notebook.coverScale(viewport: viewport)
     let fanEnd = min(fanEndProjectedHeight, coverProjectedHeight)
     let fanStart = min(fanStartProjectedHeight, fanEnd * 0.75)
     let fan = min(
@@ -719,9 +694,9 @@ public enum WorkspaceItemStackPresentation {
     let spanCount = Double(max(count - 1, 1))
     let centered = Double(index) - Double(count - 1) / 2
     return SpatialPoint(
-      x: centered * NotebookGeometry.width
+      x: centered * WorkspaceItemGeometry.notebook.width
         * fannedHorizontalSpanRatio / spanCount,
-      y: abs(centered) * NotebookGeometry.height
+      y: abs(centered) * WorkspaceItemGeometry.notebook.height
         * fannedVerticalSpanRatio / spanCount
     )
   }
@@ -929,8 +904,8 @@ public struct BoardDocument: Codable, Equatable, Sendable {
 
   public static func initial(itemIDs: [UUID], actor: UUID) -> Self {
     let columns = max(1, min(3, itemIDs.count))
-    let horizontalStep = NotebookGeometry.width * 1.28
-    let verticalStep = NotebookGeometry.height * 1.18
+    let horizontalStep = WorkspaceItemGeometry.notebook.width * 1.28
+    let verticalStep = WorkspaceItemGeometry.notebook.height * 1.18
     let placements = itemIDs.enumerated().map { index, id in
       let column = index % columns
       let row = index / columns
@@ -989,8 +964,8 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     let missing = expectedItemIDs.filter { !itemIDs.contains($0) }
     guard !missing.isEmpty else { return false }
 
-    let horizontalStep = NotebookGeometry.width * 1.28
-    let verticalStep = NotebookGeometry.height * 1.18
+    let horizontalStep = WorkspaceItemGeometry.notebook.width * 1.28
+    let verticalStep = WorkspaceItemGeometry.notebook.height * 1.18
     var occupied = freeItems.map(\.center) + stacks.map(\.center)
     var slot = 0
 
@@ -1414,15 +1389,15 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
 
   /// Projects the same camera into another viewport. A docked page has one
   /// canonical scale; every free board or cover position keeps its
-  /// dimensionless zoom relative to the notebook fit.
-  public func adapted(to targetViewport: SpatialPoint) -> Self {
+  /// dimensionless zoom relative to its owner's physical rectangle.
+  public func adapted(to targetViewport: SpatialPoint, geometry: WorkspaceItemGeometry) -> Self {
     precondition(targetViewport.x > 0 && targetViewport.y > 0)
-    let targetFit = NotebookPresentation.fitScale(viewport: targetViewport)
+    let targetFit = geometry.fitScale(viewport: targetViewport)
     let resolvedScale: Double
     if (mode == .page || mode == .document) && openProgress >= 0.999 {
       resolvedScale = targetFit
     } else {
-      let sourceFit = NotebookPresentation.fitScale(viewport: viewport)
+      let sourceFit = geometry.fitScale(viewport: viewport)
       resolvedScale = camera.scale * targetFit / sourceFit
     }
     return Self(

@@ -14,6 +14,7 @@ import type {
   DocumentStateJournal,
   PageDocument,
   PageRect,
+  PageSize,
   SessionPresence,
   SpatialElement,
   SpatialInkJournal,
@@ -28,6 +29,7 @@ import {
   maximumStackItemCount,
   minimumCameraScale,
   canonicalPageSize,
+  documentSpatialSize,
   revision,
 } from "./domain.js";
 
@@ -163,6 +165,15 @@ export class NotebookStore {
     const journal = migrateSpatialInk(stored);
     validateSpatialInk(journal);
     return journal;
+  }
+
+  async readItemSizes(workspace: WorkspaceIndex): Promise<Map<string, PageSize>> {
+    return new Map(await Promise.all(workspace.items.map(async (item) => [
+      item.id.toLowerCase(),
+      item.kind === "document"
+        ? documentSpatialSize((await this.readDocument(item.id)).paperSize)
+        : canonicalPageSize,
+    ] as const)));
   }
 
   async readPresence(): Promise<SessionPresence> {
@@ -364,6 +375,12 @@ export class NotebookStore {
       hierarchy.boards[nodeIndex]!.board = transformed;
       hierarchy.stamp = transformed.stamp;
       validateBoardHierarchy(hierarchy, workspace);
+      const sizes = await this.readItemSizes(workspace);
+      for (const element of transformed.elements) {
+        if (element.surface.kind === "cover") {
+          assertSpatialFrame(element.frame, element.surface, sizes.get(element.surface.ownerID!.toLowerCase()));
+        }
+      }
       await atomicJSON(this.boardPath, hierarchy);
       return transformed;
     }));
@@ -766,6 +783,7 @@ export function assertFrame(frame: PageRect, page: PageDocument): void {
 export function assertSpatialFrame(
   frame: PageRect,
   surface: { kind: "board" | "cover" | "page" },
+  coverSize?: PageSize,
 ): void {
   for (const [name, value] of Object.entries(frame)) {
     if (!Number.isFinite(value)) throw new StoreError(`frame.${name} должен быть числом.`);
@@ -775,10 +793,10 @@ export function assertSpatialFrame(
   }
   if (
     surface.kind === "cover"
-    && (frame.x < 0 || frame.y < 0 || frame.x + frame.width > 834
-      || frame.y + frame.height > 1_194)
+    && (frame.x < 0 || frame.y < 0 || (coverSize !== undefined
+      && (frame.x + frame.width > coverSize.width || frame.y + frame.height > coverSize.height)))
   ) {
-    throw new StoreError("Элемент обложки должен лежать внутри 834x1194.");
+    throw new StoreError(`Элемент обложки должен лежать внутри её физического размера${coverSize ? ` ${coverSize.width}x${coverSize.height}` : ""}.`);
   }
 }
 
@@ -1419,7 +1437,7 @@ function validatePresence(value: unknown): asserts value is SessionPresence {
 }
 
 function validateCurrentViewReceipt(value: unknown): asserts value is CurrentViewReceipt {
-  if (!isRecord(value) || value.format !== 5) {
+  if (!isRecord(value) || value.format !== 6) {
     throw new StoreError("Квитанция текущего вида повреждена.");
   }
   validateStamp(value.workspaceStamp, "receipt.workspaceStamp");

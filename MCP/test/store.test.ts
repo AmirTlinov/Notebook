@@ -8,9 +8,10 @@ import type {
   AgentElement,
   BoardHierarchy,
   BoardDocument,
+  SpatialElement,
   WorkspaceIndex,
 } from "../src/domain.js";
-import { boardHierarchyRevision, revision } from "../src/domain.js";
+import { boardHierarchyRevision, documentSpatialSize, revision } from "../src/domain.js";
 import {
   ConflictError,
   StoreError,
@@ -767,3 +768,39 @@ test("legacy root ink gains its permanent board owner while retaining every acti
     await assert.rejects(store.readSpatialInk(), StoreError);
   });
 });
+
+for (const paper of ["a4", "letter"] as const) {
+  test(`${paper} cover bounds belong to its immutable physical paper`, async () => {
+    await withStore(async (store) => {
+      const created = await store.createDocument({
+        title: "Размер документа", paperSize: paper,
+        center: { tileX: 0, tileY: 0, localX: 400, localY: 500 },
+        expectedWorkspaceRevision: `0@${appActor}`,
+        expectedBoardRevision: `0@${appActor}`,
+      });
+      const sizes = await store.readItemSizes(created.workspace);
+      const size = sizes.get(created.itemID.toLowerCase())!;
+      assert.deepEqual(size, documentSpatialSize(paper));
+      assert.ok(size.width > 834 && size.height > 1194);
+      const element: SpatialElement = {
+        id: "physical-corner", kind: "nativeText",
+        surface: { kind: "cover", ownerID: created.itemID },
+        frame: { x: size.width - 120, y: size.height - 80, width: 120, height: 80 },
+        source: "У края", html: "", css: "", javaScript: "", state: {},
+        textStyle: { fontSize: 34, weight: 0, red: 0, green: 0, blue: 0, alpha: 1 },
+        stamp: created.board.stamp,
+      };
+      const changed = await store.replaceBoard({
+        expectedRevision: revision(created.board.stamp),
+        transform: (board) => ({ ...board, elements: [element] }),
+      });
+      assert.deepEqual(changed.elements[0]!.frame, element.frame);
+      await assert.rejects(store.replaceBoard({
+        expectedRevision: revision(changed.stamp),
+        transform: (board) => ({ ...board, elements: [{ ...element,
+          frame: { ...element.frame, x: element.frame.x + 1 } }] }),
+      }), /физического размера/);
+      assert.deepEqual((await store.readBoard()).elements, changed.elements);
+    });
+  });
+}

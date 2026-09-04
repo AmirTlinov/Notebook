@@ -265,6 +265,16 @@ try {
   };
   assert.equal(createdReceipt.paperSize, "letter");
 
+  const sizedBoard = await client.callTool({ name: "notebook_read_board", arguments: {} });
+  assert.equal(sizedBoard.isError, undefined);
+  const sizedNodes = (sizedBoard.structuredContent as {
+    nodes: Array<{ id: string; coverSize: { width: number; height: number } }>;
+  }).nodes;
+  assert.deepEqual(sizedNodes.find(node => node.id === createdReceipt.documentID)?.coverSize,
+    { width: 1122, height: 1452 });
+  assert.deepEqual(sizedNodes.find(node => node.id.toLowerCase() === itemID)?.coverSize,
+    { width: 834, height: 1194 });
+
   const readDocument = await client.callTool({
     name: "notebook_read_document",
     arguments: { document_id: createdReceipt.documentID },

@@ -917,6 +917,61 @@ final class DrawingResponsivenessTests: XCTestCase {
     add(proof)
   }
 
+  func testDocumentCoverAndPaperKeepOneRectangleInBothOrientations() async throws {
+    continueAfterFailure = false
+    defer { XCUIDevice.shared.orientation = .portrait }
+    for letter in [false, true] {
+      XCUIDevice.shared.orientation = .portrait
+      let app = XCUIApplication()
+      app.launchArguments = [
+        "--notebook-drawing-responsiveness-fixture",
+        "--notebook-simulator-finger-gestures",
+        "--notebook-document-runtime-fixture",
+      ] + (letter ? ["--notebook-document-letter-fixture"] : [])
+      app.launch()
+      for landscape in [false, true] {
+        XCUIDevice.shared.orientation = landscape ? .landscapeLeft : .portrait
+        try await Task.sleep(for: .milliseconds(600))
+        let document = app.descendants(matching: .any).matching(
+          identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000006"
+        ).firstMatch
+        let paper = app.otherElements.matching(
+          NSPredicate(format: "label BEGINSWITH 'Страница 1 из '")
+        ).firstMatch
+        XCTAssertTrue(paper.waitForExistence(timeout: 8))
+        let ratio = letter ? 612.0 / 792 : 595.275590551 / 841.88976378
+        let surface = app.otherElements["page-turn-surface"]
+        // The native sheet owns the landing rectangle; remote WebKit
+        // accessibility frames round the ancestor transform to screen points.
+        XCTAssertEqual(surface.frame.width / surface.frame.height, ratio, accuracy: 0.002)
+        XCTAssertEqual(paper.frame.width, surface.frame.width, accuracy: 2)
+        XCTAssertEqual(paper.frame.height, surface.frame.height, accuracy: 2)
+        XCTAssertEqual(paper.frame.midX, surface.frame.midX, accuracy: 2)
+        XCTAssertEqual(paper.frame.midY, surface.frame.midY, accuracy: 2)
+        let opened = surface.frame
+        let openProof = XCTAttachment(screenshot: app.screenshot())
+        openProof.name = "\(letter ? "letter" : "a4")-\(landscape ? "landscape" : "portrait")-paper"
+        openProof.lifetime = .keepAlways
+        add(openProof)
+        app.otherElements["page-turn-surface"].pinch(withScale: 0.28, velocity: -2)
+        XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
+        XCTAssertEqual(document.frame.width / document.frame.height, ratio, accuracy: 0.01)
+        let coverProof = XCTAttachment(screenshot: app.screenshot())
+        coverProof.name = "\(letter ? "letter" : "a4")-\(landscape ? "landscape" : "portrait")-cover"
+        coverProof.lifetime = .keepAlways
+        add(coverProof)
+        document.doubleTap()
+        XCTAssertTrue(paper.waitForExistence(timeout: 5))
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(surface.frame.minX, opened.minX, accuracy: 2)
+        XCTAssertEqual(surface.frame.minY, opened.minY, accuracy: 2)
+        XCTAssertEqual(surface.frame.width, opened.width, accuracy: 2)
+        XCTAssertEqual(surface.frame.height, opened.height, accuracy: 2)
+      }
+      app.terminate()
+    }
+  }
+
   func testNearPageApproachMagnetCompletesTheDock() async throws {
     continueAfterFailure = false
     let app = XCUIApplication()

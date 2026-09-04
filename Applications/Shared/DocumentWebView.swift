@@ -133,12 +133,15 @@ private struct DocumentRuntimePayload: Codable {
     let widthPoints: Double
     let heightPoints: Double
     let marginPoints: Double
+    let cornerRadiusRatio: Double
 
     init(_ size: DocumentPaperSize) {
       kind = size
       widthPoints = size.widthPoints
       heightPoints = size.heightPoints
       marginPoints = size.marginPoints
+      let geometry = WorkspaceItemGeometry.document(size)
+      cornerRadiusRatio = geometry.cornerRadius / geometry.width
     }
   }
 
@@ -365,8 +368,10 @@ private final class DocumentWebCoordinator: NSObject,
       let json = String(data: data, encoding: .utf8)
     else { return }
     lastAppliedData = data
+    // Completion belongs to the rendered receipt; evaluating the JavaScript
+    // Promise itself produces an unsupported-result error in WebKit.
     webView.evaluateJavaScript(
-      "window.notebookRenderer.apply(\(json))"
+      "void window.notebookRenderer.apply(\(json))"
     ) { [weak self] _, error in
       guard error != nil else { return }
       Task { @MainActor [weak self] in

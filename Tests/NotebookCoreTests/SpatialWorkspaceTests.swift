@@ -103,8 +103,8 @@ func viewportProjectionIsReversible() {
   )
 
   let restored = original
-    .adapted(to: landscape)
-    .adapted(to: portrait)
+    .adapted(to: landscape, geometry: .notebook)
+    .adapted(to: portrait, geometry: .notebook)
 
   #expect(restored.camera.center == original.camera.center)
   #expect(abs(restored.camera.scale - original.camera.scale) < 0.000_000_1)
@@ -122,7 +122,7 @@ func stablePageRepairsLossyViewportScale() {
     openProgress: 1
   )
 
-  let repaired = corrupted.adapted(to: viewport)
+  let repaired = corrupted.adapted(to: viewport, geometry: .notebook)
 
   #expect(repaired.camera.scale == 1)
   #expect(repaired.focusedItemID == itemID)
@@ -143,7 +143,7 @@ func documentPageSelectionSurvivesViewportProjection() {
     documentPageIndex: 4
   )
 
-  let projected = original.adapted(to: landscape)
+  let projected = original.adapted(to: landscape, geometry: .notebook)
 
   #expect(projected.documentPageIndex == 4)
   #expect(projected.isValid)
@@ -186,7 +186,7 @@ func pagePinchCanReachADeepBoardOverview() {
   )
 
   #expect(overview.scale == 0.02)
-  #expect(overview.scale < NotebookPresentation.coverScale(viewport: viewport))
+  #expect(overview.scale < WorkspaceItemGeometry.notebook.coverScale(viewport: viewport))
 }
 
 @Test("Половина открытия соответствует половине отношения масштабов")
@@ -295,23 +295,23 @@ func pageDockingFieldGrowsThroughoutTheApproach() {
 
   #expect(NotebookDockingField.strength(
     camera: farScale,
-    viewport: viewport
+    viewport: viewport, geometry: .notebook
   ) == 0)
   let approachingStrength = NotebookDockingField.strength(
     camera: approaching,
-    viewport: viewport
+    viewport: viewport, geometry: .notebook
   )
   let coverStrength = NotebookDockingField.strength(
     camera: focusedCover,
-    viewport: viewport
+    viewport: viewport, geometry: .notebook
   )
   let nearbyStrength = NotebookDockingField.strength(
     camera: nearby,
-    viewport: viewport
+    viewport: viewport, geometry: .notebook
   )
   let offCenterStrength = NotebookDockingField.strength(
     camera: offCenter,
-    viewport: viewport
+    viewport: viewport, geometry: .notebook
   )
   #expect(approachingStrength > 0)
   #expect(approachingStrength < coverStrength)
@@ -322,7 +322,7 @@ func pageDockingFieldGrowsThroughoutTheApproach() {
   let approachingCamera = NotebookDockingField.attractedCamera(
     approaching,
     toward: .zero,
-    viewport: viewport,
+    viewport: viewport, geometry: .notebook,
     correction: NotebookDockingField.approachCorrection(
       currentStrength: approachingStrength,
       startingStrength: 0
@@ -331,7 +331,7 @@ func pageDockingFieldGrowsThroughoutTheApproach() {
   let coverCamera = NotebookDockingField.attractedCamera(
     focusedCover,
     toward: .zero,
-    viewport: viewport,
+    viewport: viewport, geometry: .notebook,
     correction: NotebookDockingField.approachCorrection(
       currentStrength: coverStrength,
       startingStrength: 0
@@ -340,7 +340,7 @@ func pageDockingFieldGrowsThroughoutTheApproach() {
   let nearbyCamera = NotebookDockingField.attractedCamera(
     nearby,
     toward: .zero,
-    viewport: viewport,
+    viewport: viewport, geometry: .notebook,
     correction: NotebookDockingField.approachCorrection(
       currentStrength: nearbyStrength,
       startingStrength: 0
@@ -375,12 +375,12 @@ func pageDockingFollowsTheCurrentPinchDirection() {
   )
   let strength = NotebookDockingField.strength(
     camera: camera,
-    viewport: viewport
+    viewport: viewport, geometry: .notebook
   )
   let attracted = NotebookDockingField.attractedCamera(
     camera,
     toward: notebookCenter,
-    viewport: viewport,
+    viewport: viewport, geometry: .notebook,
     correction: NotebookDockingField.approachCorrection(
       currentStrength: strength,
       startingStrength: 0
@@ -453,7 +453,7 @@ func resumedDockingComposesWithoutASecondAttraction() {
   let first = NotebookDockingField.attractedCamera(
     raw,
     toward: target,
-    viewport: viewport,
+    viewport: viewport, geometry: .notebook,
     correction: NotebookDockingField.approachCorrection(
       currentStrength: firstStrength,
       startingStrength: 0
@@ -462,7 +462,7 @@ func resumedDockingComposesWithoutASecondAttraction() {
   let resumed = NotebookDockingField.attractedCamera(
     first,
     toward: target,
-    viewport: viewport,
+    viewport: viewport, geometry: .notebook,
     correction: NotebookDockingField.approachCorrection(
       currentStrength: finalStrength,
       startingStrength: firstStrength
@@ -471,7 +471,7 @@ func resumedDockingComposesWithoutASecondAttraction() {
   let direct = NotebookDockingField.attractedCamera(
     raw,
     toward: target,
-    viewport: viewport,
+    viewport: viewport, geometry: .notebook,
     correction: NotebookDockingField.approachCorrection(
       currentStrength: finalStrength,
       startingStrength: 0
@@ -518,7 +518,7 @@ func coverEngagementContinuesTheApproachCorrection() {
 func openingCoverPullsTheCameraTowardThePaper() {
   let viewport = SpatialPoint(x: 834, y: 1_194)
   let target = WorldPoint.zero
-  let coverScale = NotebookPresentation.coverScale(viewport: viewport)
+  let coverScale = WorkspaceItemGeometry.notebook.coverScale(viewport: viewport)
   let startingCamera = SpatialCamera(
     center: WorldPoint(x: 100 / coverScale, y: -70 / coverScale),
     scale: coverScale
@@ -530,7 +530,7 @@ func openingCoverPullsTheCameraTowardThePaper() {
   let rawOpeningProgress = NotebookOpeningTransition.progress(
     cameraScale: rawCamera.scale,
     openingScale: startingCamera.scale,
-    pageScale: NotebookPresentation.fitScale(viewport: viewport)
+    pageScale: WorkspaceItemGeometry.notebook.fitScale(viewport: viewport)
   )
   let correction = NotebookDockingField.openingCorrection(
     currentProgress: rawOpeningProgress,
@@ -540,7 +540,7 @@ func openingCoverPullsTheCameraTowardThePaper() {
   let attracted = NotebookDockingField.attractedCamera(
     rawCamera,
     toward: target,
-    viewport: viewport,
+    viewport: viewport, geometry: .notebook,
     correction: correction
   )
   let originalError = hypot(
@@ -630,7 +630,7 @@ func openingSettlementKeepsReleaseEnergy() {
 @Test("Угол листа равен восьми физическим миллиметрам")
 func notebookCornerMatchesTheFullSizeIPadSilhouette() {
   #expect(
-    NotebookGeometry.cornerRadius
+    WorkspaceItemGeometry.notebook.cornerRadius
       == PhysicalPaper.pointsPerCentimeter * 0.8
   )
 }
@@ -710,7 +710,7 @@ func stackFocusUsesTheSameCenterAsTheReadableBoardLayout() throws {
   ]
 
   for viewport in viewports {
-    let coverScale = NotebookPresentation.coverScale(viewport: viewport)
+    let coverScale = WorkspaceItemGeometry.notebook.coverScale(viewport: viewport)
     for itemID in [lower, upper] {
       let boardCenter = try #require(WorkspaceItemStackPresentation.boardCenter(
         of: itemID,
@@ -729,7 +729,7 @@ func stackFocusUsesTheSameCenterAsTheReadableBoardLayout() throws {
   let upperCenter = try #require(board.focusedCenter(of: upper))
   #expect(
     abs(lowerCenter.delta(to: upperCenter).x
-      - NotebookGeometry.width * 0.62) < 0.000_001
+      - WorkspaceItemGeometry.notebook.width * 0.62) < 0.000_001
   )
 }
 
@@ -758,7 +758,7 @@ func stackCapacityPreservesAReadableLayout() throws {
   #expect(board.stack(containing: itemIDs[0])?.itemIDs.count == 5)
   let stack = try #require(board.stack(containing: itemIDs[0]))
   let viewport = SpatialPoint(x: 834, y: 1_194)
-  let coverScale = NotebookPresentation.coverScale(viewport: viewport)
+  let coverScale = WorkspaceItemGeometry.notebook.coverScale(viewport: viewport)
   let firstCenter = try #require(WorkspaceItemStackPresentation.boardCenter(
     of: itemIDs[0],
     in: stack,
@@ -773,7 +773,7 @@ func stackCapacityPreservesAReadableLayout() throws {
   ))
   #expect(
     abs(firstCenter.delta(to: lastCenter).x
-      - NotebookGeometry.width * 0.62) < 0.000_001
+      - WorkspaceItemGeometry.notebook.width * 0.62) < 0.000_001
   )
   #expect(board.createStack(
     moving: itemIDs[5],

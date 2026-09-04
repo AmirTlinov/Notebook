@@ -21,6 +21,7 @@ enum WorkspaceMagnificationPhase: Equatable {
 
 struct SpatialWorkspaceItemSurface: Equatable, Identifiable {
   let itemID: UUID
+  let geometry: WorkspaceItemGeometry
   let center: WorldPoint
   let zIndex: Double
 

@@ -73,7 +73,7 @@ struct PageSurface: View {
       .frame(width: page.size.width, height: page.size.height)
       .clipShape(
         RoundedRectangle(
-          cornerRadius: NotebookGeometry.cornerRadius,
+          cornerRadius: WorkspaceItemGeometry.notebook.cornerRadius,
           style: .continuous
         )
       )
@@ -121,7 +121,7 @@ struct BlankPageSurface: View {
       .frame(width: pageSize.width, height: pageSize.height)
       .clipShape(
         RoundedRectangle(
-          cornerRadius: NotebookGeometry.cornerRadius,
+          cornerRadius: WorkspaceItemGeometry.notebook.cornerRadius,
           style: .continuous
         )
       )

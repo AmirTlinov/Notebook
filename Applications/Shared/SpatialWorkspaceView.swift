@@ -30,6 +30,7 @@ private struct CameraGestureSnapshot {
 
 struct RenderedWorkspaceItem: Identifiable {
   let item: WorkspaceItem
+  let geometry: WorkspaceItemGeometry
   let center: WorldPoint
   let zIndex: Double
   let stackID: UUID?
@@ -41,17 +42,18 @@ enum WorkspaceSceneProjection {
   static let portalPasses = 32
 
   static func showsPortal(pixelScale: Double, remainingPasses: Int) -> Bool {
-    remainingPasses > 0 && NotebookGeometry.width * pixelScale >= 8
+    remainingPasses > 0 && WorkspaceItemGeometry.notebook.width * pixelScale >= 8
   }
 
   /// The snapshot publisher walks the same finite portal projection as the view.
   /// Every visible web layer must have its exact source/state raster ready.
   static func snapshotElements(
-    workspace: WorkspaceIndex, hierarchy: BoardHierarchy, presence: SessionPresence
+    workspace: WorkspaceIndex, hierarchy: BoardHierarchy, presence: SessionPresence,
+    documents: [UUID: DocumentDocument]
   ) -> [SpatialElement] {
     guard let board = hierarchy.board(presence.boardID) else { return [] }
     var result = board.elements
-    var pending = items(workspace: workspace, board: board, presence: presence)
+    var pending = items(workspace: workspace, board: board, presence: presence, documents: documents)
       .filter { $0.item.kind == .board }
       .map { ($0.id, 1.0, portalPasses) }
     while let (id, pixelScale, passes) = pending.popLast() {
@@ -67,7 +69,7 @@ enum WorkspaceSceneProjection {
         viewport: BoardPortalProjection.renderViewport(viewport: presence.viewport))
       let childScale = pixelScale * camera.scale
         / BoardPortalProjection.fillScale(viewport: presence.viewport)
-      pending.append(contentsOf: items(workspace: workspace, board: child, presence: childPresence)
+      pending.append(contentsOf: items(workspace: workspace, board: child, presence: childPresence, documents: documents)
         .filter { $0.item.kind == .board }.map { ($0.id, childScale, passes - 1) })
     }
     return result
@@ -76,20 +78,25 @@ enum WorkspaceSceneProjection {
   static func items(
     workspace: WorkspaceIndex,
     board: BoardDocument,
-    presence: SessionPresence
+    presence: SessionPresence,
+    documents: [UUID: DocumentDocument]
   ) -> [RenderedWorkspaceItem] {
     let items = Dictionary(
       uniqueKeysWithValues: workspace.items.map { ($0.id, $0) }
     )
+    func geometry(of item: WorkspaceItem) -> WorkspaceItemGeometry? {
+      guard item.kind == .document else { return .notebook }
+      return documents[item.id].map { .document($0.paperSize) }
+    }
     var result: [RenderedWorkspaceItem] = board.freeItems.compactMap { placement in
-      items[placement.itemID].map {
-        RenderedWorkspaceItem(
-          item: $0,
+      guard let item = items[placement.itemID], let geometry = geometry(of: item) else { return nil }
+      return RenderedWorkspaceItem(
+          item: item,
+          geometry: geometry,
           center: placement.center,
           zIndex: Double(placement.zIndex),
           stackID: nil
         )
-      }
     }
 
     for stack in board.stacks {
@@ -101,6 +108,7 @@ enum WorkspaceSceneProjection {
       for (index, itemID) in stack.itemIDs.enumerated() {
         guard focusedMemberID == nil || focusedMemberID == itemID,
           let item = items[itemID],
+          let geometry = geometry(of: item),
           let center = WorkspaceItemStackPresentation.boardCenter(
             of: itemID,
             in: stack,
@@ -111,6 +119,7 @@ enum WorkspaceSceneProjection {
         result.append(
           RenderedWorkspaceItem(
             item: item,
+            geometry: geometry,
             center: center,
             zIndex: Double(stack.zIndex) + Double(index) / 100,
             stackID: stack.id
@@ -137,7 +146,8 @@ enum WorkspaceSceneProjection {
       let rendered = WorkspaceSceneProjection.items(
         workspace: workspace,
         board: board,
-        presence: presence
+        presence: presence,
+        documents: model.documents
       )
       ZStack {
         SpatialBoardGrid(camera: presence.camera)
@@ -160,6 +170,7 @@ enum WorkspaceSceneProjection {
           )
           WorkspaceItemCoverView(
             item: rendered.item,
+            geometry: rendered.geometry,
             spatialInkSurfaces: SpatialInkSurfaceRegistry(),
             elements: board.elements.filter {
               $0.surface == .cover(rendered.id)
@@ -178,11 +189,7 @@ enum WorkspaceSceneProjection {
           )
           .scaleEffect(presence.camera.scale)
           .position(x: screen.x, y: screen.y)
-          .shadow(
-            color: .black.opacity(0.13),
-            radius: max(3, 18 * presence.camera.scale),
-            y: max(2, 8 * presence.camera.scale)
-          )
+          .modifier(WorkspaceItemShadow(scale: presence.camera.scale))
           .zIndex(rendered.zIndex)
         }
       }
@@ -262,8 +269,8 @@ struct SpatialWorkspaceView: View {
                 item.center,
                 viewport: viewport
               )
-              let width = NotebookGeometry.width * presence.camera.scale
-              let height = NotebookGeometry.height * presence.camera.scale
+              let width = item.geometry.width * presence.camera.scale
+              let height = item.geometry.height * presence.camera.scale
               return CGRect(
                 x: center.x - width / 2,
                 y: center.y - height / 2,
@@ -318,6 +325,7 @@ struct SpatialWorkspaceView: View {
             items: rendered.map {
               SpatialWorkspaceItemSurface(
                 itemID: $0.id,
+                geometry: $0.geometry,
                 center: $0.center,
                 zIndex: $0.zIndex
               )
@@ -491,8 +499,8 @@ struct SpatialWorkspaceView: View {
         rendered.center,
         viewport: viewport
       )
-      let halfWidth = NotebookGeometry.width * presence.camera.scale / 2
-      let halfHeight = NotebookGeometry.height * presence.camera.scale / 2
+      let halfWidth = rendered.geometry.width * presence.camera.scale / 2
+      let halfHeight = rendered.geometry.height * presence.camera.scale / 2
       Button(role: .destructive) {
         guard model.deleteItem(selectedItemID) else { return }
         self.selectedItemID = nil
@@ -698,7 +706,7 @@ struct SpatialWorkspaceView: View {
         viewport: viewport
       )
     }
-    return presence.adapted(to: viewport)
+    return presence.adapted(to: viewport, geometry: model.itemGeometry(presence.focusedItemID))
   }
 
   private func publishViewportIfNeeded(_ viewport: SpatialPoint) {
@@ -719,7 +727,8 @@ struct SpatialWorkspaceView: View {
     return WorkspaceSceneProjection.items(
       workspace: workspace,
       board: board,
-      presence: presence
+      presence: presence,
+      documents: model.documents
     )
   }
 
@@ -747,7 +756,7 @@ struct SpatialWorkspaceView: View {
   ) -> Bool {
     if let gesture = cameraGesture,
       let candidate = gesture.candidateItemID,
-      presence.camera.scale >= coverFocusScale(viewport: presence.viewport)
+      presence.camera.scale >= model.itemGeometry(candidate).coverScale(viewport: presence.viewport)
         * NotebookOpeningIntent.pagePreparationScaleRatio
     {
       return candidate == itemID
@@ -787,11 +796,12 @@ struct SpatialWorkspaceView: View {
       } else {
         dockingStartStrength = NotebookDockingField.strength(
           camera: presence.camera,
-          viewport: presence.viewport
+          viewport: presence.viewport,
+          geometry: model.itemGeometry(candidate)
         )
       }
       let boardEngagement = focusedItemID.map {
-        let coverScale = coverFocusScale(viewport: presence.viewport)
+        let coverScale = model.itemGeometry($0).coverScale(viewport: presence.viewport)
         let targetScale = transitionScale(
           for: $0,
           viewport: presence.viewport
@@ -903,8 +913,9 @@ struct SpatialWorkspaceView: View {
   ) {
     guard var snapshot = cameraGesture else { return }
     let viewport = snapshot.presence.viewport
-    let pageScale = fitScale(viewport: viewport)
-    let coverScale = coverFocusScale(viewport: viewport)
+    let geometry = model.itemGeometry(snapshot.boardEngagement?.itemID ?? snapshot.candidateItemID)
+    let pageScale = geometry.fitScale(viewport: viewport)
+    let coverScale = geometry.coverScale(viewport: viewport)
     let directionThreshold: CGFloat = 0.000_5
     let directionDelta = scale - snapshot.lastMagnification
     if abs(directionDelta) > directionThreshold {
@@ -967,7 +978,8 @@ struct SpatialWorkspaceView: View {
         } else {
           snapshot.dockingStartStrength = NotebookDockingField.strength(
             camera: camera,
-            viewport: viewport
+            viewport: viewport,
+            geometry: model.itemGeometry(nextCandidate)
           )
         }
       }
@@ -978,7 +990,8 @@ struct SpatialWorkspaceView: View {
       ?? snapshot.candidateItemID
     let dockingStrength = NotebookDockingField.strength(
       camera: rawCamera,
-      viewport: viewport
+      viewport: viewport,
+      geometry: model.itemGeometry(attractionTarget)
     )
     if let attractionTarget,
       let center = model.board?.focusedCenter(of: attractionTarget)
@@ -1011,6 +1024,7 @@ struct SpatialWorkspaceView: View {
         camera,
         toward: center,
         viewport: viewport,
+        geometry: model.itemGeometry(attractionTarget),
         correction: correction
       )
     } else {
@@ -1022,7 +1036,7 @@ struct SpatialWorkspaceView: View {
       NotebookOpeningIntent.shouldEngage(
         isApproaching: snapshot.isApproaching,
         cameraScale: camera.scale,
-        coverScale: coverScale
+        coverScale: model.itemGeometry(candidate).coverScale(viewport: viewport)
       )
     {
       snapshot.boardEngagement = CameraGestureSnapshot.BoardEngagement(
@@ -1080,7 +1094,7 @@ struct SpatialWorkspaceView: View {
     }
     cameraGesture = nil
     let viewport = presence.viewport
-    let pageScale = fitScale(viewport: viewport)
+    let pageScale = model.itemGeometry(presence.focusedItemID).fitScale(viewport: viewport)
     if let engagement = snapshot.boardEngagement,
       let itemID = presence.focusedItemID,
       engagement.itemID == itemID,
@@ -1211,8 +1225,8 @@ struct SpatialWorkspaceView: View {
       rendered.center,
       viewport: presence.viewport
     )
-    let width = NotebookGeometry.width * presence.camera.scale
-    let height = NotebookGeometry.height * presence.camera.scale
+    let width = rendered.geometry.width * presence.camera.scale
+    let height = rendered.geometry.height * presence.camera.scale
     return NotebookSelectionField.influence(
       centroid: SpatialPoint(x: centroid.x, y: centroid.y),
       cover: SpatialRect(
@@ -1243,7 +1257,7 @@ struct SpatialWorkspaceView: View {
     let target = SessionPresence(
       boardID: previousPresence?.boardID ?? WorkspaceRoot.boardID,
       mode: openMode(for: itemID),
-      camera: SpatialCamera(center: center, scale: fitScale(viewport: viewport)),
+      camera: SpatialCamera(center: center, scale: model.itemGeometry(itemID).fitScale(viewport: viewport)),
       viewport: viewport,
       focusedItemID: itemID,
       openProgress: 1,
@@ -1303,7 +1317,7 @@ struct SpatialWorkspaceView: View {
         mode: .board,
         camera: SpatialCamera(
           center: boundary.camera.center,
-          scale: coverFocusScale(viewport: viewport)
+          scale: WorkspaceItemGeometry.notebook.coverScale(viewport: viewport)
         ),
         viewport: viewport
       )
@@ -1343,7 +1357,7 @@ struct SpatialWorkspaceView: View {
   ) -> Double {
     itemKind(itemID) == .board
       ? BoardPortalProjection.fillScale(viewport: viewport)
-      : fitScale(viewport: viewport)
+      : model.itemGeometry(itemID).fitScale(viewport: viewport)
   }
 
   private func animateSettlement(
@@ -1401,7 +1415,7 @@ struct SpatialWorkspaceView: View {
       mode: .cover,
       camera: SpatialCamera(
         center: center,
-        scale: coverFocusScale(viewport: viewport)
+        scale: model.itemGeometry(itemID).coverScale(viewport: viewport)
       ),
       viewport: viewport,
       focusedItemID: itemID,
@@ -1449,21 +1463,14 @@ struct SpatialWorkspaceView: View {
       .first { candidate in
         guard candidate.id != itemID else { return false }
         let delta = center.delta(to: candidate.center)
-        return abs(delta.x) <= NotebookGeometry.width * 0.6
-          && abs(delta.y) <= NotebookGeometry.height * 0.6
+        return abs(delta.x) <= (moving.geometry.width + candidate.geometry.width) * 0.3
+          && abs(delta.y) <= (moving.geometry.height + candidate.geometry.height) * 0.3
       }
     if let target {
       _ = model.stackItem(moving.id, onto: target.id)
     }
   }
 
-  private func fitScale(viewport: SpatialPoint) -> Double {
-    NotebookPresentation.fitScale(viewport: viewport)
-  }
-
-  private func coverFocusScale(viewport: SpatialPoint) -> Double {
-    NotebookPresentation.coverScale(viewport: viewport)
-  }
 }
 
 private struct WorkspaceSceneItem: View {
@@ -1506,6 +1513,8 @@ private struct WorkspaceSceneItem: View {
     let restingShadowVisibility =
       CoverOpeningPhysics.restingShadowVisibility(openProgress)
     ZStack {
+      WorkspaceItemDepthView(kind: rendered.item.kind, geometry: rendered.geometry)
+        .opacity(max(0, 1 - openProgress * 2))
       if rendered.item.kind == .board {
         itemCover
       } else if rendered.item.kind == .notebook {
@@ -1515,13 +1524,18 @@ private struct WorkspaceSceneItem: View {
       }
     }
     .frame(
-      width: NotebookGeometry.width,
-      height: NotebookGeometry.height
+      width: rendered.geometry.width,
+      height: rendered.geometry.height
     )
+    // Accessibility follows the same physical body as camera and Pencil;
+    // exposed page edges retain their purely visual depth.
+    .contentShape(.accessibility, RoundedRectangle(
+      cornerRadius: rendered.geometry.cornerRadius, style: .continuous
+    ))
     .overlay {
       if openProgress < 0.12, isSelected {
         RoundedRectangle(
-          cornerRadius: NotebookGeometry.cornerRadius,
+          cornerRadius: rendered.geometry.cornerRadius,
           style: .continuous
         )
         .stroke(
@@ -1536,13 +1550,9 @@ private struct WorkspaceSceneItem: View {
     .offset(dragTranslation)
     .offset(y: isLifted ? -8 : 0)
     .position(x: screen.x, y: screen.y)
-    .shadow(
-      color: .black.opacity(
-        (isLifted ? 0.28 : 0.13) * restingShadowVisibility
-      ),
-      radius: isLifted ? 24 : max(3, 18 * scale),
-      y: isLifted ? 15 : max(2, 8 * scale)
-    )
+    .modifier(WorkspaceItemShadow(
+      scale: scale, lifted: isLifted, visibility: restingShadowVisibility
+    ))
     .animation(.spring(duration: 0.18, bounce: 0.18), value: isLifted)
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier(
@@ -1580,7 +1590,7 @@ private struct WorkspaceSceneItem: View {
       )
       .clipShape(
         RoundedRectangle(
-          cornerRadius: NotebookGeometry.cornerRadius,
+          cornerRadius: rendered.geometry.cornerRadius,
           style: .continuous
         )
       )
@@ -1590,7 +1600,7 @@ private struct WorkspaceSceneItem: View {
       ownerID: rendered.id,
       progress: openProgress,
       revision: coverRenderingRevision,
-      backsideColor: .notebook,
+      backsideColor: WorkspaceCoverMaterial(item: rendered.item).backside,
       preparesCoverMotion: preparesCoverMotion
     ) {
       itemCover
@@ -1623,7 +1633,7 @@ private struct WorkspaceSceneItem: View {
       .background(Color(red: 0.985, green: 0.98, blue: 0.955))
       .clipShape(
         RoundedRectangle(
-          cornerRadius: NotebookGeometry.cornerRadius,
+          cornerRadius: rendered.geometry.cornerRadius,
           style: .continuous
         )
       )
@@ -1633,7 +1643,7 @@ private struct WorkspaceSceneItem: View {
       ownerID: rendered.id,
       progress: openProgress,
       revision: coverRenderingRevision,
-      backsideColor: .document,
+      backsideColor: WorkspaceCoverMaterial(item: rendered.item).backside,
       preparesCoverMotion: preparesCoverMotion
     ) {
       itemCover
@@ -1741,6 +1751,7 @@ private struct WorkspaceSceneItem: View {
   private var itemCover: some View {
     WorkspaceItemCoverView(
       item: rendered.item,
+      geometry: rendered.geometry,
       spatialInkSurfaces: spatialInkSurfaces,
       elements: coverElements,
       editingTextID: editingTextID,
@@ -1759,7 +1770,8 @@ private struct WorkspaceSceneItem: View {
         finishMove(translation: translation, scale: camera.scale)
       },
       onTextEditingEnded: onTextEditingEnded,
-      onElementSelected: onElementSelected
+      onElementSelected: onElementSelected,
+      showsDepth: false
     )
   }
 
@@ -1772,6 +1784,7 @@ private struct WorkspaceSceneItem: View {
   private var coverRenderingRevision: CoverRenderingRevision {
     CoverRenderingRevision(
       item: rendered.item,
+      geometry: rendered.geometry,
       elements: coverElements,
       journal: model.spatialInk
     )
@@ -1855,7 +1868,8 @@ struct BoardPortalPreview: View {
       let rendered = WorkspaceSceneProjection.items(
         workspace: workspace,
         board: board,
-        presence: presence
+        presence: presence,
+        documents: model.documents
       )
 
       ZStack {
@@ -1907,6 +1921,7 @@ struct BoardPortalPreview: View {
           let screen = camera.worldToScreen(item.center, viewport: viewport)
           WorkspaceItemCoverView(
             item: item.item,
+            geometry: item.geometry,
             spatialInkSurfaces: SpatialInkSurfaceRegistry(),
             elements: board.elements.filter { $0.surface == .cover(item.id) },
             editingTextID: nil, isElementEditingEnabled: false,
@@ -1920,22 +1935,18 @@ struct BoardPortalPreview: View {
             remainingPortalPasses: remainingPortalPasses - 1
           )
           .frame(
-            width: NotebookGeometry.width,
-            height: NotebookGeometry.height
+            width: item.geometry.width,
+            height: item.geometry.height
           )
           .scaleEffect(camera.scale)
           .position(x: screen.x, y: screen.y)
-          .shadow(
-            color: .black.opacity(0.13),
-            radius: max(3, 18 * camera.scale),
-            y: max(2, 8 * camera.scale)
-          )
+          .modifier(WorkspaceItemShadow(scale: camera.scale))
           .zIndex(item.zIndex)
         }
       }
       .frame(width: viewport.x, height: viewport.y)
       .scaleEffect(1 / fill)
-      .frame(width: NotebookGeometry.width, height: NotebookGeometry.height)
+      .frame(width: WorkspaceItemGeometry.notebook.width, height: WorkspaceItemGeometry.notebook.height)
       .clipped()
       .allowsHitTesting(false)
       .accessibilityHidden(true)
@@ -1945,10 +1956,11 @@ struct BoardPortalPreview: View {
   }
 }
 
-private struct WorkspaceItemCoverView: View {
+struct WorkspaceItemCoverView: View {
   @Environment(NotebookAppModel.self) private var model
 
   let item: WorkspaceItem
+  let geometry: WorkspaceItemGeometry
   let spatialInkSurfaces: SpatialInkSurfaceRegistry
   let elements: [SpatialElement]
   let editingTextID: String?
@@ -1962,6 +1974,7 @@ private struct WorkspaceItemCoverView: View {
   let onTranslationEnded: (CGSize) -> Void
   let onTextEditingEnded: (String) -> Void
   let onElementSelected: () -> Void
+  var showsDepth = true
   var isPortalProjection = false
   var portalPixelScale: Double = 1
   var remainingPortalPasses = WorkspaceSceneProjection.portalPasses
@@ -1974,17 +1987,17 @@ private struct WorkspaceItemCoverView: View {
         Text(item.title)
           .font(
             .system(
-              size: item.kind == .document ? 42 : 38,
+              size: geometry.width * (item.kind == .document ? 0.056 : 0.048),
               weight: .medium,
-              design: item.kind == .document ? .serif : .rounded
+              design: item.kind == .document ? .serif : .default
             )
           )
-          .foregroundStyle(Color.black.opacity(0.64))
+          .foregroundStyle(Color.black.opacity(0.76))
           .lineLimit(3)
-          .frame(width: 570, alignment: .leading)
+          .frame(width: geometry.width * 0.72, alignment: .leading)
           .offset(
-            x: item.kind == .document ? 96 : 126,
-            y: item.kind == .document ? 142 : 170
+            x: geometry.width * (item.kind == .document ? 0.105 : 0.145),
+            y: geometry.height * (item.kind == .document ? 0.145 : 0.148)
           )
       }
 
@@ -2044,8 +2057,8 @@ private struct WorkspaceItemCoverView: View {
             onTranslationEnded: onTranslationEnded
           )
           .frame(
-            width: NotebookGeometry.width,
-            height: NotebookGeometry.height
+            width: geometry.width,
+            height: geometry.height
           )
           .accessibilityHidden(true)
         }
@@ -2071,8 +2084,8 @@ private struct WorkspaceItemCoverView: View {
       #endif
     }
     .frame(
-      width: NotebookGeometry.width,
-      height: NotebookGeometry.height
+      width: geometry.width,
+      height: geometry.height
     )
     .clipShape(
       RoundedRectangle(
@@ -2080,9 +2093,12 @@ private struct WorkspaceItemCoverView: View {
         style: .continuous
       )
     )
+    .background {
+      if showsDepth { WorkspaceItemDepthView(kind: item.kind, geometry: geometry) }
+    }
     .contentShape(
       RoundedRectangle(
-        cornerRadius: NotebookGeometry.cornerRadius,
+        cornerRadius: geometry.cornerRadius,
         style: .continuous
       )
     )
@@ -2094,8 +2110,8 @@ private struct WorkspaceItemCoverView: View {
 
   private var portalCornerRadius: Double {
     item.kind == .board
-      ? NotebookGeometry.cornerRadius * max(0, 1 - portalOpenProgress)
-      : NotebookGeometry.cornerRadius
+      ? geometry.cornerRadius * max(0, 1 - portalOpenProgress)
+      : geometry.cornerRadius
   }
 
   private func elementTranslation(
@@ -2131,52 +2147,8 @@ private struct WorkspaceItemCoverView: View {
         Color.black.opacity(0.16 * max(0, 1 - portalOpenProgress)),
         lineWidth: 2
       )
-    } else if item.kind == .notebook {
-      RoundedRectangle(
-        cornerRadius: NotebookGeometry.cornerRadius,
-        style: .continuous
-      )
-      .fill(Color(red: 0.945, green: 0.93, blue: 0.875))
-      RoundedRectangle(
-        cornerRadius: NotebookGeometry.cornerRadius,
-        style: .continuous
-      )
-      .stroke(Color.black.opacity(0.08), lineWidth: 2)
-      Rectangle()
-        .fill(Color.black.opacity(0.055))
-        .frame(width: 18)
-        .padding(.vertical, 2)
-        .padding(.leading, 24)
     } else {
-      RoundedRectangle(
-        cornerRadius: NotebookGeometry.cornerRadius,
-        style: .continuous
-      )
-      .fill(Color(red: 0.987, green: 0.982, blue: 0.958))
-      RoundedRectangle(
-        cornerRadius: NotebookGeometry.cornerRadius,
-        style: .continuous
-      )
-      .stroke(Color.black.opacity(0.1), lineWidth: 1.5)
-      VStack(alignment: .leading, spacing: 22) {
-        Text("DOCUMENT")
-          .font(.system(size: 18, weight: .semibold, design: .rounded))
-          .tracking(4)
-          .foregroundStyle(Color.black.opacity(0.28))
-        ForEach(0..<7, id: \.self) { index in
-          Capsule()
-            .fill(Color.black.opacity(index == 0 ? 0.12 : 0.075))
-            .frame(width: index == 6 ? 360 : 590, height: 3)
-        }
-      }
-      .offset(x: 96, y: item.title.isEmpty ? 138 : 300)
-      Path { path in
-        path.move(to: CGPoint(x: 724, y: 0))
-        path.addLine(to: CGPoint(x: 834, y: 110))
-        path.addLine(to: CGPoint(x: 834, y: 0))
-        path.closeSubpath()
-      }
-      .fill(Color.black.opacity(0.045))
+      WorkspaceCoverSurface(item: item, geometry: geometry)
     }
   }
 

@@ -22,8 +22,8 @@ public struct BoardPortalCamera: Codable, Equatable, Sendable {
 /// camera in the current viewport.
 public enum BoardPortalProjection {
   public static let viewport = SpatialPoint(
-    x: NotebookGeometry.width,
-    y: NotebookGeometry.height
+    x: WorkspaceItemGeometry.notebook.width,
+    y: WorkspaceItemGeometry.notebook.height
   )
 
   /// A portal must cover the viewport at handoff. Using `fitScale` would leave
@@ -31,8 +31,8 @@ public enum BoardPortalProjection {
   public static func fillScale(viewport: SpatialPoint) -> Double {
     precondition(viewport.x > 0 && viewport.y > 0)
     return max(
-      viewport.x / NotebookGeometry.width,
-      viewport.y / NotebookGeometry.height
+      viewport.x / WorkspaceItemGeometry.notebook.width,
+      viewport.y / WorkspaceItemGeometry.notebook.height
     )
   }
 

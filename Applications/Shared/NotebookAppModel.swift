@@ -103,6 +103,15 @@ final class NotebookAppModel {
   private(set) var isElementEditingEnabled = false
   private(set) var elementEditingSession = ElementEditingSession()
 
+  /// The document bundle supplies its physical size. A notebook or an
+  /// unselected board uses the canonical notebook/portal rectangle.
+  func itemGeometry(_ itemID: UUID?) -> WorkspaceItemGeometry {
+    if let itemID, let document = documents[itemID] {
+      return .document(document.paperSize)
+    }
+    return .notebook
+  }
+
   let store: NotebookStore
   let actorID: UUID
   let pencilInputGate = PencilInputGate()
@@ -725,9 +734,10 @@ final class NotebookAppModel {
     else { return nil }
     let width = 420.0
     let height = 120.0
+    let geometry = itemGeometry(itemID)
     let origin = SpatialPoint(
-      x: min(max(point.x, 0), NotebookGeometry.width - width),
-      y: min(max(point.y, 0), NotebookGeometry.height - height)
+      x: min(max(point.x, 0), geometry.width - width),
+      y: min(max(point.y, 0), geometry.height - height)
     )
     let id = "text-\(UUID().uuidString.lowercased())"
     let element = SpatialElement(
@@ -1090,8 +1100,9 @@ final class NotebookAppModel {
     let x: Double
     let y: Double
     if element.surface.kind == .cover {
-      x = min(max(proposedX, 0), NotebookGeometry.width - element.frame.width)
-      y = min(max(proposedY, 0), NotebookGeometry.height - element.frame.height)
+      let geometry = itemGeometry(element.surface.ownerID)
+      x = min(max(proposedX, 0), geometry.width - element.frame.width)
+      y = min(max(proposedY, 0), geometry.height - element.frame.height)
     } else {
       x = proposedX
       y = proposedY
@@ -1611,7 +1622,7 @@ final class NotebookAppModel {
     let ownerBoardID = board?.ownerBoardID(of: itemID)
       ?? workspace.rootBoardID
     let center = board?.focusedCenter(of: itemID, in: ownerBoardID) ?? .zero
-    let fit = NotebookPresentation.fitScale(
+    let fit = itemGeometry(itemID).fitScale(
       viewport: viewportPoint
     )
     return SessionPresence(
@@ -1630,7 +1641,7 @@ final class NotebookAppModel {
     board: BoardHierarchy?,
     viewport: SpatialPoint
   ) -> SessionPresence {
-    let adapted = presence.adapted(to: viewport)
+    let adapted = presence.adapted(to: viewport, geometry: itemGeometry(presence.focusedItemID))
     guard board?.board(presence.boardID) != nil else {
       return SessionPresence(
         boardID: workspace.rootBoardID,
@@ -1660,7 +1671,7 @@ final class NotebookAppModel {
         mode: presence.mode,
         camera: SpatialCamera(
           center: itemCenter,
-          scale: NotebookPresentation.fitScale(viewport: viewport)
+          scale: itemGeometry(itemID).fitScale(viewport: viewport)
         ),
         viewport: viewport,
         focusedItemID: itemID,

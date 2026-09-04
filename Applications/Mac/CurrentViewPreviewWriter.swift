@@ -116,7 +116,7 @@ enum CurrentViewPreviewWriter {
     let snapshot = try makeSnapshot(
       presence: presence,
       spatialElements: WorkspaceSceneProjection.snapshotElements(
-        workspace: workspace, hierarchy: board, presence: presence
+        workspace: workspace, hierarchy: board, presence: presence, documents: model.documents
       ),
       page: page,
       document: document,

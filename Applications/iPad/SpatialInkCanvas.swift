@@ -640,10 +640,10 @@ struct SpatialInkCanvas: UIViewRepresentable {
       items.map { item in
         let center = camera.worldToScreen(item.center, viewport: viewport)
         let rect = CGRect(
-          x: center.x - NotebookGeometry.width * camera.scale / 2,
-          y: center.y - NotebookGeometry.height * camera.scale / 2,
-          width: NotebookGeometry.width * camera.scale,
-          height: NotebookGeometry.height * camera.scale
+          x: center.x - item.geometry.width * camera.scale / 2,
+          y: center.y - item.geometry.height * camera.scale / 2,
+          width: item.geometry.width * camera.scale,
+          height: item.geometry.height * camera.scale
         )
         return SpatialScreenSurface(
           id: .cover(item.itemID),
@@ -665,9 +665,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
         let center = camera.worldToScreen(item.center, viewport: viewport)
         local = SpatialPoint(
           x: (point.location.x - center.x) / camera.scale
-            + NotebookGeometry.width / 2,
+            + item.geometry.width / 2,
           y: (point.location.y - center.y) / camera.scale
-            + NotebookGeometry.height / 2
+            + item.geometry.height / 2
         )
       } else {
         let world = camera.screenToWorld(
@@ -709,9 +709,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
       return PKStrokePoint(
         location: CGPoint(
           x: (point.location.x - center.x) / camera.scale
-            + NotebookGeometry.width / 2,
+            + item.geometry.width / 2,
           y: (point.location.y - center.y) / camera.scale
-            + NotebookGeometry.height / 2
+            + item.geometry.height / 2
         ),
         timeOffset: point.timeOffset,
         size: CGSize(

@@ -110,8 +110,8 @@ final class DrawingOwnershipTests: XCTestCase {
       journal: journal,
       camera: SpatialCamera(scale: 1),
       viewport: SpatialPoint(
-        x: NotebookGeometry.width,
-        y: NotebookGeometry.height
+        x: WorkspaceItemGeometry.notebook.width,
+        y: WorkspaceItemGeometry.notebook.height
       )
     )
     XCTAssertTrue(boardLayers.isEmpty, "Холст доски не должен рисовать обложку")
@@ -122,8 +122,8 @@ final class DrawingOwnershipTests: XCTestCase {
       frame: CGRect(
         x: 0,
         y: 0,
-        width: NotebookGeometry.width,
-        height: NotebookGeometry.height
+        width: WorkspaceItemGeometry.notebook.width,
+        height: WorkspaceItemGeometry.notebook.height
       )
     )
     registry.register(boardView, for: .board)

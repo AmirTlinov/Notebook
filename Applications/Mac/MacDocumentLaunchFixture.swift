@@ -92,7 +92,7 @@
             mode: .document,
             camera: SpatialCamera(
               center: center,
-              scale: NotebookPresentation.fitScale(viewport: viewport)
+              scale: WorkspaceItemGeometry.document(document.paperSize).fitScale(viewport: viewport)
             ),
             viewport: viewport,
             focusedItemID: documentID,

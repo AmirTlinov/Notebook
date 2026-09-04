@@ -161,6 +161,7 @@ final class CoverOpeningPhysicsTests: XCTestCase {
   private func revision(title: String) -> CoverRenderingRevision {
     CoverRenderingRevision(
       item: .document(title: title),
+      geometry: .document(.a4),
       elements: [],
       journal: nil
     )

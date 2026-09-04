@@ -20,7 +20,7 @@ final class CameraGestureTrajectoryTests: XCTestCase {
     )
     let startingStrength = NotebookDockingField.strength(
       camera: startingCamera,
-      viewport: viewport
+      viewport: viewport, geometry: .notebook
     )
     let noisyMagnifications: [CGFloat] = [
       1.08, 1.079, 1.10, 1.099, 1.12, 1.119, 1.14, 1.139, 1.16,
@@ -34,12 +34,12 @@ final class CameraGestureTrajectoryTests: XCTestCase {
       )
       let fieldStrength = NotebookDockingField.strength(
         camera: raw,
-        viewport: viewport
+        viewport: viewport, geometry: .notebook
       )
       return NotebookDockingField.attractedCamera(
         raw,
         toward: .zero,
-        viewport: viewport,
+        viewport: viewport, geometry: .notebook,
         correction: NotebookDockingField.approachCorrection(
           currentStrength: fieldStrength,
           startingStrength: startingStrength
@@ -75,7 +75,7 @@ final class CameraGestureTrajectoryTests: XCTestCase {
     )
     let startingStrength = NotebookDockingField.strength(
       camera: trajectory.startingCamera,
-      viewport: viewport
+      viewport: viewport, geometry: .notebook
     )
     let first = displayCamera(
       trajectory: trajectory,
@@ -119,12 +119,12 @@ final class CameraGestureTrajectoryTests: XCTestCase {
     )
     let fieldStrength = NotebookDockingField.strength(
       camera: raw,
-      viewport: viewport
+      viewport: viewport, geometry: .notebook
     )
     return NotebookDockingField.attractedCamera(
       raw,
       toward: .zero,
-      viewport: viewport,
+      viewport: viewport, geometry: .notebook,
       correction: NotebookDockingField.approachCorrection(
         currentStrength: fieldStrength,
         startingStrength: startingStrength

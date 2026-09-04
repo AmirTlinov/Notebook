@@ -89,7 +89,7 @@ export async function writeFixture(root: string): Promise<void> {
     documentPageIndex: 0,
   };
   const currentViewReceipt: CurrentViewReceipt = {
-    format: 5,
+    format: 6,
     workspaceStamp: workspace.stamp,
     boardRevision: boardHierarchyRevision(board),
     spatialInkStamp: spatialInk.stamp,

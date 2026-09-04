@@ -2,18 +2,18 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; frame-src 'self' data: blob:; form-action 'none'; base-uri 'none'; object-src 'none';">
   <style>
     :root {
       color-scheme: light;
       --paper: #fbfaf5;
-      --desk: #e4e4e1;
       --ink: #171713;
       --muted: rgba(23, 23, 19, .55);
       --selection: rgba(46, 104, 255, .14);
       --page-width: 595px;
       --page-height: 842px;
+      --page-radius: 3.4px;
       --page-margin: 71px;
       --page-gap: 24px;
       --content-width: 453px;
@@ -27,7 +27,7 @@
       height: 100%;
       overflow: hidden;
       margin: 0;
-      background: var(--desk);
+      background: transparent;
     }
     body {
       color: var(--ink);
@@ -62,12 +62,8 @@
       width: var(--page-width);
       height: var(--page-height);
       overflow: hidden;
-      border: 1px solid rgba(42, 42, 36, .09);
-      border-radius: clamp(5px, calc(var(--page-width) * .012), 10px);
+      border-radius: var(--page-radius);
       background: var(--paper);
-      box-shadow:
-        0 1px 2px rgba(30, 30, 24, .08),
-        0 10px 32px rgba(30, 30, 24, .10);
     }
     #document {
       position: absolute;
@@ -208,16 +204,16 @@
       const currentPageIndex = () => pageLayout?.requestedPage ?? 0;
 
       const configurePaper = (nextPayload, requestedPage = currentPageIndex()) => {
-        const paper = nextPayload.paper || {
-          kind: 'a4', widthPoints: 595.275590551,
-          heightPoints: 841.88976378, marginPoints: 70.8661417323
-        };
-        const viewportWidth = Math.max(1, viewport.clientWidth || innerWidth);
-        const viewportHeight = Math.max(1, viewport.clientHeight || innerHeight);
-        const scale = Math.max(.1, Math.min(
-          (viewportWidth - 24) / paper.widthPoints,
-          (viewportHeight - 24) / paper.heightPoints
-        ));
+        const paper = nextPayload.paper;
+        const viewportBounds = viewport.getBoundingClientRect();
+        const viewportWidth = Math.max(1, viewportBounds.width);
+        const viewportHeight = Math.max(1, viewportBounds.height);
+        // The native owner gives this view exactly one physical sheet. The
+        // same ratio scales typesetting; surrounding space belongs to the scene.
+        const scale = Math.min(
+          viewportWidth / paper.widthPoints,
+          viewportHeight / paper.heightPoints
+        );
         const pageWidth = paper.widthPoints * scale;
         const pageHeight = paper.heightPoints * scale;
         const margin = paper.marginPoints * scale;
@@ -225,8 +221,8 @@
         const contentWidth = pageWidth - 2 * margin;
         const contentHeight = pageHeight - 2 * margin;
         const columnGap = 2 * margin + gap;
-        const side = Math.max(12, (viewportWidth - pageWidth) / 2);
-        const top = Math.max(12, (viewportHeight - pageHeight) / 2);
+        const side = (viewportWidth - pageWidth) / 2;
+        const top = (viewportHeight - pageHeight) / 2;
         const stride = pageWidth + gap;
         pageLayout = {
           kind: paper.kind,
@@ -237,6 +233,7 @@
         const style = document.documentElement.style;
         style.setProperty('--page-width', `${pageWidth}px`);
         style.setProperty('--page-height', `${pageHeight}px`);
+        style.setProperty('--page-radius', `${pageWidth * paper.cornerRadiusRatio}px`);
         style.setProperty('--page-margin', `${margin}px`);
         style.setProperty('--page-gap', `${gap}px`);
         style.setProperty('--content-width', `${contentWidth}px`);
@@ -315,7 +312,7 @@
         const safeScript = JSON.stringify(block.javaScript || '').replaceAll('<', '\\u003c');
         const safeCSS = String(block.css || '').replace(/<\/style/gi, '<\\/style');
         const csp = "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; font-src data:; media-src data: blob:; form-action 'none'; base-uri 'none'; object-src 'none';";
-        return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}${safeCSS}</style></head><body>${block.html || ''}<script>(()=>{const blockID=${safeID};let value=${safeState};window.notebook={get state(){return value},commit(next){value=next;parent.postMessage({channel:'notebook-interactive',blockID,state:next},'*')}};addEventListener('message',event=>{if(event.data?.channel==='notebook-state'&&event.data.blockID===blockID){value=event.data.state;dispatchEvent(new CustomEvent('notebookstate',{detail:value}))}});try{(0,eval)(${safeScript})}catch(error){document.body.dataset.runtimeError=String(error)}})()<\/script></body></html>`;
+        return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}${safeCSS}</style></head><body>${block.html || ''}<script>(()=>{const blockID=${safeID};let value=${safeState};window.notebook={get state(){return value},commit(next){value=next;parent.postMessage({channel:'notebook-interactive',blockID,state:next},'*')}};addEventListener('message',event=>{if(event.data?.channel==='notebook-state'&&event.data.blockID===blockID){value=event.data.state;dispatchEvent(new CustomEvent('notebookstate',{detail:value}))}});try{(0,eval)(${safeScript})}catch(error){document.body.dataset.runtimeError=String(error)}})()<\/script></body></html>`;
       };
 
       const createBlock = (block) => {
@@ -573,13 +570,15 @@
         });
       });
       addEventListener('dragstart', event => event.preventDefault());
-      addEventListener('resize', () => {
+      // The laid-out viewport owns paper size, including a shrink back after
+      // expansion. Window resize can arrive before WebKit updates this box.
+      new ResizeObserver(() => {
         if (!payload) return;
         const requestedPage = currentPageIndex();
         configurePaper(payload, requestedPage);
         requestAnimationFrame(() => activeEditorLayout?.());
         schedulePagination();
-      });
+      }).observe(viewport);
 
       window.notebookRenderer = {
         apply: render,

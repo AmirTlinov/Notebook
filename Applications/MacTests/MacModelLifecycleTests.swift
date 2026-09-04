@@ -233,7 +233,7 @@ final class MacModelLifecycleTests: XCTestCase {
     XCTAssertEqual(movedCoverElement.frame.x, 0)
     XCTAssertEqual(
       movedCoverElement.frame.y,
-      NotebookGeometry.height - coverElement.frame.height
+      WorkspaceItemGeometry.notebook.height - coverElement.frame.height
     )
 
     XCTAssertTrue(

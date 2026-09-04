@@ -16,6 +16,7 @@ import type {
   DocumentStateJournal,
   JSONValue,
   PageDocument,
+  PageSize,
   SessionPresence,
   SpatialElement,
   SurfaceID,
@@ -120,10 +121,11 @@ export function createServer(store = new NotebookStore()): McpServer {
     () => safely(() => waitForSettledSnapshot(async () => {
       const current = await store.readCurrent();
       const { workspace, presence, item } = current;
-      const [hierarchy, spatialInk, receipt] = await Promise.all([
+      const [hierarchy, spatialInk, receipt, itemSizes] = await Promise.all([
         store.readBoardHierarchy(workspace),
         store.readSpatialInk(),
         store.readCurrentViewReceipt(),
+        store.readItemSizes(workspace),
       ]);
       const board = hierarchy.boards.find((node) => sameID(node.id, presence.boardID))?.board;
       if (!board) throw new StoreError("Текущая доска ожидает публикации.");
@@ -182,8 +184,8 @@ export function createServer(store = new NotebookStore()): McpServer {
             board: revision(board.stamp),
             spatialInk: revision(spatialInk.stamp),
           },
-          nodes: joinedBoardNodes(workspace, board, spatialInk),
-          visibleItems: visibleItems(workspace, board, spatialInk, presence),
+          nodes: joinedBoardNodes(workspace, board, spatialInk, itemSizes),
+          visibleItems: visibleItems(workspace, board, spatialInk, presence, itemSizes),
           appliedPencilActionCount: spatialInk.actions.filter(
             (action) => action.isActive,
           ).length,
@@ -206,16 +208,17 @@ export function createServer(store = new NotebookStore()): McpServer {
     },
     () => safely(async () => {
       const workspace = await store.readWorkspace();
-      const [board, spatialInk] = await Promise.all([
+      const [board, spatialInk, itemSizes] = await Promise.all([
         store.readBoard(workspace),
         store.readSpatialInk(),
+        store.readItemSizes(workspace),
       ]);
       return {
         boardID: (await store.readPresence()).boardID,
         workspaceRevision: revision(workspace.stamp),
         boardRevision: revision(board.stamp),
         spatialInkRevision: revision(spatialInk.stamp),
-        nodes: joinedBoardNodes(workspace, board, spatialInk),
+        nodes: joinedBoardNodes(workspace, board, spatialInk, itemSizes),
         elements: board.elements.map(publicSpatialElement),
         appliedPencilActionCount: spatialInk.actions.filter(
           (action) => action.isActive,
@@ -499,7 +502,7 @@ export function createServer(store = new NotebookStore()): McpServer {
     {
       title: "Put Markdown on the board or a cover",
       description:
-        "Create or replace one transparent Markdown layer. Board layers require a tiled world_origin; cover layers use local 834x1194 coordinates.",
+        "Create or replace one transparent Markdown layer. Board layers require a tiled world_origin; cover layers use local coordinates within the coverSize returned by notebook_read_board.",
       inputSchema: z.object({
         ...spatialSelection,
         id: z.string().trim().min(1).max(120),
@@ -915,6 +918,7 @@ function visibleItems(
   board: BoardDocument,
   spatialInk: Awaited<ReturnType<NotebookStore["readSpatialInk"]>>,
   presence: SessionPresence,
+  itemSizes: Map<string, PageSize>,
 ): object[] {
   const byID = new Map(
     workspace.items.map((item) => [item.id.toLowerCase(), item]),
@@ -981,12 +985,13 @@ function visibleItems(
       });
     }
   }
-  const width = 834 * presence.camera.scale;
-  const height = 1_194 * presence.camera.scale;
   return rendered
     .sort((first, second) => first.zIndex - second.zIndex)
     .map((item) => {
       const center = worldToScreen(item.center, presence);
+      const size = itemSizes.get(item.itemID.toLowerCase())!;
+      const width = size.width * presence.camera.scale;
+      const height = size.height * presence.camera.scale;
       return {
         ...item,
         identity: itemIdentity(
@@ -994,6 +999,7 @@ function visibleItems(
           board,
           spatialInk,
         ),
+        coverSize: size,
         screenFrame: {
           x: center.x - width / 2,
           y: center.y - height / 2,
@@ -1165,6 +1171,7 @@ function joinedBoardNodes(
   workspace: WorkspaceIndex,
   board: BoardDocument,
   spatialInk: Awaited<ReturnType<NotebookStore["readSpatialInk"]>>,
+  itemSizes: Map<string, PageSize>,
 ): object[] {
   const items = new Map(
     workspace.items.map((item) => [item.id.toLowerCase(), item]),
@@ -1175,6 +1182,7 @@ function joinedBoardNodes(
       kind: "item",
       id: item.id,
       identity: itemIdentity(item, board, spatialInk),
+      coverSize: itemSizes.get(item.id.toLowerCase()),
       center: placement.center,
       zIndex: placement.zIndex,
       stackID: null,
@@ -1187,7 +1195,7 @@ function joinedBoardNodes(
     zIndex: stack.zIndex,
     items: stack.itemIDs.map((itemID) => {
       const item = items.get(itemID.toLowerCase())!;
-      return itemIdentity(item, board, spatialInk);
+      return { ...itemIdentity(item, board, spatialInk), coverSize: itemSizes.get(item.id.toLowerCase()) };
     }),
   }));
   return [...free, ...stacks].sort((first, second) =>

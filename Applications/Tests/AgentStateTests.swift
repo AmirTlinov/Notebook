@@ -32,8 +32,8 @@ final class AgentStateTests: XCTestCase {
     let draft = try XCTUnwrap(model.board?.elements.first(where: {
       $0.id == elementID
     }))
-    XCTAssertEqual(draft.frame.x, NotebookGeometry.width - 420)
-    XCTAssertEqual(draft.frame.y, NotebookGeometry.height - 120)
+    XCTAssertEqual(draft.frame.x, WorkspaceItemGeometry.notebook.width - 420)
+    XCTAssertEqual(draft.frame.y, WorkspaceItemGeometry.notebook.height - 120)
 
     model.finishNativeTextEditing(
       elementID: elementID,

@@ -290,7 +290,7 @@ final class MacPreviewPublisher {
     switch presence.mode {
     case .board, .cover:
       return WorkspaceSceneProjection.snapshotElements(
-        workspace: workspace, hierarchy: hierarchy, presence: presence
+        workspace: workspace, hierarchy: hierarchy, presence: presence, documents: model.documents
       ).filter { $0.kind != .nativeText }.map(agentElementSnapshotSource)
     case .page:
       return model.activePage?.elements ?? []

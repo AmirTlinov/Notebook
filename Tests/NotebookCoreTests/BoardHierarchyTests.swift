@@ -16,8 +16,8 @@ func boardPortalBoundaryKeepsTheSameProjection() {
     viewport: BoardPortalProjection.viewport
   )
   let pointInsideParent = portalCenter.offsetBy(
-    x: previewPoint.x - NotebookGeometry.width / 2,
-    y: previewPoint.y - NotebookGeometry.height / 2
+    x: previewPoint.x - WorkspaceItemGeometry.notebook.width / 2,
+    y: previewPoint.y - WorkspaceItemGeometry.notebook.height / 2
   )
   let boundaryCamera = BoardPortalProjection.parentBoundaryCamera(
     portalCenter: portalCenter,
