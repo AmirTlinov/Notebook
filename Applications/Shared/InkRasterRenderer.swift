@@ -9,11 +9,11 @@ import NotebookCore
 /// Live InkCanvasView uses the same geometry, shaders, blending and sample count.
 final class InkRasterRenderer: @unchecked Sendable {
   static let shared = InkRasterRenderer()
-  private let device: (any MTLDevice)?
-  private let queue: (any MTLCommandQueue)?
-  private let ink: (any MTLRenderPipelineState)?
-  private let eraser: (any MTLRenderPipelineState)?
-  private let baseline: (any MTLRenderPipelineState)?
+  let device: (any MTLDevice)?
+  let queue: (any MTLCommandQueue)?
+  let ink: (any MTLRenderPipelineState)?
+  let eraser: (any MTLRenderPipelineState)?
+  let baseline: (any MTLRenderPipelineState)?
 
   private init() {
     let device = MTLCreateSystemDefaultDevice()
@@ -95,6 +95,8 @@ final class InkRasterRenderer: @unchecked Sendable {
     }
     var viewport = SIMD2<Float>(Float(size.width), Float(size.height))
     encoder.setVertexBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
+    var identity = SIMD4<Float>(1, 1, 0, 0)
+    encoder.setVertexBytes(&identity, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
     for layer in layers {
       var vertices: [SpatialInkGeometry.Vertex] = []
       switch layer {

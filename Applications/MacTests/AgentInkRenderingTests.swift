@@ -22,7 +22,7 @@ final class AgentInkRenderingTests: XCTestCase {
         .object(["x": .number(300), "y": .number(100)])])
     ])])
     _ = try model.store.applyCollaborationAction(action, actor: UUID())
-    model.reloadExternalChanges()
+    await model.reloadExternalChanges()?.value
     let drawn = try XCTUnwrap(model.activePage)
     XCTAssertTrue(drawn.elements.isEmpty)
     XCTAssertGreaterThan(drawn.drawingStamp, page.drawingStamp)
@@ -42,7 +42,7 @@ final class AgentInkRenderingTests: XCTestCase {
       try Data(contentsOf: model.store.targetPNGURL(crop.id)).write(to: URL(fileURLWithPath: path))
     }
     _ = try model.store.undoCollaborationAction(action.id, actor: UUID())
-    model.reloadExternalChanges()
+    await model.reloadExternalChanges()?.value
     let undone = try XCTUnwrap(model.activePage)
     XCTAssertTrue(try PageVisionRenderer.render(undone).regions.isEmpty)
     XCTAssertEqual(model.presence, before)

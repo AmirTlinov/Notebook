@@ -326,12 +326,11 @@ extension NotebookStore {
   }
 
   private func loadCollaborationContent() throws -> CollaborationContent {
-    let value = try CollaborationWorkspace(store: self)
-    let workspace = try value.workspace
-    return try CollaborationContent(workspace: workspace, hierarchy: value.hierarchy, ink: value.ink,
-      pages: value.files.filter { $0.key.hasPrefix("pages/") }.map { try $0.value.decode(PageDocument.self) },
-      documents: value.files.filter { $0.key.hasPrefix("documents/") }.map { try $0.value.decode(DocumentDocument.self) },
-      states: value.files.filter { $0.key.hasPrefix("document-states/") }.map { try $0.value.decode(DocumentStateJournal.self) })
+    let workspace = try loadIndex()
+    return try CollaborationContent(workspace: workspace, hierarchy: loadBoard(items: workspace.items), ink: loadSpatialInk(),
+      pages: workspace.items.flatMap(\.pageIDs).map(loadPage),
+      documents: workspace.items.filter { $0.kind == .document }.map { try loadDocument($0.id) },
+      states: workspace.items.filter { $0.kind == .document }.map { try loadDocumentState($0.id) })
   }
 
   /// Disk, memory and the received cut meet under the same recoverable commit.
@@ -343,12 +342,15 @@ extension NotebookStore {
       var merged = before
       if let local { merged.merge(local) }
       if let incoming { merged.merge(incoming) }
-      var validation = try CollaborationWorkspace(store: self)
-      let files = try merged.sourceFiles()
-      validation.files = files
-      try validation.validate()
-      let old = try before.sourceFiles()
-      var writes = files.filter { old[$0.key] != $0.value }
+      var writes: [String: JSONValue] = [:]
+      var removals: [String] = []
+      if merged != before {
+        let files = try merged.sourceFiles()
+        try CollaborationWorkspace(files: files).validate()
+        let old = try before.sourceFiles()
+        writes = files.filter { old[$0.key] != $0.value }
+        removals = old.keys.filter { files[$0] == nil }
+      }
       for incoming in actions {
         if let current = try? loadAction(incoming.id) {
           guard current.action == incoming.action else { throw CollaborationError("action_id_conflict", "Разные ходы имеют одинаковый ID.") }
@@ -364,7 +366,7 @@ extension NotebookStore {
         let entry = SharedContextEntry(id: receipt.id, author: .agent, references: receipt.action.references, stamp: .init(counter: 1, actor: receipt.id), createdAt: receipt.createdAt)
         writes[contextFile(receipt.action.resolvedContextID)] = try .encode(SharedContext(id: receipt.action.resolvedContextID, entries: [entry]))
       }
-      let transaction = CollaborationTransaction(writes: writes, removals: old.keys.filter { files[$0] == nil })
+      let transaction = CollaborationTransaction(writes: writes, removals: removals)
       if !transaction.writes.isEmpty || !transaction.removals.isEmpty {
         try JSONEncoder().encode(transaction).write(to: pendingCollaborationURL, options: .atomic)
         try recoverCollaborationTransaction()
@@ -401,6 +403,7 @@ extension CollaborationReceipt {
 
 private struct CollaborationWorkspace {
   var files: [String: JSONValue]
+  init(files: [String: JSONValue]) { self.files = files }
   var ink: SpatialInkJournal { get throws { try files["spatial-ink.json"]!.decode(SpatialInkJournal.self) } }
 
   init(store: NotebookStore) throws {

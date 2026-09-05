@@ -40,8 +40,8 @@ final class PortalInkTests: XCTestCase {
     controller.view.addSubview(active)
     window.makeKeyAndVisible()
     host.view.layoutIfNeeded()
-    active.applySpatial(SpatialInkComposer.boardLayers(board: .board(id), journal: journal,
-      camera: camera, viewport: size))
+    active.applySpatial(.local(SpatialInkComposer.boardLayers(board: .board(id), journal: journal,
+      camera: camera, viewport: size)))
     let portal = try XCTUnwrap(canvas(in: host.view))
     let ready = expectation(description: "Оба Metal-кадра завершены")
     ready.expectedFulfillmentCount = 2

@@ -22,7 +22,7 @@ final class MacModelLifecycleTests: XCTestCase {
   }
 
   @MainActor
-  func testIncomingCatalogPreservesIndependentLocalBoardAndPortalEdits() throws {
+  func testIncomingCatalogPreservesIndependentLocalBoardAndPortalEdits() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -75,6 +75,7 @@ final class MacModelLifecycleTests: XCTestCase {
     model.receivePeerMessage(.index(incomingIndex))
 
     XCTAssertEqual(model.workspace, incomingIndex)
+    await model.finishPendingPersistence()
     let published = try store.loadBoard(items: incomingIndex.items)
     XCTAssertEqual(model.boardHierarchy, published)
     XCTAssertEqual(published.board(childID)?.focusedCenter(of: notebookID), movedCenter)
@@ -84,7 +85,7 @@ final class MacModelLifecycleTests: XCTestCase {
   }
 
   @MainActor
-  func testPortalExitMergesAnIndependentBoardEditAlreadyOnDisk() throws {
+  func testPortalExitMergesAnIndependentBoardEditAlreadyOnDisk() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -114,6 +115,7 @@ final class MacModelLifecycleTests: XCTestCase {
 
     XCTAssertTrue(model.leaveBoard())
 
+    await model.finishPendingPersistence()
     let published = try store.loadBoard(items: workspace.items)
     XCTAssertEqual(model.boardHierarchy, published)
     XCTAssertEqual(
@@ -123,7 +125,7 @@ final class MacModelLifecycleTests: XCTestCase {
   }
 
   @MainActor
-  func testElementEditingSessionIsTheSingleTransientOwner() throws {
+  func testElementEditingSessionIsTheSingleTransientOwner() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -177,7 +179,7 @@ final class MacModelLifecycleTests: XCTestCase {
   }
 
   @MainActor
-  func testPersonCanMoveAndRemoveAgentElements() throws {
+  func testPersonCanMoveAndRemoveAgentElements() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -203,6 +205,7 @@ final class MacModelLifecycleTests: XCTestCase {
       )
     )
 
+    await model.finishPendingPersistence()
     XCTAssertTrue(
       model.transformPageElement(
         pageID: page.id,
@@ -245,6 +248,7 @@ final class MacModelLifecycleTests: XCTestCase {
       )
     )
     model.receivePeerMessage(.board(board))
+    await model.finishPendingPersistence()
 
     XCTAssertTrue(
       model.transformSpatialElement(
@@ -267,6 +271,7 @@ final class MacModelLifecycleTests: XCTestCase {
     XCTAssertTrue(model.pages[page.id]?.elements.isEmpty == true)
     XCTAssertTrue(model.removeSpatialElement(elementID: coverElement.id))
     XCTAssertTrue(model.board?.elements.isEmpty == true)
+    await model.finishPendingPersistence()
     XCTAssertTrue(try store.loadPage(page.id).elements.isEmpty)
     XCTAssertTrue(
       try XCTUnwrap(

@@ -1,7 +1,11 @@
 import MetalKit
 import NotebookCore
 import PencilKit
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 
 /// One mutable geometry record follows a pen stroke from Pencil-down to disk.
 @MainActor
@@ -60,7 +64,7 @@ final class ActiveEraserStroke {
   }
 }
 
-/// The one renderer that turns a mounted notebook surface into pixels on iPad.
+/// The renderer that turns a mounted notebook surface into pixels on both platforms.
 ///
 /// Pages and spatial surfaces persist the measured samples. Shared geometry and
 /// Metal shaders own the live line, its settled raster and the agent image.
@@ -77,6 +81,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     let operation: RenderOperation
     var vertices: [Vertex]
     var buffer: (any MTLBuffer)?
+    var projection: SpatialInkMesh.Projection = .local
   }
 
   private struct StableRasterKey: Equatable {
@@ -100,7 +105,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     value: InkCanvasView.framesInFlight
   )
 
+  private var spatialCamera: SpatialCamera?
+  private var spatialViewport = SpatialPoint(x: 1, y: 1)
   private var committedBatches: [CommittedBatch] = []
+  private var spatialActionBase: [CommittedBatch]?
   private var stableDrawing: PageInkDrawing?
   private var drawingIsPreparing = false
   private var stableDrawingRevision: UInt64 = 0
@@ -124,7 +132,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     count: InkCanvasView.framesInFlight
   )
   private var frameSlot = 0
-  private var hasPresentedFrame = false
+  private var hasRevealedFirstFrame = false
   private var stableContentRevision: UInt64 = 0
   private var presentedStableContentRevision: UInt64?
 
@@ -149,81 +157,14 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   init(frame: CGRect) {
-    let device = MTLCreateSystemDefaultDevice()
+    let gpu = InkRasterRenderer.shared
+    let device = gpu.device
+    // Display work has its own queue; a background readback cannot sit ahead of every live frame.
     commandQueue = device?.makeCommandQueue()
     textureLoader = device.map(MTKTextureLoader.init(device:))
-
-    if let device,
-      let library = try? device.makeDefaultLibrary(bundle: .main),
-      let vertexFunction = library.makeFunction(name: "paperInkVertex"),
-      let fragmentFunction = library.makeFunction(name: "paperInkFragment"),
-      let stableVertexFunction = library.makeFunction(name: "stableInkVertex"),
-      let stableFragmentFunction = library.makeFunction(
-        name: "stableInkFragment"
-      )
-    {
-      let sampleCount = device.supportsTextureSampleCount(4) ? 4 : 1
-      let stableDescriptor = MTLRenderPipelineDescriptor()
-      stableDescriptor.label = "Stable Notebook Ink"
-      stableDescriptor.vertexFunction = stableVertexFunction
-      stableDescriptor.fragmentFunction = stableFragmentFunction
-      stableDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
-      stableDescriptor.rasterSampleCount = sampleCount
-
-      let stableAttachment = stableDescriptor.colorAttachments[0]!
-      stableAttachment.isBlendingEnabled = true
-      stableAttachment.rgbBlendOperation = .add
-      stableAttachment.alphaBlendOperation = .add
-      stableAttachment.sourceRGBBlendFactor = .one
-      stableAttachment.sourceAlphaBlendFactor = .one
-      stableAttachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
-      stableAttachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
-      stableInkPipelineState = try? device.makeRenderPipelineState(
-        descriptor: stableDescriptor
-      )
-
-      let inkDescriptor = MTLRenderPipelineDescriptor()
-      inkDescriptor.label = "Notebook Ink"
-      inkDescriptor.vertexFunction = vertexFunction
-      inkDescriptor.fragmentFunction = fragmentFunction
-      inkDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
-      inkDescriptor.rasterSampleCount = sampleCount
-
-      let inkAttachment = inkDescriptor.colorAttachments[0]!
-      inkAttachment.isBlendingEnabled = true
-      inkAttachment.rgbBlendOperation = .add
-      inkAttachment.alphaBlendOperation = .add
-      inkAttachment.sourceRGBBlendFactor = .one
-      inkAttachment.sourceAlphaBlendFactor = .one
-      inkAttachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
-      inkAttachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
-      inkPipelineState = try? device.makeRenderPipelineState(
-        descriptor: inkDescriptor
-      )
-
-      let eraserDescriptor = MTLRenderPipelineDescriptor()
-      eraserDescriptor.label = "Notebook Eraser"
-      eraserDescriptor.vertexFunction = vertexFunction
-      eraserDescriptor.fragmentFunction = fragmentFunction
-      eraserDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
-      eraserDescriptor.rasterSampleCount = sampleCount
-
-      let eraserAttachment = eraserDescriptor.colorAttachments[0]!
-      eraserAttachment.isBlendingEnabled = true
-      eraserAttachment.rgbBlendOperation = .add
-      eraserAttachment.alphaBlendOperation = .add
-      eraserAttachment.sourceRGBBlendFactor = .zero
-      eraserAttachment.sourceAlphaBlendFactor = .zero
-      eraserAttachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
-      eraserAttachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
-      eraserPipelineState = try? device.makeRenderPipelineState(
-        descriptor: eraserDescriptor
-      )
-    } else {
-      stableInkPipelineState = nil
-      inkPipelineState = nil
-      eraserPipelineState = nil
-    }
+    stableInkPipelineState = gpu.baseline
+    inkPipelineState = gpu.ink
+    eraserPipelineState = gpu.eraser
 
     super.init(frame: frame, device: device)
 
@@ -235,16 +176,20 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     isPaused = false
     preferredFramesPerSecond = 120
     autoResizeDrawable = true
+    #if os(iOS)
     backgroundColor = .clear
     isOpaque = false
     isUserInteractionEnabled = false
-    layer.isOpaque = false
-    layer.opacity = 0
-    if let metalLayer = layer as? CAMetalLayer {
-      metalLayer.presentsWithTransaction = false
-      metalLayer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
-      metalLayer.maximumDrawableCount = Self.framesInFlight
-    }
+    let metalLayer = layer as? CAMetalLayer
+    #else
+    wantsLayer = true
+    let metalLayer = layer as? CAMetalLayer
+    #endif
+    metalLayer?.isOpaque = false
+    metalLayer?.opacity = 0
+    metalLayer?.presentsWithTransaction = false
+    metalLayer?.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
+    metalLayer?.maximumDrawableCount = Self.framesInFlight
     delegate = self
   }
 
@@ -253,20 +198,45 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     fatalError("init(coder:) is unavailable")
   }
 
+  #if os(iOS)
   override func didMoveToWindow() {
     super.didMoveToWindow()
-    if let screen = window?.windowScene?.screen {
-      preferredFramesPerSecond = screen.maximumFramesPerSecond
-    }
-    if window != nil {
-      isPaused = false
-      scheduleStableRasterIfNeeded()
-    }
+    if let screen = window?.windowScene?.screen { preferredFramesPerSecond = screen.maximumFramesPerSecond }
+    mounted()
+  }
+  override func layoutSubviews() { super.layoutSubviews(); scheduleStableRasterIfNeeded() }
+  #else
+  override var isOpaque: Bool { false }
+  override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); mounted() }
+  override func layout() { super.layout(); scheduleStableRasterIfNeeded() }
+  #endif
+
+  private func mounted() {
+    if window != nil { requestFrame(); scheduleStableRasterIfNeeded() }
   }
 
-  override func layoutSubviews() {
-    super.layoutSubviews()
-    scheduleStableRasterIfNeeded()
+  func project(camera: SpatialCamera?, viewport: SpatialPoint) {
+    guard spatialCamera != camera || spatialViewport != viewport else { return }
+    spatialCamera = camera; spatialViewport = viewport
+    beginStableContentUpdate()
+    requestFrame()
+  }
+
+  private(set) var spatialMeshInstallCount = 0
+
+  func finishSpatialPreparation() { drawingIsPreparing = false; requestFrame() }
+
+  func applySpatial(_ mesh: SpatialInkMesh) {
+    drawingIsPreparing = false
+    spatialMeshInstallCount += 1
+    beginStableContentUpdate()
+    stableRasterTask?.cancel(); stableRasterTask = nil
+    stableDrawing = nil; stableTexture = nil
+    installedStableRasterKey = nil; pendingStableRasterKey = nil
+    committedBatches = mesh.batches.map { .init(operation: $0.tool == .pen ? .ink : .erase,
+      vertices: $0.vertices, buffer: nil, projection: $0.projection) }
+    discardActiveAction()
+    requestFrame()
   }
 
   /// Replaces the page atomically. This is used for load, undo, and sync.
@@ -304,45 +274,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     scheduleStableRasterIfNeeded()
   }
 
-  /// Rebuilds one spatial surface from its ordered raw journal actions.
-  func applySpatial(_ layers: [SpatialInkRenderLayer]) {
-    beginStableContentUpdate()
-    stableRasterTask?.cancel()
-    stableRasterTask = nil
-    stableDrawingRevision &+= 1
-    stableDrawing = nil
-    stableTexture = nil
-    installedStableRasterKey = nil
-    pendingStableRasterKey = nil
-    committedBatches.removeAll(keepingCapacity: true)
-
-    for layer in layers {
-      switch layer {
-      case .ink(let points, let color):
-        var vertices: [Vertex] = []
-        SpatialInkGeometry.appendStrokeVertices(
-          points: points,
-          color: SIMD4(
-            Float(color.red),
-            Float(color.green),
-            Float(color.blue),
-            1
-          ),
-          to: &vertices
-        )
-        appendCommitted(vertices, operation: .ink)
-      case .erase(let points):
-        var vertices: [Vertex] = []
-        SpatialInkGeometry.appendStrokeVertices(
-          points: points,
-          color: SIMD4(1, 1, 1, 1),
-          to: &vertices
-        )
-        appendCommitted(vertices, operation: .erase)
-      }
-    }
-    discardActiveAction()
-    requestFrame()
+  func beginSpatialAction() { spatialActionBase = committedBatches }
+  func finishSpatialAction(keepingCommittedMesh: Bool) {
+    if !keepingCommittedMesh, let base = spatialActionBase { committedBatches = base; requestFrame() }
+    spatialActionBase = nil
   }
 
   /// Publishes the newest Pencil samples. Rendering happens on the display
@@ -370,76 +305,30 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     requestFrame()
   }
 
-  /// Moves the exact active mesh into the page. No second renderer and no
-  /// visual replacement are involved.
-  func commitActiveStroke() {
-    if let activeInkStroke,
-      !activeInkStroke.measuredPoints.isEmpty
-    {
-      let components = activeInkStroke.style.color.components
-      var vertices: [Vertex] = []
-      SpatialInkGeometry.appendStrokeVertices(
-        points: activeInkStroke.measuredPoints,
-        color: SIMD4(
-          Float(components.red),
-          Float(components.green),
-          Float(components.blue),
-          1
-        ),
-        to: &vertices
-      )
-      appendCommitted(vertices, operation: .ink)
-    }
-    discardActiveAction()
-    requestFrame()
-  }
+  /// Finish only the measured tail of the live mesh. Predictions never enter
+  /// the durable batch, and a long contact is not rebuilt at Pencil-up.
+  func commitActiveStroke() { guard activeInkStroke != nil else { return }; commitMeasuredMesh() }
+  func commitActiveEraser() { guard activeEraserStroke != nil else { return }; commitMeasuredMesh() }
+  func commitActiveSpatialAction() { commitMeasuredMesh() }
 
-  /// Keeps the measured eraser geometry in the same order as the page archive.
-  func commitActiveEraser() {
-    if let activeEraserStroke,
-      !activeEraserStroke.measuredPoints.isEmpty
-    {
-      var vertices: [Vertex] = []
-      SpatialInkGeometry.appendStrokeVertices(
-        points: activeEraserStroke.measuredPoints,
-        color: SIMD4(1, 1, 1, 1),
-        to: &vertices
-      )
-      appendCommitted(vertices, operation: .erase)
-    }
-    discardActiveAction()
-    requestFrame()
-  }
-
-  /// Freezes a finished board or cover gesture into this same Metal surface.
-  /// The journal replay may arrive on a later frame; a following Pencil-down
-  /// can therefore clear only its own live tip, never the preceding stroke.
-  func commitActiveSpatialAction() {
-    if let activeInkStroke, !activeInkStroke.measuredPoints.isEmpty {
-      let components = activeInkStroke.style.color.components
-      var vertices: [Vertex] = []
-      SpatialInkGeometry.appendStrokeVertices(
-        points: activeInkStroke.measuredPoints,
-        color: SIMD4(
-          Float(components.red),
-          Float(components.green),
-          Float(components.blue),
-          1
-        ),
-        to: &vertices
-      )
-      appendCommitted(vertices, operation: .ink)
-    } else if let activeEraserStroke,
-      !activeEraserStroke.measuredPoints.isEmpty
-    {
-      var vertices: [Vertex] = []
-      SpatialInkGeometry.appendStrokeVertices(
-        points: activeEraserStroke.measuredPoints,
-        color: SIMD4(1, 1, 1, 1),
-        to: &vertices
-      )
-      appendCommitted(vertices, operation: .erase)
-    }
+  private func commitMeasuredMesh() {
+    let identity: ObjectIdentifier
+    let points: [PKStrokePoint]
+    let color: SIMD4<Float>
+    let operation: RenderOperation
+    let changed: Int
+    if let stroke = activeInkStroke {
+      identity = ObjectIdentifier(stroke); points = stroke.measuredPoints
+      let value = stroke.style.color.components
+      color = .init(Float(value.red), Float(value.green), Float(value.blue), 1)
+      operation = .ink; changed = stroke.consumeChangedStart()
+    } else if let stroke = activeEraserStroke {
+      identity = ObjectIdentifier(stroke); points = stroke.measuredPoints
+      color = .init(1, 1, 1, 1); operation = .erase; changed = stroke.consumeChangedStart()
+    } else { return }
+    if builtActiveIdentity != identity { activeMesh = IncrementalInkMesh() }
+    activeMesh.update(points: points, changedFrom: builtActiveIdentity == identity ? changed : 0, color: color)
+    appendCommitted(activeMesh.vertices, operation: operation)
     discardActiveAction()
     requestFrame()
   }
@@ -511,6 +400,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         index: 1
       )
       for batch in committedBatches {
+        var transform = batch.projection.transform(camera: spatialCamera, viewport: spatialViewport)
+        encoder.setVertexBytes(&transform, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
         draw(
           buffer: batch.buffer,
           vertexCount: batch.vertices.count,
@@ -519,6 +410,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         )
       }
       if let active {
+        var identity = SIMD4<Float>(1, 1, 0, 0)
+        encoder.setVertexBytes(&identity, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
         draw(
           buffer: active.buffer,
           vertexCount: activeVertices.count,
@@ -535,11 +428,28 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         && activeEraserStroke == nil
         && stableRasterIsReady
       ? stableContentRevision : nil
-    commandBuffer.addCompletedHandler { [weak self, inFlightSemaphore] _ in
+    commandBuffer.addCompletedHandler { [weak self, inFlightSemaphore] buffer in
       inFlightSemaphore.signal()
-      guard let presentedRevision else { return }
+      guard buffer.status == .completed else { return }
       Task { @MainActor [weak self] in
-        guard let self,
+        guard let self else { return }
+        if !hasRevealedFirstFrame {
+          hasRevealedFirstFrame = true
+          // Completing a hidden drawable is not a capturable visible layer.
+          // Reveal without a Core Animation fade, then require one more frame
+          // before a cover snapshot can freeze these pixels.
+          CATransaction.begin()
+          CATransaction.setDisableActions(true)
+          #if os(iOS)
+          layer.opacity = 1
+          #else
+          layer?.opacity = 1
+          #endif
+          CATransaction.commit()
+          requestFrame()
+          return
+        }
+        guard let presentedRevision,
           stableContentRevision == presentedRevision,
           presentedStableContentRevision != presentedRevision
         else { return }
@@ -550,14 +460,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     commandBuffer.commit()
     mustSignal = false
     frameSlot = (frameSlot + 1) % Self.framesInFlight
-
-    if !hasPresentedFrame {
-      // The first drawable may contain Metal's diagnostic magenta. Reveal the
-      // layer only after its transparent clear has reached the GPU once.
-      commandBuffer.waitUntilCompleted()
-      hasPresentedFrame = true
-      layer.opacity = 1
-    }
 
     if activeInkStroke == nil, activeEraserStroke == nil { isPaused = true }
   }
@@ -768,7 +670,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     operation: RenderOperation
   ) {
     guard !vertices.isEmpty else { return }
-    if committedBatches.last?.operation == operation {
+    let projection = spatialCamera.map { SpatialInkMesh.Projection.screen($0, spatialViewport) } ?? .local
+    if committedBatches.last?.operation == operation && committedBatches.last?.projection == projection {
       committedBatches[committedBatches.count - 1].vertices.append(
         contentsOf: vertices
       )
@@ -778,7 +681,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         CommittedBatch(
           operation: operation,
           vertices: vertices,
-          buffer: nil
+          buffer: nil,
+          projection: projection
         )
       )
     }
@@ -826,20 +730,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       vertexStart: 0,
       vertexCount: vertexCount
     )
-  }
-
-  private func makeVertices(
-    measured: [PKStrokePoint],
-    predicted: [PKStrokePoint],
-    color: SIMD4<Float>
-  ) -> [Vertex] {
-    var points = measured
-    points.reserveCapacity(measured.count + predicted.count)
-    points.append(contentsOf: predicted)
-    var vertices: [Vertex] = []
-    vertices.reserveCapacity(points.count * 6)
-    SpatialInkGeometry.appendStrokeVertices(points: points, color: color, to: &vertices)
-    return vertices
   }
 
   private func nextPowerOfTwo(_ value: Int) -> Int {

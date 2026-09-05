@@ -33,11 +33,11 @@ printf '%s\n' "$SOURCE_REVISION" > "$OUTPUT/source.sha256"
 cd "$ROOT/Applications"
 xcodegen generate
 xcodebuild -quiet -project Notebook.xcodeproj -scheme NotebookMac \
-  -configuration Debug -destination 'generic/platform=macOS' \
+  -configuration Release -destination 'generic/platform=macOS' \
   -derivedDataPath "$OUTPUT/mac" CODE_SIGNING_ALLOWED=NO build \
   > "$OUTPUT/mac-build.log" 2>&1
 xcodebuild -quiet -project Notebook.xcodeproj -scheme Notebook \
-  -configuration Debug -destination 'generic/platform=iOS' \
+  -configuration Release -destination 'generic/platform=iOS' \
   -derivedDataPath "$OUTPUT/ipad" build > "$OUTPUT/ipad-build.log" 2>&1
 
 if [[ "$(source_revision)" != "$SOURCE_REVISION" ]]; then
@@ -48,9 +48,9 @@ fi
 # A verified pair is staged before either installed application is changed.
 mkdir -p "$HOME/Applications"
 APP_STAGE=$(mktemp -d "$HOME/Applications/.notebook-install.XXXXXX")
-ditto "$OUTPUT/mac/Build/Products/Debug/Notebook.app" "$APP_STAGE/Notebook.app"
+ditto "$OUTPUT/mac/Build/Products/Release/Notebook.app" "$APP_STAGE/Notebook.app"
 xcrun devicectl device install app --device "$DEVICE_ID" \
-  "$OUTPUT/ipad/Build/Products/Debug-iphoneos/Notebook.app" \
+  "$OUTPUT/ipad/Build/Products/Release-iphoneos/Notebook.app" \
   --json-output "$OUTPUT/ipad-install.json"
 if pgrep -f "^$HOME/Applications/Notebook.app/Contents/MacOS/Notebook" >/dev/null; then
   osascript -e 'tell application id "com.amirtlinov.notebook.mac" to quit'

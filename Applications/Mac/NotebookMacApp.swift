@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct NotebookMacApp: App {
+  @NSApplicationDelegateAdaptor(NotebookMacLifecycle.self) private var lifecycle
   @State private var model: NotebookAppModel
   private let isRunningTests: Bool
 
@@ -31,9 +32,24 @@ struct NotebookMacApp: App {
         MacRootView()
           .environment(model)
           .frame(minWidth: 480, minHeight: 640)
+          .onAppear { lifecycle.model = model }
       }
     }
     .windowStyle(.hiddenTitleBar)
     .defaultSize(width: 700, height: 900)
+  }
+}
+
+/// AppKit keeps the process alive until already accepted edits reach disk.
+@MainActor
+final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
+  weak var model: NotebookAppModel?
+  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    guard let model else { return .terminateNow }
+    Task {
+      await model.finishPendingInteraction()
+      sender.reply(toApplicationShouldTerminate: true)
+    }
+    return .terminateLater
   }
 }

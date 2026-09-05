@@ -15,7 +15,7 @@ final class AgentStateTests: XCTestCase {
   }
 
   @MainActor
-  func testNativeCoverTextKeepsOneDurableEditingLifecycle() throws {
+  func testNativeCoverTextKeepsOneDurableEditingLifecycle() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -41,6 +41,7 @@ final class AgentStateTests: XCTestCase {
     )
 
     let workspace = try XCTUnwrap(model.workspace)
+    await model.finishPendingPersistence()
     let saved = try store.loadBoard(items: workspace.items)
     let savedBoard = try XCTUnwrap(saved.board(workspace.rootBoardID))
     XCTAssertEqual(
@@ -53,6 +54,7 @@ final class AgentStateTests: XCTestCase {
     XCTAssertFalse(model.board?.elements.contains(where: {
       $0.id == elementID
     }) ?? true)
+    await model.finishPendingPersistence()
     XCTAssertFalse(
       try store.loadBoard(items: workspace.items)
         .board(workspace.rootBoardID)!.elements.contains(where: {
@@ -62,7 +64,7 @@ final class AgentStateTests: XCTestCase {
   }
 
   @MainActor
-  func testDocumentSourceAndInteractiveStatePersistThroughTheirOwners() throws {
+  func testDocumentSourceAndInteractiveStatePersistThroughTheirOwners() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -87,6 +89,7 @@ final class AgentStateTests: XCTestCase {
       value: .object(["count": .number(4)])
     )
 
+    await model.finishPendingPersistence()
     XCTAssertEqual(
       try store.loadDocument(documentID).blocks.first?.source,
       "# Отредактировано на iPad"
@@ -101,7 +104,7 @@ final class AgentStateTests: XCTestCase {
   }
 
   @MainActor
-  func testRemoteDocumentCatalogWaitsForAllDependencies() throws {
+  func testRemoteDocumentCatalogWaitsForAllDependencies() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -154,7 +157,7 @@ final class AgentStateTests: XCTestCase {
   }
 
   @MainActor
-  func testRemoteDocumentDeletionRemovesItsDurableOwners() throws {
+  func testRemoteDocumentDeletionRemovesItsDurableOwners() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }

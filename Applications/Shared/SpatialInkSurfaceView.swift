@@ -23,7 +23,7 @@ final class SpatialInkSurfaceRegistry {
 
     private var canvases: [SurfaceID: WeakCanvas] = [:]
     private var activeSurfaces: Set<SurfaceID> = []
-    private var deferredLayers: [SurfaceID: [SpatialInkRenderLayer]] = [:]
+    private var deferredLayers: [SurfaceID: SpatialInkMesh] = [:]
 
     func register(_ view: InkCanvasView, for surface: SurfaceID) {
       canvases = canvases.filter { $0.value.view != nil }
@@ -49,11 +49,12 @@ final class SpatialInkSurfaceRegistry {
     }
 
     func beginAction(on surface: SurfaceID) {
-      activeSurfaces.insert(surface)
+      if activeSurfaces.insert(surface).inserted { canvas(for: surface)?.beginSpatialAction() }
     }
 
     func finishAction(on surface: SurfaceID, keepingCommittedMesh: Bool) {
       activeSurfaces.remove(surface)
+      canvas(for: surface)?.finishSpatialAction(keepingCommittedMesh: keepingCommittedMesh)
       if keepingCommittedMesh {
         deferredLayers.removeValue(forKey: surface)
         return
@@ -65,7 +66,7 @@ final class SpatialInkSurfaceRegistry {
     }
 
     func applyStable(
-      _ layers: [SpatialInkRenderLayer],
+      _ layers: SpatialInkMesh,
       to surface: SurfaceID,
       in view: InkCanvasView? = nil
     ) {
@@ -120,7 +121,7 @@ struct SpatialInkSurfaceView: UIViewRepresentable {
   final class Coordinator {
     private weak var registry: SpatialInkSurfaceRegistry?
     private var surface: SurfaceID?
-    private var appliedStamp: VersionStamp?
+    private let preparation = SpatialInkMeshPreparation()
 
     func update(
       view: InkCanvasView,
@@ -133,15 +134,14 @@ struct SpatialInkSurfaceView: UIViewRepresentable {
         self.registry = registry
         self.surface = surface
         registry.register(view, for: surface)
-        appliedStamp = nil
+        preparation.cancel()
       }
-      guard appliedStamp != journal?.stamp else { return }
-      appliedStamp = journal?.stamp
-      registry.applyStable(
-        SpatialInkComposer.localLayers(for: surface, journal: journal),
-        to: surface,
-        in: view
-      )
+      let pending = preparation.update(surface: surface, journal: journal) { [weak registry, weak view] mesh in
+        guard let registry, let view else { return }
+        if let mesh { registry.applyStable(mesh, to: surface, in: view) }
+        else { view.finishSpatialPreparation() }
+      }
+      if pending { view.prepareForDrawing() }
     }
 
     func unregister(_ view: InkCanvasView) {
@@ -149,21 +149,40 @@ struct SpatialInkSurfaceView: UIViewRepresentable {
       registry?.unregister(view, for: surface)
       self.surface = nil
       registry = nil
-      appliedStamp = nil
+      preparation.cancel()
     }
   }
 }
 #elseif os(macOS)
-struct SpatialInkSurfaceView: View {
+struct SpatialInkSurfaceView: NSViewRepresentable {
   let surface: SurfaceID
   let journal: SpatialInkJournal?
   var camera: SpatialCamera? = nil
   var viewport: SpatialPoint? = nil
 
+  func makeCoordinator() -> SpatialInkMeshPreparation { SpatialInkMeshPreparation() }
+  func makeNSView(context: Context) -> InkCanvasView { InkCanvasView(frame: .zero) }
+  func updateNSView(_ view: InkCanvasView, context: Context) {
+    view.project(camera: camera, viewport: viewport ?? .init(x: view.bounds.width, y: view.bounds.height))
+    let pending = context.coordinator.update(surface: surface, journal: journal) { [weak view] mesh in
+      if let mesh { view?.applySpatial(mesh) } else { view?.finishSpatialPreparation() }
+    }
+    if pending { view.prepareForDrawing() }
+  }
+  static func dismantleNSView(_ view: InkCanvasView, coordinator: SpatialInkMeshPreparation) { coordinator.cancel() }
+}
+
+/// Static export consumes the same geometry, but never mounts a drawable in ImageRenderer.
+struct SpatialInkSnapshotView: View {
+  @Environment(\.spatialInkRasterSnapshot) private var snapshot
+  let surface: SurfaceID
+  let journal: SpatialInkJournal?
+  var camera: SpatialCamera? = nil
+  var viewport: SpatialPoint? = nil
   var body: some View {
     GeometryReader { geometry in
-      if let image = SpatialInkRasterCache.shared.image(surface: surface, journal: journal,
-        camera: camera, viewport: viewport, size: geometry.size) {
+      if let image = snapshot?.image(for: .init(surface: surface, camera: camera,
+        viewport: viewport ?? .init(x: geometry.size.width, y: geometry.size.height))) {
         Image(nsImage: image).resizable()
       }
     }

@@ -460,7 +460,9 @@ public struct NotebookStore: Sendable {
     guard presence.isValid else { throw corruptFile(at: presenceURL) }
     try prepare()
     try withMutationLock {
-      try encoder.encode(presence).write(to: presenceURL, options: [.atomic])
+      let data = try encoder.encode(presence)
+      guard (try? Data(contentsOf: presenceURL)) != data else { return }
+      try data.write(to: presenceURL, options: [.atomic])
     }
   }
 
@@ -807,6 +809,7 @@ public struct NotebookStore: Sendable {
           throw corruptFile(at: url)
         }
         _ = resolved.merge(disk)
+        if resolved == disk { return resolved }
       }
       try writePage(resolved)
       return resolved

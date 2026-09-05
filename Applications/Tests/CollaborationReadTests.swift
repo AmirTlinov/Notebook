@@ -16,7 +16,7 @@ final class CollaborationReadTests: XCTestCase {
         .init(kind: .insertElement, target: target, id: "idea", values: ["kind": .string("markdown"),
           "source": .string("Idea"), "html": .string("Idea"), "frame": .object([
             "x": .number(30), "y": .number(30), "width": .number(200), "height": .number(80)])])]), actor: UUID())
-    model.reloadExternalChanges()
+    await model.reloadExternalChanges()?.value
     let reference = try XCTUnwrap(action.resultReferences(in: XCTUnwrap(model.collaborationContent)).first)
     let finger = UUID()
     model.inputGate.beginContact(source: finger)
@@ -39,6 +39,7 @@ final class CollaborationReadTests: XCTestCase {
     _ = changed.replaceElements([.init(id: "idea", kind: .markdown,
       frame: .init(x: 130, y: 30, width: 200, height: 80), source: "Human", html: "Human")], actor: model.actorID)
     model.receivePeerMessage(.page(changed))
+    await model.finishPendingPersistence()
     XCTAssertFalse(model.collaborationDetailsAreCurrent)
     XCTAssertTrue(model.results(for: action).isEmpty, "Старое положение не выдаётся за текущий результат")
     await model.refreshCollaborationDetails()

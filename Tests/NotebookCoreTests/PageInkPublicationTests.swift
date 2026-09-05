@@ -55,3 +55,23 @@ func preparedInkCannotCrossPageOwner() throws {
   #expect(published7)
   #expect(second.drawingData.isEmpty)
 }
+
+@Test("Завершение отмены сохраняет историю штриха, добавленного во время подготовки")
+func undoCompletionKeepsNewerContact() throws {
+  let pageID = UUID(), first = UUID(), next = UUID()
+  var history = PencilUndoHistory()
+  history.recordAction(pageID: pageID, actionID: first)
+  history.recordAction(pageID: pageID, actionID: next)
+  history.didRemoveContribution([first], for: pageID)
+  #expect(history.lastContribution(for: pageID) == [next])
+  history.didRemoveContribution([next], for: pageID)
+  #expect(history.lastContribution(for: pageID) == nil)
+}
+
+@Test("Уже удалённый вклад завершает отмену без лишней ревизии чернил")
+func preparedNoOpDoesNotAdvanceDrawing() throws {
+  let page = PageDocument(size: .init(width: 834, height: 1194), actor: UUID())
+  let prepared = try page.prepareInkChange(.remove([UUID()]), stamp: .init(counter: 1, actor: UUID()))
+  #expect(prepared.stamp == page.drawingStamp)
+  #expect(prepared.data == page.drawingData)
+}

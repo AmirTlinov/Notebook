@@ -1,40 +1,20 @@
 import NotebookCore
 import SwiftUI
 
-/// The portal replays the same raw journal through the board's Metal renderer.
-/// Its coordinator retains geometry until the journal or projection changes.
+/// Portals and active boards project the same prepared vector mesh.
 struct PortalBoardInkView: UIViewRepresentable {
   let boardID: UUID
   let journal: SpatialInkJournal?
   let camera: SpatialCamera
   let viewport: SpatialPoint
-
-  struct Signature: Equatable {
-    let boardID: UUID
-    let stamp: VersionStamp?
-    let camera: SpatialCamera
-    let viewport: SpatialPoint
-  }
-
-  final class Coordinator {
-    var signature: Signature?
-  }
-
-  func makeCoordinator() -> Coordinator { Coordinator() }
-
-  func makeUIView(context: Context) -> InkCanvasView {
-    let view = InkCanvasView(frame: .zero)
-    view.isUserInteractionEnabled = false
-    return view
-  }
-
+  func makeCoordinator() -> SpatialInkMeshPreparation { SpatialInkMeshPreparation() }
+  func makeUIView(context: Context) -> InkCanvasView { InkCanvasView(frame: .zero) }
   func updateUIView(_ view: InkCanvasView, context: Context) {
-    let signature = Signature(boardID: boardID, stamp: journal?.stamp,
-      camera: camera, viewport: viewport)
-    guard context.coordinator.signature != signature else { return }
-    context.coordinator.signature = signature
-    view.applySpatial(SpatialInkComposer.boardLayers(
-      board: .board(boardID), journal: journal, camera: camera, viewport: viewport
-    ))
+    view.project(camera: camera, viewport: viewport)
+    let pending = context.coordinator.update(surface: .board(boardID), journal: journal) { [weak view] mesh in
+      if let mesh { view?.applySpatial(mesh) } else { view?.finishSpatialPreparation() }
+    }
+    if pending { view.prepareForDrawing() }
   }
+  static func dismantleUIView(_ view: InkCanvasView, coordinator: SpatialInkMeshPreparation) { coordinator.cancel() }
 }

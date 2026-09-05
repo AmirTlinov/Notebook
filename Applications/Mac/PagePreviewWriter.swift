@@ -2,7 +2,6 @@ import Foundation
 import NotebookCore
 
 enum PagePreviewWriter {
-  @MainActor
   static func hasCurrentArtifacts(
     for page: PageDocument,
     store: NotebookStore
@@ -41,10 +40,11 @@ enum PagePreviewWriter {
     }
   }
 
-  @MainActor
   static func write(_ page: PageDocument, store: NotebookStore) throws {
+    try Task.checkCancellation()
     let previewURL = store.previewURL(page.id)
     let render = try PageVisionRenderer.render(page)
+    try Task.checkCancellation()
     let regionsURL = store.previewRegionsURL(page.id)
     let fileManager = FileManager.default
     try fileManager.createDirectory(

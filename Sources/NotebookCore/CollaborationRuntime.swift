@@ -267,6 +267,7 @@ extension NotebookStore {
     try prepare()
     return try FileManager.default.contentsOfDirectory(at: deviceReceiptsURL, includingPropertiesForKeys: nil)
       .filter { $0.pathExtension == "json" }.map { try JSONDecoder().decode(DeviceActionReceipt.self, from: Data(contentsOf: $0)) }
+      .sorted { $0.id.uuidString < $1.id.uuidString }
   }
 
   public func saveDeviceActionReceipt(_ receipt: DeviceActionReceipt) throws {
@@ -276,6 +277,7 @@ extension NotebookStore {
       var result = receipt
       if let data = try? Data(contentsOf:url), let previous = try? JSONDecoder().decode(DeviceActionReceipt.self,from:data) {
         result = previous.merging(receipt)
+        guard result != previous else { return }
       }
       try JSONEncoder().encode(result).write(to:url,options:.atomic)
     }

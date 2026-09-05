@@ -47,7 +47,7 @@ if rg -n 'PKCanvasView|override func draw\(' \
     'iPad должен иметь один визуальный тракт чернил: InkCanvasView.' >&2
   exit 1
 fi
-if [[ "$(rg -l ': MTKView' "$ROOT/Applications/iPad" --glob '*.swift' | wc -l | tr -d ' ')" != 1 ]]; then
+if [[ "$(rg -l ': MTKView' "$ROOT/Applications/Shared/InkCanvasView.swift" --glob '*.swift' | wc -l | tr -d ' ')" != 1 ]]; then
   printf '%s\n' \
     'На iPad должна быть одна реализация Metal-рендера: InkCanvasView.' >&2
   exit 1

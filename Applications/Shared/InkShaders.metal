@@ -56,10 +56,11 @@ fragment half4 stableInkFragment(
 vertex PaperInkVertexOut paperInkVertex(
   const device PaperInkVertex *vertices [[buffer(0)]],
   constant float2 &viewportSize [[buffer(1)]],
+  constant float4 &transform [[buffer(2)]],
   uint vertexID [[vertex_id]]
 ) {
   const PaperInkVertex input = vertices[vertexID];
-  const float2 unit = input.position / max(viewportSize, float2(1.0));
+  const float2 unit = (input.position * transform.xy + transform.zw) / max(viewportSize, float2(1.0));
 
   PaperInkVertexOut output;
   output.position = float4(

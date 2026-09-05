@@ -19,8 +19,8 @@ public struct PencilUndoHistory: Sendable {
   public func lastContribution(for pageID: UUID) -> Set<UUID>? { contributions[pageID]?.last }
 
   public mutating func didRemoveContribution(_ ids: Set<UUID>, for pageID: UUID) {
-    guard var history = contributions[pageID], history.last == ids else { return }
-    history.removeLast()
+    guard var history = contributions[pageID], let index = history.lastIndex(of: ids) else { return }
+    history.remove(at: index)
     contributions[pageID] = history.isEmpty ? nil : history
   }
 

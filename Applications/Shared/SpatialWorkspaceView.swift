@@ -45,32 +45,38 @@ enum WorkspaceSceneProjection {
     remainingPasses > 0 && WorkspaceItemGeometry.notebook.width * pixelScale >= 8
   }
 
-  /// The snapshot publisher walks the same finite portal projection as the view.
-  /// Every visible web layer must have its exact source/state raster ready.
-  static func snapshotElements(
+  struct SnapshotInkSurface: Hashable, Sendable {
+    let surface: SurfaceID
+    let camera: SpatialCamera?
+    let viewport: SpatialPoint
+  }
+
+  struct SnapshotLayers {
+    var elements: [SpatialElement] = []
+    var ink: [SnapshotInkSurface] = []
+  }
+
+  /// Web and ink preparation enumerate exactly the same finite presentation tree.
+  static func snapshotLayers(
     workspace: WorkspaceIndex, hierarchy: BoardHierarchy, presence: SessionPresence,
     documents: [UUID: DocumentDocument]
-  ) -> [SpatialElement] {
-    guard let board = hierarchy.board(presence.boardID) else { return [] }
-    var result = board.elements
-    var pending = items(workspace: workspace, board: board, presence: presence, documents: documents)
-      .filter { $0.item.kind == .board }
-      .map { ($0.id, 1.0, portalPasses) }
-    while let (id, pixelScale, passes) = pending.popLast() {
-      guard showsPortal(pixelScale: pixelScale, remainingPasses: passes),
-        let child = hierarchy.board(id), let portal = hierarchy.portalCamera(id)
-      else { continue }
-      result.append(contentsOf: child.elements)
-      let camera = BoardPortalProjection.entryCamera(
-        portalCamera: portal, viewport: presence.viewport
-      )
-      let childPresence = SessionPresence(boardID: id, mode: .board,
-        camera: camera,
-        viewport: BoardPortalProjection.renderViewport(viewport: presence.viewport))
-      let childScale = pixelScale * camera.scale
-        / BoardPortalProjection.fillScale(viewport: presence.viewport)
-      pending.append(contentsOf: items(workspace: workspace, board: child, presence: childPresence, documents: documents)
-        .filter { $0.item.kind == .board }.map { ($0.id, childScale, passes - 1) })
+  ) -> SnapshotLayers {
+    var result = SnapshotLayers()
+    var pending = [(presence, 1.0, portalPasses)]
+    while let (projection, pixelScale, passes) = pending.popLast() {
+      guard let board = hierarchy.board(projection.boardID) else { continue }
+      result.elements.append(contentsOf: board.elements)
+      result.ink.append(.init(surface: .board(projection.boardID), camera: projection.camera, viewport: projection.viewport))
+      for item in items(workspace: workspace, board: board, presence: projection, documents: documents) {
+        result.ink.append(.init(surface: .cover(item.id), camera: nil,
+          viewport: .init(x: item.geometry.width, y: item.geometry.height)))
+        guard item.item.kind == .board, showsPortal(pixelScale: pixelScale, remainingPasses: passes),
+          let portal = hierarchy.portalCamera(item.id) else { continue }
+        let camera = BoardPortalProjection.entryCamera(portalCamera: portal, viewport: presence.viewport)
+        let child = SessionPresence(boardID: item.id, mode: .board, camera: camera,
+          viewport: BoardPortalProjection.renderViewport(viewport: presence.viewport))
+        pending.append((child, pixelScale * camera.scale / BoardPortalProjection.fillScale(viewport: presence.viewport), passes - 1))
+      }
     }
     return result
   }
@@ -152,7 +158,7 @@ enum WorkspaceSceneProjection {
       ZStack {
         SpatialBoardGrid(camera: presence.camera)
         settledBoardElements
-        SpatialInkSurfaceView(
+        SpatialInkSnapshotView(
           surface: .board(presence.boardID), journal: spatialInk, camera: presence.camera, viewport: presence.viewport
         )
         .frame(width: presence.viewport.x, height: presence.viewport.y)
@@ -224,6 +230,7 @@ enum WorkspaceSceneProjection {
 #endif
 
 struct SpatialWorkspaceView: View {
+  @Environment(\.scenePhase) private var scenePhase
   @Environment(NotebookAppModel.self) private var model
 
   @State private var pointerPreview: CGRect?
@@ -238,7 +245,7 @@ struct SpatialWorkspaceView: View {
   @State private var bufferedCameraPhases: [WorkspaceMagnificationPhase] = []
   @State private var documentPageLayouts: [UUID: DocumentPageLayout] = [:]
   @State private var settling = false
-  @State private var settlementTask: Task<Void, Never>?
+  @State private var cameraSettlement = SceneCameraSettlement()
   @State private var spatialInkSurfaces = SpatialInkSurfaceRegistry()
   #if os(iOS)
     @State private var openingFeedback = UIImpactFeedbackGenerator(style: .soft)
@@ -496,7 +503,11 @@ struct SpatialWorkspaceView: View {
           animateSettlement(to: place.presence.adapted(to: viewport, geometry: model.itemGeometry(place.presence.focusedItemID)), duration: 0.3)
         }
       }
+      .onChange(of: scenePhase) { _, phase in
+        if phase != .active { interruptSettlementForInput() }
+      }
       .onChange(of: geometry.size) { _, _ in
+        interruptSettlementForInput()
         publishViewportIfNeeded(viewport)
       }
       .onChange(of: presence.mode) { _, mode in
@@ -512,8 +523,7 @@ struct SpatialWorkspaceView: View {
         pageTurnIsActive = false
       }
       .onDisappear {
-        settlementTask?.cancel()
-        settlementTask = nil
+        cameraSettlement.cancel()
         cameraGesture = nil
         contentGestureActive = false
         pageTurnIsActive = false
@@ -1198,8 +1208,7 @@ struct SpatialWorkspaceView: View {
   }
 
   private func interruptSettlementForInput() {
-    settlementTask?.cancel()
-    settlementTask = nil
+    cameraSettlement.cancel()
     settling = false
   }
 
@@ -1242,11 +1251,8 @@ struct SpatialWorkspaceView: View {
     renderedItems(presence: presence)
       .reversed()
       .compactMap { rendered -> (UUID, Double)? in
-        let strength = selectionStrength(
-          for: rendered.id,
-          at: centroid,
-          presence: presence
-        )
+        let strength = selectionStrength(rendered: rendered, at: centroid, presence: presence,
+          halo: NotebookOpeningIntent.selectionHalo)
         return strength > 0 ? (rendered.id, strength) : nil
       }
       .max { $0.1 < $1.1 }?.0
@@ -1262,6 +1268,11 @@ struct SpatialWorkspaceView: View {
       let rendered = renderedItems(presence: presence)
         .first(where: { $0.id == itemID })
     else { return 0 }
+    return selectionStrength(rendered: rendered, at: centroid, presence: presence, halo: halo)
+  }
+
+  private func selectionStrength(rendered: RenderedWorkspaceItem, at centroid: CGPoint,
+    presence: SessionPresence, halo: Double) -> Double {
     let screen = presence.camera.worldToScreen(
       rendered.center,
       viewport: presence.viewport
@@ -1363,60 +1374,21 @@ struct SpatialWorkspaceView: View {
     duration: TimeInterval = 0.24
   ) {
     guard let presence = model.presence else { return }
-    settlementTask?.cancel()
-    settling = true
     model.selectItem(itemID)
-    withAnimation(.easeIn(duration: duration)) {
-      model.updatePresence(
-        SessionPresence(
-          boardID: presence.boardID,
-          mode: .cover,
-          camera: BoardPortalProjection.parentBoundaryCamera(
-            portalCenter: center,
-            viewport: viewport
-          ),
-          viewport: viewport,
-          focusedItemID: itemID,
-          openProgress: 1
-        ),
-        settled: true
-      )
-    }
-    settlementTask = Task { @MainActor in
-      try? await Task.sleep(for: .seconds(duration + 0.01))
-      guard !Task.isCancelled else { return }
+    animateSettlement(to: SessionPresence(boardID: presence.boardID, mode: .cover,
+      camera: BoardPortalProjection.parentBoundaryCamera(portalCenter: center, viewport: viewport),
+      viewport: viewport, focusedItemID: itemID, openProgress: 1), duration: duration, bounce: 0.025) {
       model.enterBoard(itemID)
-      contentGestureActive = false
-      settling = false
-      settlementTask = nil
     }
   }
 
   private func leaveBoard(viewport: SpatialPoint) {
-    settlementTask?.cancel()
+    cameraSettlement.cancel()
     guard model.leaveBoard(), let boundary = model.presence else { return }
-    settling = true
-    settlementTask = Task { @MainActor in
-      await Task.yield()
-      guard !Task.isCancelled else { return }
-      let target = SessionPresence(
-        boardID: boundary.boardID,
-        mode: .board,
-        camera: SpatialCamera(
-          center: boundary.camera.center,
-          scale: WorkspaceItemGeometry.notebook.coverScale(viewport: viewport)
-        ),
-        viewport: viewport
-      )
-      withAnimation(.spring(duration: 0.34, bounce: 0.025)) {
-        model.updatePresence(target, settled: true)
-      }
-      try? await Task.sleep(for: .milliseconds(360))
-      guard !Task.isCancelled else { return }
-      contentGestureActive = false
-      settling = false
-      settlementTask = nil
-    }
+    animateSettlement(to: SessionPresence(boardID: boundary.boardID, mode: .board,
+      camera: SpatialCamera(center: boundary.camera.center,
+        scale: WorkspaceItemGeometry.notebook.coverScale(viewport: viewport)),
+      viewport: viewport), duration: 0.34, bounce: 0.025)
   }
 
   private func shouldExitBoard(
@@ -1450,19 +1422,19 @@ struct SpatialWorkspaceView: View {
   private func animateSettlement(
     to target: SessionPresence,
     duration: TimeInterval,
-    bounce: Double = 0.08
+    bounce: Double = 0.08,
+    completion: @escaping () -> Void = {}
   ) {
-    settlementTask?.cancel()
+    guard let start = model.presence else { return }
     settling = true
-    withAnimation(.spring(duration: duration, bounce: bounce)) {
-      model.updatePresence(target, settled: true)
-    }
-    settlementTask = Task { @MainActor in
-      try? await Task.sleep(for: .seconds(duration + 0.02))
-      guard !Task.isCancelled else { return }
+    cameraSettlement.start(from: start, to: target, duration: duration, bounce: bounce) { presence, settled in
+      var transaction = Transaction()
+      transaction.disablesAnimations = true
+      withTransaction(transaction) { model.updatePresence(presence, settled: settled) }
+    } completion: {
       contentGestureActive = false
       settling = false
-      settlementTask = nil
+      completion()
     }
   }
 
@@ -1997,7 +1969,11 @@ struct BoardPortalPreview: View {
             camera: camera, viewport: viewport
           )
         #else
-          SpatialInkSurfaceView(surface: .board(boardID), journal: model.spatialInk, camera: camera, viewport: viewport)
+          if rendersSettledSnapshot {
+            SpatialInkSnapshotView(surface: .board(boardID), journal: model.spatialInk, camera: camera, viewport: viewport)
+          } else {
+            SpatialInkSurfaceView(surface: .board(boardID), journal: model.spatialInk, camera: camera, viewport: viewport)
+          }
         #endif
 
         ForEach(rendered) { item in
@@ -2160,9 +2136,13 @@ struct WorkspaceItemCoverView: View {
         .allowsHitTesting(false)
         .opacity(portalOverlayOpacity)
       #elseif os(macOS)
-        SpatialInkSurfaceView(
-          surface: .cover(item.id), journal: model.spatialInk
-        )
+        Group {
+          if rendersSettledSnapshot {
+            SpatialInkSnapshotView(surface: .cover(item.id), journal: model.spatialInk)
+          } else {
+            SpatialInkSurfaceView(surface: .cover(item.id), journal: model.spatialInk)
+          }
+        }
         .allowsHitTesting(false)
         .opacity(portalOverlayOpacity)
       #endif

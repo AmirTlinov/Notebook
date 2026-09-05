@@ -76,13 +76,6 @@ struct SpatialInkCanvas: UIViewRepresentable {
 
   @MainActor
   final class Coordinator {
-    private struct RenderSignature: Equatable {
-      let journalStamp: VersionStamp?
-      let board: SurfaceID
-      let camera: SpatialCamera
-      let viewport: SpatialPoint
-    }
-
     private var surfaceRegistry: SpatialInkSurfaceRegistry
     private let inputSourceID = UUID()
     private var inputGate: NotebookInputGate
@@ -90,9 +83,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private weak var view: SpatialInkContainerView?
     private weak var window: UIWindow?
     private var recognizer: SpatialPencilGestureRecognizer?
-    private var renderTask: Task<Void, Never>?
-    private var renderGeneration = 0
-    private var appliedSignature: RenderSignature?
+    private let preparation = SpatialInkMeshPreparation()
 
     private var camera = SpatialCamera()
     private var boardSurface = SurfaceID.board
@@ -159,10 +150,11 @@ struct SpatialInkCanvas: UIViewRepresentable {
       if boardSurface != nextBoardSurface {
         surfaceRegistry.unregister(view.inkView, for: boardSurface)
         boardSurface = nextBoardSurface
-        appliedSignature = nil
+        preparation.cancel()
       }
       self.camera = camera
       self.viewport = viewport
+      view.inkView.project(camera: camera, viewport: viewport)
       self.items = items.sorted { $0.zIndex < $1.zIndex }
       self.journal = journal
       self.penStyle = penStyle
@@ -171,7 +163,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       if self.surfaceRegistry !== surfaceRegistry {
         self.surfaceRegistry.unregister(view.inkView, for: boardSurface)
         self.surfaceRegistry = surfaceRegistry
-        appliedSignature = nil
+        preparation.cancel()
       }
       if self.inputGate !== inputGate {
         if pencilActionIsActive {
@@ -228,8 +220,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     }
 
     func uninstall() {
-      renderTask?.cancel()
-      renderTask = nil
+      preparation.cancel()
       if let recognizer { window?.removeGestureRecognizer(recognizer) }
       recognizer = nil
       window = nil
@@ -372,7 +363,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         )
       }
       touchedSurfaces = []
-      appliedSignature = nil
+      preparation.cancel()
     }
 
     private func cancelAction() {
@@ -395,10 +386,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
           on: surface,
           keepingCommittedMesh: false
         )
-        surfaceRegistry.applyStable(
-          stableLayers(for: surface),
-          to: surface
-        )
+
       }
       setPencilActionActive(false)
     }
@@ -725,52 +713,16 @@ struct SpatialInkCanvas: UIViewRepresentable {
       )
     }
 
-    private func stableLayers(for surface: SurfaceID) -> [SpatialInkRenderLayer] {
-      if surface == boardSurface {
-        return SpatialInkComposer.boardLayers(
-          board: boardSurface,
-          journal: journal,
-          camera: camera,
-          viewport: viewport
-        )
-      }
-      return SpatialInkComposer.localLayers(for: surface, journal: journal)
-    }
 
     private func scheduleRenderIfNeeded() {
       guard actionTool == nil, let view else { return }
-      let signature = RenderSignature(
-        journalStamp: journal?.stamp,
-        board: boardSurface,
-        camera: camera,
-        viewport: viewport
-      )
-      guard signature != appliedSignature else { return }
-      appliedSignature = signature
-      renderGeneration += 1
-      let generation = renderGeneration
-      let journal = journal
-      let camera = camera
-      let viewport = viewport
-      let boardSurface = boardSurface
-      renderTask?.cancel()
-      renderTask = Task { [weak self, weak view] in
-        let layers = await Task.detached(priority: .userInitiated) {
-          SpatialInkComposer.boardLayers(
-            board: boardSurface,
-            journal: journal,
-            camera: camera,
-            viewport: viewport
-          )
-        }.value
-        guard !Task.isCancelled,
-          let self,
-          let view,
-          generation == renderGeneration,
-          actionTool == nil
-        else { return }
-        surfaceRegistry.applyStable(layers, to: boardSurface, in: view.inkView)
+      let surface = boardSurface
+      let pending = preparation.update(surface: surface, journal: journal) { [weak self, weak view] mesh in
+        guard let self, let view else { return }
+        if let mesh { surfaceRegistry.applyStable(mesh, to: surface, in: view.inkView) }
+        else { view.inkView.finishSpatialPreparation() }
       }
+      if pending { view.inkView.prepareForDrawing() }
     }
   }
 }

@@ -45,6 +45,9 @@ import {
 } from "./page-vision.js";
 
 const TILE_SIZE = (132 / 2.54 / 2) * 256;
+const { version: packageVersion } = JSON.parse(
+  await readFile(new URL("../package.json", import.meta.url), "utf8"),
+) as { version: string };
 
 const pageSelection = {
   page_id: z.uuid().optional().describe("UUID страницы; по умолчанию текущая страница."),
@@ -59,7 +62,7 @@ const documentSelection = {
 };
 
 export function createServer(store = new NotebookStore()): McpServer {
-  const server = new McpServer({ name: "notebook", version: "0.3.5" });
+  const server = new McpServer({ name: "notebook", version: packageVersion });
   const readSafely = (operation: () => Promise<ToolData | { data: ToolData; image?: string }>, hasImage = false) =>
     safely(() => store.withReadSnapshot(operation), hasImage);
 

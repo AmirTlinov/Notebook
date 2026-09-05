@@ -3,7 +3,7 @@ import simd
 
 /// One triangle geometry feeds the live iPad canvas and the Mac raster.
 enum SpatialInkGeometry {
-  struct Vertex: Equatable {
+  struct Vertex: Equatable, Sendable {
     var position: SIMD2<Float>
     var premultipliedColor: SIMD4<Float>
   }

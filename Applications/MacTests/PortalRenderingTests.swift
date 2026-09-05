@@ -57,8 +57,15 @@ final class PortalRenderingTests: XCTestCase {
         .frame(width: size.x, height: size.y).clipped().environment(model)
       let active = SettledSpatialWorkspaceView(workspace: workspace,
         board: hierarchy.board(childID)!, spatialInk: ink, presence: presence).environment(model)
-      let first = try pixels(portal, size: size)
-      let second = try pixels(active, size: size)
+      let portalPresence = SessionPresence(boardID: childID, mode: .board, camera: camera,
+        viewport: BoardPortalProjection.renderViewport(viewport: size))
+      let surfaces = WorkspaceSceneProjection.snapshotLayers(workspace: workspace, hierarchy: hierarchy,
+        presence: presence, documents: model.documents).ink
+        + WorkspaceSceneProjection.snapshotLayers(workspace: workspace, hierarchy: hierarchy,
+          presence: portalPresence, documents: model.documents).ink
+      let inkRasters = try await SpatialInkRasterSnapshot.prepare(surfaces, journal: ink)
+      let first = try pixels(portal.environment(\.spatialInkRasterSnapshot, inkRasters), size: size)
+      let second = try pixels(active.environment(\.spatialInkRasterSnapshot, inkRasters), size: size)
       XCTAssertEqual(first.count, second.count)
       let difference = zip(first, second).reduce(0.0) { $0 + abs(Double($1.0) - Double($1.1)) }
         / Double(first.count * 255)
@@ -98,6 +105,7 @@ final class PortalRenderingTests: XCTestCase {
     model.receivePeerMessage(.board(left))
     let before = try await receipt(store: store, revision: left.revision)
     model.receivePeerMessage(.board(right))
+    await model.finishPendingPersistence()
     let merged = try XCTUnwrap(model.boardHierarchy)
     XCTAssertEqual(merged.stamp, left.stamp)
     XCTAssertNotEqual(merged.revision, left.revision)
@@ -109,7 +117,7 @@ final class PortalRenderingTests: XCTestCase {
   }
 
   @MainActor
-  func testMinimumZoomExitAndReentryPersistsTheSameCamera() throws {
+  func testMinimumZoomExitAndReentryPersistsTheSameCamera() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root)
@@ -123,6 +131,7 @@ final class PortalRenderingTests: XCTestCase {
       camera: camera, viewport: viewport), settled: true)
     XCTAssertTrue(model.leaveBoard())
     let workspace = try XCTUnwrap(model.workspace)
+    await model.finishPendingPersistence()
     let saved = try store.loadBoard(items: workspace.items)
     XCTAssertLessThan(try XCTUnwrap(saved.portalCamera(childID)).scale, SpatialCamera.minimumScale)
     model.enterBoard(childID)

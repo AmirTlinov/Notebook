@@ -31,13 +31,13 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
   public mutating func merge(_ incoming: Self) {
     _ = workspace.merge(incoming.workspace)
     _ = hierarchy.merge(incoming.hierarchy, items: workspace.items)
-    _ = ink.merge(incoming.ink)
+    if ink != incoming.ink { _ = ink.merge(incoming.ink) }
     var pages = Dictionary(uniqueKeysWithValues: self.pages.map { ($0.id, $0) })
-    for other in incoming.pages { if pages[other.id] != nil { _ = pages[other.id]!.merge(other) } else { pages[other.id] = other } }
+    for other in incoming.pages where pages[other.id] != other { if pages[other.id] != nil { _ = pages[other.id]!.merge(other) } else { pages[other.id] = other } }
     var documents = Dictionary(uniqueKeysWithValues: self.documents.map { ($0.id, $0) })
-    for other in incoming.documents { if documents[other.id] != nil { _ = documents[other.id]!.merge(other) } else { documents[other.id] = other } }
+    for other in incoming.documents where documents[other.id] != other { if documents[other.id] != nil { _ = documents[other.id]!.merge(other) } else { documents[other.id] = other } }
     var states = Dictionary(uniqueKeysWithValues: self.states.map { ($0.id, $0) })
-    for other in incoming.states { if states[other.id] != nil { _ = states[other.id]!.merge(other) } else { states[other.id] = other } }
+    for other in incoming.states where states[other.id] != other { if states[other.id] != nil { _ = states[other.id]!.merge(other) } else { states[other.id] = other } }
     let pageIDs = Set(workspace.items.flatMap(\.pageIDs))
     let documentIDs = Set(workspace.items.filter { $0.kind == .document }.map(\.id))
     self.pages = pages.values.filter { pageIDs.contains($0.id) }.sorted { $0.id.uuidString < $1.id.uuidString }

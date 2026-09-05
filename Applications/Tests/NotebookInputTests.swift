@@ -87,6 +87,7 @@ final class NotebookInputTests: XCTestCase {
     model.inputGate.endContact(source: source)
     for _ in 0..<100 where model.inputGate.isActive { await Task.yield() }
     XCTAssertFalse(model.inputGate.isActive)
+    await model.finishPendingPersistence()
     XCTAssertEqual(Set(try XCTUnwrap(model.activePage).elements.map(\.id)), ["agent", "human"])
     XCTAssertEqual(Set(try model.store.loadPage(human.id).elements.map(\.id)), ["agent", "human"])
   }

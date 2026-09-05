@@ -4,7 +4,7 @@ import XCTest
 
 final class SharedAttentionTests: XCTestCase {
   @MainActor
-  func testReceivedCatalogKeepsThePhysicalReadersSelection() throws {
+  func testReceivedCatalogKeepsThePhysicalReadersSelection() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at:root) }
     let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false)
@@ -25,7 +25,7 @@ final class SharedAttentionTests: XCTestCase {
   }
 
   @MainActor
-  func testReferenceTracksItsPageWhenNotebookMovesAndSourceChanges() throws {
+  func testReferenceTracksItsPageWhenNotebookMovesAndSourceChanges() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at:root) }
     let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false)
@@ -48,7 +48,7 @@ final class SharedAttentionTests: XCTestCase {
     XCTAssertEqual(moved.minY,150,accuracy:1)
     let action = CollaborationAction(summary:"Подпись",expected:[.init(target:reference.target,revision:page.agentStamp.revision)],operations:[
       .init(kind:.insertElement,target:reference.target,id:"caption",values:["kind":.string("markdown"),"source":.string("Мысль"),"frame":.object(["x":.number(300),"y":.number(80),"width":.number(200),"height":.number(80)])])])
-    _ = try model.store.applyCollaborationAction(action,actor:UUID()); model.reloadExternalChanges()
+    _ = try model.store.applyCollaborationAction(action,actor:UUID()); await model.reloadExternalChanges()?.value
     XCTAssertFalse(model.referenceChanged(reference), "Без точного снимка области нельзя объявлять её изменённой")
     XCTAssertEqual(model.referenceStatusLabel(reference), "Проверяется область")
   }
@@ -65,20 +65,24 @@ final class SharedAttentionTests: XCTestCase {
       .init(kind:.insertElement,target:target,id:"caption",values:["kind":.string("web"),"source":.string("<p>Meaning</p>"),"frame":.object(["x":.number(300),"y":.number(80),"width":.number(200),"height":.number(80)])])])
     let receipt = try model.store.applyCollaborationAction(action,actor:UUID())
     model.receivePeerMessage(.collaboration(.init(content:try model.store.collaborationContent(),actions:[receipt])))
+    await model.finishPendingPersistence()
     XCTAssertFalse(try XCTUnwrap(model.store.deviceActionReceipts().first).displayComplete)
     let presence = SessionPresence(boardID:workspace.rootBoardID,mode:.page,camera:.init(center:try XCTUnwrap(model.board?.focusedCenter(of:workspace.selectedItemID)),scale:1),viewport:.init(x:834,y:1194),focusedItemID:workspace.selectedItemID,openProgress:1)
     model.updatePresence(presence,settled:true)
     model.confirmVisibleActions(presence:presence)
+    await model.finishPendingPersistence()
     XCTAssertFalse(try XCTUnwrap(model.store.deviceActionReceipts().first).displayComplete)
     await model.refreshCollaborationDetails()
     model.confirmVisibleActions(presence:presence)
+    await model.finishPendingPersistence()
     XCTAssertFalse(try XCTUnwrap(model.store.deviceActionReceipts().first).displayComplete, "Подготовленные адреса ещё не являются показом")
     model.pagePresented(try XCTUnwrap(model.activePage),ready:true)
     model.confirmVisibleActions(presence:presence)
+    await model.finishPendingPersistence()
     XCTAssertTrue(try XCTUnwrap(model.store.deviceActionReceipts().first).displayComplete)
   }
   @MainActor
-  func testOneAreaKeepsReferencesToSeveralPhysicalOwners() throws {
+  func testOneAreaKeepsReferencesToSeveralPhysicalOwners() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
@@ -94,6 +98,7 @@ final class SharedAttentionTests: XCTestCase {
     XCTAssertTrue(references.contains { $0.target.id == first && $0.target.kind == .cover })
     XCTAssertTrue(references.contains { $0.target.id == second && $0.target.kind == .cover })
     model.publishHumanContext(references)
+    await model.finishPendingPersistence()
     let context = try XCTUnwrap(model.activeSharedContext)
     XCTAssertEqual(context.entries.first?.references, references)
     model.requestShow(try XCTUnwrap(references.first))

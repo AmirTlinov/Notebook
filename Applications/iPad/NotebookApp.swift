@@ -1,7 +1,9 @@
 import SwiftUI
+import UIKit
 
 @main
 struct NotebookApp: App {
+  @Environment(\.scenePhase) private var scenePhase
   @State private var model: NotebookAppModel
 
   init() {
@@ -22,6 +24,14 @@ struct NotebookApp: App {
         .environment(model)
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
+        .onChange(of: scenePhase) { _, phase in
+          guard phase == .background else { return }
+          let task = UIApplication.shared.beginBackgroundTask(withName: "Сохранение принятого ввода")
+          Task {
+            await model.finishPendingInteraction()
+            if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
+          }
+        }
     }
   }
 }

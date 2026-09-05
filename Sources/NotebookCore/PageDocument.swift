@@ -142,7 +142,11 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     case .append(let action): drawing = current.appending(action)
     case .remove(let ids): drawing = current.removing(ids)
     }
-    guard drawing != current, drawingStamp.counter < VersionStamp.maximumCounter,
+    guard drawing != current else {
+      return PreparedPageInkChange(pageID: id, baseStamp: drawingStamp,
+        stamp: drawingStamp, drawing: current, data: drawingData)
+    }
+    guard drawingStamp.counter < VersionStamp.maximumCounter,
       stamp.counter <= VersionStamp.maximumCounter else { throw PageInkDrawing.InkError.invalidDrawing }
     let next = VersionStamp(counter: max(drawingStamp.counter + 1, stamp.counter), actor: stamp.actor)
     let data = try drawing.dataRepresentation()

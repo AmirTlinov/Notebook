@@ -4,7 +4,7 @@ import XCTest
 
 final class PresenceOwnershipTests: XCTestCase {
   @MainActor
-  func testPortalExitAndReentryKeepTheExactChildCamera() throws {
+  func testPortalExitAndReentryKeepTheExactChildCamera() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -45,6 +45,7 @@ final class PresenceOwnershipTests: XCTestCase {
       inspected.camera.scale,
       accuracy: 0.000_001
     )
+    await model.finishPendingPersistence()
     let persisted = try store.loadBoard(
       items: try store.loadIndex().items
     )
@@ -58,7 +59,7 @@ final class PresenceOwnershipTests: XCTestCase {
   }
 
   @MainActor
-  func testActiveCameraFrameDoesNotReplaceTheDurableContext() throws {
+  func testActiveCameraFrameDoesNotReplaceTheDurableContext() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -80,11 +81,12 @@ final class PresenceOwnershipTests: XCTestCase {
 
     XCTAssertEqual(model.presence, active)
     XCTAssertEqual(model.presencePhase, .active)
+    await model.finishPendingPersistence()
     XCTAssertEqual(try store.loadPresence(), stable)
   }
 
   @MainActor
-  func testSettledPageCannotPersistAtATransitionalScale() throws {
+  func testSettledPageCannotPersistAtATransitionalScale() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -106,11 +108,12 @@ final class PresenceOwnershipTests: XCTestCase {
 
     XCTAssertEqual(model.presence?.camera.scale, 1)
     XCTAssertEqual(model.presence?.camera.center, center)
+    await model.finishPendingPersistence()
     XCTAssertEqual(try store.loadPresence().camera.scale, 1)
   }
 
   @MainActor
-  func testSettledBoardKeepsTheScaleChosenForInspection() throws {
+  func testSettledBoardKeepsTheScaleChosenForInspection() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -128,11 +131,12 @@ final class PresenceOwnershipTests: XCTestCase {
     model.updatePresence(inspected, settled: true)
 
     XCTAssertEqual(model.presence, inspected)
+    await model.finishPendingPersistence()
     XCTAssertEqual(try store.loadPresence(), inspected)
   }
 
   @MainActor
-  func testSettledPartialCoverKeepsTheExactCamera() throws {
+  func testSettledPartialCoverKeepsTheExactCamera() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -155,11 +159,12 @@ final class PresenceOwnershipTests: XCTestCase {
     model.updatePresence(partial, settled: true)
 
     XCTAssertEqual(model.presence, partial)
+    await model.finishPendingPersistence()
     XCTAssertEqual(try store.loadPresence(), partial)
   }
 
   @MainActor
-  func testSettledStackedPageCentersTheSelectedNotebook() throws {
+  func testSettledStackedPageCentersTheSelectedNotebook() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -227,7 +232,7 @@ final class PresenceOwnershipTests: XCTestCase {
   }
 
   @MainActor
-  func testExternalCatalogAndBoardChangeKeepTheHumanCamera() throws {
+  func testExternalCatalogAndBoardChangeKeepTheHumanCamera() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -258,7 +263,7 @@ final class PresenceOwnershipTests: XCTestCase {
       board: board
     )
 
-    model.reloadExternalChanges()
+    await model.reloadExternalChanges()?.value
 
     XCTAssertEqual(model.workspace?.selectedItemID, originalItemID)
     XCTAssertEqual(model.presence,originalPresence)

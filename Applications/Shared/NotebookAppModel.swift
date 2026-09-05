@@ -92,6 +92,15 @@ final class NotebookAppModel {
   private var pageSize = defaultPageSize
   private var started = false
   private var saveTasks: [UUID: Task<Void, Never>] = [:]
+  private var pendingPageSaves: Set<UUID> = []
+  private var peerPageTail: Task<Void, Never>?
+  private var peerPageGeneration: UInt64 = 0
+  private var spatialInkSavePending = false
+  private var boardSaveTask: Task<Void, Never>?
+  private var boardSavePending = false
+  private var pendingStoreWrites: [(reload: Bool, operation: @Sendable (NotebookStore) throws -> Void)] = []
+  private var storeWriteTask: Task<Void, Never>?
+  private var peerActivities: [UUID: NotebookInputActivity] = [:]
   /// A peer sends a new page before publishing the catalog that owns it. Keep
   /// that page out of the durable and visible page set until the newer index
   /// arrives; the same boundary also makes a late page for a deleted notebook
@@ -102,7 +111,6 @@ final class NotebookAppModel {
   private var stagedRemoteIndex: WorkspaceIndex?
   private var stagedRemoteBoard: BoardHierarchy?
   private var spatialInkSaveTask: Task<Void, Never>?
-  private var workspaceSelectionSaveTail: Task<Void, Never>?
   private var presenceSaveTail: Task<Void, Never>?
   private var pendingPresenceToSave: SessionPresence?
   private var cueTask: Task<Void, Never>?
@@ -118,7 +126,9 @@ final class NotebookAppModel {
   #if os(iOS)
     @ObservationIgnored private let inputFrameMonitor: InputFrameMonitor
   #endif
-  @ObservationIgnored private var deferredCollaboration: CollaborationEnvelope?
+  @ObservationIgnored private var incomingCollaboration: [CollaborationEnvelope] = []
+  @ObservationIgnored private var diskRefreshTask: Task<Void, Never>?
+  @ObservationIgnored private var diskRefreshRequested = false
   @ObservationIgnored private var externalReloadPending = false
   @ObservationIgnored private var inputSequence: UInt64 = 0
   @ObservationIgnored private var inputWriteTask: Task<Void, Never>?
@@ -131,7 +141,6 @@ final class NotebookAppModel {
     /// long-lived model, so closing the mirror window cannot stop delivery to
     /// the iPad while the Mac app is still running.
     private var externalChangeWatcher: DirectoryWatcher?
-    private var externalReloadRetry: Task<Void, Never>?
     /// Agent vision follows the process-level mirror, not a disposable window.
     private var previewPublisher: MacPreviewPublisher?
   #endif
@@ -168,7 +177,8 @@ final class NotebookAppModel {
     sync.onDisconnect = { [weak self] in
       self?.isPeerConnected = false
       self?.peerInputIsActive = false
-      if let self { try? store.resetInputActivities(keeping: actorID) }
+      self?.peerActivities.removeAll()
+      if let self { let actor = actorID; Task.detached(priority: .utility) { try? store.resetInputActivities(keeping: actor) } }
       self?.restoreSettledPresenceAfterDisconnect()
     }
     inputGate.onActivityChange = { [weak self] active in
@@ -183,11 +193,10 @@ final class NotebookAppModel {
       #endif
       publishInputActivity()
       if !active {
-        if let pending = deferredCollaboration {
-          deferredCollaboration = nil
-          receivePeerMessage(.collaboration(pending))
+        if externalReloadPending || !incomingCollaboration.isEmpty {
+          externalReloadPending = false
+          reloadExternalChanges()
         }
-        if externalReloadPending { externalReloadPending = false; reloadExternalChanges() }
       }
     }
   }
@@ -679,6 +688,7 @@ final class NotebookAppModel {
     #else
       if settled { schedulePresenceSave(resolved) }
     #endif
+    if settled && externalReloadPending { externalReloadPending = false; reloadExternalChanges() }
   }
 
   /// Document pagination is session presence. The iPad remains its durable
@@ -906,6 +916,7 @@ final class NotebookAppModel {
       }.value
       guard !Task.isCancelled, let change = prepared, var current = pages[pageID] else { return nil }
       guard current.publishInkChange(change) else { continue }
+      if change.stamp == change.baseStamp { return change }
       pages[pageID] = current
       sync.send(.drawing(pageID: pageID, data: change.data, stamp: change.stamp))
       scheduleSave(pageID)
@@ -1065,9 +1076,6 @@ final class NotebookAppModel {
 
   func commitElementState(elementID: String, state: JSONValue) {
     guard var page = activePage else { return }
-    if let disk = try? store.loadPage(page.id) {
-      _ = page.merge(disk)
-    }
     guard let index = page.elements.firstIndex(where: { $0.id == elementID }) else {
       return
     }
@@ -1140,11 +1148,8 @@ final class NotebookAppModel {
     by translation: SpatialPoint,
     resizeBy delta: SpatialPoint = .zero
   ) -> Bool {
-    guard var hierarchy = boardHierarchy, let workspace, let presence else {
+    guard var hierarchy = boardHierarchy, workspace != nil, let presence else {
       return false
-    }
-    if let disk = try? store.loadBoard(items: workspace.items) {
-      _ = hierarchy.merge(disk, items: workspace.items)
     }
     guard let board = hierarchy.board(presence.boardID) else { return false }
     guard let index = board.elements.firstIndex(where: { $0.id == elementID }) else {
@@ -1188,11 +1193,8 @@ final class NotebookAppModel {
 
   @discardableResult
   func removeSpatialElement(elementID: String) -> Bool {
-    guard var hierarchy = boardHierarchy, let workspace, let presence else {
+    guard var hierarchy = boardHierarchy, workspace != nil, let presence else {
       return false
-    }
-    if let disk = try? store.loadBoard(items: workspace.items) {
-      _ = hierarchy.merge(disk, items: workspace.items)
     }
     guard hierarchy.removeElements(
       ids: [elementID],
@@ -1211,9 +1213,6 @@ final class NotebookAppModel {
     mutation: (PageDocument, inout [AgentElement]) -> Bool
   ) -> Bool {
     guard var page = pages[pageID] else { return false }
-    if let disk = try? store.loadPage(pageID) {
-      _ = page.merge(disk)
-    }
     var elements = page.elements
     guard mutation(page, &elements),
       page.replaceElements(elements, actor: actorID)
@@ -1242,9 +1241,9 @@ final class NotebookAppModel {
         actor: actorID
       )
     else { return }
-    let resolved = (try? store.saveMergedDocument(document)) ?? document
-    documents[documentID] = resolved
-    sync.send(.document(resolved))
+    documents[documentID] = document
+    sync.send(.document(document))
+    receiveContent(documents: [document])
   }
 
   func commitDocumentState(
@@ -1255,46 +1254,59 @@ final class NotebookAppModel {
     guard var journal = documentStates[documentID],
       journal.commit(blockID: blockID, value: value, actor: actorID)
     else { return }
-    let resolved = (try? store.saveMergedDocumentState(journal)) ?? journal
-    documentStates[documentID] = resolved
-    sync.send(.documentState(resolved))
+    documentStates[documentID] = journal
+    sync.send(.documentState(journal))
+    receiveContent(states: [journal])
   }
 
-  func reloadExternalChanges() {
-    reloadExternalChanges(remainingAttempts: 2)
-  }
+  @discardableResult
+  func reloadExternalChanges() -> Task<Void, Never>? {
+    guard loadState == .ready else { return nil }
+    guard !inputGate.isActive, presencePhase != .active else { externalReloadPending = true; return nil }
+    diskRefreshRequested = true
+    if let diskRefreshTask { return diskRefreshTask }
+    let task = Task { [weak self] in
+      guard let self else { return }
+      defer { diskRefreshTask = nil }
+      var attempts = 2
+      while diskRefreshRequested && !Task.isCancelled {
+        guard !inputGate.isActive, presencePhase != .active else { externalReloadPending = true; return }
+        diskRefreshRequested = false
+        let local = collaborationContent
+        let epoch = collaborationReadEpoch
+        let incoming = incomingCollaboration
+        incomingCollaboration.removeAll(keepingCapacity: true)
+        let store = store
+        #if os(iOS)
+        let receivingDeviceID: UUID? = actorID
+        #else
+        let receivingDeviceID: UUID? = nil
+        #endif
+        let result = await Task.detached(priority: .utility) {
+          Result { try NotebookDiskRefresh.prepare(store: store, local: local, incoming: incoming, receivingDeviceID: receivingDeviceID) }
+        }.value
+        switch result {
+        case .success(let prepared):
+          guard !inputGate.isActive, presencePhase != .active else { externalReloadPending = true; return }
+          guard epoch == collaborationReadEpoch else { diskRefreshRequested = true; continue }
+          let metadataChanged = collaborationActions != prepared.actions
+            || sharedContexts != prepared.contexts.contexts || contextSelection != prepared.contexts.selection
+            || deviceActionReceipts != prepared.delivery
+          if prepared.contentChanged { acceptCollaborationContent(prepared.content) }
+          acceptCollaborationMetadata(actions: prepared.actions, contexts: prepared.contexts, delivery: prepared.delivery)
+          if prepared.contentChanged || metadataChanged { sendCollaboration(content: prepared.publication) }
 
-  private func reloadExternalChanges(remainingAttempts: Int) {
-    guard loadState == .ready else { return }
-    guard !inputGate.isActive else { externalReloadPending = true; return }
-    do {
-      let disk = try store.collaborationContent()
-      let previous = collaborationContent
-      let oldActions = collaborationActions
-      let oldContexts = SharedContextSnapshot(contexts: sharedContexts, selection: contextSelection)
-      let resolved = try store.mergeCollaborationContent(disk, local: previous)
-      acceptCollaborationContent(resolved)
-      reloadCollaborationMetadata()
-      if previous != resolved || oldActions != collaborationActions || oldContexts != SharedContextSnapshot(contexts: sharedContexts, selection: contextSelection) {
-        sendCollaboration(content: resolved.publication(since:previous))
-      }
-      #if os(macOS)
-        externalReloadRetry?.cancel()
-        externalReloadRetry = nil
-      #endif
-    } catch {
-      #if os(macOS)
-        guard remainingAttempts > 0 else { return }
-        externalReloadRetry?.cancel()
-        externalReloadRetry = Task { [weak self] in
+        case .failure(let error):
+          incomingCollaboration.insert(contentsOf: incoming, at: 0)
+          guard attempts > 0 else { showCue(error.localizedDescription); return }
+          attempts -= 1
           try? await Task.sleep(for: .milliseconds(60))
-          guard !Task.isCancelled else { return }
-          self?.reloadExternalChanges(
-            remainingAttempts: remainingAttempts - 1
-          )
+          diskRefreshRequested = true
         }
-      #endif
+      }
     }
+    diskRefreshTask = task
+    return task
   }
 
   #if os(macOS)
@@ -1333,28 +1345,19 @@ final class NotebookAppModel {
     switch message {
     case .inputActivity(let activity):
       guard activity.isValid else { return }
-      do {
-        try store.saveInputActivity(activity)
-        peerInputIsActive = try store.inputActivities().contains { $0.deviceID != actorID && $0.isActive }
-        #if os(macOS)
-          if peerInputIsActive { previewPublisher?.suspendForInput() }
-        #endif
-      } catch { showCue(error.localizedDescription) }
+      // Stop optional preparation before the disk acknowledges the peer contact.
+      if let previous = peerActivities[activity.deviceID], previous.sessionID == activity.sessionID,
+        previous.sequence >= activity.sequence { return }
+      peerActivities[activity.deviceID] = activity
+      peerInputIsActive = peerActivities.values.contains { $0.deviceID != actorID && $0.isActive }
+      #if os(macOS)
+      if peerInputIsActive { previewPublisher?.suspendForInput() }
+      #endif
+      let store = store
+      Task.detached(priority: .utility) { try? store.saveInputActivity(activity) }
     case .collaboration(let envelope):
-      if inputGate.isActive {
-        do { deferredCollaboration = try (deferredCollaboration ?? .init()).merging(envelope) }
-        catch { showCue(error.localizedDescription) }
-        return
-      }
-      do {
-        if let resolved = try store.receiveCollaboration(envelope,local:collaborationContent) {
-          acceptCollaborationContent(resolved)
-        }
-        reloadCollaborationMetadata()
-        #if os(iOS)
-          acknowledgeReceivedActions()
-        #endif
-      } catch { showCue(error.localizedDescription) }
+      incomingCollaboration.append(envelope)
+      reloadExternalChanges()
     case .index(let incoming):
       stageRemoteIndex(incoming)
     case .page(let incoming):
@@ -1362,80 +1365,23 @@ final class NotebookAppModel {
         stageRemotePage(incoming)
         return
       }
-      if var current = pages[incoming.id] {
-        guard current.merge(incoming) else { return }
-        acceptRemotePage(current)
-      } else {
-        acceptRemotePage(incoming)
-      }
+      receivePageChange(pageID: incoming.id) { page in _ = page.merge(incoming) }
     case .drawing(let pageID, let data, let stamp):
-      guard var page = pages[pageID],
-        page.replaceDrawing(data, stamp: stamp)
-      else { return }
-      acceptRemotePage(page)
+      receivePageChange(pageID: pageID) { page in _ = page.replaceDrawing(data, stamp: stamp) }
     case .elements(let pageID, let elements, let stamp, let collaboration):
-      guard var page = pages[pageID],
-        page.mergeElements(elements, stamp: stamp, collaboration: collaboration)
-      else { return }
-      acceptRemotePage(page)
+      receivePageChange(pageID: pageID) { page in _ = page.mergeElements(elements, stamp: stamp, collaboration: collaboration) }
     case .document(let incoming):
-      guard workspaceContainsDocument(incoming.id) else {
-        stageRemoteDocument(incoming)
-        return
-      }
-      if var current = documents[incoming.id] {
-        guard current.merge(incoming) else { return }
-        documents[incoming.id] = (try? store.saveMergedDocument(current))
-          ?? current
-      } else {
-        documents[incoming.id] = incoming
-        try? store.saveDocument(incoming)
-      }
+      guard workspaceContainsDocument(incoming.id) else { stageRemoteDocument(incoming); return }
+      receiveContent(documents: [incoming])
     case .documentState(let incoming):
-      guard workspaceContainsDocument(incoming.id) else {
-        stageRemoteDocumentState(incoming)
-        return
-      }
-      if var current = documentStates[incoming.id] {
-        guard current.merge(incoming) else { return }
-        documentStates[incoming.id] = (
-          try? store.saveMergedDocumentState(current)
-        ) ?? current
-      } else {
-        documentStates[incoming.id] = incoming
-        try? store.saveDocumentState(incoming)
-      }
+      guard workspaceContainsDocument(incoming.id) else { stageRemoteDocumentState(incoming); return }
+      receiveContent(states: [incoming])
     case .board(let incoming):
       guard let workspace else { return }
-      if var current = boardHierarchy {
-        if current.merge(incoming, items: workspace.items) {
-          boardHierarchy = (try? store.saveMergedBoard(
-            current,
-            items: workspace.items
-          )) ?? current
-          reconcilePresence(with: workspace, board: boardHierarchy)
-        } else {
-          stageRemoteBoard(incoming)
-        }
-      } else {
-        if incoming.isValid(items: workspace.items) {
-          boardHierarchy = incoming
-          try? store.saveBoard(incoming, items: workspace.items)
-          reconcilePresence(with: workspace, board: incoming)
-        } else {
-          stageRemoteBoard(incoming)
-        }
-      }
-      publishStagedWorkspaceIfReady()
+      if incoming.isValid(items: workspace.items) { receiveContent(hierarchy: incoming) }
+      else { stageRemoteBoard(incoming); publishStagedWorkspaceIfReady() }
     case .spatialInk(let incoming):
-      if var current = spatialInk {
-        guard current.merge(incoming) else { return }
-        spatialInk = (try? store.saveMergedSpatialInk(current)) ?? current
-      } else {
-        guard incoming.isValid else { return }
-        spatialInk = incoming
-        try? store.saveSpatialInk(incoming)
-      }
+      receiveContent(ink: incoming)
     case .presence(let envelope):
       #if os(macOS)
         guard presenceSequenceTracker.accepts(envelope), let workspace
@@ -1453,6 +1399,7 @@ final class NotebookAppModel {
         presencePhase = envelope.phase
         if envelope.phase == .settled {
           schedulePresenceSave(incoming)
+          if externalReloadPending { externalReloadPending = false; reloadExternalChanges() }
         }
       #endif
     case .documentPageSelection(let request):
@@ -1467,6 +1414,14 @@ final class NotebookAppModel {
     }
   }
 
+  private func receiveContent(hierarchy: BoardHierarchy? = nil, ink: SpatialInkJournal? = nil,
+    documents: [DocumentDocument] = [], states: [DocumentStateJournal] = []) {
+    guard let workspace, let boardHierarchy, let spatialInk else { return }
+    incomingCollaboration.append(.init(content: .init(workspace: workspace, hierarchy: hierarchy ?? boardHierarchy,
+      ink: ink ?? .init(stamp: .init(counter: 0, actor: spatialInk.stamp.actor)), pages: [], documents: documents, states: states)))
+    reloadExternalChanges()
+  }
+
   private func sendSnapshot() {
     guard let workspace else { return }
     _ = workspace
@@ -1479,19 +1434,16 @@ final class NotebookAppModel {
   }
 
   func publishHumanContext(_ references: [CollaborationReference]) {
-    do {
-      _ = try store.appendContext(references: references, author: .human, actor: actorID, select: true)
-      reloadCollaborationMetadata(); isPointing = false
-      sync.send(.collaboration(.init(contexts: sharedContexts, selection: contextSelection)))
-    } catch { showCue(error.localizedDescription) }
+    let actor = actorID
+    isPointing = false
+    enqueueStoreWrite(reload: true) { store in
+      _ = try store.appendContext(references: references, author: .human, actor: actor, select: true)
+    }
   }
 
   func selectSharedContext(_ id: UUID?) {
-    do {
-      try store.selectSharedContext(id, actor: actorID)
-      reloadCollaborationMetadata()
-      sync.send(.collaboration(.init(contexts: sharedContexts, selection: contextSelection)))
-    } catch { showCue(error.localizedDescription) }
+    let actor = actorID
+    enqueueStoreWrite(reload: true) { try $0.selectSharedContext(id, actor: actor) }
   }
 
   func results(for action: CollaborationReceipt) -> [CollaborationReference] {
@@ -1687,7 +1639,6 @@ final class NotebookAppModel {
       guard collaborationActions.contains(where: { action in !deviceActionReceipts.contains(where: { $0.id == action.id && $0.revisions == action.revisions && $0.displayComplete }) }),
         presencePhase == .settled, presence == visible, !isPointing,
         collaborationDetailsAreCurrent else { return }
-      acknowledgeReceivedActions()
       let receipts = deviceActionReceipts
       var changed: [DeviceActionReceipt] = []
       for action in collaborationActions.prefix(50) {
@@ -1724,13 +1675,17 @@ final class NotebookAppModel {
         }
         receipt.displayComplete = !references.isEmpty && references.allSatisfy { ref in receipt.visibleRegions.contains { $0.id == ref.id } }
         if receipt != receipts.first(where: { $0.id == action.id }) {
-          try? store.saveDeviceActionReceipt(receipt); changed.append(receipt)
+          changed.append(receipt)
         }
       }
       for receipt in changed {
         deviceActionReceipts.removeAll { $0.id == receipt.id }; deviceActionReceipts.append(receipt)
       }
-      if !changed.isEmpty { sync.send(.collaboration(.init(delivery:changed))) }
+      if !changed.isEmpty {
+        let receipts = changed
+        enqueueStoreWrite { store in for receipt in receipts { try store.saveDeviceActionReceipt(receipt) } }
+        sync.send(.collaboration(.init(delivery: changed)))
+      }
     #endif
   }
 
@@ -1761,12 +1716,14 @@ final class NotebookAppModel {
     reconcilePresence(with: workspace ?? content.workspace, board: content.hierarchy)
   }
 
-  private func reloadCollaborationMetadata() {
-    collaborationActions = (try? store.collaborationActions()) ?? []
-    let contexts = try? store.sharedContexts()
-    sharedContexts = contexts?.contexts ?? []
-    contextSelection = contexts?.selection
-    deviceActionReceipts = (try? store.deviceActionReceipts()) ?? []
+  private func reloadCollaborationMetadata() { reloadExternalChanges() }
+
+  private func acceptCollaborationMetadata(actions: [CollaborationReceipt], contexts: SharedContextSnapshot,
+    delivery: [DeviceActionReceipt]) {
+    if collaborationActions != actions { collaborationActions = actions }
+    if sharedContexts != contexts.contexts { sharedContexts = contexts.contexts }
+    contextSelection = contexts.selection
+    deviceActionReceipts = delivery
     let latest = collaborationActions.first
     let attention = sharedContexts.flatMap(\.entries).filter { $0.author == .agent }.max { $0.createdAt < $1.createdAt }
     let key = "\(latest?.id.uuidString ?? "")|\(latest?.undo?.completedAt.timeIntervalSince1970 ?? 0)|\(attention?.id.uuidString ?? "")"
@@ -1787,61 +1744,65 @@ final class NotebookAppModel {
   private func sendCollaboration(content: CollaborationContent? = nil) {
     sync.send(.collaboration(.init(content: content,
       actions: Array(collaborationActions.prefix(50)), contexts: sharedContexts, selection: contextSelection,
-      delivery: (try? store.deviceActionReceipts()) ?? [])))
+      delivery: deviceActionReceipts)))
   }
 
-  private func acknowledgeReceivedActions() {
-    let previous = deviceActionReceipts
-    var added: [DeviceActionReceipt] = []
-    for action in collaborationActions where !previous.contains(where: { $0.id == action.id && $0.revisions == action.revisions }) {
-      let receipt = DeviceActionReceipt(id: action.id, deviceID: actorID, revisions: action.revisions)
-      try? store.saveDeviceActionReceipt(receipt); added.append(receipt)
-      deviceActionReceipts.removeAll { $0.id == action.id }; deviceActionReceipts.append(receipt)
+  private func receivePageChange(pageID: UUID, mutation: @escaping @Sendable (inout PageDocument) -> Void) {
+    let previous = peerPageTail
+    peerPageGeneration &+= 1
+    let generation = peerPageGeneration
+    collaborationReadEpoch &+= 1
+    peerPageTail = Task { [weak self] in
+      if let previous { await previous.value }
+      guard let self else { return }
+      defer { if peerPageGeneration == generation { peerPageTail = nil } }
+      while let page = pages[pageID], !Task.isCancelled {
+        let resolved = await Task.detached(priority: .userInitiated) {
+          var copy = page; mutation(&copy); return copy
+        }.value
+        guard pages[pageID] == page else { continue }
+        if resolved != page { acceptRemotePage(resolved) }
+        return
+      }
     }
-    if !added.isEmpty { sync.send(.collaboration(.init(delivery: added))) }
   }
 
   private func scheduleSave(_ pageID: UUID) {
-    saveTasks[pageID]?.cancel()
-    let store = store
+    pendingPageSaves.insert(pageID)
+    guard saveTasks[pageID] == nil else { return }
     saveTasks[pageID] = Task { [weak self] in
-      guard !Task.isCancelled, let self, let page = pages[pageID] else { return }
-      let resolved = await Task.detached(priority: .utility) {
-        try? store.saveMergedPage(page)
-      }.value
-      guard !Task.isCancelled, let resolved else { return }
-      if var current = pages[pageID] {
-        let previousDrawingStamp = current.drawingStamp
-        _ = current.merge(resolved)
-        pages[pageID] = current
-        if previousDrawingStamp < current.drawingStamp, PageInkDrawing.needsMigration(current.drawingData) {
-          pencilUndoHistory.discardChanges(for: pageID)
+      guard let self else { return }
+      defer { saveTasks[pageID] = nil }
+      while pendingPageSaves.remove(pageID) != nil, let page = pages[pageID], !Task.isCancelled {
+        let store = store
+        let result = await Task.detached(priority: .utility) {
+          Result { try store.saveMergedPage(page) != page }
+        }.value
+        switch result {
+        case .success(let changed): if changed { reloadExternalChanges() }
+        case .failure(let error): showCue(error.localizedDescription)
         }
-      } else {
-        pages[pageID] = resolved
       }
-      saveTasks[pageID] = nil
     }
   }
 
   private func scheduleSpatialInkSave() {
-    spatialInkSaveTask?.cancel()
-    let store = store
+    spatialInkSavePending = true
+    guard spatialInkSaveTask == nil else { return }
     spatialInkSaveTask = Task { [weak self] in
-      guard !Task.isCancelled, let self, let journal = spatialInk else {
-        return
+      guard let self else { return }
+      defer { spatialInkSaveTask = nil }
+      while spatialInkSavePending, let journal = spatialInk, !Task.isCancelled {
+        spatialInkSavePending = false
+        let store = store
+        let result = await Task.detached(priority: .utility) {
+          Result { try store.saveMergedSpatialInk(journal) != journal }
+        }.value
+        switch result {
+        case .success(let changed): if changed { reloadExternalChanges() }
+        case .failure(let error): showCue(error.localizedDescription)
+        }
       }
-      let resolved = await Task.detached(priority: .utility) {
-        try? store.saveMergedSpatialInk(journal)
-      }.value
-      guard !Task.isCancelled, let resolved else { return }
-      if var current = spatialInk {
-        _ = current.merge(resolved)
-        spatialInk = current
-      } else {
-        spatialInk = resolved
-      }
-      spatialInkSaveTask = nil
     }
   }
 
@@ -1849,12 +1810,8 @@ final class NotebookAppModel {
     _ workspace: WorkspaceIndex,
     createdPage: PageDocument?
   ) {
-    let previous = workspaceSelectionSaveTail
-    let store = store
-    workspaceSelectionSaveTail = Task.detached(priority: .utility) {
-      if let previous { await previous.value }
-      guard !Task.isCancelled else { return }
-      _ = try? store.saveWorkspaceSelection(
+    enqueueStoreWrite(reload: false) { store in
+      _ = try store.saveWorkspaceSelection(
         index: workspace,
         createdPage: createdPage
       )
@@ -1876,26 +1833,70 @@ final class NotebookAppModel {
   }
 
   private func persistBoard(_ board: BoardHierarchy) {
-    guard let workspace else { return }
-    let resolved = (try? store.saveMergedBoard(
-      board,
-      items: workspace.items
-    )) ?? board
-    boardHierarchy = resolved
-    sync.send(.board(resolved))
+    boardHierarchy = board
+    sync.send(.board(board))
+    boardSavePending = true
+    guard boardSaveTask == nil else { return }
+    boardSaveTask = Task { [weak self] in
+      guard let self else { return }
+      defer { boardSaveTask = nil }
+      while boardSavePending, let board = boardHierarchy, let workspace {
+        boardSavePending = false
+        let store = store
+        let result = await Task.detached(priority: .utility) {
+          Result { try store.saveMergedBoard(board, items: workspace.items) != board }
+        }.value
+        switch result {
+        case .success(let changed): if changed { reloadExternalChanges() }
+        case .failure(let error): showCue(error.localizedDescription)
+        }
+      }
+    }
   }
 
   @discardableResult
   private func persistMerged(_ page: PageDocument) -> PageDocument {
-    let previousDrawingStamp = pages[page.id]?.drawingStamp
-    let resolved = (try? store.saveMergedPage(page)) ?? page
-    pages[page.id] = resolved
-    if let previousDrawingStamp,
-      previousDrawingStamp < resolved.drawingStamp, PageInkDrawing.needsMigration(resolved.drawingData)
-    {
-      pencilUndoHistory.discardChanges(for: page.id)
+    pages[page.id] = page
+    scheduleSave(page.id)
+    return page
+  }
+
+  private func enqueueStoreWrite(reload: Bool = false, _ operation: @escaping @Sendable (NotebookStore) throws -> Void) {
+    pendingStoreWrites.append((reload, operation))
+    guard storeWriteTask == nil else { return }
+    storeWriteTask = Task { [weak self] in
+      guard let self else { return }
+      defer { storeWriteTask = nil }
+      while !pendingStoreWrites.isEmpty {
+        let next = pendingStoreWrites.removeFirst(), store = store
+        let result = await Task.detached(priority: .utility) { Result { try next.operation(store) } }.value
+        if case .failure(let error) = result { showCue(error.localizedDescription) }
+        if next.reload { await reloadExternalChanges()?.value }
+      }
     }
-    return resolved
+  }
+
+  func finishPendingInteraction() async {
+    await withCheckedContinuation { continuation in
+      inputGate.performAfterPageInput { continuation.resume() }
+    }
+    if presencePhase == .active, let presence { updatePresence(presence, settled: true) }
+    await finishPendingPersistence()
+  }
+
+  /// Tests and shutdown coordination wait for persistence explicitly; gestures
+  /// only publish memory and never await this barrier.
+  func finishPendingPersistence() async {
+    while storeWriteTask != nil || peerPageTail != nil || diskRefreshTask != nil || !saveTasks.isEmpty || spatialInkSaveTask != nil
+      || presenceSaveTail != nil || boardSaveTask != nil {
+      if let task = storeWriteTask { await task.value }
+      if let task = peerPageTail { await task.value }
+      if let task = diskRefreshTask { await task.value }
+      for task in Array(saveTasks.values) { await task.value }
+      if let task = spatialInkSaveTask { await task.value }
+      if let task = presenceSaveTail { await task.value }
+      if let task = boardSaveTask { await task.value }
+    }
   }
 
   private func showCue(_ text: String) {
@@ -2136,7 +2137,7 @@ final class NotebookAppModel {
     guard resolved != current || presencePhase != .settled else { return }
     presence = resolved
     presencePhase = .settled
-    try? store.savePresence(resolved)
+    schedulePresenceSave(resolved)
     #if os(iOS)
       lastSettledPresenceEnvelope = makePresenceEnvelope(
         resolved,

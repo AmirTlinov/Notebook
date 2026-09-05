@@ -24,7 +24,16 @@ enum PageVisionRenderer {
   private static let detailOverlapCells = 2
   private static let visibleAlphaThreshold: UInt8 = 1
 
-  @MainActor
+  /// Current-view composition needs paper and ink, not the reading map,
+  /// contrast pass, crops and their PNGs.
+  static func faithfulPNG(_ page: PageDocument) throws -> Data {
+    let pixels = PageVisionPixelSize(width: max(1, Int((page.size.width * scale).rounded())),
+      height: max(1, Int((page.size.height * scale).rounded())))
+    let bounds = NSRect(x: 0, y: 0, width: page.size.width, height: page.size.height)
+    let image = try drawingImage(page, bounds: bounds)
+    return try png(bitmap(size: page.size, pixels: pixels) { drawPaper(in: bounds); image?.draw(in: bounds) })
+  }
+
   static func render(_ page: PageDocument) throws -> PageVisionRender {
     let pixelSize = PageVisionPixelSize(
       width: max(1, Int((page.size.width * scale).rounded())),
@@ -36,6 +45,7 @@ enum PageVisionRenderer {
       width: page.size.width,
       height: page.size.height
     )
+    try Task.checkCancellation()
     let drawingImage = try drawingImage(page, bounds: bounds)
     let faithfulBitmap = try bitmap(size: page.size, pixels: pixelSize) {
       drawPaper(in: bounds)
@@ -52,6 +62,7 @@ enum PageVisionRenderer {
       bounds.fill(using: .copy)
       drawingImage?.draw(in: bounds)
     }
+    try Task.checkCancellation()
     let faithfulPNG = try png(faithfulBitmap)
     let inkPNG = try png(inkBitmap)
     let coverage = try visibleInkCoverage(
@@ -65,6 +76,7 @@ enum PageVisionRenderer {
       pixelSize: pixelSize
     )
     let regions = try geometries.map { geometry in
+      try Task.checkCancellation()
       let faithfulCrop = try crop(faithfulBitmap, to: geometry.cropPixels)
       let inkCrop = try crop(inkBitmap, to: geometry.cropPixels)
       return PageVisionRenderedRegion(
@@ -139,17 +151,16 @@ enum PageVisionRenderer {
     let inkPixelCount: Int
   }
 
-  @MainActor
   private static func drawingImage(
     _ page: PageDocument,
     bounds: NSRect
   ) throws -> NSImage? {
     guard !page.drawingData.isEmpty else { return nil }
-    guard let raster = PageInkRasterCache.shared.image(for:page) else { throw RenderError.bitmapAllocation }
+    let drawing = try PageInkDrawing.decode(page.drawingData)
+    guard let raster = InkRasterRenderer.shared.page(drawing, size: bounds.size) else { throw RenderError.bitmapAllocation }
     return NSImage(cgImage:raster,size:bounds.size)
   }
 
-  @MainActor
   private static func bitmap(
     size: PageSize,
     pixels: PageVisionPixelSize,
@@ -180,7 +191,6 @@ enum PageVisionRenderer {
     return bitmap
   }
 
-  @MainActor
   private static func drawPaper(in bounds: NSRect) {
     NSColor(
       calibratedRed: PaperAppearance.background.red,

@@ -46,6 +46,8 @@ async function apply(operations: Data[], expected: Data[], actionID = randomUUID
 try {
   await writeFixture(root);
   await client.connect(transport);
+  const { version } = JSON.parse(await readFile(join(mcpRoot, "package.json"), "utf8")) as { version: string };
+  assert.equal(client.getServerVersion()?.version, version);
   const tools = (await client.listTools()).tools;
   assert.ok(tools.some(t => t.name === "notebook_apply" && t.annotations?.idempotentHint));
   assert.ok(!tools.some(t => /notebook_(put_|patch_document|create_|remove_|move_nodes|stack_nodes|rename_item)/.test(t.name)));

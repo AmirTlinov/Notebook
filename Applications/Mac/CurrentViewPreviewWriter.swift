@@ -1,5 +1,7 @@
 import AppKit
 import CryptoKit
+import ImageIO
+import UniformTypeIdentifiers
 import NotebookCore
 import SwiftUI
 
@@ -109,15 +111,15 @@ enum CurrentViewPreviewWriter {
     documentState: DocumentStateJournal?,
     pngURL: URL,
     receiptURL: URL
-  ) throws {
+  ) async throws {
     guard let activeBoard = board.board(presence.boardID) else {
       throw PreviewError.invalidSurface
     }
-    let snapshot = try makeSnapshot(
+    let snapshot = try await makeSnapshot(
       presence: presence,
-      spatialElements: WorkspaceSceneProjection.snapshotElements(
+      spatialElements: WorkspaceSceneProjection.snapshotLayers(
         workspace: workspace, hierarchy: board, presence: presence, documents: model.documents
-      ),
+      ).elements,
       page: page,
       document: document,
       documentState: documentState
@@ -131,10 +133,13 @@ enum CurrentViewPreviewWriter {
     )
     .environment(model)
     .frame(width: viewport.width, height: viewport.height)
-    let png = try renderPNG(
+    let png = try await renderPNG(
       content,
       size: viewport,
-      scale: 2
+      scale: 2,
+      inkSurfaces: [.board, .cover].contains(presence.mode)
+        ? WorkspaceSceneProjection.snapshotLayers(workspace: workspace, hierarchy: board, presence: presence, documents: model.documents).ink : [],
+      journal: spatialInk
     )
 
     let receipt = CurrentViewReceipt(
@@ -151,19 +156,28 @@ enum CurrentViewPreviewWriter {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     let receiptData = try encoder.encode(receipt)
-    try FileManager.default.createDirectory(
-      at: pngURL.deletingLastPathComponent(),
-      withIntermediateDirectories: true
-    )
-    try png.write(to: pngURL, options: [.atomic])
-    try receiptData.write(to: receiptURL, options: [.atomic])
+    try Task.checkCancellation()
+    guard model.permitsBackgroundPreparation, model.presence == presence,
+      model.presencePhase == .settled, model.workspace == workspace,
+      model.boardHierarchy?.revision == board.revision, model.spatialInk?.stamp == spatialInk.stamp,
+      page == nil || model.pages[page!.id] == page,
+      document == nil || model.documents[document!.id] == document,
+      documentState == nil || model.documentStates[documentState!.id] == documentState
+    else { throw PreviewError.sourceChanged }
+    try await Task.detached(priority: .utility) {
+      try FileManager.default.createDirectory(at: pngURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try png.write(to: pngURL, options: [.atomic])
+      try receiptData.write(to: receiptURL, options: [.atomic])
+    }.value
   }
 
   @MainActor
   static func writeTarget(_ request: TargetRenderRequest, model: NotebookAppModel) async throws {
-    guard let content = model.collaborationContent,
-      try NotebookStore.referenceRevision(target: request.target, files: content.sourceFiles()) == request.sourceRevision
-    else { throw PreviewError.sourceChanged }
+    guard let content = model.collaborationContent else { throw PreviewError.sourceChanged }
+    let files = try await Task.detached(priority: .utility) { try content.sourceFiles() }.value
+    guard try await Task.detached(priority: .utility, operation: {
+      try NotebookStore.referenceRevision(target: request.target, files: files)
+    }).value == request.sourceRevision else { throw PreviewError.sourceChanged }
     let target = request.target
     let full: RasterSnapshot
     var camera: SpatialCamera?
@@ -174,16 +188,17 @@ enum CurrentViewPreviewWriter {
     case .page:
       guard let page = model.pages[target.id] else { throw PreviewError.invalidSurface }
       try await AgentElementSnapshotCache.shared.prepare(page.elements)
-      full = try pageCompositeSnapshot(page)
-      inkRegions = try PageVisionRenderer.render(page).regions.map { $0.receipt.contentPoints }
+      full = try await pageCompositeSnapshot(page)
+      inkRegions = try await Task.detached(priority: .utility) { try PageVisionRenderer.render(page).regions.map { $0.receipt.contentPoints } }.value
+      await PageInkRasterCache.shared.prepare(page)
       guard let ink = PageInkRasterCache.shared.image(for: page) else { throw PreviewError.agentSnapshotPending }
-      inkRaster = try raster(NSImage(cgImage: ink, size: .init(width: page.size.width, height: page.size.height)))
+      inkRaster = try await raster(NSImage(cgImage: ink, size: .init(width: page.size.width, height: page.size.height)))
       diagnostics = AgentElementSnapshotCache.shared.diagnostics(for: page.elements)
     case .document:
       guard let document = model.documents[target.id], let state = model.documentStates[target.id] else { throw PreviewError.invalidSurface }
       try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: request.pageIndex)
       guard let image = DocumentSnapshotCache.shared.image(for: document, state: state, pageIndex: request.pageIndex) else { throw PreviewError.documentSnapshotPending }
-      full = try raster(image)
+      full = try await raster(image)
       diagnostics = DocumentRenderRegistry.shared.entry(document: document, state: state, pageIndex: request.pageIndex)?.diagnostics ?? []
     case .board, .cover:
       let boardID = target.kind == .board ? target.id : target.boardID!
@@ -204,38 +219,42 @@ enum CurrentViewPreviewWriter {
       camera = projection
       let presence = SessionPresence(boardID: boardID, mode: target.kind == .cover ? .cover : .board,
         camera: projection, viewport: .init(x: size.width, y: size.height), focusedItemID: target.kind == .cover ? target.id : nil)
-      let elements = WorkspaceSceneProjection.snapshotElements(workspace: content.workspace, hierarchy: content.hierarchy,
-        presence: presence, documents: model.documents).filter { $0.kind != .nativeText }.map(agentElementSnapshotSource)
+      let elements = WorkspaceSceneProjection.snapshotLayers(workspace: content.workspace, hierarchy: content.hierarchy,
+        presence: presence, documents: model.documents).elements.filter { $0.kind != .nativeText }.map(agentElementSnapshotSource)
       try await AgentElementSnapshotCache.shared.prepare(elements)
       let view = SettledSpatialWorkspaceView(workspace: content.workspace, board: board, spatialInk: content.ink, presence: presence)
         .environment(model).frame(width: size.width, height: size.height)
-      let png = try renderPNG(view, size: size, scale: 2)
+      let png = try await renderPNG(view, size: size, scale: 2,
+        inkSurfaces: WorkspaceSceneProjection.snapshotLayers(workspace: content.workspace, hierarchy: content.hierarchy,
+          presence: presence, documents: model.documents).ink, journal: content.ink)
       guard let image = NSImage(data: png) else { throw PreviewError.pngEncoding }
       full = RasterSnapshot(image: image, png: png)
       diagnostics = AgentElementSnapshotCache.shared.diagnostics(for: elements)
-      if let inkImage = SpatialInkRasterCache.shared.image(surface: target.kind == .cover ? .cover(target.id) : .board(target.id),
-        journal: content.ink, camera: target.kind == .board ? projection : nil,
-        viewport: presence.viewport, size: size) {
-        inkRegions = SpatialInkRasterCache.shared.occupiedRegions(inkImage, size: size)
-        inkRaster = try raster(inkImage)
+      let inkSurface = WorkspaceSceneProjection.SnapshotInkSurface(surface: target.kind == .cover ? .cover(target.id) : .board(target.id),
+        camera: target.kind == .board ? projection : nil, viewport: .init(x: size.width, y: size.height))
+      let inkSnapshot = try await SpatialInkRasterSnapshot.prepare([inkSurface], journal: content.ink)
+      if let inkImage = inkSnapshot.raster(for: inkSurface) {
+        inkRegions = await Task.detached(priority: .utility) { SpatialInkRasterSnapshot.occupiedRegions(inkImage, size: size) }.value
+        inkRaster = try await raster(NSImage(cgImage: inkImage, size: size))
       }
     case .workspace: throw PreviewError.invalidSurface
     }
     try Task.checkCancellation()
     guard model.permitsBackgroundPreparation else { throw PreviewError.inputActive }
-    guard try model.store.referenceRevision(target: target) == request.sourceRevision else { throw PreviewError.sourceChanged }
     let output = target.kind == .board ? full : try crop(full, region: request.region)
-    let image = NSBitmapImageRep(data: output.png)!
-    let fingerprint: String?
-    if request.region != nil {
-      if target.kind == .document { fingerprint = output.sha256 }
-      else {
-        let ink = try inkRaster.map { target.kind == .board ? $0 : try crop($0, region: request.region) }
-        fingerprint = try NotebookStore.regionalFingerprint(request, inkFingerprint: ink?.sha256 ?? "empty-ink", files: content.sourceFiles())
-      }
-    } else { fingerprint = nil }
-    try model.store.saveTargetRender(.init(request: request, status: "ready", pngSHA256: output.sha256, referenceFingerprint: fingerprint,
-      pixelSize: .init(x: Double(image.pixelsWide), y: Double(image.pixelsHigh)), camera: camera, diagnostics: diagnostics, inkRegions: inkRegions), png: output.png)
+    let ink = try inkRaster.map { target.kind == .board ? $0 : try crop($0, region: request.region) }
+    let inkFingerprint = ink?.sha256 ?? "empty-ink"
+    let png = output.png, outputHash = output.sha256, store = model.store
+    let outputCamera = camera, outputDiagnostics = diagnostics, outputRegions = inkRegions
+    try await Task.detached(priority: .utility) {
+      guard try store.referenceRevision(target: target) == request.sourceRevision else { throw PreviewError.sourceChanged }
+      guard let image = NSBitmapImageRep(data: png) else { throw PreviewError.pngEncoding }
+      let fingerprint = request.region == nil ? nil : target.kind == .document ? outputHash
+        : try NotebookStore.regionalFingerprint(request, inkFingerprint: inkFingerprint, files: files)
+      try store.saveTargetRender(.init(request: request, status: "ready", pngSHA256: outputHash, referenceFingerprint: fingerprint,
+        pixelSize: .init(x: Double(image.pixelsWide), y: Double(image.pixelsHigh)), camera: outputCamera,
+        diagnostics: outputDiagnostics, inkRegions: outputRegions), png: png)
+    }.value
   }
 
   private static func crop(_ raster: RasterSnapshot, region: PageRect?) throws -> RasterSnapshot {
@@ -256,7 +275,7 @@ enum CurrentViewPreviewWriter {
     page: PageDocument?,
     document: DocumentDocument?,
     documentState: DocumentStateJournal?
-  ) throws -> SettledSceneSnapshot {
+  ) async throws -> SettledSceneSnapshot {
     switch presence.mode {
     case .board:
       try requireSpatialElementSnapshots(spatialElements)
@@ -272,7 +291,7 @@ enum CurrentViewPreviewWriter {
         throw PreviewError.invalidSurface
       }
       return .page(
-        try pageCompositeSnapshot(page),
+        try await pageCompositeSnapshot(page),
         itemID: itemID,
         CurrentViewPageRevision(page: page)
       )
@@ -285,7 +304,7 @@ enum CurrentViewPreviewWriter {
         )
       else { throw PreviewError.documentSnapshotPending }
       return .document(
-        try raster(image),
+        try await raster(image),
         CurrentViewDocumentRevision(
           document: document,
           state: documentState
@@ -298,13 +317,14 @@ enum CurrentViewPreviewWriter {
   @MainActor
   private static func pageCompositeSnapshot(
     _ page: PageDocument
-  ) throws -> RasterSnapshot {
-    let rendered = try PageVisionRenderer.render(page)
-    guard let base = NSImage(data: rendered.faithfulPNG) else {
+  ) async throws -> RasterSnapshot {
+    let faithfulPNG = try await Task.detached(priority: .utility) { try PageVisionRenderer.faithfulPNG(page) }.value
+    try Task.checkCancellation()
+    guard let base = NSImage(data: faithfulPNG) else {
       throw PreviewError.pngEncoding
     }
     guard !page.elements.isEmpty else {
-      return RasterSnapshot(image: base, png: rendered.faithfulPNG)
+      return RasterSnapshot(image: base, png: faithfulPNG)
     }
     let overlays = try page.elements.map { element in
       guard let image = AgentElementSnapshotCache.shared.image(for: element) else {
@@ -313,7 +333,7 @@ enum CurrentViewPreviewWriter {
       return (element: element, image: image)
     }
     let size = CGSize(width: page.size.width, height: page.size.height)
-    let png = try renderPNG(
+    let png = try await renderPNG(
       PageCompositeSnapshotView(base: base, overlays: overlays),
       size: size,
       scale: CGFloat(PageVisionRenderer.scale)
@@ -337,29 +357,37 @@ enum CurrentViewPreviewWriter {
     }
   }
 
-  private static func raster(_ image: NSImage) throws -> RasterSnapshot {
-    guard let tiff = image.tiffRepresentation,
-      let bitmap = NSBitmapImageRep(data: tiff),
-      let png = bitmap.representation(using: .png, properties: [:])
-    else { throw PreviewError.pngEncoding }
+  @MainActor
+  private static func raster(_ image: NSImage) async throws -> RasterSnapshot {
+    guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { throw PreviewError.pngEncoding }
+    let scale = Double(cgImage.width) / max(1, image.size.width)
+    let png = try await Task.detached(priority: .utility) { try encodePNG(cgImage, scale: scale) }.value
     return RasterSnapshot(image: image, png: png)
+  }
+
+  private static func encodePNG(_ image: CGImage, scale: Double) throws -> Data {
+    let data = NSMutableData()
+    guard let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil) else { throw PreviewError.pngEncoding }
+    CGImageDestinationAddImage(destination, image,
+      [kCGImagePropertyDPIWidth: 72 * scale, kCGImagePropertyDPIHeight: 72 * scale] as CFDictionary)
+    guard CGImageDestinationFinalize(destination) else { throw PreviewError.pngEncoding }
+    return data as Data
   }
 
   @MainActor
   private static func renderPNG<Content: View>(
     _ content: Content,
     size: CGSize,
-    scale: CGFloat
-  ) throws -> Data {
-    let renderer = ImageRenderer(content: content)
+    scale: CGFloat,
+    inkSurfaces: [WorkspaceSceneProjection.SnapshotInkSurface] = [],
+    journal: SpatialInkJournal? = nil
+  ) async throws -> Data {
+    let prepared = try await SpatialInkRasterSnapshot.prepare(inkSurfaces, journal: journal)
+    let renderer = ImageRenderer(content: content.environment(\.spatialInkRasterSnapshot, prepared))
     renderer.proposedSize = ProposedViewSize(size)
     renderer.scale = scale
-    guard let image = renderer.nsImage,
-      let tiff = image.tiffRepresentation,
-      let bitmap = NSBitmapImageRep(data: tiff),
-      let png = bitmap.representation(using: .png, properties: [:])
-    else { throw PreviewError.pngEncoding }
-    return png
+    guard let image = renderer.cgImage else { throw PreviewError.pngEncoding }
+    return try await Task.detached(priority: .utility) { try encodePNG(image, scale: scale) }.value
   }
 
   private static func sha256(_ data: Data) -> String {

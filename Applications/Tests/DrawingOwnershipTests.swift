@@ -4,7 +4,7 @@ import XCTest
 @testable import Notebook
 
 final class DrawingOwnershipTests: XCTestCase {
-  func testCoverInkKeepsItsSurfaceIdentityInTheSpatialScene() throws {
+  func testCoverInkKeepsItsSurfaceIdentityInTheSpatialScene() async throws {
     let actor = UUID()
     let coverID = UUID()
     var journal = SpatialInkJournal(
@@ -41,17 +41,17 @@ final class DrawingOwnershipTests: XCTestCase {
     view.commitActiveSpatialAction()
     let liveVertexCount = view.committedVertexCount
 
-    view.applySpatial([
+    view.applySpatial(.local([
       .ink(points: points, color: .black),
       .erase(points: [
         point(x: 70, y: 45, width: 30),
         point(x: 130, y: 65, width: 30),
       ]),
-    ])
+    ]))
 
     XCTAssertGreaterThan(liveVertexCount, 0)
     XCTAssertGreaterThan(view.committedEraserVertexCount, 0)
-    view.applySpatial([.ink(points: points, color: .black)])
+    view.applySpatial(.local([.ink(points: points, color: .black)]))
     XCTAssertEqual(view.committedVertexCount, liveVertexCount)
   }
 
@@ -117,7 +117,7 @@ final class DrawingOwnershipTests: XCTestCase {
     )
     registry.register(boardView, for: .board)
     registry.register(coverView, for: .cover(coverID))
-    registry.applyStable(layers, to: .cover(coverID))
+    registry.applyStable(.local(layers), to: .cover(coverID))
 
     XCTAssertEqual(boardView.committedVertexCount, 0)
     XCTAssertGreaterThan(coverView.committedEraserVertexCount, 0)
@@ -130,11 +130,11 @@ final class DrawingOwnershipTests: XCTestCase {
     let view = InkCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 400))
     let first = [point(x: 20, y: 30), point(x: 180, y: 70)]
     registry.register(view, for: cover)
-    registry.applyStable([.ink(points: first, color: .black)], to: cover)
+    registry.applyStable(.local([.ink(points: first, color: .black)]), to: cover)
     let stableCount = view.committedVertexCount
 
     registry.beginAction(on: cover)
-    registry.applyStable([], to: cover)
+    registry.applyStable(.local([]), to: cover)
     let active = ActiveInkStroke(style: .standard)
     active.replaceMeasuredTail(
       from: 0,
@@ -313,7 +313,7 @@ final class DrawingOwnershipTests: XCTestCase {
     let remoteData = try remoteDrawing.appending(secondRemote).dataRepresentation()
     remote.replaceDrawing(remoteData, actor: remoteActor)
     try store.savePage(remote)
-    model.reloadExternalChanges()
+    await model.reloadExternalChanges()?.value
 
     let accepted = await model.commitDrawingAction(
       localStroke,

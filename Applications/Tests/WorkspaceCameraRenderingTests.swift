@@ -28,6 +28,9 @@ final class WorkspaceCameraRenderingTests: XCTestCase {
       }
     }
     model.receivePeerMessage(.spatialInk(journal))
+    await model.finishPendingPersistence()
+    XCTAssertEqual(model.spatialInk?.actions.count, 32,
+      "Камера должна измеряться после приёма чернил всех восьми обложек")
     let size = SpatialPoint(x: 1194, y: 834)
     let center = WorldPoint(x: 1650, y: 750)
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)

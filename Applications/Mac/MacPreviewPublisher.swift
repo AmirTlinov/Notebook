@@ -274,7 +274,7 @@ final class MacPreviewPublisher {
         guard !Task.isCancelled, model?.permitsBackgroundPreparation == true, makeCurrentViewKey() == key else {
           throw PreviewPublicationError.sourceChanged
         }
-        finishCurrentViewPublication(key, generation: generation, error: writeCurrentView())
+        finishCurrentViewPublication(key, generation: generation, error: await writeCurrentView())
       } catch {
         finishCurrentViewPublication(key, generation: generation, error: error)
       }
@@ -313,15 +313,15 @@ final class MacPreviewPublisher {
           publicationError = PreviewPublicationError.sourceChanged
           break
         }
-        guard !PagePreviewWriter.hasCurrentArtifacts(
-          for: page,
-          store: model.store
-        ) else { continue }
-        do {
-          try PagePreviewWriter.write(page, store: model.store)
-        } catch {
-          publicationError = error
+        let store = model.store
+        let worker = Task.detached(priority: .utility) {
+          guard !PagePreviewWriter.hasCurrentArtifacts(for: page, store: store) else { return }
+          try Task.checkCancellation()
+          try PagePreviewWriter.write(page, store: store)
         }
+        do {
+          try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+        } catch { publicationError = error }
         await Task.yield()
       }
       finishPagePublication(
@@ -348,9 +348,9 @@ final class MacPreviewPublisher {
       let presence = model.presence else { return [] }
     switch presence.mode {
     case .board, .cover:
-      return WorkspaceSceneProjection.snapshotElements(
+      return WorkspaceSceneProjection.snapshotLayers(
         workspace: workspace, hierarchy: hierarchy, presence: presence, documents: model.documents
-      ).filter { $0.kind != .nativeText }.map(agentElementSnapshotSource)
+      ).elements.filter { $0.kind != .nativeText }.map(agentElementSnapshotSource)
     case .page:
       return model.activePage?.elements ?? []
     case .document:
@@ -358,7 +358,7 @@ final class MacPreviewPublisher {
     }
   }
 
-  private func writeCurrentView() -> (any Error)? {
+  private func writeCurrentView() async -> (any Error)? {
     guard let model, let workspace = model.workspace,
       let board = model.boardHierarchy,
       let spatialInk = model.spatialInk,
@@ -374,7 +374,7 @@ final class MacPreviewPublisher {
       || (document != nil && documentState != nil)
     else { return PreviewPublicationError.sourceUnavailable }
     do {
-      try CurrentViewPreviewWriter.write(
+      try await CurrentViewPreviewWriter.write(
         model: model,
         viewport: CGSize(
           width: presence.viewport.x,
