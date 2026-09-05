@@ -80,8 +80,8 @@ try {
   assert.equal(pendingView.visual.status,"pending");
   assert.ok(pendingView.content);
   assert.ok(pendingView.changes.changed.length);
-  const pointing = await call("notebook_point", {target:page,element_id:"meaning",label:"Я вижу заголовок мысли"});
-  assert.equal(pointing.attention.reference.target.id.toLowerCase(),pageID.toLowerCase());
+  const pointing = await call("notebook_point", {references:[{target:page,element_id:"meaning",label:"Я вижу заголовок мысли"}]});
+  assert.equal(pointing.context.entries[0].references[0].target.id.toLowerCase(),pageID.toLowerCase());
   const search = await call("notebook_search",{query:"Meaning"});
   assert.ok(search.results.some((r:Data) => r.elementID === "meaning" && r.reference.revision));
   const targetRender = await call("notebook_render",{target:page,expected_revision:content.agentRevision});
@@ -99,10 +99,10 @@ try {
   await writeFile(pagePath, JSON.stringify(humanPage));
   const continued = await call("notebook_action",{action_id:edited.action.id});
   assert.ok(continued.action.continuations.length >= 2);
-  const interpretation = await call("notebook_point",{target:page,element_id:"meaning",
-    source_revision:pointing.attention.reference.revision,label:"Я рассматриваю исходный заголовок"});
-  assert.equal(interpretation.attention.reference.revision,pointing.attention.reference.revision);
-  const reconsider = await call("notebook_observe");
+  const interpretation = await call("notebook_point",{context_id:pointing.context.id,reply_to:pointing.context.entries[0].id,references:[{target:page,element_id:"meaning",
+    source_revision:pointing.context.entries[0].references[0].revision,label:"Я рассматриваю исходный заголовок"}]});
+  assert.equal(interpretation.context.entries[1].references[0].revision,pointing.context.entries[0].references[0].revision);
+  const reconsider = await call("notebook_observe", {context_id:pointing.context.id});
   assert.equal(reconsider.references.find((r:Data)=>r.author === "agent").status,"changed");
   const undone = await call("notebook_undo", { action_id: edited.action.id });
   assert.ok(undone.action.undo.preserved.length >= 2);

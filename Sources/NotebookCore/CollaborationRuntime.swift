@@ -58,11 +58,12 @@ public struct DeviceActionReceipt: Codable, Equatable, Sendable, Identifiable {
 public struct CollaborationEnvelope: Codable, Equatable, Sendable {
   public let content: CollaborationContent?
   public let actions: [CollaborationReceipt]
-  public let attention: [SharedAttention]
+  public let contexts: [SharedContext]
+  public let selection: SharedContextSelection?
   public let delivery: [DeviceActionReceipt]
 
-  public init(content: CollaborationContent? = nil, actions: [CollaborationReceipt] = [], attention: [SharedAttention] = [], delivery: [DeviceActionReceipt] = []) {
-    self.content = content; self.actions = actions; self.attention = attention; self.delivery = delivery
+  public init(content: CollaborationContent? = nil, actions: [CollaborationReceipt] = [], contexts: [SharedContext] = [], selection: SharedContextSelection? = nil, delivery: [DeviceActionReceipt] = []) {
+    self.content = content; self.actions = actions; self.contexts = contexts; self.selection = selection; self.delivery = delivery
   }
 }
 
@@ -73,41 +74,6 @@ extension NotebookStore {
 
   public func targetPNGURL(_ id: UUID) -> URL { targetPreviewsURL.appendingPathComponent(id.uuidString.lowercased() + ".png") }
   public func targetReceiptURL(_ id: UUID) -> URL { targetPreviewsURL.appendingPathComponent(id.uuidString.lowercased() + ".json") }
-
-  public func sharedAttention() throws -> [SharedAttention] {
-    try prepare()
-    return try withMutationLock { try readAttention() }
-  }
-
-  private func readAttention() throws -> [SharedAttention] {
-    try [SharedAttention.Author.human, .agent].compactMap { author in
-      let url = collaborationURL.appendingPathComponent("attention-\(author.rawValue).json")
-      guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-      return try JSONDecoder().decode(SharedAttention.self, from: Data(contentsOf: url))
-    }
-  }
-
-  public func saveSharedAttention(_ attention: SharedAttention) throws {
-    try prepare()
-    try withMutationLock {
-      let previous = try readAttention().first { $0.author == attention.author }
-      guard previous == nil || previous!.stamp < attention.stamp else { return }
-      if let reference = attention.reference {
-        guard reference.label.count <= 1000, reference.pageIndex.map({ (0...100_000).contains($0) }) ?? true else {
-          throw CollaborationError("invalid_reference", "Указание имеет подпись и конечную страницу.")
-        }
-      }
-      try JSONEncoder().encode(attention).write(to: collaborationURL.appendingPathComponent("attention-\(attention.author.rawValue).json"), options: .atomic)
-    }
-  }
-
-  public func pointTo(_ reference: CollaborationReference?, actor: UUID) throws -> SharedAttention {
-    let current = try sharedAttention().first { $0.author == .agent }?.stamp ?? .init(counter: 0, actor: actor)
-    guard let next = current.advanced(by: actor) else { throw CollaborationError("version_exhausted", "Версия указания достигла предела.") }
-    let value = SharedAttention(author: .agent, reference: reference, stamp: next)
-    try saveSharedAttention(value)
-    return value
-  }
 
   public func referenceRevision(target: CollaborationTarget, elementID: String? = nil) throws -> String {
     let files = try collaborationSnapshot()
@@ -270,9 +236,8 @@ extension NotebookStore {
 
   public func receiveCollaboration(_ envelope: CollaborationEnvelope, local: CollaborationContent? = nil) throws -> CollaborationContent? {
     try prepare()
-    let resolved = envelope.content != nil || !envelope.actions.isEmpty
-      ? try mergeCollaborationContent(envelope.content,local:local,actions:envelope.actions) : nil
-    for attention in envelope.attention { try saveSharedAttention(attention) }
+    let resolved = envelope.content != nil || !envelope.actions.isEmpty || !envelope.contexts.isEmpty || envelope.selection != nil
+      ? try mergeCollaborationContent(envelope.content,local:local,actions:envelope.actions, contexts:envelope.contexts, selection:envelope.selection) : nil
     for receipt in envelope.delivery { try saveDeviceActionReceipt(receipt) }
     return resolved
   }

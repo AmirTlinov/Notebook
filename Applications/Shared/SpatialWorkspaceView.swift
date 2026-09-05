@@ -442,7 +442,7 @@ struct SpatialWorkspaceView: View {
           if model.isPointing {
             NotebookPointerView(onPreview:{ pointerPreview = $0 },onPoint:{ start,end in
               guard cameraGesture == nil, !settling, let reference = NotebookAttentionProjection.reference(start:start,end:end,model:model,presence:presence) else { return }
-              model.publishHumanAttention(reference)
+              model.publishHumanContext([reference])
             })
             if let rect = pointerPreview {
               RoundedRectangle(cornerRadius:4).stroke(.indigo,style:StrokeStyle(lineWidth:2,dash:[6,4]))
@@ -456,7 +456,7 @@ struct SpatialWorkspaceView: View {
         #else
           if model.isPointing {
             Color.clear.contentShape(Rectangle()).gesture(DragGesture(minimumDistance:0).onEnded { value in
-              if let reference = NotebookAttentionProjection.reference(start:value.startLocation,end:value.location,model:model,presence:presence) { model.publishHumanAttention(reference) }
+              if let reference = NotebookAttentionProjection.reference(start:value.startLocation,end:value.location,model:model,presence:presence) { model.publishHumanContext([reference]) }
             })
           }
         #endif

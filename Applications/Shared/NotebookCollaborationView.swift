@@ -11,7 +11,7 @@ struct NotebookCollaborationView: View {
         Label("Укажите фрагмент · протяните для области",systemImage:"hand.point.up.left")
           .font(.callout).padding(12).background(.regularMaterial,in:RoundedRectangle(cornerRadius:16))
       }
-      if model.showsCollaborationNotice, let attention = model.sharedAttention.last(where: { $0.author == .agent }), let reference = attention.reference {
+      if model.showsCollaborationNotice, let attention = model.contextEntries.last(where: { $0.author == .agent }), let reference = attention.references.first {
         HStack(alignment:.top,spacing:10) {
           Image(systemName:"quote.bubble").accessibilityHidden(true)
           VStack(alignment:.leading,spacing:4) {
@@ -43,7 +43,7 @@ struct NotebookCollaborationView: View {
             .accessibilityLabel("Скрыть уведомление").accessibilityIdentifier("collaboration-dismiss")
         }.buttonStyle(.borderless).padding(12).background(.regularMaterial,in:RoundedRectangle(cornerRadius:16))
       }
-      if !model.showsCollaborationNotice, !model.collaborationActions.isEmpty || model.sharedAttention.contains(where: { $0.author == .agent && $0.reference != nil }) {
+      if !model.showsCollaborationNotice, !model.collaborationActions.isEmpty || model.contextEntries.contains(where: { $0.author == .agent && !$0.references.isEmpty }) {
         Button { showsHistory = true } label: { Label("История",systemImage:"clock.arrow.circlepath") }
           .buttonStyle(.plain).font(.callout).padding(10).background(.regularMaterial,in:Capsule())
           .accessibilityIdentifier("collaboration-history")
@@ -55,7 +55,7 @@ struct NotebookCollaborationView: View {
     }) {
       NavigationStack {
         List {
-          if let reference = model.sharedAttention.last(where: { $0.author == .agent })?.reference {
+          if let reference = model.contextEntries.last(where: { $0.author == .agent })?.references.first {
             Section("Понимание агента") {
               Text(reference.label)
               Button("Показать фрагмент") { pendingShow = reference; showsHistory = false }
@@ -104,8 +104,8 @@ struct NotebookAttentionMarks: View {
   let presence: SessionPresence
   var body: some View {
     ZStack(alignment:.topLeading) {
-      ForEach(model.sharedAttention,id:\.author) { attention in
-        if (attention.author == .human || model.showsCollaborationNotice), let reference = attention.reference, let rect = NotebookAttentionProjection.frame(reference,model:model,presence:presence) {
+      ForEach(model.contextEntries) { attention in
+        if (attention.author == .human || model.showsCollaborationNotice), let reference = attention.references.first, let rect = NotebookAttentionProjection.frame(reference,model:model,presence:presence) {
           mark(rect, human:attention.author == .human, label:attention.author == .human ? "Указано" : "Понимание агента", changed:model.referenceChanged(reference))
         }
       }

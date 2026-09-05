@@ -4,10 +4,9 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
-import { targetSchema, referenceSchema, actionResult, type Target } from "./actions.js";
+import { targetSchema, referenceSchema, actionResult } from "./actions.js";
 import { runBridge, BridgeError } from "./bridge.js";
 import { NotebookStore } from "./store.js";
-import { revision } from "./domain.js";
 
 const frame = z.object({ x: z.number().finite(), y: z.number().finite(), width: z.number().positive(), height: z.number().positive() }).strict();
 const world = z.object({ tileX: z.number().int(), tileY: z.number().int(), localX: z.number().finite(), localY: z.number().finite() }).strict();
@@ -15,14 +14,19 @@ export function registerCollaborationTools(server: McpServer, store: NotebookSto
   server.registerTool("notebook_point", {
     outputSchema: notebookResponseSchema,
     title: "Point to the source and share your interpretation",
-    description: "Attach a short interpretation or question to an exact owner, element/block or local region. When responding to an observed reference, copy its revision into source_revision: the interpretation stays bound to that considered source and later changes are explicit. Omitting source_revision captures the current source. This changes shared attention and keeps the human camera. Omit target to clear the agent pointer.",
-    inputSchema: z.object({ target: targetSchema.optional(), element_id: z.string().optional(), region: frame.optional(), world_origin: world.optional(), page_index: z.number().int().nonnegative().default(0), source_revision:z.string().regex(/^[a-f0-9]{64}$/).optional(), label: z.string().max(1000).default("") }).strict(),
+    description: "Create a durable shared context from exact source references, or reply to an explicit entry in context_id. Copy the observed source revision for a considered fragment. Camera and human selection are unchanged; earlier contexts remain readable.",
+    inputSchema: z.object({ context_id: z.uuid().optional(), reply_to: z.uuid().optional(),
+      references: z.array(z.object({ target: targetSchema, element_id: z.string().optional(), region: frame.optional(),
+        world_origin: world.optional(), page_index: z.number().int().nonnegative().optional(),
+        source_revision: z.string().regex(/^[a-f0-9]{64}$/).optional(), label: z.string().max(1000).default("") }).strict()).min(1).max(32) }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   }, input => actionResult(async () => {
-    const reference = input.target ? { id: randomUUID(), target: input.target, elementID: input.element_id,
-      region: input.region, worldOrigin: input.world_origin, pageIndex: input.page_index, label: input.label,
-      revision:input.source_revision ?? (await runBridge<{ revision: string }>(store.root, { command: "reference", target: input.target, elementID: input.element_id })).revision } : undefined;
-    return { status: "saved", attention: await runBridge(store.root, { command: "point", reference }) };
+    const references = await Promise.all(input.references.map(async value => ({ id: randomUUID(), target: value.target,
+      elementID: value.element_id, region: value.region, worldOrigin: value.world_origin, pageIndex: value.page_index,
+      label: value.label, revision: value.source_revision ?? (await runBridge<{revision:string}>(store.root,
+        {command:"reference",target:value.target,elementID:value.element_id})).revision })));
+    return { status: "saved", context: await runBridge(store.root, {command:"point",references,
+      contextID:input.context_id,replyTo:input.reply_to}) };
   }));
   server.registerTool("notebook_render", {
     outputSchema: notebookResponseSchema,
@@ -69,47 +73,5 @@ export function registerCollaborationTools(server: McpServer, store: NotebookSto
     description: "Search titles, document blocks and agent text on pages, boards and covers. Each result includes its physical path and a stable reference. Handwriting is available through notebook_page_map and images.",
     inputSchema: z.object({ query: z.string().trim().min(1).max(500), limit: z.number().int().min(1).max(100).default(20) }).strict(),
     annotations: { readOnlyHint: true, openWorldHint: false },
-  }, ({ query, limit }) => actionResult(() => store.withReadSnapshot(async () => {
-    const workspace = await store.readWorkspace();
-    const hierarchy = await store.readBoardHierarchy(workspace);
-    const hits: Array<{ target: Target; elementID?: string | undefined; title: string; path: string[]; preview: string; revision: string }> = [];
-    const items = new Map(workspace.items.map(item => [item.id.toLowerCase(), item]));
-    const parents = new Map<string,string>();
-    for (const node of hierarchy.boards) for (const id of [...node.board.freeItems.map(p => p.itemID), ...node.board.stacks.flatMap(s => s.itemIDs)]) parents.set(id.toLowerCase(),node.id);
-    const pathFor = (id: string): string[] => {
-      const result: string[] = []; const seen = new Set<string>();
-      while (!seen.has(id.toLowerCase())) {
-        seen.add(id.toLowerCase()); const item = items.get(id.toLowerCase());
-        result.unshift(item?.title || (id.toLowerCase() === workspace.rootBoardID.toLowerCase() ? "Корневая доска" : `#${id.slice(0,8)}`));
-        const parent = parents.get(id.toLowerCase()); if (!parent) break; id = parent;
-      }
-      return result;
-    };
-    const add = (target:Target,title:string,text:string,ownerRevision:string,elementID?:string,path = pathFor(target.id)) => {
-      const index = text.toLocaleLowerCase().indexOf(query.toLocaleLowerCase()); if (index < 0) return;
-      hits.push({ target, elementID, title, path, preview: text.slice(Math.max(0,index-60), index+180), revision:ownerRevision });
-    };
-    for (const node of hierarchy.boards) {
-      for (const element of node.board.elements) {
-        const target:Target = element.surface.kind === "cover" ? {kind:"cover",id:element.surface.ownerID!,boardID:node.id} : {kind:"board",id:node.id};
-        add(target,element.id,element.source || element.html,revision(node.board.stamp),element.id);
-      }
-    }
-    for (const item of workspace.items) {
-      const boardID = parents.get(item.id.toLowerCase()) ?? workspace.rootBoardID;
-      const board = hierarchy.boards.find(n => n.id.toLowerCase() === boardID.toLowerCase())!.board;
-      add(item.kind === "board" ? {kind:"board",id:item.id} : {kind:"cover",id:item.id,boardID},item.title,item.title,revision(board.stamp));
-      if (item.kind === "notebook") for (const [index,id] of item.pageIDs.entries()) {
-        const page = await store.readPage(id);
-        for (const element of page.elements) add({kind:"page",id},item.title,element.source || element.html,revision(page.agentStamp),element.id,[...pathFor(item.id),`Лист ${index+1}`]);
-      }
-      if (item.kind === "document") {
-        const document = await store.readDocument(item.id);
-        for (const block of document.blocks) add({kind:"document",id:item.id},item.title,block.kind === "interactive" ? block.html : block.source,revision(document.contentStamp),block.id);
-      }
-    }
-    const results = await Promise.all(hits.slice(0,limit).map(async hit => ({...hit,reference:{id:randomUUID(),target:hit.target,elementID:hit.elementID,label:hit.preview,
-      ...(await runBridge(store.root,{command:"reference",target:hit.target,elementID:hit.elementID}))}})));
-    return {status:"ready",results,total:hits.length,truncated:hits.length>limit};
-  })));
+  }, ({ query, limit }) => actionResult(() => runBridge(store.root, {command:"search",query,limit})));
 }

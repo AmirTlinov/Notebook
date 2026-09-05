@@ -2,6 +2,8 @@ import Foundation
 import NotebookCore
 
 struct Request: Decodable {
+  let query: String?
+  let limit: Int?
   let command: String
   let root: String
   let action: CollaborationAction?
@@ -15,6 +17,9 @@ struct Request: Decodable {
   let pageIndex: Int?
   let size: PageSize?
   let direction: String?
+  let contextID: UUID?
+  let replyTo: UUID?
+  let references: [CollaborationReference]?
 }
 
 let encoder = JSONEncoder()
@@ -38,9 +43,12 @@ do {
   case "continuations":
     guard let id = request.actionID else { throw CollaborationError("invalid_action", "Нужен ID хода.") }
     data = try encoder.encode(store.collaborationContinuations(id))
+  case "search": data = try encoder.encode(store.search(request.query ?? "", limit: request.limit ?? 20))
   case "snapshot": data = try encoder.encode(store.collaborationSnapshot())
-  case "attention": data = try encoder.encode(store.sharedAttention())
-  case "point": data = try encoder.encode(store.pointTo(request.reference, actor: store.collaborationActorID()))
+  case "contexts": data = try encoder.encode(store.sharedContexts())
+  case "point":
+    data = try encoder.encode(store.appendContext(references: request.references ?? [], author: .agent,
+      actor: store.collaborationActorID(), contextID: request.contextID, replyTo: request.replyTo))
   case "delivery": data = try encoder.encode(store.deviceActionReceipts())
   case "reference":
     guard let target = request.target else { throw CollaborationError("invalid_reference", "Нужен владелец указания.") }

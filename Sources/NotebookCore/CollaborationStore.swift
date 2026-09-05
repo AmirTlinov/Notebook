@@ -190,7 +190,19 @@ extension NotebookStore {
     receipt: CollaborationReceipt) throws {
     var writes = after.filter { before[$0.key] != $0.value }
     writes[actionFile(receipt.id)] = try .encode(receipt)
-    let transaction = CollaborationTransaction(writes: writes, removals: before.keys.filter { after[$0] == nil })
+    let contexts = try readSharedContexts()
+    if !contexts.contains(where: { $0.id == receipt.action.resolvedContextID }) {
+      if receipt.action.contextID != nil { throw CollaborationError("context_missing", "Контекст хода не найден.") }
+      let entry = SharedContextEntry(id: receipt.id, author: .agent, references: receipt.action.references,
+        stamp: .init(counter: 1, actor: receipt.id), createdAt: receipt.createdAt)
+      writes[contextFile(receipt.action.resolvedContextID)] = try .encode(SharedContext(id: receipt.action.resolvedContextID, entries: [entry]))
+    }
+    try publishCollaboration(writes: writes, removals: before.keys.filter { after[$0] == nil })
+  }
+
+  func publishCollaboration(writes: [String: JSONValue], removals: [String] = []) throws {
+    guard !writes.isEmpty || !removals.isEmpty else { return }
+    let transaction = CollaborationTransaction(writes: writes, removals: removals)
     try FileManager.default.createDirectory(at: collaborationURL, withIntermediateDirectories: true)
     try JSONEncoder().encode(transaction).write(to: pendingCollaborationURL, options: .atomic)
     try recoverCollaborationTransaction()
@@ -215,8 +227,8 @@ extension NotebookStore {
   }
 
   private func collaborationFileURL(_ path: String) throws -> URL {
-    let allowed = ["workspace.json", "board.json", "spatial-ink.json", "collaboration/format.json"].contains(path)
-      || ["pages/", "documents/", "document-states/", "collaboration/actions/"].contains { path.hasPrefix($0) }
+    let allowed = ["workspace.json", "board.json", "spatial-ink.json", "collaboration/format.json", "collaboration/selection.json", "collaboration/attention-human.json", "collaboration/attention-agent.json"].contains(path)
+      || ["pages/", "documents/", "document-states/", "collaboration/actions/", "collaboration/contexts/"].contains { path.hasPrefix($0) }
     guard allowed, !path.contains(".."), !path.hasPrefix("/"), path.hasSuffix(".json") else {
       throw CollaborationError("invalid_transaction", "Некорректный путь публикации.")
     }
@@ -231,6 +243,11 @@ extension NotebookStore {
   }
 
   public func migrateCollaborationStorage() throws {
+    try migrateCollaborationV1()
+    try migrateSharedContexts()
+  }
+
+  private func migrateCollaborationV1() throws {
     try prepare()
     try withMutationLock {
       let marker = collaborationURL.appendingPathComponent("format.json")
@@ -284,7 +301,7 @@ extension NotebookStore {
 
   /// Disk, memory and the received cut meet under the same recoverable commit.
   public func mergeCollaborationContent(_ incoming: CollaborationContent?,
-    local: CollaborationContent? = nil, actions: [CollaborationReceipt] = []) throws -> CollaborationContent {
+    local: CollaborationContent? = nil, actions: [CollaborationReceipt] = [], contexts: [SharedContext] = [], selection: SharedContextSelection? = nil) throws -> CollaborationContent {
     try prepare()
     return try withMutationLock {
       let before = try loadCollaborationContent()
@@ -304,6 +321,14 @@ extension NotebookStore {
           if current.undo != nil || current == incoming { continue }
         }
         writes[actionFile(incoming.id)] = try .encode(incoming)
+      }
+      let metadata = try contextWrites(contexts, selection: selection)
+      writes.merge(metadata) { _, new in new }
+      let known = Set(try readSharedContexts().map(\.id)).union(contexts.map(\.id))
+      for receipt in actions where !known.contains(receipt.action.resolvedContextID) {
+        guard receipt.action.contextID == nil else { throw CollaborationError("context_missing", "Ход должен поступить вместе со своим контекстом.") }
+        let entry = SharedContextEntry(id: receipt.id, author: .agent, references: receipt.action.references, stamp: .init(counter: 1, actor: receipt.id), createdAt: receipt.createdAt)
+        writes[contextFile(receipt.action.resolvedContextID)] = try .encode(SharedContext(id: receipt.action.resolvedContextID, entries: [entry]))
       }
       let transaction = CollaborationTransaction(writes: writes, removals: old.keys.filter { files[$0] == nil })
       if !transaction.writes.isEmpty || !transaction.removals.isEmpty {

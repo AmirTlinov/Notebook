@@ -38,7 +38,7 @@ final class SharedAttentionTests: XCTestCase {
     let reference = try XCTUnwrap(NotebookAttentionProjection.reference(start:.init(x:100,y:100),end:.init(x:220,y:200),model:model,presence:presence))
     XCTAssertEqual(reference.target,.init(kind:.page,id:page.id))
     model.isPointing = true
-    model.publishHumanAttention(reference)
+    model.publishHumanContext([reference])
     XCTAssertFalse(model.isPointing)
     XCTAssertFalse(model.referenceChanged(reference))
     model.moveItem(workspace.selectedItemID,to:center.offsetBy(x:100,y:50))

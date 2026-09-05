@@ -8,7 +8,7 @@ const fieldPath = z.array(z.union([
   z.object({order:z.object({})}),
 ]));
 const action = z.object({
-  id:z.uuid(),summary:z.string(),references:z.array(z.json()),createdAt:z.number().describe("Seconds since 2001-01-01T00:00:00Z, the native action journal epoch."),
+  id:z.uuid(),contextID:z.uuid(),summary:z.string(),references:z.array(z.json()),createdAt:z.number().describe("Seconds since 2001-01-01T00:00:00Z, the native action journal epoch."),
   revisions:z.array(expected),
   continuations:z.array(z.object({file:z.string(),path:fieldPath,author:z.enum(["human","agent","removed"])})),
   results:z.array(z.object({kind:z.string(),target,id:z.string().optional(),frame:z.json().optional()})),

@@ -112,7 +112,17 @@ final class NotebookAppModel {
   private var readyPages: [UUID: String] = [:]
   private(set) var isPeerConnected = false
   private(set) var collaborationActions: [CollaborationReceipt] = []
-  private(set) var sharedAttention: [SharedAttention] = []
+  private(set) var sharedContexts: [SharedContext] = []
+  private(set) var contextSelection: SharedContextSelection?
+  var activeSharedContext: SharedContext? {
+    sharedContexts.first { $0.id == contextSelection?.contextID }
+  }
+  var presentedSharedContext: SharedContext? {
+    if showsCollaborationNotice, let action = collaborationActions.first,
+      let context = sharedContexts.first(where: { $0.id == action.action.resolvedContextID }) { return context }
+    return activeSharedContext ?? sharedContexts.max { ($0.entries.last?.createdAt ?? .distantPast) < ($1.entries.last?.createdAt ?? .distantPast) }
+  }
+  var contextEntries: [SharedContextEntry] { presentedSharedContext?.entries ?? [] }
   private(set) var actionCue: String?
   private(set) var penStyle: PenStyle
   private(set) var eraserStyle: EraserStyle
@@ -1236,11 +1246,11 @@ final class NotebookAppModel {
       let disk = try store.collaborationContent()
       let previous = collaborationContent
       let oldActions = collaborationActions
-      let oldAttention = sharedAttention
+      let oldContexts = SharedContextSnapshot(contexts: sharedContexts, selection: contextSelection)
       let resolved = try store.mergeCollaborationContent(disk, local: previous)
       acceptCollaborationContent(resolved)
       reloadCollaborationMetadata()
-      if previous != resolved || oldActions != collaborationActions || oldAttention != sharedAttention {
+      if previous != resolved || oldActions != collaborationActions || oldContexts != SharedContextSnapshot(contexts: sharedContexts, selection: contextSelection) {
         sendCollaboration(content: resolved.publication(since:previous))
       }
       #if os(macOS)
@@ -1429,14 +1439,19 @@ final class NotebookAppModel {
     #endif
   }
 
-  func publishHumanAttention(_ reference: CollaborationReference) {
-    let previous = sharedAttention.first { $0.author == .human }?.stamp ?? .init(counter:0,actor:actorID)
-    guard let stamp = previous.advanced(by:actorID) else { return }
-    let attention = SharedAttention(author:.human,reference:reference,stamp:stamp)
+  func publishHumanContext(_ references: [CollaborationReference]) {
     do {
-      try store.saveSharedAttention(attention)
+      _ = try store.appendContext(references: references, author: .human, actor: actorID, select: true)
       reloadCollaborationMetadata(); isPointing = false
-      sync.send(.collaboration(.init(attention:[attention])))
+      sync.send(.collaboration(.init(contexts: sharedContexts, selection: contextSelection)))
+    } catch { showCue(error.localizedDescription) }
+  }
+
+  func selectSharedContext(_ id: UUID?) {
+    do {
+      try store.selectSharedContext(id, actor: actorID)
+      reloadCollaborationMetadata()
+      sync.send(.collaboration(.init(contexts: sharedContexts, selection: contextSelection)))
     } catch { showCue(error.localizedDescription) }
   }
 
@@ -1622,17 +1637,19 @@ final class NotebookAppModel {
 
   private func reloadCollaborationMetadata() {
     collaborationActions = (try? store.collaborationActions()) ?? []
-    sharedAttention = (try? store.sharedAttention()) ?? []
+    let contexts = try? store.sharedContexts()
+    sharedContexts = contexts?.contexts ?? []
+    contextSelection = contexts?.selection
     deviceActionReceipts = (try? store.deviceActionReceipts()) ?? []
     let latest = collaborationActions.first
-    let attention = sharedAttention.first { $0.author == .agent }
-    let key = "\(latest?.id.uuidString ?? "")|\(latest?.undo?.completedAt.timeIntervalSince1970 ?? 0)|\(attention?.stamp.revision ?? "")"
+    let attention = sharedContexts.flatMap(\.entries).filter { $0.author == .agent }.max { $0.createdAt < $1.createdAt }
+    let key = "\(latest?.id.uuidString ?? "")|\(latest?.undo?.completedAt.timeIntervalSince1970 ?? 0)|\(attention?.id.uuidString ?? "")"
     guard key != collaborationNoticeKey else { return }
     let firstLoad = collaborationNoticeKey == nil
     collaborationNoticeKey = key
     let recentlyCreated = latest.map { Date().timeIntervalSince($0.undo?.completedAt ?? $0.createdAt) < 6 } ?? false
     guard !firstLoad || recentlyCreated else { return }
-    showsCollaborationNotice = latest != nil || attention?.reference != nil
+    showsCollaborationNotice = latest != nil || attention != nil
     collaborationNoticeTask?.cancel()
     collaborationNoticeTask = Task { [weak self] in
       try? await Task.sleep(for: .seconds(6))
@@ -1643,7 +1660,7 @@ final class NotebookAppModel {
 
   private func sendCollaboration(content: CollaborationContent? = nil) {
     sync.send(.collaboration(.init(content: content,
-      actions: Array(collaborationActions.prefix(50)), attention: sharedAttention,
+      actions: Array(collaborationActions.prefix(50)), contexts: sharedContexts, selection: contextSelection,
       delivery: (try? store.deviceActionReceipts()) ?? [])))
   }
 

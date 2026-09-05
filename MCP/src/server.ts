@@ -1,7 +1,8 @@
+type ContextSnapshot = { contexts:Array<{id:string;entries:Array<{id:string;author:string;requiresReview:boolean;references:Array<{id:string;target:object;elementID?:string;revision:string;label:string}>}>}>;selection?:{contextID?:string} };
 import { notebookResponseSchema } from "./contracts.js";
 import { runBridge, BridgeError } from "./bridge.js";
 import { registerCollaborationTools } from "./collaboration-tools.js";
-import { registerActionTools } from "./actions.js";
+import { publicAction, type ActionReceipt, registerActionTools } from "./actions.js";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -67,14 +68,14 @@ export function createServer(store = new NotebookStore()): McpServer {
     outputSchema: notebookResponseSchema,
     title: "See the shared thought and what changed",
     description: "Return the current owner, human/agent pointers, compact content, changes and connection state immediately. Visual readiness is separate. Set wait_ms up to 4000 to wait for the exact current image; useful context is always returned while it is being prepared.",
-    inputSchema: z.object({ since: z.string().optional(), wait_ms: z.number().int().min(0).max(4000).default(0) }),
+    inputSchema: z.object({ since: z.string().optional(), context_id: z.uuid().optional(), wait_ms: z.number().int().min(0).max(4000).default(0) }),
     annotations: { readOnlyHint: true, openWorldHint: false },
-  }, ({ since, wait_ms }) => safely(async () => {
+  }, ({ since, context_id, wait_ms }) => safely(async () => {
     const deadline = Date.now() + wait_ms;
-    let result = await observeContext(store);
+    let result = await observeContext(store, context_id);
     while (result.data.visual.status !== "ready" && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, Math.min(100, deadline - Date.now())));
-      result = await observeContext(store);
+      result = await observeContext(store, context_id);
     }
     const keys = result.data.changeKeys;
     const cursor = createHash("sha256").update(JSON.stringify(keys)).digest("hex");
@@ -302,13 +303,13 @@ export function createServer(store = new NotebookStore()): McpServer {
   return server;
 }
 
-async function observeContext(store: NotebookStore) {
+async function observeContext(store: NotebookStore, contextID?: string) {
   return store.withReadSnapshot(async () => {
     const current = await store.readCurrent();
     const { workspace, presence, item } = current;
-    const [hierarchy, spatialInk, sizes, attention, runtime] = await Promise.all([
+    const [hierarchy, spatialInk, sizes, shared, runtime] = await Promise.all([
       store.readBoardHierarchy(workspace), store.readSpatialInk(), store.readItemSizes(workspace),
-      runBridge<Array<{ author: string; reference?: { id: string; target: object; elementID?: string; revision: string }; stamp: { counter: number; actor: string } }>>(store.root, { command: "attention" }),
+      runBridge<ContextSnapshot>(store.root, { command: "contexts" }),
       readFile(join(store.root, "previews", "runtime.json"), "utf8").then(JSON.parse).catch(() => null),
     ]);
     const board = hierarchy.boards.find(node => sameID(node.id, presence.boardID))?.board;
@@ -322,13 +323,17 @@ async function observeContext(store: NotebookStore) {
       catch (error) { content = { ...publicPage(current.page), kind: "page", pencilMap: { status: "pending", message: String(error) } }; }
     } else if (current.kind === "document") content = observedDocument(current.document, current.state) as Record<string, unknown>;
     else content = { kind: "board", boardID: presence.boardID, itemCount: board.freeItems.length + board.stacks.reduce((n, stack) => n + stack.itemIDs.length, 0) };
-    const references = await Promise.all(attention.map(async value => {
-      if (!value.reference) return value;
+    const selectedID = contextID ?? shared.selection?.contextID;
+    const context = shared.contexts.find(value => sameID(value.id, selectedID ?? ""));
+    if (contextID && !context) throw new BridgeError({code:"context_missing",message:"Общий фрагмент не найден."});
+    const references = await Promise.all((context?.entries ?? []).flatMap(entry => entry.references.map(async reference => {
       try {
-        const fresh = await runBridge<{ revision: string }>(store.root, { command: "reference", target: value.reference.target, elementID: value.reference.elementID });
-        return { ...value, status: fresh.revision === value.reference.revision ? "current" : "changed", currentRevision: fresh.revision };
-      } catch { return { ...value, status: "target_missing" }; }
-    }));
+        const fresh = await runBridge<{revision:string}>(store.root,{command:"reference",target:reference.target,elementID:reference.elementID});
+        return {entryID:entry.id,author:entry.author,reference,status:entry.requiresReview ? "review_required" : fresh.revision === reference.revision ? "current" : "changed",currentRevision:fresh.revision};
+      } catch { return {entryID:entry.id,author:entry.author,reference,status:"target_missing"}; }
+    })));
+    const relatedActions = context ? (await runBridge<ActionReceipt[]>(store.root,{command:"actions"}))
+      .filter(action => sameID(action.action.contextID ?? action.id, context.id)).slice(0,10) : [];
     let visual: Record<string, any> = { status: "pending" };
     let image: string | undefined;
     let surface: unknown = null;
@@ -342,7 +347,7 @@ async function observeContext(store: NotebookStore) {
     } catch (error) { visual = { status: "pending", code: "snapshot_pending", message: String(error) }; }
     const changeKeys: Record<string, string> = { workspace: revision(workspace.stamp),
       [`board:${presence.boardID}`]: revision(board.stamp), spatialInk: revision(spatialInk.stamp),
-      view: JSON.stringify(presence), attention: JSON.stringify(attention.map(a => [a.author, a.stamp])) };
+      view: JSON.stringify(presence), contexts: JSON.stringify(shared) };
     if (current.kind === "notebook") {
       changeKeys[`page:${current.page.id}:drawing`] = revision(current.page.drawingStamp);
       changeKeys[`page:${current.page.id}:elements`] = revision(current.page.agentStamp);
@@ -354,7 +359,11 @@ async function observeContext(store: NotebookStore) {
       camera: presence.camera, viewport: presence.viewport, focusedItemID: presence.focusedItemID ?? null,
       openProgress: presence.openProgress, documentPageIndex: presence.documentPageIndex,
       item: { id: item.id, kind: item.kind, title: item.title || null, identity: itemIdentity(item, board, spatialInk) },
-      content, references, visual, surface, changeKeys,
+      content, references, context: context ?? null,
+      contexts: shared.contexts.map(c => ({id:c.id,sourceCount:c.entries.reduce((n,e)=>n+e.references.length,0),
+        label:c.entries[0]?.references[0]?.label ?? "Самостоятельный ход"})),
+      actions: await Promise.all(relatedActions.map(action => publicAction(action,store))),
+      visual, surface, changeKeys,
       connection: runtime && Date.now() / 1000 - runtime.updatedAt < 5 ? runtime : { status: "unavailable", lastKnown: runtime },
       revisions: { workspace: revision(workspace.stamp), board: revision(board.stamp), spatialInk: revision(spatialInk.stamp) },
       nodes: joinedBoardNodes(workspace, board, spatialInk, sizes), visibleItems: visibleItems(workspace, board, spatialInk, presence, sizes),

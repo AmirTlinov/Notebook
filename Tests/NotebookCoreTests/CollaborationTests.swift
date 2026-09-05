@@ -385,3 +385,105 @@ func collaborationStateMergeNamesTheCombinedResult() {
   _ = a.merge(b)
   #expect(a == settled)
 }
+
+@Test("Новый общий фрагмент сохраняет прежнее указание и адрес начатого хода")
+func durableContextDoesNotFollowHumanSelection() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  try f.store.migrateCollaborationStorage()
+  let source = CollaborationReference(target: f.page, revision: try f.store.referenceRevision(target: f.page), label: "Рисунок")
+  let first = try f.store.appendContext(references: [source], author: .human, actor: f.human, select: true)
+  let next = try f.store.appendContext(references: [source], author: .human, actor: f.human, select: true)
+  let answer = try f.store.appendContext(references: [source], author: .agent, actor: f.agent,
+    contextID: first.id, replyTo: first.entries[0].id)
+  #expect(answer.entries.count == 2)
+  let action = CollaborationAction(contextID: first.id, summary: "Ответ на исходный рисунок",
+    references: [source], expected: [try f.expectation(f.page)], operations: [f.insert()])
+  let receipt = try f.store.applyCollaborationAction(action, actor: f.agent)
+  #expect(receipt.action.resolvedContextID == first.id)
+  #expect(try f.store.sharedContexts().selection?.contextID == next.id)
+  #expect(try f.store.sharedContexts().contexts.count == 2)
+  #expect(try f.store.applyCollaborationAction(action, actor: f.agent) == receipt)
+  let restarted = NotebookStore(root: f.root)
+  #expect(try restarted.sharedContexts().contexts.contains(answer))
+  _ = try restarted.undoCollaborationAction(receipt.id, actor: f.human)
+  #expect(try restarted.sharedContexts().contexts.contains(answer))
+}
+
+@Test("Независимые ответы сходятся в одном контексте без перезаписи")
+func contextEntriesMergeWithoutLosingIndependentReplies() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let source = CollaborationReference(target: f.page, revision: try f.store.referenceRevision(target: f.page))
+  let first = try f.store.appendContext(references: [source], author: .human, actor: f.human, select: true)
+  let replyA = SharedContextEntry(author: .agent, references: [source], replyTo: first.entries[0].id,
+    stamp: .init(counter: 2, actor: f.agent))
+  let replyB = SharedContextEntry(author: .agent, references: [source], replyTo: first.entries[0].id,
+    stamp: .init(counter: 2, actor: UUID()))
+  let a = SharedContext(id: first.id, entries: first.entries + [replyA])
+  let b = SharedContext(id: first.id, entries: first.entries + [replyB])
+  _ = try f.store.receiveCollaboration(.init(contexts: [a]))
+  _ = try f.store.receiveCollaboration(.init(contexts: [b]))
+  let merged = try #require(f.store.sharedContexts().contexts.first)
+  #expect(Set(merged.entries.map(\.id)) == Set([first.entries[0].id, replyA.id, replyB.id]))
+  _ = try f.store.receiveCollaboration(.init(contexts: [a]))
+  #expect(try f.store.sharedContexts().contexts.first == merged)
+  let corrupted = SharedContextEntry(id: replyA.id, author: .human, references: [source], stamp: replyA.stamp)
+  #expect(throws: CollaborationError.self) {
+    try f.store.receiveCollaboration(.init(contexts: [.init(id: first.id, entries: [corrupted])]))
+  }
+  #expect(try f.store.sharedContexts().contexts.first == merged)
+}
+
+@Test("Отсутствующий контекст отклоняет весь ход до публикации")
+func missingContextDoesNotPublishContent() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let before = try f.store.loadPage(f.pageID)
+  let action = CollaborationAction(contextID: UUID(), summary: "Нет источника",
+    expected: [try f.expectation(f.page)], operations: [f.insert()])
+  #expect(throws: CollaborationError.self) { try f.store.applyCollaborationAction(action, actor: f.agent) }
+  #expect(try f.store.loadPage(f.pageID) == before)
+  #expect(try f.store.collaborationActions().isEmpty)
+}
+
+@Test("Миграция указаний сохраняет точные исходные байты и не выдумывает связь")
+func contextMigrationRetainsSourcesAndBackup() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  try f.store.prepare()
+  try FileManager.default.createDirectory(at: f.store.collaborationURL, withIntermediateDirectories: true)
+  try Data("{\"format\":1}".utf8).write(to: f.store.collaborationURL.appendingPathComponent("format.json"))
+  let reference = CollaborationReference(target: f.page, region: .init(x: 10, y: 10, width: 40, height: 40),
+    revision: try f.store.referenceRevision(target: f.page), label: "Исходное указание")
+  let original = try JSONEncoder().encode(JSONValue.object(["author": .string("human"),
+    "reference": try .encode(reference), "stamp": try .encode(VersionStamp(counter: 7, actor: f.human))]))
+  let path = f.store.collaborationURL.appendingPathComponent("attention-human.json")
+  try original.write(to: path)
+  try f.store.migrateCollaborationStorage()
+  let migrated = try f.store.sharedContexts()
+  #expect(migrated.selection?.contextID == reference.id)
+  #expect(migrated.contexts.count == 1)
+  #expect(migrated.contexts[0].entries[0].requiresReview)
+  #expect(migrated.contexts[0].entries[0].references == [reference])
+  #expect(!FileManager.default.fileExists(atPath: path.path))
+  let backup = f.root.appendingPathComponent("migrations/before-collaboration-v2/collaboration/attention-human.json")
+  #expect(try Data(contentsOf: backup) == original)
+  try f.store.migrateCollaborationStorage()
+  #expect(try f.store.sharedContexts() == migrated)
+  #expect(try Data(contentsOf: backup) == original)
+}
+
+@Test("Общий поиск возвращает физический путь, исходник и версию одного завершённого снимка")
+func sharedSearchOwnsAppAndAgentResults() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  _ = try f.store.applyCollaborationAction(f.action([f.insert()]), actor: f.agent)
+  let found = try f.store.search("IDEA", limit: 1)
+  #expect(found.total == 1)
+  #expect(!found.truncated)
+  let hit = try #require(found.results.first)
+  #expect(hit.target == f.page)
+  #expect(hit.elementID == "idea")
+  #expect(hit.path.last == "Лист 1")
+  #expect(hit.preview == "Idea")
+  #expect(hit.reference.revision == (try f.store.referenceRevision(target: f.page, elementID: "idea")))
+  let same = try NotebookStore.search("idea", files: f.store.collaborationSnapshot())
+  #expect(same.results.map(\.preview) == found.results.map(\.preview))
+  #expect(same.results.map(\.path) == found.results.map(\.path))
+}

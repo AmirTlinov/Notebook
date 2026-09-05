@@ -77,14 +77,17 @@ public struct CollaborationOperation: Codable, Equatable, Sendable {
 
 public struct CollaborationAction: Codable, Equatable, Sendable, Identifiable {
   public let id: UUID
+  public let contextID: UUID?
+  public var resolvedContextID: UUID { contextID ?? id }
   public let summary: String
   public let references: [CollaborationReference]
   public let expected: [CollaborationExpectation]
   public let operations: [CollaborationOperation]
 
-  public init(id: UUID = UUID(), summary: String, references: [CollaborationReference] = [],
+  public init(id: UUID = UUID(), contextID: UUID? = nil, summary: String, references: [CollaborationReference] = [],
     expected: [CollaborationExpectation], operations: [CollaborationOperation]) {
     self.id = id
+    self.contextID = contextID
     self.summary = summary
     self.references = references
     self.expected = expected
@@ -152,19 +155,6 @@ public struct CollaborationReceipt: Codable, Equatable, Sendable, Identifiable {
   public var undo: CollaborationUndoResult?
 
   public var summary: String { action.summary }
-}
-
-public struct SharedAttention: Codable, Equatable, Sendable {
-  public enum Author: String, Codable, Sendable { case human, agent }
-  public let author: Author
-  public let reference: CollaborationReference?
-  public let stamp: VersionStamp
-
-  public init(author: Author, reference: CollaborationReference?, stamp: VersionStamp) {
-    self.author = author
-    self.reference = reference
-    self.stamp = stamp
-  }
 }
 
 extension VersionStamp {
