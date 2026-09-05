@@ -100,6 +100,10 @@ final class NotebookAppModel {
   var isPointing = false
   private(set) var requestedReference: CollaborationReference?
   private(set) var highlightedReference: CollaborationReference?
+  private(set) var showsCollaborationNotice = false
+  private var collaborationNoticeKey: String?
+  private var collaborationNoticeTask: Task<Void, Never>?
+  private var referenceHighlightTask: Task<Void, Never>?
   private var collaborationUndoTask: Task<Void, Never>?
   @ObservationIgnored private var resultCache: [UUID: [CollaborationReference]] = [:]
   @ObservationIgnored private var referenceStatusCache: [UUID: (String, Bool)] = [:]
@@ -1489,6 +1493,17 @@ final class NotebookAppModel {
   func completeShow(_ reference: CollaborationReference) {
     if requestedReference?.id == reference.id { requestedReference = nil }
     highlightedReference = reference
+    referenceHighlightTask?.cancel()
+    referenceHighlightTask = Task { [weak self] in
+      try? await Task.sleep(for: .seconds(3))
+      guard !Task.isCancelled else { return }
+      self?.highlightedReference = nil
+    }
+  }
+
+  func dismissCollaborationNotice() {
+    collaborationNoticeTask?.cancel()
+    showsCollaborationNotice = false
   }
 
   func undoCollaboration(_ id: UUID) {
@@ -1609,6 +1624,21 @@ final class NotebookAppModel {
     collaborationActions = (try? store.collaborationActions()) ?? []
     sharedAttention = (try? store.sharedAttention()) ?? []
     deviceActionReceipts = (try? store.deviceActionReceipts()) ?? []
+    let latest = collaborationActions.first
+    let attention = sharedAttention.first { $0.author == .agent }
+    let key = "\(latest?.id.uuidString ?? "")|\(latest?.undo?.completedAt.timeIntervalSince1970 ?? 0)|\(attention?.stamp.revision ?? "")"
+    guard key != collaborationNoticeKey else { return }
+    let firstLoad = collaborationNoticeKey == nil
+    collaborationNoticeKey = key
+    let recentlyCreated = latest.map { Date().timeIntervalSince($0.undo?.completedAt ?? $0.createdAt) < 6 } ?? false
+    guard !firstLoad || recentlyCreated else { return }
+    showsCollaborationNotice = latest != nil || attention?.reference != nil
+    collaborationNoticeTask?.cancel()
+    collaborationNoticeTask = Task { [weak self] in
+      try? await Task.sleep(for: .seconds(6))
+      guard !Task.isCancelled else { return }
+      self?.showsCollaborationNotice = false
+    }
   }
 
   private func sendCollaboration(content: CollaborationContent? = nil) {

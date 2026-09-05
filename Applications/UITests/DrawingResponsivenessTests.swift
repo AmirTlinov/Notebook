@@ -14,30 +14,49 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(paper.waitForExistence(timeout:8))
     let drawing = paper.value as? String
     XCTAssertNotNil(drawing)
-    let element = app.otherElements["agent-element-shared-element"]
+    let element = app.descendants(matching:.any).matching(identifier:"agent-element-shared-element").firstMatch
     XCTAssertTrue(element.waitForExistence(timeout:8))
     app.buttons["drawing-tool-pointer"].tap()
     app.coordinate(withNormalizedOffset:.init(dx:0.22,dy:0.18)).press(forDuration:0.05,
       thenDragTo:app.coordinate(withNormalizedOffset:.init(dx:0.45,dy:0.25)))
     XCTAssertFalse(app.staticTexts["Укажите фрагмент · протяните для области"].exists)
-    app.buttons["collaboration-show"].tap()
+    app.buttons["collaboration-history"].tap()
+    app.buttons.matching(NSPredicate(format:"label BEGINSWITH 'Показать результат'")).firstMatch.tap()
     app.buttons["pen-controls-toggle"].tap()
     app.buttons["element-editing-tool"].tap()
+    let showProof = XCTAttachment(screenshot: app.screenshot())
+    showProof.name = "after-history-show"; showProof.lifetime = .keepAlways; add(showProof)
+    XCTAssertTrue(element.waitForExistence(timeout:5))
     element.tap()
     XCTAssertTrue(app.buttons["delete-agent-element"].waitForExistence(timeout:3))
     let initial = element.frame
     element.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).press(forDuration:0.05,
       thenDragTo:element.coordinate(withNormalizedOffset:.init(dx:0.75,dy:0.7)),withVelocity:.slow,thenHoldForDuration:0)
     XCTAssertGreaterThan(element.frame.midX,initial.midX + 20)
-    XCTAssertTrue(app.staticTexts["Продолжено вами"].waitForExistence(timeout:3))
     let moved = element.frame
-    app.buttons["collaboration-undo"].tap()
+    app.buttons["collaboration-history"].tap()
+    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label BEGINSWITH 'Ваша доработка'")).firstMatch.waitForExistence(timeout:3))
+    app.buttons["Отменить этот ход"].firstMatch.tap()
+    app.buttons["Готово"].tap()
     XCTAssertTrue(app.staticTexts["Ход отменён"].waitForExistence(timeout:5))
     XCTAssertTrue(element.exists)
     XCTAssertEqual(element.frame.midX,moved.midX,accuracy:2)
     app.buttons["drawing-tool-eraser"].tap()
     XCTAssertTrue(paper.waitForExistence(timeout:3))
     XCTAssertEqual(paper.value as? String,drawing,"Рукопись принадлежит человеку при указании, показе и отмене")
+  }
+
+  func testAgentNoticeExpiresAndHistoryKeepsItsActions() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-collaboration-fixture"]
+    app.launch()
+    let notice = app.buttons["collaboration-dismiss"]
+    XCTAssertTrue(notice.waitForExistence(timeout:3))
+    XCTAssertTrue(notice.waitForNonExistence(timeout:8))
+    app.buttons["collaboration-history"].tap()
+    XCTAssertTrue(app.buttons["Отменить этот ход"].firstMatch.waitForExistence(timeout:3))
+    XCTAssertTrue(app.buttons.matching(NSPredicate(format:"label BEGINSWITH 'Показать результат'")).firstMatch.exists)
   }
 
   func testPointerSelectsARegionAndReturnsToThePreviousTool() {
