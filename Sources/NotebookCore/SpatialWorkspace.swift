@@ -888,6 +888,7 @@ public struct BoardDocument: Codable, Equatable, Sendable {
   public private(set) var stacks: [WorkspaceItemStack]
   public private(set) var elements: [SpatialElement]
   public private(set) var stamp: VersionStamp
+  public private(set) var collaboration: CollaborativeContent?
 
   public init(
     freeItems: [FreeItemPlacement],
@@ -900,6 +901,7 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     self.stacks = stacks
     self.elements = elements
     self.stamp = stamp
+    collaboration = nil
   }
 
   public static func initial(itemIDs: [UUID], actor: UUID) -> Self {
@@ -961,6 +963,8 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     _ expectedItemIDs: [UUID],
     actor: UUID
   ) -> Bool {
+    let contentBefore = self
+    defer { recordCollaboration(from: contentBefore) }
     let missing = expectedItemIDs.filter { !itemIDs.contains($0) }
     guard !missing.isEmpty else { return false }
 
@@ -1000,6 +1004,8 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     _ expectedItemIDs: [UUID],
     actor: UUID
   ) -> Bool {
+    let contentBefore = self
+    defer { recordCollaboration(from: contentBefore) }
     let expected = Set(expectedItemIDs)
     let obsolete = itemIDs.filter { !expected.contains($0) }
     var changed = false
@@ -1015,6 +1021,8 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     near center: WorldPoint,
     actor: UUID
   ) -> Bool {
+    let contentBefore = self
+    defer { recordCollaboration(from: contentBefore) }
     guard !itemIDs.contains(itemID),
       let next = stamp.advanced(by: actor)
     else { return false }
@@ -1036,6 +1044,8 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     to center: WorldPoint,
     actor: UUID
   ) -> Bool {
+    let contentBefore = self
+    defer { recordCollaboration(from: contentBefore) }
     guard let index = freeItems.firstIndex(where: {
       $0.itemID == itemID
     }), let next = stamp.advanced(by: actor)
@@ -1056,6 +1066,8 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     actor: UUID,
     stackID: UUID = UUID()
   ) -> UUID? {
+    let contentBefore = self
+    defer { recordCollaboration(from: contentBefore) }
     guard movingID != targetID,
       let movingIndex = freeItems.firstIndex(where: {
         $0.itemID == movingID
@@ -1097,6 +1109,8 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     at center: WorldPoint,
     actor: UUID
   ) -> Bool {
+    let contentBefore = self
+    defer { recordCollaboration(from: contentBefore) }
     guard let stackIndex = stacks.firstIndex(where: {
       $0.itemIDs.contains(itemID)
     }), let next = stamp.advanced(by: actor)
@@ -1135,6 +1149,8 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     _ itemID: UUID,
     actor: UUID
   ) -> Bool {
+    let contentBefore = self
+    defer { recordCollaboration(from: contentBefore) }
     guard itemIDs.contains(itemID),
       let next = stamp.advanced(by: actor)
     else { return false }
@@ -1176,6 +1192,8 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     expected: VersionStamp?,
     actor: UUID
   ) -> Bool {
+    let contentBefore = self
+    defer { recordCollaboration(from: contentBefore) }
     guard element.surface.kind != .page,
       let next = stamp.advanced(by: actor)
     else { return false }
@@ -1195,6 +1213,8 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     ids: Set<String>,
     actor: UUID
   ) -> Int {
+    let contentBefore = self
+    defer { recordCollaboration(from: contentBefore) }
     guard !ids.isEmpty, let next = stamp.advanced(by: actor) else { return 0 }
     let before = elements.count
     elements.removeAll { ids.contains($0.id) }
@@ -1204,17 +1224,36 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     return removed
   }
 
-  @discardableResult
+  private mutating func recordCollaboration(from before: Self) {
+    guard stamp != before.stamp,
+      let old = try? JSONValue.encode(before), let next = try? JSONValue.encode(self) else { return }
+    var metadata = before.collaboration ?? CollaborativeContent()
+    metadata.record(before: old, after: next, beforeStamp: before.stamp, stamp: stamp, human: true)
+    collaboration = metadata
+  }
+
   public mutating func merge(_ other: Self, itemIDs: Set<UUID>) -> Bool {
-    guard stamp < other.stamp, other.isValid(itemIDs: itemIDs) else {
-      return false
+    guard other.isValid(itemIDs: itemIDs),
+      let local = try? JSONValue.encode(self), let incoming = try? JSONValue.encode(other) else { return false }
+    let merged = CollaborativeContent.merge(local: local, incoming: incoming,
+      localState: collaboration, incomingState: other.collaboration,
+      localStamp: stamp, incomingStamp: other.stamp)
+    guard var candidate = try? merged.value.decode(Self.self), candidate.isValid(itemIDs: itemIDs) else {
+      guard stamp < other.stamp else { return false }
+      self = other
+      return true
     }
-    self = other
+    candidate.collaboration = merged.state
+    candidate.stamp = mergedContentStamp(local: local, incoming: incoming, result: merged.value,
+      localStamp: stamp, incomingStamp: other.stamp)
+    guard candidate != self else { return false }
+    self = candidate
     return true
   }
 
   public func isValid(itemIDs expectedIDs: Set<UUID>) -> Bool {
     guard format == Self.formatVersion,
+      collaboration?.isValid ?? true,
       stamp.counter <= VersionStamp.maximumCounter,
       freeItems.allSatisfy(\.isValid),
       stacks.allSatisfy(\.isValid),
@@ -1241,6 +1280,7 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     case stacks
     case elements
     case stamp
+    case collaboration
     case legacyFreeNotebooks = "freeNotebooks"
   }
 
@@ -1265,6 +1305,7 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     format = Self.formatVersion
     elements = try container.decode([SpatialElement].self, forKey: .elements)
     stamp = try container.decode(VersionStamp.self, forKey: .stamp)
+    collaboration = try container.decodeIfPresent(CollaborativeContent.self, forKey: .collaboration)
 
     switch storedFormat {
     case Self.formatVersion:
@@ -1318,6 +1359,7 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     try container.encode(stacks, forKey: .stacks)
     try container.encode(elements, forKey: .elements)
     try container.encode(stamp, forKey: .stamp)
+    try container.encodeIfPresent(collaboration, forKey: .collaboration)
   }
 }
 

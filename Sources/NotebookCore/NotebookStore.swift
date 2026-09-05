@@ -803,7 +803,7 @@ public struct NotebookStore: Sendable {
     )
   }
 
-  private func withMutationLock<T>(_ operation: () throws -> T) throws -> T {
+  func withMutationLock<T>(_ operation: () throws -> T) throws -> T {
     let lockURL = root.appendingPathComponent(Self.lockName, isDirectory: true)
     let fileManager = FileManager.default
     var acquired = false
@@ -833,6 +833,7 @@ public struct NotebookStore: Sendable {
       throw CocoaError(.fileWriteUnknown)
     }
     defer { try? fileManager.removeItem(at: lockURL) }
+    try recoverCollaborationTransaction()
     return try operation()
   }
 

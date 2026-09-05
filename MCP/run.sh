@@ -15,4 +15,7 @@ if [ -z "${NOTEBOOK_HOME:-}" ] && [ "$(uname -s)" = Darwin ]; then
   fi
 fi
 
+swift build --package-path "$ROOT/.." --product notebook-bridge >&2
+NOTEBOOK_BRIDGE="$(swift build --package-path "$ROOT/.." --show-bin-path)/notebook-bridge"
+export NOTEBOOK_BRIDGE
 exec "$ROOT/node_modules/.bin/tsx" "$ROOT/src/index.ts"

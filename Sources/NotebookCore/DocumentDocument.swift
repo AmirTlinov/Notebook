@@ -151,6 +151,7 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
   public private(set) var preamble: String
   public private(set) var blocks: [DocumentBlock]
   public private(set) var contentStamp: VersionStamp
+  public private(set) var collaboration: CollaborativeContent?
 
   public init(
     id: UUID = UUID(),
@@ -167,11 +168,13 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
     self.preamble = preamble
     self.blocks = blocks
     contentStamp = VersionStamp(counter: 0, actor: actor)
+    collaboration = nil
     precondition(isValid)
   }
 
   var isValid: Bool {
     guard format == Self.formatVersion,
+      collaboration?.isValid ?? true,
       preamble.utf16.count <= Self.maximumPreambleLength,
       blocks.count <= Self.maximumBlockCount,
       contentStamp.counter <= VersionStamp.maximumCounter
@@ -193,6 +196,7 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
     guard candidate.preamble != self.preamble || candidate.blocks != self.blocks
     else { return false }
     candidate.contentStamp = nextStamp
+    candidate.recordContentChange(from: self, stamp: nextStamp)
     guard candidate.isValid else { return false }
     self = candidate
     return true
@@ -211,6 +215,7 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
     candidate.preamble = preamble
     candidate.blocks = blocks
     candidate.contentStamp = stamp
+    candidate.recordContentChange(from: self, stamp: stamp)
     guard candidate.isValid else { return false }
     self = candidate
     return true
@@ -232,15 +237,26 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
     return replaceContent(blocks: next, actor: actor)
   }
 
+  private mutating func recordContentChange(from before: Self, stamp: VersionStamp) {
+    var metadata = before.collaboration ?? CollaborativeContent()
+    if let previous = try? JSONValue.encode(before), let next = try? JSONValue.encode(self) {
+      metadata.record(before: previous, after: next, beforeStamp: before.contentStamp, stamp: stamp, human: true)
+      collaboration = metadata
+    }
+  }
+
   public mutating func merge(_ other: Self) -> Bool {
-    guard id == other.id,
-      paperSize == other.paperSize,
-      other.isValid,
-      contentStamp < other.contentStamp
-    else { return false }
-    preamble = other.preamble
-    blocks = other.blocks
-    contentStamp = other.contentStamp
+    guard id == other.id, paperSize == other.paperSize, other.isValid,
+      let local = try? JSONValue.encode(self), let incoming = try? JSONValue.encode(other) else { return false }
+    let merged = CollaborativeContent.merge(local: local, incoming: incoming,
+      localState: collaboration, incomingState: other.collaboration,
+      localStamp: contentStamp, incomingStamp: other.contentStamp)
+    guard var candidate = try? merged.value.decode(Self.self), candidate.isValid else { return false }
+    candidate.collaboration = merged.state
+    candidate.contentStamp = mergedContentStamp(local: local, incoming: incoming, result: merged.value,
+      localStamp: contentStamp, incomingStamp: other.contentStamp)
+    guard candidate != self else { return false }
+    self = candidate
     return true
   }
 
@@ -251,6 +267,7 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
     case preamble
     case blocks
     case contentStamp
+    case collaboration
   }
 
   public init(from decoder: Decoder) throws {
@@ -274,6 +291,7 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
       VersionStamp.self,
       forKey: .contentStamp
     )
+    collaboration = try container.decodeIfPresent(CollaborativeContent.self, forKey: .collaboration)
     guard isValid else {
       throw DecodingError.dataCorruptedError(
         forKey: .blocks,
@@ -291,6 +309,7 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
     try container.encode(preamble, forKey: .preamble)
     try container.encode(blocks, forKey: .blocks)
     try container.encode(contentStamp, forKey: .contentStamp)
+    try container.encodeIfPresent(collaboration, forKey: .collaboration)
   }
 }
 

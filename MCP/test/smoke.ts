@@ -1,317 +1,136 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-
 import { Client } from "@modelcontextprotocol/client";
-import {
-  StdioClientTransport,
-  getDefaultEnvironment,
-} from "@modelcontextprotocol/client/stdio";
+import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
+import { appActor, itemID, pageID, rootBoardID, writeFixture } from "./fixture.js";
+import { documentSpatialSize } from "../src/domain.js";
 
-import { boardHierarchyRevision } from "../src/domain.js";
-import { appActor, itemID, pageID, writeFixture } from "./fixture.js";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const mcpRoot = join(here, "..");
-const storeRoot = await mkdtemp(join(tmpdir(), "notebook-mcp-smoke-"));
+const mcpRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+const root = await mkdtemp(join(tmpdir(), "notebook-bridge-smoke-"));
+const client = new Client({ name: "notebook-collaboration-proof", version: "0.1.0" });
+const transport = new StdioClientTransport({ command: join(mcpRoot, "run.sh"),
+  env: { ...getDefaultEnvironment(), NOTEBOOK_HOME: root }, stderr: "pipe" });
+type Data = Record<string, any>;
+const checked: string[] = [];
+async function call(name: string, args: Data = {}): Promise<Data> {
+  const result = await client.callTool({ name, arguments: args });
+  assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent ?? result.content));
+  return result.structuredContent as Data;
+}
+async function rejected(name: string, args: Data, code: string) {
+  const result = await client.callTool({ name, arguments: args });
+  assert.equal(result.isError, true);
+  assert.equal((result.structuredContent as Data).code, code, JSON.stringify(result));
+}
+const board = (id = rootBoardID) => ({ kind: "board", id });
+const page = { kind: "page", id: pageID };
+const point = { tileX: 0, tileY: 0, localX: 500, localY: 500 };
+const frame = { x: 30, y: 40, width: 300, height: 180 };
+async function boardExpectations(id = rootBoardID) {
+  const read = await call("notebook_read_board", { board_id: id });
+  return [{ target: board(id), revision: read.boardRevision },
+    { target: { kind: "workspace", id: rootBoardID }, revision: read.workspaceRevision }];
+}
+async function pageExpectation() {
+  const read = await call("notebook_read_page", { page_id: pageID });
+  return [{ target: page, revision: read.agentRevision }];
+}
+async function apply(operations: Data[], expected: Data[], actionID = randomUUID()) {
+  return call("notebook_apply", { action_id: actionID, summary: "Общий законченный ход", expected, operations });
+}
 
 try {
-  await writeFixture(storeRoot);
-  const client = new Client({ name: "notebook-smoke", version: "0.1.0" });
-  const transport = new StdioClientTransport({
-    command: join(mcpRoot, "run.sh"),
-    env: { ...getDefaultEnvironment(), NOTEBOOK_HOME: storeRoot },
-    stderr: "pipe",
-  });
+  await writeFixture(root);
   await client.connect(transport);
-
-  const listed = await client.listTools();
-  assert.deepEqual(
-    listed.tools.map((tool) => tool.name).sort(),
-    [
-      "notebook_create_board",
-      "notebook_create_document",
-      "notebook_create_notebook",
-      "notebook_export_document",
-      "notebook_move_nodes",
-      "notebook_observe",
-      "notebook_page_map",
-      "notebook_patch_document",
-      "notebook_put_markdown",
-      "notebook_put_spatial_markdown",
-      "notebook_put_spatial_web",
-      "notebook_put_web",
-      "notebook_read_board",
-      "notebook_read_document",
-      "notebook_read_notebook",
-      "notebook_read_page",
-      "notebook_remove_elements",
-      "notebook_remove_spatial_elements",
-      "notebook_rename_item",
-      "notebook_render_page",
-      "notebook_render_region",
-      "notebook_render_regions",
-      "notebook_stack_nodes",
-    ],
-  );
-
+  const tools = (await client.listTools()).tools;
+  assert.ok(tools.some(t => t.name === "notebook_apply" && t.annotations?.idempotentHint));
+  assert.ok(!tools.some(t => /notebook_(put_|patch_document|create_|remove_|move_nodes|stack_nodes|rename_item)/.test(t.name)));
+  checked.push("one mutation owner and typed MCP interface");
   const observation = await client.callTool({ name: "notebook_observe", arguments: {} });
-  assert.equal(observation.isError, undefined);
-  assert.match(JSON.stringify(observation.structuredContent), /Notebook 1/);
-  assert.match(JSON.stringify(observation.structuredContent), /shortID/);
-  assert.match(JSON.stringify(observation.structuredContent), /screenFrame/);
-  assert.match(JSON.stringify(observation.structuredContent), /pencilMap/);
-  assert.ok(observation.content.some((block) => block.type === "image"));
-  assert.equal(
-    (observation.structuredContent as {
-      revisions: { workspace: string };
-    }).revisions.workspace,
-    `0@${appActor}`,
-  );
-  assert.equal(
-    (observation.structuredContent as { documentPageIndex: number })
-      .documentPageIndex,
-    0,
-  );
+  assert.ok(observation.content.some(c => c.type === "image"));
+  assert.ok((observation.structuredContent as Data).visibleItems);
+  const ink = await call("notebook_page_map", { page_id: pageID });
+  assert.equal(ink.regions.length, 1);
+  const detail = await client.callTool({ name: "notebook_render_regions", arguments: {
+    page_id: pageID, expected_drawing_revision: ink.drawingRevision, region_ids: [ink.regions[0].id], mode: "ink" } });
+  assert.notEqual(detail.isError, true, JSON.stringify(detail));
+  checked.push("settled view and faithful visible ink regions");
 
-  // The converged node frontier can change while the aggregate clock stays put.
-  const boardPath = join(storeRoot, "board.json");
-  const receiptPath = join(storeRoot, "previews", "current-view.revision");
-  const originalBoard = await readFile(boardPath, "utf8");
-  const originalReceipt = await readFile(receiptPath, "utf8");
-  const tree = JSON.parse(originalBoard);
-  tree.stamp.counter = 10;
-  await writeFile(boardPath, JSON.stringify(tree));
-  const sameContent = await client.callTool({ name: "notebook_observe", arguments: {} });
-  assert.equal(sameContent.isError, undefined);
-  tree.boards[0].portalStamp = { counter: 1, actor: appActor };
-  await writeFile(boardPath, JSON.stringify(tree));
-  const staleTree = await client.callTool({ name: "notebook_observe", arguments: {} });
-  assert.equal(staleTree.isError, true);
-  assert.match(JSON.stringify(staleTree), /snapshot_pending/);
-  const freshReceipt = JSON.parse(originalReceipt);
-  freshReceipt.boardRevision = boardHierarchyRevision(tree);
-  await writeFile(receiptPath, JSON.stringify(freshReceipt));
-  const freshTree = await client.callTool({ name: "notebook_observe", arguments: {} });
-  assert.equal(freshTree.isError, undefined);
-  await writeFile(boardPath, originalBoard);
-  await writeFile(receiptPath, originalReceipt);
+  const firstExpectation = await pageExpectation();
+  const actionID = randomUUID();
+  const operations = [{ kind: "insertElement", target: page, id: "counter", values: {
+    kind: "web", source: "<button>+</button>", frame, state: { count: 7 }, javaScript: "window.count = 7;" } },
+    { kind: "insertElement", target: page, id: "meaning", values: { kind: "markdown", source: "# Meaning", frame: { ...frame, y: 300 } } }];
+  const first = await apply(operations, firstExpectation, actionID);
+  assert.deepEqual(await apply(operations, firstExpectation, actionID), first);
+  await rejected("notebook_apply", { action_id: actionID, summary: "Different", expected: firstExpectation, operations }, "action_id_conflict");
+  await rejected("notebook_apply", { action_id: randomUUID(), summary: "Stale", expected: firstExpectation, operations }, "revision_conflict");
+  await apply([{ kind: "updateElement", target: page, id: "counter", values: { css: "button { color: blue }" } }], await pageExpectation());
+  let content = await call("notebook_read_page", { page_id: pageID });
+  assert.deepEqual(content.elements.find((e: Data) => e.id === "counter").state, { count: 7 });
+  assert.match(content.elements.find((e: Data) => e.id === "meaning").html, /<h1>Meaning/);
+  checked.push("atomic batch, idempotency, explicit conflicts and preserved state");
 
-  const currentViewPath = join(storeRoot, "previews", "current-view.png");
-  const currentViewPNG = await readFile(currentViewPath);
-  await writeFile(currentViewPath, Buffer.from("updating"));
-  const repairedAt = Date.now();
-  const repair = setTimeout(() => {
-    void writeFile(currentViewPath, currentViewPNG);
-  }, 180);
-  const settledCurrentView = await client.callTool({
-    name: "notebook_observe",
-    arguments: {},
-  });
-  clearTimeout(repair);
-  assert.equal(settledCurrentView.isError, undefined);
-  assert.ok(Date.now() - repairedAt >= 150);
-  assert.ok(settledCurrentView.content.some((block) => block.type === "image"));
+  const edited = await apply([{ kind: "updateElement", target: page, id: "meaning", values: { source: "Changed", css: "p { color: red }" } }], await pageExpectation());
+  const pagePath = join(root, "pages", `${pageID}.json`);
+  const humanPage = JSON.parse(await readFile(pagePath, "utf8"));
+  const meaning = humanPage.elements.find((e: Data) => e.id === "meaning");
+  meaning.source = "Human understanding"; meaning.html = "Human understanding";
+  humanPage.agentStamp = { counter: humanPage.agentStamp.counter + 1, actor: appActor };
+  await writeFile(pagePath, JSON.stringify(humanPage));
+  const undone = await call("notebook_undo", { action_id: edited.action.id });
+  assert.ok(undone.action.undo.preserved.length >= 2);
+  assert.deepEqual(await call("notebook_undo", { action_id: edited.action.id }), undone);
+  content = await call("notebook_read_page", { page_id: pageID });
+  assert.equal(content.elements.find((e: Data) => e.id === "meaning").source, "Human understanding");
+  assert.equal(content.elements.find((e: Data) => e.id === "meaning").css, "");
+  checked.push("one undo retains the later human meaning");
 
-  const spatialChanged = await client.callTool({
-    name: "notebook_put_spatial_markdown",
-    arguments: {
-      expected_revision: `0@${appActor}`,
-      surface: { kind: "cover", item_id: itemID },
-      id: "cover-note",
-      frame: { x: 80, y: 360, width: 420, height: 180 },
-      markdown: "# На обложке",
-    },
-  });
-  assert.equal(spatialChanged.isError, undefined);
-  assert.match(JSON.stringify(spatialChanged.structuredContent), /cover-note/);
-  const spatialRevision = (
-    spatialChanged.structuredContent as { boardRevision: string }
-  ).boardRevision;
+  const a = randomUUID(), b = randomUUID();
+  await apply([a, b].map(id => ({ kind: "createBoard", target: board(), id, values: { center: point } })), await boardExpectations());
+  const readA = await call("notebook_read_board", { board_id: a });
+  const readB = await call("notebook_read_board", { board_id: b });
+  assert.equal(readA.boardRevision, readB.boardRevision);
+  const presencePath = join(root, "last-context.json");
+  const presence = JSON.parse(await readFile(presencePath, "utf8"));
+  await writeFile(presencePath, JSON.stringify({ ...presence, mode: "board", openProgress: 0, focusedItemID: undefined, boardID: b }));
+  await apply([{ kind: "insertElement", target: board(a), id: "belongs-to-a", values: {
+    kind: "markdown", source: "A", frame, worldOrigin: point } }], [{ target: board(a), revision: readA.boardRevision }]);
+  assert.equal((await call("notebook_read_board", { board_id: a })).elements.length, 1);
+  assert.equal((await call("notebook_read_board", { board_id: b })).elements.length, 0);
+  checked.push("board identity survives a human camera change and equal revisions");
 
-  const changed = await client.callTool({
-    name: "notebook_put_markdown",
-    arguments: {
-      expected_revision: `0@${appActor}`,
-      id: "mcp-smoke",
-      frame: { x: 52, y: 52, width: 300, height: 180 },
-      markdown: "# MCP работает",
-    },
-  });
-  assert.equal(changed.isError, undefined);
-  assert.match(JSON.stringify(changed.structuredContent), /mcp-smoke/);
-
-  const rendered = await client.callTool({
-    name: "notebook_render_page",
-    arguments: {},
-  });
-  assert.equal(rendered.isError, undefined);
-  assert.ok(rendered.content.some((block) => block.type === "image"));
-
-  const pageMap = await client.callTool({
-    name: "notebook_page_map",
-    arguments: { notebook_id: itemID, page_number: 1 },
-  });
-  assert.equal(pageMap.isError, undefined);
-  const map = pageMap.structuredContent as {
-    drawingRevision: string;
-    regions: Array<{ id: string }>;
-  };
-  assert.equal(map.regions[0]?.id, "r00-00-01-01");
-
-  const unchangedMap = await client.callTool({
-    name: "notebook_page_map",
-    arguments: { since_drawing_revision: map.drawingRevision },
-  });
-  assert.equal(unchangedMap.isError, undefined);
-  assert.deepEqual(
-    (unchangedMap.structuredContent as {
-      delta: { available: boolean; changedRegionIDs: string[]; unchangedRegionIDs: string[] };
-    }).delta,
-    {
-      fromDrawingRevision: map.drawingRevision,
-      available: true,
-      changedRegionIDs: [],
-      removedRegionIDs: [],
-      unchangedRegionIDs: ["r00-00-01-01"],
-    },
-  );
-
-  const region = await client.callTool({
-    name: "notebook_render_region",
-    arguments: {
-      expected_drawing_revision: map.drawingRevision,
-      region_id: "r00-00-01-01",
-      mode: "ink",
-    },
-  });
-  assert.equal(region.isError, undefined);
-  assert.equal(region.content.filter((block) => block.type === "image").length, 1);
-
-  const regions = await client.callTool({
-    name: "notebook_render_regions",
-    arguments: {
-      expected_drawing_revision: map.drawingRevision,
-      region_ids: ["r00-00-01-01"],
-    },
-  });
-  assert.equal(regions.isError, undefined);
-  assert.equal(regions.content.filter((block) => block.type === "image").length, 1);
-
-  const regionPath = join(
-    storeRoot,
-    "previews",
-    `${pageID}.regions`,
-    "r00-00-01-01.faithful.png",
-  );
-  const regionPNG = await readFile(regionPath);
-  await writeFile(regionPath, Buffer.from("updating"));
-  const mismatchedRegion = await client.callTool({
-    name: "notebook_render_region",
-    arguments: {
-      expected_drawing_revision: map.drawingRevision,
-      region_id: "r00-00-01-01",
-    },
-  });
-  assert.equal(mismatchedRegion.isError, true);
-  assert.match(JSON.stringify(mismatchedRegion.content), /квитанция обновляются/);
-  await writeFile(regionPath, regionPNG);
-
-  const pagePath = join(storeRoot, "pages", `${pageID}.json`);
-  const page = JSON.parse(await readFile(pagePath, "utf8")) as {
-    drawingStamp: { counter: number };
-  };
-  page.drawingStamp.counter += 1;
-  await writeFile(pagePath, JSON.stringify(page));
-  const stalePreview = await client.callTool({
-    name: "notebook_render_page",
-    arguments: {},
-  });
-  assert.equal(stalePreview.isError, true);
-  assert.match(
-    JSON.stringify(stalePreview.content),
-    /не означает, что Амир сейчас рисует/,
-  );
-
-  const createdDocument = await client.callTool({
-    name: "notebook_create_document",
-    arguments: {
-      expected_workspace_revision: `0@${appActor}`,
-      expected_board_revision: spatialRevision,
-      title: "MCP Document",
-      paper_size: "letter",
-      center: { tileX: 0, tileY: 0, localX: 600, localY: 700 },
-      blocks: [
-        { id: "body", kind: "markdown", source: "# Документ\n\nФормула $x_1$." },
-        { id: "math", kind: "latex", source: "E=mc^2" },
-        {
-          id: "counter",
-          kind: "interactive",
-          html: "<button id='counter'>0</button>",
-          javascript: "document.querySelector('#counter').onclick = () => notebook.commit({ count: (notebook.state.count || 0) + 1 });",
-          initial_state: { count: 0 },
-          height: 160,
-        },
-      ],
-    },
-  });
-  assert.equal(createdDocument.isError, undefined);
-  const createdReceipt = createdDocument.structuredContent as {
-    documentID: string;
-    contentRevision: string;
-    paperSize: string;
-  };
-  assert.equal(createdReceipt.paperSize, "letter");
-
-  const sizedBoard = await client.callTool({ name: "notebook_read_board", arguments: {} });
-  assert.equal(sizedBoard.isError, undefined);
-  const sizedNodes = (sizedBoard.structuredContent as {
-    nodes: Array<{ id: string; coverSize: { width: number; height: number } }>;
-  }).nodes;
-  assert.deepEqual(sizedNodes.find(node => node.id === createdReceipt.documentID)?.coverSize,
-    { width: 1122, height: 1452 });
-  assert.deepEqual(sizedNodes.find(node => node.id.toLowerCase() === itemID)?.coverSize,
-    { width: 834, height: 1194 });
-
-  const readDocument = await client.callTool({
-    name: "notebook_read_document",
-    arguments: { document_id: createdReceipt.documentID },
-  });
-  assert.equal(readDocument.isError, undefined);
-  assert.match(JSON.stringify(readDocument.structuredContent), /counter/);
-  assert.equal(
-    (readDocument.structuredContent as { paperSize: string }).paperSize,
-    "letter",
-  );
-
-  const patchedDocument = await client.callTool({
-    name: "notebook_patch_document",
-    arguments: {
-      document_id: createdReceipt.documentID,
-      expected_revision: createdReceipt.contentRevision,
-      preamble: "\\usepackage{microtype}",
-      blocks: [
-        { id: "body", kind: "markdown", source: "# Готовый документ" },
-        { id: "math", kind: "latex", source: "\\[E=mc^2\\]" },
-      ],
-    },
-  });
-  assert.equal(patchedDocument.isError, undefined);
-  assert.match(JSON.stringify(patchedDocument.structuredContent), /Готовый документ/);
-
-  const exportedDocument = await client.callTool({
-    name: "notebook_export_document",
-    arguments: { document_id: createdReceipt.documentID },
-  });
-  assert.equal(exportedDocument.isError, undefined);
-  assert.match(JSON.stringify(exportedDocument.structuredContent), /pdfSHA256/);
-
-  await client.close();
-  process.stdout.write(
-    "MCP smoke passed: one-call settled observation, numbered page selection, region batches, document outlines, mutation, and PDF export work.\n",
-  );
+  for (const paper of ["a4", "letter"] as const) {
+    const id = randomUUID();
+    const target = { kind: "document", id };
+    await apply([{ kind: "createDocument", target: board(), id, values: { center: point, paperSize: paper,
+      title: "", preamble: "\\newcommand{\\meaning}{M}", blocks: [
+        { id: "first", kind: "markdown", source: "First" }, { id: "second", kind: "markdown", source: "Second" },
+        { id: "live", kind: "interactive", html: "<button>+</button>", initialState: { count: 1 } }] } }], await boardExpectations());
+    const read = await call("notebook_read_document", { document_id: id });
+    await apply([{ kind: "updateBlock", target, id: "first", values: { source: "Edited first" } },
+      { kind: "reorderBlocks", target, values: { ids: ["second", "first", "live"] } }], [{ target, revision: read.contentRevision }]);
+    const source = await call("notebook_read_document", { document_id: id, include_source: true });
+    assert.deepEqual(source.blocks.map((v: Data) => v.id), ["second", "first", "live"]);
+    assert.equal(source.preamble, "\\newcommand{\\meaning}{M}");
+    const size = documentSpatialSize(paper);
+    const cover = { kind: "cover", id, boardID: rootBoardID };
+    const readBoard = await call("notebook_read_board", { board_id: rootBoardID });
+    await apply([{ kind: "insertElement", target: cover, id: `corner-${paper}`, values: { kind: "markdown", source: "Corner",
+      frame: { x: size.width - 100, y: size.height - 80, width: 100, height: 80 } } }], [{ target: cover, revision: readBoard.boardRevision }]);
+    const changedBoard = await call("notebook_read_board", { board_id: rootBoardID });
+    await rejected("notebook_apply", { action_id: randomUUID(), summary: "Outside", expected: [{ target: cover, revision: changedBoard.boardRevision }], operations: [
+      { kind: "updateElement", target: cover, id: `corner-${paper}`, values: { frame: { x: size.width - 99, y: 20, width: 100, height: 80 } } }] }, "invalid_operation");
+  }
+  const workspace = JSON.parse(await readFile(join(root, "workspace.json"), "utf8"));
+  assert.equal(workspace.selectedItemID.toLowerCase(), itemID);
+  checked.push("block-local edits, physical A4/Letter cover bounds and human selection");
+  console.log(JSON.stringify({ status: "passed", scenarios: checked }, null, 2));
 } finally {
-  await rm(storeRoot, { recursive: true, force: true });
+  await client.close();
+  await rm(root, { recursive: true, force: true });
 }

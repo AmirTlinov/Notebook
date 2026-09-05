@@ -380,10 +380,10 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
         continue
       }
       var resolved = incoming
-      if Set(current.board.itemIDs) == Set(incoming.board.itemIDs),
-        incoming.board.stamp < current.board.stamp
-      {
-        resolved.replace(with: current.board)
+      if Set(current.board.itemIDs) == Set(incoming.board.itemIDs) {
+        var content = current.board
+        _ = content.merge(incoming.board, itemIDs: Set(incoming.board.itemIDs))
+        resolved.replace(with: content)
       }
       if incoming.portalStamp < current.portalStamp {
         resolved.replacePortal(

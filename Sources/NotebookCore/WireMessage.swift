@@ -61,7 +61,8 @@ public enum WireMessage: Codable, Equatable, Sendable {
   case elements(
     pageID: UUID,
     elements: [AgentElement],
-    stamp: VersionStamp
+    stamp: VersionStamp,
+    collaboration: CollaborativeContent?
   )
   case document(DocumentDocument)
   case documentState(DocumentStateJournal)

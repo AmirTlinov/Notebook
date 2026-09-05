@@ -130,6 +130,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   public private(set) var drawingStamp: VersionStamp
   public private(set) var elements: [AgentElement]
   public private(set) var agentStamp: VersionStamp
+  public private(set) var collaboration: CollaborativeContent?
 
   public init(
     id: UUID = UUID(),
@@ -144,12 +145,14 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     self.drawingData = drawingData
     drawingStamp = VersionStamp(counter: 0, actor: actor)
     self.elements = elements
+    collaboration = nil
     agentStamp = VersionStamp(counter: 0, actor: actor)
     precondition(isValid)
   }
 
   var isValid: Bool {
     guard format == Self.formatVersion,
+      collaboration?.isValid ?? true,
       size.isValid,
       drawingStamp.counter <= VersionStamp.maximumCounter,
       agentStamp.counter <= VersionStamp.maximumCounter
@@ -207,6 +210,11 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     var candidate = self
     candidate.elements = elements
     candidate.agentStamp = stamp
+    var metadata = collaboration ?? CollaborativeContent()
+    if let before = try? JSONValue.encode(self), let after = try? JSONValue.encode(candidate) {
+      metadata.record(before: before, after: after, beforeStamp: agentStamp, stamp: stamp, human: true)
+      candidate.collaboration = metadata
+    }
     guard candidate.isValid else { return false }
     self = candidate
     return true
@@ -220,11 +228,28 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
       drawingStamp = other.drawingStamp
       changed = true
     }
-    if agentStamp < other.agentStamp {
-      elements = other.elements
-      agentStamp = other.agentStamp
-      changed = true
+    if let local = try? JSONValue.encode(self), let incoming = try? JSONValue.encode(other) {
+      let merged = CollaborativeContent.merge(local: local, incoming: incoming,
+        localState: collaboration, incomingState: other.collaboration,
+        localStamp: agentStamp, incomingStamp: other.agentStamp)
+      if let resolved = try? merged.value.decode(PageDocument.self), resolved.isValid {
+        if elements != resolved.elements || collaboration != merged.state { changed = true }
+        elements = resolved.elements
+        collaboration = merged.state
+        agentStamp = mergedContentStamp(local: local, incoming: incoming, result: merged.value,
+          localStamp: agentStamp, incomingStamp: other.agentStamp)
+      }
     }
     return changed
+  }
+
+  @discardableResult
+  public mutating func mergeElements(_ elements: [AgentElement], stamp: VersionStamp,
+    collaboration: CollaborativeContent?) -> Bool {
+    var incoming = self
+    incoming.elements = elements
+    incoming.agentStamp = stamp
+    incoming.collaboration = collaboration
+    return merge(incoming)
   }
 }

@@ -1,6 +1,7 @@
-import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, renameSync } from "node:fs";
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { runBridge } from "./bridge.js";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -30,24 +31,28 @@ import {
   minimumCameraScale,
   canonicalPageSize,
   documentSpatialSize,
-  revision,
 } from "./domain.js";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAXIMUM_PAGE_DIMENSION = 2_048;
 const WORLD_TILE_SIZE = (132 / 2.54 / 2) * 256;
+const readSnapshot = new AsyncLocalStorage<{ root: string; files: Record<string, unknown> }>();
 export const ROOT_BOARD_ID = "7e7a0000-0000-4000-8000-000000000003";
 
 export class StoreError extends Error {}
-export class ConflictError extends StoreError {}
 
 export class NotebookStore {
   readonly root: string;
-  private mutationTail: Promise<unknown> = Promise.resolve();
 
   constructor(root = defaultStoreRoot()) {
     this.root = root;
+  }
+
+  async withReadSnapshot<T>(operation: () => Promise<T>): Promise<T> {
+    if (readSnapshot.getStore()?.root === this.root) return operation();
+    const files = await runBridge<Record<string, unknown>>(this.root, { command: "snapshot" });
+    return readSnapshot.run({ root: this.root, files }, operation);
   }
 
   get indexPath(): string {
@@ -286,459 +291,6 @@ export class NotebookStore {
     return state;
   }
 
-  async readActorID(): Promise<string> {
-    const actorPath = join(this.root, "mcp-actor.txt");
-    try {
-      const value = (await readFile(actorPath, "utf8")).trim();
-      assertUUID(value, "stored MCP actor");
-      return value;
-    } catch (error) {
-      if (!isMissing(error)) throw error;
-    }
-    await mkdir(this.root, { recursive: true });
-    const actor = randomUUID();
-    try {
-      const file = await open(actorPath, "wx", 0o600);
-      try {
-        await file.writeFile(`${actor}\n`, "utf8");
-      } finally {
-        await file.close();
-      }
-      return actor;
-    } catch (error) {
-      if (!isExists(error)) throw error;
-      const value = (await readFile(actorPath, "utf8")).trim();
-      assertUUID(value, "stored MCP actor");
-      return value;
-    }
-  }
-
-  async replaceElements(args: {
-    pageID: string | undefined;
-    expectedRevision: string;
-    transform: (current: AgentElement[], page: PageDocument) => AgentElement[];
-  }): Promise<PageDocument> {
-    return this.serializeMutation(() => this.withMutationLock(async () => {
-      const page = await this.readWorkspacePage(args.pageID);
-      const currentRevision = revision(page.agentStamp);
-      if (args.expectedRevision !== currentRevision) {
-        throw new ConflictError(
-          `Страница изменилась: ожидалась версия ${args.expectedRevision}, ` +
-            `сейчас ${currentRevision}. Сначала снова вызовите notebook_read_page.`,
-        );
-      }
-      const elements = args.transform(page.elements, page);
-      validateElements(elements, page);
-      if (JSON.stringify(elements) === JSON.stringify(page.elements)) return page;
-      if (page.agentStamp.counter === Number.MAX_SAFE_INTEGER) {
-        throw new StoreError("Счётчик версии страницы исчерпан.");
-      }
-      const actor = await this.readActorID();
-      const next: PageDocument = {
-        ...page,
-        elements,
-        agentStamp: { counter: page.agentStamp.counter + 1, actor },
-      };
-      await atomicJSON(this.pagePath(page.id), next);
-      return next;
-    }));
-  }
-
-  async replaceBoard(args: {
-    expectedRevision: string;
-    transform: (
-      board: BoardDocument,
-      workspace: WorkspaceIndex,
-      actor: string,
-      boardID: string,
-    ) => BoardDocument;
-  }): Promise<BoardDocument> {
-    return this.serializeMutation(() => this.withMutationLock(async () => {
-      const workspace = await this.readWorkspace();
-      const hierarchy = await this.readBoardHierarchy(workspace);
-      const presence = await this.readPresence();
-      const nodeIndex = hierarchy.boards.findIndex((node) =>
-        sameID(node.id, presence.boardID)
-      );
-      if (nodeIndex < 0) throw new StoreError("Текущая вложенная доска не найдена.");
-      const board = structuredClone(hierarchy.boards[nodeIndex]!.board);
-      assertExpectedRevision(args.expectedRevision, board.stamp, "Доска");
-      const actor = await this.readActorID();
-      const transformed = args.transform(
-        structuredClone(board),
-        workspace,
-        actor,
-        presence.boardID,
-      );
-      if (JSON.stringify(transformed) === JSON.stringify(board)) return board;
-      transformed.stamp = advance(hierarchy.stamp, actor, "версии доски");
-      hierarchy.boards[nodeIndex]!.board = transformed;
-      hierarchy.stamp = transformed.stamp;
-      validateBoardHierarchy(hierarchy, workspace);
-      const sizes = await this.readItemSizes(workspace);
-      for (const element of transformed.elements) {
-        if (element.surface.kind === "cover") {
-          assertSpatialFrame(element.frame, element.surface, sizes.get(element.surface.ownerID!.toLowerCase()));
-        }
-      }
-      await atomicJSON(this.boardPath, hierarchy);
-      return transformed;
-    }));
-  }
-
-  async renameItem(args: {
-    itemID: string;
-    title: string;
-    expectedRevision: string;
-  }): Promise<WorkspaceIndex> {
-    return this.serializeMutation(() => this.withMutationLock(async () => {
-      const workspace = await this.readWorkspace();
-      assertExpectedRevision(args.expectedRevision, workspace.stamp, "Workspace");
-      const item = workspace.items.find(
-        (candidate) => sameID(candidate.id, args.itemID),
-      );
-      if (!item) throw new StoreError("Элемент рабочего пространства не найден.");
-      const title = args.title.trim();
-      if (item.title === title) return workspace;
-      const actor = await this.readActorID();
-      item.title = title;
-      workspace.stamp = advance(workspace.stamp, actor, "версии workspace");
-      validateWorkspace(workspace);
-      await atomicJSON(this.indexPath, workspace);
-      return workspace;
-    }));
-  }
-
-  async createNotebook(args: {
-    title: string;
-    center: WorldPoint;
-    expectedWorkspaceRevision: string;
-    expectedBoardRevision: string;
-  }): Promise<{
-    workspace: WorkspaceIndex;
-    board: BoardDocument;
-    page: PageDocument;
-    itemID: string;
-  }> {
-    return this.serializeMutation(() => this.withMutationLock(async () => {
-      const workspace = await this.readWorkspace();
-      const hierarchy = await this.readBoardHierarchy(workspace);
-      const presence = await this.readPresence();
-      const nodeIndex = hierarchy.boards.findIndex((node) =>
-        sameID(node.id, presence.boardID)
-      );
-      if (nodeIndex < 0) throw new StoreError("Текущая вложенная доска не найдена.");
-      const board = structuredClone(hierarchy.boards[nodeIndex]!.board);
-      assertExpectedRevision(
-        args.expectedWorkspaceRevision,
-        workspace.stamp,
-        "Workspace",
-      );
-      assertExpectedRevision(args.expectedBoardRevision, board.stamp, "Доска");
-      validateWorldPoint(args.center, "center");
-      const title = args.title.trim();
-
-      const actor = await this.readActorID();
-      const itemID = randomUUID();
-      const pageID = randomUUID();
-      const templatePageID = workspace.items.find(
-        (item) => item.kind === "notebook",
-      )?.pageIDs[0];
-      const pageSize = templatePageID
-        ? (await this.readPage(templatePageID)).size
-        : canonicalPageSize;
-      const initialStamp: VersionStamp = { counter: 0, actor };
-      const page: PageDocument = {
-        format: 1,
-        id: pageID,
-        size: pageSize,
-        drawingData: "",
-        drawingStamp: initialStamp,
-        elements: [],
-        agentStamp: initialStamp,
-      };
-      validatePage(page);
-
-      workspace.items.push({
-        id: itemID,
-        kind: "notebook",
-        title,
-        pageIDs: [pageID],
-      });
-      workspace.selectedItemID = itemID;
-      workspace.selectedPageID = pageID;
-      workspace.stamp = advance(workspace.stamp, actor, "версии workspace");
-
-      const boardStamp = advance(hierarchy.stamp, actor, "версии доски");
-      board.freeItems.push({
-        itemID,
-        center: args.center,
-        zIndex: highestZIndex(board) + 1,
-        stamp: boardStamp,
-      });
-      board.stamp = boardStamp;
-      validateWorkspace(workspace);
-      hierarchy.boards[nodeIndex]!.board = board;
-      hierarchy.stamp = board.stamp;
-      validateBoardHierarchy(hierarchy, workspace);
-
-      await atomicJSON(this.pagePath(pageID), page);
-      await atomicJSON(this.boardPath, hierarchy);
-      await atomicJSON(this.indexPath, workspace);
-      return { workspace, board, page, itemID };
-    }));
-  }
-
-  async createBoard(args: {
-    title: string;
-    center: WorldPoint;
-    expectedWorkspaceRevision: string;
-    expectedBoardRevision: string;
-  }): Promise<{
-    workspace: WorkspaceIndex;
-    board: BoardDocument;
-    boardID: string;
-    parentBoardID: string;
-  }> {
-    return this.serializeMutation(() => this.withMutationLock(async () => {
-      const workspace = await this.readWorkspace();
-      const hierarchy = await this.readBoardHierarchy(workspace);
-      const presence = await this.readPresence();
-      const parentIndex = hierarchy.boards.findIndex((node) =>
-        sameID(node.id, presence.boardID)
-      );
-      if (parentIndex < 0) throw new StoreError("Текущая вложенная доска не найдена.");
-      assertExpectedRevision(
-        args.expectedWorkspaceRevision,
-        workspace.stamp,
-        "Workspace",
-      );
-      assertExpectedRevision(
-        args.expectedBoardRevision,
-        hierarchy.boards[parentIndex]!.board.stamp,
-        "Доска",
-      );
-      validateWorldPoint(args.center, "center");
-
-      const actor = await this.readActorID();
-      const boardID = randomUUID();
-      workspace.items.push({
-        id: boardID,
-        kind: "board",
-        title: args.title.trim(),
-        pageIDs: [],
-      });
-      workspace.selectedItemID = boardID;
-      delete workspace.selectedPageID;
-      workspace.stamp = advance(workspace.stamp, actor, "версии workspace");
-
-      const boardStamp = advance(hierarchy.stamp, actor, "версии доски");
-      const parent = hierarchy.boards[parentIndex]!.board;
-      parent.freeItems.push({
-        itemID: boardID,
-        center: args.center,
-        zIndex: highestZIndex(parent) + 1,
-        stamp: boardStamp,
-      });
-      parent.stamp = boardStamp;
-      hierarchy.boards.push({
-        id: boardID,
-        portalCamera: {
-          center: { tileX: 0, tileY: 0, localX: 0, localY: 0 },
-          scale: 0.22,
-        },
-        portalStamp: { counter: 0, actor },
-        board: {
-          format: 2,
-          freeItems: [],
-          stacks: [],
-          elements: [],
-          stamp: { counter: 0, actor },
-        },
-      });
-      hierarchy.stamp = boardStamp;
-      validateWorkspace(workspace);
-      validateBoardHierarchy(hierarchy, workspace);
-
-      // The hierarchy is the new catalog item's dependency: publish it first.
-      await atomicJSON(this.boardPath, hierarchy);
-      await atomicJSON(this.indexPath, workspace);
-      return {
-        workspace,
-        board: structuredClone(parent),
-        boardID,
-        parentBoardID: presence.boardID,
-      };
-    }));
-  }
-
-  async createDocument(args: {
-    title: string;
-    center: WorldPoint;
-    paperSize: "a4" | "letter";
-    expectedWorkspaceRevision: string;
-    expectedBoardRevision: string;
-    preamble?: string;
-    blocks?: DocumentBlock[];
-  }): Promise<{
-    workspace: WorkspaceIndex;
-    board: BoardDocument;
-    document: DocumentDocument;
-    state: DocumentStateJournal;
-    itemID: string;
-  }> {
-    return this.serializeMutation(() => this.withMutationLock(async () => {
-      const workspace = await this.readWorkspace();
-      const hierarchy = await this.readBoardHierarchy(workspace);
-      const presence = await this.readPresence();
-      const nodeIndex = hierarchy.boards.findIndex((node) =>
-        sameID(node.id, presence.boardID)
-      );
-      if (nodeIndex < 0) throw new StoreError("Текущая вложенная доска не найдена.");
-      const board = structuredClone(hierarchy.boards[nodeIndex]!.board);
-      assertExpectedRevision(
-        args.expectedWorkspaceRevision,
-        workspace.stamp,
-        "Workspace",
-      );
-      assertExpectedRevision(args.expectedBoardRevision, board.stamp, "Доска");
-      validateWorldPoint(args.center, "center");
-
-      const actor = await this.readActorID();
-      const itemID = randomUUID();
-      const initialStamp: VersionStamp = { counter: 0, actor };
-      const document: DocumentDocument = {
-        format: 2,
-        id: itemID,
-        paperSize: args.paperSize,
-        preamble: args.preamble ?? "",
-        blocks: args.blocks ?? [markdownBlock("body", "")],
-        contentStamp: initialStamp,
-      };
-      const state: DocumentStateJournal = {
-        format: 1,
-        id: itemID,
-        records: [],
-        stamp: initialStamp,
-      };
-      validateDocument(document);
-      validateDocumentState(state);
-
-      workspace.items.push({
-        id: itemID,
-        kind: "document",
-        title: args.title.trim(),
-        pageIDs: [],
-      });
-      workspace.selectedItemID = itemID;
-      delete workspace.selectedPageID;
-      workspace.stamp = advance(workspace.stamp, actor, "версии workspace");
-
-      const boardStamp = advance(hierarchy.stamp, actor, "версии доски");
-      board.freeItems.push({
-        itemID,
-        center: args.center,
-        zIndex: highestZIndex(board) + 1,
-        stamp: boardStamp,
-      });
-      board.stamp = boardStamp;
-      validateWorkspace(workspace);
-      hierarchy.boards[nodeIndex]!.board = board;
-      hierarchy.stamp = board.stamp;
-      validateBoardHierarchy(hierarchy, workspace);
-
-      await atomicJSON(this.documentPath(itemID), document);
-      await atomicJSON(this.documentStatePath(itemID), state);
-      await atomicJSON(this.boardPath, hierarchy);
-      await atomicJSON(this.indexPath, workspace);
-      return { workspace, board, document, state, itemID };
-    }));
-  }
-
-  async replaceDocumentContent(args: {
-    documentID: string | undefined;
-    expectedRevision: string;
-    preamble: string;
-    blocks: DocumentBlock[];
-  }): Promise<{
-    document: DocumentDocument;
-    state: DocumentStateJournal;
-  }> {
-    return this.serializeMutation(() => this.withMutationLock(async () => {
-      const workspace = await this.readWorkspace();
-      const item = args.documentID
-        ? workspace.items.find((candidate) => sameID(candidate.id, args.documentID!))
-        : selectedItem(workspace);
-      if (!item || item.kind !== "document") {
-        throw new StoreError("Документ не найден.");
-      }
-      const [document, state] = await Promise.all([
-        this.readDocument(item.id),
-        this.readDocumentState(item.id),
-      ]);
-      assertExpectedRevision(
-        args.expectedRevision,
-        document.contentStamp,
-        "Документ",
-      );
-      const nextDocument: DocumentDocument = {
-        ...document,
-        preamble: args.preamble,
-        blocks: args.blocks,
-      };
-      validateDocument(nextDocument);
-      if (JSON.stringify(nextDocument.blocks) === JSON.stringify(document.blocks)
-        && nextDocument.preamble === document.preamble) {
-        return { document, state };
-      }
-      const actor = await this.readActorID();
-      nextDocument.contentStamp = advance(
-        document.contentStamp,
-        actor,
-        "версии документа",
-      );
-
-      await atomicJSON(this.documentPath(item.id), nextDocument);
-      return { document: nextDocument, state };
-    }));
-  }
-
-  private serializeMutation<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.mutationTail.then(operation, operation);
-    this.mutationTail = result.catch(() => undefined);
-    return result;
-  }
-
-  private async withMutationLock<T>(operation: () => Promise<T>): Promise<T> {
-    await mkdir(this.root, { recursive: true });
-    const lockPath = join(this.root, ".mutation-lock");
-    let acquired = false;
-    for (let attempt = 0; attempt < 200; attempt += 1) {
-      try {
-        await mkdir(lockPath);
-        acquired = true;
-        break;
-      } catch (error) {
-        if (!isExists(error)) throw error;
-        try {
-          const lock = await stat(lockPath);
-          if (Date.now() - lock.mtimeMs > 15_000) {
-            await rm(lockPath, { recursive: true, force: true });
-            continue;
-          }
-        } catch (inspectionError) {
-          if (!isMissing(inspectionError)) throw inspectionError;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 3));
-      }
-    }
-    if (!acquired) throw new StoreError("Хранилище страницы занято дольше 600 мс.");
-    try {
-      return await operation();
-    } finally {
-      await rm(lockPath, { recursive: true, force: true });
-    }
-  }
 }
 
 function defaultStoreRoot(): string {
@@ -798,14 +350,6 @@ export function assertSpatialFrame(
   ) {
     throw new StoreError(`Элемент обложки должен лежать внутри её физического размера${coverSize ? ` ${coverSize.width}x${coverSize.height}` : ""}.`);
   }
-}
-
-export function nextVersionStamp(stamp: VersionStamp, actor: string): VersionStamp {
-  return advance(stamp, actor, "версии записи");
-}
-
-export function boardHighestZIndex(board: BoardDocument): number {
-  return highestZIndex(board);
 }
 
 function validateElements(elements: unknown, page: PageDocument): asserts elements is AgentElement[] {
@@ -992,19 +536,6 @@ function selectedItem(workspace: WorkspaceIndex): WorkspaceItem {
   );
   if (!item) throw new StoreError("Выбранный элемент workspace не найден.");
   return item;
-}
-
-function markdownBlock(id: string, source: string): DocumentBlock {
-  return {
-    id,
-    kind: "markdown",
-    source,
-    html: "",
-    css: "",
-    javaScript: "",
-    initialState: {},
-    height: 320,
-  };
 }
 
 function validateDocument(value: unknown): asserts value is DocumentDocument {
@@ -1540,35 +1071,6 @@ function validateStamp(value: unknown, owner: string): void {
   }
 }
 
-function assertExpectedRevision(
-  expected: string,
-  stamp: VersionStamp,
-  owner: string,
-): void {
-  const current = revision(stamp);
-  if (expected !== current) {
-    throw new ConflictError(
-      `${owner} изменилась: ожидалась версия ${expected}, сейчас ${current}. `
-        + "Сначала прочитайте её снова.",
-    );
-  }
-}
-
-function advance(stamp: VersionStamp, actor: string, owner: string): VersionStamp {
-  if (stamp.counter === Number.MAX_SAFE_INTEGER) {
-    throw new StoreError(`Счётчик ${owner} исчерпан.`);
-  }
-  return { counter: stamp.counter + 1, actor };
-}
-
-function highestZIndex(board: BoardDocument): number {
-  return Math.max(
-    0,
-    ...board.freeItems.map((placement) => placement.zIndex),
-    ...board.stacks.map((stack) => stack.zIndex),
-  );
-}
-
 function validateWorldPoint(value: unknown, owner: string): asserts value is WorldPoint {
   if (!isRecord(value)) throw new StoreError(`${owner} поврежден.`);
   for (const name of ["tileX", "tileY"] as const) {
@@ -1696,6 +1198,11 @@ function isEmptyObject(value: unknown): boolean {
 
 async function readJSON<T>(path: string, owner: string): Promise<T> {
   try {
+    const snapshot = readSnapshot.getStore();
+    if (snapshot && path.startsWith(`${snapshot.root}/`)) {
+      const value = snapshot.files[path.slice(snapshot.root.length + 1)];
+      if (value !== undefined) return structuredClone(value) as T;
+    }
     return JSON.parse(await readFile(path, "utf8")) as T;
   } catch (error) {
     if (isMissing(error)) {
@@ -1708,28 +1215,10 @@ async function readJSON<T>(path: string, owner: string): Promise<T> {
   }
 }
 
-async function atomicJSON(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    await rename(temporary, path);
-  } finally {
-    await rm(temporary, { force: true });
-  }
-}
-
 function assertUUID(value: string, owner: string): void {
   if (!UUID_PATTERN.test(value)) throw new StoreError(`${owner} содержит неверный UUID.`);
 }
 
 function isMissing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException)?.code === "ENOENT";
-}
-
-function isExists(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException)?.code === "EEXIST";
 }

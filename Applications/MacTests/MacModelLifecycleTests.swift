@@ -182,7 +182,8 @@ final class MacModelLifecycleTests: XCTestCase {
       .elements(
         pageID: page.id,
         elements: [pageElement],
-        stamp: VersionStamp(counter: 1, actor: remoteActor)
+        stamp: VersionStamp(counter: 1, actor: remoteActor),
+        collaboration: nil
       )
     )
 

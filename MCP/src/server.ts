@@ -1,14 +1,13 @@
-import { createHash, randomUUID } from "node:crypto";
+import { registerActionTools } from "./actions.js";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { McpServer } from "@modelcontextprotocol/server";
-import { marked } from "marked";
 import * as z from "zod/v4";
 
 import type {
-  AgentElement,
   BoardDocument,
   CurrentViewReceipt,
   DocumentBlock,
@@ -19,7 +18,6 @@ import type {
   PageSize,
   SessionPresence,
   SpatialElement,
-  SurfaceID,
   VersionStamp,
   WorldPoint,
   WorkspaceIndex,
@@ -27,7 +25,6 @@ import type {
 } from "./domain.js";
 import {
   boardHierarchyRevision,
-  maximumStackItemCount,
   publicDocument,
   publicPage,
   revision,
@@ -35,10 +32,6 @@ import {
 import {
   StoreError,
   NotebookStore,
-  assertFrame,
-  assertSpatialFrame,
-  boardHighestZIndex,
-  nextVersionStamp,
 } from "./store.js";
 import { exportDocument } from "./latex.js";
 import {
@@ -48,13 +41,6 @@ import {
 } from "./page-vision.js";
 
 const TILE_SIZE = (132 / 2.54 / 2) * 256;
-
-const frameSchema = z.object({
-  x: z.number().finite(),
-  y: z.number().finite(),
-  width: z.number().positive().finite(),
-  height: z.number().positive().finite(),
-});
 
 const pageSelection = {
   page_id: z.uuid().optional().describe("UUID страницы; по умолчанию текущая страница."),
@@ -68,47 +54,10 @@ const documentSelection = {
   ),
 };
 
-const documentBlockSchema = z.discriminatedUnion("kind", [
-  z.object({
-    id: z.string().trim().min(1).max(120),
-    kind: z.literal("markdown"),
-    source: z.string().max(1_000_000),
-  }),
-  z.object({
-    id: z.string().trim().min(1).max(120),
-    kind: z.literal("latex"),
-    source: z.string().max(1_000_000),
-  }),
-  z.object({
-    id: z.string().trim().min(1).max(120),
-    kind: z.literal("interactive"),
-    html: z.string().max(1_000_000),
-    css: z.string().max(1_000_000).default(""),
-    javascript: z.string().max(1_000_000).default(""),
-    initial_state: z.json().default({}),
-    height: z.number().min(48).max(2_048).finite().default(320),
-  }),
-]);
-
-const worldPointSchema = z.object({
-  tileX: z.number().int().safe(),
-  tileY: z.number().int().safe(),
-  localX: z.number().min(0).lt(TILE_SIZE).finite(),
-  localY: z.number().min(0).lt(TILE_SIZE).finite(),
-});
-
-const spatialSurfaceSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("board") }),
-  z.object({ kind: z.literal("cover"), item_id: z.uuid() }),
-]);
-
-const spatialSelection = {
-  expected_revision: z.string().min(1).describe("boardRevision from notebook_read_board."),
-  surface: spatialSurfaceSchema,
-};
-
 export function createServer(store = new NotebookStore()): McpServer {
-  const server = new McpServer({ name: "notebook", version: "0.1.0" });
+  const server = new McpServer({ name: "notebook", version: "0.2.0" });
+  const readSafely = (operation: () => Promise<ToolData | { data: ToolData; image: string }>, hasImage = false) =>
+    safely(() => store.withReadSnapshot(operation), hasImage);
 
   server.registerTool(
     "notebook_observe",
@@ -204,17 +153,19 @@ export function createServer(store = new NotebookStore()): McpServer {
       description:
         "Read every free notebook or document, stack, and agent-authored board or cover element. "
         + "Use notebook_observe for the settled visual context.",
-      inputSchema: z.object({}),
+      inputSchema: z.object({ board_id: z.uuid().optional() }),
     },
-    () => safely(async () => {
+    ({ board_id }) => readSafely(async () => {
       const workspace = await store.readWorkspace();
+      const boardID = board_id ?? (await store.readPresence()).boardID;
       const [board, spatialInk, itemSizes] = await Promise.all([
-        store.readBoard(workspace),
+        store.readBoard(workspace, boardID),
         store.readSpatialInk(),
         store.readItemSizes(workspace),
       ]);
       return {
-        boardID: (await store.readPresence()).boardID,
+        boardID,
+        rootBoardID: workspace.rootBoardID,
         workspaceRevision: revision(workspace.stamp),
         boardRevision: revision(board.stamp),
         spatialInkRevision: revision(spatialInk.stamp),
@@ -235,7 +186,7 @@ export function createServer(store = new NotebookStore()): McpServer {
         "Read notebook pages, placement or stack ownership, and all agent-authored cover elements.",
       inputSchema: z.object({ notebook_id: z.uuid() }),
     },
-    ({ notebook_id }) => safely(async () => {
+    ({ notebook_id }) => readSafely(async () => {
       const workspace = await store.readWorkspace();
       const [board, spatialInk] = await Promise.all([
         store.readItemBoard(notebook_id, workspace),
@@ -292,342 +243,6 @@ export function createServer(store = new NotebookStore()): McpServer {
   );
 
   server.registerTool(
-    "notebook_create_notebook",
-    {
-      title: "Create a notebook on the board",
-      description:
-        "Create a real notebook, its first blank page, and one board placement in one mutation. The printed title may be empty because Pencil marks can identify the cover.",
-      inputSchema: z.object({
-        expected_workspace_revision: z.string().min(1),
-        expected_board_revision: z.string().min(1),
-        title: z.string().trim().max(240).default(""),
-        center: worldPointSchema,
-      }),
-    },
-    ({ expected_workspace_revision, expected_board_revision, title, center }) =>
-      safely(async () => {
-        const created = await store.createNotebook({
-          title,
-          center,
-          expectedWorkspaceRevision: expected_workspace_revision,
-          expectedBoardRevision: expected_board_revision,
-        });
-        return {
-          itemID: created.itemID,
-          pageID: created.page.id,
-          workspaceRevision: revision(created.workspace.stamp),
-          boardRevision: revision(created.board.stamp),
-        };
-      }),
-  );
-
-  server.registerTool(
-    "notebook_create_board",
-    {
-      title: "Create a nested infinite board",
-      description:
-        "Create one empty infinite board as a portal on the current board. The portal and child board share one stable ID.",
-      inputSchema: z.object({
-        expected_workspace_revision: z.string().min(1),
-        expected_board_revision: z.string().min(1),
-        title: z.string().trim().max(240).default(""),
-        center: worldPointSchema,
-      }),
-    },
-    ({ expected_workspace_revision, expected_board_revision, title, center }) =>
-      safely(async () => {
-        const created = await store.createBoard({
-          title,
-          center,
-          expectedWorkspaceRevision: expected_workspace_revision,
-          expectedBoardRevision: expected_board_revision,
-        });
-        return {
-          itemID: created.boardID,
-          boardID: created.boardID,
-          parentBoardID: created.parentBoardID,
-          workspaceRevision: revision(created.workspace.stamp),
-          boardRevision: revision(created.board.stamp),
-        };
-      }),
-  );
-
-  server.registerTool(
-    "notebook_create_document",
-    {
-      title: "Create a document on the board",
-      description:
-        "Create and select one finite A4 or Letter document with ordered Markdown, LaTeX, and sandboxed interactive blocks. "
-        + "Live pages typeset Markdown and TeX math; notebook_export_document compiles the complete TeX artifact.",
-      inputSchema: z.object({
-        expected_workspace_revision: z.string().min(1),
-        expected_board_revision: z.string().min(1),
-        title: z.string().trim().max(240).default("Документ"),
-        paper_size: z.enum(["a4", "letter"]).describe(
-          "Физический формат страниц, выбираемый один раз при создании.",
-        ),
-        center: worldPointSchema,
-        preamble: z.string().max(200_000).default(""),
-        blocks: z.array(documentBlockSchema).max(512).default([
-          { id: "body", kind: "markdown", source: "" },
-        ]),
-      }),
-    },
-    ({
-      expected_workspace_revision,
-      expected_board_revision,
-      title,
-      paper_size,
-      center,
-      preamble,
-      blocks,
-    }) => safely(async () => {
-      const created = await store.createDocument({
-        title,
-        paperSize: paper_size,
-        center,
-        preamble,
-        blocks: blocks.map(inputDocumentBlock),
-        expectedWorkspaceRevision: expected_workspace_revision,
-        expectedBoardRevision: expected_board_revision,
-      });
-      return {
-        itemID: created.itemID,
-        documentID: created.document.id,
-        paperSize: created.document.paperSize,
-        workspaceRevision: revision(created.workspace.stamp),
-        boardRevision: revision(created.board.stamp),
-        contentRevision: revision(created.document.contentStamp),
-        stateRevision: revision(created.state.stamp),
-      };
-    }),
-  );
-
-  server.registerTool(
-    "notebook_rename_item",
-    {
-      title: "Rename a notebook or document",
-      description: "Change or clear the board label of one workspace item.",
-      inputSchema: z.object({
-        item_id: z.uuid(),
-        title: z.string().trim().max(240),
-        expected_workspace_revision: z.string().min(1),
-      }),
-    },
-    ({ item_id, title, expected_workspace_revision }) => safely(async () => {
-      const workspace = await store.renameItem({
-        itemID: item_id,
-        title,
-        expectedRevision: expected_workspace_revision,
-      });
-      return {
-        itemID: item_id,
-        title,
-        workspaceRevision: revision(workspace.stamp),
-      };
-    }),
-  );
-
-  server.registerTool(
-    "notebook_move_nodes",
-    {
-      title: "Move workspace items or stacks",
-      description:
-        "Move board nodes to exact tiled world coordinates. Moving one item out of a stack extracts it.",
-      inputSchema: z.object({
-        expected_revision: z.string().min(1).describe("boardRevision from notebook_read_board."),
-        moves: z.array(z.object({
-          kind: z.enum(["item", "stack"]),
-          id: z.uuid(),
-          center: worldPointSchema,
-        })).min(1).max(100),
-      }),
-    },
-    ({ expected_revision, moves }) => safely(async () => {
-      const duplicate = new Set<string>();
-      for (const move of moves) {
-        const key = `${move.kind}:${move.id.toLowerCase()}`;
-        if (duplicate.has(key)) throw new StoreError(`Узел повторяется в moves: ${move.id}`);
-        duplicate.add(key);
-      }
-      const changed = await store.replaceBoard({
-        expectedRevision: expected_revision,
-        transform: (board, _workspace, actor) => {
-          for (const move of moves) moveNode(board, move.kind, move.id, move.center, actor);
-          return board;
-        },
-      });
-      return {
-        moved: moves.map(({ kind, id }) => ({ kind, id })),
-        boardRevision: revision(changed.stamp),
-      };
-    }),
-  );
-
-  server.registerTool(
-    "notebook_stack_nodes",
-    {
-      title: "Put one workspace item onto another",
-      description:
-        "Move a free notebook or document onto another item or an existing stack. The board keeps one owner per item.",
-      inputSchema: z.object({
-        expected_revision: z.string().min(1).describe("boardRevision from notebook_read_board."),
-        moving_item_id: z.uuid(),
-        target_item_id: z.uuid(),
-      }),
-    },
-    ({ expected_revision, moving_item_id, target_item_id }) => safely(async () => {
-      if (sameID(moving_item_id, target_item_id)) {
-        throw new StoreError("Элемент нельзя положить на самого себя.");
-      }
-      let stackID = "";
-      const changed = await store.replaceBoard({
-        expectedRevision: expected_revision,
-        transform: (board, _workspace, actor) => {
-          stackID = stackItem(
-            board,
-            moving_item_id,
-            target_item_id,
-            actor,
-          );
-          return board;
-        },
-      });
-      return { stackID, boardRevision: revision(changed.stamp) };
-    }),
-  );
-
-  server.registerTool(
-    "notebook_put_spatial_markdown",
-    {
-      title: "Put Markdown on the board or a cover",
-      description:
-        "Create or replace one transparent Markdown layer. Board layers require a tiled world_origin; cover layers use local coordinates within the coverSize returned by notebook_read_board.",
-      inputSchema: z.object({
-        ...spatialSelection,
-        id: z.string().trim().min(1).max(120),
-        frame: frameSchema,
-        world_origin: worldPointSchema.optional(),
-        markdown: z.string(),
-        css: z.string().default(""),
-      }),
-    },
-    ({ expected_revision, surface, id, frame, world_origin, markdown, css }) =>
-      safely(async () => {
-        const html = await marked.parse(markdown, { async: true, gfm: true });
-        const board = await store.replaceBoard({
-          expectedRevision: expected_revision,
-          transform: (current, workspace, actor, boardID) => {
-            const surfaceID = inputSurface(surface, boardID);
-            assertSpatialPlacement(surfaceID, frame, world_origin);
-            assertKnownSurface(surfaceID, workspace, current);
-            const stamp = nextVersionStamp(current.stamp, actor);
-            const element = spatialElement({
-              id,
-              surface: surfaceID,
-              frame,
-              worldOrigin: world_origin,
-              kind: "markdown",
-              source: markdown,
-              html,
-              css,
-              javaScript: "",
-              state: {},
-              stamp,
-            });
-            current.elements = upsertSpatial(current.elements, element);
-            return current;
-          },
-        });
-        return spatialMutationReceipt(board, id);
-      }),
-  );
-
-  server.registerTool(
-    "notebook_put_spatial_web",
-    {
-      title: "Put an interactive layer on the board or a cover",
-      description:
-        "Create or replace transparent HTML, SVG, CSS, and JavaScript. Use window.notebook.commit(value) for state; network access stays blocked.",
-      inputSchema: z.object({
-        ...spatialSelection,
-        id: z.string().trim().min(1).max(120),
-        frame: frameSchema,
-        world_origin: worldPointSchema.optional(),
-        html: z.string(),
-        css: z.string().default(""),
-        javascript: z.string().default(""),
-        state: z.json().default({}),
-      }),
-    },
-    ({
-      expected_revision,
-      surface,
-      id,
-      frame,
-      world_origin,
-      html,
-      css,
-      javascript,
-      state,
-    }) => safely(async () => {
-      assertJavaScript(javascript);
-      const board = await store.replaceBoard({
-        expectedRevision: expected_revision,
-        transform: (current, workspace, actor, boardID) => {
-          const surfaceID = inputSurface(surface, boardID);
-          assertSpatialPlacement(surfaceID, frame, world_origin);
-          assertKnownSurface(surfaceID, workspace, current);
-          const element = spatialElement({
-            id,
-            surface: surfaceID,
-            frame,
-            worldOrigin: world_origin,
-            kind: "web",
-            source: html,
-            html,
-            css,
-            javaScript: javascript,
-            state: state as JSONValue,
-            stamp: nextVersionStamp(current.stamp, actor),
-          });
-          current.elements = upsertSpatial(current.elements, element);
-          return current;
-        },
-      });
-      return spatialMutationReceipt(board, id);
-    }),
-  );
-
-  server.registerTool(
-    "notebook_remove_spatial_elements",
-    {
-      title: "Remove layers from the board or covers",
-      description: "Remove named agent-authored spatial layers while preserving Pencil ink.",
-      inputSchema: z.object({
-        expected_revision: z.string().min(1).describe("boardRevision from notebook_read_board."),
-        ids: z.array(z.string().trim().min(1)).min(1),
-      }),
-    },
-    ({ expected_revision, ids }) => safely(async () => {
-      const remove = new Set(ids);
-      let removed = 0;
-      const board = await store.replaceBoard({
-        expectedRevision: expected_revision,
-        transform: (current) => {
-          current.elements = current.elements.filter((element) => {
-            if (!remove.has(element.id)) return true;
-            removed += 1;
-            return false;
-          });
-          return current;
-        },
-      });
-      return { removed, boardRevision: revision(board.stamp) };
-    }),
-  );
-
-  server.registerTool(
     "notebook_read_document",
     {
       title: "Read a document",
@@ -639,7 +254,7 @@ export function createServer(store = new NotebookStore()): McpServer {
         include_source: z.boolean().default(false),
       }),
     },
-    ({ document_id, block_id, include_source }) => safely(async () => {
+    ({ document_id, block_id, include_source }) => readSafely(async () => {
       const documentID = await resolveDocumentID(store, document_id);
       const [document, state] = await Promise.all([
         store.readDocument(documentID),
@@ -663,32 +278,6 @@ export function createServer(store = new NotebookStore()): McpServer {
   );
 
   server.registerTool(
-    "notebook_patch_document",
-    {
-      title: "Replace document source",
-      description:
-        "Replace the ordered source under an optimistic content revision. Interactive state remains owned by stable block IDs.",
-      inputSchema: z.object({
-        ...documentSelection,
-        expected_revision: z.string().min(1).describe(
-          "contentRevision from notebook_read_document.",
-        ),
-        preamble: z.string().max(200_000).default(""),
-        blocks: z.array(documentBlockSchema).max(512),
-      }),
-    },
-    ({ document_id, expected_revision, preamble, blocks }) => safely(async () => {
-      const changed = await store.replaceDocumentContent({
-        documentID: document_id,
-        expectedRevision: expected_revision,
-        preamble,
-        blocks: blocks.map(inputDocumentBlock),
-      });
-      return observedDocument(changed.document, changed.state);
-    }),
-  );
-
-  server.registerTool(
     "notebook_export_document",
     {
       title: "Compile a document to PDF",
@@ -696,7 +285,7 @@ export function createServer(store = new NotebookStore()): McpServer {
         "Compile the complete LaTeX artifact locally with Tectonic, then publish its .tex and .pdf files under Notebook/exports.",
       inputSchema: z.object(documentSelection),
     },
-    ({ document_id }) => safely(async () => {
+    ({ document_id }) => readSafely(async () => {
       const documentID = await resolveDocumentID(store, document_id);
       const document = await store.readDocument(documentID);
       const receipt = await exportDocument(document, join(store.root, "exports"));
@@ -716,7 +305,7 @@ export function createServer(store = new NotebookStore()): McpServer {
         "Call notebook_render_page to see Pencil handwriting.",
       inputSchema: z.object(pageSelection),
     },
-    ({ page_id, notebook_id, page_number }) => safely(async () => {
+    ({ page_id, notebook_id, page_number }) => readSafely(async () => {
       const page = await resolvePageSelection(
         store,
         page_id,
@@ -737,7 +326,7 @@ export function createServer(store = new NotebookStore()): McpServer {
         "Agent-authored web layers are returned as source by notebook_read_page.",
       inputSchema: z.object(pageSelection),
     },
-    ({ page_id, notebook_id, page_number }) => safely(async () => {
+    ({ page_id, notebook_id, page_number }) => readSafely(async () => {
       const page = await resolvePageSelection(
         store,
         page_id,
@@ -758,157 +347,7 @@ export function createServer(store = new NotebookStore()): McpServer {
     }, true),
   );
 
-  server.registerTool(
-    "notebook_put_markdown",
-    {
-      title: "Put Markdown on a Notebook page",
-      description:
-        "Create or replace one transparent Markdown layer. The frame is in page points; there is no card, border, or toolbar.",
-      inputSchema: z.object({
-        ...pageSelection,
-        expected_revision: z.string().min(1).describe("agentRevision from notebook_read_page."),
-        id: z.string().trim().min(1).max(120),
-        frame: frameSchema,
-        markdown: z.string(),
-        css: z.string().default(""),
-      }),
-    },
-    ({
-      page_id,
-      notebook_id,
-      page_number,
-      expected_revision,
-      id,
-      frame,
-      markdown,
-      css,
-    }) => safely(async () => {
-      const selectedPage = await resolvePageSelection(
-        store,
-        page_id,
-        notebook_id,
-        page_number,
-      );
-      const element: AgentElement = {
-        id,
-        kind: "markdown",
-        frame,
-        source: markdown,
-        html: await marked.parse(markdown, { async: true, gfm: true }),
-        css,
-        javaScript: "",
-        state: {},
-      };
-      const page = await store.replaceElements({
-        pageID: selectedPage.id,
-        expectedRevision: expected_revision,
-        transform: (elements, currentPage) => {
-          assertFrame(frame, currentPage);
-          return upsert(elements, element);
-        },
-      });
-      return mutationReceipt(page, element.id);
-    }),
-  );
-
-  server.registerTool(
-    "notebook_put_web",
-    {
-      title: "Put an interactive web layer on a Notebook page",
-      description:
-        "Create or replace one transparent HTML/SVG/CSS/JavaScript layer. " +
-        "Use window.notebook.state to read state and window.notebook.commit(value) after a user action. " +
-        "The layer has no surrounding UI and cannot use the network.",
-      inputSchema: z.object({
-        ...pageSelection,
-        expected_revision: z.string().min(1).describe("agentRevision from notebook_read_page."),
-        id: z.string().trim().min(1).max(120),
-        frame: frameSchema,
-        html: z.string(),
-        css: z.string().default(""),
-        javascript: z.string().default(""),
-        state: z.json().default({}),
-      }),
-    },
-    ({
-      page_id,
-      notebook_id,
-      page_number,
-      expected_revision,
-      id,
-      frame,
-      html,
-      css,
-      javascript,
-      state,
-    }) =>
-      safely(async () => {
-        const selectedPage = await resolvePageSelection(
-          store,
-          page_id,
-          notebook_id,
-          page_number,
-        );
-        assertJavaScript(javascript);
-        const element: AgentElement = {
-          id,
-          kind: "web",
-          frame,
-          source: html,
-          html,
-          css,
-          javaScript: javascript,
-          state: state as JSONValue,
-        };
-        const page = await store.replaceElements({
-          pageID: selectedPage.id,
-          expectedRevision: expected_revision,
-          transform: (elements, currentPage) => {
-            assertFrame(frame, currentPage);
-            return upsert(elements, element);
-          },
-        });
-        return mutationReceipt(page, element.id);
-      }),
-  );
-
-  server.registerTool(
-    "notebook_remove_elements",
-    {
-      title: "Remove layers from a Notebook page",
-      description: "Remove named agent-authored layers while preserving the Pencil drawing.",
-      inputSchema: z.object({
-        ...pageSelection,
-        expected_revision: z.string().min(1).describe("agentRevision from notebook_read_page."),
-        ids: z.array(z.string().trim().min(1)).min(1),
-      }),
-    },
-    ({ page_id, notebook_id, page_number, expected_revision, ids }) => safely(async () => {
-      const selectedPage = await resolvePageSelection(
-        store,
-        page_id,
-        notebook_id,
-        page_number,
-      );
-      const remove = new Set(ids);
-      let removed = 0;
-      const page = await store.replaceElements({
-        pageID: selectedPage.id,
-        expectedRevision: expected_revision,
-        transform: (elements) => elements.filter((element) => {
-          if (!remove.has(element.id)) return true;
-          removed += 1;
-          return false;
-        }),
-      });
-      return {
-        pageID: page.id,
-        removed,
-        agentRevision: revision(page.agentStamp),
-      };
-    }),
-  );
-
+  registerActionTools(server, store);
   registerPageVisionTools(server, store);
   return server;
 }
@@ -1284,144 +723,6 @@ function assertFreshCurrentView(
   }
 }
 
-function moveNode(
-  board: BoardDocument,
-  kind: "item" | "stack",
-  id: string,
-  center: WorldPoint,
-  actor: string,
-): void {
-  const stamp = nextVersionStamp(board.stamp, actor);
-  if (kind === "stack") {
-    const stack = board.stacks.find((candidate) => sameID(candidate.id, id));
-    if (!stack) throw new StoreError(`Стопка не найдена: ${id}`);
-    stack.center = center;
-    stack.zIndex = boardHighestZIndex(board) + 1;
-    stack.stamp = stamp;
-    return;
-  }
-
-  const placement = board.freeItems.find(
-    (candidate) => sameID(candidate.itemID, id),
-  );
-  if (placement) {
-    placement.center = center;
-    placement.zIndex = boardHighestZIndex(board) + 1;
-    placement.stamp = stamp;
-    return;
-  }
-
-  const stackIndex = board.stacks.findIndex(
-    (candidate) => candidate.itemIDs.some((itemID) => sameID(itemID, id)),
-  );
-  if (stackIndex < 0) throw new StoreError(`Элемент не найден: ${id}`);
-  const stack = board.stacks[stackIndex]!;
-  stack.itemIDs = stack.itemIDs.filter((itemID) => !sameID(itemID, id));
-  board.freeItems.push({
-    itemID: id,
-    center,
-    zIndex: boardHighestZIndex(board) + 1,
-    stamp,
-  });
-  if (stack.itemIDs.length === 1) {
-    const remaining = stack.itemIDs[0]!;
-    board.freeItems.push({
-      itemID: remaining,
-      center: stack.center,
-      zIndex: stack.zIndex,
-      stamp,
-    });
-    board.stacks.splice(stackIndex, 1);
-  } else {
-    stack.stamp = stamp;
-  }
-}
-
-function stackItem(
-  board: BoardDocument,
-  movingID: string,
-  targetID: string,
-  actor: string,
-): string {
-  const movingIndex = board.freeItems.findIndex(
-    (placement) => sameID(placement.itemID, movingID),
-  );
-  if (movingIndex < 0) {
-    throw new StoreError("Перемещаемый элемент должен свободно лежать на доске.");
-  }
-  const stamp = nextVersionStamp(board.stamp, actor);
-  const targetStack = board.stacks.find(
-    (stack) => stack.itemIDs.some((itemID) => sameID(itemID, targetID)),
-  );
-  if (targetStack) {
-    if (targetStack.itemIDs.length >= maximumStackItemCount) {
-      throw new StoreError(
-        `В одной стопке помещается до ${maximumStackItemCount} элементов.`,
-      );
-    }
-    targetStack.itemIDs.push(board.freeItems[movingIndex]!.itemID);
-    targetStack.stamp = stamp;
-    board.freeItems.splice(movingIndex, 1);
-    return targetStack.id;
-  }
-
-  const targetIndex = board.freeItems.findIndex(
-    (placement) => sameID(placement.itemID, targetID),
-  );
-  if (targetIndex < 0) throw new StoreError("Целевой элемент не найден.");
-  const moving = board.freeItems[movingIndex]!;
-  const target = board.freeItems[targetIndex]!;
-  for (const index of [movingIndex, targetIndex].sort((a, b) => b - a)) {
-    board.freeItems.splice(index, 1);
-  }
-  const stackID = randomUUID();
-  board.stacks.push({
-    id: stackID,
-    center: target.center,
-    zIndex: Math.max(moving.zIndex, target.zIndex) + 1,
-    itemIDs: [target.itemID, moving.itemID],
-    stamp,
-  });
-  return stackID;
-}
-
-function inputSurface(
-  value: { kind: "board" } | { kind: "cover"; item_id: string },
-  boardID: string,
-): SurfaceID {
-  return value.kind === "board"
-    ? { kind: "board", ownerID: boardID }
-    : { kind: "cover", ownerID: value.item_id };
-}
-
-function inputDocumentBlock(
-  value: z.infer<typeof documentBlockSchema>,
-): DocumentBlock {
-  if (value.kind === "interactive") {
-    assertJavaScript(value.javascript);
-    return {
-      id: value.id,
-      kind: value.kind,
-      source: value.html,
-      html: value.html,
-      css: value.css,
-      javaScript: value.javascript,
-      initialState: value.initial_state as JSONValue,
-      height: value.height,
-    };
-  }
-  return {
-    id: value.id,
-    kind: value.kind,
-    source: value.source,
-    html: "",
-    css: "",
-    javaScript: "",
-    initialState: {},
-    height: 320,
-  };
-}
-
 async function resolvePageSelection(
   store: NotebookStore,
   pageID: string | undefined,
@@ -1482,93 +783,6 @@ async function resolveDocumentID(
   return current.document.id;
 }
 
-function assertSpatialPlacement(
-  surface: SurfaceID,
-  frame: { x: number; y: number; width: number; height: number },
-  worldOrigin: WorldPoint | undefined,
-): void {
-  assertSpatialFrame(frame, surface);
-  if (surface.kind === "board" && !worldOrigin) {
-    throw new StoreError("Элементу доски нужен world_origin.");
-  }
-  if (surface.kind === "cover" && worldOrigin) {
-    throw new StoreError("Элемент обложки использует только локальный frame.");
-  }
-}
-
-function assertKnownSurface(
-  surface: SurfaceID,
-  workspace: WorkspaceIndex,
-  board: BoardDocument,
-): void {
-  if (surface.kind === "board") return;
-  const isWorkspaceItem = workspace.items.some(
-    (item) => sameID(item.id, surface.ownerID),
-  );
-  const isOnCurrentBoard = board.freeItems.some(
-    (placement) => sameID(placement.itemID, surface.ownerID),
-  ) || board.stacks.some((stack) =>
-    stack.itemIDs.some((itemID) => sameID(itemID, surface.ownerID))
-  );
-  if (!isWorkspaceItem || !isOnCurrentBoard) {
-    throw new StoreError("Обложка не принадлежит текущей доске.");
-  }
-}
-
-function spatialElement(args: {
-  id: string;
-  surface: SurfaceID;
-  frame: { x: number; y: number; width: number; height: number };
-  worldOrigin?: WorldPoint | undefined;
-  kind: "markdown" | "web";
-  source: string;
-  html: string;
-  css: string;
-  javaScript: string;
-  state: JSONValue;
-  stamp: VersionStamp;
-}): SpatialElement {
-  return {
-    id: args.id,
-    surface: args.surface,
-    kind: args.kind,
-    frame: args.frame,
-    ...(args.worldOrigin ? { worldOrigin: args.worldOrigin } : {}),
-    source: args.source,
-    html: args.html,
-    css: args.css,
-    javaScript: args.javaScript,
-    state: args.state,
-    textStyle: {
-      fontSize: 34,
-      weight: 0.45,
-      red: 0.09,
-      green: 0.09,
-      blue: 0.08,
-      alpha: 1,
-    },
-    stamp: args.stamp,
-  };
-}
-
-function upsertSpatial(
-  elements: SpatialElement[],
-  replacement: SpatialElement,
-): SpatialElement[] {
-  const index = elements.findIndex((element) => element.id === replacement.id);
-  if (index < 0) return [...elements, replacement];
-  const next = [...elements];
-  next[index] = replacement;
-  return next;
-}
-
-function spatialMutationReceipt(board: BoardDocument, elementID: string): object {
-  return {
-    elementID,
-    boardRevision: revision(board.stamp),
-  };
-}
-
 function worldToScreen(
   point: WorldPoint,
   presence: SessionPresence,
@@ -1608,33 +822,6 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(Math.max(value, minimum), maximum);
 }
 
-function upsert(elements: AgentElement[], replacement: AgentElement): AgentElement[] {
-  const index = elements.findIndex((element) => element.id === replacement.id);
-  if (index < 0) return [...elements, replacement];
-  const next = [...elements];
-  next[index] = replacement;
-  return next;
-}
-
-function mutationReceipt(page: PageDocument, elementID: string): object {
-  return {
-    pageID: page.id,
-    elementID,
-    agentRevision: revision(page.agentStamp),
-  };
-}
-
-function assertJavaScript(source: string): void {
-  try {
-    // This compiles the body only. Execution remains inside WKWebView's local CSP sandbox.
-    Function(source);
-  } catch (error) {
-    throw new StoreError(`JavaScript содержит синтаксическую ошибку: ${(error as Error).message}`);
-  }
-}
-
-type ToolData = object;
-
 const snapshotPendingPattern =
   /собирается|создается|обновляются|обновляется/;
 
@@ -1661,6 +848,8 @@ export async function waitForSettledSnapshot<T>(
     }
   }
 }
+
+type ToolData = object;
 
 async function safely(
   operation: () => Promise<ToolData | { data: ToolData; image: string }>,

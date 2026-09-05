@@ -1029,7 +1029,8 @@ final class NotebookAppModel {
       .elements(
         pageID: page.id,
         elements: page.elements,
-        stamp: page.agentStamp
+        stamp: page.agentStamp,
+        collaboration: page.collaboration
       )
     )
   }
@@ -1164,7 +1165,8 @@ final class NotebookAppModel {
       .elements(
         pageID: resolved.id,
         elements: resolved.elements,
-        stamp: resolved.agentStamp
+        stamp: resolved.agentStamp,
+        collaboration: resolved.collaboration
       )
     )
     return true
@@ -1258,7 +1260,8 @@ final class NotebookAppModel {
                 .elements(
                   pageID: pageID,
                   elements: current.elements,
-                  stamp: current.agentStamp
+                  stamp: current.agentStamp,
+                  collaboration: current.collaboration
                 )
               )
             }
@@ -1360,9 +1363,9 @@ final class NotebookAppModel {
         page.replaceDrawing(data, stamp: stamp)
       else { return }
       acceptRemotePage(page)
-    case .elements(let pageID, let elements, let stamp):
+    case .elements(let pageID, let elements, let stamp, let collaboration):
       guard var page = pages[pageID],
-        page.replaceElements(elements, stamp: stamp)
+        page.mergeElements(elements, stamp: stamp, collaboration: collaboration)
       else { return }
       acceptRemotePage(page)
     case .document(let incoming):
