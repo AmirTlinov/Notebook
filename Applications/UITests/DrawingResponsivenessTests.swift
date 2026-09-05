@@ -5,6 +5,25 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testHistoryOpensAndClosesRepeatedlyWithManySharedFragments() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-collaboration-fixture", "--notebook-history-performance-fixture"]
+    app.launch()
+    XCTAssertTrue(app.buttons["collaboration-history"].waitForExistence(timeout: 15))
+    for _ in 0..<5 {
+      app.buttons["collaboration-history"].tap()
+      XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForExistence(timeout: 2))
+      XCTAssertTrue(app.buttons["Готово"].isHittable)
+      app.buttons["Готово"].tap()
+      XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForNonExistence(timeout: 2))
+      XCTAssertTrue(app.buttons["collaboration-history"].waitForExistence(timeout: 2))
+    }
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "history-remains-dismissible-after-five-openings"; proof.lifetime = .keepAlways; add(proof)
+  }
+
   func testSharedActionUndoKeepsTheDrawingAndHumanPlacement() {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
@@ -52,7 +71,9 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.launch()
     let notice = app.buttons["collaboration-dismiss"]
     XCTAssertTrue(notice.waitForExistence(timeout:3))
+    let historyFrame = app.buttons["collaboration-history"].frame
     XCTAssertTrue(notice.waitForNonExistence(timeout:8))
+    XCTAssertEqual(app.buttons["collaboration-history"].frame, historyFrame, "История не уезжает из-под пальца вместе с временной отметкой")
     app.buttons["collaboration-history"].tap()
     XCTAssertTrue(app.buttons["Отменить этот ход"].firstMatch.waitForExistence(timeout:3))
     XCTAssertTrue(app.buttons["show-action-result"].firstMatch.exists)

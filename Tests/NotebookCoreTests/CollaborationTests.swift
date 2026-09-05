@@ -44,6 +44,58 @@ private struct CollaborationFixture {
   }
 }
 
+@Test("История готовит один срез только нужных владельцев и сохраняет точность доработок")
+func collaborationReadSnapshotUsesCurrentSources() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let receipt = try f.store.applyCollaborationAction(f.action([f.insert()]), actor: f.agent)
+  var content = try f.store.collaborationContent()
+  let before = receipt.resultReferences(in: content)[0]
+  let old = content.pages[0].elements[0]
+  _ = content.pages[0].replaceElements([.init(id: old.id, kind: old.kind,
+    frame: .init(x: 120, y: 130, width: 300, height: 180), source: "Human", html: "Human", state: old.state)], actor: f.human)
+  let unrelated = PageDocument(id: UUID(), size: .init(width: 834, height: 1194), actor: f.human,
+    drawingData: Data(repeating: 1, count: 16 * 1024 * 1024))
+  content.pages.append(unrelated)
+  let missing = CollaborationReference(target: f.page, elementID: "missing", revision: "missing")
+  let regional = CollaborationReference(target: f.page, region: .init(x: 1, y: 1, width: 20, height: 20), revision: "old")
+  let references = [before, missing, regional]
+  let paths = content.referenceFilePaths(for: references.map(\.target) + receipt.resultTargets(in: content)).union(receipt.changes.map(\.file))
+  #expect(!paths.contains("pages/\(unrelated.id.uuidString.lowercased()).json"))
+  let files = try content.sourceFiles(including: paths)
+  #expect(!files.keys.contains("pages/\(unrelated.id.uuidString.lowercased()).json"))
+  let snapshot = try CollaborationReadSnapshot(content: content, actions: [receipt], references: references)
+  #expect(snapshot.results[receipt.id] == receipt.resultReferences(in: content))
+  #expect(snapshot.results[receipt.id]?.first?.region?.x == 120)
+  #expect(snapshot.continuations[receipt.id] == receipt.continuations(in: files))
+  #expect(snapshot.continuations[receipt.id]?.contains { $0.author == .human } == true)
+  #expect(snapshot.references[before.id]?.status == .changed)
+  #expect(snapshot.references[missing.id]?.status == .targetMissing)
+  #expect(snapshot.references[regional.id]?.status == .checking)
+}
+
+@Test("Отменённая подготовка истории не возвращает частичный результат")
+func collaborationReadSnapshotCancellation() async throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let content = try f.store.collaborationContent()
+  await Task.detached {
+    withUnsafeCurrentTask { $0?.cancel() }
+    #expect(throws: CancellationError.self) {
+      try CollaborationReadSnapshot(content: content, actions: [], references: [])
+    }
+  }.value
+}
+
+@Test("Проверка готового отпечатка не захватывает замок содержания повторно")
+func referenceProofReadDoesNotLockContent() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let revision = try f.store.referenceRevision(target: f.page)
+  let reference = CollaborationReference(target: f.page, region: .init(x: 0, y: 0, width: 30, height: 30), revision: revision)
+  let result = try f.store.withMutationLock {
+    try f.store.referenceStatus(reference, currentRevision: revision)
+  }
+  #expect(result.status == .checking)
+}
+
 @Test("Повтор запроса возвращает один ход, частичная правка сохраняет состояние")
 func collaborationIdempotencyAndState() throws {
   let fixture = try CollaborationFixture(); defer { fixture.clean() }

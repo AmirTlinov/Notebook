@@ -4,6 +4,7 @@ import SwiftUI
 struct NotebookCollaborationView: View {
   @Environment(NotebookAppModel.self) private var model
   @State private var showsHistory = false
+  @State private var historyRequestedAt: ContinuousClock.Instant?
   @State private var pendingShow: CollaborationReference?
   private var contexts: [SharedContext] {
     model.sharedContexts.sorted { left, right in
@@ -23,12 +24,12 @@ struct NotebookCollaborationView: View {
       if model.showsCollaborationNotice, let context = model.presentedSharedContext {
         let latest = model.collaborationActions.first { $0.action.resolvedContextID == context.id }
         HStack(alignment: .top, spacing: 8) {
-          Button { showsHistory = true } label: {
+          Button(action: openHistory) {
             VStack(alignment: .leading, spacing: 4) {
               Text(latest?.undo != nil ? "Ход отменён" : "Продолжение мысли").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
               Text(latest?.action.summary ?? context.entries.last?.references.first?.label ?? "Общий фрагмент").font(.callout).lineLimit(3)
             }.frame(maxWidth: .infinity, alignment: .leading)
-          }.accessibilityIdentifier("collaboration-history")
+          }.accessibilityIdentifier("collaboration-notice-history")
           if let reference = latest.flatMap({ model.results(for: $0).first }) ?? context.entries.last?.references.first {
             Button("Показать") { model.requestShow(reference) }.frame(minHeight: 44).accessibilityIdentifier("collaboration-show")
           }
@@ -38,14 +39,18 @@ struct NotebookCollaborationView: View {
           Button { model.dismissCollaborationNotice() } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }
             .accessibilityLabel("Скрыть уведомление").accessibilityIdentifier("collaboration-dismiss")
         }.buttonStyle(.plain).padding(12).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-      } else if !model.sharedContexts.isEmpty {
-        Button { showsHistory = true } label: {
+      }
+      // Keep the history target in the same place when the six-second notice
+      // expires; removing a button under a finger can silently discard its tap.
+      if !model.sharedContexts.isEmpty {
+        Button(action: openHistory) {
           Label(model.activeSharedContext == nil ? "Совместные ходы" : "Общий фрагмент", systemImage: model.activeSharedContext == nil ? "clock.arrow.circlepath" : "scope")
             .font(.callout).padding(.horizontal, 14).frame(minHeight: 44)
         }.buttonStyle(.plain).background(.regularMaterial, in: Capsule()).accessibilityIdentifier("collaboration-history")
       }
     }
     .frame(maxWidth: 520, alignment: .leading)
+    .task(id: model.collaborationPreparationKey) { await model.refreshCollaborationDetails() }
     .task {
       while !Task.isCancelled {
         await model.refreshReferenceStatuses()
@@ -90,12 +95,26 @@ struct NotebookCollaborationView: View {
         .navigationTitle("Совместные ходы")
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { showsHistory = false } } }
       }.frame(minWidth: 360, minHeight: 400)
+        .onAppear {
+          if let start = historyRequestedAt {
+            model.collaborationHistoryMounted(after: start.duration(to: .now))
+            historyRequestedAt = nil
+          }
+        }
     }
+  }
+
+  private func openHistory() {
+    historyRequestedAt = .now
+    showsHistory = true
   }
 
   private func actionCard(_ action: CollaborationReceipt) -> some View {
     VStack(alignment: .leading, spacing: 10) {
       Text(action.action.summary).font(.headline)
+      if !model.collaborationDetailsAreCurrent {
+        Text("Проверяются результаты и доработки").font(.caption).foregroundStyle(.secondary)
+      }
       ForEach(Array(Set(model.continuations(for: action).map(continuationLabel))).sorted(), id: \.self) { label in
         Text(label).font(.caption).foregroundStyle(.secondary)
       }

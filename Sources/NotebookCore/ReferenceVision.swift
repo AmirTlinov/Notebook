@@ -23,6 +23,18 @@ extension NotebookStore {
     let revision: String
     do { revision = try Self.referenceRevision(target: reference.target, elementID: reference.elementID, files: files) }
     catch let error as CollaborationError where error.code == "target_missing" { return .init(.targetMissing) }
+    let result = try referenceStatus(reference, currentRevision: revision)
+    if result.status == .checking, prepareRender {
+      _ = try requestTargetRender(target: reference.target,
+        expectedRevision: Self.targetContentRevision(target: reference.target, files: files),
+        region: reference.region, worldOrigin: reference.worldOrigin, pageIndex: reference.pageIndex ?? 0)
+    }
+    return result
+  }
+
+  /// Uses the caller's completed content cut. Reading small render proofs does
+  /// not acquire the content mutation lock or serialize the workspace again.
+  public func referenceStatus(_ reference: CollaborationReference, currentRevision revision: String) throws -> ReferenceStatus {
     guard reference.region != nil, reference.elementID == nil, reference.target.kind != .workspace else {
       return .init(revision == reference.revision ? .current : .changed, currentRevision: revision)
     }
@@ -53,11 +65,6 @@ extension NotebookStore {
       return .init(current == baseline.fingerprint ? .current : .changed, currentRevision: revision, fingerprint: current)
     }
     guard baseline != nil || revision == reference.revision else { return .init(.reviewRequired, currentRevision: revision) }
-    if prepareRender {
-      _ = try requestTargetRender(target: reference.target,
-        expectedRevision: Self.targetContentRevision(target: reference.target, files: files),
-        region: reference.region, worldOrigin: reference.worldOrigin, pageIndex: reference.pageIndex ?? 0)
-    }
     return .init(.checking, currentRevision: revision)
   }
 

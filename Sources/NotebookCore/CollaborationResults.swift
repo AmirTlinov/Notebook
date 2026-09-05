@@ -2,28 +2,39 @@ import Foundation
 
 extension CollaborationReceipt {
   public func resultReferences(in content: CollaborationContent) -> [CollaborationReference] {
-    guard let files = try? content.sourceFiles() else { return [] }
+    let paths = content.referenceFilePaths(for: resultTargets(in: content))
+    guard let files = try? content.sourceFiles(including: paths) else { return [] }
+    return resultReferences(in: content, files: files)
+  }
+
+  func resultTargets(in content: CollaborationContent) -> [CollaborationTarget] {
+    action.operations.flatMap { resultLocations($0, in: content).map(\.0) }
+  }
+
+  private func resultLocations(_ operation: CollaborationOperation, in content: CollaborationContent) -> [(CollaborationTarget, String?)] {
+    switch operation.kind {
+    case .appendInkStroke, .reorderElements, .reorderBlocks, .setPreamble, .replaceDocument:
+      return [(operation.target, nil)]
+    case .createNotebook, .createDocument, .createBoard, .renameItem, .moveItem:
+      guard let id = operation.id.flatMap(UUID.init(uuidString:)) else { return [] }
+      let kind: CollaborationTarget.Kind = operation.kind == .createDocument ? .document : operation.kind == .createBoard ? .board : .cover
+      return [(.init(kind: kind, id: id, boardID: kind == .cover ? content.hierarchy.ownerBoardID(of: id) : nil), nil)]
+    case .stackItems:
+      return (operation.values["itemIDs"]?.array ?? []).compactMap { value in
+        guard let id = value.string.flatMap(UUID.init(uuidString:)), let boardID = content.hierarchy.ownerBoardID(of: id) else { return nil }
+        return (.init(kind: .cover, id: id, boardID: boardID), nil)
+      }
+    default: return [(operation.target, operation.id)]
+    }
+  }
+
+  func resultReferences(in content: CollaborationContent, files: [String: JSONValue]) -> [CollaborationReference] {
     var results: [CollaborationReference] = []
     var seen = Set<String>()
     for operation in action.operations {
-      var targets: [(CollaborationTarget, String?)] = [(operation.target, operation.id)]
+      if Task.isCancelled { return [] }
+      let targets = resultLocations(operation, in: content)
       let stroke = operation.kind == .appendInkStroke ? try? CollaborationInkStroke(operation) : nil
-      switch operation.kind {
-      case .appendInkStroke: targets = [(operation.target, nil)]
-      case .createNotebook, .createDocument, .createBoard, .renameItem, .moveItem:
-        guard let id = operation.id.flatMap(UUID.init(uuidString:)) else { continue }
-        let boardID = content.hierarchy.ownerBoardID(of: id)
-        let kind: CollaborationTarget.Kind = operation.kind == .createDocument ? .document : operation.kind == .createBoard ? .board : .cover
-        targets = [(.init(kind: kind, id: id, boardID: kind == .cover ? boardID : nil), nil)]
-      case .stackItems:
-        targets = (operation.values["itemIDs"]?.array ?? []).compactMap { value in
-          guard let id = value.string.flatMap(UUID.init(uuidString:)), let boardID = content.hierarchy.ownerBoardID(of: id) else { return nil }
-          return (.init(kind: .cover, id: id, boardID: boardID), nil)
-        }
-      case .reorderElements, .reorderBlocks, .setPreamble, .replaceDocument:
-        targets = [(operation.target,nil)]
-      default: break
-      }
       for (target, elementID) in targets {
         let key = target.key + ":" + (stroke?.id.uuidString ?? elementID ?? "")
         guard seen.insert(key).inserted else { continue }

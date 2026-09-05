@@ -5,6 +5,22 @@ import XCTest
 
 final class NotebookInputTests: XCTestCase {
   @MainActor
+  func testProbeRetainsContactWithoutAnyDisplayCallback() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root.appendingPathComponent("runtime"), withIntermediateDirectories: true)
+    let monitor = InputFrameMonitor(root: root)
+    monitor.begin(mode: "board")
+    monitor.end()
+    let url = root.appendingPathComponent("runtime/input-frames.json")
+    for _ in 0..<100 where !FileManager.default.fileExists(atPath: url.path) { try await Task.sleep(for: .milliseconds(10)) }
+    let rows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [[String: Any]])
+    XCTAssertEqual(rows.count, 1)
+    XCTAssertNotNil(rows[0]["lastServiceToEndMS"])
+    XCTAssertEqual((rows[0]["cadence"] as? [String: Any])?["totalIntervals"] as? Int, 0)
+  }
+
+  @MainActor
   func testDisplayProbeDoesNotRetainAnUnmountedSurface() {
     var monitor: InputFrameMonitor? = .init(root: FileManager.default.temporaryDirectory)
     weak var weakMonitor = monitor

@@ -26,12 +26,12 @@ final class NotebookAppModel {
   static let defaultPageSize = PageSize(width: 834, height: 1_194)
 
   private(set) var loadState: LoadState = .loading
-  private(set) var workspace: WorkspaceIndex?
-  private(set) var pages: [UUID: PageDocument] = [:]
-  private(set) var documents: [UUID: DocumentDocument] = [:]
-  private(set) var documentStates: [UUID: DocumentStateJournal] = [:]
-  private(set) var boardHierarchy: BoardHierarchy?
-  private(set) var spatialInk: SpatialInkJournal?
+  private(set) var workspace: WorkspaceIndex? { didSet { collaborationReadEpoch &+= 1 } }
+  private(set) var pages: [UUID: PageDocument] = [:] { didSet { collaborationReadEpoch &+= 1 } }
+  private(set) var documents: [UUID: DocumentDocument] = [:] { didSet { collaborationReadEpoch &+= 1 } }
+  private(set) var documentStates: [UUID: DocumentStateJournal] = [:] { didSet { collaborationReadEpoch &+= 1 } }
+  private(set) var boardHierarchy: BoardHierarchy? { didSet { collaborationReadEpoch &+= 1 } }
+  private(set) var spatialInk: SpatialInkJournal? { didSet { collaborationReadEpoch &+= 1 } }
   private(set) var presence: SessionPresence?
   private(set) var presencePhase = PresencePhase.settled
   var isPointing = false
@@ -43,21 +43,23 @@ final class NotebookAppModel {
   private(set) var returnPlaces: [ReturnPlace] = []
   private(set) var requestedReturn: ReturnPlace?
   private(set) var requestedReference: CollaborationReference?
-  private(set) var highlightedReference: CollaborationReference?
+  private(set) var highlightedReference: CollaborationReference? { didSet { collaborationReadEpoch &+= 1 } }
   private(set) var showsCollaborationNotice = false
   private var collaborationNoticeKey: String?
   private var collaborationNoticeTask: Task<Void, Never>?
   private var referenceHighlightTask: Task<Void, Never>?
   private var collaborationUndoTask: Task<Void, Never>?
-  @ObservationIgnored private var resultCache: [UUID: [CollaborationReference]] = [:]
-  @ObservationIgnored private var referenceStatusCache: [UUID: (String, Bool)] = [:]
-  @ObservationIgnored private var continuationCache: [UUID: (String, [CollaborationContinuation])] = [:]
+  private var collaborationReadSnapshot: CollaborationReadSnapshot?
+  private var collaborationReadEpoch: UInt64 = 0
+  private var preparedCollaborationVersion: UInt64?
+  @ObservationIgnored private var collaborationReadTask: Task<CollaborationReadSnapshot, Error>?
+  @ObservationIgnored private var collaborationReadGeneration = 0
   private var deviceActionReceipts: [DeviceActionReceipt] = []
   private var readyPages: [UUID: String] = [:]
   private(set) var isPeerConnected = false
-  private(set) var collaborationActions: [CollaborationReceipt] = []
+  private(set) var collaborationActions: [CollaborationReceipt] = [] { didSet { collaborationReadEpoch &+= 1 } }
   private(set) var regionalReferenceStatuses: [UUID: ReferenceStatus] = [:]
-  private(set) var sharedContexts: [SharedContext] = []
+  private(set) var sharedContexts: [SharedContext] = [] { didSet { collaborationReadEpoch &+= 1 } }
   private(set) var contextSelection: SharedContextSelection?
   var activeSharedContext: SharedContext? {
     sharedContexts.first { $0.id == contextSelection?.contextID }
@@ -175,6 +177,7 @@ final class NotebookAppModel {
     inputGate.onActivityChange = { [weak self] active in
       guard let self else { return }
       inputIsActive = active
+      if active { collaborationReadTask?.cancel() }
       #if os(macOS)
         if active { previewPublisher?.suspendForInput() }
       #else
@@ -1507,66 +1510,103 @@ final class NotebookAppModel {
   }
 
   func results(for action: CollaborationReceipt) -> [CollaborationReference] {
-    if let result = resultCache[action.id] { return result }
-    let result = collaborationContent.map { action.resultReferences(in:$0) } ?? []
-    resultCache[action.id] = result
-    return result
+    guard collaborationDetailsAreCurrent else { return [] }
+    return collaborationReadSnapshot?.results[action.id] ?? []
   }
 
   func continuations(for action: CollaborationReceipt) -> [CollaborationContinuation] {
-    guard action.undo == nil else { return [] }
-    let signature = action.revisions.map { expectation in
-      (collaborationRevision(expectation.target) ?? "missing") + "|" + (documentStates[expectation.target.id]?.stamp.revision ?? "")
-    }.joined(separator:";")
-    if let cached = continuationCache[action.id], cached.0 == signature { return cached.1 }
-    guard let files = try? collaborationContent?.sourceFiles() else { return [] }
-    let result = action.continuations(in:files)
-    continuationCache[action.id] = (signature,result)
-    return result
+    guard action.undo == nil, collaborationDetailsAreCurrent else { return [] }
+    return collaborationReadSnapshot?.continuations[action.id] ?? []
   }
 
   func referenceChanged(_ reference: CollaborationReference) -> Bool {
-    if reference.region != nil && reference.elementID == nil {
-      let status = regionalReferenceStatuses[reference.id]?.status ?? .checking
-      return status == .changed || status == .targetMissing || status == .reviewRequired
+    let status = referenceStatus(reference).status
+    return status == .changed || status == .targetMissing || status == .reviewRequired
+  }
+
+  struct CollaborationPreparationKey: Hashable {
+    let epoch: UInt64
+    let permitsPreparation: Bool
+  }
+
+  // Every source owner and immutable receipt/context input invalidates this
+  // disposable projection on assignment. Camera frames do not. Rows compare
+  // one generation instead of re-hashing content or scanning all owner stamps.
+  var collaborationPreparationKey: CollaborationPreparationKey {
+    .init(epoch: collaborationReadEpoch, permitsPreparation: permitsBackgroundPreparation)
+  }
+
+  var collaborationDetailsAreCurrent: Bool {
+    collaborationReadSnapshot != nil && preparedCollaborationVersion == collaborationReadEpoch
+  }
+
+  func collaborationHistoryMounted(after duration: Duration) {
+    #if os(iOS)
+      let parts = duration.components
+      inputFrameMonitor.recordHistoryMount(durationMS: Double(parts.seconds) * 1000 + Double(parts.attoseconds) / 1e15)
+    #endif
+  }
+
+  func refreshCollaborationDetails() async {
+    guard !collaborationDetailsAreCurrent else { return }
+    collaborationReadGeneration += 1
+    let generation = collaborationReadGeneration
+    // Join the cancelled worker before starting another: a changing source
+    // retains at most one preparation, never a queue of workspace snapshots.
+    let previous = collaborationReadTask
+    previous?.cancel()
+    if let previous { _ = try? await previous.value }
+    guard !Task.isCancelled, generation == collaborationReadGeneration,
+      permitsBackgroundPreparation, let content = collaborationContent else { return }
+    let version = collaborationReadEpoch, actions = collaborationActions
+    var references = sharedContexts.flatMap { $0.entries.flatMap(\.references) }
+    if let highlightedReference { references.append(highlightedReference) }
+    let considered = references
+    let worker = Task.detached(priority: .utility) {
+      try CollaborationReadSnapshot(content: content, actions: actions, references: considered)
     }
-    let target = reference.target
-    let signature: String
-    switch target.kind {
-    case .page: signature = pages[target.id].map { "\($0.drawingStamp.revision)|\($0.agentStamp.revision)" } ?? "missing"
-    case .document: signature = (documents[target.id]?.contentStamp.revision ?? "missing") + "|" + (documentStates[target.id]?.stamp.revision ?? "missing")
-    case .cover,.board: signature = (boardHierarchy?.revision ?? "missing") + "|" + (spatialInk?.stamp.revision ?? "missing")
-    case .workspace: signature = workspace?.stamp.revision ?? "missing"
-    }
-    if let entry = referenceStatusCache[reference.id], entry.0 == signature { return entry.1 }
-    guard let files = try? collaborationContent?.sourceFiles() else { return true }
-    let changed = (try? NotebookStore.referenceRevision(target:reference.target,elementID:reference.elementID,files:files)) != reference.revision
-    referenceStatusCache[reference.id] = (signature,changed)
-    return changed
+    collaborationReadTask = worker
+    let result = try? await withTaskCancellationHandler {
+      try await worker.value
+    } onCancel: { worker.cancel() }
+    guard generation == collaborationReadGeneration else { return }
+    collaborationReadTask = nil
+    guard !Task.isCancelled, permitsBackgroundPreparation, version == collaborationReadEpoch, let result else { return }
+    collaborationReadSnapshot = result
+    preparedCollaborationVersion = version
+    regionalReferenceStatuses = [:]
+    await refreshReferenceStatuses()
+  }
+
+  private func referenceStatus(_ reference: CollaborationReference) -> ReferenceStatus {
+    guard collaborationDetailsAreCurrent else { return .init(.checking) }
+    return regionalReferenceStatuses[reference.id] ?? collaborationReadSnapshot?.references[reference.id] ?? .init(.checking)
   }
 
   func refreshReferenceStatuses() async {
-    guard presencePhase == .settled else { return }
-    let references = Array(contextEntries.flatMap(\.references).filter { $0.region != nil && $0.elementID == nil }.prefix(32))
+    guard permitsBackgroundPreparation, collaborationDetailsAreCurrent, let snapshot = collaborationReadSnapshot else { return }
+    let version = collaborationReadEpoch
+    let references = sharedContexts.flatMap { $0.entries.flatMap(\.references) }.filter { $0.region != nil && $0.elementID == nil }
     let store = store
     let values = await Task.detached(priority: .utility) {
-      references.map { ($0.id, (try? store.referenceStatus($0, prepareRender: false)) ?? .init(.checking)) }
+      references.compactMap { reference -> (UUID, ReferenceStatus)? in
+        guard let revision = snapshot.references[reference.id]?.currentRevision else { return nil }
+        return (reference.id, (try? store.referenceStatus(reference, currentRevision: revision)) ?? .init(.checking))
+      }
     }.value
-    guard !Task.isCancelled else { return }
-    regionalReferenceStatuses = Dictionary(values, uniquingKeysWith: { _, new in new })
+    guard !Task.isCancelled, permitsBackgroundPreparation, version == collaborationReadEpoch else { return }
+    let statuses = Dictionary(values, uniquingKeysWith: { _, new in new })
+    if regionalReferenceStatuses != statuses { regionalReferenceStatuses = statuses }
   }
 
   func referenceStatusLabel(_ reference: CollaborationReference) -> String? {
-    if reference.region != nil && reference.elementID == nil {
-      switch regionalReferenceStatuses[reference.id]?.status ?? .checking {
-      case .checking: return "Проверяется область"
-      case .reviewRequired: return "Нужно рассмотреть заново"
-      case .targetMissing: return "Исходник удалён"
-      case .changed: return "Фрагмент изменился"
-      case .current: return nil
-      }
+    switch referenceStatus(reference).status {
+    case .checking: return reference.region != nil && reference.elementID == nil ? "Проверяется область" : "Проверяется исходник"
+    case .reviewRequired: return "Нужно рассмотреть заново"
+    case .targetMissing: return "Исходник удалён"
+    case .changed: return "Фрагмент изменился"
+    case .current: return nil
     }
-    return referenceChanged(reference) ? "Фрагмент изменился" : nil
   }
 
   func referenceTitle(_ reference: CollaborationReference) -> String {
@@ -1661,7 +1701,7 @@ final class NotebookAppModel {
     #if os(iOS)
       guard collaborationActions.contains(where: { action in !deviceActionReceipts.contains(where: { $0.id == action.id && $0.revisions == action.revisions && $0.displayComplete }) }),
         presencePhase == .settled, presence == visible, !isPointing,
-        collaborationContent != nil else { return }
+        collaborationDetailsAreCurrent else { return }
       acknowledgeReceivedActions()
       let receipts = deviceActionReceipts
       var changed: [DeviceActionReceipt] = []

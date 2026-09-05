@@ -54,7 +54,7 @@ final class SharedAttentionTests: XCTestCase {
   }
 
   @MainActor
-  func testDeliveryAndDisplayRequireDifferentEvidence() throws {
+  func testDeliveryAndDisplayRequireDifferentEvidence() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at:root) }
     let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false)
@@ -70,6 +70,9 @@ final class SharedAttentionTests: XCTestCase {
     model.updatePresence(presence,settled:true)
     model.confirmVisibleActions(presence:presence)
     XCTAssertFalse(try XCTUnwrap(model.store.deviceActionReceipts().first).displayComplete)
+    await model.refreshCollaborationDetails()
+    model.confirmVisibleActions(presence:presence)
+    XCTAssertFalse(try XCTUnwrap(model.store.deviceActionReceipts().first).displayComplete, "Подготовленные адреса ещё не являются показом")
     model.pagePresented(try XCTUnwrap(model.activePage),ready:true)
     model.confirmVisibleActions(presence:presence)
     XCTAssertTrue(try XCTUnwrap(model.store.deviceActionReceipts().first).displayComplete)

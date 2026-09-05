@@ -58,11 +58,39 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
       states:states.filter { oldStates[$0.id] != $0 })
   }
 
-  public func sourceFiles() throws -> [String: JSONValue] {
-    var files: [String: JSONValue] = ["workspace.json": try .encode(workspace), "board.json": try .encode(hierarchy), "spatial-ink.json": try .encode(ink)]
-    for page in pages { files["pages/\(page.id.uuidString.lowercased()).json"] = try .encode(page) }
-    for document in documents { files["documents/\(document.id.uuidString.lowercased()).json"] = try .encode(document) }
-    for state in states { files["document-states/\(state.id.uuidString.lowercased()).json"] = try .encode(state) }
+  public func sourceFiles(including paths: Set<String>? = nil) throws -> [String: JSONValue] {
+    var files: [String: JSONValue] = [:]
+    func include(_ path: String, _ value: some Encodable) throws {
+      try Task.checkCancellation()
+      if paths == nil || paths!.contains(path) { files[path] = try .encode(value) }
+    }
+    try include("workspace.json", workspace)
+    try include("board.json", hierarchy)
+    try include("spatial-ink.json", ink)
+    for page in pages { try include("pages/\(page.id.uuidString.lowercased()).json", page) }
+    for document in documents { try include("documents/\(document.id.uuidString.lowercased()).json", document) }
+    for state in states { try include("document-states/\(state.id.uuidString.lowercased()).json", state) }
     return files
+  }
+
+  /// These are the inputs of referenceRevision, not another content store.
+  func referenceFilePaths(for targets: [CollaborationTarget]) -> Set<String> {
+    var paths = Set<String>()
+    for target in targets {
+      let suffix = target.id.uuidString.lowercased() + ".json"
+      switch target.kind {
+      case .workspace: paths.insert("workspace.json")
+      case .page: paths.insert("pages/" + suffix)
+      case .document:
+        paths.formUnion(["documents/" + suffix, "document-states/" + suffix])
+      case .cover:
+        paths.formUnion(["workspace.json", "board.json", "spatial-ink.json", "documents/" + suffix])
+      case .board:
+        paths.formUnion(["workspace.json", "board.json", "spatial-ink.json"])
+        // Board references include the physical paper sizes of their descendants.
+        paths.formUnion(documents.map { "documents/\($0.id.uuidString.lowercased()).json" })
+      }
+    }
+    return paths
   }
 }
