@@ -299,10 +299,14 @@ struct CoverSnapshotLifecycle {
   }
 
   @MainActor
-  private final class IPadCoverOpeningController: UIViewController {
+  final class IPadCoverOpeningController: UIViewController {
     private let coverHost = UIHostingController(rootView: AnyView(EmptyView()))
+    // Visibility belongs to the wrapper so the captured hosting layer keeps
+    // fully opaque pixels while the live cover rests behind the open page.
+    private let coverVisibilityView = UIView()
     private let curlView = CoverCurlMetalView(frame: .zero)
 
+    private var captureScheduled = false
     private var lifecycle = CoverSnapshotLifecycle()
     private var backsideColor = CoverBacksideColor.document
     private var preparesCoverMotion = false
@@ -317,7 +321,10 @@ struct CoverSnapshotLifecycle {
       addChild(coverHost)
       coverHost.view.backgroundColor = .clear
       coverHost.view.isOpaque = false
-      view.addSubview(coverHost.view)
+      coverVisibilityView.backgroundColor = .clear
+      coverVisibilityView.isOpaque = false
+      view.addSubview(coverVisibilityView)
+      coverVisibilityView.addSubview(coverHost.view)
       coverHost.didMove(toParent: self)
 
       curlView.isHidden = true
@@ -360,8 +367,8 @@ struct CoverSnapshotLifecycle {
           keepingPreparedSnapshot: preparesCoverMotion
         )
         resetCoverHostGeometry()
-        coverHost.view.isHidden = false
-        coverHost.view.alpha = 1
+        coverVisibilityView.isHidden = false
+        coverVisibilityView.alpha = 1
         coverHost.view.isUserInteractionEnabled = true
         prepareRestingCoverIfNeeded(at: endpointWarmProgress)
         return
@@ -372,22 +379,22 @@ struct CoverSnapshotLifecycle {
         // Keep the live cover in the render tree while the page is open. It is
         // visually absent, but Metal/WebKit can still produce a current frame
         // if the next pinch starts by closing the sheet.
-        coverHost.view.isHidden = false
-        coverHost.view.alpha = CoverOpeningPhysics.warmCoverOpacity
+        coverVisibilityView.isHidden = false
+        coverVisibilityView.alpha = CoverOpeningPhysics.warmCoverOpacity
         coverHost.view.isUserInteractionEnabled = false
         prepareRestingCoverIfNeeded(at: 1 - endpointWarmProgress)
         return
       }
 
       if lifecycle.capturedCover == nil {
-        lifecycle.storeCapturedCover(captureCover())
+        scheduleCapture()
       }
       guard let capturedCover = lifecycle.capturedCover else {
         showLiveCoverUntilSnapshotIsReady()
         return
       }
 
-      coverHost.view.isHidden = true
+      coverVisibilityView.isHidden = true
       coverHost.view.isUserInteractionEnabled = false
       curlView.isHidden = false
       curlView.alpha = 1
@@ -402,6 +409,7 @@ struct CoverSnapshotLifecycle {
 
     private func layoutSurfaces() -> CoverCurlLayout? {
       guard view.bounds.width > 0, view.bounds.height > 0 else { return nil }
+      coverVisibilityView.frame = view.bounds
       if coverHost.view.frame != view.bounds {
         coverHost.view.frame = view.bounds
       }
@@ -422,7 +430,7 @@ struct CoverSnapshotLifecycle {
         return
       }
       if lifecycle.needsCurrentSnapshot {
-        lifecycle.storeCapturedCover(captureCover())
+        scheduleCapture()
       }
       guard let capturedCover = lifecycle.capturedCover,
         let layout = layoutSurfaces()
@@ -442,15 +450,39 @@ struct CoverSnapshotLifecycle {
       )
     }
 
+    // A deferred frame lets the attached hosting tree commit its first content.
+    // InkCanvasView confirms its own GPU frame before the curl freezes those
+    // pixels. Pending ink yields a frame between attempts while the cover is live.
+    private func scheduleCapture() {
+      guard !captureScheduled, view.window != nil else { return }
+      captureScheduled = true
+      DispatchQueue.main.asyncAfter(deadline: .now() + 1 / 60) { [weak self] in
+        guard let self else { return }
+        guard self.view.window != nil else {
+          self.captureScheduled = false
+          return
+        }
+        self.lifecycle.storeCapturedCover(self.captureCover())
+        self.captureScheduled = false
+        self.renderCurrentState()
+      }
+    }
+
     private func captureCover() -> CGImage? {
+      guard view.window != nil else { return nil }
       resetCoverHostGeometry()
-      let wasHidden = coverHost.view.isHidden
-      let previousAlpha = coverHost.view.alpha
-      coverHost.view.isHidden = false
-      coverHost.view.alpha = 1
+      let wasHidden = coverVisibilityView.isHidden
+      let previousAlpha = coverVisibilityView.alpha
+      coverVisibilityView.isHidden = false
+      coverVisibilityView.alpha = 1
+      defer {
+        coverVisibilityView.alpha = previousAlpha
+        coverVisibilityView.isHidden = wasHidden
+      }
       coverHost.view.frame = view.bounds
       coverHost.view.setNeedsLayout()
       coverHost.view.layoutIfNeeded()
+      guard inkFramesAreReady(in: coverHost.view) else { return nil }
 
       let format = UIGraphicsImageRendererFormat.preferred()
       format.opaque = false
@@ -461,12 +493,17 @@ struct CoverSnapshotLifecycle {
       let image = renderer.image { _ in
         coverHost.view.drawHierarchy(
           in: coverHost.view.bounds,
-          afterScreenUpdates: false
+          afterScreenUpdates: true
         )
       }
-      coverHost.view.alpha = previousAlpha
-      coverHost.view.isHidden = wasHidden
       return image.cgImage
+    }
+
+    private func inkFramesAreReady(in view: UIView) -> Bool {
+      if let canvas = view as? InkCanvasView {
+        return canvas.isStableFramePresented
+      }
+      return view.subviews.allSatisfy { inkFramesAreReady(in: $0) }
     }
 
     private func resetCoverHostGeometry() {
@@ -480,8 +517,8 @@ struct CoverSnapshotLifecycle {
 
     private func showLiveCoverUntilSnapshotIsReady() {
       resetCoverHostGeometry()
-      coverHost.view.isHidden = false
-      coverHost.view.alpha = 1
+      coverVisibilityView.isHidden = false
+      coverVisibilityView.alpha = 1
       coverHost.view.isUserInteractionEnabled = false
       curlView.isHidden = true
     }
@@ -797,7 +834,8 @@ private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
     layout: CoverCurlLayout
   ) {
     let resolvedProgress = CoverOpeningPhysics.clamped(progress)
-    let changed = sourceCover.map { $0 !== cover } ?? true
+    let changed =
+      sourceCover.map { $0 !== cover } ?? true
       || self.progress != resolvedProgress
       || self.backsideColor != backsideColor
       || self.cornerRadius != cornerRadius

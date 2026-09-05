@@ -1004,6 +1004,10 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertFalse(app.otherElements["paper-input"].exists)
     XCTAssertEqual(app.state, .runningForeground)
     let screenshot = app.screenshot()
+    let proof = XCTAttachment(screenshot: screenshot)
+    proof.name = "cover-ink-on-physical-curl"
+    proof.lifetime = .keepAlways
+    add(proof)
     XCTAssertGreaterThan(
       visibleInkPixelShare(
         in: screenshot,
@@ -1033,10 +1037,6 @@ final class DrawingResponsivenessTests: XCTestCase {
       0.05,
       "The physical curl keeps its overscan transparent around the fold"
     )
-    let proof = XCTAttachment(screenshot: screenshot)
-    proof.name = "cover-ink-on-physical-curl"
-    proof.lifetime = .keepAlways
-    add(proof)
   }
 
   func testDocumentCoverUsesTheSamePhysicalCurl() async throws {

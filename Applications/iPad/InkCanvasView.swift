@@ -127,11 +127,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private var stableContentRevision: UInt64 = 0
   private var presentedStableContentRevision: UInt64?
 
+  var isStableFramePresented: Bool {
+    presentedStableContentRevision == stableContentRevision
+  }
+
   var onRenderReadinessChange: ((Bool) -> Void)? {
     didSet {
-      onRenderReadinessChange?(
-        presentedStableContentRevision == stableContentRevision
-      )
+      onRenderReadinessChange?(isStableFramePresented)
     }
   }
 

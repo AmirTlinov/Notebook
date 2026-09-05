@@ -1,5 +1,7 @@
 import CoreGraphics
 import NotebookCore
+import SwiftUI
+import UIKit
 import XCTest
 
 @testable import Notebook
@@ -156,6 +158,50 @@ final class CoverOpeningPhysicsTests: XCTestCase {
     lifecycle.storeCapturedCover(secondSnapshot)
     lifecycle.settleAtClosedEndpoint(keepingPreparedSnapshot: false)
     XCTAssertNil(lifecycle.capturedCover)
+  }
+
+  @MainActor
+  func testClosingFromAnInitiallyOpenPageKeepsAnOpaqueCover() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene)
+    window.frame = CGRect(x: 0, y: 0, width: 420, height: 600)
+    let controller = IPadCoverOpeningController()
+    window.rootViewController = controller
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true }
+    let owner = UUID()
+    let coverRevision = revision(title: "Opaque cover")
+    func update(_ progress: Double) {
+      controller.update(
+        ownerID: owner, progress: progress, revision: coverRevision,
+        backsideColor: .document, preparesCoverMotion: true, cornerRadius: 12,
+        cover: AnyView(Color.red))
+    }
+    update(1)
+    try await Task.sleep(for: .milliseconds(250))
+    update(0.2)
+    try await Task.sleep(for: .milliseconds(250))
+    let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
+      window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+    }
+    let proof = XCTAttachment(image: image)
+    proof.name = "opaque-cover-after-open-start"
+    proof.lifetime = .keepAlways
+    add(proof)
+    let cg = try XCTUnwrap(image.cgImage)
+    var pixels = [UInt8](repeating: 0, count: cg.width * cg.height * 4)
+    let context = try XCTUnwrap(
+      CGContext(
+        data: &pixels, width: cg.width, height: cg.height,
+        bitsPerComponent: 8, bytesPerRow: cg.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    context.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+    let red = stride(from: 0, to: pixels.count, by: 4).filter {
+      pixels[$0] > 150 && pixels[$0 + 1] < 100 && pixels[$0 + 2] < 100
+    }.count
+    XCTAssertGreaterThan(
+      Double(red) / Double(cg.width * cg.height), 0.15,
+      "Закрывающаяся обложка сохраняет плотный цвет")
   }
 
   private func revision(title: String) -> CoverRenderingRevision {

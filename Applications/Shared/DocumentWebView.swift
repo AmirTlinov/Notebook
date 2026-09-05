@@ -584,11 +584,13 @@ private enum DocumentWebViewFactory {
       )
     }
 
-    func makeUIView(context: Context) -> WKWebView {
-      DocumentWebViewFactory.make(coordinator: context.coordinator)
+    func makeUIView(context: Context) -> DocumentPaperViewport {
+      DocumentPaperViewport(
+        webView: DocumentWebViewFactory.make(coordinator: context.coordinator),
+        paperSize: document.paperSize)
     }
 
-    func updateUIView(_ view: WKWebView, context: Context) {
+    func updateUIView(_ view: DocumentPaperViewport, context: Context) {
       context.coordinator.update(
         document: document,
         state: state,
@@ -599,17 +601,18 @@ private enum DocumentWebViewFactory {
         onSourceChange: onSourceChange,
         onStateChange: onStateChange
       )
+      view.setPaperSize(document.paperSize)
       view.isUserInteractionEnabled = isInteractive
     }
 
     static func dismantleUIView(
-      _ view: WKWebView,
+      _ view: DocumentPaperViewport,
       coordinator: DocumentWebCoordinator
     ) {
-      view.configuration.userContentController.removeScriptMessageHandler(
+      view.webView.configuration.userContentController.removeScriptMessageHandler(
         forName: "notebook"
       )
-      view.navigationDelegate = nil
+      view.webView.navigationDelegate = nil
       coordinator.webView = nil
     }
   }
