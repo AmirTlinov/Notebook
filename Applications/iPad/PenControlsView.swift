@@ -23,11 +23,12 @@ struct PenControlsView: View {
         }
 
         Button {
-          if !isExpanded {
+          if isExpanded || isPenSelected {
+            withAnimation(.smooth(duration: 0.18)) {
+              isExpanded.toggle()
+            }
+          } else {
             model.selectDrawingTool(.pen)
-          }
-          withAnimation(.smooth(duration: 0.18)) {
-            isExpanded.toggle()
           }
         } label: {
           Image(systemName: controlIcon)
@@ -37,7 +38,10 @@ struct PenControlsView: View {
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(isExpanded ? "Закрыть выбор ручки" : "Настроить ручку")
+        .accessibilityLabel(
+          isExpanded ? "Закрыть выбор ручки" : isPenSelected ? "Настроить ручку" : "Ручка"
+        )
+        .accessibilityAddTraits(isPenSelected ? .isSelected : [])
         .accessibilityIdentifier("pen-controls-toggle")
       }
       .padding(isExpanded ? 7 : 0)
@@ -56,6 +60,10 @@ struct PenControlsView: View {
         .accessibilityIdentifier("drawing-tool-pointer")
         .accessibilityAddTraits(model.isPointing ? .isSelected : [])
     }
+  }
+
+  private var isPenSelected: Bool {
+    model.drawingTool == .pen && !model.isElementEditingEnabled && !model.isPointing
   }
 
   private var colorChoices: some View {

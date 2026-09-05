@@ -57,7 +57,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(app.buttons["drawing-tool-eraser"].isHittable)
   }
 
-  func testEraserIsASeparateCircleBesideThePen() {
+  func testEraserAndPenSelectDirectlyBeforeOpeningPenSettings() {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
@@ -80,6 +80,39 @@ final class DrawingResponsivenessTests: XCTestCase {
       10,
       "Ластик должен стоять отдельным кружком непосредственно рядом с ручкой"
     )
+
+    let settings = app.buttons["element-editing-tool"]
+    eraser.tap()
+    XCTAssertTrue(eraser.isSelected)
+    pen.tap()
+    XCTAssertFalse(settings.exists, "Первое касание выбирает ручку и сохраняет компактную панель")
+    XCTAssertTrue(pen.isSelected)
+    XCTAssertFalse(eraser.isSelected)
+
+    pen.tap()
+    XCTAssertTrue(settings.waitForExistence(timeout: 2), "Повторное касание выбранной ручки открывает настройки")
+    pen.tap()
+    XCTAssertTrue(settings.waitForNonExistence(timeout: 2))
+    XCTAssertTrue(pen.isSelected, "Закрытие настроек сохраняет выбранную ручку")
+
+    let pointer = app.buttons["drawing-tool-pointer"]
+    pointer.tap()
+    XCTAssertTrue(pointer.isSelected)
+    XCTAssertFalse(pen.isSelected)
+    pen.tap()
+    XCTAssertTrue(pen.isSelected)
+    XCTAssertFalse(pointer.isSelected)
+    XCTAssertFalse(settings.exists, "Возврат из указателя сразу передаёт ввод ручке")
+
+    pen.tap()
+    XCTAssertTrue(settings.waitForExistence(timeout: 2))
+    settings.tap()
+    pen.tap()
+    XCTAssertTrue(settings.waitForNonExistence(timeout: 2))
+    XCTAssertFalse(pen.isSelected)
+    pen.tap()
+    XCTAssertTrue(pen.isSelected)
+    XCTAssertFalse(settings.exists, "Возврат из редактирования элементов выбирает ручку")
   }
 
   func testPersonMovesAndDeletesAnAgentElement() {
@@ -1551,7 +1584,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     let responseStarted = ContinuousClock.now
     controls.tap()
     let controlsClosed = XCTNSPredicateExpectation(
-      predicate: NSPredicate(format: "label == %@", "Настроить ручку"),
+      predicate: NSPredicate(format: "label == %@", "Ручка"),
       object: controls
     )
     wait(for: [controlsClosed], timeout: 2)
