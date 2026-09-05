@@ -15,8 +15,7 @@ struct Request: Decodable {
   let region: PageRect?
   let worldOrigin: WorldPoint?
   let pageIndex: Int?
-  let size: PageSize?
-  let direction: String?
+  let placement: CollaborationPlacementRequest?
   let contextID: UUID?
   let replyTo: UUID?
   let references: [CollaborationReference]?
@@ -57,9 +56,8 @@ do {
     guard let target = request.target else { throw CollaborationError("invalid_reference", "Нужен владелец указания.") }
     data = try encoder.encode(["revision": store.referenceRevision(target: target, elementID: request.elementID)])
   case "placement":
-    guard let target = request.target, let revision = request.expectedRevision, let size = request.size else { throw CollaborationError("invalid_placement", "Нужны владелец, размер и версия.") }
-    data = try encoder.encode(store.suggestCollaborationPlacement(target: target, expectedRevision: revision,
-      size: size, relativeTo: request.reference, direction: request.direction ?? "free"))
+    guard let placement = request.placement else { throw CollaborationError("invalid_placement", "Нужен пакет размещения.") }
+    data = try encoder.encode(store.suggestCollaborationPlacement(placement))
   case "render":
     guard let target = request.target, let revision = request.expectedRevision else { throw CollaborationError("invalid_reference", "Нужны владелец и прочитанная версия.") }
     data = try encoder.encode(store.requestTargetRender(target: target, expectedRevision: revision,

@@ -18,6 +18,16 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
     self.states = states.sorted { $0.id.uuidString < $1.id.uuidString }
   }
 
+  init(files: [String: JSONValue]) throws {
+    guard let index = files["workspace.json"], let board = files["board.json"], let ink = files["spatial-ink.json"] else {
+      throw CollaborationError("target_missing", "Снимок должен содержать каталог, доски и чернила.")
+    }
+    try self.init(workspace: index.decode(WorkspaceIndex.self), hierarchy: board.decode(BoardHierarchy.self), ink: ink.decode(SpatialInkJournal.self),
+      pages: files.filter { $0.key.hasPrefix("pages/") }.map { try $0.value.decode(PageDocument.self) },
+      documents: files.filter { $0.key.hasPrefix("documents/") }.map { try $0.value.decode(DocumentDocument.self) },
+      states: files.filter { $0.key.hasPrefix("document-states/") }.map { try $0.value.decode(DocumentStateJournal.self) })
+  }
+
   public mutating func merge(_ incoming: Self) {
     _ = workspace.merge(incoming.workspace)
     _ = hierarchy.merge(incoming.hierarchy, items: workspace.items)

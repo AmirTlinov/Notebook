@@ -112,6 +112,23 @@ try {
   assert.equal(content.elements.find((e: Data) => e.id === "meaning").css, "");
   checked.push("one undo retains the later human meaning");
 
+  const placementRequest = { target: page, expected_revision: (await pageExpectation())[0]!.revision, context_id: pointing.context.id,
+    items: [{id:"related-a",size:{width:140,height:80}},{id:"related-b",size:{width:140,height:80},relative_to_id:"related-a",direction:"below"}] };
+  const pendingPlacement = await call("notebook_place", placementRequest);
+  assert.equal(pendingPlacement.status,"snapshot_pending");
+  assert.deepEqual(pendingPlacement.placements,[]);
+  await writeFile(join(root,"previews","targets",pendingPlacement.renderRequest.id.toLowerCase()+".json"),JSON.stringify({
+    request:pendingPlacement.renderRequest,status:"ready",diagnostics:[],inkRegions:[{x:0,y:0,width:120,height:120}],completedAt:pendingPlacement.renderRequest.createdAt}));
+  const composition = await call("notebook_place", placementRequest);
+  assert.equal(composition.status,"ready"); assert.equal(composition.placements.length,2); assert.deepEqual(composition.moves,[]);
+  const composed = await call("notebook_apply",{action_id:randomUUID(),context_id:composition.contextID,summary:"Связанное пояснение",expected:composition.expected,
+    operations:composition.placements.map((item:Data)=>({kind:"insertElement",target:page,id:item.id,values:{kind:"markdown",source:item.id,frame:item.frame}}))});
+  assert.equal(composed.action.contextID.toLowerCase(),pointing.context.id.toLowerCase());
+  await call("notebook_undo",{action_id:composed.action.id});
+  await rejected("notebook_apply",{action_id:randomUUID(),summary:"Необъявленное перемещение",expected:await pageExpectation(),operations:[
+    {kind:"updateElement",target:page,id:"meaning",values:{frame}}]},"composition_scope");
+  checked.push("atomic composition proposal, explicit movement scope and context-bound application");
+
   const a = randomUUID(), b = randomUUID();
   await apply([a, b].map(id => ({ kind: "createBoard", target: board(), id, values: { center: point } })), await boardExpectations());
   const readA = await call("notebook_read_board", { board_id: a });
@@ -145,7 +162,7 @@ try {
     await apply([{ kind: "insertElement", target: cover, id: `corner-${paper}`, values: { kind: "markdown", source: "Corner",
       frame: { x: size.width - 100, y: size.height - 80, width: 100, height: 80 } } }], [{ target: cover, revision: readBoard.boardRevision }]);
     const changedBoard = await call("notebook_read_board", { board_id: rootBoardID });
-    await rejected("notebook_apply", { action_id: randomUUID(), summary: "Outside", expected: [{ target: cover, revision: changedBoard.boardRevision }], operations: [
+    await rejected("notebook_apply", { action_id: randomUUID(), summary: "Outside", additional_owners:[cover], expected: [{ target: cover, revision: changedBoard.boardRevision }], operations: [
       { kind: "updateElement", target: cover, id: `corner-${paper}`, values: { frame: { x: size.width - 99, y: 20, width: 100, height: 80 } } }] }, "invalid_operation");
   }
   const workspace = JSON.parse(await readFile(join(root, "workspace.json"), "utf8"));

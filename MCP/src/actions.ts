@@ -52,7 +52,7 @@ export const operationSchema = z.discriminatedUnion("kind", [
   op("moveItem", z.object({ center: point }).strict(), z.uuid()),
   op("stackItems", z.object({ itemIDs: z.array(z.uuid()).min(2).max(5) }).strict(), null),
 ]);
-export const actionSchema = z.object({ action_id: z.uuid(), context_id: z.uuid().optional(), summary: z.string().min(1).max(1000),
+export const actionSchema = z.object({ action_id: z.uuid(), context_id: z.uuid().optional(), additional_owners: z.array(targetSchema).max(32).optional(), summary: z.string().min(1).max(1000),
   references: z.array(referenceSchema).max(32).default([]), expected: z.array(expectation).min(1).max(1024),
   operations: z.array(operationSchema).min(1).max(512) }).strict();
 
@@ -103,7 +103,7 @@ export async function publicAction(receipt: ActionReceipt, store: NotebookStore)
   const directory = join(store.root,"previews","targets");
   const names = await readdir(directory).catch(()=>[]);
   const snapshots = (await Promise.all(names.filter(name=>name.endsWith(".json")).map(name => readFile(join(directory,name),"utf8").then(JSON.parse).catch(()=>null))))
-    .filter(value => value?.status === "ready" && receipt.revisions.some(r => r.target.id.toLowerCase() === value.request.target.id.toLowerCase() && r.target.kind === value.request.target.kind))
+    .filter(value => value?.status === "ready" && typeof value.pngSHA256 === "string" && receipt.revisions.some(r => r.target.id.toLowerCase() === value.request.target.id.toLowerCase() && r.target.kind === value.request.target.kind))
     .map(value => ({target:value.request.target,sourceRevision:value.request.sourceRevision,region:value.request.region ?? null,pageIndex:value.request.pageIndex,pngSHA256:value.pngSHA256,diagnostics:value.diagnostics}));
   return { status: "saved", action: {id:receipt.id,contextID:receipt.action.contextID ?? receipt.id,summary:receipt.action.summary,references:receipt.action.references,
     createdAt:receipt.createdAt,revisions:receipt.revisions,continuations,results:receipt.action.operations.map(({kind,target,id,values})=>({kind,target,id,frame:values.frame})),
@@ -146,7 +146,7 @@ async function prepareAction(input: z.infer<typeof actionSchema>, store: Noteboo
     }
     operations.push(operation);
   }
-  return { id: input.action_id, contextID: input.context_id, summary: input.summary, references: input.references, expected: input.expected, operations };
+  return { id: input.action_id, contextID: input.context_id, additionalOwners: input.additional_owners, summary: input.summary, references: input.references, expected: input.expected, operations };
 }
 
 export async function actionResult(operation: () => Promise<Record<string, unknown>>) {

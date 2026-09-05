@@ -62,11 +62,18 @@ export function registerCollaborationTools(server: McpServer, store: NotebookSto
   server.registerTool("notebook_place", {
     outputSchema: notebookResponseSchema,
     title: "Find room beside the thought",
-    description: "Calculate a frame against current items, elements and final visible Pencil pixels. The first request may prepare an ink map; repeat when ready. Pass the returned frame, worldOrigin and expected versions to notebook_apply. A full sheet returns placement_unavailable with a continuation suggestion.",
-    inputSchema: z.object({target:targetSchema,expected_revision:z.string(),size:z.object({width:z.number().positive().max(2048),height:z.number().positive().max(2048)}),relative_to:referenceSchema.optional(),direction:z.enum(["right","below","free"]).default("free")}).strict(),
-    annotations:{readOnlyHint:true,openWorldHint:false},
-  }, input => actionResult(() => runBridge(store.root,{command:"placement",target:input.target,expectedRevision:input.expected_revision,
-    size:input.size,reference:input.relative_to,direction:input.direction})));
+    description: "Calculate one complete composition without writing content. Items have unique IDs, sizes and an existing source or preceding item as anchor. Fixed objects and final ink remain obstacles. Only explicitly movable subjects in context_id or additional_owners may be rearranged, and only if the package cannot fit otherwise. Return placements, necessary moves and exact expected versions for notebook_apply. A full surface returns placement_unavailable for the whole package; snapshot_pending never means empty paper.",
+    inputSchema: z.object({ target: targetSchema, expected_revision: z.string(), context_id: z.uuid().optional(),
+      additional_owners: z.array(targetSchema).max(32).default([]), world_origin: world.optional(),
+      items: z.array(z.object({ id: z.string().min(1).max(120), size: z.object({width:z.number().positive().max(2048),height:z.number().positive().max(2048)}).strict(),
+        relative_to: referenceSchema.optional(), relative_to_id: z.string().min(1).max(120).optional(), direction: z.enum(["right","below","free"]).default("free") }).strict()).min(1).max(32),
+      movable: z.array(z.object({target:targetSchema,element_id:z.string().min(1).max(120).optional()}).strict()).max(32).default([]) }).strict(),
+    annotations: {readOnlyHint:true,openWorldHint:false},
+  }, input => actionResult(() => runBridge(store.root,{command:"placement",placement:{ target:input.target,expectedRevision:input.expected_revision,
+    contextID:input.context_id,additionalOwners:input.additional_owners,worldOrigin:input.world_origin,
+    items:input.items.map(item=>({id:item.id,size:item.size,relativeTo:item.relative_to,relativeToID:item.relative_to_id,direction:item.direction})),
+    movable:input.movable.map(subject=>({target:subject.target,elementID:subject.element_id})) }})));
+
   server.registerTool("notebook_search", {
     outputSchema: notebookResponseSchema,
     title: "Find a thought across the whole board tree",

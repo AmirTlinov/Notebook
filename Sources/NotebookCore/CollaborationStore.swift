@@ -72,10 +72,12 @@ extension NotebookStore {
       }
       guard !action.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
         action.summary.count <= 1000, (1...512).contains(action.operations.count),
-        action.references.count <= 32 else {
+        action.references.count <= 32, (action.additionalOwners?.count ?? 0) <= 32 else {
         throw CollaborationError("invalid_action", "Ход содержит описание и от 1 до 512 операций.")
       }
       let before = try CollaborationWorkspace(store: self)
+      let context = try Self.placementContext(action.contextID, in: readSharedContexts())
+      let scopeReferences = context?.entries.flatMap(\.references) ?? action.references
       for expectation in action.expected {
         let actual = try before.revision(of: expectation.target)
         if let expectedSource = expectation.sourceRevision {
@@ -97,6 +99,9 @@ extension NotebookStore {
       var after = before
       var createdTargets = Set<CollaborationTarget>()
       for operation in action.operations {
+        for subject in try Self.compositionSubjects(operation, files: before.files) where !createdTargets.contains(subject.target) {
+          try Self.requireCompositionScope(subject, references: scopeReferences, additionalOwners: action.additionalOwners ?? [], files: before.files)
+        }
         for target in try before.requiredExpectations(for: operation) {
           guard createdTargets.contains(target) || action.expected.contains(where: { $0.target == target }) else {
             throw CollaborationError("revision_required", "Для изменения нужна версия владельца.", target: target)

@@ -79,15 +79,17 @@ public struct CollaborationAction: Codable, Equatable, Sendable, Identifiable {
   public let id: UUID
   public let contextID: UUID?
   public var resolvedContextID: UUID { contextID ?? id }
+  public let additionalOwners: [CollaborationTarget]?
   public let summary: String
   public let references: [CollaborationReference]
   public let expected: [CollaborationExpectation]
   public let operations: [CollaborationOperation]
 
-  public init(id: UUID = UUID(), contextID: UUID? = nil, summary: String, references: [CollaborationReference] = [],
+  public init(id: UUID = UUID(), contextID: UUID? = nil, additionalOwners: [CollaborationTarget]? = nil, summary: String, references: [CollaborationReference] = [],
     expected: [CollaborationExpectation], operations: [CollaborationOperation]) {
     self.id = id
     self.contextID = contextID
+    self.additionalOwners = additionalOwners
     self.summary = summary
     self.references = references
     self.expected = expected

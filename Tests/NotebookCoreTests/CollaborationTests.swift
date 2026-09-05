@@ -11,10 +11,10 @@ private struct CollaborationFixture {
   let itemID: UUID
   let boardID: UUID
 
-  init() throws {
+  init(pageSize: PageSize = .init(width: 834, height: 1194)) throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-collaboration-\(UUID())")
     store = NotebookStore(root: root)
-    let (index, _) = try store.loadOrCreate(actor: human, pageSize: .init(width: 834, height: 1194))
+    let (index, _) = try store.loadOrCreate(actor: human, pageSize: pageSize)
     pageID = index.selectedPageID!
     itemID = index.selectedItemID
     boardID = index.rootBoardID
@@ -236,8 +236,8 @@ func collaborationReferenceIdentity() throws {
   let f = try CollaborationFixture(); defer { f.clean() }
   _ = try f.store.applyCollaborationAction(f.action([f.insert()]),actor:f.agent)
   let source = try f.store.referenceRevision(target:f.page,elementID:"idea")
-  _ = try f.store.applyCollaborationAction(f.action([.init(kind:.moveItem,target:f.board,id:f.itemID.uuidString,
-    values:["center":try .encode(WorldPoint(x:700,y:900))])],targets:[f.board]),actor:f.human)
+  _ = try f.store.applyCollaborationAction(.init(additionalOwners: [.init(kind: .cover, id: f.itemID, boardID: f.boardID)], summary: "Переместить носитель", expected: [f.expectation(f.board)], operations: [.init(kind:.moveItem,target:f.board,id:f.itemID.uuidString,
+    values:["center":try .encode(WorldPoint(x:700,y:900))])]),actor:f.human)
   #expect(try f.store.referenceRevision(target:f.page,elementID:"idea") == source)
   _ = try f.store.applyCollaborationAction(f.action([.init(kind:.updateElement,target:f.page,id:"idea",values:["css":.string("color:blue")])]),actor:f.agent)
   #expect(try f.store.referenceRevision(target:f.page,elementID:"idea") != source)
@@ -499,4 +499,117 @@ func autonomousActionCannotReuseContextIdentity() throws {
   #expect(throws: CollaborationError.self) { try f.store.applyCollaborationAction(action, actor: f.agent) }
   #expect(try f.store.loadPage(f.page.id).elements.isEmpty)
   #expect(try f.store.sharedContexts().contexts == [context])
+}
+
+
+private func completePlacementMap(_ f: CollaborationFixture, _ request: CollaborationPlacementRequest,
+  ink: [PageRect] = []) throws -> CollaborationPlacement {
+  let pending = try f.store.suggestCollaborationPlacement(request)
+  #expect(pending.status == .snapshotPending)
+  #expect(pending.placements.isEmpty && pending.moves.isEmpty)
+  let render = try #require(pending.renderRequest)
+  let receipt = TargetRenderReceipt(request: render, status: "ready", inkRegions: ink)
+  try JSONEncoder().encode(receipt).write(to: f.store.targetReceiptURL(render.id), options: .atomic)
+  return try f.store.suggestCollaborationPlacement(request)
+}
+
+@Test("Пакет размещает связанные элементы по единой карте чернил без записи содержания")
+func placementPackageIsReadOnlyAndAvoidsFinalInk() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let before = try f.store.collaborationContent()
+  let request = CollaborationPlacementRequest(target: f.page, expectedRevision: try f.expectation(f.page).revision,
+    items: [.init(id: "question", size: .init(width: 200, height: 100)),
+      .init(id: "conclusion", size: .init(width: 200, height: 100), relativeToID: "question", direction: .below)])
+  let ink = PageRect(x: 0, y: 0, width: 420, height: 300)
+  let planned = try completePlacementMap(f, request, ink: [ink])
+  #expect(planned.status == .ready && planned.placements.count == 2 && planned.moves.isEmpty)
+  let first = planned.placements[0].frame, second = planned.placements[1].frame
+  #expect(second.x == first.x && second.y == first.y + first.height + 24)
+  #expect(planned.placements.allSatisfy { NotebookStore.collaborationFrameIsFree($0.frame, extent: .init(width: 834, height: 1194), obstacles: [ink]) })
+  #expect(try f.store.collaborationContent() == before)
+  #expect(try f.store.collaborationActions().isEmpty)
+}
+
+@Test("Перестройка двигает только разрешённый фрагмент и отменяется после человеческого продолжения")
+func placementRecompositionKeepsHumanContinuation() throws {
+  let f = try CollaborationFixture(pageSize: .init(width: 320, height: 400)); defer { f.clean() }
+  _ = try f.store.applyCollaborationAction(f.action([.init(kind: .insertElement, target: f.page, id: "source", values: [
+    "kind": .string("web"), "source": .string("Source"), "html": .string("Source"), "state": .number(7),
+    "frame": try .encode(PageRect(x: 110, y: 110, width: 100, height: 100))])]), actor: f.agent)
+  let reference = CollaborationReference(target: f.page, elementID: "source", revision: try f.store.referenceRevision(target: f.page, elementID: "source"))
+  let context = try f.store.appendContext(references: [reference], author: .human, actor: f.human, select: true)
+  let request = CollaborationPlacementRequest(target: f.page, expectedRevision: try f.expectation(f.page).revision,
+    items: [.init(id: "continuation", size: .init(width: 240, height: 180))],
+    movable: [.init(target: f.page, elementID: "source")], contextID: context.id)
+  let planned = try completePlacementMap(f, request)
+  #expect(planned.status == .ready && planned.moves.count == 1)
+  #expect(planned.moves[0].id == "source")
+  _ = try f.store.appendContext(references: [reference], author: .human, actor: f.human, select: true)
+  let operation = CollaborationOperation(kind: .insertElement, target: f.page, id: "continuation", values: [
+    "kind": .string("web"), "source": .string("Next"), "html": .string("Next"), "frame": try .encode(planned.placements[0].frame)])
+  let action = CollaborationAction(contextID: planned.contextID, summary: "Продолжение у исходника", expected: planned.expected, operations: planned.moves + [operation])
+  let receipt = try f.store.applyCollaborationAction(action, actor: f.agent)
+  #expect(receipt.action.contextID == context.id)
+  #expect(try f.store.applyCollaborationAction(action, actor: f.agent) == receipt)
+  var human = try f.store.loadPage(f.pageID)
+  human.replaceElements(human.elements.map { $0.id == "source" ? AgentElement(id: $0.id, kind: $0.kind, frame: $0.frame, source: $0.source, html: "Human continuation", css: $0.css, javaScript: $0.javaScript, state: $0.state) : $0 }, actor: f.human)
+  try f.store.savePage(human)
+  let restarted = NotebookStore(root: f.root)
+  _ = try restarted.undoCollaborationAction(action.id, actor: f.human)
+  let result = try restarted.loadPage(f.pageID)
+  #expect(result.elements.count == 1)
+  #expect(result.elements[0].html == "Human continuation" && result.elements[0].state == .number(7))
+  #expect(result.elements[0].frame == PageRect(x: 110, y: 110, width: 100, height: 100))
+}
+
+@Test("Геометрия вне контекста требует явного владельца даже при обходе расчёта размещения")
+func compositionScopeCannotBeBypassed() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  _ = try f.store.applyCollaborationAction(f.action([f.insert()]), actor: f.agent)
+  let request = CollaborationPlacementRequest(target: f.page, expectedRevision: try f.expectation(f.page).revision,
+    items: [.init(id: "new", size: .init(width: 100, height: 100))], movable: [.init(target: f.page, elementID: "idea")])
+  #expect(throws: CollaborationError.self) { try f.store.suggestCollaborationPlacement(request) }
+  let move = CollaborationOperation(kind: .updateElement, target: f.page, id: "idea", values: ["frame": try .encode(PageRect(x: 350, y: 30, width: 300, height: 180))])
+  let before = try f.store.collaborationContent()
+  #expect(throws: CollaborationError.self) { try f.store.applyCollaborationAction(f.action([move]), actor: f.agent) }
+  #expect(try f.store.collaborationContent() == before)
+  _ = try f.store.applyCollaborationAction(.init(additionalOwners: [f.page], summary: "Явно переместить", expected: [f.expectation(f.page)], operations: [move]), actor: f.agent)
+}
+
+@Test("Изменение чернил между предложением и записью отвергает весь пакет")
+func placementCannotOverwriteNewInk() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let planned = try completePlacementMap(f, .init(target: f.page, expectedRevision: f.expectation(f.page).revision,
+    items: [.init(id: "new", size: .init(width: 120, height: 80))]))
+  var page = try f.store.loadPage(f.pageID); page.replaceDrawing(Data([1, 2, 3]), actor: f.human); try f.store.savePage(page)
+  let action = CollaborationAction(summary: "Поздняя запись", expected: planned.expected, operations: [f.insert("new")])
+  #expect(throws: CollaborationError.self) { try f.store.applyCollaborationAction(action, actor: f.agent) }
+  #expect(try f.store.loadPage(f.pageID).elements.isEmpty)
+  #expect(try f.store.loadPage(f.pageID).drawingData == Data([1, 2, 3]))
+}
+
+@Test("Непоместившийся пакет не возвращает частичное размещение")
+func placementUnavailableIsWholePackage() throws {
+  let f = try CollaborationFixture(pageSize: .init(width: 320, height: 400)); defer { f.clean() }
+  let planned = try completePlacementMap(f, .init(target: f.page, expectedRevision: f.expectation(f.page).revision,
+    items: [.init(id: "a", size: .init(width: 260, height: 250)), .init(id: "b", size: .init(width: 260, height: 250))]))
+  #expect(planned.status == .unavailable && planned.placements.isEmpty && planned.moves.isEmpty)
+}
+
+
+@Test("Указанный лист разрешает перенос его тетради, но не чужого носителя")
+func pageContextOwnsItsPhysicalCarrier() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let context = try f.store.appendContext(references: [.init(target: f.page, region: .init(x: 20, y: 20, width: 80, height: 80), revision: f.store.referenceRevision(target: f.page))], author: .human, actor: f.human)
+  let move = CollaborationOperation(kind: .moveItem, target: f.board, id: f.itemID.uuidString, values: ["center": try .encode(WorldPoint(x: 600, y: 700))])
+  _ = try f.store.applyCollaborationAction(.init(contextID: context.id, summary: "Передвинуть рисунок с носителем", expected: [f.expectation(f.board)], operations: [move]), actor: f.agent)
+  #expect(try f.store.loadBoard(items: f.store.loadIndex().items).board(f.boardID)?.focusedCenter(of: f.itemID) == WorldPoint(x: 600, y: 700))
+}
+
+@Test("Новые элементы одного пакета можно упорядочить без разрешения на чужое содержание")
+func newPackageElementsCanBeReordered() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  _ = try f.store.applyCollaborationAction(f.action([f.insert("a"),f.insert("b"),
+    .init(kind: .reorderElements, target: f.page, values: ["ids": .array([.string("b"),.string("a")])])]), actor: f.agent)
+  #expect(try f.store.loadPage(f.pageID).elements.map(\.id) == ["b","a"])
 }
