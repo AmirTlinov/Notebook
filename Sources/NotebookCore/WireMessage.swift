@@ -70,4 +70,5 @@ public enum WireMessage: Codable, Equatable, Sendable {
   case spatialInk(SpatialInkJournal)
   case presence(PresenceEnvelope)
   case documentPageSelection(DocumentPageSelectionRequest)
+  case collaboration(CollaborationEnvelope)
 }

@@ -134,6 +134,9 @@ public struct NotebookStore: Sendable {
       at: previewsURL,
       withIntermediateDirectories: true
     )
+    for url in [collaborationURL, collaborationActionsURL, renderRequestsURL, targetPreviewsURL, deviceReceiptsURL] {
+      try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    }
   }
 
   static func migrateLegacyStore(

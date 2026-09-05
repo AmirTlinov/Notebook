@@ -68,6 +68,16 @@ final class AgentElementSnapshotCache {
       let image: AgentSnapshotImage
     }
 
+    private var diagnosticEntries: [String: (AgentElement, [RenderDiagnostic])] = [:]
+    func record(_ diagnostic: RenderDiagnostic, for element: AgentElement) {
+      var values = diagnosticEntries[element.id].flatMap { $0.0 == element ? $0.1 : nil } ?? []
+      if !values.contains(diagnostic) { values.append(diagnostic) }
+      diagnosticEntries[element.id] = (element, Array(values.suffix(32)))
+    }
+    func diagnostics(for elements: [AgentElement]) -> [RenderDiagnostic] {
+      elements.flatMap { element in diagnosticEntries[element.id].flatMap { $0.0 == element ? $0.1 : nil } ?? [] }
+    }
+
     private var entries: [String: [Entry]] = [:]
 
     func image(for element: AgentElement) -> AgentSnapshotImage? {
@@ -160,13 +170,13 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     _ userContentController: WKUserContentController,
     didReceive message: WKScriptMessage
   ) {
-    guard message.name == "notebook",
-      let object = message.body as? [String: Any],
-      object["kind"] as? String == "state",
-      let state = object["value"],
-      let value = Self.decodeState(state)
-    else { return }
-    onState(value)
+    guard message.name == "notebook", let object = message.body as? [String: Any] else { return }
+    if object["kind"] as? String == "diagnostic", let element = loadedElement,
+      let kind = object["category"] as? String, let message = object["message"] as? String {
+      AgentElementSnapshotCache.shared.record(.init(kind: kind, elementID: element.id, message: String(message.prefix(2000))), for: element)
+    } else if object["kind"] as? String == "state", let state = object["value"], let value = Self.decodeState(state) {
+      onState(value)
+    }
   }
 
   func webView(
@@ -197,6 +207,8 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       await document.fonts.ready;
       await Promise.all([...document.images].map(image => image.decode().catch(() => {})));
       \(frameReadiness)
+      for (const image of document.images) if (!image.naturalWidth) window.notebookDiagnostic('load_error', 'Image failed to load');
+      if (Math.max(document.body.scrollHeight, document.documentElement.scrollHeight) > innerHeight + 1 || Math.max(document.body.scrollWidth, document.documentElement.scrollWidth) > innerWidth + 1) window.notebookDiagnostic('overflow', 'Content exceeds its frame');
       return true;
       """,
       arguments: [:],
@@ -233,7 +245,8 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     withError error: any Error
   ) {
     guard navigation === activeNavigation else { return }
-    setRenderReady(true)
+    if let element = loadedElement { AgentElementSnapshotCache.shared.record(.init(kind: "load_error", elementID: element.id, message: error.localizedDescription), for: element) }
+    setRenderReady(false)
   }
 
   func webView(
@@ -242,7 +255,8 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     withError error: any Error
   ) {
     guard navigation === activeNavigation else { return }
-    setRenderReady(true)
+    if let element = loadedElement { AgentElementSnapshotCache.shared.record(.init(kind: "load_error", elementID: element.id, message: error.localizedDescription), for: element) }
+    setRenderReady(false)
   }
 
   private func setRenderReady(_ ready: Bool) {
@@ -302,6 +316,9 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         \(element.css)
       </style>
       <script>
+        window.notebookDiagnostic = (category, message) => window.webkit.messageHandlers.notebook.postMessage({kind:'diagnostic',category,message:String(message)});
+        addEventListener('error', event => window.notebookDiagnostic('javascript_error', event.message || 'Resource load error'));
+        addEventListener('unhandledrejection', event => window.notebookDiagnostic('javascript_error', event.reason));
         window.notebook = Object.freeze({
           state: \(state),
           commit(value) {

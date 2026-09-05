@@ -160,6 +160,84 @@ enum CurrentViewPreviewWriter {
   }
 
   @MainActor
+  static func writeTarget(_ request: TargetRenderRequest, model: NotebookAppModel) async throws {
+    guard let content = model.collaborationContent,
+      try NotebookStore.referenceRevision(target: request.target, files: content.sourceFiles()) == request.sourceRevision
+    else { throw PreviewError.sourceChanged }
+    let target = request.target
+    let full: RasterSnapshot
+    var camera: SpatialCamera?
+    var diagnostics: [RenderDiagnostic] = []
+    var inkRegions: [PageRect] = []
+    switch target.kind {
+    case .page:
+      guard let page = model.pages[target.id] else { throw PreviewError.invalidSurface }
+      try await AgentElementSnapshotCache.shared.prepare(page.elements)
+      full = try pageCompositeSnapshot(page)
+      inkRegions = try PageVisionRenderer.render(page).regions.map { $0.receipt.contentPoints }
+      diagnostics = AgentElementSnapshotCache.shared.diagnostics(for: page.elements)
+    case .document:
+      guard let document = model.documents[target.id], let state = model.documentStates[target.id] else { throw PreviewError.invalidSurface }
+      try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: request.pageIndex)
+      guard let image = DocumentSnapshotCache.shared.image(for: document, state: state, pageIndex: request.pageIndex) else { throw PreviewError.documentSnapshotPending }
+      full = try raster(image)
+      diagnostics = DocumentRenderRegistry.shared.entry(document: document, state: state, pageIndex: request.pageIndex)?.diagnostics ?? []
+    case .board, .cover:
+      let boardID = target.kind == .board ? target.id : target.boardID!
+      guard let board = content.hierarchy.board(boardID) else { throw PreviewError.invalidSurface }
+      let size: CGSize
+      let center: WorldPoint
+      if target.kind == .cover {
+        let geometry = model.itemGeometry(target.id)
+        size = .init(width: geometry.width, height: geometry.height)
+        guard let point = board.focusedCenter(of: target.id) else { throw PreviewError.invalidSurface }
+        center = point
+      } else {
+        let region = request.region ?? PageRect(x: 0, y: 0, width: 1024, height: 768)
+        size = .init(width: region.width, height: region.height)
+        center = (request.worldOrigin ?? .zero).offsetBy(x: region.x + region.width / 2, y: region.y + region.height / 2)
+      }
+      let projection = SpatialCamera(center: center, scale: 1)
+      camera = projection
+      let presence = SessionPresence(boardID: boardID, mode: target.kind == .cover ? .cover : .board,
+        camera: projection, viewport: .init(x: size.width, y: size.height), focusedItemID: target.kind == .cover ? target.id : nil)
+      let elements = WorkspaceSceneProjection.snapshotElements(workspace: content.workspace, hierarchy: content.hierarchy,
+        presence: presence, documents: model.documents).filter { $0.kind != .nativeText }.map(agentElementSnapshotSource)
+      try await AgentElementSnapshotCache.shared.prepare(elements)
+      let view = SettledSpatialWorkspaceView(workspace: content.workspace, board: board, spatialInk: content.ink, presence: presence)
+        .environment(model).frame(width: size.width, height: size.height)
+      let png = try renderPNG(view, size: size, scale: 2)
+      guard let image = NSImage(data: png) else { throw PreviewError.pngEncoding }
+      full = RasterSnapshot(image: image, png: png)
+      diagnostics = AgentElementSnapshotCache.shared.diagnostics(for: elements)
+      if let inkImage = SpatialInkRasterCache.shared.image(surface: target.kind == .cover ? .cover(target.id) : .board(target.id),
+        journal: content.ink, camera: target.kind == .board ? projection : nil,
+        viewport: presence.viewport, size: size) {
+        inkRegions = SpatialInkRasterCache.shared.occupiedRegions(inkImage, size: size)
+      }
+    case .workspace: throw PreviewError.invalidSurface
+    }
+    try Task.checkCancellation()
+    guard model.presencePhase == .settled else { throw PreviewError.inputActive }
+    guard try model.store.referenceRevision(target: target) == request.sourceRevision else { throw PreviewError.sourceChanged }
+    let output = target.kind == .board ? full : try crop(full, region: request.region)
+    let image = NSBitmapImageRep(data: output.png)!
+    try model.store.saveTargetRender(.init(request: request, status: "ready", pngSHA256: output.sha256,
+      pixelSize: .init(x: Double(image.pixelsWide), y: Double(image.pixelsHigh)), camera: camera, diagnostics: diagnostics, inkRegions: inkRegions), png: output.png)
+  }
+
+  private static func crop(_ raster: RasterSnapshot, region: PageRect?) throws -> RasterSnapshot {
+    guard let region else { return raster }
+    guard let bitmap = NSBitmapImageRep(data: raster.png), let image = bitmap.cgImage else { throw PreviewError.pngEncoding }
+    let scale = Double(image.width) / raster.image.size.width
+    let rect = CGRect(x: region.x * scale, y: region.y * scale, width: region.width * scale, height: region.height * scale)
+    guard rect.minX >= 0, rect.minY >= 0, rect.maxX <= Double(image.width), rect.maxY <= Double(image.height),
+      let cropped = image.cropping(to: rect), let png = NSBitmapImageRep(cgImage: cropped).representation(using: .png, properties: [:])
+    else { throw PreviewError.invalidSurface }
+    return RasterSnapshot(image: NSImage(cgImage: cropped, size: .init(width: region.width, height: region.height)), png: png)
+  }
+
+  @MainActor
   private static func makeSnapshot(
     presence: SessionPresence,
     spatialElements: [SpatialElement],
@@ -281,6 +359,8 @@ enum CurrentViewPreviewWriter {
     case documentSnapshotPending
     case invalidReceipt
     case invalidSurface
+    case sourceChanged
+    case inputActive
     case pngEncoding
   }
 }

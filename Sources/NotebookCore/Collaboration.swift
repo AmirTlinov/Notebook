@@ -21,15 +21,20 @@ public struct CollaborationReference: Codable, Equatable, Sendable, Identifiable
   public let target: CollaborationTarget
   public let elementID: String?
   public let region: PageRect?
+  public let worldOrigin: WorldPoint?
+  public let pageIndex: Int?
   public let revision: String
   public let label: String
 
   public init(id: UUID = UUID(), target: CollaborationTarget, elementID: String? = nil,
-    region: PageRect? = nil, revision: String, label: String = "") {
+    region: PageRect? = nil, worldOrigin: WorldPoint? = nil, pageIndex: Int? = nil,
+    revision: String, label: String = "") {
     self.id = id
     self.target = target
     self.elementID = elementID
     self.region = region
+    self.worldOrigin = worldOrigin
+    self.pageIndex = pageIndex
     self.revision = revision
     self.label = label
   }

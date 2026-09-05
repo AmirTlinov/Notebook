@@ -282,6 +282,24 @@
         return pageCount;
       };
 
+      let runtimeDiagnostics = [];
+      const diagnostic = (kind, message, blockID) => {
+        runtimeDiagnostics.push({kind, message:String(message), ...(blockID ? {blockID} : {})});
+        runtimeDiagnostics = runtimeDiagnostics.slice(-64);
+      };
+      const blockRegions = () => {
+        if (!pageLayout) return [];
+        const {stride,side,top,pageWidth,pageHeight,requestedPage} = pageLayout;
+        const viewportRect = viewport.getBoundingClientRect();
+        return [...root.children].flatMap(node => [...node.getClientRects()].map(rect => {
+          const x = rect.x - viewportRect.x + requestedPage * stride - side;
+          const pageIndex = Math.max(0,Math.floor(x / stride));
+          const left = Math.max(0,x - pageIndex * stride);
+          const y = Math.max(0,rect.y - viewportRect.y - top);
+          return {id:node.dataset.blockId,pageIndex,x:left,y,width:Math.min(rect.width,pageWidth-left),height:Math.min(rect.height,pageHeight-y)};
+        }).filter(rect => rect.width > 0 && rect.height > 0));
+      };
+
       const setPageIndex = (requestedIndex) => {
         if (!pageLayout || !payload || !Number.isInteger(requestedIndex)) {
           return null;
@@ -294,7 +312,9 @@
           documentID: payload.documentID,
           renderToken: payload.renderToken,
           pageIndex: index,
-          pageCount: pageLayout.pageCount
+          pageCount: pageLayout.pageCount,
+          width: pageLayout.pageWidth, height: pageLayout.pageHeight,
+          regions: blockRegions(), diagnostics: runtimeDiagnostics
         };
       };
 
@@ -312,7 +332,7 @@
         const safeScript = JSON.stringify(block.javaScript || '').replaceAll('<', '\\u003c');
         const safeCSS = String(block.css || '').replace(/<\/style/gi, '<\\/style');
         const csp = "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; font-src data:; media-src data: blob:; form-action 'none'; base-uri 'none'; object-src 'none';";
-        return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}${safeCSS}</style></head><body>${block.html || ''}<script>(()=>{const blockID=${safeID};let value=${safeState};window.notebook={get state(){return value},commit(next){value=next;parent.postMessage({channel:'notebook-interactive',blockID,state:next},'*')}};addEventListener('message',event=>{if(event.data?.channel==='notebook-state'&&event.data.blockID===blockID){value=event.data.state;dispatchEvent(new CustomEvent('notebookstate',{detail:value}))}});try{(0,eval)(${safeScript})}catch(error){document.body.dataset.runtimeError=String(error)}})()<\/script></body></html>`;
+        return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}${safeCSS}</style></head><body>${block.html || ''}<script>(()=>{const blockID=${safeID};const report=(kind,message)=>parent.postMessage({channel:'notebook-diagnostic',blockID,kind,message:String(message)},'*');addEventListener('error',e=>report('javascript_error',e.message));addEventListener('unhandledrejection',e=>report('javascript_error',e.reason));addEventListener('load',()=>{if(document.body.scrollHeight>innerHeight+1||document.body.scrollWidth>innerWidth+1)report('overflow','Content exceeds its frame');for(const image of document.images)if(!image.naturalWidth)report('load_error','Image failed to load')});let value=${safeState};window.notebook={get state(){return value},commit(next){value=next;parent.postMessage({channel:'notebook-interactive',blockID,state:next},'*')}};addEventListener('message',event=>{if(event.data?.channel==='notebook-state'&&event.data.blockID===blockID){value=event.data.state;dispatchEvent(new CustomEvent('notebookstate',{detail:value}))}});try{(0,eval)(${safeScript})}catch(error){report('javascript_error',error)}})()<\/script></body></html>`;
       };
 
       const createBlock = (block) => {
@@ -373,7 +393,7 @@
           }
         } catch (error) {
           for (const node of nodes) node.dataset.mathState = 'error';
-          console.error('MathJax failed to typeset a document block', error);
+          for (const node of nodes) diagnostic('latex_error', error, node.dataset.blockId);
         }
       };
 
@@ -381,6 +401,7 @@
         if (activeEditorFinish) activeEditorFinish(true, false);
         const requestedPage = currentPageIndex();
         payload = nextPayload;
+        runtimeDiagnostics = [];
         configurePaper(nextPayload, requestedPage);
         const oldByID = new Map([...root.children].map(node => [node.dataset.blockId, node]));
         const nextNodes = [];
@@ -558,11 +579,12 @@
       addEventListener('pagehide', () => activeEditorFinish?.(true, false));
       addEventListener('message', event => {
         const message = event.data;
-        if (message?.channel !== 'notebook-interactive' || !payload) return;
+        if (!['notebook-interactive','notebook-diagnostic'].includes(message?.channel) || !payload) return;
         const frame = [...root.querySelectorAll('iframe.interactive-frame')]
           .find(candidate => candidate.contentWindow === event.source);
         const blockID = frame?.closest('.block.interactive')?.dataset.blockId;
         if (!blockID) return;
+        if (message.channel === 'notebook-diagnostic') { diagnostic(message.kind,message.message,blockID); return; }
         payload.states[blockID] = message.state;
         bridge({
           kind: 'state', documentID: payload.documentID,

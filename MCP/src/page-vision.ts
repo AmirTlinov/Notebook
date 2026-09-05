@@ -336,7 +336,7 @@ function publicPageMap(
   return {
     pageID: receipt.pageID,
     drawingRevision: revision(receipt.drawingStamp),
-    blank: receipt.regions.length === 0,
+    inkBlank: receipt.regions.length === 0,
     coordinateSystem: {
       origin: "top-left",
       cellSizeCentimeters: 0.5,

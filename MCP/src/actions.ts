@@ -1,3 +1,5 @@
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/server";
 import { marked } from "marked";
@@ -15,7 +17,7 @@ export const targetSchema = z.discriminatedUnion("kind", [
 export type Target = z.infer<typeof targetSchema>;
 const frame = z.object({ x: z.number().finite(), y: z.number().finite(), width: z.number().positive(), height: z.number().positive() }).strict();
 const point = z.object({ tileX: z.number().int(), tileY: z.number().int(), localX: z.number().finite(), localY: z.number().finite() }).strict();
-export const referenceSchema = z.object({ id: z.uuid(), target: targetSchema, elementID: z.string().optional(), region: frame.optional(), revision: z.string(), label: z.string().max(1000).default("") }).strict();
+export const referenceSchema = z.object({ id: z.uuid(), target: targetSchema, elementID: z.string().optional(), region: frame.optional(), worldOrigin: point.optional(), pageIndex: z.number().int().nonnegative().optional(), revision: z.string(), label: z.string().max(1000).default("") }).strict();
 const expectation = z.object({ target: targetSchema, revision: z.string().min(1) }).strict();
 const source = z.string().max(1_000_000);
 const block = z.discriminatedUnion("kind", [
@@ -72,27 +74,40 @@ export function registerActionTools(server: McpServer, store: NotebookStore): vo
   }, (input) => actionResult(async () => {
     const prepared = await prepareAction(input, store);
     const receipt = await runBridge<ActionReceipt>(store.root, { command: "apply", action: prepared });
-    return publicAction(receipt);
+    return publicAction(receipt, store);
   }));
   server.registerTool("notebook_undo", {
     title: "Undo one agent action while keeping human edits",
     description: "Restore fields still owned by the action. Later human changes remain and are listed as preserved. Repeating undo returns its existing result.",
     inputSchema: z.object({ action_id: z.uuid() }).strict(), outputSchema,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  }, ({ action_id }) => actionResult(async () => publicAction(await runBridge<ActionReceipt>(store.root, { command: "undo", actionID: action_id }))));
+  }, ({ action_id }) => actionResult(async () => publicAction(await runBridge<ActionReceipt>(store.root, { command: "undo", actionID: action_id }), store)));
   server.registerTool("notebook_action", {
     title: "Read an action and its exact publication state",
     description: "Read one action by ID, or the latest actions. The saved result and device display confirmation are distinct facts.",
     inputSchema: z.object({ action_id: z.uuid().optional(), limit: z.number().int().min(1).max(50).default(10) }).strict(), outputSchema,
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ action_id, limit }) => actionResult(async () => action_id
-    ? publicAction(await runBridge<ActionReceipt>(store.root, { command: "action", actionID: action_id }))
-    : { status: "ready", actions: (await runBridge<ActionReceipt[]>(store.root, { command: "actions" })).slice(0, limit).map(publicAction) }));
+    ? publicAction(await runBridge<ActionReceipt>(store.root, { command: "action", actionID: action_id }), store)
+    : { status: "ready", actions: await Promise.all((await runBridge<ActionReceipt[]>(store.root, { command: "actions" })).slice(0, limit).map(receipt => publicAction(receipt, store))) }));
 }
 
-export function publicAction(receipt: ActionReceipt): Record<string, unknown> {
-  const { changes: _, ...action } = receipt;
-  return { status: "saved", action, publication: { saved: true, receivedByIPad: false, snapshotReady: false, shownOnIPad: false } };
+export async function publicAction(receipt: ActionReceipt, store: NotebookStore): Promise<Record<string, unknown>> {
+  const delivery = await runBridge<Array<{id:string;revisions:unknown[];shown:Array<{target:Target;revision:string}>;visibleRegions:unknown[]}>>(store.root,{command:"delivery"});
+  const device = delivery.find(value => value.id.toLowerCase() === receipt.id.toLowerCase());
+  const same = (a:unknown,b:unknown) => JSON.stringify(a) === JSON.stringify(b);
+  const received = device && same(device.revisions,receipt.revisions);
+  const shown = received && receipt.revisions.filter(r=>r.target.kind!=="workspace").every(r => device.shown.some(s => same(s,r)));
+  const directory = join(store.root,"previews","targets");
+  const names = await readdir(directory).catch(()=>[]);
+  const snapshots = (await Promise.all(names.filter(name=>name.endsWith(".json")).map(name => readFile(join(directory,name),"utf8").then(JSON.parse).catch(()=>null))))
+    .filter(value => value?.status === "ready" && receipt.revisions.some(r => r.target.id.toLowerCase() === value.request.target.id.toLowerCase() && r.target.kind === value.request.target.kind))
+    .map(value => ({target:value.request.target,sourceRevision:value.request.sourceRevision,region:value.request.region ?? null,pageIndex:value.request.pageIndex,pngSHA256:value.pngSHA256,diagnostics:value.diagnostics}));
+  return { status: "saved", action: {id:receipt.id,summary:receipt.action.summary,references:receipt.action.references,
+    createdAt:receipt.createdAt,revisions:receipt.revisions,results:receipt.action.operations.map(({kind,target,id,values})=>({kind,target,id,frame:values.frame})),
+    ...(receipt.undo ? {undo:{...receipt.undo,preserved:receipt.undo.preserved.map(value=>{const field=value as {file:string;path:unknown};return {file:field.file,path:field.path};})}} : {})},
+    publication: {saved:{status:"confirmed"},receivedByIPad:{status:received?"confirmed":"awaiting_device"},
+      snapshots,shownOnIPad:{status:shown?"confirmed":"awaiting_display",visibleRegions:received?device.visibleRegions:[]}} };
 }
 
 function deterministicID(actionID: string, suffix: string): string {

@@ -295,21 +295,20 @@ export function revision(stamp: VersionStamp): string {
   return `${stamp.counter}@${stamp.actor.toLowerCase()}`;
 }
 
-export function publicPage(page: PageDocument): object {
+export function publicPage(page: PageDocument, options: { includeSource?: boolean; elementID?: string | undefined } = {}): object {
   return {
     id: page.id,
     size: page.size,
     drawingRevision: revision(page.drawingStamp),
     agentRevision: revision(page.agentStamp),
-    elements: page.elements.map((element) => ({
+    elements: page.elements.filter(element => !options.elementID || element.id === options.elementID).map((element) => ({
       id: element.id,
       kind: element.kind,
       frame: element.frame,
-      source: element.source,
-      html: element.html,
-      css: element.css,
-      javascript: element.javaScript,
-      state: element.state,
+      sourcePreview: element.source.slice(0, 160),
+      sourceCharacterCount: element.source.length,
+      ...(options.includeSource ? { source: element.source, html: element.html, css: element.css,
+        javascript: element.javaScript, state: element.state } : {}),
     })),
   };
 }

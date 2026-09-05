@@ -350,7 +350,7 @@ Markdown и передаёт типизированную команду лок�
 | `notebook_read_page` | Элементы конкретного листа и версия для изменения |
 | `notebook_read_document` | Компактный план, один блок по `block_id` либо весь исходник |
 | `notebook_apply` | Именованный атомарный пакет создания, размещения и точечных изменений |
-| `notebook_action` | Один сохранённый ход по ID либо последние ходы |
+| `notebook_search`, `notebook_point`, `notebook_render`, `notebook_place`, `notebook_action` | Один сохранённый ход по ID либо последние ходы |
 | `notebook_undo` | Отмена сохранившихся полей агента с перечислением человеческих доработок |
 | `notebook_page_map` | Карта окончательных видимых чернил и изменение относительно прежней версии |
 | `notebook_render_page`, `notebook_render_region`, `notebook_render_regions` | Обзор рукописи и точные увеличения её областей |

@@ -226,3 +226,42 @@ func collaborationConcurrentBoardElements() throws {
   #expect(Set(left.elements.map(\.id)) == ["a", "b"])
   #expect(left.elements == right.elements)
 }
+
+@Test("Указание переносится с предметом и замечает изменение исходника")
+func collaborationReferenceIdentity() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  _ = try f.store.applyCollaborationAction(f.action([f.insert()]),actor:f.agent)
+  let source = try f.store.referenceRevision(target:f.page,elementID:"idea")
+  _ = try f.store.applyCollaborationAction(f.action([.init(kind:.moveItem,target:f.board,id:f.itemID.uuidString,
+    values:["center":try .encode(WorldPoint(x:700,y:900))])],targets:[f.board]),actor:f.human)
+  #expect(try f.store.referenceRevision(target:f.page,elementID:"idea") == source)
+  _ = try f.store.applyCollaborationAction(f.action([.init(kind:.updateElement,target:f.page,id:"idea",values:["css":.string("color:blue")])]),actor:f.agent)
+  #expect(try f.store.referenceRevision(target:f.page,elementID:"idea") != source)
+}
+
+@Test("Свободная рамка учитывает все препятствия и возвращает заполненность")
+func collaborationPlacementBounds() {
+  let extent = PageSize(width:834,height:1194), size = PageSize(width:300,height:180)
+  let anchor = PageRect(x:20,y:20,width:300,height:180)
+  let placed = NotebookStore.freeCollaborationFrame(size:size,extent:extent,anchor:anchor,direction:"right",obstacles:[anchor])
+  #expect(placed?.x == 344)
+  #expect(NotebookStore.freeCollaborationFrame(size:size,extent:extent,anchor:anchor,direction:"free",obstacles:[.init(x:0,y:0,width:834,height:1194)]) == nil)
+}
+
+@Test("Целый сетевой срез сохраняет локальную человеческую правку")
+func collaborationAtomicNetworkCut() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  _ = try f.store.applyCollaborationAction(f.action([f.insert()]),actor:f.agent)
+  var human = try f.store.collaborationContent()
+  var page = human.pages[0]; let old = page.elements[0]
+  let edited = AgentElement(id:old.id,kind:old.kind,frame:old.frame,source:"Human",html:"Human",css:old.css,state:old.state)
+  let changed = page.replaceElements([edited],actor:f.human)
+  #expect(changed)
+  human.pages = [page]
+  _ = try f.store.applyCollaborationAction(f.action([.init(kind:.updateElement,target:f.page,id:"idea",values:["css":.string("color:green")])]),actor:f.agent)
+  let incoming = try f.store.collaborationContent()
+  let merged = try f.store.mergeCollaborationContent(incoming,local:human)
+  #expect(merged.pages[0].elements[0].source == "Human")
+  #expect(merged.pages[0].elements[0].css == "color:green")
+  #expect(try f.store.collaborationContent() == merged)
+}

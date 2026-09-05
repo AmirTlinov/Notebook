@@ -6,6 +6,15 @@ struct Request: Decodable {
   let root: String
   let action: CollaborationAction?
   let actionID: UUID?
+  let target: CollaborationTarget?
+  let elementID: String?
+  let reference: CollaborationReference?
+  let expectedRevision: String?
+  let region: PageRect?
+  let worldOrigin: WorldPoint?
+  let pageIndex: Int?
+  let size: PageSize?
+  let direction: String?
 }
 
 let encoder = JSONEncoder()
@@ -26,6 +35,20 @@ do {
     data = try encoder.encode(store.collaborationAction(id))
   case "actions": data = try encoder.encode(store.collaborationActions())
   case "snapshot": data = try encoder.encode(store.collaborationSnapshot())
+  case "attention": data = try encoder.encode(store.sharedAttention())
+  case "point": data = try encoder.encode(store.pointTo(request.reference, actor: store.collaborationActorID()))
+  case "delivery": data = try encoder.encode(store.deviceActionReceipts())
+  case "reference":
+    guard let target = request.target else { throw CollaborationError("invalid_reference", "Нужен владелец указания.") }
+    data = try encoder.encode(["revision": store.referenceRevision(target: target, elementID: request.elementID)])
+  case "placement":
+    guard let target = request.target, let revision = request.expectedRevision, let size = request.size else { throw CollaborationError("invalid_placement", "Нужны владелец, размер и версия.") }
+    data = try encoder.encode(store.suggestCollaborationPlacement(target: target, expectedRevision: revision,
+      size: size, relativeTo: request.reference, direction: request.direction ?? "free"))
+  case "render":
+    guard let target = request.target, let revision = request.expectedRevision else { throw CollaborationError("invalid_reference", "Нужны владелец и прочитанная версия.") }
+    data = try encoder.encode(store.requestTargetRender(target: target, expectedRevision: revision,
+      region: request.region, worldOrigin: request.worldOrigin, pageIndex: request.pageIndex ?? 0))
   default: throw CollaborationError("invalid_command", "Команда должна назвать действие моста.")
   }
   FileHandle.standardOutput.write(data)

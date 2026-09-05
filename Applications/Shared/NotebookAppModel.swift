@@ -96,6 +96,9 @@ final class NotebookAppModel {
   private(set) var spatialInk: SpatialInkJournal?
   private(set) var presence: SessionPresence?
   private(set) var presencePhase = PresencePhase.settled
+  private(set) var isPeerConnected = false
+  private(set) var collaborationActions: [CollaborationReceipt] = []
+  private(set) var sharedAttention: [SharedAttention] = []
   private(set) var actionCue: String?
   private(set) var penStyle: PenStyle
   private(set) var eraserStyle: EraserStyle
@@ -172,9 +175,11 @@ final class NotebookAppModel {
       self?.receivePeerMessage(message)
     }
     sync.onConnect = { [weak self] in
+      self?.isPeerConnected = true
       self?.sendSnapshot()
     }
     sync.onDisconnect = { [weak self] in
+      self?.isPeerConnected = false
       self?.restoreSettledPresenceAfterDisconnect()
     }
   }
@@ -255,6 +260,7 @@ final class NotebookAppModel {
         )
       }
       loadState = .ready
+      reloadCollaborationMetadata()
       #if os(macOS)
         startExternalChangeObservation()
         startPreviewPublication()
@@ -1209,92 +1215,16 @@ final class NotebookAppModel {
   private func reloadExternalChanges(remainingAttempts: Int) {
     guard loadState == .ready else { return }
     do {
-      let diskIndex = try store.loadIndex()
-      let indexChanged = workspace?.merge(diskIndex) == true
-      if indexChanged {
-        workspace = diskIndex
-        reconcileWorkspace(with: diskIndex)
+      let disk = try store.collaborationContent()
+      let previous = collaborationContent
+      let oldActions = collaborationActions
+      let oldAttention = sharedAttention
+      let resolved = try store.mergeCollaborationContent(disk, local: previous)
+      acceptCollaborationContent(resolved)
+      reloadCollaborationMetadata()
+      if previous != resolved || oldActions != collaborationActions || oldAttention != sharedAttention {
+        sendCollaboration(content: resolved)
       }
-      let diskBoard = try store.loadBoard(items: diskIndex.items)
-      if var currentBoard = boardHierarchy {
-        if currentBoard.merge(diskBoard, items: diskIndex.items) {
-          boardHierarchy = currentBoard
-          reconcilePresence(with: diskIndex, board: currentBoard)
-          sync.send(.board(currentBoard))
-        }
-      } else {
-        boardHierarchy = diskBoard
-        reconcilePresence(with: diskIndex, board: diskBoard)
-        sync.send(.board(diskBoard))
-      }
-      let diskInk = try store.loadSpatialInk()
-      if var currentInk = spatialInk {
-        if currentInk.merge(diskInk) {
-          spatialInk = currentInk
-          sync.send(.spatialInk(currentInk))
-        }
-      } else {
-        spatialInk = diskInk
-        sync.send(.spatialInk(diskInk))
-      }
-      for item in diskIndex.items where item.kind == .notebook {
-        for pageID in item.pageIDs {
-          let diskPage = try store.loadPage(pageID)
-          if var current = pages[pageID] {
-            let oldDrawing = current.drawingStamp
-            let oldAgent = current.agentStamp
-            guard current.merge(diskPage) else { continue }
-            pages[pageID] = current
-            if oldDrawing < current.drawingStamp {
-              pencilUndoHistory.discardChanges(for: pageID)
-              sync.send(
-                .drawing(
-                  pageID: pageID,
-                  data: current.drawingData,
-                  stamp: current.drawingStamp
-                )
-              )
-            }
-            if oldAgent < current.agentStamp {
-              sync.send(
-                .elements(
-                  pageID: pageID,
-                  elements: current.elements,
-                  stamp: current.agentStamp,
-                  collaboration: current.collaboration
-                )
-              )
-            }
-          } else {
-            pages[pageID] = diskPage
-            sync.send(.page(diskPage))
-          }
-        }
-      }
-      for item in diskIndex.items where item.kind == .document {
-        let diskDocument = try store.loadDocument(item.id)
-        if var current = documents[item.id] {
-          if current.merge(diskDocument) {
-            documents[item.id] = current
-            sync.send(.document(current))
-          }
-        } else {
-          documents[item.id] = diskDocument
-          sync.send(.document(diskDocument))
-        }
-
-        let diskState = try store.loadDocumentState(item.id)
-        if var current = documentStates[item.id] {
-          if current.merge(diskState) {
-            documentStates[item.id] = current
-            sync.send(.documentState(current))
-          }
-        } else {
-          documentStates[item.id] = diskState
-          sync.send(.documentState(diskState))
-        }
-      }
-      if indexChanged { sync.send(.index(diskIndex)) }
       #if os(macOS)
         externalReloadRetry?.cancel()
         externalReloadRetry = nil
@@ -1329,6 +1259,9 @@ final class NotebookAppModel {
         store.pagesURL,
         store.documentsURL,
         store.documentStatesURL,
+        store.collaborationURL,
+        store.collaborationActionsURL,
+        store.deviceReceiptsURL,
       ]) {
         [weak self] in
         self?.reloadExternalChanges()
@@ -1345,6 +1278,18 @@ final class NotebookAppModel {
 
   func receivePeerMessage(_ message: WireMessage) {
     switch message {
+    case .collaboration(let envelope):
+      do {
+        if let incoming = envelope.content {
+          let resolved = try store.mergeCollaborationContent(incoming, local: collaborationContent)
+          acceptCollaborationContent(resolved)
+        }
+        try store.receiveCollaboration(envelope)
+        reloadCollaborationMetadata()
+        #if os(iOS)
+          acknowledgeReceivedActions()
+        #endif
+      } catch { showCue(error.localizedDescription) }
     case .index(let incoming):
       stageRemoteIndex(incoming)
     case .page(let incoming):
@@ -1484,11 +1429,50 @@ final class NotebookAppModel {
     }
     if let boardHierarchy { sync.send(.board(boardHierarchy)) }
     sync.send(.index(workspace))
+    sendCollaboration(content: collaborationContent)
     #if os(iOS)
       if let lastSettledPresenceEnvelope {
         sync.send(.presence(lastSettledPresenceEnvelope))
       }
     #endif
+  }
+
+  var collaborationContent: CollaborationContent? {
+    guard let workspace, let boardHierarchy, let spatialInk else { return nil }
+    return CollaborationContent(workspace: workspace, hierarchy: boardHierarchy, ink: spatialInk,
+      pages: Array(pages.values), documents: Array(documents.values), states: Array(documentStates.values))
+  }
+
+  private func acceptCollaborationContent(_ content: CollaborationContent) {
+    guard collaborationContent != content else { return }
+    workspace = content.workspace; boardHierarchy = content.hierarchy; spatialInk = content.ink
+    pages = Dictionary(uniqueKeysWithValues: content.pages.map { ($0.id, $0) })
+    documents = Dictionary(uniqueKeysWithValues: content.documents.map { ($0.id, $0) })
+    documentStates = Dictionary(uniqueKeysWithValues: content.states.map { ($0.id, $0) })
+    reconcilePresence(with: content.workspace, board: content.hierarchy)
+  }
+
+  private func reloadCollaborationMetadata() {
+    collaborationActions = (try? store.collaborationActions()) ?? []
+    sharedAttention = (try? store.sharedAttention()) ?? []
+  }
+
+  private func sendCollaboration(content: CollaborationContent? = nil) {
+    sync.send(.collaboration(.init(content: content,
+      actions: Array(collaborationActions.prefix(50)), attention: sharedAttention,
+      delivery: (try? store.deviceActionReceipts()) ?? [])))
+  }
+
+  private func acknowledgeReceivedActions() {
+    guard let content = collaborationContent, let files = try? content.sourceFiles() else { return }
+    let previous = (try? store.deviceActionReceipts()) ?? []
+    var added: [DeviceActionReceipt] = []
+    for action in collaborationActions where !previous.contains(where: { $0.id == action.id }) {
+      guard action.revisions.allSatisfy({ (try? NotebookStore.targetContentRevision(target: $0.target, files: files)) == $0.revision }) else { continue }
+      let receipt = DeviceActionReceipt(id: action.id, deviceID: actorID)
+      try? store.saveDeviceActionReceipt(receipt); added.append(receipt)
+    }
+    if !added.isEmpty { sync.send(.collaboration(.init(delivery: added))) }
   }
 
   private func scheduleSave(_ pageID: UUID) {

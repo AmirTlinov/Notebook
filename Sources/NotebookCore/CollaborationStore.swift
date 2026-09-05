@@ -187,7 +187,7 @@ extension NotebookStore {
   }
 
   private func collaborationFileURL(_ path: String) throws -> URL {
-    let allowed = ["workspace.json", "board.json"].contains(path)
+    let allowed = ["workspace.json", "board.json", "spatial-ink.json"].contains(path)
       || ["pages/", "documents/", "document-states/", "collaboration/actions/"].contains { path.hasPrefix($0) }
     guard allowed, !path.contains(".."), !path.hasPrefix("/"), path.hasSuffix(".json") else {
       throw CollaborationError("invalid_transaction", "Некорректный путь публикации.")
@@ -200,6 +200,44 @@ extension NotebookStore {
     if path == "workspace.json" { return "2" }
     if path.hasPrefix("collaboration/") { return "3" + path }
     return "0" + path
+  }
+
+  public func collaborationContent() throws -> CollaborationContent {
+    try prepare()
+    return try withMutationLock { try loadCollaborationContent() }
+  }
+
+  private func loadCollaborationContent() throws -> CollaborationContent {
+    let value = try CollaborationWorkspace(store: self)
+    let workspace = try value.workspace
+    return try CollaborationContent(workspace: workspace, hierarchy: value.hierarchy, ink: value.ink,
+      pages: value.files.filter { $0.key.hasPrefix("pages/") }.map { try $0.value.decode(PageDocument.self) },
+      documents: value.files.filter { $0.key.hasPrefix("documents/") }.map { try $0.value.decode(DocumentDocument.self) },
+      states: value.files.filter { $0.key.hasPrefix("document-states/") }.map { try $0.value.decode(DocumentStateJournal.self) })
+  }
+
+  /// Disk, memory and the received cut meet under the same recoverable commit.
+  public func mergeCollaborationContent(_ incoming: CollaborationContent,
+    local: CollaborationContent? = nil) throws -> CollaborationContent {
+    try prepare()
+    return try withMutationLock {
+      let before = try loadCollaborationContent()
+      var merged = before
+      if let local { merged.merge(local) }
+      merged.merge(incoming)
+      var validation = try CollaborationWorkspace(store: self)
+      let files = try merged.sourceFiles()
+      validation.files = files.filter { $0.key != "spatial-ink.json" }
+      try validation.validate()
+      guard merged.ink.isValid else { throw CollaborationError("invalid_content", "Журнал чернил должен быть завершён.") }
+      let old = try before.sourceFiles()
+      let transaction = CollaborationTransaction(writes: files.filter { old[$0.key] != $0.value }, removals: old.keys.filter { files[$0] == nil })
+      if !transaction.writes.isEmpty || !transaction.removals.isEmpty {
+        try JSONEncoder().encode(transaction).write(to: pendingCollaborationURL, options: .atomic)
+        try recoverCollaborationTransaction()
+      }
+      return merged
+    }
   }
 
   public func collaborationSnapshot() throws -> [String: JSONValue] {

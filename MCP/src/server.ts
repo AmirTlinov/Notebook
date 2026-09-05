@@ -1,3 +1,5 @@
+import { runBridge, BridgeError } from "./bridge.js";
+import { registerCollaborationTools } from "./collaboration-tools.js";
 import { registerActionTools } from "./actions.js";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -56,95 +58,33 @@ const documentSelection = {
 
 export function createServer(store = new NotebookStore()): McpServer {
   const server = new McpServer({ name: "notebook", version: "0.2.0" });
-  const readSafely = (operation: () => Promise<ToolData | { data: ToolData; image: string }>, hasImage = false) =>
+  const readSafely = (operation: () => Promise<ToolData | { data: ToolData; image?: string }>, hasImage = false) =>
     safely(() => store.withReadSnapshot(operation), hasImage);
 
-  server.registerTool(
-    "notebook_observe",
-    {
-      title: "Observe Amir's settled Notebook view",
-      description:
-        "Wait briefly for publication, then return one verified settled image with its selected item, compact Pencil map, and joined board nodes. Call this first.",
-      inputSchema: z.object({}),
-    },
-    () => safely(() => waitForSettledSnapshot(async () => {
-      const current = await store.readCurrent();
-      const { workspace, presence, item } = current;
-      const [hierarchy, spatialInk, receipt, itemSizes] = await Promise.all([
-        store.readBoardHierarchy(workspace),
-        store.readSpatialInk(),
-        store.readCurrentViewReceipt(),
-        store.readItemSizes(workspace),
-      ]);
-      const board = hierarchy.boards.find((node) => sameID(node.id, presence.boardID))?.board;
-      if (!board) throw new StoreError("Текущая доска ожидает публикации.");
-      assertFreshCurrentView(
-        receipt,
-        workspace.stamp,
-        boardHierarchyRevision(hierarchy),
-        spatialInk.stamp,
-        presence,
-      );
-      await assertCurrentSurfaceSource(store, receipt);
-      const png = await readCurrentViewPNG(store, receipt);
-      const itemIndex = workspace.items.findIndex(
-        (candidate) => sameID(candidate.id, item.id),
-      );
-      const focusedStackID = presence.focusedItemID
-        ? board.stacks.find((stack) => stack.itemIDs.some(
-          (itemID) => sameID(itemID, presence.focusedItemID!),
-        ))?.id ?? null
-        : null;
-      const content = current.kind === "notebook"
-        ? await observedPage(store, current.page, item)
-        : current.kind === "document"
-          ? observedDocument(current.document, current.state)
-          : {
-              kind: "board",
-              boardID: presence.boardID,
-              itemCount: board.freeItems.length
-                + board.stacks.reduce(
-                  (count, stack) => count + stack.itemIDs.length,
-                  0,
-                ),
-            };
-      return {
-        data: {
-          status: "ready",
-          mode: presence.mode,
-          boardID: presence.boardID,
-          camera: presence.camera,
-          viewport: presence.viewport,
-          focusedItemID: presence.focusedItemID ?? null,
-          focusedStackID,
-          openProgress: presence.openProgress,
-          documentPageIndex: presence.documentPageIndex,
-          item: {
-            id: item.id,
-            kind: item.kind,
-            title: item.title || null,
-            identity: itemIdentity(item, board, spatialInk),
-            number: itemIndex + 1,
-            count: workspace.items.length,
-          },
-          content,
-          revisions: {
-            workspace: revision(workspace.stamp),
-            board: revision(board.stamp),
-            spatialInk: revision(spatialInk.stamp),
-          },
-          nodes: joinedBoardNodes(workspace, board, spatialInk, itemSizes),
-          visibleItems: visibleItems(workspace, board, spatialInk, presence, itemSizes),
-          appliedPencilActionCount: spatialInk.actions.filter(
-            (action) => action.isActive,
-          ).length,
-          surface: receipt.surface,
-          pixelEncoding: "image/png",
-        },
-        image: png.toString("base64"),
-      };
-    }), true),
-  );
+  const observations = new Map<string, Record<string, string>>();
+  server.registerTool("notebook_observe", {
+    title: "See the shared thought and what changed",
+    description: "Return the current owner, human/agent pointers, compact content, changes and connection state immediately. Visual readiness is separate. Set wait_ms up to 4000 to wait for the exact current image; useful context is always returned while it is being prepared.",
+    inputSchema: z.object({ since: z.string().optional(), wait_ms: z.number().int().min(0).max(4000).default(0) }),
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, ({ since, wait_ms }) => safely(async () => {
+    const deadline = Date.now() + wait_ms;
+    let result = await observeContext(store);
+    while (result.data.visual.status !== "ready" && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, Math.min(100, deadline - Date.now())));
+      result = await observeContext(store);
+    }
+    const keys = result.data.changeKeys;
+    const cursor = createHash("sha256").update(JSON.stringify(keys)).digest("hex");
+    const previous = since ? observations.get(since) : undefined;
+    const changes = { status: since && !previous ? "baseline_unavailable" : "ready",
+      changed: Object.keys(keys).filter(key => !previous || previous[key] !== keys[key]),
+      removed: Object.keys(previous ?? {}).filter(key => !(key in keys)) };
+    observations.set(cursor, keys);
+    while (observations.size > 32) observations.delete(observations.keys().next().value!);
+    const { changeKeys: _, ...context } = result.data;
+    return { data: { ...context, cursor, changes }, ...(result.image ? { image: result.image } : {}) };
+  }, true));
 
   server.registerTool(
     "notebook_read_board",
@@ -153,9 +93,9 @@ export function createServer(store = new NotebookStore()): McpServer {
       description:
         "Read every free notebook or document, stack, and agent-authored board or cover element. "
         + "Use notebook_observe for the settled visual context.",
-      inputSchema: z.object({ board_id: z.uuid().optional() }),
+      inputSchema: z.object({ board_id: z.uuid().optional(), element_id: z.string().optional(), include_source: z.boolean().default(false) }),
     },
-    ({ board_id }) => readSafely(async () => {
+    ({ board_id, element_id, include_source }) => readSafely(async () => {
       const workspace = await store.readWorkspace();
       const boardID = board_id ?? (await store.readPresence()).boardID;
       const [board, spatialInk, itemSizes] = await Promise.all([
@@ -170,7 +110,8 @@ export function createServer(store = new NotebookStore()): McpServer {
         boardRevision: revision(board.stamp),
         spatialInkRevision: revision(spatialInk.stamp),
         nodes: joinedBoardNodes(workspace, board, spatialInk, itemSizes),
-        elements: board.elements.map(publicSpatialElement),
+        elements: board.elements.filter(element => !element_id || element.id === element_id)
+          .map(element => publicSpatialElement(element, include_source || !!element_id)),
         appliedPencilActionCount: spatialInk.actions.filter(
           (action) => action.isActive,
         ).length,
@@ -229,7 +170,7 @@ export function createServer(store = new NotebookStore()): McpServer {
         coverElements: board.elements.filter(
           (element) => element.surface.kind === "cover"
             && sameID(element.surface.ownerID!, notebook.id),
-        ).map(publicSpatialElement),
+        ).map(element => publicSpatialElement(element, false)),
         appliedCoverPencilActionCount: spatialInk.actions.filter(
           (action) => action.isActive && action.spans.some(
             (span) => span.surface.kind === "cover"
@@ -303,16 +244,16 @@ export function createServer(store = new NotebookStore()): McpServer {
       description:
         "Read page size and all agent-authored Markdown, SVG, CSS, JavaScript, and interactive state. " +
         "Call notebook_render_page to see Pencil handwriting.",
-      inputSchema: z.object(pageSelection),
+      inputSchema: z.object({ ...pageSelection, element_id: z.string().optional(), include_source: z.boolean().default(false) }),
     },
-    ({ page_id, notebook_id, page_number }) => readSafely(async () => {
+    ({ page_id, notebook_id, page_number, element_id, include_source }) => readSafely(async () => {
       const page = await resolvePageSelection(
         store,
         page_id,
         notebook_id,
         page_number,
       );
-      return publicPage(page);
+      return publicPage(page, { includeSource: include_source || !!element_id, elementID: element_id });
     }),
   );
 
@@ -348,8 +289,69 @@ export function createServer(store = new NotebookStore()): McpServer {
   );
 
   registerActionTools(server, store);
+  registerCollaborationTools(server, store);
   registerPageVisionTools(server, store);
   return server;
+}
+
+async function observeContext(store: NotebookStore) {
+  return store.withReadSnapshot(async () => {
+    const current = await store.readCurrent();
+    const { workspace, presence, item } = current;
+    const [hierarchy, spatialInk, sizes, attention, runtime] = await Promise.all([
+      store.readBoardHierarchy(workspace), store.readSpatialInk(), store.readItemSizes(workspace),
+      runBridge<Array<{ author: string; reference?: { id: string; target: object; elementID?: string; revision: string }; stamp: { counter: number; actor: string } }>>(store.root, { command: "attention" }),
+      readFile(join(store.root, "previews", "runtime.json"), "utf8").then(JSON.parse).catch(() => null),
+    ]);
+    const board = hierarchy.boards.find(node => sameID(node.id, presence.boardID))?.board;
+    if (!board) throw new StoreError("Текущая доска ожидает публикации.");
+    let content: Record<string, unknown>;
+    if (presence.mode === "cover") {
+      content = { kind: "cover", itemID: item.id, coverSize: sizes.get(item.id.toLowerCase()),
+        elements: board.elements.filter(e => e.surface.kind === "cover" && sameID(e.surface.ownerID!, item.id)).map(e => publicSpatialElement(e, false)) };
+    } else if (current.kind === "notebook") {
+      try { content = await observedPage(store, current.page, item) as Record<string, unknown>; }
+      catch (error) { content = { ...publicPage(current.page), kind: "page", pencilMap: { status: "pending", message: String(error) } }; }
+    } else if (current.kind === "document") content = observedDocument(current.document, current.state) as Record<string, unknown>;
+    else content = { kind: "board", boardID: presence.boardID, itemCount: board.freeItems.length + board.stacks.reduce((n, stack) => n + stack.itemIDs.length, 0) };
+    const references = await Promise.all(attention.map(async value => {
+      if (!value.reference) return value;
+      try {
+        const fresh = await runBridge<{ revision: string }>(store.root, { command: "reference", target: value.reference.target, elementID: value.reference.elementID });
+        return { ...value, status: fresh.revision === value.reference.revision ? "current" : "changed", currentRevision: fresh.revision };
+      } catch { return { ...value, status: "target_missing" }; }
+    }));
+    let visual: Record<string, any> = { status: "pending" };
+    let image: string | undefined;
+    let surface: unknown = null;
+    try {
+      const receipt = await store.readCurrentViewReceipt();
+      assertFreshCurrentView(receipt, workspace.stamp, boardHierarchyRevision(hierarchy), spatialInk.stamp, presence);
+      await assertCurrentSurfaceSource(store, receipt);
+      image = (await readCurrentViewPNG(store, receipt)).toString("base64");
+      surface = receipt.surface;
+      visual = { status: "ready", pngSHA256: receipt.pngSHA256, surface, viewport: receipt.renderViewport };
+    } catch (error) { visual = { status: "pending", code: "snapshot_pending", message: String(error) }; }
+    const changeKeys: Record<string, string> = { workspace: revision(workspace.stamp),
+      [`board:${presence.boardID}`]: revision(board.stamp), spatialInk: revision(spatialInk.stamp),
+      view: JSON.stringify(presence), attention: JSON.stringify(attention.map(a => [a.author, a.stamp])) };
+    if (current.kind === "notebook") {
+      changeKeys[`page:${current.page.id}:drawing`] = revision(current.page.drawingStamp);
+      changeKeys[`page:${current.page.id}:elements`] = revision(current.page.agentStamp);
+    } else if (current.kind === "document") {
+      changeKeys[`document:${current.document.id}:content`] = revision(current.document.contentStamp);
+      changeKeys[`document:${current.document.id}:state`] = revision(current.state.stamp);
+    }
+    return { data: { status: "ready", mode: presence.mode, boardID: presence.boardID, rootBoardID: workspace.rootBoardID,
+      camera: presence.camera, viewport: presence.viewport, focusedItemID: presence.focusedItemID ?? null,
+      openProgress: presence.openProgress, documentPageIndex: presence.documentPageIndex,
+      item: { id: item.id, kind: item.kind, title: item.title || null, identity: itemIdentity(item, board, spatialInk) },
+      content, references, visual, surface, changeKeys,
+      connection: runtime && Date.now() / 1000 - runtime.updatedAt < 5 ? runtime : { status: "unavailable", lastKnown: runtime },
+      revisions: { workspace: revision(workspace.stamp), board: revision(board.stamp), spatialInk: revision(spatialInk.stamp) },
+      nodes: joinedBoardNodes(workspace, board, spatialInk, sizes), visibleItems: visibleItems(workspace, board, spatialInk, presence, sizes),
+    }, ...(image ? { image } : {}) };
+  });
 }
 
 function visibleItems(
@@ -482,7 +484,7 @@ function itemIdentity(
   };
 }
 
-function publicSpatialElement(element: SpatialElement): object {
+function publicSpatialElement(element: SpatialElement, includeSource = true): object {
   return {
     id: element.id,
     surface: element.surface.kind === "cover"
@@ -491,11 +493,9 @@ function publicSpatialElement(element: SpatialElement): object {
     kind: element.kind,
     frame: element.frame,
     world_origin: element.worldOrigin ?? null,
-    source: element.source,
-    html: element.html,
-    css: element.css,
-    javascript: element.javaScript,
-    state: element.state,
+    sourcePreview: textPreview(element.source),
+    sourceCharacterCount: element.source.length,
+    ...(includeSource ? { source: element.source, html: element.html, css: element.css, javascript: element.javaScript, state: element.state } : {}),
     text_style: element.textStyle,
     revision: revision(element.stamp),
   };
@@ -527,7 +527,7 @@ async function observedPage(
       frame: element.frame,
     })),
     pencilMap: {
-      blank: vision.regions.length === 0,
+      inkBlank: vision.regions.length === 0,
       occupiedCellCount: occupied.length,
       occupiedCellBounds: occupied.length === 0
         ? null
@@ -706,6 +706,10 @@ async function readCurrentViewPNG(
   return png;
 }
 
+function canonicalPresence(presence: SessionPresence) {
+  return {...presence,boardID:presence.boardID.toLowerCase(),focusedItemID:presence.focusedItemID?.toLowerCase()};
+}
+
 function assertFreshCurrentView(
   receipt: CurrentViewReceipt,
   workspaceStamp: VersionStamp,
@@ -716,7 +720,7 @@ function assertFreshCurrentView(
   if (!sameStamp(receipt.workspaceStamp, workspaceStamp)
     || receipt.boardRevision !== boardRevision
     || !sameStamp(receipt.spatialInkStamp, spatialInkStamp)
-    || !isDeepStrictEqual(receipt.presence, presence)) {
+    || !isDeepStrictEqual(canonicalPresence(receipt.presence), canonicalPresence(presence))) {
     throw new StoreError(
       "Снимок текущего вида еще собирается в фоне. Повторите notebook_observe через мгновение.",
     );
@@ -852,7 +856,7 @@ export async function waitForSettledSnapshot<T>(
 type ToolData = object;
 
 async function safely(
-  operation: () => Promise<ToolData | { data: ToolData; image: string }>,
+  operation: () => Promise<ToolData | { data: ToolData; image?: string }>,
   hasImage = false,
 ): Promise<{
   content: Array<
@@ -864,11 +868,11 @@ async function safely(
 }> {
   try {
     const result = await operation();
-    if (hasImage && "image" in result && "data" in result) {
+    if (hasImage && "data" in result) {
       return {
         content: [
           { type: "text", text: JSON.stringify(result.data, null, 2) },
-          { type: "image", data: result.image, mimeType: "image/png" },
+          ...("image" in result && result.image ? [{ type: "image" as const, data: result.image, mimeType: "image/png" as const }] : []),
         ],
         structuredContent: result.data,
       };
@@ -882,7 +886,7 @@ async function safely(
     const pending = snapshotPendingPattern.test(message);
     const data = {
       status: pending ? "pending" : "error",
-      code: pending ? "snapshot_pending" : "operation_failed",
+      code: error instanceof BridgeError ? error.detail.code : pending ? "snapshot_pending" : "operation_failed",
       message,
       retryAfterMilliseconds: pending ? 500 : null,
     };

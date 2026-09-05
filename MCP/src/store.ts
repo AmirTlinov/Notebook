@@ -243,8 +243,9 @@ export class NotebookStore {
   > {
     const workspace = await this.readWorkspace();
     const presence = await this.readPresence();
-    const item = selectedItem(workspace);
-    if (item.kind === "board") {
+    const item = workspace.items.find(candidate => presence.focusedItemID
+      && sameID(candidate.id, presence.focusedItemID)) ?? selectedItem(workspace);
+    if (presence.mode === "board" || item.kind === "board") {
       return { kind: "board", workspace, presence, item };
     }
     if (item.kind === "document") {
@@ -254,15 +255,15 @@ export class NotebookStore {
       ]);
       return { kind: "document", workspace, presence, item, document, state };
     }
-    if (!workspace.selectedPageID) {
-      throw new StoreError("У выбранной тетради нет выбранного листа.");
-    }
+    const pageID = sameID(item.id, workspace.selectedItemID)
+      ? workspace.selectedPageID : item.pageIDs[0];
+    if (!pageID) throw new StoreError("У выбранной тетради нет выбранного листа.");
     return {
       kind: "notebook",
       workspace,
       presence,
       item,
-      page: await this.readPage(workspace.selectedPageID),
+      page: await this.readPage(pageID),
     };
   }
 

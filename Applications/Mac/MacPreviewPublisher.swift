@@ -81,6 +81,8 @@ final class MacPreviewPublisher {
   private var documentSnapshotGeneration = 0
   private var reconciler = PreviewReconciler()
   private var started = false
+  private var targetTask: Task<Void, Never>?
+  private var targetInProgress: UUID?
 
   init(
     model: NotebookAppModel,
@@ -98,6 +100,7 @@ final class MacPreviewPublisher {
     currentViewTask?.cancel()
     pagePreviewTask?.cancel()
     reconciliationTask?.cancel()
+    targetTask?.cancel()
   }
 
   func start() {
@@ -139,6 +142,26 @@ final class MacPreviewPublisher {
   private func reconcilePublication() {
     scheduleCurrentView(for: makeCurrentViewKey())
     schedulePagePreviews(for: pageKeys)
+    guard let model else { return }
+    let health: [String: Any] = ["status": model.isPeerConnected ? "connected" : "disconnected", "updatedAt": Date().timeIntervalSince1970]
+    if let data = try? JSONSerialization.data(withJSONObject: health) {
+      try? data.write(to: model.store.root.appendingPathComponent("previews/runtime.json"), options: .atomic)
+    }
+    guard model.presencePhase == .settled else { targetTask?.cancel(); return }
+    guard targetInProgress == nil, let request = (try? model.store.targetRenderRequests())?.first(where: {
+      !FileManager.default.fileExists(atPath: model.store.targetReceiptURL($0.id).path)
+    }) else { return }
+    targetInProgress = request.id
+    targetTask = Task { [weak self, weak model] in
+      defer { self?.targetInProgress = nil; self?.targetTask = nil }
+      guard let model else { return }
+      do { try await CurrentViewPreviewWriter.writeTarget(request, model: model) }
+      catch {
+        guard !Task.isCancelled, model.presencePhase == .settled else { return }
+        try? model.store.saveTargetRender(.init(request: request, status: "error", diagnostics: [
+          .init(kind: "render_error", message: String(describing: error))]))
+      }
+    }
   }
 
   private func observeCurrentView() {
@@ -213,6 +236,10 @@ final class MacPreviewPublisher {
       }
       do {
         try await AgentElementSnapshotCache.shared.prepare(snapshotElements())
+        if let model, model.presence?.mode == .document, let document = model.activeDocument,
+          let state = model.documentStates[document.id] {
+          try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: model.presence?.documentPageIndex ?? 0)
+        }
         guard !Task.isCancelled, makeCurrentViewKey() == key else {
           throw PreviewPublicationError.sourceChanged
         }

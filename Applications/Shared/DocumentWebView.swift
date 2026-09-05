@@ -44,6 +44,28 @@ import WebKit
       NotificationCenter.default.post(name: Self.didChange, object: documentID)
     }
 
+    func prepare(document: DocumentDocument, state: DocumentStateJournal, pageIndex: Int) async throws {
+      if image(for: document, state: state, pageIndex: pageIndex) != nil { return }
+      let ready = PageTurnReadiness { _ in }
+      let coordinator = DocumentWebCoordinator(onRenderReady: ready, onPageLayout: { _ in }, onSourceChange: { _,_ in }, onStateChange: { _,_ in })
+      let web = DocumentWebViewFactory.make(coordinator: coordinator)
+      let geometry = WorkspaceItemGeometry.document(document.paperSize)
+      let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: geometry.width, height: geometry.height),
+        styleMask: .borderless, backing: .buffered, defer: false)
+      window.isReleasedWhenClosed = false; window.contentView = web; window.orderBack(nil)
+      defer { web.stopLoading(); web.configuration.userContentController.removeScriptMessageHandler(forName: "notebook"); window.orderOut(nil); window.close() }
+      coordinator.update(document: document, state: state, selectedPageIndex: pageIndex, capturesSnapshot: true,
+        onRenderReady: ready, onPageLayout: { _ in }, onSourceChange: { _,_ in }, onStateChange: { _,_ in })
+      let deadline = ContinuousClock.now + .seconds(8)
+      while image(for: document, state: state, pageIndex: pageIndex) == nil {
+        try Task.checkCancellation()
+        guard ContinuousClock.now < deadline else { throw DocumentPreparationError.pending }
+        try await Task.sleep(for: .milliseconds(20))
+      }
+    }
+
+    enum DocumentPreparationError: Error { case pending }
+
     nonisolated static func token(
       document: DocumentDocument,
       state: DocumentStateJournal,
@@ -424,6 +446,8 @@ private final class DocumentWebCoordinator: NSObject,
           setRenderReady(false)
           return
         }
+        DocumentRenderRegistry.shared.publish(documentID: payload.documentID, token: payload.renderToken, receipt: receipt,
+          geometry: .document(payload.paper.kind))
         appliedPageIndex = receiptPage
         setRenderReady(requestedPageIndex == receiptPage)
         applyPageIndexIfReady()
@@ -472,7 +496,9 @@ private final class DocumentWebCoordinator: NSObject,
         }
         return
       }
-      webView.takeSnapshot(with: nil) { [weak self] image, _ in
+      let configuration = WKSnapshotConfiguration()
+      configuration.afterScreenUpdates = true
+      webView.takeSnapshot(with: configuration) { [weak self] image, _ in
         Task { @MainActor [weak self] in
           guard let self, let image,
             self.payload?.renderToken == payload.renderToken

@@ -36,7 +36,7 @@ async function boardExpectations(id = rootBoardID) {
     { target: { kind: "workspace", id: rootBoardID }, revision: read.workspaceRevision }];
 }
 async function pageExpectation() {
-  const read = await call("notebook_read_page", { page_id: pageID });
+  const read = await call("notebook_read_page", { page_id: pageID, include_source: true });
   return [{ target: page, revision: read.agentRevision }];
 }
 async function apply(operations: Data[], expected: Data[], actionID = randomUUID()) {
@@ -51,7 +51,7 @@ try {
   assert.ok(!tools.some(t => /notebook_(put_|patch_document|create_|remove_|move_nodes|stack_nodes|rename_item)/.test(t.name)));
   checked.push("one mutation owner and typed MCP interface");
   const observation = await client.callTool({ name: "notebook_observe", arguments: {} });
-  assert.ok(observation.content.some(c => c.type === "image"));
+  assert.ok(observation.content.some(c => c.type === "image"),JSON.stringify(observation.structuredContent));
   assert.ok((observation.structuredContent as Data).visibleItems);
   const ink = await call("notebook_page_map", { page_id: pageID });
   assert.equal(ink.regions.length, 1);
@@ -70,9 +70,24 @@ try {
   await rejected("notebook_apply", { action_id: actionID, summary: "Different", expected: firstExpectation, operations }, "action_id_conflict");
   await rejected("notebook_apply", { action_id: randomUUID(), summary: "Stale", expected: firstExpectation, operations }, "revision_conflict");
   await apply([{ kind: "updateElement", target: page, id: "counter", values: { css: "button { color: blue }" } }], await pageExpectation());
-  let content = await call("notebook_read_page", { page_id: pageID });
+  let content = await call("notebook_read_page", { page_id: pageID, include_source: true });
   assert.deepEqual(content.elements.find((e: Data) => e.id === "counter").state, { count: 7 });
   assert.match(content.elements.find((e: Data) => e.id === "meaning").html, /<h1>Meaning/);
+  const compact = await call("notebook_read_page", {page_id:pageID});
+  assert.equal(compact.elements[0].source, undefined);
+  await rm(join(root,"previews","current-view.png"));
+  const pendingView = await call("notebook_observe", {since:(observation.structuredContent as Data).cursor});
+  assert.equal(pendingView.visual.status,"pending");
+  assert.ok(pendingView.content);
+  assert.ok(pendingView.changes.changed.length);
+  const pointing = await call("notebook_point", {target:page,element_id:"meaning",label:"Я вижу заголовок мысли"});
+  assert.equal(pointing.attention.reference.target.id.toLowerCase(),pageID.toLowerCase());
+  const search = await call("notebook_search",{query:"Meaning"});
+  assert.ok(search.results.some((r:Data) => r.elementID === "meaning" && r.reference.revision));
+  const targetRender = await call("notebook_render",{target:page,expected_revision:content.agentRevision});
+  assert.equal(targetRender.status,"pending");
+  await rejected("notebook_render",{target:page,expected_revision:"0@00000000-0000-0000-0000-000000000000"},"revision_conflict");
+  checked.push("compact reads, useful pending observation, stable pointer, search and targeted render request");
   checked.push("atomic batch, idempotency, explicit conflicts and preserved state");
 
   const edited = await apply([{ kind: "updateElement", target: page, id: "meaning", values: { source: "Changed", css: "p { color: red }" } }], await pageExpectation());
@@ -85,7 +100,7 @@ try {
   const undone = await call("notebook_undo", { action_id: edited.action.id });
   assert.ok(undone.action.undo.preserved.length >= 2);
   assert.deepEqual(await call("notebook_undo", { action_id: edited.action.id }), undone);
-  content = await call("notebook_read_page", { page_id: pageID });
+  content = await call("notebook_read_page", { page_id: pageID, include_source: true });
   assert.equal(content.elements.find((e: Data) => e.id === "meaning").source, "Human understanding");
   assert.equal(content.elements.find((e: Data) => e.id === "meaning").css, "");
   checked.push("one undo retains the later human meaning");

@@ -21,13 +21,11 @@ final class DrawingOwnershipTests: XCTestCase {
     )
     XCTAssertNotNil(action)
 
-    let drawing = SpatialInkDrawingComposer.drawing(
-      for: .cover(coverID),
-      in: journal
-    )
+    let layers = SpatialInkComposer.localLayers(for: .cover(coverID), journal: journal)
+    XCTAssertEqual(layers.count, 1)
+    guard case .ink(let points, _) = layers[0] else { return XCTFail("Ожидалась ручка") }
+    XCTAssertGreaterThan(points.last!.location.x - points.first!.location.x, 100)
 
-    XCTAssertEqual(drawing.strokes.count, 1)
-    XCTAssertGreaterThan(drawing.bounds.width, 100)
   }
 
   @MainActor
@@ -82,15 +80,6 @@ final class DrawingOwnershipTests: XCTestCase {
       spans: [SpatialInkSpan(surface: .cover(coverID), samples: eraser)],
       actor: actor
     ))
-    let persistedCover = SpatialInkDrawingComposer.drawing(
-      for: .cover(coverID),
-      in: journal
-    )
-    XCTAssertTrue(
-      persistedCover.strokes.isEmpty,
-      "Тот же ластик должен убрать линию и в сохранённом представлении Mac"
-    )
-
     let layers = SpatialInkComposer.localLayers(
       for: .cover(coverID),
       journal: journal

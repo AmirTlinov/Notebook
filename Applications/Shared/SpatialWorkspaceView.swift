@@ -153,12 +153,7 @@ enum WorkspaceSceneProjection {
         SpatialBoardGrid(camera: presence.camera)
         settledBoardElements
         SpatialInkSurfaceView(
-          drawing: SpatialInkDrawingComposer.boardDrawing(
-            board: .board(presence.boardID),
-            in: spatialInk,
-            camera: presence.camera,
-            viewport: presence.viewport
-          )
+          surface: .board(presence.boardID), journal: spatialInk, camera: presence.camera, viewport: presence.viewport
         )
         .frame(width: presence.viewport.x, height: presence.viewport.y)
         .allowsHitTesting(false)
@@ -306,12 +301,7 @@ struct SpatialWorkspaceView: View {
 
         #if os(macOS)
           SpatialInkSurfaceView(
-            drawing: SpatialInkDrawingComposer.boardDrawing(
-              board: .board(presence.boardID),
-              in: model.spatialInk,
-              camera: presence.camera,
-              viewport: viewport
-            )
+            surface: .board(presence.boardID), journal: model.spatialInk, camera: presence.camera, viewport: viewport
           )
           .frame(width: viewport.x, height: viewport.y)
           .allowsHitTesting(false)
@@ -1910,10 +1900,7 @@ struct BoardPortalPreview: View {
             camera: camera, viewport: viewport
           )
         #else
-          SpatialInkSurfaceView(drawing: SpatialInkDrawingComposer.boardDrawing(
-            board: .board(boardID), in: model.spatialInk,
-            camera: camera, viewport: viewport
-          ))
+          SpatialInkSurfaceView(surface: .board(boardID), journal: model.spatialInk, camera: camera, viewport: viewport)
         #endif
 
         ForEach(rendered) { item in
@@ -2073,10 +2060,7 @@ struct WorkspaceItemCoverView: View {
         .opacity(portalOverlayOpacity)
       #elseif os(macOS)
         SpatialInkSurfaceView(
-          drawing: SpatialInkDrawingComposer.drawing(
-            for: .cover(item.id),
-            in: model.spatialInk
-          )
+          surface: .cover(item.id), journal: model.spatialInk
         )
         .allowsHitTesting(false)
         .opacity(portalOverlayOpacity)
