@@ -51,4 +51,47 @@ final class CollaborationVisionTests: XCTestCase {
     XCTAssertEqual(cropped.pixelSize?.y,320)
     XCTAssertEqual(model.presence,original)
   }
+  @MainActor
+  func testRegionalReferenceIgnoresOutsideInkAndFollowsItsPhysicalOwner() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    var page = try XCTUnwrap(model.activePage)
+    let actor = UUID(), target = CollaborationTarget(kind: .page, id: page.id)
+    func stroke(_ y: Double, tool: SpatialInkTool = .pen) -> PageInkAction {
+      .init(tool: tool, samples: [40.0, 120.0].map {
+        .init(point: .init(x: $0, y: y), timeOffset: $0 / 1000, width: tool == .pen ? 8 : 40, opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+      })
+    }
+    var actions: [PageInkAction] = []
+    func save() throws {
+      _ = page.replaceDrawing(try PageInkDrawing(actions: actions).dataRepresentation(), actor: actor)
+      _ = try model.store.saveMergedPage(page); model.reloadExternalChanges()
+    }
+    try save()
+    let reference = CollaborationReference(target: target, region: .init(x: 20, y: 20, width: 140, height: 100),
+      revision: try model.store.referenceRevision(target: target))
+    XCTAssertEqual(try model.store.referenceStatus(reference).status, .checking)
+    func render() async throws {
+      let request = try model.store.requestTargetRender(target: target, expectedRevision: page.agentStamp.revision, region: reference.region)
+      try await CurrentViewPreviewWriter.writeTarget(request, model: model)
+    }
+    try await render()
+    XCTAssertEqual(try model.store.referenceStatus(reference).status, .current)
+    actions.append(stroke(300)); try save()
+    XCTAssertEqual(try model.store.referenceStatus(reference).status, .checking)
+    try await render()
+    XCTAssertEqual(try model.store.referenceStatus(reference).status, .current, "Чернила вне области не меняют понимание")
+    let workspace = try XCTUnwrap(model.workspace)
+    model.moveItem(workspace.selectedItemID, to: .init(x: 800, y: 500))
+    XCTAssertEqual(try model.store.referenceStatus(reference).status, .current, "Положение предмета не входит в исходник")
+    actions.append(stroke(90)); try save(); try await render()
+    XCTAssertEqual(try model.store.referenceStatus(reference).status, .changed)
+    let reopened = NotebookStore(root: root)
+    XCTAssertEqual(try reopened.referenceStatus(reference).status, .changed, "Перезапуск сохраняет рассмотренные пиксели")
+    actions.append(stroke(90, tool: .eraser)); try save(); try await render()
+    XCTAssertEqual(try reopened.referenceStatus(reference).status, .current, "Окончательное стирание возвращает тот же фрагмент")
+  }
+
 }

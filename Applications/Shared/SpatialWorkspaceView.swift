@@ -441,8 +441,9 @@ struct SpatialWorkspaceView: View {
         #if os(iOS)
           if model.isPointing {
             NotebookPointerView(onPreview:{ pointerPreview = $0 },onPoint:{ start,end in
-              guard cameraGesture == nil, !settling, let reference = NotebookAttentionProjection.reference(start:start,end:end,model:model,presence:presence) else { return }
-              model.publishHumanContext([reference])
+              guard cameraGesture == nil, !settling else { return }
+              let references = NotebookAttentionProjection.references(start:start,end:end,model:model,presence:presence)
+              if !references.isEmpty { model.publishHumanContext(references) }
             })
             if let rect = pointerPreview {
               RoundedRectangle(cornerRadius:4).stroke(.indigo,style:StrokeStyle(lineWidth:2,dash:[6,4]))
@@ -456,7 +457,8 @@ struct SpatialWorkspaceView: View {
         #else
           if model.isPointing {
             Color.clear.contentShape(Rectangle()).gesture(DragGesture(minimumDistance:0).onEnded { value in
-              if let reference = NotebookAttentionProjection.reference(start:value.startLocation,end:value.location,model:model,presence:presence) { model.publishHumanContext([reference]) }
+              let references = NotebookAttentionProjection.references(start:value.startLocation,end:value.location,model:model,presence:presence)
+              if !references.isEmpty { model.publishHumanContext(references) }
             })
           }
         #endif
@@ -474,6 +476,24 @@ struct SpatialWorkspaceView: View {
         }
         model.afterPageInput {
           showReference(reference,viewport:viewport)
+        }
+      }
+      .task(id: model.requestedReturn?.id) {
+        guard let place = model.requestedReturn else { return }
+        while cameraGesture != nil || settling || pageTurnIsActive || contentGestureActive || model.presencePhase != .settled {
+          do { try await Task.sleep(for: .milliseconds(40)) } catch { return }
+        }
+        model.afterPageInput {
+          defer { model.completeReturnToPlace() }
+          guard model.boardHierarchy?.board(place.presence.boardID) != nil else { return }
+          if let itemID = place.presence.focusedItemID {
+            guard let item = model.workspace?.items.first(where: { $0.id == itemID }) else { return }
+            model.selectItem(itemID)
+            if let pageID = place.pageID, let index = item.pageIDs.firstIndex(of: pageID) {
+              _ = model.selectNotebookPage(index, notebookID: itemID)
+            }
+          }
+          animateSettlement(to: place.presence.adapted(to: viewport, geometry: model.itemGeometry(place.presence.focusedItemID)), duration: 0.3)
         }
       }
       .onChange(of: geometry.size) { _, _ in
@@ -615,27 +635,20 @@ struct SpatialWorkspaceView: View {
         .padding(.bottom, 20)
         .zIndex(10_000)
       }
-      if presence.mode == .board,
-        presence.boardID != model.workspace?.rootBoardID,
-        !settling
-      {
-        Button {
-          leaveBoard(viewport: viewport)
-        } label: {
-          Label("Назад", systemImage: "chevron.left")
-            .font(.system(size: 17, weight: .semibold))
-            .padding(.horizontal, 16)
-            .frame(height: 48)
-            .background(.ultraThinMaterial, in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("leave-nested-board")
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(.leading, 22)
-        .padding(.top, 18)
-        .zIndex(10_000)
-      }
+
     #endif
+    NotebookNavigationView(presence: presence,
+      documentPageCount: presence.focusedItemID.flatMap { documentPageLayouts[$0]?.pageCount } ?? 1,
+      onBack: {
+        if !model.returnPlaces.isEmpty { model.requestReturnToPlace() }
+        else if presence.mode == .board { leaveBoard(viewport: viewport) }
+        else {
+          animateSettlement(to: .init(boardID: presence.boardID, mode: .board,
+            camera: .init(center: presence.camera.center, scale: model.itemGeometry(presence.focusedItemID).coverScale(viewport: viewport)), viewport: viewport), duration: 0.3)
+        }
+      })
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+      .padding(.leading, 18).padding(.top, 18).zIndex(10_000)
   }
 
   @ViewBuilder
@@ -662,6 +675,7 @@ struct SpatialWorkspaceView: View {
             isSelected: model.elementEditingSession.selection == reference,
             coordinateScale: presence.camera.scale,
             translation: elementTranslation(for: reference),
+            isContentInteractive: !element.javaScript.isEmpty,
             onSelect: {
               model.selectElement(reference)
               selectedItemID = nil
@@ -672,7 +686,10 @@ struct SpatialWorkspaceView: View {
             onDragEnded: { translation in
               model.finishElementDrag(reference, translation: translation)
             },
-            onDelete: { model.deleteElement(reference) }
+            onResizeChanged: { model.updateElementResize(reference, delta: $0) },
+          onResizeEnded: { model.finishElementResize(reference, delta: $0) },
+          resizeDelta: model.elementResizeDelta(reference),
+          onDelete: { model.deleteElement(reference) }
           ) {
             SpatialElementContent(element: element)
           }
@@ -2074,6 +2091,7 @@ struct WorkspaceItemCoverView: View {
           isSelected: model.elementEditingSession.selection == reference,
           coordinateScale: 1,
           translation: elementTranslation(for: reference),
+            isContentInteractive: !element.javaScript.isEmpty,
           onSelect: {
             model.selectElement(reference)
             onElementSelected()
@@ -2084,6 +2102,9 @@ struct WorkspaceItemCoverView: View {
           onDragEnded: { translation in
             model.finishElementDrag(reference, translation: translation)
           },
+          onResizeChanged: { model.updateElementResize(reference, delta: $0) },
+          onResizeEnded: { model.finishElementResize(reference, delta: $0) },
+          resizeDelta: model.elementResizeDelta(reference),
           onDelete: { model.deleteElement(reference) }
         ) {
           Group {

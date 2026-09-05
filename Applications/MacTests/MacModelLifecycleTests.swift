@@ -204,7 +204,7 @@ final class MacModelLifecycleTests: XCTestCase {
     )
 
     XCTAssertTrue(
-      model.movePageElement(
+      model.transformPageElement(
         pageID: page.id,
         elementID: pageElement.id,
         by: SpatialPoint(x: 10_000, y: -10_000)
@@ -215,6 +215,14 @@ final class MacModelLifecycleTests: XCTestCase {
     )
     XCTAssertEqual(movedPageElement.frame.x, page.size.width - 240)
     XCTAssertEqual(movedPageElement.frame.y, 0)
+    let source = movedPageElement.source, state = movedPageElement.state
+    XCTAssertTrue(model.transformPageElement(pageID: page.id, elementID: pageElement.id, by: .zero, resizeBy: .init(x: -40, y: 80)))
+    let resized = try XCTUnwrap(model.pages[page.id]?.elements.first)
+    XCTAssertEqual(resized.frame.width, 200)
+    XCTAssertEqual(resized.frame.height, 260)
+    XCTAssertEqual(resized.source, source)
+    XCTAssertEqual(resized.state, state)
+
 
     let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
     var board = try XCTUnwrap(model.boardHierarchy)
@@ -239,7 +247,7 @@ final class MacModelLifecycleTests: XCTestCase {
     model.receivePeerMessage(.board(board))
 
     XCTAssertTrue(
-      model.moveSpatialElement(
+      model.transformSpatialElement(
         elementID: coverElement.id,
         by: SpatialPoint(x: -10_000, y: 10_000)
       )

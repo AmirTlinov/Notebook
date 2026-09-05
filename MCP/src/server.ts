@@ -309,7 +309,7 @@ async function observeContext(store: NotebookStore, contextID?: string) {
     const { workspace, presence, item } = current;
     const [hierarchy, spatialInk, sizes, shared, runtime] = await Promise.all([
       store.readBoardHierarchy(workspace), store.readSpatialInk(), store.readItemSizes(workspace),
-      runBridge<ContextSnapshot>(store.root, { command: "contexts" }),
+      store.readCollaborationContexts<ContextSnapshot>(),
       readFile(join(store.root, "previews", "runtime.json"), "utf8").then(JSON.parse).catch(() => null),
     ]);
     const board = hierarchy.boards.find(node => sameID(node.id, presence.boardID))?.board;
@@ -328,11 +328,11 @@ async function observeContext(store: NotebookStore, contextID?: string) {
     if (contextID && !context) throw new BridgeError({code:"context_missing",message:"Общий фрагмент не найден."});
     const references = await Promise.all((context?.entries ?? []).flatMap(entry => entry.references.map(async reference => {
       try {
-        const fresh = await runBridge<{revision:string}>(store.root,{command:"reference",target:reference.target,elementID:reference.elementID});
-        return {entryID:entry.id,author:entry.author,reference,status:entry.requiresReview ? "review_required" : fresh.revision === reference.revision ? "current" : "changed",currentRevision:fresh.revision};
-      } catch { return {entryID:entry.id,author:entry.author,reference,status:"target_missing"}; }
+        const fresh = await runBridge<{status:string;currentRevision?:string;fingerprint?:string}>(store.root,{command:"referenceStatus",reference});
+        return {entryID:entry.id,author:entry.author,reference,...fresh,status:entry.requiresReview ? "review_required" : fresh.status};
+      } catch (error) { return {entryID:entry.id,author:entry.author,reference,status:error instanceof BridgeError && error.detail.code === "target_missing" ? "target_missing" : "checking"}; }
     })));
-    const relatedActions = context ? (await runBridge<ActionReceipt[]>(store.root,{command:"actions"}))
+    const relatedActions = context ? (await store.readCollaborationActions<ActionReceipt[]>())
       .filter(action => sameID(action.action.contextID ?? action.id, context.id)).slice(0,10) : [];
     let visual: Record<string, any> = { status: "pending" };
     let image: string | undefined;

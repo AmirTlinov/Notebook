@@ -98,6 +98,13 @@ final class NotebookAppModel {
   private(set) var presence: SessionPresence?
   private(set) var presencePhase = PresencePhase.settled
   var isPointing = false
+  struct ReturnPlace: Identifiable {
+    let id = UUID()
+    let presence: SessionPresence
+    let pageID: UUID?
+  }
+  private(set) var returnPlaces: [ReturnPlace] = []
+  private(set) var requestedReturn: ReturnPlace?
   private(set) var requestedReference: CollaborationReference?
   private(set) var highlightedReference: CollaborationReference?
   private(set) var showsCollaborationNotice = false
@@ -112,15 +119,20 @@ final class NotebookAppModel {
   private var readyPages: [UUID: String] = [:]
   private(set) var isPeerConnected = false
   private(set) var collaborationActions: [CollaborationReceipt] = []
+  private(set) var regionalReferenceStatuses: [UUID: ReferenceStatus] = [:]
   private(set) var sharedContexts: [SharedContext] = []
   private(set) var contextSelection: SharedContextSelection?
   var activeSharedContext: SharedContext? {
     sharedContexts.first { $0.id == contextSelection?.contextID }
   }
   var presentedSharedContext: SharedContext? {
-    if showsCollaborationNotice, let action = collaborationActions.first,
-      let context = sharedContexts.first(where: { $0.id == action.action.resolvedContextID }) { return context }
-    return activeSharedContext ?? sharedContexts.max { ($0.entries.last?.createdAt ?? .distantPast) < ($1.entries.last?.createdAt ?? .distantPast) }
+    guard showsCollaborationNotice else { return activeSharedContext }
+    let newest = sharedContexts.max { ($0.entries.last?.createdAt ?? .distantPast) < ($1.entries.last?.createdAt ?? .distantPast) }
+    if let action = collaborationActions.first,
+      (action.undo?.completedAt ?? action.createdAt) >= (newest?.entries.last?.createdAt ?? .distantPast) {
+      return sharedContexts.first { $0.id == action.action.resolvedContextID }
+    }
+    return newest ?? activeSharedContext
   }
   var contextEntries: [SharedContextEntry] { presentedSharedContext?.entries ?? [] }
   private(set) var actionCue: String?
@@ -985,7 +997,7 @@ final class NotebookAppModel {
   }
 
   func selectElement(_ reference: EditableElementReference) {
-    guard isElementEditingEnabled else { return }
+    if !isElementEditingEnabled { selectElementTool() }
     guard elementEditingSession.selection != reference else { return }
     elementEditingSession = ElementEditingSession(selection: reference)
   }
@@ -1013,21 +1025,39 @@ final class NotebookAppModel {
     elementEditingSession = ElementEditingSession(selection: reference)
     switch reference {
     case .page(let pageID, let elementID):
-      _ = movePageElement(
+      _ = transformPageElement(
         pageID: pageID,
         elementID: elementID,
         by: translation
       )
     case .spatial(let elementID):
-      _ = moveSpatialElement(elementID: elementID, by: translation)
+      _ = transformSpatialElement(elementID: elementID, by: translation)
     }
+  }
+
+  func updateElementResize(_ reference: EditableElementReference, delta: SpatialPoint) {
+    guard isElementEditingEnabled, elementEditingSession.selection == reference else { return }
+    elementEditingSession = .init(selection: reference, resizeDelta: delta)
+  }
+
+  func finishElementResize(_ reference: EditableElementReference, delta: SpatialPoint) {
+    guard isElementEditingEnabled, elementEditingSession.selection == reference else { return }
+    elementEditingSession = .init(selection: reference)
+    switch reference {
+    case .page(let pageID, let elementID): _ = transformPageElement(pageID: pageID, elementID: elementID, by: .zero, resizeBy: delta)
+    case .spatial(let elementID): _ = transformSpatialElement(elementID: elementID, by: .zero, resizeBy: delta)
+    }
+  }
+
+  func elementResizeDelta(_ reference: EditableElementReference) -> SpatialPoint {
+    elementEditingSession.selection == reference ? elementEditingSession.resizeDelta : .zero
   }
 
   func deleteElement(_ reference: EditableElementReference) {
     guard isElementEditingEnabled,
       elementEditingSession.selection == reference
     else { return }
-    elementEditingSession = ElementEditingSession()
+    endElementEditing()
     switch reference {
     case .page(let pageID, let elementID):
       _ = removePageElement(pageID: pageID, elementID: elementID)
@@ -1037,7 +1067,7 @@ final class NotebookAppModel {
   }
 
   func clearElementSelection() {
-    elementEditingSession = ElementEditingSession()
+    endElementEditing()
   }
 
   private func endElementEditing() {
@@ -1070,35 +1100,38 @@ final class NotebookAppModel {
   }
 
   @discardableResult
-  func movePageElement(
+  func transformPageElement(
     pageID: UUID,
     elementID: String,
-    by translation: SpatialPoint
+    by translation: SpatialPoint,
+    resizeBy delta: SpatialPoint = .zero
   ) -> Bool {
     let moved = mutatePageElements(pageID: pageID) { page, elements in
       guard let index = elements.firstIndex(where: { $0.id == elementID }) else {
         return false
       }
       let element = elements[index]
+      let width = delta == .zero ? element.frame.width : min(max(44, element.frame.width + delta.x), page.size.width - element.frame.x)
+      let height = delta == .zero ? element.frame.height : min(max(44, element.frame.height + delta.y), page.size.height - element.frame.y)
       let x = min(
         max(element.frame.x + translation.x, 0),
-        page.size.width - element.frame.width
+        page.size.width - width
       )
       let y = min(
         max(element.frame.y + translation.y, 0),
-        page.size.height - element.frame.height
+        page.size.height - height
       )
       let frame = PageRect(
         x: x,
         y: y,
-        width: element.frame.width,
-        height: element.frame.height
+        width: width,
+        height: height
       )
       guard frame != element.frame else { return false }
       elements[index] = element.updating(frame: frame)
       return true
     }
-    if moved { showCue("Элемент перемещён") }
+    if moved { showCue(delta == .zero ? "Элемент перемещён" : "Размер элемента изменён") }
     return moved
   }
 
@@ -1114,9 +1147,10 @@ final class NotebookAppModel {
   }
 
   @discardableResult
-  func moveSpatialElement(
+  func transformSpatialElement(
     elementID: String,
-    by translation: SpatialPoint
+    by translation: SpatialPoint,
+    resizeBy delta: SpatialPoint = .zero
   ) -> Bool {
     guard var hierarchy = boardHierarchy, let workspace, let presence else {
       return false
@@ -1130,14 +1164,16 @@ final class NotebookAppModel {
     }
     var element = board.elements[index]
     let expected = element.stamp
+    let geometry = itemGeometry(element.surface.ownerID)
+    let width = delta == .zero ? element.frame.width : min(max(44, element.frame.width + delta.x), element.surface.kind == .cover ? geometry.width - element.frame.x : 2048)
+    let height = delta == .zero ? element.frame.height : min(max(44, element.frame.height + delta.y), element.surface.kind == .cover ? geometry.height - element.frame.y : 2048)
     let proposedX = element.frame.x + translation.x
     let proposedY = element.frame.y + translation.y
     let x: Double
     let y: Double
     if element.surface.kind == .cover {
-      let geometry = itemGeometry(element.surface.ownerID)
-      x = min(max(proposedX, 0), geometry.width - element.frame.width)
-      y = min(max(proposedY, 0), geometry.height - element.frame.height)
+      x = min(max(proposedX, 0), geometry.width - width)
+      y = min(max(proposedY, 0), geometry.height - height)
     } else {
       x = proposedX
       y = proposedY
@@ -1145,8 +1181,8 @@ final class NotebookAppModel {
     let frame = SpatialRect(
       x: x,
       y: y,
-      width: element.frame.width,
-      height: element.frame.height
+      width: width,
+      height: height
     )
     guard frame != element.frame,
       element.update(frame: frame, actor: actorID),
@@ -1158,7 +1194,7 @@ final class NotebookAppModel {
       )
     else { return false }
     persistBoard(hierarchy)
-    showCue("Элемент перемещён")
+    showCue(delta == .zero ? "Элемент перемещён" : "Размер элемента изменён")
     return true
   }
 
@@ -1475,6 +1511,10 @@ final class NotebookAppModel {
   }
 
   func referenceChanged(_ reference: CollaborationReference) -> Bool {
+    if reference.region != nil && reference.elementID == nil {
+      let status = regionalReferenceStatuses[reference.id]?.status ?? .checking
+      return status == .changed || status == .targetMissing || status == .reviewRequired
+    }
     let target = reference.target
     let signature: String
     switch target.kind {
@@ -1490,6 +1530,30 @@ final class NotebookAppModel {
     return changed
   }
 
+  func refreshReferenceStatuses() async {
+    guard presencePhase == .settled else { return }
+    let references = Array(contextEntries.flatMap(\.references).filter { $0.region != nil && $0.elementID == nil }.prefix(32))
+    let store = store
+    let values = await Task.detached(priority: .utility) {
+      references.map { ($0.id, (try? store.referenceStatus($0, prepareRender: false)) ?? .init(.checking)) }
+    }.value
+    guard !Task.isCancelled else { return }
+    regionalReferenceStatuses = Dictionary(values, uniquingKeysWith: { _, new in new })
+  }
+
+  func referenceStatusLabel(_ reference: CollaborationReference) -> String? {
+    if reference.region != nil && reference.elementID == nil {
+      switch regionalReferenceStatuses[reference.id]?.status ?? .checking {
+      case .checking: return "Проверяется область"
+      case .reviewRequired: return "Нужно рассмотреть заново"
+      case .targetMissing: return "Исходник удалён"
+      case .changed: return "Фрагмент изменился"
+      case .current: return nil
+      }
+    }
+    return referenceChanged(reference) ? "Фрагмент изменился" : nil
+  }
+
   func referenceTitle(_ reference: CollaborationReference) -> String {
     switch reference.target.kind {
     case .page: return "Лист"
@@ -1501,8 +1565,28 @@ final class NotebookAppModel {
   }
 
   func requestShow(_ reference: CollaborationReference) {
+    if requestedReference == nil, let presence {
+      returnPlaces.append(.init(presence: presence, pageID: workspace?.selectedPageID))
+      returnPlaces = Array(returnPlaces.suffix(32))
+    }
     requestedReference = .init(target:reference.target,elementID:reference.elementID,region:reference.region,
       worldOrigin:reference.worldOrigin,pageIndex:reference.pageIndex,revision:reference.revision,label:reference.label)
+  }
+
+  func requestReturnToPlace() {
+    guard requestedReturn == nil, let place = returnPlaces.popLast() else { return }
+    requestedReference = nil
+    requestedReturn = place
+  }
+
+  func completeReturnToPlace() { requestedReturn = nil; highlightedReference = nil }
+
+  func locationTitle(for reference: CollaborationReference) -> String {
+    let item = workspace?.items.first { $0.id == reference.target.id || $0.pageIDs.contains(reference.target.id) }
+    if reference.target.kind == .page, let item, let index = item.pageIDs.firstIndex(of: reference.target.id) {
+      return "\(item.title) · лист \(index + 1)"
+    }
+    return item?.title ?? referenceTitle(reference)
   }
 
   func completeShow(_ reference: CollaborationReference) {

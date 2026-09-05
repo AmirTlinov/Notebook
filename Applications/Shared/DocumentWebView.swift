@@ -605,6 +605,7 @@ private enum DocumentWebViewFactory {
       )
       view.setPaperSize(document.paperSize)
       view.isUserInteractionEnabled = isInteractive
+      view.accessibilityElementsHidden = !isInteractive
     }
 
     static func dismantleUIView(
@@ -644,6 +645,7 @@ private enum DocumentWebViewFactory {
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
+      view.setAccessibilityHidden(!isInteractive)
       context.coordinator.update(
         document: document,
         state: state,

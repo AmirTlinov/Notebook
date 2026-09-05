@@ -47,7 +47,27 @@ enum NotebookAttentionProjection {
       width:max(8,local.width * presence.camera.scale),height:max(8,local.height * presence.camera.scale))
   }
 
-  static func reference(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence) -> CollaborationReference? {
+  static func references(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence) -> [CollaborationReference] {
+    guard presence.mode == .board, hypot(end.x - start.x, end.y - start.y) > 8,
+      let workspace = model.workspace, let board = model.boardHierarchy?.board(presence.boardID) else {
+      return reference(start: start, end: end, model: model, presence: presence).map { [$0] } ?? []
+    }
+    let selection = CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x), height: abs(end.y - start.y))
+    var result = reference(start: start, end: end, model: model, presence: presence).map { [$0] } ?? []
+    for item in WorkspaceSceneProjection.items(workspace: workspace, board: board, presence: presence, documents: model.documents) {
+      let box = item.geometry.screenFrame(center: item.center, camera: presence.camera, viewport: presence.viewport)
+      let intersection = selection.intersection(CGRect(x: box.x, y: box.y, width: box.width, height: box.height))
+      guard !intersection.isNull, intersection.width > 0, intersection.height > 0,
+        !result.contains(where: { $0.target.id == item.id }), result.count < 32 else { continue }
+      if let reference = reference(start: .init(x: intersection.minX, y: intersection.minY),
+        end: .init(x: intersection.maxX, y: intersection.maxY), model: model, presence: presence, ownerID: item.id) {
+        result.append(reference)
+      }
+    }
+    return result
+  }
+
+  static func reference(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence, ownerID: UUID? = nil) -> CollaborationReference? {
     guard let content = model.collaborationContent, let files = try? content.sourceFiles(),
       let board = content.hierarchy.board(presence.boardID) else { return nil }
     let dragged = hypot(end.x-start.x,end.y-start.y) > 8
@@ -59,6 +79,7 @@ enum NotebookAttentionProjection {
     var elementID: String?
     var pageIndex: Int?
     if let item = items.reversed().first(where: { item in
+      if let ownerID { return item.id == ownerID }
       let frame = item.geometry.screenFrame(center:item.center,camera:presence.camera,viewport:presence.viewport)
       return CGRect(x:frame.x,y:frame.y,width:frame.width,height:frame.height).contains(rect)
     }) {

@@ -458,7 +458,8 @@ func contextMigrationRetainsSourcesAndBackup() throws {
   try original.write(to: path)
   try f.store.migrateCollaborationStorage()
   let migrated = try f.store.sharedContexts()
-  #expect(migrated.selection?.contextID == reference.id)
+  #expect(migrated.selection?.contextID == migrated.contexts.first?.id)
+  #expect(migrated.selection?.contextID != reference.id)
   #expect(migrated.contexts.count == 1)
   #expect(migrated.contexts[0].entries[0].requiresReview)
   #expect(migrated.contexts[0].entries[0].references == [reference])
@@ -486,4 +487,16 @@ func sharedSearchOwnsAppAndAgentResults() throws {
   let same = try NotebookStore.search("idea", files: f.store.collaborationSnapshot())
   #expect(same.results.map(\.preview) == found.results.map(\.preview))
   #expect(same.results.map(\.path) == found.results.map(\.path))
+}
+
+@Test("Самостоятельный ход не присоединяется к случайно совпавшему ID чужого контекста")
+func autonomousActionCannotReuseContextIdentity() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let source = CollaborationReference(target: f.page, revision: try f.store.referenceRevision(target: f.page))
+  let context = try f.store.appendContext(references: [source], author: .human, actor: f.human, select: true)
+  let original = try f.action([f.insert()])
+  let action = CollaborationAction(id: context.id, summary: original.summary, expected: original.expected, operations: original.operations)
+  #expect(throws: CollaborationError.self) { try f.store.applyCollaborationAction(action, actor: f.agent) }
+  #expect(try f.store.loadPage(f.page.id).elements.isEmpty)
+  #expect(try f.store.sharedContexts().contexts == [context])
 }

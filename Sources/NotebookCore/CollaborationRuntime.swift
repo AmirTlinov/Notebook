@@ -24,6 +24,7 @@ public struct RenderDiagnostic: Codable, Equatable, Sendable {
 public struct TargetRenderReceipt: Codable, Equatable, Sendable {
   public let request: TargetRenderRequest
   public let status: String
+  public let referenceFingerprint: String?
   public let pngSHA256: String?
   public let pixelSize: SpatialPoint?
   public let camera: SpatialCamera?
@@ -31,10 +32,10 @@ public struct TargetRenderReceipt: Codable, Equatable, Sendable {
   public let inkRegions: [PageRect]
   public let completedAt: Date
 
-  public init(request: TargetRenderRequest, status: String, pngSHA256: String? = nil,
+  public init(request: TargetRenderRequest, status: String, pngSHA256: String? = nil, referenceFingerprint: String? = nil,
     pixelSize: SpatialPoint? = nil, camera: SpatialCamera? = nil,
     diagnostics: [RenderDiagnostic] = [], inkRegions: [PageRect] = []) {
-    self.request = request; self.status = status; self.pngSHA256 = pngSHA256
+    self.request = request; self.status = status; self.pngSHA256 = pngSHA256; self.referenceFingerprint = referenceFingerprint
     self.pixelSize = pixelSize; self.camera = camera; self.diagnostics = diagnostics
     self.inkRegions = inkRegions
     completedAt = Date()
@@ -168,7 +169,7 @@ extension NotebookStore {
     let request = TargetRenderRequest(id: UUID(uuidString: uuid)!, target: target, sourceRevision: source,
       region: region, worldOrigin: worldOrigin, pageIndex: pageIndex, createdAt: Date())
     try prepare()
-    try withMutationLock {
+    return try withMutationLock {
       let url = renderRequestsURL.appendingPathComponent(request.id.uuidString.lowercased() + ".json")
       let requests = try targetRenderRequests()
       let pending = requests.filter { !FileManager.default.fileExists(atPath:targetReceiptURL($0.id).path) }
@@ -180,9 +181,12 @@ extension NotebookStore {
         try? FileManager.default.removeItem(at:targetPNGURL(obsolete.id))
         try? FileManager.default.removeItem(at:targetReceiptURL(obsolete.id))
       }
-      if !FileManager.default.fileExists(atPath: url.path) { try JSONEncoder().encode(request).write(to: url, options: .atomic) }
+      if FileManager.default.fileExists(atPath: url.path) {
+        return try JSONDecoder().decode(TargetRenderRequest.self, from: Data(contentsOf: url))
+      }
+      try JSONEncoder().encode(request).write(to: url, options: .atomic)
+      return request
     }
-    return request
   }
 
   public static func targetContentRevision(target: CollaborationTarget, files: [String: JSONValue]) throws -> String {

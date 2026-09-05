@@ -209,11 +209,14 @@ extension NotebookStore {
         guard FileManager.default.fileExists(atPath: url.path) else { continue }
         let previous = try JSONDecoder().decode(PreviousAttention.self, from: Data(contentsOf: url))
         if let reference = previous.reference {
+          // Legacy pointer IDs and action IDs belonged to independent namespaces.
+          var contextID = UUID()
+          while writes[contextFile(contextID)] != nil { contextID = UUID() }
           let entry = SharedContextEntry(id: reference.id, author: previous.author, references: [reference],
             stamp: previous.stamp, requiresReview: true, createdAt: .distantPast)
-          writes[contextFile(reference.id)] = try .encode(SharedContext(id: reference.id, entries: [entry]))
+          writes[contextFile(contextID)] = try .encode(SharedContext(id: contextID, entries: [entry]))
           if previous.author == .human {
-            writes["collaboration/selection.json"] = try .encode(SharedContextSelection(contextID: reference.id, stamp: previous.stamp))
+            writes["collaboration/selection.json"] = try .encode(SharedContextSelection(contextID: contextID, stamp: previous.stamp))
           }
         }
         removals.append(path)

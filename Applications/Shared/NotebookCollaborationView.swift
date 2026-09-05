@@ -5,97 +5,122 @@ struct NotebookCollaborationView: View {
   @Environment(NotebookAppModel.self) private var model
   @State private var showsHistory = false
   @State private var pendingShow: CollaborationReference?
+  private var contexts: [SharedContext] {
+    model.sharedContexts.sorted { left, right in
+      latestDate(left) > latestDate(right)
+    }
+  }
+  private func latestDate(_ context: SharedContext) -> Date {
+    max(context.entries.map(\.createdAt).max() ?? .distantPast,
+      model.collaborationActions.first { $0.action.resolvedContextID == context.id }?.createdAt ?? .distantPast)
+  }
   var body: some View {
-    VStack(alignment:.leading,spacing:8) {
+    VStack(alignment: .leading, spacing: 8) {
       if model.isPointing {
-        Label("Укажите фрагмент · протяните для области",systemImage:"hand.point.up.left")
-          .font(.callout).padding(12).background(.regularMaterial,in:RoundedRectangle(cornerRadius:16))
+        Label("Укажите фрагмент · протяните для области", systemImage: "hand.point.up.left")
+          .font(.callout).padding(12).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
       }
-      if model.showsCollaborationNotice, let attention = model.contextEntries.last(where: { $0.author == .agent }), let reference = attention.references.first {
-        HStack(alignment:.top,spacing:10) {
-          Image(systemName:"quote.bubble").accessibilityHidden(true)
-          VStack(alignment:.leading,spacing:4) {
-            Text("Понимание агента").font(.caption.weight(.semibold))
-            Text(reference.label).font(.callout).lineLimit(4)
-            if model.referenceChanged(reference) { Text("Фрагмент изменился · рассмотрим заново").font(.caption).foregroundStyle(.secondary) }
-          }
-          Button("Показать") { model.requestShow(reference) }.buttonStyle(.borderless)
-        }.padding(12).background(.regularMaterial,in:RoundedRectangle(cornerRadius:16))
-      }
-      if model.showsCollaborationNotice, let latest = model.collaborationActions.first {
-        HStack(spacing:12) {
+      if model.showsCollaborationNotice, let context = model.presentedSharedContext {
+        let latest = model.collaborationActions.first { $0.action.resolvedContextID == context.id }
+        HStack(alignment: .top, spacing: 8) {
           Button { showsHistory = true } label: {
-            VStack(alignment:.leading,spacing:3) {
-              Text(latest.undo == nil ? "Ход агента" : "Ход отменён").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-              Text(latest.action.summary).font(.callout).lineLimit(2)
-              if model.continuations(for:latest).contains(where: { $0.author == .human }) {
-                Text("Продолжено вами").font(.caption).foregroundStyle(.secondary)
-              }
-            }.frame(maxWidth:.infinity,alignment:.leading)
-          }.buttonStyle(.plain).accessibilityIdentifier("collaboration-history")
-          if let reference = model.results(for:latest).first {
-            Button("Показать") { model.requestShow(reference) }.accessibilityIdentifier("collaboration-show")
+            VStack(alignment: .leading, spacing: 4) {
+              Text(latest?.undo != nil ? "Ход отменён" : "Продолжение мысли").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+              Text(latest?.action.summary ?? context.entries.last?.references.first?.label ?? "Общий фрагмент").font(.callout).lineLimit(3)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+          }.accessibilityIdentifier("collaboration-history")
+          if let reference = latest.flatMap({ model.results(for: $0).first }) ?? context.entries.last?.references.first {
+            Button("Показать") { model.requestShow(reference) }.frame(minHeight: 44).accessibilityIdentifier("collaboration-show")
           }
-          if latest.undo == nil {
-            Button("Отменить") { model.undoCollaboration(latest.id) }.accessibilityIdentifier("collaboration-undo")
+          if let latest, latest.undo == nil {
+            Button("Отменить") { model.undoCollaboration(latest.id) }.frame(minHeight: 44).accessibilityIdentifier("collaboration-undo")
           }
-          Button { model.dismissCollaborationNotice() } label: { Image(systemName:"xmark") }
+          Button { model.dismissCollaborationNotice() } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }
             .accessibilityLabel("Скрыть уведомление").accessibilityIdentifier("collaboration-dismiss")
-        }.buttonStyle(.borderless).padding(12).background(.regularMaterial,in:RoundedRectangle(cornerRadius:16))
-      }
-      if !model.showsCollaborationNotice, !model.collaborationActions.isEmpty || model.contextEntries.contains(where: { $0.author == .agent && !$0.references.isEmpty }) {
-        Button { showsHistory = true } label: { Label("История",systemImage:"clock.arrow.circlepath") }
-          .buttonStyle(.plain).font(.callout).padding(10).background(.regularMaterial,in:Capsule())
-          .accessibilityIdentifier("collaboration-history")
+        }.buttonStyle(.plain).padding(12).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+      } else if !model.sharedContexts.isEmpty {
+        Button { showsHistory = true } label: {
+          Label(model.activeSharedContext == nil ? "Совместные ходы" : "Общий фрагмент", systemImage: model.activeSharedContext == nil ? "clock.arrow.circlepath" : "scope")
+            .font(.callout).padding(.horizontal, 14).frame(minHeight: 44)
+        }.buttonStyle(.plain).background(.regularMaterial, in: Capsule()).accessibilityIdentifier("collaboration-history")
       }
     }
-    .frame(maxWidth:520,alignment:.leading)
-    .sheet(isPresented:$showsHistory, onDismiss: {
+    .frame(maxWidth: 520, alignment: .leading)
+    .task {
+      while !Task.isCancelled {
+        await model.refreshReferenceStatuses()
+        do { try await Task.sleep(for: .seconds(2)) } catch { return }
+      }
+    }
+    .sheet(isPresented: $showsHistory, onDismiss: {
       if let reference = pendingShow { pendingShow = nil; model.requestShow(reference) }
     }) {
       NavigationStack {
         List {
-          if let reference = model.contextEntries.last(where: { $0.author == .agent })?.references.first {
-            Section("Понимание агента") {
-              Text(reference.label)
-              Button("Показать фрагмент") { pendingShow = reference; showsHistory = false }
-            }
-          }
-          ForEach(model.collaborationActions) { action in
-          VStack(alignment:.leading,spacing:10) {
-            Text(action.action.summary).font(.headline)
-            let continued = model.continuations(for:action)
-            if !continued.isEmpty {
-              ForEach(Array(Set(continued.map(continuationLabel))).sorted(),id:\.self) { label in
-                Text(label)
-                  .font(.caption).foregroundStyle(.secondary)
+          ForEach(contexts) { context in
+            Section {
+              ForEach(context.entries) { entry in
+                ForEach(entry.references) { reference in
+                  VStack(alignment: .leading, spacing: 5) {
+                    Label(entry.author == .human ? "Вы указали" : "Понимание агента", systemImage: entry.author == .human ? "hand.point.up.left" : "quote.bubble")
+                      .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Text(reference.label.isEmpty ? model.locationTitle(for: reference) : reference.label)
+                    Text(model.locationTitle(for: reference)).font(.caption).foregroundStyle(.secondary)
+                    if let label = entry.requiresReview ? "Нужно рассмотреть заново" : model.referenceStatusLabel(reference) {
+                      Text(label).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Button("Показать фрагмент") { pendingShow = reference; showsHistory = false }.frame(minHeight: 44)
+                  }.padding(.vertical, 4)
+                }
               }
-            }
-            if let undo = action.undo {
-              Text(undo.preserved.isEmpty ? "Отменено" : "Отменено · ваши доработки сохранены (\(undo.preserved.count))")
-                .font(.caption).foregroundStyle(.secondary)
-            }
-            ForEach(Array(model.results(for:action).enumerated()),id:\.element.id) { index,reference in
-              Button { pendingShow = reference; showsHistory = false } label: {
-                Label("Показать результат \(index+1) · \(reference.elementID ?? model.referenceTitle(reference))",systemImage:"scope")
+              ForEach(model.collaborationActions.filter { $0.action.resolvedContextID == context.id }) { action in
+                actionCard(action)
               }
+              if model.activeSharedContext?.id == context.id {
+                Button("Снять указание") { model.selectSharedContext(nil) }.frame(minHeight: 44)
+              } else {
+                Button("Продолжить этот фрагмент") { model.selectSharedContext(context.id) }.frame(minHeight: 44)
+              }
+            } header: {
+              Text(context.entries.first?.references.first.map { model.locationTitle(for: $0) } ?? "Самостоятельный ход")
             }
-            if action.undo == nil { Button("Отменить этот ход") { model.undoCollaboration(action.id) } }
-          }.padding(.vertical,6)
           }
         }
         .buttonStyle(.borderless)
         .navigationTitle("Совместные ходы")
-        .toolbar { ToolbarItem(placement:.confirmationAction) { Button("Готово") { showsHistory = false } } }
-      }.frame(minWidth:360,minHeight:400)
+        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { showsHistory = false } } }
+      }.frame(minWidth: 360, minHeight: 400)
     }
   }
 
+  private func actionCard(_ action: CollaborationReceipt) -> some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Text(action.action.summary).font(.headline)
+      ForEach(Array(Set(model.continuations(for: action).map(continuationLabel))).sorted(), id: \.self) { label in
+        Text(label).font(.caption).foregroundStyle(.secondary)
+      }
+      if let undo = action.undo {
+        Text("Отменено полей: \(undo.restored)").font(.caption).foregroundStyle(.secondary)
+        ForEach(Array(undo.preserved.enumerated()), id: \.offset) { _, field in
+          Text("Сохранена ваша доработка · \(aspect(field.path))").font(.caption)
+        }
+      }
+      ForEach(model.results(for: action)) { reference in
+        Button { pendingShow = reference; showsHistory = false } label: {
+          Label("Показать · \(model.locationTitle(for: reference))", systemImage: "scope").frame(minHeight: 44)
+        }.accessibilityIdentifier("show-action-result")
+      }
+      if action.undo == nil { Button("Отменить этот ход") { model.undoCollaboration(action.id) }.frame(minHeight: 44) }
+    }.padding(.vertical, 6)
+  }
+
+  private func aspect(_ path: [CollaborationPathComponent]) -> String {
+    let names = path.compactMap { if case .field(let name) = $0 { return name }; return nil }
+    return names.contains("frame") || names.contains("center") ? "положение" : names.contains("css") ? "оформление" : names.contains("state") || names.contains("records") ? "состояние" : "содержание"
+  }
   private func continuationLabel(_ field: CollaborationContinuation) -> String {
     let owner = field.author == .human ? "Ваша доработка" : field.author == .removed ? "Удалено позднее" : "Продолжено агентом"
-    let names = field.path.compactMap { if case .field(let name) = $0 { return name }; return nil }
-    let aspect = names.contains("frame") || names.contains("center") ? "положение" : names.contains("css") ? "оформление" : names.contains("state") || names.contains("records") ? "состояние" : "содержание"
-    return "\(owner) · \(field.elementID ?? "предмет") · \(aspect)"
+    return "\(owner) · \(aspect(field.path))"
   }
 }
 
@@ -105,8 +130,10 @@ struct NotebookAttentionMarks: View {
   var body: some View {
     ZStack(alignment:.topLeading) {
       ForEach(model.contextEntries) { attention in
-        if (attention.author == .human || model.showsCollaborationNotice), let reference = attention.references.first, let rect = NotebookAttentionProjection.frame(reference,model:model,presence:presence) {
-          mark(rect, human:attention.author == .human, label:attention.author == .human ? "Указано" : "Понимание агента", changed:model.referenceChanged(reference))
+        ForEach(attention.references) { reference in
+          if (attention.author == .human || model.showsCollaborationNotice), let rect = NotebookAttentionProjection.frame(reference,model:model,presence:presence) {
+            mark(rect, human:attention.author == .human, label:(attention.author == .human ? "Указано" : "Понимание агента") + (model.referenceStatusLabel(reference).map { " · " + $0 } ?? ""), changed:attention.requiresReview)
+          }
         }
       }
       if model.showsCollaborationNotice, let action = model.collaborationActions.first, action.undo == nil {

@@ -30,6 +30,7 @@ struct AgentOverlayView: View {
           isSelected: model.elementEditingSession.selection == reference,
           coordinateScale: 1,
           translation: translation(for: reference),
+          isContentInteractive: !element.javaScript.isEmpty,
           onSelect: { model.selectElement(reference) },
           onDragChanged: { translation in
             model.updateElementDrag(reference, translation: translation)
@@ -37,6 +38,9 @@ struct AgentOverlayView: View {
           onDragEnded: { translation in
             model.finishElementDrag(reference, translation: translation)
           },
+          onResizeChanged: { model.updateElementResize(reference, delta: $0) },
+          onResizeEnded: { model.finishElementResize(reference, delta: $0) },
+          resizeDelta: model.elementResizeDelta(reference),
           onDelete: { model.deleteElement(reference) }
         ) {
           AgentWebElementView(

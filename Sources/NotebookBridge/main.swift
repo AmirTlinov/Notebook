@@ -50,6 +50,9 @@ do {
     data = try encoder.encode(store.appendContext(references: request.references ?? [], author: .agent,
       actor: store.collaborationActorID(), contextID: request.contextID, replyTo: request.replyTo))
   case "delivery": data = try encoder.encode(store.deviceActionReceipts())
+  case "referenceStatus":
+    guard let reference = request.reference else { throw CollaborationError("invalid_reference", "Нужна рассмотренная ссылка.") }
+    data = try encoder.encode(store.referenceStatus(reference))
   case "reference":
     guard let target = request.target else { throw CollaborationError("invalid_reference", "Нужен владелец указания.") }
     data = try encoder.encode(["revision": store.referenceRevision(target: target, elementID: request.elementID)])

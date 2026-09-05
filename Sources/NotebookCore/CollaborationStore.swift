@@ -191,6 +191,11 @@ extension NotebookStore {
     var writes = after.filter { before[$0.key] != $0.value }
     writes[actionFile(receipt.id)] = try .encode(receipt)
     let contexts = try readSharedContexts()
+    if let existing = contexts.first(where: { $0.id == receipt.action.resolvedContextID }), receipt.action.contextID == nil {
+      guard existing.entries.contains(where: { $0.id == receipt.id && $0.author == .agent && $0.references == receipt.action.references }) else {
+        throw CollaborationError("context_id_conflict", "ID самостоятельного хода уже принадлежит другому контексту.")
+      }
+    }
     if !contexts.contains(where: { $0.id == receipt.action.resolvedContextID }) {
       if receipt.action.contextID != nil { throw CollaborationError("context_missing", "Контекст хода не найден.") }
       let entry = SharedContextEntry(id: receipt.id, author: .agent, references: receipt.action.references,
@@ -345,6 +350,8 @@ extension NotebookStore {
       var files = try CollaborationWorkspace(store: self).files
       files["last-context.json"] = try? .encode(loadPresence())
       files["spatial-ink.json"] = try .encode(loadSpatialInk())
+      files["collaboration/contexts.json"] = try .encode(SharedContextSnapshot(contexts: readSharedContexts(), selection: readContextSelection()))
+      files["collaboration/actions.json"] = try .encode(loadCollaborationActions())
       return files
     }
   }

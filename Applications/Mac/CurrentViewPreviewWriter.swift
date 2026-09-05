@@ -169,12 +169,15 @@ enum CurrentViewPreviewWriter {
     var camera: SpatialCamera?
     var diagnostics: [RenderDiagnostic] = []
     var inkRegions: [PageRect] = []
+    var inkRaster: RasterSnapshot?
     switch target.kind {
     case .page:
       guard let page = model.pages[target.id] else { throw PreviewError.invalidSurface }
       try await AgentElementSnapshotCache.shared.prepare(page.elements)
       full = try pageCompositeSnapshot(page)
       inkRegions = try PageVisionRenderer.render(page).regions.map { $0.receipt.contentPoints }
+      guard let ink = PageInkRasterCache.shared.image(for: page) else { throw PreviewError.agentSnapshotPending }
+      inkRaster = try raster(NSImage(cgImage: ink, size: .init(width: page.size.width, height: page.size.height)))
       diagnostics = AgentElementSnapshotCache.shared.diagnostics(for: page.elements)
     case .document:
       guard let document = model.documents[target.id], let state = model.documentStates[target.id] else { throw PreviewError.invalidSurface }
@@ -214,6 +217,7 @@ enum CurrentViewPreviewWriter {
         journal: content.ink, camera: target.kind == .board ? projection : nil,
         viewport: presence.viewport, size: size) {
         inkRegions = SpatialInkRasterCache.shared.occupiedRegions(inkImage, size: size)
+        inkRaster = try raster(inkImage)
       }
     case .workspace: throw PreviewError.invalidSurface
     }
@@ -222,7 +226,15 @@ enum CurrentViewPreviewWriter {
     guard try model.store.referenceRevision(target: target) == request.sourceRevision else { throw PreviewError.sourceChanged }
     let output = target.kind == .board ? full : try crop(full, region: request.region)
     let image = NSBitmapImageRep(data: output.png)!
-    try model.store.saveTargetRender(.init(request: request, status: "ready", pngSHA256: output.sha256,
+    let fingerprint: String?
+    if request.region != nil {
+      if target.kind == .document { fingerprint = output.sha256 }
+      else {
+        let ink = try inkRaster.map { target.kind == .board ? $0 : try crop($0, region: request.region) }
+        fingerprint = try NotebookStore.regionalFingerprint(request, inkFingerprint: ink?.sha256 ?? "empty-ink", files: content.sourceFiles())
+      }
+    } else { fingerprint = nil }
+    try model.store.saveTargetRender(.init(request: request, status: "ready", pngSHA256: output.sha256, referenceFingerprint: fingerprint,
       pixelSize: .init(x: Double(image.pixelsWide), y: Double(image.pixelsHigh)), camera: camera, diagnostics: diagnostics, inkRegions: inkRegions), png: output.png)
   }
 

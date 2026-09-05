@@ -5,181 +5,80 @@ struct PenControlsView: View {
   @State private var isExpanded = false
 
   var body: some View {
-    HStack(spacing: 8) {
-      HStack(spacing: 8) {
-        if isExpanded {
-          colorChoices
-          elementChoice
-          Rectangle()
-            .fill(.primary.opacity(0.12))
-            .frame(width: 1, height: 24)
-
-          if !model.isElementEditingEnabled {
-            widthControl
-            if model.drawingTool == .pen {
-              opacityControl
-            }
-          }
-        }
-
-        Button {
-          if isExpanded || isPenSelected {
-            withAnimation(.smooth(duration: 0.18)) {
-              isExpanded.toggle()
-            }
-          } else {
-            model.selectDrawingTool(.pen)
-          }
-        } label: {
-          ZStack {
-            Circle()
-              .fill(isPenSelected ? Color.primary.opacity(0.12) : .clear)
-              .frame(width: 31, height: 31)
-            Image(systemName: controlIcon)
-              .font(.system(size: 18, weight: .medium))
-              .foregroundStyle(controlColor)
-          }
-          .frame(width: 44, height: 44)
-          .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(
-          isExpanded ? "Закрыть выбор ручки" : isPenSelected ? "Настроить ручку" : "Ручка"
-        )
-        .accessibilityAddTraits(isPenSelected ? .isSelected : [])
-        .accessibilityIdentifier("pen-controls-toggle")
+    HStack(spacing: 2) {
+      tool("pencil.tip", title: "Ручка", id: "pen-controls-toggle", selected: isPenSelected) {
+        model.selectDrawingTool(.pen)
       }
-      .padding(isExpanded ? 7 : 0)
-      .background(.ultraThinMaterial, in: Capsule())
-      .shadow(color: .black.opacity(0.1), radius: 10, y: 3)
-
-      eraserChoice
-      Button { model.isPointing.toggle(); isExpanded = false } label: {
-        Image(systemName:"hand.point.up.left")
-          .font(.system(size:18,weight:.medium))
-          .foregroundStyle(model.isPointing ? Color.indigo : Color.primary)
-          .frame(width:44,height:44)
-      }.buttonStyle(.plain)
-        .background(.ultraThinMaterial,in:Circle())
-        .accessibilityLabel("Указать")
-        .accessibilityIdentifier("drawing-tool-pointer")
-        .accessibilityAddTraits(model.isPointing ? .isSelected : [])
-    }
-    .overlay(alignment: .topTrailing) {
-      if isExpanded && isPenSelected {
-        PenStrokePreview(style: model.penStyle)
-          .frame(width: 180, height: 52)
-          .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-          .offset(y: 66)
-          .allowsHitTesting(false)
+      tool("eraser.fill", title: "Ластик", id: "drawing-tool-eraser", selected: isEraserSelected) {
+        model.selectDrawingTool(.eraser)
+      }
+      tool("hand.point.up.left", title: "Указать", id: "drawing-tool-pointer", selected: model.isPointing) {
+        model.isPointing.toggle()
+      }
+      Divider().frame(height: 22).padding(.horizontal, 4)
+      Button { isExpanded = true } label: {
+        Image(systemName: "slider.horizontal.3").frame(width: 44, height: 44)
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("Настройки инструмента")
+      .accessibilityIdentifier("pen-settings")
+      .popover(isPresented: $isExpanded, arrowEdge: .top) {
+        VStack(alignment: .leading, spacing: 20) {
+          HStack {
+            Text(model.drawingTool == .pen ? "Ручка" : "Ластик").font(.headline)
+            Spacer()
+            Button { isExpanded = false } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }
+              .accessibilityLabel("Закрыть настройки").buttonStyle(.plain)
+          }
+          if model.drawingTool == .pen {
+            colorChoices
+            PenStrokePreview(style: model.penStyle).frame(height: 52)
+          }
+          widthControl
+          if model.drawingTool == .pen { opacityControl }
+        }
+        .padding(20).frame(minWidth: 300)
+        .presentationCompactAdaptation(.popover)
       }
     }
+    .padding(4)
+    .background(.regularMaterial, in: Capsule())
+    .shadow(color: .black.opacity(0.08), radius: 8, y: 3)
   }
 
-  private var isPenSelected: Bool {
-    model.drawingTool == .pen && !model.isElementEditingEnabled && !model.isPointing
+  private var isPenSelected: Bool { model.drawingTool == .pen && !model.isElementEditingEnabled && !model.isPointing }
+  private var isEraserSelected: Bool { model.drawingTool == .eraser && !model.isElementEditingEnabled && !model.isPointing }
+
+  private func tool(_ icon: String, title: String, id: String, selected: Bool, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      Image(systemName: icon)
+        .font(.system(size: 18, weight: selected ? .semibold : .regular))
+        .foregroundStyle(selected ? Color.white : Color.primary)
+        .frame(width: 44, height: 44)
+        .contentShape(Circle())
+        .background(selected ? Color.primary : .clear, in: Circle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(title)
+    .accessibilityIdentifier(id)
+    .accessibilityAddTraits(selected ? .isSelected : [])
   }
 
   private var colorChoices: some View {
-    HStack(spacing: 2) {
+    HStack(spacing: 0) {
       ForEach(PenColor.allCases) { color in
-        Button {
-          model.selectPenColor(color)
-        } label: {
-          ZStack {
-            Circle()
-              .stroke(
-                color == model.penStyle.color && model.drawingTool == .pen
-                  ? Color.primary.opacity(0.7)
-                  : .clear,
-                lineWidth: 2
-              )
-              .frame(width: 29, height: 29)
-            Circle()
-              .fill(color.displayColor)
-              .frame(width: 19, height: 19)
-          }
-          .frame(width: 36, height: 36)
-          .contentShape(Circle())
+        Button { model.selectPenColor(color) } label: {
+          Circle().fill(color.displayColor).frame(width: 22, height: 22)
+            .padding(4)
+            .overlay { Circle().stroke(color == model.penStyle.color ? Color.primary : .clear, lineWidth: 2) }
+            .frame(width: 44, height: 44)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(color.name) ручка")
-        .accessibilityAddTraits(
-          color == model.penStyle.color && model.drawingTool == .pen
-            ? .isSelected
-            : []
-        )
+        .accessibilityAddTraits(color == model.penStyle.color ? .isSelected : [])
         .accessibilityIdentifier("pen-color-\(color.rawValue)")
       }
     }
-  }
-
-  private var eraserChoice: some View {
-    Button {
-      model.selectDrawingTool(.eraser)
-    } label: {
-      ZStack {
-        Circle()
-          .fill(
-            model.drawingTool == .eraser
-              ? Color.primary.opacity(0.12)
-              : .clear
-          )
-          .frame(width: 31, height: 31)
-        Image(systemName: "eraser.fill")
-          .font(.system(size: 16, weight: .medium))
-          .foregroundStyle(.primary)
-      }
-      .frame(width: 44, height: 44)
-      .contentShape(Circle())
-    }
-    .buttonStyle(.plain)
-    .accessibilityLabel("Ластик")
-    .accessibilityAddTraits(
-      model.drawingTool == .eraser ? .isSelected : []
-    )
-    .accessibilityIdentifier("drawing-tool-eraser")
-    .background(.ultraThinMaterial, in: Circle())
-    .shadow(color: .black.opacity(0.1), radius: 10, y: 3)
-  }
-
-  private var controlIcon: String {
-    if isExpanded { return "xmark" }
-    if model.isElementEditingEnabled { return "square.dashed" }
-    return "pencil.tip"
-  }
-
-  private var controlColor: Color {
-    if model.isElementEditingEnabled { return .accentColor }
-    return model.drawingTool == .pen
-      ? model.penStyle.color.displayColor
-      : .primary
-  }
-
-  private var elementChoice: some View {
-    Button {
-      model.selectElementTool()
-    } label: {
-      ZStack {
-        Circle()
-          .fill(
-            model.isElementEditingEnabled
-              ? Color.accentColor.opacity(0.16)
-              : .clear
-          )
-          .frame(width: 31, height: 31)
-        Image(systemName: "square.dashed")
-          .font(.system(size: 16, weight: .semibold))
-          .foregroundStyle(model.isElementEditingEnabled ? Color.accentColor : .primary)
-      }
-      .frame(width: 36, height: 36)
-      .contentShape(Circle())
-    }
-    .buttonStyle(.plain)
-    .accessibilityLabel("Элементы")
-    .accessibilityHint("Выберите, переместите или удалите элемент на листе")
-    .accessibilityAddTraits(model.isElementEditingEnabled ? .isSelected : [])
-    .accessibilityIdentifier("element-editing-tool")
   }
 
   @ViewBuilder

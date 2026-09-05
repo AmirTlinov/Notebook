@@ -10,12 +10,15 @@ enum EditableElementReference: Equatable, Sendable {
 struct ElementEditingSession: Equatable, Sendable {
   var selection: EditableElementReference?
   var translation: SpatialPoint
+  var resizeDelta: SpatialPoint
 
   init(
     selection: EditableElementReference? = nil,
-    translation: SpatialPoint = .zero
+    translation: SpatialPoint = .zero,
+    resizeDelta: SpatialPoint = .zero
   ) {
     self.selection = selection
     self.translation = translation
+    self.resizeDelta = resizeDelta
   }
 }

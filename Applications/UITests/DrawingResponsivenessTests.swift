@@ -22,17 +22,15 @@ final class DrawingResponsivenessTests: XCTestCase {
       thenDragTo:app.coordinate(withNormalizedOffset:.init(dx:0.45,dy:0.25)))
     XCTAssertFalse(app.staticTexts["Укажите фрагмент · протяните для области"].exists)
     app.buttons["collaboration-history"].tap()
-    app.buttons.matching(NSPredicate(format:"label BEGINSWITH 'Показать результат'")).firstMatch.tap()
-    app.buttons["pen-controls-toggle"].tap()
-    app.buttons["element-editing-tool"].tap()
+    app.buttons["show-action-result"].firstMatch.tap()
     let showProof = XCTAttachment(screenshot: app.screenshot())
     showProof.name = "after-history-show"; showProof.lifetime = .keepAlways; add(showProof)
     XCTAssertTrue(element.waitForExistence(timeout:5))
     element.tap()
     XCTAssertTrue(app.buttons["delete-agent-element"].waitForExistence(timeout:3))
     let initial = element.frame
-    element.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).press(forDuration:0.05,
-      thenDragTo:element.coordinate(withNormalizedOffset:.init(dx:0.75,dy:0.7)),withVelocity:.slow,thenHoldForDuration:0)
+    app.descendants(matching: .any)["move-agent-element"].coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).press(forDuration:0.05,
+      thenDragTo:app.descendants(matching: .any)["move-agent-element"].coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).withOffset(.init(dx:100,dy:60)),withVelocity:.slow,thenHoldForDuration:0)
     XCTAssertGreaterThan(element.frame.midX,initial.midX + 20)
     let moved = element.frame
     app.buttons["collaboration-history"].tap()
@@ -57,7 +55,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(notice.waitForNonExistence(timeout:8))
     app.buttons["collaboration-history"].tap()
     XCTAssertTrue(app.buttons["Отменить этот ход"].firstMatch.waitForExistence(timeout:3))
-    XCTAssertTrue(app.buttons.matching(NSPredicate(format:"label BEGINSWITH 'Показать результат'")).firstMatch.exists)
+    XCTAssertTrue(app.buttons["show-action-result"].firstMatch.exists)
   }
 
   func testPointerSelectsARegionAndReturnsToThePreviousTool() {
@@ -101,7 +99,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "Ластик должен стоять отдельным кружком непосредственно рядом с ручкой"
     )
 
-    let settings = app.buttons["element-editing-tool"]
+    let settings = app.sliders["pen-width"]
     eraser.tap()
     XCTAssertTrue(eraser.isSelected)
     let inactivePen = pen.screenshot()
@@ -124,11 +122,13 @@ final class DrawingResponsivenessTests: XCTestCase {
     add(penProof)
 
     pen.tap()
-    XCTAssertTrue(settings.waitForExistence(timeout: 2), "Повторное касание выбранной ручки открывает настройки")
+    XCTAssertFalse(settings.exists, "Повторное касание тоже только выбирает ручку")
+    app.buttons["pen-settings"].tap()
+    XCTAssertTrue(settings.waitForExistence(timeout: 2), "Настройки открывает отдельное действие")
     XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "pen-stroke-preview").firstMatch.waitForExistence(timeout: 2))
     let previewProof = XCTAttachment(screenshot: app.screenshot())
     previewProof.name = "actual-pen-pressure-preview"; previewProof.lifetime = .keepAlways; add(previewProof)
-    pen.tap()
+    app.buttons["Закрыть настройки"].tap()
     XCTAssertTrue(settings.waitForNonExistence(timeout: 2))
     XCTAssertTrue(pen.isSelected, "Закрытие настроек сохраняет выбранную ручку")
 
@@ -146,15 +146,11 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertFalse(pointer.isSelected)
     XCTAssertFalse(settings.exists, "Возврат из указателя сразу передаёт ввод ручке")
 
-    pen.tap()
+    app.buttons["pen-settings"].tap()
     XCTAssertTrue(settings.waitForExistence(timeout: 2))
-    settings.tap()
-    pen.tap()
+    app.buttons["Закрыть настройки"].tap()
     XCTAssertTrue(settings.waitForNonExistence(timeout: 2))
-    XCTAssertFalse(pen.isSelected)
-    pen.tap()
-    XCTAssertTrue(pen.isSelected)
-    XCTAssertFalse(settings.exists, "Возврат из редактирования элементов выбирает ручку")
+    XCTAssertTrue(pen.isSelected, "Настройки не создают скрытого инструмента редактирования")
   }
 
   func testPersonMovesAndDeletesAnAgentElement() {
@@ -170,13 +166,6 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(sharedElement.waitForExistence(timeout: 8))
     let initialFrame = sharedElement.frame
 
-    let controls = app.buttons["pen-controls-toggle"]
-    XCTAssertTrue(controls.waitForExistence(timeout: 3))
-    controls.tap()
-    let elementTool = app.buttons["element-editing-tool"]
-    XCTAssertTrue(elementTool.waitForExistence(timeout: 3))
-    elementTool.tap()
-
     sharedElement.tap()
     let delete = app.buttons["delete-agent-element"]
     XCTAssertTrue(
@@ -184,12 +173,10 @@ final class DrawingResponsivenessTests: XCTestCase {
       "Выбранный общий элемент должен показать действие удаления"
     )
 
-    sharedElement.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+    app.descendants(matching: .any)["move-agent-element"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
       .press(
         forDuration: 0.05,
-        thenDragTo: sharedElement.coordinate(
-          withNormalizedOffset: CGVector(dx: 0.72, dy: 0.68)
-        ),
+        thenDragTo: app.descendants(matching: .any)["move-agent-element"].coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).withOffset(.init(dx: 100, dy: 60)),
         withVelocity: .slow,
         thenHoldForDuration: 0
       )
@@ -459,6 +446,34 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertNotEqual(sectionIDs(secondText), sectionIDs(thirdText))
     XCTAssertEqual(sectionIDs(secondText), sectionIDs(returnedText),
       "Возврат восстанавливает содержание того же листа")
+  }
+
+  func testPageControlsAndSearchReturnToTheReadPage() async throws {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-document-runtime-fixture", "--notebook-document-prose-fixture"]
+    app.launch()
+    let surface = app.otherElements["page-turn-surface"]
+    XCTAssertTrue(surface.waitForExistence(timeout: 8))
+    await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Страница 1 из ' AND value != 'Страница 1 из 1'"), object: surface)], timeout: 5)
+    app.buttons["next-page"].tap()
+    await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Страница 2 из '"), object: surface)], timeout: 3)
+    app.buttons["page-overview"].tap()
+    let thumbnail = app.buttons["Страница 3"]
+    XCTAssertTrue(thumbnail.waitForExistence(timeout: 5))
+    try await Task.sleep(for: .seconds(2))
+    let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "real-page-thumbnails"; proof.lifetime = .keepAlways; add(proof)
+    thumbnail.tap()
+    await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Страница 3 из '"), object: surface)], timeout: 3)
+    app.buttons["notebook-search"].tap()
+    let search = app.searchFields.firstMatch
+    XCTAssertTrue(search.waitForExistence(timeout: 3)); search.tap(); search.typeText("Глава 1")
+    let result = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Глава 1'")).firstMatch
+    XCTAssertTrue(result.waitForExistence(timeout: 5)); result.tap()
+    await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Страница 1 из '"), object: surface)], timeout: 6)
+    app.buttons["leave-nested-board"].tap()
+    await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Страница 3 из '"), object: surface)], timeout: 5)
   }
 
   func testProseDocumentTurnsToDifferentTextAndBack() async throws {

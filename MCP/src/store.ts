@@ -55,6 +55,14 @@ export class NotebookStore {
     return readSnapshot.run({ root: this.root, files }, operation);
   }
 
+  async readCollaborationContexts<T>(): Promise<T> {
+    return this.withReadSnapshot(() => readJSON<T>(join(this.root, "collaboration/contexts.json"), "контекстов"));
+  }
+
+  async readCollaborationActions<T>(): Promise<T> {
+    return this.withReadSnapshot(() => readJSON<T>(join(this.root, "collaboration/actions.json"), "ходов"));
+  }
+
   get indexPath(): string {
     return join(this.root, "workspace.json");
   }
@@ -1203,6 +1211,10 @@ async function readJSON<T>(path: string, owner: string): Promise<T> {
     if (snapshot && path.startsWith(`${snapshot.root}/`)) {
       const value = snapshot.files[path.slice(snapshot.root.length + 1)];
       if (value !== undefined) return structuredClone(value) as T;
+      const relative = path.slice(snapshot.root.length + 1);
+      if (/^(pages|documents|document-states|collaboration)\//.test(relative) || ["workspace.json", "board.json", "spatial-ink.json", "last-context.json"].includes(relative)) {
+        throw new StoreError(`Владелец ${owner} отсутствует в рассмотренном снимке.`);
+      }
     }
     return JSON.parse(await readFile(path, "utf8")) as T;
   } catch (error) {

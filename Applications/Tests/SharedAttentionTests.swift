@@ -49,7 +49,8 @@ final class SharedAttentionTests: XCTestCase {
     let action = CollaborationAction(summary:"Подпись",expected:[.init(target:reference.target,revision:page.agentStamp.revision)],operations:[
       .init(kind:.insertElement,target:reference.target,id:"caption",values:["kind":.string("markdown"),"source":.string("Мысль"),"frame":.object(["x":.number(300),"y":.number(80),"width":.number(200),"height":.number(80)])])])
     _ = try model.store.applyCollaborationAction(action,actor:UUID()); model.reloadExternalChanges()
-    XCTAssertTrue(model.referenceChanged(reference))
+    XCTAssertFalse(model.referenceChanged(reference), "Без точного снимка области нельзя объявлять её изменённой")
+    XCTAssertEqual(model.referenceStatusLabel(reference), "Проверяется область")
   }
 
   @MainActor
@@ -73,4 +74,30 @@ final class SharedAttentionTests: XCTestCase {
     model.confirmVisibleActions(presence:presence)
     XCTAssertTrue(try XCTUnwrap(model.store.deviceActionReceipts().first).displayComplete)
   }
+  @MainActor
+  func testOneAreaKeepsReferencesToSeveralPhysicalOwners() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let first = try XCTUnwrap(model.workspace?.selectedItemID)
+    model.moveItem(first, to: .zero)
+    let second = try XCTUnwrap(model.createNotebook(at: .init(x: 1100, y: 0)))
+    let workspace = try XCTUnwrap(model.workspace)
+    let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
+      camera: .init(center: .init(x: 550, y: 0), scale: 0.3), viewport: .init(x: 834, y: 1194))
+    model.updatePresence(presence, settled: true)
+    let references = NotebookAttentionProjection.references(start: .init(x: 80, y: 350), end: .init(x: 760, y: 850), model: model, presence: presence)
+    XCTAssertTrue(references.contains { $0.target.id == first && $0.target.kind == .cover })
+    XCTAssertTrue(references.contains { $0.target.id == second && $0.target.kind == .cover })
+    model.publishHumanContext(references)
+    let context = try XCTUnwrap(model.activeSharedContext)
+    XCTAssertEqual(context.entries.first?.references, references)
+    model.requestShow(try XCTUnwrap(references.first))
+    XCTAssertEqual(model.returnPlaces.last?.presence, presence)
+    model.requestReturnToPlace()
+    XCTAssertEqual(model.requestedReturn?.presence, presence)
+    XCTAssertNil(model.requestedReference)
+  }
+
 }

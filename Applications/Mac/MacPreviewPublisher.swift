@@ -83,6 +83,8 @@ final class MacPreviewPublisher {
   private var started = false
   private var targetTask: Task<Void, Never>?
   private var targetInProgress: UUID?
+  private var referenceVisionTask: Task<Void, Never>?
+  private var referenceVisionKey: String?
 
   init(
     model: NotebookAppModel,
@@ -101,6 +103,7 @@ final class MacPreviewPublisher {
     pagePreviewTask?.cancel()
     reconciliationTask?.cancel()
     targetTask?.cancel()
+    referenceVisionTask?.cancel()
   }
 
   func start() {
@@ -148,6 +151,7 @@ final class MacPreviewPublisher {
       try? data.write(to: model.store.root.appendingPathComponent("previews/runtime.json"), options: .atomic)
     }
     guard model.presencePhase == .settled else { targetTask?.cancel(); return }
+    scheduleReferenceVision(model)
     guard targetInProgress == nil, let request = (try? model.store.targetRenderRequests())?.first(where: {
       !FileManager.default.fileExists(atPath: model.store.targetReceiptURL($0.id).path)
     }) else { return }
@@ -155,12 +159,31 @@ final class MacPreviewPublisher {
     targetTask = Task { [weak self, weak model] in
       defer { self?.targetInProgress = nil; self?.targetTask = nil }
       guard let model else { return }
-      do { try await CurrentViewPreviewWriter.writeTarget(request, model: model) }
+      do { try await CurrentViewPreviewWriter.writeTarget(request, model: model); self?.referenceVisionKey = nil }
       catch {
         guard !Task.isCancelled, model.presencePhase == .settled else { return }
         try? model.store.saveTargetRender(.init(request: request, status: "error", diagnostics: [
           .init(kind: "render_error", message: String(describing: error))]))
       }
+    }
+  }
+
+  private func scheduleReferenceVision(_ model: NotebookAppModel) {
+    let references = Array(model.sharedContexts.sorted(by: { ($0.entries.last?.createdAt ?? .distantPast) > ($1.entries.last?.createdAt ?? .distantPast) })
+      .prefix(8).flatMap({ $0.entries.flatMap(\.references) }).filter { $0.region != nil && $0.elementID == nil }.prefix(32))
+    let key = references.map { $0.id.uuidString }.joined() + (model.boardHierarchy?.revision ?? "")
+      + (model.spatialInk?.stamp.revision ?? "")
+      + model.pages.values.sorted { $0.id.uuidString < $1.id.uuidString }.map { $0.drawingStamp.revision + $0.agentStamp.revision }.joined()
+      + model.documents.values.sorted { $0.id.uuidString < $1.id.uuidString }.map { $0.contentStamp.revision }.joined()
+      + model.documentStates.values.sorted { $0.id.uuidString < $1.id.uuidString }.map { $0.stamp.revision }.joined()
+    guard referenceVisionTask == nil, referenceVisionKey != key else { return }
+    referenceVisionKey = key
+    let store = model.store
+    referenceVisionTask = Task { [weak self] in
+      await Task.detached(priority: .utility) {
+        for reference in references { _ = try? store.referenceStatus(reference) }
+      }.value
+      self?.referenceVisionTask = nil
     }
   }
 
