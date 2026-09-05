@@ -45,6 +45,16 @@ struct PenControlsView: View {
       .shadow(color: .black.opacity(0.1), radius: 10, y: 3)
 
       eraserChoice
+      Button { model.isPointing.toggle(); isExpanded = false } label: {
+        Image(systemName:"hand.point.up.left")
+          .font(.system(size:18,weight:.medium))
+          .foregroundStyle(model.isPointing ? Color.indigo : Color.primary)
+          .frame(width:44,height:44)
+      }.buttonStyle(.plain)
+        .background(.ultraThinMaterial,in:Circle())
+        .accessibilityLabel("Указать")
+        .accessibilityIdentifier("drawing-tool-pointer")
+        .accessibilityAddTraits(model.isPointing ? .isSelected : [])
     }
   }
 

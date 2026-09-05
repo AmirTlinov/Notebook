@@ -317,20 +317,27 @@ public struct DocumentStateRecord: Codable, Equatable, Identifiable, Sendable {
   public let id: String
   public private(set) var value: JSONValue
   public private(set) var stamp: VersionStamp
+  public private(set) var fieldVersion: ContentFieldVersion?
 
-  public init(id: String, value: JSONValue, stamp: VersionStamp) {
+  public init(id: String, value: JSONValue, stamp: VersionStamp, fieldVersion: ContentFieldVersion? = nil) {
     precondition(!id.isEmpty && value.isValid)
     self.id = id
     self.value = value
     self.stamp = stamp
+    self.fieldVersion = fieldVersion
   }
 
-  mutating func replace(_ value: JSONValue, stamp: VersionStamp) -> Bool {
-    guard self.stamp < stamp, value.isValid else { return false }
-    self.value = value
-    self.stamp = stamp
-    return true
+  mutating func replace(_ value: JSONValue, version: ContentFieldVersion) -> Bool {
+    guard value.isValid else { return false }
+    let previous = fieldVersion ?? .init(stamp:self.stamp,human:true)
+    let merged = previous.joining(version)
+    let useIncoming = version.wins(over:previous)
+    let changed = fieldVersion != merged || (useIncoming && self.value != value)
+    fieldVersion = merged
+    if useIncoming { self.value = value; self.stamp = version.stamp }
+    return changed
   }
+
 }
 
 public struct DocumentStateJournal: Codable, Equatable, Identifiable, Sendable {
@@ -373,7 +380,8 @@ public struct DocumentStateJournal: Codable, Equatable, Identifiable, Sendable {
   public mutating func commit(
     blockID: String,
     value: JSONValue,
-    actor: UUID
+    actor: UUID,
+    human: Bool = true
   ) -> Bool {
     guard !blockID.isEmpty,
       blockID.utf16.count <= 120,
@@ -382,10 +390,11 @@ public struct DocumentStateJournal: Codable, Equatable, Identifiable, Sendable {
     else { return false }
     if let index = records.firstIndex(where: { $0.id == blockID }) {
       guard records[index].value != value else { return false }
-      _ = records[index].replace(value, stamp: nextStamp)
+      let previous = records[index].fieldVersion ?? .init(stamp:records[index].stamp,human:true)
+      _ = records[index].replace(value, version:.init(stamp:nextStamp,human:human,previous:previous))
     } else {
       records.append(
-        DocumentStateRecord(id: blockID, value: value, stamp: nextStamp)
+        DocumentStateRecord(id: blockID, value: value, stamp: nextStamp, fieldVersion:.init(stamp:nextStamp,human:human))
       )
     }
     stamp = nextStamp
@@ -394,12 +403,14 @@ public struct DocumentStateJournal: Codable, Equatable, Identifiable, Sendable {
 
   public mutating func merge(_ other: Self) -> Bool {
     guard id == other.id, other.isValid else { return false }
+    let frontier = max(stamp,other.stamp)
+    let ownerRecords = stamp > other.stamp ? records : other.records
     var changed = false
     for incoming in other.records {
       if let index = records.firstIndex(where: { $0.id == incoming.id }) {
         changed = records[index].replace(
           incoming.value,
-          stamp: incoming.stamp
+          version:incoming.fieldVersion ?? .init(stamp:incoming.stamp,human:true)
         ) || changed
       } else {
         records.append(incoming)
@@ -410,6 +421,12 @@ public struct DocumentStateJournal: Codable, Equatable, Identifiable, Sendable {
       stamp = other.stamp
       changed = true
     }
+    let visible = Dictionary(uniqueKeysWithValues:records.map { ($0.id,$0.value) })
+    let ownerVisible = Dictionary(uniqueKeysWithValues:ownerRecords.map { ($0.id,$0.value) })
+    if visible != ownerVisible, let mergedStamp = frontier.advanced(by:frontier.actor) {
+      stamp = mergedStamp; changed = true
+    }
+    records.sort { $0.id < $1.id }
     return changed
   }
 }

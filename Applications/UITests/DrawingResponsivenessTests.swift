@@ -4,6 +4,58 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testSharedActionUndoKeepsTheDrawingAndHumanPlacement() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-collaboration-fixture"]
+    app.launch()
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout:8))
+    let drawing = paper.value as? String
+    XCTAssertNotNil(drawing)
+    let element = app.otherElements["agent-element-shared-element"]
+    XCTAssertTrue(element.waitForExistence(timeout:8))
+    app.buttons["drawing-tool-pointer"].tap()
+    app.coordinate(withNormalizedOffset:.init(dx:0.22,dy:0.18)).press(forDuration:0.05,
+      thenDragTo:app.coordinate(withNormalizedOffset:.init(dx:0.45,dy:0.25)))
+    XCTAssertFalse(app.staticTexts["Укажите фрагмент · протяните для области"].exists)
+    app.buttons["collaboration-show"].tap()
+    app.buttons["pen-controls-toggle"].tap()
+    app.buttons["element-editing-tool"].tap()
+    element.tap()
+    XCTAssertTrue(app.buttons["delete-agent-element"].waitForExistence(timeout:3))
+    let initial = element.frame
+    element.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).press(forDuration:0.05,
+      thenDragTo:element.coordinate(withNormalizedOffset:.init(dx:0.75,dy:0.7)),withVelocity:.slow,thenHoldForDuration:0)
+    XCTAssertGreaterThan(element.frame.midX,initial.midX + 20)
+    let moved = element.frame
+    app.buttons["collaboration-undo"].tap()
+    XCTAssertTrue(app.staticTexts["Ход отменён"].waitForExistence(timeout:5))
+    XCTAssertTrue(element.exists)
+    XCTAssertEqual(element.frame.midX,moved.midX,accuracy:2)
+    app.buttons["drawing-tool-eraser"].tap()
+    XCTAssertTrue(paper.waitForExistence(timeout:3))
+    XCTAssertEqual(paper.value as? String,drawing,"Рукопись принадлежит человеку при указании, показе и отмене")
+  }
+
+  func testPointerSelectsARegionAndReturnsToThePreviousTool() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    app.launch()
+    let pointer = app.buttons["drawing-tool-pointer"]
+    XCTAssertTrue(pointer.waitForExistence(timeout:5))
+    pointer.tap()
+    XCTAssertTrue(app.staticTexts["Укажите фрагмент · протяните для области"].waitForExistence(timeout:2))
+    let start = app.coordinate(withNormalizedOffset:.init(dx:0.25,dy:0.25))
+    let end = app.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.4))
+    start.press(forDuration:0.05,thenDragTo:end)
+    XCTAssertFalse(app.staticTexts["Укажите фрагмент · протяните для области"].exists)
+    XCTAssertFalse(pointer.isSelected)
+    XCTAssertTrue(app.buttons["drawing-tool-eraser"].isHittable)
+  }
+
   func testEraserIsASeparateCircleBesideThePen() {
     continueAfterFailure = false
     let app = XCUIApplication()

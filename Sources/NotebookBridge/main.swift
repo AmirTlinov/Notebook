@@ -22,6 +22,7 @@ encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
 do {
   let request = try JSONDecoder().decode(Request.self, from: FileHandle.standardInput.readDataToEndOfFile())
   let store = NotebookStore(root: URL(fileURLWithPath: request.root, isDirectory: true))
+  try store.migrateCollaborationStorage()
   let data: Data
   switch request.command {
   case "apply":

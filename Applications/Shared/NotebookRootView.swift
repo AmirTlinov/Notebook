@@ -32,6 +32,10 @@ struct NotebookRootView: View {
             .allowsHitTesting(false)
         }
 
+        NotebookCollaborationView()
+          .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.bottomLeading)
+          .padding(18)
+
         #if os(iOS)
           PenControlsView()
             .frame(
@@ -41,6 +45,11 @@ struct NotebookRootView: View {
             )
             .padding(.top, 18)
             .padding(.trailing, 18)
+        #else
+          Button { model.isPointing.toggle() } label: {
+            Label("Указать",systemImage:"hand.point.up.left")
+          }.buttonStyle(.bordered).keyboardShortcut("p",modifiers:[.command,.shift])
+            .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topTrailing).padding(18)
         #endif
       }
       .onAppear {

@@ -32,7 +32,9 @@ final class SpatialInkRasterCache {
     else { layers = SpatialInkComposer.localLayers(for: surface, journal: journal) }
     guard let image = render(layers: layers, size: size) else { return nil }
     entries[key] = image; order.append(key)
-    while order.count > 24 { entries.removeValue(forKey: order.removeFirst()) }
+    while order.count > 24 || order.reduce(0, { $0 + $1.width * $1.height * 4 }) > 128 * 1024 * 1024 {
+      entries.removeValue(forKey: order.removeFirst())
+    }
     return image
   }
 

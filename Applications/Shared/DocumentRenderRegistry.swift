@@ -26,6 +26,11 @@ final class DocumentRenderRegistry {
     return entries[document.id]?.last { $0.token.hasPrefix(token) && $0.pageIndex == pageIndex }
   }
 
+  func regions(document: DocumentDocument, state: DocumentStateJournal) -> [DocumentBlockRegion] {
+    let token = "\(document.contentStamp.revision)|\(state.stamp.revision)"
+    return entries[document.id]?.last(where: { $0.token.hasPrefix(token) })?.regions ?? []
+  }
+
   func publish(documentID: UUID, token: String, receipt: NSDictionary, geometry: WorkspaceItemGeometry) {
     let width = (receipt["width"] as? NSNumber)?.doubleValue ?? geometry.width
     let height = (receipt["height"] as? NSNumber)?.doubleValue ?? geometry.height

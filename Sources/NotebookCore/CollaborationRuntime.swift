@@ -47,10 +47,11 @@ public struct DeviceActionReceipt: Codable, Equatable, Sendable, Identifiable {
   public let receivedAt: Date
   public let revisions: [CollaborationExpectation]
   public var shown: [CollaborationExpectation]
+  public var displayComplete: Bool
   public var visibleRegions: [CollaborationReference]
 
-  public init(id: UUID, deviceID: UUID, receivedAt: Date = Date(), revisions: [CollaborationExpectation] = [], shown: [CollaborationExpectation] = [], visibleRegions: [CollaborationReference] = []) {
-    self.id = id; self.deviceID = deviceID; self.receivedAt = receivedAt; self.revisions = revisions; self.shown = shown; self.visibleRegions = visibleRegions
+  public init(id: UUID, deviceID: UUID, receivedAt: Date = Date(), revisions: [CollaborationExpectation] = [], shown: [CollaborationExpectation] = [], displayComplete: Bool = false, visibleRegions: [CollaborationReference] = []) {
+    self.id = id; self.deviceID = deviceID; self.receivedAt = receivedAt; self.revisions = revisions; self.shown = shown; self.displayComplete = displayComplete; self.visibleRegions = visibleRegions
   }
 }
 
@@ -144,14 +145,33 @@ extension NotebookStore {
         content = element.setting("frame", nil).setting("worldOrigin", nil).setting("stamp", nil)
       } else if target.kind == .cover {
         let item = workspace["items"]?.array.first { $0.memberIdentity == target.id.uuidString.lowercased() }
-        guard item != nil else { throw CollaborationError("target_missing", "Предмет отсутствует.", target: target) }
+        guard item != nil, let boardValue = node["board"],
+          try boardValue.decode(BoardDocument.self).itemIDs.contains(target.id) else {
+          throw CollaborationError("target_missing", "Предмет принадлежит другой доске либо отсутствует.", target: target)
+        }
         let actions = files["spatial-ink.json"]?["actions"]?.array.filter { action in
           action["spans"]?.array.contains { $0["surface"]?["ownerID"]?.string.flatMap(UUID.init(uuidString:)) == target.id } == true
         } ?? []
         content = .object(["item": item ?? .null, "elements": .array(elements), "ink": .array(actions),
           "paperSize": files["documents/" + suffix]?["paperSize"] ?? .null])
       } else {
-        content = .object(["workspace": workspace, "hierarchy": hierarchy, "ink": files["spatial-ink.json"] ?? .null])
+        let tree = try hierarchy.decode(BoardHierarchy.self)
+        var descendants: Set<UUID> = [target.id]
+        var pending = [target.id]
+        while let id = pending.popLast(), let board = tree.board(id) {
+          for child in board.itemIDs where tree.board(child) != nil && descendants.insert(child).inserted { pending.append(child) }
+        }
+        let itemIDs = Set(descendants.flatMap { tree.board($0)?.itemIDs ?? [] })
+        let nodes = (hierarchy["boards"]?.array ?? []).filter { $0["id"]?.string.flatMap(UUID.init(uuidString:)).map(descendants.contains) == true }
+        let items = (workspace["items"]?.array ?? []).filter { $0["id"]?.string.flatMap(UUID.init(uuidString:)).map(itemIDs.contains) == true }
+        let ink = (files["spatial-ink.json"]?["actions"]?.array ?? []).filter { action in
+          action["spans"]?.array.contains { span in
+            guard let id = span["surface"]?["ownerID"]?.string.flatMap(UUID.init(uuidString:)) else { return false }
+            return span["surface"]?["kind"]?.string == "board" ? descendants.contains(id) : itemIDs.contains(id)
+          } == true
+        }
+        let paper: [JSONValue] = itemIDs.compactMap { id -> JSONValue? in files["documents/\(id.uuidString.lowercased()).json"]?["paperSize"].map { .object(["id":.string(id.uuidString.lowercased()),"size":$0]) } }.sorted { ($0["id"]?.string ?? "") < ($1["id"]?.string ?? "") }
+        content = .object(["items":.array(items),"boards":.array(nodes),"ink":.array(ink),"paper":.array(paper)])
       }
     case .workspace: content = files["workspace.json"] ?? .null
     }
@@ -184,6 +204,16 @@ extension NotebookStore {
     try prepare()
     try withMutationLock {
       let url = renderRequestsURL.appendingPathComponent(request.id.uuidString.lowercased() + ".json")
+      let requests = try targetRenderRequests()
+      let pending = requests.filter { !FileManager.default.fileExists(atPath:targetReceiptURL($0.id).path) }
+      guard pending.count < 16 || requests.contains(where: { $0.id == request.id }) else {
+        throw CollaborationError("snapshot_pending", "Очередь снимков занята активными запросами. Повторите после подготовки текущих областей.")
+      }
+      for obsolete in requests.filter({ FileManager.default.fileExists(atPath:targetReceiptURL($0.id).path) }).dropLast(64) {
+        try? FileManager.default.removeItem(at:renderRequestsURL.appendingPathComponent(obsolete.id.uuidString.lowercased()+".json"))
+        try? FileManager.default.removeItem(at:targetPNGURL(obsolete.id))
+        try? FileManager.default.removeItem(at:targetReceiptURL(obsolete.id))
+      }
       if !FileManager.default.fileExists(atPath: url.path) { try JSONEncoder().encode(request).write(to: url, options: .atomic) }
     }
     return request
@@ -225,24 +255,26 @@ extension NotebookStore {
   public func saveDeviceActionReceipt(_ receipt: DeviceActionReceipt) throws {
     try prepare()
     try withMutationLock {
-      try JSONEncoder().encode(receipt).write(to: deviceReceiptsURL.appendingPathComponent(receipt.id.uuidString.lowercased() + ".json"), options: .atomic)
+      let url = deviceReceiptsURL.appendingPathComponent(receipt.id.uuidString.lowercased() + ".json")
+      var result = receipt
+      if let data = try? Data(contentsOf:url), let previous = try? JSONDecoder().decode(DeviceActionReceipt.self,from:data) {
+        if previous.revisions == receipt.revisions {
+          for shown in previous.shown where !result.shown.contains(shown) { result.shown.append(shown) }
+          for region in previous.visibleRegions where !result.visibleRegions.contains(where: { $0.id == region.id }) { result.visibleRegions.append(region) }
+          result.displayComplete = previous.displayComplete || result.displayComplete
+        } else if previous.receivedAt > receipt.receivedAt { return }
+      }
+      try JSONEncoder().encode(result).write(to:url,options:.atomic)
     }
   }
 
-  public func receiveCollaboration(_ envelope: CollaborationEnvelope) throws {
+  public func receiveCollaboration(_ envelope: CollaborationEnvelope, local: CollaborationContent? = nil) throws -> CollaborationContent? {
     try prepare()
+    let resolved = envelope.content != nil || !envelope.actions.isEmpty
+      ? try mergeCollaborationContent(envelope.content,local:local,actions:envelope.actions) : nil
     for attention in envelope.attention { try saveSharedAttention(attention) }
     for receipt in envelope.delivery { try saveDeviceActionReceipt(receipt) }
-    try withMutationLock {
-      for incoming in envelope.actions {
-        let url = collaborationActionsURL.appendingPathComponent(incoming.id.uuidString.lowercased() + ".json")
-        if let data = try? Data(contentsOf: url), let current = try? JSONDecoder().decode(CollaborationReceipt.self, from: data) {
-          guard current.action == incoming.action else { throw CollaborationError("action_id_conflict", "Разные ходы имеют одинаковый ID.") }
-          if current.undo != nil || current == incoming { continue }
-        }
-        try JSONEncoder().encode(incoming).write(to: url, options: .atomic)
-      }
-    }
+    return resolved
   }
 }
 

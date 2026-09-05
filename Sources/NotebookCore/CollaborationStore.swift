@@ -71,6 +71,17 @@ extension NotebookStore {
       let before = try CollaborationWorkspace(store: self)
       for expectation in action.expected {
         let actual = try before.revision(of: expectation.target)
+        if let expectedSource = expectation.sourceRevision {
+          var sourceFiles = before.files
+          sourceFiles["spatial-ink.json"] = try .encode(before.ink)
+          let source = try Self.referenceRevision(target:expectation.target,files:sourceFiles)
+          guard source == expectedSource else {
+            throw CollaborationError("revision_conflict", "Содержание и геометрия изменились. Рассчитайте место заново.", target:expectation.target,expected:expectedSource,actual:source)
+          }
+        }
+        if let expectedState = expectation.stateRevision, try before.stateRevision(of:expectation.target) != expectedState.lowercased() {
+          throw CollaborationError("revision_conflict", "Состояние блока изменилось.", target:expectation.target, expected:expectedState, actual:try before.stateRevision(of:expectation.target))
+        }
         guard actual == expectation.revision.lowercased() else {
           throw CollaborationError("revision_conflict", "Владелец изменился. Прочитайте его текущую версию.",
             target: expectation.target, expected: expectation.revision, actual: actual)
@@ -83,6 +94,9 @@ extension NotebookStore {
           guard createdTargets.contains(target) || action.expected.contains(where: { $0.target == target }) else {
             throw CollaborationError("revision_required", "Для изменения нужна версия владельца.", target: target)
           }
+        }
+        if operation.kind == .setBlockState, !action.expected.contains(where: { $0.target == operation.target && $0.stateRevision != nil }) {
+          throw CollaborationError("revision_required", "Для состояния блока нужна stateRevision документа.", target:operation.target)
         }
         try after.apply(operation, actor: actor)
         if let id = operation.id.flatMap(UUID.init(uuidString:)) {
@@ -105,7 +119,7 @@ extension NotebookStore {
       let changes = collaborationDiff(before.files, after.files)
       let receipt = CollaborationReceipt(id: action.id, action: action, createdAt: Date(),
         revisions: try after.changedTargets(from: before).map {
-          CollaborationExpectation(target: $0, revision: try after.revision(of: $0))
+          CollaborationExpectation(target: $0, revision: try after.revision(of: $0), stateRevision: try after.stateRevision(of:$0))
         }, changes: changes)
       try commitCollaboration(before: before.files, after: after.files, receipt: receipt)
       return receipt
@@ -134,7 +148,14 @@ extension NotebookStore {
           preserved.append(change)
           continue
         }
-        if let value = after.files[change.file] {
+        if change.file.hasPrefix("document-states/"), change.before == nil, change.path.count == 2,
+          change.path[0] == .field("records"), case .member(let blockID) = change.path[1],
+          let documentID = UUID(uuidString:URL(fileURLWithPath:change.file).deletingPathExtension().lastPathComponent),
+          let document = try? after.files[documentFile(documentID)]?.decode(DocumentDocument.self),
+          let block = document.blocks.first(where: { $0.id == blockID }), let current {
+          after.files[change.file] = after.files[change.file]?.setting(at:change.path[...],to:current.setting("value",block.initialState))
+        } else if let value = after.files[change.file] {
+          if change.file.hasPrefix("document-states/"), change.path.last == .order { continue }
           after.files[change.file] = value.setting(at: change.path[...], to: change.before)
         } else if change.path.isEmpty {
           after.files[change.file] = change.before
@@ -151,7 +172,7 @@ extension NotebookStore {
       try after.validate()
       receipt.undo = CollaborationUndoResult(restored: restored, preserved: preserved, completedAt: Date())
       receipt.revisions = try after.changedTargets(from: before).map {
-        CollaborationExpectation(target: $0, revision: try after.revision(of: $0))
+        CollaborationExpectation(target: $0, revision: try after.revision(of: $0), stateRevision: try after.stateRevision(of:$0))
       }
       try commitCollaboration(before: before.files, after: after.files, receipt: receipt)
       return receipt
@@ -187,7 +208,7 @@ extension NotebookStore {
   }
 
   private func collaborationFileURL(_ path: String) throws -> URL {
-    let allowed = ["workspace.json", "board.json", "spatial-ink.json"].contains(path)
+    let allowed = ["workspace.json", "board.json", "spatial-ink.json", "collaboration/format.json"].contains(path)
       || ["pages/", "documents/", "document-states/", "collaboration/actions/"].contains { path.hasPrefix($0) }
     guard allowed, !path.contains(".."), !path.hasPrefix("/"), path.hasSuffix(".json") else {
       throw CollaborationError("invalid_transaction", "Некорректный путь публикации.")
@@ -200,6 +221,44 @@ extension NotebookStore {
     if path == "workspace.json" { return "2" }
     if path.hasPrefix("collaboration/") { return "3" + path }
     return "0" + path
+  }
+
+  public func migrateCollaborationStorage() throws {
+    try prepare()
+    try withMutationLock {
+      let marker = collaborationURL.appendingPathComponent("format.json")
+      guard !FileManager.default.fileExists(atPath:marker.path) else { return }
+      let before = try CollaborationWorkspace(store:self)
+      let backup = root.appendingPathComponent("migrations/before-collaboration-v1",isDirectory:true)
+      for path in before.files.keys.sorted() + ["spatial-ink.json","last-context.json"] {
+        let source = root.appendingPathComponent(path)
+        guard FileManager.default.fileExists(atPath:source.path) else { continue }
+        let destination = backup.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at:destination.deletingLastPathComponent(),withIntermediateDirectories:true)
+        try Data(contentsOf:source).write(to:destination,options:.atomic)
+      }
+      var after = before
+      func adopt(_ value: JSONValue, stampKey: String) throws -> JSONValue {
+        guard value["collaboration"] == nil else { return value }
+        let stamp = try value[stampKey]!.decode(VersionStamp.self)
+        var state = CollaborativeContent()
+        state.record(before:.object([:]),after:value,beforeStamp:stamp,stamp:stamp,human:true)
+        return value.setting("collaboration",try .encode(state))
+      }
+      for path in after.files.keys {
+        if path.hasPrefix("pages/") { after.files[path] = try adopt(after.files[path]!,stampKey:"agentStamp") }
+        if path.hasPrefix("documents/") { after.files[path] = try adopt(after.files[path]!,stampKey:"contentStamp") }
+      }
+      let tree = after.files["board.json"]!
+      after.files["board.json"] = try tree.setting("boards",.array((tree["boards"]?.array ?? []).map { node in
+        try node.setting("board",adopt(node["board"]!,stampKey:"stamp"))
+      }))
+      try after.validate()
+      var writes = after.files.filter { before.files[$0.key] != $0.value }
+      writes["collaboration/format.json"] = .object(["format":.number(1),"backup":.string("migrations/before-collaboration-v1")])
+      try JSONEncoder().encode(CollaborationTransaction(writes:writes,removals:[])).write(to:pendingCollaborationURL,options:.atomic)
+      try recoverCollaborationTransaction()
+    }
   }
 
   public func collaborationContent() throws -> CollaborationContent {
@@ -217,21 +276,29 @@ extension NotebookStore {
   }
 
   /// Disk, memory and the received cut meet under the same recoverable commit.
-  public func mergeCollaborationContent(_ incoming: CollaborationContent,
-    local: CollaborationContent? = nil) throws -> CollaborationContent {
+  public func mergeCollaborationContent(_ incoming: CollaborationContent?,
+    local: CollaborationContent? = nil, actions: [CollaborationReceipt] = []) throws -> CollaborationContent {
     try prepare()
     return try withMutationLock {
       let before = try loadCollaborationContent()
       var merged = before
       if let local { merged.merge(local) }
-      merged.merge(incoming)
+      if let incoming { merged.merge(incoming) }
       var validation = try CollaborationWorkspace(store: self)
       let files = try merged.sourceFiles()
       validation.files = files.filter { $0.key != "spatial-ink.json" }
       try validation.validate()
       guard merged.ink.isValid else { throw CollaborationError("invalid_content", "Журнал чернил должен быть завершён.") }
       let old = try before.sourceFiles()
-      let transaction = CollaborationTransaction(writes: files.filter { old[$0.key] != $0.value }, removals: old.keys.filter { files[$0] == nil })
+      var writes = files.filter { old[$0.key] != $0.value }
+      for incoming in actions {
+        if let current = try? loadAction(incoming.id) {
+          guard current.action == incoming.action else { throw CollaborationError("action_id_conflict", "Разные ходы имеют одинаковый ID.") }
+          if current.undo != nil || current == incoming { continue }
+        }
+        writes[actionFile(incoming.id)] = try .encode(incoming)
+      }
+      let transaction = CollaborationTransaction(writes: writes, removals: old.keys.filter { files[$0] == nil })
       if !transaction.writes.isEmpty || !transaction.removals.isEmpty {
         try JSONEncoder().encode(transaction).write(to: pendingCollaborationURL, options: .atomic)
         try recoverCollaborationTransaction()
@@ -297,6 +364,11 @@ private struct CollaborationWorkspace {
     }
   }
 
+  func stateRevision(of target: CollaborationTarget) throws -> String? {
+    guard target.kind == .document else { return nil }
+    return try files[stateFile(target.id)]?.decode(DocumentStateJournal.self).stamp.revision
+  }
+
   func requiredExpectations(for operation: CollaborationOperation) throws -> [CollaborationTarget] {
     var targets = [operation.target]
     if [.createNotebook, .createDocument, .createBoard, .renameItem].contains(operation.kind) {
@@ -309,6 +381,14 @@ private struct CollaborationWorkspace {
     switch operation.kind {
     case .insertElement, .updateElement, .setElementState, .removeElement, .reorderElements:
       try editElements(operation, actor: actor)
+    case .setBlockState:
+      guard operation.target.kind == .document, let id = operation.id, let value = operation.values["state"],
+        let raw = files[documentFile(operation.target.id)],
+        try raw.decode(DocumentDocument.self).blocks.contains(where: { $0.id == id && $0.kind == .interactive }),
+        let rawState = files[stateFile(operation.target.id)] else { throw missing(operation.target) }
+      var state = try rawState.decode(DocumentStateJournal.self)
+      _ = state.commit(blockID:id,value:value,actor:actor,human:false)
+      files[stateFile(operation.target.id)] = try .encode(state)
     case .insertBlock, .updateBlock, .removeBlock, .reorderBlocks, .setPreamble, .replaceDocument:
       try editDocument(operation, actor: actor)
     case .createNotebook, .createDocument, .createBoard:
@@ -536,7 +616,7 @@ private struct CollaborationWorkspace {
     for node in try hierarchy.boards where node.board != oldTree.board(node.id) { targets.append(.init(kind: .board, id: node.id)) }
     for item in try workspace.items {
       for pageID in item.pageIDs where files[pageFile(pageID)] != previous.files[pageFile(pageID)] { targets.append(.init(kind: .page, id: pageID)) }
-      if item.kind == .document, files[documentFile(item.id)] != previous.files[documentFile(item.id)] { targets.append(.init(kind: .document, id: item.id)) }
+      if item.kind == .document, (files[documentFile(item.id)] != previous.files[documentFile(item.id)] || files[stateFile(item.id)] != previous.files[stateFile(item.id)]) { targets.append(.init(kind: .document, id: item.id)) }
     }
     return targets
   }
@@ -546,7 +626,23 @@ private struct CollaborationWorkspace {
       switch target.kind {
       case .workspace: files["workspace.json"] = try advancing(files["workspace.json"]!, key: "stamp", actor: actor)
       case .page: files[pageFile(target.id)] = try advancing(files[pageFile(target.id)]!, key: "agentStamp", actor: actor)
-      case .document: files[documentFile(target.id)] = try advancing(files[documentFile(target.id)]!, key: "contentStamp", actor: actor)
+      case .document:
+        if files[documentFile(target.id)] != previous.files[documentFile(target.id)] {
+          files[documentFile(target.id)] = try advancing(files[documentFile(target.id)]!, key: "contentStamp", actor: actor)
+        }
+        if var value = files[stateFile(target.id)], let old = previous.files[stateFile(target.id)], value != old {
+          let next = try old["stamp"]!.decode(VersionStamp.self).advanced(by:actor)!
+          var records = value["records"]?.array ?? []
+          for index in records.indices {
+            let prior = old["records"]?.array.first { $0.memberIdentity == records[index].memberIdentity }
+            if collaborationComparable(prior) != collaborationComparable(records[index]) {
+              let previousVersion = try prior?["fieldVersion"]?.decode(ContentFieldVersion.self)
+              records[index] = records[index].setting("stamp",try .encode(next)).setting("fieldVersion",try .encode(ContentFieldVersion(stamp:next,human:true,previous:previousVersion)))
+            }
+          }
+          value = value.setting("records",.array(records)).setting("stamp",try .encode(next))
+          files[stateFile(target.id)] = value
+        }
       case .board:
         let path: [CollaborationPathComponent] = [.field("boards"), .member(target.id.uuidString), .field("board")]
         let tree = files["board.json"]!
@@ -633,7 +729,7 @@ private func reordered(_ items: [JSONValue], values: [String: JSONValue]) throws
   return ids.map { id in items.first { $0["id"]?.string == id }! }
 }
 
-private let versionFields: Set<String> = ["stamp", "agentStamp", "contentStamp", "portalStamp", "collaboration"]
+private let versionFields: Set<String> = ["stamp", "agentStamp", "contentStamp", "portalStamp", "collaboration", "fieldVersion"]
 private func collaborationComparable(_ value: JSONValue?) -> JSONValue? {
   guard let value else { return nil }
   switch value {
@@ -672,6 +768,11 @@ private func collaborationDiff(_ before: [String: JSONValue], _ after: [String: 
 private func collaborationFieldVersion(file: JSONValue?, path: [CollaborationPathComponent]) -> ContentFieldVersion? {
   guard var owner = file else { return nil }
   var local = path
+  if local.count >= 2, local[0] == .field("records"), case .member(let id) = local[1],
+    let record = owner["records"]?.array.first(where: { $0.memberIdentity == id }) {
+    return (try? record["fieldVersion"]?.decode(ContentFieldVersion.self))
+      ?? (try? record["stamp"]?.decode(VersionStamp.self)).map { .init(stamp:$0,human:true) }
+  }
   if local.count >= 3, local[0] == .field("boards"), local[2] == .field("board") {
     guard let board = owner.value(at: local.prefix(3)) else { return nil }
     owner = board

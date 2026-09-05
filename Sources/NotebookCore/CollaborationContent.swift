@@ -35,6 +35,19 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
     self.states = states.values.filter { documentIDs.contains($0.id) }.sorted { $0.id.uuidString < $1.id.uuidString }
   }
 
+  /// A publication carries only changed heavy owners; the receiver retains the
+  /// rest of its completed cut. Initial connection carries the complete set.
+  public func publication(since previous: Self?) -> Self {
+    guard let previous else { return self }
+    let oldPages = Dictionary(uniqueKeysWithValues:previous.pages.map { ($0.id,$0) })
+    let oldDocuments = Dictionary(uniqueKeysWithValues:previous.documents.map { ($0.id,$0) })
+    let oldStates = Dictionary(uniqueKeysWithValues:previous.states.map { ($0.id,$0) })
+    return .init(workspace:workspace,hierarchy:hierarchy,
+      ink:ink == previous.ink ? SpatialInkJournal(stamp:.init(counter:0,actor:ink.stamp.actor)) : ink,
+      pages:pages.filter { oldPages[$0.id] != $0 },documents:documents.filter { oldDocuments[$0.id] != $0 },
+      states:states.filter { oldStates[$0.id] != $0 })
+  }
+
   public func sourceFiles() throws -> [String: JSONValue] {
     var files: [String: JSONValue] = ["workspace.json": try .encode(workspace), "board.json": try .encode(hierarchy), "spatial-ink.json": try .encode(ink)]
     for page in pages { files["pages/\(page.id.uuidString.lowercased()).json"] = try .encode(page) }

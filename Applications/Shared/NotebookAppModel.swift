@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 import Observation
 import NotebookCore
 
@@ -96,6 +97,14 @@ final class NotebookAppModel {
   private(set) var spatialInk: SpatialInkJournal?
   private(set) var presence: SessionPresence?
   private(set) var presencePhase = PresencePhase.settled
+  var isPointing = false
+  private(set) var requestedReference: CollaborationReference?
+  private(set) var highlightedReference: CollaborationReference?
+  private var collaborationUndoTask: Task<Void, Never>?
+  @ObservationIgnored private var resultCache: [UUID: [CollaborationReference]] = [:]
+  @ObservationIgnored private var referenceStatusCache: [UUID: (String, Bool)] = [:]
+  private var deviceActionReceipts: [DeviceActionReceipt] = []
+  private var readyPages: [UUID: String] = [:]
   private(set) var isPeerConnected = false
   private(set) var collaborationActions: [CollaborationReceipt] = []
   private(set) var sharedAttention: [SharedAttention] = []
@@ -259,8 +268,10 @@ final class NotebookAppModel {
           phase: .settled
         )
       }
+      try store.migrateCollaborationStorage()
       loadState = .ready
       reloadCollaborationMetadata()
+      reloadExternalChanges()
       #if os(macOS)
         startExternalChangeObservation()
         startPreviewPublication()
@@ -947,11 +958,13 @@ final class NotebookAppModel {
   }
 
   func selectDrawingTool(_ tool: DrawingTool) {
+    isPointing = false
     endElementEditing()
     drawingTool = tool
   }
 
   func selectElementTool() {
+    isPointing = false
     isElementEditingEnabled = true
     elementEditingSession = ElementEditingSession()
   }
@@ -1223,7 +1236,7 @@ final class NotebookAppModel {
       acceptCollaborationContent(resolved)
       reloadCollaborationMetadata()
       if previous != resolved || oldActions != collaborationActions || oldAttention != sharedAttention {
-        sendCollaboration(content: resolved)
+        sendCollaboration(content: resolved.publication(since:previous))
       }
       #if os(macOS)
         externalReloadRetry?.cancel()
@@ -1280,11 +1293,9 @@ final class NotebookAppModel {
     switch message {
     case .collaboration(let envelope):
       do {
-        if let incoming = envelope.content {
-          let resolved = try store.mergeCollaborationContent(incoming, local: collaborationContent)
+        if let resolved = try store.receiveCollaboration(envelope,local:collaborationContent) {
           acceptCollaborationContent(resolved)
         }
-        try store.receiveCollaboration(envelope)
         reloadCollaborationMetadata()
         #if os(iOS)
           acknowledgeReceivedActions()
@@ -1404,36 +1415,153 @@ final class NotebookAppModel {
 
   private func sendSnapshot() {
     guard let workspace else { return }
-    let publishedPageIDs = Set(workspace.items.flatMap(\.pageIDs))
-    let selectedPageID = workspace.selectedPageID
-    if let selectedPageID, let selectedPage = pages[selectedPageID] {
-      sync.send(.page(selectedPage))
-    }
-    if workspace.selectedItem.kind == .document {
-      let id = workspace.selectedItemID
-      if let document = documents[id] { sync.send(.document(document)) }
-      if let state = documentStates[id] { sync.send(.documentState(state)) }
-    }
-    if let spatialInk { sync.send(.spatialInk(spatialInk)) }
-    for page in pages.values
-    where page.id != selectedPageID && publishedPageIDs.contains(page.id) {
-      sync.send(.page(page))
-    }
-    for item in workspace.items where item.kind == .document
-      && item.id != workspace.selectedItemID
-    {
-      if let document = documents[item.id] { sync.send(.document(document)) }
-      if let state = documentStates[item.id] {
-        sync.send(.documentState(state))
-      }
-    }
-    if let boardHierarchy { sync.send(.board(boardHierarchy)) }
-    sync.send(.index(workspace))
+    _ = workspace
     sendCollaboration(content: collaborationContent)
     #if os(iOS)
       if let lastSettledPresenceEnvelope {
         sync.send(.presence(lastSettledPresenceEnvelope))
       }
+    #endif
+  }
+
+  func publishHumanAttention(_ reference: CollaborationReference) {
+    let previous = sharedAttention.first { $0.author == .human }?.stamp ?? .init(counter:0,actor:actorID)
+    guard let stamp = previous.advanced(by:actorID) else { return }
+    let attention = SharedAttention(author:.human,reference:reference,stamp:stamp)
+    do {
+      try store.saveSharedAttention(attention)
+      reloadCollaborationMetadata(); isPointing = false
+      sync.send(.collaboration(.init(attention:[attention])))
+    } catch { showCue(error.localizedDescription) }
+  }
+
+  func results(for action: CollaborationReceipt) -> [CollaborationReference] {
+    if let result = resultCache[action.id] { return result }
+    let result = collaborationContent.map { action.resultReferences(in:$0) } ?? []
+    resultCache[action.id] = result
+    return result
+  }
+
+  func referenceChanged(_ reference: CollaborationReference) -> Bool {
+    let target = reference.target
+    let signature: String
+    switch target.kind {
+    case .page: signature = pages[target.id].map { "\($0.drawingStamp.revision)|\($0.agentStamp.revision)" } ?? "missing"
+    case .document: signature = (documents[target.id]?.contentStamp.revision ?? "missing") + "|" + (documentStates[target.id]?.stamp.revision ?? "missing")
+    case .cover,.board: signature = (boardHierarchy?.revision ?? "missing") + "|" + (spatialInk?.stamp.revision ?? "missing")
+    case .workspace: signature = workspace?.stamp.revision ?? "missing"
+    }
+    if let entry = referenceStatusCache[reference.id], entry.0 == signature { return entry.1 }
+    guard let files = try? collaborationContent?.sourceFiles() else { return true }
+    let changed = (try? NotebookStore.referenceRevision(target:reference.target,elementID:reference.elementID,files:files)) != reference.revision
+    referenceStatusCache[reference.id] = (signature,changed)
+    return changed
+  }
+
+  func referenceTitle(_ reference: CollaborationReference) -> String {
+    switch reference.target.kind {
+    case .page: return "Лист"
+    case .document: return "Документ"
+    case .cover: return "Обложка"
+    case .board: return "Доска"
+    case .workspace: return "Рабочее место"
+    }
+  }
+
+  func requestShow(_ reference: CollaborationReference) {
+    requestedReference = .init(target:reference.target,elementID:reference.elementID,region:reference.region,
+      worldOrigin:reference.worldOrigin,pageIndex:reference.pageIndex,revision:reference.revision,label:reference.label)
+  }
+
+  func completeShow(_ reference: CollaborationReference) {
+    if requestedReference?.id == reference.id { requestedReference = nil }
+    highlightedReference = reference
+  }
+
+  func undoCollaboration(_ id: UUID) {
+    guard collaborationUndoTask == nil else { return }
+    afterPageInput { [weak self] in
+      guard let self else { return }
+      let store = store, actor = actorID, local = collaborationContent
+      collaborationUndoTask = Task { [weak self] in
+        let result = await Task.detached(priority:.userInitiated) { () -> Result<CollaborationReceipt, Error> in
+          do {
+            if let local { _ = try store.mergeCollaborationContent(local) }
+            return .success(try store.undoCollaborationAction(id,actor:actor))
+          } catch { return .failure(error) }
+        }.value
+        guard let self else { return }
+        collaborationUndoTask = nil
+        switch result {
+        case .success(let receipt):
+          reloadExternalChanges()
+          showCue(receipt.undo?.preserved.isEmpty == false ? "Ход отменён. Ваши доработки сохранены" : "Ход отменён")
+        case .failure(let error): showCue(error.localizedDescription)
+        }
+      }
+    }
+  }
+
+  func pagePresented(_ page: PageDocument, ready: Bool) {
+    readyPages[page.id] = ready ? "\(page.drawingStamp.revision)|\(page.agentStamp.revision)" : nil
+  }
+
+  private func collaborationRevision(_ target: CollaborationTarget) -> String? {
+    switch target.kind {
+    case .page: return pages[target.id]?.agentStamp.revision
+    case .document: return documents[target.id]?.contentStamp.revision
+    case .board,.cover: return boardHierarchy?.board(target.boardID ?? target.id)?.stamp.revision
+    case .workspace: return workspace?.stamp.revision
+    }
+  }
+
+  func confirmVisibleActions(presence visible: SessionPresence) {
+    #if os(iOS)
+      guard collaborationActions.contains(where: { action in !deviceActionReceipts.contains(where: { $0.id == action.id && $0.revisions == action.revisions && $0.displayComplete }) }),
+        presencePhase == .settled, presence == visible, !isPointing,
+        collaborationContent != nil else { return }
+      acknowledgeReceivedActions()
+      let receipts = deviceActionReceipts
+      var changed: [DeviceActionReceipt] = []
+      for action in collaborationActions.prefix(50) {
+        guard var receipt = receipts.first(where: { $0.id == action.id && $0.revisions == action.revisions }), !receipt.displayComplete else { continue }
+        let references = results(for:action)
+        let viewport = CGRect(x:0,y:0,width:visible.viewport.x,height:visible.viewport.y)
+        for reference in references where !receipt.visibleRegions.contains(where: { $0.id == reference.id }) {
+          let owner = reference.target.kind == .cover ? CollaborationTarget(kind:.board,id:reference.target.boardID!) : reference.target
+          guard let expected = action.revisions.first(where: { $0.target == owner || $0.target == reference.target }),
+            collaborationRevision(expected.target) == expected.revision,
+            expected.stateRevision == nil || documentStates[expected.target.id]?.stamp.revision == expected.stateRevision,
+            let rect = NotebookAttentionProjection.frame(reference,model:self,presence:visible), viewport.contains(rect) else { continue }
+          let ready: Bool
+          switch reference.target.kind {
+          case .page:
+            if let page = pages[reference.target.id] { ready = readyPages[page.id] == "\(page.drawingStamp.revision)|\(page.agentStamp.revision)" }
+            else { ready = false }
+          case .document:
+            if let document = documents[reference.target.id], let state = documentStates[document.id] {
+              ready = DocumentRenderRegistry.shared.entry(document:document,state:state,pageIndex:visible.documentPageIndex) != nil
+            } else { ready = false }
+          case .board,.cover:
+            if let board = boardHierarchy?.board(reference.target.boardID ?? reference.target.id) {
+              ready = board.elements.filter { $0.kind != .nativeText && (reference.elementID == nil || $0.id == reference.elementID) }
+                .allSatisfy { AgentElementSnapshotCache.shared.image(for:agentElementSnapshotSource($0)) != nil }
+            } else { ready = false }
+          case .workspace: ready = false
+          }
+          guard ready else { continue }
+          if !receipt.shown.contains(expected) { receipt.shown.append(expected) }
+          receipt.visibleRegions.append(reference)
+        }
+        receipt.displayComplete = !references.isEmpty && references.allSatisfy { ref in receipt.visibleRegions.contains { $0.id == ref.id } }
+        if receipt != receipts.first(where: { $0.id == action.id }) {
+          try? store.saveDeviceActionReceipt(receipt); changed.append(receipt)
+        }
+      }
+      for receipt in changed {
+        deviceActionReceipts.removeAll { $0.id == receipt.id }; deviceActionReceipts.append(receipt)
+      }
+      if !changed.isEmpty { sync.send(.collaboration(.init(delivery:changed))) }
     #endif
   }
 
@@ -1445,16 +1573,29 @@ final class NotebookAppModel {
 
   private func acceptCollaborationContent(_ content: CollaborationContent) {
     guard collaborationContent != content else { return }
+    #if os(iOS)
+      let humanSelection = workspace
+    #endif
     workspace = content.workspace; boardHierarchy = content.hierarchy; spatialInk = content.ink
     pages = Dictionary(uniqueKeysWithValues: content.pages.map { ($0.id, $0) })
     documents = Dictionary(uniqueKeysWithValues: content.documents.map { ($0.id, $0) })
     documentStates = Dictionary(uniqueKeysWithValues: content.states.map { ($0.id, $0) })
-    reconcilePresence(with: content.workspace, board: content.hierarchy)
+    #if os(iOS)
+      if let focus = presence?.focusedItemID, focus == humanSelection?.selectedItemID,
+        let item = content.workspace.items.first(where: { $0.id == focus }) {
+        selectItem(focus)
+        if item.kind == .notebook, let pageID = humanSelection?.selectedPageID, let index = item.pageIDs.firstIndex(of:pageID) {
+          _ = selectNotebookPage(index,notebookID:focus)
+        }
+      }
+    #endif
+    reconcilePresence(with: workspace ?? content.workspace, board: content.hierarchy)
   }
 
   private func reloadCollaborationMetadata() {
     collaborationActions = (try? store.collaborationActions()) ?? []
     sharedAttention = (try? store.sharedAttention()) ?? []
+    deviceActionReceipts = (try? store.deviceActionReceipts()) ?? []
   }
 
   private func sendCollaboration(content: CollaborationContent? = nil) {
@@ -1464,13 +1605,12 @@ final class NotebookAppModel {
   }
 
   private func acknowledgeReceivedActions() {
-    guard let content = collaborationContent, let files = try? content.sourceFiles() else { return }
-    let previous = (try? store.deviceActionReceipts()) ?? []
+    let previous = deviceActionReceipts
     var added: [DeviceActionReceipt] = []
-    for action in collaborationActions where !previous.contains(where: { $0.id == action.id }) {
-      guard action.revisions.allSatisfy({ (try? NotebookStore.targetContentRevision(target: $0.target, files: files)) == $0.revision }) else { continue }
-      let receipt = DeviceActionReceipt(id: action.id, deviceID: actorID)
+    for action in collaborationActions where !previous.contains(where: { $0.id == action.id && $0.revisions == action.revisions }) {
+      let receipt = DeviceActionReceipt(id: action.id, deviceID: actorID, revisions: action.revisions)
       try? store.saveDeviceActionReceipt(receipt); added.append(receipt)
+      deviceActionReceipts.removeAll { $0.id == action.id }; deviceActionReceipts.append(receipt)
     }
     if !added.isEmpty { sync.send(.collaboration(.init(delivery: added))) }
   }

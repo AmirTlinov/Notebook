@@ -1,3 +1,4 @@
+import { notebookResponseSchema } from "./contracts.js";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -131,6 +132,7 @@ export function registerPageVisionTools(
   server.registerTool(
     "notebook_page_map",
     {
+      outputSchema: notebookResponseSchema,
       title: "Locate visible Pencil ink",
       description:
         "Return the physical 0.5 cm grid cells and grouped regions containing visible Pencil pixels. " +
@@ -156,6 +158,7 @@ export function registerPageVisionTools(
   server.registerTool(
     "notebook_render_region",
     {
+      outputSchema: notebookResponseSchema,
       title: "Magnify one Pencil region",
       description:
         "Return one exact pre-cropped region from notebook_page_map. " +
@@ -194,6 +197,7 @@ export function registerPageVisionTools(
   server.registerTool(
     "notebook_render_regions",
     {
+      outputSchema: notebookResponseSchema,
       title: "Magnify several Pencil regions",
       description:
         "Return up to four exact region images in the requested order, avoiding repeated full-page screenshots.",

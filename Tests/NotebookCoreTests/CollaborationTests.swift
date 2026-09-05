@@ -265,3 +265,119 @@ func collaborationAtomicNetworkCut() throws {
   #expect(merged.pages[0].elements[0].css == "color:green")
   #expect(try f.store.collaborationContent() == merged)
 }
+
+@Test("Миграция сохраняет точную копию и выполняется один раз")
+func collaborationOneTimeMigration() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let raw = try Data(contentsOf:f.store.pageURL(f.pageID))
+  try f.store.migrateCollaborationStorage()
+  let backup = f.root.appendingPathComponent("migrations/before-collaboration-v1/pages/\(f.pageID.uuidString.lowercased()).json")
+  #expect(try Data(contentsOf:backup) == raw)
+  #expect(try f.store.loadPage(f.pageID).collaboration != nil)
+  try f.store.migrateCollaborationStorage()
+  #expect(try Data(contentsOf:backup) == raw)
+}
+
+@Test("Состояние блока имеет явную операцию, отдельную версию и устойчивую отмену")
+func collaborationBlockStateUndoAndMerge() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let id = UUID(), target = CollaborationTarget(kind:.document,id:id)
+  _ = try f.store.applyCollaborationAction(f.action([.init(kind:.createDocument,target:f.board,id:id.uuidString,values:[
+    "center":try .encode(WorldPoint.zero),"paperSize":.string("a4"),"blocks":.array([
+      .object(["id":.string("counter"),"kind":.string("interactive"),"html":.string("<button>+</button>"),"initialState":.number(0)])])])],targets:[f.board,f.index]),actor:f.agent)
+  let document = try f.store.loadDocument(id), state = try f.store.loadDocumentState(id)
+  let action = CollaborationAction(summary:"Счётчик показывает семь",expected:[.init(target:target,revision:document.contentStamp.revision,stateRevision:state.stamp.revision)],operations:[
+    .init(kind:.setBlockState,target:target,id:"counter",values:["state":.number(7)])])
+  _ = try f.store.applyCollaborationAction(action,actor:f.agent)
+  let delivered = try f.store.loadDocumentState(id)
+  #expect(delivered.value(for:"counter") == .number(7))
+  #expect(try f.store.loadDocument(id).contentStamp == document.contentStamp)
+  _ = try f.store.undoCollaborationAction(action.id,actor:f.human)
+  var final = try f.store.loadDocumentState(id)
+  #expect(final.value(for:"counter") == .number(0))
+  _ = final.merge(delivered)
+  #expect(final.value(for:"counter") == .number(0))
+  var human = delivered, agent = delivered
+  _ = human.commit(blockID:"counter",value:.number(11),actor:f.human)
+  _ = agent.commit(blockID:"counter",value:.number(12),actor:f.agent,human:false)
+  _ = human.merge(agent); _ = agent.merge(human)
+  #expect(human.value(for:"counter") == .number(11))
+  #expect(agent.value(for:"counter") == .number(11))
+}
+
+@Test("Публикация хода переносит изменённых владельцев и сохраняет остальную тетрадь")
+func collaborationSparsePublication() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  try f.store.migrateCollaborationStorage()
+  let previous = try f.store.collaborationContent()
+  _ = try f.store.applyCollaborationAction(f.action([f.insert()]),actor:f.agent)
+  let next = try f.store.collaborationContent()
+  let patch = next.publication(since:previous)
+  #expect(patch.pages.count == 1)
+  #expect(patch.ink.actions.isEmpty)
+  var receiver = previous
+  receiver.merge(patch)
+  #expect(receiver == next)
+  #expect(next.publication(since:next).pages.isEmpty)
+}
+
+@Test("Переход человека меняет внимание, сохраняя хеш содержания доски")
+func collaborationBoardReferenceIgnoresSelection() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let id = UUID()
+  _ = try f.store.applyCollaborationAction(f.action([.init(kind:.createNotebook,target:f.board,id:id.uuidString,
+    values:["center":try .encode(WorldPoint(x:1200,y:0)),"pageID":.string(UUID().uuidString)])],targets:[f.board,f.index]),actor:f.agent)
+  let source = try f.store.referenceRevision(target:f.board)
+  var workspace = try f.store.loadIndex()
+  _ = workspace.selectItem(id,actor:f.human)
+  try f.store.saveIndex(workspace)
+  #expect(try f.store.referenceRevision(target:f.board) == source)
+}
+
+@Test("Размещение защищает рассмотренные чернила при неизменной версии элементов")
+func collaborationPlacementRejectsChangedInk() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let source = try f.store.referenceRevision(target:f.page)
+  let expectation = CollaborationExpectation(target:f.page,revision:try f.expectation(f.page).revision,sourceRevision:source)
+  var page = try f.store.loadPage(f.pageID)
+  let changed = page.replaceDrawing(Data([1,2,3]),actor:f.human)
+  #expect(changed)
+  try f.store.savePage(page)
+  let action = CollaborationAction(summary:"Продолжение рядом",expected:[expectation],operations:[f.insert()])
+  do {
+    _ = try f.store.applyCollaborationAction(action,actor:f.agent)
+    Issue.record("Рамка должна быть пересчитана после рукописи")
+  } catch let error as CollaborationError { #expect(error.code == "revision_conflict") }
+  #expect(try f.store.loadPage(f.pageID).elements.isEmpty)
+}
+
+@Test("Конфликт истории отклоняет весь пришедший срез до публикации")
+func collaborationReceivedActionIdentityIsAtomic() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let action = try f.action([f.insert()])
+  let receipt = try f.store.applyCollaborationAction(action,actor:f.agent)
+  let before = try f.store.collaborationContent()
+  var incoming = before
+  let prior = incoming.pages[0].elements[0]
+  _ = incoming.pages[0].replaceElements([AgentElement(id:prior.id,kind:prior.kind,frame:prior.frame,source:"Changed",html:"Changed")],actor:f.agent)
+  let conflict = CollaborationAction(id:action.id,summary:"Другое намерение",references:action.references,expected:action.expected,operations:action.operations)
+  let counterfeit = CollaborationReceipt(id:receipt.id,action:conflict,createdAt:receipt.createdAt,revisions:receipt.revisions,changes:receipt.changes)
+  #expect(throws:CollaborationError.self) { try f.store.receiveCollaboration(.init(content:incoming,actions:[counterfeit])) }
+  #expect(try f.store.collaborationContent() == before)
+  #expect(try f.store.collaborationAction(action.id) == receipt)
+}
+
+@Test("Сошедшееся состояние получает версию собственного видимого результата")
+func collaborationStateMergeNamesTheCombinedResult() {
+  let id = UUID(), actorA = UUID(), actorB = UUID()
+  var a = DocumentStateJournal(id:id,actor:actorA), b = DocumentStateJournal(id:id,actor:actorA)
+  _ = a.commit(blockID:"a",value:.number(1),actor:actorA)
+  _ = b.commit(blockID:"b",value:.number(2),actor:actorB)
+  let frontier = max(a.stamp,b.stamp)
+  _ = a.merge(b); _ = b.merge(a)
+  #expect(a == b)
+  #expect(a.stamp > frontier)
+  let settled = a
+  _ = a.merge(b)
+  #expect(a == settled)
+}

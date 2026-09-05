@@ -226,6 +226,7 @@ enum WorkspaceSceneProjection {
 struct SpatialWorkspaceView: View {
   @Environment(NotebookAppModel.self) private var model
 
+  @State private var pointerPreview: CGRect?
   @State private var cameraGesture: CameraGestureSnapshot?
   @State private var panStart: SessionPresence?
   @State private var selectedItemID: UUID?
@@ -258,7 +259,7 @@ struct SpatialWorkspaceView: View {
         #if os(iOS)
           BoardPanView(
             isEnabled: (presence.mode == .board || presence.mode == .cover)
-              && cameraGesture == nil && !settling,
+              && cameraGesture == nil && !settling && !model.isPointing,
             itemFrames: rendered.map { item in
               let center = presence.camera.worldToScreen(
                 item.center,
@@ -330,7 +331,7 @@ struct SpatialWorkspaceView: View {
             isEnabled: (presence.mode == .board || presence.mode == .cover)
               && !contentGestureActive
               && editingSpatialTextID == nil
-              && !model.isElementEditingEnabled
+              && !model.isElementEditingEnabled && !model.isPointing
           )
           .allowsHitTesting(false)
         #endif
@@ -358,14 +359,14 @@ struct SpatialWorkspaceView: View {
             openProgress: presence.focusedItemID == rendered.id
               ? presence.openProgress
               : 0,
-            contentIsInteractive: presence.focusedItemID == rendered.id
+            contentIsInteractive: !model.isPointing && presence.focusedItemID == rendered.id
               && (presence.mode == .page || presence.mode == .document)
               && !contentGestureActive
               && !pageTurnIsActive
               && cameraGesture == nil
               && !settling
               && presence.openProgress >= 0.999,
-            pageNavigationIsEnabled: presence.focusedItemID == rendered.id
+            pageNavigationIsEnabled: !model.isPointing && presence.focusedItemID == rendered.id
               && (presence.mode == .page || presence.mode == .document)
               && presence.openProgress >= 0.999
               && cameraGesture == nil
@@ -424,7 +425,7 @@ struct SpatialWorkspaceView: View {
             isEnabled: true,
             defersHorizontalMotionToPageTurn: (presence.mode == .page
               || presence.mode == .document)
-              && presence.openProgress >= 0.999,
+              && presence.openProgress >= 0.999 && !model.isPointing,
             pencilInputGate: model.pencilInputGate,
             onCamera: handleWorkspaceMagnification,
             onUndo: {
@@ -436,11 +437,44 @@ struct SpatialWorkspaceView: View {
           itemSelectionControl(presence: presence, viewport: viewport)
         #endif
 
+        NotebookAttentionMarks(presence:presence)
+        #if os(iOS)
+          if model.isPointing {
+            NotebookPointerView(onPreview:{ pointerPreview = $0 },onPoint:{ start,end in
+              guard cameraGesture == nil, !settling, let reference = NotebookAttentionProjection.reference(start:start,end:end,model:model,presence:presence) else { return }
+              model.publishHumanAttention(reference)
+            })
+            if let rect = pointerPreview {
+              RoundedRectangle(cornerRadius:4).stroke(.indigo,style:StrokeStyle(lineWidth:2,dash:[6,4]))
+                .frame(width:rect.width,height:rect.height).position(x:rect.midX,y:rect.midY).allowsHitTesting(false)
+            }
+          }
+          NotebookDisplayConfirmation {
+            guard cameraGesture == nil, !settling, !pageTurnIsActive, !contentGestureActive else { return }
+            model.confirmVisibleActions(presence:presence)
+          }.allowsHitTesting(false)
+        #else
+          if model.isPointing {
+            Color.clear.contentShape(Rectangle()).gesture(DragGesture(minimumDistance:0).onEnded { value in
+              if let reference = NotebookAttentionProjection.reference(start:value.startLocation,end:value.location,model:model,presence:presence) { model.publishHumanAttention(reference) }
+            })
+          }
+        #endif
+
         controls(presence: presence, viewport: viewport)
       }
       .clipped()
       .onAppear {
         publishViewportIfNeeded(viewport)
+      }
+      .task(id:model.requestedReference?.id) {
+        guard let reference = model.requestedReference else { return }
+        while cameraGesture != nil || settling || pageTurnIsActive || contentGestureActive || model.presencePhase != .settled {
+          do { try await Task.sleep(for:.milliseconds(40)) } catch { return }
+        }
+        model.afterPageInput {
+          showReference(reference,viewport:viewport)
+        }
       }
       .onChange(of: geometry.size) { _, _ in
         publishViewportIfNeeded(viewport)
@@ -1227,6 +1261,52 @@ struct SpatialWorkspaceView: View {
       ),
       halo: halo
     )
+  }
+
+  private func showReference(_ reference: CollaborationReference, viewport: SpatialPoint) {
+    guard let workspace = model.workspace, let hierarchy = model.boardHierarchy else { return }
+    let target = reference.target
+    let itemID = target.kind == .page ? workspace.items.first(where: { $0.pageIDs.contains(target.id) })?.id : target.id
+    let boardID = target.kind == .board ? target.id : itemID.flatMap { hierarchy.ownerBoardID(of:$0) }
+    guard let boardID, let board = hierarchy.board(boardID) else { return }
+    if target.kind == .board {
+      var center = reference.worldOrigin ?? .zero
+      var region = reference.region ?? .init(x:-400,y:-300,width:800,height:600)
+      if let id = reference.elementID, let element = board.elements.first(where: { $0.id == id }) {
+        center = element.worldOrigin ?? .zero
+        region = .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+      }
+      center = center.offsetBy(x:region.x + region.width / 2,y:region.y + region.height / 2)
+      let scale = min(1.5,max(SpatialCamera.minimumScale,min(viewport.x/(region.width+100),viewport.y/(region.height+100))))
+      animateSettlement(to:.init(boardID:boardID,mode:.board,camera:.init(center:center,scale:scale),viewport:viewport),duration:0.3)
+    } else if let itemID, let center = board.focusedCenter(of:itemID) {
+      model.selectItem(itemID)
+      if target.kind == .page, let item = workspace.items.first(where: { $0.id == itemID }), let index = item.pageIDs.firstIndex(of:target.id) {
+        _ = model.selectNotebookPage(index,notebookID:itemID)
+      }
+      var pageIndex = reference.pageIndex ?? 0
+      if target.kind == .document, let id = reference.elementID, let document = model.documents[itemID], let state = model.documentStates[itemID],
+        let region = DocumentRenderRegistry.shared.regions(document:document,state:state).first(where: { $0.id == id }) { pageIndex = region.pageIndex }
+      let mode: WorkspaceSemanticMode = target.kind == .page ? .page : target.kind == .document ? .document : .cover
+      let geometry = model.itemGeometry(itemID)
+      animateSettlement(to:.init(boardID:boardID,mode:mode,camera:.init(center:center,scale:mode == .cover ? geometry.coverScale(viewport:viewport) : geometry.fitScale(viewport:viewport)),
+        viewport:viewport,focusedItemID:itemID,openProgress:mode == .cover ? 0 : 1,documentPageIndex:pageIndex),duration:0.3)
+      if target.kind == .document, let blockID = reference.elementID {
+        Task {
+          let deadline = ContinuousClock.now + .seconds(8)
+          while ContinuousClock.now < deadline {
+            try? await Task.sleep(for:.milliseconds(60))
+            guard model.presence?.focusedItemID == itemID else { return }
+            if let document = model.documents[itemID], let state = model.documentStates[itemID],
+              let region = DocumentRenderRegistry.shared.regions(document:document,state:state).first(where: { $0.id == blockID }), !settling {
+              _ = model.selectDocumentPage(region.pageIndex,documentID:itemID)
+              return
+            }
+          }
+        }
+      }
+    }
+    model.completeShow(reference)
   }
 
   private func openItem(

@@ -21,7 +21,7 @@ extension NotebookStore {
     let actual = try Self.targetContentRevision(target: target, files: files)
     guard actual == expectedRevision.lowercased() else { throw CollaborationError("revision_conflict", "Геометрия изменилась.", target: target, expected: expectedRevision, actual: actual) }
     let source = try Self.referenceRevision(target: target, files: files)
-    let expected = [CollaborationExpectation(target: target, revision: actual)]
+    let expected = [CollaborationExpectation(target: target, revision: actual, sourceRevision: source)]
     var extent = PageSize(width: 2048, height: 2048)
     var origin: WorldPoint? = target.kind == .board ? (reference?.worldOrigin ?? .zero) : nil
     var anchor = reference?.region ?? PageRect(x: 20, y: 20, width: 1, height: 1)

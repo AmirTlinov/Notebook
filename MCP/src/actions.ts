@@ -1,3 +1,4 @@
+import { notebookResponseSchema } from "./contracts.js";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -18,7 +19,7 @@ export type Target = z.infer<typeof targetSchema>;
 const frame = z.object({ x: z.number().finite(), y: z.number().finite(), width: z.number().positive(), height: z.number().positive() }).strict();
 const point = z.object({ tileX: z.number().int(), tileY: z.number().int(), localX: z.number().finite(), localY: z.number().finite() }).strict();
 export const referenceSchema = z.object({ id: z.uuid(), target: targetSchema, elementID: z.string().optional(), region: frame.optional(), worldOrigin: point.optional(), pageIndex: z.number().int().nonnegative().optional(), revision: z.string(), label: z.string().max(1000).default("") }).strict();
-const expectation = z.object({ target: targetSchema, revision: z.string().min(1) }).strict();
+const expectation = z.object({ target: targetSchema, revision: z.string().min(1), stateRevision:z.string().optional(), sourceRevision:z.string().optional() }).strict();
 const source = z.string().max(1_000_000);
 const block = z.discriminatedUnion("kind", [
   z.object({ id: z.string().min(1).max(120), kind: z.enum(["markdown", "latex"]), source }).strict(),
@@ -39,6 +40,7 @@ export const operationSchema = z.discriminatedUnion("kind", [
   op("insertBlock", z.object({ kind: z.enum(["markdown", "latex", "interactive"]), source: source.optional(), html: source.optional(), css: source.optional(),
     javaScript: source.optional(), initialState: z.json().optional(), height: z.number().min(48).max(2048).optional(), afterID: z.string().optional() }).strict()),
   op("updateBlock", z.object({ source: source.optional(), html: source.optional(), css: source.optional(), javaScript: source.optional(), height: z.number().min(48).max(2048).optional() }).strict()),
+  op("setBlockState", z.object({state:z.json()}).strict()),
   op("removeBlock", z.object({}).strict().default({})),
   op("reorderBlocks", z.object({ ids: z.array(z.string()).max(512) }).strict(), null),
   op("setPreamble", z.object({ preamble: source }).strict(), null),
@@ -64,8 +66,7 @@ export interface ActionReceipt {
 }
 
 export function registerActionTools(server: McpServer, store: NotebookStore): void {
-  const outputSchema = z.object({ status: z.string(), action: z.object({}).passthrough().optional(),
-    code: z.string().optional(), message: z.string().optional() }).passthrough();
+  const outputSchema = notebookResponseSchema;
   server.registerTool("notebook_apply", {
     title: "Continue one shared thought",
     description: "Apply one named, atomic, undoable action to explicit owners. Read their revisions first. Omitted update fields retain their values; interactive state has a separate operation. Creation keeps the human's camera and selection. Reuse action_id only for the same action. Workspace expectations use rootBoardID and workspaceRevision; page expectations use agentRevision; documents contentRevision; boards boardRevision.",
@@ -93,11 +94,11 @@ export function registerActionTools(server: McpServer, store: NotebookStore): vo
 }
 
 export async function publicAction(receipt: ActionReceipt, store: NotebookStore): Promise<Record<string, unknown>> {
-  const delivery = await runBridge<Array<{id:string;revisions:unknown[];shown:Array<{target:Target;revision:string}>;visibleRegions:unknown[]}>>(store.root,{command:"delivery"});
+  const delivery = await runBridge<Array<{id:string;revisions:unknown[];shown:Array<{target:Target;revision:string}>;displayComplete:boolean;visibleRegions:unknown[]}>>(store.root,{command:"delivery"});
   const device = delivery.find(value => value.id.toLowerCase() === receipt.id.toLowerCase());
   const same = (a:unknown,b:unknown) => JSON.stringify(a) === JSON.stringify(b);
   const received = device && same(device.revisions,receipt.revisions);
-  const shown = received && receipt.revisions.filter(r=>r.target.kind!=="workspace").every(r => device.shown.some(s => same(s,r)));
+  const shown = received && device.displayComplete;
   const directory = join(store.root,"previews","targets");
   const names = await readdir(directory).catch(()=>[]);
   const snapshots = (await Promise.all(names.filter(name=>name.endsWith(".json")).map(name => readFile(join(directory,name),"utf8").then(JSON.parse).catch(()=>null))))

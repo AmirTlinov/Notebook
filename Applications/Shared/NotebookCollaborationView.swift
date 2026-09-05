@@ -1,0 +1,103 @@
+import NotebookCore
+import SwiftUI
+
+struct NotebookCollaborationView: View {
+  @Environment(NotebookAppModel.self) private var model
+  @State private var showsHistory = false
+  var body: some View {
+    VStack(alignment:.leading,spacing:8) {
+      if model.isPointing {
+        Label("Укажите фрагмент · протяните для области",systemImage:"hand.point.up.left")
+          .font(.callout).padding(12).background(.regularMaterial,in:RoundedRectangle(cornerRadius:16))
+      }
+      if let attention = model.sharedAttention.last(where: { $0.author == .agent }), let reference = attention.reference {
+        HStack(alignment:.top,spacing:10) {
+          Image(systemName:"quote.bubble").accessibilityHidden(true)
+          VStack(alignment:.leading,spacing:4) {
+            Text("Понимание агента").font(.caption.weight(.semibold))
+            Text(reference.label).font(.callout).lineLimit(4)
+            if model.referenceChanged(reference) { Text("Фрагмент изменился · рассмотрим заново").font(.caption).foregroundStyle(.secondary) }
+          }
+          Button("Показать") { model.requestShow(reference) }.buttonStyle(.borderless)
+        }.padding(12).background(.regularMaterial,in:RoundedRectangle(cornerRadius:16))
+      }
+      if let latest = model.collaborationActions.first {
+        HStack(spacing:12) {
+          Button { showsHistory = true } label: {
+            VStack(alignment:.leading,spacing:3) {
+              Text(latest.undo == nil ? "Ход агента" : "Ход отменён").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+              Text(latest.action.summary).font(.callout).lineLimit(2)
+            }.frame(maxWidth:.infinity,alignment:.leading)
+          }.buttonStyle(.plain).accessibilityIdentifier("collaboration-history")
+          if let reference = model.results(for:latest).first {
+            Button("Показать") { model.requestShow(reference) }.accessibilityIdentifier("collaboration-show")
+          }
+          if latest.undo == nil {
+            Button("Отменить") { model.undoCollaboration(latest.id) }.accessibilityIdentifier("collaboration-undo")
+          }
+        }.buttonStyle(.borderless).padding(12).background(.regularMaterial,in:RoundedRectangle(cornerRadius:16))
+      }
+    }
+    .frame(maxWidth:520,alignment:.leading)
+    .sheet(isPresented:$showsHistory) {
+      NavigationStack {
+        List(model.collaborationActions) { action in
+          VStack(alignment:.leading,spacing:10) {
+            Text(action.action.summary).font(.headline)
+            if let undo = action.undo {
+              Text(undo.preserved.isEmpty ? "Отменено" : "Отменено · ваши доработки сохранены (\(undo.preserved.count))")
+                .font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(Array(model.results(for:action).enumerated()),id:\.element.id) { index,reference in
+              Button { model.requestShow(reference); showsHistory = false } label: {
+                Label("Показать результат \(index+1) · \(reference.elementID ?? model.referenceTitle(reference))",systemImage:"scope")
+              }
+            }
+            if action.undo == nil { Button("Отменить этот ход") { model.undoCollaboration(action.id) } }
+          }.padding(.vertical,6)
+        }
+        .navigationTitle("Совместные ходы")
+        .toolbar { ToolbarItem(placement:.confirmationAction) { Button("Готово") { showsHistory = false } } }
+      }.frame(minWidth:360,minHeight:400)
+    }
+  }
+}
+
+struct NotebookAttentionMarks: View {
+  @Environment(NotebookAppModel.self) private var model
+  let presence: SessionPresence
+  var body: some View {
+    ZStack(alignment:.topLeading) {
+      ForEach(model.sharedAttention,id:\.author) { attention in
+        if let reference = attention.reference, let rect = NotebookAttentionProjection.frame(reference,model:model,presence:presence) {
+          mark(rect, human:attention.author == .human, label:attention.author == .human ? "Указано" : "Понимание агента", changed:model.referenceChanged(reference))
+        }
+      }
+      if let action = model.collaborationActions.first, action.undo == nil {
+        TimelineView(.periodic(from:.now,by:1)) { context in
+          if context.date.timeIntervalSince(action.createdAt) < 6 {
+            ForEach(model.results(for:action)) { reference in
+              if let rect = NotebookAttentionProjection.frame(reference,model:model,presence:presence) {
+                mark(rect,human:false,label:"Добавлено",changed:false)
+              }
+            }
+          }
+        }
+      }
+      if let reference = model.highlightedReference, let rect = NotebookAttentionProjection.frame(reference,model:model,presence:presence) {
+        mark(rect,human:false,label:"Результат",changed:model.referenceChanged(reference))
+      }
+    }.allowsHitTesting(false).accessibilityHidden(true)
+  }
+  private func mark(_ rect: CGRect,human:Bool,label:String,changed:Bool) -> some View {
+    ZStack(alignment:.topLeading) {
+      if human {
+        RoundedRectangle(cornerRadius:4).stroke(.indigo,style:StrokeStyle(lineWidth:2,dash:[6,4]))
+      } else {
+        RoundedRectangle(cornerRadius:12).stroke(.teal,lineWidth:2)
+      }
+      Text(changed ? "\(label) · изменилось" : label).font(.caption2.weight(.semibold))
+        .padding(.horizontal,5).padding(.vertical,2).background(.regularMaterial,in:Capsule()).offset(y:-20)
+    }.frame(width:max(12,rect.width),height:max(12,rect.height)).position(x:rect.midX,y:rect.midY)
+  }
+}

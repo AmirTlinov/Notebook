@@ -28,7 +28,7 @@ struct PageSurface: View {
           PencilCanvasView(
             pageID: page.id,
             drawingData: page.drawingData,
-            isInputEnabled: isInteractive && !model.isElementEditingEnabled,
+            isInputEnabled: isInteractive && !model.isElementEditingEnabled && !model.isPointing,
             penStyle: model.penStyle,
             eraserStyle: model.eraserStyle,
             drawingTool: model.drawingTool,
@@ -97,6 +97,7 @@ struct PageSurface: View {
 
   private func publishReadiness(ink: Bool, overlay: Bool) {
     onRenderReady(ink && overlay)
+    model.pagePresented(page,ready:ink && overlay)
   }
 }
 

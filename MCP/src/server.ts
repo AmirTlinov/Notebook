@@ -1,3 +1,4 @@
+import { notebookResponseSchema } from "./contracts.js";
 import { runBridge, BridgeError } from "./bridge.js";
 import { registerCollaborationTools } from "./collaboration-tools.js";
 import { registerActionTools } from "./actions.js";
@@ -63,6 +64,7 @@ export function createServer(store = new NotebookStore()): McpServer {
 
   const observations = new Map<string, Record<string, string>>();
   server.registerTool("notebook_observe", {
+    outputSchema: notebookResponseSchema,
     title: "See the shared thought and what changed",
     description: "Return the current owner, human/agent pointers, compact content, changes and connection state immediately. Visual readiness is separate. Set wait_ms up to 4000 to wait for the exact current image; useful context is always returned while it is being prepared.",
     inputSchema: z.object({ since: z.string().optional(), wait_ms: z.number().int().min(0).max(4000).default(0) }),
@@ -89,6 +91,7 @@ export function createServer(store = new NotebookStore()): McpServer {
   server.registerTool(
     "notebook_read_board",
     {
+      outputSchema: notebookResponseSchema,
       title: "Read the infinite Notebook board",
       description:
         "Read every free notebook or document, stack, and agent-authored board or cover element. "
@@ -122,6 +125,7 @@ export function createServer(store = new NotebookStore()): McpServer {
   server.registerTool(
     "notebook_read_notebook",
     {
+      outputSchema: notebookResponseSchema,
       title: "Read a notebook and its cover",
       description:
         "Read notebook pages, placement or stack ownership, and all agent-authored cover elements.",
@@ -186,6 +190,7 @@ export function createServer(store = new NotebookStore()): McpServer {
   server.registerTool(
     "notebook_read_document",
     {
+      outputSchema: notebookResponseSchema,
       title: "Read a document",
       description:
         "Return a compact ordered outline by default. Set block_id for one complete block or include_source for the full document.",
@@ -221,6 +226,7 @@ export function createServer(store = new NotebookStore()): McpServer {
   server.registerTool(
     "notebook_export_document",
     {
+      outputSchema: notebookResponseSchema,
       title: "Compile a document to PDF",
       description:
         "Compile the complete LaTeX artifact locally with Tectonic, then publish its .tex and .pdf files under Notebook/exports.",
@@ -240,6 +246,7 @@ export function createServer(store = new NotebookStore()): McpServer {
   server.registerTool(
     "notebook_read_page",
     {
+      outputSchema: notebookResponseSchema,
       title: "Read a Notebook page",
       description:
         "Read page size and all agent-authored Markdown, SVG, CSS, JavaScript, and interactive state. " +
@@ -260,6 +267,7 @@ export function createServer(store = new NotebookStore()): McpServer {
   server.registerTool(
     "notebook_render_page",
     {
+      outputSchema: notebookResponseSchema,
       title: "See Pencil handwriting",
       description:
         "Return a PNG of the faint grid and Apple Pencil drawing. " +

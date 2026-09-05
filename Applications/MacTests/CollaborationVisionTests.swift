@@ -43,5 +43,12 @@ final class CollaborationVisionTests: XCTestCase {
     XCTAssertTrue(receipt.diagnostics.contains { $0.kind == "overflow" })
     XCTAssertEqual(model.presence,original)
     XCTAssertNotNil(NSImage(contentsOf:model.store.targetPNGURL(request.id)))
+    let crop = try model.store.requestTargetRender(target:target,expectedRevision:try XCTUnwrap(model.activePage).agentStamp.revision,
+      region:.init(x:60,y:80,width:300,height:160))
+    try await CurrentViewPreviewWriter.writeTarget(crop,model:model)
+    let cropped = try JSONDecoder().decode(TargetRenderReceipt.self,from:Data(contentsOf:model.store.targetReceiptURL(crop.id)))
+    XCTAssertEqual(cropped.pixelSize?.x,600)
+    XCTAssertEqual(cropped.pixelSize?.y,320)
+    XCTAssertEqual(model.presence,original)
   }
 }

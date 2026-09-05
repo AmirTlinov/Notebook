@@ -1,3 +1,4 @@
+import { notebookResponseSchema } from "./contracts.js";
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -12,6 +13,7 @@ const frame = z.object({ x: z.number().finite(), y: z.number().finite(), width: 
 const world = z.object({ tileX: z.number().int(), tileY: z.number().int(), localX: z.number().finite(), localY: z.number().finite() }).strict();
 export function registerCollaborationTools(server: McpServer, store: NotebookStore) {
   server.registerTool("notebook_point", {
+    outputSchema: notebookResponseSchema,
     title: "Point to the source and share your interpretation",
     description: "Attach a short interpretation or question to an exact owner, element/block or local region. The reference follows its physical owner. This changes shared attention and keeps the human camera. Omit target to clear the agent pointer.",
     inputSchema: z.object({ target: targetSchema.optional(), element_id: z.string().optional(), region: frame.optional(), world_origin: world.optional(), page_index: z.number().int().nonnegative().default(0), label: z.string().max(1000).default("") }).strict(),
@@ -23,6 +25,7 @@ export function registerCollaborationTools(server: McpServer, store: NotebookSto
     return { status: "saved", attention: await runBridge(store.root, { command: "point", reference }) };
   }));
   server.registerTool("notebook_render", {
+    outputSchema: notebookResponseSchema,
     title: "See a complete surface independently of the camera",
     description: "Request paper, final Pencil pixels and agent content for an explicit owner. A region crops local points; board world_origin anchors its region. Document page_index starts at 0. Returns exact source versions, PNG hash and runtime diagnostics. Pending is a useful state; wait_ms is bounded to four seconds. Camera remains human-owned.",
     inputSchema: z.object({ target: targetSchema, expected_revision: z.string(), region: frame.optional(), world_origin: world.optional(), page_index: z.number().int().nonnegative().default(0), wait_ms: z.number().int().min(0).max(4000).default(0) }).strict(),
@@ -53,6 +56,7 @@ export function registerCollaborationTools(server: McpServer, store: NotebookSto
     return png ? { ...result, content: [...result.content, { type: "image" as const, data: png.toString("base64"), mimeType: "image/png" }] } : result;
   });
   server.registerTool("notebook_place", {
+    outputSchema: notebookResponseSchema,
     title: "Find room beside the thought",
     description: "Calculate a frame against current items, elements and final visible Pencil pixels. The first request may prepare an ink map; repeat when ready. Pass the returned frame, worldOrigin and expected versions to notebook_apply. A full sheet returns placement_unavailable with a continuation suggestion.",
     inputSchema: z.object({target:targetSchema,expected_revision:z.string(),size:z.object({width:z.number().positive().max(2048),height:z.number().positive().max(2048)}),relative_to:referenceSchema.optional(),direction:z.enum(["right","below","free"]).default("free")}).strict(),
@@ -60,6 +64,7 @@ export function registerCollaborationTools(server: McpServer, store: NotebookSto
   }, input => actionResult(() => runBridge(store.root,{command:"placement",target:input.target,expectedRevision:input.expected_revision,
     size:input.size,reference:input.relative_to,direction:input.direction})));
   server.registerTool("notebook_search", {
+    outputSchema: notebookResponseSchema,
     title: "Find a thought across the whole board tree",
     description: "Search titles, document blocks and agent text on pages, boards and covers. Each result includes its physical path and a stable reference. Handwriting is available through notebook_page_map and images.",
     inputSchema: z.object({ query: z.string().trim().min(1).max(500), limit: z.number().int().min(1).max(100).default(20) }).strict(),

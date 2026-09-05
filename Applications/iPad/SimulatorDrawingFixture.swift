@@ -19,6 +19,7 @@
     static let documentPageArgument = "--notebook-document-page-three-fixture"
     static let documentLetterArgument = "--notebook-document-letter-fixture"
     static let agentElementArgument = "--notebook-agent-element-fixture"
+    static let collaborationArgument = "--notebook-collaboration-fixture"
 
     static var isRequested: Bool {
       ProcessInfo.processInfo.arguments.contains(launchArgument)
@@ -358,6 +359,19 @@
           try store.saveSpatialInk(journal)
         }
         try store.saveIndex(index)
+        if ProcessInfo.processInfo.arguments.contains(collaborationArgument) {
+          _ = try store.loadOrCreateBoard(workspace:index,actor:actor)
+          _ = try store.loadOrCreateSpatialInk(actor:actor)
+          let target = CollaborationTarget(kind:.page,id:pageID)
+          let reference = CollaborationReference(target:target,region:.init(x:80,y:80,width:250,height:150),
+            revision:try store.referenceRevision(target:target),label:"Здесь начинается рисунок")
+          _ = try store.applyCollaborationAction(.init(summary:"Пояснение к рисунку",references:[reference],
+            expected:[.init(target:target,revision:page.agentStamp.revision)],operations:[
+              .init(kind:.insertElement,target:target,id:"shared-element",values:[
+                "kind":.string("web"),"source":.string("<div>Продолжение мысли</div>"),
+                "css":.string("body{display:grid;place-items:center;font:700 32px -apple-system;color:#263746;background:#f6c85f;border:5px solid #263746;border-radius:28px}"),
+                "frame":.object(["x":.number(180),"y":.number(280),"width":.number(360),"height":.number(220)])])]),actor:UUID())
+        }
         let model = NotebookAppModel(store: store, startsNearbySync: false)
         if startsWithCoverEraser {
           model.selectDrawingTool(.eraser)

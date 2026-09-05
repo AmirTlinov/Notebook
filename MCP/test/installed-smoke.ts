@@ -16,8 +16,8 @@ try {
   await client.connect(transport);
   const observed = await waitForSettledSnapshot(async () => {
     const result = await client.callTool({ name: "notebook_observe", arguments: {} });
-    const status = result.structuredContent as { code?: string; message?: string } | undefined;
-    if (result.isError && status?.code === "snapshot_pending") {
+    const status = result.structuredContent as { code?: string; message?: string; visual?: {status:string} } | undefined;
+    if (status?.visual?.status === "pending" || (result.isError && status?.code === "snapshot_pending")) {
       throw new StoreError(status.message ?? "Снимок обновляется.");
     }
     if (result.isError && status?.message === "Квитанция текущего вида повреждена.") {

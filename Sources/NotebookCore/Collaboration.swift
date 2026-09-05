@@ -43,10 +43,14 @@ public struct CollaborationReference: Codable, Equatable, Sendable, Identifiable
 public struct CollaborationExpectation: Codable, Equatable, Sendable {
   public let target: CollaborationTarget
   public let revision: String
+  public let stateRevision: String?
+  public let sourceRevision: String?
 
-  public init(target: CollaborationTarget, revision: String) {
+  public init(target: CollaborationTarget, revision: String, stateRevision: String? = nil, sourceRevision: String? = nil) {
     self.target = target
     self.revision = revision
+    self.stateRevision = stateRevision
+    self.sourceRevision = sourceRevision
   }
 }
 
@@ -54,7 +58,7 @@ public struct CollaborationExpectation: Codable, Equatable, Sendable {
 public struct CollaborationOperation: Codable, Equatable, Sendable {
   public enum Kind: String, Codable, Sendable {
     case insertElement, updateElement, setElementState, removeElement, reorderElements
-    case insertBlock, updateBlock, removeBlock, reorderBlocks, setPreamble, replaceDocument
+    case insertBlock, updateBlock, setBlockState, removeBlock, reorderBlocks, setPreamble, replaceDocument
     case createNotebook, createDocument, createBoard, renameItem, moveItem, stackItems
   }
   public let kind: Kind
