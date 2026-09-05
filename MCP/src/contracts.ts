@@ -1,7 +1,7 @@
 import * as z from "zod/v4";
 
 const target = z.object({kind:z.enum(["workspace","board","cover","page","document"]),id:z.uuid(),boardID:z.uuid().optional()});
-const expected = z.object({target,revision:z.string(),stateRevision:z.string().optional(),sourceRevision:z.string().optional()});
+const expected = z.object({target,revision:z.string(),stateRevision:z.string().optional(),sourceRevision:z.string().optional(),inkRevision:z.string().optional()});
 const fieldPath = z.array(z.union([
   z.object({field:z.object({_0:z.string()})}),
   z.object({member:z.object({_0:z.string()})}),
@@ -24,7 +24,7 @@ export const notebookResponseSchema = z.object({
   acceptance: z.literal("not_saved").optional().describe("A pending input response has not queued or accepted the action. Retry the identical request after contact ends."),
   action:action.optional(),
   target: z.object({kind:z.string(),id:z.string(),boardID:z.string().optional()}).optional(),
-  expected: z.union([z.string(),z.array(z.object({target:z.json(),revision:z.string(),stateRevision:z.string().optional(),sourceRevision:z.string().optional()}))]).optional(),
+  expected: z.union([z.string(),z.array(z.object({target:z.json(),revision:z.string(),stateRevision:z.string().optional(),sourceRevision:z.string().optional(),inkRevision:z.string().optional()}))]).optional(),
   actual: z.string().optional(),
   placements: z.array(z.object({id:z.string(),frame:z.object({x:z.number(),y:z.number(),width:z.number().positive(),height:z.number().positive()}),worldOrigin:z.json().optional()})).optional(),
   moves: z.array(z.object({kind:z.enum(["moveItem","updateElement"]),target,id:z.string(),values:z.record(z.string(),z.json())})).optional(),

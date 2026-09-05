@@ -19,7 +19,7 @@ export type Target = z.infer<typeof targetSchema>;
 const frame = z.object({ x: z.number().finite(), y: z.number().finite(), width: z.number().positive(), height: z.number().positive() }).strict();
 const point = z.object({ tileX: z.number().int(), tileY: z.number().int(), localX: z.number().finite(), localY: z.number().finite() }).strict();
 export const referenceSchema = z.object({ id: z.uuid(), target: targetSchema, elementID: z.string().optional(), region: frame.optional(), worldOrigin: point.optional(), pageIndex: z.number().int().nonnegative().optional(), revision: z.string(), label: z.string().max(1000).default("") }).strict();
-const expectation = z.object({ target: targetSchema, revision: z.string().min(1), stateRevision:z.string().optional(), sourceRevision:z.string().optional() }).strict();
+const expectation = z.object({ target: targetSchema, revision: z.string().min(1), stateRevision:z.string().optional(), sourceRevision:z.string().optional(), inkRevision:z.string().optional().describe("For appendInkStroke: drawingRevision of a page or spatialInkRevision of a board/cover.") }).strict();
 const source = z.string().max(1_000_000);
 const block = z.discriminatedUnion("kind", [
   z.object({ id: z.string().min(1).max(120), kind: z.enum(["markdown", "latex"]), source }).strict(),
@@ -31,6 +31,15 @@ const editFields = z.object({ source: source.optional(), html: source.optional()
 const op = <K extends string, S extends z.ZodType>(kind: K, values: S, id: z.ZodType | null = z.string().min(1).max(120)) =>
   z.object({ kind: z.literal(kind), target: targetSchema, ...(id ? { id } : {}), values }).strict();
 export const operationSchema = z.discriminatedUnion("kind", [
+  op("appendInkStroke", z.object({
+    points: z.array(z.object({ x: z.number().finite().min(-1e6).max(1e6), y: z.number().finite().min(-1e6).max(1e6),
+      width: z.number().positive().max(128).optional(), opacity: z.number().min(0).max(1).optional() }).strict()).min(1).max(8192)
+      .describe("Ordered native pen samples in owner-local points; per-point width/opacity override the stroke defaults."),
+    width: z.number().positive().max(128).optional().describe("Pen width in physical points; defaults to 2."),
+    opacity: z.number().min(0).max(1).optional().describe("Defaults to 1; matches native ink opacity."),
+    color: z.object({ red: z.number().min(0).max(1), green: z.number().min(0).max(1), blue: z.number().min(0).max(1) }).strict().optional(),
+    worldOrigin: point.optional().describe("Required for board ink: points are offsets from this tiled origin. Omit on pages/covers."),
+  }).strict(), z.uuid().optional()),
   op("insertElement", z.object({ kind: z.enum(["markdown", "web"]), source, frame,
     html: source.optional(), css: source.optional(), javaScript: source.optional(), state: z.json().optional(), worldOrigin: point.optional() }).strict()),
   op("updateElement", editFields),
@@ -69,7 +78,7 @@ export function registerActionTools(server: McpServer, store: NotebookStore): vo
   const outputSchema = notebookResponseSchema;
   server.registerTool("notebook_apply", {
     title: "Continue one shared thought",
-    description: "Apply one named, atomic, undoable action to explicit owners. Read their revisions first. Omitted update fields retain their values; interactive state has a separate operation. Creation keeps the human's camera and selection. Reuse action_id only for the same action. Workspace expectations use rootBoardID and workspaceRevision; page expectations use agentRevision; documents contentRevision; boards boardRevision.",
+    description: "Apply one named, atomic, undoable action to explicit owners. Read their revisions first. appendInkStroke draws with the native pen on page, board or cover (not SVG); it also requires expected.inkRevision (drawingRevision for pages, spatialInkRevision for boards/covers), preserves other strokes and undoes only its own UUIDs. At most 100000 ink points per action. Omitted update fields retain their values; interactive state has a separate operation. Creation keeps the human's camera and selection. Reuse action_id only for the same action. Workspace expectations use rootBoardID and workspaceRevision; page expectations use agentRevision; documents contentRevision; boards boardRevision.",
     inputSchema: actionSchema, outputSchema,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   }, (input) => actionResult(async () => {
@@ -126,6 +135,7 @@ async function prepareAction(input: z.infer<typeof actionSchema>, store: Noteboo
       operation.id ??= deterministicID(input.action_id, `item:${index}`);
       if (operation.kind === "createNotebook") operation.values.pageID ??= deterministicID(input.action_id, `page:${index}`);
     }
+    if (operation.kind === "appendInkStroke") operation.id ??= deterministicID(input.action_id, `stroke:${index}`);
     const key = `${operation.target.kind}:${operation.target.id}:${operation.id}`;
     if (operation.kind === "insertElement") kinds.set(key, String(operation.values.kind));
     if (operation.kind === "updateElement" && typeof operation.values.source === "string") {

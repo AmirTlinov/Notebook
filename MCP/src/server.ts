@@ -176,6 +176,7 @@ export function createServer(store = new NotebookStore()): McpServer {
           (element) => element.surface.kind === "cover"
             && sameID(element.surface.ownerID!, notebook.id),
         ).map(element => publicSpatialElement(element, false)),
+        spatialInkRevision: revision(spatialInk.stamp),
         appliedCoverPencilActionCount: spatialInk.actions.filter(
           (action) => action.isActive && action.spans.some(
             (span) => span.surface.kind === "cover"

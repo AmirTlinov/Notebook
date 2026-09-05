@@ -895,8 +895,7 @@ final class NotebookAppModel {
   ) -> Data? {
     guard var page = pages[pageID] else { return nil }
     guard stamp.actor == actorID,
-      stamp.counter <= reservedDrawingCounters[pageID, default: 0],
-      page.drawingStamp < stamp
+      stamp.counter <= reservedDrawingCounters[pageID, default: 0]
     else { return page.drawingData }
     guard data != page.drawingData else { return page.drawingData }
     guard page.replaceDrawing(data, stamp: stamp) else {
@@ -923,7 +922,7 @@ final class NotebookAppModel {
   func undoLastDrawingAction() {
     guard var page = activePage,
           page.drawingStamp.counter < VersionStamp.maximumCounter,
-          let previousDrawing = pencilUndoHistory.removeLastChange(for: page.id)
+          let previousDrawing = pencilUndoHistory.removeLastChange(for: page.id, from: page.drawingData)
     else { return }
     guard page.replaceDrawing(previousDrawing, actor: actorID) else { return }
     pages[page.id] = page
@@ -1675,6 +1674,8 @@ final class NotebookAppModel {
           guard let expected = action.revisions.first(where: { $0.target == owner || $0.target == reference.target }),
             collaborationRevision(expected.target) == expected.revision,
             expected.stateRevision == nil || documentStates[expected.target.id]?.stamp.revision == expected.stateRevision,
+            expected.inkRevision == nil || (expected.target.kind == .page
+              ? pages[expected.target.id]?.drawingStamp.revision : spatialInk?.stamp.revision) == expected.inkRevision,
             let rect = NotebookAttentionProjection.frame(reference,model:self,presence:visible), viewport.contains(rect) else { continue }
           let ready: Bool
           switch reference.target.kind {
@@ -1788,7 +1789,7 @@ final class NotebookAppModel {
         let previousDrawingStamp = current.drawingStamp
         _ = current.merge(resolved)
         pages[pageID] = current
-        if previousDrawingStamp < current.drawingStamp {
+        if previousDrawingStamp < current.drawingStamp, PageInkDrawing.needsMigration(current.drawingData) {
           pencilUndoHistory.discardChanges(for: pageID)
         }
       } else {
@@ -1873,7 +1874,7 @@ final class NotebookAppModel {
     let resolved = (try? store.saveMergedPage(page)) ?? page
     pages[page.id] = resolved
     if let previousDrawingStamp,
-      previousDrawingStamp < resolved.drawingStamp
+      previousDrawingStamp < resolved.drawingStamp, PageInkDrawing.needsMigration(resolved.drawingData)
     {
       pencilUndoHistory.discardChanges(for: page.id)
     }
@@ -2002,7 +2003,7 @@ final class NotebookAppModel {
   private func acceptRemotePage(_ page: PageDocument) {
     let previousDrawingStamp = pages[page.id]?.drawingStamp
     pages[page.id] = page
-    if let previousDrawingStamp, previousDrawingStamp < page.drawingStamp {
+    if let previousDrawingStamp, previousDrawingStamp < page.drawingStamp, PageInkDrawing.needsMigration(page.drawingData) {
       pencilUndoHistory.discardChanges(for: page.id)
     }
     scheduleSave(page.id)

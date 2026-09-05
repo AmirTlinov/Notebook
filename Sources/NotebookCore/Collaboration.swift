@@ -45,18 +45,21 @@ public struct CollaborationExpectation: Codable, Equatable, Sendable {
   public let revision: String
   public let stateRevision: String?
   public let sourceRevision: String?
+  public let inkRevision: String?
 
-  public init(target: CollaborationTarget, revision: String, stateRevision: String? = nil, sourceRevision: String? = nil) {
+  public init(target: CollaborationTarget, revision: String, stateRevision: String? = nil, sourceRevision: String? = nil, inkRevision: String? = nil) {
     self.target = target
     self.revision = revision
     self.stateRevision = stateRevision
     self.sourceRevision = sourceRevision
+    self.inkRevision = inkRevision
   }
 }
 
 /// Each operation names its domain action. `values` contains only supplied fields.
 public struct CollaborationOperation: Codable, Equatable, Sendable {
   public enum Kind: String, Codable, Sendable {
+    case appendInkStroke
     case insertElement, updateElement, setElementState, removeElement, reorderElements
     case insertBlock, updateBlock, setBlockState, removeBlock, reorderBlocks, setPreamble, replaceDocument
     case createNotebook, createDocument, createBoard, renameItem, moveItem, stackItems

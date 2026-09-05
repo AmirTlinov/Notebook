@@ -178,6 +178,13 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     guard data != drawingData,
       let stamp = drawingStamp.advanced(by: actor)
     else { return false }
+    if let current = try? PageInkDrawing.decode(drawingData),
+      let requested = try? PageInkDrawing.decode(data),
+      let next = try? current.removing(Set(current.activeActions.map(\.id))
+        .subtracting(requested.activeActions.map(\.id))).merging(requested),
+      let encoded = try? next.dataRepresentation() {
+      return replaceDrawing(encoded, stamp: stamp)
+    }
     return replaceDrawing(data, stamp: stamp)
   }
 
@@ -186,9 +193,29 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     _ data: Data,
     stamp: VersionStamp
   ) -> Bool {
-    guard drawingStamp < stamp,
-      stamp.counter <= VersionStamp.maximumCounter
-    else { return false }
+    guard stamp.counter <= VersionStamp.maximumCounter else { return false }
+    if data == drawingData {
+      guard drawingStamp < stamp else { return false }
+      drawingStamp = stamp
+      return true
+    }
+    if let current = try? PageInkDrawing.decode(drawingData),
+      let incoming = try? PageInkDrawing.decode(data) {
+      do {
+        let merged = try current.merging(incoming)
+        let frontier = max(drawingStamp, stamp)
+        let winner = drawingStamp > stamp ? current : incoming
+        let resolvedStamp = merged == winner ? frontier : (frontier.advanced(by: frontier.actor) ?? frontier)
+        guard merged != current || drawingStamp != resolvedStamp else { return false }
+        drawingData = merged == current ? drawingData : merged == incoming ? data : try merged.dataRepresentation()
+        drawingStamp = resolvedStamp
+        return true
+      } catch PageInkDrawing.InkError.incompatibleBaseline {
+        // Importing/replacing the archived PencilKit raster remains an explicit
+        // whole-baseline revision. Native contacts on that baseline merge above.
+      } catch { return false }
+    }
+    guard drawingStamp < stamp else { return false }
     drawingData = data
     drawingStamp = stamp
     return true
@@ -229,10 +256,9 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   public mutating func merge(_ other: Self) -> Bool {
     guard id == other.id, size == other.size, other.isValid else { return false }
     var changed = false
-    if drawingStamp < other.drawingStamp {
-      drawingData = other.drawingData
-      drawingStamp = other.drawingStamp
-      changed = true
+    if replaceDrawing(other.drawingData, stamp: other.drawingStamp) { changed = true }
+    if elements == other.elements && collaboration == other.collaboration && agentStamp == other.agentStamp {
+      return changed
     }
     if let local = try? JSONValue.encode(self), let incoming = try? JSONValue.encode(other) {
       let merged = CollaborativeContent.merge(local: local, incoming: incoming,

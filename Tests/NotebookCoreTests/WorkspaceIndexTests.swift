@@ -73,69 +73,55 @@ func eraserForceCorrectionKeepsErasureMonotonic() {
   #expect(PencilEraserContact.reconciledWidth(previous: 18, updated: 24) == 24)
 }
 
+private func undoTestStroke() -> PageInkAction {
+  .init(tool: .pen, samples: [.init(point: .init(x: 10, y: 20), timeOffset: 0,
+    width: 2, opacity: 1, force: 1, azimuth: 0, altitude: 1)])
+}
+
 @Test("Одно завершённое движение Pencil создаёт один шаг отмены")
-func pencilUndoRecordsOneCompletedAction() {
-  let pageID = UUID()
-  let empty = Data()
-  let drawing = Data("drawing".utf8)
+func pencilUndoRecordsOneCompletedAction() throws {
+  let pageID = UUID(), stroke = undoTestStroke()
+  let drawing = try PageInkDrawing().appending(stroke).dataRepresentation()
   var history = PencilUndoHistory()
-
-  history.recordAction(
-    pageID: pageID,
-    before: empty,
-    after: drawing
-  )
-
-  #expect(history.removeLastChange(for: pageID) == empty)
-  #expect(history.removeLastChange(for: pageID) == nil)
+  history.recordAction(pageID: pageID, before: Data(), after: drawing)
+  let removal = history.removeLastChange(for: pageID, from: drawing)
+  let undone = try #require(removal)
+  #expect(try PageInkDrawing.decode(undone).isEmpty)
+  #expect(try PageInkDrawing.decode(undone).actions.first?.isActive == false)
+  #expect(history.removeLastChange(for: pageID, from: undone) == nil)
 }
 
 @Test("История Pencil разделена по листам и ограничена")
-func pencilUndoIsPageLocalAndBounded() {
-  let firstPage = UUID()
-  let secondPage = UUID()
+func pencilUndoIsPageLocalAndBounded() throws {
+  let firstPage = UUID(), secondPage = UUID()
   var history = PencilUndoHistory(capacity: 2)
-
-  history.recordAction(
-    pageID: firstPage,
-    before: Data("zero".utf8),
-    after: Data("one".utf8)
-  )
-  history.recordAction(
-    pageID: firstPage,
-    before: Data("one".utf8),
-    after: Data("two".utf8)
-  )
-  history.recordAction(
-    pageID: firstPage,
-    before: Data("two".utf8),
-    after: Data("three".utf8)
-  )
-  history.recordAction(
-    pageID: secondPage,
-    before: Data("other zero".utf8),
-    after: Data("other one".utf8)
-  )
-
-  #expect(history.removeLastChange(for: secondPage) == Data("other zero".utf8))
-  #expect(history.removeLastChange(for: firstPage) == Data("two".utf8))
-  #expect(history.removeLastChange(for: firstPage) == Data("one".utf8))
-  #expect(history.removeLastChange(for: firstPage) == nil)
+  var drawing = PageInkDrawing()
+  for _ in 0..<3 {
+    let next = drawing.appending(undoTestStroke())
+    history.recordAction(pageID: firstPage, before: try drawing.dataRepresentation(), after: try next.dataRepresentation())
+    drawing = next
+  }
+  let other = try PageInkDrawing().appending(undoTestStroke()).dataRepresentation()
+  history.recordAction(pageID: secondPage, before: Data(), after: other)
+  let otherRemoval = history.removeLastChange(for: secondPage, from: other)
+  #expect(try PageInkDrawing.decode(#require(otherRemoval)).isEmpty)
+  let firstRemoval = try history.removeLastChange(for: firstPage, from: drawing.dataRepresentation())
+  let two = try #require(firstRemoval)
+  #expect(try PageInkDrawing.decode(two).actionCount == 2)
+  let secondRemoval = history.removeLastChange(for: firstPage, from: two)
+  let one = try #require(secondRemoval)
+  #expect(try PageInkDrawing.decode(one).actionCount == 1)
+  #expect(history.removeLastChange(for: firstPage, from: one) == nil)
 }
 
-@Test("Новый внешний рисунок завершает локальную историю отмены")
-func pencilUndoCanDiscardAStalePageHistory() {
+@Test("Удаление листа освобождает его локальную историю отмены")
+func pencilUndoCanDiscardAStalePageHistory() throws {
   let pageID = UUID()
+  let drawing = try PageInkDrawing().appending(undoTestStroke()).dataRepresentation()
   var history = PencilUndoHistory()
-  history.recordAction(
-    pageID: pageID,
-    before: Data("before".utf8),
-    after: Data("after".utf8)
-  )
-
+  history.recordAction(pageID: pageID, before: Data(), after: drawing)
   history.discardChanges(for: pageID)
-
-  #expect(history.removeLastChange(for: pageID) == nil)
+  #expect(history.removeLastChange(for: pageID, from: drawing) == nil)
 }
 
 @Test("Перелистывание за последний лист создаёт ровно один лист")

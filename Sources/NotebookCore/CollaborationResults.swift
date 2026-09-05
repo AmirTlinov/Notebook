@@ -7,7 +7,9 @@ extension CollaborationReceipt {
     var seen = Set<String>()
     for operation in action.operations {
       var targets: [(CollaborationTarget, String?)] = [(operation.target, operation.id)]
+      let stroke = operation.kind == .appendInkStroke ? try? CollaborationInkStroke(operation) : nil
       switch operation.kind {
+      case .appendInkStroke: targets = [(operation.target, nil)]
       case .createNotebook, .createDocument, .createBoard, .renameItem, .moveItem:
         guard let id = operation.id.flatMap(UUID.init(uuidString:)) else { continue }
         let boardID = content.hierarchy.ownerBoardID(of: id)
@@ -23,10 +25,10 @@ extension CollaborationReceipt {
       default: break
       }
       for (target, elementID) in targets {
-        let key = target.key + ":" + (elementID ?? "")
+        let key = target.key + ":" + (stroke?.id.uuidString ?? elementID ?? "")
         guard seen.insert(key).inserted else { continue }
-        var region: PageRect?
-        var origin: WorldPoint?
+        var region: PageRect? = stroke?.region
+        var origin: WorldPoint? = stroke?.worldOrigin
         if target.kind == .page, let element = content.pages.first(where: { $0.id == target.id })?.elements.first(where: { $0.id == elementID }) {
           region = element.frame
         }

@@ -85,10 +85,12 @@ extension NotebookStore {
       let scopeReferences = context?.entries.flatMap(\.references) ?? action.references
       for expectation in action.expected {
         let actual = try before.revision(of: expectation.target)
+        if let expectedInk = expectation.inkRevision, try before.inkRevision(of: expectation.target) != expectedInk.lowercased() {
+          throw CollaborationError("revision_conflict", "Чернила изменились. Рассмотрите поверхность заново.", target: expectation.target,
+            expected: expectedInk, actual: try before.inkRevision(of: expectation.target))
+        }
         if let expectedSource = expectation.sourceRevision {
-          var sourceFiles = before.files
-          sourceFiles["spatial-ink.json"] = try .encode(before.ink)
-          let source = try Self.referenceRevision(target:expectation.target,files:sourceFiles)
+          let source = try Self.referenceRevision(target:expectation.target,files:before.files)
           guard source == expectedSource else {
             throw CollaborationError("revision_conflict", "Содержание и геометрия изменились. Рассчитайте место заново.", target:expectation.target,expected:expectedSource,actual:source)
           }
@@ -103,7 +105,15 @@ extension NotebookStore {
       }
       var after = before
       var createdTargets = Set<CollaborationTarget>()
+      var inkPointCount = 0
       for operation in action.operations {
+        if operation.kind == .appendInkStroke {
+          inkPointCount += operation.values["points"]?.array.count ?? 0
+          guard inkPointCount <= 100_000 else { throw invalid("Один ход содержит не более 100000 точек ручки.") }
+          guard createdTargets.contains(operation.target) || action.expected.contains(where: {
+            $0.target == operation.target && $0.inkRevision != nil
+          }) else { throw CollaborationError("revision_required", "Для ручки нужна inkRevision: drawingRevision листа либо spatialInkRevision доски/обложки.", target: operation.target) }
+        }
         for subject in try Self.compositionSubjects(operation, files: before.files) where !createdTargets.contains(subject.target) {
           try Self.requireCompositionScope(subject, references: scopeReferences, additionalOwners: action.additionalOwners ?? [], files: before.files)
         }
@@ -133,10 +143,11 @@ extension NotebookStore {
       }
       try after.recordFieldChanges(from: before, human: false)
       try after.validate()
-      let changes = collaborationDiff(before.files, after.files)
+      let changes = collaborationDiff(before.files, after.files).filter { !action.ownsInkField($0) }
       let receipt = CollaborationReceipt(id: action.id, action: action, createdAt: Date(),
         revisions: try after.changedTargets(from: before).map {
-          CollaborationExpectation(target: $0, revision: try after.revision(of: $0), stateRevision: try after.stateRevision(of:$0))
+          CollaborationExpectation(target: $0, revision: try after.revision(of: $0), stateRevision: try after.stateRevision(of:$0),
+            inkRevision: action.containsInk ? try after.inkRevision(of: $0) : nil)
         }, changes: changes)
       try commitCollaboration(before: before.files, after: after.files, receipt: receipt)
       return receipt
@@ -159,6 +170,9 @@ extension NotebookStore {
       var preserved: [CollaborationFieldChange] = []
       let protected = before.protectedCreationChanges(in: receipt)
       var restored = 0
+      for operation in receipt.action.operations where operation.kind == .appendInkStroke {
+        if try after.undoInk(operation, actor: actor) { restored += 1 }
+      }
       for change in receipt.changes {
         let current = before.files[change.file]?.value(at: change.path[...])
         let version = collaborationFieldVersion(file: before.files[change.file], path: change.path)
@@ -194,7 +208,8 @@ extension NotebookStore {
       try after.validate()
       receipt.undo = CollaborationUndoResult(restored: restored, preserved: preserved, completedAt: Date())
       receipt.revisions = try after.changedTargets(from: before).map {
-        CollaborationExpectation(target: $0, revision: try after.revision(of: $0), stateRevision: try after.stateRevision(of:$0))
+        CollaborationExpectation(target: $0, revision: try after.revision(of: $0), stateRevision: try after.stateRevision(of:$0),
+          inkRevision: receipt.action.containsInk ? try after.inkRevision(of: $0) : nil)
       }
       try commitCollaboration(before: before.files, after: after.files, receipt: receipt)
       return receipt
@@ -274,7 +289,7 @@ extension NotebookStore {
       guard !FileManager.default.fileExists(atPath:marker.path) else { return }
       let before = try CollaborationWorkspace(store:self)
       let backup = root.appendingPathComponent("migrations/before-collaboration-v1",isDirectory:true)
-      for path in before.files.keys.sorted() + ["spatial-ink.json","last-context.json"] {
+      for path in before.files.keys.sorted() + ["last-context.json"] {
         let source = root.appendingPathComponent(path)
         guard FileManager.default.fileExists(atPath:source.path) else { continue }
         let destination = backup.appendingPathComponent(path)
@@ -330,9 +345,8 @@ extension NotebookStore {
       if let incoming { merged.merge(incoming) }
       var validation = try CollaborationWorkspace(store: self)
       let files = try merged.sourceFiles()
-      validation.files = files.filter { $0.key != "spatial-ink.json" }
+      validation.files = files
       try validation.validate()
-      guard merged.ink.isValid else { throw CollaborationError("invalid_content", "Журнал чернил должен быть завершён.") }
       let old = try before.sourceFiles()
       var writes = files.filter { old[$0.key] != $0.value }
       for incoming in actions {
@@ -364,7 +378,6 @@ extension NotebookStore {
     return try withMutationLock {
       var files = try CollaborationWorkspace(store: self).files
       files["last-context.json"] = try? .encode(loadPresence())
-      files["spatial-ink.json"] = try .encode(loadSpatialInk())
       files["collaboration/contexts.json"] = try .encode(SharedContextSnapshot(contexts: readSharedContexts(), selection: readContextSelection()))
       files["collaboration/actions.json"] = try .encode(loadCollaborationActions())
       return files
@@ -388,7 +401,7 @@ extension CollaborationReceipt {
 
 private struct CollaborationWorkspace {
   var files: [String: JSONValue]
-  let ink: SpatialInkJournal
+  var ink: SpatialInkJournal { get throws { try files["spatial-ink.json"]!.decode(SpatialInkJournal.self) } }
 
   init(store: NotebookStore) throws {
     let workspace = try store.loadIndex()
@@ -400,7 +413,7 @@ private struct CollaborationWorkspace {
         files[stateFile(item.id)] = try .encode(store.loadDocumentState(item.id))
       }
     }
-    ink = try store.loadSpatialInk()
+    files["spatial-ink.json"] = try .encode(store.loadSpatialInk())
   }
 
   var workspace: WorkspaceIndex { get throws { try files["workspace.json"]!.decode(WorkspaceIndex.self) } }
@@ -437,6 +450,14 @@ private struct CollaborationWorkspace {
     return try files[stateFile(target.id)]?.decode(DocumentStateJournal.self).stamp.revision
   }
 
+  func inkRevision(of target: CollaborationTarget) throws -> String? {
+    switch target.kind {
+    case .page: return try files[pageFile(target.id)]?.decode(PageDocument.self).drawingStamp.revision
+    case .board, .cover: return try files["spatial-ink.json"]?["stamp"]?.decode(VersionStamp.self).revision
+    default: return nil
+    }
+  }
+
   func requiredExpectations(for operation: CollaborationOperation) throws -> [CollaborationTarget] {
     var targets = [operation.target]
     if [.createNotebook, .createDocument, .createBoard, .renameItem].contains(operation.kind) {
@@ -447,6 +468,8 @@ private struct CollaborationWorkspace {
 
   mutating func apply(_ operation: CollaborationOperation, actor: UUID) throws {
     switch operation.kind {
+    case .appendInkStroke:
+      try appendInk(operation, actor: actor)
     case .insertElement, .updateElement, .setElementState, .removeElement, .reorderElements:
       try editElements(operation, actor: actor)
     case .setBlockState:
@@ -494,6 +517,57 @@ private struct CollaborationWorkspace {
       }
       files["board.json"] = try .encode(tree)
     }
+  }
+
+  mutating func appendInk(_ operation: CollaborationOperation, actor: UUID) throws {
+    let stroke = try CollaborationInkStroke(operation)
+    let target = operation.target
+    if target.kind == .page {
+      guard let raw = files[pageFile(target.id)] else { throw missing(target) }
+      var page = try raw.decode(PageDocument.self)
+      guard stroke.region.isContained(in: page.size) else { throw invalid("Штрих целиком помещается в физический лист.") }
+      let drawing = try PageInkDrawing.decode(page.drawingData)
+      guard !drawing.actions.contains(where: { $0.id == stroke.id }) else { throw invalid("UUID штриха уже занят.") }
+      let next = drawing.appending(stroke.pageAction)
+      guard next != drawing, page.replaceDrawing(try next.dataRepresentation(), actor: actor) else { throw invalid("Не удалось добавить штрих.") }
+      files[pageFile(target.id)] = try .encode(page)
+    } else {
+      guard try hierarchy.board(boardID(for: target)) != nil else { throw missing(target) }
+      if target.kind == .cover {
+        guard let item = try workspace.items.first(where: { $0.id == target.id }) else { throw missing(target) }
+        let geometry = item.kind == .document
+          ? WorkspaceItemGeometry.document(try files[documentFile(item.id)]!.decode(DocumentDocument.self).paperSize)
+          : .notebook
+        guard stroke.region.isContained(in: .init(width: geometry.width, height: geometry.height)) else {
+          throw invalid("Штрих целиком помещается в физическую обложку.")
+        }
+      }
+      var journal = try ink
+      guard journal.append(tool: .pen, color: stroke.color, spans: [stroke.span(on: target)], actor: actor, id: stroke.id) != nil else {
+        throw invalid("UUID штриха уже занят либо достигнут предел версии.")
+      }
+      files["spatial-ink.json"] = try .encode(journal)
+    }
+  }
+
+  mutating func undoInk(_ operation: CollaborationOperation, actor: UUID) throws -> Bool {
+    let stroke = try CollaborationInkStroke(operation)
+    if operation.target.kind == .page {
+      guard let raw = files[pageFile(operation.target.id)] else { return false }
+      var page = try raw.decode(PageDocument.self)
+      let drawing = try PageInkDrawing.decode(page.drawingData)
+      guard let existing = drawing.actions.first(where: { $0.id == stroke.id }), existing.isActive,
+        existing.tool == .pen, existing.color == stroke.color, existing.samples == stroke.samples else { return false }
+      guard page.replaceDrawing(try drawing.removing([stroke.id]).dataRepresentation(), actor: actor) else { return false }
+      files[pageFile(page.id)] = try .encode(page)
+    } else {
+      var journal = try ink
+      guard let existing = journal.actions.first(where: { $0.id == stroke.id }),
+        existing.tool == .pen, existing.color == stroke.color, existing.spans == [stroke.span(on: operation.target)],
+        journal.deactivate(stroke.id, actor: actor) else { return false }
+      files["spatial-ink.json"] = try .encode(journal)
+    }
+    return true
   }
 
   mutating func editElements(_ op: CollaborationOperation, actor: UUID) throws {
@@ -650,6 +724,7 @@ private struct CollaborationWorkspace {
 
   func validate() throws {
     let index = try workspace
+    guard try ink.isValid else { throw invalid("Журнал чернил должен быть завершён.") }
     guard index.isValid, try hierarchy.isValid(items: index.items) else { throw invalid("Каждый предмет имеет одного владельца на доске.") }
     for item in index.items {
       for pageID in item.pageIDs {
@@ -686,6 +761,20 @@ private struct CollaborationWorkspace {
       for pageID in item.pageIDs where files[pageFile(pageID)] != previous.files[pageFile(pageID)] { targets.append(.init(kind: .page, id: pageID)) }
       if item.kind == .document, (files[documentFile(item.id)] != previous.files[documentFile(item.id)] || files[stateFile(item.id)] != previous.files[stateFile(item.id)]) { targets.append(.init(kind: .document, id: item.id)) }
     }
+    if files["spatial-ink.json"] != previous.files["spatial-ink.json"] {
+      let oldInk = Dictionary(uniqueKeysWithValues: try previous.ink.actions.map { ($0.id, $0) })
+      let tree = try hierarchy
+      for action in try ink.actions where oldInk[action.id] != action {
+        for span in action.spans {
+          guard let id = span.surface.ownerID else { continue }
+          let board = tree.ownerBoardID(of: id)
+          guard span.surface.kind == .board ? tree.board(id) != nil : board != nil else { continue }
+          let target = CollaborationTarget(kind: span.surface.kind == .board ? .board : .cover,
+            id: id, boardID: span.surface.kind == .cover ? board : nil)
+          if !targets.contains(target) { targets.append(target) }
+        }
+      }
+    }
     return targets
   }
 
@@ -693,7 +782,10 @@ private struct CollaborationWorkspace {
     for target in try changedTargets(from: previous) {
       switch target.kind {
       case .workspace: files["workspace.json"] = try advancing(files["workspace.json"]!, key: "stamp", actor: actor)
-      case .page: files[pageFile(target.id)] = try advancing(files[pageFile(target.id)]!, key: "agentStamp", actor: actor)
+      case .page:
+        if files[pageFile(target.id)]?["elements"] != previous.files[pageFile(target.id)]?["elements"] {
+          files[pageFile(target.id)] = try advancing(files[pageFile(target.id)]!, key: "agentStamp", actor: actor)
+        }
       case .document:
         if files[documentFile(target.id)] != previous.files[documentFile(target.id)] {
           files[documentFile(target.id)] = try advancing(files[documentFile(target.id)]!, key: "contentStamp", actor: actor)
@@ -715,6 +807,7 @@ private struct CollaborationWorkspace {
         let path: [CollaborationPathComponent] = [.field("boards"), .member(target.id.uuidString), .field("board")]
         let tree = files["board.json"]!
         if let board = tree.value(at: path[...]) {
+          guard board != previous.files["board.json"]?.value(at: path[...]) else { continue }
           let next = try advancing(board, key: "stamp", actor: actor)
           files["board.json"] = tree.setting(at: path[...], to: next)
         }
@@ -740,10 +833,13 @@ private struct CollaborationWorkspace {
       }
       guard let current = files[file]?.value(at: path[...]) else { continue }
       let old = previous.files[file]?.value(at: path[...]) ?? .object([:])
+      guard current != old else { continue }
       let stamp = try current[stampKey]!.decode(VersionStamp.self)
       let beforeStamp = try old[stampKey]?.decode(VersionStamp.self) ?? stamp
       var metadata = try old["collaboration"]?.decode(CollaborativeContent.self) ?? CollaborativeContent()
+      let previousMetadata = metadata
       metadata.record(before: old, after: current, beforeStamp: beforeStamp, stamp: stamp, human: human)
+      guard metadata != previousMetadata else { continue }
       files[file] = files[file]!.setting(at: path[...], to: current.setting("collaboration", try .encode(metadata)))
     }
   }
@@ -759,9 +855,11 @@ private struct CollaborationWorkspace {
         owned.contains(change.file) && change.path.isEmpty
           && collaborationComparable(files[change.file]) != collaborationComparable(change.after)
       }
-      let adoptedInk = ink.actions.contains { action in
+      let contributedIDs = Set(receipt.action.operations.filter { $0.kind == .appendInkStroke }.compactMap { $0.id.flatMap(UUID.init(uuidString:)) })
+      let adoptedInk = (try? ink.actions.contains { action in
         action.isActive && action.spans.contains { $0.surface.ownerID == id }
-      }
+          && !contributedIDs.contains(action.id)
+      }) ?? false
       let child = try? hierarchy.board(id)
       let adoptedBoard = op.kind == .createBoard && (child?.elements.isEmpty == false || child?.itemIDs.isEmpty == false)
       if adoptedFile || adoptedInk || adoptedBoard {
@@ -797,7 +895,7 @@ private func reordered(_ items: [JSONValue], values: [String: JSONValue]) throws
   return ids.map { id in items.first { $0["id"]?.string == id }! }
 }
 
-private let versionFields: Set<String> = ["stamp", "agentStamp", "contentStamp", "portalStamp", "collaboration", "fieldVersion"]
+private let versionFields: Set<String> = ["stamp", "agentStamp", "drawingStamp", "stateStamp", "contentStamp", "portalStamp", "collaboration", "fieldVersion"]
 private func collaborationComparable(_ value: JSONValue?) -> JSONValue? {
   guard let value else { return nil }
   switch value {
