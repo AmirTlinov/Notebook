@@ -43,7 +43,7 @@ final class DrawingResponsivenessTests: XCTestCase {
   func testPointerSelectsARegionAndReturnsToThePreviousTool() {
     continueAfterFailure = false
     let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-pointer-fixture"]
     app.launch()
     let pointer = app.buttons["drawing-tool-pointer"]
     XCTAssertTrue(pointer.waitForExistence(timeout:5))

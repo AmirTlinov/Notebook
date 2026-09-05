@@ -20,6 +20,7 @@
     static let documentLetterArgument = "--notebook-document-letter-fixture"
     static let agentElementArgument = "--notebook-agent-element-fixture"
     static let collaborationArgument = "--notebook-collaboration-fixture"
+    static let pointerArgument = "--notebook-pointer-fixture"
 
     static var isRequested: Bool {
       ProcessInfo.processInfo.arguments.contains(launchArgument)
@@ -61,7 +62,11 @@
         agentElementArgument
       )
       let fixtureName: String
-      if startsInDocument {
+      if ProcessInfo.processInfo.arguments.contains(collaborationArgument) {
+        fixtureName = "SharedCollaboration"
+      } else if ProcessInfo.processInfo.arguments.contains(pointerArgument) {
+        fixtureName = "SharedPointer"
+      } else if startsInDocument {
         fixtureName = "DocumentRuntime"
       } else if startsInStack {
         fixtureName = startsOnStackBoard
