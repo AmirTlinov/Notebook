@@ -6,6 +6,22 @@ import XCTest
 
 final class MacModelLifecycleTests: XCTestCase {
   @MainActor
+  func testCoherentReadsLeaveTheWatchedDirectoryQuiet() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at:root) }
+    let store = NotebookStore(root:root), actor = UUID()
+    _ = try store.loadOrCreate(actor:actor,pageSize:.init(width:834,height:1194))
+    _ = try store.loadOrCreateSpatialInk(actor:actor)
+    try store.migrateCollaborationStorage()
+    var notifications = 0
+    let watcher = DirectoryWatcher(urls:[root,store.collaborationURL]) { notifications += 1 }
+    watcher.start(); defer { watcher.stop() }
+    for _ in 0..<5 { _ = try store.collaborationSnapshot(); _ = try store.collaborationActions() }
+    try await Task.sleep(for:.milliseconds(250))
+    XCTAssertEqual(notifications,0,"Завершённое чтение сохраняет файловое наблюдение спокойным")
+  }
+
+  @MainActor
   func testIncomingCatalogPreservesIndependentLocalBoardAndPortalEdits() throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)

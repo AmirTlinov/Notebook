@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 public enum NotebookStoreError: Error {
   case boardContainsContent(UUID)
@@ -6,7 +7,7 @@ public enum NotebookStoreError: Error {
 }
 
 public struct NotebookStore: Sendable {
-  private static let lockName = ".mutation-lock"
+  private static let lockName = ".mutation.lock"
   private static let legacyDirectoryName = "Tetrad"
 
   public let root: URL
@@ -807,35 +808,21 @@ public struct NotebookStore: Sendable {
   }
 
   func withMutationLock<T>(_ operation: () throws -> T) throws -> T {
-    let lockURL = root.appendingPathComponent(Self.lockName, isDirectory: true)
-    let fileManager = FileManager.default
-    var acquired = false
-    for _ in 0..<200 {
-      do {
-        try fileManager.createDirectory(
-          at: lockURL,
-          withIntermediateDirectories: false
-        )
-        acquired = true
-        break
-      } catch let error as CocoaError
-        where error.code == .fileWriteFileExists
-      {
-        if let values = try? lockURL.resourceValues(forKeys: [.contentModificationDateKey]),
-           let date = values.contentModificationDate,
-           Date().timeIntervalSince(date) > 15 {
-          try? fileManager.removeItem(at: lockURL)
-          continue
-        }
-        Thread.sleep(forTimeInterval: 0.003)
-      } catch {
-        throw error
+    // The kernel owns exclusion and releases it when a process exits. Reading
+    // a completed cut leaves directory entries intact, so a file watcher sees
+    // content publication rather than the act of observation itself.
+    let descriptor = open(root.appendingPathComponent(Self.lockName).path,O_CREAT | O_RDWR,0o600)
+    guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue:errno) ?? .EIO) }
+    defer { close(descriptor) }
+    let deadline = ProcessInfo.processInfo.systemUptime + 4
+    while flock(descriptor,LOCK_EX | LOCK_NB) != 0 {
+      guard errno == EWOULDBLOCK || errno == EINTR else { throw POSIXError(POSIXErrorCode(rawValue:errno) ?? .EIO) }
+      guard ProcessInfo.processInfo.systemUptime < deadline else {
+        throw CollaborationError("publication_pending", "Завершается публикация предыдущего хода. Повторите чтение.")
       }
+      Thread.sleep(forTimeInterval:0.005)
     }
-    guard acquired else {
-      throw CocoaError(.fileWriteUnknown)
-    }
-    defer { try? fileManager.removeItem(at: lockURL) }
+    defer { flock(descriptor,LOCK_UN) }
     try recoverCollaborationTransaction()
     return try operation()
   }

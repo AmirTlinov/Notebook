@@ -584,11 +584,8 @@ func storeMergesConcurrentStreams() throws {
   #expect(resolved.drawingData == Data("new ink".utf8))
   #expect(resolved.elements.map(\.id) == ["new-agent-layer"])
   #expect(try store.loadPage(resolved.id) == resolved)
-  #expect(
-    !FileManager.default.fileExists(
-      atPath: root.appendingPathComponent(".mutation-lock").path
-    )
-  )
+  let lock = root.appendingPathComponent(".mutation.lock")
+  #expect(try lock.resourceValues(forKeys:[.isRegularFileKey]).isRegularFile == true)
 }
 
 @Test("Хранилище отвергает два физических размера одного листа")
