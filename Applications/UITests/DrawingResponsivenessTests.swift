@@ -84,10 +84,24 @@ final class DrawingResponsivenessTests: XCTestCase {
     let settings = app.buttons["element-editing-tool"]
     eraser.tap()
     XCTAssertTrue(eraser.isSelected)
+    let inactivePen = pen.screenshot()
     pen.tap()
     XCTAssertFalse(settings.exists, "Первое касание выбирает ручку и сохраняет компактную панель")
     XCTAssertTrue(pen.isSelected)
     XCTAssertFalse(eraser.isSelected)
+    let selectedPen = pen.screenshot()
+    // Sample the selection circle beside the icon, so the pen's ink colour
+    // alone cannot satisfy the visible-selection contract.
+    let selectionBackground = CGRect(x: 0.2, y: 0.4, width: 0.08, height: 0.2)
+    XCTAssertGreaterThan(
+      changedPixelShare(from: inactivePen, to: selectedPen, normalizedRect: selectionBackground),
+      0.8,
+      "Выбранная ручка должна показывать круговую подложку, как ластик"
+    )
+    let penProof = XCTAttachment(screenshot: app.screenshot())
+    penProof.name = "selected-pen-highlight"
+    penProof.lifetime = .keepAlways
+    add(penProof)
 
     pen.tap()
     XCTAssertTrue(settings.waitForExistence(timeout: 2), "Повторное касание выбранной ручки открывает настройки")
@@ -99,6 +113,11 @@ final class DrawingResponsivenessTests: XCTestCase {
     pointer.tap()
     XCTAssertTrue(pointer.isSelected)
     XCTAssertFalse(pen.isSelected)
+    XCTAssertLessThan(
+      changedPixelShare(from: inactivePen, to: pen.screenshot(), normalizedRect: selectionBackground),
+      0.05,
+      "При выборе указателя ручка возвращается к обычной подложке"
+    )
     pen.tap()
     XCTAssertTrue(pen.isSelected)
     XCTAssertFalse(pointer.isSelected)

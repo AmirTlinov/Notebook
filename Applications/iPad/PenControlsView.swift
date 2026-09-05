@@ -31,11 +31,16 @@ struct PenControlsView: View {
             model.selectDrawingTool(.pen)
           }
         } label: {
-          Image(systemName: controlIcon)
-            .font(.system(size: 18, weight: .medium))
-            .foregroundStyle(controlColor)
-            .frame(width: 44, height: 44)
-            .contentShape(Circle())
+          ZStack {
+            Circle()
+              .fill(isPenSelected ? Color.primary.opacity(0.12) : .clear)
+              .frame(width: 31, height: 31)
+            Image(systemName: controlIcon)
+              .font(.system(size: 18, weight: .medium))
+              .foregroundStyle(controlColor)
+          }
+          .frame(width: 44, height: 44)
+          .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(
