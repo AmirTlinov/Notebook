@@ -15,13 +15,13 @@ export function registerCollaborationTools(server: McpServer, store: NotebookSto
   server.registerTool("notebook_point", {
     outputSchema: notebookResponseSchema,
     title: "Point to the source and share your interpretation",
-    description: "Attach a short interpretation or question to an exact owner, element/block or local region. The reference follows its physical owner. This changes shared attention and keeps the human camera. Omit target to clear the agent pointer.",
-    inputSchema: z.object({ target: targetSchema.optional(), element_id: z.string().optional(), region: frame.optional(), world_origin: world.optional(), page_index: z.number().int().nonnegative().default(0), label: z.string().max(1000).default("") }).strict(),
+    description: "Attach a short interpretation or question to an exact owner, element/block or local region. When responding to an observed reference, copy its revision into source_revision: the interpretation stays bound to that considered source and later changes are explicit. Omitting source_revision captures the current source. This changes shared attention and keeps the human camera. Omit target to clear the agent pointer.",
+    inputSchema: z.object({ target: targetSchema.optional(), element_id: z.string().optional(), region: frame.optional(), world_origin: world.optional(), page_index: z.number().int().nonnegative().default(0), source_revision:z.string().regex(/^[a-f0-9]{64}$/).optional(), label: z.string().max(1000).default("") }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   }, input => actionResult(async () => {
     const reference = input.target ? { id: randomUUID(), target: input.target, elementID: input.element_id,
       region: input.region, worldOrigin: input.world_origin, pageIndex: input.page_index, label: input.label,
-      ...(await runBridge<{ revision: string }>(store.root, { command: "reference", target: input.target, elementID: input.element_id })) } : undefined;
+      revision:input.source_revision ?? (await runBridge<{ revision: string }>(store.root, { command: "reference", target: input.target, elementID: input.element_id })).revision } : undefined;
     return { status: "saved", attention: await runBridge(store.root, { command: "point", reference }) };
   }));
   server.registerTool("notebook_render", {

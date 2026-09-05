@@ -27,6 +27,9 @@ struct NotebookCollaborationView: View {
             VStack(alignment:.leading,spacing:3) {
               Text(latest.undo == nil ? "Ход агента" : "Ход отменён").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
               Text(latest.action.summary).font(.callout).lineLimit(2)
+              if model.continuations(for:latest).contains(where: { $0.author == .human }) {
+                Text("Продолжено вами").font(.caption).foregroundStyle(.secondary)
+              }
             }.frame(maxWidth:.infinity,alignment:.leading)
           }.buttonStyle(.plain).accessibilityIdentifier("collaboration-history")
           if let reference = model.results(for:latest).first {
@@ -44,6 +47,13 @@ struct NotebookCollaborationView: View {
         List(model.collaborationActions) { action in
           VStack(alignment:.leading,spacing:10) {
             Text(action.action.summary).font(.headline)
+            let continued = model.continuations(for:action)
+            if !continued.isEmpty {
+              ForEach(Array(Set(continued.map(continuationLabel))).sorted(),id:\.self) { label in
+                Text(label)
+                  .font(.caption).foregroundStyle(.secondary)
+              }
+            }
             if let undo = action.undo {
               Text(undo.preserved.isEmpty ? "Отменено" : "Отменено · ваши доработки сохранены (\(undo.preserved.count))")
                 .font(.caption).foregroundStyle(.secondary)
@@ -60,6 +70,13 @@ struct NotebookCollaborationView: View {
         .toolbar { ToolbarItem(placement:.confirmationAction) { Button("Готово") { showsHistory = false } } }
       }.frame(minWidth:360,minHeight:400)
     }
+  }
+
+  private func continuationLabel(_ field: CollaborationContinuation) -> String {
+    let owner = field.author == .human ? "Ваша доработка" : field.author == .removed ? "Удалено позднее" : "Продолжено агентом"
+    let names = field.path.compactMap { if case .field(let name) = $0 { return name }; return nil }
+    let aspect = names.contains("frame") || names.contains("center") ? "положение" : names.contains("css") ? "оформление" : names.contains("state") || names.contains("records") ? "состояние" : "содержание"
+    return "\(owner) · \(field.elementID ?? "предмет") · \(aspect)"
   }
 }
 

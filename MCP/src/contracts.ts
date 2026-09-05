@@ -1,11 +1,27 @@
 import * as z from "zod/v4";
 
+const target = z.object({kind:z.enum(["workspace","board","cover","page","document"]),id:z.uuid(),boardID:z.uuid().optional()});
+const expected = z.object({target,revision:z.string(),stateRevision:z.string().optional(),sourceRevision:z.string().optional()});
+const fieldPath = z.array(z.union([
+  z.object({field:z.object({_0:z.string()})}),
+  z.object({member:z.object({_0:z.string()})}),
+  z.object({order:z.object({})}),
+]));
+const action = z.object({
+  id:z.uuid(),summary:z.string(),references:z.array(z.json()),createdAt:z.number().describe("Seconds since 2001-01-01T00:00:00Z, the native action journal epoch."),
+  revisions:z.array(expected),
+  continuations:z.array(z.object({file:z.string(),path:fieldPath,author:z.enum(["human","agent","removed"])})),
+  results:z.array(z.object({kind:z.string(),target,id:z.string().optional(),frame:z.json().optional()})),
+  undo:z.object({restored:z.number().int(),preserved:z.array(z.object({file:z.string(),path:fieldPath})),completedAt:z.number().describe("Seconds since 2001-01-01T00:00:00Z.")}).optional(),
+});
+
 /** Every tool publishes this machine-readable envelope; owner-specific data
  * remains alongside it, with source schemas on the typed operation inputs. */
 export const notebookResponseSchema = z.object({
   status: z.enum(["ready","saved","pending","error","snapshot_pending","placement_unavailable"]).optional(),
   code: z.string().optional().describe("revision_conflict: reread the explicit owner; target_missing: resolve its path; placement_unavailable: choose another surface; snapshot_pending: retain context and retry; action_id_conflict: use a fresh action ID for a different action."),
   message: z.string().optional(),
+  action:action.optional(),
   target: z.object({kind:z.string(),id:z.string(),boardID:z.string().optional()}).optional(),
   expected: z.union([z.string(),z.array(z.object({target:z.json(),revision:z.string(),stateRevision:z.string().optional(),sourceRevision:z.string().optional()}))]).optional(),
   actual: z.string().optional(),

@@ -103,6 +103,7 @@ final class NotebookAppModel {
   private var collaborationUndoTask: Task<Void, Never>?
   @ObservationIgnored private var resultCache: [UUID: [CollaborationReference]] = [:]
   @ObservationIgnored private var referenceStatusCache: [UUID: (String, Bool)] = [:]
+  @ObservationIgnored private var continuationCache: [UUID: (String, [CollaborationContinuation])] = [:]
   private var deviceActionReceipts: [DeviceActionReceipt] = []
   private var readyPages: [UUID: String] = [:]
   private(set) var isPeerConnected = false
@@ -1439,6 +1440,18 @@ final class NotebookAppModel {
     if let result = resultCache[action.id] { return result }
     let result = collaborationContent.map { action.resultReferences(in:$0) } ?? []
     resultCache[action.id] = result
+    return result
+  }
+
+  func continuations(for action: CollaborationReceipt) -> [CollaborationContinuation] {
+    guard action.undo == nil else { return [] }
+    let signature = action.revisions.map { expectation in
+      (collaborationRevision(expectation.target) ?? "missing") + "|" + (documentStates[expectation.target.id]?.stamp.revision ?? "")
+    }.joined(separator:";")
+    if let cached = continuationCache[action.id], cached.0 == signature { return cached.1 }
+    guard let files = try? collaborationContent?.sourceFiles() else { return [] }
+    let result = action.continuations(in:files)
+    continuationCache[action.id] = (signature,result)
     return result
   }
 

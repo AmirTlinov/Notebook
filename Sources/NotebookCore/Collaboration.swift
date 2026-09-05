@@ -132,6 +132,17 @@ public struct CollaborationUndoResult: Codable, Equatable, Sendable {
   public let completedAt: Date
 }
 
+public struct CollaborationContinuation: Codable, Equatable, Sendable {
+  public enum Author: String, Codable, Sendable { case human, agent, removed }
+  public let file: String
+  public let path: [CollaborationPathComponent]
+  public let author: Author
+
+  public var elementID: String? {
+    path.reversed().compactMap { if case .member(let id) = $0 { return id }; return nil }.first
+  }
+}
+
 public struct CollaborationReceipt: Codable, Equatable, Sendable, Identifiable {
   public let id: UUID
   public let action: CollaborationAction

@@ -40,6 +40,13 @@ extension NotebookStore {
     return try withMutationLock { try loadAction(id) }
   }
 
+  public func collaborationContinuations(_ id: UUID) throws -> [CollaborationContinuation] {
+    try prepare()
+    return try withMutationLock {
+      try loadAction(id).continuations(in:CollaborationWorkspace(store:self).files)
+    }
+  }
+
   private func actionFile(_ id: UUID) -> String {
     "collaboration/actions/\(id.uuidString.lowercased()).json"
   }
@@ -314,6 +321,20 @@ extension NotebookStore {
       files["last-context.json"] = try? .encode(loadPresence())
       files["spatial-ink.json"] = try .encode(loadSpatialInk())
       return files
+    }
+  }
+}
+
+extension CollaborationReceipt {
+  /// A receipt keeps the original contribution; these addresses name the fields
+  /// whose current owner has continued it since publication.
+  public func continuations(in files: [String:JSONValue]) -> [CollaborationContinuation] {
+    guard undo == nil else { return [] }
+    return changes.compactMap { change in
+      let current = files[change.file]?.value(at:change.path[...])
+      guard collaborationComparable(current) != collaborationComparable(change.after) else { return nil }
+      let version = collaborationFieldVersion(file:files[change.file],path:change.path)
+      return .init(file:change.file,path:change.path,author:current == nil ? .removed : version?.human == false ? .agent : .human)
     }
   }
 }

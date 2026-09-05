@@ -97,6 +97,13 @@ try {
   meaning.source = "Human understanding"; meaning.html = "Human understanding";
   humanPage.agentStamp = { counter: humanPage.agentStamp.counter + 1, actor: appActor };
   await writeFile(pagePath, JSON.stringify(humanPage));
+  const continued = await call("notebook_action",{action_id:edited.action.id});
+  assert.ok(continued.action.continuations.length >= 2);
+  const interpretation = await call("notebook_point",{target:page,element_id:"meaning",
+    source_revision:pointing.attention.reference.revision,label:"Я рассматриваю исходный заголовок"});
+  assert.equal(interpretation.attention.reference.revision,pointing.attention.reference.revision);
+  const reconsider = await call("notebook_observe");
+  assert.equal(reconsider.references.find((r:Data)=>r.author === "agent").status,"changed");
   const undone = await call("notebook_undo", { action_id: edited.action.id });
   assert.ok(undone.action.undo.preserved.length >= 2);
   assert.deepEqual(await call("notebook_undo", { action_id: edited.action.id }), undone);

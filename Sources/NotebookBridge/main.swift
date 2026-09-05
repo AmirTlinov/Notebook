@@ -35,6 +35,9 @@ do {
     guard let id = request.actionID else { throw CollaborationError("invalid_action", "Нужен ID хода.") }
     data = try encoder.encode(store.collaborationAction(id))
   case "actions": data = try encoder.encode(store.collaborationActions())
+  case "continuations":
+    guard let id = request.actionID else { throw CollaborationError("invalid_action", "Нужен ID хода.") }
+    data = try encoder.encode(store.collaborationContinuations(id))
   case "snapshot": data = try encoder.encode(store.collaborationSnapshot())
   case "attention": data = try encoder.encode(store.sharedAttention())
   case "point": data = try encoder.encode(store.pointTo(request.reference, actor: store.collaborationActorID()))

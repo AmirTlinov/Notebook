@@ -94,6 +94,7 @@ export function registerActionTools(server: McpServer, store: NotebookStore): vo
 }
 
 export async function publicAction(receipt: ActionReceipt, store: NotebookStore): Promise<Record<string, unknown>> {
+  const continuations = await runBridge(store.root,{command:"continuations",actionID:receipt.id});
   const delivery = await runBridge<Array<{id:string;revisions:unknown[];shown:Array<{target:Target;revision:string}>;displayComplete:boolean;visibleRegions:unknown[]}>>(store.root,{command:"delivery"});
   const device = delivery.find(value => value.id.toLowerCase() === receipt.id.toLowerCase());
   const same = (a:unknown,b:unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -105,7 +106,7 @@ export async function publicAction(receipt: ActionReceipt, store: NotebookStore)
     .filter(value => value?.status === "ready" && receipt.revisions.some(r => r.target.id.toLowerCase() === value.request.target.id.toLowerCase() && r.target.kind === value.request.target.kind))
     .map(value => ({target:value.request.target,sourceRevision:value.request.sourceRevision,region:value.request.region ?? null,pageIndex:value.request.pageIndex,pngSHA256:value.pngSHA256,diagnostics:value.diagnostics}));
   return { status: "saved", action: {id:receipt.id,summary:receipt.action.summary,references:receipt.action.references,
-    createdAt:receipt.createdAt,revisions:receipt.revisions,results:receipt.action.operations.map(({kind,target,id,values})=>({kind,target,id,frame:values.frame})),
+    createdAt:receipt.createdAt,revisions:receipt.revisions,continuations,results:receipt.action.operations.map(({kind,target,id,values})=>({kind,target,id,frame:values.frame})),
     ...(receipt.undo ? {undo:{...receipt.undo,preserved:receipt.undo.preserved.map(value=>{const field=value as {file:string;path:unknown};return {file:field.file,path:field.path};})}} : {})},
     publication: {saved:{status:"confirmed"},receivedByIPad:{status:received?"confirmed":"awaiting_device"},
       snapshots,shownOnIPad:{status:shown?"confirmed":"awaiting_display",visibleRegions:received?device.visibleRegions:[]}} };

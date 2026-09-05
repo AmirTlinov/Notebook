@@ -29,6 +29,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     element.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).press(forDuration:0.05,
       thenDragTo:element.coordinate(withNormalizedOffset:.init(dx:0.75,dy:0.7)),withVelocity:.slow,thenHoldForDuration:0)
     XCTAssertGreaterThan(element.frame.midX,initial.midX + 20)
+    XCTAssertTrue(app.staticTexts["Продолжено вами"].waitForExistence(timeout:3))
     let moved = element.frame
     app.buttons["collaboration-undo"].tap()
     XCTAssertTrue(app.staticTexts["Ход отменён"].waitForExistence(timeout:5))

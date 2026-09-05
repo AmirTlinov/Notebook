@@ -227,7 +227,7 @@ final class PresenceOwnershipTests: XCTestCase {
   }
 
   @MainActor
-  func testExternalCatalogAndBoardChangeMoveCameraToTheSelectedItem() throws {
+  func testExternalCatalogAndBoardChangeKeepTheHumanCamera() throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -236,6 +236,8 @@ final class PresenceOwnershipTests: XCTestCase {
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     let size = PageSize(width: 834, height: 1_194)
     model.start(pageSize: size)
+    let originalPresence = try XCTUnwrap(model.presence)
+    let originalItemID = try XCTUnwrap(model.workspace?.selectedItemID)
     var workspace = try XCTUnwrap(model.workspace)
     var board = try XCTUnwrap(model.boardHierarchy)
     let created = try XCTUnwrap(workspace.createNotebook(
@@ -258,10 +260,10 @@ final class PresenceOwnershipTests: XCTestCase {
 
     model.reloadExternalChanges()
 
-    XCTAssertEqual(model.workspace?.selectedItemID, created.item.id)
-    XCTAssertEqual(model.presence?.focusedItemID, created.item.id)
-    XCTAssertEqual(model.presence?.camera.center, expectedCenter)
-    XCTAssertEqual(model.presence?.mode, .page)
+    XCTAssertEqual(model.workspace?.selectedItemID, originalItemID)
+    XCTAssertEqual(model.presence,originalPresence)
+    XCTAssertEqual(model.board?.placement(of:created.item.id)?.center,expectedCenter)
+    XCTAssertNotNil(model.pages[created.page.id])
   }
 
   @MainActor
