@@ -201,10 +201,20 @@ final class DrawingResponsivenessTests: XCTestCase {
     ]
     app.launch()
 
-    let thirdPage = app.otherElements.matching(
+    let selectedSheet = app.otherElements["page-turn-page-2"]
+    let thirdPage = selectedSheet.otherElements.matching(
       NSPredicate(format: "label BEGINSWITH 'Страница 3 из '")
     ).firstMatch
     XCTAssertTrue(thirdPage.waitForExistence(timeout: 8))
+    // WebKit publishes the document tree before its fixed page is positioned.
+    // The selected sheet's completed placement owns this assertion.
+    let centered = XCTNSPredicateExpectation(
+      predicate: NSPredicate { _, _ in
+        thirdPage.exists && abs(thirdPage.frame.midX - app.frame.midX) <= 4
+      },
+      object: nil
+    )
+    await fulfillment(of: [centered], timeout: 8)
     XCTAssertEqual(
       thirdPage.frame.midX,
       app.frame.midX,
@@ -212,7 +222,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "SessionPresence должен поставить выбранный физический лист в центр"
     )
 
-    let thirdPageMarker = app.staticTexts["Раздел 12"].firstMatch
+    let thirdPageMarker = selectedSheet.staticTexts["Раздел 12"].firstMatch
     XCTAssertTrue(thirdPageMarker.waitForExistence(timeout: 3))
     XCTAssertTrue(
       app.frame.intersects(thirdPageMarker.frame),

@@ -6,6 +6,34 @@ import XCTest
 
 final class WorkspaceAppearanceTests: XCTestCase {
   @MainActor
+  func testCameraAndTitleChangesReuseMaterialAndShadowPixels() throws {
+    let item = WorkspaceItem.notebook(id: UUID(), title: "First title", pageIDs: [UUID()])
+    let geometry = WorkspaceItemGeometry.notebook
+    let material = WorkspaceCoverRaster.material(item: item, geometry: geometry)
+    let shadow = WorkspaceCoverRaster.shadow(geometry: geometry, lifted: false)
+    let lifted = WorkspaceCoverRaster.shadow(geometry: geometry, lifted: true)
+    for step in 1...120 {
+      let changedTitle = WorkspaceItem.notebook(id: item.id, title: "Title \(step)", pageIDs: item.pageIDs)
+      XCTAssertTrue(WorkspaceCoverRaster.material(item: changedTitle, geometry: geometry) === material)
+      XCTAssertTrue(WorkspaceCoverRaster.shadow(geometry: geometry, lifted: false) === shadow)
+      XCTAssertTrue(WorkspaceCoverRaster.shadow(geometry: geometry, lifted: true) === lifted)
+    }
+    XCTAssertFalse(shadow === lifted)
+    let width = shadow.width
+    let height = shadow.height
+    var pixels = [UInt8](repeating: 0, count: width * height * 4)
+    try pixels.withUnsafeMutableBytes { bytes in
+      let context = try XCTUnwrap(CGContext(data: bytes.baseAddress, width: width, height: height,
+        bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+      context.draw(shadow, in: CGRect(x: 0, y: 0, width: width, height: height))
+    }
+    XCTAssertEqual(pixels[((height / 2) * width + width / 2) * 4 + 3], 0,
+      "The live page owns every pixel inside the shadow's paper cutout")
+    XCTAssertGreaterThan(pixels[((height / 2) * width + Int(WorkspaceCoverRaster.shadowPadding) - 5) * 4 + 3], 0)
+  }
+
+  @MainActor
   func testCoverMaterialsKeepStableIdentityAndReadablePencil() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -36,8 +64,8 @@ final class WorkspaceAppearanceTests: XCTestCase {
         HStack(spacing: 28) {
           ForEach(0..<3) { column in
             self.cover(item: items[row * 3 + column], geometry: .notebook, model: model)
+              .background { WorkspaceItemShadow(geometry: .notebook) }
               .scaleEffect(scale).frame(width: 260, height: height)
-              .modifier(WorkspaceItemShadow(scale: scale))
           }
         }
       }

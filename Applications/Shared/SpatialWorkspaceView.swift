@@ -187,9 +187,9 @@ enum WorkspaceSceneProjection {
             onTextEditingEnded: { _ in },
             onElementSelected: {}
           )
+          .background { WorkspaceItemShadow(geometry: rendered.geometry) }
           .scaleEffect(presence.camera.scale)
           .position(x: screen.x, y: screen.y)
-          .modifier(WorkspaceItemShadow(scale: presence.camera.scale))
           .zIndex(rendered.zIndex)
         }
       }
@@ -1513,6 +1513,8 @@ private struct WorkspaceSceneItem: View {
     let restingShadowVisibility =
       CoverOpeningPhysics.restingShadowVisibility(openProgress)
     ZStack {
+      WorkspaceItemShadow(geometry: rendered.geometry,
+        lifted: isLifted, visibility: restingShadowVisibility)
       WorkspaceItemDepthView(kind: rendered.item.kind, geometry: rendered.geometry)
         .opacity(max(0, 1 - openProgress * 2))
       if rendered.item.kind == .board {
@@ -1550,9 +1552,6 @@ private struct WorkspaceSceneItem: View {
     .offset(dragTranslation)
     .offset(y: isLifted ? -8 : 0)
     .position(x: screen.x, y: screen.y)
-    .modifier(WorkspaceItemShadow(
-      scale: scale, lifted: isLifted, visibility: restingShadowVisibility
-    ))
     .animation(.spring(duration: 0.18, bounce: 0.18), value: isLifted)
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier(
@@ -1938,9 +1937,9 @@ struct BoardPortalPreview: View {
             width: item.geometry.width,
             height: item.geometry.height
           )
+          .background { WorkspaceItemShadow(geometry: item.geometry) }
           .scaleEffect(camera.scale)
           .position(x: screen.x, y: screen.y)
-          .modifier(WorkspaceItemShadow(scale: camera.scale))
           .zIndex(item.zIndex)
         }
       }

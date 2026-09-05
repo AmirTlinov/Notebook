@@ -84,7 +84,7 @@ private enum CoverPaperGrain {
   }()
 }
 
-struct WorkspaceCoverSurface: View {
+private struct WorkspaceCoverPaint: View {
   let item: WorkspaceItem
   let geometry: WorkspaceItemGeometry
 
@@ -166,18 +166,86 @@ struct WorkspaceItemDepthView: View {
   }
 }
 
-/// One overhead light: a tight contact shadow and a soft lifted shadow.
-struct WorkspaceItemShadow: ViewModifier {
-  let scale: Double
+/// Material and shadow are fixed physical artwork. Camera changes reuse these
+/// exact pixels through a transform, so a pinch never rerasterizes their grain,
+/// rounded clipping, gradients or blur at a new screen-sized resolution.
+@MainActor
+enum WorkspaceCoverRaster {
+  private struct Key: Hashable {
+    let width: Double
+    let height: Double
+    let radius: Double
+    let palette: Int
+    let notebook: Bool
+    let lifted: Bool
+  }
+
+  static let shadowPadding = 120.0
+  private static var materials: [Key: CGImage] = [:]
+  private static var shadows: [Key: CGImage] = [:]
+
+  static func material(item: WorkspaceItem, geometry: WorkspaceItemGeometry) -> CGImage {
+    let key = Key(width: geometry.width, height: geometry.height,
+      radius: geometry.cornerRadius,
+      palette: item.kind == .notebook ? NotebookCoverPalette(itemID: item.id).rawValue : 0,
+      notebook: item.kind == .notebook, lifted: false)
+    if let image = materials[key] { return image }
+    let renderer = ImageRenderer(content: WorkspaceCoverPaint(item: item, geometry: geometry))
+    renderer.scale = 1
+    let image = renderer.cgImage!
+    materials[key] = image
+    return image
+  }
+
+  static func shadow(geometry: WorkspaceItemGeometry, lifted: Bool) -> CGImage {
+    let key = Key(width: geometry.width, height: geometry.height,
+      radius: geometry.cornerRadius, palette: 0, notebook: false, lifted: lifted)
+    if let image = shadows[key] { return image }
+    let shape = RoundedRectangle(cornerRadius: geometry.cornerRadius, style: .continuous)
+    let renderer = ImageRenderer(content:
+      shape.fill(.black)
+        .frame(width: geometry.width, height: geometry.height)
+        .shadow(color: .black.opacity(lifted ? 0.035 : 0.17), radius: 1.8, x: 0, y: 1.4)
+        .shadow(color: .black.opacity(lifted ? 0.22 : 0.115),
+          radius: lifted ? 28 : 14, x: 1.5, y: lifted ? 18 : 7)
+        .overlay { shape.fill(.black).blendMode(.destinationOut) }
+        .compositingGroup()
+        .padding(shadowPadding)
+    )
+    renderer.scale = 1
+    let image = renderer.cgImage!
+    shadows[key] = image
+    return image
+  }
+}
+
+struct WorkspaceCoverSurface: View {
+  let item: WorkspaceItem
+  let geometry: WorkspaceItemGeometry
+
+  var body: some View {
+    Image(decorative: WorkspaceCoverRaster.material(item: item, geometry: geometry), scale: 1)
+      .resizable()
+      .frame(width: geometry.width, height: geometry.height)
+      .accessibilityHidden(true)
+  }
+}
+
+/// A transparent shadow is a sibling beneath the live paper, Pencil and WebKit.
+/// Its fixed local rectangle follows the same camera transform as the item.
+struct WorkspaceItemShadow: View {
+  let geometry: WorkspaceItemGeometry
   var lifted = false
   var visibility = 1.0
 
-  func body(content: Content) -> some View {
-    content
-      .shadow(color: .black.opacity((lifted ? 0.035 : 0.17) * visibility),
-        radius: max(0.6, 1.8 * scale), x: 0, y: max(0.6, 1.4 * scale))
-      .shadow(color: .black.opacity((lifted ? 0.22 : 0.115) * visibility),
-        radius: max(2, (lifted ? 28 : 14) * scale),
-        x: 1.5 * scale, y: (lifted ? 18 : 7) * scale)
+  var body: some View {
+    Image(decorative: WorkspaceCoverRaster.shadow(geometry: geometry, lifted: lifted), scale: 1)
+      .resizable()
+      .frame(width: geometry.width + 2 * WorkspaceCoverRaster.shadowPadding,
+        height: geometry.height + 2 * WorkspaceCoverRaster.shadowPadding)
+      .frame(width: geometry.width, height: geometry.height)
+      .opacity(visibility)
+      .allowsHitTesting(false)
+      .accessibilityHidden(true)
   }
 }
