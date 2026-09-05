@@ -167,6 +167,12 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
       }
   }
 
+  /// Representation migration preserves the version of the same visible drawing.
+  mutating func migrateInkRepresentation(_ data: Data) throws {
+    _ = try PageInkDrawing.decode(data)
+    drawingData = data
+  }
+
   @discardableResult
   public mutating func replaceDrawing(_ data: Data, actor: UUID) -> Bool {
     guard data != drawingData,

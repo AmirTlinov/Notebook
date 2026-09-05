@@ -7,6 +7,13 @@ enum SpatialInkRenderLayer {
 }
 
 enum SpatialInkComposer {
+  static func pageLayers(_ drawing: PageInkDrawing) -> [SpatialInkRenderLayer] {
+    drawing.actions.map { action in
+      let points = action.samples.map { point($0,location:CGPoint(x:$0.point.x,y:$0.point.y),widthScale:1) }
+      return action.tool == .pen ? .ink(points:points,color:action.color) : .erase(points:points)
+    }
+  }
+
   static func boardLayers(
     board: SurfaceID,
     journal: SpatialInkJournal?,

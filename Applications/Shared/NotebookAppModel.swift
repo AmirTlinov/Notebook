@@ -240,7 +240,7 @@ final class NotebookAppModel {
         initialPageID: Self.initialPageID
       )
       workspace = stored.0
-      pages = stored.1
+      pages = try PageInkMigration.migrate(stored.1,store:store)
       let storedDocuments = try store.loadAvailableDocuments(
         workspace: stored.0
       )

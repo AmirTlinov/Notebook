@@ -23,7 +23,8 @@ source_revision() {
     python3 -c 'import hashlib,pathlib,sys
 root=pathlib.Path(sys.argv[1]); digest=hashlib.sha256()
 for name in sorted(set(sys.stdin.buffer.read().split(b"\0")) - {b""}):
-    digest.update(name + b"\0"); digest.update((root / name.decode()).read_bytes())
+    path = root / name.decode()
+    digest.update(name + b"\0"); digest.update(path.read_bytes() if path.is_file() else b"\0deleted")
 print(digest.hexdigest())' "$ROOT"
 }
 SOURCE_REVISION=$(source_revision)

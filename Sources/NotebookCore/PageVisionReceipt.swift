@@ -137,7 +137,7 @@ public struct PageVisionRegion: Codable, Equatable, Sendable {
 
 /// Exact page raster and its visible-ink index, published as one settled revision.
 public struct PageVisionReceipt: Codable, Equatable, Sendable {
-  public static let formatVersion = 1
+  public static let formatVersion = 2
   public static let maximumRegionCellSpan = 12
   private static let maximumRenderScale = 16.0
 

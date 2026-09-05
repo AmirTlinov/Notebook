@@ -124,6 +124,9 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     pen.tap()
     XCTAssertTrue(settings.waitForExistence(timeout: 2), "Повторное касание выбранной ручки открывает настройки")
+    XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "pen-stroke-preview").firstMatch.waitForExistence(timeout: 2))
+    let previewProof = XCTAttachment(screenshot: app.screenshot())
+    previewProof.name = "actual-pen-pressure-preview"; previewProof.lifetime = .keepAlways; add(previewProof)
     pen.tap()
     XCTAssertTrue(settings.waitForNonExistence(timeout: 2))
     XCTAssertTrue(pen.isSelected, "Закрытие настроек сохраняет выбранную ручку")
@@ -1527,7 +1530,7 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
-    XCTAssertEqual(paper.value as? String, "80 штрихов")
+    XCTAssertEqual(paper.value as? String, "80 действий пера")
 
     let start = paper.coordinate(
       withNormalizedOffset: CGVector(dx: 0.18, dy: 0.22)
@@ -1549,7 +1552,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     )
 
     let drawingChanged = XCTNSPredicateExpectation(
-      predicate: NSPredicate(format: "value == %@", "81 штрихов"),
+      predicate: NSPredicate(format: "value == %@", "81 действий пера"),
       object: paper
     )
     wait(for: [drawingChanged], timeout: 2)
@@ -1582,7 +1585,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       XCTFail("Лист должен сообщать число штрихов")
       return
     }
-    XCTAssertEqual(initialValue, "80 штрихов")
+    XCTAssertEqual(initialValue, "80 действий пера")
     let start = paper.coordinate(
       withNormalizedOffset: CGVector(dx: 0.12, dy: 0.48)
     )
@@ -1629,7 +1632,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertLessThan(ContinuousClock.now - responseStarted, .seconds(2))
 
     let bothErasersLanded = XCTNSPredicateExpectation(
-      predicate: NSPredicate(format: "value BEGINSWITH '2'"),
+      predicate: NSPredicate(format: "value == '82 действий пера'"),
       object: paper
     )
     wait(for: [bothErasersLanded], timeout: 2)
@@ -1654,7 +1657,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 2))
     let originalValue = paper.value as? String
-    XCTAssertEqual(originalValue, "80 штрихов")
+    XCTAssertEqual(originalValue, "80 действий пера")
     paper.coordinate(withNormalizedOffset: CGVector(dx: 0.12, dy: 0.48))
       .press(
         forDuration: 0.04,

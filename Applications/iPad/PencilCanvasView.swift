@@ -3,23 +3,6 @@ import PencilKit
 import SwiftUI
 import UIKit
 
-/// One finished Pencil gesture, independent of the page snapshot it will
-/// eventually modify. The coordinator applies these mutations in order after
-/// the hand has already been released for the next gesture.
-enum PageDrawingMutation: @unchecked Sendable {
-  case pen(PKStroke)
-  case eraser(PKStrokePath)
-
-  func apply(to drawing: PKDrawing) -> PKDrawing {
-    switch self {
-    case .pen(let stroke):
-      PKDrawing(strokes: drawing.strokes + [stroke])
-    case .eraser(let path):
-      drawing.erasingPath(path)
-    }
-  }
-}
-
 struct PencilCanvasView: UIViewRepresentable {
   let pageID: UUID
   let drawingData: Data
@@ -94,7 +77,7 @@ struct PencilCanvasView: UIViewRepresentable {
     private var pencilActionIsActive = false
     private var pageID: UUID?
     private var modelDrawingData: Data?
-    private var appliedDrawing = PKDrawing()
+    private var appliedDrawing = PageInkDrawing()
     private var appliedPenStyle: PenStyle?
     private var appliedEraserStyle: EraserStyle?
     private var appliedDrawingTool: DrawingTool?
@@ -126,11 +109,11 @@ struct PencilCanvasView: UIViewRepresentable {
       registerPageFinisher(on: paper)
     }
 
-    /// The touch owner ends at Pencil-up. This task owns the slower PencilKit
-    /// mutation and file delivery from that point onward, so a following
+    /// The touch owner ends at Pencil-up. This task owns ordered archive encoding
+    /// and file delivery from that point onward, so a following
     /// gesture can begin immediately while completed actions stay ordered.
     func commit(
-      _ mutation: PageDrawingMutation,
+      _ mutation: PageInkAction,
       on paper: PaperCanvasContainerView
     ) {
       guard let pageID,
@@ -148,11 +131,17 @@ struct PencilCanvasView: UIViewRepresentable {
       serializationTails[pageID] = Task { [self, weak paper] in
         await previous?.value
         let previousData = localDrawingData[pageID] ?? Data()
-        let baseDrawing = Self.drawing(from: previousData)
-        let (drawing, data) = await Task.detached(priority: .userInitiated) {
-          let drawing = mutation.apply(to: baseDrawing)
-          return (drawing, drawing.dataRepresentation())
+        let result = await Task.detached(priority: .userInitiated) {
+          () -> (PageInkDrawing, Data)? in
+          guard let base = try? PageInkDrawing.decode(previousData) else { return nil }
+          let drawing = base.appending(mutation)
+          guard let data = try? drawing.dataRepresentation() else { return nil }
+          return (drawing, data)
         }.value
+        guard let (drawing, data) = result else {
+          completeLocalDelivery(on: pageID, acceptedData: nil, paper: paper)
+          return
+        }
 
         if pageID == self.pageID {
           appliedDrawing = drawing
@@ -162,9 +151,12 @@ struct PencilCanvasView: UIViewRepresentable {
         if let acceptedData {
           localDrawingData[pageID] = acceptedData
           if pageID == self.pageID {
-            let acceptedDrawing = Self.drawing(from: acceptedData)
-            appliedDrawing = acceptedDrawing
-            paper?.touchView.acceptCommittedDrawing(acceptedDrawing)
+            if let acceptedDrawing = try? PageInkDrawing.decode(acceptedData) {
+              appliedDrawing = acceptedDrawing
+              paper?.touchView.acceptCommittedDrawing(acceptedDrawing)
+            } else {
+              paper?.setInputEnabled(false)
+            }
           }
         } else {
           localDrawingData[pageID] = data
@@ -275,12 +267,15 @@ struct PencilCanvasView: UIViewRepresentable {
       if !pageChanged, modelDrawingData == data {
         return
       }
-      let drawing = Self.drawing(from: data)
+      guard let drawing = try? PageInkDrawing.decode(data) else {
+        paper.setInputEnabled(false)
+        return
+      }
       self.pageID = pageID
       modelDrawingData = data
       if !pageChanged,
-        (pendingLocalDeliveries[pageID, default: 0] > 0
-          || paper.touchView.hasActiveAction)
+        pendingLocalDeliveries[pageID, default: 0] > 0
+          || paper.touchView.hasActiveAction
       {
         return
       }
@@ -298,7 +293,8 @@ struct PencilCanvasView: UIViewRepresentable {
         0,
         pendingLocalDeliveries[deliveredPageID, default: 1] - 1
       )
-      pendingLocalDeliveries[deliveredPageID] = remaining == 0
+      pendingLocalDeliveries[deliveredPageID] =
+        remaining == 0
         ? nil
         : remaining
 
@@ -314,8 +310,11 @@ struct PencilCanvasView: UIViewRepresentable {
         restoreModelDrawing(on: paper)
         return
       }
+      guard let acceptedDrawing = try? PageInkDrawing.decode(acceptedData) else {
+        paper.setInputEnabled(false)
+        return
+      }
       modelDrawingData = acceptedData
-      let acceptedDrawing = Self.drawing(from: acceptedData)
       appliedDrawing = acceptedDrawing
       paper.settle(acceptedDrawing)
     }
@@ -336,15 +335,14 @@ struct PencilCanvasView: UIViewRepresentable {
 
     private func restoreModelDrawing(on paper: PaperCanvasContainerView?) {
       guard let paper, let modelDrawingData else { return }
-      let drawing = Self.drawing(from: modelDrawingData)
+      guard let drawing = try? PageInkDrawing.decode(modelDrawingData) else {
+        paper.setInputEnabled(false)
+        return
+      }
       appliedDrawing = drawing
       paper.apply(drawing)
     }
 
-    private static func drawing(from data: Data) -> PKDrawing {
-      guard !data.isEmpty else { return PKDrawing() }
-      return (try? PKDrawing(data: data)) ?? PKDrawing()
-    }
   }
 }
 
@@ -395,12 +393,12 @@ final class PaperCanvasContainerView: UIView {
     touchView.frame = bounds
   }
 
-  func apply(_ drawing: PKDrawing) {
+  func apply(_ drawing: PageInkDrawing) {
     inkView.apply(drawing)
     touchView.apply(drawing)
   }
 
-  func settle(_ drawing: PKDrawing) {
+  func settle(_ drawing: PageInkDrawing) {
     inkView.settle(drawing)
     touchView.acceptCommittedDrawing(drawing)
   }
@@ -414,7 +412,7 @@ final class PaperCanvasContainerView: UIView {
 
 @MainActor
 final class PaperInputView: UIView {
-  var onDrawingMutation: ((PageDrawingMutation) -> Void)?
+  var onDrawingMutation: ((PageInkAction) -> Void)?
   var onActionActivityChange: ((Bool) -> Void)?
   var presentActivePen: ((ActiveInkStroke) -> Void)?
   var commitActivePen: (() -> Void)?
@@ -437,7 +435,7 @@ final class PaperInputView: UIView {
 
   private static let estimateWait = Duration.milliseconds(120)
 
-  private var drawing = PKDrawing()
+  private var drawing = PageInkDrawing()
   private var penStyle = PenStyle.standard
   private var eraserStyle = EraserStyle.standard
   private var drawingTool = DrawingTool.pen
@@ -446,10 +444,7 @@ final class PaperInputView: UIView {
   private var actionTool: DrawingTool?
   private var actionPenStyle: PenStyle?
   private var actionEraserStyle: EraserStyle?
-  private var actionCreationDate = Date()
-  private var actionPathID = UUID()
   private var actionStrokeID = UUID()
-  private var actionRandomSeed = UInt32.random(in: 0...UInt32.max)
   private var actionStartTimestamp: TimeInterval = 0
   private var samples: [Sample] = []
   private var predictedSamples: [Sample] = []
@@ -484,7 +479,7 @@ final class PaperInputView: UIView {
     self.drawingTool = drawingTool
   }
 
-  func apply(_ drawing: PKDrawing) {
+  func apply(_ drawing: PageInkDrawing) {
     cancelCurrentAction()
     self.drawing = drawing
     updateAccessibilityValue()
@@ -492,7 +487,7 @@ final class PaperInputView: UIView {
 
   /// Accepts the durable result without replacing the exact Metal mesh that
   /// was already committed under the person's hand.
-  func acceptCommittedDrawing(_ drawing: PKDrawing) {
+  func acceptCommittedDrawing(_ drawing: PageInkDrawing) {
     self.drawing = drawing
     updateAccessibilityValue()
   }
@@ -609,17 +604,16 @@ final class PaperInputView: UIView {
     if reportsPencilActivity { onActionActivityChange?(true) }
     actionPenStyle = penStyle
     actionEraserStyle = eraserStyle
-    actionCreationDate = Date()
-    actionPathID = UUID()
     actionStrokeID = UUID()
-    actionRandomSeed = UInt32.random(in: 0...UInt32.max)
     actionStartTimestamp = touch.timestamp
     samples = []
     predictedSamples = []
-    activePenStroke = actionTool == .pen
+    activePenStroke =
+      actionTool == .pen
       ? actionPenStyle.map { ActiveInkStroke(style: $0) }
       : nil
-    activeEraserStroke = actionTool == .eraser
+    activeEraserStroke =
+      actionTool == .eraser
       ? ActiveEraserStroke()
       : nil
     filteredPenForces = []
@@ -656,14 +650,12 @@ final class PaperInputView: UIView {
     if touch.type == .pencil { return true }
     #if targetEnvironment(simulator)
       return touch.type == .direct
-        && (
-          !ProcessInfo.processInfo.arguments.contains(
-            SimulatorDrawingFixture.fingerGestureArgument
-          )
-            || ProcessInfo.processInfo.arguments.contains(
-              SimulatorDrawingFixture.mixedInputArgument
-            )
+        && (!ProcessInfo.processInfo.arguments.contains(
+          SimulatorDrawingFixture.fingerGestureArgument
         )
+          || ProcessInfo.processInfo.arguments.contains(
+            SimulatorDrawingFixture.mixedInputArgument
+          ))
     #else
       return false
     #endif
@@ -829,7 +821,8 @@ final class PaperInputView: UIView {
     processedTail.reserveCapacity(samples.count - startIndex)
 
     var previousForce = filteredPenForces.last
-    var previousTimestamp = startIndex > 0
+    var previousTimestamp =
+      startIndex > 0
       ? samples[startIndex - 1].timestamp
       : nil
 
@@ -945,44 +938,15 @@ final class PaperInputView: UIView {
     }
   }
 
-  private func actionMutation() -> PageDrawingMutation? {
-    switch actionTool {
-    case .pen:
-      guard let stroke = penStroke() else { return nil }
-      return .pen(stroke)
-    case .eraser:
-      guard !samples.isEmpty else { return nil }
-      return .eraser(eraserPath())
-    case nil:
-      return nil
-    }
-  }
-
-  private func penStroke() -> PKStroke? {
-    guard let style = actionPenStyle,
-      let activePenStroke,
-      !activePenStroke.measuredPoints.isEmpty
-    else {
-      return nil
-    }
-    let path = PKStrokePath(
-      controlPoints: activePenStroke.measuredPoints,
-      creationDate: actionCreationDate,
-      id: actionPathID
-    )
-    return PKStroke(
-      ink: PKInk(.monoline, color: style.uiColor(alpha: 1)),
-      path: path,
-      randomSeed: actionRandomSeed,
-      id: actionStrokeID
-    )
-  }
-
-  private func eraserPath() -> PKStrokePath {
-    return PKStrokePath(
-      controlPoints: samples.map(\.point),
-      creationDate: actionCreationDate
-    )
+  private func actionMutation() -> PageInkAction? {
+    guard let actionTool else { return nil }
+    let points = actionTool == .pen ? (activePenStroke?.measuredPoints ?? []) : samples.map(\.point)
+    guard !points.isEmpty else { return nil }
+    let components = (actionPenStyle ?? penStyle).color.components
+    return PageInkAction(
+      id: actionStrokeID, tool: actionTool == .pen ? .pen : .eraser,
+      color: .init(red: components.red, green: components.green, blue: components.blue),
+      points: points)
   }
 
   private func scheduleFinalization() {
@@ -1005,7 +969,7 @@ final class PaperInputView: UIView {
     finishAction(with: mutation)
   }
 
-  private func finishAction(with mutation: PageDrawingMutation) {
+  private func finishAction(with mutation: PageInkAction) {
     let completions = actionCompletions
     let tool = actionTool
     if tool == .pen {
@@ -1054,7 +1018,7 @@ final class PaperInputView: UIView {
   }
 
   private func updateAccessibilityValue() {
-    accessibilityValue = "\(drawing.strokes.count) штрихов"
+    accessibilityValue = "\(drawing.actionCount) действий пера"
   }
 }
 

@@ -747,6 +747,23 @@ public struct NotebookStore: Sendable {
     }
   }
 
+  public func migratePageInk(page: PageDocument, data: Data) throws -> PageDocument {
+    try withMutationLock {
+      var current = try loadPage(page.id)
+      guard current.drawingData == page.drawingData else { return current }
+      guard PageInkDrawing.needsMigration(current.drawingData) else { return current }
+      let backup = root.appendingPathComponent("migrations/before-ink-v1/pages",isDirectory:true)
+      try FileManager.default.createDirectory(at:backup,withIntermediateDirectories:true)
+      let original = backup.appendingPathComponent(page.id.uuidString.lowercased() + ".json")
+      if !FileManager.default.fileExists(atPath:original.path) {
+        try Data(contentsOf:pageURL(page.id)).write(to:original,options:.atomic)
+      }
+      try current.migrateInkRepresentation(data)
+      try writePage(current)
+      return current
+    }
+  }
+
   public func savePage(_ page: PageDocument) throws {
     guard page.isValid else { throw corruptFile(at: pageURL(page.id)) }
     try prepare()

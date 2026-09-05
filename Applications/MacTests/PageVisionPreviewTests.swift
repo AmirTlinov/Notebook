@@ -1,15 +1,44 @@
 import AppKit
-@testable import Notebook
 import NotebookCore
 import PencilKit
 import XCTest
 
+@testable import Notebook
+
 final class PageVisionPreviewTests: XCTestCase {
   @MainActor
+  func testReadingContrastMakesLightNativeInkVisibleAndKeepsTheMap() throws {
+    let samples = [30.0, 220.0].map { x in
+      SpatialInkSample(
+        point: .init(x: x, y: 100), timeOffset: 0, width: 4,
+        opacity: 0.18, force: 0, azimuth: 0, altitude: 1)
+    }
+    let drawing = PageInkDrawing(actions: [PageInkAction(tool: .pen, samples: samples)])
+    var page = PageDocument(size: .init(width: 260, height: 260), actor: UUID())
+    page.replaceDrawing(try drawing.dataRepresentation(), actor: UUID())
+    let render = try PageVisionRenderer.render(page)
+    func minimumChannel(_ data: Data) throws -> UInt8 {
+      let bitmap = try XCTUnwrap(NSBitmapImageRep(data: data))
+      let bytes = try XCTUnwrap(bitmap.bitmapData)
+      var minimum: UInt8 = 255
+      for y in 0..<bitmap.pixelsHigh {
+        for x in 0..<bitmap.pixelsWide {
+          minimum = min(minimum, bytes[y * bitmap.bytesPerRow + x * 4])
+        }
+      }
+      return minimum
+    }
+    XCTAssertLessThan(try minimumChannel(render.inkPNG), try minimumChannel(render.faithfulPNG))
+    XCTAssertEqual(render.regions.count, 1)
+    XCTAssertNotNil(render.visibleInkBounds)
+  }
+
+  @MainActor
   func testReceiptBindsVisibleRegionsToExactPNGs() throws {
-    let fixture = try makeFixture(drawing: PKDrawing(strokes: [
-      stroke(from: CGPoint(x: 30, y: 40), to: CGPoint(x: 92, y: 40)),
-    ]))
+    let fixture = try makeFixture(
+      drawing: PKDrawing(strokes: [
+        stroke(from: CGPoint(x: 30, y: 40), to: CGPoint(x: 92, y: 40))
+      ]))
     defer { try? FileManager.default.removeItem(at: fixture.root) }
 
     try PagePreviewWriter.write(fixture.page, store: fixture.store)
@@ -50,7 +79,7 @@ final class PageVisionPreviewTests: XCTestCase {
   @MainActor
   func testErasedPixelsDoNotCreateGhostRegions() throws {
     let source = PKDrawing(strokes: [
-      stroke(from: CGPoint(x: 12, y: 130), to: CGPoint(x: 248, y: 130)),
+      stroke(from: CGPoint(x: 12, y: 130), to: CGPoint(x: 248, y: 130))
     ])
     let eraser = PKStrokePath(
       controlPoints: [point(x: 130, y: 130, width: 88)],
@@ -76,9 +105,10 @@ final class PageVisionPreviewTests: XCTestCase {
 
   @MainActor
   func testBlankRevisionRemovesPreviousRegionArtifacts() throws {
-    var fixture = try makeFixture(drawing: PKDrawing(strokes: [
-      stroke(from: CGPoint(x: 30, y: 40), to: CGPoint(x: 92, y: 40)),
-    ]))
+    var fixture = try makeFixture(
+      drawing: PKDrawing(strokes: [
+        stroke(from: CGPoint(x: 30, y: 40), to: CGPoint(x: 92, y: 40))
+      ]))
     defer { try? FileManager.default.removeItem(at: fixture.root) }
     try PagePreviewWriter.write(fixture.page, store: fixture.store)
     XCTAssertFalse(
@@ -116,7 +146,7 @@ final class PageVisionPreviewTests: XCTestCase {
   func testLargeConnectedSketchBecomesReadableDetailWindows() throws {
     let fixture = try makeFixture(
       drawing: PKDrawing(strokes: [
-        stroke(from: CGPoint(x: 10, y: 100), to: CGPoint(x: 824, y: 100)),
+        stroke(from: CGPoint(x: 10, y: 100), to: CGPoint(x: 824, y: 100))
       ]),
       size: PageSize(width: 834, height: 300)
     )
@@ -126,19 +156,22 @@ final class PageVisionPreviewTests: XCTestCase {
 
     let receipt = try readReceipt(fixture)
     XCTAssertGreaterThan(receipt.regions.count, 1)
-    XCTAssertTrue(receipt.regions.allSatisfy {
-      $0.contentCells.width <= 12 && $0.contentCells.height <= 12
-    })
-    XCTAssertTrue(receipt.occupiedCells.allSatisfy { cell in
-      receipt.regions.contains { $0.contentCells.contains(cell) }
-    })
+    XCTAssertTrue(
+      receipt.regions.allSatisfy {
+        $0.contentCells.width <= 12 && $0.contentCells.height <= 12
+      })
+    XCTAssertTrue(
+      receipt.occupiedCells.allSatisfy { cell in
+        receipt.regions.contains { $0.contentCells.contains(cell) }
+      })
   }
 
   @MainActor
   func testCorruptedArtifactCannotHideBehindAValidatedRevision() throws {
-    let fixture = try makeFixture(drawing: PKDrawing(strokes: [
-      stroke(from: CGPoint(x: 30, y: 40), to: CGPoint(x: 92, y: 40)),
-    ]))
+    let fixture = try makeFixture(
+      drawing: PKDrawing(strokes: [
+        stroke(from: CGPoint(x: 30, y: 40), to: CGPoint(x: 92, y: 40))
+      ]))
     defer { try? FileManager.default.removeItem(at: fixture.root) }
     try PagePreviewWriter.write(fixture.page, store: fixture.store)
     XCTAssertTrue(
@@ -167,6 +200,7 @@ final class PageVisionPreviewTests: XCTestCase {
     var page: PageDocument
   }
 
+  @MainActor
   private func makeFixture(
     drawing: PKDrawing,
     size: PageSize = PageSize(width: 260, height: 260)
@@ -180,7 +214,10 @@ final class PageVisionPreviewTests: XCTestCase {
       size: size,
       actor: actor
     )
-    XCTAssertTrue(page.replaceDrawing(drawing.dataRepresentation(), actor: actor))
+    XCTAssertTrue(
+      page.replaceDrawing(
+        try PageInkMigration.importDrawing(drawing.dataRepresentation(), size: size)
+          .dataRepresentation(), actor: actor))
     return Fixture(root: root, store: store, page: page)
   }
 
@@ -225,13 +262,13 @@ final class PageVisionPreviewTests: XCTestCase {
 
   private func containsNonWhitePixel(_ bitmap: NSBitmapImageRep) -> Bool {
     guard let bytes = bitmap.bitmapData,
-          bitmap.bitsPerSample == 8,
-          bitmap.samplesPerPixel >= 3,
-          !bitmap.isPlanar
+      bitmap.bitsPerSample == 8,
+      bitmap.samplesPerPixel >= 3,
+      !bitmap.isPlanar
     else { return false }
-    for y in 0 ..< bitmap.pixelsHigh {
+    for y in 0..<bitmap.pixelsHigh {
       let rowStart = y * bitmap.bytesPerRow
-      for x in 0 ..< bitmap.pixelsWide {
+      for x in 0..<bitmap.pixelsWide {
         let pixel = rowStart + x * bitmap.samplesPerPixel
         if bytes[pixel] < 245 || bytes[pixel + 1] < 245 || bytes[pixel + 2] < 245 {
           return true

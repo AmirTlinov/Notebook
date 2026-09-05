@@ -34,7 +34,9 @@ public enum PencilPressureOpacity {
 
   public static func value(force: Double, minimum: Double) -> Double {
     let floor = min(max(minimum, 0), maximumFloor)
-    return floor + ((1 - floor) * PencilPressure.level(force: force))
+    let pressure = PencilPressure.level(force: force)
+    let response = pressure * (2 - pressure)
+    return floor + ((1 - floor) * response)
   }
 }
 

@@ -175,8 +175,8 @@ final class DrawingOwnershipTests: XCTestCase {
   }
 
   @MainActor
-  func testARepeatedModelSnapshotCannotReplaceANewerLocalDrawing() async {
-    let base = PKDrawing(strokes: [stroke(y: 20)])
+  func testARepeatedModelSnapshotCannotReplaceANewerLocalDrawing() async throws {
+    let base = PageInkDrawing(actions: [stroke(y: 20)])
     let pageID = UUID()
     let actorID = UUID()
     var counter: UInt64 = 0
@@ -194,18 +194,18 @@ final class DrawingOwnershipTests: XCTestCase {
     )
     let paper = PaperCanvasContainerView()
     coordinator.attach(to: paper)
-    coordinator.apply(base.dataRepresentation(), pageID: pageID, to: paper)
+    coordinator.apply(try base.dataRepresentation(), pageID: pageID, to: paper)
 
-    coordinator.commit(.pen(stroke(y: 40)), on: paper)
-    coordinator.apply(base.dataRepresentation(), pageID: pageID, to: paper)
+    coordinator.commit(stroke(y: 40), on: paper)
+    coordinator.apply(try base.dataRepresentation(), pageID: pageID, to: paper)
 
     await fulfillment(of: [delivered], timeout: 2)
-    XCTAssertEqual(paper.touchView.accessibilityValue, "2 штрихов")
+    XCTAssertEqual(paper.touchView.accessibilityValue, "2 действий пера")
   }
 
   @MainActor
   func testFinishedErasersQueueWithoutHoldingTheNextPencilGesture() async throws {
-    let base = PKDrawing(strokes: [stroke(y: 20), stroke(y: 60)])
+    let base = PageInkDrawing(actions: [stroke(y: 20), stroke(y: 60)])
     let pageID = UUID()
     let actorID = UUID()
     var counter: UInt64 = 0
@@ -226,7 +226,7 @@ final class DrawingOwnershipTests: XCTestCase {
     )
     let paper = PaperCanvasContainerView()
     coordinator.attach(to: paper)
-    coordinator.apply(base.dataRepresentation(), pageID: pageID, to: paper)
+    coordinator.apply(try base.dataRepresentation(), pageID: pageID, to: paper)
 
     let first = PKStrokePath(
       controlPoints: [
@@ -243,8 +243,8 @@ final class DrawingOwnershipTests: XCTestCase {
       creationDate: Date()
     )
 
-    coordinator.commit(.eraser(first), on: paper)
-    coordinator.commit(.eraser(second), on: paper)
+    coordinator.commit(PageInkAction(tool: .eraser, points: Array(first)), on: paper)
+    coordinator.commit(PageInkAction(tool: .eraser, points: Array(second)), on: paper)
     XCTAssertEqual(
       counter,
       2,
@@ -252,8 +252,8 @@ final class DrawingOwnershipTests: XCTestCase {
     )
 
     await fulfillment(of: [delivered], timeout: 2)
-    let drawing = try PKDrawing(data: finalData)
-    XCTAssertTrue(drawing.strokes.isEmpty)
+    let drawing = try PageInkDrawing.decode(finalData)
+    XCTAssertEqual(drawing.actions.map(\.tool), [.pen, .pen, .eraser, .eraser])
   }
 
   @MainActor
@@ -297,15 +297,15 @@ final class DrawingOwnershipTests: XCTestCase {
     model.start(pageSize: PageSize(width: 834, height: 1_194))
     let pageID = try XCTUnwrap(model.activePage?.id)
     let localStamp = try XCTUnwrap(model.reserveDrawingAction(pageID: pageID))
-    let localData = PKDrawing(strokes: [stroke(y: 40)]).dataRepresentation()
+    let localData = try PageInkDrawing(actions: [stroke(y: 40)]).dataRepresentation()
 
     var remote = try XCTUnwrap(model.activePage)
     let remoteActor = UUID()
     remote.replaceDrawing(
-      PKDrawing(strokes: [stroke(y: 60)]).dataRepresentation(),
+      try PageInkDrawing(actions: [stroke(y: 60)]).dataRepresentation(),
       actor: remoteActor
     )
-    let remoteData = PKDrawing(strokes: [stroke(y: 80)]).dataRepresentation()
+    let remoteData = try PageInkDrawing(actions: [stroke(y: 80)]).dataRepresentation()
     remote.replaceDrawing(remoteData, actor: remoteActor)
     try store.savePage(remote)
     model.reloadExternalChanges()
@@ -321,15 +321,8 @@ final class DrawingOwnershipTests: XCTestCase {
     XCTAssertEqual(model.activePage?.drawingData, remoteData)
   }
 
-  private func stroke(y: CGFloat) -> PKStroke {
-    let points = [
-      point(x: 10, y: y),
-      point(x: 100, y: y),
-    ]
-    return PKStroke(
-      ink: PKInk(.monoline, color: .black),
-      path: PKStrokePath(controlPoints: points, creationDate: Date())
-    )
+  private func stroke(y: CGFloat) -> PageInkAction {
+    PageInkAction(tool: .pen, points: [point(x: 10, y: y), point(x: 100, y: y)])
   }
 
   private func point(

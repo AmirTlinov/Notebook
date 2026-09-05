@@ -58,7 +58,7 @@ const documentSelection = {
 };
 
 export function createServer(store = new NotebookStore()): McpServer {
-  const server = new McpServer({ name: "notebook", version: "0.2.0" });
+  const server = new McpServer({ name: "notebook", version: "0.3.0" });
   const readSafely = (operation: () => Promise<ToolData | { data: ToolData; image?: string }>, hasImage = false) =>
     safely(() => store.withReadSnapshot(operation), hasImage);
 

@@ -111,7 +111,7 @@ export async function writeFixture(root: string): Promise<void> {
   const regionSHA256 = createHash("sha256").update(regionPNG).digest("hex");
   const gridSpacing = 132 / 2.54 / 2;
   const visionReceipt: PageVisionReceipt = {
-    format: 1,
+    format: 2,
     pageID,
     drawingStamp: page.drawingStamp,
     pageSize: page.size,

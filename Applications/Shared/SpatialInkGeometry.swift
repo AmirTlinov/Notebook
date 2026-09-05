@@ -3,7 +3,7 @@ import simd
 
 /// One triangle geometry feeds the live iPad canvas and the Mac raster.
 enum SpatialInkGeometry {
-  struct Vertex {
+  struct Vertex: Equatable {
     var position: SIMD2<Float>
     var premultipliedColor: SIMD4<Float>
   }
@@ -15,6 +15,7 @@ enum SpatialInkGeometry {
   }
 
   private static let capSegments = 12
+  static var roundCapVertexCount: Int { capSegments * 3 }
   private static let minimumDistanceSquared: Float = 0.0001
   static func appendStrokeVertices(
     points: [PKStrokePoint],

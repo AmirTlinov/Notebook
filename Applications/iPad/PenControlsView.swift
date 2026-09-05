@@ -65,6 +65,15 @@ struct PenControlsView: View {
         .accessibilityIdentifier("drawing-tool-pointer")
         .accessibilityAddTraits(model.isPointing ? .isSelected : [])
     }
+    .overlay(alignment: .topTrailing) {
+      if isExpanded && isPenSelected {
+        PenStrokePreview(style: model.penStyle)
+          .frame(width: 180, height: 52)
+          .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+          .offset(y: 66)
+          .allowsHitTesting(false)
+      }
+    }
   }
 
   private var isPenSelected: Bool {

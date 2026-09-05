@@ -1,5 +1,4 @@
 #if os(macOS)
-import PencilKit
 import SwiftUI
 import NotebookCore
 
@@ -8,19 +7,8 @@ struct PencilDrawingView: View {
 
   var body: some View {
     if !page.drawingData.isEmpty,
-       let drawing = try? PKDrawing(data: page.drawingData) {
-      Image(
-        nsImage: PaperInkRenderer.image(
-          from: drawing,
-          bounds: CGRect(
-            x: 0,
-            y: 0,
-            width: page.size.width,
-            height: page.size.height
-          ),
-          scale: 2
-        )
-      )
+       let raster = PageInkRasterCache.shared.image(for:page) {
+      Image(nsImage:NSImage(cgImage:raster,size:CGSize(width:page.size.width,height:page.size.height)))
       .resizable()
     }
   }

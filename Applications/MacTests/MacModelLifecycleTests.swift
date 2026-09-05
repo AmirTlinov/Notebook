@@ -452,7 +452,7 @@ final class MacModelLifecycleTests: XCTestCase {
       ])
       model.receivePeerMessage(.drawing(
         pageID: page.id,
-        data: drawing.dataRepresentation(),
+        data: try PageInkMigration.importDrawing(drawing.dataRepresentation(), size: page.size).dataRepresentation(),
         stamp: finalStamp
       ))
       await Task.yield()

@@ -12,7 +12,7 @@ func halfCentimeterGrid() {
 func pencilPressureControlsOpacity() {
   #expect(PencilPressureOpacity.value(force: 0, minimum: 0.2) == 0.2)
   #expect(
-    abs(PencilPressureOpacity.value(force: 0.5, minimum: 0.2) - 0.6)
+    abs(PencilPressureOpacity.value(force: 0.5, minimum: 0.2) - 0.8)
       < 0.000_001
   )
   #expect(PencilPressureOpacity.value(force: 1, minimum: 0.2) == 1)

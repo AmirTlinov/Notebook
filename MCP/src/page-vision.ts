@@ -67,7 +67,7 @@ const regionSchema = z
   .strict();
 const receiptSchema = z
   .object({
-    format: z.literal(1),
+    format: z.literal(2),
     pageID: z.uuid(),
     drawingStamp: stampSchema,
     pageSize: z
@@ -162,7 +162,7 @@ export function registerPageVisionTools(
       title: "Magnify one Pencil region",
       description:
         "Return one exact pre-cropped region from notebook_page_map. " +
-        "Faithful mode keeps paper and grid; ink mode removes the grid.",
+        "Faithful mode preserves the physical appearance. Ink mode removes the grid and doubles ink-to-white contrast for reading.",
       inputSchema: z.object({
         ...pageSelection,
         ...expectedRevision,
@@ -639,6 +639,7 @@ function publicRenderedRegions(
     pageID: receipt.pageID,
     drawingRevision: revision(receipt.drawingStamp),
     mode,
+    appearance: mode === "ink" ? "contrast-enhanced: 2x ink-to-white difference" : "faithful paper and ink",
     images: regions.map((region, imageIndex) => ({
       imageIndex,
       regionID: region.id,

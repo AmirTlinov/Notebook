@@ -10,6 +10,12 @@ final class ActiveInkStroke {
   private(set) var measuredPoints: [PKStrokePoint] = []
   private(set) var predictedPoints: [PKStrokePoint] = []
   private(set) var revision: UInt64 = 0
+  private var changedFrom = 0
+
+  func consumeChangedStart() -> Int {
+    defer { changedFrom = measuredPoints.count }
+    return changedFrom
+  }
 
   init(style: PenStyle) {
     self.style = style
@@ -20,6 +26,7 @@ final class ActiveInkStroke {
     with points: [PKStrokePoint]
   ) {
     let start = min(max(startIndex, 0), measuredPoints.count)
+    changedFrom = min(changedFrom, start)
     measuredPoints.replaceSubrange(start..., with: points)
     revision &+= 1
   }
@@ -35,12 +42,19 @@ final class ActiveInkStroke {
 final class ActiveEraserStroke {
   private(set) var measuredPoints: [PKStrokePoint] = []
   private(set) var revision: UInt64 = 0
+  private var changedFrom = 0
+
+  func consumeChangedStart() -> Int {
+    defer { changedFrom = measuredPoints.count }
+    return changedFrom
+  }
 
   func replaceMeasuredTail(
     from startIndex: Int,
     with points: [PKStrokePoint]
   ) {
     let start = min(max(startIndex, 0), measuredPoints.count)
+    changedFrom = min(changedFrom, start)
     measuredPoints.replaceSubrange(start..., with: points)
     revision &+= 1
   }
@@ -48,9 +62,8 @@ final class ActiveEraserStroke {
 
 /// The one renderer that turns a mounted notebook surface into pixels on iPad.
 ///
-/// A page later persists as PencilKit; the spatial scene persists raw journal
-/// samples. Metal owns every live pixel and replays each stable format without
-/// replacing the geometry that was shown under Pencil.
+/// Pages and spatial surfaces persist the measured samples. Shared geometry and
+/// Metal shaders own the live line, its settled raster and the agent image.
 @MainActor
 final class InkCanvasView: MTKView, MTKViewDelegate {
   private enum RenderOperation: Equatable {
@@ -88,7 +101,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   )
 
   private var committedBatches: [CommittedBatch] = []
-  private var stableDrawing: PKDrawing?
+  private var stableDrawing: PageInkDrawing?
   private var stableDrawingRevision: UInt64 = 0
   private var stableTexture: (any MTLTexture)?
   private var installedStableRasterKey: StableRasterKey?
@@ -99,6 +112,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private var activeEraserStroke: ActiveEraserStroke?
   private var builtActiveIdentity: ObjectIdentifier?
   private var builtActiveRevision: UInt64?
+  private var activeMesh = IncrementalInkMesh()
   private var activeVertices: [Vertex] = []
   private var activeBuffers = Array<(any MTLBuffer)?>(
     repeating: nil,
@@ -253,7 +267,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   /// Replaces the page atomically. This is used for load, undo, and sync.
-  func apply(_ drawing: PKDrawing) {
+  func apply(_ drawing: PageInkDrawing) {
     beginStableContentUpdate()
     stableRasterTask?.cancel()
     stableRasterTask = nil
@@ -267,10 +281,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     scheduleStableRasterIfNeeded()
   }
 
-  /// Replaces finished live batches only after PencilKit has produced the
+  /// Replaces finished live batches after InkRasterRenderer has produced the
   /// exact durable pixels for the same drawing. A newer active gesture keeps
   /// the existing base and batches until its own durable drawing settles.
-  func settle(_ drawing: PKDrawing) {
+  func settle(_ drawing: PageInkDrawing) {
     beginStableContentUpdate()
     stableRasterTask?.cancel()
     stableRasterTask = nil
@@ -334,8 +348,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     requestFrame()
   }
 
-  /// Shows a destination-out brush over the stable page. PencilKit does not
-  /// produce any visible intermediate drawings while the gesture is active.
+  /// Composites the measured destination-out brush over the stable page.
   func displayActiveEraser(_ stroke: ActiveEraserStroke) {
     if activeEraserStroke !== stroke {
       cancelPendingStableRaster()
@@ -371,8 +384,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     requestFrame()
   }
 
-  /// Keeps the exact Metal eraser gesture in the action order. The PencilKit
-  /// result is persistence for Mac and reload, not a second live renderer.
+  /// Keeps the measured eraser geometry in the same order as the page archive.
   func commitActiveEraser() {
     if let activeEraserStroke,
       !activeEraserStroke.measuredPoints.isEmpty
@@ -580,7 +592,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     stableRasterTask?.cancel()
     pendingStableRasterKey = key
 
-    if drawing.strokes.isEmpty {
+    if drawing.isEmpty {
       installStableRaster(nil, for: key)
       return
     }
@@ -625,7 +637,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     return try? await textureLoader.newTexture(
       cgImage: raster.image,
       options: [
-        .SRGB: true,
+        .SRGB: false,
         .origin: MTKTextureLoader.Origin.topLeft.rawValue,
       ]
     )
@@ -648,12 +660,12 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   nonisolated private static func makeStableRaster(
-    from drawing: PKDrawing,
+    from drawing: PageInkDrawing,
     bounds: CGRect,
     scale: CGFloat
   ) -> StableRaster? {
     autoreleasepool {
-      guard let image = drawing.image(from: bounds, scale: scale).cgImage else {
+      guard let image = InkRasterRenderer.shared.page(drawing,size:bounds.size,scale:scale) else {
         return nil
       }
       return StableRaster(image: image)
@@ -710,11 +722,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     }
 
     if builtActiveIdentity != identity || builtActiveRevision != revision {
-      activeVertices = makeVertices(
-        measured: measured,
-        predicted: predicted,
-        color: color
-      )
+      let changed = activeInkStroke?.consumeChangedStart() ?? activeEraserStroke?.consumeChangedStart() ?? 0
+      if builtActiveIdentity != identity { activeMesh = IncrementalInkMesh() }
+      activeMesh.update(points: measured + predicted, changedFrom: changed, color: color)
+      activeVertices = activeMesh.vertices
       builtActiveIdentity = identity
       builtActiveRevision = revision
     }

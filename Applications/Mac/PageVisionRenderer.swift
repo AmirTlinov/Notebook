@@ -1,7 +1,6 @@
 import AppKit
 import CryptoKit
 import NotebookCore
-import PencilKit
 
 struct PageVisionRenderedRegion {
   let receipt: PageVisionRegion
@@ -47,6 +46,7 @@ enum PageVisionRenderer {
       bounds.fill()
       drawingImage?.draw(in: bounds)
     }
+    enhanceInkContrast(inkBitmap)
     let alphaBitmap = try bitmap(size: page.size, pixels: pixelSize) {
       NSColor.clear.setFill()
       bounds.fill(using: .copy)
@@ -112,6 +112,20 @@ enum PageVisionRenderer {
     )
   }
 
+  /// Reading projection: double the ink-to-white difference. The faithful
+  /// image and the alpha-derived occupancy map keep the physical appearance.
+  private static func enhanceInkContrast(_ bitmap: NSBitmapImageRep) {
+    guard let bytes = bitmap.bitmapData, bitmap.samplesPerPixel == 4 else { return }
+    for y in 0..<bitmap.pixelsHigh {
+      for x in 0..<bitmap.pixelsWide {
+        let start = y * bitmap.bytesPerRow + x * 4
+        for channel in 0..<3 {
+          bytes[start + channel] = UInt8(max(0, 255 - 2 * (255 - Int(bytes[start + channel]))))
+        }
+      }
+    }
+  }
+
   private struct Coverage {
     let pixelBounds: PageVisionPixelFrame?
     let pixelCountByCell: [PageVisionCell: Int]
@@ -131,8 +145,8 @@ enum PageVisionRenderer {
     bounds: NSRect
   ) throws -> NSImage? {
     guard !page.drawingData.isEmpty else { return nil }
-    let drawing = try PKDrawing(data: page.drawingData)
-    return PaperInkRenderer.image(from: drawing, bounds: bounds, scale: scale)
+    guard let raster = PageInkRasterCache.shared.image(for:page) else { throw RenderError.bitmapAllocation }
+    return NSImage(cgImage:raster,size:bounds.size)
   }
 
   @MainActor

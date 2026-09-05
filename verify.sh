@@ -72,15 +72,8 @@ if rg -n 'SpatialInkDrawingComposer' \
     'Пространственный Metal должен повторять сырые точки журнала без перерисовки PencilKit.' >&2
   exit 1
 fi
-ERASER_MUTATION_COUNT=$(
-  { rg -o 'erasingPath\(' \
-      "$ROOT/Applications/iPad/PencilCanvasView.swift" || true; } \
-    | wc -l \
-    | tr -d ' '
-)
-if [[ "$ERASER_MUTATION_COUNT" != 1 ]]; then
-  printf '%s\n' \
-    'PencilKit должен вычислять ластик один раз после завершения жеста.' >&2
+if rg -n 'erasingPath\(|PKDrawing\(' "$ROOT/Applications/iPad/PencilCanvasView.swift"; then
+  printf '%s\n' 'Новые действия пера сохраняют точки общей геометрии.' >&2
   exit 1
 fi
 
