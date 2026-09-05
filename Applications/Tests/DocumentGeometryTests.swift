@@ -15,7 +15,10 @@ final class DocumentGeometryTests: XCTestCase {
         id: UUID(), actor: UUID(), paperSize: paper,
         blocks: [
           .markdown(
-            id: "body", source: "# Пространство мысли\n\nОдин физический лист для текста и формул.")
+            id: "body",
+            source:
+              "# Пространство мысли\n\nОдин физический лист для текста и формул.\n\n## Раздел\n\nТекст раздела.\n\n### Уточнение\n\nТекст уточнения."
+          )
         ])
       let state = DocumentStateJournal(id: document.id, actor: UUID())
       let geometry = WorkspaceItemGeometry.document(paper)
@@ -47,6 +50,32 @@ final class DocumentGeometryTests: XCTestCase {
       host.view.layoutIfNeeded()
       await fulfillment(of: [ready], timeout: 8)
       let web = try XCTUnwrap(webView(in: host.view))
+      let physicalValue = try await web.evaluateJavaScript(
+        """
+        (() => {
+          const sheet = document.querySelector('.paper-sheet').getBoundingClientRect();
+          const scale = sheet.width / \(paper.widthPoints);
+          const paragraph = getComputedStyle(document.querySelector('#document p'));
+          return {
+            body: parseFloat(paragraph.fontSize) / scale,
+            leading: parseFloat(paragraph.lineHeight) / scale,
+            h1: parseFloat(getComputedStyle(document.querySelector('h1')).fontSize) / scale,
+            h2: parseFloat(getComputedStyle(document.querySelector('h2')).fontSize) / scale,
+            h3: parseFloat(getComputedStyle(document.querySelector('h3')).fontSize) / scale,
+            top: (document.querySelector('h1').getBoundingClientRect().top - sheet.top) / scale,
+            left: (document.querySelector('h1').getBoundingClientRect().left - sheet.left) / scale
+          };
+        })()
+        """)
+      let physical = try XCTUnwrap(physicalValue as? [String: Double])
+      print("DOCUMENT PHYSICAL TYPE", paper, physical)
+      XCTAssertEqual(try XCTUnwrap(physical["body"]), 12, accuracy: 0.05)
+      XCTAssertEqual(try XCTUnwrap(physical["leading"]), 14.5, accuracy: 0.05)
+      XCTAssertEqual(try XCTUnwrap(physical["h1"]), 17.28, accuracy: 0.05)
+      XCTAssertEqual(try XCTUnwrap(physical["h2"]), 14.4, accuracy: 0.05)
+      XCTAssertEqual(try XCTUnwrap(physical["h3"]), 12, accuracy: 0.05)
+      XCTAssertEqual(try XCTUnwrap(physical["top"]), paper.marginPoints, accuracy: 0.1)
+      XCTAssertEqual(try XCTUnwrap(physical["left"]), paper.marginPoints, accuracy: 0.1)
       let initialMetrics = try await textMetrics(in: web)
       for width in [baseWidth, baseWidth + 0.15, baseWidth - 0.2, baseWidth * 1.5, baseWidth] {
         let target = CGSize(width: width, height: width * geometry.height / geometry.width)

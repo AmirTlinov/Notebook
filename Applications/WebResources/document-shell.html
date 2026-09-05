@@ -31,9 +31,9 @@
     }
     body {
       color: var(--ink);
-      font-family: ui-serif, "New York", "Times New Roman", serif;
+      font-family: Georgia, "Times New Roman", serif;
       font-size: var(--body-font-size);
-      line-height: 1.5;
+      line-height: 1.2083333333;
       -webkit-font-smoothing: antialiased;
       -webkit-text-size-adjust: 100%;
       overscroll-behavior: none;
@@ -79,15 +79,23 @@
       column-fill: auto;
       overflow: visible;
     }
-    .block { position: relative; margin: 0 0 1.5em; }
+    .block { position: relative; margin: 0 0 .75em; }
     .block.interactive, .block.latex, pre { break-inside: avoid-column; }
     .block.editable { border-radius: .45rem; touch-action: manipulation; }
     .block.editable:active { background: rgba(23, 23, 19, .018); }
-    h1, h2, h3, h4 { line-height: 1.12; letter-spacing: -.025em; margin: 1.6em 0 .55em; }
-    h1 { font-size: 2.25em; font-weight: 650; }
-    h2 { font-size: 1.55em; font-weight: 620; }
-    h3 { font-size: 1.22em; font-weight: 620; }
-    p, ul, ol, blockquote, pre, table { margin: 0 0 1em; }
+    /* The 12-point article scale also used by the default TeX export:
+       body 12/14.5, section 17.28/22, subsection 14.4/18 points. */
+    h1, h2, h3, h4, h5, h6 {
+      font-weight: 700;
+      letter-spacing: normal;
+      margin: 1.25em 0 .5em;
+      break-after: avoid-column;
+    }
+    h1 { font-size: 1.44em; line-height: 1.2731481481; }
+    h2 { font-size: 1.2em; line-height: 1.25; }
+    h3, h4, h5, h6 { font-size: 1em; line-height: 1.2083333333; }
+    #document > .block:first-child > :first-child { margin-top: 0; }
+    p, ul, ol, blockquote, pre, table { margin: 0 0 .5em; }
     ul, ol { padding-left: 1.45em; }
     blockquote { margin-left: 0; padding-left: 1em; color: var(--muted); border-left: 2px solid rgba(23,23,19,.14); }
     code { font-family: ui-monospace, "SFMono-Regular", monospace; font-size: .86em; }

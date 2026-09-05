@@ -63,6 +63,18 @@ test("turns Markdown prose and exact LaTeX blocks into one TeX artifact", () => 
   assert.match(source, /\\begin\{align\}y &= x\^2\\end\{align\}/);
 });
 
+test("keeps paper text at 12 points and follows the Markdown heading hierarchy", () => {
+  for (const paper of ["a4", "letter"] as const) {
+    const source = documentTeX(document([
+      markdown("body", "# Title\n\n## Section\n\n### Detail\n\nBody text."),
+    ], "", paper));
+    assert.match(source, /\\documentclass\[12pt\]\{article\}/);
+    assert.match(source, /\\section\{Title\}/);
+    assert.match(source, /\\subsection\{Section\}/);
+    assert.match(source, /\\subsubsection\{Detail\}/);
+  }
+});
+
 test("binds Letter creation choice to the exported PDF geometry", () => {
   const source = documentTeX(document(
     [markdown("body", "Letter")],

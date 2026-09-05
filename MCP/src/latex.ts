@@ -162,7 +162,7 @@ function renderBlocks(tokens: Token[]): string {
       return "";
     case "heading": {
       const heading = token as Tokens.Heading;
-      const command = ["section", "section", "subsection", "subsubsection", "paragraph", "subparagraph"]
+      const command = ["section", "subsection", "subsubsection", "paragraph", "subparagraph", "subparagraph"]
         [Math.min(Math.max(heading.depth, 1), 6) - 1]!;
       return `\\${command}{${renderInline(heading.tokens)}}`;
     }
