@@ -150,6 +150,16 @@
   <script>
     window.MathJax = {
       startup: { typeset: false },
+      loader: { load: ['a11y/assistive-mml'] },
+      output: { fontPath: new URL('fonts/%%FONT%%-font', location.href).href },
+      // Native screen readers consume local MathML; the page renderer owns
+      // a complete offline frame, including the mathematical glyphs.
+      options: {
+        enableMenu: false,
+        menuOptions: { settings: {
+          enrich: false, speech: false, braille: false, assistiveMml: true
+        } }
+      },
       tex: {
         inlineMath: [['$', '$'], ['\\(', '\\)']],
         displayMath: [['$$', '$$'], ['\\[', '\\]']],
@@ -236,7 +246,8 @@
           kind: paper.kind,
           pageWidth, pageHeight, margin, gap,
           contentWidth, contentHeight, columnGap,
-          side, top, stride, requestedPage
+          side, top, stride, requestedPage,
+          pageCount: pageLayout?.pageCount || 1
         };
         const style = document.documentElement.style;
         style.setProperty('--page-width', `${pageWidth}px`);
@@ -316,10 +327,14 @@
         const index = Math.max(0, Math.min(maximum, requestedIndex));
         track.style.transform = `translate3d(${-index * pageLayout.stride}px, 0, 0)`;
         pageLayout.requestedPage = index;
+      };
+
+      const pageReceipt = () => {
+        if (!pageLayout || !payload) return null;
         return {
           documentID: payload.documentID,
           renderToken: payload.renderToken,
-          pageIndex: index,
+          pageIndex: currentPageIndex(),
           pageCount: pageLayout.pageCount,
           width: pageLayout.pageWidth, height: pageLayout.pageHeight,
           regions: blockRegions(), diagnostics: runtimeDiagnostics
@@ -340,7 +355,7 @@
         const safeScript = JSON.stringify(block.javaScript || '').replaceAll('<', '\\u003c');
         const safeCSS = String(block.css || '').replace(/<\/style/gi, '<\\/style');
         const csp = "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; font-src data:; media-src data: blob:; form-action 'none'; base-uri 'none'; object-src 'none';";
-        return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}${safeCSS}</style></head><body>${block.html || ''}<script>(()=>{const blockID=${safeID};const report=(kind,message)=>parent.postMessage({channel:'notebook-diagnostic',blockID,kind,message:String(message)},'*');addEventListener('error',e=>report('javascript_error',e.message));addEventListener('unhandledrejection',e=>report('javascript_error',e.reason));addEventListener('load',()=>{if(document.body.scrollHeight>innerHeight+1||document.body.scrollWidth>innerWidth+1)report('overflow','Content exceeds its frame');for(const image of document.images)if(!image.naturalWidth)report('load_error','Image failed to load')});let value=${safeState};window.notebook={get state(){return value},commit(next){value=next;parent.postMessage({channel:'notebook-interactive',blockID,state:next},'*')}};addEventListener('message',event=>{if(event.data?.channel==='notebook-state'&&event.data.blockID===blockID){value=event.data.state;dispatchEvent(new CustomEvent('notebookstate',{detail:value}))}});try{(0,eval)(${safeScript})}catch(error){report('javascript_error',error)}})()<\/script></body></html>`;
+        return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}${safeCSS}</style></head><body>${block.html || ''}<script>(()=>{const blockID=${safeID};const report=(kind,message)=>parent.postMessage({channel:'notebook-diagnostic',blockID,kind,message:String(message)},'*');addEventListener('error',e=>report('javascript_error',e.message));addEventListener('unhandledrejection',e=>report('javascript_error',e.reason));addEventListener('load',()=>{if(document.body.scrollHeight>innerHeight+1||document.body.scrollWidth>innerWidth+1)report('overflow','Content exceeds its frame');for(const image of document.images)if(!image.naturalWidth)report('load_error','Image failed to load')});let value=${safeState};window.notebook={get state(){return value},commit(next){value=next;parent.postMessage({channel:'notebook-interactive',blockID,state:next},'*')}};addEventListener('message',event=>{if(event.data?.channel==='notebook-state'&&event.data.blockID===blockID){value=event.data.state;dispatchEvent(new CustomEvent('notebookstate',{detail:value}))}});try{const script=document.createElement('script');script.textContent=${safeScript};document.body.append(script)}catch(error){report('javascript_error',error)}})()<\/script></body></html>`;
       };
 
       const createBlock = (block) => {
@@ -394,8 +409,6 @@
               if (!node.querySelector('mjx-container')) {
                 throw new Error(`LaTeX block ${node.dataset.blockId} stayed unrendered`);
               }
-              node.setAttribute('role', 'math');
-              node.setAttribute('aria-label', 'Формула отрисована');
             }
             node.dataset.mathState = 'rendered';
           }
@@ -456,13 +469,31 @@
         await new Promise(resolve => requestAnimationFrame(
           () => requestAnimationFrame(resolve)
         ));
-        const pageCount = paginate(requestedPage);
+        const pageCount = paginate(currentPageIndex());
         bridge({
           kind: 'rendered',
           documentID: nextPayload.documentID,
           renderToken: nextPayload.renderToken,
           pageCount
         });
+      };
+
+      // One renderer owns the DOM while MathJax and frames finish. A newer
+      // payload replaces the waiting payload; it follows the current render.
+      let pendingPayload = null;
+      let renderTask = null;
+      const apply = (nextPayload) => {
+        pendingPayload = nextPayload;
+        if (!renderTask) {
+          renderTask = (async () => {
+            while (pendingPayload) {
+              const next = pendingPayload;
+              pendingPayload = null;
+              await render(next);
+            }
+          })().finally(() => { renderTask = null; });
+        }
+        return renderTask;
       };
 
       const beginEditing = (blockID) => {
@@ -543,7 +574,7 @@
             block.source = source;
             bridge({ kind: 'source', documentID: payload.documentID, blockID, source });
           }
-          if (rerender) render(payload);
+          if (rerender) apply(payload);
         };
         activeEditorFinish = finish;
         editor.addEventListener('keydown', event => {
@@ -611,8 +642,9 @@
       }).observe(viewport);
 
       window.notebookRenderer = {
-        apply: render,
-        setPageIndex
+        apply,
+        setPageIndex,
+        pageReceipt
       };
       bridge({ kind: 'ready' });
     })();

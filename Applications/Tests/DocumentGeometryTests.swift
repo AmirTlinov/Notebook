@@ -115,6 +115,99 @@ final class DocumentGeometryTests: XCTestCase {
   }
 
   @MainActor
+  func testOneOfflineRenderCompletesMathAndInteractiveStateThenSerializesUpdates() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let document = DocumentDocument(id: UUID(), actor: UUID(), paperSize: .letter, blocks: [
+      .latex(id: "formula", source: #"\mathfrak{A} + \sum_{k=1}^{n} k^2"#),
+      .interactive(id: "interactive", html: "<p>Готово</p>", css: "",
+        javaScript: "notebook.commit({ready:true})", initialState: .null, height: 100),
+      .markdown(id: "body", source: (1...40).map {
+        "## Раздел \($0)\n\nПоследовательное содержание физического листа."
+      }.joined(separator: "\n\n")),
+    ])
+    let state = DocumentStateJournal(id: document.id, actor: UUID())
+    let ready = expectation(description: "Один завершённый набор")
+    let interactive = expectation(description: "Исполнен исходник интерактивного блока")
+    var completed = false
+    var committed = false
+    let window = UIWindow(windowScene: scene)
+    defer { window.isHidden = true }
+    let host = UIHostingController(rootView: DocumentWebView(
+      document: document, state: state, isInteractive: true, selectedPageIndex: 0,
+      capturesSnapshot: false, onRenderReady: PageTurnReadiness { value in
+        if value && !completed { completed = true; ready.fulfill() }
+      }, onPageLayout: { _ in }, onSourceChange: { _, _ in },
+      onStateChange: { id, value in
+        if id == "interactive", value == .object(["ready": .bool(true)]), !committed {
+          committed = true; interactive.fulfill()
+        }
+      }).ignoresSafeArea())
+    window.rootViewController = host
+    window.makeKeyAndVisible()
+    await fulfillment(of: [ready, interactive], timeout: 8)
+    let web = try XCTUnwrap(webView(in: host.view))
+    let result = try await web.evaluateJavaScript("""
+      (() => ({
+        math: document.querySelectorAll('mjx-container svg').length,
+        accessibleMath: document.querySelectorAll('mjx-assistive-mml math').length,
+        remoteScripts: [...document.scripts].filter(s => /^https?:/.test(s.src)).length,
+        diagnostics: window.notebookRenderer.pageReceipt().diagnostics.length
+      }))()
+      """)
+    let proof = try XCTUnwrap(result as? [String: Int])
+    XCTAssertEqual(proof["math"], 1)
+    XCTAssertEqual(proof["accessibleMath"], 1)
+    XCTAssertEqual(proof["remoteScripts"], 0)
+    XCTAssertEqual(proof["diagnostics"], 0)
+
+    let updated: String = try await withCheckedThrowingContinuation { continuation in
+      web.callAsyncJavaScript("""
+      const renderer = window.notebookRenderer;
+      const originalTypeset = MathJax.typesetPromise;
+      let release, entered, count = 0;
+      const started = new Promise(resolve => { entered = resolve; });
+      const gate = new Promise(resolve => { release = resolve; });
+      MathJax.typesetPromise = async nodes => {
+        count++;
+        if (count === 1) { entered(); await gate; }
+        else { renderer.setPageIndex(1); }
+        return originalTypeset(nodes);
+      };
+      const makePayload = token => ({
+        documentID: documentID, renderToken: token, editable: true, states: {},
+        paper: {kind:'letter',widthPoints:612,heightPoints:792,marginPoints:72,cornerRadiusRatio:0.004},
+        blocks: [{id:'body',kind:'markdown',source:Array.from({length:40},(_,i)=>
+          '# ' + token + ' ' + i + '\\n\\nСодержание конечного листа.').join('\\n\\n')}]
+      });
+      try {
+        const finished = renderer.apply(makePayload('first'));
+        await started;
+        renderer.apply(makePayload('superseded'));
+        renderer.apply(makePayload('latest'));
+        release();
+        await finished;
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        return JSON.stringify({count, ...renderer.pageReceipt(),
+          heading:document.querySelector('h1').textContent,
+          offset:new DOMMatrix(getComputedStyle(document.querySelector('#page-track')).transform).m41});
+      } finally { MathJax.typesetPromise = originalTypeset; }
+      """, arguments: ["documentID": document.id.uuidString], in: nil, in: .page) { result in
+        switch result {
+        case .success(let value): continuation.resume(returning: value as? String ?? "{}")
+        case .failure(let error): continuation.resume(throwing: error)
+        }
+      }
+    }
+    let receipt = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: Data(updated.utf8)) as? [String: Any])
+    XCTAssertEqual(receipt["count"] as? Int, 2, "Ожидающие правки объединяются до последней")
+    XCTAssertEqual(receipt["renderToken"] as? String, "latest")
+    XCTAssertEqual(receipt["heading"] as? String, "latest 0")
+    XCTAssertEqual(receipt["pageIndex"] as? Int, 1, "Завершение набора сохраняет выбранный лист")
+    XCTAssertLessThan(try XCTUnwrap(receipt["offset"] as? Double), -100)
+  }
+
+  @MainActor
   private func textMetrics(in web: WKWebView) async throws -> String {
     let value = try await web.evaluateJavaScript(
       """

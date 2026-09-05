@@ -17,6 +17,7 @@
     static let stackBoardArgument = "--notebook-stacked-board-fixture"
     static let documentArgument = "--notebook-document-runtime-fixture"
     static let documentPageArgument = "--notebook-document-page-three-fixture"
+    static let documentProseArgument = "--notebook-document-prose-fixture"
     static let documentLetterArgument = "--notebook-document-letter-fixture"
     static let agentElementArgument = "--notebook-agent-element-fixture"
     static let collaborationArgument = "--notebook-collaboration-fixture"
@@ -67,7 +68,7 @@
       } else if ProcessInfo.processInfo.arguments.contains(pointerArgument) {
         fixtureName = "SharedPointer"
       } else if startsInDocument {
-        fixtureName = "DocumentRuntime"
+        fixtureName = ProcessInfo.processInfo.arguments.contains(documentProseArgument) ? "DocumentProse" : "DocumentRuntime"
       } else if startsInStack {
         fixtureName = startsOnStackBoard
           ? "StackedBoard"
@@ -151,7 +152,16 @@
             id: documentID,
             actor: actor,
             paperSize: ProcessInfo.processInfo.arguments.contains(documentLetterArgument) ? .letter : .a4,
-            blocks: [
+            blocks: ProcessInfo.processInfo.arguments.contains(documentProseArgument)
+              ? (1...3).map { chapter in
+                .markdown(id: "chapter-\(chapter)", source:
+                  "# Глава \(chapter)\n\n*Текст самостоятельной главы*\n\n" +
+                  (1...4).map { section in
+                    "## Тема \(chapter).\(section)\n\n" +
+                    String(repeating: "Один лист содержит свою часть общего текста. Следующий лист продолжает мысль с того места, где закончился предыдущий. ", count: 2)
+                  }.joined(separator: "\n\n"))
+              }
+              : [
               .markdown(
                 id: "introduction",
                 source: "# Живая математика\n\nДокумент соединяет текст, формулы и управление."

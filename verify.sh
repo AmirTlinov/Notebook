@@ -99,6 +99,8 @@ npm ci --ignore-scripts
 for pair in \
   "node_modules/marked/lib/marked.umd.js:$ROOT/Applications/WebResources/marked.umd.js" \
   "node_modules/dompurify/dist/purify.min.js:$ROOT/Applications/WebResources/purify.min.js" \
+  "node_modules/mathjax/a11y/assistive-mml.js:$ROOT/Applications/WebResources/a11y/assistive-mml.js" \
+  "node_modules/@mathjax/mathjax-newcm-font/svg.js:$ROOT/Applications/WebResources/fonts/mathjax-newcm-font/svg.js" \
   "node_modules/mathjax/tex-svg-nofont.js:$ROOT/Applications/WebResources/tex-svg-nofont.js" \
   "node_modules/marked/LICENSE:$ROOT/Applications/WebResources/Licenses/marked-LICENSE" \
   "node_modules/dompurify/LICENSE:$ROOT/Applications/WebResources/Licenses/dompurify-LICENSE" \
@@ -113,6 +115,8 @@ do
     exit 1
   fi
 done
+diff -qr node_modules/@mathjax/mathjax-newcm-font/svg \
+  "$ROOT/Applications/WebResources/fonts/mathjax-newcm-font/svg"
 npm run check
 npm test
 npm run smoke

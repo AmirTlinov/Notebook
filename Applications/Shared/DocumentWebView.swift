@@ -384,8 +384,10 @@ private final class DocumentWebCoordinator: NSObject,
   }
 
   private func applyIfReady() {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
     guard isReady, let webView, let payload,
-      let data = try? JSONEncoder().encode(payload),
+      let data = try? encoder.encode(payload),
       data != lastAppliedData,
       let json = String(data: data, encoding: .utf8)
     else { return }
@@ -419,11 +421,11 @@ private final class DocumentWebCoordinator: NSObject,
     pageIndexRequestID = requestID
     webView.callAsyncJavaScript(
       """
-      const receipt = window.notebookRenderer.setPageIndex(index);
+      window.notebookRenderer.setPageIndex(index);
       await new Promise(resolve => requestAnimationFrame(
         () => requestAnimationFrame(resolve)
       ));
-      return receipt;
+      return window.notebookRenderer.pageReceipt();
       """,
       arguments: ["index": value],
       in: nil,

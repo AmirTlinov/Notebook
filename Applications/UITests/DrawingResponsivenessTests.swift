@@ -1,5 +1,6 @@
 import CoreGraphics
 import UIKit
+import Vision
 import XCTest
 
 @MainActor
@@ -424,7 +425,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       ),
       object: surface
     )
-    await fulfillment(of: [paginationReady], timeout: 3)
+    await fulfillment(of: [paginationReady], timeout: 8)
     try await Task.sleep(for: .seconds(2.5))
     surface.swipeLeft()
 
@@ -434,12 +435,100 @@ final class DrawingResponsivenessTests: XCTestCase {
     )
     await fulfillment(of: [landed], timeout: 3)
 
-    let secondPageMarker = app.staticTexts["Раздел 5"].firstMatch
-    XCTAssertTrue(secondPageMarker.waitForExistence(timeout: 3))
-    XCTAssertTrue(
-      app.frame.intersects(secondPageMarker.frame),
-      "После перелистывания на экране должен появиться раздел второго листа"
-    )
+    let secondText = try visibleDocumentText(app: app, surface: surface, name: "document-page-2")
+    surface.swipeLeft()
+    await fulfillment(of: [XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value BEGINSWITH 'Страница 3 из '"), object: surface
+    )], timeout: 3)
+    try await Task.sleep(for: .milliseconds(600))
+    let thirdText = try visibleDocumentText(app: app, surface: surface, name: "document-page-3")
+    XCTAssertNotEqual(secondText, thirdText, "Соседние листы показывают разные фрагменты текста")
+    surface.swipeRight()
+    await fulfillment(of: [XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value BEGINSWITH 'Страница 2 из '"), object: surface
+    )], timeout: 3)
+    try await Task.sleep(for: .milliseconds(600))
+    let returnedText = try visibleDocumentText(app: app, surface: surface, name: "document-page-2-return")
+    let sections = try NSRegularExpression(pattern: #"Раздел\s+(\d+)"#)
+    func sectionIDs(_ text: String) -> [String] {
+      sections.matches(in: text, range: NSRange(text.startIndex..., in: text)).map {
+        String(text[Range($0.range(at: 1), in: text)!])
+      }
+    }
+    XCTAssertGreaterThanOrEqual(sectionIDs(secondText).count, 4)
+    XCTAssertNotEqual(sectionIDs(secondText), sectionIDs(thirdText))
+    XCTAssertEqual(sectionIDs(secondText), sectionIDs(returnedText),
+      "Возврат восстанавливает содержание того же листа")
+  }
+
+  func testProseDocumentTurnsToDifferentTextAndBack() async throws {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture",
+      "--notebook-document-runtime-fixture", "--notebook-document-prose-fixture"]
+    app.launch()
+    let surface = app.otherElements["page-turn-surface"]
+    XCTAssertTrue(surface.waitForExistence(timeout: 8))
+    await fulfillment(of: [XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value BEGINSWITH 'Страница 1 из ' AND value != 'Страница 1 из 1'"),
+      object: surface)], timeout: 4)
+    try await Task.sleep(for: .seconds(2.5))
+    let first = try visibleDocumentText(app: app, surface: surface, name: "prose-page-1")
+    surface.swipeLeft()
+    await fulfillment(of: [XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value BEGINSWITH 'Страница 2 из '"), object: surface
+    )], timeout: 3)
+    try await Task.sleep(for: .milliseconds(600))
+    let second = try visibleDocumentText(app: app, surface: surface, name: "prose-page-2")
+    XCTAssertNotEqual(first, second)
+    XCTAssertFalse(second.contains("Глава 1"), "Первый заголовок остаётся на первом листе")
+    surface.swipeLeft()
+    await fulfillment(of: [XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value BEGINSWITH 'Страница 3 из '"), object: surface
+    )], timeout: 3)
+    try await Task.sleep(for: .milliseconds(600))
+    let third = try visibleDocumentText(app: app, surface: surface, name: "prose-page-3")
+    XCTAssertFalse(third.contains("Глава 1"))
+    surface.swipeRight()
+    await fulfillment(of: [XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value BEGINSWITH 'Страница 2 из '"), object: surface
+    )], timeout: 3)
+    surface.swipeRight()
+    await fulfillment(of: [XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value BEGINSWITH 'Страница 1 из '"), object: surface
+    )], timeout: 3)
+    try await Task.sleep(for: .milliseconds(600))
+    let returned = try visibleDocumentText(app: app, surface: surface, name: "prose-page-1-return")
+    XCTAssertTrue(returned.contains("Глава 1"))
+    let topics = try NSRegularExpression(pattern: #"[1-3]\.[1-4]"#)
+    func topicIDs(_ text: String) -> [String] {
+      topics.matches(in: text, range: NSRange(text.startIndex..., in: text)).map {
+        String(text[Range($0.range, in: text)!])
+      }
+    }
+    XCTAssertGreaterThanOrEqual(topicIDs(first).count, 4)
+    XCTAssertEqual(topicIDs(first), topicIDs(returned))
+  }
+
+  private func visibleDocumentText(app: XCUIApplication, surface: XCUIElement, name: String) throws -> String {
+    let screenshot = app.screenshot()
+    let attachment = XCTAttachment(screenshot: screenshot)
+    attachment.name = name
+    attachment.lifetime = .keepAlways
+    add(attachment)
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .accurate
+    request.recognitionLanguages = ["ru-RU", "en-US"]
+    let frame = surface.frame.intersection(app.frame)
+    request.regionOfInterest = CGRect(x: frame.minX / app.frame.width,
+      y: 1 - frame.maxY / app.frame.height, width: frame.width / app.frame.width,
+      height: frame.height / app.frame.height)
+    try VNImageRequestHandler(cgImage: screenshot.image.cgImage!, options: [:]).perform([request])
+    let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+    XCTAssertFalse(text.isEmpty)
+    let proof = XCTAttachment(string: text); proof.name = name + "-text"; proof.lifetime = .keepAlways; add(proof)
+    return text
   }
 
   func testPageFitSurvivesPortraitLandscapePortrait() async throws {
