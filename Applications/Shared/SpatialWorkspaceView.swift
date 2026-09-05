@@ -264,7 +264,7 @@ struct SpatialWorkspaceView: View {
           BoardPanView(
             isEnabled: (presence.mode == .board || presence.mode == .cover)
               && cameraGesture == nil && !settling,
-            excludedFrames: rendered.map { item in
+            itemFrames: rendered.map { item in
               let center = presence.camera.worldToScreen(
                 item.center,
                 viewport: viewport

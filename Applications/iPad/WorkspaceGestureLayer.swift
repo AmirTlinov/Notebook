@@ -236,7 +236,7 @@ final class GestureAnchorView: UIView {
 
 struct BoardPanView: UIViewRepresentable {
   let isEnabled: Bool
-  let excludedFrames: [CGRect]
+  let itemFrames: [CGRect]
   let onTap: () -> Void
   let onBegan: () -> Void
   let onChanged: (CGPoint) -> Void
@@ -245,7 +245,7 @@ struct BoardPanView: UIViewRepresentable {
   func makeCoordinator() -> Coordinator {
     Coordinator(
       isEnabled: isEnabled,
-      excludedFrames: excludedFrames,
+      itemFrames: itemFrames,
       onTap: onTap,
       onBegan: onBegan,
       onChanged: onChanged,
@@ -265,7 +265,7 @@ struct BoardPanView: UIViewRepresentable {
 
   func updateUIView(_ view: GestureAnchorView, context: Context) {
     context.coordinator.isEnabled = isEnabled
-    context.coordinator.excludedFrames = excludedFrames
+    context.coordinator.itemFrames = itemFrames
     context.coordinator.onTap = onTap
     context.coordinator.onBegan = onBegan
     context.coordinator.onChanged = onChanged
@@ -291,7 +291,7 @@ struct BoardPanView: UIViewRepresentable {
         tap?.isEnabled = isEnabled
       }
     }
-    var excludedFrames: [CGRect]
+    var itemFrames: [CGRect]
     var onTap: () -> Void
     var onBegan: () -> Void
     var onChanged: (CGPoint) -> Void
@@ -301,17 +301,19 @@ struct BoardPanView: UIViewRepresentable {
     private weak var sceneView: UIView?
     private var pan: UIPanGestureRecognizer?
     private var tap: UITapGestureRecognizer?
+    private weak var startingCover: NotebookInteractionTouchView?
+    private var panOrigin = CGPoint.zero
 
     init(
       isEnabled: Bool,
-      excludedFrames: [CGRect],
+      itemFrames: [CGRect],
       onTap: @escaping () -> Void,
       onBegan: @escaping () -> Void,
       onChanged: @escaping (CGPoint) -> Void,
       onEnded: @escaping (CGPoint) -> Void
     ) {
       self.isEnabled = isEnabled
-      self.excludedFrames = excludedFrames
+      self.itemFrames = itemFrames
       self.onTap = onTap
       self.onBegan = onBegan
       self.onChanged = onChanged
@@ -364,15 +366,19 @@ struct BoardPanView: UIViewRepresentable {
       if let tap { hostView?.removeGestureRecognizer(tap) }
       pan = nil
       tap = nil
+      startingCover = nil
       hostView = nil
       sceneView = nil
     }
 
     @objc func handle(_ pan: UIPanGestureRecognizer) {
-      let translation = pan.translation(in: sceneView)
+      let point = pan.location(in: sceneView)
+      // The touch-down point also includes UIKit's recognition travel.
+      let translation = CGPoint(x: point.x - panOrigin.x, y: point.y - panOrigin.y)
       switch pan.state {
       case .began:
         onBegan()
+        onChanged(translation)
       case .changed:
         onChanged(translation)
       case .ended:
@@ -394,8 +400,21 @@ struct BoardPanView: UIViewRepresentable {
     ) -> Bool {
       guard let sceneView, sceneView.window != nil else { return false }
       let point = touch.location(in: sceneView)
-      return sceneView.bounds.contains(point)
-        && !excludedFrames.contains(where: { $0.contains(point) })
+      guard sceneView.bounds.contains(point) else { return false }
+      let isFreeBoard = !itemFrames.contains(where: { $0.contains(point) })
+      if gestureRecognizer === pan {
+        panOrigin = point
+        startingCover = touch.view as? NotebookInteractionTouchView
+        // The cover's direct-touch surface can hand motion to the camera.
+        // Its passthrough editors and interactive content keep their own input.
+        return startingCover != nil || isFreeBoard
+      }
+      return isFreeBoard
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+      guard gestureRecognizer === pan, let startingCover else { return true }
+      return startingCover.yieldToCameraPan()
     }
 
     func gestureRecognizer(
@@ -544,6 +563,14 @@ final class NotebookInteractionTouchView: UIView {
 
   func cancelInteraction() {
     finishInteraction(acceptTap: false, tapLocation: .zero, tapCount: 0)
+  }
+
+  /// Movement takes the pending finger from this cover; a completed hold keeps
+  /// the same finger here until the item is dropped.
+  func yieldToCameraPan() -> Bool {
+    guard activeTouch != nil, !isLifted else { return false }
+    cancelInteraction()
+    return true
   }
 
   private func scheduleLift() {

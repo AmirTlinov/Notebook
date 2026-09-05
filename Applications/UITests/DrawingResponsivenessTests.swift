@@ -601,6 +601,44 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertFalse(removed.exists)
   }
 
+  func testImmediateDragFromACoverPansTheWholeBoard() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--notebook-drawing-responsiveness-fixture",
+      "--notebook-simulator-finger-gestures",
+      "--notebook-stacked-board-fixture",
+    ]
+    app.launch()
+
+    let covers = ["002", "004"].map { suffix in
+      app.descendants(matching: .any).matching(
+        identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000\(suffix)"
+      ).firstMatch
+    }
+    for cover in covers { XCTAssertTrue(cover.waitForExistence(timeout: 5)) }
+    let initial = covers.map(\.frame)
+    for delta in [CGVector(dx: 120, dy: 80), CGVector(dx: -90, dy: -50)] {
+      let before = covers.map(\.frame)
+      let start = covers[1].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+      start.press(forDuration: 0.01, thenDragTo: start.withOffset(delta),
+        withVelocity: .fast, thenHoldForDuration: 0)
+      for (cover, frame) in zip(covers, before) {
+        XCTAssertEqual(cover.frame.midX - frame.midX, delta.dx, accuracy: 6,
+          "Движение с обложки должно сдвигать всю доску вместе с соседями")
+        XCTAssertEqual(cover.frame.midY - frame.midY, delta.dy, accuracy: 6)
+        XCTAssertEqual(cover.frame.width, frame.width, accuracy: 2)
+      }
+    }
+    for (cover, frame) in zip(covers, initial) {
+      XCTAssertEqual(cover.frame.midX - frame.midX, 30, accuracy: 6)
+      XCTAssertEqual(cover.frame.midY - frame.midY, 30, accuracy: 6)
+    }
+    XCTAssertFalse(app.buttons["delete-workspace-item"].exists,
+      "Завершённое движение камеры оставляет выбор у сцены")
+  }
+
   func testLongPressPicksUpAndMovesTheNotebook() {
     continueAfterFailure = false
     let app = XCUIApplication()
