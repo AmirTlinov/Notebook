@@ -913,7 +913,7 @@ struct SpatialWorkspaceView: View {
       let gestureID = UUID()
       pageInputGestureID = gestureID
       bufferedCameraPhases = [phase]
-      model.afterPageInput {
+      model.inputGate.performAfterPageContact {
         guard pageInputGestureID == gestureID else { return }
         let phases = bufferedCameraPhases
         pageInputGestureID = nil

@@ -36,14 +36,16 @@ public struct PageInkDrawing: Codable, Equatable, Sendable {
   public static func decode(_ data: Data) throws -> Self {
     if data.isEmpty { return Self() }
     guard data.starts(with: signature) else { throw InkError.migrationRequired }
-    let decoded = try PropertyListDecoder().decode(Self.self, from: data.dropFirst(signature.count))
+    var decoded = try PropertyListDecoder().decode(Self.self, from: data.dropFirst(signature.count))
     guard decoded.isValid else { throw InkError.invalidDrawing }
     // Native archives written before shared ink have array order but no clock.
     // Adopt that exact order once; later appends carry their own sequence.
-    let drawing = Self(baselinePNG: decoded.baselinePNG, baselineActionCount: decoded.baselineActionCount,
-      actions: decoded.actions)
-    guard drawing.isValid else { throw InkError.invalidDrawing }
-    return drawing
+    if decoded.actions.contains(where: { $0.sequence == 0 }) {
+      decoded.actions = decoded.actions.enumerated().map { index, action in
+        action.sequence == 0 ? action.ordered(UInt64(index + 1)) : action
+      }
+    }
+    return decoded
   }
 
   public func dataRepresentation() throws -> Data {

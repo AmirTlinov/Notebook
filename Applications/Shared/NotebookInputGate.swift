@@ -1,7 +1,7 @@
 import Foundation
 
 typealias NotebookInputCompletion = @MainActor @Sendable () -> Void
-typealias NotebookInputFinisher = (@escaping NotebookInputCompletion) -> Void
+typealias NotebookInputFinisher = (_ waitsForPublication: Bool, @escaping NotebookInputCompletion) -> Void
 
 @MainActor
 final class NotebookInputGate {
@@ -72,10 +72,19 @@ final class NotebookInputGate {
   }
 
   func performAfterPageInput(_ action: @escaping NotebookInputCompletion) {
+    finishPage(waitsForPublication: true, action)
+  }
+
+  /// Camera handoff waits only for the measured contact, never for its archive.
+  func performAfterPageContact(_ action: @escaping NotebookInputCompletion) {
+    finishPage(waitsForPublication: false, action)
+  }
+
+  private func finishPage(waitsForPublication: Bool, _ action: @escaping NotebookInputCompletion) {
     if let currentPageSource,
       let pageFinisher = pageFinishers[currentPageSource]
     {
-      pageFinisher(action)
+      pageFinisher(waitsForPublication, action)
     } else {
       action()
     }

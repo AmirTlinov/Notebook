@@ -132,6 +132,32 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   public private(set) var agentStamp: VersionStamp
   public private(set) var collaboration: CollaborativeContent?
 
+  /// Decoding and encoding happen before publication. The drawing stamp is the
+  /// compare-and-swap boundary; unrelated element edits remain on this page.
+  public func prepareInkChange(_ mutation: PageInkMutation, stamp: VersionStamp) throws -> PreparedPageInkChange {
+    try Task.checkCancellation()
+    let current = try PageInkDrawing.decode(drawingData)
+    let drawing: PageInkDrawing
+    switch mutation {
+    case .append(let action): drawing = current.appending(action)
+    case .remove(let ids): drawing = current.removing(ids)
+    }
+    guard drawing != current, drawingStamp.counter < VersionStamp.maximumCounter,
+      stamp.counter <= VersionStamp.maximumCounter else { throw PageInkDrawing.InkError.invalidDrawing }
+    let next = VersionStamp(counter: max(drawingStamp.counter + 1, stamp.counter), actor: stamp.actor)
+    let data = try drawing.dataRepresentation()
+    try Task.checkCancellation()
+    return PreparedPageInkChange(pageID: id, baseStamp: drawingStamp, stamp: next, drawing: drawing, data: data)
+  }
+
+  @discardableResult
+  public mutating func publishInkChange(_ change: PreparedPageInkChange) -> Bool {
+    guard change.pageID == id, change.baseStamp == drawingStamp else { return false }
+    drawingData = change.data
+    drawingStamp = change.stamp
+    return true
+  }
+
   public init(
     id: UUID = UUID(),
     size: PageSize,
@@ -283,5 +309,25 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     incoming.agentStamp = stamp
     incoming.collaboration = collaboration
     return merge(incoming)
+  }
+}
+
+public enum PageInkMutation: Sendable {
+  case append(PageInkAction)
+  case remove(Set<UUID>)
+}
+
+/// A validated result prepared away from the input thread. Its constructor is
+/// private to the page owner, so publication never needs to decode the archive.
+public struct PreparedPageInkChange: Sendable {
+  public let pageID: UUID
+  public let baseStamp: VersionStamp
+  public let stamp: VersionStamp
+  public let drawing: PageInkDrawing
+  public let data: Data
+
+  fileprivate init(pageID: UUID, baseStamp: VersionStamp, stamp: VersionStamp, drawing: PageInkDrawing, data: Data) {
+    self.pageID = pageID; self.baseStamp = baseStamp; self.stamp = stamp
+    self.drawing = drawing; self.data = data
   }
 }

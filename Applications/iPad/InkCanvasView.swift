@@ -102,6 +102,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   private var committedBatches: [CommittedBatch] = []
   private var stableDrawing: PageInkDrawing?
+  private var drawingIsPreparing = false
   private var stableDrawingRevision: UInt64 = 0
   private var stableTexture: (any MTLTexture)?
   private var installedStableRasterKey: StableRasterKey?
@@ -269,7 +270,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   /// Replaces the page atomically. This is used for load, undo, and sync.
+  func prepareForDrawing() {
+    drawingIsPreparing = true
+    beginStableContentUpdate()
+  }
+
   func apply(_ drawing: PageInkDrawing) {
+    drawingIsPreparing = false
     beginStableContentUpdate()
     stableRasterTask?.cancel()
     stableRasterTask = nil
@@ -287,6 +294,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   /// exact durable pixels for the same drawing. A newer active gesture keeps
   /// the existing base and batches until its own durable drawing settles.
   func settle(_ drawing: PageInkDrawing) {
+    drawingIsPreparing = false
     beginStableContentUpdate()
     stableRasterTask?.cancel()
     stableRasterTask = nil
@@ -560,6 +568,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   private var stableRasterIsReady: Bool {
+    guard !drawingIsPreparing else { return false }
     guard stableDrawing != nil else { return true }
     guard let key = desiredStableRasterKey else { return false }
     return installedStableRasterKey == key

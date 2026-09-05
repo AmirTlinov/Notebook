@@ -180,6 +180,7 @@ final class DrawingOwnershipTests: XCTestCase {
     let pageID = UUID()
     let actorID = UUID()
     var counter: UInt64 = 0
+    var page = PageDocument(id: pageID, size: .init(width: 834, height: 1194), actor: actorID, drawingData: try base.dataRepresentation())
     let delivered = expectation(description: "local drawing serialized")
     let coordinator = PencilCanvasView.Coordinator(
       inputGate: NotebookInputGate(),
@@ -187,9 +188,11 @@ final class DrawingOwnershipTests: XCTestCase {
         counter += 1
         return VersionStamp(counter: counter, actor: actorID)
       },
-      commitAction: { data, _, _, _ in
+      commitAction: { action, _, stamp in
+        let change = try! page.prepareInkChange(.append(action), stamp: stamp)
+        _ = page.publishInkChange(change)
         delivered.fulfill()
-        return data
+        return change
       }
     )
     let paper = PaperCanvasContainerView()
@@ -210,6 +213,7 @@ final class DrawingOwnershipTests: XCTestCase {
     let actorID = UUID()
     var counter: UInt64 = 0
     var finalData = Data()
+    var page = PageDocument(id: pageID, size: .init(width: 834, height: 1194), actor: actorID, drawingData: try base.dataRepresentation())
     let delivered = expectation(description: "both erasers serialized")
     delivered.expectedFulfillmentCount = 2
     let coordinator = PencilCanvasView.Coordinator(
@@ -218,10 +222,12 @@ final class DrawingOwnershipTests: XCTestCase {
         counter += 1
         return VersionStamp(counter: counter, actor: actorID)
       },
-      commitAction: { data, _, _, _ in
-        finalData = data
+      commitAction: { action, _, stamp in
+        let change = try! page.prepareInkChange(.append(action), stamp: stamp)
+        _ = page.publishInkChange(change)
+        finalData = change.data
         delivered.fulfill()
-        return data
+        return change
       }
     )
     let paper = PaperCanvasContainerView()
@@ -263,12 +269,12 @@ final class DrawingOwnershipTests: XCTestCase {
     let neighbour = UUID()
     var events: [String] = []
 
-    gate.registerPageFinisher(source: current) { completion in
+    gate.registerPageFinisher(source: current) { _, completion in
       events.append("current")
       completion()
     }
     gate.setCurrentPageSource(current, isCurrent: true)
-    gate.registerPageFinisher(source: neighbour) { completion in
+    gate.registerPageFinisher(source: neighbour) { _, completion in
       events.append("neighbour")
       completion()
     }
@@ -287,7 +293,7 @@ final class DrawingOwnershipTests: XCTestCase {
   }
 
   @MainActor
-  func testReservedLocalContactMergesWithNewerRemoteInkAndUndoesOnlyItself() throws {
+  func testReservedLocalContactMergesWithNewerRemoteInkAndUndoesOnlyItself() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -298,7 +304,6 @@ final class DrawingOwnershipTests: XCTestCase {
     let pageID = try XCTUnwrap(model.activePage?.id)
     let localStamp = try XCTUnwrap(model.reserveDrawingAction(pageID: pageID))
     let localStroke = stroke(y: 40)
-    let localData = try PageInkDrawing(actions: [localStroke]).dataRepresentation()
 
     var remote = try XCTUnwrap(model.activePage)
     let remoteActor = UUID()
@@ -310,18 +315,17 @@ final class DrawingOwnershipTests: XCTestCase {
     try store.savePage(remote)
     model.reloadExternalChanges()
 
-    let accepted = model.commitDrawingAction(
-      localData,
-      replacing: Data(),
+    let accepted = await model.commitDrawingAction(
+      localStroke,
       pageID: pageID,
       stamp: localStamp
     )
 
-    let merged = try PageInkDrawing.decode(XCTUnwrap(accepted))
+    let merged = try XCTUnwrap(accepted).drawing
     XCTAssertEqual(Set(merged.activeActions.map(\.id)), [localStroke.id, firstRemote.id, secondRemote.id])
-    XCTAssertEqual(model.activePage?.drawingData, accepted)
+    XCTAssertEqual(model.activePage?.drawingData, accepted?.data)
     XCTAssertGreaterThan(try XCTUnwrap(model.activePage?.drawingStamp), remote.drawingStamp)
-    model.undoLastDrawingAction()
+    await model.undoLastDrawingAction()
     let undone = try PageInkDrawing.decode(XCTUnwrap(model.activePage?.drawingData))
     XCTAssertEqual(undone.activeActions.map(\.id), [firstRemote.id, secondRemote.id])
     XCTAssertEqual(undone.actions.first { $0.id == localStroke.id }?.isActive, false)

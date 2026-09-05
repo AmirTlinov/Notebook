@@ -12,7 +12,7 @@ struct PencilCanvasView: UIViewRepresentable {
   let drawingTool: DrawingTool
   let inputGate: NotebookInputGate
   let reserveAction: (UUID) -> VersionStamp?
-  let commitAction: (Data, Data, UUID, VersionStamp) -> Data?
+  let commitAction: (PageInkAction, UUID, VersionStamp) async -> PreparedPageInkChange?
   let onRenderReady: (Bool) -> Void
 
   func makeCoordinator() -> Coordinator {
@@ -70,7 +70,7 @@ struct PencilCanvasView: UIViewRepresentable {
   @MainActor
   final class Coordinator: NSObject {
     var reserveAction: (UUID) -> VersionStamp?
-    var commitAction: (Data, Data, UUID, VersionStamp) -> Data?
+    var commitAction: (PageInkAction, UUID, VersionStamp) async -> PreparedPageInkChange?
 
     private let inputSourceID = UUID()
     private var inputGate: NotebookInputGate
@@ -83,14 +83,15 @@ struct PencilCanvasView: UIViewRepresentable {
     private var appliedDrawingTool: DrawingTool?
     private var serializationTails: [UUID: Task<Void, Never>] = [:]
     private var pendingLocalDeliveries: [UUID: Int] = [:]
-    private var localDrawingData: [UUID: Data] = [:]
+    private var decodeTask: Task<Void, Never>?
+    private var decodeGeneration: UInt64 = 0
     private weak var attachedPaper: PaperCanvasContainerView?
     private var pageFinisherIsCurrent = false
 
     init(
       inputGate: NotebookInputGate,
       reserveAction: @escaping (UUID) -> VersionStamp?,
-      commitAction: @escaping (Data, Data, UUID, VersionStamp) -> Data?
+      commitAction: @escaping (PageInkAction, UUID, VersionStamp) async -> PreparedPageInkChange?
     ) {
       self.inputGate = inputGate
       self.reserveAction = reserveAction
@@ -122,62 +123,32 @@ struct PencilCanvasView: UIViewRepresentable {
         restoreModelDrawing(on: paper)
         return
       }
-      if pendingLocalDeliveries[pageID, default: 0] == 0 {
-        localDrawingData[pageID] = modelDrawingData ?? Data()
-      }
+      decodeTask?.cancel()
+      decodeTask = nil
       pendingLocalDeliveries[pageID, default: 0] += 1
       let previous = serializationTails[pageID]
       let deliver = commitAction
       serializationTails[pageID] = Task { [self, weak paper] in
         await previous?.value
-        let previousData = localDrawingData[pageID] ?? Data()
-        let result = await Task.detached(priority: .userInitiated) {
-          () -> (PageInkDrawing, Data)? in
-          guard let base = try? PageInkDrawing.decode(previousData) else { return nil }
-          let drawing = base.appending(mutation)
-          guard let data = try? drawing.dataRepresentation() else { return nil }
-          return (drawing, data)
-        }.value
-        guard let (drawing, data) = result else {
-          completeLocalDelivery(on: pageID, acceptedData: nil, paper: paper)
-          return
+        let accepted = await deliver(mutation, pageID, stamp)
+        if pageID == self.pageID, let accepted {
+          appliedDrawing = accepted.drawing
+          paper?.touchView.acceptCommittedDrawing(accepted.drawing)
         }
-
-        if pageID == self.pageID {
-          appliedDrawing = drawing
-          paper?.touchView.acceptCommittedDrawing(drawing)
-        }
-        let acceptedData = deliver(data, previousData, pageID, stamp)
-        if let acceptedData {
-          localDrawingData[pageID] = acceptedData
-          if pageID == self.pageID {
-            if let acceptedDrawing = try? PageInkDrawing.decode(acceptedData) {
-              appliedDrawing = acceptedDrawing
-              paper?.touchView.acceptCommittedDrawing(acceptedDrawing)
-            } else {
-              paper?.setInputEnabled(false)
-            }
-          }
-        } else {
-          localDrawingData[pageID] = data
-        }
-        completeLocalDelivery(
-          on: pageID,
-          acceptedData: acceptedData,
-          paper: paper
-        )
+        completeLocalDelivery(on: pageID, accepted: accepted, paper: paper)
       }
     }
 
     private func registerPageFinisher(on paper: PaperCanvasContainerView) {
       inputGate.registerPageFinisher(source: inputSourceID) {
-        [weak self, weak paper] completion in
+        [weak self, weak paper] waitsForPublication, completion in
         guard let self, let paper else {
           completion()
           return
         }
         paper.touchView.finishCurrentAction {
-          self.afterLocalDeliveries(on: self.pageID, perform: completion)
+          if waitsForPublication { self.afterLocalDeliveries(on: self.pageID, perform: completion) }
+          else { completion() }
         }
       }
     }
@@ -222,6 +193,8 @@ struct PencilCanvasView: UIViewRepresentable {
       inputGate.unregisterPageFinisher(source: inputSourceID)
       pageFinisherIsCurrent = false
       attachedPaper = nil
+      decodeTask?.cancel()
+      decodeTask = nil
       setPencilActionActive(false)
     }
 
@@ -265,28 +238,33 @@ struct PencilCanvasView: UIViewRepresentable {
     ) {
       let pageChanged = self.pageID != pageID
       if !pageChanged, modelDrawingData == data {
-        return
-      }
-      guard let drawing = try? PageInkDrawing.decode(data) else {
-        paper.setInputEnabled(false)
+        if decodeTask != nil { paper.setInputEnabled(false) }
         return
       }
       self.pageID = pageID
       modelDrawingData = data
       if !pageChanged,
-        pendingLocalDeliveries[pageID, default: 0] > 0
-          || paper.touchView.hasActiveAction
-      {
-        return
+        pendingLocalDeliveries[pageID, default: 0] > 0 || paper.touchView.hasActiveAction { return }
+      decodeTask?.cancel()
+      decodeGeneration &+= 1
+      let generation = decodeGeneration
+      paper.setInputEnabled(false)
+      paper.inkView.prepareForDrawing()
+      decodeTask = Task { [weak self, weak paper] in
+        let drawing = await Task.detached(priority: .userInitiated) { try? PageInkDrawing.decode(data) }.value
+        guard !Task.isCancelled, let self, let paper,
+          decodeGeneration == generation, self.pageID == pageID else { return }
+        decodeTask = nil
+        guard let drawing else { return }
+        appliedDrawing = drawing
+        paper.apply(drawing)
+        paper.setInputEnabled(pageFinisherIsCurrent)
       }
-      guard pageChanged || drawing != appliedDrawing else { return }
-      appliedDrawing = drawing
-      paper.apply(drawing)
     }
 
     private func completeLocalDelivery(
       on deliveredPageID: UUID,
-      acceptedData: Data?,
+      accepted: PreparedPageInkChange?,
       paper: PaperCanvasContainerView?
     ) {
       let remaining = max(
@@ -300,23 +278,18 @@ struct PencilCanvasView: UIViewRepresentable {
 
       if remaining == 0 {
         serializationTails[deliveredPageID] = nil
-        localDrawingData[deliveredPageID] = nil
       }
       guard remaining == 0,
         deliveredPageID == pageID,
         let paper
       else { return }
-      guard let acceptedData else {
+      guard let accepted else {
         restoreModelDrawing(on: paper)
         return
       }
-      guard let acceptedDrawing = try? PageInkDrawing.decode(acceptedData) else {
-        paper.setInputEnabled(false)
-        return
-      }
-      modelDrawingData = acceptedData
-      appliedDrawing = acceptedDrawing
-      paper.settle(acceptedDrawing)
+      modelDrawingData = accepted.data
+      appliedDrawing = accepted.drawing
+      paper.settle(accepted.drawing)
     }
 
     private func afterLocalDeliveries(
@@ -334,13 +307,9 @@ struct PencilCanvasView: UIViewRepresentable {
     }
 
     private func restoreModelDrawing(on paper: PaperCanvasContainerView?) {
-      guard let paper, let modelDrawingData else { return }
-      guard let drawing = try? PageInkDrawing.decode(modelDrawingData) else {
-        paper.setInputEnabled(false)
-        return
-      }
-      appliedDrawing = drawing
-      paper.apply(drawing)
+      guard let paper, let data = modelDrawingData, let pageID else { return }
+      modelDrawingData = nil
+      apply(data, pageID: pageID, to: paper)
     }
 
   }

@@ -12,11 +12,6 @@ final class NotebookAppModel {
     case failed(String)
   }
 
-  private enum PresencePersistence {
-    case immediate
-    case deferred
-  }
-
   static let initialNotebookID = UUID(
     uuidString: "7E7A0000-0000-4000-8000-000000000001"
   )!
@@ -109,8 +104,10 @@ final class NotebookAppModel {
   private var spatialInkSaveTask: Task<Void, Never>?
   private var workspaceSelectionSaveTail: Task<Void, Never>?
   private var presenceSaveTail: Task<Void, Never>?
+  private var pendingPresenceToSave: SessionPresence?
   private var cueTask: Task<Void, Never>?
   private var pencilUndoHistory = PencilUndoHistory()
+  private var inkUndoInProgress = false
   private var reservedDrawingCounters: [UUID: UInt64] = [:]
   private let presenceSessionID = UUID()
   private var presenceSequence: UInt64 = 0
@@ -586,8 +583,7 @@ final class NotebookAppModel {
   func updatePresence(_ presence: SessionPresence, settled: Bool) {
     applyPresence(
       presence,
-      settled: settled,
-      persistence: .immediate
+      settled: settled
     )
   }
 
@@ -654,8 +650,7 @@ final class NotebookAppModel {
 
   private func applyPresence(
     _ presence: SessionPresence,
-    settled: Bool,
-    persistence: PresencePersistence
+    settled: Bool
   ) {
     guard presence.isValid else { return }
     let resolved: SessionPresence
@@ -679,10 +674,10 @@ final class NotebookAppModel {
       sync.send(.presence(envelope))
       if settled {
         lastSettledPresenceEnvelope = envelope
-        persistPresence(resolved, using: persistence)
+        schedulePresenceSave(resolved)
       }
     #else
-      if settled { persistPresence(resolved, using: persistence) }
+      if settled { schedulePresenceSave(resolved) }
     #endif
   }
 
@@ -715,8 +710,7 @@ final class NotebookAppModel {
         openProgress: presence.openProgress,
         documentPageIndex: pageIndex
       ),
-      settled: true,
-      persistence: .deferred
+      settled: true
     )
     #if os(macOS)
       if publishesRequest {
@@ -754,7 +748,7 @@ final class NotebookAppModel {
   func undoLastSurfaceAction() {
     guard presence?.mode != .document else { return }
     if isPageOpen {
-      undoLastDrawingAction()
+      Task { [weak self] in await self?.undoLastDrawingAction() }
       return
     }
     guard var journal = spatialInk else { return }
@@ -889,54 +883,45 @@ final class NotebookAppModel {
     return stamp
   }
 
-  @discardableResult
   func commitDrawingAction(
-    _ data: Data,
-    replacing previousData: Data,
+    _ action: PageInkAction,
     pageID: UUID,
     stamp: VersionStamp
-  ) -> Data? {
-    guard var page = pages[pageID] else { return nil }
+  ) async -> PreparedPageInkChange? {
     guard stamp.actor == actorID,
-      stamp.counter <= reservedDrawingCounters[pageID, default: 0]
-    else { return page.drawingData }
-    guard data != page.drawingData else { return page.drawingData }
-    guard page.replaceDrawing(data, stamp: stamp) else {
-      return page.drawingData
-    }
-
-    pencilUndoHistory.recordAction(
-      pageID: page.id,
-      before: previousData,
-      after: data
-    )
-    pages[page.id] = page
-    sync.send(
-      .drawing(
-        pageID: page.id,
-        data: page.drawingData,
-        stamp: page.drawingStamp
-      )
-    )
-    scheduleSave(page.id)
-    return page.drawingData
+      stamp.counter <= reservedDrawingCounters[pageID, default: 0] else { return nil }
+    guard let change = await publishInkMutation(.append(action), pageID: pageID, stamp: stamp) else { return nil }
+    pencilUndoHistory.recordAction(pageID: pageID, actionID: action.id)
+    return change
   }
 
-  func undoLastDrawingAction() {
-    guard var page = activePage,
-          page.drawingStamp.counter < VersionStamp.maximumCounter,
-          let previousDrawing = pencilUndoHistory.removeLastChange(for: page.id, from: page.drawingData)
-    else { return }
-    guard page.replaceDrawing(previousDrawing, actor: actorID) else { return }
-    pages[page.id] = page
-    scheduleSave(page.id)
-    sync.send(
-      .drawing(
-        pageID: page.id,
-        data: page.drawingData,
-        stamp: page.drawingStamp
-      )
-    )
+  /// Only a prepared, still-current drawing crosses back to MainActor. A peer
+  /// that advanced this page during preparation is included in the retry.
+  private func publishInkMutation(
+    _ mutation: PageInkMutation, pageID: UUID, stamp: VersionStamp
+  ) async -> PreparedPageInkChange? {
+    while !Task.isCancelled, let snapshot = pages[pageID] {
+      let prepared = await Task.detached(priority: .userInitiated) {
+        try? snapshot.prepareInkChange(mutation, stamp: stamp)
+      }.value
+      guard !Task.isCancelled, let change = prepared, var current = pages[pageID] else { return nil }
+      guard current.publishInkChange(change) else { continue }
+      pages[pageID] = current
+      sync.send(.drawing(pageID: pageID, data: change.data, stamp: change.stamp))
+      scheduleSave(pageID)
+      return change
+    }
+    return nil
+  }
+
+  func undoLastDrawingAction() async {
+    guard !inkUndoInProgress, let page = activePage,
+      let ids = pencilUndoHistory.lastContribution(for: page.id),
+      let stamp = reserveDrawingAction(pageID: page.id) else { return }
+    inkUndoInProgress = true
+    defer { inkUndoInProgress = false }
+    guard await publishInkMutation(.remove(ids), pageID: page.id, stamp: stamp) != nil else { return }
+    pencilUndoHistory.didRemoveContribution(ids, for: page.id)
     showCue("Отменено")
   }
 
@@ -1467,7 +1452,7 @@ final class NotebookAppModel {
         presence = incoming
         presencePhase = envelope.phase
         if envelope.phase == .settled {
-          try? store.savePresence(incoming)
+          schedulePresenceSave(incoming)
         }
       #endif
     case .documentPageSelection(let request):
@@ -1877,24 +1862,16 @@ final class NotebookAppModel {
   }
 
   private func schedulePresenceSave(_ presence: SessionPresence) {
-    let previous = presenceSaveTail
-    let store = store
-    presenceSaveTail = Task.detached(priority: .utility) {
-      if let previous { await previous.value }
-      guard !Task.isCancelled else { return }
-      try? store.savePresence(presence)
-    }
-  }
-
-  private func persistPresence(
-    _ presence: SessionPresence,
-    using persistence: PresencePersistence
-  ) {
-    switch persistence {
-    case .immediate:
-      try? store.savePresence(presence)
-    case .deferred:
-      schedulePresenceSave(presence)
+    pendingPresenceToSave = presence
+    guard presenceSaveTail == nil else { return }
+    presenceSaveTail = Task { [weak self] in
+      guard let self else { return }
+      while let next = pendingPresenceToSave {
+        pendingPresenceToSave = nil
+        let store = store
+        await Task.detached(priority: .utility) { try? store.savePresence(next) }.value
+      }
+      presenceSaveTail = nil
     }
   }
 

@@ -46,7 +46,7 @@ final class NotebookInputTests: XCTestCase {
     var callbacks: [NotebookInputCompletion] = []
     var changes: [Bool] = []
     gate.onActivityChange = { changes.append($0) }
-    gate.registerPageFinisher(source: page) { callbacks.append($0) }
+    gate.registerPageFinisher(source: page) { _, completion in callbacks.append(completion) }
     gate.setCurrentPageSource(page, isCurrent: true)
     gate.beginContact(source: first); gate.beginContact(source: second)
     gate.endContact(source: first)

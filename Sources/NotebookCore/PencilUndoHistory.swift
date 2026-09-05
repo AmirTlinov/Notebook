@@ -10,22 +10,18 @@ public struct PencilUndoHistory: Sendable {
     self.capacity = capacity
   }
 
-  public mutating func recordAction(pageID: UUID, before: Data, after: Data) {
-    guard let old = try? PageInkDrawing.decode(before),
-      let new = try? PageInkDrawing.decode(after) else { return }
-    let added = Set(new.activeActions.map(\.id)).subtracting(old.actions.map(\.id))
-    guard !added.isEmpty else { return }
+  public mutating func recordAction(pageID: UUID, actionID: UUID) {
     var history = contributions[pageID, default: []]
-    history.append(added)
+    history.append([actionID])
     contributions[pageID] = Array(history.suffix(capacity))
   }
 
-  public mutating func removeLastChange(for pageID: UUID, from data: Data) -> Data? {
-    guard let drawing = try? PageInkDrawing.decode(data),
-      var history = contributions[pageID], let ids = history.popLast(),
-      let result = try? drawing.removing(ids).dataRepresentation() else { return nil }
+  public func lastContribution(for pageID: UUID) -> Set<UUID>? { contributions[pageID]?.last }
+
+  public mutating func didRemoveContribution(_ ids: Set<UUID>, for pageID: UUID) {
+    guard var history = contributions[pageID], history.last == ids else { return }
+    history.removeLast()
     contributions[pageID] = history.isEmpty ? nil : history
-    return result
   }
 
   public mutating func discardChanges(for pageID: UUID) {
