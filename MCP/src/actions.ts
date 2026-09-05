@@ -154,7 +154,10 @@ export async function actionResult(operation: () => Promise<Record<string, unkno
     const data = await operation();
     return { content: [{ type: "text" as const, text: JSON.stringify(data) }], structuredContent: data };
   } catch (error) {
-    const data = error instanceof BridgeError ? { status: "error", ...error.detail }
+    const data = error instanceof BridgeError ? {
+      status: error.detail.code === "input_active" ? "pending" : "error", ...error.detail,
+      ...(error.detail.code === "input_active" ? { acceptance: "not_saved" } : {}),
+    }
       : { status: "error", code: "operation_failed", message: String(error) };
     return { content: [{ type: "text" as const, text: JSON.stringify(data) }], structuredContent: data, isError: true };
   }

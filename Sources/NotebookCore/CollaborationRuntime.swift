@@ -66,6 +66,53 @@ public struct CollaborationEnvelope: Codable, Equatable, Sendable {
   public init(content: CollaborationContent? = nil, actions: [CollaborationReceipt] = [], contexts: [SharedContext] = [], selection: SharedContextSelection? = nil, delivery: [DeviceActionReceipt] = []) {
     self.content = content; self.actions = actions; self.contexts = contexts; self.selection = selection; self.delivery = delivery
   }
+
+  /// A held contact retains one causal cut, not an ever-growing message queue.
+  public func merging(_ incoming: Self) throws -> Self {
+    for envelope in [self, incoming] {
+      guard Set(envelope.actions.map(\.id)).count == envelope.actions.count,
+        Set(envelope.contexts.map(\.id)).count == envelope.contexts.count,
+        Set(envelope.delivery.map(\.id)).count == envelope.delivery.count else {
+        throw CollaborationError("invalid_content", "Сетевой срез содержит уникальные ID владельцев и ходов.")
+      }
+    }
+    var content = content
+    if let next = incoming.content {
+      if content != nil { content!.merge(next) } else { content = next }
+    }
+    var actions = Dictionary(uniqueKeysWithValues: actions.map { ($0.id, $0) })
+    for next in incoming.actions {
+      if let old = actions[next.id] {
+        guard old.action == next.action else { throw CollaborationError("action_id_conflict", "Разные ходы имеют одинаковый ID.") }
+        if old.undo != nil { continue }
+      }
+      actions[next.id] = next
+    }
+    var contexts = Dictionary(uniqueKeysWithValues: contexts.map { ($0.id, $0) })
+    for next in incoming.contexts {
+      var merged = contexts[next.id] ?? .init(id: next.id)
+      try merged.merge(next)
+      contexts[next.id] = merged
+    }
+    var selection = selection
+    if let next = incoming.selection, selection.map({ $0.stamp < next.stamp }) ?? true { selection = next }
+    var delivery = Dictionary(uniqueKeysWithValues: delivery.map { ($0.id, $0) })
+    for next in incoming.delivery { delivery[next.id] = delivery[next.id].map { $0.merging(next) } ?? next }
+    return .init(content: content, actions: actions.values.sorted { $0.id.uuidString < $1.id.uuidString },
+      contexts: contexts.values.sorted { $0.id.uuidString < $1.id.uuidString }, selection: selection,
+      delivery: delivery.values.sorted { $0.id.uuidString < $1.id.uuidString })
+  }
+}
+
+extension DeviceActionReceipt {
+  func merging(_ next: Self) -> Self {
+    guard revisions == next.revisions else { return receivedAt > next.receivedAt ? self : next }
+    var result = next
+    for item in shown where !result.shown.contains(item) { result.shown.append(item) }
+    for region in visibleRegions where !result.visibleRegions.contains(where: { $0.id == region.id }) { result.visibleRegions.append(region) }
+    result.displayComplete = displayComplete || next.displayComplete
+    return result
+  }
 }
 
 extension NotebookStore {
@@ -228,11 +275,7 @@ extension NotebookStore {
       let url = deviceReceiptsURL.appendingPathComponent(receipt.id.uuidString.lowercased() + ".json")
       var result = receipt
       if let data = try? Data(contentsOf:url), let previous = try? JSONDecoder().decode(DeviceActionReceipt.self,from:data) {
-        if previous.revisions == receipt.revisions {
-          for shown in previous.shown where !result.shown.contains(shown) { result.shown.append(shown) }
-          for region in previous.visibleRegions where !result.visibleRegions.contains(where: { $0.id == region.id }) { result.visibleRegions.append(region) }
-          result.displayComplete = previous.displayComplete || result.displayComplete
-        } else if previous.receivedAt > receipt.receivedAt { return }
+        result = previous.merging(receipt)
       }
       try JSONEncoder().encode(result).write(to:url,options:.atomic)
     }

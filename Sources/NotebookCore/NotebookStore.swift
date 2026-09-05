@@ -135,7 +135,7 @@ public struct NotebookStore: Sendable {
       at: previewsURL,
       withIntermediateDirectories: true
     )
-    for url in [collaborationURL, collaborationActionsURL, renderRequestsURL, targetPreviewsURL, deviceReceiptsURL] {
+    for url in [collaborationURL, collaborationActionsURL, renderRequestsURL, targetPreviewsURL, deviceReceiptsURL, runtimeURL] {
       try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     }
   }

@@ -49,7 +49,12 @@ struct WireSendQueue {
   }
 
   mutating func enqueue(_ message: WireMessage) {
-    if case .presence(let incoming) = message,
+    if case .inputActivity(let incoming) = message,
+      head < storage.count,
+      case .inputActivity(let pending) = storage[storage.count - 1],
+      pending.deviceID == incoming.deviceID, pending.sessionID == incoming.sessionID {
+      storage[storage.count - 1] = message
+    } else if case .presence(let incoming) = message,
       incoming.phase == .active,
       head < storage.count,
       case .presence(let pending) = storage[storage.count - 1],

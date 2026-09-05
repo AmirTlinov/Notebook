@@ -222,7 +222,7 @@ enum CurrentViewPreviewWriter {
     case .workspace: throw PreviewError.invalidSurface
     }
     try Task.checkCancellation()
-    guard model.presencePhase == .settled else { throw PreviewError.inputActive }
+    guard model.permitsBackgroundPreparation else { throw PreviewError.inputActive }
     guard try model.store.referenceRevision(target: target) == request.sourceRevision else { throw PreviewError.sourceChanged }
     let output = target.kind == .board ? full : try crop(full, region: request.region)
     let image = NSBitmapImageRep(data: output.png)!

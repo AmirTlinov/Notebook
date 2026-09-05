@@ -3,69 +3,6 @@ import CoreGraphics
 import Observation
 import NotebookCore
 
-typealias PencilInputCompletion = @MainActor @Sendable () -> Void
-typealias PencilInputFinisher = (@escaping PencilInputCompletion) -> Void
-
-@MainActor
-final class PencilInputGate {
-  private var pageFinishers: [UUID: PencilInputFinisher] = [:]
-  private var currentPageSource: UUID?
-  private var activePencilSources: Set<UUID> = []
-  private var fingerSequenceRevision: UInt64 = 0
-
-  func registerPageFinisher(
-    source: UUID,
-    _ finisher: @escaping PencilInputFinisher
-  ) {
-    pageFinishers[source] = finisher
-  }
-
-  func unregisterPageFinisher(source: UUID) {
-    pageFinishers[source] = nil
-    if currentPageSource == source { currentPageSource = nil }
-  }
-
-  /// Several live sheets may be mounted for a curl, but only the sheet that
-  /// currently accepts Pencil is allowed to delay a following command.
-  func setCurrentPageSource(_ source: UUID, isCurrent: Bool) {
-    if isCurrent {
-      currentPageSource = source
-    } else if currentPageSource == source {
-      currentPageSource = nil
-    }
-  }
-
-  func performAfterPageInput(_ action: @escaping PencilInputCompletion) {
-    if let currentPageSource,
-      let pageFinisher = pageFinishers[currentPageSource]
-    {
-      pageFinisher(action)
-    } else {
-      action()
-    }
-  }
-
-  /// Pencil owns the surface from contact to lift. A later finger command may
-  /// wait for the page finisher, while any pair overlapping this contact stays
-  /// part of the hand movement rather than becoming a second command.
-  func beginPencilAction(source: UUID) {
-    guard activePencilSources.insert(source).inserted else { return }
-    fingerSequenceRevision &+= 1
-  }
-
-  func endPencilAction(source: UUID) {
-    activePencilSources.remove(source)
-  }
-
-  func beginFingerSequence() -> UInt64? {
-    activePencilSources.isEmpty ? fingerSequenceRevision : nil
-  }
-
-  func acceptsFingerSequence(_ revision: UInt64) -> Bool {
-    activePencilSources.isEmpty && revision == fingerSequenceRevision
-  }
-}
-
 @MainActor
 @Observable
 final class NotebookAppModel {
@@ -153,7 +90,7 @@ final class NotebookAppModel {
 
   let store: NotebookStore
   let actorID: UUID
-  let pencilInputGate = PencilInputGate()
+  let inputGate = NotebookInputGate()
 
   private var pageSize = defaultPageSize
   private var started = false
@@ -179,6 +116,17 @@ final class NotebookAppModel {
   private var presenceSequenceTracker = PresenceSequenceTracker()
   private let startsNearbySync: Bool
   private let sync: NearbySync
+  #if os(iOS)
+    @ObservationIgnored private let inputFrameMonitor: InputFrameMonitor
+  #endif
+  @ObservationIgnored private var deferredCollaboration: CollaborationEnvelope?
+  @ObservationIgnored private var externalReloadPending = false
+  @ObservationIgnored private var inputSequence: UInt64 = 0
+  @ObservationIgnored private var inputWriteTask: Task<Void, Never>?
+  @ObservationIgnored private var pendingInputActivity: NotebookInputActivity?
+  private(set) var inputIsActive = false
+  private(set) var peerInputIsActive = false
+  var permitsBackgroundPreparation: Bool { !inputIsActive && !peerInputIsActive && presencePhase == .settled }
   #if os(macOS)
     /// MCP writes the same files as the app. This observer belongs to the
     /// long-lived model, so closing the mirror window cannot stop delivery to
@@ -194,6 +142,9 @@ final class NotebookAppModel {
     startsNearbySync: Bool = true
   ) {
     self.store = store
+    #if os(iOS)
+      inputFrameMonitor = InputFrameMonitor(root: store.root)
+    #endif
     self.startsNearbySync = startsNearbySync
     penStyle = Self.loadPenStyle()
     eraserStyle = Self.loadEraserStyle()
@@ -212,11 +163,60 @@ final class NotebookAppModel {
     }
     sync.onConnect = { [weak self] in
       self?.isPeerConnected = true
+      self?.publishInputActivity()
       self?.sendSnapshot()
     }
     sync.onDisconnect = { [weak self] in
       self?.isPeerConnected = false
+      self?.peerInputIsActive = false
+      if let self { try? store.resetInputActivities(keeping: actorID) }
       self?.restoreSettledPresenceAfterDisconnect()
+    }
+    inputGate.onActivityChange = { [weak self] active in
+      guard let self else { return }
+      inputIsActive = active
+      #if os(macOS)
+        if active { previewPublisher?.suspendForInput() }
+      #else
+        if active { inputFrameMonitor.begin(mode: presence?.mode.rawValue ?? "unknown") }
+        else { inputFrameMonitor.end() }
+      #endif
+      publishInputActivity()
+      if !active {
+        if let pending = deferredCollaboration {
+          deferredCollaboration = nil
+          receivePeerMessage(.collaboration(pending))
+        }
+        if externalReloadPending { externalReloadPending = false; reloadExternalChanges() }
+      }
+    }
+  }
+
+  private func publishInputActivity() {
+    guard loadState == .ready else { return }
+    inputSequence &+= 1
+    var targets: [CollaborationTarget] = []
+    if inputIsActive, let presence {
+      let board = CollaborationTarget(kind: .board, id: presence.boardID)
+      if presence.mode == .board { targets = [board] }
+      else if let id = presence.focusedItemID {
+        targets = [.init(kind: .cover, id: id, boardID: presence.boardID)]
+        if presence.mode == .page, let page = activePage { targets.append(.init(kind: .page, id: page.id)) }
+        if presence.mode == .document { targets.append(.init(kind: .document, id: id)) }
+      } else { targets = [board] }
+    }
+    let activity = NotebookInputActivity(deviceID: actorID, sessionID: presenceSessionID, sequence: inputSequence, targets: targets)
+    sync.send(.inputActivity(activity))
+    pendingInputActivity = activity
+    guard inputWriteTask == nil else { return }
+    inputWriteTask = Task { [weak self] in
+      guard let self else { return }
+      while let next = pendingInputActivity {
+        pendingInputActivity = nil
+        let store = store
+        await Task.detached(priority: .userInitiated) { try? store.saveInputActivity(next) }.value
+      }
+      inputWriteTask = nil
     }
   }
 
@@ -296,6 +296,7 @@ final class NotebookAppModel {
         )
       }
       try store.migrateCollaborationStorage()
+      try store.resetInputActivities()
       loadState = .ready
       reloadCollaborationMetadata()
       reloadExternalChanges()
@@ -767,8 +768,8 @@ final class NotebookAppModel {
     showCue("Отменено")
   }
 
-  func afterPageInput(_ action: @escaping PencilInputCompletion) {
-    pencilInputGate.performAfterPageInput(action)
+  func afterPageInput(_ action: @escaping NotebookInputCompletion) {
+    inputGate.performAfterPageInput(action)
   }
 
   func addNativeText(on itemID: UUID, at point: SpatialPoint) -> String? {
@@ -1278,6 +1279,7 @@ final class NotebookAppModel {
 
   private func reloadExternalChanges(remainingAttempts: Int) {
     guard loadState == .ready else { return }
+    guard !inputGate.isActive else { externalReloadPending = true; return }
     do {
       let disk = try store.collaborationContent()
       let previous = collaborationContent
@@ -1342,7 +1344,21 @@ final class NotebookAppModel {
 
   func receivePeerMessage(_ message: WireMessage) {
     switch message {
+    case .inputActivity(let activity):
+      guard activity.isValid else { return }
+      do {
+        try store.saveInputActivity(activity)
+        peerInputIsActive = try store.inputActivities().contains { $0.deviceID != actorID && $0.isActive }
+        #if os(macOS)
+          if peerInputIsActive { previewPublisher?.suspendForInput() }
+        #endif
+      } catch { showCue(error.localizedDescription) }
     case .collaboration(let envelope):
+      if inputGate.isActive {
+        do { deferredCollaboration = try (deferredCollaboration ?? .init()).merging(envelope) }
+        catch { showCue(error.localizedDescription) }
+        return
+      }
       do {
         if let resolved = try store.receiveCollaboration(envelope,local:collaborationContent) {
           acceptCollaborationContent(resolved)
@@ -1614,7 +1630,7 @@ final class NotebookAppModel {
         let result = await Task.detached(priority:.userInitiated) { () -> Result<CollaborationReceipt, Error> in
           do {
             if let local { _ = try store.mergeCollaborationContent(local) }
-            return .success(try store.undoCollaborationAction(id,actor:actor))
+            return .success(try store.undoCollaborationAction(id,actor:actor,waitForInput:4))
           } catch { return .failure(error) }
         }.value
         guard let self else { return }

@@ -140,7 +140,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   private(set) var centroid = CGPoint.zero
 
   var defersHorizontalMotionToPageTurn = false
-  weak var pencilInputGate: PencilInputGate?
+  weak var inputGate: NotebookInputGate?
 
   var startCentroidValue: CGPoint { startCentroid ?? centroid }
   var gestureElapsed: TimeInterval {
@@ -160,7 +160,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
       return
     }
     if fingerSequenceRevision == nil {
-      guard let revision = pencilInputGate?.beginFingerSequence() else {
+      guard let revision = inputGate?.beginFingerSequence() else {
         finishAsInvalid()
         return
       }
@@ -464,7 +464,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
 
   private var fingerSequenceIsAccepted: Bool {
     guard let fingerSequenceRevision else { return false }
-    return pencilInputGate?.acceptsFingerSequence(fingerSequenceRevision)
+    return inputGate?.acceptsFingerSequence(fingerSequenceRevision)
       == true
   }
 

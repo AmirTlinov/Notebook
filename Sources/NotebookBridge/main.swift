@@ -31,10 +31,10 @@ do {
   switch request.command {
   case "apply":
     guard let action = request.action else { throw CollaborationError("invalid_action", "Нужен законченный ход.") }
-    data = try encoder.encode(store.applyCollaborationAction(action, actor: store.collaborationActorID()))
+    data = try encoder.encode(store.applyCollaborationAction(action, actor: store.collaborationActorID(), waitForInput: 4))
   case "undo":
     guard let id = request.actionID else { throw CollaborationError("invalid_action", "Нужен ID хода.") }
-    data = try encoder.encode(store.undoCollaborationAction(id, actor: store.collaborationActorID()))
+    data = try encoder.encode(store.undoCollaborationAction(id, actor: store.collaborationActorID(), waitForInput: 4))
   case "action":
     guard let id = request.actionID else { throw CollaborationError("invalid_action", "Нужен ID хода.") }
     data = try encoder.encode(store.collaborationAction(id))

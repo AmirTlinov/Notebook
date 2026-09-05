@@ -252,7 +252,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
 
   @MainActor
   func testPencilInvalidatesAnAlreadyStartedFingerSequence() throws {
-    let gate = PencilInputGate()
+    let gate = NotebookInputGate()
     let fingerRevision = try XCTUnwrap(gate.beginFingerSequence())
     let pencilSource = UUID()
 
@@ -474,7 +474,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
     let controller = WorkspaceGestureLayer.Coordinator(
       defersHorizontalMotionToPageTurn: true,
       isEnabled: true,
-      pencilInputGate: PencilInputGate(),
+      inputGate: NotebookInputGate(),
       onCamera: { _ in },
       onUndo: {}
     )

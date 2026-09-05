@@ -71,4 +71,5 @@ public enum WireMessage: Codable, Equatable, Sendable {
   case presence(PresenceEnvelope)
   case documentPageSelection(DocumentPageSelectionRequest)
   case collaboration(CollaborationEnvelope)
+  case inputActivity(NotebookInputActivity)
 }

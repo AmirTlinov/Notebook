@@ -13,14 +13,14 @@ struct SpatialInkCanvas: UIViewRepresentable {
   let eraserStyle: EraserStyle
   let drawingTool: DrawingTool
   let surfaceRegistry: SpatialInkSurfaceRegistry
-  let pencilInputGate: PencilInputGate
+  let inputGate: NotebookInputGate
   let onCommit: (SpatialInkTool, SpatialInkColor, [SpatialInkSpan]) -> Void
   let isEnabled: Bool
 
   func makeCoordinator() -> Coordinator {
     Coordinator(
       surfaceRegistry: surfaceRegistry,
-      pencilInputGate: pencilInputGate,
+      inputGate: inputGate,
       onCommit: onCommit
     )
   }
@@ -42,7 +42,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       eraserStyle: eraserStyle,
       drawingTool: drawingTool,
       surfaceRegistry: surfaceRegistry,
-      pencilInputGate: pencilInputGate,
+      inputGate: inputGate,
       isEnabled: isEnabled,
       onCommit: onCommit
     )
@@ -61,7 +61,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       eraserStyle: eraserStyle,
       drawingTool: drawingTool,
       surfaceRegistry: surfaceRegistry,
-      pencilInputGate: pencilInputGate,
+      inputGate: inputGate,
       isEnabled: isEnabled,
       onCommit: onCommit
     )
@@ -85,7 +85,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
 
     private var surfaceRegistry: SpatialInkSurfaceRegistry
     private let inputSourceID = UUID()
-    private var pencilInputGate: PencilInputGate
+    private var inputGate: NotebookInputGate
     private var pencilActionIsActive = false
     private weak var view: SpatialInkContainerView?
     private weak var window: UIWindow?
@@ -123,7 +123,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
 
     init(
       surfaceRegistry: SpatialInkSurfaceRegistry,
-      pencilInputGate: PencilInputGate,
+      inputGate: NotebookInputGate,
       onCommit: @escaping (
         SpatialInkTool,
         SpatialInkColor,
@@ -131,7 +131,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       ) -> Void
     ) {
       self.surfaceRegistry = surfaceRegistry
-      self.pencilInputGate = pencilInputGate
+      self.inputGate = inputGate
       self.onCommit = onCommit
     }
 
@@ -146,7 +146,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       eraserStyle: EraserStyle,
       drawingTool: DrawingTool,
       surfaceRegistry: SpatialInkSurfaceRegistry,
-      pencilInputGate: PencilInputGate,
+      inputGate: NotebookInputGate,
       isEnabled: Bool,
       onCommit: @escaping (
         SpatialInkTool,
@@ -173,13 +173,13 @@ struct SpatialInkCanvas: UIViewRepresentable {
         self.surfaceRegistry = surfaceRegistry
         appliedSignature = nil
       }
-      if self.pencilInputGate !== pencilInputGate {
+      if self.inputGate !== inputGate {
         if pencilActionIsActive {
-          self.pencilInputGate.endPencilAction(source: inputSourceID)
+          self.inputGate.endPencilAction(source: inputSourceID)
         }
-        self.pencilInputGate = pencilInputGate
+        self.inputGate = inputGate
         if pencilActionIsActive {
-          self.pencilInputGate.beginPencilAction(source: inputSourceID)
+          self.inputGate.beginPencilAction(source: inputSourceID)
         }
       }
       self.isEnabled = isEnabled
@@ -407,9 +407,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
       guard pencilActionIsActive != active else { return }
       pencilActionIsActive = active
       if active {
-        pencilInputGate.beginPencilAction(source: inputSourceID)
+        inputGate.beginPencilAction(source: inputSourceID)
       } else {
-        pencilInputGate.endPencilAction(source: inputSourceID)
+        inputGate.endPencilAction(source: inputSourceID)
       }
     }
 

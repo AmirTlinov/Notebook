@@ -138,6 +138,14 @@ final class MacPreviewPublisher {
     }
   }
 
+  func suspendForInput() {
+    currentViewTask?.cancel()
+    pagePreviewTask?.cancel()
+    targetTask?.cancel()
+    referenceVisionTask?.cancel()
+    referenceVisionKey = nil
+  }
+
   /// Observation gives immediate updates. This small process-level pass gives
   /// the durable readout the same eventual guarantee as the files it mirrors:
   /// if a burst coalesces observation callbacks, the final versions still get
@@ -150,7 +158,7 @@ final class MacPreviewPublisher {
     if let data = try? JSONSerialization.data(withJSONObject: health) {
       try? data.write(to: model.store.root.appendingPathComponent("previews/runtime.json"), options: .atomic)
     }
-    guard model.presencePhase == .settled else { targetTask?.cancel(); return }
+    guard model.permitsBackgroundPreparation else { targetTask?.cancel(); return }
     scheduleReferenceVision(model)
     guard targetInProgress == nil, let request = (try? model.store.targetRenderRequests())?.first(where: {
       !FileManager.default.fileExists(atPath: model.store.targetReceiptURL($0.id).path)
@@ -161,7 +169,7 @@ final class MacPreviewPublisher {
       guard let model else { return }
       do { try await CurrentViewPreviewWriter.writeTarget(request, model: model); self?.referenceVisionKey = nil }
       catch {
-        guard !Task.isCancelled, model.presencePhase == .settled else { return }
+        guard !Task.isCancelled, model.permitsBackgroundPreparation else { return }
         try? model.store.saveTargetRender(.init(request: request, status: "error", diagnostics: [
           .init(kind: "render_error", message: String(describing: error))]))
       }
@@ -243,7 +251,7 @@ final class MacPreviewPublisher {
   }
 
   private func scheduleCurrentView(for key: PreviewCurrentViewKey?) {
-    guard let key, key.presencePhase == .settled else { return }
+    guard let key, key.presencePhase == .settled, model?.permitsBackgroundPreparation == true else { currentViewTask?.cancel(); return }
     guard reconciler.currentView.request(key) else { return }
     currentViewTask?.cancel()
     let generation = reconciler.currentView.begin(key)
@@ -251,7 +259,7 @@ final class MacPreviewPublisher {
       try? await Task.sleep(for: self?.currentViewDelay ?? .zero)
       guard let self else { return }
       guard !Task.isCancelled,
-        model?.presencePhase == .settled,
+        model?.permitsBackgroundPreparation == true,
         makeCurrentViewKey() == key
       else {
         finishCurrentViewPublication(key, generation: generation, error: PreviewPublicationError.sourceChanged)
@@ -263,7 +271,7 @@ final class MacPreviewPublisher {
           let state = model.documentStates[document.id] {
           try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: model.presence?.documentPageIndex ?? 0)
         }
-        guard !Task.isCancelled, makeCurrentViewKey() == key else {
+        guard !Task.isCancelled, model?.permitsBackgroundPreparation == true, makeCurrentViewKey() == key else {
           throw PreviewPublicationError.sourceChanged
         }
         finishCurrentViewPublication(key, generation: generation, error: writeCurrentView())
@@ -285,6 +293,7 @@ final class MacPreviewPublisher {
   }
 
   private func schedulePagePreviews(for keys: [PreviewPageKey]) {
+    guard model?.permitsBackgroundPreparation == true else { pagePreviewTask?.cancel(); return }
     guard reconciler.pages.request(keys) else { return }
     pagePreviewTask?.cancel()
     let generation = reconciler.pages.begin(keys)
@@ -298,7 +307,7 @@ final class MacPreviewPublisher {
       var publicationError: (any Error)?
       for key in keys {
         guard !Task.isCancelled,
-          let model, let page = model.pages[key.pageID],
+          let model, model.permitsBackgroundPreparation, let page = model.pages[key.pageID],
           page.drawingStamp == key.drawingStamp
         else {
           publicationError = PreviewPublicationError.sourceChanged

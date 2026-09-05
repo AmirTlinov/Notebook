@@ -326,7 +326,7 @@ struct SpatialWorkspaceView: View {
             eraserStyle: model.eraserStyle,
             drawingTool: model.drawingTool,
             surfaceRegistry: spatialInkSurfaces,
-            pencilInputGate: model.pencilInputGate,
+            inputGate: model.inputGate,
             onCommit: model.appendSpatialInk,
             isEnabled: (presence.mode == .board || presence.mode == .cover)
               && !contentGestureActive
@@ -426,7 +426,7 @@ struct SpatialWorkspaceView: View {
             defersHorizontalMotionToPageTurn: (presence.mode == .page
               || presence.mode == .document)
               && presence.openProgress >= 0.999 && !model.isPointing,
-            pencilInputGate: model.pencilInputGate,
+            inputGate: model.inputGate,
             onCamera: handleWorkspaceMagnification,
             onUndo: {
               model.afterPageInput { model.undoLastSurfaceAction() }
@@ -1661,7 +1661,7 @@ private struct WorkspaceSceneItem: View {
         navigationIsEnabled: pageNavigationIsEnabled,
         pageIsInteractive: contentIsInteractive,
         canBeginNavigation: {
-          model.pencilInputGate.beginFingerSequence() != nil
+          model.inputGate.beginFingerSequence() != nil
         },
         page: { index, isCurrent, readiness in
           notebookPage(

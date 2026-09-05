@@ -10,14 +10,14 @@ struct PencilCanvasView: UIViewRepresentable {
   let penStyle: PenStyle
   let eraserStyle: EraserStyle
   let drawingTool: DrawingTool
-  let pencilInputGate: PencilInputGate
+  let inputGate: NotebookInputGate
   let reserveAction: (UUID) -> VersionStamp?
   let commitAction: (Data, Data, UUID, VersionStamp) -> Data?
   let onRenderReady: (Bool) -> Void
 
   func makeCoordinator() -> Coordinator {
     Coordinator(
-      pencilInputGate: pencilInputGate,
+      inputGate: inputGate,
       reserveAction: reserveAction,
       commitAction: commitAction
     )
@@ -46,7 +46,7 @@ struct PencilCanvasView: UIViewRepresentable {
       Task { @MainActor in onRenderReady(ready) }
     }
     paper.setInputEnabled(isInputEnabled)
-    context.coordinator.use(pencilInputGate)
+    context.coordinator.use(inputGate)
     context.coordinator.setPageFinisherCurrent(isInputEnabled)
     context.coordinator.reserveAction = reserveAction
     context.coordinator.commitAction = commitAction
@@ -73,7 +73,7 @@ struct PencilCanvasView: UIViewRepresentable {
     var commitAction: (Data, Data, UUID, VersionStamp) -> Data?
 
     private let inputSourceID = UUID()
-    private var pencilInputGate: PencilInputGate
+    private var inputGate: NotebookInputGate
     private var pencilActionIsActive = false
     private var pageID: UUID?
     private var modelDrawingData: Data?
@@ -88,11 +88,11 @@ struct PencilCanvasView: UIViewRepresentable {
     private var pageFinisherIsCurrent = false
 
     init(
-      pencilInputGate: PencilInputGate,
+      inputGate: NotebookInputGate,
       reserveAction: @escaping (UUID) -> VersionStamp?,
       commitAction: @escaping (Data, Data, UUID, VersionStamp) -> Data?
     ) {
-      self.pencilInputGate = pencilInputGate
+      self.inputGate = inputGate
       self.reserveAction = reserveAction
       self.commitAction = commitAction
     }
@@ -170,7 +170,7 @@ struct PencilCanvasView: UIViewRepresentable {
     }
 
     private func registerPageFinisher(on paper: PaperCanvasContainerView) {
-      pencilInputGate.registerPageFinisher(source: inputSourceID) {
+      inputGate.registerPageFinisher(source: inputSourceID) {
         [weak self, weak paper] completion in
         guard let self, let paper else {
           completion()
@@ -182,31 +182,31 @@ struct PencilCanvasView: UIViewRepresentable {
       }
     }
 
-    func use(_ gate: PencilInputGate) {
-      guard pencilInputGate !== gate else { return }
-      pencilInputGate.setCurrentPageSource(
+    func use(_ gate: NotebookInputGate) {
+      guard inputGate !== gate else { return }
+      inputGate.setCurrentPageSource(
         inputSourceID,
         isCurrent: false
       )
-      pencilInputGate.unregisterPageFinisher(source: inputSourceID)
+      inputGate.unregisterPageFinisher(source: inputSourceID)
       if pencilActionIsActive {
-        pencilInputGate.endPencilAction(source: inputSourceID)
+        inputGate.endPencilAction(source: inputSourceID)
       }
-      pencilInputGate = gate
+      inputGate = gate
       if let attachedPaper { registerPageFinisher(on: attachedPaper) }
-      pencilInputGate.setCurrentPageSource(
+      inputGate.setCurrentPageSource(
         inputSourceID,
         isCurrent: pageFinisherIsCurrent
       )
       if pencilActionIsActive {
-        pencilInputGate.beginPencilAction(source: inputSourceID)
+        inputGate.beginPencilAction(source: inputSourceID)
       }
     }
 
     func setPageFinisherCurrent(_ isCurrent: Bool) {
       guard pageFinisherIsCurrent != isCurrent else { return }
       pageFinisherIsCurrent = isCurrent
-      pencilInputGate.setCurrentPageSource(
+      inputGate.setCurrentPageSource(
         inputSourceID,
         isCurrent: isCurrent
       )
@@ -215,11 +215,11 @@ struct PencilCanvasView: UIViewRepresentable {
     func detach(from paper: PaperCanvasContainerView) {
       paper.touchView.onActionActivityChange = nil
       paper.touchView.onDrawingMutation = nil
-      pencilInputGate.setCurrentPageSource(
+      inputGate.setCurrentPageSource(
         inputSourceID,
         isCurrent: false
       )
-      pencilInputGate.unregisterPageFinisher(source: inputSourceID)
+      inputGate.unregisterPageFinisher(source: inputSourceID)
       pageFinisherIsCurrent = false
       attachedPaper = nil
       setPencilActionActive(false)
@@ -229,9 +229,9 @@ struct PencilCanvasView: UIViewRepresentable {
       guard pencilActionIsActive != active else { return }
       pencilActionIsActive = active
       if active {
-        pencilInputGate.beginPencilAction(source: inputSourceID)
+        inputGate.beginPencilAction(source: inputSourceID)
       } else {
-        pencilInputGate.endPencilAction(source: inputSourceID)
+        inputGate.endPencilAction(source: inputSourceID)
       }
     }
 

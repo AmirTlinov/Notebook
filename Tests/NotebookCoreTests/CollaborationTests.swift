@@ -613,3 +613,74 @@ func newPackageElementsCanBeReordered() throws {
     .init(kind: .reorderElements, target: f.page, values: ["ids": .array([.string("b"),.string("a")])])]), actor: f.agent)
   #expect(try f.store.loadPage(f.pageID).elements.map(\.id) == ["b","a"])
 }
+
+@Test("Контакт удерживает весь ход без записи, а отпускание повторно проверяет версии")
+func inputHoldsPublicationAndRechecks() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let session = UUID()
+  let action = try f.action([f.insert()])
+  try f.store.saveInputActivity(.init(deviceID: f.human, sessionID: session, sequence: 1, targets: [f.page]))
+  do { _ = try f.store.applyCollaborationAction(action, actor: f.agent); Issue.record("Контакт должен удерживать публикацию") }
+  catch let error as CollaborationError { #expect(error.code == "input_active") }
+  #expect(try f.store.collaborationActions().isEmpty)
+  #expect(try f.store.loadPage(f.pageID).elements.isEmpty)
+  var humanPage = try f.store.loadPage(f.pageID)
+  _ = humanPage.replaceElements([.init(id: "human", kind: .markdown, frame: .init(x: 20, y: 400, width: 200, height: 80), source: "Human", html: "Human")], actor: f.human)
+  try f.store.saveMergedPage(humanPage)
+  try f.store.saveInputActivity(.init(deviceID: f.human, sessionID: session, sequence: 2, targets: []))
+  do { _ = try f.store.applyCollaborationAction(action, actor: f.agent); Issue.record("Поздняя правка требует нового рассмотрения") }
+  catch let error as CollaborationError { #expect(error.code == "revision_conflict") }
+  #expect(try f.store.loadPage(f.pageID).elements.map(\.id) == ["human"])
+  #expect(try f.store.collaborationActions().isEmpty)
+}
+
+@Test("Контакт доски удерживает её листы, но не другую доску; старое отпускание не снимает новый контакт")
+func inputScopeAndSequence() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let session = UUID()
+  let action = try f.action([f.insert()])
+  try f.store.saveInputActivity(.init(deviceID: f.human, sessionID: session, sequence: 2, targets: [f.board]))
+  try f.store.saveInputActivity(.init(deviceID: f.human, sessionID: session, sequence: 1, targets: []))
+  #expect(try f.store.inputActivities().first?.isActive == true)
+  #expect(throws: CollaborationError.self) { try f.store.applyCollaborationAction(action, actor: f.agent) }
+  try f.store.saveInputActivity(.init(deviceID: f.human, sessionID: session, sequence: 3, targets: [.init(kind: .board, id: UUID())]))
+  let receipt = try f.store.applyCollaborationAction(action, actor: f.agent)
+  try f.store.saveInputActivity(.init(deviceID: f.human, sessionID: session, sequence: 4, targets: [f.page]))
+  #expect(try f.store.applyCollaborationAction(action, actor: f.agent) == receipt, "Квитанция повтора доступна даже при новом касании")
+  #expect(throws: CollaborationError.self) { try f.store.undoCollaborationAction(action.id, actor: f.agent) }
+  try f.store.resetInputActivities()
+  #expect(try f.store.undoCollaborationAction(action.id, actor: f.agent).undo != nil)
+}
+
+@Test("Удерживаемые пакеты сходятся в один срез, сохраняя окончательную отмену")
+func heldEnvelopesKeepOneCausalCut() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let first = try f.store.applyCollaborationAction(f.action([f.insert()]), actor: f.agent)
+  let content = try f.store.collaborationContent()
+  let undone = try f.store.undoCollaborationAction(first.id, actor: f.agent)
+  var held = CollaborationEnvelope(content: content, actions: [first])
+  let latest = CollaborationEnvelope(content: try f.store.collaborationContent(), actions: [undone])
+  for _ in 0..<200 { held = try held.merging(latest) }
+  held = try held.merging(.init(content: content, actions: [first]))
+  #expect(held.actions == [undone])
+  #expect(held.content?.pages.count == 1)
+  #expect(held.content?.pages.first?.elements.isEmpty == true)
+  #expect(throws: CollaborationError.self) { try held.merging(.init(actions: [first, first])) }
+  let wire = WireMessage.inputActivity(.init(deviceID: f.human, sessionID: UUID(), sequence: 1, targets: [f.page]))
+  #expect(try JSONDecoder().decode(WireMessage.self, from: JSONEncoder().encode(wire)) == wire)
+}
+
+@Test("Диагностика кадров ограничивает память и отличает частоту от задержки")
+func inputFrameWindowIsBounded() {
+  var frames = InputFrameStatistics()
+  for index in 0...10_000 { frames.record(timestamp: Double(index) / 120, expectedInterval: 1.0 / 120) }
+  #expect(frames.summary.totalIntervals == 10_000)
+  #expect(frames.summary.retainedIntervals == InputFrameStatistics.capacity)
+  #expect(abs(frames.summary.recentIntervalP95MS - 1000.0 / 120) < 0.001)
+  #expect(frames.summary.estimatedUnservicedIntervals == 0)
+  frames.record(timestamp: 10_000.0 / 120 + 0.1, expectedInterval: 1.0 / 120)
+  #expect(abs(frames.summary.maximumIntervalMS - 100) < 0.001)
+  #expect(frames.summary.estimatedUnservicedIntervals == 11)
+  frames.record(timestamp: .nan, expectedInterval: 0)
+  #expect(frames.summary.totalIntervals == 10_001)
+}

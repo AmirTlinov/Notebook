@@ -60,7 +60,11 @@ extension NotebookStore {
   }
 
   @discardableResult
-  public func applyCollaborationAction(_ action: CollaborationAction, actor: UUID) throws -> CollaborationReceipt {
+  public func applyCollaborationAction(_ action: CollaborationAction, actor: UUID, waitForInput: TimeInterval = 0) throws -> CollaborationReceipt {
+    try waitingForInput(waitForInput) { try applyCollaborationActionImmediately(action, actor: actor) }
+  }
+
+  private func applyCollaborationActionImmediately(_ action: CollaborationAction, actor: UUID) throws -> CollaborationReceipt {
     try prepare()
     return try withMutationLock {
       if FileManager.default.fileExists(atPath: root.appendingPathComponent(actionFile(action.id)).path) {
@@ -76,6 +80,7 @@ extension NotebookStore {
         throw CollaborationError("invalid_action", "Ход содержит описание и от 1 до 512 операций.")
       }
       let before = try CollaborationWorkspace(store: self)
+      try requireIdleInput(for: action.operations.map(\.target), files: before.files)
       let context = try Self.placementContext(action.contextID, in: readSharedContexts())
       let scopeReferences = context?.entries.flatMap(\.references) ?? action.references
       for expectation in action.expected {
@@ -139,12 +144,17 @@ extension NotebookStore {
   }
 
   @discardableResult
-  public func undoCollaborationAction(_ id: UUID, actor: UUID) throws -> CollaborationReceipt {
+  public func undoCollaborationAction(_ id: UUID, actor: UUID, waitForInput: TimeInterval = 0) throws -> CollaborationReceipt {
+    try waitingForInput(waitForInput) { try undoCollaborationActionImmediately(id, actor: actor) }
+  }
+
+  private func undoCollaborationActionImmediately(_ id: UUID, actor: UUID) throws -> CollaborationReceipt {
     try prepare()
     return try withMutationLock {
       var receipt = try loadAction(id)
       if receipt.undo != nil { return receipt }
       let before = try CollaborationWorkspace(store: self)
+      try requireIdleInput(for: receipt.action.operations.map(\.target), files: before.files)
       var after = before
       var preserved: [CollaborationFieldChange] = []
       let protected = before.protectedCreationChanges(in: receipt)

@@ -4,7 +4,7 @@ import UIKit
 struct WorkspaceGestureLayer: UIViewRepresentable {
   let isEnabled: Bool
   let defersHorizontalMotionToPageTurn: Bool
-  let pencilInputGate: PencilInputGate
+  let inputGate: NotebookInputGate
   let onCamera: (WorkspaceMagnificationPhase) -> Void
   let onUndo: () -> Void
 
@@ -12,7 +12,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     Coordinator(
       defersHorizontalMotionToPageTurn: defersHorizontalMotionToPageTurn,
       isEnabled: isEnabled,
-      pencilInputGate: pencilInputGate,
+      inputGate: inputGate,
       onCamera: onCamera,
       onUndo: onUndo
     )
@@ -34,7 +34,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     context.coordinator.defersHorizontalMotionToPageTurn =
       defersHorizontalMotionToPageTurn
     context.coordinator.isEnabled = isEnabled
-    context.coordinator.pencilInputGate = pencilInputGate
+    context.coordinator.inputGate = inputGate
     if let window = view.window {
       context.coordinator.install(on: window, inside: view)
     }
@@ -59,26 +59,30 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     }
     var onCamera: (WorkspaceMagnificationPhase) -> Void
     var onUndo: () -> Void
-    var pencilInputGate: PencilInputGate {
-      didSet { recognizer?.pencilInputGate = pencilInputGate }
+    var inputGate: NotebookInputGate {
+      didSet {
+        recognizer?.inputGate = inputGate
+        contactObserver?.use(inputGate)
+      }
     }
 
     private weak var hostView: UIView?
     private weak var sceneView: UIView?
     private var recognizer: TwoFingerPaperGestureRecognizer?
+    private var contactObserver: NotebookContactObserver?
     private var repeatTask: Task<Void, Never>?
 
     init(
       defersHorizontalMotionToPageTurn: Bool,
       isEnabled: Bool,
-      pencilInputGate: PencilInputGate,
+      inputGate: NotebookInputGate,
       onCamera: @escaping (WorkspaceMagnificationPhase) -> Void,
       onUndo: @escaping () -> Void
     ) {
       self.defersHorizontalMotionToPageTurn =
         defersHorizontalMotionToPageTurn
       self.isEnabled = isEnabled
-      self.pencilInputGate = pencilInputGate
+      self.inputGate = inputGate
       self.onCamera = onCamera
       self.onUndo = onUndo
     }
@@ -104,19 +108,28 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       recognizer.delaysTouchesEnded = false
       recognizer.defersHorizontalMotionToPageTurn =
         defersHorizontalMotionToPageTurn
-      recognizer.pencilInputGate = pencilInputGate
+      recognizer.inputGate = inputGate
       recognizer.isEnabled = isEnabled
       recognizer.delegate = self
       hostView.addGestureRecognizer(recognizer)
+      let observer = NotebookContactObserver(gate: inputGate)
+      observer.delegate = self
+      hostView.addGestureRecognizer(observer)
       self.hostView = hostView
       self.sceneView = sceneView
       self.recognizer = recognizer
+      contactObserver = observer
     }
 
     func uninstall() {
       repeatTask?.cancel()
       repeatTask = nil
       if let recognizer { hostView?.removeGestureRecognizer(recognizer) }
+      if let contactObserver {
+        contactObserver.finish()
+        hostView?.removeGestureRecognizer(contactObserver)
+      }
+      contactObserver = nil
       recognizer = nil
       hostView = nil
       sceneView = nil
@@ -222,6 +235,47 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       true
     }
   }
+}
+
+/// The existing window gesture owner observes contact lifetime independently
+/// of which gesture wins. It never delays, cancels, or claims the touch.
+@MainActor
+final class NotebookContactObserver: UIGestureRecognizer {
+  private let source = UUID()
+  private var contacts: Set<ObjectIdentifier> = []
+  private var gate: NotebookInputGate
+
+  init(gate: NotebookInputGate) {
+    self.gate = gate
+    super.init(target: nil, action: nil)
+    cancelsTouchesInView = false
+    delaysTouchesBegan = false
+    delaysTouchesEnded = false
+  }
+
+  func use(_ next: NotebookInputGate) {
+    guard gate !== next else { return }
+    if !contacts.isEmpty { gate.endContact(source: source); next.beginContact(source: source) }
+    gate = next
+  }
+
+  override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+  override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+  override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+    contacts.formUnion(touches.map(ObjectIdentifier.init))
+    gate.beginContact(source: source)
+  }
+  override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) { end(touches) }
+  override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { end(touches) }
+  private func end(_ touches: Set<UITouch>) {
+    contacts.subtract(touches.map(ObjectIdentifier.init))
+    if contacts.isEmpty { finish(); state = .failed }
+  }
+  func finish() {
+    contacts.removeAll()
+    gate.endContact(source: source)
+  }
+  override func reset() { super.reset(); finish() }
 }
 
 @MainActor

@@ -129,6 +129,26 @@ try {
     {kind:"updateElement",target:page,id:"meaning",values:{frame}}]},"composition_scope");
   checked.push("atomic composition proposal, explicit movement scope and context-bound application");
 
+  const inputPath = join(root,"runtime","input.json");
+  const inputActivity = {deviceID:appActor,sessionID:randomUUID(),sequence:1,targets:[page]};
+  await writeFile(inputPath,JSON.stringify([inputActivity]));
+  const heldAction = {action_id:randomUUID(),summary:"После касания",expected:await pageExpectation(),operations:[
+    {kind:"insertElement",target:page,id:"after-contact",values:{kind:"markdown",source:"Continued",frame}}]};
+  const heldResult = await client.callTool({name:"notebook_apply",arguments:heldAction});
+  assert.equal(heldResult.isError,true);
+  assert.equal((heldResult.structuredContent as Data).code,"input_active");
+  assert.equal((heldResult.structuredContent as Data).status,"pending");
+  assert.equal((heldResult.structuredContent as Data).acceptance,"not_saved");
+  await rejected("notebook_action",{action_id:heldAction.action_id},"target_missing");
+  const release = setTimeout(()=>{ void writeFile(inputPath,JSON.stringify([{...inputActivity,sequence:2,targets:[]}])); },150);
+  try {
+    const resumed = await call("notebook_apply",heldAction);
+    assert.equal(resumed.action.id.toLowerCase(),heldAction.action_id);
+    assert.deepEqual((await call("notebook_apply",heldAction)).action,resumed.action);
+  } finally { clearTimeout(release); }
+  await call("notebook_undo",{action_id:heldAction.action_id});
+  checked.push("bounded contact wait, truthful not-saved status and idempotent retry after release");
+
   const a = randomUUID(), b = randomUUID();
   await apply([a, b].map(id => ({ kind: "createBoard", target: board(), id, values: { center: point } })), await boardExpectations());
   const readA = await call("notebook_read_board", { board_id: a });

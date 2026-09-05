@@ -182,7 +182,7 @@ final class DrawingOwnershipTests: XCTestCase {
     var counter: UInt64 = 0
     let delivered = expectation(description: "local drawing serialized")
     let coordinator = PencilCanvasView.Coordinator(
-      pencilInputGate: PencilInputGate(),
+      inputGate: NotebookInputGate(),
       reserveAction: { _ in
         counter += 1
         return VersionStamp(counter: counter, actor: actorID)
@@ -213,7 +213,7 @@ final class DrawingOwnershipTests: XCTestCase {
     let delivered = expectation(description: "both erasers serialized")
     delivered.expectedFulfillmentCount = 2
     let coordinator = PencilCanvasView.Coordinator(
-      pencilInputGate: PencilInputGate(),
+      inputGate: NotebookInputGate(),
       reserveAction: { _ in
         counter += 1
         return VersionStamp(counter: counter, actor: actorID)
@@ -258,7 +258,7 @@ final class DrawingOwnershipTests: XCTestCase {
 
   @MainActor
   func testPrewarmedSheetCannotReplaceTheCurrentPageFinisher() {
-    let gate = PencilInputGate()
+    let gate = NotebookInputGate()
     let current = UUID()
     let neighbour = UUID()
     var events: [String] = []

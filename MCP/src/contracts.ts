@@ -19,8 +19,9 @@ const action = z.object({
  * remains alongside it, with source schemas on the typed operation inputs. */
 export const notebookResponseSchema = z.object({
   status: z.enum(["ready","saved","pending","error","snapshot_pending","placement_unavailable"]).optional(),
-  code: z.string().optional().describe("revision_conflict: reread the explicit owner; target_missing: resolve its path; placement_unavailable: choose another surface; snapshot_pending: retain context and retry; action_id_conflict: use a fresh action ID for a different action; composition_scope: restrict movement to context sources or explicitly list additional_owners."),
+  code: z.string().optional().describe("revision_conflict: reread the explicit owner; target_missing: resolve its path; placement_unavailable: choose another surface; snapshot_pending: retain context and retry; action_id_conflict: use a fresh action ID for a different action; input_active: the action was not saved; retry the same request after contact ends; composition_scope: restrict movement to context sources or explicitly list additional_owners."),
   message: z.string().optional(),
+  acceptance: z.literal("not_saved").optional().describe("A pending input response has not queued or accepted the action. Retry the identical request after contact ends."),
   action:action.optional(),
   target: z.object({kind:z.string(),id:z.string(),boardID:z.string().optional()}).optional(),
   expected: z.union([z.string(),z.array(z.object({target:z.json(),revision:z.string(),stateRevision:z.string().optional(),sourceRevision:z.string().optional()}))]).optional(),
