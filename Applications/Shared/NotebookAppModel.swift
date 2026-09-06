@@ -1527,11 +1527,11 @@ final class NotebookAppModel {
     #endif
   }
 
-  func publishHumanContext(_ references: [CollaborationReference]) {
+  func publishHumanContext(_ selection: NotebookAttentionSelection) {
     let actor = actorID
     isPointing = false
     enqueueStoreWrite(reload: true) { store in
-      _ = try store.appendContext(references: references, author: .human, actor: actor, select: true)
+      _ = try store.appendContext(references: selection.resolvedReferences(), author: .human, actor: actor, select: true)
     }
   }
 
@@ -1668,11 +1668,19 @@ final class NotebookAppModel {
   func completeReturnToPlace() { requestedReturn = nil; highlightedReference = nil }
 
   func locationTitle(for reference: CollaborationReference) -> String {
-    let item = workspace?.items.first { $0.id == reference.target.id || $0.pageIDs.contains(reference.target.id) }
-    if reference.target.kind == .page, let item, let index = item.pageIDs.firstIndex(of: reference.target.id) {
-      return "\(item.title) · лист \(index + 1)"
+    let itemID = reference.target.kind == .page
+      ? sceneIndex?.pageOwner(pageID: reference.target.id) : reference.target.id
+    guard let itemID, let item = workspace?.item(id: itemID) else { return referenceTitle(reference) }
+    let kind: String = switch item.kind {
+      case .notebook: "Тетрадь"
+      case .document: "Документ"
+      case .board: "Доска"
     }
-    return item?.title ?? referenceTitle(reference)
+    let title = item.title.isEmpty ? kind : item.title
+    if reference.target.kind == .page, let index = item.pageIDs.firstIndex(of: reference.target.id) {
+      return "\(title) · лист \(index + 1)"
+    }
+    return title
   }
 
   func completeShow(_ reference: CollaborationReference) {

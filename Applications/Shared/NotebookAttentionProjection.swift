@@ -51,19 +51,27 @@ enum NotebookAttentionProjection {
       width:max(8,local.width * presence.camera.scale),height:max(8,local.height * presence.camera.scale))
   }
 
-  static func references(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence) -> [CollaborationReference] {
+  static func capture(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence) -> NotebookAttentionSelection? {
+    guard let workspace = model.workspace, let hierarchy = model.boardHierarchy, let ink = model.spatialInk else { return nil }
+    let fragments = fragments(start: start, end: end, model: model, presence: presence)
+    guard !fragments.isEmpty else { return nil }
+    return .init(fragments: fragments, workspace: workspace, hierarchy: hierarchy, ink: ink,
+      pages: model.pages, documents: model.documents, states: model.documentStates)
+  }
+
+  private static func fragments(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence) -> [NotebookAttentionSelection.Fragment] {
     guard presence.mode == .board, hypot(end.x - start.x, end.y - start.y) > 8,
       let index = model.sceneIndex, !model.scenePreparationPending else {
-      return reference(start: start, end: end, model: model, presence: presence).map { [$0] } ?? []
+      return fragment(start: start, end: end, model: model, presence: presence).map { [$0] } ?? []
     }
     let selection = CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x), height: abs(end.y - start.y))
-    var result = reference(start: start, end: end, model: model, presence: presence).map { [$0] } ?? []
+    var result = fragment(start: start, end: end, model: model, presence: presence).map { [$0] } ?? []
     for item in index.workset(presence: presence).items {
       let box = item.geometry.screenFrame(center: item.center, camera: presence.camera, viewport: presence.viewport)
       let intersection = selection.intersection(CGRect(x: box.x, y: box.y, width: box.width, height: box.height))
       guard !intersection.isNull, intersection.width > 0, intersection.height > 0,
         !result.contains(where: { $0.target.id == item.id }), result.count < 32 else { continue }
-      if let reference = reference(start: .init(x: intersection.minX, y: intersection.minY),
+      if let reference = fragment(start: .init(x: intersection.minX, y: intersection.minY),
         end: .init(x: intersection.maxX, y: intersection.maxY), model: model, presence: presence, ownerID: item.id) {
         result.append(reference)
       }
@@ -71,10 +79,9 @@ enum NotebookAttentionProjection {
     return result
   }
 
-  static func reference(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence, ownerID: UUID? = nil) -> CollaborationReference? {
+  private static func fragment(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence, ownerID: UUID? = nil) -> NotebookAttentionSelection.Fragment? {
     guard !model.scenePreparationPending, let index = model.sceneIndex,
-      let content = model.collaborationContent, let files = try? content.sourceFiles(),
-      let board = content.hierarchy.board(presence.boardID) else { return nil }
+      let workspace = model.workspace, let board = index.board(id: presence.boardID) else { return nil }
     let dragged = hypot(end.x-start.x,end.y-start.y) > 8
     let rect = CGRect(x:min(start.x,end.x),y:min(start.y,end.y),width:max(1,abs(end.x-start.x)),height:max(1,abs(end.y-start.y)))
     let admitted = index.workset(presence: presence)
@@ -92,7 +99,7 @@ enum NotebookAttentionProjection {
       let box = item.geometry.screenFrame(center:item.center,camera:presence.camera,viewport:presence.viewport)
       region = .init(x:max(0,(rect.minX-box.x)/presence.camera.scale),y:max(0,(rect.minY-box.y)/presence.camera.scale),
         width:rect.width/presence.camera.scale,height:rect.height/presence.camera.scale)
-      if presence.focusedItemID == item.id && presence.mode == .page, let pageID = content.workspace.selectedPageID {
+      if presence.focusedItemID == item.id && presence.mode == .page, let pageID = workspace.selectedPageID {
         target = .init(kind:.page,id:pageID)
         if !dragged { elementID = model.pages[pageID]?.elements.last { CGRect(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height).contains(CGPoint(x:region.x,y:region.y)) }?.id }
       } else if presence.focusedItemID == item.id && presence.mode == .document,
@@ -116,8 +123,7 @@ enum NotebookAttentionProjection {
         }
       }
     }
-    guard let revision = try? NotebookStore.referenceRevision(target:target,elementID:elementID,files:files) else { return nil }
-    return .init(target:target,elementID:elementID,region:region,worldOrigin:origin,pageIndex:pageIndex,revision:revision,
+    return .init(target:target,elementID:elementID,region:region,worldOrigin:origin,pageIndex:pageIndex,
       label:dragged ? "Амир указал область" : elementID == nil ? "Амир указал место" : "Амир указал фрагмент")
   }
 }

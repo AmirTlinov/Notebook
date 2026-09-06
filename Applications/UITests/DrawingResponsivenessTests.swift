@@ -94,6 +94,15 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertFalse(app.staticTexts["Укажите фрагмент · протяните для области"].exists)
     XCTAssertFalse(pointer.isSelected)
     XCTAssertTrue(app.buttons["drawing-tool-eraser"].isHittable)
+    let history = app.buttons["collaboration-history"]
+    XCTAssertTrue(history.waitForExistence(timeout: 3), "The captured source must also reach the shared context")
+    history.tap()
+    XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForExistence(timeout: 2))
+    XCTAssertTrue(app.staticTexts["Амир указал область"].firstMatch.exists)
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "human-pointer-prepared-source"; proof.lifetime = .keepAlways; add(proof)
+    app.buttons["Готово"].tap()
+    XCTAssertTrue(app.buttons["drawing-tool-eraser"].isHittable)
   }
 
   func testEraserAndPenSelectDirectlyBeforeOpeningPenSettings() {

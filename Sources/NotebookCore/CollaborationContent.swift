@@ -74,7 +74,7 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
   }
 
   /// These are the inputs of referenceRevision, not another content store.
-  func referenceFilePaths(for targets: [CollaborationTarget]) -> Set<String> {
+  public func referenceFilePaths(for targets: [CollaborationTarget]) -> Set<String> {
     var paths = Set<String>()
     for target in targets {
       let suffix = target.id.uuidString.lowercased() + ".json"

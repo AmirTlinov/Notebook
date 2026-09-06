@@ -36,10 +36,13 @@ final class SharedAttentionTests: XCTestCase {
       viewport:.init(x:834,y:1194),focusedItemID:workspace.selectedItemID,openProgress:1)
     model.updatePresence(presence,settled:true)
     try await waitForScene(model)
-    let reference = try XCTUnwrap(NotebookAttentionProjection.reference(start:.init(x:100,y:100),end:.init(x:220,y:200),model:model,presence:presence))
+    let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start:.init(x:100,y:100),end:.init(x:220,y:200),model:model,presence:presence))
+    let prepared = try await Task.detached { try selection.resolvedReferences() }.value
+    let reference = try XCTUnwrap(prepared.first)
     XCTAssertEqual(reference.target,.init(kind:.page,id:page.id))
+    XCTAssertEqual(model.locationTitle(for: reference), "Тетрадь · лист 1")
     model.isPointing = true
-    model.publishHumanContext([reference])
+    model.publishHumanContext(selection)
     XCTAssertFalse(model.isPointing)
     XCTAssertFalse(model.referenceChanged(reference))
     model.moveItem(workspace.selectedItemID,to:center.offsetBy(x:100,y:50))
@@ -98,10 +101,11 @@ final class SharedAttentionTests: XCTestCase {
       camera: .init(center: .init(x: 550, y: 0), scale: 0.3), viewport: .init(x: 834, y: 1194))
     model.updatePresence(presence, settled: true)
     try await waitForScene(model)
-    let references = NotebookAttentionProjection.references(start: .init(x: 80, y: 350), end: .init(x: 760, y: 850), model: model, presence: presence)
+    let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start: .init(x: 80, y: 350), end: .init(x: 760, y: 850), model: model, presence: presence))
+    let references = try await Task.detached { try selection.resolvedReferences() }.value
     XCTAssertTrue(references.contains { $0.target.id == first && $0.target.kind == .cover })
     XCTAssertTrue(references.contains { $0.target.id == second && $0.target.kind == .cover })
-    model.publishHumanContext(references)
+    model.publishHumanContext(selection)
     await model.finishPendingPersistence()
     let context = try XCTUnwrap(model.activeSharedContext)
     XCTAssertEqual(context.entries.first?.references, references)
@@ -160,6 +164,43 @@ final class SharedAttentionTests: XCTestCase {
     model.confirmVisibleActions(presence: presence, scene: detailed)
     await model.finishPendingPersistence()
     XCTAssertTrue(try XCTUnwrap(model.store.deviceActionReceipts().first { $0.id == action.id }).displayComplete)
+  }
+
+  @MainActor
+  func testPointingReturnsTheToolBeforePreparationAndKeepsTheSeenSourceAfterNavigation() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let first = try XCTUnwrap(model.workspace?.selectedItemID)
+    let page = try XCTUnwrap(model.activePage)
+    let second = try XCTUnwrap(model.createNotebook(at: .init(x: 2000, y: 0)))
+    model.selectItem(first)
+    let workspace = try XCTUnwrap(model.workspace)
+    let center = try XCTUnwrap(model.board?.focusedCenter(of: first))
+    let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .page,
+      camera: .init(center: center, scale: 1), viewport: .init(x: 834, y: 1194), focusedItemID: first, openProgress: 1)
+    model.updatePresence(presence, settled: true)
+    try await waitForScene(model)
+    let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start: .init(x: 100, y: 100),
+      end: .init(x: 240, y: 180), model: model, presence: presence))
+    model.isPointing = true
+    model.publishHumanContext(selection)
+    XCTAssertFalse(model.isPointing, "A control action must not wait for JSON, hashing or the file lock")
+    XCTAssertEqual(model.presence, presence)
+    model.selectItem(second)
+    var later = page
+    XCTAssertTrue(later.replaceElements([.init(id: "later-text", kind: .markdown,
+      frame: .init(x: 120, y: 120, width: 100, height: 40), source: "New meaning", html: "<p>New meaning</p>")], actor: UUID()))
+    model.receivePeerMessage(.page(later))
+    await model.finishPendingPersistence()
+    let context = try XCTUnwrap(model.activeSharedContext)
+    let reference = try XCTUnwrap(context.entries.first?.references.first)
+    XCTAssertEqual(reference.target, .init(kind: .page, id: page.id))
+    XCTAssertEqual(reference.revision, try NotebookStore.referenceRevision(target: reference.target,
+      files: ["pages/\(page.id.uuidString.lowercased()).json": .encode(page)]))
+    XCTAssertNotEqual(reference.revision, try model.store.referenceRevision(target: reference.target))
+    XCTAssertEqual(model.workspace?.selectedItemID, second)
   }
 
   @MainActor
