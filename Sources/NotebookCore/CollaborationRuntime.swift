@@ -127,7 +127,7 @@ extension NotebookStore {
   public func targetReceiptURL(_ id: UUID) -> URL { targetPreviewsURL.appendingPathComponent(id.uuidString.lowercased() + ".json") }
 
   public func referenceRevision(target: CollaborationTarget, elementID: String? = nil) throws -> String {
-    let files = try collaborationSnapshot()
+    let files = try referenceSourceFiles(target: target)
     return try Self.referenceRevision(target: target, elementID: elementID, files: files)
   }
 
@@ -169,16 +169,16 @@ extension NotebookStore {
         let actions = files["spatial-ink.json"]?["actions"]?.array.filter { action in
           action["spans"]?.array.contains { $0["surface"]?["ownerID"]?.string.flatMap(UUID.init(uuidString:)) == target.id } == true
         } ?? []
-        content = .object(["item": item ?? .null, "elements": .array(elements), "ink": .array(actions),
-          "paperSize": files["documents/" + suffix]?["paperSize"] ?? .null])
+        var cover: [String: JSONValue] = ["item": item ?? .null, "elements": .array(elements), "ink": .array(actions),
+          "paperSize": files["documents/" + suffix]?["paperSize"] ?? .null]
+        if item?["kind"]?.string == "board" {
+          cover["portal"] = .string(try referenceRevision(target: .init(kind: .board, id: target.id), files: files))
+        }
+        content = .object(cover)
       } else {
         let tree = try hierarchy.decode(BoardHierarchy.self)
-        var descendants: Set<UUID> = [target.id]
-        var pending = [target.id]
-        while let id = pending.popLast(), let board = tree.board(id) {
-          for child in board.itemIDs where tree.board(child) != nil && descendants.insert(child).inserted { pending.append(child) }
-        }
-        let itemIDs = Set(descendants.flatMap { tree.board($0)?.itemIDs ?? [] })
+        let descendants = tree.descendantBoardIDs(including: target.id)
+        let itemIDs = Set(tree.boards.filter { descendants.contains($0.id) }.flatMap { $0.board.itemIDs })
         let nodes = (hierarchy["boards"]?.array ?? []).filter { $0["id"]?.string.flatMap(UUID.init(uuidString:)).map(descendants.contains) == true }
         let items = (workspace["items"]?.array ?? []).filter { $0["id"]?.string.flatMap(UUID.init(uuidString:)).map(itemIDs.contains) == true }
         let ink = (files["spatial-ink.json"]?["actions"]?.array ?? []).filter { action in
@@ -197,7 +197,15 @@ extension NotebookStore {
 
   public func requestTargetRender(target: CollaborationTarget, expectedRevision: String,
     region: PageRect? = nil, worldOrigin: WorldPoint? = nil, pageIndex: Int = 0) throws -> TargetRenderRequest {
-    let files = try collaborationSnapshot()
+    try prepare()
+    return try withMutationLock {
+      try enqueueTargetRender(target: target, expectedRevision: expectedRevision,
+        region: region, worldOrigin: worldOrigin, pageIndex: pageIndex)
+    }
+  }
+
+  private func enqueueTargetRender(target: CollaborationTarget, expectedRevision: String,
+    region: PageRect?, worldOrigin: WorldPoint?, pageIndex: Int) throws -> TargetRenderRequest {
     guard target.kind != .workspace else { throw CollaborationError("invalid_reference", "Снимок принадлежит доске, обложке, листу или странице документа.") }
     if let region {
       guard [region.x,region.y,region.width,region.height].allSatisfy(\.isFinite),
@@ -206,6 +214,7 @@ extension NotebookStore {
       }
     }
     guard (0...100_000).contains(pageIndex) else { throw CollaborationError("invalid_reference", "Номер страницы находится в допустимом диапазоне.") }
+    let files = try readReferenceSourceFiles(target: target)
     let source = try Self.referenceRevision(target: target, files: files)
     let actual = try Self.targetContentRevision(target: target, files: files)
     guard actual == expectedRevision.lowercased() else {
@@ -218,8 +227,7 @@ extension NotebookStore {
     let uuid = String(hex[0..<8]) + "-" + String(hex[8..<12]) + "-4" + String(hex[13..<16]) + "-8" + String(hex[17..<20]) + "-" + String(hex[20..<32])
     let request = TargetRenderRequest(id: UUID(uuidString: uuid)!, target: target, sourceRevision: source,
       region: region, worldOrigin: worldOrigin, pageIndex: pageIndex, pageVisionRevision: nil, createdAt: Date())
-    try prepare()
-    return try withMutationLock { try enqueueRenderRequest(request) }
+    return try enqueueRenderRequest(request)
   }
 
   /// The page itself is the addressed source. A cold ink map does not load or

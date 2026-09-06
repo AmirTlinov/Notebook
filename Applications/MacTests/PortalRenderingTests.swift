@@ -48,7 +48,7 @@ final class PortalRenderingTests: XCTestCase {
     for size in [SpatialPoint(x: 834, y: 1_194), SpatialPoint(x: 1_366, y: 1_024)] {
       let camera = BoardPortalProjection.entryCamera(portalCamera: hierarchy.portalCamera(childID)!, viewport: size)
       let presence = SessionPresence(boardID: childID, mode: .board, camera: camera, viewport: size)
-      let sourceIndex = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, documents: model.documents)
+      let sourceIndex = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: model.documents.mapValues(\.paperSize))
       let painter = SceneCompositionRenderer(index: sourceIndex, hierarchy: hierarchy, journal: ink)
       let parent = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
         camera: BoardPortalProjection.parentBoundaryCamera(portalCenter: .zero, viewport: size), viewport: size)
@@ -106,7 +106,7 @@ final class PortalRenderingTests: XCTestCase {
       _ = ink.append(tool: tool, spans: [.init(surface: .cover(notebook), samples: samples)], actor: actor)
     }
     model.receivePeerMessage(.spatialInk(ink))
-    let sourceIndex = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, documents: model.documents)
+    let sourceIndex = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: model.documents.mapValues(\.paperSize))
     for scale in [0.3, 0.6] {
       let size = SpatialPoint(x: 1194, y: 834)
       let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
@@ -152,7 +152,7 @@ final class PortalRenderingTests: XCTestCase {
         let parent = SpatialCamera(center: .init(x: 24, y: -17), scale: fill * ratio)
         let camera = try XCTUnwrap(BoardPortalProjection.enteringCamera(from: parent,
           portalCamera: portalCamera, portalCenter: .zero, viewport: size))
-        let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, documents: model.documents)
+        let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: model.documents.mapValues(\.paperSize))
         let painter = SceneCompositionRenderer(index: index, hierarchy: hierarchy, journal: try XCTUnwrap(model.spatialInk))
         let first = try pixels(try await painter.render(presence: .init(boardID: workspace.rootBoardID,
           mode: .board, camera: parent, viewport: size), scale: 1).png, size: size)

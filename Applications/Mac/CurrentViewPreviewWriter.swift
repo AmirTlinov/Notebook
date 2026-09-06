@@ -38,7 +38,7 @@ enum CurrentViewPreviewWriter {
     switch presence.mode {
     case .board, .cover:
       let index = try await WorkspaceSceneIndex.prepare(workspace: workspace, hierarchy: board,
-        documents: model.documents, reusing: model.sceneIndex)
+        paperSizes: model.documents.mapValues(\.paperSize), reusing: model.sceneIndex)
       let result = try await SceneCompositionRenderer(index: index, hierarchy: board, journal: spatialInk,
         permitsPreparation: { model.permitsBackgroundPreparation }).render(presence: presence)
       png = result.png
@@ -93,14 +93,15 @@ enum CurrentViewPreviewWriter {
 
   @MainActor
   static func writeTarget(_ request: TargetRenderRequest, model: NotebookAppModel) async throws {
+    let store = model.store
     if let revision = request.pageVisionRevision {
       guard request.target.kind == .page, request.region == nil, request.worldOrigin == nil,
-        request.pageIndex == 0, let page = model.pages[request.target.id],
-        page.drawingStamp.revision == revision else { throw PreviewError.sourceChanged }
+        request.pageIndex == 0 else { throw PreviewError.invalidSurface }
       guard model.permitsBackgroundPreparation else { throw PreviewError.inputActive }
-      let store = model.store
       let worker = Task.detached(priority: .utility) {
-        guard try NotebookStore.pageVisionSourceRevision(page) == request.sourceRevision else {
+        let page = try store.loadPage(request.target.id)
+        guard page.drawingStamp.revision == revision,
+          try NotebookStore.pageVisionSourceRevision(page) == request.sourceRevision else {
           throw PreviewError.sourceChanged
         }
         if !store.hasCurrentPageVision(page) { try PagePreviewWriter.write(page, store: store) }
@@ -117,8 +118,11 @@ enum CurrentViewPreviewWriter {
       try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
       return
     }
-    guard let content = model.collaborationContent else { throw PreviewError.sourceChanged }
-    let files = try await Task.detached(priority: .utility) { try content.sourceFiles() }.value
+    guard model.permitsBackgroundPreparation else { throw PreviewError.inputActive }
+    let reader = Task.detached(priority: .utility) {
+      try store.referenceSourceFiles(target: request.target)
+    }
+    let files = try await withTaskCancellationHandler { try await reader.value } onCancel: { reader.cancel() }
     guard try await Task.detached(priority: .utility, operation: {
       try NotebookStore.referenceRevision(target: request.target, files: files)
     }).value == request.sourceRevision else { throw PreviewError.sourceChanged }
@@ -132,7 +136,10 @@ enum CurrentViewPreviewWriter {
     defer { documentRaster?.release() }
     switch target.kind {
     case .page:
-      guard let page = model.pages[target.id] else { throw PreviewError.invalidSurface }
+      let page = try await Task.detached(priority: .utility) {
+        guard let raw = files["pages/\(target.id.uuidString.lowercased()).json"] else { throw PreviewError.invalidSurface }
+        return try raw.decode(PageDocument.self)
+      }.value
       full = try await pageCompositeSnapshot(page, permitsPreparation: { model.permitsBackgroundPreparation })
       inkRegions = try await Task.detached(priority: .utility) { try PageVisionRenderer.render(page).regions.map { $0.receipt.contentPoints } }.value
       await PageInkRasterCache.shared.prepare(page)
@@ -140,18 +147,36 @@ enum CurrentViewPreviewWriter {
       inkRaster = try await raster(NSImage(cgImage: ink, size: .init(width: page.size.width, height: page.size.height)))
       diagnostics = full.diagnostics
     case .document:
-      guard let document = model.documents[target.id], let state = model.documentStates[target.id] else { throw PreviewError.invalidSurface }
+      let (document, state) = try await Task.detached(priority: .utility) {
+        let suffix = target.id.uuidString.lowercased() + ".json"
+        guard let source = files["documents/" + suffix], let state = files["document-states/" + suffix] else {
+          throw PreviewError.invalidSurface
+        }
+        return (try source.decode(DocumentDocument.self), try state.decode(DocumentStateJournal.self))
+      }.value
       let preparedDocument = try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: request.pageIndex)
       documentRaster = preparedDocument
       full = try await raster(preparedDocument.image)
       diagnostics = DocumentRenderRegistry.shared.entry(document: document, state: state, pageIndex: request.pageIndex)?.diagnostics ?? []
     case .board, .cover:
+      let (workspace, hierarchy, journal, paperSizes) = try await Task.detached(priority: .utility) {
+        guard let catalog = files["workspace.json"], let tree = files["board.json"],
+          let ink = files["spatial-ink.json"] else { throw PreviewError.invalidSurface }
+        var paperSizes: [UUID: DocumentPaperSize] = [:]
+        for (path, value) in files where path.hasPrefix("documents/") {
+          guard let id = UUID(uuidString: String(path.dropFirst("documents/".count).dropLast(".json".count))),
+            let paper = value["paperSize"] else { throw PreviewError.invalidSurface }
+          paperSizes[id] = try paper.decode(DocumentPaperSize.self)
+        }
+        return (try catalog.decode(WorkspaceIndex.self), try tree.decode(BoardHierarchy.self),
+          try ink.decode(SpatialInkJournal.self), paperSizes)
+      }.value
       let boardID = target.kind == .board ? target.id : target.boardID!
-      guard let board = content.hierarchy.board(boardID) else { throw PreviewError.invalidSurface }
+      guard let board = hierarchy.board(boardID) else { throw PreviewError.invalidSurface }
       let size: CGSize
       let center: WorldPoint
       if target.kind == .cover {
-        let geometry = model.itemGeometry(target.id)
+        let geometry = paperSizes[target.id].map(WorkspaceItemGeometry.document) ?? .notebook
         size = .init(width: geometry.width, height: geometry.height)
         guard let point = board.focusedCenter(of: target.id) else { throw PreviewError.invalidSurface }
         center = point
@@ -164,16 +189,19 @@ enum CurrentViewPreviewWriter {
       camera = projection
       let presence = SessionPresence(boardID: boardID, mode: target.kind == .cover ? .cover : .board,
         camera: projection, viewport: .init(x: size.width, y: size.height), focusedItemID: target.kind == .cover ? target.id : nil)
-      let index = try await WorkspaceSceneIndex.prepare(workspace: content.workspace, hierarchy: content.hierarchy,
-        documents: model.documents, reusing: model.sceneIndex)
-      let result = try await SceneCompositionRenderer(index: index, hierarchy: content.hierarchy, journal: content.ink,
-        permitsPreparation: { model.permitsBackgroundPreparation }).render(presence: presence)
+      let index = try await WorkspaceSceneIndex.prepare(workspace: workspace, hierarchy: hierarchy,
+        paperSizes: paperSizes, reusing: model.sceneIndex)
+      let renderer = SceneCompositionRenderer(index: index, hierarchy: hierarchy, journal: journal,
+        permitsPreparation: { model.permitsBackgroundPreparation })
+      let result = target.kind == .cover
+        ? try await renderer.renderCover(itemID: target.id, boardID: boardID)
+        : try await renderer.render(presence: presence)
       guard let image = NSImage(data: result.png) else { throw PreviewError.pngEncoding }
       full = RasterSnapshot(image: image, png: result.png)
       diagnostics = result.diagnostics
       if let ink = try await SpatialInkRasterSnapshot.prepare(
         surface: target.kind == .cover ? .cover(target.id) : .board(target.id),
-        camera: target.kind == .board ? projection : nil, size: size, journal: content.ink,
+        camera: target.kind == .board ? projection : nil, size: size, journal: journal,
         permitsPreparation: { model.permitsBackgroundPreparation }) {
         guard let image = NSImage(data: ink.png) else { throw PreviewError.pngEncoding }
         inkRegions = ink.regions
@@ -186,7 +214,7 @@ enum CurrentViewPreviewWriter {
     let output = target.kind == .board ? full : try crop(full, region: request.region)
     let ink = try inkRaster.map { target.kind == .board ? $0 : try crop($0, region: request.region) }
     let inkFingerprint = ink?.sha256 ?? "empty-ink"
-    let png = output.png, outputHash = output.sha256, store = model.store
+    let png = output.png, outputHash = output.sha256
     let outputCamera = camera, outputDiagnostics = diagnostics, outputRegions = inkRegions
     try await Task.detached(priority: .utility) {
       guard try store.referenceRevision(target: target) == request.sourceRevision else { throw PreviewError.sourceChanged }

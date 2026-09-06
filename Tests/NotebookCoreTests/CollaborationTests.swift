@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import Testing
 @testable import NotebookCore
 
@@ -42,6 +43,130 @@ private struct CollaborationFixture {
       "frame": .object(["x": .number(20), "y": .number(30), "width": .number(300), "height": .number(180)]),
       "source": .string("<p>Idea</p>"), "html": .string("<p>Idea</p>"), "state": .object(["count": .number(7)])])
   }
+}
+
+@Test("Целевой лист и ссылка не читают чужие страницы и историю ходов")
+func addressedReferenceIgnoresUnrelatedSources() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let otherID = UUID(), otherPage = UUID()
+  _ = try f.store.applyCollaborationAction(f.action([.init(kind: .createNotebook, target: f.board,
+    id: otherID.uuidString, values: ["pageID": .string(otherPage.uuidString), "center": try .encode(WorldPoint.zero)])],
+    targets: [f.board, f.index]), actor: f.agent)
+  let legacy = try f.store.collaborationSnapshot()
+  let expected = try NotebookStore.referenceRevision(target: f.page, files: legacy)
+  let request = try f.store.requestTargetRender(target: f.page, expectedRevision: f.expectation(f.page).revision)
+  try Data("unrelated damaged page".utf8).write(to: f.store.pageURL(otherPage))
+  try Data("unrelated damaged history".utf8).write(to:
+    f.store.collaborationActionsURL.appendingPathComponent(UUID().uuidString.lowercased() + ".json"))
+  let files = try f.store.referenceSourceFiles(target: f.page)
+  #expect(Set(files.keys) == ["pages/\(f.pageID.uuidString.lowercased()).json"])
+  #expect(try f.store.referenceRevision(target: f.page) == expected)
+  let reference = CollaborationReference(target: f.page, revision: expected)
+  #expect(try f.store.referenceStatus(reference).status == .current)
+  #expect(try f.store.requestTargetRender(target: f.page, expectedRevision: f.expectation(f.page).revision) == request)
+}
+
+@Test("Адрес документа читает его блоки и состояние, а состояние меняет идентичность снимка")
+func addressedDocumentIncludesItsInteractiveState() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let id = UUID(), target = CollaborationTarget(kind: .document, id: id)
+  _ = try f.store.applyCollaborationAction(f.action([.init(kind: .createDocument, target: f.board,
+    id: id.uuidString, values: ["center": try .encode(WorldPoint.zero), "paperSize": .string("letter"),
+      "blocks": .array([.object(["id": .string("counter"), "kind": .string("interactive"),
+        "html": .string("<button>+</button>"), "initialState": .number(0)])])])], targets: [f.board, f.index]), actor: f.agent)
+  let legacy = try f.store.collaborationSnapshot(), suffix = id.uuidString.lowercased() + ".json"
+  let files = try f.store.referenceSourceFiles(target: target)
+  #expect(Set(files.keys) == Set(["documents/" + suffix, "document-states/" + suffix]))
+  #expect(try NotebookStore.referenceRevision(target: target, files: files)
+    == NotebookStore.referenceRevision(target: target, files: legacy))
+  #expect(try NotebookStore.referenceRevision(target: target, elementID: "counter", files: files)
+    == NotebookStore.referenceRevision(target: target, elementID: "counter", files: legacy))
+  let version = try f.expectation(target).revision
+  let before = try f.store.requestTargetRender(target: target, expectedRevision: version)
+  var state = try f.store.loadDocumentState(id)
+  _ = state.commit(blockID: "counter", value: .number(7), actor: f.human)
+  try f.store.saveDocumentState(state)
+  let after = try f.store.requestTargetRender(target: target, expectedRevision: version)
+  #expect(before.id != after.id)
+  #expect(before.sourceRevision != after.sourceRevision)
+  try Data("unrelated damaged drawing".utf8).write(to: f.store.pageURL(f.pageID))
+  #expect(try f.store.referenceRevision(target: target) == after.sourceRevision)
+}
+
+@Test("Доска и обложка сохраняют прежний отпечаток, читая бумагу только своей ветви")
+func addressedBoardPreservesHistoricalIdentityAndScope() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let a = UUID(), b = UUID(), documentA = UUID(), documentB = UUID()
+  for id in [a, b] {
+    _ = try f.store.applyCollaborationAction(f.action([.init(kind: .createBoard, target: f.board,
+      id: id.uuidString, values: ["center": try .encode(WorldPoint.zero)])], targets: [f.board, f.index]), actor: f.agent)
+  }
+  for (boardID, id) in [(a, documentA), (b, documentB)] {
+    let target = CollaborationTarget(kind: .board, id: boardID)
+    _ = try f.store.applyCollaborationAction(f.action([.init(kind: .createDocument, target: target,
+      id: id.uuidString, values: ["center": try .encode(WorldPoint.zero), "paperSize": .string("letter"),
+        "blocks": .array([.object(["id": .string("body"), "kind": .string("markdown"),
+          "source": .string("This text belongs to the document, not its cover.")])])])], targets: [target, f.index]), actor: f.agent)
+  }
+  let targets = [CollaborationTarget(kind: .board, id: a), .init(kind: .cover, id: documentA, boardID: a)]
+  let legacy = try f.store.collaborationSnapshot()
+  let expected = try targets.map { try NotebookStore.referenceRevision(target: $0, files: legacy) }
+  try Data("unrelated damaged document".utf8).write(to: f.store.documentURL(documentB))
+  for (target, revision) in zip(targets, expected) {
+    let files = try f.store.referenceSourceFiles(target: target)
+    #expect(files["documents/\(documentA.uuidString.lowercased()).json"] == .object(["paperSize": .string("letter")]))
+    #expect(files["documents/\(documentB.uuidString.lowercased()).json"] == nil)
+    #expect(!files.keys.contains { $0.hasPrefix("pages/") || $0.hasPrefix("document-states/") || $0.hasPrefix("collaboration/") })
+    #expect(try f.store.referenceRevision(target: target) == revision)
+    #expect(try f.store.requestTargetRender(target: target, expectedRevision: f.expectation(target).revision).sourceRevision == revision)
+  }
+}
+
+@Test("Ссылка на портал включает дочернюю доску и размеры вложенной бумаги")
+func portalCoverReferenceOwnsItsVisibleChildSources() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let portalID = UUID(), documentID = UUID()
+  _ = try f.store.applyCollaborationAction(f.action([.init(kind: .createBoard, target: f.board,
+    id: portalID.uuidString, values: ["center": try .encode(WorldPoint.zero)])], targets: [f.board, f.index]), actor: f.agent)
+  let child = CollaborationTarget(kind: .board, id: portalID)
+  _ = try f.store.applyCollaborationAction(f.action([.init(kind: .createDocument, target: child,
+    id: documentID.uuidString, values: ["center": try .encode(WorldPoint.zero), "paperSize": .string("letter")])],
+    targets: [child, f.index]), actor: f.agent)
+  let portal = CollaborationTarget(kind: .cover, id: portalID, boardID: f.boardID)
+  let files = try f.store.referenceSourceFiles(target: portal)
+  #expect(files["documents/\(documentID.uuidString.lowercased()).json"] == .object(["paperSize": .string("letter")]))
+  let original = try f.store.referenceRevision(target: portal)
+  let content = try f.store.collaborationContent()
+  let memory = try content.sourceFiles(including: content.referenceFilePaths(for: [portal]))
+  #expect(try NotebookStore.referenceRevision(target: portal, files: memory) == original)
+  let parentVersion = try f.expectation(portal).revision
+  let before = try f.store.requestTargetRender(target: portal, expectedRevision: parentVersion)
+  _ = try f.store.applyCollaborationAction(f.action([.init(kind: .insertElement, target: child, id: "inside",
+    values: ["kind": .string("web"), "source": .string("<svg/>"), "html": .string("<svg/>"),
+      "frame": try .encode(PageRect(x: 0, y: 0, width: 100, height: 80)),
+      "worldOrigin": try .encode(WorldPoint.zero)])], targets: [child]), actor: f.agent)
+  #expect(try f.expectation(portal).revision == parentVersion)
+  let after = try f.store.requestTargetRender(target: portal, expectedRevision: parentVersion)
+  #expect(after.id != before.id)
+  #expect(after.sourceRevision != original)
+  #expect(try f.store.referenceStatus(.init(target: portal, revision: original)).status == .changed)
+}
+
+@Test("Отменённое чтение освобождает исполнителя, пока другой писатель держит замок")
+func addressedReferenceCancellationDoesNotWaitForTheWriterTimeout() async throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let descriptor = open(f.root.appendingPathComponent(".mutation.lock").path, O_CREAT | O_RDWR, 0o600)
+  #expect(descriptor >= 0)
+  guard descriptor >= 0 else { return }
+  defer { flock(descriptor, LOCK_UN); close(descriptor) }
+  #expect(flock(descriptor, LOCK_EX | LOCK_NB) == 0)
+  let read = Task.detached { try f.store.referenceSourceFiles(target: f.page) }
+  try await Task.sleep(for: .milliseconds(20))
+  read.cancel()
+  do {
+    _ = try await read.value
+    Issue.record("A cancelled reader must not acquire or wait out the writer's lock")
+  } catch { #expect(error is CancellationError) }
 }
 
 @Test("История готовит один срез только нужных владельцев и сохраняет точность доработок")

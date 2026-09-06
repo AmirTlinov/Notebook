@@ -836,6 +836,7 @@ public struct NotebookStore: Sendable {
     defer { close(descriptor) }
     let deadline = ProcessInfo.processInfo.systemUptime + 4
     while flock(descriptor,LOCK_EX | LOCK_NB) != 0 {
+      try Task.checkCancellation()
       guard errno == EWOULDBLOCK || errno == EINTR else { throw POSIXError(POSIXErrorCode(rawValue:errno) ?? .EIO) }
       guard ProcessInfo.processInfo.systemUptime < deadline else {
         throw CollaborationError("publication_pending", "Завершается публикация предыдущего хода. Повторите чтение.")

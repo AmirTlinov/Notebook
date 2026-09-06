@@ -100,6 +100,20 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
     boards.first(where: { $0.id == boardID })?.board
   }
 
+  /// A portal's sources are its whole reachable subtree, without repeatedly
+  /// scanning the flat archive for every child in a deep chain.
+  public func descendantBoardIDs(including root: UUID) -> Set<UUID> {
+    let indexed = Dictionary(uniqueKeysWithValues: boards.map { ($0.id, $0.board) })
+    guard indexed[root] != nil else { return [] }
+    var result: Set<UUID> = [root], pending = [root]
+    while let id = pending.popLast(), let board = indexed[id] {
+      for child in board.itemIDs where indexed[child] != nil && result.insert(child).inserted {
+        pending.append(child)
+      }
+    }
+    return result
+  }
+
   public func portalCamera(_ boardID: UUID) -> BoardPortalCamera? {
     boards.first(where: { $0.id == boardID })?.portalCamera
   }

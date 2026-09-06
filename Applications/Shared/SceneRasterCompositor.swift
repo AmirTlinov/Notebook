@@ -217,6 +217,7 @@ private actor CompositionPixels {
     guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
       bytesPerRow: ((width * 4 + 63) / 64) * 64, space: CGColorSpaceCreateDeviceRGB(),
       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw SceneRenderError.resourceLimit }
+    context.clear(CGRect(x: 0, y: 0, width: width, height: height))
     context.translateBy(x: 0, y: Double(height))
     context.scaleBy(x: Double(width) / size.width, y: -Double(height) / size.height)
     context.interpolationQuality = .high

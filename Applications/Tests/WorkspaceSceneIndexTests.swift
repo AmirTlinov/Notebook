@@ -8,7 +8,7 @@ import XCTest
 final class WorkspaceSceneIndexTests: XCTestCase {
   func testOneHundredThousandStoredItemsResolveFourVisibleOwnersWithoutCatalogScan() throws {
     let fixture = itemFixture(count: 100_000)
-    let index = WorkspaceSceneIndex(workspace: fixture.workspace, hierarchy: fixture.hierarchy, documents: [:])
+    let index = WorkspaceSceneIndex(workspace: fixture.workspace, hierarchy: fixture.hierarchy, paperSizes: [:])
     for offset in 0..<30 {
       let presence = SessionPresence(mode: .board,
         camera: .init(center: .init(x: 500 + Double(offset % 7), y: 700), scale: 0.4),
@@ -34,7 +34,7 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     let board = BoardDocument(freeItems: [.init(itemID: itemID, center: .zero, zIndex: 0, stamp: stamp)],
       elements: elements, stamp: stamp)
     let hierarchy = BoardHierarchy(rootBoardID: boardID, boards: [.init(id: boardID, board: board)], stamp: stamp)
-    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, documents: [:])
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
     let presence = SessionPresence(mode: .board, camera: .init(scale: 0.4), viewport: .init(x: 1194, y: 834))
     let limit = 48
     let pins: Set<WorkspaceSpatialID> = [.item(itemID), .element(elements.last!.id)]
@@ -59,7 +59,7 @@ final class WorkspaceSceneIndexTests: XCTestCase {
   func testPreparedProjectionKeepsLocalGeometryAfterTranslationAcrossDistantTiles() throws {
     let origin = WorldPoint(tileX: 1_000_000_000_000, tileY: -1_000_000_000_000, localX: 123.125, localY: 789.375)
     let fixture = itemFixture(count: 1000, origin: origin)
-    let index = WorkspaceSceneIndex(workspace: fixture.workspace, hierarchy: fixture.hierarchy, documents: [:])
+    let index = WorkspaceSceneIndex(workspace: fixture.workspace, hierarchy: fixture.hierarchy, paperSizes: [:])
     let presence = SessionPresence(mode: .board,
       camera: .init(center: origin.offsetBy(x: 500, y: 700), scale: 0.4), viewport: .init(x: 1194, y: 834))
     let visible = index.workset(presence: presence)

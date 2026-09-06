@@ -117,7 +117,7 @@ final class PortalPassageTests: XCTestCase {
     let hierarchy = try XCTUnwrap(scene.model.boardHierarchy)
     let start = try XCTUnwrap(scene.model.presence)
     let index = try await WorkspaceSceneIndex.prepare(workspace: workspace, hierarchy: hierarchy,
-      documents: scene.model.documents, reusing: scene.model.sceneIndex)
+      paperSizes: scene.model.documents.mapValues(\.paperSize), reusing: scene.model.sceneIndex)
     let distantID = try XCTUnwrap(workspace.items.first { $0.kind == .notebook }?.id)
     let distant = try XCTUnwrap(index.renderedItem(id: distantID, presence: start))
     XCTAssertFalse(index.workset(presence: start).items.contains { $0.id == distant.id },

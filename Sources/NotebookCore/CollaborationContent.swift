@@ -83,12 +83,16 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
       case .page: paths.insert("pages/" + suffix)
       case .document:
         paths.formUnion(["documents/" + suffix, "document-states/" + suffix])
-      case .cover:
-        paths.formUnion(["workspace.json", "board.json", "spatial-ink.json", "documents/" + suffix])
-      case .board:
+      case .cover, .board:
         paths.formUnion(["workspace.json", "board.json", "spatial-ink.json"])
-        // Board references include the physical paper sizes of their descendants.
-        paths.formUnion(documents.map { "documents/\($0.id.uuidString.lowercased()).json" })
+        if target.kind == .cover, workspace.item(id: target.id)?.kind != .board {
+          paths.insert("documents/" + suffix)
+        } else {
+          let descendants = hierarchy.descendantBoardIDs(including: target.id)
+          let items = hierarchy.boards.filter { descendants.contains($0.id) }.flatMap { $0.board.itemIDs }
+          paths.formUnion(items.filter { workspace.item(id: $0)?.kind == .document }
+            .map { "documents/\($0.uuidString.lowercased()).json" })
+        }
       }
     }
     return paths

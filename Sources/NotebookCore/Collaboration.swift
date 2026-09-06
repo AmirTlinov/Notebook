@@ -170,14 +170,8 @@ extension JSONValue {
   var object: [String: JSONValue] { if case .object(let value) = self { value } else { [:] } }
   var array: [JSONValue] { if case .array(let value) = self { value } else { [] } }
   var string: String? { if case .string(let value) = self { value } else { nil } }
-  subscript(_ key: String) -> JSONValue? { object[key] }
-
   static func encode<T: Encodable>(_ value: T) throws -> JSONValue {
     try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(value))
-  }
-
-  func decode<T: Decodable>(_ type: T.Type) throws -> T {
-    try JSONDecoder().decode(type, from: JSONEncoder().encode(self))
   }
 
   func setting(_ key: String, _ value: JSONValue?) -> JSONValue {

@@ -24,7 +24,7 @@ final class WorkspaceSceneFrameTests: XCTestCase {
     }
     let workspace = WorkspaceIndex(items: portals, selectedItemID: portals[0].id, selectedPageID: nil, stamp: stamp)
     let hierarchy = BoardHierarchy(rootBoardID: rootID, boards: nodes, stamp: stamp)
-    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, documents: [:])
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
     for budget in [32, 48, 96] {
       let presence = SessionPresence(mode: .board, camera: .init(scale: 0.15), viewport: .init(x: 1194, y: 834))
       let frame = WorkspaceSceneFrame(index: index, presence: presence,
@@ -52,7 +52,7 @@ final class WorkspaceSceneFrameTests: XCTestCase {
     let workspace = WorkspaceIndex(items: [item], selectedItemID: item.id, selectedPageID: item.pageIDs[0], stamp: stamp)
     let index = WorkspaceSceneIndex(workspace: workspace,
       hierarchy: .init(rootBoardID: WorkspaceRoot.boardID, boards: [.init(id: WorkspaceRoot.boardID, board: board)], stamp: stamp),
-      documents: [:])
+      paperSizes: [:])
     let presence = SessionPresence(mode: .cover, camera: .init(scale: 0.5), viewport: .init(x: 1194, y: 834),
       focusedItemID: item.id)
     let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil },

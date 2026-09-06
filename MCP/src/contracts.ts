@@ -31,6 +31,8 @@ export const notebookResponseSchema = z.object({
   contextID: z.uuid().optional(),
   additionalOwners: z.array(target).optional(),
   sourceRevision: z.string().optional(),
+  requestID: z.uuid().optional().describe("Stable derivative request identity; retry the same physical owner without changing the human camera."),
+  retryAfterMilliseconds: z.number().int().nonnegative().nullable().optional(),
   suggestion: z.string().optional(),
   visual: z.object({status:z.enum(["ready","pending"]),code:z.string().optional(),message:z.string().optional(),
     pngSHA256:z.string().optional(),surface:z.json().optional(),viewport:z.json().optional()}).optional(),

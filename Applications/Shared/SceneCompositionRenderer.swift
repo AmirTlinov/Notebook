@@ -30,10 +30,7 @@ final class SceneCompositionRenderer {
     let size = CGSize(width: presence.viewport.x, height: presence.viewport.y)
     let canvas = try await SceneRasterCompositor.create(size: size, scale: scale,
       resources: resources, permitsPreparation: permitsPreparation)
-    let journal = journal
-    let inkOwners = await Task.detached(priority: .utility) {
-      Set(journal.actions.filter(\.isActive).flatMap { $0.spans.map(\.surface) })
-    }.value
+    let inkOwners = await inkOwners()
     try checkPreparation()
     let frame = CGRect(origin: .zero, size: size)
     try await paintBoard(presence: presence, frame: frame, visible: frame,
@@ -41,6 +38,33 @@ final class SceneCompositionRenderer {
       inkOwners: inkOwners, canvas: canvas)
     let png = try await canvas.finishPNG()
     return .init(png: png, diagnostics: canvas.diagnostics)
+  }
+
+  /// A physical cover contains only its paper, contents and ink. Neighbouring
+  /// boards and shadows behind its transparent corners are not its sources.
+  func renderCover(itemID: UUID, boardID: UUID, scale: Double = 2) async throws -> Result {
+    try checkPreparation()
+    let presence = SessionPresence(boardID: boardID, mode: .cover, camera: .init(),
+      viewport: .init(x: 834, y: 1194), focusedItemID: itemID)
+    guard let item = index.renderedItem(id: itemID, presence: presence) else {
+      throw SceneRenderError.snapshotPending("cover_source")
+    }
+    let size = CGSize(width: item.geometry.width, height: item.geometry.height)
+    let canvas = try await SceneRasterCompositor.create(size: size, scale: scale,
+      resources: resources, permitsPreparation: permitsPreparation)
+    let frame = CGRect(origin: .zero, size: size)
+    try await paintCover(item, boardID: boardID, frame: frame, visible: frame,
+      transitionViewport: .init(x: size.width, y: size.height), passes: WorkspaceSceneProjection.portalPasses,
+      inkOwners: await inkOwners(), canvas: canvas)
+    let png = try await canvas.finishPNG()
+    return .init(png: png, diagnostics: canvas.diagnostics)
+  }
+
+  private func inkOwners() async -> Set<SurfaceID> {
+    let journal = journal
+    return await Task.detached(priority: .utility) {
+      Set(journal.actions.filter(\.isActive).flatMap { $0.spans.map(\.surface) })
+    }.value
   }
 
   private func paintBoard(presence: SessionPresence, frame: CGRect, visible: CGRect,

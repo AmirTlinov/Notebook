@@ -35,7 +35,7 @@ for (count, boardCount) in [(1000, 1000), (10_000, 10_000), (100_000, 100_000),
   precondition(hierarchy.isValid(items: items))
   let fixtureMS = milliseconds(since: fixtureStart)
   let prepareStart = now()
-  let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, documents: [:])
+  let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
   let prepareMS = milliseconds(since: prepareStart)
   var baselineTimes: [Double] = [], preparedTimes: [Double] = []
   var visibleCounts = Set<Int>(), visits = Set<Int>(), examinations = Set<Int>()
@@ -76,7 +76,7 @@ for count in [1000, 10_000, 100_000] {
   let hierarchy = BoardHierarchy(rootBoardID: WorkspaceRoot.boardID, boards: [.init(id: WorkspaceRoot.boardID, board: board)], stamp: stamp)
   precondition(hierarchy.isValid(items: workspace.items))
   let start = now()
-  let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, documents: [:])
+  let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
   let prepareMS = milliseconds(since: start)
   var times: [Double] = []
   var details = Set<Int>(), aggregates = Set<Int>(), examinations = Set<Int>(), visits = Set<Int>()

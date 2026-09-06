@@ -19,9 +19,12 @@ extension NotebookStore {
   /// A regional source is compared only after the common renderer has examined its final pixels.
   /// A missing baseline is never replaced by the newer source and called fresh.
   public func referenceStatus(_ reference: CollaborationReference, prepareRender: Bool = true) throws -> ReferenceStatus {
-    let files = try collaborationSnapshot()
+    let files: [String: JSONValue]
     let revision: String
-    do { revision = try Self.referenceRevision(target: reference.target, elementID: reference.elementID, files: files) }
+    do {
+      files = try referenceSourceFiles(target: reference.target)
+      revision = try Self.referenceRevision(target: reference.target, elementID: reference.elementID, files: files)
+    }
     catch let error as CollaborationError where error.code == "target_missing" { return .init(.targetMissing) }
     let result = try referenceStatus(reference, currentRevision: revision)
     if result.status == .checking, prepareRender {

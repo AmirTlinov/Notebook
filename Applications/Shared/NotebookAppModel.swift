@@ -51,9 +51,10 @@ final class NotebookAppModel {
         let documents = documents
         let previous = sceneIndex
         let result = await Task.detached(priority: .utility) {
+          let paperSizes = documents.mapValues(\.paperSize)
           let portals = Dictionary(uniqueKeysWithValues: boardHierarchy.boards.map { ($0.id, $0.portalCamera) })
-          let changed = previous?.represents(workspace: workspace, hierarchy: boardHierarchy, documents: documents) != true
-          let index = changed ? WorkspaceSceneIndex(workspace: workspace, hierarchy: boardHierarchy, documents: documents) : previous
+          let changed = previous?.represents(workspace: workspace, hierarchy: boardHierarchy, paperSizes: paperSizes) != true
+          let index = changed ? WorkspaceSceneIndex(workspace: workspace, hierarchy: boardHierarchy, paperSizes: paperSizes) : previous
           return (index, changed, portals)
         }.value
         // At most one builder exists. Obsolete work cannot publish or enqueue

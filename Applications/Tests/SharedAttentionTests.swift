@@ -148,7 +148,7 @@ final class SharedAttentionTests: XCTestCase {
     XCTAssertFalse(try XCTUnwrap(model.store.deviceActionReceipts().first { $0.id == action.id }).displayComplete,
       "A region label is not the displayed source, even when its exact revision is saved")
     let otherGeneration = WorkspaceSceneIndex(workspace: try XCTUnwrap(model.workspace),
-      hierarchy: try XCTUnwrap(model.boardHierarchy), documents: model.documents).workset(presence: presence)
+      hierarchy: try XCTUnwrap(model.boardHierarchy), paperSizes: model.documents.mapValues(\.paperSize)).workset(presence: presence)
     XCTAssertEqual(otherGeneration.elements.count, 2)
     XCTAssertNotEqual(otherGeneration.generationID, index.generationID)
     model.confirmVisibleActions(presence: presence, scene: otherGeneration)

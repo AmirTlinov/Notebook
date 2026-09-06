@@ -179,19 +179,20 @@ final class MacPreviewPublisher {
   private func scheduleReferenceVision(_ model: NotebookAppModel) {
     let references = Array(model.sharedContexts.sorted(by: { ($0.entries.last?.createdAt ?? .distantPast) > ($1.entries.last?.createdAt ?? .distantPast) })
       .prefix(8).flatMap({ $0.entries.flatMap(\.references) }).filter { $0.region != nil && $0.elementID == nil }.prefix(32))
-    let key = references.map { $0.id.uuidString }.joined() + (model.boardHierarchy?.revision ?? "")
-      + (model.spatialInk?.stamp.revision ?? "")
-      + model.pages.values.sorted { $0.id.uuidString < $1.id.uuidString }.map { $0.drawingStamp.revision + $0.agentStamp.revision }.joined()
-      + model.documents.values.sorted { $0.id.uuidString < $1.id.uuidString }.map { $0.contentStamp.revision }.joined()
-      + model.documentStates.values.sorted { $0.id.uuidString < $1.id.uuidString }.map { $0.stamp.revision }.joined()
+    guard !references.isEmpty else { return }
+    let key = String(model.collaborationReadEpoch)
     guard referenceVisionTask == nil, referenceVisionKey != key else { return }
     referenceVisionKey = key
     let store = model.store
     referenceVisionTask = Task { [weak self] in
-      await Task.detached(priority: .utility) {
-        for reference in references { _ = try? store.referenceStatus(reference) }
-      }.value
-      self?.referenceVisionTask = nil
+      defer { self?.referenceVisionTask = nil }
+      let worker = Task.detached(priority: .utility) {
+        for reference in references {
+          guard !Task.isCancelled else { return }
+          _ = try? store.referenceStatus(reference)
+        }
+      }
+      await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
     }
   }
 

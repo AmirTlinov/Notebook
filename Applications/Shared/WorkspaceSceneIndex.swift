@@ -31,10 +31,9 @@ struct WorkspaceSceneIndex: Sendable {
   private let paperSizes: [UUID: DocumentPaperSize]
   private let boards: [UUID: Board]
 
-  init(workspace: WorkspaceIndex, hierarchy: BoardHierarchy, documents: [UUID: DocumentDocument]) {
+  init(workspace: WorkspaceIndex, hierarchy: BoardHierarchy, paperSizes: [UUID: DocumentPaperSize]) {
     catalog = workspace.items
-    let sizes = documents.mapValues(\.paperSize)
-    paperSizes = sizes
+    self.paperSizes = paperSizes
     let values = Dictionary(uniqueKeysWithValues: workspace.items.map { ($0.id, $0) })
     itemValues = values
     pageOwners = Dictionary(uniqueKeysWithValues: workspace.items.flatMap { item in item.pageIDs.map { ($0, item.id) } })
@@ -46,7 +45,7 @@ struct WorkspaceSceneIndex: Sendable {
       var elements: [String: SpatialElement] = [:]
       var covers: [UUID: [SpatialElement]] = [:]
       func geometry(_ value: WorkspaceItem) -> WorkspaceItemGeometry? {
-        value.kind == .document ? sizes[value.id].map(WorkspaceItemGeometry.document) : .notebook
+        value.kind == .document ? paperSizes[value.id].map(WorkspaceItemGeometry.document) : .notebook
       }
       for placement in node.board.freeItems {
         guard let value = values[placement.itemID], let size = geometry(value) else { continue }
@@ -101,11 +100,11 @@ struct WorkspaceSceneIndex: Sendable {
   /// Exact exports borrow a coherent existing generation, or prepare the same
   /// derived index off the UI actor when its publication has not caught up yet.
   static func prepare(workspace: WorkspaceIndex, hierarchy: BoardHierarchy,
-    documents: [UUID: DocumentDocument], reusing previous: Self?) async throws -> Self {
+    paperSizes: [UUID: DocumentPaperSize], reusing previous: Self?) async throws -> Self {
     let worker = Task.detached(priority: .utility) {
       try Task.checkCancellation()
-      if let previous, previous.represents(workspace: workspace, hierarchy: hierarchy, documents: documents) { return previous }
-      let index = Self(workspace: workspace, hierarchy: hierarchy, documents: documents)
+      if let previous, previous.represents(workspace: workspace, hierarchy: hierarchy, paperSizes: paperSizes) { return previous }
+      let index = Self(workspace: workspace, hierarchy: hierarchy, paperSizes: paperSizes)
       try Task.checkCancellation()
       return index
     }
@@ -115,8 +114,8 @@ struct WorkspaceSceneIndex: Sendable {
   /// Comparison runs on the preparation task, never on a camera frame. A
   /// selected page and portal camera are not geometry or source changes.
   func represents(workspace: WorkspaceIndex, hierarchy: BoardHierarchy,
-    documents: [UUID: DocumentDocument]) -> Bool {
-    guard catalog == workspace.items, paperSizes == documents.mapValues(\.paperSize),
+    paperSizes: [UUID: DocumentPaperSize]) -> Bool {
+    guard catalog == workspace.items, self.paperSizes == paperSizes,
       boards.count == hierarchy.boards.count else { return false }
     return hierarchy.boards.allSatisfy { boards[$0.id]?.source == $0.board }
   }
