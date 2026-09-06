@@ -63,7 +63,7 @@ enum WorkspaceSceneProjection {
     documents: [UUID: DocumentDocument]
   ) -> SnapshotLayers {
     var result = SnapshotLayers()
-    var pending = [(presence, 1.0, portalPasses)]
+    var pending = [(presence, presence.camera.scale, portalPasses)]
     while let (projection, pixelScale, passes) = pending.popLast() {
       guard let board = hierarchy.board(projection.boardID) else { continue }
       result.elements.append(contentsOf: board.elements)
@@ -187,7 +187,8 @@ enum WorkspaceSceneProjection {
             onTranslationChanged: { _ in },
             onTranslationEnded: { _ in },
             onTextEditingEnded: { _ in },
-            onElementSelected: {}
+            onElementSelected: {},
+            portalPixelScale: presence.camera.scale
           )
           .background { WorkspaceItemShadow(geometry: rendered.geometry) }
           .scaleEffect(presence.camera.scale)
@@ -1852,7 +1853,8 @@ private struct WorkspaceSceneItem: View {
       },
       onTextEditingEnded: onTextEditingEnded,
       onElementSelected: onElementSelected,
-      showsDepth: false
+      showsDepth: false,
+      portalPixelScale: camera.scale
     )
   }
 
@@ -1954,7 +1956,7 @@ struct BoardPortalPreview: View {
       )
 
       ZStack {
-        SpatialBoardGrid(camera: camera)
+        SpatialBoardGrid(camera: camera, outputScale: pixelScale / fill)
 
         ForEach(board.elements.filter { $0.surface == .board(boardID) }) {
           element in
@@ -2257,6 +2259,7 @@ struct WorkspaceItemCoverView: View {
 struct SpatialElementContent: View {
   @Environment(NotebookAppModel.self) private var model
   @State private var readyElement: AgentElement?
+  @State private var hasLiveWebSurface = false
   let element: SpatialElement
   let commitsState: Bool
   let isTextEditing: Bool
@@ -2284,26 +2287,33 @@ struct SpatialElementContent: View {
       )
     case .markdown, .web:
       let source = agentElement
+      let image = AgentElementSnapshotCache.shared.image(for: source)
       ZStack {
-        if readyElement != source, let image = AgentElementSnapshotCache.shared.image(for: source) {
+        if readyElement != source, let image {
           #if os(iOS)
             Image(uiImage: image).resizable()
           #else
             Image(nsImage: image).resizable()
           #endif
         }
-        AgentWebElementView(
-          element: source,
-          onRenderReady: { ready in
-            let next = ready ? source : nil
-            if readyElement != next { readyElement = next }
-          },
-          onState: { state in
-            if commitsState { model.commitSpatialElementState(elementID: element.id, state: state) }
-          }
-        )
-        .opacity(readyElement == source ? 1 : 0)
-        .allowsHitTesting(readyElement == source && commitsState)
+        // A new coordinate owner starts with the exact frame already visible
+        // inside the portal. Cold WebKit work waits for the fingers; a mounted
+        // live surface stays mounted throughout subsequent camera gestures.
+        if hasLiveWebSurface || image == nil || model.permitsBackgroundPreparation {
+          AgentWebElementView(
+            element: source,
+            onRenderReady: { ready in
+              let next = ready ? source : nil
+              if readyElement != next { readyElement = next }
+            },
+            onState: { state in
+              if commitsState { model.commitSpatialElementState(elementID: element.id, state: state) }
+            }
+          )
+          .onAppear { hasLiveWebSurface = true }
+          .opacity(readyElement == source ? 1 : 0)
+          .allowsHitTesting(readyElement == source && commitsState)
+        }
       }
     }
   }
@@ -2498,6 +2508,7 @@ private struct NativeTextElementView: View {
 private struct SpatialBoardGrid: View {
   @Environment(\.displayScale) private var displayScale
   let camera: SpatialCamera
+  var outputScale: Double = 1
 
   var body: some View {
     Canvas(opaque: true, colorMode: .nonLinear) { context, size in
@@ -2507,7 +2518,7 @@ private struct SpatialBoardGrid: View {
       )
 
       var worldStep = PhysicalPaper.gridSpacing
-      while worldStep * camera.scale < BoardAppearance.minimumDotSpacing {
+      while worldStep * camera.scale * outputScale < BoardAppearance.minimumDotSpacing {
         worldStep *= 2
       }
       let step = worldStep * camera.scale
@@ -2521,7 +2532,7 @@ private struct SpatialBoardGrid: View {
         .truncatingRemainder(dividingBy: step)
       let startY = (size.height / 2 - phaseY)
         .truncatingRemainder(dividingBy: step)
-      let radius = max(0.65, 0.9 / displayScale)
+      let radius = max(0.65, 0.9 / displayScale) / outputScale
       var dots = Path()
       var x = startX < 0 ? startX + step : startX
       while x <= size.width {

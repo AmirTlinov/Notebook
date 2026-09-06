@@ -1,6 +1,7 @@
 import NotebookCore
 import SwiftUI
 import UIKit
+import WebKit
 import XCTest
 @testable import Notebook
 
@@ -55,6 +56,52 @@ final class PortalPassageTests: XCTestCase {
     XCTAssertEqual(drift.x, 0, accuracy: 1e-8)
     XCTAssertEqual(drift.y, 0, accuracy: 1e-8)
     await scene.model.finishPendingPersistence()
+  }
+
+  func testHandoffDoesNotStartColdWebContentUnderTheFingers() async throws {
+    let scene = try await makeScene(elementCount: 10)
+    defer { scene.close() }
+    let input = UUID()
+    scene.model.inputGate.beginContact(source: input)
+    defer { scene.model.inputGate.endContact(source: input) }
+    let center = CGPoint(x: scene.viewport.x / 2, y: scene.viewport.y / 2)
+    let crossing = BoardPortalProjection.fillScale(viewport: scene.viewport) / 0.35
+    try scene.send(.began(centroid: center, isOpeningApproach: true))
+    try scene.send(.changed(scale: crossing * 1.1, velocity: 1, elapsed: 0.2, centroid: center))
+    try await Task.sleep(for: .milliseconds(40))
+    XCTAssertEqual(scene.model.presence?.boardID, scene.childID)
+    XCTAssertTrue(agentWebViews(in: scene.host.view).isEmpty,
+      "Готовый вид портала передаётся без создания WebKit и повторного запуска JavaScript под пальцами")
+    _ = try redPoint(in: scene.host.view)
+    try scene.send(.changed(scale: crossing * 0.9, velocity: -1, elapsed: 0.3, centroid: center))
+    try await Task.sleep(for: .milliseconds(40))
+    XCTAssertNotEqual(scene.model.presence?.boardID, scene.childID)
+    XCTAssertTrue(agentWebViews(in: scene.host.view).isEmpty,
+      "Обратный переход также использует уже подготовленное содержание")
+    _ = try redPoint(in: scene.host.view)
+    try scene.send(.ended(scale: crossing * 0.9, velocity: -1, elapsed: 0.4, centroid: center))
+    scene.model.inputGate.endContact(source: input)
+    let deadline = ContinuousClock.now + .seconds(5)
+    while agentWebViews(in: scene.host.view).count < 10, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    XCTAssertEqual(agentWebViews(in: scene.host.view).count, 10,
+      "После контакта тот же элемент снова получает живой ввод")
+    let mounted = Set(agentWebViews(in: scene.host.view).map(ObjectIdentifier.init))
+    scene.model.inputGate.beginContact(source: input)
+    try scene.send(.began(centroid: center, isOpeningApproach: true))
+    try scene.send(.changed(scale: 1.04, velocity: 1, elapsed: 0.2, centroid: center))
+    try await Task.sleep(for: .milliseconds(30))
+    XCTAssertEqual(Set(agentWebViews(in: scene.host.view).map(ObjectIdentifier.init)), mounted,
+      "Следующий щипок не размонтирует уже живые интерактивные элементы")
+    try scene.send(.ended(scale: 1.04, velocity: 1, elapsed: 0.3, centroid: center))
+    scene.model.inputGate.endContact(source: input)
+    await scene.model.finishPendingPersistence()
+  }
+
+  private func agentWebViews(in view: UIView) -> [WKWebView] {
+    (view as? WKWebView).map { $0.navigationDelegate is AgentWebCoordinator ? [$0] : [] }
+      ?? view.subviews.flatMap { agentWebViews(in: $0) }
   }
 
   func testMinimumZoomCanLeaveAndCancellationKeepsTheVisibleFrame() async throws {
@@ -114,7 +161,7 @@ final class PortalPassageTests: XCTestCase {
     }
   }
 
-  private func makeScene(viewport requestedViewport: SpatialPoint? = nil) async throws -> Scene {
+  private func makeScene(viewport requestedViewport: SpatialPoint? = nil, elementCount: Int = 1) async throws -> Scene {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     model.start(pageSize: NotebookAppModel.defaultPageSize)
@@ -122,11 +169,16 @@ final class PortalPassageTests: XCTestCase {
     let childID = try XCTUnwrap(model.createBoard(at: .zero))
     await model.finishPendingPersistence()
     var hierarchy = try XCTUnwrap(model.boardHierarchy)
-    let element = SpatialElement(id: UUID().uuidString, surface: .board(childID), kind: .web,
-      frame: .init(x: 0, y: 0, width: 400, height: 300), worldOrigin: .zero, source: "Portal marker",
-      html: "<svg width='100%' height='100%' viewBox='0 0 400 300'><circle cx='200' cy='150' r='65' fill='#ed2020'/></svg>",
-      stamp: .init(counter: 0, actor: model.actorID))
-    XCTAssertTrue(hierarchy.upsertElement(element, in: childID, expected: nil, actor: model.actorID))
+    let elements = (0..<elementCount).map { index in
+      SpatialElement(id: UUID().uuidString, surface: .board(childID), kind: .web,
+        frame: .init(x: 0, y: 0, width: 400, height: 300),
+        worldOrigin: .init(x: Double(index % 3) * 500, y: Double(index / 3) * 400), source: "Portal marker",
+        html: "<svg width='100%' height='100%' viewBox='0 0 400 300'><circle cx='200' cy='150' r='65' fill='#ed2020'/></svg>",
+        stamp: .init(counter: 0, actor: model.actorID))
+    }
+    for element in elements {
+      XCTAssertTrue(hierarchy.upsertElement(element, in: childID, expected: nil, actor: model.actorID))
+    }
     try model.store.saveBoard(hierarchy, items: XCTUnwrap(model.workspace).items)
     model.reloadExternalChanges()
     await model.finishPendingPersistence()
@@ -140,10 +192,10 @@ final class PortalPassageTests: XCTestCase {
       camera: .init(scale: 0.35), viewport: viewport), settled: false)
     window.makeKeyAndVisible()
     let deadline = ContinuousClock.now + .seconds(6)
-    while AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource(element)) == nil, ContinuousClock.now < deadline {
+    while elements.contains(where: { AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource($0)) == nil }), ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(30))
     }
-    XCTAssertNotNil(AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource(element)))
+    XCTAssertTrue(elements.allSatisfy { AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource($0)) != nil })
     try await Task.sleep(for: .milliseconds(40))
     return Scene(root: root, model: model, childID: childID, viewport: viewport, window: window, host: host)
   }

@@ -50,7 +50,7 @@ final class PortalRenderingTests: XCTestCase {
       let camera = BoardPortalProjection.entryCamera(portalCamera: hierarchy.portalCamera(childID)!, viewport: size)
       let presence = SessionPresence(boardID: childID, mode: .board, camera: camera, viewport: size)
       let fill = BoardPortalProjection.fillScale(viewport: size)
-      let portal = BoardPortalPreview(boardID: childID, pixelScale: 1,
+      let portal = BoardPortalPreview(boardID: childID, pixelScale: fill,
         remainingPortalPasses: WorkspaceSceneProjection.portalPasses,
         transitionViewport: size, rendersSettledSnapshot: true)
         .scaleEffect(fill)
@@ -77,6 +77,46 @@ final class PortalRenderingTests: XCTestCase {
       XCTAssertLessThan(difference, 0.003, "Готовые слои и стёртые чернила сохраняют изображение при передаче: \(size)")
       XCTAssertGreaterThan(first.filter { $0 < 150 }.count, 5_000)
     }
+  }
+
+  @MainActor
+  func testOffCenterPortalGridKeepsTheScreenPixelScaleAtHandoff() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let childID = try XCTUnwrap(model.createBoard(at: .zero))
+    let workspace = try XCTUnwrap(model.workspace)
+    let hierarchy = try XCTUnwrap(model.boardHierarchy)
+    let portalCamera = try XCTUnwrap(hierarchy.portalCamera(childID))
+    for size in [SpatialPoint(x: 834, y: 1194), SpatialPoint(x: 1194, y: 834)] {
+      let fill = BoardPortalProjection.fillScale(viewport: size)
+      for ratio in [1.2, 1.8] {
+        let parent = SpatialCamera(center: .init(x: 24, y: -17), scale: fill * ratio)
+        let camera = try XCTUnwrap(BoardPortalProjection.enteringCamera(from: parent,
+          portalCamera: portalCamera, portalCenter: .zero, viewport: size))
+        let portal = BoardPortalPreview(boardID: childID, pixelScale: parent.scale,
+          remainingPortalPasses: WorkspaceSceneProjection.portalPasses,
+          transitionViewport: size, rendersSettledSnapshot: true)
+          .scaleEffect(parent.scale)
+          .frame(width: size.x, height: size.y)
+          .offset(x: -24 * parent.scale, y: 17 * parent.scale)
+          .frame(width: size.x, height: size.y).clipped().environment(model)
+        let active = SettledSpatialWorkspaceView(workspace: workspace,
+          board: try XCTUnwrap(hierarchy.board(childID)), spatialInk: try XCTUnwrap(model.spatialInk),
+          presence: .init(boardID: childID, mode: .board, camera: camera, viewport: size)).environment(model)
+        let first = try pixels(portal, size: size), second = try pixels(active, size: size)
+        let difference = zip(first, second).reduce(0.0) { $0 + abs(Double($1.0) - Double($1.1)) }
+          / Double(first.count * 255)
+        XCTContext.runActivity(named: "Сетка \(Int(size.x)) × \(Int(size.y)), \(ratio): MAE \(difference)") { activity in
+          let attachment = XCTAttachment(string: "normalized_pixel_MAE=\(difference)")
+          attachment.lifetime = .keepAlways; activity.add(attachment)
+        }
+        XCTAssertLessThan(difference, 0.0001,
+          "Сетка сохраняет шаг и размер точек в экранных пикселях при передаче вне центра: \(size), \(ratio)")
+      }
+    }
+    await model.finishPendingPersistence()
   }
 
   @MainActor

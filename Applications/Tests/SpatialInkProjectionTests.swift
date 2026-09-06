@@ -28,6 +28,94 @@ final class SpatialInkProjectionTests: XCTestCase {
     XCTAssertEqual(view.spatialMeshInstallCount, revision)
   }
 
+  @MainActor
+  func testPreparedSurfaceTransfersSynchronouslyToTheNewCoordinateOwner() async throws {
+    let journal = projectionJournal()
+    let cache = SpatialInkMeshCache()
+    let portal = SpatialInkMeshPreparation(cache: cache)
+    let ready = expectation(description: "Портал уже показал окончательные чернила")
+    var expectedCount = 0
+    XCTAssertTrue(portal.update(surface: .board, journal: journal) { mesh in
+      expectedCount = mesh?.batches.reduce(0) { $0 + $1.vertices.count } ?? 0
+      if expectedCount > 0 { ready.fulfill() }
+    })
+    await fulfillment(of: [ready], timeout: 3)
+    let active = SpatialInkMeshPreparation(cache: cache)
+    var transferred: SpatialInkMesh?
+    let pending = active.update(surface: .board, journal: journal) { transferred = $0 }
+    XCTAssertFalse(pending, "Смена камеры получает уже готовую геометрию без новой фоновой работы")
+    XCTAssertEqual(transferred?.batches.reduce(0) { $0 + $1.vertices.count }, expectedCount)
+    portal.cancel(); active.cancel()
+  }
+
+  @MainActor
+  func testIndependentInkWithAnUnchangedMaximumClockInvalidatesTheMesh() async throws {
+    let cache = SpatialInkMeshCache()
+    let preparation = SpatialInkMeshPreparation(cache: cache)
+    var journal = projectionJournal()
+    let before = try await prepare(preparation, surface: .board, journal: journal)
+    let oldStamp = journal.stamp
+    let action = SpatialInkAction(tool: .pen, spans: journal.actions[0].spans,
+      stamp: .init(counter: 1, actor: UUID()))
+    XCTAssertTrue(journal.merge(.init(actions: [action], stamp: action.stamp)))
+    XCTAssertEqual(journal.stamp, oldStamp)
+    let after = try await prepare(preparation, surface: .board, journal: journal)
+    XCTAssertGreaterThan(after.batches.reduce(0) { $0 + $1.vertices.count },
+      before.batches.reduce(0) { $0 + $1.vertices.count })
+    for _ in 0..<1000 {
+      XCTAssertFalse(preparation.update(surface: .board, journal: journal) { _ in
+        XCTFail("Камера не пересобирает и не переустанавливает неизменённые чернила")
+      })
+    }
+    preparation.cancel()
+  }
+
+  @MainActor
+  func testMeshRetentionIsBoundedAndAnUncachedOwnerCannotShowPreviousInk() async throws {
+    let journal = projectionJournal()
+    let cache = SpatialInkMeshCache(capacity: 2, byteLimit: 1024 * 1024)
+    let preparation = SpatialInkMeshPreparation(cache: cache)
+    _ = try await prepare(preparation, surface: .board, journal: journal)
+    for _ in 0..<6 {
+      let owner = SurfaceID.board(UUID())
+      var clearedImmediately = false
+      let pending = preparation.update(surface: owner, journal: journal) { mesh in
+        if let mesh, mesh.batches.isEmpty { clearedImmediately = true }
+      }
+      XCTAssertTrue(pending)
+      XCTAssertTrue(clearedImmediately, "Новый владелец не показывает чернила старой доски даже в первом кадре")
+      // Switching again cancels the obsolete request; only this owner may publish.
+      _ = try await prepare(SpatialInkMeshPreparation(cache: cache), surface: owner, journal: journal)
+      XCTAssertLessThanOrEqual(cache.count, 2)
+      XCTAssertLessThanOrEqual(cache.retainedBytes, 1024 * 1024)
+    }
+    preparation.cancel()
+    let tiny = SpatialInkMeshCache(capacity: 2, byteLimit: 1)
+    _ = try await prepare(SpatialInkMeshPreparation(cache: tiny), surface: .board, journal: journal)
+    XCTAssertEqual(tiny.count, 0)
+    XCTAssertEqual(tiny.retainedBytes, 0)
+  }
+
+  @MainActor
+  private func prepare(_ owner: SpatialInkMeshPreparation, surface: SurfaceID,
+    journal: SpatialInkJournal) async throws -> SpatialInkMesh {
+    let ready = expectation(description: "Окончательная геометрия готова")
+    let received = MeshReception()
+    let pending = owner.update(surface: surface, journal: journal) { value in
+      if let value { received.mesh = value }
+      if !received.updating { ready.fulfill() }
+    }
+    received.updating = false
+    if pending { await fulfillment(of: [ready], timeout: 3) }
+    else { ready.fulfill() }
+    return try XCTUnwrap(received.mesh)
+  }
+
+  @MainActor private final class MeshReception {
+    var mesh: SpatialInkMesh?
+    var updating = true
+  }
+
   func testTileBatchingPreservesEraserOrderAndEveryStroke() throws {
     let journal = projectionJournal()
     let mesh = try SpatialInkMesh.prepare(surface: .board, journal: journal)
