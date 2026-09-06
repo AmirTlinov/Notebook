@@ -23,6 +23,7 @@ trap cleanup EXIT
 
 cd "$ROOT"
 swift test
+"$ROOT/Applications/test-load-fixture.sh"
 
 ICON_PROOF="$DERIVED/AppIcon.appiconset"
 "$ROOT/Applications/render-app-icon.sh" "$ICON_PROOF"
