@@ -52,13 +52,6 @@ private struct PreviewPublicationSlot<Key: Equatable> {
   }
 }
 
-/// One owner for the desired, published, pending, and failed state of every
-/// durable preview. Timers merely wake this state machine; they do not own it.
-private struct PreviewReconciler {
-  var currentView = PreviewPublicationSlot<PreviewCurrentViewKey>()
-  var pages = PreviewPublicationSlot<[PreviewPageKey]>()
-}
-
 private enum PreviewPublicationError: Error {
   case sourceUnavailable
   case sourceChanged
@@ -71,15 +64,15 @@ private enum PreviewPublicationError: Error {
 final class MacPreviewPublisher {
   private weak var model: NotebookAppModel?
   private let currentViewDelay: Duration
-  private let pagePreviewDelay: Duration
   private let reconciliationInterval: Duration
   private var currentViewTask: Task<Void, Never>?
-  private var pagePreviewTask: Task<Void, Never>?
+  private var pageRequestTask: Task<Void, Never>?
+  private var requestedPageKey: PreviewPageKey?
   private var reconciliationTask: Task<Void, Never>?
   private var documentSnapshotObserver: AnyCancellable?
   private var agentSnapshotObserver: AnyCancellable?
   private var documentSnapshotGeneration = 0
-  private var reconciler = PreviewReconciler()
+  private var currentView = PreviewPublicationSlot<PreviewCurrentViewKey>()
   private var started = false
   private var targetTask: Task<Void, Never>?
   private var targetInProgress: UUID?
@@ -89,18 +82,16 @@ final class MacPreviewPublisher {
   init(
     model: NotebookAppModel,
     currentViewDelay: Duration = .milliseconds(220),
-    pagePreviewDelay: Duration = .milliseconds(420),
     reconciliationInterval: Duration = .seconds(1)
   ) {
     self.model = model
     self.currentViewDelay = currentViewDelay
-    self.pagePreviewDelay = pagePreviewDelay
     self.reconciliationInterval = reconciliationInterval
   }
 
   deinit {
     currentViewTask?.cancel()
-    pagePreviewTask?.cancel()
+    pageRequestTask?.cancel()
     reconciliationTask?.cancel()
     targetTask?.cancel()
     referenceVisionTask?.cancel()
@@ -140,7 +131,7 @@ final class MacPreviewPublisher {
 
   func suspendForInput() {
     currentViewTask?.cancel()
-    pagePreviewTask?.cancel()
+    pageRequestTask?.cancel()
     targetTask?.cancel()
     referenceVisionTask?.cancel()
     referenceVisionKey = nil
@@ -152,7 +143,7 @@ final class MacPreviewPublisher {
   /// published without reopening the app.
   private func reconcilePublication() {
     scheduleCurrentView(for: makeCurrentViewKey())
-    schedulePagePreviews(for: pageKeys)
+    schedulePagePreview(for: pageKey)
     guard let model else { return }
     let health: [String: Any] = ["status": model.isPeerConnected ? "connected" : "disconnected", "updatedAt": Date().timeIntervalSince1970]
     if let data = try? JSONSerialization.data(withJSONObject: health) {
@@ -160,7 +151,16 @@ final class MacPreviewPublisher {
     }
     guard model.permitsBackgroundPreparation else { targetTask?.cancel(); return }
     scheduleReferenceVision(model)
-    guard targetInProgress == nil, let request = (try? model.store.targetRenderRequests())?.first(where: {
+    scheduleTargetRender(model)
+  }
+
+  private func scheduleTargetRender(_ model: NotebookAppModel) {
+    guard model.permitsBackgroundPreparation, targetInProgress == nil,
+      let request = (try? model.store.targetRenderRequests())?.sorted(by: { left, right in
+        let leftCurrent = left.pageVisionRevision != nil && left.target.id == pageKey?.pageID
+        let rightCurrent = right.pageVisionRevision != nil && right.target.id == pageKey?.pageID
+        return leftCurrent == rightCurrent ? left.createdAt < right.createdAt : leftCurrent
+      }).first(where: {
       !FileManager.default.fileExists(atPath: model.store.targetReceiptURL($0.id).path)
     }) else { return }
     targetInProgress = request.id
@@ -207,23 +207,19 @@ final class MacPreviewPublisher {
   }
 
   private func observePages() {
-    let keys = withObservationTracking {
-      pageKeys
+    let key = withObservationTracking {
+      pageKey
     } onChange: { [weak self] in
       Task { @MainActor [weak self] in
         self?.observePages()
       }
     }
-    schedulePagePreviews(for: keys)
+    schedulePagePreview(for: key)
   }
 
-  private var pageKeys: [PreviewPageKey] {
-    guard let model else { return [] }
-    return model.pages.values
-      .map {
-        PreviewPageKey(pageID: $0.id, drawingStamp: $0.drawingStamp)
-      }
-      .sorted { $0.pageID.uuidString < $1.pageID.uuidString }
+  private var pageKey: PreviewPageKey? {
+    guard let model, let id = model.workspace?.selectedPageID, let page = model.pages[id] else { return nil }
+    return .init(pageID: id, drawingStamp: page.drawingStamp)
   }
 
   private func makeCurrentViewKey() -> PreviewCurrentViewKey? {
@@ -252,9 +248,9 @@ final class MacPreviewPublisher {
 
   private func scheduleCurrentView(for key: PreviewCurrentViewKey?) {
     guard let key, key.presencePhase == .settled, model?.permitsBackgroundPreparation == true else { currentViewTask?.cancel(); return }
-    guard reconciler.currentView.request(key) else { return }
+    guard currentView.request(key) else { return }
     currentViewTask?.cancel()
-    let generation = reconciler.currentView.begin(key)
+    let generation = currentView.begin(key)
     currentViewTask = Task { [weak self] in
       try? await Task.sleep(for: self?.currentViewDelay ?? .zero)
       guard let self else { return }
@@ -288,61 +284,31 @@ final class MacPreviewPublisher {
     generation: UInt64,
     error: (any Error)?
   ) {
-    guard reconciler.currentView.pending == key,
-      reconciler.currentView.generation == generation else { return }
-    reconciler.currentView.finish(key, generation: generation, error: error)
+    guard currentView.pending == key,
+      currentView.generation == generation else { return }
+    currentView.finish(key, generation: generation, error: error)
     currentViewTask = nil
   }
 
-  private func schedulePagePreviews(for keys: [PreviewPageKey]) {
-    guard model?.permitsBackgroundPreparation == true else { pagePreviewTask?.cancel(); return }
-    guard reconciler.pages.request(keys) else { return }
-    pagePreviewTask?.cancel()
-    let generation = reconciler.pages.begin(keys)
-    pagePreviewTask = Task { [weak self] in
-      try? await Task.sleep(for: self?.pagePreviewDelay ?? .zero)
-      guard let self else { return }
-      guard !Task.isCancelled, pageKeys == keys else {
-        finishPagePublication(keys, generation: generation, error: PreviewPublicationError.sourceChanged)
-        return
+  /// Only the selected physical page is requested automatically. Explicit
+  /// agent requests and this request share one queue and one render executor.
+  private func schedulePagePreview(for key: PreviewPageKey?) {
+    guard let key, requestedPageKey != key, pageRequestTask == nil, let model,
+      model.permitsBackgroundPreparation else { return }
+    let store = model.store
+    pageRequestTask = Task { [weak self, weak model] in
+      defer { self?.pageRequestTask = nil }
+      let worker = Task.detached(priority: .utility) {
+        try Task.checkCancellation()
+        return try store.requestPageVision(pageID: key.pageID, expectedRevision: key.drawingStamp.revision)
       }
-      var publicationError: (any Error)?
-      for key in keys {
-        guard !Task.isCancelled,
-          let model, model.permitsBackgroundPreparation, let page = model.pages[key.pageID],
-          page.drawingStamp == key.drawingStamp
-        else {
-          publicationError = PreviewPublicationError.sourceChanged
-          break
-        }
-        let store = model.store
-        let worker = Task.detached(priority: .utility) {
-          guard !PagePreviewWriter.hasCurrentArtifacts(for: page, store: store) else { return }
-          try Task.checkCancellation()
-          try PagePreviewWriter.write(page, store: store)
-        }
-        do {
-          try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
-        } catch { publicationError = error }
-        await Task.yield()
-      }
-      finishPagePublication(
-        keys,
-        generation: generation,
-        error: publicationError
-      )
+      do {
+        _ = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+        guard !Task.isCancelled, let self, let model, pageKey == key else { return }
+        requestedPageKey = key
+        scheduleTargetRender(model)
+      } catch { }
     }
-  }
-
-  private func finishPagePublication(
-    _ keys: [PreviewPageKey],
-    generation: UInt64,
-    error: (any Error)?
-  ) {
-    guard reconciler.pages.pending == keys,
-      reconciler.pages.generation == generation else { return }
-    reconciler.pages.finish(keys, generation: generation, error: error)
-    pagePreviewTask = nil
   }
 
   private func writeCurrentView(documentRaster: RasterLease?) async -> (any Error)? {

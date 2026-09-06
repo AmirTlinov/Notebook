@@ -62,6 +62,11 @@ do {
     guard let target = request.target, let revision = request.expectedRevision else { throw CollaborationError("invalid_reference", "Нужны владелец и прочитанная версия.") }
     data = try encoder.encode(store.requestTargetRender(target: target, expectedRevision: revision,
       region: request.region, worldOrigin: request.worldOrigin, pageIndex: request.pageIndex ?? 0))
+  case "pageVision":
+    guard let target = request.target, target.kind == .page, let revision = request.expectedRevision else {
+      throw CollaborationError("invalid_reference", "Нужны лист и версия рассмотренных чернил.")
+    }
+    data = try encoder.encode(store.requestPageVision(pageID: target.id, expectedRevision: revision))
   default: throw CollaborationError("invalid_command", "Команда должна назвать действие моста.")
   }
   FileHandle.standardOutput.write(data)

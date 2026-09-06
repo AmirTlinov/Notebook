@@ -1,4 +1,5 @@
 import { notebookResponseSchema } from "./contracts.js";
+import { BridgeError, runBridge } from "./bridge.js";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -98,6 +99,28 @@ export type PageVisionReceipt = z.infer<typeof receiptSchema>;
 type PageVisionRegion = z.infer<typeof regionSchema>;
 type VisionMode = "faithful" | "ink";
 
+class PageVisionPending extends StoreError {
+  constructor(readonly requestID: string) {
+    super("Карта указанного листа собирается в фоне. Это не означает, что Амир сейчас рисует. Повторите notebook_page_map через мгновение.");
+  }
+}
+
+async function requestPageVision(store: NotebookStore, page: PageDocument): Promise<never> {
+  const request = await runBridge<{ id: string }>(store.root, { command: "pageVision",
+    target: { kind: "page", id: page.id }, expectedRevision: revision(page.drawingStamp) });
+  let receipt: { status?: string; diagnostics?: Array<{ message?: string }> } | undefined;
+  try {
+    receipt = JSON.parse(await readFile(join(store.root, "previews/targets", `${request.id.toLowerCase()}.json`), "utf8"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  if (receipt?.status === "error") {
+    throw new StoreError("Подготовка карты завершилась ошибкой: " +
+      (receipt.diagnostics?.slice(0, 3).map(value => value.message ?? "Ошибка исполнения").join("; ") ?? "Ошибка исполнения"));
+  }
+  throw new PageVisionPending(request.id);
+}
+
 const pageSelection = {
   page_id: z
     .uuid()
@@ -136,7 +159,8 @@ export function registerPageVisionTools(
       title: "Locate visible Pencil ink",
       description:
         "Return the physical 0.5 cm grid cells and grouped regions containing visible Pencil pixels. " +
-        "Call this before requesting detail images; erased PKStroke paths are excluded.",
+        "Call this before requesting detail images; erased PKStroke paths are excluded. " +
+        "A cold or stale map queues only this page and returns pending; it does not prepare the archive.",
       inputSchema: z.object({ ...pageSelection, ...sinceRevision }),
     },
     ({ page_id, notebook_id, page_number, since_drawing_revision }) =>
@@ -245,6 +269,10 @@ export async function readFreshPageVision(
   page: PageDocument,
   expectedDrawingRevision?: string,
 ): Promise<PageVisionReceipt> {
+  const currentRevision = revision(page.drawingStamp);
+  if (expectedDrawingRevision && expectedDrawingRevision !== currentRevision) {
+    throw new StoreError("Лист изменился после карты. Сначала снова вызовите notebook_page_map.");
+  }
   let stored: unknown;
   try {
     stored = JSON.parse(
@@ -252,9 +280,7 @@ export async function readFreshPageVision(
     );
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
-      throw new StoreError(
-        "Карта листа еще не создана. Откройте Notebook на Mac и оставьте его запущенным.",
-      );
+      return requestPageVision(store, page);
     }
     if (error instanceof SyntaxError) {
       throw new StoreError("Квитанция карты листа содержит поврежденный JSON.");
@@ -273,21 +299,13 @@ export async function readFreshPageVision(
       "Квитанция карты листа содержит противоречивую геометрию.",
     );
   }
-  const currentRevision = revision(page.drawingStamp);
   if (
     !sameID(receipt.pageID, page.id) ||
     revision(receipt.drawingStamp) !== currentRevision ||
     receipt.pageSize.width !== page.size.width ||
     receipt.pageSize.height !== page.size.height
   ) {
-    throw new StoreError(
-      "Визуальная карта листа еще собирается в фоне. Это не означает, что Амир сейчас рисует. Повторите notebook_page_map через мгновение.",
-    );
-  }
-  if (expectedDrawingRevision && expectedDrawingRevision !== currentRevision) {
-    throw new StoreError(
-      "Лист изменился после карты. Сначала снова вызовите notebook_page_map.",
-    );
+    return requestPageVision(store, page);
   }
   return receipt;
 }
@@ -303,7 +321,7 @@ export async function readVerifiedPageOverview(
       : inkPath(store, receipt.pageID);
   const expectedSHA256 =
     mode === "faithful" ? receipt.previewPNG_SHA256 : receipt.inkPNG_SHA256;
-  return readVerifiedPNG(path, expectedSHA256, receipt.pixelSize);
+  return readVerifiedPNG(store, receipt, path, expectedSHA256, receipt.pixelSize);
 }
 
 function publicPageMap(
@@ -712,6 +730,8 @@ async function readVerifiedRegion(
   const expectedSHA256 =
     mode === "faithful" ? region.faithfulPNG_SHA256 : region.inkPNG_SHA256;
   return readVerifiedPNG(
+    store,
+    receipt,
     join(regionsPath(store, receipt.pageID), `${region.id}.${mode}.png`),
     expectedSHA256,
     {
@@ -722,6 +742,8 @@ async function readVerifiedRegion(
 }
 
 async function readVerifiedPNG(
+  store: NotebookStore,
+  receipt: PageVisionReceipt,
   path: string,
   expectedSHA256: string,
   expectedSize: { width: number; height: number },
@@ -731,17 +753,13 @@ async function readVerifiedPNG(
     image = await readFile(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
-      throw new StoreError(
-        "Изображение области обновляется. Повторите запрос через мгновение.",
-      );
+      return rebuildPageVision(store, receipt);
     }
     throw error;
   }
   const actualSHA256 = createHash("sha256").update(image).digest("hex");
   if (actualSHA256 !== expectedSHA256) {
-    throw new StoreError(
-      "Изображение области и его квитанция обновляются. Повторите запрос через мгновение.",
-    );
+    return rebuildPageVision(store, receipt);
   }
   const actualSize = pngSize(image);
   if (
@@ -754,6 +772,14 @@ async function readVerifiedPNG(
     );
   }
   return image;
+}
+
+async function rebuildPageVision(store: NotebookStore, receipt: PageVisionReceipt): Promise<never> {
+  const page = await store.readPage(receipt.pageID);
+  if (revision(page.drawingStamp) !== revision(receipt.drawingStamp)) {
+    throw new StoreError("Лист изменился после карты. Сначала снова вызовите notebook_page_map.");
+  }
+  return requestPageVision(store, page);
 }
 
 function pngSize(image: Buffer): { width: number; height: number } | null {
@@ -840,11 +866,13 @@ function visionError(error: unknown): {
   isError: true;
 } {
   const message = error instanceof Error ? error.message : String(error);
-  const pending = /собирается|создана|обновляются|обновляется/.test(message);
+  const bridgeCode = error instanceof BridgeError ? error.detail.code : undefined;
+  const pending = bridgeCode === "snapshot_pending" || /собирается|создана|обновляются|обновляется/.test(message);
   const data = {
     status: pending ? "pending" : "error",
-    code: pending ? "snapshot_pending" : "operation_failed",
+    code: bridgeCode ?? (pending ? "snapshot_pending" : "operation_failed"),
     message,
+    ...(error instanceof PageVisionPending ? { requestID: error.requestID } : {}),
     retryAfterMilliseconds: pending ? 500 : null,
   };
   return {

@@ -93,6 +93,30 @@ enum CurrentViewPreviewWriter {
 
   @MainActor
   static func writeTarget(_ request: TargetRenderRequest, model: NotebookAppModel) async throws {
+    if let revision = request.pageVisionRevision {
+      guard request.target.kind == .page, request.region == nil, request.worldOrigin == nil,
+        request.pageIndex == 0, let page = model.pages[request.target.id],
+        page.drawingStamp.revision == revision else { throw PreviewError.sourceChanged }
+      guard model.permitsBackgroundPreparation else { throw PreviewError.inputActive }
+      let store = model.store
+      let worker = Task.detached(priority: .utility) {
+        guard try NotebookStore.pageVisionSourceRevision(page) == request.sourceRevision else {
+          throw PreviewError.sourceChanged
+        }
+        if !store.hasCurrentPageVision(page) { try PagePreviewWriter.write(page, store: store) }
+        try Task.checkCancellation()
+        guard try NotebookStore.pageVisionSourceRevision(store.loadPage(page.id)) == request.sourceRevision,
+          store.hasCurrentPageVision(page) else { throw PreviewError.sourceChanged }
+        let vision = try JSONDecoder().decode(PageVisionReceipt.self,
+          from: Data(contentsOf: store.previewVisionReceiptURL(page.id)))
+        try store.saveTargetRender(.init(request: request, status: "ready",
+          pngSHA256: vision.previewPNG_SHA256,
+          pixelSize: .init(x: Double(vision.pixelSize.width), y: Double(vision.pixelSize.height)),
+          inkRegions: vision.regions.map(\.contentPoints)))
+      }
+      try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+      return
+    }
     guard let content = model.collaborationContent else { throw PreviewError.sourceChanged }
     let files = try await Task.detached(priority: .utility) { try content.sourceFiles() }.value
     guard try await Task.detached(priority: .utility, operation: {

@@ -82,7 +82,10 @@ final class CollaborationVisionTests: XCTestCase {
     let pixel = try XCTUnwrap(bitmap.colorAt(x: 500, y: 500)?.usingColorSpace(.deviceRGB))
     XCTAssertGreaterThan(pixel.redComponent, 0.95)
     XCTAssertLessThan(pixel.blueComponent, 0.05)
-    XCTAssertEqual(SceneRenderResources.shared.reservedBytes, 0)
+    // The app publisher can be composing the current view at this instant.
+    // Private-owner tests check release to zero; the shared owner checks its total budget.
+    XCTAssertLessThanOrEqual(SceneRenderResources.shared.residentBytes + SceneRenderResources.shared.reservedBytes,
+      SceneRenderResources.shared.byteLimit)
     await model.finishPendingPersistence()
   }
 

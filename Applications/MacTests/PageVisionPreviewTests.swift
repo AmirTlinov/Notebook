@@ -175,10 +175,7 @@ final class PageVisionPreviewTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at: fixture.root) }
     try PagePreviewWriter.write(fixture.page, store: fixture.store)
     XCTAssertTrue(
-      PagePreviewWriter.hasCurrentArtifacts(
-        for: fixture.page,
-        store: fixture.store
-      )
+      fixture.store.hasCurrentPageVision(fixture.page)
     )
 
     try Data("corrupted".utf8).write(
@@ -187,10 +184,7 @@ final class PageVisionPreviewTests: XCTestCase {
     )
 
     XCTAssertFalse(
-      PagePreviewWriter.hasCurrentArtifacts(
-        for: fixture.page,
-        store: fixture.store
-      )
+      fixture.store.hasCurrentPageVision(fixture.page)
     )
   }
 

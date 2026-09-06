@@ -8,6 +8,9 @@ public struct TargetRenderRequest: Codable, Equatable, Sendable, Identifiable {
   public let region: PageRect?
   public let worldOrigin: WorldPoint?
   public let pageIndex: Int
+  /// A page-vision request asks only for final ink, its map and detail windows.
+  /// Without this constraint the request is a composite content snapshot.
+  public let pageVisionRevision: String?
   public let createdAt: Date
 }
 
@@ -214,26 +217,71 @@ extension NotebookStore {
     let hex = Array(hash)
     let uuid = String(hex[0..<8]) + "-" + String(hex[8..<12]) + "-4" + String(hex[13..<16]) + "-8" + String(hex[17..<20]) + "-" + String(hex[20..<32])
     let request = TargetRenderRequest(id: UUID(uuidString: uuid)!, target: target, sourceRevision: source,
-      region: region, worldOrigin: worldOrigin, pageIndex: pageIndex, createdAt: Date())
+      region: region, worldOrigin: worldOrigin, pageIndex: pageIndex, pageVisionRevision: nil, createdAt: Date())
+    try prepare()
+    return try withMutationLock { try enqueueRenderRequest(request) }
+  }
+
+  /// The page itself is the addressed source. A cold ink map does not load or
+  /// enqueue the rest of the catalog and does not depend on agent elements.
+  public func requestPageVision(pageID: UUID, expectedRevision: String) throws -> TargetRenderRequest {
     try prepare()
     return try withMutationLock {
-      let url = renderRequestsURL.appendingPathComponent(request.id.uuidString.lowercased() + ".json")
-      let requests = try targetRenderRequests()
-      let pending = requests.filter { !FileManager.default.fileExists(atPath:targetReceiptURL($0.id).path) }
-      guard pending.count < 16 || requests.contains(where: { $0.id == request.id }) else {
-        throw CollaborationError("snapshot_pending", "Очередь снимков занята активными запросами. Повторите после подготовки текущих областей.")
+      let target = CollaborationTarget(kind: .page, id: pageID)
+      guard FileManager.default.fileExists(atPath: pageURL(pageID).path) else {
+        throw CollaborationError("target_missing", "Лист отсутствует.", target: target)
       }
-      for obsolete in requests.filter({ FileManager.default.fileExists(atPath:targetReceiptURL($0.id).path) }).dropLast(64) {
-        try? FileManager.default.removeItem(at:renderRequestsURL.appendingPathComponent(obsolete.id.uuidString.lowercased()+".json"))
-        try? FileManager.default.removeItem(at:targetPNGURL(obsolete.id))
-        try? FileManager.default.removeItem(at:targetReceiptURL(obsolete.id))
+      let page = try loadPage(pageID)
+      guard page.drawingStamp.revision == expectedRevision.lowercased() else {
+        throw CollaborationError("revision_conflict", "Перед подготовкой карты чернила изменились.",
+          target: target, expected: expectedRevision, actual: page.drawingStamp.revision)
       }
-      if FileManager.default.fileExists(atPath: url.path) {
-        return try JSONDecoder().decode(TargetRenderRequest.self, from: Data(contentsOf: url))
+      let source = try Self.pageVisionSourceRevision(page)
+      let hash = Array(try collaborationHash(JSONValue.object(["pageVision": .string(source)])))
+      let uuid = String(hash[0..<8]) + "-" + String(hash[8..<12]) + "-4" + String(hash[13..<16])
+        + "-8" + String(hash[17..<20]) + "-" + String(hash[20..<32])
+      let request = TargetRenderRequest(id: UUID(uuidString: uuid)!, target: target,
+        sourceRevision: source, region: nil, worldOrigin: nil, pageIndex: 0,
+        pageVisionRevision: page.drawingStamp.revision, createdAt: Date())
+      for obsolete in try targetRenderRequests() where obsolete.target == target
+        && obsolete.pageVisionRevision != nil && obsolete.id != request.id
+        && !FileManager.default.fileExists(atPath: targetReceiptURL(obsolete.id).path) {
+        try FileManager.default.removeItem(at: renderRequestsURL.appendingPathComponent(obsolete.id.uuidString.lowercased() + ".json"))
       }
-      try JSONEncoder().encode(request).write(to: url, options: .atomic)
-      return request
+      // A deleted or corrupted derivative can be rebuilt with the same source
+      // identity. An execution error remains explicit until the source changes.
+      if let data = try? Data(contentsOf: targetReceiptURL(request.id)),
+        let receipt = try? JSONDecoder().decode(TargetRenderReceipt.self, from: data),
+        receipt.status == "ready", !hasCurrentPageVision(page) {
+        try FileManager.default.removeItem(at: targetReceiptURL(request.id))
+      }
+      return try enqueueRenderRequest(request)
     }
+  }
+
+  public static func pageVisionSourceRevision(_ page: PageDocument) throws -> String {
+    try collaborationHash(JSONValue.object(["id": .string(page.id.uuidString.lowercased()),
+      "size": try .encode(page.size), "drawingStamp": try .encode(page.drawingStamp),
+      "ink": .string(SHA256.hash(data: page.drawingData).map { String(format: "%02x", $0) }.joined())]))
+  }
+
+  private func enqueueRenderRequest(_ request: TargetRenderRequest) throws -> TargetRenderRequest {
+    let url = renderRequestsURL.appendingPathComponent(request.id.uuidString.lowercased() + ".json")
+    let requests = try targetRenderRequests()
+    let pending = requests.filter { !FileManager.default.fileExists(atPath: targetReceiptURL($0.id).path) }
+    guard pending.count < 16 || requests.contains(where: { $0.id == request.id }) else {
+      throw CollaborationError("snapshot_pending", "Очередь снимков занята активными запросами. Повторите после подготовки текущих областей.")
+    }
+    for obsolete in requests.filter({ FileManager.default.fileExists(atPath: targetReceiptURL($0.id).path) }).dropLast(64) {
+      try? FileManager.default.removeItem(at: renderRequestsURL.appendingPathComponent(obsolete.id.uuidString.lowercased() + ".json"))
+      try? FileManager.default.removeItem(at: targetPNGURL(obsolete.id))
+      try? FileManager.default.removeItem(at: targetReceiptURL(obsolete.id))
+    }
+    if FileManager.default.fileExists(atPath: url.path) {
+      return try JSONDecoder().decode(TargetRenderRequest.self, from: Data(contentsOf: url))
+    }
+    try JSONEncoder().encode(request).write(to: url, options: .atomic)
+    return request
   }
 
   public static func targetContentRevision(target: CollaborationTarget, files: [String: JSONValue]) throws -> String {

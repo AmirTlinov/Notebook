@@ -2,44 +2,6 @@ import Foundation
 import NotebookCore
 
 enum PagePreviewWriter {
-  static func hasCurrentArtifacts(
-    for page: PageDocument,
-    store: NotebookStore
-  ) -> Bool {
-    guard let receiptData = try? Data(
-      contentsOf: store.previewVisionReceiptURL(page.id)
-    ),
-      let receipt = try? JSONDecoder().decode(
-        PageVisionReceipt.self,
-        from: receiptData
-      ),
-      receipt.isValid,
-      receipt.pageID == page.id,
-      receipt.drawingStamp == page.drawingStamp,
-      let preview = try? Data(contentsOf: store.previewURL(page.id)),
-      PageVisionRenderer.sha256(preview) == receipt.previewPNG_SHA256,
-      let ink = try? Data(contentsOf: store.previewInkURL(page.id)),
-      PageVisionRenderer.sha256(ink) == receipt.inkPNG_SHA256
-    else { return false }
-
-    let directory = store.previewRegionsURL(page.id)
-    return receipt.regions.allSatisfy { region in
-      guard let faithful = try? Data(contentsOf: regionURL(
-        in: directory,
-        regionID: region.id,
-        mode: "faithful"
-      )),
-        PageVisionRenderer.sha256(faithful) == region.faithfulPNG_SHA256,
-        let cleanInk = try? Data(contentsOf: regionURL(
-          in: directory,
-          regionID: region.id,
-          mode: "ink"
-        ))
-      else { return false }
-      return PageVisionRenderer.sha256(cleanInk) == region.inkPNG_SHA256
-    }
-  }
-
   static func write(_ page: PageDocument, store: NotebookStore) throws {
     try Task.checkCancellation()
     let previewURL = store.previewURL(page.id)
