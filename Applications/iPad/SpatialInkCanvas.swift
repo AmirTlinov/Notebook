@@ -145,6 +145,11 @@ struct SpatialInkCanvas: UIViewRepresentable {
         [SpatialInkSpan]
       ) -> Void
     ) {
+      // Finish against the geometry that received the samples, before a new
+      // owner or disabled input can cancel UIKit without a final touch event.
+      if !isEnabled || boardSurface != .board(boardID) {
+        finishAction()
+      }
       self.view = view
       let nextBoardSurface = SurfaceID.board(boardID)
       if boardSurface != nextBoardSurface {
@@ -210,8 +215,8 @@ struct SpatialInkCanvas: UIViewRepresentable {
       #endif
       recognizer.cancelsTouchesInView = true
       recognizer.isEnabled = isEnabled
-      recognizer.onEvent = { [weak self] phase, touch, event in
-        self?.handle(phase: phase, touch: touch, event: event)
+      recognizer.onEvent = { [weak self] event in
+        self?.handle(event)
       }
       window.addGestureRecognizer(recognizer)
       self.window = window
@@ -220,28 +225,26 @@ struct SpatialInkCanvas: UIViewRepresentable {
     }
 
     func uninstall() {
+      finishAction()
       preparation.cancel()
+      recognizer?.onEvent = nil
       if let recognizer { window?.removeGestureRecognizer(recognizer) }
       recognizer = nil
       window = nil
-      cancelAction()
       if let view {
         surfaceRegistry.unregister(view.inkView, for: boardSurface)
       }
     }
 
-    private func handle(
-      phase: SpatialPencilGestureRecognizer.Phase,
-      touch: UITouch,
-      event: UIEvent
-    ) {
-      guard isEnabled else { return }
-      switch phase {
-      case .began:
+    private func handle(_ input: SpatialPencilGestureRecognizer.Event) {
+      switch input {
+      case .began(let touch, let event):
+        guard isEnabled else { return }
         beginAction(touch: touch, event: event)
-      case .moved:
+      case .moved(let touch, let event):
+        guard isEnabled else { return }
         appendSamples(touch: touch, event: event)
-      case .ended:
+      case .ended(let touch, let event):
         appendSamples(touch: touch, event: event)
         finishAction()
       case .cancelled:
@@ -250,7 +253,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     }
 
     private func beginAction(touch: UITouch, event: UIEvent) {
-      cancelAction()
+      finishAction()
       setPencilActionActive(touch.type == .pencil)
       actionTool = drawingTool
       actionPenStyle = penStyle
@@ -761,24 +764,29 @@ final class SpatialInkContainerView: UIView {
 
 @MainActor
 final class SpatialPencilGestureRecognizer: UIGestureRecognizer {
-  enum Phase {
-    case began
-    case moved
-    case ended
+  enum Event {
+    case began(UITouch, UIEvent)
+    case moved(UITouch, UIEvent)
+    case ended(UITouch, UIEvent)
     case cancelled
   }
 
-  var onEvent: ((Phase, UITouch, UIEvent) -> Void)?
-  private weak var activeTouch: UITouch?
+  var onEvent: ((Event) -> Void)?
+  private var activeTouch: UITouch?
 
   override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-    guard activeTouch == nil, let touch = touches.first else {
+    guard activeTouch == nil else {
+      cancelTracking()
+      state = .cancelled
+      return
+    }
+    guard let touch = touches.first else {
       state = .failed
       return
     }
     activeTouch = touch
     state = .began
-    onEvent?(.began, touch, event)
+    onEvent?(.began(touch, event))
   }
 
   override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
@@ -786,29 +794,36 @@ final class SpatialPencilGestureRecognizer: UIGestureRecognizer {
       return
     }
     state = .changed
-    onEvent?(.moved, touch, event)
+    onEvent?(.moved(touch, event))
   }
 
   override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
     guard let touch = touches.first(where: { $0 === activeTouch }) else {
       return
     }
-    onEvent?(.ended, touch, event)
     activeTouch = nil
+    onEvent?(.ended(touch, event))
     state = .ended
   }
 
   override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
-    guard let touch = touches.first(where: { $0 === activeTouch }) else {
+    guard touches.contains(where: { $0 === activeTouch }) else {
       return
     }
-    onEvent?(.cancelled, touch, event)
-    activeTouch = nil
+    cancelTracking()
     state = .cancelled
   }
 
   override func reset() {
+    // isEnabled, competing recognizers and window detachment can end UIKit's
+    // recognition without touchesCancelled. Every accepted contact still ends.
+    cancelTracking()
     super.reset()
+  }
+
+  private func cancelTracking() {
+    guard activeTouch != nil else { return }
     activeTouch = nil
+    onEvent?(.cancelled)
   }
 }

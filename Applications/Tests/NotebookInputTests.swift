@@ -5,6 +5,115 @@ import XCTest
 
 final class NotebookInputTests: XCTestCase {
   @MainActor
+  func testInterruptedSpatialEraserReleasesTheNextCameraGesture() async throws {
+    try await assertSpatialCompletion(.disabled)
+  }
+
+  @MainActor
+  func testUIKitResetCompletesMeasuredInkAndReleasesCamera() async throws {
+    try await assertSpatialCompletion(.reset)
+  }
+
+  @MainActor
+  func testCancelledPencilCompletesMeasuredInkOnce() async throws {
+    try await assertSpatialCompletion(.cancelled)
+  }
+
+  @MainActor
+  func testLiftCompletesMeasuredInkOnceBeforeRecognizerReset() async throws {
+    try await assertSpatialCompletion(.lifted)
+  }
+
+  @MainActor
+  func testWindowDetachCompletesMeasuredInkAndReleasesCamera() async throws {
+    try await assertSpatialCompletion(.detached)
+  }
+
+  @MainActor
+  func testOwnerChangeFinishesInkAgainstItsOriginalBoard() async throws {
+    try await assertSpatialCompletion(.ownerChanged)
+  }
+
+  private enum InputEnding { case disabled, reset, cancelled, lifted, detached, ownerChanged }
+
+  @MainActor
+  private func assertSpatialCompletion(_ ending: InputEnding) async throws {
+    let gate = NotebookInputGate(), registry = SpatialInkSurfaceRegistry(), boardID = UUID()
+    var nextBoardID = boardID
+    var projection = SpatialCamera(scale: 1)
+    var commits: [(SpatialInkTool, [SpatialInkSpan])] = []
+    let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate) { tool, _, spans in commits.append((tool, spans)) }
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene)
+    let host = UIViewController()
+    let canvas = SpatialInkContainerView(frame: CGRect(x: 0, y: 0, width: 600, height: 800))
+    window.rootViewController = host
+    host.view.addSubview(canvas)
+    window.makeKeyAndVisible()
+    defer { coordinator.uninstall(); window.isHidden = true }
+    func update(enabled: Bool) {
+      coordinator.update(view: canvas, boardID: nextBoardID, camera: projection, viewport: .init(x: 600, y: 800),
+        items: [], journal: nil, penStyle: .standard, eraserStyle: .standard, drawingTool: .eraser,
+        surfaceRegistry: registry, inputGate: gate, isEnabled: enabled,
+        onCommit: { tool, _, spans in commits.append((tool, spans)) })
+    }
+    update(enabled: true)
+    let recognizer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SpatialPencilGestureRecognizer }.first)
+    let touch = InputTouch(), event = UIEvent()
+    recognizer.touchesBegan([touch], with: event)
+    touch.sampleTime += 0.1; touch.point.x += 80
+    recognizer.touchesMoved([touch], with: event)
+    XCTAssertNil(gate.beginFingerSequence(), "Незаконченный Pencil защищает свой контакт")
+
+    switch ending {
+    case .disabled: update(enabled: false)
+    case .reset: break
+    case .cancelled: recognizer.touchesCancelled([touch], with: event)
+    case .lifted: recognizer.touchesEnded([touch], with: event)
+    case .detached: coordinator.uninstall()
+    case .ownerChanged:
+      nextBoardID = UUID()
+      projection = .init(center: .init(x: 1_000, y: 2_000), scale: 0.4)
+      update(enabled: true)
+    }
+    // UIKit can reset without another measured touch event. Subsequent reset
+    // or detach must not publish the same human action a second time.
+    recognizer.reset()
+    for _ in 0..<30 where gate.isActive { await Task.yield() }
+    XCTAssertNotNil(gate.beginFingerSequence(), "Прерванный ластик не удерживает камеру навсегда")
+    XCTAssertFalse(gate.isActive)
+    XCTAssertEqual(commits.map { $0.0 }, [.eraser], "Уже измеренное стирание завершается один раз")
+    let span = try XCTUnwrap(commits.first?.1.first)
+    XCTAssertEqual(span.surface, .board(boardID), "Смена доски не переносит измеренное стирание")
+    XCTAssertGreaterThanOrEqual(span.samples.count, 2)
+    XCTAssertEqual(span.samples.first?.worldPoint, WorldPoint(x: -180, y: -180))
+    XCTAssertEqual(span.samples.last?.worldPoint, WorldPoint(x: -100, y: -180))
+
+    for pinch in [false, true] {
+      let camera = TwoFingerPaperGestureRecognizer()
+      camera.inputGate = gate
+      window.addGestureRecognizer(camera)
+      defer { camera.reset(); window.removeGestureRecognizer(camera) }
+      let first = InputTouch(), second = InputTouch()
+      first.inputType = .direct; second.inputType = .direct
+      first.point = .init(x: 100, y: 300); second.point = .init(x: 300, y: 300)
+      camera.touchesBegan([first, second], with: event)
+      first.point.x += pinch ? -40 : 80; second.point.x += 80
+      first.sampleTime += 0.1; second.sampleTime += 0.1
+      camera.touchesMoved([first, second], with: event)
+      XCTAssertEqual(camera.state, .began, "Следующее движение распознаётся камерой")
+      if pinch {
+        guard case .magnification = camera.intent else { return XCTFail("Ожидался щипок после \(ending)") }
+      } else {
+        guard case .navigation = camera.intent else { return XCTFail("Ожидалось перемещение после \(ending)") }
+      }
+      camera.touchesEnded([first, second], with: event)
+    }
+    coordinator.uninstall()
+    XCTAssertEqual(commits.count, 1)
+  }
+
+  @MainActor
   func testProbeRetainsContactWithoutAnyDisplayCallback() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -127,4 +236,19 @@ final class NotebookInputTests: XCTestCase {
     XCTAssertEqual(Set(try XCTUnwrap(model.activePage).elements.map(\.id)), ["agent", "human"])
     XCTAssertEqual(Set(try model.store.loadPage(human.id).elements.map(\.id)), ["agent", "human"])
   }
+}
+
+@MainActor
+private final class InputTouch: UITouch {
+  var point = CGPoint(x: 120, y: 220)
+  var sampleTime: TimeInterval = 1
+  var inputType: UITouch.TouchType = .pencil
+  override var type: UITouch.TouchType { inputType }
+  override var timestamp: TimeInterval { sampleTime }
+  override var force: CGFloat { 1 }
+  override var maximumPossibleForce: CGFloat { 1 }
+  override var altitudeAngle: CGFloat { .pi / 2 }
+  override func location(in view: UIView?) -> CGPoint { point }
+  override func preciseLocation(in view: UIView?) -> CGPoint { point }
+  override func azimuthAngle(in view: UIView?) -> CGFloat { 0 }
 }
