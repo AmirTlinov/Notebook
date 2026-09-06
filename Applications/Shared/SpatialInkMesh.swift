@@ -146,6 +146,7 @@ final class SpatialInkMeshPreparation {
   private let cache: SpatialInkMeshCache
   private var surface: SurfaceID?
   private var journal: SpatialInkJournal?
+  private var needsSource = true
   private var task: Task<Void, Never>?
   private var versions: [SpatialInkMeshCache.ActionVersion]?
 
@@ -155,10 +156,11 @@ final class SpatialInkMeshPreparation {
   func update(surface: SurfaceID, journal: SpatialInkJournal?, apply: @escaping @MainActor (SpatialInkMesh?) -> Void) -> Bool {
     // Array equality takes its shared-storage fast path on camera-only frames;
     // unlike a maximum stamp it also detects independent, lower-clock merges.
-    guard self.surface != surface || self.journal != journal else { return false }
+    guard needsSource || self.surface != surface || self.journal != journal else { return false }
     let ownerChanged = self.surface != surface
     let previous = ownerChanged ? nil : versions
     self.surface = surface; self.journal = journal
+    needsSource = false
     task?.cancel(); task = nil
     let cached = cache.entry(for: surface)
     if let cached, cached.journal == journal {
@@ -190,6 +192,12 @@ final class SpatialInkMeshPreparation {
     return true
   }
 
-  func cancel() { task?.cancel(); task = nil; surface = nil; journal = nil; versions = nil }
+  /// A completed local action already lives in this canvas. Cancel obsolete
+  /// replay, not its physical owner: the next source replaces it atomically.
+  func invalidateSource() {
+    task?.cancel(); task = nil; journal = nil; versions = nil; needsSource = true
+  }
+
+  func cancel() { invalidateSource(); surface = nil }
   deinit { task?.cancel() }
 }

@@ -184,8 +184,8 @@ struct SpatialInkCanvas: UIViewRepresentable {
       surfaceRegistry.register(view.inkView, for: boardSurface)
       view.accessibilityValue = "\(journal?.actions.filter(\.isActive).count ?? 0) действий"
       recognizer?.isEnabled = isEnabled
-      scheduleRenderIfNeeded()
       if let window = view.window { install(on: window, inside: view) }
+      scheduleRenderIfNeeded()
     }
 
     func install(on window: UIWindow?, inside view: SpatialInkContainerView) {
@@ -222,6 +222,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       self.window = window
       self.view = view
       self.recognizer = recognizer
+      scheduleRenderIfNeeded()
     }
 
     func uninstall() {
@@ -366,7 +367,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         )
       }
       touchedSurfaces = []
-      preparation.cancel()
+      preparation.invalidateSource()
     }
 
     private func cancelAction() {

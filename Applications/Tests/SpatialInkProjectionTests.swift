@@ -71,6 +71,48 @@ final class SpatialInkProjectionTests: XCTestCase {
   }
 
   @MainActor
+  func testInvalidatingReplayRetainsItsOwnerAndDoesNotRestartOnCameraFrames() async throws {
+    let preparation = SpatialInkMeshPreparation(cache: .init(capacity: 0))
+    let journal = projectionJournal()
+    _ = try await prepare(preparation, surface: .board, journal: journal)
+    preparation.invalidateSource()
+    let ready = expectation(description: "Измеренный вклад заменяется готовым повтором")
+    var publications = 0
+    XCTAssertTrue(preparation.update(surface: .board, journal: journal) { mesh in
+      publications += 1
+      XCTAssertFalse(mesh?.batches.isEmpty ?? true, "Тот же владелец не получает промежуточную пустоту")
+      ready.fulfill()
+    })
+    XCTAssertEqual(publications, 0)
+    for _ in 0..<1000 {
+      XCTAssertFalse(preparation.update(surface: .board, journal: journal) { _ in XCTFail("Повтор камеры перезапустил подготовку") })
+    }
+    await fulfillment(of: [ready], timeout: 3)
+    XCTAssertEqual(publications, 1)
+    preparation.cancel()
+  }
+
+  @MainActor
+  func testInvalidatedEmptySourceStillPublishesTheExactEmptyResult() async throws {
+    let preparation = SpatialInkMeshPreparation(cache: .init(capacity: 0))
+    _ = try await prepare(preparation, surface: .board, journal: projectionJournal())
+    for _ in 0..<2 {
+      preparation.invalidateSource()
+      let ready = expectation(description: "Отсутствующий источник имеет готовый пустой результат")
+      var publications = 0
+      XCTAssertTrue(preparation.update(surface: .board, journal: nil) { mesh in
+        publications += 1
+        XCTAssertTrue(mesh?.batches.isEmpty ?? false)
+        ready.fulfill()
+      })
+      XCTAssertEqual(publications, 0, "Очистка приходит как результат, не как временное состояние подготовки")
+      await fulfillment(of: [ready], timeout: 3)
+      XCTAssertEqual(publications, 1)
+    }
+    preparation.cancel()
+  }
+
+  @MainActor
   func testMeshRetentionIsBoundedAndAnUncachedOwnerCannotShowPreviousInk() async throws {
     let journal = projectionJournal()
     let cache = SpatialInkMeshCache(capacity: 2, byteLimit: 1024 * 1024)

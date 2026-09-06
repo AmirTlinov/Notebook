@@ -5,6 +5,65 @@ import XCTest
 
 final class NotebookInputTests: XCTestCase {
   @MainActor
+  func testFinishedSpatialEraserKeepsTheBoardVisibleWhileItsJournalReplays() async throws {
+    let actor = UUID(), board = UUID(), gate = NotebookInputGate(), registry = SpatialInkSurfaceRegistry()
+    var journal = SpatialInkJournal(stamp: .init(counter: 0, actor: actor))
+    let samples = [-240.0, 240.0].enumerated().map { index, x in
+      SpatialInkSample(point: .init(x: x, y: -180), worldPoint: .init(x: x, y: -180),
+        timeOffset: Double(index) * 0.1, width: 8, opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+    }
+    journal.append(tool: .pen, spans: [.init(surface: .board(board), samples: samples)], actor: actor)
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene), host = UIViewController()
+    let canvas = SpatialInkContainerView(frame: .init(x: 0, y: 0, width: 600, height: 800))
+    window.rootViewController = host; host.view.addSubview(canvas); window.makeKeyAndVisible()
+    let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate) { _, _, _ in }
+    defer { coordinator.uninstall(); window.isHidden = true }
+    func update(camera: SpatialCamera = .init(scale: 1)) {
+      coordinator.update(view: canvas, boardID: board, camera: camera, viewport: .init(x: 600, y: 800),
+        items: [], journal: journal, penStyle: .standard, eraserStyle: .standard, drawingTool: .eraser,
+        surfaceRegistry: registry, inputGate: gate, isEnabled: true, onCommit: { tool, color, spans in
+          journal.append(tool: tool, color: color, spans: spans, actor: actor)
+        })
+    }
+    update()
+    for _ in 0..<200 where canvas.inkView.committedVertexCount == 0 { try await Task.sleep(for: .milliseconds(5)) }
+    let baseline = canvas.inkView.committedVertexCount
+    XCTAssertGreaterThan(baseline, 0)
+    let pencil = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SpatialPencilGestureRecognizer }.first)
+    let touch = InputTouch(), event = UIEvent()
+    pencil.touchesBegan([touch], with: event)
+    update()
+    XCTAssertEqual(canvas.inkView.committedVertexCount, baseline, "Первое касание не очищает рисунок")
+    touch.point.x += 80; touch.sampleTime += 0.1
+    pencil.touchesMoved([touch], with: event)
+    pencil.touchesEnded([touch], with: event)
+    let committed = canvas.inkView.committedVertexCount
+    XCTAssertGreaterThan(committed, baseline)
+    XCTAssertGreaterThan(canvas.inkView.committedEraserVertexCount, 0)
+    let installations = canvas.inkView.spatialMeshInstallCount
+    update()
+    XCTAssertEqual(canvas.inkView.committedVertexCount, committed,
+      "Публикация стирания не подменяет ту же доску пустой геометрией")
+    XCTAssertEqual(canvas.inkView.spatialMeshInstallCount, installations,
+      "До готовности новой геометрии остаётся уже показанный результат")
+    for frame in 0..<200 {
+      update(camera: .init(center: .init(x: Double(frame), y: 0), scale: 1 + Double(frame) / 500))
+      XCTAssertGreaterThan(canvas.inkView.committedVertexCount, 0)
+      if canvas.inkView.spatialMeshInstallCount > installations { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertEqual(canvas.inkView.spatialMeshInstallCount, installations + 1)
+    XCTAssertGreaterThan(canvas.inkView.committedEraserVertexCount, 0)
+    let settled = canvas.inkView.spatialMeshInstallCount
+    for frame in 0..<100 {
+      update(camera: .init(center: .init(x: Double(frame), y: 0), scale: 0.5))
+    }
+    XCTAssertEqual(canvas.inkView.spatialMeshInstallCount, settled,
+      "Следующий зум не перезагружает готовые чернила")
+  }
+
+  @MainActor
   func testInterruptedSpatialEraserReleasesTheNextCameraGesture() async throws {
     try await assertSpatialCompletion(.disabled)
   }
