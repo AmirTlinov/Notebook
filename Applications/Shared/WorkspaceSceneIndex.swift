@@ -20,6 +20,7 @@ struct WorkspaceSceneIndex: Sendable {
     let items: [UUID: Item]
     let elements: [String: SpatialElement]
     let covers: [UUID: [SpatialElement]]
+    let coverIndices: [UUID: WorkspaceSpatialIndex]
     let index: WorkspaceSpatialIndex
   }
 
@@ -87,7 +88,12 @@ struct WorkspaceSceneIndex: Sendable {
         }
       }
       prepared[node.id] = Board(source: node.board, items: items, elements: elements,
-        covers: covers, index: WorkspaceSpatialIndex(entries: entries))
+        covers: covers, coverIndices: covers.mapValues { elements in
+          WorkspaceSpatialIndex(entries: elements.enumerated().map { offset, element in
+            .init(id: .element(element.id), bounds: .init(origin: .init(x: element.frame.x, y: element.frame.y),
+              width: element.frame.width, height: element.frame.height), zIndex: Double(offset))
+          })
+        }, index: WorkspaceSpatialIndex(entries: entries))
     }
     boards = prepared
   }
@@ -127,6 +133,27 @@ struct WorkspaceSceneIndex: Sendable {
 
   func coverElements(itemID: UUID, boardID: UUID) -> [SpatialElement] {
     boards[boardID]?.covers[itemID] ?? []
+  }
+
+  func hasCoverElements(itemID: UUID, boardID: UUID) -> Bool {
+    boards[boardID]?.covers[itemID]?.isEmpty == false
+  }
+
+  func coverWorkset(item: RenderedWorkspaceItem, presence: SessionPresence,
+    pixelScale: Double, limit: Int, pinned: Set<WorkspaceSpatialID> = []) -> WorkspaceSceneWorkset {
+    guard let board = boards[presence.boardID], let index = board.coverIndices[item.id] else { return .empty }
+    let center = presence.camera.worldToScreen(item.center, viewport: presence.viewport)
+    let left = max(0, item.geometry.width / 2 - (center.x + 96) / presence.camera.scale)
+    let top = max(0, item.geometry.height / 2 - (center.y + 96) / presence.camera.scale)
+    let right = min(item.geometry.width, item.geometry.width / 2 + (presence.viewport.x + 96 - center.x) / presence.camera.scale)
+    let bottom = min(item.geometry.height, item.geometry.height / 2 + (presence.viewport.y + 96 - center.y) / presence.camera.scale)
+    let query = index.query(bounds: .init(origin: .init(x: left, y: top),
+      width: max(0, right - left), height: max(0, bottom - top)), limit: limit,
+      minimumProjectedExtent: 12, scale: pixelScale, pinned: pinned)
+    return .init(items: [], elements: query.entries.compactMap {
+      if case .element(let id) = $0.id { return board.elements[id] }
+      return nil
+    }, query: query, generationID: generationID)
   }
 
   func workset(presence: SessionPresence, pinned: Set<WorkspaceSpatialID> = [],

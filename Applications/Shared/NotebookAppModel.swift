@@ -110,7 +110,7 @@ final class NotebookAppModel {
   private var referenceHighlightTask: Task<Void, Never>?
   private var collaborationUndoTask: Task<Void, Never>?
   private var collaborationReadSnapshot: CollaborationReadSnapshot?
-  private var collaborationReadEpoch: UInt64 = 0
+  private(set) var collaborationReadEpoch: UInt64 = 0
   private var preparedCollaborationVersion: UInt64?
   @ObservationIgnored private var collaborationReadTask: Task<CollaborationReadSnapshot, Error>?
   @ObservationIgnored private var collaborationReadGeneration = 0

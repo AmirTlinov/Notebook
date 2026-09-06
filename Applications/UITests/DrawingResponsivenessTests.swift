@@ -248,8 +248,18 @@ final class DrawingResponsivenessTests: XCTestCase {
     // direct automation tap gives the synthesized keyboard the same focus a
     // real touch already has.
     editor.tap()
+    XCTAssertTrue(
+      app.keyboards.firstMatch.waitForExistence(timeout: 5),
+      "Редактор должен получить клавиатуру до синтезированного ввода"
+    )
     editor.typeText("\n\nНовая строка\n\n")
 
+    if (editor.value as? String)?.contains("Новая строка") != true {
+      let hierarchy = XCTAttachment(string: app.debugDescription)
+      hierarchy.name = "Document editor after keyboard input"
+      hierarchy.lifetime = .keepAlways
+      add(hierarchy)
+    }
     XCTAssertTrue(
       (editor.value as? String)?.contains("Новая строка") == true,
       "Редактор должен принимать Markdown с экранной клавиатуры"
@@ -1254,6 +1264,12 @@ final class DrawingResponsivenessTests: XCTestCase {
         // The native sheet owns the landing rectangle; remote WebKit
         // accessibility frames round the ancestor transform to screen points.
         XCTAssertEqual(surface.frame.width / surface.frame.height, ratio, accuracy: 0.002)
+        if abs(paper.frame.width - surface.frame.width) > 2 {
+          let hierarchy = XCTAttachment(string: app.debugDescription)
+          hierarchy.name = "document-frame-failure-hierarchy"
+          hierarchy.lifetime = .keepAlways
+          add(hierarchy)
+        }
         XCTAssertEqual(paper.frame.width, surface.frame.width, accuracy: 2)
         XCTAssertEqual(paper.frame.height, surface.frame.height, accuracy: 2)
         XCTAssertEqual(paper.frame.midX, surface.frame.midX, accuracy: 2)

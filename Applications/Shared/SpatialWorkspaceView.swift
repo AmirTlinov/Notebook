@@ -326,7 +326,11 @@ struct SpatialWorkspaceView: View {
         y: geometry.size.height
       )
       let presence = normalizedPresence(for: viewport)
-      let workset = sceneWorkset(presence: presence)
+      let frame = model.sceneIndex.map {
+        WorkspaceSceneFrame(index: $0, presence: presence, portalCamera: model.scenePortalCamera,
+          pinned: scenePins(presence: presence))
+      }
+      let workset = frame?.workset(boardID: presence.boardID) ?? .empty
       let rendered = workset.items
 
       ZStack {
@@ -419,96 +423,8 @@ struct SpatialWorkspaceView: View {
           .allowsHitTesting(false)
         #endif
 
-        ForEach(rendered.filter {
-          WorkspaceSceneProjection.mountsContent(of: $0, in: presence)
-            || $0.id == selectedItemID || $0.id == liftedItemID
-            || $0.id == cameraGesture?.candidateItemID
-        }) { rendered in
-          WorkspaceSceneItem(
-            rendered: rendered,
-            document: model.documents[rendered.id],
-            documentState: model.documentStates[rendered.id],
-            documentPageIndex: presence.focusedItemID == rendered.id
-              ? presence.documentPageIndex
-              : 0,
-            documentPageCount: documentPageLayouts[rendered.id]?.pageCount ?? 1,
-            camera: presence.camera,
-            viewport: viewport,
-            isFocused: presence.focusedItemID == rendered.id,
-            preparesCoverMotion: presence.focusedItemID == rendered.id
-              || cameraGesture?.candidateItemID == rendered.id
-              || selectedItemID == rendered.id
-              || model.workspace?.selectedItemID == rendered.id,
-            preparesContent: preparesContent(
-              rendered.id,
-              presence: presence
-            ),
-            openProgress: presence.focusedItemID == rendered.id
-              ? presence.openProgress
-              : 0,
-            contentIsInteractive: !model.isPointing && presence.focusedItemID == rendered.id
-              && (presence.mode == .page || presence.mode == .document)
-              && !contentGestureActive
-              && !pageTurnIsActive
-              && cameraGesture == nil
-              && !settling
-              && presence.openProgress >= 0.999,
-            pageNavigationIsEnabled: !model.isPointing && presence.focusedItemID == rendered.id
-              && (presence.mode == .page || presence.mode == .document)
-              && presence.openProgress >= 0.999
-              && cameraGesture == nil
-              && !settling
-              && (!model.isElementEditingEnabled || presence.mode == .document),
-            isSelected: selectedItemID == rendered.id,
-            isLifted: liftedItemID == rendered.id,
-            editingTextID: editingSpatialTextID,
-            spatialInkSurfaces: spatialInkSurfaces,
-            onDrop: { itemID, center in
-              guard !model.scenePreparationPending else { return }
-              dropItem(itemID, at: center, presence: presence)
-            },
-            onSelect: { itemID in
-              withAnimation(.easeOut(duration: 0.12)) {
-                selectedItemID = itemID
-              }
-            },
-            onLiftChanged: { itemID, lifted in
-              if lifted { editingSpatialTextID = nil }
-              withAnimation(.spring(duration: 0.18, bounce: 0.18)) {
-                liftedItemID = lifted ? itemID : nil
-                if lifted { selectedItemID = itemID }
-              }
-            },
-            onOpen: { itemID in
-              guard !model.scenePreparationPending else { return }
-              editingSpatialTextID = nil
-              selectedItemID = nil
-              openItem(itemID, viewport: viewport)
-            },
-            onEditText: { itemID, point in
-              guard !model.scenePreparationPending else { return }
-              beginTextEditing(on: itemID, at: point)
-            },
-            onTextEditingEnded: { elementID in
-              if editingSpatialTextID == elementID {
-                editingSpatialTextID = nil
-              }
-            },
-            onElementSelected: {
-              selectedItemID = nil
-            },
-            onPageTurnStateChange: { active in
-              pageTurnIsActive = active
-            },
-            onDocumentPageLayout: { layout in
-              acceptDocumentPageLayout(
-                layout,
-                documentID: rendered.id
-              )
-            }
-          )
-          .zIndex(liftedItemID == rendered.id ? 9_000 : rendered.zIndex)
-        }
+        sceneItems(rendered, presence: presence, viewport: viewport, frame: frame)
+          .zIndex(liftedItemID == nil ? 0 : 9_000)
 
         #if os(iOS)
           WorkspaceGestureLayer(
@@ -752,8 +668,180 @@ struct SpatialWorkspaceView: View {
       .padding(.leading, 18).padding(.top, 18).zIndex(10_000)
   }
 
+  private struct ItemPlaneRevision: Equatable {
+    let generation: UUID?
+    let contents: UInt64
+    let ids: [UUID]
+    let coverIDs: [UUID: [String]]
+    let mode: WorkspaceSemanticMode
+    let focused: UUID?
+    let open: Double
+    let selected: UUID?
+    let lifted: UUID?
+    let candidate: UUID?
+    let editingText: String?
+    let contentGesture: Bool
+    let pageTurn: Bool
+    let isCameraGesture: Bool
+    let settling: Bool
+    let pointing: Bool
+    let prepares: [Bool]
+    let page: Int
+    let layout: [UUID: DocumentPageLayout]
+    let dependentCamera: SpatialCamera?
+  }
+
+  private func sceneItems(_ rendered: [RenderedWorkspaceItem], presence: SessionPresence,
+    viewport: SpatialPoint, frame: WorkspaceSceneFrame?) -> some View {
+    let revision = ItemPlaneRevision(generation: model.sceneIndex?.generationID,
+      contents: model.collaborationReadEpoch, ids: rendered.map(\.id),
+      coverIDs: frame?.covers.mapValues { $0.elements.map { "element:" + $0.id } + $0.aggregates.map { "aggregate:" + String($0.id) } } ?? [:], mode: presence.mode,
+      focused: presence.focusedItemID, open: presence.openProgress,
+      selected: selectedItemID, lifted: liftedItemID, candidate: cameraGesture?.candidateItemID,
+      editingText: editingSpatialTextID, contentGesture: contentGestureActive,
+      pageTurn: pageTurnIsActive, isCameraGesture: cameraGesture != nil, settling: settling,
+      pointing: model.isPointing, prepares: rendered.map { preparesContent($0.id, presence: presence) },
+      page: presence.documentPageIndex, layout: documentPageLayouts,
+      dependentCamera: rendered.contains { $0.stackID != nil || $0.item.kind == .board }
+        || selectedItemID != nil ? presence.camera : nil)
+    return SceneCameraPlane(presence: presence, revision: revision, reanchorsOnRevision: false,
+      isCameraActive: cameraGesture != nil || panStart != nil || settling) { anchor in
+      ZStack { sceneItemContents(rendered, presence: presence, viewport: viewport, anchorCamera: anchor.camera, frame: frame) }
+        .environment(model).environment(\.workspaceSceneFrame, frame)
+    }
+  }
+
+  private func sceneItemContents(_ rendered: [RenderedWorkspaceItem], presence: SessionPresence,
+    viewport: SpatialPoint, anchorCamera: SpatialCamera, frame: WorkspaceSceneFrame?) -> some View {
+    ForEach(rendered.filter {
+          WorkspaceSceneProjection.mountsContent(of: $0, in: presence)
+            || $0.id == selectedItemID || $0.id == liftedItemID
+            || $0.id == cameraGesture?.candidateItemID
+        }) { rendered in
+          WorkspaceSceneItem(
+            rendered: rendered,
+            document: model.documents[rendered.id],
+            documentState: model.documentStates[rendered.id],
+            documentPageIndex: presence.focusedItemID == rendered.id
+              ? presence.documentPageIndex
+              : 0,
+            documentPageCount: documentPageLayouts[rendered.id]?.pageCount ?? 1,
+            camera: anchorCamera,
+            projectedScale: presence.camera.scale,
+            boardID: presence.boardID,
+            contentRevision: model.collaborationReadEpoch,
+            coverElements: frame?.covers[rendered.id]?.elements ?? [],
+            coverAggregates: frame?.covers[rendered.id]?.aggregates ?? [],
+            viewport: viewport,
+            isFocused: presence.focusedItemID == rendered.id,
+            preparesCoverMotion: presence.focusedItemID == rendered.id
+              || cameraGesture?.candidateItemID == rendered.id
+              || selectedItemID == rendered.id
+              || model.workspace?.selectedItemID == rendered.id,
+            preparesContent: preparesContent(
+              rendered.id,
+              presence: presence
+            ),
+            openProgress: presence.focusedItemID == rendered.id
+              ? presence.openProgress
+              : 0,
+            contentIsInteractive: !model.isPointing && presence.focusedItemID == rendered.id
+              && (presence.mode == .page || presence.mode == .document)
+              && !contentGestureActive
+              && !pageTurnIsActive
+              && cameraGesture == nil
+              && !settling
+              && presence.openProgress >= 0.999,
+            pageNavigationIsEnabled: !model.isPointing && presence.focusedItemID == rendered.id
+              && (presence.mode == .page || presence.mode == .document)
+              && presence.openProgress >= 0.999
+              && cameraGesture == nil
+              && !settling
+              && (!model.isElementEditingEnabled || presence.mode == .document),
+            isSelected: selectedItemID == rendered.id,
+            isLifted: liftedItemID == rendered.id,
+            editingTextID: editingSpatialTextID,
+            spatialInkSurfaces: spatialInkSurfaces,
+            onDrop: { itemID, center in
+              guard !model.scenePreparationPending else { return }
+              dropItem(itemID, at: center, presence: model.presence ?? presence)
+            },
+            onSelect: { itemID in
+              withAnimation(.easeOut(duration: 0.12)) {
+                selectedItemID = itemID
+              }
+            },
+            onLiftChanged: { itemID, lifted in
+              if lifted { editingSpatialTextID = nil }
+              withAnimation(.spring(duration: 0.18, bounce: 0.18)) {
+                liftedItemID = lifted ? itemID : nil
+                if lifted { selectedItemID = itemID }
+              }
+            },
+            onOpen: { itemID in
+              guard !model.scenePreparationPending else { return }
+              editingSpatialTextID = nil
+              selectedItemID = nil
+              openItem(itemID, viewport: viewport)
+            },
+            onEditText: { itemID, point in
+              guard !model.scenePreparationPending else { return }
+              beginTextEditing(on: itemID, at: point)
+            },
+            onTextEditingEnded: { elementID in
+              if editingSpatialTextID == elementID {
+                editingSpatialTextID = nil
+              }
+            },
+            onElementSelected: {
+              selectedItemID = nil
+            },
+            onPageTurnStateChange: { active in
+              pageTurnIsActive = active
+            },
+            onDocumentPageLayout: { layout in
+              acceptDocumentPageLayout(
+                layout,
+                documentID: rendered.id
+              )
+            }
+          )
+          .equatable()
+          .zIndex(liftedItemID == rendered.id ? 9_000 : rendered.zIndex)
+        }
+
+  }
+
+  private struct ElementPlaneRevision: Equatable {
+    let generation: UUID?
+    let elements: [String]
+    let editing: Bool
+    let selection: EditableElementReference?
+    let translation: SpatialPoint
+    let resize: SpatialPoint
+    let pending: Bool
+    // Frame handles remain screen-sized. Their small selected surface changes
+    // presentation explicitly; passive content does not subscribe to the camera.
+    let editingCamera: SpatialCamera?
+  }
+
+  private func boardElements(_ elements: [SpatialElement], presence: SessionPresence,
+    viewport: SpatialPoint) -> some View {
+    let selection = model.elementEditingSession.selection
+    let revision = ElementPlaneRevision(generation: model.sceneIndex?.generationID,
+      elements: elements.map(\.id), editing: model.isElementEditingEnabled,
+      selection: selection, translation: model.elementEditingSession.translation,
+      resize: selection.map { model.elementResizeDelta($0) } ?? .zero,
+      pending: model.scenePreparationPending, editingCamera: selection == nil ? nil : presence.camera)
+    return SceneCameraPlane(presence: presence, revision: revision,
+      isCameraActive: cameraGesture != nil || panStart != nil || settling) { anchor in
+      ZStack { boardElementContents(elements, presence: anchor, viewport: anchor.viewport) }
+        .environment(model)
+    }
+  }
+
   @ViewBuilder
-  private func boardElements(
+  private func boardElementContents(
     _ elements: [SpatialElement],
     presence: SessionPresence,
     viewport: SpatialPoint
@@ -792,7 +880,7 @@ struct SpatialWorkspaceView: View {
           ) {
             // The physical viewport belongs to the element. The camera transforms
             // its whole layer; WebKit layout must not trail the moving frame.
-            SpatialElementContent(element: element)
+            SpatialElementContent(element: element, boardID: presence.boardID)
               .frame(width: element.frame.width, height: element.frame.height)
               .scaleEffect(presence.camera.scale)
               .frame(
@@ -867,14 +955,18 @@ struct SpatialWorkspaceView: View {
     #endif
   }
 
-  private func sceneWorkset(presence: SessionPresence) -> WorkspaceSceneWorkset {
+  private func scenePins(presence: SessionPresence) -> Set<WorkspaceSpatialID> {
     var pins = Set<WorkspaceSpatialID>()
     for id in [presence.focusedItemID, selectedItemID, liftedItemID, cameraGesture?.candidateItemID] {
       if let id { pins.insert(.item(id)) }
     }
     if case .spatial(let id) = model.elementEditingSession.selection { pins.insert(.element(id)) }
     if let editingSpatialTextID { pins.insert(.element(editingSpatialTextID)) }
-    return model.sceneWorkset(presence: presence, pinned: pins)
+    return pins
+  }
+
+  private func sceneWorkset(presence: SessionPresence) -> WorkspaceSceneWorkset {
+    model.sceneWorkset(presence: presence, pinned: scenePins(presence: presence))
   }
 
   private func acceptDocumentPageLayout(
@@ -1639,8 +1731,9 @@ struct SpatialWorkspaceView: View {
 
 }
 
-private struct WorkspaceSceneItem: View {
+private struct WorkspaceSceneItem: View, Equatable {
   @Environment(NotebookAppModel.self) private var model
+  @Environment(\.scenePlaneProjection) private var planeProjection
 
   let rendered: RenderedWorkspaceItem
   let document: DocumentDocument?
@@ -1648,6 +1741,11 @@ private struct WorkspaceSceneItem: View {
   let documentPageIndex: Int
   let documentPageCount: Int
   let camera: SpatialCamera
+  let projectedScale: Double
+  let boardID: UUID
+  let contentRevision: UInt64
+  let coverElements: [SpatialElement]
+  let coverAggregates: [WorkspaceSpatialAggregate]
   let viewport: SpatialPoint
   let isFocused: Bool
   let preparesCoverMotion: Bool
@@ -1672,6 +1770,22 @@ private struct WorkspaceSceneItem: View {
   @State private var dragTranslation = CGSize.zero
   @State private var pendingPlacement: WorldPoint?
   @State private var liftStarted = false
+
+  nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.rendered.id == rhs.rendered.id && lhs.rendered.center == rhs.rendered.center
+      && lhs.rendered.zIndex == rhs.rendered.zIndex && lhs.contentRevision == rhs.contentRevision
+      && lhs.coverElements.map(\.id) == rhs.coverElements.map(\.id)
+      && lhs.coverAggregates == rhs.coverAggregates
+      && lhs.boardID == rhs.boardID && lhs.camera == rhs.camera && lhs.viewport == rhs.viewport
+      && lhs.isFocused == rhs.isFocused && lhs.preparesCoverMotion == rhs.preparesCoverMotion
+      && lhs.preparesContent == rhs.preparesContent && lhs.openProgress == rhs.openProgress
+      && lhs.contentIsInteractive == rhs.contentIsInteractive
+      && lhs.pageNavigationIsEnabled == rhs.pageNavigationIsEnabled
+      && lhs.isSelected == rhs.isSelected && lhs.isLifted == rhs.isLifted
+      && lhs.editingTextID == rhs.editingTextID && lhs.documentPageIndex == rhs.documentPageIndex
+      && lhs.documentPageCount == rhs.documentPageCount
+      && (!(lhs.isSelected || lhs.rendered.item.kind == .board) || lhs.projectedScale == rhs.projectedScale)
+  }
 
   var body: some View {
     let screen = camera.worldToScreen(pendingPlacement ?? rendered.center, viewport: viewport)
@@ -1709,7 +1823,7 @@ private struct WorkspaceSceneItem: View {
         )
         .stroke(
           Color.accentColor.opacity(0.72),
-          lineWidth: 2 / max(scale, 0.0125)
+          lineWidth: 2 / max(projectedScale, 0.0125)
         )
         .allowsHitTesting(false)
       }
@@ -1925,6 +2039,7 @@ private struct WorkspaceSceneItem: View {
       geometry: rendered.geometry,
       spatialInkSurfaces: spatialInkSurfaces,
       elements: coverElements,
+      aggregates: coverAggregates,
       editingTextID: editingTextID,
       isElementEditingEnabled: model.isElementEditingEnabled && !model.scenePreparationPending,
       rendersSettledSnapshot: false,
@@ -1935,22 +2050,19 @@ private struct WorkspaceSceneItem: View {
         if lifted { beginLift() } else { endLift() }
       },
       onTranslationChanged: { translation in
-        dragTranslation = translation
+        let ratio = camera.scale / (planeProjection?.current.camera.scale ?? camera.scale)
+        dragTranslation = CGSize(width: translation.width * ratio, height: translation.height * ratio)
       },
       onTranslationEnded: { translation in
-        finishMove(translation: translation, scale: camera.scale)
+        finishMove(translation: translation, scale: planeProjection?.current.camera.scale ?? camera.scale)
       },
       onTextEditingEnded: onTextEditingEnded,
       onElementSelected: onElementSelected,
       showsDepth: false,
-      portalPixelScale: camera.scale
+      portalPixelScale: projectedScale
     )
   }
 
-  private var coverElements: [SpatialElement] {
-    model.sceneIndex?.coverElements(itemID: rendered.id,
-      boardID: model.presence?.boardID ?? WorkspaceRoot.boardID) ?? []
-  }
 
   private var coverRenderingRevision: CoverRenderingRevision {
     CoverRenderingRevision(
@@ -2015,6 +2127,7 @@ private struct WorkspaceSceneItem: View {
 /// hierarchy itself has no depth bound.
 struct BoardPortalPreview: View {
   @Environment(NotebookAppModel.self) private var model
+  @Environment(\.workspaceSceneFrame) private var frame
 
   let boardID: UUID
   let pixelScale: Double
@@ -2039,8 +2152,11 @@ struct BoardPortalPreview: View {
         camera: camera,
         viewport: viewport
       )
+      let projectionFrame = frame ?? model.sceneIndex.map {
+        WorkspaceSceneFrame(index: $0, presence: presence, portalCamera: model.scenePortalCamera)
+      }
       let workset = rendersSettledSnapshot ? WorkspaceSceneWorkset.empty
-        : model.sceneWorkset(presence: presence, pixelScale: pixelScale * camera.scale / fill)
+        : projectionFrame?.workset(boardID: boardID) ?? .empty
       let rendered = rendersSettledSnapshot
         ? WorkspaceSceneProjection.exactItems(workspace: workspace, board: board,
           presence: presence, documents: model.documents)
@@ -2051,6 +2167,10 @@ struct BoardPortalPreview: View {
 
       ZStack {
         SpatialBoardGrid(camera: camera, outputScale: pixelScale / fill)
+        if !rendersSettledSnapshot && workset.generationID == nil {
+          Text("Подготовка области").font(.caption).foregroundStyle(.secondary)
+            .padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        }
         WorkspaceSceneAggregates(aggregates: workset.aggregates, presence: presence)
 
         ForEach(elements) {
@@ -2104,7 +2224,8 @@ struct BoardPortalPreview: View {
             spatialInkSurfaces: SpatialInkSurfaceRegistry(),
             elements: rendersSettledSnapshot
               ? board.elements.filter { $0.surface == .cover(item.id) }
-              : model.sceneIndex?.coverElements(itemID: item.id, boardID: boardID) ?? [],
+              : projectionFrame?.covers[item.id]?.elements ?? [],
+            aggregates: projectionFrame?.covers[item.id]?.aggregates ?? [],
             editingTextID: nil, isElementEditingEnabled: false,
             rendersSettledSnapshot: rendersSettledSnapshot,
             portalOpenProgress: 0, portalViewport: transitionViewport,
@@ -2125,6 +2246,7 @@ struct BoardPortalPreview: View {
           .zIndex(item.zIndex)
         }
       }
+      .environment(\.workspaceSceneFrame, projectionFrame)
       .frame(width: viewport.x, height: viewport.y)
       .scaleEffect(1 / fill)
       .frame(width: WorkspaceItemGeometry.notebook.width, height: WorkspaceItemGeometry.notebook.height)
@@ -2144,6 +2266,7 @@ struct WorkspaceItemCoverView: View {
   let geometry: WorkspaceItemGeometry
   let spatialInkSurfaces: SpatialInkSurfaceRegistry
   let elements: [SpatialElement]
+  var aggregates: [WorkspaceSpatialAggregate] = []
   let editingTextID: String?
   let isElementEditingEnabled: Bool
   let rendersSettledSnapshot: Bool
@@ -2180,6 +2303,12 @@ struct WorkspaceItemCoverView: View {
             x: geometry.width * (item.kind == .document ? 0.105 : 0.145),
             y: geometry.height * (item.kind == .document ? 0.145 : 0.148)
           )
+      }
+
+      if !aggregates.isEmpty {
+        WorkspaceSceneAggregates(aggregates: aggregates, presence: .init(mode: .board,
+          camera: .init(center: .init(x: geometry.width / 2, y: geometry.height / 2), scale: 1),
+          viewport: .init(x: geometry.width, y: geometry.height)))
       }
 
       ForEach(elements) { element in
@@ -2227,6 +2356,7 @@ struct WorkspaceItemCoverView: View {
                 SpatialElementContent(
                   element: element,
                   commitsState: !isPortalProjection,
+                  boardID: model.sceneIndex?.ownerBoard(itemID: item.id),
                   isTextEditing: retainsTextInput,
                   onTextEditingEnded: { onTextEditingEnded(element.id) }
                 )
@@ -2235,6 +2365,7 @@ struct WorkspaceItemCoverView: View {
               SpatialElementContent(
                 element: element,
                 commitsState: !isPortalProjection,
+                boardID: model.sceneIndex?.ownerBoard(itemID: item.id),
                 isTextEditing: retainsTextInput,
                 onTextEditingEnded: { onTextEditingEnded(element.id) }
               )
@@ -2413,17 +2544,20 @@ struct SpatialElementContent: View {
   @Environment(NotebookAppModel.self) private var model
   let element: SpatialElement
   let commitsState: Bool
+  let boardID: UUID?
   let isTextEditing: Bool
   let onTextEditingEnded: () -> Void
 
   init(
     element: SpatialElement,
     commitsState: Bool = true,
+    boardID: UUID? = nil,
     isTextEditing: Bool = false,
     onTextEditingEnded: @escaping () -> Void = {}
   ) {
     self.element = element
     self.commitsState = commitsState
+    self.boardID = boardID
     self.isTextEditing = isTextEditing
     self.onTextEditingEnded = onTextEditingEnded
   }
@@ -2437,13 +2571,15 @@ struct SpatialElementContent: View {
         onEditingEnded: onTextEditingEnded
       )
     case .markdown, .web:
-      let boardID = model.presence?.boardID ?? WorkspaceRoot.boardID
+      let sourceBoardID = boardID ?? (element.surface.kind == .cover
+        ? element.surface.ownerID.flatMap { model.sceneIndex?.ownerBoard(itemID: $0) }
+        : element.surface.ownerID)
       PreparedAgentElementView(element: agentElement,
-        allowsInteraction: commitsState,
-        focus: .board(boardID: boardID, elementID: element.id), onRenderReady: { _ in },
+        allowsInteraction: commitsState && sourceBoardID != nil,
+        focus: .board(boardID: sourceBoardID ?? WorkspaceRoot.boardID, elementID: element.id), onRenderReady: { _ in },
         onState: { state in
-          guard commitsState, !model.scenePreparationPending else { return }
-          model.commitSpatialElementState(boardID: boardID, elementID: element.id, state: state)
+          guard commitsState, let sourceBoardID, !model.scenePreparationPending else { return }
+          model.commitSpatialElementState(boardID: sourceBoardID, elementID: element.id, state: state)
         })
     }
   }

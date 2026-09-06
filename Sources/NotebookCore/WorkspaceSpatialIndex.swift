@@ -21,7 +21,9 @@ public struct WorkspaceSpatialBounds: Equatable, Sendable {
     maximum = origin.offsetBy(x: width, y: height)
   }
 
-  private init(origin: WorldPoint, maximum: WorldPoint) {
+  public init(origin: WorldPoint, maximum: WorldPoint) {
+    precondition(Self.compare(origin.tileX, origin.localX, maximum.tileX, maximum.localX) <= 0
+      && Self.compare(origin.tileY, origin.localY, maximum.tileY, maximum.localY) <= 0)
     self.origin = origin
     self.maximum = maximum
     width = Self.distance(origin.tileX, origin.localX, maximum.tileX, maximum.localX)
@@ -127,6 +129,22 @@ public struct WorkspaceSpatialQuery: Equatable, Sendable {
   public let statistics: WorkspaceSpatialQueryStatistics
 }
 
+/// A cursor names one immutable index and one physical query. Its stack is a
+/// depth-first path, bounded by tree depth rather than by the number of sources.
+public struct WorkspaceSpatialReadCursor: Sendable {
+  fileprivate let generation: UUID
+  fileprivate let bounds: WorkspaceSpatialBounds
+  fileprivate let pending: [Int]
+}
+
+public enum WorkspaceSpatialReadError: Error, Equatable { case cursorMismatch }
+
+public struct WorkspaceSpatialReadPage: Sendable {
+  public let entries: [WorkspaceSpatialEntry]
+  public let next: WorkspaceSpatialReadCursor?
+  public let visitedNodes: Int
+}
+
 /// Immutable derived geometry. Build once per geometry revision, query without reading content.
 /// Query work and returned primitives are bounded even when every source overlaps the viewport.
 public struct WorkspaceSpatialIndex: Sendable {
@@ -136,6 +154,9 @@ public struct WorkspaceSpatialIndex: Sendable {
     var children: (Int, Int)?
   }
 
+  private let generation = UUID()
+  private let paintEntries: [WorkspaceSpatialEntry]
+  private let paintNodes: [Node]
   private let entries: [WorkspaceSpatialEntry]
   private let positions: [WorkspaceSpatialID: Int]
   private let nodes: [Node]
@@ -150,11 +171,58 @@ public struct WorkspaceSpatialIndex: Sendable {
     }
     self.entries = entries
     self.nodes = nodes
+    let ordered = source.sorted(by: Self.detailOrder)
+    var orderedNodes: [Node] = []
+    if !ordered.isEmpty { Self.buildPaint(entries: ordered, range: ordered.indices, nodes: &orderedNodes) }
+    paintEntries = ordered
+    paintNodes = orderedNodes
     positions = Dictionary(uniqueKeysWithValues: entries.enumerated().map { ($0.element.id, $0.offset) })
   }
 
   public func entry(id: WorkspaceSpatialID) -> WorkspaceSpatialEntry? {
     positions[id].map { entries[$0] }
+  }
+
+  /// Exact, stable painter order for sequential raster preparation. Each call
+  /// bounds both output and traversal, including sparse and fully overlapping
+  /// compositions. An empty page with a cursor is progress, not an empty region.
+  public func readPaintOrder(in bounds: WorkspaceSpatialBounds,
+    after cursor: WorkspaceSpatialReadCursor? = nil, limit: Int = 64,
+    maximumVisits: Int = 512) throws -> WorkspaceSpatialReadPage {
+    precondition(limit > 0 && limit <= 1024 && maximumVisits > 0 && maximumVisits <= 8192)
+    if let cursor, cursor.generation != generation || cursor.bounds != bounds {
+      throw WorkspaceSpatialReadError.cursorMismatch
+    }
+    var pending = cursor?.pending ?? (paintNodes.isEmpty ? [] : [0])
+    var result: [WorkspaceSpatialEntry] = []
+    var visits = 0
+    while visits < maximumVisits, result.count < limit, let id = pending.popLast() {
+      let node = paintNodes[id]
+      visits += 1
+      guard node.bounds.intersects(bounds) else { continue }
+      if let children = node.children {
+        pending.append(children.1)
+        pending.append(children.0)
+      } else {
+        result.append(paintEntries[node.range.lowerBound])
+      }
+    }
+    return .init(entries: result, next: pending.isEmpty ? nil : .init(generation: generation,
+      bounds: bounds, pending: pending), visitedNodes: visits)
+  }
+
+  @discardableResult
+  private static func buildPaint(entries: [WorkspaceSpatialEntry], range: Range<Int>, nodes: inout [Node]) -> Int {
+    let id = nodes.count
+    nodes.append(.init(bounds: entries[range.lowerBound].bounds, range: range, children: nil))
+    if range.count > 1 {
+      let middle = range.lowerBound + range.count / 2
+      let left = buildPaint(entries: entries, range: range.lowerBound..<middle, nodes: &nodes)
+      let right = buildPaint(entries: entries, range: middle..<range.upperBound, nodes: &nodes)
+      nodes[id].bounds = nodes[left].bounds.union(nodes[right].bounds)
+      nodes[id].children = (left, right)
+    }
+    return id
   }
 
   /// `limit` bounds ordinary details plus aggregates. Explicit pinned owners are returned

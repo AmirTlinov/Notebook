@@ -488,38 +488,65 @@ final class SceneRenderResources {
     return (cost, min(horizontal, vertical))
   }
 
+  /// Every caller uses the same granted executor and receives the exact entry
+  /// it prepared. A large composition can release each source after painting it.
+  func prepareRaster(_ element: AgentElement, requestedScale: Double = 2,
+    permitsPreparation: @MainActor () -> Bool = { true }) async throws -> RasterLease {
+    try Task.checkCancellation()
+    if let raster = retainRaster(for: element, minimumScale: requestedScale) { return raster }
+    while !permitsPreparation() {
+      try await Task.sleep(for: .milliseconds(30))
+    }
+    let slot = try await acquireWebSurface(priority: .background)
+    defer { slot.release() }
+    try Task.checkCancellation()
+    // Input may have started while this request waited for its executor.
+    guard permitsPreparation() else { throw CancellationError() }
+    let coordinator = AgentWebCoordinator(lease: slot, resources: self,
+      snapshotPolicy: .exact(scale: requestedScale), onState: { _ in })
+    let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
+    let size = CGSize(width: element.frame.width, height: element.frame.height)
+    #if os(macOS)
+    let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: -20_000, y: -20_000), size: size),
+      styleMask: .borderless, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false; window.contentView = web; window.orderBack(nil)
+    defer { coordinator.invalidate(); window.orderOut(nil); window.close() }
+    #else
+    guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+      .first(where: { $0.activationState == .foregroundActive }) else {
+      coordinator.invalidate()
+      throw SceneRenderError.snapshotPending(element.id)
+    }
+    let window = UIWindow(windowScene: scene)
+    // Never make the preparation window key: text, Pencil and camera keep the
+    // human's window. The viewport is outside the visible scene, not alpha-zero.
+    window.frame = CGRect(origin: CGPoint(x: -20_000 - size.width, y: -20_000 - size.height), size: size)
+    let controller = UIViewController()
+    controller.view.backgroundColor = .clear
+    controller.view.addSubview(web)
+    web.frame = CGRect(origin: .zero, size: size)
+    window.rootViewController = controller
+    window.isHidden = false
+    defer { coordinator.invalidate(); web.removeFromSuperview(); window.isHidden = true; window.rootViewController = nil }
+    #endif
+    coordinator.load(element, in: web)
+    let deadline = ContinuousClock.now + .seconds(8)
+    while true {
+      try Task.checkCancellation()
+      guard permitsPreparation() else { throw CancellationError() }
+      if let raster = retainRaster(for: element, minimumScale: requestedScale) { return raster }
+      if let failure = coordinator.snapshotFailure { throw failure }
+      guard ContinuousClock.now < deadline else { throw SceneRenderError.snapshotPending(element.id) }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+  }
+
   #if os(macOS)
-  /// The export owns these leases until its composition is complete. A batch
-  /// larger than the admitted budget fails explicitly instead of losing earlier images.
+  /// Existing exact page exports retain their selected entries until publication.
   func prepare(_ elements: [AgentElement], requestedScale: Double = 2) async throws -> RasterBatchLease {
     var retained: [RasterLease] = []
     do {
-      for element in elements {
-        try Task.checkCancellation()
-        if let raster = retainRaster(for: element, minimumScale: requestedScale) {
-          retained.append(raster); continue
-        }
-        let slot = try await acquireWebSurface(priority: .background)
-        let coordinator = AgentWebCoordinator(lease: slot, resources: self,
-          snapshotPolicy: .exact(scale: requestedScale), onState: { _ in })
-        let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
-        let size = NSSize(width: element.frame.width, height: element.frame.height)
-        let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: -20_000, y: -20_000), size: size),
-          styleMask: .borderless, backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = web; window.orderBack(nil)
-        defer { coordinator.invalidate(); window.orderOut(nil); window.close(); slot.release() }
-        coordinator.load(element, in: web)
-        let deadline = ContinuousClock.now + .seconds(8)
-        while true {
-          try Task.checkCancellation()
-          if let raster = retainRaster(for: element, minimumScale: requestedScale) {
-            retained.append(raster); break
-          }
-          if let failure = coordinator.snapshotFailure { throw failure }
-          guard ContinuousClock.now < deadline else { throw SceneRenderError.snapshotPending(element.id) }
-          try await Task.sleep(for: .milliseconds(20))
-        }
-      }
+      for element in elements { retained.append(try await prepareRaster(element, requestedScale: requestedScale)) }
       return RasterBatchLease(retained)
     } catch {
       for raster in retained { raster.release() }
