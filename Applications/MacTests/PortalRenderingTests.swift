@@ -45,30 +45,15 @@ final class PortalRenderingTests: XCTestCase {
       _ = ink.append(tool: tool, spans: [SpatialInkSpan(surface: .board(childID), samples: points)], actor: actor)
     }
     model.receivePeerMessage(.spatialInk(ink))
-    let resources = try await SceneRenderResources.shared.prepare(elements.filter { $0.kind != .nativeText }.map(agentElementSnapshotSource))
-    defer { resources.release() }
     for size in [SpatialPoint(x: 834, y: 1_194), SpatialPoint(x: 1_366, y: 1_024)] {
       let camera = BoardPortalProjection.entryCamera(portalCamera: hierarchy.portalCamera(childID)!, viewport: size)
       let presence = SessionPresence(boardID: childID, mode: .board, camera: camera, viewport: size)
-      let fill = BoardPortalProjection.fillScale(viewport: size)
-      let portal = BoardPortalPreview(boardID: childID, pixelScale: fill,
-        remainingPortalPasses: WorkspaceSceneProjection.portalPasses,
-        transitionViewport: size, rendersSettledSnapshot: true)
-        .scaleEffect(fill)
-        .frame(width: size.x, height: size.y).clipped().environment(model)
-        .environment(\.sceneSnapshotRasters, resources)
-      let active = SettledSpatialWorkspaceView(workspace: workspace,
-        board: hierarchy.board(childID)!, spatialInk: ink, presence: presence).environment(model)
-        .environment(\.sceneSnapshotRasters, resources)
-      let portalPresence = SessionPresence(boardID: childID, mode: .board, camera: camera,
-        viewport: BoardPortalProjection.renderViewport(viewport: size))
-      let surfaces = WorkspaceSceneProjection.snapshotLayers(workspace: workspace, hierarchy: hierarchy,
-        presence: presence, documents: model.documents).ink
-        + WorkspaceSceneProjection.snapshotLayers(workspace: workspace, hierarchy: hierarchy,
-          presence: portalPresence, documents: model.documents).ink
-      let inkRasters = try await SpatialInkRasterSnapshot.prepare(surfaces, journal: ink)
-      let first = try pixels(portal.environment(\.spatialInkRasterSnapshot, inkRasters), size: size)
-      let second = try pixels(active.environment(\.spatialInkRasterSnapshot, inkRasters), size: size)
+      let sourceIndex = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, documents: model.documents)
+      let painter = SceneCompositionRenderer(index: sourceIndex, hierarchy: hierarchy, journal: ink)
+      let parent = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
+        camera: BoardPortalProjection.parentBoundaryCamera(portalCenter: .zero, viewport: size), viewport: size)
+      let first = try pixels(try await painter.render(presence: parent, scale: 1).png, size: size)
+      let second = try pixels(try await painter.render(presence: presence, scale: 1).png, size: size)
       XCTAssertEqual(first.count, second.count)
       let difference = zip(first, second).reduce(0.0) { $0 + abs(Double($1.0) - Double($1.1)) }
         / Double(first.count * 255)
@@ -80,6 +65,75 @@ final class PortalRenderingTests: XCTestCase {
       XCTAssertLessThan(difference, 0.003, "Готовые слои и стёртые чернила сохраняют изображение при передаче: \(size)")
       XCTAssertGreaterThan(first.filter { $0 < 150 }.count, 5_000)
     }
+  }
+
+  @MainActor
+  func testSequentialCompositionKeepsOverlapsCoversAndNestedPortals() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let notebook = try XCTUnwrap(model.workspace?.selectedItemID)
+    model.moveItem(notebook, to: .init(x: -350, y: 0))
+    let portal = try XCTUnwrap(model.createBoard(at: .init(x: 650, y: 0)))
+    let document = try XCTUnwrap(model.createDocument(at: .init(x: 1550, y: 0), paperSize: .letter))
+    let workspace = try XCTUnwrap(model.workspace)
+    var hierarchy = try XCTUnwrap(model.boardHierarchy)
+    let actor = UUID(), stamp = VersionStamp(counter: 0, actor: UUID())
+    let elements = [
+      SpatialElement(id: "behind-covers", surface: .board(workspace.rootBoardID), kind: .web,
+        frame: .init(x: 0, y: 0, width: 2000, height: 180), worldOrigin: .init(x: -800, y: 400),
+        source: "red band", html: "<svg width='2000' height='180'><rect width='2000' height='180' fill='red' fill-opacity='.5'/></svg>", stamp: stamp),
+      SpatialElement(id: "on-cover", surface: .cover(notebook), kind: .web,
+        frame: .init(x: 120, y: 420, width: 580, height: 280), source: "transparent circle",
+        html: "<svg width='580' height='280'><circle cx='290' cy='140' r='125' fill='blue' fill-opacity='.5'/></svg>", stamp: stamp),
+      SpatialElement(id: "in-portal", surface: .board(portal), kind: .web,
+        frame: .init(x: 0, y: 0, width: 600, height: 700), worldOrigin: .init(x: -300, y: -350),
+        source: "green field", html: "<svg width='600' height='700'><rect width='600' height='700' fill='green'/></svg>", stamp: stamp),
+      SpatialElement(id: "title", surface: .cover(document), kind: .nativeText,
+        frame: .init(x: 60, y: 600, width: 500, height: 90), source: "Связанный документ", stamp: stamp)
+    ]
+    for element in elements {
+      XCTAssertTrue(hierarchy.upsertElement(element,
+        in: element.surface == .board(portal) ? portal : workspace.rootBoardID, expected: nil, actor: actor))
+    }
+    _ = hierarchy.updatePortalCamera(.init(scale: 0.8), for: portal, actor: actor)
+    model.receivePeerMessage(.board(hierarchy))
+    var ink = try XCTUnwrap(model.spatialInk)
+    for (tool, width) in [(SpatialInkTool.pen, 42.0), (.eraser, 13.0)] {
+      let samples = [100.0, 650.0].map { x in SpatialInkSample(point: .init(x: x, y: 550),
+        timeOffset: x / 1000, width: width, opacity: 1, force: 1, azimuth: 0, altitude: 1) }
+      _ = ink.append(tool: tool, spans: [.init(surface: .cover(notebook), samples: samples)], actor: actor)
+    }
+    model.receivePeerMessage(.spatialInk(ink))
+    let sourceIndex = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, documents: model.documents)
+    for scale in [0.3, 0.6] {
+      let size = SpatialPoint(x: 1194, y: 834)
+      let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
+        camera: .init(center: .init(x: 400, y: 0), scale: scale), viewport: size)
+      let painter = SceneCompositionRenderer(index: sourceIndex, hierarchy: hierarchy, journal: ink)
+      let result = try await painter.render(presence: presence, scale: 1)
+      let actual = try XCTUnwrap(NSImage(data: result.png))
+      let actualPixels = try pixels(result.png, size: size)
+      let halves = try await SceneRasterCompositor.create(size: .init(width: size.x, height: size.y),
+        scale: 1, resources: .shared)
+      for half in 0..<2 {
+        let left = Double(half) * size.x / 2
+        let center = presence.camera.screenToWorld(.init(x: left + size.x / 4, y: size.y / 2), viewport: size)
+        let portion = SessionPresence(boardID: presence.boardID, mode: .board,
+          camera: .init(center: center, scale: scale), viewport: .init(x: size.x / 2, y: size.y))
+        let pixels = try await painter.render(presence: portion, scale: 1, transitionViewport: size)
+        try await halves.drawPNG(pixels.png, in: .init(x: left, y: 0, width: size.x / 2, height: size.y))
+      }
+      let expectedPixels = try pixels(try await halves.finishPNG(), size: size)
+      let difference = zip(actualPixels, expectedPixels).reduce(0.0) { $0 + abs(Double($1.0) - Double($1.1)) }
+        / Double(actualPixels.count * 255)
+      XCTContext.runActivity(named: "Composition \(scale), MAE \(difference)") { activity in
+        let attachment = XCTAttachment(image: actual); attachment.name = "Sequential"; attachment.lifetime = .keepAlways; activity.add(attachment)
+      }
+      XCTAssertLessThan(difference, 0.003, "Independent regions must join without losing layers or shifting pixels: \(difference)")
+    }
+    await model.finishPendingPersistence()
   }
 
   @MainActor
@@ -98,17 +152,12 @@ final class PortalRenderingTests: XCTestCase {
         let parent = SpatialCamera(center: .init(x: 24, y: -17), scale: fill * ratio)
         let camera = try XCTUnwrap(BoardPortalProjection.enteringCamera(from: parent,
           portalCamera: portalCamera, portalCenter: .zero, viewport: size))
-        let portal = BoardPortalPreview(boardID: childID, pixelScale: parent.scale,
-          remainingPortalPasses: WorkspaceSceneProjection.portalPasses,
-          transitionViewport: size, rendersSettledSnapshot: true)
-          .scaleEffect(parent.scale)
-          .frame(width: size.x, height: size.y)
-          .offset(x: -24 * parent.scale, y: 17 * parent.scale)
-          .frame(width: size.x, height: size.y).clipped().environment(model)
-        let active = SettledSpatialWorkspaceView(workspace: workspace,
-          board: try XCTUnwrap(hierarchy.board(childID)), spatialInk: try XCTUnwrap(model.spatialInk),
-          presence: .init(boardID: childID, mode: .board, camera: camera, viewport: size)).environment(model)
-        let first = try pixels(portal, size: size), second = try pixels(active, size: size)
+        let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, documents: model.documents)
+        let painter = SceneCompositionRenderer(index: index, hierarchy: hierarchy, journal: try XCTUnwrap(model.spatialInk))
+        let first = try pixels(try await painter.render(presence: .init(boardID: workspace.rootBoardID,
+          mode: .board, camera: parent, viewport: size), scale: 1).png, size: size)
+        let second = try pixels(try await painter.render(presence: .init(boardID: childID,
+          mode: .board, camera: camera, viewport: size), scale: 1).png, size: size)
         let difference = zip(first, second).reduce(0.0) { $0 + abs(Double($1.0) - Double($1.1)) }
           / Double(first.count * 255)
         XCTContext.runActivity(named: "Сетка \(Int(size.x)) × \(Int(size.y)), \(ratio): MAE \(difference)") { activity in
@@ -195,11 +244,10 @@ final class PortalRenderingTests: XCTestCase {
   }
 
   @MainActor
-  private func pixels<V: View>(_ view: V, size: SpatialPoint) throws -> [UInt8] {
-    let renderer = ImageRenderer(content: view.frame(width: size.x, height: size.y))
-    renderer.proposedSize = ProposedViewSize(width: size.x, height: size.y)
-    renderer.scale = 1
-    let image = try XCTUnwrap(renderer.cgImage)
+  private func pixels(_ png: Data, size: SpatialPoint) throws -> [UInt8] {
+    let bitmap = try XCTUnwrap(NSBitmapImageRep(data: png))
+    let image = try XCTUnwrap(bitmap.cgImage)
+    XCTAssertEqual(image.width, Int(size.x)); XCTAssertEqual(image.height, Int(size.y))
     var result = [UInt8](repeating: 0, count: image.width * image.height * 4)
     try result.withUnsafeMutableBytes { bytes in
       let context = try XCTUnwrap(CGContext(data: bytes.baseAddress, width: image.width, height: image.height,

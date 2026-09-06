@@ -3,6 +3,7 @@ import Foundation
 import ImageIO
 import NotebookCore
 import UniformTypeIdentifiers
+import SwiftUI
 
 /// A composition owns one accounted output buffer and borrows one source at a
 /// time. It never retains the archive's decoded images as a batch. The caller
@@ -11,8 +12,26 @@ import UniformTypeIdentifiers
 final class SceneRasterCompositor {
   private let reservation: RasterReservation
   private let buffer: CompositionPixels
+  private let resources: SceneRenderResources
+  let scale: Double
+  private let size: CGSize
   private let permitsPreparation: @MainActor () -> Bool
   private var isFinished = false
+  private var recordedDiagnostics: [RenderDiagnostic] = []
+  private var omittedDiagnostics = 0
+  var diagnostics: [RenderDiagnostic] {
+    guard omittedDiagnostics > 0 else { return recordedDiagnostics }
+    return recordedDiagnostics + [.init(kind: "diagnostics_truncated",
+      message: "Ещё сообщений исполнения: \(omittedDiagnostics)")]
+  }
+  func recordDiagnostics(_ values: [RenderDiagnostic]) {
+    guard !isFinished else { return }
+    for value in values {
+      if recordedDiagnostics.count < 255 { recordedDiagnostics.append(value) }
+      else { omittedDiagnostics += 1 }
+    }
+  }
+
 
   static func create(size: CGSize, scale: Double, resources: SceneRenderResources,
     permitsPreparation: @escaping @MainActor () -> Bool = { true }) async throws -> SceneRasterCompositor {
@@ -29,13 +48,14 @@ final class SceneRasterCompositor {
       let buffer = try await CompositionPixels.create(size: size, width: width, height: height, scale: scale)
       try Task.checkCancellation()
       guard permitsPreparation() else { throw CancellationError() }
-      return Self(reservation: reservation, buffer: buffer, permitsPreparation: permitsPreparation)
+      return Self(reservation: reservation, buffer: buffer, resources: resources, size: size, scale: scale, permitsPreparation: permitsPreparation)
     } catch { reservation.release(); throw error }
   }
 
   private init(reservation: RasterReservation, buffer: CompositionPixels,
-    permitsPreparation: @escaping @MainActor () -> Bool) {
-    self.reservation = reservation; self.buffer = buffer; self.permitsPreparation = permitsPreparation
+    resources: SceneRenderResources, size: CGSize, scale: Double, permitsPreparation: @escaping @MainActor () -> Bool) {
+    self.reservation = reservation; self.buffer = buffer; self.resources = resources
+    self.size = size; self.scale = scale; self.permitsPreparation = permitsPreparation
   }
 
   func drawPNG(_ data: Data, in frame: CGRect) async throws {
@@ -59,6 +79,115 @@ final class SceneRasterCompositor {
     try checkPreparation()
   }
 
+  func drawView<Content: View>(_ content: Content, size: CGSize, in frame: CGRect) async throws {
+    try checkPreparation()
+    guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0,
+      frame.minX.isFinite, frame.minY.isFinite, frame.width.isFinite, frame.height.isFinite,
+      frame.width > 0, frame.height > 0 else { throw SceneRenderError.resourceLimit }
+    let visible = frame.intersection(CGRect(origin: .zero, size: self.size))
+    guard !visible.isNull, !visible.isEmpty else { return }
+    // Render artwork directly onto the destination pixel grid. A fractional
+    // item origin must not introduce another resampling of grain or thin lines.
+    let left = floor(visible.minX * scale), top = floor(visible.minY * scale)
+    let width = Int(ceil(visible.maxX * scale) - left)
+    let height = Int(ceil(visible.maxY * scale) - top)
+    let capture = CGRect(x: left / scale, y: top / scale,
+      width: Double(width) / scale, height: Double(height) / scale)
+    guard let allocation = resources.reserveRaster(pixelWidth: width + 2, pixelHeight: height + 2)
+    else { throw SceneRenderError.resourceLimit }
+    defer { allocation.release() }
+    let renderer = ImageRenderer(content: content.frame(width: size.width, height: size.height)
+      .scaleEffect(x: frame.width / size.width, y: frame.height / size.height)
+      .position(x: frame.midX - capture.minX, y: frame.midY - capture.minY)
+      .frame(width: capture.width, height: capture.height).clipped())
+    renderer.scale = scale
+    guard let image = renderer.cgImage else { throw SceneRenderError.snapshotPending("physical_artwork") }
+    try await buffer.draw(image, in: capture)
+    try checkPreparation()
+  }
+
+  func drawInk(surface: SurfaceID, journal: SpatialInkJournal, camera: SpatialCamera?,
+    size: CGSize, in frame: CGRect) async throws {
+    try checkPreparation()
+    guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0,
+      size.width * 2 <= 65536, size.height * 2 <= 65536,
+      frame.minX.isFinite, frame.minY.isFinite, frame.width.isFinite, frame.height.isFinite,
+      frame.width > 0, frame.height > 0 else { throw SceneRenderError.resourceLimit }
+    let visible = frame.intersection(CGRect(origin: .zero, size: self.size))
+    guard !visible.isNull, !visible.isEmpty else { return }
+    let pixelsWide = Int(ceil(size.width * 2)), pixelsHigh = Int(ceil(size.height * 2))
+    let sx = Double(pixelsWide) / size.width, sy = Double(pixelsHigh) / size.height
+    let projectedX = frame.width / size.width, projectedY = frame.height / size.height
+    let local = CGRect(x: (visible.minX - frame.minX) / projectedX,
+      y: (visible.minY - frame.minY) / projectedY,
+      width: visible.width / projectedX, height: visible.height / projectedY)
+    let side = CompositionTile.pixelSize
+    let haloX = Int(min(Double(pixelsWide), max(4, ceil(4 * sx / (projectedX * scale)))))
+    let haloY = Int(min(Double(pixelsHigh), max(4, ceil(4 * sy / (projectedY * scale)))))
+    let firstX = max(0, Int(floor(local.minX * sx)) - haloX)
+    let firstY = max(0, Int(floor(local.minY * sy)) - haloY)
+    let lastX = min(pixelsWide, Int(ceil(local.maxX * sx)) + haloX)
+    let lastY = min(pixelsHigh, Int(ceil(local.maxY * sy)) + haloY)
+    // Keep the physical image extent as well as its pixel grid. Cropping this
+    // mask before projection changes Core Graphics' downsampling kernel phase.
+    // The CPU mask is accounted before allocation; expensive MSAA work visits
+    // only the visible regions and a reconstruction-filter halo.
+    let mask = try await Self.create(size: size, scale: 2,
+      resources: resources, permitsPreparation: permitsPreparation)
+    for y in stride(from: firstY, to: lastY, by: side) {
+      for x in stride(from: firstX, to: lastX, by: side) {
+        try checkPreparation()
+        let width = min(side, lastX - x), height = min(side, lastY - y)
+        let region = CGRect(x: Double(x) / sx, y: Double(y) / sy,
+          width: Double(width) / sx, height: Double(height) / sy)
+        let shiftedCamera = camera.map {
+          SpatialCamera(center: $0.screenToWorld(.init(x: region.midX, y: region.midY),
+            viewport: .init(x: size.width, y: size.height)), scale: $0.scale)
+        }
+        // MSAA, resolve texture and CPU readback coexist for only this 512-pixel
+        // region. The physical 2x sampling grid remains the original owner's.
+        guard let allocation = resources.reserveRaster(pixelWidth: width, pixelHeight: height, backingCount: 8)
+        else { throw SceneRenderError.resourceLimit }
+        do {
+          let worker = Task.detached(priority: .utility) {
+            try Task.checkCancellation()
+            let layers = shiftedCamera.map { SpatialInkComposer.boardLayers(board: surface, journal: journal,
+              camera: $0, viewport: .init(x: region.width, y: region.height)) }
+              ?? SpatialInkComposer.localLayers(for: surface, journal: journal,
+                origin: .init(x: region.minX, y: region.minY))
+            guard !layers.isEmpty else { return nil as CGImage? }
+            guard let image = InkRasterRenderer.shared.render(layers: layers, size: region.size, scale: 2) else {
+              throw SceneRenderError.snapshotPending("ink_pixels")
+            }
+            try Task.checkCancellation()
+            return image
+          }
+          let image = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+          try checkPreparation()
+          if let image {
+            try await mask.buffer.draw(image, in: region)
+          }
+          allocation.release()
+        } catch { allocation.release(); throw error }
+      }
+    }
+    // Assemble the transparent mask on its integer source grid first. Scaling
+    // separate tiles over paper would blend their shared edge twice or leave a
+    // faint seam. The physical mask is projected exactly once.
+    try await mask.finishInto(self, in: frame)
+  }
+
+  private func finishInto(_ destination: SceneRasterCompositor, in frame: CGRect) async throws {
+    try checkPreparation(); try destination.checkPreparation()
+    let image = try await buffer.finishImage()
+    try await destination.buffer.draw(image, in: frame)
+    try checkPreparation(); try destination.checkPreparation()
+    isFinished = true; reservation.release()
+  }
+
+  func pushClip(_ path: sending CGPath) async throws { try checkPreparation(); try await buffer.pushClip(path) }
+  func popClip() async throws { try checkPreparation(); try await buffer.popClip() }
+
   func finishPNG() async throws -> Data {
     try checkPreparation()
     let png = try await buffer.finishPNG()
@@ -80,6 +209,7 @@ final class SceneRasterCompositor {
 /// actor serializes one composition; it is neither a source cache nor a writer.
 private actor CompositionPixels {
   private var context: CGContext?
+  private var clipDepth = 0
   private let size: CGSize
   private let scale: Double
 
@@ -119,9 +249,26 @@ private actor CompositionPixels {
     context.restoreGState()
   }
 
+  func pushClip(_ path: sending CGPath) throws {
+    try Task.checkCancellation()
+    guard let context else { throw CancellationError() }
+    context.saveGState(); context.addPath(path); context.clip(); clipDepth += 1
+  }
+  func popClip() throws {
+    guard let context, clipDepth > 0 else { throw CancellationError() }
+    context.restoreGState(); clipDepth -= 1
+  }
+
+  func finishImage() throws -> CGImage {
+    try Task.checkCancellation()
+    guard clipDepth == 0, let context, let image = context.makeImage() else { throw CancellationError() }
+    self.context = nil
+    return image
+  }
+
   func finishPNG() throws -> Data {
     try Task.checkCancellation()
-    guard let context, let image = context.makeImage() else { throw CancellationError() }
+    guard clipDepth == 0, let context, let image = context.makeImage() else { throw CancellationError() }
     let data = NSMutableData()
     guard let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil)
     else { throw SceneRenderError.snapshotPending("png_encoding") }

@@ -14,9 +14,9 @@ final class CollaborationVisionTests: XCTestCase {
     let cache = InkRasterRenderer.shared
     let size = CGSize(width:200,height:160)
     let ink = try XCTUnwrap(cache.render(layers:[.ink(points:points,color:.black)],size:size))
-    XCTAssertFalse(SpatialInkRasterSnapshot.occupiedRegions(ink,size:size).isEmpty)
+    XCTAssertFalse(try SpatialInkRasterSnapshot.occupiedRegions(ink,size:size).isEmpty)
     let erased = try XCTUnwrap(cache.render(layers:[.ink(points:points,color:.black),.erase(points:eraser)],size:size))
-    XCTAssertTrue(SpatialInkRasterSnapshot.occupiedRegions(erased,size:size).isEmpty)
+    XCTAssertTrue(try SpatialInkRasterSnapshot.occupiedRegions(erased,size:size).isEmpty)
   }
 
   @MainActor

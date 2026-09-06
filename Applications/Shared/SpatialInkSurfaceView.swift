@@ -172,20 +172,4 @@ struct SpatialInkSurfaceView: NSViewRepresentable {
   static func dismantleNSView(_ view: InkCanvasView, coordinator: SpatialInkMeshPreparation) { coordinator.cancel() }
 }
 
-/// Static export consumes the same geometry, but never mounts a drawable in ImageRenderer.
-struct SpatialInkSnapshotView: View {
-  @Environment(\.spatialInkRasterSnapshot) private var snapshot
-  let surface: SurfaceID
-  let journal: SpatialInkJournal?
-  var camera: SpatialCamera? = nil
-  var viewport: SpatialPoint? = nil
-  var body: some View {
-    GeometryReader { geometry in
-      if let image = snapshot?.image(for: .init(surface: surface, camera: camera,
-        viewport: viewport ?? .init(x: geometry.size.width, y: geometry.size.height))) {
-        Image(nsImage: image).resizable()
-      }
-    }
-  }
-}
 #endif

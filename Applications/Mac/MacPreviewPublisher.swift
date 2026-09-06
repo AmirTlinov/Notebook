@@ -266,8 +266,6 @@ final class MacPreviewPublisher {
         return
       }
       do {
-        let resources = try await SceneRenderResources.shared.prepare(snapshotElements())
-        defer { resources.release() }
         var documentRaster: RasterLease?
         defer { documentRaster?.release() }
         if let model, model.presence?.mode == .document, let document = model.activeDocument,
@@ -278,7 +276,7 @@ final class MacPreviewPublisher {
           throw PreviewPublicationError.sourceChanged
         }
         finishCurrentViewPublication(key, generation: generation,
-          error: await writeCurrentView(agentRasters: resources, documentRaster: documentRaster))
+          error: await writeCurrentView(documentRaster: documentRaster))
       } catch {
         finishCurrentViewPublication(key, generation: generation, error: error)
       }
@@ -347,24 +345,7 @@ final class MacPreviewPublisher {
     pagePreviewTask = nil
   }
 
-  private func snapshotElements() -> [AgentElement] {
-    guard let model, let workspace = model.workspace, let hierarchy = model.boardHierarchy,
-      let presence = model.presence else { return [] }
-    switch presence.mode {
-    case .board, .cover:
-      return WorkspaceSceneProjection.snapshotLayers(
-        workspace: workspace, hierarchy: hierarchy, presence: presence, documents: model.documents
-      ).elements.filter { $0.kind != .nativeText }.map(agentElementSnapshotSource)
-    case .page:
-      // Page composition borrows each source in painter order and releases it
-      // immediately; pre-retaining the full page would defeat that bound.
-      return []
-    case .document:
-      return []
-    }
-  }
-
-  private func writeCurrentView(agentRasters: RasterBatchLease, documentRaster: RasterLease?) async -> (any Error)? {
+  private func writeCurrentView(documentRaster: RasterLease?) async -> (any Error)? {
     guard let model, let workspace = model.workspace,
       let board = model.boardHierarchy,
       let spatialInk = model.spatialInk,
@@ -393,7 +374,6 @@ final class MacPreviewPublisher {
         page: page,
         document: document,
         documentState: documentState,
-        agentRasters: agentRasters,
         documentRaster: documentRaster,
         pngURL: model.store.currentViewPreviewURL,
         receiptURL: model.store.currentViewRevisionURL

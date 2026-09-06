@@ -98,6 +98,20 @@ struct WorkspaceSceneIndex: Sendable {
     boards = prepared
   }
 
+  /// Exact exports borrow a coherent existing generation, or prepare the same
+  /// derived index off the UI actor when its publication has not caught up yet.
+  static func prepare(workspace: WorkspaceIndex, hierarchy: BoardHierarchy,
+    documents: [UUID: DocumentDocument], reusing previous: Self?) async throws -> Self {
+    let worker = Task.detached(priority: .utility) {
+      try Task.checkCancellation()
+      if let previous, previous.represents(workspace: workspace, hierarchy: hierarchy, documents: documents) { return previous }
+      let index = Self(workspace: workspace, hierarchy: hierarchy, documents: documents)
+      try Task.checkCancellation()
+      return index
+    }
+    return try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+  }
+
   /// Comparison runs on the preparation task, never on a camera frame. A
   /// selected page and portal camera are not geometry or source changes.
   func represents(workspace: WorkspaceIndex, hierarchy: BoardHierarchy,
@@ -154,6 +168,15 @@ struct WorkspaceSceneIndex: Sendable {
       if case .element(let id) = $0.id { return board.elements[id] }
       return nil
     }, query: query, generationID: generationID)
+  }
+
+  /// Exact preparation reads a bounded painter-order page from the same index
+  /// as the live camera. A page may be empty while its cursor still advances.
+  func readPaintOrder(boardID: UUID, coverID: UUID? = nil, bounds: WorkspaceSpatialBounds,
+    after cursor: WorkspaceSpatialReadCursor? = nil) throws -> WorkspaceSpatialReadPage? {
+    guard let board = boards[boardID] else { return nil }
+    let index = coverID.flatMap { board.coverIndices[$0] } ?? (coverID == nil ? board.index : nil)
+    return try index?.readPaintOrder(in: bounds, after: cursor, limit: 32, maximumVisits: 256)
   }
 
   func workset(presence: SessionPresence, pinned: Set<WorkspaceSpatialID> = [],

@@ -15,65 +15,6 @@ private struct RasterSnapshot {
   }
 }
 
-private enum SettledSceneSnapshot {
-  case board(boardID: UUID)
-  case cover(itemID: UUID)
-  case page(RasterSnapshot, itemID: UUID, CurrentViewPageRevision)
-  case document(
-    RasterSnapshot,
-    CurrentViewDocumentRevision,
-    pageIndex: Int
-  )
-
-  var receipt: CurrentViewSurfaceRevision {
-    switch self {
-    case .board(let boardID):
-      return .board(boardID: boardID)
-    case .cover(let itemID):
-      return .cover(itemID: itemID)
-    case .page(let snapshot, let itemID, let revision):
-      return .page(
-        itemID: itemID,
-        revision: revision,
-        snapshotPNG_SHA256: snapshot.sha256
-      )
-    case .document(let snapshot, let revision, let pageIndex):
-      return .document(
-        revision: revision,
-        pageIndex: pageIndex,
-        snapshotPNG_SHA256: snapshot.sha256
-      )
-    }
-  }
-}
-
-private struct SettledCurrentView: View {
-  let snapshot: SettledSceneSnapshot
-  let workspace: WorkspaceIndex
-  let board: BoardDocument
-  let spatialInk: SpatialInkJournal
-  let presence: SessionPresence
-
-  @ViewBuilder
-  var body: some View {
-    switch snapshot {
-    case .board, .cover:
-      SettledSpatialWorkspaceView(
-        workspace: workspace,
-        board: board,
-        spatialInk: spatialInk,
-        presence: presence
-      )
-    case .page(let raster, _, _), .document(let raster, _, _):
-      Image(nsImage: raster.image)
-        .resizable()
-        .aspectRatio(contentMode: .fit)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(red: 0.992, green: 0.988, blue: 0.969))
-    }
-  }
-}
-
 enum CurrentViewPreviewWriter {
   @MainActor
   static func write(
@@ -86,44 +27,40 @@ enum CurrentViewPreviewWriter {
     page: PageDocument?,
     document: DocumentDocument?,
     documentState: DocumentStateJournal?,
-    agentRasters: RasterBatchLease,
     documentRaster: RasterLease?,
     pngURL: URL,
     receiptURL: URL
   ) async throws {
-    guard let activeBoard = board.board(presence.boardID) else {
-      throw PreviewError.invalidSurface
+    guard board.board(presence.boardID) != nil,
+      viewport.width == presence.viewport.x, viewport.height == presence.viewport.y else { throw PreviewError.invalidSurface }
+    let png: Data
+    let surface: CurrentViewSurfaceRevision
+    switch presence.mode {
+    case .board, .cover:
+      let index = try await WorkspaceSceneIndex.prepare(workspace: workspace, hierarchy: board,
+        documents: model.documents, reusing: model.sceneIndex)
+      let result = try await SceneCompositionRenderer(index: index, hierarchy: board, journal: spatialInk,
+        permitsPreparation: { model.permitsBackgroundPreparation }).render(presence: presence)
+      png = result.png
+      if presence.mode == .cover {
+        guard let id = presence.focusedItemID else { throw PreviewError.invalidSurface }
+        surface = .cover(itemID: id)
+      } else { surface = .board(boardID: presence.boardID) }
+    case .page:
+      guard let page, let id = presence.focusedItemID else { throw PreviewError.invalidSurface }
+      let snapshot = try await pageCompositeSnapshot(page, permitsPreparation: { model.permitsBackgroundPreparation })
+      png = try await fittedPNG(snapshot.image, viewport: viewport)
+      surface = .page(itemID: id, revision: .init(page: page), snapshotPNG_SHA256: snapshot.sha256)
+    case .document:
+      guard let document, let documentState,
+        let image = documentRaster?.image(for: .document(id: document.id,
+          token: DocumentSnapshotCache.token(document: document, state: documentState,
+            pageIndex: presence.documentPageIndex))) else { throw PreviewError.documentSnapshotPending }
+      let snapshot = try await raster(image)
+      png = try await fittedPNG(image, viewport: viewport)
+      surface = .document(revision: .init(document: document, state: documentState),
+        pageIndex: presence.documentPageIndex, snapshotPNG_SHA256: snapshot.sha256)
     }
-    let snapshot = try await makeSnapshot(
-      presence: presence,
-      spatialElements: WorkspaceSceneProjection.snapshotLayers(
-        workspace: workspace, hierarchy: board, presence: presence, documents: model.documents
-      ).elements,
-      page: page,
-      document: document,
-      documentState: documentState,
-      agentRasters: agentRasters,
-      documentRaster: documentRaster,
-      permitsPreparation: { model.permitsBackgroundPreparation }
-    )
-    let content = SettledCurrentView(
-      snapshot: snapshot,
-      workspace: workspace,
-      board: activeBoard,
-      spatialInk: spatialInk,
-      presence: presence
-    )
-    .environment(model)
-    .environment(\.sceneSnapshotRasters, agentRasters)
-    .frame(width: viewport.width, height: viewport.height)
-    let png = try await renderPNG(
-      content,
-      size: viewport,
-      scale: 2,
-      inkSurfaces: [.board, .cover].contains(presence.mode)
-        ? WorkspaceSceneProjection.snapshotLayers(workspace: workspace, hierarchy: board, presence: presence, documents: model.documents).ink : [],
-      journal: spatialInk
-    )
 
     let receipt = CurrentViewReceipt(
       workspace: workspace,
@@ -131,7 +68,7 @@ enum CurrentViewPreviewWriter {
       spatialInk: spatialInk,
       presence: presence,
       renderViewport: SpatialPoint(x: viewport.width, y: viewport.height),
-      surface: snapshot.receipt,
+      surface: surface,
       pngSHA256: sha256(png)
     )
     guard receipt.isValid else { throw PreviewError.invalidReceipt }
@@ -203,25 +140,20 @@ enum CurrentViewPreviewWriter {
       camera = projection
       let presence = SessionPresence(boardID: boardID, mode: target.kind == .cover ? .cover : .board,
         camera: projection, viewport: .init(x: size.width, y: size.height), focusedItemID: target.kind == .cover ? target.id : nil)
-      let elements = WorkspaceSceneProjection.snapshotLayers(workspace: content.workspace, hierarchy: content.hierarchy,
-        presence: presence, documents: model.documents).elements.filter { $0.kind != .nativeText }.map(agentElementSnapshotSource)
-      let resources = try await SceneRenderResources.shared.prepare(elements)
-      defer { resources.release() }
-      let view = SettledSpatialWorkspaceView(workspace: content.workspace, board: board, spatialInk: content.ink, presence: presence)
-        .environment(model).environment(\.sceneSnapshotRasters, resources)
-        .frame(width: size.width, height: size.height)
-      let png = try await renderPNG(view, size: size, scale: 2,
-        inkSurfaces: WorkspaceSceneProjection.snapshotLayers(workspace: content.workspace, hierarchy: content.hierarchy,
-          presence: presence, documents: model.documents).ink, journal: content.ink)
-      guard let image = NSImage(data: png) else { throw PreviewError.pngEncoding }
-      full = RasterSnapshot(image: image, png: png)
-      diagnostics = SceneRenderResources.shared.diagnostics(for: elements)
-      let inkSurface = WorkspaceSceneProjection.SnapshotInkSurface(surface: target.kind == .cover ? .cover(target.id) : .board(target.id),
-        camera: target.kind == .board ? projection : nil, viewport: .init(x: size.width, y: size.height))
-      let inkSnapshot = try await SpatialInkRasterSnapshot.prepare([inkSurface], journal: content.ink)
-      if let inkImage = inkSnapshot.raster(for: inkSurface) {
-        inkRegions = await Task.detached(priority: .utility) { SpatialInkRasterSnapshot.occupiedRegions(inkImage, size: size) }.value
-        inkRaster = try await raster(NSImage(cgImage: inkImage, size: size))
+      let index = try await WorkspaceSceneIndex.prepare(workspace: content.workspace, hierarchy: content.hierarchy,
+        documents: model.documents, reusing: model.sceneIndex)
+      let result = try await SceneCompositionRenderer(index: index, hierarchy: content.hierarchy, journal: content.ink,
+        permitsPreparation: { model.permitsBackgroundPreparation }).render(presence: presence)
+      guard let image = NSImage(data: result.png) else { throw PreviewError.pngEncoding }
+      full = RasterSnapshot(image: image, png: result.png)
+      diagnostics = result.diagnostics
+      if let ink = try await SpatialInkRasterSnapshot.prepare(
+        surface: target.kind == .cover ? .cover(target.id) : .board(target.id),
+        camera: target.kind == .board ? projection : nil, size: size, journal: content.ink,
+        permitsPreparation: { model.permitsBackgroundPreparation }) {
+        guard let image = NSImage(data: ink.png) else { throw PreviewError.pngEncoding }
+        inkRegions = ink.regions
+        inkRaster = RasterSnapshot(image: image, png: ink.png)
       }
     case .workspace: throw PreviewError.invalidSurface
     }
@@ -255,53 +187,6 @@ enum CurrentViewPreviewWriter {
   }
 
   @MainActor
-  private static func makeSnapshot(
-    presence: SessionPresence,
-    spatialElements: [SpatialElement],
-    page: PageDocument?,
-    document: DocumentDocument?,
-    documentState: DocumentStateJournal?,
-    agentRasters: RasterBatchLease,
-    documentRaster: RasterLease?,
-    permitsPreparation: @escaping @MainActor () -> Bool
-  ) async throws -> SettledSceneSnapshot {
-    switch presence.mode {
-    case .board:
-      try requireSpatialElementSnapshots(spatialElements, rasters: agentRasters)
-      return .board(boardID: presence.boardID)
-    case .cover:
-      guard let itemID = presence.focusedItemID else {
-        throw PreviewError.invalidSurface
-      }
-      try requireSpatialElementSnapshots(spatialElements, rasters: agentRasters)
-      return .cover(itemID: itemID)
-    case .page:
-      guard let page, let itemID = presence.focusedItemID else {
-        throw PreviewError.invalidSurface
-      }
-      return .page(
-        try await pageCompositeSnapshot(page, permitsPreparation: permitsPreparation),
-        itemID: itemID,
-        CurrentViewPageRevision(page: page)
-      )
-    case .document:
-      guard let document, let documentState,
-        let image = documentRaster?.image(for: .document(id: document.id,
-          token: DocumentSnapshotCache.token(document: document, state: documentState,
-            pageIndex: presence.documentPageIndex)))
-      else { throw PreviewError.documentSnapshotPending }
-      return .document(
-        try await raster(image),
-        CurrentViewDocumentRevision(
-          document: document,
-          state: documentState
-        ),
-        pageIndex: presence.documentPageIndex
-      )
-    }
-  }
-
-  @MainActor
   private static func pageCompositeSnapshot(
     _ page: PageDocument,
     permitsPreparation: @escaping @MainActor () -> Bool
@@ -312,8 +197,6 @@ enum CurrentViewPreviewWriter {
       scale: PageVisionRenderer.scale, resources: resources, permitsPreparation: permitsPreparation)
     let faithfulPNG = try await Task.detached(priority: .utility) { try PageVisionRenderer.faithfulPNG(page) }.value
     try await compositor.drawPNG(faithfulPNG, in: CGRect(origin: .zero, size: size))
-    var diagnostics: [RenderDiagnostic] = []
-    var omittedDiagnostics = 0
     for element in page.elements {
       try Task.checkCancellation()
       let raster = try await resources.prepareRaster(element, permitsPreparation: permitsPreparation)
@@ -322,32 +205,11 @@ enum CurrentViewPreviewWriter {
           width: element.frame.width, height: element.frame.height))
         raster.release()
       } catch { raster.release(); throw error }
-      for diagnostic in resources.diagnostics(for: [element]) {
-        if diagnostics.count < 255 { diagnostics.append(diagnostic) }
-        else { omittedDiagnostics += 1 }
-      }
-    }
-    if omittedDiagnostics > 0 {
-      diagnostics.append(.init(kind: "diagnostics_truncated",
-        message: "Ещё сообщений исполнения: \(omittedDiagnostics)"))
+      compositor.recordDiagnostics(resources.diagnostics(for: [element]))
     }
     let png = try await compositor.finishPNG()
     guard let image = NSImage(data: png) else { throw PreviewError.pngEncoding }
-    return RasterSnapshot(image: image, png: png, diagnostics: diagnostics)
-  }
-
-  @MainActor
-  private static func requireSpatialElementSnapshots(
-    _ elements: [SpatialElement],
-    rasters: RasterBatchLease
-  ) throws {
-    for element in elements where element.kind != .nativeText {
-      guard rasters.image(
-        for: agentElementSnapshotSource(element), minimumScale: 2
-      ) != nil else {
-        throw PreviewError.agentSnapshotPending
-      }
-    }
+    return RasterSnapshot(image: image, png: png, diagnostics: compositor.diagnostics)
   }
 
   @MainActor
@@ -368,19 +230,15 @@ enum CurrentViewPreviewWriter {
   }
 
   @MainActor
-  private static func renderPNG<Content: View>(
-    _ content: Content,
-    size: CGSize,
-    scale: CGFloat,
-    inkSurfaces: [WorkspaceSceneProjection.SnapshotInkSurface] = [],
-    journal: SpatialInkJournal? = nil
-  ) async throws -> Data {
-    let prepared = try await SpatialInkRasterSnapshot.prepare(inkSurfaces, journal: journal)
-    let renderer = ImageRenderer(content: content.environment(\.spatialInkRasterSnapshot, prepared))
-    renderer.proposedSize = ProposedViewSize(size)
-    renderer.scale = scale
+  private static func fittedPNG(_ image: NSImage, viewport: CGSize) async throws -> Data {
+    let content = Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
+      .frame(width: viewport.width, height: viewport.height)
+      .background(Color(red: 0.992, green: 0.988, blue: 0.969))
+    let renderer = ImageRenderer(content: content)
+    renderer.proposedSize = ProposedViewSize(viewport)
+    renderer.scale = 2
     guard let image = renderer.cgImage else { throw PreviewError.pngEncoding }
-    return try await Task.detached(priority: .utility) { try encodePNG(image, scale: scale) }.value
+    return try await Task.detached(priority: .utility) { try encodePNG(image, scale: 2) }.value
   }
 
   private static func sha256(_ data: Data) -> String {

@@ -34,13 +34,14 @@ enum SpatialInkComposer {
 
   static func localLayers(
     for surface: SurfaceID,
-    journal: SpatialInkJournal?
+    journal: SpatialInkJournal?,
+    origin: SpatialPoint = .zero
   ) -> [SpatialInkRenderLayer] {
     guard let journal else { return [] }
     return layers(for: surface, in: journal) { sample in
       point(
         sample,
-        location: CGPoint(x: sample.point.x, y: sample.point.y),
+        location: CGPoint(x: sample.point.x - origin.x, y: sample.point.y - origin.y),
         widthScale: 1
       )
     }

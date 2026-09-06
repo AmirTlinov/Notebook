@@ -70,39 +70,6 @@ final class RasterLease {
   isolated deinit { release() }
 }
 
-@MainActor
-final class RasterBatchLease {
-  private var rasters: [RasterLease]
-  private(set) var isReleased = false
-  var count: Int { rasters.count }
-  fileprivate init(_ rasters: [RasterLease]) { self.rasters = rasters }
-  func image(for element: AgentElement, minimumScale: Double = 0) -> AgentSnapshotImage? {
-    guard !isReleased else { return nil }
-    return rasters.first { $0.source == .agent(element) }?.image(for: .agent(element), minimumScale: minimumScale)
-  }
-  func release() {
-    guard !isReleased else { return }
-    isReleased = true
-    for raster in rasters { raster.release() }
-    rasters.removeAll()
-  }
-  isolated deinit { release() }
-}
-
-#if os(macOS)
-/// A settled SwiftUI tree reads the exact batch acquired by its publisher.
-/// The value only carries leases; it neither stores nor discovers other images.
-private struct SceneSnapshotRastersKey: EnvironmentKey {
-  static let defaultValue: RasterBatchLease? = nil
-}
-extension EnvironmentValues {
-  var sceneSnapshotRasters: RasterBatchLease? {
-    get { self[SceneSnapshotRastersKey.self] }
-    set { self[SceneSnapshotRastersKey.self] = newValue }
-  }
-}
-#endif
-
 /// Reserves conservative CPU and GPU backing before WebKit allocates a snapshot.
 @MainActor
 final class RasterReservation {
@@ -244,9 +211,12 @@ final class SceneRenderResources {
       entryID: id, resources: self)
   }
 
-  func reserveRaster(pixelWidth: Int, pixelHeight: Int) -> RasterReservation? {
-    guard let cost = Self.estimatedRasterBytes(pixelWidth: pixelWidth, pixelHeight: pixelHeight),
-      makeRoom(for: cost, additionalEntry: true) else { return nil }
+  func reserveRaster(pixelWidth: Int, pixelHeight: Int, backingCount: Int = 2) -> RasterReservation? {
+    guard (1...16).contains(backingCount),
+      let pair = Self.estimatedRasterBytes(pixelWidth: pixelWidth, pixelHeight: pixelHeight) else { return nil }
+    let allocation = (pair / 2).multipliedReportingOverflow(by: backingCount)
+    guard !allocation.overflow, makeRoom(for: allocation.partialValue, additionalEntry: true) else { return nil }
+    let cost = allocation.partialValue
     let id = UUID()
     reservations[id] = cost; reservedBytes += cost
     return RasterReservation(id: id, byteCount: cost, resources: self)
@@ -541,17 +511,4 @@ final class SceneRenderResources {
     }
   }
 
-  #if os(macOS)
-  /// Existing exact page exports retain their selected entries until publication.
-  func prepare(_ elements: [AgentElement], requestedScale: Double = 2) async throws -> RasterBatchLease {
-    var retained: [RasterLease] = []
-    do {
-      for element in elements { retained.append(try await prepareRaster(element, requestedScale: requestedScale)) }
-      return RasterBatchLease(retained)
-    } catch {
-      for raster in retained { raster.release() }
-      throw error
-    }
-  }
-  #endif
 }

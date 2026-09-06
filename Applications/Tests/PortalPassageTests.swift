@@ -116,12 +116,12 @@ final class PortalPassageTests: XCTestCase {
     let workspace = try XCTUnwrap(scene.model.workspace)
     let hierarchy = try XCTUnwrap(scene.model.boardHierarchy)
     let start = try XCTUnwrap(scene.model.presence)
-    let distant = try XCTUnwrap(WorkspaceSceneProjection.exactItems(workspace: workspace,
-      board: XCTUnwrap(hierarchy.board(start.boardID)), presence: start, documents: scene.model.documents)
-      .first(where: { $0.item.kind == .notebook }))
-    XCTAssertFalse(WorkspaceSceneProjection.snapshotLayers(workspace: workspace, hierarchy: hierarchy,
-      presence: start, documents: scene.model.documents).ink.contains { $0.surface == .cover(distant.id) },
-      "Снимок агента перечисляет то же дерево отображения, сохраняя полный каталог для адресации")
+    let index = try await WorkspaceSceneIndex.prepare(workspace: workspace, hierarchy: hierarchy,
+      documents: scene.model.documents, reusing: scene.model.sceneIndex)
+    let distantID = try XCTUnwrap(workspace.items.first { $0.kind == .notebook }?.id)
+    let distant = try XCTUnwrap(index.renderedItem(id: distantID, presence: start))
+    XCTAssertFalse(index.workset(presence: start).items.contains { $0.id == distant.id },
+      "Рабочий кадр не монтирует далёкую бумагу; адресный индекс продолжает знать её владельца")
     let focused = SessionPresence(boardID: start.boardID, mode: .cover, camera: start.camera,
       viewport: start.viewport, focusedItemID: distant.id, openProgress: 0)
     XCTAssertTrue(WorkspaceSceneProjection.mountsContent(of: distant, in: focused),

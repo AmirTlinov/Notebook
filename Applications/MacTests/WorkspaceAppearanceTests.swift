@@ -101,7 +101,7 @@ final class WorkspaceAppearanceTests: XCTestCase {
   private func cover(item: WorkspaceItem, geometry: WorkspaceItemGeometry, model: NotebookAppModel) -> some View {
     WorkspaceItemCoverView(item: item, geometry: geometry,
       spatialInkSurfaces: SpatialInkSurfaceRegistry(), elements: [],
-      editingTextID: nil, isElementEditingEnabled: false, rendersSettledSnapshot: true,
+      editingTextID: nil, isElementEditingEnabled: false,
       portalOpenProgress: 0, portalViewport: geometry.size,
       onTap: { _, _ in }, onLiftChanged: { _ in }, onTranslationChanged: { _ in },
       onTranslationEnded: { _ in }, onTextEditingEnded: { _ in }, onElementSelected: {})

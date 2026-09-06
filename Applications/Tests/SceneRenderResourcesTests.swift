@@ -83,6 +83,21 @@ final class SceneRenderResourcesTests: XCTestCase {
   }
 
   @MainActor
+  func testMultisampleInkReservationAccountsEverySimultaneousBacking() throws {
+    let resources = SceneRenderResources(byteLimit: 8 * 1024 * 1024)
+    let tile = try XCTUnwrap(resources.reserveRaster(pixelWidth: 512, pixelHeight: 512, backingCount: 8))
+    XCTAssertEqual(resources.reservedBytes, resources.byteLimit)
+    XCTAssertNil(resources.reserveRaster(pixelWidth: 1, pixelHeight: 1))
+    tile.release()
+    XCTAssertEqual(resources.reservedBytes, 0)
+    for count in [0, -1, 17, Int.max] {
+      XCTAssertNil(resources.reserveRaster(pixelWidth: 512, pixelHeight: 512, backingCount: count))
+    }
+    XCTAssertNil(resources.reserveRaster(pixelWidth: Int.max, pixelHeight: 512, backingCount: 8))
+    XCTAssertEqual(resources.reservedBytes, 0)
+  }
+
+  @MainActor
   func testDocumentAndAgentRastersShareTheSameByteBudget() throws {
     let raster = image(), cost = try byteCost(raster)
     let resources = SceneRenderResources(byteLimit: cost)

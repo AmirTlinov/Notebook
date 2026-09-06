@@ -59,197 +59,7 @@ enum WorkspaceSceneProjection {
       && center.y + halfHeight >= -margin && center.y - halfHeight <= presence.viewport.y + margin
   }
 
-  struct SnapshotInkSurface: Hashable, Sendable {
-    let surface: SurfaceID
-    let camera: SpatialCamera?
-    let viewport: SpatialPoint
-  }
-
-  struct SnapshotLayers {
-    var elements: [SpatialElement] = []
-    var ink: [SnapshotInkSurface] = []
-  }
-
-  /// Web and ink preparation enumerate exactly the same finite presentation tree.
-  static func snapshotLayers(
-    workspace: WorkspaceIndex, hierarchy: BoardHierarchy, presence: SessionPresence,
-    documents: [UUID: DocumentDocument]
-  ) -> SnapshotLayers {
-    var result = SnapshotLayers()
-    var pending = [(presence, presence.camera.scale, portalPasses)]
-    while let (projection, pixelScale, passes) = pending.popLast() {
-      guard let board = hierarchy.board(projection.boardID) else { continue }
-      let rendered = exactItems(workspace: workspace, board: board, presence: projection, documents: documents)
-        .filter { mountsContent(of: $0, in: projection) }
-      let surfaces = Set(rendered.map { SurfaceID.cover($0.id) } + [.board(projection.boardID)])
-      result.elements.append(contentsOf: board.elements.filter {
-        surfaces.contains($0.surface)
-      })
-      result.ink.append(.init(surface: .board(projection.boardID), camera: projection.camera, viewport: projection.viewport))
-      for item in rendered {
-        result.ink.append(.init(surface: .cover(item.id), camera: nil,
-          viewport: .init(x: item.geometry.width, y: item.geometry.height)))
-        guard item.item.kind == .board, showsPortal(pixelScale: pixelScale, remainingPasses: passes),
-          let portal = hierarchy.portalCamera(item.id) else { continue }
-        let camera = BoardPortalProjection.entryCamera(portalCamera: portal, viewport: presence.viewport)
-        let child = SessionPresence(boardID: item.id, mode: .board, camera: camera,
-          viewport: BoardPortalProjection.renderViewport(viewport: presence.viewport))
-        pending.append((child, pixelScale * camera.scale / BoardPortalProjection.fillScale(viewport: presence.viewport), passes - 1))
-      }
-    }
-    return result
-  }
-
-  /// Explicit source enumeration for exact, settled exports. The live camera
-  /// and references use WorkspaceSceneIndex instead.
-  static func exactItems(
-    workspace: WorkspaceIndex,
-    board: BoardDocument,
-    presence: SessionPresence,
-    documents: [UUID: DocumentDocument]
-  ) -> [RenderedWorkspaceItem] {
-    let items = Dictionary(
-      uniqueKeysWithValues: workspace.items.map { ($0.id, $0) }
-    )
-    func geometry(of item: WorkspaceItem) -> WorkspaceItemGeometry? {
-      guard item.kind == .document else { return .notebook }
-      return documents[item.id].map { .document($0.paperSize) }
-    }
-    var result: [RenderedWorkspaceItem] = board.freeItems.compactMap { placement in
-      guard let item = items[placement.itemID], let geometry = geometry(of: item) else { return nil }
-      return RenderedWorkspaceItem(
-          item: item,
-          geometry: geometry,
-          center: placement.center,
-          zIndex: Double(placement.zIndex),
-          stackID: nil
-        )
-    }
-
-    for stack in board.stacks {
-      let focusedMemberID = presence.mode == .board
-        ? nil
-        : presence.focusedItemID.flatMap { itemID in
-          stack.itemIDs.contains(itemID) ? itemID : nil
-        }
-      for (index, itemID) in stack.itemIDs.enumerated() {
-        guard focusedMemberID == nil || focusedMemberID == itemID,
-          let item = items[itemID],
-          let geometry = geometry(of: item),
-          let center = WorkspaceItemStackPresentation.boardCenter(
-            of: itemID,
-            in: stack,
-            cameraScale: presence.camera.scale,
-            viewport: presence.viewport
-          )
-        else { continue }
-        result.append(
-          RenderedWorkspaceItem(
-            item: item,
-            geometry: geometry,
-            center: center,
-            zIndex: Double(stack.zIndex) + Double(index) / 100,
-            stackID: stack.id
-          )
-        )
-      }
-    }
-    return result.sorted { $0.zIndex < $1.zIndex }
-  }
 }
-
-#if os(macOS)
-  /// A settled read model. It contains no gesture surface, cover transition,
-  /// page-turn controller, Metal drawable, or live WebKit view.
-  struct SettledSpatialWorkspaceView: View {
-    @Environment(NotebookAppModel.self) private var model
-
-    let workspace: WorkspaceIndex
-    let board: BoardDocument
-    let spatialInk: SpatialInkJournal
-    let presence: SessionPresence
-
-    var body: some View {
-      let rendered = WorkspaceSceneProjection.exactItems(
-        workspace: workspace,
-        board: board,
-        presence: presence,
-        documents: model.documents
-      )
-      ZStack {
-        SpatialBoardGrid(camera: presence.camera)
-        settledBoardElements
-        SpatialInkSnapshotView(
-          surface: .board(presence.boardID), journal: spatialInk, camera: presence.camera, viewport: presence.viewport
-        )
-        .frame(width: presence.viewport.x, height: presence.viewport.y)
-        .allowsHitTesting(false)
-
-        ForEach(rendered.filter { WorkspaceSceneProjection.mountsContent(of: $0, in: presence) }) { rendered in
-          let screen = presence.camera.worldToScreen(
-            rendered.center,
-            viewport: presence.viewport
-          )
-          WorkspaceItemCoverView(
-            item: rendered.item,
-            geometry: rendered.geometry,
-            spatialInkSurfaces: SpatialInkSurfaceRegistry(),
-            elements: board.elements.filter {
-              $0.surface == .cover(rendered.id)
-            },
-            editingTextID: nil,
-            isElementEditingEnabled: false,
-            rendersSettledSnapshot: true,
-            portalOpenProgress: 0,
-            portalViewport: presence.viewport,
-            onTap: { _, _ in },
-            onLiftChanged: { _ in },
-            onTranslationChanged: { _ in },
-            onTranslationEnded: { _ in },
-            onTextEditingEnded: { _ in },
-            onElementSelected: {},
-            portalPixelScale: presence.camera.scale
-          )
-          .background { WorkspaceItemShadow(geometry: rendered.geometry) }
-          .scaleEffect(presence.camera.scale)
-          .position(x: screen.x, y: screen.y)
-          .zIndex(rendered.zIndex)
-        }
-      }
-      .frame(width: presence.viewport.x, height: presence.viewport.y)
-      .clipped()
-      .allowsHitTesting(false)
-      .accessibilityHidden(true)
-    }
-
-    @ViewBuilder
-    private var settledBoardElements: some View {
-      ForEach(board.elements.filter { $0.surface.kind == .board }) { element in
-        if let worldOrigin = element.worldOrigin {
-          let base = presence.camera.worldToScreen(
-            worldOrigin,
-            viewport: presence.viewport
-          )
-          let origin = CGPoint(
-            x: base.x + element.frame.x * presence.camera.scale,
-            y: base.y + element.frame.y * presence.camera.scale
-          )
-          SettledSpatialElementContent(element: element)
-            .frame(width: element.frame.width, height: element.frame.height)
-            .scaleEffect(presence.camera.scale)
-            .frame(
-              width: element.frame.width * presence.camera.scale,
-              height: element.frame.height * presence.camera.scale
-            )
-            .position(
-              x: origin.x + element.frame.width * presence.camera.scale / 2,
-              y: origin.y + element.frame.height * presence.camera.scale / 2
-            )
-        }
-      }
-    }
-  }
-#endif
 
 /// A Show command may outlive its camera animation while WebKit finds a block's
 /// physical sheet. Only that command may finish the pending page adjustment.
@@ -2043,7 +1853,6 @@ private struct WorkspaceSceneItem: View, Equatable {
       aggregates: coverAggregates,
       editingTextID: editingTextID,
       isElementEditingEnabled: model.isElementEditingEnabled && !model.scenePreparationPending,
-      rendersSettledSnapshot: false,
       portalOpenProgress: openProgress,
       portalViewport: viewport,
       onTap: handleTap,
@@ -2134,15 +1943,11 @@ struct BoardPortalPreview: View {
   let pixelScale: Double
   let remainingPortalPasses: Int
   let transitionViewport: SpatialPoint
-  var rendersSettledSnapshot = false
 
   var body: some View {
-    if let workspace = model.workspace,
-      let hierarchy = model.boardHierarchy,
-      let board = rendersSettledSnapshot ? hierarchy.board(boardID) : model.sceneIndex?.board(id: boardID)
-    {
+    if model.sceneIndex?.board(id: boardID) != nil {
       let camera = BoardPortalProjection.entryCamera(
-        portalCamera: (rendersSettledSnapshot ? hierarchy.portalCamera(boardID) : model.scenePortalCamera(boardID: boardID)) ?? BoardPortalCamera(),
+        portalCamera: model.scenePortalCamera(boardID: boardID) ?? BoardPortalCamera(),
         viewport: transitionViewport
       )
       let viewport = BoardPortalProjection.renderViewport(viewport: transitionViewport)
@@ -2156,19 +1961,13 @@ struct BoardPortalPreview: View {
       let projectionFrame = frame ?? model.sceneIndex.map {
         WorkspaceSceneFrame(index: $0, presence: presence, portalCamera: model.scenePortalCamera)
       }
-      let workset = rendersSettledSnapshot ? WorkspaceSceneWorkset.empty
-        : projectionFrame?.workset(boardID: boardID) ?? .empty
-      let rendered = rendersSettledSnapshot
-        ? WorkspaceSceneProjection.exactItems(workspace: workspace, board: board,
-          presence: presence, documents: model.documents)
-        : workset.items
-      let elements = rendersSettledSnapshot
-        ? board.elements.filter { $0.surface == .board(boardID) }
-        : workset.elements
+      let workset = projectionFrame?.workset(boardID: boardID) ?? .empty
+      let rendered = workset.items
+      let elements = workset.elements
 
       ZStack {
         SpatialBoardGrid(camera: camera, outputScale: pixelScale / fill)
-        if !rendersSettledSnapshot && workset.generationID == nil {
+        if workset.generationID == nil {
           Text("Подготовка области").font(.caption).foregroundStyle(.secondary)
             .padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
         }
@@ -2178,17 +1977,7 @@ struct BoardPortalPreview: View {
           element in
           if let origin = element.worldOrigin {
             let screen = camera.worldToScreen(origin, viewport: viewport)
-            Group {
-              #if os(macOS)
-                if rendersSettledSnapshot {
-                  SettledSpatialElementContent(element: element)
-                } else {
-                  SpatialElementContent(element: element, commitsState: false)
-                }
-              #else
-                SpatialElementContent(element: element, commitsState: false)
-              #endif
-            }
+            SpatialElementContent(element: element, commitsState: false)
               .frame(width: element.frame.width, height: element.frame.height)
               .scaleEffect(camera.scale)
               .frame(
@@ -2210,11 +1999,7 @@ struct BoardPortalPreview: View {
             camera: camera, viewport: viewport
           )
         #else
-          if rendersSettledSnapshot {
-            SpatialInkSnapshotView(surface: .board(boardID), journal: model.spatialInk, camera: camera, viewport: viewport)
-          } else {
-            SpatialInkSurfaceView(surface: .board(boardID), journal: model.spatialInk, camera: camera, viewport: viewport)
-          }
+          SpatialInkSurfaceView(surface: .board(boardID), journal: model.spatialInk, camera: camera, viewport: viewport)
         #endif
 
         ForEach(rendered.filter { WorkspaceSceneProjection.mountsContent(of: $0, in: presence) }) { item in
@@ -2223,12 +2008,9 @@ struct BoardPortalPreview: View {
             item: item.item,
             geometry: item.geometry,
             spatialInkSurfaces: SpatialInkSurfaceRegistry(),
-            elements: rendersSettledSnapshot
-              ? board.elements.filter { $0.surface == .cover(item.id) }
-              : projectionFrame?.covers[item.id]?.elements ?? [],
+            elements: projectionFrame?.covers[item.id]?.elements ?? [],
             aggregates: projectionFrame?.covers[item.id]?.aggregates ?? [],
             editingTextID: nil, isElementEditingEnabled: false,
-            rendersSettledSnapshot: rendersSettledSnapshot,
             portalOpenProgress: 0, portalViewport: transitionViewport,
             onTap: { _, _ in }, onLiftChanged: { _ in },
             onTranslationChanged: { _ in }, onTranslationEnded: { _ in },
@@ -2260,6 +2042,24 @@ struct BoardPortalPreview: View {
   }
 }
 
+struct WorkspaceCoverTitle: View {
+  let item: WorkspaceItem
+  let geometry: WorkspaceItemGeometry
+
+  var body: some View {
+    if item.kind != .board, !item.title.isEmpty {
+      Text(item.title)
+        .font(.system(size: geometry.width * (item.kind == .document ? 0.056 : 0.048),
+          weight: .medium, design: item.kind == .document ? .serif : .default))
+        .foregroundStyle(Color.black.opacity(0.76))
+        .lineLimit(3)
+        .frame(width: geometry.width * 0.72, alignment: .leading)
+        .offset(x: geometry.width * (item.kind == .document ? 0.105 : 0.145),
+          y: geometry.height * (item.kind == .document ? 0.145 : 0.148))
+    }
+  }
+}
+
 struct WorkspaceItemCoverView: View {
   @Environment(NotebookAppModel.self) private var model
 
@@ -2270,7 +2070,6 @@ struct WorkspaceItemCoverView: View {
   var aggregates: [WorkspaceSpatialAggregate] = []
   let editingTextID: String?
   let isElementEditingEnabled: Bool
-  let rendersSettledSnapshot: Bool
   let portalOpenProgress: Double
   let portalViewport: SpatialPoint
   let onTap: (CGPoint, Int) -> Void
@@ -2288,23 +2087,7 @@ struct WorkspaceItemCoverView: View {
     ZStack(alignment: .topLeading) {
       coverBackground
 
-      if item.kind != .board, !item.title.isEmpty {
-        Text(item.title)
-          .font(
-            .system(
-              size: geometry.width * (item.kind == .document ? 0.056 : 0.048),
-              weight: .medium,
-              design: item.kind == .document ? .serif : .default
-            )
-          )
-          .foregroundStyle(Color.black.opacity(0.76))
-          .lineLimit(3)
-          .frame(width: geometry.width * 0.72, alignment: .leading)
-          .offset(
-            x: geometry.width * (item.kind == .document ? 0.105 : 0.145),
-            y: geometry.height * (item.kind == .document ? 0.145 : 0.148)
-          )
-      }
+      WorkspaceCoverTitle(item: item, geometry: geometry)
 
       if !aggregates.isEmpty {
         WorkspaceSceneAggregates(aggregates: aggregates, presence: .init(mode: .board,
@@ -2314,7 +2097,7 @@ struct WorkspaceItemCoverView: View {
 
       ForEach(elements) { element in
         let reference = EditableElementReference.spatial(elementID: element.id)
-        let retainsTextInput = !isPortalProjection && !rendersSettledSnapshot
+        let retainsTextInput = !isPortalProjection
           && element.kind == .nativeText && editingTextID == element.id
         EditableElementContainer(
           isEditingEnabled: isElementEditingEnabled && !model.scenePreparationPending,
@@ -2349,29 +2132,12 @@ struct WorkspaceItemCoverView: View {
             model.deleteElement(reference)
           }
         ) {
-          Group {
-            #if os(macOS)
-              if rendersSettledSnapshot {
-                SettledSpatialElementContent(element: element)
-              } else {
-                SpatialElementContent(
-                  element: element,
-                  commitsState: !isPortalProjection,
-                  boardID: model.sceneIndex?.ownerBoard(itemID: item.id),
-                  isTextEditing: retainsTextInput,
-                  onTextEditingEnded: { onTextEditingEnded(element.id) }
-                )
-              }
-            #else
-              SpatialElementContent(
-                element: element,
-                commitsState: !isPortalProjection,
-                boardID: model.sceneIndex?.ownerBoard(itemID: item.id),
-                isTextEditing: retainsTextInput,
-                onTextEditingEnded: { onTextEditingEnded(element.id) }
-              )
-            #endif
-          }
+          SpatialElementContent(
+            element: element, commitsState: !isPortalProjection,
+            boardID: model.sceneIndex?.ownerBoard(itemID: item.id),
+            isTextEditing: retainsTextInput,
+            onTextEditingEnded: { onTextEditingEnded(element.id) }
+          )
         }
         .disabled(model.scenePreparationPending && !retainsTextInput)
         .allowsHitTesting(!model.scenePreparationPending || retainsTextInput)
@@ -2423,15 +2189,8 @@ struct WorkspaceItemCoverView: View {
         .allowsHitTesting(false)
         .opacity(portalOverlayOpacity)
       #elseif os(macOS)
-        Group {
-          if rendersSettledSnapshot {
-            SpatialInkSnapshotView(surface: .cover(item.id), journal: model.spatialInk)
-          } else {
-            SpatialInkSurfaceView(surface: .cover(item.id), journal: model.spatialInk)
-          }
-        }
-        .allowsHitTesting(false)
-        .opacity(portalOverlayOpacity)
+        SpatialInkSurfaceView(surface: .cover(item.id), journal: model.spatialInk)
+          .allowsHitTesting(false).opacity(portalOverlayOpacity)
       #endif
     }
     .frame(
@@ -2494,8 +2253,7 @@ struct WorkspaceItemCoverView: View {
           boardID: item.id,
           pixelScale: portalPixelScale,
           remainingPortalPasses: remainingPortalPasses,
-          transitionViewport: portalViewport,
-          rendersSettledSnapshot: rendersSettledSnapshot
+          transitionViewport: portalViewport
         ))
       } else {
         Color(red: 0.9, green: 0.93, blue: 0.925)
@@ -2516,7 +2274,7 @@ struct WorkspaceItemCoverView: View {
   private var interactionPassthroughFrames: [CGRect] {
     Self.interactionPassthroughFrames(
       elements: elements,
-      editingTextID: isPortalProjection || rendersSettledSnapshot ? nil : editingTextID,
+      editingTextID: isPortalProjection ? nil : editingTextID,
       scenePreparationPending: model.scenePreparationPending
     )
   }
@@ -2614,48 +2372,27 @@ func agentElementSnapshotSource(_ element: SpatialElement) -> AgentElement {
   )
 }
 
-#if os(macOS)
-  private struct SettledSpatialElementContent: View {
-    @Environment(\.sceneSnapshotRasters) private var rasters
-    let element: SpatialElement
+struct SpatialTextSnapshot: View {
+  let element: SpatialElement
 
-    var body: some View {
-      if element.kind == .nativeText {
-        Text(element.source)
-          .font(
-            .system(
-              size: element.textStyle.fontSize,
-              weight: fontWeight(element.textStyle.weight)
-            )
-          )
-          .foregroundStyle(
-            Color(
-              red: element.textStyle.red,
-              green: element.textStyle.green,
-              blue: element.textStyle.blue,
-              opacity: element.textStyle.alpha
-            )
-          )
-          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-      } else if let image = rasters?.image(
-        for: agentElementSnapshotSource(element)
-      ) {
-        Image(nsImage: image)
-          .resizable()
-      }
-    }
+  var body: some View {
+    Text(element.source)
+      .font(.system(size: element.textStyle.fontSize, weight: fontWeight(element.textStyle.weight)))
+      .foregroundStyle(Color(red: element.textStyle.red, green: element.textStyle.green,
+        blue: element.textStyle.blue, opacity: element.textStyle.alpha))
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+  }
 
-    private func fontWeight(_ value: Double) -> Font.Weight {
-      switch value {
-      case ..<0.2: .light
-      case ..<0.4: .regular
-      case ..<0.6: .medium
-      case ..<0.8: .semibold
-      default: .bold
-      }
+  private func fontWeight(_ value: Double) -> Font.Weight {
+    switch value {
+    case ..<0.2: .light
+    case ..<0.4: .regular
+    case ..<0.6: .medium
+    case ..<0.8: .semibold
+    default: .bold
     }
   }
-#endif
+}
 
 private struct NativeTextElementView: View {
   @Environment(NotebookAppModel.self) private var model
@@ -2781,7 +2518,7 @@ private struct NativeTextElementView: View {
   }
 }
 
-private struct SpatialBoardGrid: View {
+struct SpatialBoardGrid: View {
   @Environment(\.displayScale) private var displayScale
   let camera: SpatialCamera
   var outputScale: Double = 1
