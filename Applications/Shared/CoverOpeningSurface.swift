@@ -42,12 +42,16 @@ struct CoverOpeningSurface<Cover: View>: View {
   }
 
   var body: some View {
-    PlatformCoverOpeningSurface(
+    // Observe eligibility here, then recheck its live owner when deferred work
+    // runs: a contact can begin before SwiftUI delivers the next view update.
+    let permitsPreparation = model.permitsBackgroundPreparation
+    return PlatformCoverOpeningSurface(
       ownerID: ownerID,
       progress: progress,
       revision: revision,
       backsideColor: backsideColor,
       preparesCoverMotion: preparesCoverMotion,
+      canPrepare: { permitsPreparation && model.permitsBackgroundPreparation },
       cornerRadius: revision.geometry.cornerRadius,
       cover: AnyView(cover.environment(model))
     )
@@ -245,6 +249,10 @@ struct CoverSnapshotLifecycle {
     self.progress = resolvedProgress
   }
 
+  var isTransitioning: Bool {
+    !CoverOpeningPhysics.isClosed(progress) && !CoverOpeningPhysics.isOpen(progress)
+  }
+
   mutating func settleAtClosedEndpoint(keepingPreparedSnapshot: Bool) {
     guard keepingPreparedSnapshot, capturedRevision == revision else {
       clearCapture()
@@ -275,6 +283,7 @@ struct CoverSnapshotLifecycle {
     let revision: CoverRenderingRevision
     let backsideColor: CoverBacksideColor
     let preparesCoverMotion: Bool
+    let canPrepare: @MainActor () -> Bool
     let cornerRadius: CGFloat
     let cover: AnyView
 
@@ -292,6 +301,7 @@ struct CoverSnapshotLifecycle {
         revision: revision,
         backsideColor: backsideColor,
         preparesCoverMotion: preparesCoverMotion,
+        canPrepare: canPrepare,
         cornerRadius: cornerRadius,
         cover: cover
       )
@@ -306,10 +316,13 @@ struct CoverSnapshotLifecycle {
     private let coverVisibilityView = UIView()
     private let curlView = CoverCurlMetalView(frame: .zero)
 
+    var submittedCurlFrameCount: Int { curlView.submittedFrameCount }
+    private(set) var capturedCoverCount = 0
     private var captureScheduled = false
     private var lifecycle = CoverSnapshotLifecycle()
     private var backsideColor = CoverBacksideColor.document
     private var preparesCoverMotion = false
+    private var canPrepare: @MainActor () -> Bool = { false }
     private var cornerRadius: CGFloat = 0
 
     override func viewDidLoad() {
@@ -328,6 +341,10 @@ struct CoverSnapshotLifecycle {
       coverHost.didMove(toParent: self)
 
       curlView.isHidden = true
+      curlView.permitsFrameSubmission = { [weak self] in
+        guard let self else { return false }
+        return lifecycle.isTransitioning || (preparesCoverMotion && canPrepare())
+      }
       view.addSubview(curlView)
     }
 
@@ -342,6 +359,7 @@ struct CoverSnapshotLifecycle {
       revision: CoverRenderingRevision,
       backsideColor: CoverBacksideColor,
       preparesCoverMotion: Bool,
+      canPrepare: @escaping @MainActor () -> Bool,
       cornerRadius: CGFloat,
       cover: AnyView
     ) {
@@ -353,6 +371,7 @@ struct CoverSnapshotLifecycle {
       coverHost.rootView = cover
       self.backsideColor = backsideColor
       self.preparesCoverMotion = preparesCoverMotion
+      self.canPrepare = canPrepare
       self.cornerRadius = cornerRadius
 
       guard isViewLoaded else { return }
@@ -425,7 +444,7 @@ struct CoverSnapshotLifecycle {
     }
 
     private func prepareRestingCoverIfNeeded(at progress: Double) {
-      guard preparesCoverMotion else {
+      guard preparesCoverMotion, canPrepare() else {
         curlView.isHidden = true
         return
       }
@@ -453,17 +472,19 @@ struct CoverSnapshotLifecycle {
     // A deferred frame lets the attached hosting tree commit its first content.
     // InkCanvasView confirms its own GPU frame before the curl freezes those
     // pixels. Pending ink yields a frame between attempts while the cover is live.
+    private var needsCaptureNow: Bool {
+      if lifecycle.isTransitioning { return lifecycle.capturedCover == nil }
+      return preparesCoverMotion && canPrepare() && lifecycle.needsCurrentSnapshot
+    }
+
     private func scheduleCapture() {
-      guard !captureScheduled, view.window != nil else { return }
+      guard !captureScheduled, view.window != nil, needsCaptureNow else { return }
       captureScheduled = true
       DispatchQueue.main.asyncAfter(deadline: .now() + 1 / 60) { [weak self] in
         guard let self else { return }
-        guard self.view.window != nil else {
-          self.captureScheduled = false
-          return
-        }
-        self.lifecycle.storeCapturedCover(self.captureCover())
         self.captureScheduled = false
+        guard self.view.window != nil, self.needsCaptureNow else { return }
+        self.lifecycle.storeCapturedCover(self.captureCover())
         self.renderCurrentState()
       }
     }
@@ -496,6 +517,7 @@ struct CoverSnapshotLifecycle {
           afterScreenUpdates: true
         )
       }
+      if image.cgImage != nil { capturedCoverCount += 1 }
       return image.cgImage
     }
 
@@ -530,6 +552,7 @@ struct CoverSnapshotLifecycle {
     let revision: CoverRenderingRevision
     let backsideColor: CoverBacksideColor
     let preparesCoverMotion: Bool
+    let canPrepare: @MainActor () -> Bool
     let cornerRadius: CGFloat
     let cover: AnyView
 
@@ -544,6 +567,7 @@ struct CoverSnapshotLifecycle {
         revision: revision,
         backsideColor: backsideColor,
         preparesCoverMotion: preparesCoverMotion,
+        canPrepare: canPrepare,
         cornerRadius: cornerRadius,
         cover: cover
       )
@@ -558,6 +582,7 @@ struct CoverSnapshotLifecycle {
     private var lifecycle = CoverSnapshotLifecycle()
     private var backsideColor = CoverBacksideColor.document
     private var preparesCoverMotion = false
+    private var canPrepare: @MainActor () -> Bool = { false }
     private var cornerRadius: CGFloat = 0
 
     override init(frame frameRect: NSRect) {
@@ -569,6 +594,10 @@ struct CoverSnapshotLifecycle {
       coverHost.layer?.backgroundColor = NSColor.clear.cgColor
       addSubview(coverHost)
       curlView.isHidden = true
+      curlView.permitsFrameSubmission = { [weak self] in
+        guard let self else { return false }
+        return lifecycle.isTransitioning || (preparesCoverMotion && canPrepare())
+      }
       addSubview(curlView)
     }
 
@@ -588,6 +617,7 @@ struct CoverSnapshotLifecycle {
       revision: CoverRenderingRevision,
       backsideColor: CoverBacksideColor,
       preparesCoverMotion: Bool,
+      canPrepare: @escaping @MainActor () -> Bool,
       cornerRadius: CGFloat,
       cover: AnyView
     ) {
@@ -599,6 +629,7 @@ struct CoverSnapshotLifecycle {
       coverHost.rootView = cover
       self.backsideColor = backsideColor
       self.preparesCoverMotion = preparesCoverMotion
+      self.canPrepare = canPrepare
       self.cornerRadius = cornerRadius
 
       needsLayout = true
@@ -663,7 +694,7 @@ struct CoverSnapshotLifecycle {
     }
 
     private func prepareRestingCoverIfNeeded(at progress: Double) {
-      guard preparesCoverMotion else {
+      guard preparesCoverMotion, canPrepare() else {
         curlView.isHidden = true
         return
       }
@@ -781,6 +812,9 @@ private final class CoverCurlGPU: @unchecked Sendable {
 /// every drawable, and presents the camera-owned progress value.
 @MainActor
 private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
+  var permitsFrameSubmission: @MainActor () -> Bool = { false }
+  private(set) var submittedFrameCount = 0
+  private var framePending = false
   private let commandQueue: (any MTLCommandQueue)?
   private let imageContext: CIContext?
   private let outputColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
@@ -840,13 +874,17 @@ private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
       || self.backsideColor != backsideColor
       || self.cornerRadius != cornerRadius
       || curlLayout != layout
-    guard changed else { return }
+    guard changed else {
+      if framePending { setNeedsDisplay(bounds) }
+      return
+    }
     sourceCover = cover
     coverImage = CIImage(cgImage: cover)
     self.progress = resolvedProgress
     self.backsideColor = backsideColor
     self.cornerRadius = cornerRadius
     curlLayout = layout
+    framePending = true
     setNeedsDisplay(bounds)
   }
 
@@ -854,10 +892,14 @@ private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
     _ view: MTKView,
     drawableSizeWillChange size: CGSize
   ) {
+    framePending = true
     setNeedsDisplay(bounds)
   }
 
   func draw(in view: MTKView) {
+    // A queued warm frame is still background work when a new contact arrives.
+    // Keep it pending, without rescheduling a busy loop, until the next update.
+    guard !isHidden, permitsFrameSubmission() else { return }
     guard inFlightSemaphore.wait(timeout: .now()) == .success else {
       setNeedsDisplay(bounds)
       return
@@ -913,6 +955,8 @@ private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
     mustSignal = false
     commandBuffer.present(drawable)
     commandBuffer.commit()
+    framePending = false
+    submittedFrameCount += 1
   }
 
   private func clear(

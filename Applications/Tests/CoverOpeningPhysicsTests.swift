@@ -1,4 +1,5 @@
 import CoreGraphics
+import MetalKit
 import NotebookCore
 import SwiftUI
 import UIKit
@@ -174,7 +175,7 @@ final class CoverOpeningPhysicsTests: XCTestCase {
     func update(_ progress: Double) {
       controller.update(
         ownerID: owner, progress: progress, revision: coverRevision,
-        backsideColor: .document, preparesCoverMotion: true, cornerRadius: 12,
+        backsideColor: .document, preparesCoverMotion: true, canPrepare: { true }, cornerRadius: 12,
         cover: AnyView(Color.red))
     }
     update(1)
@@ -202,6 +203,116 @@ final class CoverOpeningPhysicsTests: XCTestCase {
     XCTAssertGreaterThan(
       Double(red) / Double(cg.width * cg.height), 0.15,
       "Закрывающаяся обложка сохраняет плотный цвет")
+  }
+
+  @MainActor
+  func testRestingCoverDefersCaptureDuringContactAndReusesItForOpening() async throws {
+    let (window, controller) = try coverWindow()
+    defer { window.isHidden = true }
+    let gate = NotebookInputGate(), contact = UUID(), owner = UUID()
+    func update(_ progress: Double) {
+      controller.update(ownerID: owner, progress: progress, revision: revision(title: "Resting"),
+        backsideColor: .document, preparesCoverMotion: true,
+        canPrepare: { !gate.isActive }, cornerRadius: 12, cover: AnyView(Color.red))
+    }
+    gate.beginContact(source: contact)
+    update(0)
+    try await Task.sleep(for: .milliseconds(150))
+    XCTAssertEqual(controller.capturedCoverCount, 0, "Камера не готовит неподвижную обложку")
+    gate.endContact(source: contact)
+    for _ in 0..<100 where gate.isActive { await Task.yield() }
+    XCTAssertFalse(gate.isActive)
+    update(0)
+    for _ in 0..<100 where controller.capturedCoverCount == 0 {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertEqual(controller.capturedCoverCount, 1, "После ввода готовится один снимок")
+    gate.beginContact(source: contact)
+    update(0)
+    update(0.3)
+    try await Task.sleep(for: .milliseconds(150))
+    XCTAssertEqual(controller.capturedCoverCount, 1, "Раскрытие использует уже готовую обложку")
+    gate.endContact(source: contact)
+  }
+
+  @MainActor
+  func testQueuedRestingCaptureRechecksContactWithoutAViewUpdate() async throws {
+    let (window, controller) = try coverWindow()
+    defer { window.isHidden = true }
+    let gate = NotebookInputGate(), contact = UUID()
+    controller.update(ownerID: UUID(), progress: 0, revision: revision(title: "Queued"),
+      backsideColor: .document, preparesCoverMotion: true,
+      canPrepare: { !gate.isActive }, cornerRadius: 12, cover: AnyView(Color.red))
+    window.layoutIfNeeded()
+    gate.beginContact(source: contact)
+    // No controller update: the callback must consult the current input owner.
+    try await Task.sleep(for: .milliseconds(150))
+    XCTAssertEqual(controller.capturedCoverCount, 0)
+    gate.endContact(source: contact)
+  }
+
+  @MainActor
+  func testQueuedCaptureDoesNotPrepareAnAbandonedCandidate() async throws {
+    let (window, controller) = try coverWindow()
+    defer { window.isHidden = true }
+    let owner = UUID()
+    func update(prepares: Bool) {
+      controller.update(ownerID: owner, progress: 0, revision: revision(title: "Candidate"),
+        backsideColor: .document, preparesCoverMotion: prepares,
+        canPrepare: { true }, cornerRadius: 12, cover: AnyView(Color.red))
+    }
+    update(prepares: true)
+    window.layoutIfNeeded()
+    update(prepares: false)
+    try await Task.sleep(for: .milliseconds(150))
+    XCTAssertEqual(controller.capturedCoverCount, 0, "Устаревшее задание не захватывает новый снимок")
+  }
+
+  @MainActor
+  func testQueuedWarmFrameRechecksContactAndResumesAfterIt() async throws {
+    let (window, controller) = try coverWindow()
+    defer { window.isHidden = true }
+    let gate = NotebookInputGate(), contact = UUID(), owner = UUID()
+    func update() {
+      controller.update(ownerID: owner, progress: 0, revision: revision(title: "Warm frame"),
+        backsideColor: .document, preparesCoverMotion: true,
+        canPrepare: { !gate.isActive }, cornerRadius: 12, cover: AnyView(Color.red))
+    }
+    update()
+    for _ in 0..<100 where controller.submittedCurlFrameCount == 0 {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertGreaterThan(controller.submittedCurlFrameCount, 0)
+    let curl = try XCTUnwrap(controller.view.subviews.compactMap { $0 as? MTKView }.first)
+    let submitted = controller.submittedCurlFrameCount
+    gate.beginContact(source: contact)
+    // A frame requested before UIKit delivers the next SwiftUI update is still
+    // background preparation, not a visible curl owned by the current pinch.
+    curl.delegate?.mtkView(curl, drawableSizeWillChange: curl.drawableSize)
+    curl.draw()
+    try await Task.sleep(for: .milliseconds(100))
+    XCTAssertEqual(controller.submittedCurlFrameCount, submitted)
+    gate.endContact(source: contact)
+    for _ in 0..<100 where gate.isActive { await Task.yield() }
+    XCTAssertFalse(gate.isActive)
+    update()
+    for _ in 0..<100 where controller.submittedCurlFrameCount == submitted {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertGreaterThan(controller.submittedCurlFrameCount, submitted,
+      "Ожидающий кадр возобновляется без нового снимка и без смены прогресса")
+    XCTAssertEqual(controller.capturedCoverCount, 1)
+  }
+
+  @MainActor
+  private func coverWindow() throws -> (UIWindow, IPadCoverOpeningController) {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene)
+    window.frame = CGRect(x: 0, y: 0, width: 420, height: 600)
+    let controller = IPadCoverOpeningController()
+    window.rootViewController = controller
+    window.makeKeyAndVisible()
+    return (window, controller)
   }
 
   private func revision(title: String) -> CoverRenderingRevision {
