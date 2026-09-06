@@ -6,13 +6,15 @@ import SwiftUI
 @MainActor
 enum NotebookAttentionProjection {
   static func frame(_ reference: CollaborationReference, model: NotebookAppModel, presence: SessionPresence) -> CGRect? {
-    guard let workspace = model.workspace, let board = model.boardHierarchy?.board(presence.boardID) else { return nil }
+    guard let workspace = model.workspace, let index = model.sceneIndex else { return nil }
     var local = reference.region ?? PageRect(x:0,y:0,width:1,height:1)
     let target = reference.target
     if target.kind == .board {
       guard target.id == presence.boardID else { return nil }
       var origin = reference.worldOrigin ?? .zero
-      if let id = reference.elementID, let element = board.elements.first(where: { $0.id == id && $0.surface == .board(target.id) }) {
+      if let id = reference.elementID {
+        guard let element = index.element(id: id, boardID: presence.boardID),
+          element.surface == .board(target.id) else { return nil }
         local = .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
         origin = element.worldOrigin ?? .zero
       }
@@ -21,9 +23,9 @@ enum NotebookAttentionProjection {
     }
     let itemID: UUID
     if target.kind == .page {
-      guard let item = workspace.items.first(where: { $0.pageIDs.contains(target.id) }),
+      guard let ownerID = index.pageOwner(pageID: target.id),
         workspace.selectedPageID == target.id, presence.mode == .page else { return nil }
-      itemID = item.id
+      itemID = ownerID
       if let id = reference.elementID, let element = model.pages[target.id]?.elements.first(where: { $0.id == id }) { local = element.frame }
     } else {
       itemID = target.id
@@ -35,12 +37,14 @@ enum NotebookAttentionProjection {
         } else if let page = reference.pageIndex, page != presence.documentPageIndex { return nil }
       } else if target.kind == .cover {
         guard presence.mode == .board || presence.mode == .cover else { return nil }
-        if let id = reference.elementID, let element = board.elements.first(where: { $0.id == id && $0.surface == .cover(itemID) }) {
+        if let id = reference.elementID {
+          guard let element = index.element(id: id, boardID: presence.boardID),
+            element.surface == .cover(itemID) else { return nil }
           local = .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
         }
       } else { return nil }
     }
-    guard let rendered = WorkspaceSceneProjection.items(workspace:workspace,board:board,presence:presence,documents:model.documents).first(where: { $0.id == itemID }) else { return nil }
+    guard let rendered = index.renderedItem(id: itemID, presence: presence) else { return nil }
     let box = rendered.geometry.screenFrame(center:rendered.center,camera:presence.camera,viewport:presence.viewport)
     if reference.region == nil && reference.elementID == nil { local = .init(x:0,y:0,width:rendered.geometry.width,height:rendered.geometry.height) }
     return .init(x:box.x + local.x * presence.camera.scale,y:box.y + local.y * presence.camera.scale,
@@ -49,12 +53,12 @@ enum NotebookAttentionProjection {
 
   static func references(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence) -> [CollaborationReference] {
     guard presence.mode == .board, hypot(end.x - start.x, end.y - start.y) > 8,
-      let workspace = model.workspace, let board = model.boardHierarchy?.board(presence.boardID) else {
+      let index = model.sceneIndex, !model.scenePreparationPending else {
       return reference(start: start, end: end, model: model, presence: presence).map { [$0] } ?? []
     }
     let selection = CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x), height: abs(end.y - start.y))
     var result = reference(start: start, end: end, model: model, presence: presence).map { [$0] } ?? []
-    for item in WorkspaceSceneProjection.items(workspace: workspace, board: board, presence: presence, documents: model.documents) {
+    for item in index.workset(presence: presence).items {
       let box = item.geometry.screenFrame(center: item.center, camera: presence.camera, viewport: presence.viewport)
       let intersection = selection.intersection(CGRect(x: box.x, y: box.y, width: box.width, height: box.height))
       guard !intersection.isNull, intersection.width > 0, intersection.height > 0,
@@ -68,11 +72,13 @@ enum NotebookAttentionProjection {
   }
 
   static func reference(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence, ownerID: UUID? = nil) -> CollaborationReference? {
-    guard let content = model.collaborationContent, let files = try? content.sourceFiles(),
+    guard !model.scenePreparationPending, let index = model.sceneIndex,
+      let content = model.collaborationContent, let files = try? content.sourceFiles(),
       let board = content.hierarchy.board(presence.boardID) else { return nil }
     let dragged = hypot(end.x-start.x,end.y-start.y) > 8
     let rect = CGRect(x:min(start.x,end.x),y:min(start.y,end.y),width:max(1,abs(end.x-start.x)),height:max(1,abs(end.y-start.y)))
-    let items = WorkspaceSceneProjection.items(workspace:content.workspace,board:board,presence:presence,documents:model.documents)
+    let admitted = index.workset(presence: presence)
+    let items = ownerID.map { id in index.renderedItem(id: id, presence: presence).map { [$0] } ?? [] } ?? admitted.items
     var target = CollaborationTarget(kind:.board,id:presence.boardID)
     var region: PageRect
     var origin: WorldPoint?
@@ -104,7 +110,7 @@ enum NotebookAttentionProjection {
       origin = presence.camera.screenToWorld(.init(x:rect.minX,y:rect.minY),viewport:presence.viewport)
       region = .init(x:0,y:0,width:rect.width/presence.camera.scale,height:rect.height/presence.camera.scale)
       if !dragged, let origin {
-        for element in board.elements.reversed() where element.surface == .board(presence.boardID) {
+        for element in admitted.elements.reversed() where element.surface == .board(presence.boardID) {
           let delta = (element.worldOrigin ?? .zero).delta(to:origin)
           if element.frame.contains(delta) { elementID = element.id; break }
         }

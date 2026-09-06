@@ -21,12 +21,76 @@ final class NotebookAppModel {
   static let defaultPageSize = PageSize(width: 834, height: 1_194)
 
   private(set) var loadState: LoadState = .loading
-  private(set) var workspace: WorkspaceIndex? { didSet { collaborationReadEpoch &+= 1 } }
+  private(set) var workspace: WorkspaceIndex? { didSet { collaborationReadEpoch &+= 1; scheduleScenePreparation() } }
   private(set) var pages: [UUID: PageDocument] = [:] { didSet { collaborationReadEpoch &+= 1 } }
-  private(set) var documents: [UUID: DocumentDocument] = [:] { didSet { collaborationReadEpoch &+= 1 } }
+  private(set) var documents: [UUID: DocumentDocument] = [:] { didSet { collaborationReadEpoch &+= 1; scheduleScenePreparation() } }
   private(set) var documentStates: [UUID: DocumentStateJournal] = [:] { didSet { collaborationReadEpoch &+= 1 } }
-  private(set) var boardHierarchy: BoardHierarchy? { didSet { collaborationReadEpoch &+= 1 } }
+  private(set) var boardHierarchy: BoardHierarchy? { didSet { collaborationReadEpoch &+= 1; scheduleScenePreparation() } }
   private(set) var spatialInk: SpatialInkJournal? { didSet { collaborationReadEpoch &+= 1 } }
+  private(set) var sceneIndex: WorkspaceSceneIndex?
+  private(set) var scenePreparationPending = false
+  private(set) var sceneIndexGeneration: UInt64 = 0
+  @ObservationIgnored private var scenePreparationTask: Task<Void, Never>?
+  @ObservationIgnored private var scenePreparationRequest: UInt64 = 0
+  @ObservationIgnored private var preparedScene: (index: WorkspaceSceneIndex?, changed: Bool, portals: [UUID: BoardPortalCamera], request: UInt64)?
+  private var scenePortalCameras: [UUID: BoardPortalCamera] = [:]
+  @ObservationIgnored private(set) var sceneQueryCount: UInt64 = 0
+
+  /// Coalesce a completed content publication before deriving the spatial
+  /// read model. The old generation remains visible until the next is whole.
+  private func scheduleScenePreparation() {
+    scenePreparationRequest &+= 1
+    scenePreparationPending = true
+    preparedScene = nil
+    guard scenePreparationTask == nil else { return }
+    scenePreparationTask = Task { [weak self] in
+      await Task.yield()
+      guard let self else { return }
+      while !Task.isCancelled, let workspace, let boardHierarchy {
+        let request = scenePreparationRequest
+        let documents = documents
+        let previous = sceneIndex
+        let result = await Task.detached(priority: .utility) {
+          let portals = Dictionary(uniqueKeysWithValues: boardHierarchy.boards.map { ($0.id, $0.portalCamera) })
+          let changed = previous?.represents(workspace: workspace, hierarchy: boardHierarchy, documents: documents) != true
+          let index = changed ? WorkspaceSceneIndex(workspace: workspace, hierarchy: boardHierarchy, documents: documents) : previous
+          return (index, changed, portals)
+        }.value
+        // At most one builder exists. Obsolete work cannot publish or enqueue
+        // a second expensive build in parallel with the latest publication.
+        guard request == scenePreparationRequest else { continue }
+        preparedScene = (result.0, result.1, result.2, request)
+        scenePreparationTask = nil
+        publishPreparedSceneIfPossible()
+        return
+      }
+      scenePreparationTask = nil
+    }
+  }
+
+  private func publishPreparedSceneIfPossible() {
+    guard let prepared = preparedScene, prepared.request == scenePreparationRequest,
+      !prepared.changed || (!inputIsActive && !peerInputIsActive) else { return }
+    scenePortalCameras = prepared.portals
+    if prepared.changed { sceneIndex = prepared.index; sceneIndexGeneration &+= 1 }
+    preparedScene = nil
+    scenePreparationPending = false
+  }
+
+  /// Pages are read from their current catalog owner, independently of the
+  /// background geometry generation and any preceding membership changes.
+  func itemForDisplay(id: UUID) -> WorkspaceItem? {
+    workspace?.item(id: id)
+  }
+
+  func scenePortalCamera(boardID: UUID) -> BoardPortalCamera? { scenePortalCameras[boardID] }
+
+  func sceneWorkset(presence: SessionPresence, pinned: Set<WorkspaceSpatialID> = [],
+    limit: Int = WorkspaceSceneIndex.detailLimit, pixelScale: Double? = nil) -> WorkspaceSceneWorkset {
+    sceneQueryCount &+= 1
+    return sceneIndex?.workset(presence: presence, pinned: pinned, limit: limit, pixelScale: pixelScale) ?? .empty
+  }
+
   private(set) var presence: SessionPresence?
   private(set) var presencePhase = PresencePhase.settled
   var isPointing = false
@@ -134,7 +198,7 @@ final class NotebookAppModel {
   @ObservationIgnored private var inputWriteTask: Task<Void, Never>?
   @ObservationIgnored private var pendingInputActivity: NotebookInputActivity?
   private(set) var inputIsActive = false
-  private(set) var peerInputIsActive = false
+  private(set) var peerInputIsActive = false { didSet { if !peerInputIsActive { publishPreparedSceneIfPossible() } } }
   var permitsBackgroundPreparation: Bool { !inputIsActive && !peerInputIsActive && presencePhase == .settled }
   #if os(macOS)
     /// MCP writes the same files as the app. This observer belongs to the
@@ -193,6 +257,7 @@ final class NotebookAppModel {
       #endif
       publishInputActivity()
       if !active {
+        publishPreparedSceneIfPossible()
         if externalReloadPending || !incomingCollaboration.isEmpty {
           externalReloadPending = false
           reloadExternalChanges()
@@ -598,23 +663,23 @@ final class NotebookAppModel {
 
   @discardableResult
   func enterBoard(_ boardID: UUID, through parentCamera: SpatialCamera? = nil, settled: Bool = true) -> Bool {
-    guard let workspace, let hierarchy = boardHierarchy,
-      workspace.items.contains(where: {
-        $0.id == boardID && $0.kind == .board
-      }),
-      hierarchy.board(boardID) != nil,
-      let presence
-    else { return false }
+    guard let workspace, let hierarchy = boardHierarchy, let presence else { return false }
+    let item = sceneIndex?.item(id: boardID)
+      ?? (sceneIndex == nil ? workspace.items.first { $0.id == boardID } : nil)
+    let boardExists = sceneIndex.map { $0.board(id: boardID) != nil } ?? (hierarchy.board(boardID) != nil)
+    guard item?.kind == .board, boardExists else { return false }
+    let portal = scenePortalCamera(boardID: boardID) ?? hierarchy.portalCamera(boardID) ?? BoardPortalCamera()
     let camera: SpatialCamera
     if let parentCamera {
-      guard let center = hierarchy.focusedCenter(of: boardID, in: presence.boardID),
+      guard let center = sceneIndex?.focusedCenter(itemID: boardID, boardID: presence.boardID)
+        ?? (sceneIndex == nil ? hierarchy.focusedCenter(of: boardID, in: presence.boardID) : nil),
         let entered = BoardPortalProjection.enteringCamera(from: parentCamera,
-          portalCamera: hierarchy.portalCamera(boardID) ?? BoardPortalCamera(),
+          portalCamera: portal,
           portalCenter: center, viewport: presence.viewport) else { return false }
       camera = entered
     } else {
       camera = BoardPortalProjection.entryCamera(
-        portalCamera: hierarchy.portalCamera(boardID) ?? BoardPortalCamera(), viewport: presence.viewport)
+        portalCamera: portal, viewport: presence.viewport)
     }
     selectItem(boardID)
     updatePresence(
@@ -641,12 +706,20 @@ final class NotebookAppModel {
     let projection = passage ?? BoardPortalProjection.exitingCamera(
       boundary: presence.camera, centroid: .init(x: presence.viewport.x / 2, y: presence.viewport.y / 2),
       portalCenter: center, viewport: presence.viewport)
+    // A local passage changes only coordinates. When both physical owners are
+    // already represented, its normalized camera must reach the very first
+    // parent frame, rather than wait for a background metadata comparison.
+    let carriesPreparedGeometry = sceneIndex?.board(id: presence.boardID)?.stamp == hierarchy.board(presence.boardID)?.stamp
+      && sceneIndex?.board(id: parentID)?.stamp == hierarchy.board(parentID)?.stamp
     if hierarchy.updatePortalCamera(
       projection.portalCamera,
       for: presence.boardID,
       actor: actorID
     ) {
       persistBoard(hierarchy)
+    }
+    if carriesPreparedGeometry {
+      scenePortalCameras[presence.boardID] = projection.portalCamera
     }
     selectItem(presence.boardID)
     updatePresence(
@@ -1647,11 +1720,11 @@ final class NotebookAppModel {
     }
   }
 
-  func confirmVisibleActions(presence visible: SessionPresence) {
+  func confirmVisibleActions(presence visible: SessionPresence, scene: WorkspaceSceneWorkset? = nil) {
     #if os(iOS)
       guard collaborationActions.contains(where: { action in !deviceActionReceipts.contains(where: { $0.id == action.id && $0.revisions == action.revisions && $0.displayComplete }) }),
         presencePhase == .settled, presence == visible, !isPointing,
-        collaborationDetailsAreCurrent else { return }
+        collaborationDetailsAreCurrent, !scenePreparationPending else { return }
       let receipts = deviceActionReceipts
       var changed: [DeviceActionReceipt] = []
       for action in collaborationActions.prefix(50) {
@@ -1675,11 +1748,8 @@ final class NotebookAppModel {
             if let document = documents[reference.target.id], let state = documentStates[document.id] {
               ready = DocumentRenderRegistry.shared.entry(document:document,state:state,pageIndex:visible.documentPageIndex) != nil
             } else { ready = false }
-          case .board,.cover:
-            if let board = boardHierarchy?.board(reference.target.boardID ?? reference.target.id) {
-              ready = board.elements.filter { $0.kind != .nativeText && (reference.elementID == nil || $0.id == reference.elementID) }
-                .allSatisfy { AgentElementSnapshotCache.shared.image(for:agentElementSnapshotSource($0)) != nil }
-            } else { ready = false }
+          case .board, .cover:
+            ready = scene.map { sceneRepresents(reference, in: $0, presence: visible) } ?? false
           case .workspace: ready = false
           }
           guard ready else { continue }
@@ -1700,6 +1770,38 @@ final class NotebookAppModel {
         sync.send(.collaboration(.init(delivery: changed)))
       }
     #endif
+  }
+
+  /// A cached image proves preparation, not mounting. The completed display
+  /// callback supplies the actual admitted generation; an overview region
+  /// cannot acknowledge that its detailed sources were shown.
+  private func sceneRepresents(_ reference: CollaborationReference,
+    in scene: WorkspaceSceneWorkset, presence: SessionPresence) -> Bool {
+    guard let sceneIndex, scene.generationID == sceneIndex.generationID else { return false }
+    let elements: [SpatialElement]
+    switch reference.target.kind {
+    case .board:
+      guard reference.target.id == presence.boardID else { return false }
+      if let id = reference.elementID {
+        guard let element = scene.elements.first(where: { $0.id == id }) else { return false }
+        elements = [element]
+      } else {
+        guard scene.aggregates.isEmpty else { return false }
+        elements = scene.elements
+      }
+    case .cover:
+      guard reference.target.boardID == presence.boardID,
+        scene.items.contains(where: { $0.id == reference.target.id }) else { return false }
+      let source = sceneIndex.coverElements(itemID: reference.target.id, boardID: presence.boardID)
+      if let id = reference.elementID {
+        guard let element = source.first(where: { $0.id == id }) else { return false }
+        elements = [element]
+      } else { elements = source }
+    default: return false
+    }
+    return elements.allSatisfy {
+      $0.kind == .nativeText || AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource($0)) != nil
+    }
   }
 
   var collaborationContent: CollaborationContent? {

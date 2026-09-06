@@ -35,6 +35,7 @@ final class SharedAttentionTests: XCTestCase {
     let presence = SessionPresence(boardID:workspace.rootBoardID,mode:.page,camera:.init(center:center,scale:1),
       viewport:.init(x:834,y:1194),focusedItemID:workspace.selectedItemID,openProgress:1)
     model.updatePresence(presence,settled:true)
+    try await waitForScene(model)
     let reference = try XCTUnwrap(NotebookAttentionProjection.reference(start:.init(x:100,y:100),end:.init(x:220,y:200),model:model,presence:presence))
     XCTAssertEqual(reference.target,.init(kind:.page,id:page.id))
     model.isPointing = true
@@ -42,6 +43,7 @@ final class SharedAttentionTests: XCTestCase {
     XCTAssertFalse(model.isPointing)
     XCTAssertFalse(model.referenceChanged(reference))
     model.moveItem(workspace.selectedItemID,to:center.offsetBy(x:100,y:50))
+    try await waitForScene(model)
     XCTAssertFalse(model.referenceChanged(reference))
     let moved = try XCTUnwrap(NotebookAttentionProjection.frame(reference,model:model,presence:presence))
     XCTAssertEqual(moved.minX,200,accuracy:1)
@@ -69,6 +71,7 @@ final class SharedAttentionTests: XCTestCase {
     XCTAssertFalse(try XCTUnwrap(model.store.deviceActionReceipts().first).displayComplete)
     let presence = SessionPresence(boardID:workspace.rootBoardID,mode:.page,camera:.init(center:try XCTUnwrap(model.board?.focusedCenter(of:workspace.selectedItemID)),scale:1),viewport:.init(x:834,y:1194),focusedItemID:workspace.selectedItemID,openProgress:1)
     model.updatePresence(presence,settled:true)
+    try await waitForScene(model)
     model.confirmVisibleActions(presence:presence)
     await model.finishPendingPersistence()
     XCTAssertFalse(try XCTUnwrap(model.store.deviceActionReceipts().first).displayComplete)
@@ -94,6 +97,7 @@ final class SharedAttentionTests: XCTestCase {
     let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
       camera: .init(center: .init(x: 550, y: 0), scale: 0.3), viewport: .init(x: 834, y: 1194))
     model.updatePresence(presence, settled: true)
+    try await waitForScene(model)
     let references = NotebookAttentionProjection.references(start: .init(x: 80, y: 350), end: .init(x: 760, y: 850), model: model, presence: presence)
     XCTAssertTrue(references.contains { $0.target.id == first && $0.target.kind == .cover })
     XCTAssertTrue(references.contains { $0.target.id == second && $0.target.kind == .cover })
@@ -108,4 +112,63 @@ final class SharedAttentionTests: XCTestCase {
     XCTAssertNil(model.requestedReference)
   }
 
+  @MainActor
+  func testOverviewDoesNotAcknowledgeDetailedAgentResultAsShown() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    model.moveItem(try XCTUnwrap(model.workspace?.selectedItemID), to: .init(x: -20_000, y: -20_000))
+    await model.finishPendingPersistence()
+    let boardID = try XCTUnwrap(model.presence?.boardID)
+    let target = CollaborationTarget(kind: .board, id: boardID)
+    let action = CollaborationAction(summary: "Два связанных пояснения",
+      expected: [.init(target: target, revision: try XCTUnwrap(model.board).stamp.revision)],
+      operations: (0..<2).map { index in
+        .init(kind: .insertElement, target: target, id: "overview-caption-\(index)", values: [
+          "kind": .string("nativeText"), "source": .string("Пояснение \(index)"),
+          "frame": .object(["x": .number(0), "y": .number(0), "width": .number(100), "height": .number(80)]),
+          "worldOrigin": .object(["tileX": .number(0), "tileY": .number(0),
+            "localX": .number(Double(index) * 150), "localY": .number(0)])])
+      })
+    let receipt = try model.store.applyCollaborationAction(action, actor: UUID())
+    model.receivePeerMessage(.collaboration(.init(content: try model.store.collaborationContent(), actions: [receipt])))
+    await model.finishPendingPersistence()
+    try await waitForScene(model)
+    await model.refreshCollaborationDetails()
+    let presence = SessionPresence(boardID: boardID, mode: .board,
+      camera: .init(center: .init(x: 100, y: 0), scale: 1), viewport: .init(x: 834, y: 1194))
+    model.updatePresence(presence, settled: true)
+    let index = try XCTUnwrap(model.sceneIndex)
+    let overview = index.workset(presence: presence, limit: 1)
+    XCTAssertFalse(overview.aggregates.isEmpty)
+    XCTAssertTrue(overview.elements.isEmpty)
+    model.confirmVisibleActions(presence: presence, scene: overview)
+    await model.finishPendingPersistence()
+    XCTAssertFalse(try XCTUnwrap(model.store.deviceActionReceipts().first { $0.id == action.id }).displayComplete,
+      "A region label is not the displayed source, even when its exact revision is saved")
+    let otherGeneration = WorkspaceSceneIndex(workspace: try XCTUnwrap(model.workspace),
+      hierarchy: try XCTUnwrap(model.boardHierarchy), documents: model.documents).workset(presence: presence)
+    XCTAssertEqual(otherGeneration.elements.count, 2)
+    XCTAssertNotEqual(otherGeneration.generationID, index.generationID)
+    model.confirmVisibleActions(presence: presence, scene: otherGeneration)
+    await model.finishPendingPersistence()
+    XCTAssertFalse(try XCTUnwrap(model.store.deviceActionReceipts().first { $0.id == action.id }).displayComplete,
+      "A callback from a different presentation generation cannot acknowledge the newly published sources")
+    let detailed = index.workset(presence: presence)
+    XCTAssertEqual(detailed.elements.count, 2)
+    model.confirmVisibleActions(presence: presence, scene: detailed)
+    await model.finishPendingPersistence()
+    XCTAssertTrue(try XCTUnwrap(model.store.deviceActionReceipts().first { $0.id == action.id }).displayComplete)
+  }
+
+  @MainActor
+  private func waitForScene(_ model: NotebookAppModel) async throws {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while model.scenePreparationPending, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertFalse(model.scenePreparationPending)
+    XCTAssertNotNil(model.sceneIndex)
+  }
 }

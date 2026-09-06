@@ -29,7 +29,7 @@ private struct CameraGestureSnapshot {
   var followsPortal = false
 }
 
-struct RenderedWorkspaceItem: Identifiable {
+struct RenderedWorkspaceItem: Identifiable, Sendable {
   let item: WorkspaceItem
   let geometry: WorkspaceItemGeometry
   let center: WorldPoint
@@ -79,7 +79,7 @@ enum WorkspaceSceneProjection {
     var pending = [(presence, presence.camera.scale, portalPasses)]
     while let (projection, pixelScale, passes) = pending.popLast() {
       guard let board = hierarchy.board(projection.boardID) else { continue }
-      let rendered = items(workspace: workspace, board: board, presence: projection, documents: documents)
+      let rendered = exactItems(workspace: workspace, board: board, presence: projection, documents: documents)
         .filter { mountsContent(of: $0, in: projection) }
       let surfaces = Set(rendered.map { SurfaceID.cover($0.id) } + [.board(projection.boardID)])
       result.elements.append(contentsOf: board.elements.filter {
@@ -100,7 +100,9 @@ enum WorkspaceSceneProjection {
     return result
   }
 
-  static func items(
+  /// Explicit source enumeration for exact, settled exports. The live camera
+  /// and references use WorkspaceSceneIndex instead.
+  static func exactItems(
     workspace: WorkspaceIndex,
     board: BoardDocument,
     presence: SessionPresence,
@@ -168,7 +170,7 @@ enum WorkspaceSceneProjection {
     let presence: SessionPresence
 
     var body: some View {
-      let rendered = WorkspaceSceneProjection.items(
+      let rendered = WorkspaceSceneProjection.exactItems(
         workspace: workspace,
         board: board,
         presence: presence,
@@ -278,10 +280,16 @@ struct SpatialWorkspaceView: View {
         y: geometry.size.height
       )
       let presence = normalizedPresence(for: viewport)
-      let rendered = renderedItems(presence: presence)
+      let workset = sceneWorkset(presence: presence)
+      let rendered = workset.items
 
       ZStack {
         SpatialBoardGrid(camera: presence.camera)
+        if model.sceneIndex == nil && model.scenePreparationPending {
+          ProgressView("Подготовка пространства")
+            .padding(12).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .zIndex(9_000)
+        }
 
         #if os(iOS)
           BoardPanView(
@@ -324,7 +332,8 @@ struct SpatialWorkspaceView: View {
           .frame(width: viewport.x, height: viewport.y)
         #endif
 
-        boardElements(presence: presence, viewport: viewport)
+        WorkspaceSceneAggregates(aggregates: workset.aggregates, presence: presence)
+        boardElements(workset.elements, presence: presence, viewport: viewport)
           .zIndex(model.isElementEditingEnabled ? 8_000 : 0)
 
         #if os(macOS)
@@ -356,7 +365,7 @@ struct SpatialWorkspaceView: View {
             inputGate: model.inputGate,
             onCommit: model.appendSpatialInk,
             isEnabled: (presence.mode == .board || presence.mode == .cover)
-              && !contentGestureActive
+              && !model.scenePreparationPending && !contentGestureActive
               && editingSpatialTextID == nil
               && !model.isElementEditingEnabled && !model.isPointing
           )
@@ -408,6 +417,7 @@ struct SpatialWorkspaceView: View {
             editingTextID: editingSpatialTextID,
             spatialInkSurfaces: spatialInkSurfaces,
             onDrop: { itemID, center in
+              guard !model.scenePreparationPending else { return }
               dropItem(itemID, at: center, presence: presence)
             },
             onSelect: { itemID in
@@ -423,11 +433,13 @@ struct SpatialWorkspaceView: View {
               }
             },
             onOpen: { itemID in
+              guard !model.scenePreparationPending else { return }
               editingSpatialTextID = nil
               selectedItemID = nil
               openItem(itemID, viewport: viewport)
             },
             onEditText: { itemID, point in
+              guard !model.scenePreparationPending else { return }
               beginTextEditing(on: itemID, at: point)
             },
             onTextEditingEnded: { elementID in
@@ -472,7 +484,7 @@ struct SpatialWorkspaceView: View {
         #if os(iOS)
           if model.isPointing {
             NotebookPointerView(onPreview:{ pointerPreview = $0 },onPoint:{ start,end in
-              guard cameraGesture == nil, !settling else { return }
+              guard cameraGesture == nil, !settling, !model.scenePreparationPending else { return }
               let references = NotebookAttentionProjection.references(start:start,end:end,model:model,presence:presence)
               if !references.isEmpty { model.publishHumanContext(references) }
             })
@@ -483,7 +495,7 @@ struct SpatialWorkspaceView: View {
           }
           NotebookDisplayConfirmation {
             guard cameraGesture == nil, !settling, !pageTurnIsActive, !contentGestureActive else { return }
-            model.confirmVisibleActions(presence:presence)
+            model.confirmVisibleActions(presence: presence, scene: workset)
           }.allowsHitTesting(false)
         #else
           if model.isPointing {
@@ -569,9 +581,7 @@ struct SpatialWorkspaceView: View {
       presence.mode == .board || presence.mode == .cover,
       liftedItemID == nil,
       let selectedItemID,
-      let rendered = renderedItems(presence: presence).first(where: {
-        $0.id == selectedItemID
-      })
+      let rendered = model.sceneIndex?.renderedItem(id: selectedItemID, presence: presence)
     {
       let center = presence.camera.worldToScreen(
         rendered.center,
@@ -687,13 +697,11 @@ struct SpatialWorkspaceView: View {
 
   @ViewBuilder
   private func boardElements(
+    _ elements: [SpatialElement],
     presence: SessionPresence,
     viewport: SpatialPoint
   ) -> some View {
-    if let board = model.board {
-      ForEach(board.elements.filter {
-        $0.surface == .board(presence.boardID)
-      }) { element in
+    ForEach(elements) { element in
         if let worldOrigin = element.worldOrigin {
           let reference = EditableElementReference.spatial(elementID: element.id)
           let base = presence.camera.worldToScreen(
@@ -705,11 +713,11 @@ struct SpatialWorkspaceView: View {
             y: base.y + element.frame.y * presence.camera.scale
           )
           EditableElementContainer(
-            isEditingEnabled: model.isElementEditingEnabled,
+            isEditingEnabled: model.isElementEditingEnabled && !model.scenePreparationPending,
             isSelected: model.elementEditingSession.selection == reference,
             coordinateScale: presence.camera.scale,
             translation: elementTranslation(for: reference),
-            isContentInteractive: !element.javaScript.isEmpty,
+            isContentInteractive: !model.scenePreparationPending && !element.javaScript.isEmpty,
             onSelect: {
               model.selectElement(reference)
               selectedItemID = nil
@@ -735,6 +743,8 @@ struct SpatialWorkspaceView: View {
                 height: element.frame.height * presence.camera.scale
               )
           }
+            .disabled(model.scenePreparationPending)
+            .allowsHitTesting(!model.scenePreparationPending)
             .frame(
               width: element.frame.width * presence.camera.scale,
               height: element.frame.height * presence.camera.scale
@@ -745,7 +755,6 @@ struct SpatialWorkspaceView: View {
             )
         }
       }
-    }
   }
 
   private func elementTranslation(
@@ -801,18 +810,14 @@ struct SpatialWorkspaceView: View {
     #endif
   }
 
-  private func renderedItems(
-    presence: SessionPresence
-  ) -> [RenderedWorkspaceItem] {
-    guard let board = model.board, let workspace = model.workspace else {
-      return []
+  private func sceneWorkset(presence: SessionPresence) -> WorkspaceSceneWorkset {
+    var pins = Set<WorkspaceSpatialID>()
+    for id in [presence.focusedItemID, selectedItemID, liftedItemID, cameraGesture?.candidateItemID] {
+      if let id { pins.insert(.item(id)) }
     }
-    return WorkspaceSceneProjection.items(
-      workspace: workspace,
-      board: board,
-      presence: presence,
-      documents: model.documents
-    )
+    if case .spatial(let id) = model.elementEditingSession.selection { pins.insert(.element(id)) }
+    if let editingSpatialTextID { pins.insert(.element(editingSpatialTextID)) }
+    return model.sceneWorkset(presence: presence, pinned: pins)
   }
 
   private func acceptDocumentPageLayout(
@@ -1078,7 +1083,7 @@ struct SpatialWorkspaceView: View {
       geometry: model.itemGeometry(attractionTarget)
     )
     if let attractionTarget,
-      let center = model.board?.focusedCenter(of: attractionTarget)
+      let center = model.sceneIndex?.focusedCenter(itemID: attractionTarget, boardID: snapshot.presence.boardID)
     {
       let correction: NotebookDockingCorrection
       if let engagement = snapshot.paperEngagement,
@@ -1181,7 +1186,7 @@ struct SpatialWorkspaceView: View {
         isApproaching: snapshot.isApproaching,
         releaseVelocity: Double(velocity)
       ),
-      let center = model.board?.focusedCenter(of: itemID)
+      let center = model.sceneIndex?.focusedCenter(itemID: itemID, boardID: presence.boardID)
     {
       model.selectItem(itemID)
       let target = SessionPresence(
@@ -1228,10 +1233,9 @@ struct SpatialWorkspaceView: View {
     let viewport = start.viewport
     if snapshot.paperEngagement == nil,
       start.mode == .board || (start.mode == .cover && start.focusedItemID.flatMap(itemKind) == .board),
-      let hierarchy = model.boardHierarchy,
-      let parentID = hierarchy.parentBoardID(of: start.boardID),
-      let portal = hierarchy.portalCamera(start.boardID),
-      let center = hierarchy.focusedCenter(of: start.boardID, in: parentID) {
+      let parentID = model.sceneIndex?.ownerBoard(itemID: start.boardID),
+      let portal = model.scenePortalCamera(boardID: start.boardID),
+      let center = model.sceneIndex?.focusedCenter(itemID: start.boardID, boardID: parentID) {
       let entryScale = BoardPortalProjection.entryCamera(portalCamera: portal, viewport: viewport).scale
       let boundaryScale = min(entryScale, snapshot.trajectory.startingCamera.scale)
       let rawScale = snapshot.trajectory.startingCamera.scale * Double(magnification / snapshot.trajectory.startingMagnification)
@@ -1250,7 +1254,7 @@ struct SpatialWorkspaceView: View {
     }
     guard snapshot.paperEngagement == nil,
       let candidate = snapshot.candidateItemID, itemKind(candidate) == .board,
-      let center = model.board?.focusedCenter(of: candidate) else { return false }
+      let center = model.sceneIndex?.focusedCenter(itemID: candidate, boardID: start.boardID) else { return false }
     if model.enterBoard(candidate, through: camera, settled: false), let presence = model.presence {
       continuePortalGesture(presence: presence, magnification: magnification, centroid: centroid,
         candidate: nil, isApproaching: snapshot.isApproaching)
@@ -1318,7 +1322,7 @@ struct SpatialWorkspaceView: View {
     at centroid: CGPoint,
     presence: SessionPresence
   ) -> UUID? {
-    renderedItems(presence: presence)
+    sceneWorkset(presence: presence).items
       .reversed()
       .compactMap { rendered -> (UUID, Double)? in
         let strength = selectionStrength(rendered: rendered, at: centroid, presence: presence,
@@ -1335,8 +1339,7 @@ struct SpatialWorkspaceView: View {
     halo: Double = NotebookOpeningIntent.selectionHalo
   ) -> Double {
     guard
-      let rendered = renderedItems(presence: presence)
-        .first(where: { $0.id == itemID })
+      let rendered = model.sceneIndex?.renderedItem(id: itemID, presence: presence)
     else { return 0 }
     return selectionStrength(rendered: rendered, at: centroid, presence: presence, halo: halo)
   }
@@ -1413,10 +1416,10 @@ struct SpatialWorkspaceView: View {
   ) {
     guard !settling,
       cameraGesture == nil,
-      model.presence != nil,
-      let center = model.board?.focusedCenter(of: itemID)
+      let presence = model.presence,
+      let center = model.sceneIndex?.focusedCenter(itemID: itemID, boardID: presence.boardID)
     else { return }
-    if model.workspace?.items.first(where: { $0.id == itemID })?.kind == .board {
+    if model.sceneIndex?.item(id: itemID)?.kind == .board {
       enterBoard(itemID, center: center, viewport: viewport)
       return
     }
@@ -1462,7 +1465,7 @@ struct SpatialWorkspaceView: View {
   }
 
   private func itemKind(_ itemID: UUID) -> WorkspaceItemKind? {
-    model.workspace?.items.first(where: { $0.id == itemID })?.kind
+    model.sceneIndex?.item(id: itemID)?.kind
   }
 
   private func animateSettlement(
@@ -1530,7 +1533,7 @@ struct SpatialWorkspaceView: View {
   }
 
   private func openMode(for itemID: UUID) -> WorkspaceSemanticMode {
-    switch model.workspace?.items.first(where: { $0.id == itemID })?.kind {
+    switch model.sceneIndex?.item(id: itemID)?.kind {
     case .document: return .document
     case .notebook: return .page
     case .board, nil: return .board
@@ -1542,7 +1545,7 @@ struct SpatialWorkspaceView: View {
     from presence: SessionPresence?
   ) -> Int {
     guard let itemID,
-      model.workspace?.items.first(where: { $0.id == itemID })?.kind == .document,
+      model.sceneIndex?.item(id: itemID)?.kind == .document,
       presence?.focusedItemID == itemID
     else { return 0 }
     return presence?.documentPageIndex ?? 0
@@ -1560,10 +1563,9 @@ struct SpatialWorkspaceView: View {
     }
 
     guard
-      let moving = renderedItems(presence: presence)
-        .first(where: { $0.id == itemID })
+      let moving = model.sceneIndex?.renderedItem(id: itemID, presence: presence)
     else { return }
-    let target = renderedItems(presence: presence)
+    let target = sceneWorkset(presence: presence).items
       .reversed()
       .first { candidate in
         guard candidate.id != itemID else { return false }
@@ -1609,10 +1611,11 @@ private struct WorkspaceSceneItem: View {
   let onDocumentPageLayout: (DocumentPageLayout) -> Void
 
   @State private var dragTranslation = CGSize.zero
+  @State private var pendingPlacement: WorldPoint?
   @State private var liftStarted = false
 
   var body: some View {
-    let screen = camera.worldToScreen(rendered.center, viewport: viewport)
+    let screen = camera.worldToScreen(pendingPlacement ?? rendered.center, viewport: viewport)
     let scale = camera.scale
     let contentIsLive = openProgress > 0.001 || contentIsInteractive
     let restingShadowVisibility =
@@ -1658,6 +1661,7 @@ private struct WorkspaceSceneItem: View {
     .offset(y: isLifted ? -8 : 0)
     .position(x: screen.x, y: screen.y)
     .animation(.spring(duration: 0.18, bounce: 0.18), value: isLifted)
+    .onChange(of: model.sceneIndexGeneration) { _, _ in pendingPlacement = nil }
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier(
       "workspace-item-\(rendered.id.uuidString.lowercased())"
@@ -1670,10 +1674,10 @@ private struct WorkspaceSceneItem: View {
 
   @ViewBuilder
   private func notebookContents(isLive: Bool) -> some View {
-    if preparesContent, !rendered.item.pageIDs.isEmpty {
+    if preparesContent, !notebookItem.pageIDs.isEmpty {
       PageTurnSurface(
         ownerID: rendered.id,
-        pageCount: rendered.item.pageIDs.count + 1,
+        pageCount: notebookItem.pageIDs.count + 1,
         selectedIndex: notebookSelectedPageIndex,
         allowsTrailingPageCreation: true,
         navigationIsEnabled: pageNavigationIsEnabled,
@@ -1754,15 +1758,19 @@ private struct WorkspaceSceneItem: View {
     }
   }
 
+  private var notebookItem: WorkspaceItem {
+    model.itemForDisplay(id: rendered.id) ?? rendered.item
+  }
+
   private var notebookSelectedPageIndex: Int {
     guard let selectedPageID = model.workspace?.selectedPageID,
-      let index = rendered.item.pageIDs.firstIndex(of: selectedPageID)
+      let index = notebookItem.pageIDs.firstIndex(of: selectedPageID)
     else { return 0 }
     return index
   }
 
   private var notebookFallbackSize: PageSize {
-    guard let firstID = rendered.item.pageIDs.first,
+    guard let firstID = notebookItem.pageIDs.first,
       let page = model.pages[firstID]
     else { return NotebookAppModel.defaultPageSize }
     return page.size
@@ -1775,8 +1783,8 @@ private struct WorkspaceSceneItem: View {
     onRenderReady: PageTurnReadiness
   ) -> AnyView {
     guard index >= 0,
-      index < rendered.item.pageIDs.count,
-      let page = model.pages[rendered.item.pageIDs[index]]
+      index < notebookItem.pageIDs.count,
+      let page = model.pages[notebookItem.pageIDs[index]]
     else {
       return AnyView(
         BlankPageSurface(fallbackSize: notebookFallbackSize)
@@ -1859,7 +1867,7 @@ private struct WorkspaceSceneItem: View {
       spatialInkSurfaces: spatialInkSurfaces,
       elements: coverElements,
       editingTextID: editingTextID,
-      isElementEditingEnabled: model.isElementEditingEnabled,
+      isElementEditingEnabled: model.isElementEditingEnabled && !model.scenePreparationPending,
       rendersSettledSnapshot: false,
       portalOpenProgress: openProgress,
       portalViewport: viewport,
@@ -1881,9 +1889,8 @@ private struct WorkspaceSceneItem: View {
   }
 
   private var coverElements: [SpatialElement] {
-    model.board?.elements.filter {
-      $0.surface == .cover(rendered.id)
-    } ?? []
+    model.sceneIndex?.coverElements(itemID: rendered.id,
+      boardID: model.presence?.boardID ?? WorkspaceRoot.boardID) ?? []
   }
 
   private var coverRenderingRevision: CoverRenderingRevision {
@@ -1917,16 +1924,19 @@ private struct WorkspaceSceneItem: View {
 
   private func finishMove(translation: CGSize, scale: Double) {
     dragTranslation = .zero
-    guard hypot(translation.width, translation.height) >= 2 else { return }
+    guard !model.scenePreparationPending,
+      hypot(translation.width, translation.height) >= 2 else { return }
     let center = rendered.center.offsetBy(
       x: translation.width / max(scale, 0.001),
       y: translation.height / max(scale, 0.001)
     )
+    pendingPlacement = center
     onDrop(rendered.id, center)
+    if !model.scenePreparationPending { pendingPlacement = nil }
   }
 
   private func beginLift() {
-    guard !liftStarted else { return }
+    guard !model.scenePreparationPending, !liftStarted else { return }
     liftStarted = true
     #if os(iOS)
       UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -1956,10 +1966,10 @@ struct BoardPortalPreview: View {
   var body: some View {
     if let workspace = model.workspace,
       let hierarchy = model.boardHierarchy,
-      let board = hierarchy.board(boardID)
+      let board = rendersSettledSnapshot ? hierarchy.board(boardID) : model.sceneIndex?.board(id: boardID)
     {
       let camera = BoardPortalProjection.entryCamera(
-        portalCamera: hierarchy.portalCamera(boardID) ?? BoardPortalCamera(),
+        portalCamera: (rendersSettledSnapshot ? hierarchy.portalCamera(boardID) : model.scenePortalCamera(boardID: boardID)) ?? BoardPortalCamera(),
         viewport: transitionViewport
       )
       let viewport = BoardPortalProjection.renderViewport(viewport: transitionViewport)
@@ -1970,17 +1980,21 @@ struct BoardPortalPreview: View {
         camera: camera,
         viewport: viewport
       )
-      let rendered = WorkspaceSceneProjection.items(
-        workspace: workspace,
-        board: board,
-        presence: presence,
-        documents: model.documents
-      )
+      let workset = rendersSettledSnapshot ? WorkspaceSceneWorkset.empty
+        : model.sceneWorkset(presence: presence, pixelScale: pixelScale * camera.scale / fill)
+      let rendered = rendersSettledSnapshot
+        ? WorkspaceSceneProjection.exactItems(workspace: workspace, board: board,
+          presence: presence, documents: model.documents)
+        : workset.items
+      let elements = rendersSettledSnapshot
+        ? board.elements.filter { $0.surface == .board(boardID) }
+        : workset.elements
 
       ZStack {
         SpatialBoardGrid(camera: camera, outputScale: pixelScale / fill)
+        WorkspaceSceneAggregates(aggregates: workset.aggregates, presence: presence)
 
-        ForEach(board.elements.filter { $0.surface == .board(boardID) }) {
+        ForEach(elements) {
           element in
           if let origin = element.worldOrigin {
             let screen = camera.worldToScreen(origin, viewport: viewport)
@@ -2029,7 +2043,9 @@ struct BoardPortalPreview: View {
             item: item.item,
             geometry: item.geometry,
             spatialInkSurfaces: SpatialInkSurfaceRegistry(),
-            elements: board.elements.filter { $0.surface == .cover(item.id) },
+            elements: rendersSettledSnapshot
+              ? board.elements.filter { $0.surface == .cover(item.id) }
+              : model.sceneIndex?.coverElements(itemID: item.id, boardID: boardID) ?? [],
             editingTextID: nil, isElementEditingEnabled: false,
             rendersSettledSnapshot: rendersSettledSnapshot,
             portalOpenProgress: 0, portalViewport: transitionViewport,
@@ -2110,11 +2126,11 @@ struct WorkspaceItemCoverView: View {
       ForEach(elements) { element in
         let reference = EditableElementReference.spatial(elementID: element.id)
         EditableElementContainer(
-          isEditingEnabled: isElementEditingEnabled,
+          isEditingEnabled: isElementEditingEnabled && !model.scenePreparationPending,
           isSelected: model.elementEditingSession.selection == reference,
           coordinateScale: 1,
           translation: elementTranslation(for: reference),
-            isContentInteractive: !element.javaScript.isEmpty,
+            isContentInteractive: !model.scenePreparationPending && !element.javaScript.isEmpty,
           onSelect: {
             model.selectElement(reference)
             onElementSelected()
@@ -2138,7 +2154,7 @@ struct WorkspaceItemCoverView: View {
                 SpatialElementContent(
                   element: element,
                   commitsState: !isPortalProjection,
-                  isTextEditing: editingTextID == element.id,
+                  isTextEditing: !model.scenePreparationPending && editingTextID == element.id,
                   onTextEditingEnded: { onTextEditingEnded(element.id) }
                 )
               }
@@ -2146,19 +2162,21 @@ struct WorkspaceItemCoverView: View {
               SpatialElementContent(
                 element: element,
                 commitsState: !isPortalProjection,
-                isTextEditing: editingTextID == element.id,
+                isTextEditing: !model.scenePreparationPending && editingTextID == element.id,
                 onTextEditingEnded: { onTextEditingEnded(element.id) }
               )
             #endif
           }
         }
+        .disabled(model.scenePreparationPending)
+        .allowsHitTesting(!model.scenePreparationPending)
         .frame(width: element.frame.width, height: element.frame.height)
         .offset(x: element.frame.x, y: element.frame.y)
         .opacity(portalOverlayOpacity)
       }
 
       #if os(iOS)
-        if !isElementEditingEnabled && !isPortalProjection {
+        if !isElementEditingEnabled && !isPortalProjection && !model.scenePreparationPending {
           NotebookInteractionView(
             passthroughFrames: interactionPassthroughFrames,
             onTap: onTap,
@@ -2329,12 +2347,14 @@ struct SpatialElementContent: View {
               if readyElement != next { readyElement = next }
             },
             onState: { state in
-              if commitsState { model.commitSpatialElementState(elementID: element.id, state: state) }
+              if commitsState && !model.scenePreparationPending {
+                model.commitSpatialElementState(elementID: element.id, state: state)
+              }
             }
           )
           .onAppear { hasLiveWebSurface = true }
           .opacity(readyElement == source ? 1 : 0)
-          .allowsHitTesting(readyElement == source && commitsState)
+          .allowsHitTesting(readyElement == source && commitsState && !model.scenePreparationPending)
         }
       }
     }
@@ -2575,5 +2595,44 @@ private struct SpatialBoardGrid: View {
       context.fill(dots, with: .color(BoardAppearance.dot))
     }
     .ignoresSafeArea()
+  }
+}
+
+/// An overview represents the whole indexed region, not an invented thumbnail
+/// or an exact rendering of sources which have not been mounted.
+private struct WorkspaceSceneAggregates: View {
+  let aggregates: [WorkspaceSpatialAggregate]
+  let presence: SessionPresence
+
+  var body: some View {
+    let viewportBounds = WorkspaceSpatialBounds(
+      origin: presence.camera.screenToWorld(.init(x: -16, y: -16), viewport: presence.viewport),
+      width: (presence.viewport.x + 32) / presence.camera.scale,
+      height: (presence.viewport.y + 32) / presence.camera.scale)
+    ForEach(aggregates) { aggregate in
+      if let visible = aggregate.bounds.intersection(viewportBounds), visible.width > 0, visible.height > 0 {
+        let topLeft = presence.camera.worldToScreen(visible.origin, viewport: presence.viewport)
+        let left = topLeft.x, top = topLeft.y
+        let right = left + visible.width * presence.camera.scale
+        let bottom = top + visible.height * presence.camera.scale
+        RoundedRectangle(cornerRadius: 5)
+          .fill(Color.accentColor.opacity(0.08))
+          .overlay { RoundedRectangle(cornerRadius: 5).strokeBorder(Color.accentColor.opacity(0.4), style: .init(lineWidth: 1, dash: [3, 3])) }
+          .overlay {
+            if right - left > 52 && bottom - top > 24 {
+              Text("Область · \(aggregate.count)")
+                .font(.system(size: 11, weight: .medium))
+                .padding(5)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
+                .lineLimit(1)
+            }
+          }
+          .frame(width: max(2, right - left), height: max(2, bottom - top))
+          .position(x: (left + right) / 2, y: (top + bottom) / 2)
+          .accessibilityLabel("Область: \(aggregate.count) предметов. Приблизьте для подробностей.")
+          .accessibilityIdentifier("workspace-aggregate-\(aggregate.id)")
+          .allowsHitTesting(false)
+      }
+    }
   }
 }

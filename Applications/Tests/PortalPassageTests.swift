@@ -112,7 +112,7 @@ final class PortalPassageTests: XCTestCase {
     let workspace = try XCTUnwrap(scene.model.workspace)
     let hierarchy = try XCTUnwrap(scene.model.boardHierarchy)
     let start = try XCTUnwrap(scene.model.presence)
-    let distant = try XCTUnwrap(WorkspaceSceneProjection.items(workspace: workspace,
+    let distant = try XCTUnwrap(WorkspaceSceneProjection.exactItems(workspace: workspace,
       board: XCTUnwrap(hierarchy.board(start.boardID)), presence: start, documents: scene.model.documents)
       .first(where: { $0.item.kind == .notebook }))
     XCTAssertFalse(WorkspaceSceneProjection.snapshotLayers(workspace: workspace, hierarchy: hierarchy,

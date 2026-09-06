@@ -95,6 +95,9 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
   public let format: Int
   public let rootBoardID: UUID
   public private(set) var items: [WorkspaceItem]
+  /// Derived addresses belong to the same catalog value as their sources.
+  /// Page edits keep their item slot; only membership changes these addresses.
+  private var itemPositions: [UUID: Int]
   public private(set) var selectedItemID: UUID
   public private(set) var selectedPageID: UUID?
   public private(set) var stamp: VersionStamp
@@ -110,6 +113,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     format = Self.formatVersion
     self.rootBoardID = rootBoardID
     self.items = items
+    itemPositions = Self.makeItemPositions(items)
     self.selectedItemID = selectedItemID
     self.selectedPageID = selectedPageID
     self.stamp = stamp
@@ -138,8 +142,16 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     )
   }
 
+  private static func makeItemPositions(_ items: [WorkspaceItem]) -> [UUID: Int] {
+    Dictionary(items.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { first, _ in first })
+  }
+
+  public func item(id: UUID) -> WorkspaceItem? {
+    itemPositions[id].map { items[$0] }
+  }
+
   private var selectedItemIndex: Int {
-    items.firstIndex { $0.id == selectedItemID } ?? 0
+    itemPositions[selectedItemID] ?? 0
   }
 
   public var selectedItem: WorkspaceItem {
@@ -157,7 +169,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     pageID: UUID? = nil,
     actor: UUID
   ) -> Bool {
-    guard let item = items.first(where: { $0.id == itemID }),
+    guard let item = item(id: itemID),
       let nextStamp = stamp.advanced(by: actor)
     else { return false }
 
@@ -192,7 +204,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
   ) -> (item: WorkspaceItem, page: PageDocument)? {
     let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
     guard normalized.utf16.count <= Self.maximumTitleLength,
-      !items.contains(where: { $0.id == itemID }),
+      itemPositions[itemID] == nil,
       !items.flatMap(\.pageIDs).contains(pageID),
       let nextStamp = stamp.advanced(by: actor)
     else { return nil }
@@ -202,6 +214,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
       title: normalized,
       pageIDs: [pageID]
     )
+    itemPositions[item.id] = items.count
     items.append(item)
     selectedItemID = itemID
     selectedPageID = pageID
@@ -217,10 +230,11 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
   ) -> WorkspaceItem? {
     let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
     guard normalized.utf16.count <= Self.maximumTitleLength,
-      !items.contains(where: { $0.id == documentID }),
+      itemPositions[documentID] == nil,
       let nextStamp = stamp.advanced(by: actor)
     else { return nil }
     let item = WorkspaceItem.document(id: documentID, title: normalized)
+    itemPositions[item.id] = items.count
     items.append(item)
     selectedItemID = documentID
     selectedPageID = nil
@@ -237,10 +251,11 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
     guard normalized.utf16.count <= Self.maximumTitleLength,
       boardID != rootBoardID,
-      !items.contains(where: { $0.id == boardID }),
+      itemPositions[boardID] == nil,
       let nextStamp = stamp.advanced(by: actor)
     else { return nil }
     let item = WorkspaceItem.board(id: boardID, title: normalized)
+    itemPositions[item.id] = items.count
     items.append(item)
     selectedItemID = boardID
     selectedPageID = nil
@@ -256,11 +271,13 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     actor: UUID
   ) -> WorkspaceItem? {
     guard items.count > 1,
-      let removedIndex = items.firstIndex(where: { $0.id == itemID }),
+      let removedIndex = itemPositions[itemID],
       let nextStamp = stamp.advanced(by: actor)
     else { return nil }
 
     let removed = items.remove(at: removedIndex)
+    itemPositions[itemID] = nil
+    for position in removedIndex..<items.count { itemPositions[items[position].id] = position }
     if selectedItemID == itemID {
       let replacement = items[min(removedIndex, items.count - 1)]
       selectedItemID = replacement.id
@@ -343,10 +360,17 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
   public mutating func merge(_ other: Self) -> Bool {
     guard stamp < other.stamp, other.isValid else { return false }
     items = other.items
+    itemPositions = other.itemPositions
     selectedItemID = other.selectedItemID
     selectedPageID = other.selectedPageID
     stamp = other.stamp
     return true
+  }
+
+  public static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.format == rhs.format && lhs.rootBoardID == rhs.rootBoardID
+      && lhs.items == rhs.items && lhs.selectedItemID == rhs.selectedItemID
+      && lhs.selectedPageID == rhs.selectedPageID && lhs.stamp == rhs.stamp
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -407,6 +431,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
         debugDescription: "Unsupported workspace format: \(storedFormat)"
       )
     }
+    itemPositions = Self.makeItemPositions(items)
   }
 
   public func encode(to encoder: Encoder) throws {

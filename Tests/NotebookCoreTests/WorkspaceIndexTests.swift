@@ -672,3 +672,58 @@ func storeRejectsInvalidDecodedWorkspace() throws {
     try store.loadIndex()
   }
 }
+
+@Test("Адрес предмета остаётся актуальным после добавления, удаления и быстрых новых страниц")
+func workspaceItemLookupTracksMembershipAndPageContinuation() throws {
+  let actor = UUID(), size = PageSize(width: 834, height: 1194)
+  var workspace = WorkspaceIndex.initial(actor: actor, pageSize: size).index
+  let firstID = workspace.selectedItemID
+  let addedNotebook = workspace.createNotebook(title: "Continuation", actor: actor, pageSize: size)
+  let notebook = try #require(addedNotebook)
+  let addedDocument = workspace.createDocument(title: "Document", actor: actor)
+  let document = try #require(addedDocument)
+  let addedBoard = workspace.createBoard(title: "Board", actor: actor)
+  let board = try #require(addedBoard)
+  for value in workspace.items { #expect(workspace.item(id: value.id) == value) }
+  let removedFirst = workspace.deleteItem(firstID, actor: actor)
+  #expect(removedFirst?.id == firstID)
+  #expect(workspace.item(id: firstID) == nil)
+  let selectedNotebook = workspace.selectItem(notebook.item.id, actor: actor)
+  #expect(selectedNotebook)
+  for target in 1...8 {
+    let changedPage = workspace.selectPage(at: target, in: notebook.item.id, actor: actor, pageSize: size)
+    let selected = try #require(changedPage)
+    let current = try #require(workspace.item(id: notebook.item.id))
+    #expect(current.pageIDs.count == target + 1)
+    #expect(current.pageIDs[target] == selected.pageID)
+    #expect(workspace.selectedItem == current)
+  }
+  let removedDocument = workspace.deleteItem(document.id, actor: actor)
+  #expect(removedDocument?.id == document.id)
+  #expect(workspace.item(id: document.id) == nil)
+  #expect(workspace.item(id: board.id) == board)
+  #expect(workspace.item(id: UUID()) == nil)
+  for value in workspace.items { #expect(workspace.item(id: value.id) == value) }
+}
+
+@Test("Замена порядка и декодирование каталога восстанавливают адреса без изменения wire")
+func workspaceItemLookupFollowsMergeAndDecodeWithoutWireMetadata() throws {
+  let actor = UUID(), size = PageSize(width: 834, height: 1194)
+  var workspace = WorkspaceIndex.initial(actor: actor, pageSize: size).index
+  let second = workspace.createNotebook(title: "Second", actor: actor, pageSize: size)
+  _ = try #require(second)
+  let third = workspace.createBoard(title: "Third", actor: actor)
+  _ = try #require(third)
+  let reordered = WorkspaceIndex(items: Array(workspace.items.reversed()),
+    selectedItemID: workspace.selectedItemID, selectedPageID: workspace.selectedPageID,
+    stamp: VersionStamp(counter: workspace.stamp.counter + 1, actor: actor))
+  let merged = workspace.merge(reordered)
+  #expect(merged)
+  for value in reordered.items { #expect(workspace.item(id: value.id) == value) }
+  let data = try JSONEncoder().encode(workspace)
+  let fields = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+  #expect(Set(fields.keys) == Set(["format", "rootBoardID", "items", "selectedItemID", "stamp"]))
+  let decoded = try JSONDecoder().decode(WorkspaceIndex.self, from: data)
+  #expect(decoded == reordered)
+  for value in reordered.items { #expect(decoded.item(id: value.id) == value) }
+}

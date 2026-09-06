@@ -7,7 +7,7 @@ import XCTest
 
 final class WorkspaceCameraRenderingTests: XCTestCase {
   @MainActor
-  func testLargeDiagramBoardReusesItsSurfacesThroughoutRepeatedZoom() async throws {
+  func testLargeDiagramBoardKeepsSnapshotsWhileCullingOffscreenSurfaces() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
@@ -65,8 +65,13 @@ final class WorkspaceCameraRenderingTests: XCTestCase {
     driver.start()
     await fulfillment(of: [end], timeout: 60)
     driver.stop()
-    XCTAssertEqual(Set(webViews(in: host.view).map(ObjectIdentifier.init)), mounted,
-      "Четыре повторения не создают новые WebKit")
+    try await Task.sleep(for: .milliseconds(50))
+    let finalWebViews = Set(webViews(in: host.view).map(ObjectIdentifier.init))
+    let visible = model.sceneWorkset(presence: try XCTUnwrap(model.presence))
+    XCTAssertLessThanOrEqual(finalWebViews.count, visible.elements.count,
+      "За экраном не остаются живые WebKit; готовый снимок сохраняет источник")
+    XCTAssertTrue(finalWebViews.isSubset(of: mounted),
+      "Повтор камеры не запускает новую подготовку уже готовых статических источников")
     for (element, image) in zip(elements, images) {
       XCTAssertTrue(AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource(element)) === image,
         "Камера использует прежние точные снимки, а не очередь новых растров")
