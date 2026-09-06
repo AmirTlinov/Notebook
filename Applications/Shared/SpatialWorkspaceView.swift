@@ -46,6 +46,19 @@ enum WorkspaceSceneProjection {
     remainingPasses > 0 && WorkspaceItemGeometry.notebook.width * pixelScale >= 8
   }
 
+  /// Geometry and camera targeting still see every item. Only mounted content
+  /// is bounded by the viewport, with room for shadows and preparation before
+  /// an edge appears. A focused sheet keeps its input and page-turn owner.
+  static func mountsContent(of item: RenderedWorkspaceItem, in presence: SessionPresence) -> Bool {
+    if presence.focusedItemID == item.id { return true }
+    let center = presence.camera.worldToScreen(item.center, viewport: presence.viewport)
+    let halfWidth = item.geometry.width * presence.camera.scale / 2
+    let halfHeight = item.geometry.height * presence.camera.scale / 2
+    let margin = 96.0 + WorkspaceCoverRaster.shadowPadding * presence.camera.scale
+    return center.x + halfWidth >= -margin && center.x - halfWidth <= presence.viewport.x + margin
+      && center.y + halfHeight >= -margin && center.y - halfHeight <= presence.viewport.y + margin
+  }
+
   struct SnapshotInkSurface: Hashable, Sendable {
     let surface: SurfaceID
     let camera: SpatialCamera?
@@ -66,9 +79,14 @@ enum WorkspaceSceneProjection {
     var pending = [(presence, presence.camera.scale, portalPasses)]
     while let (projection, pixelScale, passes) = pending.popLast() {
       guard let board = hierarchy.board(projection.boardID) else { continue }
-      result.elements.append(contentsOf: board.elements)
+      let rendered = items(workspace: workspace, board: board, presence: projection, documents: documents)
+        .filter { mountsContent(of: $0, in: projection) }
+      let surfaces = Set(rendered.map { SurfaceID.cover($0.id) } + [.board(projection.boardID)])
+      result.elements.append(contentsOf: board.elements.filter {
+        surfaces.contains($0.surface)
+      })
       result.ink.append(.init(surface: .board(projection.boardID), camera: projection.camera, viewport: projection.viewport))
-      for item in items(workspace: workspace, board: board, presence: projection, documents: documents) {
+      for item in rendered {
         result.ink.append(.init(surface: .cover(item.id), camera: nil,
           viewport: .init(x: item.geometry.width, y: item.geometry.height)))
         guard item.item.kind == .board, showsPortal(pixelScale: pixelScale, remainingPasses: passes),
@@ -165,7 +183,7 @@ enum WorkspaceSceneProjection {
         .frame(width: presence.viewport.x, height: presence.viewport.y)
         .allowsHitTesting(false)
 
-        ForEach(rendered) { rendered in
+        ForEach(rendered.filter { WorkspaceSceneProjection.mountsContent(of: $0, in: presence) }) { rendered in
           let screen = presence.camera.worldToScreen(
             rendered.center,
             viewport: presence.viewport
@@ -345,7 +363,11 @@ struct SpatialWorkspaceView: View {
           .allowsHitTesting(false)
         #endif
 
-        ForEach(rendered) { rendered in
+        ForEach(rendered.filter {
+          WorkspaceSceneProjection.mountsContent(of: $0, in: presence)
+            || $0.id == selectedItemID || $0.id == liftedItemID
+            || $0.id == cameraGesture?.candidateItemID
+        }) { rendered in
           WorkspaceSceneItem(
             rendered: rendered,
             document: model.documents[rendered.id],
@@ -2001,7 +2023,7 @@ struct BoardPortalPreview: View {
           }
         #endif
 
-        ForEach(rendered) { item in
+        ForEach(rendered.filter { WorkspaceSceneProjection.mountsContent(of: $0, in: presence) }) { item in
           let screen = camera.worldToScreen(item.center, viewport: viewport)
           WorkspaceItemCoverView(
             item: item.item,
@@ -2289,17 +2311,17 @@ struct SpatialElementContent: View {
       let source = agentElement
       let image = AgentElementSnapshotCache.shared.image(for: source)
       ZStack {
-        if readyElement != source, let image {
+        if !commitsState || readyElement != source, let image {
           #if os(iOS)
             Image(uiImage: image).resizable()
           #else
             Image(nsImage: image).resizable()
           #endif
         }
-        // A new coordinate owner starts with the exact frame already visible
-        // inside the portal. Cold WebKit work waits for the fingers; a mounted
-        // live surface stays mounted throughout subsequent camera gestures.
-        if hasLiveWebSurface || image == nil || model.permitsBackgroundPreparation {
+        // A read-only portal needs one exact raster, not another JavaScript
+        // session after every passage. Only its active board resumes live input.
+        // Already-mounted interactive surfaces survive later camera gestures.
+        if image == nil || (commitsState && (hasLiveWebSurface || model.permitsBackgroundPreparation)) {
           AgentWebElementView(
             element: source,
             onRenderReady: { ready in

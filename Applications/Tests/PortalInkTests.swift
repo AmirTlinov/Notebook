@@ -1,6 +1,7 @@
 import NotebookCore
 import SwiftUI
 import UIKit
+import WebKit
 import XCTest
 @testable import Notebook
 
@@ -137,6 +138,48 @@ final class PortalInkTests: XCTestCase {
     XCTAssertGreaterThan(rgba[center], 180)
     XCTAssertLessThan(rgba[center + 1], 80)
     await fulfillment(of: [ready], timeout: 5)
+  }
+
+  @MainActor
+  func testPassivePortalRendersChangedContentOnceWithoutRestartingItsScripts() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let model = NotebookAppModel(store: NotebookStore(root: root), startsNearbySync: false)
+    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    var element = SpatialElement(id: UUID().uuidString, surface: .board, kind: .web,
+      frame: .init(x: 0, y: 0, width: 300, height: 180), worldOrigin: .zero,
+      source: "Portal state", html: "<div id='value'></div>",
+      javaScript: "document.body.style.background=notebook.state.value===1?'#e02020':'#2040e0'",
+      state: .object(["value": .number(1)]), stamp: .init(counter: 0, actor: UUID()))
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene)
+    window.frame = CGRect(x: 0, y: 0, width: 300, height: 180)
+    defer { window.isHidden = true }
+    func webCount(in view: UIView) -> Int {
+      (view is WKWebView ? 1 : 0) + view.subviews.reduce(0) { $0 + webCount(in: $1) }
+    }
+    var previousPNG: Data?
+    for value in [1, 2] {
+      XCTAssertTrue(element.update(state: .object(["value": .number(Double(value))]), actor: model.actorID))
+      let source = agentElementSnapshotSource(element)
+      XCTAssertNil(AgentElementSnapshotCache.shared.image(for: source), "Предыдущий растр не выдаётся за изменённое состояние")
+      let host = UIHostingController(rootView: SpatialElementContent(element: element, commitsState: false)
+        .frame(width: 300, height: 180).environment(model))
+      window.rootViewController = host
+      window.makeKeyAndVisible()
+      let deadline = ContinuousClock.now + .seconds(5)
+      while AgentElementSnapshotCache.shared.image(for: source) == nil, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+      }
+      let image = try XCTUnwrap(AgentElementSnapshotCache.shared.image(for: source))
+      try await Task.sleep(for: .milliseconds(40))
+      XCTAssertEqual(webCount(in: host.view), 0, "Предпросмотр освобождает WebKit после получения точного кадра")
+      XCTAssertTrue(AgentElementSnapshotCache.shared.image(for: source) === image)
+      let png = try XCTUnwrap(image.pngData())
+      if let previousPNG { XCTAssertNotEqual(png, previousPNG, "Новое состояние меняет видимый результат") }
+      previousPNG = png
+    }
+    await model.finishPendingPersistence()
   }
 
   @MainActor

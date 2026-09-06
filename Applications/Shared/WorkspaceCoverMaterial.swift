@@ -180,7 +180,7 @@ enum WorkspaceCoverRaster {
     let lifted: Bool
   }
 
-  static let shadowPadding = 120.0
+  nonisolated static let shadowPadding = 120.0
   private static var materials: [Key: CGImage] = [:]
   private static var shadows: [Key: CGImage] = [:]
 

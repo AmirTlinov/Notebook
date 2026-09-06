@@ -81,6 +81,13 @@ final class PortalPassageTests: XCTestCase {
     _ = try redPoint(in: scene.host.view)
     try scene.send(.ended(scale: crossing * 0.9, velocity: -1, elapsed: 0.4, centroid: center))
     scene.model.inputGate.endContact(source: input)
+    try await Task.sleep(for: .milliseconds(400))
+    XCTAssertTrue(agentWebViews(in: scene.host.view).isEmpty,
+      "Пассивный портал не перезапускает десять готовых элементов после отпускания")
+    _ = try redPoint(in: scene.host.view)
+
+    scene.model.enterBoard(scene.childID)
+    try await Task.sleep(for: .milliseconds(40))
     let deadline = ContinuousClock.now + .seconds(5)
     while agentWebViews(in: scene.host.view).count < 10, ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(20))
@@ -96,6 +103,43 @@ final class PortalPassageTests: XCTestCase {
       "Следующий щипок не размонтирует уже живые интерактивные элементы")
     try scene.send(.ended(scale: 1.04, velocity: 1, elapsed: 0.3, centroid: center))
     scene.model.inputGate.endContact(source: input)
+    await scene.model.finishPendingPersistence()
+  }
+
+  func testPortalExitDoesNotMountDistantPaperSurfaces() async throws {
+    let scene = try await makeScene()
+    defer { scene.close() }
+    let workspace = try XCTUnwrap(scene.model.workspace)
+    let hierarchy = try XCTUnwrap(scene.model.boardHierarchy)
+    let start = try XCTUnwrap(scene.model.presence)
+    let distant = try XCTUnwrap(WorkspaceSceneProjection.items(workspace: workspace,
+      board: XCTUnwrap(hierarchy.board(start.boardID)), presence: start, documents: scene.model.documents)
+      .first(where: { $0.item.kind == .notebook }))
+    XCTAssertFalse(WorkspaceSceneProjection.snapshotLayers(workspace: workspace, hierarchy: hierarchy,
+      presence: start, documents: scene.model.documents).ink.contains { $0.surface == .cover(distant.id) },
+      "Снимок агента перечисляет то же дерево отображения, сохраняя полный каталог для адресации")
+    let focused = SessionPresence(boardID: start.boardID, mode: .cover, camera: start.camera,
+      viewport: start.viewport, focusedItemID: distant.id, openProgress: 0)
+    XCTAssertTrue(WorkspaceSceneProjection.mountsContent(of: distant, in: focused),
+      "Сфокусированный предмет удерживает своего владельца ввода даже за краем кадра")
+    func inkSurfaces(in view: UIView) -> Int {
+      (view is InkCanvasView ? 1 : 0) + view.subviews.reduce(0) { $0 + inkSurfaces(in: $1) }
+    }
+    XCTAssertEqual(inkSurfaces(in: scene.host.view), 3,
+      "Смонтированы только доска, чернила портала и его обложки; не далёкая тетрадь")
+    scene.model.enterBoard(scene.childID)
+    try await Task.sleep(for: .milliseconds(40))
+    scene.model.leaveBoard()
+    try await Task.sleep(for: .milliseconds(40))
+    XCTAssertEqual(inkSurfaces(in: scene.host.view), 3,
+      "Выход из портала не монтирует невидимые предметы родительской доски")
+    let presence = try XCTUnwrap(scene.model.presence)
+    scene.model.updatePresence(.init(boardID: presence.boardID, mode: .board,
+      camera: .init(center: .init(x: -30_000, y: -30_000), scale: 0.35),
+      viewport: scene.viewport), settled: true)
+    try await Task.sleep(for: .milliseconds(100))
+    XCTAssertEqual(inkSurfaces(in: scene.host.view), 2,
+      "Камера открывает обложку той же тетради; прежний портал теперь за пределами кадра")
     await scene.model.finishPendingPersistence()
   }
 
