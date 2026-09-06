@@ -697,11 +697,19 @@ struct SpatialWorkspaceView: View {
               model.finishElementDrag(reference, translation: translation)
             },
             onResizeChanged: { model.updateElementResize(reference, delta: $0) },
-          onResizeEnded: { model.finishElementResize(reference, delta: $0) },
-          resizeDelta: model.elementResizeDelta(reference),
-          onDelete: { model.deleteElement(reference) }
+            onResizeEnded: { model.finishElementResize(reference, delta: $0) },
+            resizeDelta: model.elementResizeDelta(reference),
+            onDelete: { model.deleteElement(reference) }
           ) {
+            // The physical viewport belongs to the element. The camera transforms
+            // its whole layer; WebKit layout must not trail the moving frame.
             SpatialElementContent(element: element)
+              .frame(width: element.frame.width, height: element.frame.height)
+              .scaleEffect(presence.camera.scale)
+              .frame(
+                width: element.frame.width * presence.camera.scale,
+                height: element.frame.height * presence.camera.scale
+              )
           }
             .frame(
               width: element.frame.width * presence.camera.scale,

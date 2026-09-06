@@ -16,14 +16,21 @@ import WebKit
       )
     }
 
-    func makeUIView(context: Context) -> WKWebView {
-      AgentWebCoordinator.makeWebView(coordinator: context.coordinator)
+    private var physicalSize: CGSize {
+      CGSize(width: element.frame.width, height: element.frame.height)
     }
 
-    func updateUIView(_ webView: WKWebView, context: Context) {
+    func makeUIView(context: Context) -> PhysicalWebViewport {
+      PhysicalWebViewport(
+        webView: AgentWebCoordinator.makeWebView(coordinator: context.coordinator),
+        contentSize: physicalSize)
+    }
+
+    func updateUIView(_ view: PhysicalWebViewport, context: Context) {
+      view.setContentSize(physicalSize)
       context.coordinator.use(onRenderReady: onRenderReady)
       context.coordinator.onState = onState
-      context.coordinator.load(element, in: webView)
+      context.coordinator.load(element, in: view.webView)
     }
   }
 #else
@@ -285,6 +292,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       webView.isOpaque = false
       webView.backgroundColor = .clear
       webView.scrollView.backgroundColor = .clear
+      webView.scrollView.contentInsetAdjustmentBehavior = .never
       webView.scrollView.isScrollEnabled = false
       webView.scrollView.minimumZoomScale = 1
       webView.scrollView.maximumZoomScale = 1

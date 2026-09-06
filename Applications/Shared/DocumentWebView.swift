@@ -586,13 +586,18 @@ private enum DocumentWebViewFactory {
       )
     }
 
-    func makeUIView(context: Context) -> DocumentPaperViewport {
-      DocumentPaperViewport(
-        webView: DocumentWebViewFactory.make(coordinator: context.coordinator),
-        paperSize: document.paperSize)
+    private var physicalSize: CGSize {
+      let paper = WorkspaceItemGeometry.document(document.paperSize)
+      return CGSize(width: paper.width, height: paper.height)
     }
 
-    func updateUIView(_ view: DocumentPaperViewport, context: Context) {
+    func makeUIView(context: Context) -> PhysicalWebViewport {
+      PhysicalWebViewport(
+        webView: DocumentWebViewFactory.make(coordinator: context.coordinator),
+        contentSize: physicalSize)
+    }
+
+    func updateUIView(_ view: PhysicalWebViewport, context: Context) {
       context.coordinator.update(
         document: document,
         state: state,
@@ -603,13 +608,13 @@ private enum DocumentWebViewFactory {
         onSourceChange: onSourceChange,
         onStateChange: onStateChange
       )
-      view.setPaperSize(document.paperSize)
+      view.setContentSize(physicalSize)
       view.isUserInteractionEnabled = isInteractive
       view.accessibilityElementsHidden = !isInteractive
     }
 
     static func dismantleUIView(
-      _ view: DocumentPaperViewport,
+      _ view: PhysicalWebViewport,
       coordinator: DocumentWebCoordinator
     ) {
       view.webView.configuration.userContentController.removeScriptMessageHandler(
