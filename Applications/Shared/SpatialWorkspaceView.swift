@@ -251,6 +251,51 @@ enum WorkspaceSceneProjection {
   }
 #endif
 
+/// A Show command may outlive its camera animation while WebKit finds a block's
+/// physical sheet. Only that command may finish the pending page adjustment.
+@MainActor
+final class NotebookReferencePageResolution {
+  private var task: Task<Void, Never>?
+  private var generation: UInt64 = 0
+  private(set) var requestID: UUID?
+  private(set) var documentID: UUID?
+
+  func cancel() {
+    generation &+= 1
+    requestID = nil
+    documentID = nil
+    task?.cancel(); task = nil
+  }
+
+  func start(requestID: UUID, documentID: UUID, isCurrent: @escaping () -> Bool,
+    resolve: @escaping () -> Int?, apply: @escaping (Int) -> Void) {
+    cancel()
+    self.requestID = requestID
+    self.documentID = documentID
+    let expectedGeneration = generation
+    task = Task { @MainActor [weak self] in
+      defer { self?.finish(requestID: requestID, generation: expectedGeneration) }
+      let deadline = ContinuousClock.now + .seconds(8)
+      while ContinuousClock.now < deadline {
+        do { try await Task.sleep(for: .milliseconds(60)) } catch { return }
+        guard let self, !Task.isCancelled, generation == expectedGeneration,
+          self.requestID == requestID, isCurrent() else { return }
+        guard let page = resolve() else { continue }
+        guard generation == expectedGeneration, self.requestID == requestID else { return }
+        apply(page)
+        return
+      }
+    }
+  }
+
+  private func finish(requestID: UUID, generation: UInt64) {
+    guard self.generation == generation, self.requestID == requestID else { return }
+    task = nil; self.requestID = nil; documentID = nil
+  }
+
+  isolated deinit { task?.cancel() }
+}
+
 struct SpatialWorkspaceView: View {
   @Environment(\.scenePhase) private var scenePhase
   @Environment(NotebookAppModel.self) private var model
@@ -268,6 +313,7 @@ struct SpatialWorkspaceView: View {
   @State private var documentPageLayouts: [UUID: DocumentPageLayout] = [:]
   @State private var settling = false
   @State private var cameraSettlement = SceneCameraSettlement()
+  @State private var referencePageResolution = NotebookReferencePageResolution()
   @State private var spatialInkSurfaces = SpatialInkSurfaceRegistry()
   #if os(iOS)
     @State private var openingFeedback = UIImpactFeedbackGenerator(style: .soft)
@@ -317,6 +363,7 @@ struct SpatialWorkspaceView: View {
               editingSpatialTextID = nil
             },
             onBegan: {
+              referencePageResolution.cancel()
               selectedItemID = nil
               model.clearElementSelection()
               editingSpatialTextID = nil
@@ -514,19 +561,23 @@ struct SpatialWorkspaceView: View {
       }
       .task(id:model.requestedReference?.id) {
         guard let reference = model.requestedReference else { return }
+        referencePageResolution.cancel()
         while cameraGesture != nil || settling || pageTurnIsActive || contentGestureActive || model.presencePhase != .settled {
           do { try await Task.sleep(for:.milliseconds(40)) } catch { return }
         }
         model.afterPageInput {
+          guard model.requestedReference?.id == reference.id else { return }
           showReference(reference,viewport:viewport)
         }
       }
       .task(id: model.requestedReturn?.id) {
         guard let place = model.requestedReturn else { return }
+        referencePageResolution.cancel()
         while cameraGesture != nil || settling || pageTurnIsActive || contentGestureActive || model.presencePhase != .settled {
           do { try await Task.sleep(for: .milliseconds(40)) } catch { return }
         }
         model.afterPageInput {
+          guard model.requestedReturn?.id == place.id else { return }
           defer { model.completeReturnToPlace() }
           guard model.boardHierarchy?.board(place.presence.boardID) != nil else { return }
           if let itemID = place.presence.focusedItemID {
@@ -540,7 +591,10 @@ struct SpatialWorkspaceView: View {
         }
       }
       .onChange(of: scenePhase) { _, phase in
-        if phase != .active { interruptSettlementForInput() }
+        if phase != .active {
+          referencePageResolution.cancel()
+          interruptSettlementForInput()
+        }
       }
       .onChange(of: geometry.size) { _, _ in
         interruptSettlementForInput()
@@ -554,11 +608,13 @@ struct SpatialWorkspaceView: View {
         }
       }
       .onChange(of: presence.focusedItemID) { _, itemID in
+        if referencePageResolution.documentID != itemID { referencePageResolution.cancel() }
         model.clearElementSelection()
         if itemID == nil { editingSpatialTextID = nil }
         pageTurnIsActive = false
       }
       .onDisappear {
+        referencePageResolution.cancel()
         cameraSettlement.cancel()
         cameraGesture = nil
         contentGestureActive = false
@@ -684,6 +740,7 @@ struct SpatialWorkspaceView: View {
     NotebookNavigationView(presence: presence,
       documentPageCount: presence.focusedItemID.flatMap { documentPageLayouts[$0]?.pageCount } ?? 1,
       onBack: {
+        referencePageResolution.cancel()
         if !model.returnPlaces.isEmpty { model.requestReturnToPlace() }
         else if presence.mode == .board { leaveBoard(viewport: viewport) }
         else {
@@ -950,6 +1007,7 @@ struct SpatialWorkspaceView: View {
   private func handleWorkspaceMagnification(
     _ phase: WorkspaceMagnificationPhase
   ) {
+    if case .began = phase { referencePageResolution.cancel() }
     if pageInputGestureID != nil {
       bufferCameraPhase(phase)
       return
@@ -1393,18 +1451,19 @@ struct SpatialWorkspaceView: View {
       animateSettlement(to:.init(boardID:boardID,mode:mode,camera:.init(center:center,scale:mode == .cover ? geometry.coverScale(viewport:viewport) : geometry.fitScale(viewport:viewport)),
         viewport:viewport,focusedItemID:itemID,openProgress:mode == .cover ? 0 : 1,documentPageIndex:pageIndex),duration:0.3)
       if target.kind == .document, let blockID = reference.elementID {
-        Task {
-          let deadline = ContinuousClock.now + .seconds(8)
-          while ContinuousClock.now < deadline {
-            try? await Task.sleep(for:.milliseconds(60))
-            guard model.presence?.focusedItemID == itemID else { return }
-            if let document = model.documents[itemID], let state = model.documentStates[itemID],
-              let region = DocumentRenderRegistry.shared.regions(document:document,state:state).first(where: { $0.id == blockID }), !settling {
-              _ = model.selectDocumentPage(region.pageIndex,documentID:itemID)
-              return
-            }
-          }
-        }
+        referencePageResolution.start(requestID: reference.id, documentID: itemID, isCurrent: {
+          (settling || model.presence?.focusedItemID == itemID)
+            && (settling || model.presence?.documentPageIndex == pageIndex)
+            && model.requestedReturn == nil
+            && (model.requestedReference == nil || model.requestedReference?.id == reference.id)
+        }, resolve: {
+          guard !settling, let document = model.documents[itemID], let state = model.documentStates[itemID]
+          else { return nil }
+          return DocumentRenderRegistry.shared.regions(document: document, state: state)
+            .first(where: { $0.id == blockID })?.pageIndex
+        }, apply: { resolvedPage in
+          _ = model.selectDocumentPage(resolvedPage, documentID: itemID)
+        })
       }
     }
     model.completeShow(reference)
@@ -2125,26 +2184,40 @@ struct WorkspaceItemCoverView: View {
 
       ForEach(elements) { element in
         let reference = EditableElementReference.spatial(elementID: element.id)
+        let retainsTextInput = !isPortalProjection && !rendersSettledSnapshot
+          && element.kind == .nativeText && editingTextID == element.id
         EditableElementContainer(
           isEditingEnabled: isElementEditingEnabled && !model.scenePreparationPending,
-          isSelected: model.elementEditingSession.selection == reference,
+          isSelected: !model.scenePreparationPending && model.elementEditingSession.selection == reference,
           coordinateScale: 1,
-          translation: elementTranslation(for: reference),
-            isContentInteractive: !model.scenePreparationPending && !element.javaScript.isEmpty,
+          translation: model.scenePreparationPending ? .zero : elementTranslation(for: reference),
+          isContentInteractive: retainsTextInput || (!model.scenePreparationPending && !element.javaScript.isEmpty),
           onSelect: {
+            guard !model.scenePreparationPending else { return }
             model.selectElement(reference)
             onElementSelected()
           },
           onDragChanged: { translation in
+            guard !model.scenePreparationPending else { return }
             model.updateElementDrag(reference, translation: translation)
           },
           onDragEnded: { translation in
+            guard !model.scenePreparationPending else { return }
             model.finishElementDrag(reference, translation: translation)
           },
-          onResizeChanged: { model.updateElementResize(reference, delta: $0) },
-          onResizeEnded: { model.finishElementResize(reference, delta: $0) },
-          resizeDelta: model.elementResizeDelta(reference),
-          onDelete: { model.deleteElement(reference) }
+          onResizeChanged: {
+            guard !model.scenePreparationPending else { return }
+            model.updateElementResize(reference, delta: $0)
+          },
+          onResizeEnded: {
+            guard !model.scenePreparationPending else { return }
+            model.finishElementResize(reference, delta: $0)
+          },
+          resizeDelta: model.scenePreparationPending ? .zero : model.elementResizeDelta(reference),
+          onDelete: {
+            guard !model.scenePreparationPending else { return }
+            model.deleteElement(reference)
+          }
         ) {
           Group {
             #if os(macOS)
@@ -2154,7 +2227,7 @@ struct WorkspaceItemCoverView: View {
                 SpatialElementContent(
                   element: element,
                   commitsState: !isPortalProjection,
-                  isTextEditing: !model.scenePreparationPending && editingTextID == element.id,
+                  isTextEditing: retainsTextInput,
                   onTextEditingEnded: { onTextEditingEnded(element.id) }
                 )
               }
@@ -2162,27 +2235,44 @@ struct WorkspaceItemCoverView: View {
               SpatialElementContent(
                 element: element,
                 commitsState: !isPortalProjection,
-                isTextEditing: !model.scenePreparationPending && editingTextID == element.id,
+                isTextEditing: retainsTextInput,
                 onTextEditingEnded: { onTextEditingEnded(element.id) }
               )
             #endif
           }
         }
-        .disabled(model.scenePreparationPending)
-        .allowsHitTesting(!model.scenePreparationPending)
+        .disabled(model.scenePreparationPending && !retainsTextInput)
+        .allowsHitTesting(!model.scenePreparationPending || retainsTextInput)
         .frame(width: element.frame.width, height: element.frame.height)
         .offset(x: element.frame.x, y: element.frame.y)
         .opacity(portalOverlayOpacity)
       }
 
       #if os(iOS)
-        if !isElementEditingEnabled && !isPortalProjection && !model.scenePreparationPending {
+        if !isElementEditingEnabled && !isPortalProjection {
           NotebookInteractionView(
+            permitsManipulation: !model.scenePreparationPending,
             passthroughFrames: interactionPassthroughFrames,
-            onTap: onTap,
-            onLiftChanged: onLiftChanged,
-            onTranslationChanged: onTranslationChanged,
-            onTranslationEnded: onTranslationEnded
+            onTap: { location, count in
+              // Finishing a text session does not need the next geometry index.
+              // Keep this input owner mounted while the saved text is prepared.
+              if model.scenePreparationPending {
+                if let editingTextID { onTextEditingEnded(editingTextID) }
+                return
+              }
+              onTap(location, count)
+            },
+            onLiftChanged: { lifted in
+              guard !lifted || !model.scenePreparationPending else { return }
+              onLiftChanged(lifted)
+            },
+            onTranslationChanged: { translation in
+              guard !model.scenePreparationPending else { return }
+              onTranslationChanged(translation)
+            },
+            onTranslationEnded: { translation in
+              onTranslationEnded(model.scenePreparationPending ? .zero : translation)
+            }
           )
           .frame(
             width: geometry.width,
@@ -2231,6 +2321,16 @@ struct WorkspaceItemCoverView: View {
         style: .continuous
       )
     )
+    .onChange(of: model.scenePreparationPending) { _, pending in
+      guard pending, !isPortalProjection,
+        let selection = model.elementEditingSession.selection,
+        case .spatial(let selectedID) = selection,
+        elements.contains(where: { $0.id == selectedID })
+      else { return }
+      // A removed frame handle must not revive its unfinished translation when
+      // the next scene arrives. The native text session has a separate owner.
+      model.updateElementDrag(.spatial(elementID: selectedID), translation: .zero)
+    }
   }
 
   private var portalOverlayOpacity: Double {
@@ -2282,8 +2382,21 @@ struct WorkspaceItemCoverView: View {
   }
 
   private var interactionPassthroughFrames: [CGRect] {
+    Self.interactionPassthroughFrames(
+      elements: elements,
+      editingTextID: isPortalProjection || rendersSettledSnapshot ? nil : editingTextID,
+      scenePreparationPending: model.scenePreparationPending
+    )
+  }
+
+  static func interactionPassthroughFrames(
+    elements: [SpatialElement],
+    editingTextID: String?,
+    scenePreparationPending: Bool
+  ) -> [CGRect] {
     elements.compactMap { element in
-      guard element.kind != .nativeText || editingTextID == element.id else {
+      let isLiveEditor = element.kind == .nativeText && editingTextID == element.id
+      guard isLiveEditor || (!scenePreparationPending && element.kind != .nativeText) else {
         return nil
       }
       return CGRect(
@@ -2298,8 +2411,6 @@ struct WorkspaceItemCoverView: View {
 
 struct SpatialElementContent: View {
   @Environment(NotebookAppModel.self) private var model
-  @State private var readyElement: AgentElement?
-  @State private var hasLiveWebSurface = false
   let element: SpatialElement
   let commitsState: Bool
   let isTextEditing: Bool
@@ -2326,37 +2437,14 @@ struct SpatialElementContent: View {
         onEditingEnded: onTextEditingEnded
       )
     case .markdown, .web:
-      let source = agentElement
-      let image = AgentElementSnapshotCache.shared.image(for: source)
-      ZStack {
-        if !commitsState || readyElement != source, let image {
-          #if os(iOS)
-            AgentElementSnapshotView(image: image)
-          #else
-            Image(nsImage: image).resizable()
-          #endif
-        }
-        // A read-only portal needs one exact raster, not another JavaScript
-        // session after every passage. Only its active board resumes live input.
-        // Already-mounted interactive surfaces survive later camera gestures.
-        if image == nil || (commitsState && (hasLiveWebSurface || model.permitsBackgroundPreparation)) {
-          AgentWebElementView(
-            element: source,
-            onRenderReady: { ready in
-              let next = ready ? source : nil
-              if readyElement != next { readyElement = next }
-            },
-            onState: { state in
-              if commitsState && !model.scenePreparationPending {
-                model.commitSpatialElementState(elementID: element.id, state: state)
-              }
-            }
-          )
-          .onAppear { hasLiveWebSurface = true }
-          .opacity(readyElement == source ? 1 : 0)
-          .allowsHitTesting(readyElement == source && commitsState && !model.scenePreparationPending)
-        }
-      }
+      let boardID = model.presence?.boardID ?? WorkspaceRoot.boardID
+      PreparedAgentElementView(element: agentElement,
+        allowsInteraction: commitsState,
+        focus: .board(boardID: boardID, elementID: element.id), onRenderReady: { _ in },
+        onState: { state in
+          guard commitsState, !model.scenePreparationPending else { return }
+          model.commitSpatialElementState(boardID: boardID, elementID: element.id, state: state)
+        })
     }
   }
 
@@ -2386,6 +2474,7 @@ func agentElementSnapshotSource(_ element: SpatialElement) -> AgentElement {
 
 #if os(macOS)
   private struct SettledSpatialElementContent: View {
+    @Environment(\.sceneSnapshotRasters) private var rasters
     let element: SpatialElement
 
     var body: some View {
@@ -2406,7 +2495,7 @@ func agentElementSnapshotSource(_ element: SpatialElement) -> AgentElement {
             )
           )
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-      } else if let image = AgentElementSnapshotCache.shared.image(
+      } else if let image = rasters?.image(
         for: agentElementSnapshotSource(element)
       ) {
         Image(nsImage: image)

@@ -107,13 +107,14 @@ final class PortalInkTests: XCTestCase {
     window.makeKeyAndVisible()
     let clock = ContinuousClock()
     let deadline = clock.now + .seconds(5)
-    while AgentElementSnapshotCache.shared.image(for: source) == nil, clock.now < deadline {
+    while SceneRenderResources.shared.image(for: source) == nil, clock.now < deadline {
       try await Task.sleep(for: .milliseconds(20))
     }
-    XCTAssertNotNil(AgentElementSnapshotCache.shared.image(for: source))
-    let ready = expectation(description: "Новый живой владелец подготовил точный кадр")
+    XCTAssertNotNil(SceneRenderResources.shared.image(for: source))
+    let ready = expectation(description: "Готовый статический источник не запускается повторно")
+    ready.isInverted = true
     let observer = NotificationCenter.default.addObserver(
-      forName: AgentElementSnapshotCache.didChange, object: nil, queue: .main
+      forName: SceneRenderResources.didChange, object: nil, queue: .main
     ) { notification in
       if notification.object as? String == element.id { ready.fulfill() }
     }
@@ -137,7 +138,7 @@ final class PortalInkTests: XCTestCase {
     let center = (cg.height / 2 * cg.width + cg.width / 2) * 4
     XCTAssertGreaterThan(rgba[center], 180)
     XCTAssertLessThan(rgba[center + 1], 80)
-    await fulfillment(of: [ready], timeout: 5)
+    await fulfillment(of: [ready], timeout: 0.3)
   }
 
   @MainActor
@@ -162,19 +163,19 @@ final class PortalInkTests: XCTestCase {
     for value in [1, 2] {
       XCTAssertTrue(element.update(state: .object(["value": .number(Double(value))]), actor: model.actorID))
       let source = agentElementSnapshotSource(element)
-      XCTAssertNil(AgentElementSnapshotCache.shared.image(for: source), "Предыдущий растр не выдаётся за изменённое состояние")
+      XCTAssertNil(SceneRenderResources.shared.image(for: source), "Предыдущий растр не выдаётся за изменённое состояние")
       let host = UIHostingController(rootView: SpatialElementContent(element: element, commitsState: false)
         .frame(width: 300, height: 180).environment(model))
       window.rootViewController = host
       window.makeKeyAndVisible()
       let deadline = ContinuousClock.now + .seconds(5)
-      while AgentElementSnapshotCache.shared.image(for: source) == nil, ContinuousClock.now < deadline {
+      while SceneRenderResources.shared.image(for: source) == nil, ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(20))
       }
-      let image = try XCTUnwrap(AgentElementSnapshotCache.shared.image(for: source))
+      let image = try XCTUnwrap(SceneRenderResources.shared.image(for: source))
       try await Task.sleep(for: .milliseconds(40))
       XCTAssertEqual(webCount(in: host.view), 0, "Предпросмотр освобождает WebKit после получения точного кадра")
-      XCTAssertTrue(AgentElementSnapshotCache.shared.image(for: source) === image)
+      XCTAssertTrue(SceneRenderResources.shared.image(for: source) === image)
       let png = try XCTUnwrap(image.pngData())
       if let previousPNG { XCTAssertNotEqual(png, previousPNG, "Новое состояние меняет видимый результат") }
       previousPNG = png

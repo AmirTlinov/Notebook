@@ -485,6 +485,7 @@ struct BoardPanView: UIViewRepresentable {
 /// finger stream. Pencil touches remain owned by the window-level spatial ink
 /// recognizer.
 struct NotebookInteractionView: UIViewRepresentable {
+  let permitsManipulation: Bool
   let passthroughFrames: [CGRect]
   let onTap: (CGPoint, Int) -> Void
   let onLiftChanged: (Bool) -> Void
@@ -508,13 +509,14 @@ struct NotebookInteractionView: UIViewRepresentable {
     view.onLiftChanged = onLiftChanged
     view.onTranslationChanged = onTranslationChanged
     view.onTranslationEnded = onTranslationEnded
+    view.setPermitsManipulation(permitsManipulation)
   }
 
   static func dismantleUIView(
     _ view: NotebookInteractionTouchView,
     coordinator: Void
   ) {
-    view.cancelInteraction()
+    view.cancelInteraction(deferCallbacks: true)
   }
 }
 
@@ -528,6 +530,7 @@ final class NotebookInteractionTouchView: UIView {
   var onTranslationChanged: (CGSize) -> Void = { _ in }
   var onTranslationEnded: (CGSize) -> Void = { _ in }
   var passthroughFrames: [CGRect] = []
+  private(set) var permitsManipulation = true
 
   private weak var activeTouch: UITouch?
   private var startPoint = CGPoint.zero
@@ -535,6 +538,24 @@ final class NotebookInteractionTouchView: UIView {
   private var maximumTravel: CGFloat = 0
   private var liftWorkItem: DispatchWorkItem?
   private var isLifted = false
+  private var manipulationAllowedForContact = false
+  private var hasLiftedDuringContact = false
+  private var contactGeneration = 0
+  private var deferredLiftCancellation: (() -> Void)?
+
+  /// Admission can close during a SwiftUI update. Release native ownership now,
+  /// but notify the SwiftUI gesture owner only after that update has completed.
+  func setPermitsManipulation(_ permitted: Bool) {
+    permitsManipulation = permitted
+    guard !permitted else { return }
+    manipulationAllowedForContact = false
+    liftWorkItem?.cancel()
+    liftWorkItem = nil
+    if isLifted {
+      isLifted = false
+      enqueueLiftCancellation()
+    }
+  }
 
   override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
     super.point(inside: point, with: event)
@@ -545,6 +566,7 @@ final class NotebookInteractionTouchView: UIView {
     _ touches: Set<UITouch>,
     with event: UIEvent?
   ) {
+    flushLiftCancellation()
     let directTouches = touches.filter { $0.type == .direct }
     guard activeTouch == nil, directTouches.count == 1,
       let touch = directTouches.first
@@ -556,13 +578,17 @@ final class NotebookInteractionTouchView: UIView {
     startPoint = touch.location(in: window)
     latestTranslation = .zero
     maximumTravel = 0
-    scheduleLift()
+    contactGeneration += 1
+    hasLiftedDuringContact = false
+    manipulationAllowedForContact = permitsManipulation
+    if manipulationAllowedForContact { scheduleLift() }
   }
 
   override func touchesMoved(
     _ touches: Set<UITouch>,
     with event: UIEvent?
   ) {
+    flushLiftCancellation()
     guard let activeTouch,
       touches.contains(where: { $0 === activeTouch })
     else { return }
@@ -615,8 +641,11 @@ final class NotebookInteractionTouchView: UIView {
     cancelInteraction()
   }
 
-  func cancelInteraction() {
-    finishInteraction(acceptTap: false, tapLocation: .zero, tapCount: 0)
+  func cancelInteraction(deferCallbacks: Bool = false) {
+    finishInteraction(
+      acceptTap: false, tapLocation: .zero, tapCount: 0,
+      deferCallbacks: deferCallbacks
+    )
   }
 
   /// Movement takes the pending finger from this cover; a completed hold keeps
@@ -629,11 +658,15 @@ final class NotebookInteractionTouchView: UIView {
 
   private func scheduleLift() {
     liftWorkItem?.cancel()
+    let generation = contactGeneration
     let workItem = DispatchWorkItem { [weak self] in
       guard let self, activeTouch != nil,
+        contactGeneration == generation, manipulationAllowedForContact,
+        permitsManipulation,
         maximumTravel <= Self.movementTolerance
       else { return }
       isLifted = true
+      hasLiftedDuringContact = true
       onLiftChanged(true)
     }
     liftWorkItem = workItem
@@ -646,12 +679,13 @@ final class NotebookInteractionTouchView: UIView {
   private func finishInteraction(
     acceptTap: Bool,
     tapLocation: CGPoint,
-    tapCount: Int
+    tapCount: Int,
+    deferCallbacks: Bool = false
   ) {
     let wasLifted = isLifted
     let translation = latestTranslation
     let wasTap =
-      acceptTap && !wasLifted
+      acceptTap && !hasLiftedDuringContact
       && maximumTravel <= Self.movementTolerance
     liftWorkItem?.cancel()
     liftWorkItem = nil
@@ -659,12 +693,38 @@ final class NotebookInteractionTouchView: UIView {
     latestTranslation = .zero
     maximumTravel = 0
     isLifted = false
+    manipulationAllowedForContact = false
+    hasLiftedDuringContact = false
+    contactGeneration += 1
 
     if wasLifted {
-      onTranslationEnded(translation)
-      onLiftChanged(false)
-    } else if wasTap {
+      if acceptTap {
+        onTranslationEnded(translation)
+        onLiftChanged(false)
+      } else {
+        enqueueLiftCancellation()
+      }
+    }
+    if !deferCallbacks { flushLiftCancellation() }
+    if wasTap {
       onTap(tapLocation, tapCount)
     }
+  }
+
+  private func enqueueLiftCancellation() {
+    guard deferredLiftCancellation == nil else { return }
+    let translationEnded = onTranslationEnded
+    let liftChanged = onLiftChanged
+    deferredLiftCancellation = {
+      translationEnded(.zero)
+      liftChanged(false)
+    }
+    DispatchQueue.main.async { self.flushLiftCancellation() }
+  }
+
+  private func flushLiftCancellation() {
+    let cancellation = deferredLiftCancellation
+    deferredLiftCancellation = nil
+    cancellation?()
   }
 }

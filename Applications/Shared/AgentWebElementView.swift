@@ -1,17 +1,22 @@
 import NotebookCore
-import Observation
 import SwiftUI
 import WebKit
 
 #if os(iOS)
   struct AgentWebElementView: UIViewRepresentable {
     let element: AgentElement
+    let lease: WebSurfaceLease
+    let snapshotPolicy: AgentSnapshotPolicy
     let onRenderReady: (Bool) -> Void
+    var onFailure: (RenderDiagnostic) -> Void = { _ in }
     let onState: (JSONValue) -> Void
 
     func makeCoordinator() -> AgentWebCoordinator {
       AgentWebCoordinator(
+        lease: lease,
+        snapshotPolicy: snapshotPolicy,
         onRenderReady: onRenderReady,
+        onFailure: onFailure,
         onState: onState
       )
     }
@@ -31,11 +36,17 @@ import WebKit
       return view
     }
 
+    static func dismantleUIView(_ view: PhysicalWebViewport, coordinator: AgentWebCoordinator) {
+      coordinator.invalidate()
+    }
+
     func updateUIView(_ view: PhysicalWebViewport, context: Context) {
-      view.layer.rasterizationScale = context.environment.displayScale
+      view.layer.rasterizationScale = snapshotPolicy.rasterizationScale(
+        for: element, displayScale: context.environment.displayScale)
       view.setContentSize(physicalSize)
       context.coordinator.use(onRenderReady: onRenderReady)
-      context.coordinator.onState = onState
+      context.coordinator.use(onFailure: onFailure)
+      context.coordinator.use(onState: onState)
       context.coordinator.load(element, in: view.webView)
     }
   }
@@ -44,32 +55,82 @@ import WebKit
   /// Rasterization is needed even for layer.contents: filtering that image alone
   /// loses subpixel strokes at fractional scales. Its exact source stays cached.
   struct AgentElementSnapshotView: UIViewRepresentable {
-    let image: UIImage
+    let raster: RasterLease
 
-    func makeUIView(context: Context) -> UIView {
-      let view = UIView()
-      view.isOpaque = false
-      view.isUserInteractionEnabled = false
-      view.layer.shouldRasterize = true
-      view.layer.minificationFilter = .trilinear
-      return view
+    func makeUIView(context: Context) -> AgentSnapshotRasterView {
+      AgentSnapshotRasterView()
     }
 
-    func updateUIView(_ view: UIView, context: Context) {
-      if (view.layer.contents as AnyObject?) !== image.cgImage { view.layer.contents = image.cgImage }
-      view.layer.contentsScale = image.scale
-      view.layer.rasterizationScale = context.environment.displayScale
+    func updateUIView(_ view: AgentSnapshotRasterView, context: Context) {
+      view.updateRaster(raster, displayScale: context.environment.displayScale)
+    }
+
+    static func dismantleUIView(_ view: AgentSnapshotRasterView, coordinator: ()) {
+      view.removeRaster()
     }
   }
+
+  /// The physical bounds determine backing allocation. An external camera
+  /// transform only projects this completed raster and never raises its density.
+  final class AgentSnapshotRasterView: UIView {
+    private var pixelSize: CGSize = .zero
+    private var displayScale: CGFloat = 1
+    private var retainedRaster: RasterLease?
+
+    init() {
+      super.init(frame: .zero)
+      isOpaque = false
+      isUserInteractionEnabled = false
+      layer.shouldRasterize = true
+      layer.minificationFilter = .trilinear
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("Use init()") }
+
+    func updateRaster(_ raster: RasterLease, displayScale: CGFloat) {
+      let image = raster.image
+      if (layer.contents as AnyObject?) !== image.cgImage { layer.contents = image.cgImage }
+      retainedRaster = raster
+      layer.contentsScale = image.scale
+      pixelSize = image.cgImage.map { CGSize(width: $0.width, height: $0.height) } ?? .zero
+      self.displayScale = displayScale
+      updateRasterizationScale()
+    }
+
+    func removeRaster() {
+      layer.contents = nil
+      retainedRaster = nil
+      pixelSize = .zero
+    }
+
+    override func layoutSubviews() {
+      super.layoutSubviews()
+      updateRasterizationScale()
+    }
+
+    private func updateRasterizationScale() {
+      guard bounds.width > 0, bounds.height > 0, pixelSize.width > 0, pixelSize.height > 0 else { return }
+      layer.rasterizationScale = min(max(1, displayScale),
+        pixelSize.width / bounds.width, pixelSize.height / bounds.height)
+    }
+  }
+
 #else
   struct AgentWebElementView: NSViewRepresentable {
     let element: AgentElement
+    let lease: WebSurfaceLease
+    let snapshotPolicy: AgentSnapshotPolicy
     let onRenderReady: (Bool) -> Void
+    var onFailure: (RenderDiagnostic) -> Void = { _ in }
     let onState: (JSONValue) -> Void
 
     func makeCoordinator() -> AgentWebCoordinator {
       AgentWebCoordinator(
+        lease: lease,
+        snapshotPolicy: snapshotPolicy,
         onRenderReady: onRenderReady,
+        onFailure: onFailure,
         onState: onState
       )
     }
@@ -78,12 +139,79 @@ import WebKit
       AgentWebCoordinator.makeWebView(coordinator: context.coordinator)
     }
 
+    static func dismantleNSView(_ webView: WKWebView, coordinator: AgentWebCoordinator) {
+      coordinator.invalidate()
+    }
+
     func updateNSView(_ webView: WKWebView, context: Context) {
       context.coordinator.use(onRenderReady: onRenderReady)
-      context.coordinator.onState = onState
+      context.coordinator.use(onFailure: onFailure)
+      context.coordinator.use(onState: onState)
       context.coordinator.load(element, in: webView)
     }
   }
+
+  struct AgentElementSnapshotView: NSViewRepresentable {
+    let raster: RasterLease
+
+    func makeNSView(context: Context) -> AgentSnapshotRasterView {
+      AgentSnapshotRasterView()
+    }
+
+    func updateNSView(_ view: AgentSnapshotRasterView, context: Context) {
+      view.updateRaster(raster, displayScale: context.environment.displayScale)
+    }
+
+    static func dismantleNSView(_ view: AgentSnapshotRasterView, coordinator: ()) {
+      view.removeRaster()
+    }
+  }
+
+  final class AgentSnapshotRasterView: NSImageView {
+    private var retainedRaster: RasterLease?
+    private var pixelSize: CGSize = .zero
+    private var displayScale: CGFloat = 1
+
+    init() {
+      super.init(frame: .zero)
+      imageScaling = .scaleAxesIndependently
+      wantsLayer = true
+      layer?.shouldRasterize = true
+      layer?.minificationFilter = .trilinear
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("Use init()") }
+
+    func updateRaster(_ raster: RasterLease, displayScale: CGFloat) {
+      let image = raster.image
+      if self.image !== image { self.image = image }
+      retainedRaster = raster
+      pixelSize = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        .map { CGSize(width: $0.width, height: $0.height) } ?? .zero
+      self.displayScale = displayScale
+      updateRasterizationScale()
+    }
+
+    func removeRaster() {
+      image = nil
+      layer?.contents = nil
+      retainedRaster = nil
+      pixelSize = .zero
+    }
+
+    override func layout() {
+      super.layout()
+      updateRasterizationScale()
+    }
+
+    private func updateRasterizationScale() {
+      guard bounds.width > 0, bounds.height > 0, pixelSize.width > 0, pixelSize.height > 0 else { return }
+      layer?.rasterizationScale = min(max(1, displayScale),
+        pixelSize.width / bounds.width, pixelSize.height / bounds.height)
+    }
+  }
+
 #endif
 
 #if os(iOS)
@@ -92,123 +220,155 @@ typealias AgentSnapshotImage = UIImage
 typealias AgentSnapshotImage = NSImage
 #endif
 
-@MainActor
-@Observable
-final class AgentElementSnapshotCache {
-    static let shared = AgentElementSnapshotCache()
-    static let didChange = Notification.Name("NotebookAgentElementSnapshotDidChange")
+/// Physical layout remains canonical. This policy controls only the number of
+/// pixels allocated for its raster: display samples are bounded, exact exports
+/// request their declared density and may be refused by the resource owner.
+enum AgentSnapshotPolicy: Equatable {
+  case display(scale: Double)
+  case exact(scale: Double)
 
-    private struct Entry {
-      let element: AgentElement
-      let image: AgentSnapshotImage
+  func rasterizationScale(for element: AgentElement, displayScale: CGFloat) -> CGFloat {
+    let width = element.frame.width, height = element.frame.height
+    if let pixels = pixelSize(for: element) {
+      return min(max(1, displayScale), pixels.width / width, pixels.height / height)
     }
-
-    private var diagnosticEntries: [String: (AgentElement, [RenderDiagnostic])] = [:]
-    func record(_ diagnostic: RenderDiagnostic, for element: AgentElement) {
-      var values = diagnosticEntries[element.id].flatMap { $0.0 == element ? $0.1 : nil } ?? []
-      if !values.contains(diagnostic) { values.append(diagnostic) }
-      diagnosticEntries[element.id] = (element, Array(values.suffix(32)))
-    }
-    func diagnostics(for elements: [AgentElement]) -> [RenderDiagnostic] {
-      elements.flatMap { element in diagnosticEntries[element.id].flatMap { $0.0 == element ? $0.1 : nil } ?? [] }
-    }
-
-    private var entries: [String: [Entry]] = [:]
-
-    func image(for element: AgentElement) -> AgentSnapshotImage? {
-      entries[element.id]?.last(where: { $0.element == element })?.image
-    }
-
-    #if os(macOS)
-    /// The publisher owns this temporary, window-backed WebKit render. It uses
-    /// the same coordinator as the live element and accepts only its exact raster.
-    func prepare(_ elements: [AgentElement]) async throws {
-      for element in elements where image(for: element) == nil {
-        try Task.checkCancellation()
-        let coordinator = AgentWebCoordinator(onState: { _ in })
-        let webView = AgentWebCoordinator.makeWebView(coordinator: coordinator)
-        let size = NSSize(width: element.frame.width, height: element.frame.height)
-        let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: -20_000, y: -20_000), size: size),
-          styleMask: .borderless, backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.contentView = webView
-        window.orderBack(nil)
-        defer {
-          webView.stopLoading()
-          webView.configuration.userContentController.removeScriptMessageHandler(forName: "notebook")
-          window.orderOut(nil)
-          window.close()
-        }
-        coordinator.load(element, in: webView)
-        let clock = ContinuousClock()
-        let deadline = clock.now + .seconds(8)
-        while image(for: element) == nil {
-          try await Task.sleep(for: .milliseconds(20))
-          guard clock.now < deadline else { throw SnapshotError.pending(element.id) }
-        }
-      }
-    }
-
-    enum SnapshotError: Error { case pending(String) }
-
-    #endif
-
-    func store(_ image: AgentSnapshotImage, for element: AgentElement) {
-      var matchingID = entries[element.id] ?? []
-      matchingID.removeAll { $0.element == element }
-      matchingID.append(Entry(element: element, image: image))
-      entries[element.id] = Array(matchingID.suffix(8))
-      NotificationCenter.default.post(
-        name: Self.didChange,
-        object: element.id
-      )
-    }
+    // A source that cannot produce a valid whole-frame snapshot still must not
+    // allocate its uncapped canonical dimensions before reporting that refusal.
+    return min(max(1, displayScale), 2048 / max(width, height))
   }
 
+  func pixelSize(for element: AgentElement) -> CGSize? {
+    let width = element.frame.width, height = element.frame.height
+    let density: Double
+    switch self {
+    case .display(let scale):
+      density = min(max(1, scale), 2048 / max(width, height), sqrt(4_194_304 / (width * height)))
+    case .exact(let scale): density = max(1, scale)
+    }
+    guard density.isFinite, density > 0 else { return nil }
+    // WebKit derives height from the output width. Quantize that one axis and
+    // derive the other, otherwise a very narrow frame can allocate far beyond
+    // the predicted height after its width rounds up to one pixel.
+    let pixelWidth: Double
+    switch self {
+    case .display: pixelWidth = floor(width * density)
+    case .exact:
+      // Exact admission checks both raster axes. Round the requested height up
+      // before deriving width so a wide fractional frame cannot lose density
+      // when WebKit rounds its resulting height down.
+      pixelWidth = max(ceil(width * density), ceil(ceil(height * density) * (width / height)))
+    }
+    let pixelHeight = ceil(pixelWidth * (height / width))
+    guard pixelWidth >= 1, pixelHeight >= 1, pixelWidth.isFinite, pixelHeight.isFinite else { return nil }
+    if case .display = self, max(pixelWidth, pixelHeight) > 2048 || pixelWidth * pixelHeight > 4_194_304 {
+      return nil
+    }
+    return CGSize(width: pixelWidth, height: pixelHeight)
+  }
+}
 
 @MainActor
 final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
-  var onState: (JSONValue) -> Void
+  private let lease: WebSurfaceLease
+  private let resources: SceneRenderResources
+  private let snapshotPolicy: AgentSnapshotPolicy
+  private(set) var snapshotFailure: SceneRenderError?
+  private var onState: (JSONValue) -> Void
   private var onRenderReady: (Bool) -> Void
+  private var onFailure: (RenderDiagnostic) -> Void
   private var renderIsReady = false
+  private var isInvalidated = false
   private var activeNavigation: WKNavigation?
-  private var renderRevision: UInt64 = 0
+  private weak var attachedWebView: WKWebView?
   private var loadedElement: AgentElement?
+  private(set) var loadToken: String?
 
   init(
+    lease: WebSurfaceLease,
+    resources: SceneRenderResources = .shared,
+    snapshotPolicy: AgentSnapshotPolicy = .display(scale: 2),
     onRenderReady: @escaping (Bool) -> Void = { _ in },
+    onFailure: @escaping (RenderDiagnostic) -> Void = { _ in },
     onState: @escaping (JSONValue) -> Void
   ) {
+    self.lease = lease
+    self.resources = resources
+    self.snapshotPolicy = snapshotPolicy
     self.onRenderReady = onRenderReady
+    self.onFailure = onFailure
     self.onState = onState
   }
 
   func use(onRenderReady: @escaping (Bool) -> Void) {
+    guard !isInvalidated else { return }
     self.onRenderReady = onRenderReady
   }
 
+  func use(onFailure: @escaping (RenderDiagnostic) -> Void) {
+    guard !isInvalidated else { return }
+    self.onFailure = onFailure
+  }
+
+  func use(onState: @escaping (JSONValue) -> Void) {
+    guard !isInvalidated else { return }
+    self.onState = onState
+  }
+
+  /// Dismantling ends this owner session. Neither a queued script message nor an
+  /// already running WebKit completion may publish into its next owner.
+  func invalidate() {
+    guard !isInvalidated else { return }
+    isInvalidated = true
+    loadToken = nil
+    loadedElement = nil
+    activeNavigation = nil
+    renderIsReady = false
+    onRenderReady = { _ in }
+    onFailure = { _ in }
+    onState = { _ in }
+    attachedWebView?.stopLoading()
+    attachedWebView?.navigationDelegate = nil
+    attachedWebView?.configuration.userContentController.removeScriptMessageHandler(forName: "notebook")
+    attachedWebView = nil
+  }
+
+  private func accepts(_ token: String) -> Bool {
+    !isInvalidated && !lease.isReleased && loadToken == token
+  }
+
   func load(_ element: AgentElement, in webView: WKWebView) {
+    guard !isInvalidated, !lease.isReleased, attachedWebView === webView else { return }
     guard loadedElement != element else {
-      publishRenderReadiness(renderIsReady)
+      if let token = loadToken { publishRenderReadiness(renderIsReady, token: token) }
       return
     }
+    activeNavigation = nil
+    webView.stopLoading()
+    let token = "\(lease.id.uuidString)/\(UUID().uuidString)"
+    loadToken = token
     loadedElement = element
-    renderRevision &+= 1
-    setRenderReady(false)
-    activeNavigation = webView.loadHTMLString(
-      Self.document(for: element),
-      baseURL: nil
-    )
+    snapshotFailure = nil
+    renderIsReady = false
+    publishRenderReadiness(false, token: token)
+    activeNavigation = webView.loadHTMLString(Self.document(for: element, token: token), baseURL: nil)
   }
 
   func userContentController(
     _ userContentController: WKUserContentController,
     didReceive message: WKScriptMessage
   ) {
-    guard message.name == "notebook", let object = message.body as? [String: Any] else { return }
-    if object["kind"] as? String == "diagnostic", let element = loadedElement,
+    guard message.name == "notebook", message.webView === attachedWebView,
+      let object = message.body as? [String: Any] else { return }
+    receive(object)
+  }
+
+  /// The script embeds its immutable load identity, not a mutable native value:
+  /// a timer from the preceding document cannot commit into the current source.
+  func receive(_ object: [String: Any]) {
+    guard let token = object["token"] as? String, accepts(token), let element = loadedElement else { return }
+    if object["kind"] as? String == "diagnostic",
       let kind = object["category"] as? String, let message = object["message"] as? String {
-      AgentElementSnapshotCache.shared.record(.init(kind: kind, elementID: element.id, message: String(message.prefix(2000))), for: element)
+      resources.record(.init(kind: kind, elementID: element.id, message: String(message.prefix(2000))), for: element)
     } else if object["kind"] as? String == "state", let state = object["value"], let value = Self.decodeState(state) {
       onState(value)
     }
@@ -220,12 +380,13 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
   ) {
     let scheme = navigationAction.request.url?.scheme
-    decisionHandler(scheme == nil || scheme == "about" ? .allow : .cancel)
+    decisionHandler(!isInvalidated && !lease.isReleased && attachedWebView === webView
+      && (scheme == nil || scheme == "about") ? .allow : .cancel)
   }
 
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-    guard navigation === activeNavigation else { return }
-    let revision = renderRevision
+    guard let navigation, navigation === activeNavigation, attachedWebView === webView,
+      let token = loadToken, accepts(token) else { return }
     #if os(iOS)
       let frameReadiness = """
         await new Promise(resolve => requestAnimationFrame(
@@ -233,8 +394,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         ));
         """
     #else
-      // WKSnapshotConfiguration.afterScreenUpdates supplies the finished Mac
-      // frame, including an occluded publication window where RAF is suspended.
+      // afterScreenUpdates finishes a Mac frame even in an occluded window.
       let frameReadiness = ""
     #endif
     webView.callAsyncJavaScript(
@@ -246,68 +406,126 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       if (Math.max(document.body.scrollHeight, document.documentElement.scrollHeight) > innerHeight + 1 || Math.max(document.body.scrollWidth, document.documentElement.scrollWidth) > innerWidth + 1) window.notebookDiagnostic('overflow', 'Content exceeds its frame');
       return true;
       """,
-      arguments: [:],
-      in: nil,
-      in: .page,
-      completionHandler: { [weak self] _ in
-        guard let self, renderRevision == revision else { return }
-        #if os(iOS)
-          setRenderReady(true)
-        #endif
-        captureSnapshot(of: webView, revision: revision)
+      arguments: [:], in: nil, in: .page,
+      completionHandler: { [weak self, weak webView] result in
+        guard let self, let webView, accepts(token), attachedWebView === webView else { return }
+        switch result {
+        case .success:
+          captureSnapshot(of: webView, token: token)
+        case .failure(let error):
+          record(error, kind: "render_error", token: token)
+          setRenderReady(false, token: token)
+        }
       }
     )
   }
 
-  private func captureSnapshot(of webView: WKWebView, revision: UInt64) {
-      guard let element = loadedElement else { return }
-      let configuration = WKSnapshotConfiguration()
-      configuration.afterScreenUpdates = true
-      webView.takeSnapshot(with: configuration) { [weak self] image, _ in
-        guard let self,
-          renderRevision == revision,
-          loadedElement == element,
-          let image
-        else { return }
-        AgentElementSnapshotCache.shared.store(image, for: element)
-        setRenderReady(true)
-      }
+  private func captureSnapshot(of webView: WKWebView, token: String) {
+    guard accepts(token), let element = loadedElement else { return }
+    guard let pixels = snapshotPolicy.pixelSize(for: element),
+      let configuration = Self.snapshotConfiguration(for: element, policy: snapshotPolicy, backingScale: snapshotScale(of: webView)),
+      pixels.width.isFinite, pixels.height.isFinite,
+      pixels.width < CGFloat(Int.max - 2), pixels.height < CGFloat(Int.max - 2),
+      let reservation = resources.reserveRaster(pixelWidth: Int(pixels.width) + 2, pixelHeight: Int(pixels.height) + 2)
+    else {
+      fail(.init(kind: "resource_limit", elementID: element.id,
+        message: "The requested snapshot exceeds the raster resource budget."), token: token)
+      return
     }
-
-  func webView(
-    _ webView: WKWebView,
-    didFail navigation: WKNavigation!,
-    withError error: any Error
-  ) {
-    guard navigation === activeNavigation else { return }
-    if let element = loadedElement { AgentElementSnapshotCache.shared.record(.init(kind: "load_error", elementID: element.id, message: error.localizedDescription), for: element) }
-    setRenderReady(false)
+    webView.takeSnapshot(with: configuration) { [weak self] image, error in
+      guard let self else { reservation.release(); return }
+      completeSnapshot(image, error: error, token: token, element: element, reservation: reservation)
+    }
   }
 
-  func webView(
-    _ webView: WKWebView,
-    didFailProvisionalNavigation navigation: WKNavigation!,
-    withError error: any Error
-  ) {
-    guard navigation === activeNavigation else { return }
-    if let element = loadedElement { AgentElementSnapshotCache.shared.record(.init(kind: "load_error", elementID: element.id, message: error.localizedDescription), for: element) }
-    setRenderReady(false)
+  func completeSnapshot(_ image: AgentSnapshotImage?, error: (any Error)?, token: String,
+    element: AgentElement, reservation: RasterReservation) {
+    defer { reservation.release() }
+    guard accepts(token), loadedElement == element else { return }
+    if let error {
+      record(error, kind: "snapshot_error", token: token)
+    } else if let image {
+      if resources.store(image, for: element, reservation: reservation) {
+        setRenderReady(true, token: token)
+      } else {
+        fail(.init(kind: "resource_limit", elementID: element.id,
+          message: "The completed raster could not be admitted to the resource budget."), token: token)
+      }
+    } else {
+      fail(.init(kind: "snapshot_error", elementID: element.id,
+        message: "WebKit returned no image for the completed surface."), token: token)
+    }
   }
 
-  private func setRenderReady(_ ready: Bool) {
-    guard renderIsReady != ready else { return }
+  func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
+    fail(navigation: navigation, in: webView, error: error)
+  }
+
+  func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
+    fail(navigation: navigation, in: webView, error: error)
+  }
+
+  private func fail(navigation: WKNavigation?, in webView: WKWebView, error: any Error) {
+    guard let navigation, navigation === activeNavigation, attachedWebView === webView,
+      let token = loadToken, accepts(token) else { return }
+    record(error, kind: "load_error", token: token)
+    setRenderReady(false, token: token)
+  }
+
+  private func record(_ error: any Error, kind: String, token: String) {
+    guard accepts(token), let element = loadedElement else { return }
+    fail(.init(kind: kind, elementID: element.id,
+      message: String(error.localizedDescription.prefix(2000))), token: token)
+  }
+
+  private func fail(_ diagnostic: RenderDiagnostic, token: String) {
+    guard accepts(token), let element = loadedElement else { return }
+    snapshotFailure = diagnostic.kind == "resource_limit" ? .resourceLimit : .snapshotPending(element.id)
+    resources.record(diagnostic, for: element)
+    setRenderReady(false, token: token)
+    Task { @MainActor [weak self] in
+      guard let self, accepts(token) else { return }
+      onFailure(diagnostic)
+    }
+  }
+
+  private func setRenderReady(_ ready: Bool, token: String) {
+    guard accepts(token), renderIsReady != ready else { return }
     renderIsReady = ready
-    publishRenderReadiness(ready)
+    publishRenderReadiness(ready, token: token)
   }
 
-  private func publishRenderReadiness(_ ready: Bool) {
-    let handler = onRenderReady
-    Task { @MainActor in handler(ready) }
+  private func publishRenderReadiness(_ ready: Bool, token: String) {
+    Task { @MainActor [weak self] in
+      guard let self, accepts(token) else { return }
+      onRenderReady(ready)
+    }
+  }
+
+  private func snapshotScale(of webView: WKWebView) -> CGFloat {
+    #if os(iOS)
+      webView.traitCollection.displayScale
+    #else
+      webView.window?.backingScaleFactor ?? 2
+    #endif
+  }
+
+  static func snapshotConfiguration(for element: AgentElement, policy: AgentSnapshotPolicy,
+    backingScale: CGFloat) -> WKSnapshotConfiguration? {
+    guard let pixels = policy.pixelSize(for: element) else { return nil }
+    let configuration = WKSnapshotConfiguration()
+    configuration.afterScreenUpdates = true
+    configuration.rect = CGRect(x: 0, y: 0, width: element.frame.width, height: element.frame.height)
+    // WKSnapshotConfiguration measures output width in points, not pixels.
+    configuration.snapshotWidth = NSNumber(value: Double(pixels.width / max(1, backingScale)))
+    return configuration
   }
 
   static func makeWebView(
     coordinator: AgentWebCoordinator
   ) -> WKWebView {
+    precondition(!coordinator.isInvalidated && !coordinator.lease.isReleased, "WebKit requires an active, parent-owned lease.")
+    precondition(coordinator.attachedWebView == nil, "A lease session mounts exactly one WebKit surface.")
     let controller = WKUserContentController()
     controller.add(coordinator, name: "notebook")
     let configuration = WKWebViewConfiguration()
@@ -316,6 +534,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
     let webView = WKWebView(frame: .zero, configuration: configuration)
     webView.navigationDelegate = coordinator
+    coordinator.attachedWebView = webView
     #if os(iOS)
       webView.isOpaque = false
       webView.backgroundColor = .clear
@@ -332,7 +551,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     return webView
   }
 
-  private static func document(for element: AgentElement) -> String {
+  private static func document(for element: AgentElement, token: String) -> String {
     let state = json(element.state).replacingOccurrences(
       of: "</script>",
       with: "<\\/script>",
@@ -352,13 +571,14 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         \(element.css)
       </style>
       <script>
-        window.notebookDiagnostic = (category, message) => window.webkit.messageHandlers.notebook.postMessage({kind:'diagnostic',category,message:String(message)});
+        const notebookLoadToken = '\(token)';
+        window.notebookDiagnostic = (category, message) => window.webkit.messageHandlers.notebook.postMessage({token:notebookLoadToken,kind:'diagnostic',category,message:String(message)});
         addEventListener('error', event => window.notebookDiagnostic('javascript_error', event.message || 'Resource load error'));
         addEventListener('unhandledrejection', event => window.notebookDiagnostic('javascript_error', event.reason));
         window.notebook = Object.freeze({
           state: \(state),
           commit(value) {
-            window.webkit.messageHandlers.notebook.postMessage({ kind: 'state', value });
+            window.webkit.messageHandlers.notebook.postMessage({ token: notebookLoadToken, kind: 'state', value });
           }
         });
       </script>

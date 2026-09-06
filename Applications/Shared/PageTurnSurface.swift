@@ -34,11 +34,13 @@ final class PageTurnReadiness {
 
 /// Chooses the small set of live pages that must already have a first frame.
 ///
-/// The current page keeps both immediate neighbours. Once a turn has a
+/// An adjacent turn keeps both immediate neighbours. Once a turn has a
 /// direction, the page beyond its landing point is prepared during the turn,
 /// rather than after the landing. This is the difference between a continuous
 /// stack of paper and a stack that pauses to manufacture its next sheet.
 enum PageTurnPrewarmWindow {
+  static let capacity = 4
+
   static func indices(
     displayedIndex: Int,
     anticipatedIndex: Int?,
@@ -47,10 +49,10 @@ enum PageTurnPrewarmWindow {
   ) -> Set<Int> {
     guard pageCount > 0 else { return [] }
     var result = Set<Int>()
-    insert(displayedIndex - 1, pageCount: pageCount, into: &result)
     insert(displayedIndex, pageCount: pageCount, into: &result)
-    insert(displayedIndex + 1, pageCount: pageCount, into: &result)
 
+    // The page under the hand, its landing and the page beyond the landing
+    // precede speculative neighbours, including for an explicit distant jump.
     if let anticipatedIndex {
       insert(anticipatedIndex, pageCount: pageCount, into: &result)
       let direction = sign(anticipatedIndex - displayedIndex)
@@ -68,6 +70,16 @@ enum PageTurnPrewarmWindow {
         into: &result
       )
     }
+    insert(displayedIndex - 1, pageCount: pageCount, into: &result)
+    insert(displayedIndex + 1, pageCount: pageCount, into: &result)
+
+    // At a finite edge there is no forward sheet to use the remaining slot.
+    // Keep the nearest reverse sheets instead of destroying a ready page only
+    // to rebuild it on the next turn. Work is bounded independently of count.
+    for distance in 1..<capacity where result.count < min(capacity, pageCount) {
+      insert(displayedIndex - distance, pageCount: pageCount, into: &result)
+      insert(displayedIndex + distance, pageCount: pageCount, into: &result)
+    }
     return result
   }
 
@@ -76,7 +88,7 @@ enum PageTurnPrewarmWindow {
     pageCount: Int,
     into result: inout Set<Int>
   ) {
-    guard index >= 0, index < pageCount else { return }
+    guard result.count < capacity, index >= 0, index < pageCount else { return }
     result.insert(index)
   }
 

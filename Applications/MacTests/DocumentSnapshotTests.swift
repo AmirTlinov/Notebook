@@ -4,9 +4,16 @@ import NotebookCore
 import XCTest
 
 final class DocumentSnapshotTests: XCTestCase {
+  private func bitmap(width: Int, height: Int) -> NSImage {
+    let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+      bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    return NSImage(cgImage: context.makeImage()!, size: NSSize(width: width, height: height))
+  }
+
   @MainActor
   func testAgentSnapshotBelongsToExactElementSourceAndState() {
-    let image = NSImage(size: NSSize(width: 240, height: 120))
+    let image = bitmap(width: 240, height: 120)
     let element = AgentElement(
       id: "counter",
       kind: .web,
@@ -17,10 +24,10 @@ final class DocumentSnapshotTests: XCTestCase {
       state: .object(["count": .number(0)])
     )
 
-    AgentElementSnapshotCache.shared.store(image, for: element)
-    XCTAssertNotNil(AgentElementSnapshotCache.shared.image(for: element))
+    SceneRenderResources.shared.store(image, for: element)
+    XCTAssertNotNil(SceneRenderResources.shared.image(for: element))
     XCTAssertNil(
-      AgentElementSnapshotCache.shared.image(
+      SceneRenderResources.shared.image(
         for: element.updating(state: .object(["count": .number(1)]))
       ),
       "Снимок прежнего состояния не должен подписывать новый составной лист"
@@ -36,7 +43,7 @@ final class DocumentSnapshotTests: XCTestCase {
       blocks: [.markdown(id: "body", source: "# Первый кадр")]
     )
     var state = DocumentStateJournal(id: document.id, actor: actor)
-    let image = NSImage(size: NSSize(width: 834, height: 1_194))
+    let image = bitmap(width: 834, height: 1_194)
     let firstToken = DocumentSnapshotCache.token(
       document: document,
       state: state,
@@ -100,7 +107,7 @@ final class DocumentSnapshotTests: XCTestCase {
     let actor = UUID()
     let document = DocumentDocument(id: UUID(), actor: actor)
     let state = DocumentStateJournal(id: document.id, actor: actor)
-    let image = NSImage(size: NSSize(width: 834, height: 1_194))
+    let image = bitmap(width: 834, height: 1_194)
     let token = DocumentSnapshotCache.token(
       document: document,
       state: state,

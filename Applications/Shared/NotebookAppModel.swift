@@ -93,6 +93,7 @@ final class NotebookAppModel {
 
   private(set) var presence: SessionPresence?
   private(set) var presencePhase = PresencePhase.settled
+  var interactiveElementFocus: InteractiveElementReference?
   var isPointing = false
   struct ReturnPlace: Identifiable {
     let id = UUID()
@@ -756,6 +757,7 @@ final class NotebookAppModel {
     let inputOwnerChanged = self.presence?.boardID != resolved.boardID
       || self.presence?.mode != resolved.mode
       || self.presence?.focusedItemID != resolved.focusedItemID
+    if inputOwnerChanged { interactiveElementFocus = nil }
     self.presence = resolved
     // A continuous contact can cross a portal without ending. Transfer its
     // publication barrier with the physical owner, not with each camera frame.
@@ -949,9 +951,9 @@ final class NotebookAppModel {
     updateNativeText(elementID: elementID, text: text)
   }
 
-  func commitSpatialElementState(elementID: String, state: JSONValue) {
-    guard var hierarchy = boardHierarchy, let presence,
-      let board = hierarchy.board(presence.boardID),
+  func commitSpatialElementState(boardID: UUID, elementID: String, state: JSONValue) {
+    guard var hierarchy = boardHierarchy, presence?.boardID == boardID,
+      let board = hierarchy.board(boardID),
       let index = board.elements.firstIndex(where: { $0.id == elementID })
     else { return }
     var element = board.elements[index]
@@ -959,7 +961,7 @@ final class NotebookAppModel {
     guard element.update(state: state, actor: actorID),
       hierarchy.upsertElement(
         element,
-        in: presence.boardID,
+        in: boardID,
         expected: expected,
         actor: actorID
       )
@@ -1160,8 +1162,8 @@ final class NotebookAppModel {
     elementEditingSession = ElementEditingSession()
   }
 
-  func commitElementState(elementID: String, state: JSONValue) {
-    guard var page = activePage else { return }
+  func commitElementState(pageID: UUID, elementID: String, state: JSONValue) {
+    guard var page = pages[pageID] else { return }
     guard let index = page.elements.firstIndex(where: { $0.id == elementID }) else {
       return
     }
@@ -1800,7 +1802,7 @@ final class NotebookAppModel {
     default: return false
     }
     return elements.allSatisfy {
-      $0.kind == .nativeText || AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource($0)) != nil
+      $0.kind == .nativeText || SceneRenderResources.shared.image(for: agentElementSnapshotSource($0)) != nil
     }
   }
 

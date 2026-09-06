@@ -30,9 +30,9 @@ final class BoardElementProjectionTests: XCTestCase {
     window.rootViewController = host
     window.makeKeyAndVisible()
     let deadline = ContinuousClock.now + .seconds(5)
-    while AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource(element)) == nil,
+    while SceneRenderResources.shared.image(for: agentElementSnapshotSource(element)) == nil,
       ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
-    let sourceImage = try XCTUnwrap(AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource(element)))
+    let sourceImage = try XCTUnwrap(SceneRenderResources.shared.image(for: agentElementSnapshotSource(element)))
     let format = UIGraphicsImageRendererFormat(); format.scale = scene.screen.scale
     let sourcePixels = try XCTUnwrap(sourceImage.cgImage)
     var report = ["snapshot=\(sourceImage.size), scale=\(sourceImage.scale), pixels=\(sourcePixels.width)x\(sourcePixels.height)"]
@@ -82,7 +82,7 @@ final class BoardElementProjectionTests: XCTestCase {
     }
     let attachment = XCTAttachment(string: report.joined(separator: "\n"))
     attachment.name = "diagram-line-coverage"; attachment.lifetime = .keepAlways; add(attachment)
-    XCTAssertTrue(AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource(element)) === sourceImage,
+    XCTAssertTrue(SceneRenderResources.shared.image(for: agentElementSnapshotSource(element)) === sourceImage,
       "Дробный зум не пересоздаёт снимок и не меняет исходник схемы")
     await model.finishPendingPersistence()
   }
@@ -120,18 +120,21 @@ final class BoardElementProjectionTests: XCTestCase {
     }
     show(.init(scale: 0.4))
     window.makeKeyAndVisible()
-    var webViews: [String: WKWebView] = [:]
-    let deadline = ContinuousClock.now + .seconds(8)
-    repeat {
-      try await Task.sleep(for: .milliseconds(30))
-      for web in descendants(of: host.view, as: WKWebView.self) {
-        if let id = try? await web.evaluateJavaScript("document.body.dataset.testID") as? String { webViews[id] = web }
+    func activate(_ element: SpatialElement) async throws -> WKWebView {
+      model.interactiveElementFocus = .board(boardID: boardID, elementID: element.id)
+      let deadline = ContinuousClock.now + .seconds(8)
+      while ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(30))
+        for web in descendants(of: host.view, as: WKWebView.self) {
+          if let id = try? await web.evaluateJavaScript("document.body.dataset.testID") as? String,
+            id == element.id { return web }
+        }
       }
-    } while webViews.count < 2 && ContinuousClock.now < deadline
-    XCTAssertEqual(webViews.count, 2)
-    for web in webViews.values {
-      // ResizeObserver owes its initial notification even without a resize.
-      // Wait for that actual frame instead of assuming a 40 ms warm-up delivered it.
+      throw NSError(domain: "InteractiveSurfaceNotReady", code: 1)
+    }
+    for element in elements {
+      let web = try await activate(element)
+      // A new ResizeObserver owes one initial notification even without a resize.
       try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
         web.callAsyncJavaScript("""
           window.resizeCount = 0;
@@ -144,37 +147,35 @@ final class BoardElementProjectionTests: XCTestCase {
           continuation.resume(with: result.map { _ in () })
         }
       }
-    }
-
-    for scale in [0.4, 0.13, 0.27, 0.5354, 0.91, 0.38, 0.4, 0.13] {
-      let camera = SpatialCamera(center: .init(x: scale * 40, y: -scale * 30), scale: scale)
-      show(camera)
-      try await Task.sleep(for: .milliseconds(35))
-      host.view.layoutIfNeeded()
-      for element in elements {
-        let web = try XCTUnwrap(webViews[element.id])
-        XCTAssertNotNil(web.window, "Камера сохраняет тот же живой экземпляр предмета")
-        let physical = CGSize(width: element.frame.width, height: element.frame.height)
-        XCTAssertEqual(web.bounds.width, physical.width, accuracy: 0.01, "Зум меняет проекцию предмета, а не размер WebKit")
-        XCTAssertEqual(web.bounds.height, physical.height, accuracy: 0.01)
-        let value = try await web.evaluateJavaScript("""
-          (() => { const pin = document.querySelector('circle').getBoundingClientRect();
-            return {width:innerWidth,height:innerHeight,resizes:resizeCount,
-              pinX:pin.x + pin.width / 2,pinY:pin.y + pin.height / 2}; })()
-          """)
-        let metrics = try XCTUnwrap(value as? [String: Double])
-        XCTAssertEqual(metrics["width"]!, physical.width, accuracy: 1)
-        XCTAssertEqual(metrics["height"]!, physical.height, accuracy: 1)
-        XCTAssertEqual(metrics["resizes"], 0, "Браузер не догоняет камеру отдельной переразметкой")
-        let frame = web.convert(web.bounds, to: host.view)
-        let top = camera.worldToScreen(try XCTUnwrap(element.worldOrigin), viewport: viewport)
-        XCTAssertEqual(frame.minX, top.x, accuracy: 1)
-        XCTAssertEqual(frame.minY, top.y, accuracy: 1)
-        XCTAssertEqual(frame.width, physical.width * scale, accuracy: 1)
-        XCTAssertEqual(frame.height, physical.height * scale, accuracy: 1)
-        let pin = web.convert(CGPoint(x: try XCTUnwrap(metrics["pinX"]), y: try XCTUnwrap(metrics["pinY"])), to: host.view)
-        XCTAssertEqual(pin.x, top.x + physical.width * 0.75 * scale, accuracy: 1)
-        XCTAssertEqual(pin.y, top.y + physical.height * 0.25 * scale, accuracy: 1)
+      for scale in [0.4, 0.13, 0.27, 0.5354, 0.91, 0.38, 0.4, 0.13] {
+        let camera = SpatialCamera(center: .init(x: scale * 40, y: -scale * 30), scale: scale)
+        show(camera)
+        try await Task.sleep(for: .milliseconds(35))
+        host.view.layoutIfNeeded()
+        do {
+          XCTAssertNotNil(web.window, "Камера сохраняет тот же живой экземпляр предмета")
+          let physical = CGSize(width: element.frame.width, height: element.frame.height)
+          XCTAssertEqual(web.bounds.width, physical.width, accuracy: 0.01, "Зум меняет проекцию предмета, а не размер WebKit")
+          XCTAssertEqual(web.bounds.height, physical.height, accuracy: 0.01)
+          let value = try await web.evaluateJavaScript("""
+            (() => { const pin = document.querySelector('circle').getBoundingClientRect();
+              return {width:innerWidth,height:innerHeight,resizes:resizeCount,
+                pinX:pin.x + pin.width / 2,pinY:pin.y + pin.height / 2}; })()
+            """)
+          let metrics = try XCTUnwrap(value as? [String: Double])
+          XCTAssertEqual(metrics["width"]!, physical.width, accuracy: 1)
+          XCTAssertEqual(metrics["height"]!, physical.height, accuracy: 1)
+          XCTAssertEqual(metrics["resizes"], 0, "Браузер не догоняет камеру отдельной переразметкой")
+          let frame = web.convert(web.bounds, to: host.view)
+          let top = camera.worldToScreen(try XCTUnwrap(element.worldOrigin), viewport: viewport)
+          XCTAssertEqual(frame.minX, top.x, accuracy: 1)
+          XCTAssertEqual(frame.minY, top.y, accuracy: 1)
+          XCTAssertEqual(frame.width, physical.width * scale, accuracy: 1)
+          XCTAssertEqual(frame.height, physical.height * scale, accuracy: 1)
+          let pin = web.convert(CGPoint(x: try XCTUnwrap(metrics["pinX"]), y: try XCTUnwrap(metrics["pinY"])), to: host.view)
+          XCTAssertEqual(pin.x, top.x + physical.width * 0.75 * scale, accuracy: 1)
+          XCTAssertEqual(pin.y, top.y + physical.height * 0.25 * scale, accuracy: 1)
+        }
       }
     }
     XCTAssertEqual(model.board, originalBoard, "Зум не меняет содержание и сохранённые расстояния между предметами")
@@ -184,7 +185,7 @@ final class BoardElementProjectionTests: XCTestCase {
     proof.name = "rigid-board-elements-after-reversible-zoom"; proof.lifetime = .keepAlways; add(proof)
 
     let reference = EditableElementReference.spatial(elementID: elements[0].id)
-    let web = try XCTUnwrap(webViews[elements[0].id])
+    let web = try await activate(elements[0])
     model.selectElement(reference)
     model.updateElementResize(reference, delta: .init(x: 90, y: 80))
     try await Task.sleep(for: .milliseconds(35))

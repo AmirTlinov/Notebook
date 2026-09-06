@@ -101,13 +101,21 @@ private struct NotebookPageThumbnail: View {
   let itemID: UUID?
   let index: Int
   @State private var ready = false
+  @State private var preparationFailed = false
   var body: some View {
     ZStack {
       if let itemID, let document = model.documents[itemID], let state = model.documentStates[itemID] {
         let geometry = WorkspaceItemGeometry.document(document.paperSize)
-        DocumentWebView(document: document, state: state, isInteractive: false, selectedPageIndex: index,
-          capturesSnapshot: false, onRenderReady: .init { value in Task { @MainActor in ready = value } }, onPageLayout: { _ in },
-          onSourceChange: { _,_ in }, onStateChange: { _,_ in })
+        DocumentThumbnailView(document: document, state: state, pageIndex: index,
+          onRenderReady: .init { value in Task { @MainActor in
+            ready = value
+            if value { preparationFailed = false }
+          } },
+          onFailure: { _ in Task { @MainActor in preparationFailed = true } })
+          .onChange(of: SceneRasterSource.document(id: document.id,
+            token: DocumentSnapshotCache.token(document: document, state: state, pageIndex: index))) { _,_ in
+              ready = false; preparationFailed = false
+            }
           .frame(width: geometry.width, height: geometry.height)
           .scaleEffect(90 / geometry.width)
           .frame(width: 90, height: 128)
@@ -115,7 +123,12 @@ private struct NotebookPageThumbnail: View {
         let page = model.pages[item.pageIDs[index]] {
         PageSurface(page: page, isInteractive: false, isVisible: true, onRenderReady: .init { value in Task { @MainActor in ready = value } })
       }
-      if !ready { ProgressView().controlSize(.small) }
+      if !ready {
+        if preparationFailed {
+          Image(systemName: "exclamationmark.triangle").font(.caption).foregroundStyle(.secondary)
+            .accessibilityLabel("Миниатюра недоступна. Страницу можно открыть.")
+        } else { ProgressView().controlSize(.small) }
+      }
     }.clipped().allowsHitTesting(false).accessibilityHidden(true)
   }
 }

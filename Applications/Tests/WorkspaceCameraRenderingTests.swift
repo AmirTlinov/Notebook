@@ -45,17 +45,21 @@ final class WorkspaceCameraRenderingTests: XCTestCase {
         camera: .init(center: .init(x: 7200, y: 6200), scale: scale), viewport: viewport), settled: false)
     }
     show(0.03)
+    model.updatePresence(try XCTUnwrap(model.presence), settled: true)
     window.makeKeyAndVisible()
-    defer { window.isHidden = true }
+    defer { window.isHidden = true; window.rootViewController = nil }
     let deadline = ContinuousClock.now + .seconds(10)
-    while elements.contains(where: { AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource($0)) == nil }),
+    while elements.contains(where: { SceneRenderResources.shared.image(for: agentElementSnapshotSource($0)) == nil }),
       ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(30)) }
-    let images = try elements.map { try XCTUnwrap(AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource($0))) }
+    let images = try elements.map { try XCTUnwrap(SceneRenderResources.shared.image(for: agentElementSnapshotSource($0))) }
     func webViews(in view: UIView) -> [WKWebView] {
       (view as? WKWebView).map { [$0] } ?? view.subviews.flatMap { webViews(in: $0) }
     }
+    while !webViews(in: host.view).isEmpty, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
     let mounted = Set(webViews(in: host.view).map(ObjectIdentifier.init))
-    XCTAssertEqual(mounted.count, elements.count)
+    XCTAssertEqual(mounted.count, 0, "Готовые статические SVG освобождают WebKit до движения камеры")
     let end = expectation(description: "Repeated diagram camera frames")
     let driver = CameraFrameDriver()
     driver.step = { frame in
@@ -73,7 +77,7 @@ final class WorkspaceCameraRenderingTests: XCTestCase {
     XCTAssertTrue(finalWebViews.isSubset(of: mounted),
       "Повтор камеры не запускает новую подготовку уже готовых статических источников")
     for (element, image) in zip(elements, images) {
-      XCTAssertTrue(AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource(element)) === image,
+      XCTAssertTrue(SceneRenderResources.shared.image(for: agentElementSnapshotSource(element)) === image,
         "Камера использует прежние точные снимки, а не очередь новых растров")
     }
     let times = Array(driver.intervals.dropFirst(120)).sorted()
@@ -122,8 +126,10 @@ final class WorkspaceCameraRenderingTests: XCTestCase {
     window.rootViewController = host
     model.updatePresence(SessionPresence(boardID: boardID, mode: .board, camera: SpatialCamera(center: center, scale: 0.15), viewport: size), settled: false)
     window.makeKeyAndVisible()
-    defer { window.isHidden = true }
+    defer { window.isHidden = true; window.rootViewController = nil }
     try await Task.sleep(for: .seconds(2))
+    let resources = SceneRenderResources.shared
+    let resourcesBefore = "web=\(resources.activeWebSurfaceCount); pending=\(resources.pendingWebRequestCount); rasterBytes=\(resources.residentBytes)"
     let end = expectation(description: "camera frames")
     let driver = CameraFrameDriver()
     driver.step = { frame in
@@ -144,6 +150,10 @@ final class WorkspaceCameraRenderingTests: XCTestCase {
     attachment.name = "Dense board camera frame intervals in seconds"
     attachment.lifetime = .keepAlways
     add(attachment)
+    let resourceReport = XCTAttachment(string: "before: \(resourcesBefore)\nafter: web=\(resources.activeWebSurfaceCount); pending=\(resources.pendingWebRequestCount); rasterBytes=\(resources.residentBytes)")
+    resourceReport.name = "Dense board preparation resources"
+    resourceReport.lifetime = .keepAlways
+    add(resourceReport)
     XCTAssertLessThan(p95, 0.1, report)
   }
 }

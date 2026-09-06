@@ -282,18 +282,20 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     window.makeKeyAndVisible()
     defer { window.isHidden = true }
     let deadline = ContinuousClock.now + .seconds(8)
-    while webViews(in: host.view).count < 4, ContinuousClock.now < deadline {
-      try await Task.sleep(for: .milliseconds(30))
-    }
     let workset = model.sceneWorkset(presence: presence)
     XCTAssertEqual(workset.elements.count, 4)
-    XCTAssertEqual(webViews(in: host.view).count, workset.elements.count,
-      "The actual SwiftUI scene mounts WebKit only for its four visible SVG owners")
     while elements.prefix(4).contains(where: {
-      AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource($0)) == nil
-    }), ContinuousClock.now < deadline {
+      SceneRenderResources.shared.image(for: agentElementSnapshotSource($0)) == nil
+    }) || !webViews(in: host.view).isEmpty {
+      guard ContinuousClock.now < deadline else { break }
       try await Task.sleep(for: .milliseconds(30))
+      XCTAssertLessThanOrEqual(webViews(in: host.view).count, 6)
     }
+    XCTAssertTrue(elements.prefix(4).allSatisfy {
+      SceneRenderResources.shared.image(for: agentElementSnapshotSource($0)) != nil
+    })
+    XCTAssertTrue(webViews(in: host.view).isEmpty,
+      "Four visible SVGs keep their rasters, not four idle browser sessions")
     let picture = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
       window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
     }
@@ -314,18 +316,21 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     model.updatePresence(try XCTUnwrap(model.presence), settled: true)
     model.selectElement(.spatial(elementID: elements[4].id))
     let pinDeadline = ContinuousClock.now + .seconds(5)
-    while webViews(in: host.view).count < 5, ContinuousClock.now < pinDeadline {
+    while SceneRenderResources.shared.image(for: agentElementSnapshotSource(elements[4])) == nil,
+      ContinuousClock.now < pinDeadline {
       try await Task.sleep(for: .milliseconds(20))
     }
-    XCTAssertEqual(webViews(in: host.view).count, 5,
-      "An explicitly selected offscreen owner remains mounted in addition to the visible workset")
+    XCTAssertNotNil(SceneRenderResources.shared.image(for: agentElementSnapshotSource(elements[4])),
+      "The pinned offscreen owner gets a completed image through the same limited renderer")
+    XCTAssertEqual(model.sceneWorkset(presence: try XCTUnwrap(model.presence),
+      pinned: [.element(elements[4].id)]).elements.count, 5)
     model.clearElementSelection()
     let releaseDeadline = ContinuousClock.now + .seconds(5)
-    while webViews(in: host.view).count != 4, ContinuousClock.now < releaseDeadline {
+    while !webViews(in: host.view).isEmpty, ContinuousClock.now < releaseDeadline {
       try await Task.sleep(for: .milliseconds(20))
     }
-    XCTAssertEqual(webViews(in: host.view).count, 4,
-      "Removing the pin releases the offscreen surface instead of growing the live pool")
+    XCTAssertTrue(webViews(in: host.view).isEmpty)
+    XCTAssertEqual(model.sceneWorkset(presence: try XCTUnwrap(model.presence)).elements.count, 4)
     await model.finishPendingPersistence()
   }
 

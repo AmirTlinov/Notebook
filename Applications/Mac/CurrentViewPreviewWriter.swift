@@ -109,6 +109,8 @@ enum CurrentViewPreviewWriter {
     page: PageDocument?,
     document: DocumentDocument?,
     documentState: DocumentStateJournal?,
+    agentRasters: RasterBatchLease,
+    documentRaster: RasterLease?,
     pngURL: URL,
     receiptURL: URL
   ) async throws {
@@ -122,7 +124,9 @@ enum CurrentViewPreviewWriter {
       ).elements,
       page: page,
       document: document,
-      documentState: documentState
+      documentState: documentState,
+      agentRasters: agentRasters,
+      documentRaster: documentRaster
     )
     let content = SettledCurrentView(
       snapshot: snapshot,
@@ -132,6 +136,7 @@ enum CurrentViewPreviewWriter {
       presence: presence
     )
     .environment(model)
+    .environment(\.sceneSnapshotRasters, agentRasters)
     .frame(width: viewport.width, height: viewport.height)
     let png = try await renderPNG(
       content,
@@ -184,21 +189,24 @@ enum CurrentViewPreviewWriter {
     var diagnostics: [RenderDiagnostic] = []
     var inkRegions: [PageRect] = []
     var inkRaster: RasterSnapshot?
+    var documentRaster: RasterLease?
+    defer { documentRaster?.release() }
     switch target.kind {
     case .page:
       guard let page = model.pages[target.id] else { throw PreviewError.invalidSurface }
-      try await AgentElementSnapshotCache.shared.prepare(page.elements)
-      full = try await pageCompositeSnapshot(page)
+      let resources = try await SceneRenderResources.shared.prepare(page.elements)
+      defer { resources.release() }
+      full = try await pageCompositeSnapshot(page, rasters: resources)
       inkRegions = try await Task.detached(priority: .utility) { try PageVisionRenderer.render(page).regions.map { $0.receipt.contentPoints } }.value
       await PageInkRasterCache.shared.prepare(page)
       guard let ink = PageInkRasterCache.shared.image(for: page) else { throw PreviewError.agentSnapshotPending }
       inkRaster = try await raster(NSImage(cgImage: ink, size: .init(width: page.size.width, height: page.size.height)))
-      diagnostics = AgentElementSnapshotCache.shared.diagnostics(for: page.elements)
+      diagnostics = SceneRenderResources.shared.diagnostics(for: page.elements)
     case .document:
       guard let document = model.documents[target.id], let state = model.documentStates[target.id] else { throw PreviewError.invalidSurface }
-      try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: request.pageIndex)
-      guard let image = DocumentSnapshotCache.shared.image(for: document, state: state, pageIndex: request.pageIndex) else { throw PreviewError.documentSnapshotPending }
-      full = try await raster(image)
+      let preparedDocument = try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: request.pageIndex)
+      documentRaster = preparedDocument
+      full = try await raster(preparedDocument.image)
       diagnostics = DocumentRenderRegistry.shared.entry(document: document, state: state, pageIndex: request.pageIndex)?.diagnostics ?? []
     case .board, .cover:
       let boardID = target.kind == .board ? target.id : target.boardID!
@@ -221,15 +229,17 @@ enum CurrentViewPreviewWriter {
         camera: projection, viewport: .init(x: size.width, y: size.height), focusedItemID: target.kind == .cover ? target.id : nil)
       let elements = WorkspaceSceneProjection.snapshotLayers(workspace: content.workspace, hierarchy: content.hierarchy,
         presence: presence, documents: model.documents).elements.filter { $0.kind != .nativeText }.map(agentElementSnapshotSource)
-      try await AgentElementSnapshotCache.shared.prepare(elements)
+      let resources = try await SceneRenderResources.shared.prepare(elements)
+      defer { resources.release() }
       let view = SettledSpatialWorkspaceView(workspace: content.workspace, board: board, spatialInk: content.ink, presence: presence)
-        .environment(model).frame(width: size.width, height: size.height)
+        .environment(model).environment(\.sceneSnapshotRasters, resources)
+        .frame(width: size.width, height: size.height)
       let png = try await renderPNG(view, size: size, scale: 2,
         inkSurfaces: WorkspaceSceneProjection.snapshotLayers(workspace: content.workspace, hierarchy: content.hierarchy,
           presence: presence, documents: model.documents).ink, journal: content.ink)
       guard let image = NSImage(data: png) else { throw PreviewError.pngEncoding }
       full = RasterSnapshot(image: image, png: png)
-      diagnostics = AgentElementSnapshotCache.shared.diagnostics(for: elements)
+      diagnostics = SceneRenderResources.shared.diagnostics(for: elements)
       let inkSurface = WorkspaceSceneProjection.SnapshotInkSurface(surface: target.kind == .cover ? .cover(target.id) : .board(target.id),
         camera: target.kind == .board ? projection : nil, viewport: .init(x: size.width, y: size.height))
       let inkSnapshot = try await SpatialInkRasterSnapshot.prepare([inkSurface], journal: content.ink)
@@ -274,34 +284,34 @@ enum CurrentViewPreviewWriter {
     spatialElements: [SpatialElement],
     page: PageDocument?,
     document: DocumentDocument?,
-    documentState: DocumentStateJournal?
+    documentState: DocumentStateJournal?,
+    agentRasters: RasterBatchLease,
+    documentRaster: RasterLease?
   ) async throws -> SettledSceneSnapshot {
     switch presence.mode {
     case .board:
-      try requireSpatialElementSnapshots(spatialElements)
+      try requireSpatialElementSnapshots(spatialElements, rasters: agentRasters)
       return .board(boardID: presence.boardID)
     case .cover:
       guard let itemID = presence.focusedItemID else {
         throw PreviewError.invalidSurface
       }
-      try requireSpatialElementSnapshots(spatialElements)
+      try requireSpatialElementSnapshots(spatialElements, rasters: agentRasters)
       return .cover(itemID: itemID)
     case .page:
       guard let page, let itemID = presence.focusedItemID else {
         throw PreviewError.invalidSurface
       }
       return .page(
-        try await pageCompositeSnapshot(page),
+        try await pageCompositeSnapshot(page, rasters: agentRasters),
         itemID: itemID,
         CurrentViewPageRevision(page: page)
       )
     case .document:
       guard let document, let documentState,
-        let image = DocumentSnapshotCache.shared.image(
-          for: document,
-          state: documentState,
-          pageIndex: presence.documentPageIndex
-        )
+        let image = documentRaster?.image(for: .document(id: document.id,
+          token: DocumentSnapshotCache.token(document: document, state: documentState,
+            pageIndex: presence.documentPageIndex)))
       else { throw PreviewError.documentSnapshotPending }
       return .document(
         try await raster(image),
@@ -316,7 +326,8 @@ enum CurrentViewPreviewWriter {
 
   @MainActor
   private static func pageCompositeSnapshot(
-    _ page: PageDocument
+    _ page: PageDocument,
+    rasters: RasterBatchLease
   ) async throws -> RasterSnapshot {
     let faithfulPNG = try await Task.detached(priority: .utility) { try PageVisionRenderer.faithfulPNG(page) }.value
     try Task.checkCancellation()
@@ -327,7 +338,7 @@ enum CurrentViewPreviewWriter {
       return RasterSnapshot(image: base, png: faithfulPNG)
     }
     let overlays = try page.elements.map { element in
-      guard let image = AgentElementSnapshotCache.shared.image(for: element) else {
+      guard let image = rasters.image(for: element, minimumScale: 2) else {
         throw PreviewError.agentSnapshotPending
       }
       return (element: element, image: image)
@@ -346,11 +357,12 @@ enum CurrentViewPreviewWriter {
 
   @MainActor
   private static func requireSpatialElementSnapshots(
-    _ elements: [SpatialElement]
+    _ elements: [SpatialElement],
+    rasters: RasterBatchLease
   ) throws {
     for element in elements where element.kind != .nativeText {
-      guard AgentElementSnapshotCache.shared.image(
-        for: agentElementSnapshotSource(element)
+      guard rasters.image(
+        for: agentElementSnapshotSource(element), minimumScale: 2
       ) != nil else {
         throw PreviewError.agentSnapshotPending
       }

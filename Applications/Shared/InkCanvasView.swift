@@ -173,7 +173,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     clearColor = MTLClearColorMake(0, 0, 0, 0)
     framebufferOnly = true
     enableSetNeedsDisplay = false
-    isPaused = false
+    // Mounting, not construction, admits a display loop. Derived offscreen
+    // snapshots use InkRasterRenderer and never need a live drawable timer.
+    isPaused = true
     preferredFramesPerSecond = 120
     autoResizeDrawable = true
     #if os(iOS)
@@ -212,7 +214,14 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   #endif
 
   private func mounted() {
-    if window != nil { requestFrame(); scheduleStableRasterIfNeeded() }
+    guard window != nil else {
+      // UIKit can retain a culled canvas beyond the end of its visible use.
+      // Stop its timer even when no drawable arrives to finish the last draw.
+      isPaused = true
+      return
+    }
+    requestFrame()
+    scheduleStableRasterIfNeeded()
   }
 
   func project(camera: SpatialCamera?, viewport: SpatialPoint) {
@@ -348,6 +357,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   func draw(in view: MTKView) {
+    guard window != nil else { isPaused = true; return }
     guard inFlightSemaphore.wait(timeout: .now()) == .success else { return }
     var mustSignal = true
     defer {
@@ -586,7 +596,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   private func requestFrame() {
-    isPaused = false
+    // Mesh/raster completions may arrive after culling. Preserve their ready
+    // content, but only a mounted surface can resume display execution.
+    isPaused = window == nil
   }
 
   private func discardActiveAction() {

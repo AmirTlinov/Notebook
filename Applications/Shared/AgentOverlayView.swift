@@ -7,10 +7,11 @@ struct AgentOverlayView: View {
   let pageID: UUID
   let elements: [AgentElement]
   let isElementEditingEnabled: Bool
+  let allowsInteraction: Bool
   let onRenderReady: (Bool) -> Void
   let onState: (String, JSONValue) -> Void
 
-  @State private var readyElementIDs: Set<String> = []
+  @State private var readiness = AgentOverlayReadiness()
 
   var body: some View {
     ZStack(alignment: .topLeading) {
@@ -25,6 +26,7 @@ struct AgentOverlayView: View {
           pageID: pageID,
           elementID: element.id
         )
+        let interactiveReference = InteractiveElementReference.page(pageID: pageID, elementID: element.id)
         EditableElementContainer(
           isEditingEnabled: isElementEditingEnabled,
           isSelected: model.elementEditingSession.selection == reference,
@@ -43,12 +45,15 @@ struct AgentOverlayView: View {
           resizeDelta: model.elementResizeDelta(reference),
           onDelete: { model.deleteElement(reference) }
         ) {
-          AgentWebElementView(
+          PreparedAgentElementView(
             element: element,
+            allowsInteraction: allowsInteraction,
+            focus: interactiveReference,
             onRenderReady: { ready in
-              setElement(element.id, ready: ready)
+              setElement(element, ready: ready)
             },
             onState: { state in
+              guard allowsInteraction, model.interactiveElementFocus == interactiveReference else { return }
               onState(element.id, state)
             }
           )
@@ -66,7 +71,7 @@ struct AgentOverlayView: View {
     .onAppear { publishReadiness() }
     .onChange(of: elements) { _, updatedElements in
       let liveIDs = Set(updatedElements.map(\.id))
-      readyElementIDs.formIntersection(liveIDs)
+      readiness.retain(updatedElements)
       if case .page(let selectedPageID, let selectedElementID) =
         model.elementEditingSession.selection,
         selectedPageID == pageID,
@@ -87,17 +92,32 @@ struct AgentOverlayView: View {
     return model.elementEditingSession.translation
   }
 
-  private func setElement(_ id: String, ready: Bool) {
-    if ready {
-      readyElementIDs.insert(id)
-    } else {
-      readyElementIDs.remove(id)
-    }
+  private func setElement(_ element: AgentElement, ready: Bool) {
+    readiness.record(element, ready: ready)
     publishReadiness()
   }
 
   private func publishReadiness() {
-    let expected = Set(elements.map(\.id))
-    onRenderReady(expected.isSubset(of: readyElementIDs))
+    onRenderReady(readiness.isReady(for: elements))
+  }
+}
+
+/// Readiness names the exact source and state, not just an element whose ID can
+/// survive an edit. A late teardown of the old source cannot clear its successor.
+struct AgentOverlayReadiness {
+  private var sources: [String: AgentElement] = [:]
+
+  mutating func record(_ element: AgentElement, ready: Bool) {
+    if ready { sources[element.id] = element }
+    else if sources[element.id] == element { sources[element.id] = nil }
+  }
+
+  mutating func retain(_ elements: [AgentElement]) {
+    let current = Dictionary(elements.map { ($0.id, $0) }, uniquingKeysWith: { _, newest in newest })
+    sources = sources.filter { current[$0.key] == $0.value }
+  }
+
+  func isReady(for elements: [AgentElement]) -> Bool {
+    elements.allSatisfy { sources[$0.id] == $0 }
   }
 }

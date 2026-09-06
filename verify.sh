@@ -212,6 +212,24 @@ xcodebuild \
   -only-testing:NotebookTests \
   -only-testing:NotebookUITests/DrawingResponsivenessTests
 
+for platform in mac ipad; do
+  xcrun xcresulttool get test-results summary \
+    --path "$EVIDENCE/$platform.xcresult" --compact \
+    >"$EVIDENCE/$platform-summary.json"
+  python3 - "$EVIDENCE/$platform-summary.json" <<'PY'
+import json
+import pathlib
+import sys
+
+summary = json.loads(pathlib.Path(sys.argv[1]).read_text())
+warnings = summary.get("runtimeWarnings", [])
+if warnings:
+    for warning in warnings:
+        print(warning.get("message", str(warning)), file=sys.stderr)
+    raise SystemExit("Проверка исполнения не допускает предупреждений runtime.")
+PY
+done
+
 APP_CONTAINER=$(xcrun simctl get_app_container \
   "$SIMULATOR_ID" com.amirtlinov.notebook data)
 python3 - "$APP_CONTAINER/tmp/NotebookUITests/DrawingResponsiveness/pages" <<'PY'

@@ -88,12 +88,16 @@ final class PortalPassageTests: XCTestCase {
 
     scene.model.enterBoard(scene.childID)
     try await Task.sleep(for: .milliseconds(40))
+    XCTAssertTrue(agentWebViews(in: scene.host.view).isEmpty,
+      "Entering a board does not activate every prepared source")
+    let interactive = try XCTUnwrap(scene.model.boardHierarchy?.board(scene.childID)?.elements.first { !$0.javaScript.isEmpty })
+    scene.model.interactiveElementFocus = .board(boardID: scene.childID, elementID: interactive.id)
     let deadline = ContinuousClock.now + .seconds(5)
-    while agentWebViews(in: scene.host.view).count < 10, ContinuousClock.now < deadline {
+    while agentWebViews(in: scene.host.view).count < 1, ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(20))
     }
-    XCTAssertEqual(agentWebViews(in: scene.host.view).count, 10,
-      "После контакта тот же элемент снова получает живой ввод")
+    XCTAssertEqual(agentWebViews(in: scene.host.view).count, 1,
+      "Явное обращение активирует одну схему, а не всю доску")
     let mounted = Set(agentWebViews(in: scene.host.view).map(ObjectIdentifier.init))
     scene.model.inputGate.beginContact(source: input)
     try scene.send(.began(centroid: center, isOpeningApproach: true))
@@ -218,6 +222,7 @@ final class PortalPassageTests: XCTestCase {
         frame: .init(x: 0, y: 0, width: 400, height: 300),
         worldOrigin: .init(x: Double(index % 3) * 500, y: Double(index / 3) * 400), source: "Portal marker",
         html: "<svg width='100%' height='100%' viewBox='0 0 400 300'><circle cx='200' cy='150' r='65' fill='#ed2020'/></svg>",
+        javaScript: index == 0 ? "document.body.dataset.interactive = 'ready';" : "",
         stamp: .init(counter: 0, actor: model.actorID))
     }
     for element in elements {
@@ -233,14 +238,17 @@ final class PortalPassageTests: XCTestCase {
     let host = UIHostingController(rootView: SpatialWorkspaceView().environment(model).ignoresSafeArea())
     window.rootViewController = host
     model.updatePresence(.init(boardID: try XCTUnwrap(model.workspace?.rootBoardID), mode: .board,
-      camera: .init(scale: 0.35), viewport: viewport), settled: false)
+      camera: .init(scale: 0.35), viewport: viewport), settled: true)
     window.makeKeyAndVisible()
-    let deadline = ContinuousClock.now + .seconds(6)
-    while elements.contains(where: { AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource($0)) == nil }), ContinuousClock.now < deadline {
+    let deadline = ContinuousClock.now + .seconds(15)
+    while elements.contains(where: { SceneRenderResources.shared.image(for: agentElementSnapshotSource($0)) == nil }), ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(30))
     }
-    XCTAssertTrue(elements.allSatisfy { AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource($0)) != nil })
-    try await Task.sleep(for: .milliseconds(40))
+    XCTAssertTrue(elements.allSatisfy { SceneRenderResources.shared.image(for: agentElementSnapshotSource($0)) != nil })
+    while !agentWebViews(in: host.view).isEmpty, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    XCTAssertTrue(agentWebViews(in: host.view).isEmpty, "Preparation completes before the fixed warm gesture route")
     return Scene(root: root, model: model, childID: childID, viewport: viewport, window: window, host: host)
   }
 

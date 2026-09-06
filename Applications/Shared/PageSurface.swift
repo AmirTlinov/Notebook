@@ -10,7 +10,9 @@ struct PageSurface: View {
   let onRenderReady: PageTurnReadiness
 
   @State private var inkIsReady = false
-  @State private var overlayIsReady = false
+  @State private var readyOverlay: [AgentElement]?
+
+  private var overlayIsReady: Bool { readyOverlay == page.elements }
 
   var body: some View {
     GeometryReader { geometry in
@@ -54,12 +56,15 @@ struct PageSurface: View {
           pageID: page.id,
           elements: page.elements,
           isElementEditingEnabled: model.isElementEditingEnabled && isInteractive,
+          allowsInteraction: isVisible && isInteractive,
           onRenderReady: { ready in
-            overlayIsReady = ready
-            publishReadiness(ink: inkIsReady, overlay: ready)
+            if ready { readyOverlay = page.elements }
+            else if readyOverlay == page.elements { readyOverlay = nil }
+            publishReadiness(ink: inkIsReady, overlay: overlayIsReady)
           },
           onState: { elementID, state in
-            model.commitElementState(elementID: elementID, state: state)
+            guard isVisible, isInteractive, model.activePage?.id == page.id else { return }
+            model.commitElementState(pageID: page.id, elementID: elementID, state: state)
           }
         )
         .opacity(isVisible ? 1 : 0)
@@ -86,6 +91,9 @@ struct PageSurface: View {
       .clipped()
     }
     .onAppear {
+      publishReadiness(ink: inkIsReady, overlay: overlayIsReady)
+    }
+    .onChange(of: page.elements) { _, _ in
       publishReadiness(ink: inkIsReady, overlay: overlayIsReady)
     }
   }

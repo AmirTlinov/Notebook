@@ -572,7 +572,7 @@
           activeEditorLayout = null;
           if (commit && source !== block.source) {
             block.source = source;
-            bridge({ kind: 'source', documentID: payload.documentID, blockID, source });
+            bridge({ kind: 'source', documentID: payload.documentID, renderToken: payload.renderToken, blockID, source });
           }
           if (rerender) apply(payload);
         };
@@ -626,7 +626,7 @@
         if (message.channel === 'notebook-diagnostic') { diagnostic(message.kind,message.message,blockID); return; }
         payload.states[blockID] = message.state;
         bridge({
-          kind: 'state', documentID: payload.documentID,
+          kind: 'state', documentID: payload.documentID, renderToken: payload.renderToken,
           blockID, value: message.state
         });
       });

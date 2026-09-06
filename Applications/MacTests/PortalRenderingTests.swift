@@ -45,7 +45,8 @@ final class PortalRenderingTests: XCTestCase {
       _ = ink.append(tool: tool, spans: [SpatialInkSpan(surface: .board(childID), samples: points)], actor: actor)
     }
     model.receivePeerMessage(.spatialInk(ink))
-    try await AgentElementSnapshotCache.shared.prepare(elements.filter { $0.kind != .nativeText }.map(agentElementSnapshotSource))
+    let resources = try await SceneRenderResources.shared.prepare(elements.filter { $0.kind != .nativeText }.map(agentElementSnapshotSource))
+    defer { resources.release() }
     for size in [SpatialPoint(x: 834, y: 1_194), SpatialPoint(x: 1_366, y: 1_024)] {
       let camera = BoardPortalProjection.entryCamera(portalCamera: hierarchy.portalCamera(childID)!, viewport: size)
       let presence = SessionPresence(boardID: childID, mode: .board, camera: camera, viewport: size)
@@ -55,8 +56,10 @@ final class PortalRenderingTests: XCTestCase {
         transitionViewport: size, rendersSettledSnapshot: true)
         .scaleEffect(fill)
         .frame(width: size.x, height: size.y).clipped().environment(model)
+        .environment(\.sceneSnapshotRasters, resources)
       let active = SettledSpatialWorkspaceView(workspace: workspace,
         board: hierarchy.board(childID)!, spatialInk: ink, presence: presence).environment(model)
+        .environment(\.sceneSnapshotRasters, resources)
       let portalPresence = SessionPresence(boardID: childID, mode: .board, camera: camera,
         viewport: BoardPortalProjection.renderViewport(viewport: size))
       let surfaces = WorkspaceSceneProjection.snapshotLayers(workspace: workspace, hierarchy: hierarchy,
@@ -151,7 +154,7 @@ final class PortalRenderingTests: XCTestCase {
     XCTAssertNotEqual(merged.revision, left.revision)
     let after = try await receipt(store: store, revision: merged.revision)
     XCTAssertNotEqual(after.pngSHA256, before.pngSHA256)
-    XCTAssertNotNil(AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource(element)))
+    XCTAssertNotNil(SceneRenderResources.shared.image(for: agentElementSnapshotSource(element)))
     XCTAssertEqual(after.pngSHA256, SHA256.hash(data: try Data(contentsOf: store.currentViewPreviewURL))
       .map { String(format: "%02x", $0) }.joined())
   }

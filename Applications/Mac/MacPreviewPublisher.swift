@@ -119,7 +119,7 @@ final class MacPreviewPublisher {
       }
     }
     agentSnapshotObserver = NotificationCenter.default.publisher(
-      for: AgentElementSnapshotCache.didChange
+      for: SceneRenderResources.didChange
     ).sink { [weak self] _ in
       Task { @MainActor [weak self] in
         guard let self else { return }
@@ -266,15 +266,19 @@ final class MacPreviewPublisher {
         return
       }
       do {
-        try await AgentElementSnapshotCache.shared.prepare(snapshotElements())
+        let resources = try await SceneRenderResources.shared.prepare(snapshotElements())
+        defer { resources.release() }
+        var documentRaster: RasterLease?
+        defer { documentRaster?.release() }
         if let model, model.presence?.mode == .document, let document = model.activeDocument,
           let state = model.documentStates[document.id] {
-          try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: model.presence?.documentPageIndex ?? 0)
+          documentRaster = try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: model.presence?.documentPageIndex ?? 0)
         }
         guard !Task.isCancelled, model?.permitsBackgroundPreparation == true, makeCurrentViewKey() == key else {
           throw PreviewPublicationError.sourceChanged
         }
-        finishCurrentViewPublication(key, generation: generation, error: await writeCurrentView())
+        finishCurrentViewPublication(key, generation: generation,
+          error: await writeCurrentView(agentRasters: resources, documentRaster: documentRaster))
       } catch {
         finishCurrentViewPublication(key, generation: generation, error: error)
       }
@@ -358,7 +362,7 @@ final class MacPreviewPublisher {
     }
   }
 
-  private func writeCurrentView() async -> (any Error)? {
+  private func writeCurrentView(agentRasters: RasterBatchLease, documentRaster: RasterLease?) async -> (any Error)? {
     guard let model, let workspace = model.workspace,
       let board = model.boardHierarchy,
       let spatialInk = model.spatialInk,
@@ -387,6 +391,8 @@ final class MacPreviewPublisher {
         page: page,
         document: document,
         documentState: documentState,
+        agentRasters: agentRasters,
+        documentRaster: documentRaster,
         pngURL: model.store.currentViewPreviewURL,
         receiptURL: model.store.currentViewRevisionURL
       )

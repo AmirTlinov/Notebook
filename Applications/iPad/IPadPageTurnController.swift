@@ -32,7 +32,8 @@ final class IPadPageTurnController: UIViewController,
   private let prewarmView = UIView()
   let pageViewController = PageTurnPlatformContract.makePageViewController()
 
-  private var controllers: [Int: IPadIndexedPageHostingController] = [:]
+  private var controllers: [Int: IPadIndexedPageController] = [:]
+  private var retiredControllers: [Int: WeakIPadPageController] = [:]
   private var readyPages: [Int: Bool] = [:]
   private var ownerID: UUID?
   private var pageCount = 1
@@ -60,6 +61,9 @@ final class IPadPageTurnController: UIViewController,
   private var anticipatedIndex: Int?
   private var lastTurnDirection: Int?
   private var transitionRevision: UInt64 = 0
+  private var transitionNotificationRevision: UInt64 = 0
+  private var transitionNotificationTask: Task<Void, Never>?
+  private var publishedTransitionState = false
 
   var displayedIndex: Int { selection.displayedIndex }
 
@@ -89,11 +93,8 @@ final class IPadPageTurnController: UIViewController,
     super.viewDidLayoutSubviews()
     prewarmView.frame = view.bounds
     pageViewController.view.frame = view.bounds
-    for controller in controllers.values
-    where controller.view.superview === prewarmView {
-      controller.view.frame = prewarmView.bounds
-      controller.view.setNeedsLayout()
-      controller.view.layoutIfNeeded()
+    for controller in controllers.values {
+      controller.layoutPrewarmingContent(in: prewarmView)
     }
   }
 
@@ -133,7 +134,7 @@ final class IPadPageTurnController: UIViewController,
 
     if ownerChanged {
       transitionRevision &+= 1
-      setTransitioning(false)
+      setTransitioning(false, resetsPublication: true)
       pendingExternalIndex = nil
       anticipatedIndex = nil
       lastTurnDirection = nil
@@ -157,7 +158,7 @@ final class IPadPageTurnController: UIViewController,
     viewControllerBefore viewController: UIViewController
   ) -> UIViewController? {
     guard navigationIsEnabled,
-      let current = viewController as? IPadIndexedPageHostingController
+      let current = viewController as? IPadIndexedPageController
     else { return nil }
     return preparedController(at: current.pageIndex - 1)
   }
@@ -167,7 +168,7 @@ final class IPadPageTurnController: UIViewController,
     viewControllerAfter viewController: UIViewController
   ) -> UIViewController? {
     guard navigationIsEnabled,
-      let current = viewController as? IPadIndexedPageHostingController
+      let current = viewController as? IPadIndexedPageController
     else { return nil }
     return preparedController(at: current.pageIndex + 1)
   }
@@ -176,14 +177,19 @@ final class IPadPageTurnController: UIViewController,
     _ pageViewController: UIPageViewController,
     willTransitionTo pendingViewControllers: [UIViewController]
   ) {
-    let target = pendingViewControllers.first as? IPadIndexedPageHostingController
+    let target = pendingViewControllers.first as? IPadIndexedPageController
     guard canBeginNavigation(),
       let target,
+      controllers[target.pageIndex] === target,
       readyPages[target.pageIndex] == true
     else {
       cancelSystemGestures()
       return
     }
+    // UIKit may reuse its cached shell without asking the data source again.
+    // Its restored child has earned readiness in prewarm, but is not yet inside
+    // that shell. The delegate handoff must install it too.
+    transferToPageViewController(target)
     anticipatedIndex = target.pageIndex
     retainNeededControllers()
     setTransitioning(true)
@@ -198,7 +204,7 @@ final class IPadPageTurnController: UIViewController,
   ) {
     if completed,
       let visible = pageViewController.viewControllers?.first
-        as? IPadIndexedPageHostingController
+        as? IPadIndexedPageController
     {
       let source = displayedIndex
       let target = visible.pageIndex
@@ -214,7 +220,7 @@ final class IPadPageTurnController: UIViewController,
       }
       lastTurnDirection = target == source ? nil : (target > source ? 1 : -1)
     } else if let previous = previousViewControllers.first
-      as? IPadIndexedPageHostingController
+      as? IPadIndexedPageController
     {
       if previous.pageIndex != displayedIndex {
         selection.recordExternalLanding(at: previous.pageIndex)
@@ -258,6 +264,7 @@ final class IPadPageTurnController: UIViewController,
     guard isViewLoaded else { return }
     let oldControllers = Array(controllers.values)
     controllers.removeAll()
+    retiredControllers.removeAll()
     readyPages.removeAll()
     hasInstalledPage = true
 
@@ -269,7 +276,7 @@ final class IPadPageTurnController: UIViewController,
       animated: false
     )
     for oldController in oldControllers where oldController !== controller {
-      detachFromPrewarming(oldController)
+      retireContent(of: oldController, preservingUIKitIdentity: false)
     }
     retainNeededControllers()
     refreshRenderedPages()
@@ -278,7 +285,7 @@ final class IPadPageTurnController: UIViewController,
 
   private func preparedController(
     at index: Int
-  ) -> IPadIndexedPageHostingController? {
+  ) -> IPadIndexedPageController? {
     guard index >= 0, index < pageCount else { return nil }
     let controller = controllerForPage(at: index)
     mountForPrewarming(controller)
@@ -289,14 +296,16 @@ final class IPadPageTurnController: UIViewController,
 
   private func controllerForPage(
     at index: Int
-  ) -> IPadIndexedPageHostingController {
+  ) -> IPadIndexedPageController {
     if let controller = controllers[index] { return controller }
 
     readyPages[index] = false
-    let controller = IPadIndexedPageHostingController(
+    let restored = retiredControllers.removeValue(forKey: index)?.controller
+    let controller = restored ?? IPadIndexedPageController(
       pageIndex: index,
       rootView: AnyView(EmptyView())
     )
+    if restored != nil { controller.renewContentIdentity() }
     controller.view.backgroundColor = .clear
     controller.view.accessibilityIdentifier = "page-turn-page-\(index)"
     controllers[index] = controller
@@ -311,6 +320,7 @@ final class IPadPageTurnController: UIViewController,
 
   private func retainNeededControllers() {
     guard isViewLoaded else { return }
+    retiredControllers = retiredControllers.filter { $0.value.controller != nil }
     var required = PageTurnPrewarmWindow.indices(
       displayedIndex: displayedIndex,
       anticipatedIndex: anticipatedIndex,
@@ -319,41 +329,45 @@ final class IPadPageTurnController: UIViewController,
     )
     if let pendingExternalIndex { required.insert(clamped(pendingExternalIndex)) }
 
+    // UIKit may retain a controller after its curl finishes. That identity is
+    // not a reason to retain every WebKit/Metal page visited in this document.
+    // Keep the live window and the complete in-flight turn; retire only content
+    // that neither can display. Never reparent a controller already handed off.
+    if !isTransitioning {
+      let visible = Set((pageViewController.viewControllers ?? []).map(ObjectIdentifier.init))
+      for index in Array(controllers.keys) where !required.contains(index) {
+        guard let controller = controllers[index],
+          !visible.contains(ObjectIdentifier(controller))
+        else { continue }
+        controllers[index] = nil
+        readyPages[index] = nil
+        retireContent(of: controller)
+      }
+    }
+
     for index in required {
       let controller = controllerForPage(at: index)
       if index != displayedIndex { mountForPrewarming(controller) }
     }
+  }
 
-    for index in Array(controllers.keys) where !required.contains(index) {
-      guard let controller = controllers[index],
-        controller.containmentOwner != .pageViewController,
-        controller.parent == nil || controller.parent === self
-      else {
-        continue
-      }
-      detachFromPrewarming(controller)
-      controllers[index] = nil
-      readyPages[index] = nil
+  private func retireContent(
+    of controller: IPadIndexedPageController,
+    preservingUIKitIdentity: Bool = true
+  ) {
+    if preservingUIKitIdentity, controller.wasHandedToUIKit {
+      retiredControllers[controller.pageIndex] = WeakIPadPageController(controller)
     }
+    // The shell can remain in UIKit's private curl cache. Its content is our
+    // bounded resource: remove the child, not UIKit's controller identity.
+    controller.retireContent()
   }
 
   private func mountForPrewarming(
-    _ controller: IPadIndexedPageHostingController
+    _ controller: IPadIndexedPageController
   ) {
-    guard controller.pageIndex != displayedIndex,
-      controller.containmentOwner == .detached,
-      controller.parent == nil,
-      controller.view.superview !== prewarmView
-    else { return }
-    controller.containmentOwner = .prewarming
-    addChild(controller)
-    prewarmView.addSubview(controller.view)
-    controller.view.frame = prewarmView.bounds
-    controller.view.isUserInteractionEnabled = false
-    controller.view.accessibilityElementsHidden = true
-    controller.didMove(toParent: self)
-    controller.view.setNeedsLayout()
-    controller.view.layoutIfNeeded()
+    guard controller.pageIndex != displayedIndex else { return }
+    controller.prepareContent(in: self, container: prewarmView)
   }
 
   private func refreshRenderedPages() {
@@ -478,28 +492,9 @@ final class IPadPageTurnController: UIViewController,
   }
 
   private func transferToPageViewController(
-    _ controller: IPadIndexedPageHostingController
+    _ controller: IPadIndexedPageController
   ) {
-    switch controller.containmentOwner {
-    case .pageViewController:
-      return
-    case .prewarming:
-      detachFromPrewarming(controller)
-    case .detached:
-      break
-    }
-    controller.containmentOwner = .pageViewController
-  }
-
-  private func detachFromPrewarming(
-    _ controller: IPadIndexedPageHostingController
-  ) {
-    guard controller.containmentOwner == .prewarming else { return }
-    let wasChild = controller.parent === self
-    if wasChild { controller.willMove(toParent: nil) }
-    controller.view.removeFromSuperview()
-    if wasChild { controller.removeFromParent() }
-    controller.containmentOwner = .detached
+    controller.installPreparedContent()
   }
 
   private func configureSystemGestures() {
@@ -525,10 +520,23 @@ final class IPadPageTurnController: UIViewController,
     refreshControllerState()
   }
 
-  private func setTransitioning(_ value: Bool) {
-    guard isTransitioning != value else { return }
+  private func setTransitioning(_ value: Bool, resetsPublication: Bool = false) {
+    guard isTransitioning != value || resetsPublication else { return }
+    // UIKit and input admission change in this event. A SwiftUI observer cannot
+    // be called from updateUIViewController, which may initiate an external turn.
     isTransitioning = value
-    onTransitioningChange(value)
+    transitionNotificationRevision &+= 1
+    let revision = transitionNotificationRevision, owner = ownerID
+    transitionNotificationTask?.cancel()
+    transitionNotificationTask = Task { @MainActor [weak self] in
+      guard let self, !Task.isCancelled, transitionNotificationRevision == revision,
+        ownerID == owner else { return }
+      transitionNotificationTask = nil
+      let current = isTransitioning
+      guard publishedTransitionState != current || resetsPublication else { return }
+      publishedTransitionState = current
+      onTransitioningChange(current)
+    }
   }
 
   private func clamped(_ index: Int) -> Int {
@@ -544,17 +552,93 @@ final class IPadPageTurnController: UIViewController,
   }
 }
 
+/// UIKit owns this shell for its entire curl lifetime. The separately owned
+/// hosting child can be retired and prepared again without reparenting the shell.
 @MainActor
-private final class IPadIndexedPageHostingController:
-  UIHostingController<AnyView>
-{
+private final class IPadIndexedPageController: UIViewController {
   let pageIndex: Int
-  let hostID = UUID()
-  var containmentOwner = IPadPageHostContainmentOwner.detached
+  private(set) var hostID = UUID()
+  private(set) var wasHandedToUIKit = false
+  private var content: UIHostingController<AnyView>?
+
+  var rootView: AnyView {
+    get { content?.rootView ?? AnyView(EmptyView()) }
+    set {
+      if let content {
+        content.rootView = newValue
+      } else {
+        let host = UIHostingController(rootView: newValue)
+        host.view.backgroundColor = .clear
+        content = host
+      }
+    }
+  }
 
   init(pageIndex: Int, rootView: AnyView) {
     self.pageIndex = pageIndex
-    super.init(rootView: rootView)
+    super.init(nibName: nil, bundle: nil)
+    self.rootView = rootView
+  }
+
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    view.backgroundColor = .clear
+    view.isOpaque = false
+  }
+
+  override func viewDidLayoutSubviews() {
+    super.viewDidLayoutSubviews()
+    if let content, content.parent === self { content.view.frame = view.bounds }
+  }
+
+  func renewContentIdentity() { hostID = UUID() }
+
+  /// A newly created hosting child needs a real visible window to run SwiftUI
+  /// tasks and produce its WebKit/Metal frame. The retired UIKit shell does not.
+  func prepareContent(in owner: UIViewController, container: UIView) {
+    guard let content, content.parent == nil else { return }
+    owner.addChild(content)
+    container.addSubview(content.view)
+    content.view.frame = container.bounds
+    content.view.isUserInteractionEnabled = false
+    content.view.accessibilityElementsHidden = true
+    content.didMove(toParent: owner)
+    container.setNeedsLayout()
+    content.view.setNeedsLayout()
+  }
+
+  func layoutPrewarmingContent(in container: UIView) {
+    guard let content, content.view.superview === container else { return }
+    content.view.frame = container.bounds
+  }
+
+  /// Transfer the already rendered child exactly once. An existing live child
+  /// stays inside its UIKit shell, including while UIKit caches the neighbour.
+  func installPreparedContent() {
+    wasHandedToUIKit = true
+    guard let content, content.parent !== self else { return }
+    detach(content)
+    loadViewIfNeeded()
+    addChild(content)
+    view.addSubview(content.view)
+    content.view.frame = view.bounds
+    content.view.isUserInteractionEnabled = true
+    content.view.accessibilityElementsHidden = false
+    content.didMove(toParent: self)
+    view.setNeedsLayout()
+  }
+
+  func retireContent() {
+    guard let content else { return }
+    detach(content)
+    self.content = nil
+  }
+
+  private func detach(_ content: UIViewController) {
+    let hasParent = content.parent != nil
+    if hasParent { content.willMove(toParent: nil) }
+    content.view.removeFromSuperview()
+    if hasParent { content.removeFromParent() }
   }
 
   @available(*, unavailable)
@@ -563,8 +647,12 @@ private final class IPadIndexedPageHostingController:
   }
 }
 
-private enum IPadPageHostContainmentOwner {
-  case detached
-  case prewarming
-  case pageViewController
+/// UIKit, not this registry, retains shells handed to a curl.
+@MainActor
+private final class WeakIPadPageController {
+  weak var controller: IPadIndexedPageController?
+
+  init(_ controller: IPadIndexedPageController) {
+    self.controller = controller
+  }
 }
