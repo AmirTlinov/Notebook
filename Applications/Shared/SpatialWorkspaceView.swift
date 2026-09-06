@@ -917,6 +917,7 @@ struct SpatialWorkspaceView: View {
   ) {
     guard model.presence?.mode == .cover,
       model.presence?.focusedItemID == itemID,
+      let boardID = model.presence?.boardID,
       let board = model.board
     else { return }
     let elements = board.elements.filter {
@@ -929,7 +930,7 @@ struct SpatialWorkspaceView: View {
       return
     }
     guard !elements.contains(where: { $0.frame.contains(point) }),
-      let elementID = model.addNativeText(on: itemID, at: point)
+      let elementID = model.addNativeText(boardID: boardID, on: itemID, at: point)
     else { return }
     editingSpatialTextID = elementID
   }
@@ -2567,25 +2568,30 @@ struct SpatialElementContent: View {
     case .nativeText:
       NativeTextElementView(
         element: element,
-        isEditing: isTextEditing,
+        boardID: sourceBoardID,
+        isEditing: isTextEditing && commitsState && sourceBoardID != nil,
         onEditingEnded: onTextEditingEnded
       )
     case .markdown, .web:
-      let sourceBoardID = boardID ?? (element.surface.kind == .cover
-        ? element.surface.ownerID.flatMap { model.sceneIndex?.ownerBoard(itemID: $0) }
-        : element.surface.ownerID)
+      let sourceBoardID = self.sourceBoardID
       PreparedAgentElementView(element: agentElement,
         allowsInteraction: commitsState && sourceBoardID != nil,
         focus: .board(boardID: sourceBoardID ?? WorkspaceRoot.boardID, elementID: element.id), onRenderReady: { _ in },
         onState: { state in
-          guard commitsState, let sourceBoardID, !model.scenePreparationPending else { return }
-          model.commitSpatialElementState(boardID: sourceBoardID, elementID: element.id, state: state)
+          guard commitsState, let sourceBoardID else { return }
+          model.commitSpatialElementState(boardID: sourceBoardID, rendered: element, state: state)
         })
     }
   }
 
   private var agentElement: AgentElement {
     agentElementSnapshotSource(element)
+  }
+
+  private var sourceBoardID: UUID? {
+    boardID ?? (element.surface.kind == .cover
+      ? element.surface.ownerID.flatMap { model.sceneIndex?.ownerBoard(itemID: $0) }
+      : element.surface.ownerID)
   }
 
 }
@@ -2661,15 +2667,18 @@ private struct NativeTextElementView: View {
   @State private var hasOwnedEditing = false
 
   let element: SpatialElement
+  let boardID: UUID?
   let isEditing: Bool
   let onEditingEnded: () -> Void
 
   init(
     element: SpatialElement,
+    boardID: UUID?,
     isEditing: Bool,
     onEditingEnded: @escaping () -> Void
   ) {
     self.element = element
+    self.boardID = boardID
     self.isEditing = isEditing
     self.onEditingEnded = onEditingEnded
     _text = State(initialValue: element.source)
@@ -2748,8 +2757,8 @@ private struct NativeTextElementView: View {
   private func commit() {
     commitTask?.cancel()
     commitTask = nil
-    guard text != element.source else { return }
-    model.updateNativeText(elementID: element.id, text: text)
+    guard text != element.source, let boardID else { return }
+    model.updateNativeText(boardID: boardID, elementID: element.id, text: text)
   }
 
   private func finishEditing() {
@@ -2757,7 +2766,7 @@ private struct NativeTextElementView: View {
     hasFinishedEditing = true
     commitTask?.cancel()
     commitTask = nil
-    model.finishNativeTextEditing(elementID: element.id, text: text)
+    if let boardID { model.finishNativeTextEditing(boardID: boardID, elementID: element.id, text: text) }
     onEditingEnded()
   }
 

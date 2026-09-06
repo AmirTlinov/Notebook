@@ -867,9 +867,9 @@ final class NotebookAppModel {
     inputGate.performAfterPageInput(action)
   }
 
-  func addNativeText(on itemID: UUID, at point: SpatialPoint) -> String? {
-    guard var hierarchy = boardHierarchy, let presence,
-      let board = hierarchy.board(presence.boardID),
+  func addNativeText(boardID: UUID, on itemID: UUID, at point: SpatialPoint) -> String? {
+    guard var hierarchy = boardHierarchy,
+      let board = hierarchy.board(boardID),
       board.itemIDs.contains(itemID)
     else { return nil }
     let width = 420.0
@@ -895,7 +895,7 @@ final class NotebookAppModel {
     )
     guard hierarchy.upsertElement(
       element,
-      in: presence.boardID,
+      in: boardID,
       expected: nil,
       actor: actorID
     ) else {
@@ -905,9 +905,9 @@ final class NotebookAppModel {
     return id
   }
 
-  func updateNativeText(elementID: String, text: String) {
-    guard var hierarchy = boardHierarchy, let presence,
-      let board = hierarchy.board(presence.boardID),
+  func updateNativeText(boardID: UUID, elementID: String, text: String) {
+    guard var hierarchy = boardHierarchy,
+      let board = hierarchy.board(boardID),
       let index = board.elements.firstIndex(where: {
         $0.id == elementID && $0.kind == .nativeText
       })
@@ -918,7 +918,7 @@ final class NotebookAppModel {
     guard element.update(source: text, actor: actorID),
       hierarchy.upsertElement(
         element,
-        in: presence.boardID,
+        in: boardID,
         expected: expected,
         actor: actorID
       )
@@ -929,9 +929,9 @@ final class NotebookAppModel {
   /// Ends the editor's ownership of one native text element. A blank draft has
   /// no visible meaning, so ending its edit removes it from the cover and from
   /// the durable board in the same mutation.
-  func finishNativeTextEditing(elementID: String, text: String) {
-    guard var hierarchy = boardHierarchy, let presence,
-      let board = hierarchy.board(presence.boardID),
+  func finishNativeTextEditing(boardID: UUID, elementID: String, text: String) {
+    guard var hierarchy = boardHierarchy,
+      let board = hierarchy.board(boardID),
       let element = board.elements.first(where: {
         $0.id == elementID && $0.kind == .nativeText
       })
@@ -939,7 +939,7 @@ final class NotebookAppModel {
     if text.isEmpty {
       guard hierarchy.removeElements(
         ids: [elementID],
-        from: presence.boardID,
+        from: boardID,
         actor: actorID
       ) == 1 else {
         return
@@ -948,15 +948,20 @@ final class NotebookAppModel {
       return
     }
     guard element.source != text else { return }
-    updateNativeText(elementID: elementID, text: text)
+    updateNativeText(boardID: boardID, elementID: elementID, text: text)
   }
 
-  func commitSpatialElementState(boardID: UUID, elementID: String, state: JSONValue) {
-    guard var hierarchy = boardHierarchy, presence?.boardID == boardID,
+  /// Input belongs to the source that emitted it. A camera move and a frame edit
+  /// do not revoke it; a changed program or removed physical owner does.
+  func commitSpatialElementState(boardID: UUID, rendered: SpatialElement, state: JSONValue) {
+    guard var hierarchy = boardHierarchy,
       let board = hierarchy.board(boardID),
-      let index = board.elements.firstIndex(where: { $0.id == elementID })
+      let index = board.elements.firstIndex(where: { $0.id == rendered.id })
     else { return }
     var element = board.elements[index]
+    guard element.surface == rendered.surface, element.kind == rendered.kind,
+      element.source == rendered.source, element.html == rendered.html,
+      element.css == rendered.css, element.javaScript == rendered.javaScript else { return }
     let expected = element.stamp
     guard element.update(state: state, actor: actorID),
       hierarchy.upsertElement(

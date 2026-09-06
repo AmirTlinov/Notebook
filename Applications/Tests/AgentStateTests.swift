@@ -4,6 +4,80 @@ import XCTest
 
 final class AgentStateTests: XCTestCase {
   @MainActor
+  func testTextCompletionAfterNavigationKeepsItsOriginalBoard() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let model = NotebookAppModel(store: NotebookStore(root: root), startsNearbySync: false)
+    model.start(pageSize: PageSize(width: 834, height: 1194))
+    let boardA = try XCTUnwrap(model.presence?.boardID)
+    let notebook = try XCTUnwrap(model.workspace?.selectedItemID)
+    let elementID = try XCTUnwrap(model.addNativeText(boardID: boardA, on: notebook, at: .init(x: 100, y: 100)))
+    let boardB = try XCTUnwrap(model.createBoard(at: .init(x: 2000, y: 0)))
+    model.updatePresence(.init(boardID: boardB, mode: .board, camera: .init(),
+      viewport: .init(x: 1194, y: 834)), settled: true)
+    // The editor's debounce or onDisappear can finish after camera ownership changes.
+    model.finishNativeTextEditing(boardID: boardA, elementID: elementID, text: "Продолжение у исходника")
+    await model.finishPendingPersistence()
+    let saved = try model.store.loadBoard(items: XCTUnwrap(model.workspace).items)
+    XCTAssertEqual(saved.board(boardA)?.elements.first { $0.id == elementID }?.source,
+      "Продолжение у исходника")
+    XCTAssertTrue(saved.board(boardB)?.elements.isEmpty == true)
+    model.finishNativeTextEditing(boardID: boardA, elementID: elementID, text: "")
+    model.updateNativeText(boardID: boardA, elementID: elementID, text: "Не возвращать удалённый предмет")
+    await model.finishPendingPersistence()
+    let afterDeletion = try model.store.loadBoard(items: XCTUnwrap(model.workspace).items)
+    XCTAssertFalse(afterDeletion.board(boardA)?.elements.contains { $0.id == elementID } ?? true)
+    XCTAssertTrue(afterDeletion.board(boardB)?.elements.isEmpty == true)
+  }
+
+  @MainActor
+  func testAcceptedInteractiveInputIsNotDiscardedByNavigation() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let model = NotebookAppModel(store: NotebookStore(root: root), startsNearbySync: false)
+    model.start(pageSize: PageSize(width: 834, height: 1194))
+    let boardA = try XCTUnwrap(model.presence?.boardID)
+    let boardB = try XCTUnwrap(model.createBoard(at: .init(x: 2000, y: 0)))
+    var hierarchy = try XCTUnwrap(model.boardHierarchy)
+    let element = SpatialElement(id: "input-before-navigation", surface: .board(boardA), kind: .web,
+      frame: .init(x: 0, y: 0, width: 300, height: 200), worldOrigin: .zero, source: "control",
+      html: "<button>Continue</button>", stamp: .init(counter: 0, actor: model.actorID))
+    XCTAssertTrue(hierarchy.upsertElement(element, in: boardA, expected: nil, actor: model.actorID))
+    try model.store.saveBoard(hierarchy, items: XCTUnwrap(model.workspace).items)
+    await model.reloadExternalChanges()?.value
+    model.updatePresence(.init(boardID: boardB, mode: .board, camera: .init(),
+      viewport: .init(x: 1194, y: 834)), settled: true)
+    model.commitSpatialElementState(boardID: boardA, rendered: element, state: .number(42))
+    await model.finishPendingPersistence()
+    let saved = try model.store.loadBoard(items: XCTUnwrap(model.workspace).items)
+    XCTAssertEqual(saved.board(boardA)?.elements.first { $0.id == element.id }?.state, .number(42))
+    XCTAssertTrue(saved.board(boardB)?.elements.isEmpty == true)
+    var moved = try XCTUnwrap(model.boardHierarchy?.board(boardA)?.elements.first { $0.id == element.id })
+    let beforeFrame = moved.stamp
+    XCTAssertTrue(moved.update(frame: .init(x: 80, y: 40, width: 320, height: 220), actor: model.actorID))
+    hierarchy = try XCTUnwrap(model.boardHierarchy)
+    XCTAssertTrue(hierarchy.upsertElement(moved, in: boardA, expected: beforeFrame, actor: model.actorID))
+    try model.store.saveBoard(hierarchy, items: XCTUnwrap(model.workspace).items)
+    await model.reloadExternalChanges()?.value
+    model.commitSpatialElementState(boardID: boardA, rendered: element, state: .number(43))
+    await model.finishPendingPersistence()
+    XCTAssertEqual(model.boardHierarchy?.board(boardA)?.elements.first { $0.id == element.id }?.state, .number(43))
+
+    var changed = try XCTUnwrap(model.boardHierarchy?.board(boardA)?.elements.first { $0.id == element.id })
+    let beforeSource = changed.stamp
+    XCTAssertTrue(changed.update(html: "<button>Different program</button>", actor: model.actorID))
+    hierarchy = try XCTUnwrap(model.boardHierarchy)
+    XCTAssertTrue(hierarchy.upsertElement(changed, in: boardA, expected: beforeSource, actor: model.actorID))
+    try model.store.saveBoard(hierarchy, items: XCTUnwrap(model.workspace).items)
+    await model.reloadExternalChanges()?.value
+    model.commitSpatialElementState(boardID: boardA, rendered: element, state: .number(99))
+    await model.finishPendingPersistence()
+    let afterLateReply = try model.store.loadBoard(items: XCTUnwrap(model.workspace).items)
+    XCTAssertEqual(afterLateReply.board(boardA)?.elements.first { $0.id == element.id }?.state, .number(43),
+      "The previous WebKit program cannot change its replacement")
+  }
+
+  @MainActor
   func testInteractiveElementCanCommitAnyJSONRoot() {
     XCTAssertEqual(AgentWebCoordinator.decodeState(7), .number(7))
     XCTAssertEqual(AgentWebCoordinator.decodeState("готово"), .string("готово"))
@@ -24,8 +98,9 @@ final class AgentStateTests: XCTestCase {
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     model.start(pageSize: PageSize(width: 834, height: 1_194))
     let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
+    let boardID = try XCTUnwrap(model.presence?.boardID)
     let elementID = try XCTUnwrap(model.addNativeText(
-      on: itemID,
+      boardID: boardID, on: itemID,
       at: SpatialPoint(x: 830, y: 1_190)
     ))
 
@@ -36,7 +111,7 @@ final class AgentStateTests: XCTestCase {
     XCTAssertEqual(draft.frame.y, WorkspaceItemGeometry.notebook.height - 120)
 
     model.finishNativeTextEditing(
-      elementID: elementID,
+      boardID: boardID, elementID: elementID,
       text: "Первая мысль"
     )
 
@@ -49,7 +124,7 @@ final class AgentStateTests: XCTestCase {
       "Первая мысль"
     )
 
-    model.finishNativeTextEditing(elementID: elementID, text: "")
+    model.finishNativeTextEditing(boardID: boardID, elementID: elementID, text: "")
 
     XCTAssertFalse(model.board?.elements.contains(where: {
       $0.id == elementID
