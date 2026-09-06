@@ -356,7 +356,9 @@ final class MacPreviewPublisher {
         workspace: workspace, hierarchy: hierarchy, presence: presence, documents: model.documents
       ).elements.filter { $0.kind != .nativeText }.map(agentElementSnapshotSource)
     case .page:
-      return model.activePage?.elements ?? []
+      // Page composition borrows each source in painter order and releases it
+      // immediately; pre-retaining the full page would defeat that bound.
+      return []
     case .document:
       return []
     }

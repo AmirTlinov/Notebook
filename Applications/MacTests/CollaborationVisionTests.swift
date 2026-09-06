@@ -52,6 +52,41 @@ final class CollaborationVisionTests: XCTestCase {
     XCTAssertEqual(model.presence,original)
   }
   @MainActor
+  func testTargetPageLargerThanTheRasterCachePublishesOneOrderedResult() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    var page = try XCTUnwrap(model.activePage)
+    let elements = (0..<12).map { index in
+      AgentElement(id: "large-\(UUID().uuidString)", kind: .web,
+        frame: .init(x: 17, y: 29, width: 800, height: 1100), source: "unique layer \(index)",
+        html: "<svg width='800' height='1100'><rect width='800' height='1100' fill='\(index == 11 ? "red" : "blue")'/></svg>",
+        javaScript: index == 0 ? "throw Error('first source diagnostic')" : "")
+    }
+    let total = elements.reduce(0) { $0 + Int($1.frame.width * $1.frame.height * 4 * 4 * 2) }
+    XCTAssertGreaterThan(total, SceneRenderResources.shared.byteLimit)
+    XCTAssertTrue(page.replaceElements(elements, actor: UUID()))
+    _ = try model.store.saveMergedPage(page)
+    await model.reloadExternalChanges()?.value
+    let original = model.presence
+    let target = CollaborationTarget(kind: .page, id: page.id)
+    let request = try model.store.requestTargetRender(target: target, expectedRevision: page.agentStamp.revision)
+    try await CurrentViewPreviewWriter.writeTarget(request, model: model)
+    let receipt = try JSONDecoder().decode(TargetRenderReceipt.self,
+      from: Data(contentsOf: model.store.targetReceiptURL(request.id)))
+    XCTAssertEqual(receipt.status, "ready")
+    XCTAssertTrue(receipt.diagnostics.contains { $0.kind == "javascript_error" && $0.elementID == elements[0].id }, "\(receipt.diagnostics)")
+    XCTAssertEqual(model.presence, original)
+    let bitmap = try XCTUnwrap(NSBitmapImageRep(data: Data(contentsOf: model.store.targetPNGURL(request.id))))
+    let pixel = try XCTUnwrap(bitmap.colorAt(x: 500, y: 500)?.usingColorSpace(.deviceRGB))
+    XCTAssertGreaterThan(pixel.redComponent, 0.95)
+    XCTAssertLessThan(pixel.blueComponent, 0.05)
+    XCTAssertEqual(SceneRenderResources.shared.reservedBytes, 0)
+    await model.finishPendingPersistence()
+  }
+
+  @MainActor
   func testRegionalReferenceIgnoresOutsideInkAndFollowsItsPhysicalOwner() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

@@ -5,32 +5,21 @@ import XCTest
 
 final class SnapshotLeaseBindingTests: XCTestCase {
   @MainActor
-  func testPageCompositionReadsThePreparedEntryAfterALateSameSourceCapture() async throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
-    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: .init(width: 256, height: 256))
-    var page = try XCTUnwrap(model.activePage)
+  func testPageCompositionReadsTheBorrowedEntryAfterALateSameSourceCapture() async throws {
+    let resources = SceneRenderResources(byteLimit: 6 * 1024 * 1024)
+    let size = CGSize(width: 256, height: 256)
+    let compositor = try await SceneRasterCompositor.create(size: size, scale: 2, resources: resources)
     let element = AgentElement(id: UUID().uuidString, kind: .web,
       frame: .init(x: 0, y: 0, width: 256, height: 256), source: "same source", html: "")
-    XCTAssertTrue(page.replaceElements([element], actor: UUID()))
-    _ = try model.store.saveMergedPage(page)
-    await model.reloadExternalChanges()?.value
-    let resources = SceneRenderResources.shared
-    let red = bitmap(size: .init(width: 256, height: 256), color: .red)
-    let blue = bitmap(size: red.size, color: .blue)
+    let red = bitmap(size: size, color: .red), blue = bitmap(size: size, color: .blue)
     XCTAssertTrue(resources.store(red, for: element))
-    let batch = try await resources.prepare([element])
-    defer { batch.release() }
+    let raster = try XCTUnwrap(resources.retainRaster(for: element, minimumScale: 2))
+    defer { raster.release() }
     XCTAssertTrue(resources.store(blue, for: element))
     XCTAssertTrue(resources.image(for: element) === blue)
-    XCTAssertTrue(batch.image(for: element) === red)
-
-    let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
-    model.updatePresence(.init(mode: .page, camera: .init(),
-      viewport: .init(x: 256, y: 256), focusedItemID: itemID, openProgress: 1), settled: true)
-    try assertRed(try await publish(model, agentRasters: batch))
-    await model.finishPendingPersistence()
+    try await compositor.draw(raster, in: CGRect(origin: .zero, size: size))
+    try assertRed(try await compositor.finishPNG())
+    XCTAssertEqual(resources.reservedBytes, 0)
   }
 
   @MainActor

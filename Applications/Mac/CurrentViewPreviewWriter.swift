@@ -8,6 +8,7 @@ import SwiftUI
 private struct RasterSnapshot {
   let image: NSImage
   let png: Data
+  var diagnostics: [RenderDiagnostic] = []
 
   var sha256: String {
     SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined()
@@ -73,30 +74,6 @@ private struct SettledCurrentView: View {
   }
 }
 
-private struct PageCompositeSnapshotView: View {
-  let base: NSImage
-  let overlays: [(element: AgentElement, image: NSImage)]
-
-  var body: some View {
-    ZStack(alignment: .topLeading) {
-      Image(nsImage: base)
-        .resizable()
-      ForEach(Array(overlays.enumerated()), id: \.offset) { _, overlay in
-        Image(nsImage: overlay.image)
-          .resizable()
-          .frame(
-            width: overlay.element.frame.width,
-            height: overlay.element.frame.height
-          )
-          .offset(
-            x: overlay.element.frame.x,
-            y: overlay.element.frame.y
-          )
-      }
-    }
-  }
-}
-
 enum CurrentViewPreviewWriter {
   @MainActor
   static func write(
@@ -126,7 +103,8 @@ enum CurrentViewPreviewWriter {
       document: document,
       documentState: documentState,
       agentRasters: agentRasters,
-      documentRaster: documentRaster
+      documentRaster: documentRaster,
+      permitsPreparation: { model.permitsBackgroundPreparation }
     )
     let content = SettledCurrentView(
       snapshot: snapshot,
@@ -194,14 +172,12 @@ enum CurrentViewPreviewWriter {
     switch target.kind {
     case .page:
       guard let page = model.pages[target.id] else { throw PreviewError.invalidSurface }
-      let resources = try await SceneRenderResources.shared.prepare(page.elements)
-      defer { resources.release() }
-      full = try await pageCompositeSnapshot(page, rasters: resources)
+      full = try await pageCompositeSnapshot(page, permitsPreparation: { model.permitsBackgroundPreparation })
       inkRegions = try await Task.detached(priority: .utility) { try PageVisionRenderer.render(page).regions.map { $0.receipt.contentPoints } }.value
       await PageInkRasterCache.shared.prepare(page)
       guard let ink = PageInkRasterCache.shared.image(for: page) else { throw PreviewError.agentSnapshotPending }
       inkRaster = try await raster(NSImage(cgImage: ink, size: .init(width: page.size.width, height: page.size.height)))
-      diagnostics = SceneRenderResources.shared.diagnostics(for: page.elements)
+      diagnostics = full.diagnostics
     case .document:
       guard let document = model.documents[target.id], let state = model.documentStates[target.id] else { throw PreviewError.invalidSurface }
       let preparedDocument = try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: request.pageIndex)
@@ -286,7 +262,8 @@ enum CurrentViewPreviewWriter {
     document: DocumentDocument?,
     documentState: DocumentStateJournal?,
     agentRasters: RasterBatchLease,
-    documentRaster: RasterLease?
+    documentRaster: RasterLease?,
+    permitsPreparation: @escaping @MainActor () -> Bool
   ) async throws -> SettledSceneSnapshot {
     switch presence.mode {
     case .board:
@@ -303,7 +280,7 @@ enum CurrentViewPreviewWriter {
         throw PreviewError.invalidSurface
       }
       return .page(
-        try await pageCompositeSnapshot(page, rasters: agentRasters),
+        try await pageCompositeSnapshot(page, permitsPreparation: permitsPreparation),
         itemID: itemID,
         CurrentViewPageRevision(page: page)
       )
@@ -327,32 +304,36 @@ enum CurrentViewPreviewWriter {
   @MainActor
   private static func pageCompositeSnapshot(
     _ page: PageDocument,
-    rasters: RasterBatchLease
+    permitsPreparation: @escaping @MainActor () -> Bool
   ) async throws -> RasterSnapshot {
-    let faithfulPNG = try await Task.detached(priority: .utility) { try PageVisionRenderer.faithfulPNG(page) }.value
-    try Task.checkCancellation()
-    guard let base = NSImage(data: faithfulPNG) else {
-      throw PreviewError.pngEncoding
-    }
-    guard !page.elements.isEmpty else {
-      return RasterSnapshot(image: base, png: faithfulPNG)
-    }
-    let overlays = try page.elements.map { element in
-      guard let image = rasters.image(for: element, minimumScale: 2) else {
-        throw PreviewError.agentSnapshotPending
-      }
-      return (element: element, image: image)
-    }
     let size = CGSize(width: page.size.width, height: page.size.height)
-    let png = try await renderPNG(
-      PageCompositeSnapshotView(base: base, overlays: overlays),
-      size: size,
-      scale: CGFloat(PageVisionRenderer.scale)
-    )
-    guard let image = NSImage(data: png) else {
-      throw PreviewError.pngEncoding
+    let resources = SceneRenderResources.shared
+    let compositor = try await SceneRasterCompositor.create(size: size,
+      scale: PageVisionRenderer.scale, resources: resources, permitsPreparation: permitsPreparation)
+    let faithfulPNG = try await Task.detached(priority: .utility) { try PageVisionRenderer.faithfulPNG(page) }.value
+    try await compositor.drawPNG(faithfulPNG, in: CGRect(origin: .zero, size: size))
+    var diagnostics: [RenderDiagnostic] = []
+    var omittedDiagnostics = 0
+    for element in page.elements {
+      try Task.checkCancellation()
+      let raster = try await resources.prepareRaster(element, permitsPreparation: permitsPreparation)
+      do {
+        try await compositor.draw(raster, in: CGRect(x: element.frame.x, y: element.frame.y,
+          width: element.frame.width, height: element.frame.height))
+        raster.release()
+      } catch { raster.release(); throw error }
+      for diagnostic in resources.diagnostics(for: [element]) {
+        if diagnostics.count < 255 { diagnostics.append(diagnostic) }
+        else { omittedDiagnostics += 1 }
+      }
     }
-    return RasterSnapshot(image: image, png: png)
+    if omittedDiagnostics > 0 {
+      diagnostics.append(.init(kind: "diagnostics_truncated",
+        message: "Ещё сообщений исполнения: \(omittedDiagnostics)"))
+    }
+    let png = try await compositor.finishPNG()
+    guard let image = NSImage(data: png) else { throw PreviewError.pngEncoding }
+    return RasterSnapshot(image: image, png: png, diagnostics: diagnostics)
   }
 
   @MainActor
