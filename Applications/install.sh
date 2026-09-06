@@ -29,7 +29,7 @@ print(digest.hexdigest())' "$ROOT"
 }
 SOURCE_REVISION=$(source_revision)
 printf '%s\n' "$SOURCE_REVISION" > "$OUTPUT/source.sha256"
-"$ROOT/verify.sh" > "$OUTPUT/verify.log" 2>&1
+NOTEBOOK_VERIFY_EVIDENCE_DIR="$OUTPUT/verification" "$ROOT/verify.sh" > "$OUTPUT/verify.log" 2>&1
 cd "$ROOT/Applications"
 xcodegen generate
 xcodebuild -quiet -project Notebook.xcodeproj -scheme NotebookMac \

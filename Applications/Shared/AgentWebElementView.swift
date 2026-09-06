@@ -21,16 +21,44 @@ import WebKit
     }
 
     func makeUIView(context: Context) -> PhysicalWebViewport {
-      PhysicalWebViewport(
+      let view = PhysicalWebViewport(
         webView: AgentWebCoordinator.makeWebView(coordinator: context.coordinator),
         contentSize: physicalSize)
+      // Filter the completed physical surface, not individual WebKit tiles.
+      // The camera transforms this layer without changing its raster scale.
+      view.layer.shouldRasterize = true
+      view.layer.minificationFilter = .trilinear
+      return view
     }
 
     func updateUIView(_ view: PhysicalWebViewport, context: Context) {
+      view.layer.rasterizationScale = context.environment.displayScale
       view.setContentSize(physicalSize)
       context.coordinator.use(onRenderReady: onRenderReady)
       context.coordinator.onState = onState
       context.coordinator.load(element, in: view.webView)
+    }
+  }
+
+  /// The portal uses the same area-preserving minification as the live surface.
+  /// Rasterization is needed even for layer.contents: filtering that image alone
+  /// loses subpixel strokes at fractional scales. Its exact source stays cached.
+  struct AgentElementSnapshotView: UIViewRepresentable {
+    let image: UIImage
+
+    func makeUIView(context: Context) -> UIView {
+      let view = UIView()
+      view.isOpaque = false
+      view.isUserInteractionEnabled = false
+      view.layer.shouldRasterize = true
+      view.layer.minificationFilter = .trilinear
+      return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+      if (view.layer.contents as AnyObject?) !== image.cgImage { view.layer.contents = image.cgImage }
+      view.layer.contentsScale = image.scale
+      view.layer.rasterizationScale = context.environment.displayScale
     }
   }
 #else

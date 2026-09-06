@@ -2313,7 +2313,7 @@ struct SpatialElementContent: View {
       ZStack {
         if !commitsState || readyElement != source, let image {
           #if os(iOS)
-            Image(uiImage: image).resizable()
+            AgentElementSnapshotView(image: image)
           #else
             Image(nsImage: image).resizable()
           #endif

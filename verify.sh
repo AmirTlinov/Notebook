@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
 DERIVED=$(mktemp -d "${TMPDIR:-/tmp}/notebook-derived.XXXXXX")
+EVIDENCE=${NOTEBOOK_VERIFY_EVIDENCE_DIR:-"$DERIVED/evidence"}
+mkdir -p "$EVIDENCE"
 SIMULATOR_ID=""
 SHUTDOWN_SIMULATOR=false
 MAC_SMOKE_PID=""
@@ -155,6 +157,7 @@ xcodebuild \
   -configuration Debug \
   -destination 'platform=macOS' \
   -derivedDataPath "$DERIVED/mac-tests" \
+  -resultBundlePath "$EVIDENCE/mac.xcresult" \
   CODE_SIGNING_ALLOWED=NO \
   test \
   -only-testing:NotebookMacTests
@@ -204,6 +207,7 @@ xcodebuild \
   -collect-test-diagnostics never \
   -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
   -derivedDataPath "$DERIVED/ipad-tests" \
+  -resultBundlePath "$EVIDENCE/ipad.xcresult" \
   test \
   -only-testing:NotebookTests \
   -only-testing:NotebookUITests/DrawingResponsivenessTests

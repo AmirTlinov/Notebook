@@ -1,10 +1,87 @@
 import NotebookCore
 import SwiftUI
 import UIKit
+import WebKit
 import XCTest
 @testable import Notebook
 
 final class WorkspaceCameraRenderingTests: XCTestCase {
+  @MainActor
+  func testLargeDiagramBoardReusesItsSurfacesThroughoutRepeatedZoom() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    model.moveItem(try XCTUnwrap(model.workspace?.selectedItemID), to: .init(x: -30_000, y: -30_000))
+    await model.finishPendingPersistence()
+    let boardID = try XCTUnwrap(model.presence?.boardID)
+    var hierarchy = try XCTUnwrap(model.boardHierarchy)
+    // The working set has the physical sizes of the reported dense board,
+    // but contains synthetic paths, never the person's document content.
+    let sizes = [(2689.3, 3943.4), (2218.4, 1430.1), (1247.1, 1242.4), (3160.6, 2069.2),
+      (3681.7, 867.9), (3395.1, 1741.7), (2465.8, 2668.3), (1017.0, 1209.9), (1370.3, 1440.0), (588.5, 696.0)]
+    let elements = sizes.enumerated().map { index, size in
+      let paths = (0..<40).map { "<path d='M \(40 + $0 * 10) 40 V \(size.1 - 40)'/>" }.joined()
+      return SpatialElement(id: UUID().uuidString, surface: .board(boardID), kind: .web,
+        frame: .init(x: 0, y: 0, width: size.0, height: size.1),
+        worldOrigin: .init(x: Double(index % 4) * 4000, y: Double(index / 4) * 4500),
+        source: "Diagram minification fixture",
+        html: "<svg width='100%' height='100%' viewBox='0 0 \(size.0) \(size.1)'><g stroke='#202020' stroke-width='3.5'>\(paths)</g></svg>",
+        stamp: .init(counter: 0, actor: model.actorID))
+    }
+    for element in elements {
+      XCTAssertTrue(hierarchy.upsertElement(element, in: boardID, expected: nil, actor: model.actorID))
+    }
+    try model.store.saveBoard(hierarchy, items: XCTUnwrap(model.workspace).items)
+    model.reloadExternalChanges()
+    await model.finishPendingPersistence()
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene)
+    let host = UIHostingController(rootView: SpatialWorkspaceView().environment(model).ignoresSafeArea())
+    window.rootViewController = host
+    let viewport = SpatialPoint(x: window.bounds.width, y: window.bounds.height)
+    func show(_ scale: Double) {
+      model.updatePresence(.init(boardID: boardID, mode: .board,
+        camera: .init(center: .init(x: 7200, y: 6200), scale: scale), viewport: viewport), settled: false)
+    }
+    show(0.03)
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true }
+    let deadline = ContinuousClock.now + .seconds(10)
+    while elements.contains(where: { AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource($0)) == nil }),
+      ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(30)) }
+    let images = try elements.map { try XCTUnwrap(AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource($0))) }
+    func webViews(in view: UIView) -> [WKWebView] {
+      (view as? WKWebView).map { [$0] } ?? view.subviews.flatMap { webViews(in: $0) }
+    }
+    let mounted = Set(webViews(in: host.view).map(ObjectIdentifier.init))
+    XCTAssertEqual(mounted.count, elements.count)
+    let end = expectation(description: "Repeated diagram camera frames")
+    let driver = CameraFrameDriver()
+    driver.step = { frame in
+      show(exp(log(0.02) + (log(0.13) - log(0.02)) * (sin(Double(frame) * .pi / 60) + 1) / 2))
+      if frame == 480 { driver.stop(); end.fulfill() }
+    }
+    driver.start()
+    await fulfillment(of: [end], timeout: 60)
+    driver.stop()
+    XCTAssertEqual(Set(webViews(in: host.view).map(ObjectIdentifier.init)), mounted,
+      "Четыре повторения не создают новые WebKit")
+    for (element, image) in zip(elements, images) {
+      XCTAssertTrue(AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource(element)) === image,
+        "Камера использует прежние точные снимки, а не очередь новых растров")
+    }
+    let times = Array(driver.intervals.dropFirst(120)).sorted()
+    XCTAssertGreaterThan(times.count, 300)
+    let p95 = times[times.count * 95 / 100]
+    let report = "frames=\(times.count); p50=\(times[times.count / 2]); p95=\(p95); max=\(times.last!)"
+    let attachment = XCTAttachment(string: report)
+    attachment.name = "Large diagram camera display-link intervals in seconds"
+    attachment.lifetime = .keepAlways; add(attachment)
+    XCTAssertLessThan(p95, 0.1, report)
+    await model.finishPendingPersistence()
+  }
+
   @MainActor
   func testDenseBoardKeepsFramesMovingDuringZoom() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

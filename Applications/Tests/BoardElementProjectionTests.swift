@@ -7,6 +7,87 @@ import XCTest
 
 final class BoardElementProjectionTests: XCTestCase {
   @MainActor
+  func testThinDiagramLinesSurviveFractionalMinificationInLiveAndPortalLayers() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let lines = (0..<10).map { "<path d='M \(50 + $0 * 100) 50 V 450'/>" }.joined()
+    let element = SpatialElement(id: UUID().uuidString, surface: .board, kind: .web,
+      frame: .init(x: 0, y: 0, width: 1000, height: 500), worldOrigin: .zero,
+      source: "Thin diagram lines", html: "<svg width='100%' height='100%' viewBox='0 0 1000 500'><g stroke='black' stroke-width='3.5'>\(lines)</g></svg>",
+      stamp: .init(counter: 0, actor: model.actorID))
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene)
+    window.frame = CGRect(x: 0, y: 0, width: 600, height: 400)
+    defer { window.isHidden = true }
+    func content(scale: Double, phase: Double, passive: Bool) -> some View {
+      SpatialElementContent(element: element, commitsState: !passive)
+        .frame(width: 1000, height: 500).scaleEffect(scale).offset(x: phase)
+        .frame(width: 600, height: 400).background(.white).ignoresSafeArea().environment(model)
+    }
+    let host = UIHostingController(rootView: content(scale: 0.5, phase: 0, passive: false))
+    window.rootViewController = host
+    window.makeKeyAndVisible()
+    let deadline = ContinuousClock.now + .seconds(5)
+    while AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource(element)) == nil,
+      ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    let sourceImage = try XCTUnwrap(AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource(element)))
+    let format = UIGraphicsImageRendererFormat(); format.scale = scene.screen.scale
+    let sourcePixels = try XCTUnwrap(sourceImage.cgImage)
+    var report = ["snapshot=\(sourceImage.size), scale=\(sourceImage.scale), pixels=\(sourcePixels.width)x\(sourcePixels.height)"]
+    for passive in [false, true] {
+      for scale in [0.03, 0.05, 0.08, 0.13] {
+        var coverage: [Double] = []
+        for phase in [0.0, 0.17, 0.33, 0.5, 0.67, 0.83] {
+          host.rootView = content(scale: scale, phase: phase, passive: passive)
+          try await Task.sleep(for: .milliseconds(25))
+          let image = UIGraphicsImageRenderer(size: host.view.bounds.size, format: format).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+          }
+          let cg = try XCTUnwrap(image.cgImage)
+          var bytes = [UInt8](repeating: 0, count: cg.width * cg.height * 4)
+          try bytes.withUnsafeMutableBytes { buffer in
+            let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: cg.width, height: cg.height,
+              bitsPerComponent: 8, bytesPerRow: cg.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+          }
+          let y0 = Int((200 - 100 * scale) * format.scale)
+          let y1 = Int((200 + 100 * scale) * format.scale)
+          for line in 0..<10 {
+            let x = (300 + (Double(50 + line * 100) - 500) * scale + phase) * format.scale
+            let center = Int(x.rounded(.down))
+            var ink = 0.0
+            for y in y0..<y1 { for px in (center - 2)...(center + 2) {
+              ink += 1 - Double(bytes[(y * cg.width + px) * 4]) / 255
+            } }
+            coverage.append(ink / Double(y1 - y0))
+          }
+          if phase == 0 {
+            let attachment = XCTAttachment(image: image)
+            attachment.name = "diagram-lines-\(passive ? "portal" : "live")-\(scale)"
+            attachment.lifetime = .keepAlways; add(attachment)
+          }
+        }
+        let expected = 3.5 * scale * format.scale
+        let minimum = try XCTUnwrap(coverage.min()), maximum = try XCTUnwrap(coverage.max())
+        report.append("passive=\(passive), scale=\(scale), expected=\(expected), min=\(minimum), max=\(maximum)")
+        XCTAssertGreaterThan(minimum, expected * 0.4, "Тонкая линия не исчезает между пикселями: \(report.last!)")
+        XCTAssertLessThan(maximum - minimum, expected * 0.4 + 0.03,
+          "Сдвиг камеры на долю пикселя сохраняет вес линии: \(report.last!)")
+        XCTAssertLessThan(maximum, expected * 1.25 + 0.03,
+          "Видимость не достигается утолщением линии: \(report.last!)")
+      }
+    }
+    let attachment = XCTAttachment(string: report.joined(separator: "\n"))
+    attachment.name = "diagram-line-coverage"; attachment.lifetime = .keepAlways; add(attachment)
+    XCTAssertTrue(AgentElementSnapshotCache.shared.image(for: agentElementSnapshotSource(element)) === sourceImage,
+      "Дробный зум не пересоздаёт снимок и не меняет исходник схемы")
+    await model.finishPendingPersistence()
+  }
+
+  @MainActor
   func testZoomKeepsLiveBoardObjectsRigidWithoutResizingTheirWebViewports() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -49,10 +130,21 @@ final class BoardElementProjectionTests: XCTestCase {
     } while webViews.count < 2 && ContinuousClock.now < deadline
     XCTAssertEqual(webViews.count, 2)
     for web in webViews.values {
-      _ = try await web.evaluateJavaScript("window.resizeCount=0; new ResizeObserver(()=>resizeCount++).observe(document.documentElement)")
+      // ResizeObserver owes its initial notification even without a resize.
+      // Wait for that actual frame instead of assuming a 40 ms warm-up delivered it.
+      try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        web.callAsyncJavaScript("""
+          window.resizeCount = 0;
+          await new Promise(resolve => {
+            new ResizeObserver(() => { resizeCount++; resolve(); }).observe(document.documentElement);
+          });
+          resizeCount = 0;
+          return true;
+          """, arguments: [:], in: nil, in: .page) { result in
+          continuation.resume(with: result.map { _ in () })
+        }
+      }
     }
-    try await Task.sleep(for: .milliseconds(40))
-    for web in webViews.values { _ = try await web.evaluateJavaScript("resizeCount=0") }
 
     for scale in [0.4, 0.13, 0.27, 0.5354, 0.91, 0.38, 0.4, 0.13] {
       let camera = SpatialCamera(center: .init(x: scale * 40, y: -scale * 30), scale: scale)
