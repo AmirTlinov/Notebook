@@ -9,7 +9,7 @@ import SwiftUI
 #endif
 
 private struct CameraGestureSnapshot {
-  struct BoardEngagement {
+  struct PaperEngagement {
     let itemID: UUID
     let openingScale: Double
     let rawOpeningScale: Double
@@ -23,9 +23,10 @@ private struct CameraGestureSnapshot {
   var candidateItemID: UUID?
   var dockingStartStrength: Double
   var isApproaching: Bool
-  var boardEngagement: BoardEngagement?
+  var paperEngagement: PaperEngagement?
   var dockingCorrection: NotebookDockingCorrection
   var openingWasVisible: Bool
+  var followsPortal = false
 }
 
 struct RenderedWorkspaceItem: Identifiable {
@@ -850,21 +851,19 @@ struct SpatialWorkspaceView: View {
       contentGestureActive =
         presence.mode == .page || presence.mode == .document
       let dockingStartStrength: Double
-      if candidate == nil {
-        dockingStartStrength = 0
-      } else {
+      if let candidate, itemKind(candidate) != .board {
         dockingStartStrength = NotebookDockingField.strength(
           camera: presence.camera,
           viewport: presence.viewport,
           geometry: model.itemGeometry(candidate)
         )
+      } else {
+        dockingStartStrength = 0
       }
-      let boardEngagement = focusedItemID.map {
-        let coverScale = model.itemGeometry($0).coverScale(viewport: presence.viewport)
-        let targetScale = transitionScale(
-          for: $0,
-          viewport: presence.viewport
-        )
+      let paperEngagement = focusedItemID.flatMap { itemID -> CameraGestureSnapshot.PaperEngagement? in
+        guard itemKind(itemID) != .board else { return nil }
+        let coverScale = model.itemGeometry(itemID).coverScale(viewport: presence.viewport)
+        let targetScale = model.itemGeometry(itemID).fitScale(viewport: presence.viewport)
         let fallback =
           presence.mode == .cover
             && presence.openProgress <= 0
@@ -876,8 +875,8 @@ struct SpatialWorkspaceView: View {
           progress: presence.openProgress,
           fallback: fallback
         )
-        return CameraGestureSnapshot.BoardEngagement(
-          itemID: $0,
+        return CameraGestureSnapshot.PaperEngagement(
+          itemID: itemID,
           openingScale: openingScale,
           rawOpeningScale: openingScale,
           dockingEntryProgress: presence.openProgress,
@@ -896,7 +895,7 @@ struct SpatialWorkspaceView: View {
         candidateItemID: candidate,
         dockingStartStrength: dockingStartStrength,
         isApproaching: isOpeningApproach,
-        boardEngagement: boardEngagement,
+        paperEngagement: paperEngagement,
         dockingCorrection: .zero,
         openingWasVisible:
           presence.openProgress > 0
@@ -972,7 +971,7 @@ struct SpatialWorkspaceView: View {
   ) {
     guard var snapshot = cameraGesture else { return }
     let viewport = snapshot.presence.viewport
-    let geometry = model.itemGeometry(snapshot.boardEngagement?.itemID ?? snapshot.candidateItemID)
+    let geometry = model.itemGeometry(snapshot.paperEngagement?.itemID ?? snapshot.candidateItemID)
     let pageScale = geometry.fitScale(viewport: viewport)
     let coverScale = geometry.coverScale(viewport: viewport)
     let directionThreshold: CGFloat = 0.000_5
@@ -981,11 +980,11 @@ struct SpatialWorkspaceView: View {
       snapshot.isApproaching = directionDelta > 0
     }
 
-    let engagedItemID = snapshot.boardEngagement?.itemID
+    let engagedItemID = snapshot.paperEngagement?.itemID
     let engagementScale = engagedItemID.map {
-      transitionScale(for: $0, viewport: viewport)
+      model.itemGeometry($0).fitScale(viewport: viewport)
     } ?? pageScale
-    let maximumScale = snapshot.boardEngagement == nil
+    let maximumScale = snapshot.paperEngagement == nil
       ? SpatialCamera.maximumScale
       : engagementScale
     let rawCamera = snapshot.trajectory.camera(
@@ -995,19 +994,19 @@ struct SpatialWorkspaceView: View {
     )
     var camera = rawCamera
 
-    if let boardEngagement = snapshot.boardEngagement {
+    if let paperEngagement = snapshot.paperEngagement {
       if NotebookOpeningIntent.shouldDisengage(
         cameraScale: rawCamera.scale,
         coverScale: coverScale
       ) {
-        snapshot.boardEngagement = nil
+        snapshot.paperEngagement = nil
         snapshot.dockingCorrection = .zero
       } else {
-        snapshot.candidateItemID = boardEngagement.itemID
+        snapshot.candidateItemID = paperEngagement.itemID
       }
     }
 
-    if snapshot.boardEngagement == nil {
+    if snapshot.paperEngagement == nil {
       let liveBoardPresence = SessionPresence(
         boardID: snapshot.presence.boardID,
         mode: .board,
@@ -1032,20 +1031,23 @@ struct SpatialWorkspaceView: View {
         )
       if nextCandidate != snapshot.candidateItemID {
         snapshot.candidateItemID = nextCandidate
-        if nextCandidate == nil {
-          snapshot.dockingStartStrength = 0
-        } else {
+        if let nextCandidate, itemKind(nextCandidate) != .board {
           snapshot.dockingStartStrength = NotebookDockingField.strength(
             camera: camera,
             viewport: viewport,
             geometry: model.itemGeometry(nextCandidate)
           )
+        } else {
+          snapshot.dockingStartStrength = 0
         }
       }
     }
 
+    if updatePortalMagnification(snapshot: &snapshot, camera: rawCamera,
+      magnification: scale, centroid: centroid) { return }
+
     let attractionTarget =
-      snapshot.boardEngagement?.itemID
+      snapshot.paperEngagement?.itemID
       ?? snapshot.candidateItemID
     let dockingStrength = NotebookDockingField.strength(
       camera: rawCamera,
@@ -1056,16 +1058,13 @@ struct SpatialWorkspaceView: View {
       let center = model.board?.focusedCenter(of: attractionTarget)
     {
       let correction: NotebookDockingCorrection
-      if let engagement = snapshot.boardEngagement,
+      if let engagement = snapshot.paperEngagement,
         rawCamera.scale >= engagement.rawOpeningScale
       {
         let rawOpeningProgress = NotebookOpeningTransition.progress(
           cameraScale: rawCamera.scale,
           openingScale: engagement.rawOpeningScale,
-          pageScale: transitionScale(
-            for: engagement.itemID,
-            viewport: viewport
-          )
+          pageScale: model.itemGeometry(engagement.itemID).fitScale(viewport: viewport)
         )
         correction = NotebookDockingField.openingCorrection(
           currentProgress: rawOpeningProgress,
@@ -1090,7 +1089,7 @@ struct SpatialWorkspaceView: View {
       snapshot.dockingCorrection = .zero
     }
 
-    if snapshot.boardEngagement == nil,
+    if snapshot.paperEngagement == nil,
       let candidate = snapshot.candidateItemID,
       NotebookOpeningIntent.shouldEngage(
         isApproaching: snapshot.isApproaching,
@@ -1098,7 +1097,7 @@ struct SpatialWorkspaceView: View {
         coverScale: model.itemGeometry(candidate).coverScale(viewport: viewport)
       )
     {
-      snapshot.boardEngagement = CameraGestureSnapshot.BoardEngagement(
+      snapshot.paperEngagement = CameraGestureSnapshot.PaperEngagement(
         itemID: candidate,
         openingScale: camera.scale,
         rawOpeningScale: rawCamera.scale,
@@ -1107,17 +1106,14 @@ struct SpatialWorkspaceView: View {
       )
     }
 
-    let engagement = snapshot.boardEngagement
+    let engagement = snapshot.paperEngagement
     let candidate = engagement?.itemID
     let open: Double
     if let engagement {
       open = NotebookOpeningTransition.progress(
         cameraScale: camera.scale,
         openingScale: engagement.openingScale,
-        pageScale: transitionScale(
-          for: engagement.itemID,
-          viewport: viewport
-        )
+        pageScale: model.itemGeometry(engagement.itemID).fitScale(viewport: viewport)
       )
     } else {
       open = 0
@@ -1154,7 +1150,7 @@ struct SpatialWorkspaceView: View {
     cameraGesture = nil
     let viewport = presence.viewport
     let pageScale = model.itemGeometry(presence.focusedItemID).fitScale(viewport: viewport)
-    if let engagement = snapshot.boardEngagement,
+    if let engagement = snapshot.paperEngagement,
       let itemID = presence.focusedItemID,
       engagement.itemID == itemID,
       NotebookDockingField.shouldDock(
@@ -1164,18 +1160,6 @@ struct SpatialWorkspaceView: View {
       ),
       let center = model.board?.focusedCenter(of: itemID)
     {
-      if itemKind(itemID) == .board {
-        enterBoard(
-          itemID,
-          center: center,
-          viewport: viewport,
-          duration: NotebookDockingField.settlementDuration(
-            openProgress: presence.openProgress,
-            releaseVelocity: Double(velocity)
-          )
-        )
-        return
-      }
       model.selectItem(itemID)
       let target = SessionPresence(
         boardID: presence.boardID,
@@ -1197,12 +1181,6 @@ struct SpatialWorkspaceView: View {
         ),
         bounce: 0.025
       )
-    } else if shouldExitBoard(
-      snapshot: snapshot,
-      presence: presence,
-      velocity: velocity
-    ) {
-      leaveBoard(viewport: viewport)
     } else {
       contentGestureActive = false
       model.updatePresence(presence, settled: true)
@@ -1212,7 +1190,68 @@ struct SpatialWorkspaceView: View {
   private func cancelMagnification() {
     guard let snapshot = cameraGesture else { return }
     cameraGesture = nil
+    if snapshot.followsPortal, let presence = model.presence {
+      model.updatePresence(presence, settled: true)
+      return
+    }
     animateSettlement(to: snapshot.presence, duration: 0.26)
+  }
+
+  /// A portal changes the coordinates of the same live gesture. Paper docking
+  /// never participates; releasing the fingers only saves their final frame.
+  private func updatePortalMagnification(snapshot: inout CameraGestureSnapshot,
+    camera: SpatialCamera, magnification: CGFloat, centroid: CGPoint) -> Bool {
+    let start = snapshot.presence
+    let viewport = start.viewport
+    if snapshot.paperEngagement == nil,
+      start.mode == .board || (start.mode == .cover && start.focusedItemID.flatMap(itemKind) == .board),
+      let hierarchy = model.boardHierarchy,
+      let parentID = hierarchy.parentBoardID(of: start.boardID),
+      let portal = hierarchy.portalCamera(start.boardID),
+      let center = hierarchy.focusedCenter(of: start.boardID, in: parentID) {
+      let entryScale = BoardPortalProjection.entryCamera(portalCamera: portal, viewport: viewport).scale
+      let boundaryScale = min(entryScale, snapshot.trajectory.startingCamera.scale)
+      let rawScale = snapshot.trajectory.startingCamera.scale * Double(magnification / snapshot.trajectory.startingMagnification)
+      if !snapshot.isApproaching, rawScale < boundaryScale {
+        let boundaryMagnification = snapshot.trajectory.startingMagnification * boundaryScale / snapshot.trajectory.startingCamera.scale
+        let boundary = snapshot.trajectory.camera(at: boundaryMagnification, centroid: centroid, maximumScale: SpatialCamera.maximumScale)
+        let passage = BoardPortalProjection.exitingCamera(boundary: boundary,
+          magnification: rawScale / boundaryScale, centroid: .init(x: centroid.x, y: centroid.y),
+          portalCenter: center, viewport: viewport)
+        if model.leaveBoard(through: passage, settled: false), let presence = model.presence {
+          continuePortalGesture(presence: presence, magnification: magnification, centroid: centroid,
+            candidate: start.boardID, isApproaching: false)
+          return true
+        }
+      }
+    }
+    guard snapshot.paperEngagement == nil,
+      let candidate = snapshot.candidateItemID, itemKind(candidate) == .board,
+      let center = model.board?.focusedCenter(of: candidate) else { return false }
+    if model.enterBoard(candidate, through: camera, settled: false), let presence = model.presence {
+      continuePortalGesture(presence: presence, magnification: magnification, centroid: centroid,
+        candidate: nil, isApproaching: snapshot.isApproaching)
+      return true
+    }
+    let progress = BoardPortalProjection.openingProgress(camera: camera, portalCenter: center, viewport: viewport)
+    snapshot.lastMagnification = magnification
+    snapshot.followsPortal = true
+    cameraGesture = snapshot
+    model.updatePresence(.init(boardID: start.boardID, mode: progress > 0 ? .cover : .board,
+      camera: camera, viewport: viewport, focusedItemID: progress > 0 ? candidate : nil,
+      openProgress: progress), settled: false)
+    return true
+  }
+
+  private func continuePortalGesture(presence: SessionPresence, magnification: CGFloat,
+    centroid: CGPoint, candidate: UUID?, isApproaching: Bool) {
+    cameraGesture = CameraGestureSnapshot(presence: presence,
+      trajectory: .init(startingCamera: presence.camera, startingCentroid: centroid,
+        startingMagnification: magnification, viewport: presence.viewport),
+      lastMagnification: magnification, candidateItemID: candidate, dockingStartStrength: 0,
+      isApproaching: isApproaching, paperEngagement: nil, dockingCorrection: .zero,
+      openingWasVisible: presence.openProgress > 0, followsPortal: true)
+    contentGestureActive = false
   }
 
   private func interruptSettlementForInput() {
@@ -1399,32 +1438,8 @@ struct SpatialWorkspaceView: View {
       viewport: viewport), duration: 0.34, bounce: 0.025)
   }
 
-  private func shouldExitBoard(
-    snapshot: CameraGestureSnapshot,
-    presence: SessionPresence,
-    velocity: CGFloat
-  ) -> Bool {
-    snapshot.presence.mode == .board
-      && snapshot.presence.boardID != model.workspace?.rootBoardID
-      && snapshot.boardEngagement == nil
-      && snapshot.candidateItemID == nil
-      && snapshot.lastMagnification <= 0.78
-      && !snapshot.isApproaching
-      && velocity <= 0
-      && presence.mode == .board
-  }
-
   private func itemKind(_ itemID: UUID) -> WorkspaceItemKind? {
     model.workspace?.items.first(where: { $0.id == itemID })?.kind
-  }
-
-  private func transitionScale(
-    for itemID: UUID,
-    viewport: SpatialPoint
-  ) -> Double {
-    itemKind(itemID) == .board
-      ? BoardPortalProjection.fillScale(viewport: viewport)
-      : model.itemGeometry(itemID).fitScale(viewport: viewport)
   }
 
   private func animateSettlement(

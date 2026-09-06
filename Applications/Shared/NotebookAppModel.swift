@@ -596,44 +596,53 @@ final class NotebookAppModel {
     )
   }
 
-  func enterBoard(_ boardID: UUID) {
+  @discardableResult
+  func enterBoard(_ boardID: UUID, through parentCamera: SpatialCamera? = nil, settled: Bool = true) -> Bool {
     guard let workspace, let hierarchy = boardHierarchy,
       workspace.items.contains(where: {
         $0.id == boardID && $0.kind == .board
       }),
       hierarchy.board(boardID) != nil,
       let presence
-    else { return }
+    else { return false }
+    let camera: SpatialCamera
+    if let parentCamera {
+      guard let center = hierarchy.focusedCenter(of: boardID, in: presence.boardID),
+        let entered = BoardPortalProjection.enteringCamera(from: parentCamera,
+          portalCamera: hierarchy.portalCamera(boardID) ?? BoardPortalCamera(),
+          portalCenter: center, viewport: presence.viewport) else { return false }
+      camera = entered
+    } else {
+      camera = BoardPortalProjection.entryCamera(
+        portalCamera: hierarchy.portalCamera(boardID) ?? BoardPortalCamera(), viewport: presence.viewport)
+    }
     selectItem(boardID)
     updatePresence(
       SessionPresence(
         boardID: boardID,
         mode: .board,
-        camera: BoardPortalProjection.entryCamera(
-          portalCamera: hierarchy.portalCamera(boardID) ?? BoardPortalCamera(),
-          viewport: presence.viewport
-        ),
+        camera: camera,
         viewport: presence.viewport
       ),
-      settled: true
+      settled: settled
     )
+    return true
   }
 
   /// Moves ownership to the parent at the one frame where the child and its
   /// portal are the same projection. The view can then continue zooming out
   /// without a visual cut.
   @discardableResult
-  func leaveBoard() -> Bool {
+  func leaveBoard(through passage: BoardPortalProjection.ExitProjection? = nil, settled: Bool = true) -> Bool {
     guard var hierarchy = boardHierarchy, let presence,
       let parentID = hierarchy.parentBoardID(of: presence.boardID),
       let center = hierarchy.focusedCenter(of: presence.boardID, in: parentID)
     else { return false }
-    let portalCamera = BoardPortalProjection.portalCamera(
-      from: presence.camera,
-      viewport: presence.viewport
-    )
+    let projection = passage ?? BoardPortalProjection.exitingCamera(
+      boundary: presence.camera, centroid: .init(x: presence.viewport.x / 2, y: presence.viewport.y / 2),
+      portalCenter: center, viewport: presence.viewport)
     if hierarchy.updatePortalCamera(
-      portalCamera,
+      projection.portalCamera,
       for: presence.boardID,
       actor: actorID
     ) {
@@ -644,15 +653,13 @@ final class NotebookAppModel {
       SessionPresence(
         boardID: parentID,
         mode: .cover,
-        camera: BoardPortalProjection.parentBoundaryCamera(
-          portalCenter: center,
-          viewport: presence.viewport
-        ),
+        camera: projection.parentCamera,
         viewport: presence.viewport,
         focusedItemID: presence.boardID,
-        openProgress: 1
+        openProgress: BoardPortalProjection.openingProgress(camera: projection.parentCamera,
+          portalCenter: center, viewport: presence.viewport)
       ),
-      settled: true
+      settled: settled
     )
     return true
   }
@@ -673,7 +680,13 @@ final class NotebookAppModel {
     } else {
       resolved = presence
     }
+    let inputOwnerChanged = self.presence?.boardID != resolved.boardID
+      || self.presence?.mode != resolved.mode
+      || self.presence?.focusedItemID != resolved.focusedItemID
     self.presence = resolved
+    // A continuous contact can cross a portal without ending. Transfer its
+    // publication barrier with the physical owner, not with each camera frame.
+    if inputIsActive && inputOwnerChanged { publishInputActivity() }
     let phase = settled ? PresencePhase.settled : .active
     presencePhase = phase
     #if os(iOS)
@@ -1888,7 +1901,7 @@ final class NotebookAppModel {
   /// only publish memory and never await this barrier.
   func finishPendingPersistence() async {
     while storeWriteTask != nil || peerPageTail != nil || diskRefreshTask != nil || !saveTasks.isEmpty || spatialInkSaveTask != nil
-      || presenceSaveTail != nil || boardSaveTask != nil {
+      || presenceSaveTail != nil || boardSaveTask != nil || inputWriteTask != nil {
       if let task = storeWriteTask { await task.value }
       if let task = peerPageTail { await task.value }
       if let task = diskRefreshTask { await task.value }
@@ -1896,6 +1909,7 @@ final class NotebookAppModel {
       if let task = spatialInkSaveTask { await task.value }
       if let task = presenceSaveTail { await task.value }
       if let task = boardSaveTask { await task.value }
+      if let task = inputWriteTask { await task.value }
     }
   }
 

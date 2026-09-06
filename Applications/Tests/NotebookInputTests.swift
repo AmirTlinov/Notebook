@@ -67,6 +67,42 @@ final class NotebookInputTests: XCTestCase {
   }
 
   @MainActor
+  func testContactProtectionFollowsPortalWithoutEndingContact() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let parent = try XCTUnwrap(model.workspace?.rootBoardID)
+    let child = try XCTUnwrap(model.createBoard(at: .zero))
+    let viewport = BoardPortalProjection.viewport
+    model.updatePresence(.init(boardID: parent, mode: .board,
+      camera: .init(scale: 0.3), viewport: viewport), settled: false)
+    let source = UUID()
+    model.inputGate.beginContact(source: source)
+    await model.finishPendingPersistence()
+    XCTAssertEqual(try model.store.inputActivities().first?.targets, [.init(kind: .board, id: parent)])
+
+    XCTAssertTrue(model.enterBoard(child, through: .init(scale: 1), settled: false))
+    await model.finishPendingPersistence()
+    XCTAssertTrue(model.inputGate.isActive)
+    XCTAssertEqual(try model.store.inputActivities().first?.targets, [.init(kind: .board, id: child)])
+
+    XCTAssertTrue(model.leaveBoard(settled: false))
+    await model.finishPendingPersistence()
+    XCTAssertTrue(model.inputGate.isActive)
+    XCTAssertEqual(try model.store.inputActivities().first?.targets, [.init(kind: .cover, id: child, boardID: parent)])
+    model.updatePresence(.init(boardID: parent, mode: .board,
+      camera: .init(scale: 0.3), viewport: viewport), settled: false)
+    await model.finishPendingPersistence()
+    XCTAssertEqual(try model.store.inputActivities().first?.targets, [.init(kind: .board, id: parent)])
+
+    model.inputGate.endContact(source: source)
+    for _ in 0..<100 where model.inputGate.isActive { await Task.yield() }
+    await model.finishPendingPersistence()
+    XCTAssertEqual(try model.store.inputActivities().first?.targets, [])
+  }
+
+  @MainActor
   func testIncomingCompositionWaitsForFingerAndMergesHumanContinuation() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

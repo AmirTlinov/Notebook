@@ -3,9 +3,10 @@ import SwiftUI
 
 /// Owns the geometric camera path for one two-finger gesture.
 ///
-/// Every frame is solved from the same starting camera and finger pair. A
-/// semantic correction may change what is displayed, but it never becomes the
-/// starting point of the next frame.
+/// Within one board every frame is solved from the same starting camera and
+/// finger pair. Paper docking never becomes the next frame's baseline. A portal
+/// handoff expresses the current camera and pair in the new board exactly once,
+/// keeping the cumulative magnification of the same physical gesture.
 struct CameraGestureTrajectory {
   let startingCamera: SpatialCamera
   let startingCentroid: CGPoint

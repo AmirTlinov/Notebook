@@ -740,6 +740,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     let portal = portals.element(boundBy: portals.count - 1)
     XCTAssertTrue(portal.waitForExistence(timeout: 3))
     portal.pinch(withScale: 4, velocity: 2)
+    XCTAssertTrue(portal.waitForNonExistence(timeout: 4), "Вложенная сцена заменяет рамку портала")
     XCTAssertTrue(
       app.buttons["leave-nested-board"].waitForExistence(timeout: 4),
       "Щипок наружу должен продолжить окно портала во вложенную доску"
@@ -747,9 +748,18 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     app.windows.firstMatch.pinch(withScale: 0.55, velocity: -2)
     XCTAssertTrue(
-      app.buttons["leave-nested-board"].waitForNonExistence(timeout: 4),
-      "Сильный щипок внутрь на пустой дочерней доске должен вернуть портал"
+      !portal.exists && app.buttons["leave-nested-board"].exists,
+      "Обычное уменьшение внутри доски не должно выводить наружу по доле отдельного жеста"
     )
+    app.windows.firstMatch.pinch(withScale: 0.5, velocity: -2)
+    XCTAssertTrue(
+      portal.waitForExistence(timeout: 4),
+      "Уменьшение за входной масштаб должно продолжить тот же вид на родительской доске"
+    )
+    XCTAssertLessThan(portal.frame.width, app.windows.firstMatch.frame.width)
+    // Releasing at the portal's edge does not automatically zoom to overview.
+    // A further explicit pinch reveals the parent's creation controls.
+    app.windows.firstMatch.pinch(withScale: 0.4, velocity: -2)
     XCTAssertTrue(app.buttons["create-workspace-item"].exists)
   }
 
