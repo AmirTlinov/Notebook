@@ -5,6 +5,23 @@ import XCTest
 
 final class SceneRenderResourcesTests: XCTestCase {
   @MainActor
+  func testGeometryBuffersAndRastersHaveOneBudgetButNotOneEntryCount() throws {
+    let resources = SceneRenderResources(byteLimit: 1_024, maximumRasterCount: 0)
+    let first = try XCTUnwrap(resources.reserveDerivedBytes(512))
+    let second = try XCTUnwrap(resources.reserveDerivedBytes(512))
+    XCTAssertEqual(resources.reservedBytes, 1_024)
+    XCTAssertNil(resources.reserveDerivedBytes(1))
+    XCTAssertNil(resources.reserveRaster(pixelWidth: 1, pixelHeight: 1))
+    first.release()
+    let third = try XCTUnwrap(resources.reserveDerivedBytes(512))
+    second.release(); third.release()
+    XCTAssertEqual(resources.reservedBytes, 0)
+    XCTAssertNil(resources.reserveDerivedBytes(0))
+    XCTAssertNil(resources.reserveDerivedBytes(-1))
+    XCTAssertNil(resources.reserveDerivedBytes(Int.max))
+  }
+
+  @MainActor
   func testRasterLRUEvictsOnlyTheLeastRecentlyUsedUnretainedImage() throws {
     let raster = image()
     let cost = try byteCost(raster)

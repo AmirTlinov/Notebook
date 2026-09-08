@@ -16,10 +16,8 @@ final class AddressedTargetRenderTests: XCTestCase {
       html: "<svg width='70' height='90'><rect width='70' height='90' fill='red'/></svg>")], actor: actor))
     try store.savePage(page)
     let other = try XCTUnwrap(workspace.createNotebook(title: "Not requested", actor: actor, pageSize: page.size))
-    try store.savePage(other.page)
-    try store.saveIndex(workspace)
-    try store.saveBoard(.initial(rootBoardID: workspace.rootBoardID, itemIDs: workspace.items.map(\.id), actor: actor),
-      items: workspace.items)
+    try store.saveWorkspaceBundle(index: workspace, page: other.page,
+      board: .initial(rootBoardID: workspace.rootBoardID, itemIDs: workspace.items.map(\.id), actor: actor))
     _ = try store.loadOrCreateSpatialInk(actor: actor)
     try Data("Unrelated source must not be opened by this render".utf8).write(to: store.pageURL(other.page.id))
     let request = try store.requestTargetRender(target: .init(kind: .page, id: page.id),
@@ -48,10 +46,10 @@ final class AddressedTargetRenderTests: XCTestCase {
     let item = try XCTUnwrap(workspace.createDocument(title: "Letter", actor: actor))
     let document = DocumentDocument(id: item.id, actor: actor, paperSize: .letter,
       blocks: [.markdown(id: "body", source: "The document program is not its cover.")])
-    try store.saveDocument(document)
-    try store.saveIndex(workspace)
     var hierarchy = BoardHierarchy.initial(rootBoardID: workspace.rootBoardID, itemIDs: workspace.items.map(\.id), actor: actor)
-    try store.saveBoard(hierarchy, items: workspace.items)
+    try store.saveDocumentWorkspaceBundle(index: workspace, document: document,
+      state: .init(id: document.id, actor: actor), board: hierarchy)
+    try FileManager.default.removeItem(at: store.documentStateURL(document.id))
     _ = try store.loadOrCreateSpatialInk(actor: actor)
     // No document-state file is needed to see this physical cover.
     let target = CollaborationTarget(kind: .cover, id: item.id, boardID: workspace.rootBoardID)

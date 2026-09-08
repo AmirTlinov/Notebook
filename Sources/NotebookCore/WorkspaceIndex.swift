@@ -101,6 +101,8 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
   public private(set) var selectedItemID: UUID
   public private(set) var selectedPageID: UUID?
   public private(set) var stamp: VersionStamp
+  public private(set) var collaboration: CollaborativeContent
+  public private(set) var selectionVersion: ContentFieldVersion
 
   public init(
     items: [WorkspaceItem],
@@ -117,6 +119,9 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     self.selectedItemID = selectedItemID
     self.selectedPageID = selectedPageID
     self.stamp = stamp
+    collaboration = CollaborativeContent()
+    selectionVersion = .init(stamp: stamp, human: true)
+    recordChanges(from: nil, human: true)
     precondition(isValid)
   }
 
@@ -163,6 +168,16 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     return selectedItem.pageIDs.firstIndex(of: selectedPageID)
   }
 
+  /// A prepared mutation can await its durable publication while the person
+  /// continues elsewhere. Reserve its clock before yielding so the next
+  /// intent cannot reuse that actor/counter. No field value or owner changes.
+  @discardableResult
+  public mutating func observeCausalFrontier(_ frontier: VersionStamp) -> Bool {
+    guard frontier.counter <= VersionStamp.maximumCounter, stamp < frontier else { return false }
+    stamp = frontier
+    return true
+  }
+
   @discardableResult
   public mutating func selectItem(
     _ itemID: UUID,
@@ -191,6 +206,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     selectedItemID = itemID
     selectedPageID = selectedPage
     stamp = nextStamp
+    selectionVersion = .init(stamp: nextStamp, human: true, previous: selectionVersion)
     return true
   }
 
@@ -219,6 +235,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     selectedItemID = itemID
     selectedPageID = pageID
     stamp = nextStamp
+    recordCreatedItem(item)
     return (item, page)
   }
 
@@ -239,6 +256,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     selectedItemID = documentID
     selectedPageID = nil
     stamp = nextStamp
+    recordCreatedItem(item)
     return item
   }
 
@@ -260,6 +278,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     selectedItemID = boardID
     selectedPageID = nil
     stamp = nextStamp
+    recordCreatedItem(item)
     return item
   }
 
@@ -275,6 +294,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
       let nextStamp = stamp.advanced(by: actor)
     else { return nil }
 
+    let changesSelection = selectedItemID == itemID
     let removed = items.remove(at: removedIndex)
     itemPositions[itemID] = nil
     for position in removedIndex..<items.count { itemPositions[items[position].id] = position }
@@ -284,13 +304,17 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
       selectedPageID = replacement.pageIDs.first
     }
     stamp = nextStamp
+    collaboration.recordField(Self.itemField(itemID, "exists"), stamp: stamp, human: true)
+    collaboration.recordField("items/order", stamp: stamp, human: true)
+    if changesSelection { selectionVersion = .init(stamp: stamp, human: true, previous: selectionVersion) }
     return removed
   }
 
   var isValid: Bool {
     guard format == Self.formatVersion,
       !items.isEmpty,
-      stamp.counter <= VersionStamp.maximumCounter
+      stamp.counter <= VersionStamp.maximumCounter,
+      selectionVersion.isValid, collaboration.isValid(maximumFields: 1_000_000)
     else { return false }
 
     let itemIDs = items.map(\.id)
@@ -337,6 +361,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
       let pageID = items[itemIndex].pageIDs[pageIndex]
       self.selectedPageID = pageID
       stamp = nextStamp
+      selectionVersion = .init(stamp: stamp, human: true, previous: selectionVersion)
       return WorkspacePageSelection(
         itemID: itemID,
         pageIndex: pageIndex,
@@ -349,6 +374,10 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     items[itemIndex].pageIDs.append(page.id)
     self.selectedPageID = page.id
     stamp = nextStamp
+    collaboration.recordField(Self.itemField(itemID, "exists"), stamp: stamp, human: true)
+    collaboration.recordField(Self.itemField(itemID, "pageIDs"), stamp: stamp, human: true)
+    collaboration.recordField(Self.pageField(itemID, page.id), stamp: stamp, human: true)
+    selectionVersion = .init(stamp: stamp, human: true, previous: selectionVersion)
     return WorkspacePageSelection(
       itemID: itemID,
       pageIndex: pageIndex,
@@ -358,12 +387,8 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
   }
 
   public mutating func merge(_ other: Self) -> Bool {
-    guard stamp < other.stamp, other.isValid else { return false }
-    items = other.items
-    itemPositions = other.itemPositions
-    selectedItemID = other.selectedItemID
-    selectedPageID = other.selectedPageID
-    stamp = other.stamp
+    guard let resolved = try? merging(other), resolved != self else { return false }
+    self = resolved
     return true
   }
 
@@ -371,6 +396,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     lhs.format == rhs.format && lhs.rootBoardID == rhs.rootBoardID
       && lhs.items == rhs.items && lhs.selectedItemID == rhs.selectedItemID
       && lhs.selectedPageID == rhs.selectedPageID && lhs.stamp == rhs.stamp
+      && lhs.collaboration == rhs.collaboration && lhs.selectionVersion == rhs.selectionVersion
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -379,6 +405,8 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     case selectedItemID
     case selectedPageID
     case stamp
+    case collaboration
+    case selectionVersion
     case rootBoardID
     case notebooks
     case legacySelectedNotebookID = "selectedNotebookID"
@@ -415,6 +443,9 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
       )
       format = Self.formatVersion
       rootBoardID = WorkspaceRoot.boardID
+      guard notebooks.allSatisfy({ !$0.pageIDs.isEmpty }) else {
+        throw DecodingError.dataCorruptedError(forKey: .notebooks, in: container, debugDescription: "A notebook requires a page.")
+      }
       items = notebooks.map {
         WorkspaceItem.notebook(id: $0.id, title: $0.title, pageIDs: $0.pageIDs)
       }
@@ -432,6 +463,12 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
       )
     }
     itemPositions = Self.makeItemPositions(items)
+    selectionVersion = try container.decodeIfPresent(ContentFieldVersion.self, forKey: .selectionVersion) ?? .init(stamp: stamp, human: true)
+    collaboration = try container.decodeIfPresent(CollaborativeContent.self, forKey: .collaboration) ?? CollaborativeContent()
+    if !container.contains(.collaboration) { recordChanges(from: nil, human: true) }
+    guard isValid else {
+      throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid workspace owner."))
+    }
   }
 
   public func encode(to encoder: Encoder) throws {
@@ -442,5 +479,114 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     try container.encode(selectedItemID, forKey: .selectedItemID)
     try container.encodeIfPresent(selectedPageID, forKey: .selectedPageID)
     try container.encode(stamp, forKey: .stamp)
+    try container.encode(collaboration, forKey: .collaboration)
+    try container.encode(selectionVersion, forKey: .selectionVersion)
+  }
+
+  private static func itemField(_ id: UUID, _ field: String) -> String {
+    fieldKey(["items", id.uuidString.lowercased(), field])
+  }
+
+  private static func pageField(_ itemID: UUID, _ pageID: UUID) -> String {
+    fieldKey(["items", itemID.uuidString.lowercased(), "pageIDs", pageID.uuidString.lowercased()])
+  }
+
+  private mutating func recordCreatedItem(_ item: WorkspaceItem) {
+    for field in ["exists", "title", "kind", "pageIDs"] {
+      collaboration.recordField(Self.itemField(item.id, field), stamp: stamp, human: true)
+    }
+    for page in item.pageIDs {
+      collaboration.recordField(Self.pageField(item.id, page), stamp: stamp, human: true)
+    }
+    collaboration.recordField("items/order", stamp: stamp, human: true)
+    selectionVersion = .init(stamp: stamp, human: true, previous: selectionVersion)
+  }
+
+  /// Native selection records one field; agent operations and undo use this
+  /// same owner's comparison to record only the catalog fields they changed.
+  mutating func recordChanges(from previous: Self?, human: Bool) {
+    collaboration = previous?.collaboration ?? CollaborativeContent()
+    let oldIDs = previous?.items.map(\.id) ?? []
+    let ids = items.map(\.id)
+    if oldIDs != ids { collaboration.recordField("items/order", stamp: stamp, human: human) }
+    selectionVersion = previous?.selectionVersion ?? .init(stamp: stamp, human: human)
+    if previous?.selectedItemID != selectedItemID || previous?.selectedPageID != selectedPageID {
+      selectionVersion = .init(stamp: stamp, human: human, previous: selectionVersion)
+    }
+    for id in Set(oldIDs).union(ids) {
+      let old = previous?.item(id: id), new = item(id: id)
+      guard old != new else { continue }
+      collaboration.recordField(Self.itemField(id, "exists"), stamp: stamp, human: human)
+      guard let new else { continue }
+      if old?.title != new.title { collaboration.recordField(Self.itemField(id, "title"), stamp: stamp, human: human) }
+      if old?.kind != new.kind { collaboration.recordField(Self.itemField(id, "kind"), stamp: stamp, human: human) }
+      if old?.pageIDs != new.pageIDs {
+        collaboration.recordField(Self.itemField(id, "pageIDs"), stamp: stamp, human: human)
+        let oldPages = Set(old?.pageIDs ?? []), newPages = Set(new.pageIDs)
+        for page in oldPages.symmetricDifference(newPages) {
+          collaboration.recordField(Self.pageField(id, page), stamp: stamp, human: human)
+        }
+      }
+    }
+  }
+
+  public func merging(_ other: Self) throws -> Self {
+    guard isValid, other.isValid, rootBoardID == other.rootBoardID else {
+      throw CollaborationError("invalid_content", "Каталоги должны принадлежать одному корню.")
+    }
+    if self == other { return self }
+    func incomingOwns(_ field: String) -> Bool {
+      if field == "selection" { return other.selectionVersion.wins(over: selectionVersion) }
+      guard let incoming = other.collaboration.fields[field] else { return false }
+      guard let current = collaboration.fields[field] else { return true }
+      return incoming.wins(over: current)
+    }
+    var byID: [UUID: WorkspaceItem] = [:]
+    for id in Set(items.map(\.id)).union(other.items.map(\.id)) {
+      let local = item(id: id), incoming = other.item(id: id)
+      let exists = incomingOwns(Self.itemField(id, "exists")) ? incoming != nil : local != nil
+      guard exists else { continue }
+      guard var resolved = local ?? incoming else { continue }
+      if let local, let incoming {
+        guard local.kind == incoming.kind else {
+          throw CollaborationError("invalid_content", "UUID предмета не меняет вид владельца.")
+        }
+        resolved.title = incomingOwns(Self.itemField(id, "title")) ? incoming.title : local.title
+        let localPages = Set(local.pageIDs), incomingPages = Set(incoming.pageIDs)
+        let live = localPages.union(incomingPages).filter { page in
+          incomingOwns(Self.pageField(id, page)) ? incomingPages.contains(page) : localPages.contains(page)
+        }
+        let preferred = incomingOwns(Self.itemField(id, "pageIDs")) ? incoming.pageIDs : local.pageIDs
+        resolved.pageIDs = preferred.filter(live.contains) + live.subtracting(preferred).sorted { $0.uuidString < $1.uuidString }
+      }
+      byID[id] = resolved
+    }
+    guard !byID.isEmpty else {
+      throw CollaborationError("workspace_conflict", "Независимые удаления требуют сохранить хотя бы один доступный предмет.")
+    }
+    let preferred = incomingOwns("items/order") ? other.items : items
+    let preferredIDs = preferred.map(\.id)
+    let order = preferredIDs.filter { byID[$0] != nil }
+      + Set(byID.keys).subtracting(preferredIDs).sorted { $0.uuidString < $1.uuidString }
+    let selected = incomingOwns("selection") ? other : self
+    let selectedID = byID[selected.selectedItemID] == nil ? order[0] : selected.selectedItemID
+    let selectedItem = byID[selectedID]!
+    let selectedPage = selected.selectedPageID.flatMap { selectedItem.pageIDs.contains($0) ? $0 : nil }
+      ?? selectedItem.pageIDs.first
+    let frontier = max(stamp, other.stamp)
+    var result = self
+    result.items = order.compactMap { byID[$0] }
+    result.itemPositions = Self.makeItemPositions(result.items)
+    result.selectedItemID = selectedID
+    result.selectedPageID = selectedPage
+    result.stamp = frontier
+    result.selectionVersion = selectionVersion.joining(other.selectionVersion)
+    for (key, version) in other.collaboration.fields { result.collaboration.joinField(key, version: version) }
+    let newest = stamp > other.stamp ? self : other
+    if result.items != newest.items || selectedID != newest.selectedItemID || selectedPage != newest.selectedPageID {
+      result.stamp = frontier.advanced(by: frontier.actor) ?? frontier
+    }
+    guard result.isValid else { throw CollaborationError("invalid_content", "Слияние каталога должно сохранить уникальных владельцев листов.") }
+    return result
   }
 }

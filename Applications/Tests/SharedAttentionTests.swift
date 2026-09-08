@@ -19,6 +19,8 @@ final class SharedAttentionTests: XCTestCase {
     var remote = try XCTUnwrap(model.collaborationContent)
     XCTAssertTrue(remote.workspace.selectItem(newItem,actor:UUID()))
     model.receivePeerMessage(.collaboration(.init(content:remote)))
+    let saved = await model.finishPendingPersistence()
+    XCTAssertTrue(saved, model.persistenceFailure ?? "")
     XCTAssertEqual(model.workspace?.selectedItemID,original.selectedItemID)
     XCTAssertEqual(model.workspace?.selectedPageID,original.selectedPageID)
     XCTAssertEqual(model.presence,presence)

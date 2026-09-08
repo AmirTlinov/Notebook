@@ -201,7 +201,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       repeatTask = Task { [weak self] in
         while !Task.isCancelled {
           try? await Task.sleep(for: .milliseconds(95))
-          guard !Task.isCancelled, let self else { return }
+          guard !Task.isCancelled, let self, recognizer?.permitsUndoRepetition == true else { return }
           onUndo()
         }
       }
@@ -291,19 +291,23 @@ final class GestureAnchorView: UIView {
 struct BoardPanView: UIViewRepresentable {
   let isEnabled: Bool
   let itemFrames: [CGRect]
+  let inputGate: NotebookInputGate
   let onTap: () -> Void
   let onBegan: () -> Void
   let onChanged: (CGPoint) -> Void
   let onEnded: (CGPoint) -> Void
+  let onCancelled: () -> Void
 
   func makeCoordinator() -> Coordinator {
     Coordinator(
       isEnabled: isEnabled,
       itemFrames: itemFrames,
+      inputGate: inputGate,
       onTap: onTap,
       onBegan: onBegan,
       onChanged: onChanged,
-      onEnded: onEnded
+      onEnded: onEnded,
+      onCancelled: onCancelled
     )
   }
 
@@ -320,10 +324,12 @@ struct BoardPanView: UIViewRepresentable {
   func updateUIView(_ view: GestureAnchorView, context: Context) {
     context.coordinator.isEnabled = isEnabled
     context.coordinator.itemFrames = itemFrames
+    context.coordinator.inputGate = inputGate
     context.coordinator.onTap = onTap
     context.coordinator.onBegan = onBegan
     context.coordinator.onChanged = onChanged
     context.coordinator.onEnded = onEnded
+    context.coordinator.onCancelled = onCancelled
     if let window = view.window {
       context.coordinator.install(on: window, inside: view)
     }
@@ -341,15 +347,28 @@ struct BoardPanView: UIViewRepresentable {
     var isEnabled: Bool {
       didSet {
         guard oldValue != isEnabled else { return }
+        // UIKit can send its cancellation target synchronously from this
+        // setter inside updateUIView. End native ownership before disabling
+        // the recognizer; publish the SwiftUI completion after that update.
+        if !isEnabled { cancelFingerSequence(deferCallbacks: true) }
         pan?.isEnabled = isEnabled
         tap?.isEnabled = isEnabled
       }
     }
     var itemFrames: [CGRect]
+    var inputGate: NotebookInputGate {
+      didSet {
+        guard oldValue !== inputGate else { return }
+        oldValue.unregisterFingerCancellation(source: inputSource)
+        cancelFingerSequence(deferCallbacks: true)
+        if hostView != nil { registerCancellation() }
+      }
+    }
     var onTap: () -> Void
     var onBegan: () -> Void
     var onChanged: (CGPoint) -> Void
     var onEnded: (CGPoint) -> Void
+    var onCancelled: () -> Void
 
     private weak var hostView: UIView?
     private weak var sceneView: UIView?
@@ -357,21 +376,30 @@ struct BoardPanView: UIViewRepresentable {
     private var tap: UITapGestureRecognizer?
     private weak var startingCover: NotebookInteractionTouchView?
     private var panOrigin = CGPoint.zero
+    private let inputSource = UUID()
+    private var panRevision: UInt64?
+    private var tapRevision: UInt64?
+    private var panIsActive = false
+    private var deferredPanCancellation: (() -> Void)?
 
     init(
       isEnabled: Bool,
       itemFrames: [CGRect],
+      inputGate: NotebookInputGate,
       onTap: @escaping () -> Void,
       onBegan: @escaping () -> Void,
       onChanged: @escaping (CGPoint) -> Void,
-      onEnded: @escaping (CGPoint) -> Void
+      onEnded: @escaping (CGPoint) -> Void,
+      onCancelled: @escaping () -> Void
     ) {
       self.isEnabled = isEnabled
       self.itemFrames = itemFrames
+      self.inputGate = inputGate
       self.onTap = onTap
       self.onBegan = onBegan
       self.onChanged = onChanged
       self.onEnded = onEnded
+      self.onCancelled = onCancelled
     }
 
     func install(on hostView: UIView?, inside sceneView: UIView) {
@@ -413,9 +441,12 @@ struct BoardPanView: UIViewRepresentable {
       self.sceneView = sceneView
       self.pan = pan
       self.tap = tap
+      registerCancellation()
     }
 
     func uninstall() {
+      inputGate.unregisterFingerCancellation(source: inputSource)
+      cancelFingerSequence(deferCallbacks: true)
       if let pan { hostView?.removeGestureRecognizer(pan) }
       if let tap { hostView?.removeGestureRecognizer(tap) }
       pan = nil
@@ -425,26 +456,73 @@ struct BoardPanView: UIViewRepresentable {
       sceneView = nil
     }
 
+    private func registerCancellation() {
+      inputGate.registerFingerCancellation(source: inputSource) { [weak self] in
+        self?.flushPanCancellation()
+        self?.cancelFingerSequence()
+      }
+    }
+
+    private func cancelFingerSequence(deferCallbacks: Bool = false) {
+      panRevision = nil
+      tapRevision = nil
+      if panIsActive {
+        panIsActive = false
+        if deferCallbacks {
+          let cancellation = onCancelled
+          deferredPanCancellation = cancellation
+          DispatchQueue.main.async { self.flushPanCancellation() }
+        } else {
+          onCancelled()
+        }
+      }
+      if let pan, pan.state == .began || pan.state == .changed {
+        pan.isEnabled = false
+        pan.isEnabled = isEnabled
+      }
+    }
+
+    private func flushPanCancellation() {
+      let cancellation = deferredPanCancellation
+      deferredPanCancellation = nil
+      cancellation?()
+    }
+
     @objc func handle(_ pan: UIPanGestureRecognizer) {
       let point = pan.location(in: sceneView)
       // The touch-down point also includes UIKit's recognition travel.
       let translation = CGPoint(x: point.x - panOrigin.x, y: point.y - panOrigin.y)
-      switch pan.state {
+      receivePan(state: pan.state, translation: translation)
+    }
+
+    func receivePan(state: UIGestureRecognizer.State, translation: CGPoint) {
+      guard let panRevision, inputGate.acceptsFingerSequence(panRevision) else {
+        cancelFingerSequence()
+        return
+      }
+      switch state {
       case .began:
+        panIsActive = true
         onBegan()
         onChanged(translation)
       case .changed:
+        guard panIsActive else { return }
         onChanged(translation)
       case .ended:
+        guard panIsActive else { return }
+        panIsActive = false
+        self.panRevision = nil
         onEnded(translation)
       case .cancelled, .failed:
-        onEnded(.zero)
+        cancelFingerSequence()
       default:
         break
       }
     }
 
     @objc private func handleTap() {
+      guard let revision = tapRevision, inputGate.acceptsFingerSequence(revision) else { return }
+      tapRevision = nil
       onTap()
     }
 
@@ -452,21 +530,38 @@ struct BoardPanView: UIViewRepresentable {
       _ gestureRecognizer: UIGestureRecognizer,
       shouldReceive touch: UITouch
     ) -> Bool {
-      guard let sceneView, sceneView.window != nil else { return false }
+      guard isEnabled, let sceneView, sceneView.window != nil else { return false }
+      // A following contact must not be cleared by the previous pan's queued
+      // completion, even if disable and re-enable preceded the next run loop.
+      flushPanCancellation()
+      guard let revision = inputGate.beginFingerSequence(), !Self.ownsInteractiveInput(touch.view) else { return false }
       let point = touch.location(in: sceneView)
       guard sceneView.bounds.contains(point) else { return false }
       let isFreeBoard = !itemFrames.contains(where: { $0.contains(point) })
       if gestureRecognizer === pan {
+        panRevision = revision
         panOrigin = point
         startingCover = touch.view as? NotebookInteractionTouchView
         // The cover's direct-touch surface can hand motion to the camera.
         // Its passthrough editors and interactive content keep their own input.
         return startingCover != nil || isFreeBoard
       }
+      tapRevision = revision
       return isFreeBoard
     }
 
+    static func ownsInteractiveInput(_ view: UIView?) -> Bool {
+      var current = view
+      while let candidate = current {
+        if candidate is UIControl || candidate is UITextView || candidate is UIScrollView { return true }
+        current = candidate.superview
+      }
+      return false
+    }
+
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+      let revision = gestureRecognizer === pan ? panRevision : tapRevision
+      guard let revision, inputGate.acceptsFingerSequence(revision) else { return false }
       guard gestureRecognizer === pan, let startingCover else { return true }
       return startingCover.yieldToCameraPan()
     }
@@ -486,6 +581,7 @@ struct BoardPanView: UIViewRepresentable {
 /// recognizer.
 struct NotebookInteractionView: UIViewRepresentable {
   let permitsManipulation: Bool
+  let canBeginContact: () -> Bool
   let passthroughFrames: [CGRect]
   let onTap: (CGPoint, Int) -> Void
   let onLiftChanged: (Bool) -> Void
@@ -505,6 +601,7 @@ struct NotebookInteractionView: UIViewRepresentable {
     context: Context
   ) {
     view.passthroughFrames = passthroughFrames
+    view.canBeginContact = canBeginContact
     view.onTap = onTap
     view.onLiftChanged = onLiftChanged
     view.onTranslationChanged = onTranslationChanged
@@ -526,6 +623,7 @@ final class NotebookInteractionTouchView: UIView {
   private static let movementTolerance: CGFloat = 18
 
   var onTap: (CGPoint, Int) -> Void = { _, _ in }
+  var canBeginContact: () -> Bool = { true }
   var onLiftChanged: (Bool) -> Void = { _ in }
   var onTranslationChanged: (CGSize) -> Void = { _ in }
   var onTranslationEnded: (CGSize) -> Void = { _ in }
@@ -567,6 +665,7 @@ final class NotebookInteractionTouchView: UIView {
     with event: UIEvent?
   ) {
     flushLiftCancellation()
+    guard canBeginContact() else { return }
     let directTouches = touches.filter { $0.type == .direct }
     guard activeTouch == nil, directTouches.count == 1,
       let touch = directTouches.first

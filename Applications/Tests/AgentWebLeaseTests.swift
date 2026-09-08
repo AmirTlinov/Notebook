@@ -106,6 +106,30 @@ final class AgentWebLeaseTests: XCTestCase {
   }
 
   @MainActor
+  func testOriginOnlyMoveReusesRasterAndAcceptsAnAlreadyRunningSnapshot() async throws {
+    let resources = SceneRenderResources()
+    let lease = try await resources.acquireWebSurface(priority: .visible)
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in })
+    let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
+    defer { coordinator.invalidate(); lease.release() }
+    let original = element(source: "one physical surface")
+    let moved = original.updating(frame: .init(x: 100, y: -50, width: 32, height: 32))
+    coordinator.load(original, in: web)
+    let token = try XCTUnwrap(coordinator.loadToken)
+    coordinator.load(moved, in: web)
+    XCTAssertEqual(coordinator.loadToken, token)
+    let reservation = try XCTUnwrap(resources.reserveRaster(pixelWidth: 32, pixelHeight: 32))
+    coordinator.completeSnapshot(raster(), error: nil, token: token, element: original, reservation: reservation)
+    let retained = try XCTUnwrap(resources.retainRaster(for: moved))
+    defer { retained.release() }
+    XCTAssertNotNil(retained.image(for: .agent(original)))
+    XCTAssertNotNil(resources.image(for: moved))
+    XCTAssertNil(resources.image(for: moved.updating(state: .number(2))))
+    XCTAssertNil(resources.image(for: moved.updating(frame: .init(x: 100, y: -50, width: 64, height: 32))))
+    XCTAssertNil(resources.image(for: element(source: "changed program")))
+  }
+
+  @MainActor
   func testCurrentSnapshotErrorIsReportedButInvalidatedErrorIsDiscarded() async throws {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .visible)

@@ -118,6 +118,28 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
     boards.first(where: { $0.id == boardID })?.portalCamera
   }
 
+  /// A pending tree mutation reserves clocks, not physical content. The next
+  /// edit of a shared board must follow that mutation before it reaches disk.
+  @discardableResult
+  public mutating func observeCausalFrontiers(from pending: Self) -> Bool {
+    guard rootBoardID == pending.rootBoardID,
+      pending.stamp.counter <= VersionStamp.maximumCounter,
+      Set(pending.boards.map(\.id)).count == pending.boards.count,
+      pending.boards.allSatisfy({ $0.board.stamp.counter <= VersionStamp.maximumCounter }) else { return false }
+    let frontiers = Dictionary(uniqueKeysWithValues: pending.boards.map { ($0.id, $0.board.stamp) })
+    var changed = false
+    for index in boards.indices {
+      guard let frontier = frontiers[boards[index].id] else { continue }
+      var content = boards[index].board
+      if content.observeCausalFrontier(frontier) {
+        boards[index].replace(with: content)
+        changed = true
+      }
+    }
+    if stamp < pending.stamp { stamp = pending.stamp; changed = true }
+    return changed
+  }
+
   public var itemIDs: [UUID] {
     boards.flatMap { $0.board.itemIDs }
   }
@@ -170,42 +192,6 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
     in boardID: UUID
   ) -> WorldPoint? {
     board(boardID)?.focusedCenter(of: itemID)
-  }
-
-  /// Builds a short-lived publication bridge for an older catalog. Missing
-  /// items receive a valid root placement; missing board portals also receive
-  /// an empty child board, so either catalog can be read between atomic files.
-  @discardableResult
-  public mutating func placeMissingItems(
-    _ items: [WorkspaceItem],
-    actor: UUID
-  ) -> Bool {
-    let owned = Set(boards.flatMap { $0.board.itemIDs })
-    let missing = items.filter { !owned.contains($0.id) }
-    guard !missing.isEmpty else { return false }
-    var changed = false
-    for (offset, item) in missing.enumerated() {
-      let center = WorldPoint(
-        x: Double(offset % 3 - 1) * WorkspaceItemGeometry.notebook.width * 1.28,
-        y: Double(offset / 3) * WorkspaceItemGeometry.notebook.height * 1.18
-      )
-      if item.kind == .board {
-        changed = createBoard(
-          item.id,
-          in: rootBoardID,
-          near: center,
-          actor: actor
-        ) || changed
-      } else {
-        changed = addItem(
-          item.id,
-          to: rootBoardID,
-          near: center,
-          actor: actor
-        ) || changed
-      }
-    }
-    return changed
   }
 
   @discardableResult
@@ -378,45 +364,65 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
     _ other: Self,
     items: [WorkspaceItem]
   ) -> Bool {
+    guard let resolved = try? merging(other, items: items), resolved != self else { return false }
+    self = resolved
+    return true
+  }
+
+  /// A publication must distinguish an unchanged tree from a conflicting
+  /// physical owner. A failed merge cannot silently publish the other fields.
+  func merging(_ other: Self, items: [WorkspaceItem]) throws -> Self {
     guard rootBoardID == other.rootBoardID,
-      other.isValid(items: items)
-    else {
-      return false
+      Set(items.map(\.id)).count == items.count else {
+      throw CollaborationError("invalid_content", "Дерево требует одного корня и уникальных предметов.")
     }
-    // The incoming hierarchy owns topology for the incoming catalog. A local
-    // node can still win independently when both sides name the same items.
-    // This preserves a newer edit in board B while board A adds or removes an
-    // item and changes the catalog boundary.
-    var candidate = other
-    for index in candidate.boards.indices {
-      let incoming = candidate.boards[index]
-      guard let current = boards.first(where: { $0.id == incoming.id }) else {
-        continue
+    if self == other, isValid(items: items) { return self }
+    let knownItems = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+    let liveIDs = Set(knownItems.keys)
+    let liveBoards = Set(items.filter { $0.kind == .board }.map(\.id)).union([rootBoardID])
+    // Validate each source with its own catalog boundary. Neither source is
+    // required to know a concurrently created owner in the other source.
+    func sourceItems(_ tree: Self) -> [WorkspaceItem] {
+      let nested = Set(tree.boards.map(\.id))
+      return tree.itemIDs.map { id in
+        knownItems[id]
+          ?? (nested.contains(id) ? .board(id: id, title: "") : .document(id: id, title: ""))
       }
-      var resolved = incoming
-      if Set(current.board.itemIDs) == Set(incoming.board.itemIDs) {
+    }
+    guard isValid(items: sourceItems(self)), other.isValid(items: sourceItems(other)) else {
+      throw CollaborationError("invalid_content", "Каждый исходный предмет должен иметь одного физического владельца.")
+    }
+    let localNodes = Dictionary(uniqueKeysWithValues: boards.map { ($0.id, $0) })
+    let incomingNodes = Dictionary(uniqueKeysWithValues: other.boards.map { ($0.id, $0) })
+    var candidate = self
+    candidate.stamp = max(stamp, other.stamp)
+    candidate.boards = []
+    for id in liveBoards.sorted(by: { $0.uuidString < $1.uuidString }) {
+      guard var resolved = localNodes[id] ?? incomingNodes[id] else {
+        throw CollaborationError("dependency_missing", "Каталог не может открыть отсутствующую доску.")
+      }
+      if let current = localNodes[id], let incoming = incomingNodes[id] {
         var content = current.board
-        _ = content.merge(incoming.board, itemIDs: Set(incoming.board.itemIDs))
+        if content != incoming.board { _ = content.merge(incoming.board, itemIDs: []) }
+        resolved.replace(with: content)
+        if current.portalStamp < incoming.portalStamp {
+          resolved.replacePortal(camera: incoming.portalCamera, stamp: incoming.portalStamp)
+        }
+      }
+      var content = resolved.board
+      let retained = content.itemIDs.filter(liveIDs.contains)
+      if retained.count != content.itemIDs.count {
+        _ = content.reconcileItems(retained, actor: candidate.stamp.actor)
         resolved.replace(with: content)
       }
-      if incoming.portalStamp < current.portalStamp {
-        resolved.replacePortal(
-          camera: current.portalCamera,
-          stamp: current.portalStamp
-        )
-      }
-      candidate.boards[index] = resolved
+      candidate.boards.append(resolved)
     }
-    if candidate.stamp < stamp { candidate.stamp = stamp }
-    if !candidate.isValid(items: items) {
-      candidate = other
-      if candidate.stamp < stamp { candidate.stamp = stamp }
+    // A missing or multiply placed item is a conflict, never an instruction
+    // to invent a position or discard a physical owner.
+    guard candidate.isValid(items: items) else {
+      throw CollaborationError("ownership_conflict", "Независимые перемещения требуют одного физического владельца предмета.")
     }
-    guard candidate != self, candidate.isValid(items: items) else {
-      return false
-    }
-    self = candidate
-    return true
+    return candidate
   }
 
   public func isValid(items: [WorkspaceItem]) -> Bool {

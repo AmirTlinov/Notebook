@@ -65,19 +65,22 @@ final class DocumentResourceLeaseTests: XCTestCase {
     let resources = SceneRenderResources(maximumWebSurfaces: 1)
     var sources: [String] = [], states: [JSONValue] = [], readies: [Bool] = []
     let fixture = fixture(resources: resources, interactive: true,
-      ready: { readies.append($0) }, source: { _, source in sources.append(source) }, state: { _, value in states.append(value) })
+      ready: { readies.append($0) }, source: { edit in sources.append(edit.source); return .committed }, state: { _, value in states.append(value) })
     let window = try show(fixture.host)
     defer { fixture.coordinator.invalidate(); window.isHidden = true }
     await waitUntil(timeout: .seconds(8)) { fixture.coordinator.renderIsReady }
     let web = try XCTUnwrap(fixture.coordinator.webView)
-    let token = try XCTUnwrap(fixture.coordinator.payload?.renderToken)
+    let token = try XCTUnwrap(fixture.coordinator.payload?.runtimeID.uuidString)
     func source(_ token: String, _ value: String) -> [String: Any] {
-      ["kind": "source", "documentID": fixture.document.id.uuidString, "renderToken": token, "blockID": "body", "source": value]
+      let edit = DocumentSourceEdit(sessionID: UUID(), documentID: fixture.document.id, blockID: "body",
+        baseSource: fixture.document.blocks[0].source, baseVersion: fixture.document.sourceVersion(blockID: "body"), source: value, sequence: 1)
+      return ["kind": "source", "documentID": fixture.document.id.uuidString, "runtimeID": token, "blockID": "body",
+        "edit": try! JSONSerialization.jsonObject(with: JSONEncoder().encode(edit))]
     }
     fixture.coordinator.receive(body: source("old-token", "stale"), from: web)
     XCTAssertTrue(sources.isEmpty)
     fixture.coordinator.receive(body: source(token, "accepted"), from: web)
-    XCTAssertEqual(sources, ["accepted"])
+    await waitUntil { sources == ["accepted"] }
     fixture.coordinator.invalidate()
     let readyCount = readies.count
     fixture.coordinator.receive(body: source(token, "after teardown"), from: web)
@@ -103,7 +106,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
       blocks: [.markdown(id: "body", source: "A different physical owner")])
     let state = DocumentStateJournal(id: other.id, actor: fixture.state.stamp.actor)
     fixture.coordinator.update(document: other, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _,_ in }, onStateChange: { _,_ in })
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in })
     XCTAssertEqual(fixture.coordinator.payload?.documentID, other.id)
     XCTAssertEqual(fixture.coordinator.payload?.blocks.first?.source, "A different physical owner")
   }
@@ -124,7 +127,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
         page: { index, current, readiness in
           AnyView(DocumentWebView(document: document, state: state, isInteractive: current,
             selectedPageIndex: index, capturesSnapshot: false, onRenderReady: readiness,
-            onPageLayout: { _ in }, onSourceChange: { _,_ in }, onStateChange: { _,_ in }, resources: resources))
+            onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in }, resources: resources))
         }, onCommit: { committed = $0 }, onTransitioningChange: { _ in })
     }
     configure(); window.makeKeyAndVisible()
@@ -179,7 +182,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
           DocumentWebView(document: document, state: state, isInteractive: index == 0,
             selectedPageIndex: index, capturesSnapshot: false,
             onRenderReady: .init { if $0 { liveReady.insert(index) } else { liveReady.remove(index) } },
-            onPageLayout: { _ in }, onSourceChange: { _,_ in }, onStateChange: { _,_ in }, resources: resources)
+            onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in }, resources: resources)
             .frame(width: geometry.width, height: geometry.height)
         }
         if previews {
@@ -294,7 +297,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
   }
 
   private func fixture(resources: SceneRenderResources, interactive: Bool, document suppliedDocument: DocumentDocument? = nil,
-    ready: @escaping @MainActor @Sendable (Bool) -> Void = { _ in }, source: @escaping (String, String) -> Void = { _,_ in },
+    ready: @escaping @MainActor @Sendable (Bool) -> Void = { _ in }, source: @escaping (DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status = { _ in .committed },
     state stateChange: @escaping (String, JSONValue) -> Void = { _,_ in })
       -> (document: DocumentDocument, state: DocumentStateJournal, coordinator: DocumentWebCoordinator, host: DocumentWebHost) {
     let document = suppliedDocument ?? DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "# A real document page\n\nA bounded WebKit owner.")])

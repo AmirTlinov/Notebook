@@ -8,6 +8,21 @@ enum SceneRasterSource: Equatable, Sendable {
   case agent(AgentElement)
   case document(id: UUID, token: String)
 
+  /// A raster belongs to the element's local pixels. Moving those pixels in the
+  /// scene does not change their source; size, program and state still do.
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    switch (lhs, rhs) {
+    case (.agent(let left), .agent(let right)):
+      left.id == right.id && left.kind == right.kind
+        && left.frame.width == right.frame.width && left.frame.height == right.frame.height
+        && left.source == right.source && left.html == right.html
+        && left.css == right.css && left.javaScript == right.javaScript && left.state == right.state
+    case (.document(let leftID, let leftToken), .document(let rightID, let rightToken)):
+      leftID == rightID && leftToken == rightToken
+    default: false
+    }
+  }
+
   fileprivate var owner: RasterOwner {
     switch self {
     case .agent(let element): .agent(element.id)
@@ -70,7 +85,8 @@ final class RasterLease {
   isolated deinit { release() }
 }
 
-/// Reserves conservative CPU and GPU backing before WebKit allocates a snapshot.
+/// Reserves derived CPU/GPU backing before its allocation. GPU users retain
+/// this lease until the last submitted command has completed, not just unmount.
 @MainActor
 final class RasterReservation {
   let byteCount: Int
@@ -172,7 +188,12 @@ final class SceneRenderResources {
   }
   @ObservationIgnored private var entries: [UUID: RasterEntry] = [:]
   @ObservationIgnored private var rasterOwners: [RasterOwner: [UUID]] = [:]
-  @ObservationIgnored private var reservations: [UUID: Int] = [:]
+  private struct ReservedAllocation {
+    let bytes: Int
+    let rasterCount: Int
+  }
+  @ObservationIgnored private var reservations: [UUID: ReservedAllocation] = [:]
+  @ObservationIgnored private var reservedRasterCount = 0
   @ObservationIgnored private var diagnosticEntries: [String: DiagnosticEntry] = [:]
   @ObservationIgnored private var activeWebSurfaces: [UUID: WebPriority] = [:]
   @ObservationIgnored private var waiters: [WebWaiter] = []
@@ -216,10 +237,21 @@ final class SceneRenderResources {
       let pair = Self.estimatedRasterBytes(pixelWidth: pixelWidth, pixelHeight: pixelHeight) else { return nil }
     let allocation = (pair / 2).multipliedReportingOverflow(by: backingCount)
     guard !allocation.overflow, makeRoom(for: allocation.partialValue, additionalEntry: true) else { return nil }
-    let cost = allocation.partialValue
+    return reserveAllocation(bytes: allocation.partialValue, rasterCount: 1)
+  }
+
+  /// Buffers and drawable backing compete with images for the same byte pool,
+  /// but do not consume an image-cache entry or create another resource owner.
+  func reserveDerivedBytes(_ byteCount: Int) -> RasterReservation? {
+    guard byteCount > 0, makeRoom(for: byteCount, additionalEntry: false) else { return nil }
+    return reserveAllocation(bytes: byteCount, rasterCount: 0)
+  }
+
+  private func reserveAllocation(bytes: Int, rasterCount: Int) -> RasterReservation {
     let id = UUID()
-    reservations[id] = cost; reservedBytes += cost
-    return RasterReservation(id: id, byteCount: cost, resources: self)
+    reservations[id] = .init(bytes: bytes, rasterCount: rasterCount)
+    reservedBytes += bytes; reservedRasterCount += rasterCount
+    return RasterReservation(id: id, byteCount: bytes, resources: self)
   }
 
   @discardableResult
@@ -319,7 +351,9 @@ final class SceneRenderResources {
     entry.retains -= 1; entries[id] = entry
   }
   fileprivate func releaseReservation(_ id: UUID) {
-    if let cost = reservations.removeValue(forKey: id) { reservedBytes -= cost }
+    if let allocation = reservations.removeValue(forKey: id) {
+      reservedBytes -= allocation.bytes; reservedRasterCount -= allocation.rasterCount
+    }
   }
   fileprivate func releaseWebSurface(_ id: UUID) {
     let availability = webAvailability
@@ -399,15 +433,16 @@ final class SceneRenderResources {
     accessClock &+= 1; entry.access = accessClock; entries[id] = entry
   }
   private func makeRoom(for cost: Int, additionalEntry: Bool) -> Bool {
-    guard cost >= 0, cost <= byteLimit - reservedBytes, maximumRasterCount > 0 else { return false }
+    guard cost >= 0, cost <= byteLimit - reservedBytes,
+      !additionalEntry || maximumRasterCount > 0 else { return false }
     let neededCount = additionalEntry ? 1 : 0
     let candidates = entries.filter { $0.value.retains == 0 }.sorted { $0.value.access < $1.value.access }
     let recoverable = candidates.reduce(0) { $0 + $1.value.cost }
     guard residentBytes - recoverable <= byteLimit - reservedBytes - cost,
-      entries.count - candidates.count + reservations.count + neededCount <= maximumRasterCount else { return false }
+      entries.count - candidates.count + reservedRasterCount + neededCount <= maximumRasterCount else { return false }
     var position = 0
     while residentBytes > byteLimit - reservedBytes - cost
-      || entries.count + reservations.count + neededCount > maximumRasterCount {
+      || entries.count + reservedRasterCount + neededCount > maximumRasterCount {
       removeRaster(candidates[position].key); position += 1
     }
     return true

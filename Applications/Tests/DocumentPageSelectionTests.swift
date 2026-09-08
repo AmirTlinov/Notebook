@@ -4,7 +4,7 @@ import XCTest
 
 final class DocumentPageSelectionTests: XCTestCase {
   @MainActor
-  func testPeerRequestIsAppliedByTheIPadPresenceOwner() throws {
+  func testPeerRequestIsAppliedByTheIPadPresenceOwner() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -40,10 +40,12 @@ final class DocumentPageSelectionTests: XCTestCase {
 
     XCTAssertEqual(model.presence?.documentPageIndex, 3)
     XCTAssertEqual(model.presence?.focusedItemID, documentID)
+    let saved = await model.finishPendingPersistence()
+    XCTAssertTrue(saved)
   }
 
   @MainActor
-  func testRequestForAnotherDocumentCannotMoveTheFocusedDocument() throws {
+  func testRequestForAnotherDocumentCannotMoveTheFocusedDocument() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -77,5 +79,7 @@ final class DocumentPageSelectionTests: XCTestCase {
     )
 
     XCTAssertEqual(model.presence?.documentPageIndex, 0)
+    let saved = await model.finishPendingPersistence()
+    XCTAssertTrue(saved)
   }
 }

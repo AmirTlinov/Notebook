@@ -8,11 +8,14 @@ final class NotebookInputGate {
   private var pageFinishers: [UUID: NotebookInputFinisher] = [:]
   private var currentPageSource: UUID?
   private var activePencilSources: Set<UUID> = []
-  private var fingerSequenceRevision: UInt64 = 0
+  private(set) var pencilGeneration: UInt64 = 0
+  private var fingerCancellations: [UUID: @MainActor () -> Void] = [:]
+  private var commandsAfterPencil: [NotebookInputCompletion] = []
   private var contactSources: Set<UUID> = []
   private var settlingTask: Task<Void, Never>?
   private var activityGeneration: UInt64 = 0
   private(set) var isActive = false
+  var hasActivePencil: Bool { !activePencilSources.isEmpty }
   var onActivityChange: ((Bool) -> Void)?
 
   func beginContact(source: UUID) {
@@ -72,7 +75,20 @@ final class NotebookInputGate {
   }
 
   func performAfterPageInput(_ action: @escaping NotebookInputCompletion) {
-    finishPage(waitsForPublication: true, action)
+    guard activePencilSources.isEmpty else {
+      commandsAfterPencil.append(action)
+      return
+    }
+    let generation = pencilGeneration
+    finishPage(waitsForPublication: true) {
+      // The page finisher captures one serialization tail. A later contact
+      // can already be lifted when that older tail completes.
+      if !self.activePencilSources.isEmpty || self.pencilGeneration != generation {
+        self.performAfterPageInput(action)
+      } else {
+        action()
+      }
+    }
   }
 
   /// Camera handoff waits only for the measured contact, never for its archive.
@@ -95,20 +111,35 @@ final class NotebookInputGate {
   /// part of the hand movement rather than becoming a second command.
   func beginPencilAction(source: UUID) {
     guard activePencilSources.insert(source).inserted else { return }
-    fingerSequenceRevision &+= 1
+    pencilGeneration &+= 1
     updateActivity()
+    // Cancel a camera already moving before this Pencil-down synchronously.
+    // Waiting for SwiftUI or the next finger event would move measured ink.
+    for cancel in Array(fingerCancellations.values) { cancel() }
+  }
+
+  func registerFingerCancellation(source: UUID, _ cancel: @escaping @MainActor () -> Void) {
+    fingerCancellations[source] = cancel
+  }
+
+  func unregisterFingerCancellation(source: UUID) {
+    fingerCancellations.removeValue(forKey: source)
   }
 
   func endPencilAction(source: UUID) {
     activePencilSources.remove(source)
     updateActivity()
+    guard activePencilSources.isEmpty, !commandsAfterPencil.isEmpty else { return }
+    let commands = commandsAfterPencil
+    commandsAfterPencil = []
+    for command in commands { performAfterPageInput(command) }
   }
 
   func beginFingerSequence() -> UInt64? {
-    activePencilSources.isEmpty ? fingerSequenceRevision : nil
+    activePencilSources.isEmpty ? pencilGeneration : nil
   }
 
   func acceptsFingerSequence(_ revision: UInt64) -> Bool {
-    activePencilSources.isEmpty && revision == fingerSequenceRevision
+    activePencilSources.isEmpty && revision == pencilGeneration
   }
 }

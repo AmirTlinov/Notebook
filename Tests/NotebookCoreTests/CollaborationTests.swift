@@ -493,13 +493,13 @@ func collaborationSparsePublication() throws {
   let previous = try f.store.collaborationContent()
   _ = try f.store.applyCollaborationAction(f.action([f.insert()]),actor:f.agent)
   let next = try f.store.collaborationContent()
-  let patch = next.publication(since:previous)
+  let patch = try next.publication(since:previous)
   #expect(patch.pages.count == 1)
   #expect(patch.ink.actions.isEmpty)
   var receiver = previous
-  receiver.merge(patch)
+  try receiver.merge(patch)
   #expect(receiver == next)
-  #expect(next.publication(since:next).pages.isEmpty)
+  #expect(try next.publication(since:next).pages.isEmpty)
 }
 
 @Test("Переход человека меняет внимание, сохраняя хеш содержания доски")

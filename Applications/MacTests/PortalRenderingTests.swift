@@ -65,6 +65,8 @@ final class PortalRenderingTests: XCTestCase {
       XCTAssertLessThan(difference, 0.003, "Готовые слои и стёртые чернила сохраняют изображение при передаче: \(size)")
       XCTAssertGreaterThan(first.filter { $0 < 150 }.count, 5_000)
     }
+    let saved = await model.finishPendingPersistence()
+    XCTAssertTrue(saved, model.persistenceFailure ?? "")
   }
 
   @MainActor

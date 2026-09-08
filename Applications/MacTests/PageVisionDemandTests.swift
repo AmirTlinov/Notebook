@@ -22,12 +22,11 @@ final class PageVisionDemandTests: XCTestCase {
       let created = try XCTUnwrap(workspace.createNotebook(title: "Source \(number)", actor: actor, pageSize: size))
       try store.savePage(created.page)
     }
-    try store.saveIndex(workspace)
-    try store.saveBoard(.initial(rootBoardID: workspace.rootBoardID, itemIDs: workspace.items.map(\.id), actor: actor),
-      items: workspace.items)
     let selectedID = try XCTUnwrap(workspace.selectedPageID)
     XCTAssertNotEqual(selectedID, firstID)
     let selectedPage = try store.loadPage(selectedID)
+    try store.saveWorkspaceBundle(index: workspace, page: selectedPage,
+      board: .initial(rootBoardID: workspace.rootBoardID, itemIDs: workspace.items.map(\.id), actor: actor))
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     model.start(pageSize: size)
     defer { model.inputGate.beginContact(source: UUID()) }

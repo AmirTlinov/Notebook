@@ -234,18 +234,17 @@ final class DrawingResponsivenessTests: XCTestCase {
     ]
     app.launch()
 
-    let heading = app.staticTexts["Живая математика"].firstMatch
+    // HTML page regions are siblings of the continuous text flow in WebKit's
+    // accessibility tree. The UIKit shell owns the actual current document.
+    let firstPage = app.otherElements["page-turn-page-0"].firstMatch
+    XCTAssertTrue(firstPage.waitForExistence(timeout: 8))
+    let heading = firstPage.staticTexts["Живая математика"].firstMatch
     XCTAssertTrue(
       heading.waitForExistence(timeout: 8),
-      "Markdown должен стать читаемым текстом WebKit"
+      "Markdown должен стать читаемым текстом текущей страницы WebKit"
     )
-    let firstPage = app.otherElements.matching(
-      NSPredicate(format: "label BEGINSWITH 'Страница 1 из '")
-    ).firstMatch
-    XCTAssertTrue(firstPage.waitForExistence(timeout: 8))
-    firstPage.coordinate(
-      withNormalizedOffset: CGVector(dx: 0.32, dy: 0.16)
-    ).doubleTap()
+    XCTAssertTrue(heading.isHittable, "Читаемый Markdown должен принимать касание")
+    heading.doubleTap()
 
     let editor = app.textViews["Исходный Markdown или LaTeX"].firstMatch
     XCTAssertTrue(

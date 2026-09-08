@@ -376,7 +376,8 @@
           }
           try store.saveSpatialInk(journal)
         }
-        try store.saveIndex(index)
+        try store.saveWorkspaceBundle(index: index, page: page,
+          board: store.loadOrCreateBoard(workspace: index, actor: actor))
         if ProcessInfo.processInfo.arguments.contains(collaborationArgument) {
           _ = try store.loadOrCreateBoard(workspace:index,actor:actor)
           _ = try store.loadOrCreateSpatialInk(actor:actor)

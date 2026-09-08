@@ -70,18 +70,36 @@ public struct CollaborationEnvelope: Codable, Equatable, Sendable {
     self.content = content; self.actions = actions; self.contexts = contexts; self.selection = selection; self.delivery = delivery
   }
 
+  private enum CodingKeys: String, CodingKey { case content, actions, contexts, selection, delivery }
+
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    content = try values.decodeIfPresent(CollaborationContent.self, forKey: .content)
+    actions = try values.decode([CollaborationReceipt].self, forKey: .actions)
+    contexts = try values.decode([SharedContext].self, forKey: .contexts)
+    selection = try values.decodeIfPresent(SharedContextSelection.self, forKey: .selection)
+    delivery = try values.decode([DeviceActionReceipt].self, forKey: .delivery)
+    try validate()
+  }
+
+  public func validate() throws {
+    try content?.validate()
+    guard Set(actions.map(\.id)).count == actions.count,
+      Set(contexts.map(\.id)).count == contexts.count,
+      Set(delivery.map(\.id)).count == delivery.count,
+      actions.allSatisfy({ $0.id == $0.action.id }) else {
+      throw CollaborationError("invalid_content", "Сетевой срез содержит уникальные ID владельцев и ходов.")
+    }
+    for context in contexts { try context.validate() }
+  }
+
   /// A held contact retains one causal cut, not an ever-growing message queue.
   public func merging(_ incoming: Self) throws -> Self {
-    for envelope in [self, incoming] {
-      guard Set(envelope.actions.map(\.id)).count == envelope.actions.count,
-        Set(envelope.contexts.map(\.id)).count == envelope.contexts.count,
-        Set(envelope.delivery.map(\.id)).count == envelope.delivery.count else {
-        throw CollaborationError("invalid_content", "Сетевой срез содержит уникальные ID владельцев и ходов.")
-      }
-    }
+    try validate()
+    try incoming.validate()
     var content = content
     if let next = incoming.content {
-      if content != nil { content!.merge(next) } else { content = next }
+      if content != nil { try content!.merge(next) } else { content = next }
     }
     var actions = Dictionary(uniqueKeysWithValues: actions.map { ($0.id, $0) })
     for next in incoming.actions {
@@ -340,6 +358,7 @@ extension NotebookStore {
   }
 
   public func receiveCollaboration(_ envelope: CollaborationEnvelope, local: CollaborationContent? = nil) throws -> CollaborationContent? {
+    try envelope.validate()
     try prepare()
     let resolved = envelope.content != nil || !envelope.actions.isEmpty || !envelope.contexts.isEmpty || envelope.selection != nil
       ? try mergeCollaborationContent(envelope.content,local:local,actions:envelope.actions, contexts:envelope.contexts, selection:envelope.selection) : nil

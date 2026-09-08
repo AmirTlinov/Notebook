@@ -60,11 +60,17 @@ final class PreparedAgentElementViewTests: XCTestCase {
     let second = element(id: UUID().uuidString, source: "second", interactive: true)
     for source in [first, second] { XCTAssertTrue(SceneRenderResources.shared.store(raster(), for: source)) }
     var commits: [String: Int] = [:]
+    var ticks: [String: [Int]] = [:]
     let host = try SurfaceHost(content: AnyView(HStack {
       ForEach([first, second]) { source in
         PreparedAgentElementView(element: source, allowsInteraction: true,
           focus: .board(boardID: boardID, elementID: source.id), onRenderReady: { _ in },
-          onState: { _ in commits[source.id, default: 0] += 1 })
+          onState: { value in
+            commits[source.id, default: 0] += 1
+            if case .object(let fields) = value, case .number(let tick) = fields["tick"] {
+              ticks[source.id, default: []].append(Int(tick))
+            }
+          })
           .frame(width: 160, height: 120)
       }
     }.environment(fixture.model)))
@@ -82,6 +88,10 @@ final class PreparedAgentElementViewTests: XCTestCase {
     try await waitUntil("Current owner's timer remains live") { commits[second.id, default: 0] > secondCommitCount }
     XCTAssertEqual(commits[first.id, default: 0], firstCommitCount,
       "A timer from the previous owner must not write after focus changes.")
+    for values in ticks.values {
+      XCTAssertTrue(zip(values, values.dropFirst()).allSatisfy { pair in pair.0 < pair.1 },
+        "The same runtime's timer advances; a reload must not reset its local counter")
+    }
     let web = try XCTUnwrap(webViews(in: host.controller.view).first)
     let owner = try await web.evaluateJavaScript("document.body.dataset.owner") as? String
     XCTAssertEqual(owner, second.id)
@@ -158,8 +168,9 @@ final class PreparedAgentElementViewTests: XCTestCase {
       html: "<div style='width:100%;height:100%;background:#67aade'>\(source)</div>",
       javaScript: interactive ? """
         document.body.dataset.owner = '\(id)';
-        window.notebook.commit({owner: '\(id)'});
-        setInterval(() => window.notebook.commit({owner: '\(id)'}), 30);
+        let tick = 0;
+        window.notebook.commit({owner: '\(id)', tick});
+        setInterval(() => window.notebook.commit({owner: '\(id)', tick: ++tick}), 30);
         """ : "")
   }
 

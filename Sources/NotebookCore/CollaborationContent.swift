@@ -28,13 +28,53 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
       states: files.filter { $0.key.hasPrefix("document-states/") }.map { try $0.value.decode(DocumentStateJournal.self) })
   }
 
-  public mutating func merge(_ incoming: Self) {
-    _ = workspace.merge(incoming.workspace)
-    _ = hierarchy.merge(incoming.hierarchy, items: workspace.items)
+  public func validate() throws {
+    try validateOwners()
+    let pageIDs = Set(workspace.items.flatMap(\.pageIDs))
+    let documentIDs = Set(workspace.items.filter { $0.kind == .document }.map(\.id))
+    guard pages.allSatisfy({ pageIDs.contains($0.id) }),
+      documents.allSatisfy({ documentIDs.contains($0.id) }),
+      states.allSatisfy({ documentIDs.contains($0.id) }) else {
+      throw CollaborationError("invalid_content", "Содержание принадлежит владельцам переданного каталога.")
+    }
+  }
+
+  private func validateOwners() throws {
+    guard workspace.isValid, hierarchy.isValid(items: workspace.items), ink.isValid,
+      Set(pages.map(\.id)).count == pages.count,
+      Set(documents.map(\.id)).count == documents.count,
+      Set(states.map(\.id)).count == states.count,
+      pages.allSatisfy(\.isValid), documents.allSatisfy(\.isValid), states.allSatisfy(\.isValid) else {
+      throw CollaborationError("invalid_content", "Срез содержит проверенных владельцев с уникальными ID.")
+    }
+  }
+
+  public mutating func merge(_ incoming: Self) throws {
+    try validate()
+    try incoming.validate()
+    var result = self
+    try result.mergeValidated(incoming)
+    try result.validate()
+    self = result
+  }
+
+  private mutating func mergeValidated(_ incoming: Self) throws {
+    workspace = try workspace.merging(incoming.workspace)
+    hierarchy = try hierarchy.merging(incoming.hierarchy, items: workspace.items)
     if ink != incoming.ink { _ = ink.merge(incoming.ink) }
     var pages = Dictionary(uniqueKeysWithValues: self.pages.map { ($0.id, $0) })
+    for other in incoming.pages {
+      if let current = pages[other.id], current.size != other.size {
+        throw CollaborationError("invalid_content", "UUID листа сохраняет физический размер.")
+      }
+    }
     for other in incoming.pages where pages[other.id] != other { if pages[other.id] != nil { _ = pages[other.id]!.merge(other) } else { pages[other.id] = other } }
     var documents = Dictionary(uniqueKeysWithValues: self.documents.map { ($0.id, $0) })
+    for other in incoming.documents {
+      if let current = documents[other.id], current.paperSize != other.paperSize {
+        throw CollaborationError("invalid_content", "UUID документа сохраняет формат бумаги.")
+      }
+    }
     for other in incoming.documents where documents[other.id] != other { if documents[other.id] != nil { _ = documents[other.id]!.merge(other) } else { documents[other.id] = other } }
     var states = Dictionary(uniqueKeysWithValues: self.states.map { ($0.id, $0) })
     for other in incoming.states where states[other.id] != other { if states[other.id] != nil { _ = states[other.id]!.merge(other) } else { states[other.id] = other } }
@@ -47,8 +87,10 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
 
   /// A publication carries only changed heavy owners; the receiver retains the
   /// rest of its completed cut. Initial connection carries the complete set.
-  public func publication(since previous: Self?) -> Self {
+  public func publication(since previous: Self?) throws -> Self {
+    try validate()
     guard let previous else { return self }
+    try previous.validate()
     let oldPages = Dictionary(uniqueKeysWithValues:previous.pages.map { ($0.id,$0) })
     let oldDocuments = Dictionary(uniqueKeysWithValues:previous.documents.map { ($0.id,$0) })
     let oldStates = Dictionary(uniqueKeysWithValues:previous.states.map { ($0.id,$0) })
@@ -59,6 +101,7 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
   }
 
   public func sourceFiles(including paths: Set<String>? = nil) throws -> [String: JSONValue] {
+    try validateOwners()
     var files: [String: JSONValue] = [:]
     func include(_ path: String, _ value: some Encodable) throws {
       try Task.checkCancellation()

@@ -8,10 +8,43 @@ enum SpatialInkGeometry {
     var premultipliedColor: SIMD4<Float>
   }
 
-  private struct RenderPoint {
+  /// Splitting the already generated triangles does not introduce stroke caps
+  /// or another alpha blend. A chunk is only an upload/culling boundary.
+  struct Chunk: Sendable {
+    static let maximumVertexCount = 4_092
+    let vertices: Range<Int>
+    let bounds: CGRect
+
+    func intersects(viewport: CGRect, transform: SIMD4<Float>) -> Bool {
+      let projected = CGRect(x: Double(bounds.minX) * Double(transform.x) + Double(transform.z),
+        y: Double(bounds.minY) * Double(transform.y) + Double(transform.w),
+        width: Double(bounds.width) * Double(transform.x), height: Double(bounds.height) * Double(transform.y))
+      return projected.intersects(viewport.insetBy(dx: -1, dy: -1))
+    }
+  }
+
+
+  struct RenderPoint: Equatable, Sendable {
     var position: SIMD2<Float>
     var radius: Float
     var premultipliedColor: SIMD4<Float>
+  }
+
+  static func chunks(for vertices: [Vertex], startingAt start: Int = 0) -> [Chunk] {
+    var chunks: [Chunk] = []
+    for start in stride(from: start, to: vertices.count, by: Chunk.maximumVertexCount) {
+      let end = min(start + Chunk.maximumVertexCount, vertices.count)
+      var minX = Float.infinity, minY = Float.infinity
+      var maxX = -Float.infinity, maxY = -Float.infinity
+      for index in start..<end {
+        let point = vertices[index].position
+        minX = min(minX, point.x); minY = min(minY, point.y)
+        maxX = max(maxX, point.x); maxY = max(maxY, point.y)
+      }
+      chunks.append(.init(vertices: start..<end,
+        bounds: .init(x: Double(minX), y: Double(minY), width: Double(maxX) - Double(minX), height: Double(maxY) - Double(minY))))
+    }
+    return chunks
   }
 
   private static let capSegments = 12
@@ -25,6 +58,17 @@ enum SpatialInkGeometry {
     to vertices: inout [Vertex]
   ) {
     let renderPoints = renderPoints(from: points, color: color)
+    appendStrokeVertices(renderPoints: renderPoints, roundsStart: roundsStart,
+      roundsEnd: roundsEnd, to: &vertices)
+  }
+
+  /// Consumes the single normalization shared with the incremental tail.
+  /// A second normalization could collapse a distinct pair after near samples
+  /// moved the last point back towards its preceding neighbour.
+  static func appendStrokeVertices(
+    renderPoints: [RenderPoint], roundsStart: Bool = true, roundsEnd: Bool = true,
+    to vertices: inout [Vertex]
+  ) {
     guard let first = renderPoints.first else { return }
 
     guard renderPoints.count > 1 else {
@@ -33,7 +77,9 @@ enum SpatialInkGeometry {
     }
 
     let offsets = crossSectionOffsets(for: renderPoints)
+    guard offsets.count == renderPoints.count else { return }
     for index in 0..<(renderPoints.count - 1) {
+      if index.isMultiple(of: 256), Task.isCancelled { return }
       let start = renderPoints[index]
       let end = renderPoints[index + 1]
       let startOffset = offsets[index]
@@ -89,25 +135,12 @@ enum SpatialInkGeometry {
     var result: [RenderPoint] = []
     result.reserveCapacity(points.count)
 
-    for point in points {
-      let position = SIMD2<Float>(
-        Float(point.location.x),
-        Float(point.location.y)
-      )
-      let alpha = min(max(Float(point.opacity) * color.w, 0), 1)
-      let renderPoint = RenderPoint(
-        position: position,
-        radius: max(Float(point.size.width / 2), 0.25),
-        premultipliedColor: SIMD4(
-          color.x * alpha,
-          color.y * alpha,
-          color.z * alpha,
-          alpha
-        )
-      )
+    for (index, point) in points.enumerated() {
+      if index.isMultiple(of: 256), Task.isCancelled { return [] }
+      let renderPoint = renderPoint(from: point, color: color)
 
       if let last = result.last,
-        distanceSquared(last.position, position) < Self.minimumDistanceSquared
+        areCoincident(last, renderPoint)
       {
         result[result.count - 1] = renderPoint
       } else {
@@ -117,6 +150,17 @@ enum SpatialInkGeometry {
     return result
   }
 
+  static func renderPoint(from point: PKStrokePoint, color: SIMD4<Float>) -> RenderPoint {
+    let alpha = min(max(Float(point.opacity) * color.w, 0), 1)
+    return .init(position: .init(Float(point.location.x), Float(point.location.y)),
+      radius: max(Float(point.size.width / 2), 0.25),
+      premultipliedColor: .init(color.x * alpha, color.y * alpha, color.z * alpha, alpha))
+  }
+
+  static func areCoincident(_ first: RenderPoint, _ second: RenderPoint) -> Bool {
+    distanceSquared(first.position, second.position) < minimumDistanceSquared
+  }
+
   private static func crossSectionOffsets(
     for points: [RenderPoint]
   ) -> [SIMD2<Float>] {
@@ -124,6 +168,7 @@ enum SpatialInkGeometry {
     offsets.reserveCapacity(points.count)
 
     for index in points.indices {
+      if index.isMultiple(of: 256), Task.isCancelled { return [] }
       let incoming: SIMD2<Float>
       let outgoing: SIMD2<Float>
       if index == points.startIndex {

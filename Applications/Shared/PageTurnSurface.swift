@@ -158,9 +158,8 @@ struct PageTurnSelectionTracker {
 /// The only owner of a page turn. Notebook and document code provide pages and
 /// accept a completed selection; they never animate or replace a page.
 ///
-/// Both platform executors keep nearby pages mounted and move the exact rendered
-/// page under the hand. On iPad UIKit owns the system curl; on Mac the native
-/// Core Animation surface owns the equivalent trackpad motion.
+/// UIKit keeps the nearby live pages and owns the curl on iPad. Mac prepares
+/// one non-interactive physical page for export; it has no page-turn runtime.
 struct PageTurnSurface: View {
   @Environment(\.rendersSettledPageSnapshot) private var rendersSettledSnapshot
 
@@ -182,6 +181,11 @@ struct PageTurnSurface: View {
 
   var body: some View {
     Group {
+      #if os(macOS)
+        page(clampedSelectedIndex, true, PageTurnReadiness { _ in })
+          .environment(\.rendersSettledPageSnapshot, true)
+          .allowsHitTesting(false)
+      #else
       if rendersSettledSnapshot {
         page(
           clampedSelectedIndex,
@@ -203,6 +207,7 @@ struct PageTurnSurface: View {
           onTransitioningChange: onTransitioningChange
         )
       }
+      #endif
     }
     .accessibilityIdentifier("page-turn-surface")
     .accessibilityValue("Страница \(selectedIndex + 1) из \(max(1, pageCount))")
@@ -210,15 +215,6 @@ struct PageTurnSurface: View {
 
   private var clampedSelectedIndex: Int {
     min(max(0, selectedIndex), max(0, pageCount - 1))
-  }
-}
-
-enum PageTurnDecision {
-  static let commitProgress: CGFloat = 0.34
-  static let projectionDuration: CGFloat = 0.20
-
-  static func commits(progress: CGFloat, velocity: CGFloat) -> Bool {
-    progress + velocity * projectionDuration >= commitProgress
   }
 }
 
@@ -255,49 +251,6 @@ enum PageTurnDecision {
 
     private func update(_ controller: IPadPageTurnController) {
       controller.update(
-        ownerID: ownerID,
-        pageCount: pageCount,
-        selectedIndex: selectedIndex,
-        allowsTrailingPageCreation: allowsTrailingPageCreation,
-        navigationIsEnabled: navigationIsEnabled,
-        pageIsInteractive: pageIsInteractive,
-        canBeginNavigation: canBeginNavigation,
-        page: page,
-        onCommit: onCommit,
-        onTransitioningChange: onTransitioningChange
-      )
-    }
-  }
-#elseif os(macOS)
-  private struct PlatformPageTurnSurface: NSViewRepresentable {
-    let ownerID: UUID
-    let pageCount: Int
-    let selectedIndex: Int
-    let allowsTrailingPageCreation: Bool
-    let navigationIsEnabled: Bool
-    let pageIsInteractive: Bool
-    let canBeginNavigation: @MainActor () -> Bool
-    let page:
-      @MainActor (
-        Int,
-        Bool,
-        PageTurnReadiness
-      ) -> AnyView
-    let onCommit: @MainActor (Int) -> Void
-    let onTransitioningChange: @MainActor (Bool) -> Void
-
-    func makeNSView(context: Context) -> MacPageTurnView {
-      let view = MacPageTurnView()
-      update(view)
-      return view
-    }
-
-    func updateNSView(_ view: MacPageTurnView, context: Context) {
-      update(view)
-    }
-
-    private func update(_ view: MacPageTurnView) {
-      view.update(
         ownerID: ownerID,
         pageCount: pageCount,
         selectedIndex: selectedIndex,

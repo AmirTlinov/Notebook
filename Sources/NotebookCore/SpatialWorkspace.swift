@@ -931,6 +931,19 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     freeItems.map(\.itemID) + stacks.flatMap(\.itemIDs)
   }
 
+  /// Reserve the pending mutation's clock, keeping the actual field versions
+  /// at their previous frontier even when they were still implicit.
+  @discardableResult
+  mutating func observeCausalFrontier(_ frontier: VersionStamp) -> Bool {
+    guard frontier.counter <= VersionStamp.maximumCounter, stamp < frontier,
+      let content = try? JSONValue.encode(self) else { return false }
+    var versions = collaboration ?? CollaborativeContent()
+    versions.materializeVersions(in: content, fallback: stamp)
+    collaboration = versions
+    stamp = frontier
+    return true
+  }
+
   public var highestZIndex: Int {
     max(
       freeItems.map(\.zIndex).max() ?? 0,

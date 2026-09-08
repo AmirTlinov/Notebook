@@ -129,6 +129,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   private var maximumRelativeMovement: CGFloat = 0
   private var magnificationSamples: [(timestamp: TimeInterval, value: CGFloat)] = []
   private var fingerSequenceRevision: UInt64?
+  private let inputSource = UUID()
 
   private(set) var intent = Intent.undecided
   private(set) var translation = CGPoint.zero
@@ -140,7 +141,25 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   private(set) var centroid = CGPoint.zero
 
   var defersHorizontalMotionToPageTurn = false
-  weak var inputGate: NotebookInputGate?
+  weak var inputGate: NotebookInputGate? {
+    didSet {
+      guard oldValue !== inputGate else { return }
+      oldValue?.unregisterFingerCancellation(source: inputSource)
+      cancelForExclusiveInput()
+      inputGate?.registerFingerCancellation(source: inputSource) { [weak self] in
+        self?.cancelForExclusiveInput()
+      }
+    }
+  }
+
+  var permitsUndoRepetition: Bool {
+    intent == .hold && (state == .began || state == .changed) && fingerSequenceIsAccepted
+  }
+
+  isolated deinit {
+    holdTask?.cancel()
+    inputGate?.unregisterFingerCancellation(source: inputSource)
+  }
 
   var startCentroidValue: CGPoint { startCentroid ?? centroid }
   var gestureElapsed: TimeInterval {
@@ -281,12 +300,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     _ touches: Set<UITouch>,
     with event: UIEvent
   ) {
-    cancelHold()
-    if state == .began || state == .changed {
-      state = .cancelled
-    } else {
-      state = .failed
-    }
+    finishAsInvalid()
   }
 
   override func reset() {
@@ -450,11 +464,17 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
 
   private func finishAsInvalid() {
     cancelHold()
-    if state == .began || state == .changed {
-      state = .cancelled
-    } else {
-      state = .failed
+    switch state {
+    case .began, .changed: state = .cancelled
+    case .possible: state = .failed
+    default: break
     }
+  }
+
+  private func cancelForExclusiveInput() {
+    guard fingerSequenceRevision != nil,
+      state == .possible || state == .began || state == .changed else { return }
+    finishAsInvalid()
   }
 
   private func cancelHold() {

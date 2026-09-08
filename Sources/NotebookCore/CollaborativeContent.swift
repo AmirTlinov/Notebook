@@ -15,6 +15,11 @@ public struct ContentFieldVersion: Codable, Equatable, Sendable {
     self.observed = observed
   }
 
+  var isValid: Bool {
+    stamp.counter <= VersionStamp.maximumCounter && observed.count <= 256
+      && observed.allSatisfy { UUID(uuidString: $0.key) != nil && $0.value <= VersionStamp.maximumCounter }
+  }
+
   func includes(_ other: Self) -> Bool {
     (observed[other.stamp.actor.uuidString.lowercased()] ?? 0) >= other.stamp.counter
   }
@@ -43,11 +48,29 @@ public struct CollaborativeContent: Codable, Equatable, Sendable {
 
   public init() {}
 
+  mutating func recordField(_ key: String, stamp: VersionStamp, human: Bool) {
+    fields[key] = .init(stamp: stamp, human: human, previous: fields[key])
+  }
+
+  mutating func joinField(_ key: String, version: ContentFieldVersion) {
+    fields[key] = fields[key].map { $0.joining(version) } ?? version
+  }
+
+  /// Materialize implicit clocks before the aggregate Lamport frontier moves
+  /// without a content edit. Existing causal field owners remain unchanged.
+  mutating func materializeVersions(in value: JSONValue, fallback: VersionStamp) {
+    for key in contentFields(value).keys where fields[key] == nil {
+      fields[key] = .init(stamp: fallback, human: true)
+    }
+  }
+
   var isValid: Bool {
-    fields.count <= 100_000 && fields.allSatisfy { key, value in
-      key.utf8.count <= 2048 && value.stamp.counter <= VersionStamp.maximumCounter
-        && value.observed.count <= 256
-        && value.observed.allSatisfy { UUID(uuidString: $0.key) != nil && $0.value <= VersionStamp.maximumCounter }
+    isValid(maximumFields: 100_000)
+  }
+
+  func isValid(maximumFields: Int) -> Bool {
+    fields.count <= maximumFields && fields.allSatisfy { key, value in
+      key.utf8.count <= 2048 && value.isValid
     }
   }
 

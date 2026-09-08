@@ -21,6 +21,7 @@ struct PreparedAgentElementView: View {
   @State private var raster: RasterLease?
   @State private var web: WebSurfaceLease?
   @State private var preparedSource: AgentElement?
+  @State private var liveProgram: AgentProgramSource?
   @State private var failure: String?
   @State private var failedSource: AgentElement?
   @State private var waitingForAdmission = false
@@ -64,6 +65,7 @@ struct PreparedAgentElementView: View {
           onRenderReady: { ready in
             guard self.web?.id == web.id, !web.isReleased else { return }
             if ready, let next = SceneRenderResources.shared.retainRaster(for: element) {
+              liveProgram = AgentProgramSource(element)
               raster = next
               preparedSource = element
               failure = nil
@@ -82,6 +84,7 @@ struct PreparedAgentElementView: View {
             default: failure = "Не удалось подготовить изображение"
             }
             failedSource = element
+            liveProgram = nil
             self.web = nil
             onRenderReady(false)
           }, onState: { value in
@@ -89,8 +92,8 @@ struct PreparedAgentElementView: View {
             onState(value)
           })
           .id(web.id)
-          .opacity(isActive && preparedSource == element ? 1 : 0)
-          .allowsHitTesting(isActive && preparedSource == element && !model.scenePreparationPending)
+          .opacity(isActive && liveProgram == AgentProgramSource(element) ? 1 : 0)
+          .allowsHitTesting(isActive && liveProgram == AgentProgramSource(element) && !model.scenePreparationPending)
       }
       if allowsInteraction && !element.javaScript.isEmpty && !isActive {
         Button {
@@ -115,7 +118,7 @@ struct PreparedAgentElementView: View {
           }.frame(minWidth: 44, minHeight: 44)
         }
         .padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-      } else if preparedSource != element {
+      } else if preparedSource != element && !(isActive && liveProgram == AgentProgramSource(element)) {
         Text(raster == nil ? "Подготовка…" : "Обновление…")
           .font(.caption).foregroundStyle(.secondary)
           .padding(6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
@@ -132,6 +135,7 @@ struct PreparedAgentElementView: View {
       web = nil
       raster = nil
       preparedSource = nil
+      liveProgram = nil
       waitingForAdmission = false
       onRenderReady(false)
     }

@@ -35,11 +35,9 @@ for icon in "$ROOT"/Applications/Assets.xcassets/AppIcon.appiconset/*.png; do
   fi
 done
 
-if rg -n 'DirectoryWatcher' "$ROOT/Applications/Mac/MacRootView.swift" \
-  || ! rg -q 'externalChangeWatcher: DirectoryWatcher' \
-    "$ROOT/Applications/Shared/NotebookAppModel.swift"; then
-  printf '%s\n' \
-    'MCP file-watch должен принадлежать модели Mac, а не времени жизни окна.' >&2
+if rg -n 'WindowGroup|MacRootView|MacPageTurnView' "$ROOT/Applications/Mac" --glob '*.swift' \
+  || ! rg -q 'MenuBarExtra' "$ROOT/Applications/Mac/NotebookMacApp.swift"; then
+  printf '%s\n' 'Mac должен работать из строки меню без рабочего окна и второго перелистывания.' >&2
   exit 1
 fi
 
@@ -137,17 +135,34 @@ xcodebuild \
   build
 MAC_SMOKE_APP="$DERIVED/mac/Build/Products/Debug/Notebook.app"
 MAC_SMOKE_LOG="$DERIVED/mac-document-launch.log"
+MAC_SMOKE_PROOF="$EVIDENCE/mac-helper-launch.json"
+NOTEBOOK_MAC_LAUNCH_PROOF="$MAC_SMOKE_PROOF" \
 "$MAC_SMOKE_APP/Contents/MacOS/Notebook" \
   --notebook-mac-document-launch-fixture \
   >"$MAC_SMOKE_LOG" 2>&1 &
 MAC_SMOKE_PID=$!
-sleep 5
+for _ in {1..160}; do
+  [[ -f "$MAC_SMOKE_PROOF" ]] && break
+  kill -0 "$MAC_SMOKE_PID" >/dev/null 2>&1 || break
+  sleep 0.25
+done
 if ! kill -0 "$MAC_SMOKE_PID" >/dev/null 2>&1; then
   cat "$MAC_SMOKE_LOG" >&2
   printf '%s\n' \
-    'Mac должен открыть живой многостраничный WebKit-документ.' >&2
+    'Фоновый Mac должен пережить запуск с многостраничным документом без рабочего окна.' >&2
   exit 1
 fi
+python3 - "$MAC_SMOKE_PROOF" <<'PY'
+import hashlib, json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+assert p.exists(), "Mac не завершил проверку фонового документа"
+proof = json.loads(p.read_text())
+assert proof.get("status") == "ready", proof
+assert proof.get("workingWindows") == 0 and proof.get("surface") == "document", proof
+assert proof.get("pngBytes", 0) > 0 and len(proof.get("pngSHA256", "")) == 64, proof
+png = p.with_suffix(".png").read_bytes()
+assert len(png) == proof["pngBytes"] and hashlib.sha256(png).hexdigest() == proof["pngSHA256"], proof
+PY
 kill "$MAC_SMOKE_PID" >/dev/null 2>&1 || true
 wait "$MAC_SMOKE_PID" >/dev/null 2>&1 || true
 MAC_SMOKE_PID=""
@@ -156,6 +171,7 @@ xcodebuild \
   -project Notebook.xcodeproj \
   -scheme NotebookMac \
   -configuration Debug \
+  -collect-test-diagnostics never \
   -destination 'platform=macOS' \
   -derivedDataPath "$DERIVED/mac-tests" \
   -resultBundlePath "$EVIDENCE/mac.xcresult" \
@@ -223,6 +239,10 @@ import pathlib
 import sys
 
 summary = json.loads(pathlib.Path(sys.argv[1]).read_text())
+if summary.get("failedTests", 0) or summary.get("skippedTests", 0):
+    raise SystemExit("Полный маршрут не допускает ошибок или пропущенных тестов.")
+if not summary.get("passedTests", 0):
+    raise SystemExit("Полный маршрут должен исполнить тесты, а не только собрать приложение.")
 warnings = summary.get("runtimeWarnings", [])
 if warnings:
     for warning in warnings:

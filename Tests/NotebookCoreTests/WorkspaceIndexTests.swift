@@ -706,7 +706,7 @@ func workspaceItemLookupTracksMembershipAndPageContinuation() throws {
   for value in workspace.items { #expect(workspace.item(id: value.id) == value) }
 }
 
-@Test("Замена порядка и декодирование каталога восстанавливают адреса без изменения wire")
+@Test("Декодирование сохраняет причинные версии каталога и восстанавливает производные адреса")
 func workspaceItemLookupFollowsMergeAndDecodeWithoutWireMetadata() throws {
   let actor = UUID(), size = PageSize(width: 834, height: 1194)
   var workspace = WorkspaceIndex.initial(actor: actor, pageSize: size).index
@@ -722,7 +722,7 @@ func workspaceItemLookupFollowsMergeAndDecodeWithoutWireMetadata() throws {
   for value in reordered.items { #expect(workspace.item(id: value.id) == value) }
   let data = try JSONEncoder().encode(workspace)
   let fields = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-  #expect(Set(fields.keys) == Set(["format", "rootBoardID", "items", "selectedItemID", "stamp"]))
+  #expect(Set(fields.keys) == Set(["format", "rootBoardID", "items", "selectedItemID", "stamp", "collaboration", "selectionVersion"]))
   let decoded = try JSONDecoder().decode(WorkspaceIndex.self, from: data)
   #expect(decoded == reordered)
   for value in reordered.items { #expect(decoded.item(id: value.id) == value) }

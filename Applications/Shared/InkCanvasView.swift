@@ -77,11 +77,19 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   private typealias Vertex = SpatialInkGeometry.Vertex
 
+  private struct GeometryBuffer {
+    let buffer: any MTLBuffer
+    let reservation: RasterReservation
+  }
+
   private struct CommittedBatch {
-    let operation: RenderOperation
-    var vertices: [Vertex]
-    var buffer: (any MTLBuffer)?
-    var projection: SpatialInkMesh.Projection = .local
+    let mesh: SpatialInkMesh.Batch
+    var buffers: [GeometryBuffer?]
+    var operation: RenderOperation { mesh.tool == .pen ? .ink : .erase }
+    init(_ mesh: SpatialInkMesh.Batch) {
+      self.mesh = mesh
+      buffers = Array(repeating: nil, count: mesh.chunks.count)
+    }
   }
 
   private struct StableRasterKey: Equatable {
@@ -101,6 +109,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private let inkPipelineState: (any MTLRenderPipelineState)?
   private let eraserPipelineState: (any MTLRenderPipelineState)?
   private let textureLoader: MTKTextureLoader?
+  private let resources: SceneRenderResources
   private let inFlightSemaphore = DispatchSemaphore(
     value: InkCanvasView.framesInFlight
   )
@@ -122,11 +131,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private var builtActiveIdentity: ObjectIdentifier?
   private var builtActiveRevision: UInt64?
   private var activeMesh = IncrementalInkMesh()
-  private var activeVertices: [Vertex] = []
+  private var activeBufferDirtyStarts = Array(repeating: 0, count: InkCanvasView.framesInFlight)
   private var activeBuffers = Array<(any MTLBuffer)?>(
     repeating: nil,
     count: InkCanvasView.framesInFlight
   )
+  private var activeBufferReservations = Array<RasterReservation?>(
+    repeating: nil, count: InkCanvasView.framesInFlight)
   private var activeBufferCapacities = Array(
     repeating: 0,
     count: InkCanvasView.framesInFlight
@@ -135,6 +146,16 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private var hasRevealedFirstFrame = false
   private var stableContentRevision: UInt64 = 0
   private var presentedStableContentRevision: UInt64?
+  private(set) var drawableRequestCount = 0
+  private(set) var activeUploadedByteCount = 0
+  private(set) var visibleCommittedVertexCount = 0
+  private(set) var visibleCommittedChunkCount = 0
+  private(set) var renderFailure: SceneRenderError?
+  var residentCommittedBufferBytes: Int {
+    committedBatches.reduce(0) { count, batch in
+      count + batch.buffers.reduce(0) { $0 + ($1?.reservation.byteCount ?? 0) }
+    }
+  }
 
   var isStableFramePresented: Bool {
     presentedStableContentRevision == stableContentRevision
@@ -147,16 +168,17 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   var committedVertexCount: Int {
-    committedBatches.reduce(0) { $0 + $1.vertices.count }
+    committedBatches.reduce(0) { $0 + $1.mesh.vertices.count }
   }
 
   var committedEraserVertexCount: Int {
     committedBatches.reduce(0) { count, batch in
-      count + (batch.operation == .erase ? batch.vertices.count : 0)
+      count + (batch.operation == .erase ? batch.mesh.vertices.count : 0)
     }
   }
 
-  init(frame: CGRect) {
+  init(frame: CGRect, resources: SceneRenderResources = .shared) {
+    self.resources = resources
     let gpu = InkRasterRenderer.shared
     let device = gpu.device
     // Display work has its own queue; a background readback cannot sit ahead of every live frame.
@@ -169,7 +191,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     super.init(frame: frame, device: device)
 
     colorPixelFormat = .bgra8Unorm
-    sampleCount = device?.supportsTextureSampleCount(4) == true ? 4 : 1
+    // Empty physical owners retain routing and readiness, not MSAA attachments.
+    sampleCount = 1
     clearColor = MTLClearColorMake(0, 0, 0, 0)
     framebufferOnly = true
     enableSetNeedsDisplay = false
@@ -200,6 +223,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     fatalError("init(coder:) is unavailable")
   }
 
+  isolated deinit { stableRasterTask?.cancel() }
+
   #if os(iOS)
   override func didMoveToWindow() {
     super.didMoveToWindow()
@@ -218,6 +243,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       // UIKit can retain a culled canvas beyond the end of its visible use.
       // Stop its timer even when no drawable arrives to finish the last draw.
       isPaused = true
+      cancelPendingStableRaster()
+      releaseDrawables()
+      releaseGeometryBuffers()
       return
     }
     requestFrame()
@@ -242,8 +270,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     stableRasterTask?.cancel(); stableRasterTask = nil
     stableDrawing = nil; stableTexture = nil
     installedStableRasterKey = nil; pendingStableRasterKey = nil
-    committedBatches = mesh.batches.map { .init(operation: $0.tool == .pen ? .ink : .erase,
-      vertices: $0.vertices, buffer: nil, projection: $0.projection) }
+    committedBatches = mesh.batches.map(CommittedBatch.init)
     discardActiveAction()
     requestFrame()
   }
@@ -293,6 +320,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   /// clock, never inside the touch callback.
   func displayActiveStroke(_ stroke: ActiveInkStroke) {
     if activeInkStroke !== stroke {
+      beginStableContentUpdate()
       cancelPendingStableRaster()
       activeInkStroke = stroke
       activeEraserStroke = nil
@@ -305,6 +333,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   /// Composites the measured destination-out brush over the stable page.
   func displayActiveEraser(_ stroke: ActiveEraserStroke) {
     if activeEraserStroke !== stroke {
+      beginStableContentUpdate()
       cancelPendingStableRaster()
       activeEraserStroke = stroke
       activeInkStroke = nil
@@ -337,7 +366,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     } else { return }
     if builtActiveIdentity != identity { activeMesh = IncrementalInkMesh() }
     activeMesh.update(points: points, changedFrom: builtActiveIdentity == identity ? changed : 0, color: color)
-    appendCommitted(activeMesh.vertices, operation: operation)
+    appendCommitted(activeMesh, operation: operation)
     discardActiveAction()
     requestFrame()
   }
@@ -358,6 +387,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   func draw(in view: MTKView) {
     guard window != nil else { isPaused = true; return }
+    if presentEmptyContentIfReady() { return }
+    sampleCount = device?.supportsTextureSampleCount(4) == true ? 4 : 1
     guard inFlightSemaphore.wait(timeout: .now()) == .success else { return }
     var mustSignal = true
     defer {
@@ -366,6 +397,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       }
     }
 
+    drawableRequestCount += 1
     guard let commandQueue,
       let commandBuffer = commandQueue.makeCommandBuffer(),
       let descriptor = currentRenderPassDescriptor,
@@ -378,14 +410,15 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       descriptor: descriptor
     ) else { return }
 
-    for index in committedBatches.indices
-      where committedBatches[index].buffer == nil
-    {
-      committedBatches[index].buffer = makeBuffer(
-        for: committedBatches[index].vertices
-      )
+    guard let visible = prepareCommittedBuffers() else {
+      encoder.endEncoding(); renderFailure = .resourceLimit
+      return
     }
     let active = prepareActiveBuffer(in: frameSlot)
+    if (activeInkStroke != nil || activeEraserStroke != nil) && !activeMesh.vertices.isEmpty && active == nil {
+      encoder.endEncoding(); renderFailure = .resourceLimit
+      return
+    }
 
     if let stableTexture, let stableInkPipelineState {
       encoder.label = "Stable Notebook Ink"
@@ -409,12 +442,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         length: MemoryLayout<SIMD2<Float>>.stride,
         index: 1
       )
-      for batch in committedBatches {
-        var transform = batch.projection.transform(camera: spatialCamera, viewport: spatialViewport)
+      for (batchIndex, chunkIndex) in visible {
+        let batch = committedBatches[batchIndex]
+        var transform = batch.mesh.projection.transform(camera: spatialCamera, viewport: spatialViewport)
         encoder.setVertexBytes(&transform, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
         draw(
-          buffer: batch.buffer,
-          vertexCount: batch.vertices.count,
+          buffer: batch.buffers[chunkIndex]?.buffer,
+          vertexCount: batch.mesh.chunks[chunkIndex].vertices.count,
           operation: batch.operation,
           with: encoder
         )
@@ -424,7 +458,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         encoder.setVertexBytes(&identity, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
         draw(
           buffer: active.buffer,
-          vertexCount: activeVertices.count,
+          vertexCount: activeMesh.vertices.count,
           operation: active.operation,
           with: encoder
         )
@@ -438,11 +472,18 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         && activeEraserStroke == nil
         && stableRasterIsReady
       ? stableContentRevision : nil
-    commandBuffer.addCompletedHandler { [weak self, inFlightSemaphore] buffer in
+    let submittedRevision = stableContentRevision
+    let heldGeometry = visible.compactMap { committedBatches[$0.0].buffers[$0.1]?.reservation }
+      + (activeBufferReservations[frameSlot].map { [$0] } ?? [])
+    commandBuffer.addCompletedHandler { [weak self, inFlightSemaphore, heldGeometry] buffer in
       inFlightSemaphore.signal()
       guard buffer.status == .completed else { return }
-      Task { @MainActor [weak self] in
-        guard let self else { return }
+      Task { @MainActor [weak self, heldGeometry] in
+        // Unmount/culling may already have released the canvas's references.
+        // These bytes remain charged through the final GPU completion.
+        withExtendedLifetime(heldGeometry) {}
+        guard let self, window != nil, stableContentRevision == submittedRevision else { return }
+        renderFailure = nil
         if !hasRevealedFirstFrame {
           hasRevealedFirstFrame = true
           // Completing a hidden drawable is not a capturable visible layer.
@@ -521,14 +562,18 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     }
 
     let rasterBounds = CGRect(origin: .zero, size: key.size)
-    stableRasterTask = Task { [weak self] in
-      let raster = await Task.detached(priority: .userInitiated) {
-        Self.makeStableRaster(
+    let worker = Task.detached(priority: .userInitiated) {
+      guard !Task.isCancelled else { return nil as StableRaster? }
+      return Self.makeStableRaster(
           from: drawing,
           bounds: rasterBounds,
           scale: Self.stableRasterScale
         )
-      }.value
+    }
+    stableRasterTask = Task { [weak self] in
+      let raster = await withTaskCancellationHandler {
+        await worker.value
+      } onCancel: { worker.cancel() }
       guard let self else { return }
       guard acceptsStableRaster(for: key),
         let raster,
@@ -596,9 +641,41 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   private func requestFrame() {
+    if presentEmptyContentIfReady() { return }
     // Mesh/raster completions may arrive after culling. Preserve their ready
     // content, but only a mounted surface can resume display execution.
     isPaused = window == nil
+  }
+
+  @discardableResult
+  private func presentEmptyContentIfReady() -> Bool {
+    guard stableRasterIsReady, stableTexture == nil,
+      activeInkStroke == nil, activeEraserStroke == nil,
+      committedBatches.allSatisfy({ $0.mesh.vertices.isEmpty })
+    else { return false }
+    isPaused = true
+    if sampleCount != 1 { sampleCount = 1 }
+    releaseDrawables()
+    hasRevealedFirstFrame = false
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    #if os(iOS)
+    layer.opacity = 0
+    #else
+    layer?.opacity = 0
+    #endif
+    CATransaction.commit()
+    let revision = stableContentRevision
+    // SwiftUI may be updating this owner now. Empty is a complete transparent
+    // result, but readiness is delivered after the current publication pass.
+    Task { @MainActor [weak self] in
+      guard let self, stableContentRevision == revision, stableRasterIsReady,
+        activeInkStroke == nil, activeEraserStroke == nil,
+        presentedStableContentRevision != revision else { return }
+      presentedStableContentRevision = revision
+      onRenderReadinessChange?(true)
+    }
+    return true
   }
 
   private func discardActiveAction() {
@@ -606,7 +683,23 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     activeEraserStroke = nil
     builtActiveIdentity = nil
     builtActiveRevision = nil
-    activeVertices.removeAll(keepingCapacity: true)
+    activeMesh = IncrementalInkMesh()
+    activeBufferDirtyStarts = Array(repeating: 0, count: Self.framesInFlight)
+    releaseActiveBuffers()
+  }
+
+  private func releaseActiveBuffers() {
+    activeBuffers = Array(repeating: nil, count: Self.framesInFlight)
+    activeBufferReservations = Array(repeating: nil, count: Self.framesInFlight)
+    activeBufferCapacities = Array(repeating: 0, count: Self.framesInFlight)
+    activeBufferDirtyStarts = Array(repeating: 0, count: Self.framesInFlight)
+  }
+
+  private func releaseGeometryBuffers() {
+    for index in committedBatches.indices {
+      committedBatches[index].buffers = Array(repeating: nil, count: committedBatches[index].mesh.chunks.count)
+    }
+    releaseActiveBuffers()
   }
 
   private func prepareActiveBuffer(
@@ -640,7 +733,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       color = SIMD4(1, 1, 1, 1)
       operation = .erase
     } else {
-      activeVertices.removeAll(keepingCapacity: true)
       builtActiveIdentity = nil
       builtActiveRevision = nil
       return nil
@@ -648,80 +740,100 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
     if builtActiveIdentity != identity || builtActiveRevision != revision {
       let changed = activeInkStroke?.consumeChangedStart() ?? activeEraserStroke?.consumeChangedStart() ?? 0
-      if builtActiveIdentity != identity { activeMesh = IncrementalInkMesh() }
-      activeMesh.update(points: measured + predicted, changedFrom: changed, color: color)
-      activeVertices = activeMesh.vertices
+      if builtActiveIdentity != identity {
+        activeMesh = IncrementalInkMesh()
+        activeBufferDirtyStarts = Array(repeating: 0, count: Self.framesInFlight)
+      }
+      activeMesh.update(measured: measured, predicted: predicted, changedFrom: changed, color: color)
+      for index in activeBufferDirtyStarts.indices {
+        activeBufferDirtyStarts[index] = min(activeBufferDirtyStarts[index], activeMesh.rebuiltVertexStart)
+      }
       builtActiveIdentity = identity
       builtActiveRevision = revision
     }
-    guard !activeVertices.isEmpty else { return nil }
+    guard !activeMesh.vertices.isEmpty else { return nil }
 
-    let requiredLength = activeVertices.count * MemoryLayout<Vertex>.stride
+    let requiredLength = activeMesh.vertices.count * MemoryLayout<Vertex>.stride
     if requiredLength > activeBufferCapacities[slot] {
-      activeBufferCapacities[slot] = max(
-        4096,
-        nextPowerOfTwo(requiredLength)
-      )
-      activeBuffers[slot] = device?.makeBuffer(
-        length: activeBufferCapacities[slot],
-        options: .storageModeShared
-      )
-      activeBuffers[slot]?.label = "Active Pencil Stroke \(slot)"
+      let capacity = max(4096, nextPowerOfTwo(requiredLength))
+      guard let reservation = resources.reserveDerivedBytes(capacity),
+        let buffer = device?.makeBuffer(length: capacity, options: .storageModeShared)
+      else { return nil }
+      activeBufferCapacities[slot] = capacity
+      activeBuffers[slot] = buffer
+      activeBufferReservations[slot] = reservation
+      buffer.label = "Active Pencil Stroke \(slot)"
+      activeBufferDirtyStarts[slot] = 0
     }
     guard let buffer = activeBuffers[slot] else {
       return nil
     }
     // Every in-flight frame owns its slot. The CPU never overwrites vertices
     // that a preceding GPU command buffer may still be reading.
-    copy(activeVertices, to: buffer)
+    let start = min(activeBufferDirtyStarts[slot], activeMesh.vertices.count)
+    let offset = start * MemoryLayout<Vertex>.stride
+    let length = requiredLength - offset
+    if length > 0 {
+      activeMesh.vertices.withUnsafeBytes { bytes in
+        if let base = bytes.baseAddress {
+          buffer.contents().advanced(by: offset).copyMemory(from: base.advanced(by: offset), byteCount: length)
+        }
+      }
+      activeUploadedByteCount += length
+    }
+    activeBufferDirtyStarts[slot] = activeMesh.vertices.count
     return (buffer, operation)
   }
 
   private func appendCommitted(
-    _ vertices: [Vertex],
+    _ active: IncrementalInkMesh,
     operation: RenderOperation
   ) {
-    guard !vertices.isEmpty else { return }
+    guard !active.vertices.isEmpty else { return }
     let projection = spatialCamera.map { SpatialInkMesh.Projection.screen($0, spatialViewport) } ?? .local
-    if committedBatches.last?.operation == operation && committedBatches.last?.projection == projection {
-      committedBatches[committedBatches.count - 1].vertices.append(
-        contentsOf: vertices
-      )
-      committedBatches[committedBatches.count - 1].buffer = nil
-    } else {
-      committedBatches.append(
-        CommittedBatch(
-          operation: operation,
-          vertices: vertices,
-          buffer: nil,
-          projection: projection
-        )
-      )
-    }
+    // The contact already indexed its mutable tail on display frames. Sealing
+    // it retains those arrays; it neither rescans nor copies the older history.
+    committedBatches.append(.init(.init(tool: operation == .ink ? .pen : .eraser,
+      vertices: active.vertices, chunks: active.chunks, projection: projection)))
   }
 
-  private func makeBuffer(for vertices: [Vertex]) -> (any MTLBuffer)? {
-    guard let device, !vertices.isEmpty else { return nil }
-    return vertices.withUnsafeBytes { bytes in
+  private func prepareCommittedBuffers() -> [(Int, Int)]? {
+    var visible: [(Int, Int)] = []
+    visibleCommittedVertexCount = 0
+    let viewport = CGRect(origin: .zero, size: bounds.size)
+    for batchIndex in committedBatches.indices {
+      let mesh = committedBatches[batchIndex].mesh
+      let transform = mesh.projection.transform(camera: spatialCamera, viewport: spatialViewport)
+      for chunkIndex in mesh.chunks.indices {
+        let chunk = mesh.chunks[chunkIndex]
+        if chunk.intersects(viewport: viewport, transform: transform) {
+          visible.append((batchIndex, chunkIndex))
+          visibleCommittedVertexCount += chunk.vertices.count
+        } else {
+          committedBatches[batchIndex].buffers[chunkIndex] = nil
+        }
+      }
+    }
+    visibleCommittedChunkCount = visible.count
+    for (batchIndex, chunkIndex) in visible where committedBatches[batchIndex].buffers[chunkIndex] == nil {
+      let mesh = committedBatches[batchIndex].mesh
+      guard let buffer = makeBuffer(for: mesh.vertices, range: mesh.chunks[chunkIndex].vertices) else { return nil }
+      committedBatches[batchIndex].buffers[chunkIndex] = buffer
+    }
+    return visible
+  }
+
+  private func makeBuffer(for vertices: [Vertex], range: Range<Int>) -> GeometryBuffer? {
+    guard let device, !range.isEmpty,
+      let reservation = resources.reserveDerivedBytes(range.count * MemoryLayout<Vertex>.stride) else { return nil }
+    let buffer = vertices.withUnsafeBytes { bytes -> (any MTLBuffer)? in
       guard let baseAddress = bytes.baseAddress else { return nil }
-      let buffer = device.makeBuffer(
-        bytes: baseAddress,
-        length: bytes.count,
-        options: .storageModeShared
-      )
-      buffer?.label = "Committed Notebook Ink"
-      return buffer
+      return device.makeBuffer(bytes: baseAddress.advanced(by: range.lowerBound * MemoryLayout<Vertex>.stride),
+        length: reservation.byteCount, options: .storageModeShared)
     }
-  }
-
-  private func copy(_ vertices: [Vertex], to buffer: any MTLBuffer) {
-    vertices.withUnsafeBytes { source in
-      guard let baseAddress = source.baseAddress else { return }
-      buffer.contents().copyMemory(
-        from: baseAddress,
-        byteCount: source.count
-      )
-    }
+    guard let buffer else { return nil }
+    buffer.label = "Visible Notebook Ink Chunk"
+    return .init(buffer: buffer, reservation: reservation)
   }
 
   private func draw(

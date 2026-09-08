@@ -1,5 +1,7 @@
 #if DEBUG
   import Foundation
+  import AppKit
+  import CryptoKit
   import NotebookCore
 
   @MainActor
@@ -8,6 +10,46 @@
 
     static var isRequested: Bool {
       ProcessInfo.processInfo.arguments.contains(launchArgument)
+    }
+
+    /// The smoke route waits for the actual background publisher's pixels,
+    /// not merely for a process that has stayed alive for a few seconds.
+    static func writeProof(model: NotebookAppModel) async {
+      guard let path = ProcessInfo.processInfo.environment["NOTEBOOK_MAC_LAUNCH_PROOF"] else { return }
+      let deadline = ContinuousClock.now + .seconds(30)
+      var proof: [String: Any] = ["status": "failed", "reason": "No completed document raster"]
+      while ContinuousClock.now < deadline {
+        let workWindows = NSApplication.shared.windows.filter { $0.canBecomeMain || $0.styleMask.contains(.titled) }
+        if !workWindows.isEmpty {
+          proof["reason"] = "The helper opened a working window"
+          break
+        }
+        if let bytes = try? Data(contentsOf: model.store.currentViewRevisionURL),
+          let receipt = try? JSONDecoder().decode(CurrentViewReceipt.self, from: bytes), receipt.isValid,
+          receipt.presence.mode == .document,
+          let png = try? Data(contentsOf: model.store.currentViewPreviewURL),
+          SHA256.hash(data: png).map({ String(format: "%02x", $0) }).joined() == receipt.pngSHA256,
+          NSApplication.shared.activationPolicy() == .accessory {
+          proof = ["status": "ready", "workingWindows": 0, "surface": "document",
+            "pngSHA256": receipt.pngSHA256, "pngBytes": png.count]
+          break
+        }
+        try? await Task.sleep(for: .milliseconds(50))
+      }
+      do {
+        if proof["status"] as? String == "ready" {
+          // Keep the pixels alongside the receipt so the headless proof can be
+          // inspected after the isolated helper has exited.
+          let png = try Data(contentsOf: model.store.currentViewPreviewURL)
+          guard let expectedHash = proof["pngSHA256"] as? String,
+            SHA256.hash(data: png).map({ String(format: "%02x", $0) }).joined() == expectedHash else {
+            throw CocoaError(.fileReadCorruptFile)
+          }
+          try png.write(to: URL(fileURLWithPath: path).deletingPathExtension().appendingPathExtension("png"), options: .atomic)
+        }
+        try JSONSerialization.data(withJSONObject: proof, options: [.sortedKeys])
+          .write(to: URL(fileURLWithPath: path), options: .atomic)
+      } catch { FileHandle.standardError.write(Data("Mac launch proof: \(error.localizedDescription)\n".utf8)) }
     }
 
     static func makeModel() -> NotebookAppModel {
@@ -85,7 +127,8 @@
           ),
           items: index.items
         )
-        try store.saveIndex(index)
+        try store.saveWorkspaceBundle(index: index, page: initial.page,
+          board: store.loadBoard(items: index.items))
         try store.savePresence(
           SessionPresence(
             boardID: index.rootBoardID,

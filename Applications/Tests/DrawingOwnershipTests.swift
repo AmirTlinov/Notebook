@@ -4,6 +4,54 @@ import XCTest
 @testable import Notebook
 
 final class DrawingOwnershipTests: XCTestCase {
+  @MainActor
+  func testEmptyMountedCoverIsReadyWithoutDrawableAndItsFirstStrokeStillRenders() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene), host = UIViewController()
+    let canvas = InkCanvasView(frame: .init(x: 0, y: 0, width: 834, height: 1194))
+    window.rootViewController = host; host.view.addSubview(canvas); window.makeKeyAndVisible()
+    defer { window.isHidden = true }
+    canvas.applySpatial(.init(batches: []))
+    for _ in 0..<20 where !canvas.isStableFramePresented { await Task.yield() }
+    XCTAssertTrue(canvas.isStableFramePresented)
+    XCTAssertTrue(canvas.isPaused)
+    XCTAssertEqual(canvas.drawableRequestCount, 0)
+    XCTAssertEqual(canvas.sampleCount, 1)
+    let first = ActiveInkStroke(style: .standard)
+    first.replaceMeasuredTail(from: 0, with: [point(x: 20, y: 20), point(x: 120, y: 80)])
+    canvas.displayActiveStroke(first)
+    XCTAssertFalse(canvas.isPaused)
+    canvas.commitActiveSpatialAction()
+    for _ in 0..<200 where !canvas.isStableFramePresented {
+      canvas.draw()
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertGreaterThan(canvas.committedVertexCount, 0)
+    XCTAssertGreaterThan(canvas.drawableRequestCount, 0)
+    XCTAssertTrue(canvas.isStableFramePresented, "Первое перо раскрывает прежний Metal-тракт")
+    canvas.applySpatial(.init(batches: []))
+    for _ in 0..<20 where !canvas.isStableFramePresented { await Task.yield() }
+    let requests = canvas.drawableRequestCount
+    for _ in 0..<10 { canvas.draw() }
+    XCTAssertEqual(canvas.drawableRequestCount, requests)
+    XCTAssertEqual(canvas.layer.opacity, 0, "Пустая ревизия не оставляет старые чернила")
+  }
+
+  func testCancelledRasterDoesNotProduceAnOutput() async {
+    let cancelled = await Task.detached {
+      withUnsafeCurrentTask { $0?.cancel() }
+      return InkRasterRenderer.shared.render(layers: [], size: .init(width: 834, height: 1194)) == nil
+    }.value
+    XCTAssertTrue(cancelled)
+  }
+
+  func testExactInkRasterRejectsOversizedAndNonFiniteRequestsInsteadOfReducingScale() {
+    for size in [CGSize(width: 8_193, height: 1), .init(width: 1, height: 8_193),
+      .init(width: CGFloat.infinity, height: 1), .init(width: 1, height: CGFloat.nan)] {
+      XCTAssertNil(InkRasterRenderer.shared.render(layers: [], size: size, scale: 1))
+    }
+  }
+
   func testCoverInkKeepsItsSurfaceIdentityInTheSpatialScene() async throws {
     let actor = UUID()
     let coverID = UUID()

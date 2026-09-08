@@ -263,7 +263,7 @@ extension NotebookStore {
 
   private func collaborationFileURL(_ path: String) throws -> URL {
     let allowed = ["workspace.json", "board.json", "spatial-ink.json", "collaboration/format.json", "collaboration/selection.json", "collaboration/attention-human.json", "collaboration/attention-agent.json"].contains(path)
-      || ["pages/", "documents/", "document-states/", "collaboration/actions/", "collaboration/contexts/"].contains { path.hasPrefix($0) }
+      || ["pages/", "documents/", "document-states/", "document-drafts/", "collaboration/actions/", "collaboration/contexts/"].contains { path.hasPrefix($0) }
     guard allowed, !path.contains(".."), !path.hasPrefix("/"), path.hasSuffix(".json") else {
       throw CollaborationError("invalid_transaction", "Некорректный путь публикации.")
     }
@@ -336,12 +336,14 @@ extension NotebookStore {
   /// Disk, memory and the received cut meet under the same recoverable commit.
   public func mergeCollaborationContent(_ incoming: CollaborationContent?,
     local: CollaborationContent? = nil, actions: [CollaborationReceipt] = [], contexts: [SharedContext] = [], selection: SharedContextSelection? = nil) throws -> CollaborationContent {
+    try CollaborationEnvelope(content: incoming, actions: actions, contexts: contexts, selection: selection).validate()
+    try local?.validate()
     try prepare()
     return try withMutationLock {
       let before = try loadCollaborationContent()
       var merged = before
-      if let local { merged.merge(local) }
-      if let incoming { merged.merge(incoming) }
+      if let local { try merged.merge(local) }
+      if let incoming { try merged.merge(incoming) }
       var writes: [String: JSONValue] = [:]
       var removals: [String] = []
       if merged != before {
@@ -366,11 +368,7 @@ extension NotebookStore {
         let entry = SharedContextEntry(id: receipt.id, author: .agent, references: receipt.action.references, stamp: .init(counter: 1, actor: receipt.id), createdAt: receipt.createdAt)
         writes[contextFile(receipt.action.resolvedContextID)] = try .encode(SharedContext(id: receipt.action.resolvedContextID, entries: [entry]))
       }
-      let transaction = CollaborationTransaction(writes: writes, removals: removals)
-      if !transaction.writes.isEmpty || !transaction.removals.isEmpty {
-        try JSONEncoder().encode(transaction).write(to: pendingCollaborationURL, options: .atomic)
-        try recoverCollaborationTransaction()
-      }
+      try publishCollaboration(writes: writes, removals: removals)
       return merged
     }
   }
@@ -821,6 +819,11 @@ private struct CollaborationWorkspace {
   }
 
   mutating func recordFieldChanges(from previous: Self, human: Bool) throws {
+    if files["workspace.json"] != previous.files["workspace.json"] {
+      var index = try workspace
+      try index.recordChanges(from: previous.workspace, human: human)
+      files["workspace.json"] = try .encode(index)
+    }
     for target in try changedTargets(from: previous) where target.kind != .workspace {
       let file: String
       let path: [CollaborationPathComponent]
@@ -898,7 +901,7 @@ private func reordered(_ items: [JSONValue], values: [String: JSONValue]) throws
   return ids.map { id in items.first { $0["id"]?.string == id }! }
 }
 
-private let versionFields: Set<String> = ["stamp", "agentStamp", "drawingStamp", "stateStamp", "contentStamp", "portalStamp", "collaboration", "fieldVersion"]
+private let versionFields: Set<String> = ["stamp", "agentStamp", "drawingStamp", "stateStamp", "contentStamp", "portalStamp", "collaboration", "fieldVersion", "selectionVersion"]
 private func collaborationComparable(_ value: JSONValue?) -> JSONValue? {
   guard let value else { return nil }
   switch value {
@@ -948,6 +951,9 @@ private func collaborationFieldVersion(file: JSONValue?, path: [CollaborationPat
     local = Array(local.dropFirst(3))
   }
   guard let first = local.first, case .field(let collection) = first else { return nil }
+  if ["selectedItemID", "selectedPageID"].contains(collection) {
+    return try? owner["selectionVersion"]?.decode(ContentFieldVersion.self)
+  }
   var parts = [collection]
   if local.count > 1 {
     switch local[1] {
@@ -955,7 +961,7 @@ private func collaborationFieldVersion(file: JSONValue?, path: [CollaborationPat
     case .member(let id):
       parts.append(collaborationIdentity(id))
       if local.count > 2, case .field(let field) = local[2] {
-        parts.append(["source", "html", "kind"].contains(field) ? "content" : field)
+        parts.append(collection != "items" && ["source", "html", "kind"].contains(field) ? "content" : field)
       } else { parts.append("exists") }
     case .field: return nil
     }

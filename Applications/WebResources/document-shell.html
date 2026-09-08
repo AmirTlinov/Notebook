@@ -179,6 +179,7 @@
       <div id="page-track">
         <div id="page-backgrounds"></div>
         <main id="document" aria-label="Содержимое документа"></main>
+        <div id="interactive-layer"></div>
         <div id="editor-layer"></div>
       </div>
     </div>
@@ -192,20 +193,25 @@
       const track = document.getElementById('page-track');
       const backgrounds = document.getElementById('page-backgrounds');
       const editorLayer = document.getElementById('editor-layer');
+      const interactiveLayer = document.getElementById('interactive-layer');
+      const interactiveFrames = new Map();
       let payload = null;
       let pageLayout = null;
-      let layoutFrame = null;
       let editingBlockID = null;
       let activeEditorFinish = null;
       let activeEditorLayout = null;
+      let activeEditor = null;
+      const finishedSessionIDs = new Set();
       let lastTouchTap = null;
 
       const bridge = (message) => {
         const handler = window.webkit?.messageHandlers?.notebook;
-        if (handler) handler.postMessage(message);
+        if (handler) handler.postMessage({ ...message, runtimeID: payload?.runtimeID });
       };
 
-      const stable = (value) => JSON.stringify(value ?? null);
+      const canonical = value => Array.isArray(value) ? value.map(canonical)
+        : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
+      const stable = (value) => JSON.stringify(canonical(value ?? null));
       const stateFor = (block) => payload?.states
         && Object.prototype.hasOwnProperty.call(payload.states, block.id)
         ? payload.states[block.id]
@@ -215,8 +221,7 @@
         source: block.source,
         html: block.html,
         css: block.css,
-        javaScript: block.javaScript,
-        height: block.height
+        javaScript: block.javaScript
       });
 
       const currentPageIndex = () => pageLayout?.requestedPage ?? 0;
@@ -337,25 +342,114 @@
           pageIndex: currentPageIndex(),
           pageCount: pageLayout.pageCount,
           width: pageLayout.pageWidth, height: pageLayout.pageHeight,
-          regions: blockRegions(), diagnostics: runtimeDiagnostics
+          regions: blockRegions(), diagnostics: runtimeDiagnostics,
+          programs: [...interactiveFrames].map(([blockID, value]) => ({blockID, token:value.token,
+            readiness:value.readiness || 'unknown'}))
         };
       };
 
       const schedulePagination = () => {
-        if (!payload || layoutFrame !== null) return;
-        layoutFrame = requestAnimationFrame(() => {
-          layoutFrame = null;
-          paginate(currentPageIndex());
-        });
+        if (!payload) return;
+        paginate(currentPageIndex());
+        positionInteractiveFrames();
+        activeEditorLayout?.();
       };
 
-      const interactiveDocument = (block, state) => {
+      const interactiveDocument = (block, state, token) => {
         const safeID = JSON.stringify(block.id).replaceAll('<', '\\u003c');
         const safeState = JSON.stringify(state ?? null).replaceAll('<', '\\u003c');
         const safeScript = JSON.stringify(block.javaScript || '').replaceAll('<', '\\u003c');
+        const safeToken = JSON.stringify(token);
         const safeCSS = String(block.css || '').replace(/<\/style/gi, '<\\/style');
         const csp = "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; font-src data:; media-src data: blob:; form-action 'none'; base-uri 'none'; object-src 'none';";
-        return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}${safeCSS}</style></head><body>${block.html || ''}<script>(()=>{const blockID=${safeID};const report=(kind,message)=>parent.postMessage({channel:'notebook-diagnostic',blockID,kind,message:String(message)},'*');addEventListener('error',e=>report('javascript_error',e.message));addEventListener('unhandledrejection',e=>report('javascript_error',e.reason));addEventListener('load',()=>{if(document.body.scrollHeight>innerHeight+1||document.body.scrollWidth>innerWidth+1)report('overflow','Content exceeds its frame');for(const image of document.images)if(!image.naturalWidth)report('load_error','Image failed to load')});let value=${safeState};window.notebook={get state(){return value},commit(next){value=next;parent.postMessage({channel:'notebook-interactive',blockID,state:next},'*')}};addEventListener('message',event=>{if(event.data?.channel==='notebook-state'&&event.data.blockID===blockID){value=event.data.state;dispatchEvent(new CustomEvent('notebookstate',{detail:value}))}});try{const script=document.createElement('script');script.textContent=${safeScript};document.body.append(script)}catch(error){report('javascript_error',error)}})()<\/script></body></html>`;
+        const html = block.html || '';
+        return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}${safeCSS}</style></head><body>${html}<script>(()=>{
+          const blockID=${safeID}, token=${safeToken};
+          const post=message=>parent.postMessage({...message,blockID,token},'*');
+          const report=(kind,message)=>post({channel:'notebook-diagnostic',kind,message:String(message)});
+          addEventListener('error',e=>report('javascript_error',e.message));
+          addEventListener('unhandledrejection',e=>report('javascript_error',e.reason));
+          let value=${safeState};
+          const stable=value=>JSON.stringify(value,(_,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,v[k]])):v);
+          let declaredReady=null;
+          window.notebook=Object.freeze({
+            get state(){return value},
+            commit(next){if(stable(value)===stable(next))return;value=next;post({channel:'notebook-interactive',state:next})},
+            ready(promise){declaredReady=Promise.resolve(promise);declaredReady.then(()=>post({channel:'notebook-program-ready'}),error=>report('program_ready_error',error));return declaredReady}
+          });
+          addEventListener('message',event=>{
+            if(event.source!==parent||event.data?.channel!=='notebook-state'||event.data.token!==token)return;
+            const next=event.data.state;
+            if(stable(value)!==stable(next)){value=next;dispatchEvent(new CustomEvent('notebookstate',{detail:value}))}
+            post({channel:'notebook-state-applied',requestID:event.data.requestID});
+          });
+          addEventListener('load',async()=>{
+            await document.fonts.ready;
+            await Promise.all([...document.images].map(image=>image.decode().catch(()=>{})));
+            if(document.body.scrollHeight>innerHeight+1||document.body.scrollWidth>innerWidth+1)report('overflow','Content exceeds its frame');
+            for(const image of document.images)if(!image.naturalWidth)report('load_error','Image failed to load');
+            try{await declaredReady;post({channel:'notebook-program-started'})}
+            catch(error){report('program_ready_error',error)}
+          });
+          try{const script=document.createElement('script');script.textContent=${safeScript};document.body.append(script)}catch(error){report('javascript_error',error)}
+        })()<\/script></body></html>`;
+      };
+
+      const positionInteractiveFrames = () => {
+        const trackRect = track.getBoundingClientRect();
+        for (const [blockID, runtime] of interactiveFrames) {
+          const section = [...root.children].find(node => node.dataset.blockId === blockID);
+          if (!section) continue;
+          const rect = section.getBoundingClientRect();
+          Object.assign(runtime.frame.style, {position:'absolute',left:`${rect.left-trackRect.left}px`,
+            top:`${rect.top-trackRect.top}px`,width:`${rect.width}px`,height:`${section.dataset.height}px`});
+        }
+      };
+
+      // Iframes never belong to reordered flow nodes: detach/reinsert destroys
+      // their browsing contexts, even when the JavaScript node stays identical.
+      const prepareInteractiveFrames = async () => {
+        const page = currentPageIndex();
+        const visible = new Set(blockRegions().filter(region => region.pageIndex === page).map(region => region.id));
+        const blocks = new Map((payload.blocks || []).filter(block => block.kind === 'interactive').map(block => [block.id,block]));
+        for (const [blockID, runtime] of interactiveFrames) {
+          if (!visible.has(blockID) || !blocks.has(blockID) || runtime.token !== payload.blockTokens?.[blockID]) {
+            runtime.frame.remove(); runtime.cancel(); interactiveFrames.delete(blockID);
+          }
+        }
+        for (const [blockID, block] of blocks) {
+          if (!visible.has(blockID)) continue;
+          let runtime = interactiveFrames.get(blockID);
+          if (!runtime) {
+            const frame = document.createElement('iframe');
+            frame.className = 'interactive-frame'; frame.title = blockID;
+            frame.setAttribute('sandbox','allow-scripts'); frame.setAttribute('scrolling','no');
+            frame.dataset.blockId = blockID;
+            let resolve, reject;
+            const started = new Promise((yes,no) => {resolve=yes;reject=no});
+            runtime = {frame,token:payload.blockTokens?.[blockID],started,resolve,reject,readiness:'unknown',
+              appliedState:stable(stateFor(block)),
+              cancel:()=>reject(new Error('Interactive surface was superseded'))};
+            interactiveFrames.set(blockID,runtime);
+            frame.srcdoc = interactiveDocument(block,stateFor(block),runtime.token);
+            interactiveLayer.append(frame);
+          }
+        }
+        positionInteractiveFrames();
+        await Promise.all([...interactiveFrames.values()].map(runtime=>runtime.started));
+        if (payload.programMode === 'headless') for (const [blockID, runtime] of interactiveFrames) {
+          if (runtime.readiness !== 'declared' && blocks.get(blockID)?.javaScript) {
+            diagnostic('program_completion_unknown', 'This is a captured frame. The program has not declared completion with notebook.ready(promise).', blockID);
+          }
+        }
+        await Promise.all([...interactiveFrames].map(([blockID,runtime])=>new Promise(resolve=>{
+          const nextState=stateFor(blocks.get(blockID)), stateKey=stable(nextState);
+          if(runtime.appliedState===stateKey){resolve();return}
+          const requestID=crypto.randomUUID(); runtime.stateRequestID=requestID; runtime.stateApplied=resolve;
+          runtime.appliedState=stateKey;
+          runtime.frame.contentWindow.postMessage({channel:'notebook-state',token:runtime.token,
+            requestID,state:nextState},'*');
+        })));
       };
 
       const createBlock = (block) => {
@@ -366,18 +460,8 @@
         section.dataset.signature = signatureFor(block);
 
         if (block.kind === 'interactive') {
-          const frame = document.createElement('iframe');
-          frame.className = 'interactive-frame';
-          frame.title = block.id;
-          frame.height = String(block.height || 320);
-          frame.setAttribute('sandbox', 'allow-scripts');
-          frame.setAttribute('scrolling', 'no');
-          frame.dataset.runtimeLoaded = 'false';
-          frame.addEventListener('load', () => {
-            frame.dataset.runtimeLoaded = 'true';
-          }, { once: true });
-          frame.srcdoc = interactiveDocument(block, stateFor(block));
-          section.append(frame);
+          section.dataset.height = String(block.height || 320);
+          section.style.height = `${block.height || 320}px`;
         } else if (block.kind === 'latex') {
           section.classList.add('latex');
           const source = block.source || '';
@@ -419,8 +503,7 @@
       };
 
       const render = async (nextPayload) => {
-        if (activeEditorFinish) activeEditorFinish(true, false);
-        const requestedPage = currentPageIndex();
+        const requestedPage = nextPayload.pageIndex ?? currentPageIndex();
         payload = nextPayload;
         runtimeDiagnostics = [];
         configurePaper(nextPayload, requestedPage);
@@ -431,11 +514,9 @@
         for (const block of nextPayload.blocks || []) {
           const old = oldByID.get(block.id);
           const signature = signatureFor(block);
-          if (old && old.dataset.signature === signature && editingBlockID !== block.id) {
+          if (old && (old.dataset.signature === signature || editingBlockID === block.id)) {
             if (block.kind === 'interactive') {
-              old.querySelector('iframe')?.contentWindow?.postMessage({
-                channel: 'notebook-state', blockID: block.id, state: stateFor(block)
-              }, '*');
+              old.dataset.height = String(block.height || 320); old.style.height = `${block.height || 320}px`;
             }
             nextNodes.push(old);
             oldByID.delete(block.id);
@@ -451,25 +532,15 @@
         for (const node of oldByID.values()) {
           if (window.MathJax?.typesetClear) MathJax.typesetClear([node]);
         }
-        root.replaceChildren(...nextNodes);
+        for (const node of oldByID.values()) node.remove();
+        nextNodes.forEach((node,index) => { if(root.children[index]!==node)root.insertBefore(node,root.children[index]||null) });
         await typeset(typesetNodes);
-        const loadingFrames = [...root.querySelectorAll('iframe.interactive-frame')]
-          .filter(frame => frame.dataset.runtimeLoaded !== 'true');
-        await Promise.all(loadingFrames.map(frame => new Promise(resolve => {
-          const finish = () => {
-            frame.dataset.runtimeLoaded = 'true';
-            resolve();
-          };
-          const timeout = setTimeout(finish, 1000);
-          frame.addEventListener('load', () => {
-            clearTimeout(timeout);
-            finish();
-          }, { once: true });
-        })));
-        await new Promise(resolve => requestAnimationFrame(
-          () => requestAnimationFrame(resolve)
-        ));
+        await document.fonts.ready;
+        await Promise.all([...root.querySelectorAll('img')].map(image=>image.decode().catch(()=>{})));
         const pageCount = paginate(currentPageIndex());
+        await prepareInteractiveFrames();
+        activeEditorLayout?.();
+        restoreEditor();
         bridge({
           kind: 'rendered',
           documentID: nextPayload.documentID,
@@ -489,14 +560,17 @@
             while (pendingPayload) {
               const next = pendingPayload;
               pendingPayload = null;
-              await render(next);
+              try { await render(next); } catch(error) {
+                diagnostic('render_error',error);
+                bridge({kind:'renderFailed',documentID:next.documentID,renderToken:next.renderToken,message:String(error)});
+              }
             }
           })().finally(() => { renderTask = null; });
         }
         return renderTask;
       };
 
-      const beginEditing = (blockID) => {
+      const beginEditing = (blockID, restored = null) => {
         if (!payload?.editable || editingBlockID) return;
         const block = payload.blocks.find(candidate => candidate.id === blockID);
         if (!block || block.kind === 'interactive') return;
@@ -508,7 +582,25 @@
         let editorTop = pageLayout.margin;
         const editor = document.createElement('textarea');
         editor.className = 'source-editor';
-        editor.value = block.source || '';
+        editor.value = restored?.edit.source ?? block.source ?? '';
+        const edit = restored?.edit || {sessionID:crypto.randomUUID(),documentID:payload.documentID,blockID,
+          baseSource:block.source || '',baseVersion:payload.sourceVersions[blockID],source:editor.value,sequence:0};
+        let sequence = edit.sequence, composing = false, waitingForCommit = false, lastDraft = restored;
+        const reportDraft = () => {
+          if(waitingForCommit)return lastDraft;
+          if(lastDraft?.edit.source===editor.value && lastDraft.selectionStart===editor.selectionStart
+            && lastDraft.selectionEnd===editor.selectionEnd && lastDraft.isComposing===composing)return lastDraft;
+          sequence += 1;
+          lastDraft={
+            edit:{...edit,source:editor.value,sequence},selectionStart:editor.selectionStart,selectionEnd:editor.selectionEnd,
+            isComposing:composing,phase:'editing'};
+          bridge({kind:'draft',documentID:edit.documentID,blockID,session:lastDraft});
+          return lastDraft;
+        };
+        editor.addEventListener('compositionstart',()=>{composing=true;reportDraft()});
+        editor.addEventListener('compositionend',()=>{composing=false;reportDraft()});
+        editor.addEventListener('input',reportDraft);
+        editor.addEventListener('select',reportDraft);
         editor.setAttribute('aria-label', 'Исходный Markdown или LaTeX');
         editor.setAttribute('autocomplete', 'off');
         editor.setAttribute('autocorrect', 'off');
@@ -557,25 +649,43 @@
         // iPadOS will show the software keyboard only when focus is claimed
         // inside the double-tap event itself. Deferring this call even by one
         // task leaves a visible editor with no keyboard.
-        editor.focus({ preventScroll: true });
-        editor.setSelectionRange(editor.value.length, editor.value.length);
+        if(!restored)editor.focus({ preventScroll: true });
+        editor.setSelectionRange(restored?.selectionStart ?? editor.value.length, restored?.selectionEnd ?? editor.value.length);
+        if(!restored)reportDraft();
 
-        let finished = false;
-        const finish = (commit, rerender = true) => {
-          if (finished) return;
-          finished = true;
-          const source = editor.value;
-          editor.remove();
-          section.style.visibility = '';
-          editingBlockID = null;
-          activeEditorFinish = null;
-          activeEditorLayout = null;
-          if (commit && source !== block.source) {
-            block.source = source;
-            bridge({ kind: 'source', documentID: payload.documentID, renderToken: payload.renderToken, blockID, source });
-          }
-          if (rerender) apply(payload);
+        const status = document.createElement('div');
+        status.className='source-editor-status'; status.setAttribute('role','status');
+        Object.assign(status.style,{position:'absolute',left:editor.style.left,top:`${editorTop-28}px`,
+          font:'13px -apple-system',background:'white',padding:'4px',zIndex:2});
+        editorLayer.append(status);
+        const close = () => {
+          editor.remove(); status.remove(); section.style.visibility='';
+          editingBlockID=null; activeEditorFinish=null; activeEditorLayout=null; activeEditor=null;
         };
+        const finish = commit => {
+          if(waitingForCommit||composing)return;
+          if(!commit){
+            finishedSessionIDs.add(edit.sessionID.toLowerCase());
+            bridge({kind:'discardDraft',documentID:edit.documentID,blockID,sessionID:edit.sessionID});
+            close(); apply(payload); return;
+          }
+          reportDraft(); waitingForCommit=true; editor.readOnly=true;
+          status.textContent='Сохранение…';
+          bridge({kind:'source',documentID:edit.documentID,blockID,edit:{...edit,source:editor.value,sequence}});
+        };
+        activeEditor = {sessionID:edit.sessionID,reportDraft,suspend:()=>{
+          const draft=reportDraft(); editor.readOnly=true; editor.blur(); close(); return draft;
+        },complete:(result)=>{
+          if(result.sequence!==sequence)return;
+          waitingForCommit=false;editor.readOnly=false;
+          if(result.status==='committed'){
+            finishedSessionIDs.add(edit.sessionID.toLowerCase());
+            close(); apply(payload);
+          }else{
+            status.textContent=result.status==='conflict'?'Исходник изменился. Ваш черновик сохранён.'
+              :result.status==='targetMissing'?'Блок удалён. Ваш черновик сохранён.':'Не удалось сохранить. Черновик остаётся здесь.';
+          }
+        }};
         activeEditorFinish = finish;
         editor.addEventListener('keydown', event => {
           if (event.key === 'Escape') { event.preventDefault(); finish(false); }
@@ -583,6 +693,25 @@
             event.preventDefault(); finish(true);
           }
         });
+      };
+
+      const restoreEditor = () => {
+        if(!payload?.editable||editingBlockID)return;
+        const draft=(payload.drafts||[]).find(draft=>draft.edit.documentID===payload.documentID
+          && !['committed','discarded'].includes(draft.phase) && !finishedSessionIDs.has(draft.edit.sessionID.toLowerCase())
+          && blockRegions().some(region=>region.id===draft.edit.blockID&&region.pageIndex===currentPageIndex()));
+        if(draft)beginEditing(draft.edit.blockID,draft);
+      };
+
+      const setEditingEnabled = (enabled, drafts = []) => {
+        if(!payload)return null;
+        if(!enabled){
+          const draft=activeEditor?.suspend() || null;
+          payload.editable=false;
+          if(draft)apply(payload);
+          return draft;
+        }
+        payload.editable=true;payload.drafts=drafts;restoreEditor();return null;
       };
 
       root.addEventListener('dblclick', event => {
@@ -615,20 +744,21 @@
           lastTouchTap = tap;
         }
       });
-      addEventListener('pagehide', () => activeEditorFinish?.(true, false));
+      addEventListener('pagehide', () => activeEditor?.reportDraft());
       addEventListener('message', event => {
-        const message = event.data;
-        if (!['notebook-interactive','notebook-diagnostic'].includes(message?.channel) || !payload) return;
-        const frame = [...root.querySelectorAll('iframe.interactive-frame')]
-          .find(candidate => candidate.contentWindow === event.source);
-        const blockID = frame?.closest('.block.interactive')?.dataset.blockId;
-        if (!blockID) return;
-        if (message.channel === 'notebook-diagnostic') { diagnostic(message.kind,message.message,blockID); return; }
-        payload.states[blockID] = message.state;
-        bridge({
-          kind: 'state', documentID: payload.documentID, renderToken: payload.renderToken,
-          blockID, value: message.state
-        });
+        const message=event.data;
+        if(!payload||!message?.channel?.startsWith('notebook-'))return;
+        const found=[...interactiveFrames].find(([,runtime])=>runtime.frame.contentWindow===event.source);
+        if(!found)return;
+        const [blockID,runtime]=found;
+        if(message.token!==runtime.token)return;
+        if(message.channel==='notebook-diagnostic'){diagnostic(message.kind,message.message,blockID);return}
+        if(message.channel==='notebook-program-started'){runtime.resolve();return}
+        if(message.channel==='notebook-program-ready'){runtime.readiness='declared';return}
+        if(message.channel==='notebook-state-applied'){if(message.requestID===runtime.stateRequestID)runtime.stateApplied?.();return}
+        if(message.channel!=='notebook-interactive')return;
+        payload.states[blockID]=message.state;
+        bridge({kind:'state',documentID:payload.documentID,blockID,blockToken:runtime.token,value:message.state});
       });
       addEventListener('dragstart', event => event.preventDefault());
       // The laid-out viewport owns paper size, including a shrink back after
@@ -637,14 +767,15 @@
         if (!payload) return;
         const requestedPage = currentPageIndex();
         configurePaper(payload, requestedPage);
-        requestAnimationFrame(() => activeEditorLayout?.());
         schedulePagination();
       }).observe(viewport);
 
       window.notebookRenderer = {
         apply,
         setPageIndex,
-        pageReceipt
+        pageReceipt,
+        setEditingEnabled,
+        completeSourceEdit: result => {if(activeEditor?.sessionID.toLowerCase()===result.sessionID.toLowerCase())activeEditor.complete(result)}
       };
       bridge({ kind: 'ready' });
     })();

@@ -11,6 +11,7 @@ struct NotebookDiskRefresh: Sendable {
   let actions: [CollaborationReceipt]
   let contexts: SharedContextSnapshot
   let delivery: [DeviceActionReceipt]
+  let documentDrafts: [DocumentEditingSession]
 
   static func prepare(store: NotebookStore, local: CollaborationContent?, incoming: [CollaborationEnvelope], receivingDeviceID: UUID?) throws -> Self {
     let content: CollaborationContent
@@ -31,7 +32,7 @@ struct NotebookDiskRefresh: Sendable {
       }
     }
     return try .init(content: content, contentChanged: content != local,
-      publication: content.publication(since: local), actions: actions,
-      contexts: store.sharedContexts(), delivery: delivery)
+      publication: try content.publication(since: local), actions: actions,
+      contexts: store.sharedContexts(), delivery: delivery, documentDrafts: store.documentEditingSessions())
   }
 }

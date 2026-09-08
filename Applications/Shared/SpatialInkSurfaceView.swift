@@ -129,15 +129,17 @@ struct SpatialInkSurfaceView: UIViewRepresentable {
       journal: SpatialInkJournal?,
       registry: SpatialInkSurfaceRegistry
     ) {
-      if self.registry !== registry || self.surface != surface {
+      if self.surface != surface {
         unregister(view)
-        self.registry = registry
         self.surface = surface
-        registry.register(view, for: surface)
-        preparation.cancel()
       }
-      let pending = preparation.update(surface: surface, journal: journal) { [weak registry, weak view] mesh in
-        guard let registry, let view else { return }
+      if self.registry !== registry {
+        self.registry?.unregister(view, for: surface)
+        self.registry = registry
+      }
+      registry.register(view, for: surface)
+      let pending = preparation.update(surface: surface, journal: journal) { [weak self, weak view] mesh in
+        guard let self, self.surface == surface, let registry = self.registry, let view else { return }
         if let mesh { registry.applyStable(mesh, to: surface, in: view) }
         else { view.finishSpatialPreparation() }
       }

@@ -104,8 +104,8 @@ func boardDeletionRechecksDurableContent() throws {
   defer { try? FileManager.default.removeItem(at: root) }
   let store = NotebookStore(root: root)
   let actor = workspace.stamp.actor
-  try store.saveIndex(workspace)
-  try store.saveBoard(base, items: workspace.items)
+  let page = PageDocument(id: workspace.items[0].pageIDs[0], size: .init(width: 834, height: 1194), actor: actor)
+  try store.saveWorkspaceBundle(index: workspace, page: page, board: base)
   let ink = SpatialInkJournal(stamp: VersionStamp(counter: 0, actor: actor))
   try store.saveSpatialInk(ink)
   var removedIndex = workspace
@@ -158,8 +158,8 @@ func boardDeletionProtectsRacingOwners(catalogChanged: Bool) throws {
   defer { try? FileManager.default.removeItem(at: root) }
   let store = NotebookStore(root: root)
   let actor = workspace.stamp.actor
-  try store.saveIndex(workspace)
-  try store.saveBoard(base, items: workspace.items)
+  let page = PageDocument(id: workspace.items[0].pageIDs[0], size: .init(width: 834, height: 1194), actor: actor)
+  try store.saveWorkspaceBundle(index: workspace, page: page, board: base)
   var ink = SpatialInkJournal(stamp: VersionStamp(counter: 0, actor: actor))
   try store.saveSpatialInk(ink)
   var removedIndex = workspace
@@ -175,8 +175,7 @@ func boardDeletionProtectsRacingOwners(catalogChanged: Bool) throws {
     let created = try #require(creation)
     let added = latestBoard.createBoard(created.id, in: workspace.rootBoardID, near: .zero, actor: actor)
     #expect(added)
-    try store.saveIndex(latestIndex)
-    try store.saveBoard(latestBoard, items: latestIndex.items)
+    try store.saveBoardWorkspaceBundle(index: latestIndex, board: latestBoard, boardID: created.id)
   } else {
     _ = ink.append(tool: .pen, spans: [SpatialInkSpan(surface: .board(childID), samples: [
       SpatialInkSample(point: .zero, worldPoint: .zero, timeOffset: 0,
@@ -184,11 +183,12 @@ func boardDeletionProtectsRacingOwners(catalogChanged: Bool) throws {
     ])], actor: actor)
     try store.saveSpatialInk(ink)
   }
+  let publishedBoard = try store.loadBoard(items: latestIndex.items)
   #expect(throws: NotebookStoreError.self) {
     try store.deleteWorkspaceBundle(expectedIndex: workspace, index: removedIndex,
       board: removedBoard, pageIDs: [])
   }
   #expect(try store.loadIndex() == latestIndex)
-  #expect(try store.loadBoard(items: latestIndex.items) == latestBoard)
+  #expect(try store.loadBoard(items: latestIndex.items) == publishedBoard)
   #expect(try store.loadSpatialInk() == ink)
 }

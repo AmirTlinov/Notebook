@@ -26,10 +26,35 @@ struct SpatialInkMesh: Sendable {
     }
   }
 
+  typealias Chunk = SpatialInkGeometry.Chunk
+
   struct Batch: Sendable {
     let tool: SpatialInkTool
-    var vertices: [SpatialInkGeometry.Vertex]
+    private(set) var vertices: [SpatialInkGeometry.Vertex]
     let projection: Projection
+    private(set) var chunks: [Chunk] = []
+
+    init(tool: SpatialInkTool, vertices: [SpatialInkGeometry.Vertex], projection: Projection) {
+      self.tool = tool; self.vertices = []; self.projection = projection
+      append(vertices)
+    }
+
+    init(tool: SpatialInkTool, vertices: [SpatialInkGeometry.Vertex], chunks: [Chunk], projection: Projection) {
+      self.tool = tool; self.vertices = vertices; self.projection = projection; self.chunks = chunks
+    }
+
+    mutating func append(_ added: [SpatialInkGeometry.Vertex]) {
+      guard !added.isEmpty else { return }
+      precondition(added.count.isMultiple(of: 3))
+      let previousCount = vertices.count
+      vertices.append(contentsOf: added)
+      var start = previousCount
+      if let last = chunks.last, last.vertices.count < Chunk.maximumVertexCount {
+        start = last.vertices.lowerBound
+        chunks.removeLast()
+      }
+      chunks.append(contentsOf: SpatialInkGeometry.chunks(for: vertices, startingAt: start))
+    }
   }
   let batches: [Batch]
 
@@ -69,9 +94,10 @@ struct SpatialInkMesh: Sendable {
         SpatialInkGeometry.appendStrokeVertices(points: points,
           color: action.tool == .pen ? .init(Float(color.red), Float(color.green), Float(color.blue), 1) : .init(1, 1, 1, 1),
           to: &vertices)
+        try Task.checkCancellation()
         let projection = origin.map(Projection.world) ?? .local
         if let index = batches.indices.last, batches[index].tool == action.tool, batches[index].projection == projection {
-          batches[index].vertices.append(contentsOf: vertices)
+          batches[index].append(vertices)
         } else {
           batches.append(.init(tool: action.tool, vertices: vertices, projection: projection))
         }
@@ -126,6 +152,7 @@ final class SpatialInkMeshCache {
     // Count retained source storage too; shared Swift arrays only reduce the
     // real cost. One oversized surface is used by its canvas but not retained.
     let cost = vertices * MemoryLayout<SpatialInkGeometry.Vertex>.stride
+      + mesh.batches.reduce(0) { $0 + $1.chunks.count * MemoryLayout<SpatialInkGeometry.Chunk>.stride }
       + samples * MemoryLayout<SpatialInkSample>.stride
       + (journal?.actions.count ?? 0) * MemoryLayout<SpatialInkAction>.stride
     guard capacity > 0, cost <= byteLimit else { return }

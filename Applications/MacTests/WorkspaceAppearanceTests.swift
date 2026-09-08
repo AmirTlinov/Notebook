@@ -74,7 +74,7 @@ final class WorkspaceAppearanceTests: XCTestCase {
   }
 
   @MainActor
-  func testDocumentModelRestoresThePaperFitAfterWindowRotation() throws {
+  func testDocumentModelRestoresThePaperFitAfterWindowRotation() async throws {
     for paper in DocumentPaperSize.allCases {
       let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
       defer { try? FileManager.default.removeItem(at: root) }
@@ -87,12 +87,16 @@ final class WorkspaceAppearanceTests: XCTestCase {
       model.updatePresence(SessionPresence(mode: .document,
         camera: SpatialCamera(scale: geometry.fitScale(viewport: portrait)),
         viewport: portrait, focusedItemID: id, openProgress: 1), settled: true)
+      let creationSaved = await model.finishPendingPersistence()
+      XCTAssertTrue(creationSaved, model.persistenceFailure ?? "")
       for size in [PageSize(width: 1_366, height: 1_024), NotebookAppModel.defaultPageSize] {
         let restored = NotebookAppModel(store: store, startsNearbySync: false)
         restored.start(pageSize: size)
         XCTAssertEqual(restored.itemGeometry(id), geometry)
         let presence = try XCTUnwrap(restored.presence)
         XCTAssertEqual(presence.camera.scale, geometry.fitScale(viewport: SpatialPoint(x: size.width, y: size.height)), accuracy: 1e-12)
+        let restoredSaved = await restored.finishPendingPersistence()
+        XCTAssertTrue(restoredSaved)
       }
     }
   }

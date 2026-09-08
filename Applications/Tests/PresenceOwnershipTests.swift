@@ -212,7 +212,8 @@ final class PresenceOwnershipTests: XCTestCase {
       ),
       items: initial.index.items
     )
-    try store.saveIndex(initial.index)
+    try store.saveWorkspaceBundle(index: initial.index, page: initial.page,
+      board: store.loadBoard(items: initial.index.items))
     try store.savePresence(
       SessionPresence(
         boardID: initial.index.rootBoardID,
@@ -285,6 +286,8 @@ final class PresenceOwnershipTests: XCTestCase {
     let createdID = try XCTUnwrap(
       model.createNotebook(at: WorldPoint(x: 1_200, y: 0))
     )
+    let creationSaved = await model.finishPendingPersistence()
+    XCTAssertTrue(creationSaved, model.persistenceFailure ?? "")
     XCTAssertEqual(try store.loadIndex().selectedItemID, createdID)
 
     model.selectItem(originalID)

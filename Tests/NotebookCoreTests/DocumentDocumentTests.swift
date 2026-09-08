@@ -198,7 +198,9 @@ func incompleteNetworkBundleCanResumeAfterLaunch() throws {
     pageSize: first.1[legacyPageID]!.size
   )
   let missing = try #require(missingCreation)
-  try store.saveIndex(workspace)
+  // This fixture deliberately models an old interrupted network publication;
+  // production catalog writes now reject missing content and placement.
+  try JSONEncoder().encode(workspace).write(to: store.indexURL, options: .atomic)
 
   let reopened = try store.loadOrCreate(
     actor: UUID(),

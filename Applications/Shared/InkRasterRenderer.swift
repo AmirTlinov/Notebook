@@ -44,7 +44,8 @@ final class InkRasterRenderer: @unchecked Sendable {
   }
 
   func page(_ drawing: PageInkDrawing, size: CGSize, scale: Double = 2) -> CGImage? {
-    render(
+    guard !Task.isCancelled else { return nil }
+    return render(
       layers: SpatialInkComposer.pageLayers(drawing), size: size, baselinePNG: drawing.baselinePNG,
       scale: scale)
   }
@@ -52,12 +53,14 @@ final class InkRasterRenderer: @unchecked Sendable {
   func render(
     layers: [SpatialInkRenderLayer], size: CGSize, baselinePNG: Data? = nil, scale: Double = 2
   ) -> CGImage? {
-    guard size.width > 0, size.height > 0, scale.isFinite, scale > 0,
+    guard !Task.isCancelled, size.width.isFinite, size.height.isFinite,
+      size.width > 0, size.height > 0, scale.isFinite, scale > 0,
+      size.width * scale <= 8192, size.height * scale <= 8192,
       let device, let queue, let ink, let eraser, let baseline,
       let command = queue.makeCommandBuffer()
     else { return nil }
-    let width = max(1, min(8192, Int(ceil(size.width * scale))))
-    let height = max(1, min(8192, Int(ceil(size.height * scale))))
+    let width = max(1, Int(ceil(size.width * scale)))
+    let height = max(1, Int(ceil(size.height * scale)))
     let descriptor = MTLTextureDescriptor.texture2DDescriptor(
       pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
     descriptor.storageMode = .shared
@@ -98,6 +101,7 @@ final class InkRasterRenderer: @unchecked Sendable {
     var identity = SIMD4<Float>(1, 1, 0, 0)
     encoder.setVertexBytes(&identity, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
     for layer in layers {
+      guard !Task.isCancelled else { encoder.endEncoding(); return nil }
       var vertices: [SpatialInkGeometry.Vertex] = []
       switch layer {
       case .ink(let points, let color):
@@ -110,18 +114,25 @@ final class InkRasterRenderer: @unchecked Sendable {
         SpatialInkGeometry.appendStrokeVertices(
           points: points, color: .init(1, 1, 1, 1), to: &vertices)
       }
+      guard !Task.isCancelled else { encoder.endEncoding(); return nil }
       guard !vertices.isEmpty else { continue }
-      let buffer = vertices.withUnsafeBytes { bytes in
-        device.makeBuffer(
-          bytes: bytes.baseAddress!, length: bytes.count, options: .storageModeShared)
+      for chunk in SpatialInkGeometry.chunks(for: vertices)
+        where chunk.intersects(viewport: CGRect(origin: .zero, size: size), transform: identity) {
+        guard !Task.isCancelled else { encoder.endEncoding(); return nil }
+        let buffer = vertices.withUnsafeBytes { bytes in
+          device.makeBuffer(bytes: bytes.baseAddress!.advanced(by: chunk.vertices.lowerBound * MemoryLayout<SpatialInkGeometry.Vertex>.stride),
+            length: chunk.vertices.count * MemoryLayout<SpatialInkGeometry.Vertex>.stride, options: .storageModeShared)
+        }
+        guard let buffer else { encoder.endEncoding(); return nil }
+        encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: chunk.vertices.count)
       }
-      encoder.setVertexBuffer(buffer, offset: 0, index: 0)
-      encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: vertices.count)
     }
     encoder.endEncoding()
+    guard !Task.isCancelled else { return nil }
     command.commit()
     command.waitUntilCompleted()
-    guard command.status == .completed else { return nil }
+    guard !Task.isCancelled, command.status == .completed else { return nil }
     var bytes = [UInt8](repeating: 0, count: width * height * 4)
     output.getBytes(
       &bytes, bytesPerRow: width * 4, from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)

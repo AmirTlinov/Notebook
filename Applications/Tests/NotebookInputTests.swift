@@ -5,6 +5,339 @@ import XCTest
 
 final class NotebookInputTests: XCTestCase {
   @MainActor
+  func testPencilImmediatelyStopsAStationaryTwoFingerUndoHoldAndCamera() async throws {
+    let gate = NotebookInputGate(), pencilSource = UUID()
+    let windowScene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: windowScene), host = UIViewController()
+    let scene = UIView(frame: .init(x: 0, y: 0, width: 600, height: 800))
+    window.rootViewController = host; host.view.addSubview(scene); window.makeKeyAndVisible()
+    var undoCount = 0, cameraBeginCount = 0
+    let owner = WorkspaceGestureLayer.Coordinator(defersHorizontalMotionToPageTurn: false,
+      isEnabled: true, inputGate: gate, onCamera: { phase in
+        if case .began = phase { cameraBeginCount += 1 }
+      }, onUndo: { undoCount += 1 })
+    owner.install(on: window, inside: scene)
+    defer { owner.uninstall(); gate.endPencilAction(source: pencilSource); window.isHidden = true }
+    let recognizer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? TwoFingerPaperGestureRecognizer }.first)
+    let first = InputTouch(), second = InputTouch(), event = UIEvent()
+    first.inputType = .direct; second.inputType = .direct
+    first.point = .init(x: 100, y: 300); second.point = .init(x: 300, y: 300)
+    recognizer.touchesBegan([first, second], with: event)
+    for _ in 0..<100 where undoCount == 0 { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertTrue(recognizer.permitsUndoRepetition)
+    XCTAssertGreaterThan(undoCount, 0, "UIKit должен передать распознанное удержание настоящему владельцу")
+    gate.beginPencilAction(source: pencilSource)
+    XCTAssertEqual(recognizer.state, .cancelled, "Не требуется ждать нового движения пальцев")
+    XCTAssertFalse(recognizer.permitsUndoRepetition)
+    let stoppedAt = undoCount
+    try await Task.sleep(for: .milliseconds(250))
+    XCTAssertEqual(undoCount, stoppedAt, "Даже отложенная доставка UIKit cancellation не допускает повтор undo")
+    gate.endPencilAction(source: pencilSource)
+    XCTAssertFalse(recognizer.permitsUndoRepetition, "Прежняя удерживаемая пара не возвращает своё разрешение")
+
+    recognizer.reset()
+    recognizer.touchesBegan([first, second], with: event)
+    first.point.x -= 40; second.point.x += 40
+    first.sampleTime += 0.1; second.sampleTime += 0.1
+    recognizer.touchesMoved([first, second], with: event)
+    for _ in 0..<100 where cameraBeginCount == 0 { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertEqual(cameraBeginCount, 1, "Следующая пара должна начать новый жест через UIKit")
+    XCTAssertEqual(recognizer.state, .began)
+    gate.beginPencilAction(source: pencilSource)
+    XCTAssertEqual(recognizer.state, .cancelled)
+    recognizer.touchesCancelled([first, second], with: event)
+    XCTAssertEqual(recognizer.state, .cancelled, "Поздняя системная отмена не переписывает завершение активной камеры")
+  }
+
+  @MainActor
+  func testBoardPanCannotStartDuringPencilAndPencilCancelsAnEarlierPanWithoutRewinding() throws {
+    let gate = NotebookInputGate(), pencil = UUID()
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene), host = UIViewController()
+    let anchor = UIView(frame: .init(x: 0, y: 0, width: 600, height: 800))
+    window.rootViewController = host; host.view.addSubview(anchor); window.makeKeyAndVisible()
+    var shown = CGPoint.zero, cancellations = 0, commits = 0
+    let owner = BoardPanView.Coordinator(isEnabled: true, itemFrames: [], inputGate: gate,
+      onTap: {}, onBegan: {}, onChanged: { shown = $0 }, onEnded: { shown = $0; commits += 1 },
+      onCancelled: { cancellations += 1 })
+    owner.install(on: window, inside: anchor)
+    defer { owner.uninstall(); window.isHidden = true }
+    let pan = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer }.first)
+    let finger = InputTouch(); finger.inputType = .direct
+    gate.beginPencilAction(source: pencil)
+    XCTAssertFalse(owner.gestureRecognizer(pan, shouldReceive: finger))
+    gate.endPencilAction(source: pencil)
+    XCTAssertTrue(owner.gestureRecognizer(pan, shouldReceive: finger))
+    owner.receivePan(state: .began, translation: .init(x: 30, y: 20))
+    owner.receivePan(state: .changed, translation: .init(x: 80, y: 40))
+    gate.beginPencilAction(source: pencil)
+    XCTAssertEqual(cancellations, 1, "Pencil немедленно завершает уже движущуюся камеру")
+    owner.receivePan(state: .changed, translation: .init(x: 160, y: 80))
+    owner.receivePan(state: .cancelled, translation: .zero)
+    XCTAssertEqual(shown, .init(x: 80, y: 40), "Отмена не становится нулевым измерением")
+    XCTAssertEqual(commits, 0)
+    XCTAssertEqual(cancellations, 1)
+    gate.endPencilAction(source: pencil)
+    XCTAssertTrue(owner.gestureRecognizer(pan, shouldReceive: finger))
+    owner.receivePan(state: .began, translation: .init(x: 12, y: 7))
+    owner.receivePan(state: .cancelled, translation: .zero)
+    XCTAssertEqual(shown, .init(x: 12, y: 7))
+    XCTAssertEqual(cancellations, 2)
+  }
+
+  @MainActor
+  func testBoardPanDefersConfigurationCancellationWithoutStoppingTheNextContact() async throws {
+    let gate = NotebookInputGate()
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+    let window = UIWindow(windowScene: scene), host = UIViewController()
+    let anchor = UIView(frame: .init(x: 0, y: 0, width: 600, height: 800))
+    window.rootViewController = host; host.view.addSubview(anchor); window.makeKeyAndVisible()
+    var isUpdatingView = false, begins = 0, cancellations = 0, successorCancellations = 0
+    var shown = CGPoint.zero
+    let owner = BoardPanView.Coordinator(isEnabled: true, itemFrames: [], inputGate: gate,
+      onTap: {}, onBegan: { begins += 1 }, onChanged: { shown = $0 }, onEnded: { shown = $0 },
+      onCancelled: {
+        XCTAssertFalse(isUpdatingView, "SwiftUI completion must not run inside native configuration")
+        cancellations += 1
+      })
+    owner.install(on: window, inside: anchor)
+    defer { owner.uninstall(); window.isHidden = true; previousKeyWindow?.makeKey() }
+    let pan = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer }.first)
+    let finger = InputTouch(); finger.inputType = .direct
+    XCTAssertTrue(owner.gestureRecognizer(pan, shouldReceive: finger))
+    pan.state = .began
+    for _ in 0..<100 where begins == 0 { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertEqual(begins, 1, "Exercise UIKit target delivery, not only receivePan")
+    owner.receivePan(state: .changed, translation: .init(x: 80, y: 40))
+
+    isUpdatingView = true
+    owner.isEnabled = false
+    owner.receivePan(state: .changed, translation: .init(x: 160, y: 80))
+    owner.receivePan(state: .cancelled, translation: .zero)
+    XCTAssertEqual(cancellations, 0)
+    XCTAssertFalse(owner.gestureRecognizer(pan, shouldReceive: finger))
+    XCTAssertFalse(pan.isEnabled)
+    XCTAssertEqual(shown, .init(x: 80, y: 40), "Native ownership closes immediately without rewinding")
+    isUpdatingView = false
+    for _ in 0..<100 where cancellations == 0 { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertEqual(cancellations, 1)
+
+    // The native cancellation path above has completed. Exercise the owner's
+    // queued-completion ordering with admitted phases below; assigning a new
+    // UIKit .began before its cancelled recognizer resets is not a new touch.
+    owner.isEnabled = true
+    XCTAssertTrue(owner.gestureRecognizer(pan, shouldReceive: finger))
+    owner.receivePan(state: .began, translation: .init(x: 40, y: 20))
+    XCTAssertEqual(begins, 2)
+    isUpdatingView = true
+    owner.isEnabled = false
+    owner.onCancelled = { successorCancellations += 1 }
+    owner.isEnabled = true
+    isUpdatingView = false
+    XCTAssertEqual(cancellations, 1)
+    XCTAssertTrue(owner.gestureRecognizer(pan, shouldReceive: finger))
+    XCTAssertEqual(cancellations, 2, "The next contact first completes the captured preceding owner")
+    XCTAssertEqual(successorCancellations, 0)
+    owner.receivePan(state: .began, translation: .init(x: 12, y: 7))
+    XCTAssertEqual(begins, 3)
+    try await Task.sleep(for: .milliseconds(20))
+    XCTAssertEqual(cancellations, 2)
+    XCTAssertEqual(successorCancellations, 0, "The queued old completion cannot cancel the new pan")
+    owner.receivePan(state: .changed, translation: .init(x: 24, y: 14))
+    XCTAssertEqual(shown, .init(x: 24, y: 14))
+    owner.receivePan(state: .ended, translation: .init(x: 24, y: 14))
+  }
+
+  @MainActor
+  func testBoardPanYieldsToPhysicalElementsAndNativeInteractiveAncestors() throws {
+    let gate = NotebookInputGate()
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene), host = UIViewController()
+    let anchor = UIView(frame: .init(x: 0, y: 0, width: 600, height: 800))
+    window.rootViewController = host; host.view.addSubview(anchor); window.makeKeyAndVisible()
+    let owner = BoardPanView.Coordinator(isEnabled: true,
+      itemFrames: [.init(x: 100, y: 200, width: 200, height: 100)], inputGate: gate,
+      onTap: {}, onBegan: {}, onChanged: { _ in }, onEnded: { _ in }, onCancelled: {})
+    owner.install(on: window, inside: anchor)
+    defer { owner.uninstall(); window.isHidden = true }
+    let pan = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer }.first)
+    let finger = InputTouch(); finger.inputType = .direct
+    XCTAssertFalse(owner.gestureRecognizer(pan, shouldReceive: finger), "Элемент доски не является свободным фоном")
+    finger.point = .init(x: 400, y: 500)
+    XCTAssertTrue(owner.gestureRecognizer(pan, shouldReceive: finger))
+    let slider = UISlider(), thumb = UIView(); slider.addSubview(thumb)
+    finger.sourceView = thumb
+    XCTAssertFalse(owner.gestureRecognizer(pan, shouldReceive: finger))
+    let scroll = UIScrollView(), webContent = UIView(); scroll.addSubview(webContent)
+    finger.sourceView = webContent
+    XCTAssertFalse(owner.gestureRecognizer(pan, shouldReceive: finger))
+  }
+
+  @MainActor
+  func testSpatialContactRoutesOnceAndKeepsItsOriginalCameraAcrossAnUpdate() throws {
+    let gate = NotebookInputGate(), registry = SpatialInkSurfaceRegistry(), board = UUID(), cover = UUID()
+    var commits: [[SpatialInkSpan]] = []
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene), host = UIViewController()
+    let canvas = SpatialInkContainerView(frame: .init(x: 0, y: 0, width: 600, height: 800))
+    window.rootViewController = host; host.view.addSubview(canvas); window.makeKeyAndVisible()
+    let owner = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate) { _, _, spans in commits.append(spans) }
+    defer { owner.uninstall(); window.isHidden = true }
+    func update(camera: SpatialCamera, items: [SpatialWorkspaceItemSurface]) {
+      owner.update(view: canvas, boardID: board, camera: camera, viewport: .init(x: 600, y: 800),
+        items: items, journal: nil, penStyle: .standard, eraserStyle: .standard, drawingTool: .pen,
+        surfaceRegistry: registry, inputGate: gate, isItemBeingDeleted: { _ in false }, admitsNewContact: { true }, isEnabled: true, onCommit: { _, _, spans in commits.append(spans) })
+    }
+    update(camera: .init(scale: 0.1), items: [.init(itemID: cover, geometry: .notebook, center: .zero, zIndex: 1)])
+    let pencil = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SpatialPencilGestureRecognizer }.first)
+    let touch = InputTouch(), event = UIEvent()
+    touch.point = .init(x: 200, y: 400)
+    pencil.touchesBegan([touch], with: event)
+    update(camera: .init(center: .init(x: 1000, y: 2000), scale: 2), items: [])
+    touch.point.x = 400; touch.sampleTime += 0.1
+    pencil.touchesMoved([touch], with: event)
+    XCTAssertEqual(owner.routedSegmentCount, 1)
+    pencil.touchesEnded([touch], with: event)
+    XCTAssertEqual(owner.routedSegmentCount, 1, "Поднятие Pencil не повторяет маршрутизацию")
+    XCTAssertEqual(commits.count, 1)
+    let spans = try XCTUnwrap(commits.first)
+    XCTAssertEqual(spans.map(\.surface), [.board(board), .cover(cover), .board(board)])
+    XCTAssertEqual(spans.first?.samples.first?.worldPoint, .init(x: -1000, y: 0))
+    XCTAssertEqual(spans.last?.samples.last?.worldPoint, .init(x: 1000, y: 0))
+    // PKStrokePoint round-trips a screen location through Float. The world
+    // conversion amplifies at most one screen ULP by the original 0.1 scale.
+    let boundaryPrecision = Double(Float(touch.point.x).ulp) / 0.1
+    XCTAssertEqual(try XCTUnwrap(spans[1].samples.first).point.x, 0, accuracy: boundaryPrecision)
+    XCTAssertEqual(try XCTUnwrap(spans[1].samples.last).point.x, WorkspaceItemGeometry.notebook.width, accuracy: boundaryPrecision)
+  }
+
+  @MainActor
+  func testDeletionWaitsForFrozenSpatialContactAndBlocksOnlyThatPhysicalCover() throws {
+    let gate = NotebookInputGate(), registry = SpatialInkSurfaceRegistry(), board = UUID(), deleting = UUID(), other = UUID()
+    let windowScene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: windowScene), host = UIViewController()
+    let canvas = SpatialInkContainerView(frame: .init(x: 0, y: 0, width: 1000, height: 800))
+    window.rootViewController = host; host.view.addSubview(canvas); window.makeKeyAndVisible()
+    var blocked: Set<UUID> = [], commits: [[SpatialInkSpan]] = [], events: [String] = []
+    let owner = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate) { _, _, _ in }
+    defer { owner.uninstall(); window.isHidden = true }
+    owner.update(view: canvas, boardID: board, camera: .init(scale: 0.3), viewport: .init(x: 1000, y: 800),
+      items: [.init(itemID: deleting, geometry: .notebook, center: .zero, zIndex: 1),
+        .init(itemID: other, geometry: .notebook, center: .init(x: 1000, y: 0), zIndex: 2)],
+      journal: nil, penStyle: .standard, eraserStyle: .standard, drawingTool: .pen,
+      surfaceRegistry: registry, inputGate: gate, isItemBeingDeleted: { blocked.contains($0) }, admitsNewContact: { true }, isEnabled: true,
+      onCommit: { _, _, spans in commits.append(spans); events.append("ink") })
+    let pencil = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SpatialPencilGestureRecognizer }.first)
+    let touch = InputTouch(), event = UIEvent()
+    touch.point = .init(x: 500, y: 400)
+    pencil.touchesBegan([touch], with: event)
+    gate.performAfterPageInput { blocked.insert(deleting); events.append("delete") }
+    XCTAssertTrue(blocked.isEmpty, "Удаление не меняет владельца принятого Pencil-контакта")
+    XCTAssertTrue(commits.isEmpty)
+    touch.point.x += 20; touch.sampleTime += 0.1
+    pencil.touchesMoved([touch], with: event)
+    pencil.touchesEnded([touch], with: event)
+    XCTAssertEqual(events, ["ink", "delete"], "Snapshot удаления начинается только после публикации контакта")
+    XCTAssertEqual(commits.first?.map(\.surface), [.cover(deleting)])
+
+    // No SwiftUI update has delivered the pending state to the canvas.
+    pencil.reset()
+    pencil.touchesBegan([touch], with: event)
+    XCTAssertEqual(pencil.state, .failed, "Новый контакт проверяет живое разрешение до принятия UIKit")
+    XCTAssertNotNil(gate.beginFingerSequence(), "Отклонённый Pencil не блокирует другие поверхности")
+    pencil.touchesEnded([touch], with: event)
+    XCTAssertEqual(commits.count, 1)
+
+    pencil.reset()
+    touch.point.x = 100; touch.sampleTime += 0.1
+    pencil.touchesBegan([touch], with: event)
+    touch.point.x = 660; touch.sampleTime += 0.1
+    pencil.touchesMoved([touch], with: event)
+    pencil.touchesEnded([touch], with: event)
+    let aroundCover = try XCTUnwrap(commits.last)
+    XCTAssertEqual(aroundCover.map(\.surface), [.board(board), .board(board)],
+      "Удаляемая обложка оставляет разрыв, а не становится доступной доской под ней")
+    XCTAssertEqual(commits.count, 2)
+
+    pencil.reset()
+    touch.point.x = 800; touch.sampleTime += 0.1
+    pencil.touchesBegan([touch], with: event)
+    touch.point.x += 10; touch.sampleTime += 0.1
+    pencil.touchesMoved([touch], with: event)
+    pencil.touchesEnded([touch], with: event)
+    XCTAssertEqual(commits.last?.map(\.surface), [.cover(other)])
+    XCTAssertEqual(commits.count, 3, "Другая обложка продолжает принимать Pencil во время удаления")
+
+    let coverInput = NotebookInteractionTouchView(), finger = InputTouch()
+    finger.inputType = .direct
+    var taps = 0
+    coverInput.onTap = { _, _ in taps += 1 }
+    coverInput.canBeginContact = { !blocked.contains(deleting) }
+    coverInput.touchesBegan([finger], with: event)
+    coverInput.touchesEnded([finger], with: event)
+    XCTAssertEqual(taps, 0)
+    coverInput.canBeginContact = { !blocked.contains(other) }
+    coverInput.touchesBegan([finger], with: event)
+    coverInput.touchesEnded([finger], with: event)
+    XCTAssertEqual(taps, 1, "Отказ одного владельца не выключает соседнюю обложку")
+  }
+
+  @MainActor
+  func testPendingSceneClosesOnlyNewSpatialAdmissionAndKeepsAcceptedContactUntilLift() throws {
+    let gate = NotebookInputGate(), registry = SpatialInkSurfaceRegistry(), board = UUID(), cover = UUID()
+    let windowScene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: windowScene), host = UIViewController()
+    let canvas = SpatialInkContainerView(frame: .init(x: 0, y: 0, width: 600, height: 800))
+    window.rootViewController = host; host.view.addSubview(canvas); window.makeKeyAndVisible()
+    var preparing = false, commits: [[SpatialInkSpan]] = []
+    let owner = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate) { _, _, _ in }
+    defer { owner.uninstall(); window.isHidden = true }
+    func update(enabled: Bool = true) {
+      owner.update(view: canvas, boardID: board, camera: .init(scale: 0.3), viewport: .init(x: 600, y: 800),
+        items: [.init(itemID: cover, geometry: .notebook, center: .zero, zIndex: 1)],
+        journal: nil, penStyle: .standard, eraserStyle: .standard, drawingTool: .pen,
+        surfaceRegistry: registry, inputGate: gate, isItemBeingDeleted: { _ in false },
+        admitsNewContact: { !preparing }, isEnabled: enabled,
+        onCommit: { _, _, spans in commits.append(spans) })
+    }
+    update()
+    let pencil = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SpatialPencilGestureRecognizer }.first)
+    let touch = InputTouch(), event = UIEvent()
+    touch.point = .init(x: 300, y: 400)
+    pencil.touchesBegan([touch], with: event)
+    preparing = true
+    update()
+    XCTAssertTrue(commits.isEmpty, "Подготовка другого изменения не завершает уже принятое касание")
+    XCTAssertTrue(gate.hasActivePencil)
+    touch.point.x += 20; touch.sampleTime += 0.1
+    pencil.touchesMoved([touch], with: event)
+    XCTAssertTrue(commits.isEmpty)
+    pencil.touchesEnded([touch], with: event)
+    XCTAssertEqual(commits.count, 1)
+    XCTAssertEqual(commits.first?.map(\.surface), [.cover(cover)])
+    XCTAssertFalse(gate.hasActivePencil)
+
+    pencil.reset()
+    pencil.touchesBegan([touch], with: event)
+    XCTAssertEqual(pencil.state, .failed, "Следующий контакт ждёт готовую геометрию")
+    pencil.touchesEnded([touch], with: event)
+    XCTAssertEqual(commits.count, 1)
+    XCTAssertFalse(gate.hasActivePencil)
+
+    // Admission observes the ready owner directly, without waiting for SwiftUI.
+    preparing = false
+    pencil.reset()
+    pencil.touchesBegan([touch], with: event)
+    XCTAssertTrue(gate.hasActivePencil)
+    update(enabled: false)
+    XCTAssertEqual(commits.count, 2, "Явное выключение инструмента по-прежнему завершает принятый контакт")
+    XCTAssertFalse(gate.hasActivePencil)
+    pencil.touchesEnded([touch], with: event)
+    XCTAssertEqual(commits.count, 2)
+  }
+
+  @MainActor
   func testFinishedSpatialEraserKeepsTheBoardVisibleWhileItsJournalReplays() async throws {
     let actor = UUID(), board = UUID(), gate = NotebookInputGate(), registry = SpatialInkSurfaceRegistry()
     var journal = SpatialInkJournal(stamp: .init(counter: 0, actor: actor))
@@ -22,7 +355,7 @@ final class NotebookInputTests: XCTestCase {
     func update(camera: SpatialCamera = .init(scale: 1)) {
       coordinator.update(view: canvas, boardID: board, camera: camera, viewport: .init(x: 600, y: 800),
         items: [], journal: journal, penStyle: .standard, eraserStyle: .standard, drawingTool: .eraser,
-        surfaceRegistry: registry, inputGate: gate, isEnabled: true, onCommit: { tool, color, spans in
+        surfaceRegistry: registry, inputGate: gate, isItemBeingDeleted: { _ in false }, admitsNewContact: { true }, isEnabled: true, onCommit: { tool, color, spans in
           journal.append(tool: tool, color: color, spans: spans, actor: actor)
         })
     }
@@ -113,7 +446,7 @@ final class NotebookInputTests: XCTestCase {
     func update(enabled: Bool) {
       coordinator.update(view: canvas, boardID: nextBoardID, camera: projection, viewport: .init(x: 600, y: 800),
         items: [], journal: nil, penStyle: .standard, eraserStyle: .standard, drawingTool: .eraser,
-        surfaceRegistry: registry, inputGate: gate, isEnabled: enabled,
+        surfaceRegistry: registry, inputGate: gate, isItemBeingDeleted: { _ in false }, admitsNewContact: { true }, isEnabled: enabled,
         onCommit: { tool, _, spans in commits.append((tool, spans)) })
     }
     update(enabled: true)
@@ -191,7 +524,7 @@ final class NotebookInputTests: XCTestCase {
   @MainActor
   func testDisplayProbeDoesNotRetainAnUnmountedSurface() {
     var monitor: InputFrameMonitor? = .init(root: FileManager.default.temporaryDirectory)
-    weak var weakMonitor = monitor
+    weak let weakMonitor = monitor
     monitor?.begin(mode: "board")
     monitor = nil
     XCTAssertNil(weakMonitor)
@@ -302,6 +635,8 @@ private final class InputTouch: UITouch {
   var point = CGPoint(x: 120, y: 220)
   var sampleTime: TimeInterval = 1
   var inputType: UITouch.TouchType = .pencil
+  var sourceView: UIView?
+  override var view: UIView? { sourceView }
   override var type: UITouch.TouchType { inputType }
   override var timestamp: TimeInterval { sampleTime }
   override var force: CGFloat { 1 }

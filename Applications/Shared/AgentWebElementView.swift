@@ -267,6 +267,21 @@ enum AgentSnapshotPolicy: Equatable {
   }
 }
 
+/// State and physical placement are inputs to an existing program, not new
+/// programs. This identity survives a commit echo, resize and camera move.
+struct AgentProgramSource: Equatable {
+  let id: String
+  let kind: AgentElementKind
+  let source: String
+  let html: String
+  let css: String
+  let javaScript: String
+  init(_ element: AgentElement) {
+    id = element.id; kind = element.kind; source = element.source
+    html = element.html; css = element.css; javaScript = element.javaScript
+  }
+}
+
 @MainActor
 final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
   private let lease: WebSurfaceLease
@@ -282,6 +297,15 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private weak var attachedWebView: WKWebView?
   private var loadedElement: AgentElement?
   private(set) var loadToken: String?
+  private var runtimeLoaded = false
+  private var appliedState: JSONValue?
+  private var stateApplication: Task<Void, Never>?
+  private var stateApplicationID: UUID?
+  private var snapshotReservation: RasterReservation?
+  private var snapshotInFlight = false
+  private var needsSnapshot = false
+  private var preparationDeadline: Task<Void, Never>?
+  private var recoveryAttempts = 0
 
   init(
     lease: WebSurfaceLease,
@@ -321,8 +345,12 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     isInvalidated = true
     loadToken = nil
     loadedElement = nil
+    appliedState = nil
     activeNavigation = nil
     renderIsReady = false
+    stateApplicationID = nil; stateApplication?.cancel(); stateApplication = nil
+    preparationDeadline?.cancel(); preparationDeadline = nil
+    snapshotReservation?.release(); snapshotReservation = nil
     onRenderReady = { _ in }
     onFailure = { _ in }
     onState = { _ in }
@@ -342,15 +370,81 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       if let token = loadToken { publishRenderReadiness(renderIsReady, token: token) }
       return
     }
+    if let previous = loadedElement, AgentProgramSource(previous) == AgentProgramSource(element) {
+      loadedElement = element
+      if previous.state != element.state || previous.frame.width != element.frame.width || previous.frame.height != element.frame.height {
+        snapshotFailure = nil
+        if let token = loadToken {
+          setRenderReady(false, token: token)
+          beginPreparationDeadline(token: token)
+        }
+        applyCurrentState()
+      } else if let token = loadToken { publishRenderReadiness(renderIsReady, token: token) }
+      return
+    }
+    recoveryAttempts = 0
+    beginLoad(element, in: webView)
+  }
+
+  private func beginLoad(_ element: AgentElement, in webView: WKWebView) {
+    stateApplicationID = nil; stateApplication?.cancel(); stateApplication = nil
+    snapshotReservation?.release(); snapshotReservation = nil
+    snapshotInFlight = false; needsSnapshot = false; runtimeLoaded = false
     activeNavigation = nil
     webView.stopLoading()
     let token = "\(lease.id.uuidString)/\(UUID().uuidString)"
     loadToken = token
     loadedElement = element
+    appliedState = element.state
     snapshotFailure = nil
     renderIsReady = false
     publishRenderReadiness(false, token: token)
+    beginPreparationDeadline(token: token)
     activeNavigation = webView.loadHTMLString(Self.document(for: element, token: token), baseURL: nil)
+  }
+
+  private func applyCurrentState() {
+    guard runtimeLoaded, stateApplication == nil, let token = loadToken, accepts(token) else { return }
+    let id = UUID(); stateApplicationID = id
+    stateApplication = Task { @MainActor [weak self] in
+      guard let self else { return }
+      defer { if stateApplicationID == id { stateApplicationID = nil; stateApplication = nil } }
+      while !Task.isCancelled, accepts(token), let web = attachedWebView, let element = loadedElement {
+        if appliedState == element.state { break }
+        do {
+          let state = try JSONSerialization.jsonObject(with: JSONEncoder().encode(element.state), options: .fragmentsAllowed)
+          try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            web.callAsyncJavaScript("window.notebookApplyState(state); return true;",
+              arguments: ["state": state], in: nil, in: .page) { result in
+                switch result {
+                case .success: continuation.resume()
+                case .failure(let error): continuation.resume(throwing: error)
+                }
+              }
+          }
+          guard accepts(token), !Task.isCancelled else { return }
+          appliedState = element.state
+        } catch {
+          if accepts(token), !Task.isCancelled { record(error, kind: "render_error", token: token) }
+          return
+        }
+        guard accepts(token), !Task.isCancelled else { return }
+        if loadedElement == element { break }
+      }
+      guard accepts(token), !Task.isCancelled, let web = attachedWebView else { return }
+      captureSnapshot(of: web, token: token)
+    }
+  }
+
+  private func beginPreparationDeadline(token: String) {
+    preparationDeadline?.cancel()
+    preparationDeadline = Task { @MainActor [weak self] in
+      do { try await Task.sleep(for: .seconds(8)) } catch { return }
+      guard let self, accepts(token) else { return }
+      snapshotReservation?.release(); snapshotReservation = nil
+      fail(.init(kind: "preparation_timeout", elementID: loadedElement?.id,
+        message: "WebKit did not complete source preparation and a snapshot before the deadline."), token: token)
+    }
   }
 
   func userContentController(
@@ -394,13 +488,15 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         ));
         """
     #else
-      // afterScreenUpdates finishes a Mac frame even in an occluded window.
+      // The public snapshot includes pending pixels; it does not advance an
+      // arbitrary program's rAF or claim that its computation has finished.
       let frameReadiness = ""
     #endif
     webView.callAsyncJavaScript(
       """
       await document.fonts.ready;
       await Promise.all([...document.images].map(image => image.decode().catch(() => {})));
+      await window.notebookReadyPromise;
       \(frameReadiness)
       for (const image of document.images) if (!image.naturalWidth) window.notebookDiagnostic('load_error', 'Image failed to load');
       if (Math.max(document.body.scrollHeight, document.documentElement.scrollHeight) > innerHeight + 1 || Math.max(document.body.scrollWidth, document.documentElement.scrollWidth) > innerWidth + 1) window.notebookDiagnostic('overflow', 'Content exceeds its frame');
@@ -411,7 +507,8 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         guard let self, let webView, accepts(token), attachedWebView === webView else { return }
         switch result {
         case .success:
-          captureSnapshot(of: webView, token: token)
+          runtimeLoaded = true
+          applyCurrentState()
         case .failure(let error):
           record(error, kind: "render_error", token: token)
           setRenderReady(false, token: token)
@@ -422,6 +519,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
 
   private func captureSnapshot(of webView: WKWebView, token: String) {
     guard accepts(token), let element = loadedElement else { return }
+    if snapshotInFlight { needsSnapshot = true; return }
     guard let pixels = snapshotPolicy.pixelSize(for: element),
       let configuration = Self.snapshotConfiguration(for: element, policy: snapshotPolicy, backingScale: snapshotScale(of: webView)),
       pixels.width.isFinite, pixels.height.isFinite,
@@ -432,20 +530,28 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         message: "The requested snapshot exceeds the raster resource budget."), token: token)
       return
     }
+    snapshotInFlight = true
+    snapshotReservation = reservation
     webView.takeSnapshot(with: configuration) { [weak self] image, error in
       guard let self else { reservation.release(); return }
+      if accepts(token) { snapshotInFlight = false; snapshotReservation = nil }
       completeSnapshot(image, error: error, token: token, element: element, reservation: reservation)
+      if accepts(token), needsSnapshot, let web = attachedWebView {
+        needsSnapshot = false; captureSnapshot(of: web, token: token)
+      }
     }
   }
 
   func completeSnapshot(_ image: AgentSnapshotImage?, error: (any Error)?, token: String,
     element: AgentElement, reservation: RasterReservation) {
     defer { reservation.release() }
-    guard accepts(token), loadedElement == element else { return }
+    guard accepts(token), let loadedElement,
+      SceneRasterSource.agent(loadedElement) == .agent(element) else { return }
     if let error {
       record(error, kind: "snapshot_error", token: token)
     } else if let image {
       if resources.store(image, for: element, reservation: reservation) {
+        preparationDeadline?.cancel(); preparationDeadline = nil
         setRenderReady(true, token: token)
       } else {
         fail(.init(kind: "resource_limit", elementID: element.id,
@@ -465,6 +571,17 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     fail(navigation: navigation, in: webView, error: error)
   }
 
+  func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+    guard attachedWebView === webView, let token = loadToken, accepts(token), let element = loadedElement else { return }
+    guard recoveryAttempts < 2 else {
+      fail(.init(kind: "web_process_terminated", elementID: element.id,
+        message: "WebKit terminated repeatedly. Retry the surface explicitly."), token: token)
+      return
+    }
+    recoveryAttempts += 1
+    beginLoad(element, in: webView)
+  }
+
   private func fail(navigation: WKNavigation?, in webView: WKWebView, error: any Error) {
     guard let navigation, navigation === activeNavigation, attachedWebView === webView,
       let token = loadToken, accepts(token) else { return }
@@ -481,6 +598,8 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private func fail(_ diagnostic: RenderDiagnostic, token: String) {
     guard accepts(token), let element = loadedElement else { return }
     snapshotFailure = diagnostic.kind == "resource_limit" ? .resourceLimit : .snapshotPending(element.id)
+    preparationDeadline?.cancel(); preparationDeadline = nil
+    snapshotReservation?.release(); snapshotReservation = nil
     resources.record(diagnostic, for: element)
     setRenderReady(false, token: token)
     Task { @MainActor [weak self] in
@@ -575,23 +694,37 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         window.notebookDiagnostic = (category, message) => window.webkit.messageHandlers.notebook.postMessage({token:notebookLoadToken,kind:'diagnostic',category,message:String(message)});
         addEventListener('error', event => window.notebookDiagnostic('javascript_error', event.message || 'Resource load error'));
         addEventListener('unhandledrejection', event => window.notebookDiagnostic('javascript_error', event.reason));
+        let notebookState = \(state);
+        const notebookCanonical = value => JSON.stringify(value, (_,v) => v && typeof v === 'object' && !Array.isArray(v)
+          ? Object.fromEntries(Object.keys(v).sort().map(key => [key,v[key]])) : v);
+        window.notebookApplyState = value => {
+          if (notebookCanonical(value) === notebookCanonical(notebookState)) return;
+          notebookState = value;
+          dispatchEvent(new CustomEvent('notebookstate', { detail: value }));
+        };
         window.notebook = Object.freeze({
-          state: \(state),
+          get state() { return notebookState; },
           commit(value) {
+            if (notebookCanonical(value) === notebookCanonical(notebookState)) return;
+            notebookState = value;
             window.webkit.messageHandlers.notebook.postMessage({ token: notebookLoadToken, kind: 'state', value });
+          },
+          ready(promise) {
+            window.notebookReadyPromise = Promise.resolve(promise);
+            return window.notebookReadyPromise;
           }
         });
       </script>
       </head><body>
       \(element.html)
-      <script>\(element.javaScript)</script>
+      <script>const program=document.createElement('script');program.textContent=\(json(.string(element.javaScript)));document.body.append(program);</script>
       </body></html>
       """
   }
 
   private static func json(_ value: JSONValue) -> String {
     guard let data = try? JSONEncoder().encode(value) else { return "{}" }
-    return String(decoding: data, as: UTF8.self)
+    return String(decoding: data, as: UTF8.self).replacingOccurrences(of: "<", with: "\\u003c")
   }
 
   static func decodeState(_ object: Any) -> JSONValue? {

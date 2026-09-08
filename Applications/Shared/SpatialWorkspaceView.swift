@@ -168,7 +168,15 @@ struct SpatialWorkspaceView: View {
                 width: width,
                 height: height
               )
+            } + workset.elements.compactMap { element in
+              guard let origin = element.worldOrigin else { return nil }
+              let screen = presence.camera.worldToScreen(origin, viewport: viewport)
+              return CGRect(x: screen.x + element.frame.x * presence.camera.scale,
+                y: screen.y + element.frame.y * presence.camera.scale,
+                width: element.frame.width * presence.camera.scale,
+                height: element.frame.height * presence.camera.scale).insetBy(dx: -16, dy: -16)
             },
+            inputGate: model.inputGate,
             onTap: {
               withAnimation(.easeOut(duration: 0.12)) {
                 selectedItemID = nil
@@ -181,13 +189,16 @@ struct SpatialWorkspaceView: View {
               selectedItemID = nil
               model.clearElementSelection()
               editingSpatialTextID = nil
-              panStart = presence
+              panStart = presenceForNewContact(presence)
             },
             onChanged: { translation in
               updateBoardPan(translation, viewport: viewport)
             },
             onEnded: { translation in
               finishBoardPan(translation, viewport: viewport)
+            },
+            onCancelled: {
+              finishBoardPan(nil, viewport: viewport)
             }
           )
           .frame(width: viewport.x, height: viewport.y)
@@ -224,9 +235,11 @@ struct SpatialWorkspaceView: View {
             drawingTool: model.drawingTool,
             surfaceRegistry: spatialInkSurfaces,
             inputGate: model.inputGate,
+            isItemBeingDeleted: model.isItemBeingDeleted,
+            admitsNewContact: { !model.scenePreparationPending },
             onCommit: model.appendSpatialInk,
             isEnabled: (presence.mode == .board || presence.mode == .cover)
-              && !model.scenePreparationPending && !contentGestureActive
+              && !contentGestureActive
               && editingSpatialTextID == nil
               && !model.isElementEditingEnabled && !model.isPointing
           )
@@ -374,8 +387,10 @@ struct SpatialWorkspaceView: View {
       let halfWidth = rendered.geometry.width * presence.camera.scale / 2
       let halfHeight = rendered.geometry.height * presence.camera.scale / 2
       Button(role: .destructive) {
-        guard model.deleteItem(selectedItemID) else { return }
-        self.selectedItemID = nil
+        Task {
+          guard await model.deleteItem(selectedItemID) else { return }
+          if self.selectedItemID == selectedItemID { self.selectedItemID = nil }
+        }
       } label: {
         Image(systemName: "trash")
           .font(.system(size: 17, weight: .semibold))
@@ -384,6 +399,7 @@ struct SpatialWorkspaceView: View {
           .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
       }
       .buttonStyle(.plain)
+      .disabled(model.isItemBeingDeleted(selectedItemID))
       .accessibilityLabel("Удалить")
       .accessibilityIdentifier("delete-workspace-item")
       .position(
@@ -558,6 +574,7 @@ struct SpatialWorkspaceView: View {
               ? presence.openProgress
               : 0,
             contentIsInteractive: !model.isPointing && presence.focusedItemID == rendered.id
+              && !model.isItemBeingDeleted(rendered.id)
               && (presence.mode == .page || presence.mode == .document)
               && !contentGestureActive
               && !pageTurnIsActive
@@ -565,6 +582,7 @@ struct SpatialWorkspaceView: View {
               && !settling
               && presence.openProgress >= 0.999,
             pageNavigationIsEnabled: !model.isPointing && presence.focusedItemID == rendered.id
+              && !model.isItemBeingDeleted(rendered.id)
               && (presence.mode == .page || presence.mode == .document)
               && presence.openProgress >= 0.999
               && cameraGesture == nil
@@ -579,6 +597,7 @@ struct SpatialWorkspaceView: View {
               dropItem(itemID, at: center, presence: model.presence ?? presence)
             },
             onSelect: { itemID in
+              guard !model.isItemBeingDeleted(itemID) else { return }
               withAnimation(.easeOut(duration: 0.12)) {
                 selectedItemID = itemID
               }
@@ -830,7 +849,8 @@ struct SpatialWorkspaceView: View {
       #endif
       selectedItemID = nil
       editingSpatialTextID = nil
-      guard let presence = model.presence else { return }
+      guard let currentPresence = model.presence else { return }
+      let presence = presenceForNewContact(currentPresence)
       let focusedItemID =
         presence.mode == .board
         ? nil
@@ -1270,13 +1290,22 @@ struct SpatialWorkspaceView: View {
     )
   }
 
+  private func presenceForNewContact(_ presence: SessionPresence) -> SessionPresence {
+    guard let itemID = presence.focusedItemID, model.isItemBeingDeleted(itemID) else { return presence }
+    return SessionPresence(boardID: presence.boardID, mode: .board,
+      camera: presence.camera, viewport: presence.viewport)
+  }
+
   private func finishBoardPan(
-    _ translation: CGPoint,
+    _ translation: CGPoint?,
     viewport: SpatialPoint
   ) {
-    updateBoardPan(translation, viewport: viewport)
+    guard panStart != nil else { return }
+    if let translation { updateBoardPan(translation, viewport: viewport) }
     panStart = nil
-    if let presence = model.presence {
+    // A pinch may already own the camera when its preceding one-finger pan
+    // publishes cancellation. Only the current camera owner may settle it.
+    if cameraGesture == nil, let presence = model.presence {
       model.updatePresence(presence, settled: true)
     }
   }
@@ -1309,6 +1338,7 @@ struct SpatialWorkspaceView: View {
 
   private func selectionStrength(rendered: RenderedWorkspaceItem, at centroid: CGPoint,
     presence: SessionPresence, halo: Double) -> Double {
+    guard !model.isItemBeingDeleted(rendered.id) else { return 0 }
     let screen = presence.camera.worldToScreen(
       rendered.center,
       viewport: presence.viewport
@@ -1378,7 +1408,7 @@ struct SpatialWorkspaceView: View {
     _ itemID: UUID,
     viewport: SpatialPoint
   ) {
-    guard !settling,
+    guard !settling, !model.isItemBeingDeleted(itemID),
       cameraGesture == nil,
       let presence = model.presence,
       let center = model.sceneIndex?.focusedCenter(itemID: itemID, boardID: presence.boardID)
@@ -1410,7 +1440,7 @@ struct SpatialWorkspaceView: View {
     viewport: SpatialPoint,
     duration: TimeInterval = 0.24
   ) {
-    guard let presence = model.presence else { return }
+    guard !model.isItemBeingDeleted(itemID), let presence = model.presence else { return }
     model.selectItem(itemID)
     animateSettlement(to: SessionPresence(boardID: presence.boardID, mode: .cover,
       camera: BoardPortalProjection.parentBoundaryCamera(portalCenter: center, viewport: viewport),
@@ -1803,20 +1833,17 @@ private struct WorkspaceSceneItem: View, Equatable {
         capturesSnapshot: isCurrent,
         onRenderReady: onRenderReady,
         onPageLayout: onDocumentPageLayout,
-        onSourceChange: { blockID, source in
-          model.replaceDocumentBlockSource(
-            documentID: document.id,
-            blockID: blockID,
-            source: source
-          )
-        },
+        onSourceChange: { edit in try await model.commitDocumentSource(edit: edit) },
         onStateChange: { blockID, value in
           model.commitDocumentState(
             documentID: document.id,
             blockID: blockID,
             value: value
           )
-        }
+        },
+        drafts: model.documentEditingSessions.filter { $0.edit.documentID == document.id },
+        onDraftChange: model.saveDocumentDraft,
+        onDraftDiscard: model.discardDocumentDraft
       )
     )
   }
@@ -1862,6 +1889,7 @@ private struct WorkspaceSceneItem: View, Equatable {
         if lifted { beginLift() } else { endLift() }
       },
       onTranslationChanged: { translation in
+        guard !model.isItemBeingDeleted(rendered.id) else { return }
         let ratio = camera.scale / (planeProjection?.current.camera.scale ?? camera.scale)
         dragTranslation = CGSize(width: translation.width * ratio, height: translation.height * ratio)
       },
@@ -1886,7 +1914,7 @@ private struct WorkspaceSceneItem: View, Equatable {
   }
 
   private func handleTap(_ location: CGPoint, tapCount: Int) {
-    guard openProgress < 0.12 else { return }
+    guard openProgress < 0.12, !model.isItemBeingDeleted(rendered.id) else { return }
     onSelect(rendered.id)
     if let editingTextID {
       onTextEditingEnded(editingTextID)
@@ -1907,7 +1935,7 @@ private struct WorkspaceSceneItem: View, Equatable {
 
   private func finishMove(translation: CGSize, scale: Double) {
     dragTranslation = .zero
-    guard !model.scenePreparationPending,
+    guard !model.scenePreparationPending, !model.isItemBeingDeleted(rendered.id),
       hypot(translation.width, translation.height) >= 2 else { return }
     let center = rendered.center.offsetBy(
       x: translation.width / max(scale, 0.001),
@@ -1919,7 +1947,7 @@ private struct WorkspaceSceneItem: View, Equatable {
   }
 
   private func beginLift() {
-    guard !model.scenePreparationPending, !liftStarted else { return }
+    guard !model.scenePreparationPending, !model.isItemBeingDeleted(rendered.id), !liftStarted else { return }
     liftStarted = true
     #if os(iOS)
       UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -1940,6 +1968,7 @@ private struct WorkspaceSceneItem: View, Equatable {
 struct BoardPortalPreview: View {
   @Environment(NotebookAppModel.self) private var model
   @Environment(\.workspaceSceneFrame) private var frame
+  @State private var spatialInkSurfaces = SpatialInkSurfaceRegistry()
 
   let boardID: UUID
   let pixelScale: Double
@@ -2009,7 +2038,7 @@ struct BoardPortalPreview: View {
           WorkspaceItemCoverView(
             item: item.item,
             geometry: item.geometry,
-            spatialInkSurfaces: SpatialInkSurfaceRegistry(),
+            spatialInkSurfaces: spatialInkSurfaces,
             elements: projectionFrame?.covers[item.id]?.elements ?? [],
             aggregates: projectionFrame?.covers[item.id]?.aggregates ?? [],
             editingTextID: nil, isElementEditingEnabled: false,
@@ -2149,11 +2178,13 @@ struct WorkspaceItemCoverView: View {
       }
 
       #if os(iOS)
-        if !isElementEditingEnabled && !isPortalProjection {
+        if (!isElementEditingEnabled || model.isItemBeingDeleted(item.id)) && !isPortalProjection {
           NotebookInteractionView(
-            permitsManipulation: !model.scenePreparationPending,
-            passthroughFrames: interactionPassthroughFrames,
+            permitsManipulation: !model.scenePreparationPending && !model.isItemBeingDeleted(item.id),
+            canBeginContact: { !model.isItemBeingDeleted(item.id) },
+            passthroughFrames: model.isItemBeingDeleted(item.id) ? [] : interactionPassthroughFrames,
             onTap: { location, count in
+              guard !model.isItemBeingDeleted(item.id) else { return }
               // Finishing a text session does not need the next geometry index.
               // Keep this input owner mounted while the saved text is prepared.
               if model.scenePreparationPending {
@@ -2163,14 +2194,15 @@ struct WorkspaceItemCoverView: View {
               onTap(location, count)
             },
             onLiftChanged: { lifted in
-              guard !lifted || !model.scenePreparationPending else { return }
+              guard !lifted || (!model.scenePreparationPending && !model.isItemBeingDeleted(item.id)) else { return }
               onLiftChanged(lifted)
             },
             onTranslationChanged: { translation in
-              guard !model.scenePreparationPending else { return }
+              guard !model.scenePreparationPending, !model.isItemBeingDeleted(item.id) else { return }
               onTranslationChanged(translation)
             },
             onTranslationEnded: { translation in
+              guard !model.isItemBeingDeleted(item.id) else { return }
               onTranslationEnded(model.scenePreparationPending ? .zero : translation)
             }
           )
@@ -2207,6 +2239,13 @@ struct WorkspaceItemCoverView: View {
     )
     .background {
       if showsDepth { WorkspaceItemDepthView(kind: item.kind, geometry: geometry) }
+    }
+    .overlay {
+      if model.isItemBeingDeleted(item.id), !isPortalProjection {
+        ProgressView("Удаление")
+          .padding(16).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+          .allowsHitTesting(false)
+      }
     }
     .contentShape(
       RoundedRectangle(

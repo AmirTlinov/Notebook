@@ -38,6 +38,8 @@ final class AgentStateTests: XCTestCase {
     model.start(pageSize: PageSize(width: 834, height: 1194))
     let boardA = try XCTUnwrap(model.presence?.boardID)
     let boardB = try XCTUnwrap(model.createBoard(at: .init(x: 2000, y: 0)))
+    let creationSaved = await model.finishPendingPersistence()
+    XCTAssertTrue(creationSaved, model.persistenceFailure ?? "")
     var hierarchy = try XCTUnwrap(model.boardHierarchy)
     let element = SpatialElement(id: "input-before-navigation", surface: .board(boardA), kind: .web,
       frame: .init(x: 0, y: 0, width: 300, height: 200), worldOrigin: .zero, source: "control",
@@ -151,13 +153,17 @@ final class AgentStateTests: XCTestCase {
       model.createDocument(at: .zero, paperSize: .letter)
     )
 
+    let creationSaved = await model.finishPendingPersistence()
+    XCTAssertTrue(creationSaved, model.persistenceFailure ?? "")
     XCTAssertEqual(try store.loadDocument(documentID).paperSize, .letter)
 
-    model.replaceDocumentBlockSource(
-      documentID: documentID,
-      blockID: "body",
-      source: "# Отредактировано на iPad"
-    )
+    let document = try store.loadDocument(documentID)
+    let source = try XCTUnwrap(document.blocks.first { $0.id == "body" }?.source)
+    let status = try await model.commitDocumentSource(edit: .init(
+      sessionID: UUID(), documentID: documentID, blockID: "body", baseSource: source,
+      baseVersion: document.sourceVersion(blockID: "body"), source: "# Отредактировано на iPad", sequence: 1
+    ))
+    XCTAssertEqual(status, .committed)
     model.commitDocumentState(
       documentID: documentID,
       blockID: "counter",
@@ -173,7 +179,8 @@ final class AgentStateTests: XCTestCase {
       try store.loadDocumentState(documentID).value(for: "counter"),
       .object(["count": .number(4)])
     )
-    XCTAssertTrue(model.deleteItem(documentID))
+    let deleted = await model.deleteItem(documentID)
+    XCTAssertTrue(deleted)
     XCTAssertThrowsError(try store.loadDocument(documentID))
     XCTAssertThrowsError(try store.loadDocumentState(documentID))
   }
@@ -217,8 +224,12 @@ final class AgentStateTests: XCTestCase {
     XCTAssertEqual(model.workspace, original)
     model.receivePeerMessage(.board(remoteBoard))
 
-    XCTAssertEqual(model.workspace, remoteIndex)
-    XCTAssertEqual(try store.loadIndex(), remoteIndex)
+    let saved = await model.finishPendingPersistence()
+    XCTAssertTrue(saved, model.persistenceFailure ?? "")
+    XCTAssertEqual(model.workspace?.items, remoteIndex.items)
+    XCTAssertEqual(try store.loadIndex().items, remoteIndex.items)
+    XCTAssertEqual(model.workspace?.selectedItemID, original.selectedItemID,
+      "Receiving independent content does not redirect the iPad's human selection")
     let delivered = try store.loadDocument(item.id)
     XCTAssertEqual(delivered.id, document.id)
     XCTAssertEqual(delivered.paperSize, document.paperSize)
@@ -227,8 +238,8 @@ final class AgentStateTests: XCTestCase {
     XCTAssertEqual(delivered.contentStamp, document.contentStamp)
     XCTAssertNotNil(delivered.collaboration, "Принятое содержание получает причинные версии полей")
     XCTAssertEqual(try store.loadDocumentState(item.id), state)
-    XCTAssertEqual(model.presence?.focusedItemID, item.id)
-    XCTAssertEqual(model.presence?.mode, .document)
+    XCTAssertEqual(model.presence?.focusedItemID, original.selectedItemID)
+    XCTAssertEqual(model.presence?.mode, .page)
   }
 
   @MainActor
@@ -258,6 +269,8 @@ final class AgentStateTests: XCTestCase {
     model.receivePeerMessage(.board(remoteBoard))
     model.receivePeerMessage(.index(remoteIndex))
 
+    let saved = await model.finishPendingPersistence()
+    XCTAssertTrue(saved, model.persistenceFailure ?? "")
     XCTAssertNil(model.documents[documentID])
     XCTAssertNil(model.documentStates[documentID])
     XCTAssertFalse(FileManager.default.fileExists(

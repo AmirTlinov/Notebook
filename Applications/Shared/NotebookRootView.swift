@@ -36,6 +36,22 @@ struct NotebookRootView: View {
           .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.bottomLeading)
           .padding(18)
 
+        if let failure = model.persistenceFailure {
+          VStack(alignment: .leading, spacing: 8) {
+            Label("Изменения ещё не сохранены", systemImage: "exclamationmark.triangle")
+              .font(.headline)
+            Text(failure).font(.caption).lineLimit(3)
+            Button("Повторить сохранение") { model.retryPendingPersistence() }
+              .frame(minHeight: 44)
+          }
+          .padding(14)
+          .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+          .frame(maxWidth: 420)
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+          .padding(18)
+          .accessibilityIdentifier("persistence-failure")
+        }
+
         #if os(iOS)
           PenControlsView()
             .frame(

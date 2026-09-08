@@ -39,7 +39,7 @@ final class DocumentGeometryTests: XCTestCase {
               completed = true
               ready.fulfill()
             }
-          }, onPageLayout: { _ in }, onSourceChange: { _, _ in }, onStateChange: { _, _ in }
+          }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in }
         ).ignoresSafeArea())
       container.addChild(host)
       container.view.addSubview(host.view)
@@ -136,7 +136,7 @@ final class DocumentGeometryTests: XCTestCase {
       document: document, state: state, isInteractive: true, selectedPageIndex: 0,
       capturesSnapshot: false, onRenderReady: PageTurnReadiness { value in
         if value && !completed { completed = true; ready.fulfill() }
-      }, onPageLayout: { _ in }, onSourceChange: { _, _ in },
+      }, onPageLayout: { _ in }, onSourceChange: { _ in .committed },
       onStateChange: { id, value in
         if id == "interactive", value == .object(["ready": .bool(true)]), !committed {
           committed = true; interactive.fulfill()

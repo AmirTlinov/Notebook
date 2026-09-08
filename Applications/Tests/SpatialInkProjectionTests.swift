@@ -1,8 +1,92 @@
 import NotebookCore
+import PencilKit
+import UIKit
 import XCTest
 @testable import Notebook
 
 final class SpatialInkProjectionTests: XCTestCase {
+  func testUploadChunksPreserveEveryOriginalTriangleAndTheirPainterOrder() {
+    let points = (0..<20_000).map { index in
+      PKStrokePoint(location: .init(x: Double(index) * 10, y: 50), timeOffset: Double(index) / 120,
+        size: .init(width: 5, height: 5), opacity: 0.4, force: 1, azimuth: 0, altitude: 1)
+    }
+    let mesh = SpatialInkMesh.local([.ink(points: points, color: .black), .erase(points: points),
+      .ink(points: points, color: .black)])
+    XCTAssertEqual(mesh.batches.map(\.tool), [.pen, .eraser, .pen])
+    for batch in mesh.batches {
+      XCTAssertGreaterThan(batch.chunks.count, 1)
+      XCTAssertEqual(batch.chunks.flatMap { Array(batch.vertices[$0.vertices]) }, batch.vertices)
+      for chunk in batch.chunks {
+        XCTAssertLessThanOrEqual(chunk.vertices.count, 4_092)
+        XCTAssertTrue(chunk.vertices.count.isMultiple(of: 3))
+        for vertex in batch.vertices[chunk.vertices] {
+          XCTAssertGreaterThanOrEqual(CGFloat(vertex.position.x), chunk.bounds.minX)
+          XCTAssertLessThanOrEqual(CGFloat(vertex.position.x), chunk.bounds.maxX)
+          XCTAssertGreaterThanOrEqual(CGFloat(vertex.position.y), chunk.bounds.minY)
+          XCTAssertLessThanOrEqual(CGFloat(vertex.position.y), chunk.bounds.maxY)
+        }
+      }
+      let visible = batch.chunks.filter {
+        $0.intersects(viewport: .init(x: 0, y: 0, width: 600, height: 800), transform: .init(1, 1, 0, 0))
+      }
+      XCTAssertEqual(visible.count, 2, "Первый участок и настоящий начальный cap остаются видимыми")
+      XCTAssertLessThan(visible.reduce(0) { $0 + $1.vertices.count }, batch.vertices.count / 10)
+    }
+  }
+
+  @MainActor
+  func testOnlyVisibleChunksReceiveGPUBuffersAndUnmountReleasesThem() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene), controller = UIViewController()
+    window.rootViewController = controller
+    let resources = SceneRenderResources(byteLimit: 2 * 1024 * 1024)
+    let canvas = InkCanvasView(frame: .init(x: 0, y: 0, width: 600, height: 800), resources: resources)
+    controller.view.addSubview(canvas); window.makeKeyAndVisible()
+    defer { canvas.removeFromSuperview(); window.isHidden = true }
+    let points = (0..<20_000).map { index in
+      PKStrokePoint(location: .init(x: Double(index) * 10, y: 50), timeOffset: Double(index) / 120,
+        size: .init(width: 5, height: 5), opacity: 0.4, force: 1, azimuth: 0, altitude: 1)
+    }
+    canvas.applySpatial(.local([.ink(points: points, color: .black), .erase(points: points)]))
+    for _ in 0..<200 where !canvas.isStableFramePresented {
+      canvas.draw(); try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertTrue(canvas.isStableFramePresented)
+    XCTAssertNil(canvas.renderFailure)
+    XCTAssertLessThan(canvas.visibleCommittedVertexCount, canvas.committedVertexCount / 10)
+    XCTAssertEqual(canvas.residentCommittedBufferBytes,
+      canvas.visibleCommittedVertexCount * MemoryLayout<SpatialInkGeometry.Vertex>.stride)
+    XCTAssertLessThanOrEqual(resources.reservedBytes + resources.residentBytes, resources.byteLimit)
+    canvas.removeFromSuperview()
+    XCTAssertEqual(canvas.residentCommittedBufferBytes, 0)
+    for _ in 0..<200 where resources.reservedBytes != 0 { try await Task.sleep(for: .milliseconds(5)) }
+    XCTAssertEqual(resources.reservedBytes, 0, "GPU completion возвращает последнее право на буферы")
+  }
+
+  @MainActor
+  func testRoutingRegistryHandoffNeverReinstallsTheSamePhysicalMesh() async throws {
+    let view = InkCanvasView(frame: .init(x: 0, y: 0, width: 834, height: 1194))
+    let coordinator = SpatialInkSurfaceView.Coordinator()
+    let journal = projectionJournal()
+    var registry = SpatialInkSurfaceRegistry()
+    coordinator.update(view: view, surface: .board, journal: journal, registry: registry)
+    for _ in 0..<200 where view.committedVertexCount == 0 {
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertGreaterThan(view.committedVertexCount, 0)
+    let installations = view.spatialMeshInstallCount
+    for _ in 0..<120 {
+      let previous = registry
+      registry = SpatialInkSurfaceRegistry()
+      coordinator.update(view: view, surface: .board, journal: journal, registry: registry)
+      XCTAssertNil(previous.canvas(for: .board))
+      XCTAssertTrue(registry.canvas(for: .board) === view)
+      XCTAssertEqual(view.spatialMeshInstallCount, installations,
+        "Передача маршрутизации не обнуляет готовую геометрию и GPU buffers")
+    }
+    coordinator.unregister(view)
+  }
+
   func testWorldProjectionPreservesPrecisionAtDistantTiles() throws {
     let origin = WorldPoint(tileX: 1_000_000, tileY: -1_000_000, localX: 10, localY: 20)
     let viewport = SpatialPoint(x: 1366, y: 1024)

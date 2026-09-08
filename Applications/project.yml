@@ -39,7 +39,7 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.productivity
-        NSLocalNetworkUsageDescription: Notebook показывает написанное на вашем Mac без облачного сервера.
+        NSLocalNetworkUsageDescription: Notebook связывает iPad с помощником на вашем Mac без облачного сервера.
         NSBonjourServices:
           - _notebook._tcp
         UILaunchScreen: {}
@@ -119,6 +119,7 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.productivity
+        LSUIElement: true
         NSLocalNetworkUsageDescription: Notebook принимает страницы с вашего iPad без облачного сервера.
         NSBonjourServices:
           - _notebook._tcp

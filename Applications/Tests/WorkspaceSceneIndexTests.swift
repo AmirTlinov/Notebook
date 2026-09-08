@@ -112,6 +112,8 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at: root) }
     let boardA = try XCTUnwrap(model.presence?.boardID)
     let boardB = try XCTUnwrap(model.createBoard(at: .init(x: 40_000, y: 40_000)))
+    let creationSaved = await model.finishPendingPersistence()
+    XCTAssertTrue(creationSaved, model.persistenceFailure ?? "")
     var hierarchy = try XCTUnwrap(model.boardHierarchy)
     var source = element(0, boardID: boardA, origin: .zero, actor: model.actorID)
     XCTAssertTrue(hierarchy.upsertElement(source, in: boardA, expected: nil, actor: model.actorID))
@@ -162,7 +164,8 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     XCTAssertEqual(before.item(id: itemID)?.pageIDs.count, 1)
     let contact = UUID()
     model.inputGate.beginContact(source: contact)
-    XCTAssertTrue(model.deleteItem(precedingID))
+    let deleted = await model.deleteItem(precedingID)
+    XCTAssertTrue(deleted)
     XCTAssertEqual(model.workspace?.items.first?.id, itemID,
       "Deleting the preceding owner shifts the current notebook away from its prepared catalog slot")
     for target in 1...3 {
