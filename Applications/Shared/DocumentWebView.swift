@@ -599,13 +599,17 @@ final class DocumentWebCoordinator: NSObject,
         pageCount = 1; blockTokens = [:]
         draftsByID = Dictionary(uniqueKeysWithValues: drafts.filter { $0.edit.documentID == document.id }.map { ($0.id, $0) })
       }
+      // A state echo visits each program once. Searching both arrays for each
+      // block made four live pages repeat quadratic work on the input actor.
+      let previousBlocks = Dictionary((payload?.blocks ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+      var nextTokens: [String: String] = [:]
+      nextTokens.reserveCapacity(document.blocks.count)
       for block in document.blocks {
-        let previous = payload?.blocks.first { $0.id == block.id }
-        if previous.map({ Self.sameProgram($0, block) }) != true || blockTokens[block.id] == nil {
-          blockTokens[block.id] = UUID().uuidString
-        }
+        if let previous = previousBlocks[block.id], let token = blockTokens[block.id], Self.sameProgram(previous, block) {
+          nextTokens[block.id] = token
+        } else { nextTokens[block.id] = UUID().uuidString }
       }
-      blockTokens = blockTokens.filter { id, _ in document.blocks.contains { $0.id == id } }
+      blockTokens = nextTokens
       if payloadKey?.contentStamp != nextKey.contentStamp { recoveryAttempts = 0 }
       payloadKey = nextKey
       payload = DocumentRuntimePayload(
