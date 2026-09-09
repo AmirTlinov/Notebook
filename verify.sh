@@ -53,6 +53,7 @@ PY
 source_fingerprint "$EVIDENCE/source-before.json"
 swift test 2>&1 | tee "$EVIDENCE/core.log"
 "$ROOT/Applications/test-load-fixture.sh" 2>&1 | tee "$EVIDENCE/load-fixture.log"
+python3 "$ROOT/Tests/PreviewInstaller/run.py" 2>&1 | tee "$EVIDENCE/preview-installer.log"
 
 ICON_PROOF="$DERIVED/AppIcon.appiconset"
 "$ROOT/Applications/render-app-icon.sh" "$ICON_PROOF"
