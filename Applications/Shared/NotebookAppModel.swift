@@ -1163,7 +1163,7 @@ final class NotebookAppModel {
     else { return nil }
     spatialInk = journal
 
-    scheduleSpatialInkSave()
+    scheduleSpatialInkSave(.append(action, journalStamp: journal.stamp))
     return action
   }
 
@@ -1178,12 +1178,13 @@ final class NotebookAppModel {
       presence.focusedItemID.map(SurfaceID.cover)
         ?? .board(presence.boardID)
     }
-    guard journal.undoLast(actor: actorID, touching: surface) != nil
-      || (surface != nil && journal.undoLast(actor: actorID) != nil)
+    guard let action = journal.undoLast(actor: actorID, touching: surface)
+      ?? (surface != nil ? journal.undoLast(actor: actorID) : nil)
     else { return }
     spatialInk = journal
 
-    scheduleSpatialInkSave()
+    scheduleSpatialInkSave(.state(actionID: action.id, creationStamp: action.stamp,
+      isActive: action.isActive, stateStamp: action.stateStamp, journalStamp: journal.stamp))
     showCue("Отменено")
   }
 
@@ -2322,9 +2323,10 @@ final class NotebookAppModel {
     persistence.enqueue(owner: .page(pageID)) { try $0.saveMergedPage(page) != page }
   }
 
-  private func scheduleSpatialInkSave() {
-    guard let journal = spatialInk else { return }
-    persistence.enqueue(owner: .spatialInk) { try $0.saveMergedSpatialInk(journal) != journal }
+  private func scheduleSpatialInkSave(_ command: NotebookSpatialInkCommand) {
+    persistence.enqueue(owner: .spatialInk(command.expectedResult.actionID)) {
+      try $0.commitSpatialInk(command) != command.expectedResult
+    }
   }
 
   private func scheduleWorkspaceSelectionSave(

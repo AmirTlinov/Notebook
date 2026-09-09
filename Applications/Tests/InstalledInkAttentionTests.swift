@@ -273,7 +273,7 @@ final class InstalledInkAttentionTests: XCTestCase {
         journal.append(tool: .pen, spans: [.init(surface: .cover(nestedCover), samples: [.init(point: .init(x: 40, y: 40),
           timeOffset: 0, width: 4, opacity: 1, force: 1, azimuth: 0, altitude: 1)])], actor: actor)
       }
-      _ = try store.saveMergedSpatialInk(journal)
+      try store.saveSpatialInk(journal)
     }
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)

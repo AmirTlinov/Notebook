@@ -3,8 +3,10 @@ import Foundation
 extension NotebookStore {
   func storedFragments(address: String, descendants: Bool = true) throws -> [NotebookStoredFragment] {
     try sqlRead { database in
+      // The addressed subtree drives both joins. Without CROSS JOIN, SQLite
+      // can scan every record before filtering this one owner's descendants.
       let query = descendants
-        ? "WITH RECURSIVE subtree(address) AS (SELECT address FROM records WHERE address=? UNION ALL SELECT r.address FROM records r JOIN subtree s ON r.parent=s.address) SELECT b.data FROM subtree s JOIN records r ON r.address=s.address JOIN blobs b ON b.hash=r.hash"
+        ? "WITH RECURSIVE subtree(address) AS (SELECT address FROM records WHERE address=? UNION ALL SELECT r.address FROM subtree s CROSS JOIN records r ON r.parent=s.address) SELECT b.data FROM subtree s CROSS JOIN records r ON r.address=s.address CROSS JOIN blobs b ON b.hash=r.hash"
         : "SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.address=?"
       return try database.rows(query, [.text(address)]).map { try JSONDecoder().decode(NotebookStoredFragment.self, from: $0[0].blob!) }
     }

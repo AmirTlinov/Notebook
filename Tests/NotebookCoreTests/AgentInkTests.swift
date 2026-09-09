@@ -86,7 +86,7 @@ func agentInkUndoPreservesLaterContacts() throws {
   var ink = try f.store.loadSpatialInk()
   let appended = try ink.append(tool: .pen, spans: [CollaborationInkStroke(ops[2]).span(on: f.cover)], actor: f.human)
   let humanSpatial = try #require(appended)
-  _ = try f.store.saveMergedSpatialInk(ink)
+  try f.store.saveSpatialInk(ink)
   let undone = try f.store.undoCollaborationAction(action.id, actor: f.agent)
   #expect(undone.undo?.restored == 3)
   #expect(try f.store.undoCollaborationAction(action.id, actor: f.agent) == undone)

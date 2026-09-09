@@ -124,7 +124,7 @@ final class WorkspaceCameraRenderingTests: XCTestCase {
     }
     let creationsSaved = await model.finishPendingPersistence()
     XCTAssertTrue(creationsSaved)
-    _ = try model.store.saveMergedSpatialInk(journal)
+    try model.store.saveSpatialInk(journal)
     await model.reloadExternalChanges()?.value
     await model.finishPendingPersistence()
     XCTAssertEqual(try model.store.readSpatialInk(surfaces: inkOwners.map(SurfaceID.cover)).actions.count, 32,

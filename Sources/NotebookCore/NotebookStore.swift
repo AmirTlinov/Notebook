@@ -322,27 +322,6 @@ public struct NotebookStore: Sendable {
     }
   }
 
-  @discardableResult
-  public func saveMergedSpatialInk(
-    _ journal: SpatialInkJournal
-  ) throws -> SpatialInkJournal {
-    guard journal.isValid else { throw corruptFile(at: spatialInkURL) }
-    try prepare()
-    return try withMutationLock {
-      var resolved = journal
-      if (try hasStoredValue(at: spatialInkURL)) {
-        let disk = try decoder.decode(
-          SpatialInkJournal.self,
-          from: storedData(at: spatialInkURL)
-        )
-        guard disk.isValid else { throw corruptFile(at: spatialInkURL) }
-        _ = resolved.merge(disk)
-      }
-      try publishCollaboration(writes: ["spatial-ink.json": try .encode(resolved)])
-      return resolved
-    }
-  }
-
   public func savePresence(_ presence: SessionPresence) throws {
     guard presence.isValid else { throw corruptFile(at: presenceURL) }
     try prepare()

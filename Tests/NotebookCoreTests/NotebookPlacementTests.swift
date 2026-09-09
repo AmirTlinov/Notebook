@@ -105,7 +105,7 @@ struct NotebookPlacementTests {
       .init(point: .init(x: 10, y: 10), worldPoint: .init(x: 3010, y: 3010), timeOffset: 0, width: 4, opacity: 1, force: 1, azimuth: 0, altitude: 1)])
     let added = ink.append(tool: .pen, spans: [span], actor: f.actor)
     #expect(added != nil)
-    _ = try f.store.saveMergedSpatialInk(ink)
+    try f.store.saveSpatialInk(ink)
     #expect(try f.store.targetContentRevision(target: f.board) == before)
     let cursor = try f.store.currentChangeCursor()
     do { _ = try f.store.placementRender(cut, budget: budget); Issue.record("Old ink must not authorize the render") }

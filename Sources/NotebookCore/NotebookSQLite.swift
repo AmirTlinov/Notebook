@@ -203,8 +203,25 @@ struct NotebookRecordCodec {
         if row.file.hasPrefix("pages/"), collection.path == ["drawingData"], collection.kind != .pageInk {
           throw NotebookStorageError.unsupportedFormat
         }
-        let matching = (children[address] ?? []).filter { $0.collection == fieldKey(collection.path) }
-          .sorted { $0.position == $1.position ? $0.member < $1.member : $0.position < $1.position }
+        let members = (children[address] ?? []).filter { $0.collection == fieldKey(collection.path) }
+        let matching: [NotebookStoredFragment]
+        if row.file == "spatial-ink.json", collection.path == ["actions"] {
+          // Contact order is authored by its creation stamp and UUID, not by
+          // arrival or SQL slot. An addressed insertion never renumbers peers.
+          var stamped: [(row: NotebookStoredFragment, stamp: VersionStamp)] = []
+          for member in members {
+            guard let stamp = try member.value["stamp"]?.decode(VersionStamp.self) else {
+              throw NotebookStorageError.corruptRecord(member.address)
+            }
+            stamped.append((member, stamp))
+          }
+          stamped.sort { left, right in
+            left.stamp == right.stamp ? left.row.member < right.row.member : left.stamp < right.stamp
+          }
+          matching = stamped.map(\.row)
+        } else {
+          matching = members.sorted { $0.position == $1.position ? $0.member < $1.member : $0.position < $1.position }
+        }
         let content: JSONValue
         switch collection.kind {
         case .array: content = .array(try matching.map { try assemble($0.address) })

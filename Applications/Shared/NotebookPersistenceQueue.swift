@@ -7,7 +7,7 @@ import NotebookCore
 final class NotebookPersistenceQueue {
   enum Owner: Hashable {
     case page(UUID), document(UUID), documentState(UUID), documentDraft(UUID)
-    case board, spatialInk, presence, inputActivity(UUID)
+    case board, spatialInk(UUID), presence, inputActivity(UUID)
     case nativeText(UUID, String), elementState(UUID, String)
   }
 
@@ -70,6 +70,9 @@ final class NotebookPersistenceQueue {
   }
 
   private func coalescingIndex(for owner: Owner) -> Int? {
+      // An append and its later undo are separate causal commands, not complete
+      // replacement journals. Coalescing either would lose the accepted contact.
+      if case .spatialInk = owner { return nil }
       for index in pending.indices.reversed() {
         guard pending[index].owner != nil else { break }
         // Contact release must not jump ahead of content accepted during that
