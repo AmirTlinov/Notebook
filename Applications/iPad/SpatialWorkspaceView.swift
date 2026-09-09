@@ -507,7 +507,7 @@ struct SpatialWorkspaceView: View {
       dependentCamera: rendered.contains { $0.stackID != nil || $0.item.kind == .board }
         || selectedItemID != nil ? presence.camera : nil)
     return SceneCameraPlane(presence: presence, revision: revision, reanchorsOnRevision: false,
-      isCameraActive: cameraGesture != nil || panStart != nil || settling) { anchor in
+      isCameraActive: model.presencePhase == .active || cameraGesture != nil || panStart != nil || settling) { anchor in
       ZStack {
         if let cohort {
           ForEach(cohort.bands(in: .board(presence.boardID), layer: .covers)) { band in
@@ -647,7 +647,7 @@ struct SpatialWorkspaceView: View {
       resize: selection.map { model.elementResizeDelta($0) } ?? .zero,
       pending: model.scenePreparationPending, editingCamera: selection == nil ? nil : presence.camera)
     return SceneCameraPlane(presence: presence, revision: revision,
-      isCameraActive: cameraGesture != nil || panStart != nil || settling) { anchor in
+      isCameraActive: model.presencePhase == .active || cameraGesture != nil || panStart != nil || settling) { anchor in
       ZStack {
         if let cohort {
           ForEach(cohort.bands(in: .board(presence.boardID), layer: .elements)) { band in

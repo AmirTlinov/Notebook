@@ -55,6 +55,14 @@ extension EnvironmentValues {
   }
 }
 
+/// Counts the two distinct operations performed by the physical camera owner.
+/// A scheduling sample is not evidence of a display presentation.
+@MainActor
+protocol SceneCameraPlaneActivity: AnyObject {
+  var contentPublicationCount: Int { get }
+  var cameraProjectionCount: Int { get }
+}
+
 /// `revision` names the workset and its interaction mode, not the camera.
 /// During a camera contact only that contract can replace the hosting root.
 /// Settlement rebases its input window once before the next contact; visible
@@ -93,7 +101,7 @@ private struct NativeSceneCameraPlane<Revision: Equatable, Content: View>: UIVie
 }
 
 @MainActor
-final class SceneCameraPlaneController<Revision: Equatable>: UIViewController {
+final class SceneCameraPlaneController<Revision: Equatable>: UIViewController, SceneCameraPlaneActivity {
   private let host = UIHostingController(rootView: AnyView(EmptyView()))
   private var anchor: SessionPresence?
   private var revision: Revision?
@@ -175,7 +183,7 @@ private struct NativeSceneCameraPlane<Revision: Equatable, Content: View>: NSVie
 }
 
 @MainActor
-final class SceneCameraPlaneView<Revision: Equatable>: NSView {
+final class SceneCameraPlaneView<Revision: Equatable>: NSView, SceneCameraPlaneActivity {
   private let host = NSHostingView(rootView: AnyView(EmptyView()))
   private var anchor: SessionPresence?
   private var revision: Revision?
