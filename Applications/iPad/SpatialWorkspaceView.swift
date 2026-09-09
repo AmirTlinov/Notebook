@@ -225,7 +225,8 @@ struct SpatialWorkspaceView: View {
           if model.isPointing {
             NotebookPointerView(onPreview:{ pointerPreview = $0 },onPoint:{ start,end in
               guard cameraGesture == nil, !settling, !model.scenePreparationPending, let cohort else { return }
-              if let selection = NotebookAttentionProjection.capture(start:start,end:end,model:model,presence:presence,cohort:cohort) {
+              if let selection = NotebookAttentionProjection.capture(start:start,end:end,model:model,presence:presence,
+                cohort:cohort, installedInk: spatialInkSurfaces.installedSources()) {
                 model.publishHumanContext(selection)
               }
             })

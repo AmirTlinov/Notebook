@@ -18,7 +18,7 @@ struct NotebookAttentionSelection: Sendable {
   let fragments: [Fragment]
   private let workspace: WorkspaceIndex
   private let hierarchy: BoardHierarchy
-  private let ink: SpatialInkJournal
+  private var ink: SpatialInkJournal
   private let pages: [PageDocument]
   private let documents: [DocumentDocument]
   private let states: [DocumentStateJournal]
@@ -26,12 +26,18 @@ struct NotebookAttentionSelection: Sendable {
   // read later; document programs never enter a board/cover reference hash.
   private let paperSources: [UUID: DocumentDocument]
   private let visuals: NotebookFrozenVisualSources?
-  private let referenceIdentities: [NotebookReferenceIdentity]
+  private var referenceIdentities: [NotebookReferenceIdentity]
+  private var installedInk: [SurfaceID: SpatialInkInstalledSource]
+  private var requiredInk: Set<SurfaceID>
+  private var inkBasis: NotebookReferenceInkBasis?
+  private let workspaceID: UUID?
 
   init(fragments: [Fragment], workspace: WorkspaceIndex, hierarchy: BoardHierarchy,
     ink: SpatialInkJournal, pages: [UUID: PageDocument], documents: [UUID: DocumentDocument],
     states: [UUID: DocumentStateJournal], visuals: NotebookFrozenVisualSources? = nil,
-    referenceIdentities: [NotebookReferenceIdentity] = []) {
+    referenceIdentities: [NotebookReferenceIdentity] = [],
+    installedInk: [SurfaceID: SpatialInkInstalledSource] = [:], requiredInk: Set<SurfaceID> = [],
+    inkBasis: NotebookReferenceInkBasis? = nil) {
     self.fragments = fragments
     self.workspace = workspace; self.hierarchy = hierarchy; self.ink = ink
     let pageIDs = Set(fragments.filter { $0.target.kind == .page }.map { $0.target.id })
@@ -43,9 +49,15 @@ struct NotebookAttentionSelection: Sendable {
     self.visuals = visuals
     let targets = Set(fragments.map(\.target))
     self.referenceIdentities = referenceIdentities.filter { targets.contains($0.target) }
+    self.installedInk = installedInk; self.requiredInk = requiredInk; self.inkBasis = inkBasis
+    workspaceID = inkBasis?.workspaceID
   }
 
   func sourceFiles() throws -> [String: JSONValue] {
+    try resolvingInstalledInk().encodedSourceFiles()
+  }
+
+  private func encodedSourceFiles() throws -> [String: JSONValue] {
     try Task.checkCancellation()
     let content = CollaborationContent(workspace: workspace, hierarchy: hierarchy,
       ink: ink, pages: pages, documents: documents, states: states)
@@ -69,6 +81,82 @@ struct NotebookAttentionSelection: Sendable {
         revision: try NotebookStore.referenceRevision(target: fragment.target, elementID: fragment.elementID, files: files),
         label: fragment.label)
     }
+  }
+
+  struct Sealed: Sendable {
+    let selection: NotebookAttentionSelection
+    let references: [CollaborationReference]
+    let workspaceID: UUID
+  }
+
+  /// Runs in the existing command queue, after preceding ink writes and before
+  /// the next contact's write. A newer global cursor is not itself a conflict.
+  func seal(in store: NotebookStore) throws -> Sealed {
+    let normalized = try resolvingInstalledInk()
+    let references = try normalized.resolvedReferences()
+    return try store.readTransaction { store in
+      let header = try store.workspaceHeader()
+      guard workspaceID == nil || workspaceID == header.workspaceID else {
+        throw CollaborationError("capture_source_changed", "Рабочее пространство указания изменилось.")
+      }
+      if !requiredInk.isEmpty {
+        let current = try store.readSpatialInk(surfaces: Array(requiredInk))
+        for surface in requiredInk {
+          let expected = try installedInk[surface]!.referenceInk()
+          let actual = try NotebookReferenceInk(surface: surface, actions: current.actions)
+          guard expected == actual else {
+            throw CollaborationError("capture_source_changed", "Установленные чернила отличаются от сохранённого источника. Укажите область после готовности чернил.")
+          }
+        }
+      }
+      for reference in references {
+        guard try store.referenceRevision(target: reference.target, elementID: reference.elementID) == reference.revision else {
+          throw CollaborationError("capture_source_changed", "Статический источник указания изменился. Укажите фрагмент снова.")
+        }
+      }
+      return .init(selection: normalized, references: references, workspaceID: header.workspaceID)
+    }
+  }
+
+  private func resolvingInstalledInk() throws -> Self {
+    guard !requiredInk.isEmpty else { return self }
+    guard requiredInk.count <= 8, requiredInk.allSatisfy({ installedInk[$0]?.surface == $0 }), let inkBasis else {
+      throw CollaborationError("capture_source_pending", "Чернила указанной поверхности ещё не установлены. Укажите область после их готовности.")
+    }
+    let sources = try requiredInk.map { try installedInk[$0]!.referenceInk() }
+    let identities = try inkBasis.replacingInk(sources)
+    let directSurfaces = Set(fragments.compactMap { fragment -> SurfaceID? in
+      switch fragment.target.kind {
+      case .board: return .board(fragment.target.id)
+      case .cover: return .cover(fragment.target.id)
+      default: return nil
+      }
+    })
+    var bySurface = Dictionary(uniqueKeysWithValues: sources.filter { directSurfaces.contains($0.surface) }.map { ($0.surface, $0) })
+    for surface in directSurfaces where bySurface[surface] == nil {
+      bySurface[surface] = try .init(surface: surface, actions: ink.actions)
+    }
+    var actions: [UUID: SpatialInkAction] = [:]
+    for source in bySurface.values.sorted(by: { String(describing: $0.surface) < String(describing: $1.surface) }) {
+      for action in source.actions {
+        if let previous = actions[action.id] {
+          guard previous.tool == action.tool, previous.color == action.color, previous.stamp == action.stamp,
+            previous.stateStamp == action.stateStamp, previous.isActive == action.isActive else {
+            throw CollaborationError("capture_source_changed", "Живые и неподвижные поверхности содержат разные состояния одного контакта.")
+          }
+          actions[action.id] = .init(id: action.id, tool: action.tool, color: action.color,
+            spans: previous.spans + action.spans, stamp: action.stamp, isActive: action.isActive, stateStamp: action.stateStamp)
+        } else { actions[action.id] = action }
+      }
+    }
+    var value = self
+    value.ink = .init(actions: actions.values.sorted {
+      $0.stamp == $1.stamp ? $0.id.uuidString < $1.id.uuidString : $0.stamp < $1.stamp
+    }, stamp: ink.stamp)
+    let targets = Set(fragments.map(\.target))
+    value.referenceIdentities = identities.filter { targets.contains($0.target) }
+    value.installedInk = [:]; value.requiredInk = []; value.inkBasis = nil
+    return value
   }
 
   @MainActor

@@ -1,43 +1,86 @@
 import Foundation
 
+struct CompositionSubjectGeometry {
+  let frame: PageRect
+  let origin: WorldPoint?
+
+  func intersects(_ reference: CollaborationReference) -> Bool {
+    guard let region = reference.region else { return true }
+    let delta = compositionDelta(from: reference.worldOrigin, to: origin)
+    return frame.x + delta.x < region.x + region.width && frame.x + delta.x + frame.width > region.x
+      && frame.y + delta.y < region.y + region.height && frame.y + delta.y + frame.height > region.y
+  }
+}
+
+// Subtract tiles before converting nearby coordinates. A far, explicit anchor
+// can cross the entire Int64 range; it must fail to intersect, not trap.
+func compositionDelta(from origin: WorldPoint?, to other: WorldPoint?) -> SpatialPoint {
+  guard let origin, let other else { return .zero }
+  func distance(_ a: Int64, _ b: Int64, _ local: Double) -> Double {
+    let delta = b.subtractingReportingOverflow(a)
+    return (delta.overflow ? Double(b) - Double(a) : Double(delta.partialValue)) * WorldPoint.tileSize + local
+  }
+  return .init(x: distance(origin.tileX, other.tileX, other.localX - origin.localX),
+    y: distance(origin.tileY, other.tileY, other.localY - origin.localY))
+}
+
 extension NotebookStore {
   /// Geometry edits declare the objects they may rearrange. Selecting another
   /// context cannot widen an already addressed action's scope.
   static func requireCompositionScope(_ subject: CollaborationSubject, references: [CollaborationReference],
     additionalOwners: [CollaborationTarget], files: [String: JSONValue]) throws {
     if additionalOwners.contains(subject.target) { return }
-    if subject.target.kind == .cover && subject.elementID == nil {
-      let index = try files["workspace.json"]?.decode(WorkspaceIndex.self)
-      let tree = try files["board.json"]?.decode(BoardHierarchy.self)
-      for reference in references {
-        let ownerID = reference.target.kind == .page
-          ? index?.items.first(where: { $0.pageIDs.contains(reference.target.id) })?.id : reference.target.id
-        if ownerID == subject.target.id, tree?.ownerBoardID(of: subject.target.id) == subject.target.boardID { return }
-      }
+    var index: WorkspaceIndex?, tree: BoardHierarchy?
+    var resolvedGeometry: CompositionSubjectGeometry?, loadedGeometry = false
+    for reference in references {
+      if try compositionScopeContains(subject, reference: reference,
+        pageOwner: { id in
+          if index == nil { index = try files["workspace.json"]?.decode(WorkspaceIndex.self) }
+          return index?.items.first { $0.pageIDs.contains(id) }?.id
+        }, boardOwner: { id in
+          if tree == nil { tree = try files["board.json"]?.decode(BoardHierarchy.self) }
+          return tree?.ownerBoardID(of: id)
+        }, geometry: {
+          if !loadedGeometry { resolvedGeometry = try subjectGeometry(subject, files: files); loadedGeometry = true }
+          return resolvedGeometry
+        }) { return }
     }
-    for reference in references where reference.target == subject.target {
-      if subject.elementID == nil { return } // A region travels with its physical cover.
-      if let id = reference.elementID { if id == subject.elementID { return }; continue }
-      guard let region = reference.region else { return }
-      guard let geometry = try subjectGeometry(subject, files: files) else { continue }
-      let delta = reference.worldOrigin.flatMap { local in geometry.origin.map { local.delta(to: $0) } } ?? .zero
-      let rect = geometry.frame
-      if rect.x + delta.x < region.x + region.width && rect.x + delta.x + rect.width > region.x
-        && rect.y + delta.y < region.y + region.height && rect.y + delta.y + rect.height > region.y { return }
-    }
-    throw CollaborationError("composition_scope", "Перемещение требует исходный фрагмент этого контекста либо явно перечисленного дополнительного владельца.", target: subject.target)
+    throw compositionScopeError(subject)
   }
 
-  private static func subjectGeometry(_ subject: CollaborationSubject, files: [String: JSONValue]) throws -> (frame: PageRect, origin: WorldPoint?)? {
+  /// The same predicate authorizes a proposal and its eventual command. Only
+  /// the resolver differs: a WAL read for planning, the command's causal cut
+  /// for apply/undo. No selection or current camera participates in this rule.
+  static func compositionScopeContains(_ subject: CollaborationSubject, reference: CollaborationReference,
+    pageOwner: (UUID) throws -> UUID?, boardOwner: (UUID) throws -> UUID?,
+    geometry: () throws -> CompositionSubjectGeometry?) throws -> Bool {
+    if subject.target.kind == .cover && subject.elementID == nil {
+      let ownerID = reference.target.kind == .page ? try pageOwner(reference.target.id) : reference.target.id
+      if ownerID == subject.target.id, try boardOwner(subject.target.id) == subject.target.boardID { return true }
+    }
+    guard reference.target == subject.target else { return false }
+    if subject.elementID == nil { return true } // A region travels with its physical cover.
+    if let id = reference.elementID {
+      return collaborationIdentity(id) == subject.elementID.map(collaborationIdentity)
+    }
+    guard reference.region != nil else { return true }
+    return try geometry()?.intersects(reference) ?? false
+  }
+
+  static func compositionScopeError(_ subject: CollaborationSubject) -> CollaborationError {
+    .init("composition_scope", "Перемещение требует исходный фрагмент этого контекста либо явно перечисленного дополнительного владельца.", target: subject.target)
+  }
+
+  private static func subjectGeometry(_ subject: CollaborationSubject, files: [String: JSONValue]) throws -> CompositionSubjectGeometry? {
     guard let id = subject.elementID else { return nil }
     if subject.target.kind == .page {
       let page = try files["pages/\(subject.target.id.uuidString.lowercased()).json"]?.decode(PageDocument.self)
-      return page?.elements.first(where: { $0.id == id }).map { ($0.frame, nil) }
+      return page?.elements.first(where: { collaborationIdentity($0.id) == collaborationIdentity(id) }).map { .init(frame: $0.frame, origin: nil) }
     }
     let tree = try files["board.json"]?.decode(BoardHierarchy.self)
     let surface: SurfaceID = subject.target.kind == .cover ? .cover(subject.target.id) : .board(subject.target.id)
-    return tree?.board(subject.target.boardID ?? subject.target.id)?.elements.first(where: { $0.id == id && $0.surface == surface }).map {
-      (.init(x: $0.frame.x, y: $0.frame.y, width: $0.frame.width, height: $0.frame.height), $0.worldOrigin)
+    return tree?.board(subject.target.boardID ?? subject.target.id)?.elements.first(where: { collaborationIdentity($0.id) == collaborationIdentity(id) && $0.surface == surface }).map {
+      .init(frame: .init(x: $0.frame.x, y: $0.frame.y, width: $0.frame.width, height: $0.frame.height), origin: $0.worldOrigin)
     }
   }
 

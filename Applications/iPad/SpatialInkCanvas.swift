@@ -18,7 +18,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
   /// Geometry preparation closes admission, not an accepted physical contact.
   /// Explicit isEnabled changes still finish that contact before teardown.
   let admitsNewContact: () -> Bool
-  let onCommit: (SpatialInkTool, SpatialInkColor, [SpatialInkSpan]) -> Void
+  let onCommit: (SpatialInkTool, SpatialInkColor, [SpatialInkSpan]) -> SpatialInkAction?
   let isEnabled: Bool
 
   func makeCoordinator() -> Coordinator {
@@ -108,7 +108,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       SpatialInkTool,
       SpatialInkColor,
       [SpatialInkSpan]
-    ) -> Void
+    ) -> SpatialInkAction?
 
     private var actionTool: DrawingTool?
     private var actionPenStyle: PenStyle?
@@ -140,7 +140,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         SpatialInkTool,
         SpatialInkColor,
         [SpatialInkSpan]
-      ) -> Void
+      ) -> SpatialInkAction?
     ) {
       self.surfaceRegistry = surfaceRegistry
       self.inputGate = inputGate
@@ -166,7 +166,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         SpatialInkTool,
         SpatialInkColor,
         [SpatialInkSpan]
-      ) -> Void
+      ) -> SpatialInkAction?
     ) {
       // Finish against the geometry that received the samples, before a new
       // owner or disabled input can cancel UIKit without a final touch event.
@@ -244,7 +244,8 @@ struct SpatialInkCanvas: UIViewRepresentable {
       recognizer.cancelsTouchesInView = true
       recognizer.isEnabled = isEnabled
       recognizer.canBeginContact = { [weak self] touch in
-        guard let self, isEnabled, admitsNewContact() else { return false }
+        guard let self, isEnabled, admitsNewContact(),
+          inputGate.permitsSceneContact(at: touch.preciseLocation(in: self.window)) else { return false }
         let surface = SpatialSurfaceRouter.surface(at: touch.preciseLocation(in: self.view ?? self.window),
           covers: screenSurfaces(), board: boardSurface)
         return surface.kind != .cover || surface.ownerID.map { !isItemBeingDeleted($0) } == true
@@ -404,11 +405,12 @@ struct SpatialInkCanvas: UIViewRepresentable {
         touchedSurfaces = []
         return
       }
-      onCommit(actionTool == .pen ? .pen : .eraser, color, spans)
+      let committed = onCommit(actionTool == .pen ? .pen : .eraser, color, spans)
       for surface in touchedSurfaces {
         surfaceRegistry.finishAction(
           on: surface,
-          keepingCommittedMesh: true
+          keepingCommittedMesh: committed != nil,
+          committedAction: committed
         )
       }
       touchedSurfaces = []
@@ -738,10 +740,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private func scheduleRenderIfNeeded() {
       guard actionTool == nil, let view else { return }
       let surface = boardSurface
-      let pending = preparation.update(surface: surface, journal: journal) { [weak self, weak view] mesh in
+      let pending = preparation.update(surface: surface, journal: journal) { [weak self, weak view] mesh, source in
         guard let self, let view else { return }
-        if let mesh { surfaceRegistry.applyStable(mesh, to: surface, in: view.inkView) }
-        else { view.inkView.finishSpatialPreparation() }
+        surfaceRegistry.applyStable(mesh, source: source, to: surface, in: view.inkView)
       }
       if pending { view.inkView.prepareForDrawing() }
     }

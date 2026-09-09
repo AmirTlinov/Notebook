@@ -21,7 +21,17 @@ struct NotebookSQLScaleTests {
           value: .object(["id": .string(id.uuidString), "kind": .string("notebook"), "title": .string("Notebook \(offset)")]), collections: [.init(path: ["pageIDs"], kind: .array)]), database: database)
         try store.writeFragment(.init(address: itemAddress + "/pageIDs/@" + page.uuidString.lowercased(), file: "workspace.json", parent: itemAddress, collection: "pageIDs", member: page.uuidString.lowercased(), position: 0, value: .string(page.uuidString), collections: []), database: database)
         try store.savePage(PageDocument(id: page, size: .init(width: 834, height: 1194), actor: actor))
-        let placement = FreeItemPlacement(itemID: id, center: .init(x: Double(offset % 1000) * 5000 + 5000, y: Double(offset / 1000) * 5000), zIndex: offset, stamp: stamp)
+        // Half the distant archive shares X=0 with the query; the other half
+        // shares Y=0. Both signs must be skipped by the two-axis SQL index.
+        let distance = Double(offset + 1) * 5_000
+        let center: WorldPoint
+        switch offset % 4 {
+        case 0: center = .init(x: 0, y: distance)
+        case 1: center = .init(x: 0, y: -distance)
+        case 2: center = .init(x: distance, y: 0)
+        default: center = .init(x: -distance, y: 0)
+        }
+        let placement = FreeItemPlacement(itemID: id, center: center, zIndex: offset, stamp: stamp)
         try store.writeFragment(.init(address: boardAddress + "/board/freeItems/@" + id.uuidString.lowercased(), file: "board.json", parent: boardAddress, collection: "board/freeItems", member: id.uuidString.lowercased(), position: offset, value: try .encode(placement), collections: []), database: database)
       }
     }
@@ -48,5 +58,25 @@ struct NotebookSQLScaleTests {
     #expect(delta.records.count < 64)
     #expect(delta.records.allSatisfy { $0.address.hasPrefix("board.json#") })
     #expect(try store.readWorkingSet(itemIDs: [firstID], pageIDs: [initial.items[0].pageIDs[0]], boardIDs: [header.rootBoardID], surfaces: []).pages.count == 1)
+
+    let target = CollaborationTarget(kind: .board, id: header.rootBoardID)
+    let request = CollaborationPlacementRequest(target: target, expectedRevision: try store.targetContentRevision(target: target),
+      items: [.init(id: "scale-proposal", size: .init(width: 100, height: 80))], worldOrigin: .zero)
+    let budget = NotebookPlacementBudget()
+    let cut = try store.readPlacement(request, budget: budget)
+    #expect(budget.inspectedObstacles == 1)
+    #expect(budget.sqlSteps > 0 && budget.sqlSteps < 50_000)
+    #expect(try cut.sourceRevision == store.referenceRevision(target: target))
+    let pending = try store.suggestCollaborationPlacement(request)
+    #expect(pending.status == .snapshotPending)
+    let render = try #require(pending.renderRequest)
+    try JSONEncoder().encode(TargetRenderReceipt(request: render, status: "ready")).write(to: store.targetReceiptURL(render.id), options: .atomic)
+    let planned = try store.suggestCollaborationPlacement(request)
+    let size = WorkspaceItemGeometry.notebook
+    let expected = NotebookStore.freeCollaborationFrame(size: .init(width: 100, height: 80), extent: .init(width: 2048, height: 2048),
+      anchor: .init(x: 20, y: 20, width: 1, height: 1), direction: "free", obstacles: [
+        .init(x: -100 - size.width / 2, y: 20 - size.height / 2, width: size.width, height: size.height)])
+    #expect(planned.status == .ready && planned.placements.first?.frame == expected)
+    print("PLACEMENT_SCALE owners=100000 inspected=\(budget.inspectedObstacles) sql_vm_steps=\(budget.sqlSteps)")
   }
 }

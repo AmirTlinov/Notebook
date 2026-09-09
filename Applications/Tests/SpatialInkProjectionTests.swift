@@ -119,14 +119,14 @@ final class SpatialInkProjectionTests: XCTestCase {
     let portal = SpatialInkMeshPreparation(cache: cache)
     let ready = expectation(description: "Портал уже показал окончательные чернила")
     var expectedCount = 0
-    XCTAssertTrue(portal.update(surface: .board, journal: journal) { mesh in
+    XCTAssertTrue(portal.update(surface: .board, journal: journal) { mesh, _ in
       expectedCount = mesh?.batches.reduce(0) { $0 + $1.vertices.count } ?? 0
       if expectedCount > 0 { ready.fulfill() }
     })
     await fulfillment(of: [ready], timeout: 3)
     let active = SpatialInkMeshPreparation(cache: cache)
     var transferred: SpatialInkMesh?
-    let pending = active.update(surface: .board, journal: journal) { transferred = $0 }
+    let pending = active.update(surface: .board, journal: journal) { mesh, _ in transferred = mesh }
     XCTAssertFalse(pending, "Смена камеры получает уже готовую геометрию без новой фоновой работы")
     XCTAssertEqual(transferred?.batches.reduce(0) { $0 + $1.vertices.count }, expectedCount)
     portal.cancel(); active.cancel()
@@ -147,7 +147,7 @@ final class SpatialInkProjectionTests: XCTestCase {
     XCTAssertGreaterThan(after.batches.reduce(0) { $0 + $1.vertices.count },
       before.batches.reduce(0) { $0 + $1.vertices.count })
     for _ in 0..<1000 {
-      XCTAssertFalse(preparation.update(surface: .board, journal: journal) { _ in
+      XCTAssertFalse(preparation.update(surface: .board, journal: journal) { _, _ in
         XCTFail("Камера не пересобирает и не переустанавливает неизменённые чернила")
       })
     }
@@ -162,14 +162,14 @@ final class SpatialInkProjectionTests: XCTestCase {
     preparation.invalidateSource()
     let ready = expectation(description: "Измеренный вклад заменяется готовым повтором")
     var publications = 0
-    XCTAssertTrue(preparation.update(surface: .board, journal: journal) { mesh in
+    XCTAssertTrue(preparation.update(surface: .board, journal: journal) { mesh, _ in
       publications += 1
       XCTAssertFalse(mesh?.batches.isEmpty ?? true, "Тот же владелец не получает промежуточную пустоту")
       ready.fulfill()
     })
     XCTAssertEqual(publications, 0)
     for _ in 0..<1000 {
-      XCTAssertFalse(preparation.update(surface: .board, journal: journal) { _ in XCTFail("Повтор камеры перезапустил подготовку") })
+      XCTAssertFalse(preparation.update(surface: .board, journal: journal) { _, _ in XCTFail("Повтор камеры перезапустил подготовку") })
     }
     await fulfillment(of: [ready], timeout: 3)
     XCTAssertEqual(publications, 1)
@@ -184,7 +184,7 @@ final class SpatialInkProjectionTests: XCTestCase {
       preparation.invalidateSource()
       let ready = expectation(description: "Отсутствующий источник имеет готовый пустой результат")
       var publications = 0
-      XCTAssertTrue(preparation.update(surface: .board, journal: nil) { mesh in
+      XCTAssertTrue(preparation.update(surface: .board, journal: nil) { mesh, _ in
         publications += 1
         XCTAssertTrue(mesh?.batches.isEmpty ?? false)
         ready.fulfill()
@@ -205,7 +205,7 @@ final class SpatialInkProjectionTests: XCTestCase {
     for _ in 0..<6 {
       let owner = SurfaceID.board(UUID())
       var clearedImmediately = false
-      let pending = preparation.update(surface: owner, journal: journal) { mesh in
+      let pending = preparation.update(surface: owner, journal: journal) { mesh, _ in
         if let mesh, mesh.batches.isEmpty { clearedImmediately = true }
       }
       XCTAssertTrue(pending)
@@ -227,7 +227,7 @@ final class SpatialInkProjectionTests: XCTestCase {
     journal: SpatialInkJournal) async throws -> SpatialInkMesh {
     let ready = expectation(description: "Окончательная геометрия готова")
     let received = MeshReception()
-    let pending = owner.update(surface: surface, journal: journal) { value in
+    let pending = owner.update(surface: surface, journal: journal) { value, _ in
       if let value { received.mesh = value }
       if !received.updating { ready.fulfill() }
     }

@@ -46,9 +46,9 @@ enum WorkspaceSceneProjection {
 struct BoardPortalPreview: View {
   @Environment(NotebookAppModel.self) private var model
   @Environment(\.sceneCompositionCohort) private var cohort
-  @State private var spatialInkSurfaces = SpatialInkSurfaceRegistry()
 
   let boardID: UUID
+  let spatialInkSurfaces: SpatialInkSurfaceRegistry
   let pixelScale: Double
   let remainingPortalPasses: Int
   let transitionViewport: SpatialPoint
@@ -350,6 +350,7 @@ struct WorkspaceItemCoverView: View {
       ) {
         AnyView(BoardPortalPreview(
           boardID: item.id,
+          spatialInkSurfaces: spatialInkSurfaces,
           pixelScale: portalPixelScale,
           remainingPortalPasses: remainingPortalPasses,
           transitionViewport: portalViewport

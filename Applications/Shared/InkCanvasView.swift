@@ -118,6 +118,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private var spatialViewport = SpatialPoint(x: 1, y: 1)
   private var committedBatches: [CommittedBatch] = []
   private var spatialActionBase: [CommittedBatch]?
+  private(set) var installedSpatialSource: SpatialInkInstalledSource?
   private var stableDrawing: PageInkDrawing?
   private var drawingIsPreparing = false
   private var stableDrawingRevision: UInt64 = 0
@@ -264,6 +265,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   func finishSpatialPreparation() { drawingIsPreparing = false; requestFrame() }
 
   func applySpatial(_ mesh: SpatialInkMesh) {
+    installedSpatialSource = nil
     drawingIsPreparing = false
     spatialMeshInstallCount += 1
     beginStableContentUpdate()
@@ -275,6 +277,16 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     requestFrame()
   }
 
+  /// Source and geometry are installed by the same physical owner. This is a
+  /// source receipt, not a GPU-presented or visible-pixels acknowledgement.
+  func installSpatialSource(_ journal: SpatialInkJournal?, on surface: SurfaceID) {
+    installedSpatialSource = journal.map { .init(surface: surface, journal: $0) }
+  }
+
+  func appendInstalledSpatialAction(_ action: SpatialInkAction) {
+    installedSpatialSource = installedSpatialSource?.appending(action)
+  }
+
   /// Replaces the page atomically. This is used for load, undo, and sync.
   func prepareForDrawing() {
     drawingIsPreparing = true
@@ -282,6 +294,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   func apply(_ drawing: PageInkDrawing) {
+    installedSpatialSource = nil
     drawingIsPreparing = false
     beginStableContentUpdate()
     stableRasterTask?.cancel()

@@ -53,10 +53,13 @@ struct SceneCompositionLiveData: Sendable {
   let pages: [UUID: PageDocument]
   let ink: SpatialInkJournal
   let referenceIdentities: [NotebookReferenceIdentity]
+  let referenceInkBasis: NotebookReferenceInkBasis?
   init(documents: [UUID: DocumentDocument], states: [UUID: DocumentStateJournal], pages: [UUID: PageDocument],
-    ink: SpatialInkJournal, referenceIdentities: [NotebookReferenceIdentity] = []) {
+    ink: SpatialInkJournal, referenceIdentities: [NotebookReferenceIdentity] = [],
+    referenceInkBasis: NotebookReferenceInkBasis? = nil) {
     self.documents = documents; self.states = states; self.pages = pages; self.ink = ink
     self.referenceIdentities = referenceIdentities
+    self.referenceInkBasis = referenceInkBasis
   }
 }
 
@@ -136,9 +139,18 @@ actor SceneCompositionSource {
         for (boardID, workset) in frame.worksets {
           for item in workset.items { targets.insert(.init(kind: .cover, id: item.id, boardID: boardID)) }
         }
-        let identities = try store.referenceIdentities(targets: targets.sorted { $0.key < $1.key })
+        // A prepared child can become the active board without a new cohort.
+        // Its compact complete ink basis travels too, not another sample copy.
+        let replaceable = plan.presentations.keys.compactMap { plane -> SurfaceID? in
+          switch plane {
+          case .board(let id): return .board(id)
+          case .cover(_, let id): return .cover(id)
+          }
+        }
+        let basis = try store.referenceInkBasis(rootBoardID: plan.rootBoardID,
+          targets: targets.sorted { $0.key < $1.key }, surfaces: replaceable)
         return .init(documents: data.documents, states: data.states, pages: data.pages, ink: data.ink,
-          referenceIdentities: identities)
+          referenceIdentities: basis.identities, referenceInkBasis: basis)
       }
     case .values(_, _, let journal):
       let wanted = Set(surfaces)

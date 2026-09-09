@@ -9,6 +9,57 @@ public struct NotebookReferenceIdentity: Codable, Equatable, Sendable {
   public init(target: CollaborationTarget, revision: String) { self.target = target; self.revision = revision }
 }
 
+/// The complete direct ink of one physical owner, not a viewport sample. This
+/// value is prepared off the input actor and includes inactive undo records.
+public struct NotebookReferenceInk: Equatable, Sendable {
+  public let surface: SurfaceID
+  public let actions: [SpatialInkAction]
+
+  public init(surface: SurfaceID, actions: [SpatialInkAction]) throws {
+    guard surface.isValid, surface.kind != .page, Set(actions.map(\.id)).count == actions.count,
+      actions.allSatisfy(\.isValid) else {
+      throw CollaborationError("capture_source_changed", "Чернила указания не имеют единственного физического владельца.")
+    }
+    self.surface = surface
+    self.actions = actions.compactMap { action in
+      let spans = action.spans.filter { $0.surface == surface }
+      guard !spans.isEmpty else { return nil }
+      return SpatialInkAction(id: action.id, tool: action.tool, color: action.color, spans: spans,
+        stamp: action.stamp, isActive: action.isActive, stateStamp: action.stateStamp)
+    }.sorted { $0.stamp == $1.stamp ? $0.id.uuidString < $1.id.uuidString : $0.stamp < $1.stamp }
+  }
+}
+
+private struct NotebookReferenceInkNode: Sendable {
+  var digest: Data
+  var hash: String
+  let parent: String?
+  let inkDigest: Data?
+}
+
+/// A transient replacement proof from the same SQL cut as a tile cohort. It
+/// cannot be decoded from an agent request and is not another durable index.
+public struct NotebookReferenceInkBasis: Sendable {
+  public let workspaceID: UUID
+  public let cursor: UInt64
+  public var identities: [NotebookReferenceIdentity] { targets }
+  private let targets: [NotebookReferenceIdentity]
+  private let nodes: [String: NotebookReferenceInkNode]
+
+  fileprivate init(workspaceID: UUID, cursor: UInt64, targets: [NotebookReferenceIdentity],
+    nodes: [String: NotebookReferenceInkNode]) {
+    self.workspaceID = workspaceID; self.cursor = cursor; self.targets = targets
+    self.nodes = nodes
+  }
+
+  public func replacingInk(_ ink: [NotebookReferenceInk]) throws -> [NotebookReferenceIdentity] {
+    try NotebookStore.replacingReferenceInk(ink, basis: self)
+  }
+
+  fileprivate var retainedTargets: [NotebookReferenceIdentity] { targets }
+  fileprivate var retainedNodes: [String: NotebookReferenceInkNode] { nodes }
+}
+
 private struct NotebookBoundReferenceIdentities: Codable {
   let projectionHash: String
   let identities: [NotebookReferenceIdentity]
@@ -55,6 +106,109 @@ extension NotebookStore {
         return .init(target: target, revision: hash)
       }
     }
+  }
+
+  /// Reads only hash contributions, in bounded pages. The preparation is linear
+  /// in the addressed owners' ink; it never decodes samples or scans an archive.
+  public func referenceInkBasis(rootBoardID: UUID, targets: [CollaborationTarget],
+    surfaces: [SurfaceID]) throws -> NotebookReferenceInkBasis {
+    guard surfaces.count <= 15, Set(surfaces).count == surfaces.count,
+      surfaces.allSatisfy({ $0.isValid && $0.kind != .page }) else {
+      throw NotebookStorageError.limitExceeded("reference_ink_surfaces")
+    }
+    return try readTransaction { store in
+      let header = try store.workspaceHeader(), identities = try store.referenceIdentities(targets: targets)
+      let root = Self.referenceOwnerKey("board", rootBoardID)
+      var nodes: [String: NotebookReferenceInkNode] = [:]
+      func readNode(_ key: String, includesInk: Bool) throws {
+        if let existing = nodes[key], !includesInk || existing.inkDigest != nil { return }
+        guard let row = try currentSQL!.rows("SELECT digest,hash,parent FROM reference_owners WHERE owner_key=?", [.text(key)]).first,
+          let digest = row[0].blob, let hash = row[1].text else {
+          throw CollaborationError("capture_source_pending", "Основа физической поверхности ещё не готова.")
+        }
+        var inkDigest: Data?
+        if includesInk {
+          var aggregate = Data(repeating: 0, count: 32)
+          let prefix = "spatial-ink.json#/actions/@"
+          var after = prefix
+          while true {
+            try Task.checkCancellation()
+            let rows = try currentSQL!.rows("SELECT address,hash FROM reference_contributions WHERE owner_key=? AND address>? AND address<? ORDER BY address LIMIT 256",
+              [.text(key), .text(after), .text(prefix + "\u{10ffff}")])
+            for row in rows {
+              guard let address = row[0].text, let hash = row[1].text else { throw NotebookStorageError.corruptRecord(key) }
+              Self.xorReferenceDigest(&aggregate, Self.referenceContribution(address, hash))
+              after = address
+            }
+            if rows.count < 256 { break }
+          }
+          inkDigest = aggregate
+        }
+        nodes[key] = .init(digest: digest, hash: hash, parent: key == root ? nil : row[2].text, inkDigest: inkDigest)
+      }
+      for identity in identities { try readNode(Self.referenceOwnerKey(identity.target.kind.rawValue, identity.target.id), includesInk: false) }
+      for surface in surfaces {
+        let key = Self.referenceOwnerKey(surface.kind.rawValue, surface.ownerID!)
+        try readNode(key, includesInk: true)
+        var current = key, visited = Set<String>()
+        while current != root {
+          guard visited.insert(current).inserted, visited.count <= 16,
+            let parent = nodes[current]?.parent else {
+            throw CollaborationError("capture_source_pending", "Основа указания не содержит полную цепочку портала.")
+          }
+          try readNode(parent, includesInk: false)
+          current = parent
+        }
+      }
+      return .init(workspaceID: header.workspaceID, cursor: header.cursor, targets: identities, nodes: nodes)
+    }
+  }
+
+  fileprivate static func replacingReferenceInk(_ ink: [NotebookReferenceInk], basis: NotebookReferenceInkBasis) throws -> [NotebookReferenceIdentity] {
+    guard ink.count <= 8, Set(ink.map(\.surface)).count == ink.count else { throw NotebookStorageError.limitExceeded("captured_ink_owners") }
+    var nodes = basis.retainedNodes, pending = Set<String>()
+    for source in ink {
+      guard let id = source.surface.ownerID else { throw NotebookStorageError.invalidTransaction("surface owner") }
+      let key = referenceOwnerKey(source.surface.kind.rawValue, id)
+      guard var node = nodes[key], let previous = node.inkDigest else {
+        throw CollaborationError("capture_source_pending", "Поверхность не входила в подготовленное основание указания.")
+      }
+      var next = Data(repeating: 0, count: 32)
+      for action in source.actions {
+        try Task.checkCancellation()
+        let address = "spatial-ink.json#/actions/@" + action.id.uuidString.lowercased()
+        xorReferenceDigest(&next, referenceContribution(address, try collaborationHash(JSONValue.encode(action))))
+      }
+      xorReferenceDigest(&node.digest, previous); xorReferenceDigest(&node.digest, next)
+      nodes[key] = node; pending.insert(key)
+    }
+    // Every edge comes from the retained SQL graph, including portal covers.
+    // Repeating an ancestor update is harmless; cycles were rejected on read.
+    while let key = pending.first {
+      pending.remove(key)
+      guard var node = nodes[key] else { throw NotebookStorageError.corruptRecord(key) }
+      let previous = node.hash
+      let next = referenceHash(Data(("reference-owner-v2\n" + key + "\n").utf8) + node.digest)
+      if next == previous { continue }
+      node.hash = next; nodes[key] = node
+      if let parent = node.parent {
+        guard var owner = nodes[parent] else {
+          throw CollaborationError("capture_source_pending", "Основа указания не содержит промежуточного владельца.")
+        }
+        xorReferenceDigest(&owner.digest, referenceContribution("child:" + key, previous))
+        xorReferenceDigest(&owner.digest, referenceContribution("child:" + key, next))
+        nodes[parent] = owner; pending.insert(parent)
+      }
+    }
+    return try basis.retainedTargets.map { identity in
+      let key = referenceOwnerKey(identity.target.kind.rawValue, identity.target.id)
+      guard let node = nodes[key] else { throw NotebookStorageError.corruptRecord(key) }
+      return .init(target: identity.target, revision: node.hash)
+    }
+  }
+
+  private static func xorReferenceDigest(_ digest: inout Data, _ contribution: Data) {
+    for (offset, byte) in contribution.enumerated() { digest[offset] ^= byte }
   }
 
   private static func referenceOwnerKey(_ kind: String, _ id: UUID) -> String { kind + ":" + id.uuidString.lowercased() }

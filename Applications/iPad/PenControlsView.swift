@@ -13,7 +13,7 @@ struct PenControlsView: View {
         model.selectDrawingTool(.eraser)
       }
       tool("hand.point.up.left", title: "Указать", id: "drawing-tool-pointer", selected: model.isPointing) {
-        model.isPointing.toggle()
+        model.afterPageInput { model.isPointing.toggle() }
       }
       Divider().frame(height: 22).padding(.horizontal, 4)
       Button { isExpanded = true } label: {

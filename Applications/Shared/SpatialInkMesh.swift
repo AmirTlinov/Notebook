@@ -1,5 +1,33 @@
 import Foundation
 import NotebookCore
+
+/// The source installed by one physical canvas. Retaining it and appending a
+/// finished contact do not walk or copy the baseline's sample arrays.
+struct SpatialInkInstalledSource: Sendable {
+  let surface: SurfaceID
+  private let baseline: SpatialInkJournal
+  private var finished: [SpatialInkAction] = []
+
+  init(surface: SurfaceID, journal: SpatialInkJournal) { self.surface = surface; baseline = journal }
+
+  func appending(_ action: SpatialInkAction) -> Self {
+    var value = self
+    value.finished.append(action)
+    return value
+  }
+
+  /// Only the persistence worker resolves the retained tail and exact records.
+  func referenceInk() throws -> NotebookReferenceInk {
+    var actions = Dictionary(uniqueKeysWithValues: baseline.actions.filter { $0.spans.contains { $0.surface == surface } }.map { ($0.id, $0) })
+    for action in finished where action.spans.contains(where: { $0.surface == surface }) {
+      if let previous = actions[action.id], previous != action {
+        throw CollaborationError("capture_source_changed", "Один контакт получил несовместимые источники чернил.")
+      }
+      actions[action.id] = action
+    }
+    return try .init(surface: surface, actions: Array(actions.values))
+  }
+}
 import PencilKit
 
 /// Vertices stay near their physical origin. Camera motion changes one uniform
@@ -180,7 +208,7 @@ final class SpatialInkMeshPreparation {
   init(cache: SpatialInkMeshCache = .shared) { self.cache = cache }
 
   @discardableResult
-  func update(surface: SurfaceID, journal: SpatialInkJournal?, apply: @escaping @MainActor (SpatialInkMesh?) -> Void) -> Bool {
+  func update(surface: SurfaceID, journal: SpatialInkJournal?, apply: @escaping @MainActor (SpatialInkMesh?, SpatialInkJournal?) -> Void) -> Bool {
     // Array equality takes its shared-storage fast path on camera-only frames;
     // unlike a maximum stamp it also detects independent, lower-clock merges.
     guard needsSource || self.surface != surface || self.journal != journal else { return false }
@@ -189,15 +217,22 @@ final class SpatialInkMeshPreparation {
     self.surface = surface; self.journal = journal
     needsSource = false
     task?.cancel(); task = nil
+    if let journal, journal.actions.isEmpty {
+      versions = []
+      let mesh = SpatialInkMesh(batches: [])
+      cache.store(mesh, versions: [], surface: surface, journal: journal)
+      apply(mesh, journal)
+      return false
+    }
     let cached = cache.entry(for: surface)
     if let cached, cached.journal == journal {
       versions = cached.versions
-      apply(cached.mesh)
+      apply(cached.mesh, journal)
       return false
     }
     if ownerChanged {
       // An uncached owner never inherits the old board's ink while preparing.
-      apply(.init(batches: []))
+      apply(.init(batches: []), nil)
     }
     let worker = Task.detached(priority: .userInitiated) {
       try Task.checkCancellation()
@@ -213,7 +248,7 @@ final class SpatialInkMeshPreparation {
         guard let result = try? await worker.value, !Task.isCancelled, let self else { return }
         self.versions = result.0
         self.cache.store(result.1, versions: result.0, surface: surface, journal: journal)
-        apply(previous == result.0 ? nil : result.1)
+        apply(previous == result.0 ? nil : result.1, journal)
       } onCancel: { worker.cancel() }
     }
     return true

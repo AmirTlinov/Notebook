@@ -64,7 +64,7 @@ enum NotebookAttentionProjection {
   }
 
   static func capture(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence,
-    cohort: SceneCompositionCohort) -> NotebookAttentionSelection? {
+    cohort: SceneCompositionCohort, installedInk: [SurfaceID: SpatialInkInstalledSource]) -> NotebookAttentionSelection? {
     guard !model.scenePreparationPending, cohort.plan.presentations[.board(presence.boardID)] != nil else { return nil }
     let index = cohort.frame.index
     var sources = CaptureSources(index: index, workset: cohort.frame.workset(boardID: presence.boardID),
@@ -83,9 +83,24 @@ enum NotebookAttentionProjection {
     guard !fragments.isEmpty else { return nil }
     let visuals = NotebookFrozenVisualSources.capture(fragments: fragments, hierarchy: sources.hierarchy,
       pages: sources.pages, documents: sources.documents, states: sources.states)
+    var requiredInk = Set<SurfaceID>()
+    for fragment in fragments where fragment.elementID == nil {
+      if fragment.target.kind == .board {
+        requiredInk.insert(.board(fragment.target.id))
+        let descendants = sources.hierarchy.descendantBoardIDs(including: fragment.target.id)
+        for owner in cohort.plan.liveOwners where descendants.contains(owner.plane.boardID) {
+          if case .item(let id) = owner.id { requiredInk.insert(.cover(id)) }
+        }
+      } else if fragment.target.kind == .cover,
+        cohort.plan.allowsLive(.item(fragment.target.id), in: .board(fragment.target.boardID ?? presence.boardID)) {
+        requiredInk.insert(.cover(fragment.target.id))
+      }
+    }
     return .init(fragments: fragments, workspace: sources.workspace, hierarchy: sources.hierarchy, ink: sources.ink,
       pages: sources.pages, documents: sources.documents, states: sources.states, visuals: visuals,
-      referenceIdentities: cohort.liveData.referenceIdentities)
+      referenceIdentities: cohort.liveData.referenceIdentities,
+      installedInk: installedInk.filter { requiredInk.contains($0.key) }, requiredInk: requiredInk,
+      inkBasis: cohort.liveData.referenceInkBasis)
   }
 
   private static func fragments(start: CGPoint, end: CGPoint, sources: CaptureSources, presence: SessionPresence) -> [NotebookAttentionSelection.Fragment] {

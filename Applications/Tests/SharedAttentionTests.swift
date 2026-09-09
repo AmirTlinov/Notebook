@@ -52,7 +52,7 @@ final class SharedAttentionTests: XCTestCase {
     model.updatePresence(presence,settled:true)
     try await waitForScene(model)
     let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start:.init(x:100,y:100),end:.init(x:220,y:200),model:model,presence:presence,
-      cohort: XCTUnwrap(model.compositionTiles.published)))
+      cohort: XCTUnwrap(model.compositionTiles.published), installedInk: [:]))
     let prepared = try await Task.detached { try selection.resolvedReferences() }.value
     let reference = try XCTUnwrap(prepared.first)
     XCTAssertEqual(reference.target,.init(kind:.page,id:page.id))
@@ -120,7 +120,7 @@ final class SharedAttentionTests: XCTestCase {
     model.updatePresence(presence, settled: true)
     try await waitForScene(model)
     let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start: .init(x: 80, y: 350), end: .init(x: 760, y: 850), model: model, presence: presence,
-      cohort: XCTUnwrap(model.compositionTiles.published)))
+      cohort: XCTUnwrap(model.compositionTiles.published), installedInk: cohortInkSources(XCTUnwrap(model.compositionTiles.published))))
     let references = try await Task.detached { try selection.resolvedReferences() }.value
     XCTAssertTrue(references.contains { $0.target.id == first && $0.target.kind == .cover })
     XCTAssertTrue(references.contains { $0.target.id == second && $0.target.kind == .cover })
@@ -205,7 +205,7 @@ final class SharedAttentionTests: XCTestCase {
     try await waitForScene(model)
     let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start: .init(x: 100, y: 100),
       end: .init(x: 240, y: 180), model: model, presence: presence,
-      cohort: XCTUnwrap(model.compositionTiles.published)))
+      cohort: XCTUnwrap(model.compositionTiles.published), installedInk: [:]))
     model.isPointing = true
     model.publishHumanContext(selection)
     XCTAssertFalse(model.isPointing, "A control action must not wait for JSON, hashing or the file lock")
@@ -214,7 +214,8 @@ final class SharedAttentionTests: XCTestCase {
     var later = page
     XCTAssertTrue(later.replaceElements([.init(id: "later-text", kind: .markdown,
       frame: .init(x: 120, y: 120, width: 100, height: 40), source: "New meaning", html: "<p>New meaning</p>")], actor: UUID()))
-    _ = try model.store.saveMergedPage(later)
+    let laterPage = later
+    _ = try await model.performStoreCommand { try $0.saveMergedPage(laterPage) }
     await model.reloadExternalChanges()?.value
     await model.finishPendingPersistence()
     let context = try XCTUnwrap(model.activeSharedContext)

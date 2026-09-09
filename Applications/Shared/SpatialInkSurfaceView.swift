@@ -23,7 +23,11 @@ final class SpatialInkSurfaceRegistry {
 
     private var canvases: [SurfaceID: WeakCanvas] = [:]
     private var activeSurfaces: Set<SurfaceID> = []
-    private var deferredLayers: [SurfaceID: SpatialInkMesh] = [:]
+    private struct PreparedSource {
+      let mesh: SpatialInkMesh?
+      let journal: SpatialInkJournal?
+    }
+    private var deferredLayers: [SurfaceID: PreparedSource] = [:]
 
     func register(_ view: InkCanvasView, for surface: SurfaceID) {
       canvases = canvases.filter { $0.value.view != nil }
@@ -31,7 +35,7 @@ final class SpatialInkSurfaceRegistry {
       if !activeSurfaces.contains(surface),
         let layers = deferredLayers.removeValue(forKey: surface)
       {
-        view.applySpatial(layers)
+        install(layers, on: surface, in: view)
       }
     }
 
@@ -48,33 +52,54 @@ final class SpatialInkSurfaceRegistry {
       return view
     }
 
+    func installedSource(on surface: SurfaceID) -> SpatialInkInstalledSource? {
+      guard !activeSurfaces.contains(surface), let source = canvas(for: surface)?.installedSpatialSource,
+        source.surface == surface else { return nil }
+      return source
+    }
+
+    func installedSources() -> [SurfaceID: SpatialInkInstalledSource] {
+      var result: [SurfaceID: SpatialInkInstalledSource] = [:]
+      for surface in Array(canvases.keys) {
+        if let source = installedSource(on: surface) { result[surface] = source }
+      }
+      return result
+    }
+
     func beginAction(on surface: SurfaceID) {
       if activeSurfaces.insert(surface).inserted { canvas(for: surface)?.beginSpatialAction() }
     }
 
-    func finishAction(on surface: SurfaceID, keepingCommittedMesh: Bool) {
+    func finishAction(on surface: SurfaceID, keepingCommittedMesh: Bool, committedAction: SpatialInkAction? = nil) {
       activeSurfaces.remove(surface)
       canvas(for: surface)?.finishSpatialAction(keepingCommittedMesh: keepingCommittedMesh)
       if keepingCommittedMesh {
+        if let committedAction { canvas(for: surface)?.appendInstalledSpatialAction(committedAction) }
         deferredLayers.removeValue(forKey: surface)
         return
       }
       guard let layers = deferredLayers.removeValue(forKey: surface),
         let view = canvas(for: surface)
       else { return }
-      view.applySpatial(layers)
+      install(layers, on: surface, in: view)
     }
 
     func applyStable(
-      _ layers: SpatialInkMesh,
+      _ layers: SpatialInkMesh?,
+      source: SpatialInkJournal?,
       to surface: SurfaceID,
       in view: InkCanvasView? = nil
     ) {
       if activeSurfaces.contains(surface) {
-        deferredLayers[surface] = layers
+        deferredLayers[surface] = .init(mesh: layers, journal: source)
         return
       }
-      (view ?? canvas(for: surface))?.applySpatial(layers)
+      if let view = view ?? canvas(for: surface) { install(.init(mesh: layers, journal: source), on: surface, in: view) }
+    }
+
+    private func install(_ prepared: PreparedSource, on surface: SurfaceID, in view: InkCanvasView) {
+      if let mesh = prepared.mesh { view.applySpatial(mesh) } else { view.finishSpatialPreparation() }
+      view.installSpatialSource(prepared.journal, on: surface)
     }
   #endif
 }
@@ -138,10 +163,9 @@ struct SpatialInkSurfaceView: UIViewRepresentable {
         self.registry = registry
       }
       registry.register(view, for: surface)
-      let pending = preparation.update(surface: surface, journal: journal) { [weak self, weak view] mesh in
+      let pending = preparation.update(surface: surface, journal: journal) { [weak self, weak view] mesh, source in
         guard let self, self.surface == surface, let registry = self.registry, let view else { return }
-        if let mesh { registry.applyStable(mesh, to: surface, in: view) }
-        else { view.finishSpatialPreparation() }
+        registry.applyStable(mesh, source: source, to: surface, in: view)
       }
       if pending { view.prepareForDrawing() }
     }
@@ -166,8 +190,9 @@ struct SpatialInkSurfaceView: NSViewRepresentable {
   func makeNSView(context: Context) -> InkCanvasView { InkCanvasView(frame: .zero) }
   func updateNSView(_ view: InkCanvasView, context: Context) {
     view.project(camera: camera, viewport: viewport ?? .init(x: view.bounds.width, y: view.bounds.height))
-    let pending = context.coordinator.update(surface: surface, journal: journal) { [weak view] mesh in
+    let pending = context.coordinator.update(surface: surface, journal: journal) { [weak view] mesh, source in
       if let mesh { view?.applySpatial(mesh) } else { view?.finishSpatialPreparation() }
+      view?.installSpatialSource(source, on: surface)
     }
     if pending { view.prepareForDrawing() }
   }

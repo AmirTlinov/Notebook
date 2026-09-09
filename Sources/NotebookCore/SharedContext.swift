@@ -119,9 +119,22 @@ extension NotebookStore {
 
   @discardableResult
   public func appendContext(references: [CollaborationReference], author: SharedContextEntry.Author,
-    actor: UUID, contextID: UUID? = nil, replyTo: UUID? = nil, text: String? = nil, select: Bool = false) throws -> SharedContext {
+    actor: UUID, contextID: UUID? = nil, replyTo: UUID? = nil, text: String? = nil, select: Bool = false,
+    sourceWorkspaceID: UUID? = nil) throws -> SharedContext {
     try prepare()
     return try withMutationLock {
+      // A newly captured native context seals its exact sources in this write
+      // transaction. Imported/historical context entries keep their own cut.
+      if let sourceWorkspaceID {
+        guard try workspaceHeader().workspaceID == sourceWorkspaceID else {
+          throw CollaborationError("capture_source_changed", "Рабочее пространство указания изменилось.")
+        }
+        for reference in references {
+          guard try referenceRevision(target: reference.target, elementID: reference.elementID) == reference.revision else {
+            throw CollaborationError("capture_source_changed", "Источник указания изменился до сохранения. Укажите фрагмент снова.")
+          }
+        }
+      }
       var context: SharedContext
       if let contextID {
         guard let existing = try storedValue(contextFile(contextID))?.decode(SharedContext.self) else {

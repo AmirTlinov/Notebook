@@ -100,21 +100,27 @@ final class NotebookPersistenceQueue {
     publishesChanges: Bool = false,
     _ operation: @escaping @Sendable (NotebookStore) throws -> Value
   ) async throws -> Value {
-    if let failure { throw Failure(message: failure) }
     return try await withCheckedThrowingContinuation { continuation in
-      let write = Write(owner: nil, operation: { store in
-        let result = Result { try operation(store) }
-        continuation.resume(with: result)
-        switch result {
-        case .success: return .init(merged: false, succeeded: true)
-        case .failure: return .init(merged: false, succeeded: false)
-        }
-      }, onBlocked: { message in
-        continuation.resume(throwing: Failure(message: message))
-      }, notifiesCommit: publishesChanges)
-      pending.append(write)
-      startIfNeeded()
+      enqueueCommand(publishesChanges: publishesChanges, operation) { continuation.resume(with: $0) }
     }
+  }
+
+  /// Registers the fence before returning to UIKit. A later contact may start
+  /// immediately, but neither its write nor coalescing can overtake this cut.
+  func enqueueCommand<Value: Sendable>(publishesChanges: Bool = false,
+    _ operation: @escaping @Sendable (NotebookStore) throws -> Value,
+    completion: @escaping @Sendable (Result<Value, Error>) -> Void) {
+    if let failure { completion(.failure(Failure(message: failure))); return }
+    let write = Write(owner: nil, operation: { store in
+      let result = Result { try operation(store) }
+      completion(result)
+      switch result {
+      case .success: return .init(merged: false, succeeded: true)
+      case .failure: return .init(merged: false, succeeded: false)
+      }
+    }, onBlocked: { completion(.failure(Failure(message: $0))) }, notifiesCommit: publishesChanges)
+    pending.append(write)
+    startIfNeeded()
   }
 
   @discardableResult

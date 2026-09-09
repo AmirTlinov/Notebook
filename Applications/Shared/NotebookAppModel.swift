@@ -1147,22 +1147,24 @@ final class NotebookAppModel {
     return pageIndex
   }
 
+  @discardableResult
   func appendSpatialInk(
     tool: SpatialInkTool,
     color: SpatialInkColor,
     spans: [SpatialInkSpan]
-  ) {
+  ) -> SpatialInkAction? {
     guard spans.allSatisfy({ surfaceAcceptsChanges($0.surface) }), var journal = spatialInk,
-      journal.append(
+      let action = journal.append(
         tool: tool,
         color: color,
         spans: spans,
         actor: actorID
-      ) != nil
-    else { return }
+      )
+    else { return nil }
     spatialInk = journal
 
     scheduleSpatialInkSave()
+    return action
   }
 
   func undoLastSurfaceAction() {
@@ -1848,16 +1850,26 @@ final class NotebookAppModel {
     let actor = actorID, generation = UUID()
     attentionGeneration = generation
     isPointing = false
-    enqueueStoreWrite(reload: true) { [weak self] store in
-      let references = try selection.resolvedReferences()
-      let context = try store.appendContext(references: references, author: .human, actor: actor, select: true)
-      guard let entry = context.entries.last else { return }
+    persistence.enqueueCommand(publishesChanges: true, { store in
+      let sealed = try selection.seal(in: store)
+      let context = try store.appendContext(references: sealed.references, author: .human, actor: actor,
+        select: true, sourceWorkspaceID: sealed.workspaceID)
+      return (context, sealed)
+    }) { [weak self] result in
       Task { @MainActor [weak self] in
         guard let self else { return }
-        self.pinnedAttentionSelections.append((context.id, selection))
+        let context: SharedContext, sealed: NotebookAttentionSelection.Sealed
+        do { (context, sealed) = try result.get() }
+        catch {
+          if self.attentionGeneration == generation { self.agentRequestError = error.localizedDescription }
+          return
+        }
+        guard let entry = context.entries.last else { return }
+        self.pinnedAttentionSelections.append((context.id, sealed.selection))
         if self.pinnedAttentionSelections.count > 2 { self.pinnedAttentionSelections.removeFirst() }
+        self.reloadExternalChanges()
         guard self.attentionGeneration == generation else { return }
-        self.agentQuestion = .init(contextID: context.id, entryID: entry.id, references: references)
+        self.agentQuestion = .init(contextID: context.id, entryID: entry.id, references: sealed.references)
         self.agentRequestError = nil
       }
     }

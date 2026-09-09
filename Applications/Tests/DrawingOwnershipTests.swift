@@ -165,7 +165,7 @@ final class DrawingOwnershipTests: XCTestCase {
     )
     registry.register(boardView, for: .board)
     registry.register(coverView, for: .cover(coverID))
-    registry.applyStable(.local(layers), to: .cover(coverID))
+    registry.applyStable(.local(layers), source: nil, to: .cover(coverID))
 
     XCTAssertEqual(boardView.committedVertexCount, 0)
     XCTAssertGreaterThan(coverView.committedEraserVertexCount, 0)
@@ -178,11 +178,11 @@ final class DrawingOwnershipTests: XCTestCase {
     let view = InkCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 400))
     let first = [point(x: 20, y: 30), point(x: 180, y: 70)]
     registry.register(view, for: cover)
-    registry.applyStable(.local([.ink(points: first, color: .black)]), to: cover)
+    registry.applyStable(.local([.ink(points: first, color: .black)]), source: nil, to: cover)
     let stableCount = view.committedVertexCount
 
     registry.beginAction(on: cover)
-    registry.applyStable(.local([]), to: cover)
+    registry.applyStable(.local([]), source: nil, to: cover)
     let active = ActiveInkStroke(style: .standard)
     active.replaceMeasuredTail(
       from: 0,

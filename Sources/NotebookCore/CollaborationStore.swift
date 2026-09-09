@@ -294,16 +294,6 @@ extension NotebookStore {
     }
   }
 
-  public func collaborationSnapshot() throws -> [String: JSONValue] {
-    try prepare()
-    return try withMutationLock {
-      var files = try CollaborationWorkspace(store: self).files
-      files["last-context.json"] = try? .encode(loadPresence())
-      files["collaboration/contexts.json"] = try .encode(SharedContextSnapshot(contexts: readSharedContexts(), selection: readContextSelection()))
-      files["collaboration/actions.json"] = try .encode(loadCollaborationActions())
-      return files
-    }
-  }
 }
 
 extension CollaborationReceipt {

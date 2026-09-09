@@ -7,9 +7,8 @@ import XCTest
 
 final class PortalInkTests: XCTestCase {
   @MainActor
-  func testPortalReplaysErasedInkThroughTheActiveMetalRenderer() async throws {
-    let id = UUID()
-    let actor = UUID()
+  func testPortalCompositionPreservesTheSharedMetalPenAndEraserPixels() async throws {
+    let id = UUID(), actor = UUID()
     var journal = SpatialInkJournal(stamp: VersionStamp(counter: 0, actor: actor))
     for (tool, xs, width) in [
       (SpatialInkTool.pen, [-100.0, 0, 100], 20.0),
@@ -21,68 +20,39 @@ final class PortalInkTests: XCTestCase {
           force: 1, azimuth: 0, altitude: 1)
       })], actor: actor)
     }
-    let size = SpatialPoint(x: 300, y: 300)
-    let camera = SpatialCamera(scale: 1)
-    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
-    let window = UIWindow(windowScene: scene)
-    window.frame = CGRect(x: 0, y: 0, width: 600, height: 300)
-    defer { window.isHidden = true }
-    let controller = UIViewController()
-    controller.view.backgroundColor = .white
-    window.rootViewController = controller
-    let host = UIHostingController(rootView: PortalBoardInkView(boardID: id,
-      journal: journal, camera: camera, viewport: size).frame(width: 300, height: 300))
-    host.view.backgroundColor = .white
-    controller.addChild(host)
-    controller.view.addSubview(host.view)
-    host.view.frame = CGRect(x: 0, y: 0, width: 300, height: 300)
-    host.didMove(toParent: controller)
-    let active = InkCanvasView(frame: CGRect(x: 300, y: 0, width: 300, height: 300))
-    controller.view.addSubview(active)
-    window.makeKeyAndVisible()
-    host.view.layoutIfNeeded()
-    active.applySpatial(.local(SpatialInkComposer.boardLayers(board: .board(id), journal: journal,
-      camera: camera, viewport: size)))
-    let portal = try XCTUnwrap(canvas(in: host.view))
-    let ready = expectation(description: "Оба Metal-кадра завершены")
-    ready.expectedFulfillmentCount = 2
-    var seenPortal = false
-    var seenActive = false
-    portal.onRenderReadinessChange = { value in
-      if value && !seenPortal { seenPortal = true; ready.fulfill() }
-    }
-    active.onRenderReadinessChange = { value in
-      if value && !seenActive { seenActive = true; ready.fulfill() }
-    }
-    await fulfillment(of: [ready], timeout: 4)
-    XCTAssertEqual(portal.committedVertexCount, active.committedVertexCount)
-    XCTAssertEqual(portal.committedEraserVertexCount, active.committedEraserVertexCount)
-    XCTAssertGreaterThan(portal.committedEraserVertexCount, 0)
-    let format = UIGraphicsImageRendererFormat()
-    format.scale = 1
-    let image = UIGraphicsImageRenderer(size: CGSize(width: 600, height: 300), format: format).image { _ in
-      controller.view.drawHierarchy(in: controller.view.bounds, afterScreenUpdates: true)
-    }
-    let cgImage = try XCTUnwrap(image.cgImage)
-    var pixels = [UInt8](repeating: 0, count: 600 * 300 * 4)
-    try pixels.withUnsafeMutableBytes { bytes in
-      let context = try XCTUnwrap(CGContext(data: bytes.baseAddress, width: 600, height: 300,
-        bitsPerComponent: 8, bytesPerRow: 600 * 4, space: CGColorSpaceCreateDeviceRGB(),
+    let size = CGSize(width: 300, height: 300), viewport = SpatialPoint(x: 300, y: 300)
+    let camera = SpatialCamera(scale: 1), resources = SceneRenderResources()
+    let layers = SpatialInkComposer.boardLayers(board: .board(id), journal: journal, camera: camera, viewport: viewport)
+    let native = InkCanvasView(frame: .init(origin: .zero, size: size))
+    native.applySpatial(.local(layers))
+    XCTAssertGreaterThan(native.committedVertexCount, 0)
+    XCTAssertGreaterThan(native.committedEraserVertexCount, 0)
+    let expected = try XCTUnwrap(InkRasterRenderer.shared.render(layers: layers, size: size, scale: 2))
+    // Passive portal ink now traverses this compositor, including its 512-pixel
+    // mask chunks. Compare actual alpha pixels with the same Metal used by the
+    // active canvas; no test-only portal surface remains mounted.
+    let compositor = try await SceneRasterCompositor.create(size: size, scale: 2, resources: resources)
+    try await compositor.drawInk(surface: .board(id), journal: journal, camera: camera,
+      size: size, in: .init(origin: .zero, size: size))
+    let png = try await compositor.finishPNG()
+    let actual = try XCTUnwrap(UIImage(data: png)?.cgImage)
+    XCTAssertEqual(actual.width, expected.width)
+    XCTAssertEqual(actual.height, expected.height)
+    func pixels(_ image: CGImage) throws -> [UInt8] {
+      let context = try XCTUnwrap(CGContext(data: nil, width: image.width, height: image.height,
+        bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
-      context.draw(cgImage, in: CGRect(x: 0, y: 0, width: 600, height: 300))
+      context.draw(image, in: .init(x: 0, y: 0, width: image.width, height: image.height))
+      let data = try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self)
+      return Array(UnsafeBufferPointer(start: data, count: image.width * image.height * 4))
     }
-    var difference = 0
-    var dark = 0
-    for y in 0..<300 {
-      for x in 0..<300 {
-        let left = (y * 600 + x) * 4
-        let right = (y * 600 + x + 300) * 4
-        for c in 0..<3 { difference += abs(Int(pixels[left + c]) - Int(pixels[right + c])) }
-        if pixels[left] < 128 { dark += 1 }
-      }
-    }
-    XCTAssertGreaterThan(dark, 1_000)
-    XCTAssertLessThan(Double(difference) / Double(300 * 300 * 3 * 255), 0.001)
+    let rendered = try pixels(actual), reference = try pixels(expected)
+    let difference = zip(rendered, reference).reduce(0) { $0 + abs(Int($1.0) - Int($1.1)) }
+    XCTAssertLessThan(Double(difference) / Double(rendered.count * 255), 0.001)
+    XCTAssertGreaterThan(stride(from: 3, to: rendered.count, by: 4).filter { rendered[$0] > 240 }.count, 4_000)
+    XCTAssertLessThan(rendered[(300 * actual.width + 300) * 4 + 3], 5, "The later eraser clears the center")
+    XCTAssertGreaterThan(rendered[(300 * actual.width + 160) * 4 + 3], 240, "Unaffected pen survives the mask composition")
+    XCTAssertEqual(resources.reservedBytes, 0)
   }
 
   @MainActor
@@ -181,11 +151,5 @@ final class PortalInkTests: XCTestCase {
       previousPNG = png
     }
     await model.finishPendingPersistence()
-  }
-
-  @MainActor
-  private func canvas(in view: UIView) -> InkCanvasView? {
-    if let view = view as? InkCanvasView { return view }
-    return view.subviews.lazy.compactMap { self.canvas(in: $0) }.first
   }
 }

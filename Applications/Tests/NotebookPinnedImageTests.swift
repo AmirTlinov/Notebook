@@ -131,7 +131,7 @@ final class NotebookPinnedImageTests: XCTestCase {
       let selection = try XCTUnwrap(NotebookAttentionProjection.capture(
         start: .init(x: box.x - 98, y: box.y - 98),
         end: .init(x: box.x + intersection, y: box.y + intersection),
-        model: model, presence: presence, cohort: shown))
+        model: model, presence: presence, cohort: shown, installedInk: cohortInkSources(shown)))
       let reference = try XCTUnwrap(selection.resolvedReferences().first { $0.target.kind == .cover })
       XCTAssertNil(reference.elementID, "An area intersection is not a second tap on the corner's element")
       let region = try XCTUnwrap(reference.region)
@@ -179,7 +179,7 @@ final class NotebookPinnedImageTests: XCTestCase {
     while model.scenePreparationPending, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     XCTAssertNotEqual(model.sceneIndex?.generationID, shown.frame.index.generationID)
     let selected = try XCTUnwrap(NotebookAttentionProjection.capture(start: .init(x: 276, y: 276),
-      end: .init(x: 276, y: 276), model: model, presence: presence, cohort: shown))
+      end: .init(x: 276, y: 276), model: model, presence: presence, cohort: shown, installedInk: [:]))
     let reference = try XCTUnwrap(selected.resolvedReferences().first)
     XCTAssertEqual(reference.elementID, old.id)
     XCTAssertEqual(reference.region, .init(x: 0, y: 0, width: 100, height: 60), "A tap pins the full frame in the completed contact, not at send time")
