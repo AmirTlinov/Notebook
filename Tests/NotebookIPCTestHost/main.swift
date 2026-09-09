@@ -10,16 +10,13 @@ struct FixtureControl: Decodable, Sendable {
   let value: JSONValue?
 }
 struct Seed: Decodable {
-  let workspace: WorkspaceIndex
-  let page: PageDocument
-  let board: BoardHierarchy
-  let spatialInk: SpatialInkJournal
+  let actor: UUID
+  let itemID: UUID
+  let pageID: UUID
+  let rootBoardID: UUID
+  let title: String
+  let pageSize: PageSize
   let presence: SessionPresence
-}
-struct WorkspaceBundle: Decodable {
-  let workspace: WorkspaceIndex
-  let page: PageDocument
-  let board: BoardHierarchy
 }
 actor TestOwner {
   let store: NotebookStore
@@ -30,15 +27,24 @@ actor TestOwner {
     switch command.operation {
     case "seed":
       let fixture = try value.decode(Seed.self)
-      try store.saveWorkspaceBundle(index: fixture.workspace, page: fixture.page, board: fixture.board)
-      try store.saveSpatialInk(fixture.spatialInk)
+      // The fixture submits creation intent, never a handwritten archive or a
+      // bounded MCP projection. Core authors the same order witnesses and
+      // causal fields as native notebook creation before the atomic publish.
+      let stamp = VersionStamp(counter: 0, actor: fixture.actor)
+      let page = PageDocument(id: fixture.pageID, size: fixture.pageSize, actor: fixture.actor)
+      let workspace = WorkspaceIndex(
+        items: [.notebook(id: fixture.itemID, title: fixture.title, pageIDs: [page.id])],
+        selectedItemID: fixture.itemID, selectedPageID: page.id, stamp: stamp, rootBoardID: fixture.rootBoardID)
+      let board = BoardHierarchy.initial(rootBoardID: fixture.rootBoardID, itemIDs: [fixture.itemID], actor: fixture.actor)
+      try store.saveWorkspaceBundle(index: workspace, page: page, board: board)
+      try store.saveSpatialInk(SpatialInkJournal(stamp: stamp))
       try store.savePresence(fixture.presence)
+      return .object(["workspaceStamp": try .encode(store.workspaceHeader().stamp),
+        "page": try .encode(store.loadPage(page.id)), "spatialInkStamp": try .encode(store.loadSpatialInk().stamp),
+        "presence": try .encode(store.loadPresence())])
     case "page": try store.savePage(value.decode(PageDocument.self))
     case "presence": try store.savePresence(value.decode(SessionPresence.self))
     case "ink": try store.saveSpatialInk(value.decode(SpatialInkJournal.self))
-    case "workspaceBundle":
-      let fixture = try value.decode(WorkspaceBundle.self)
-      try store.saveWorkspaceBundle(index: fixture.workspace, page: fixture.page, board: fixture.board)
     case "input": try store.saveInputActivity(value.decode(NotebookInputActivity.self))
     case "targetReceipt": try store.saveTargetRender(value.decode(TargetRenderReceipt.self))
     case "renderRequests": return try .encode(store.targetRenderRequests())

@@ -13,6 +13,8 @@ private func withPublicationStore(_ body: (NotebookStore, WorkspaceIndex, BoardH
   let index = try store.loadOrCreate(actor: publicationActorA, pageSize: publicationSize).0
   let board = try store.loadOrCreateBoard(workspace: index, actor: publicationActorA)
   _ = try store.loadOrCreateSpatialInk(actor: publicationActorA)
+  try store.savePresence(.init(mode: .board, camera: .init(), viewport: .init(x: 834, y: 1194),
+    selectedItemID: index.selectedItemID, notebookPageID: index.selectedPageID))
   try body(store, index, board)
 }
 

@@ -194,9 +194,15 @@ final class AgentStateTests: XCTestCase {
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: PageSize(width: 834, height: 1_194))
+    let initialSaved = await model.finishPendingPersistence()
+    XCTAssertTrue(initialSaved, model.persistenceFailure ?? "")
     let original = try XCTUnwrap(model.workspace)
-    var remoteIndex = original
-    var remoteBoard = try XCTUnwrap(model.boardHierarchy)
+    let peer = NotebookStore(root: root.appendingPathComponent("peer")), peerID = UUID()
+    try NotebookPeerFixture.copy(from: store, to: peer, peerID: model.actorID)
+    // The peer authors a canonical archive, not the iPad's bounded scene projection.
+    let originalCatalog = try peer.loadIndex()
+    var remoteIndex = originalCatalog
+    var remoteBoard = try peer.loadBoard(items: originalCatalog.items)
     let remoteActor = UUID()
     let item = try XCTUnwrap(remoteIndex.createDocument(
       title: "Сетевой документ",
@@ -215,15 +221,12 @@ final class AgentStateTests: XCTestCase {
     )
     let state = DocumentStateJournal(id: item.id, actor: remoteActor)
 
-    await model.finishPendingPersistence()
-    let peer = NotebookStore(root: root.appendingPathComponent("peer")), peerID = UUID()
-    try NotebookPeerFixture.copy(from: store, to: peer, peerID: model.actorID)
     try peer.saveDocumentWorkspaceBundle(index: remoteIndex, document: document, state: state, board: remoteBoard)
     let changes = try peer.changeJournal(after: 0, limit: 16)
     let change = try XCTUnwrap(changes.last)
     try NotebookPeerFixture.stage(change, from: peer, to: store)
     XCTAssertEqual(model.workspace, original, "Staged blobs are not a visible publication")
-    XCTAssertEqual(try store.loadIndex().items, original.items)
+    XCTAssertEqual(try store.loadIndex().items, originalCatalog.items)
     try await NotebookPeerFixture.deliver(from: peer, to: model, peerID: peerID)
 
     let saved = await model.finishPendingPersistence()

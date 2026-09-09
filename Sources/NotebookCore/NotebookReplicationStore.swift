@@ -41,7 +41,7 @@ extension NotebookStore {
     guard data.count <= 67_108_864 else { throw NotebookStorageError.limitExceeded("change_manifest_part") }
     let manifest = try JSONDecoder().decode(NotebookChangeManifest.self, from: data)
     let workspaceID = try currentSQL!.rows("SELECT value FROM metadata WHERE key='workspace_id'").first?[0].text.flatMap(UUID.init(uuidString:))
-    guard manifest.format == 1, manifest.transactionID == change.transactionID, manifest.workspaceID == workspaceID,
+    guard manifest.format == 2, manifest.transactionID == change.transactionID, manifest.workspaceID == workspaceID,
       manifest.records.count <= 16_384, manifest.parts.count <= 512,
       !manifest.records.isEmpty || !manifest.parts.isEmpty,
       manifest.records.isEmpty || manifest.parts.isEmpty,
@@ -49,7 +49,9 @@ extension NotebookStore {
       Set(manifest.parts).count == manifest.parts.count,
       Set(manifest.records.map(\.address)).count == manifest.records.count else { throw NotebookStorageError.invalidTransaction("manifest identity or duplicate addresses") }
     func validHash(_ hash: String) -> Bool { hash.utf8.count == 64 && hash.allSatisfy { "0123456789abcdef".contains($0) } }
-    guard manifest.parts.allSatisfy(validHash) else { throw NotebookStorageError.invalidTransaction("manifest part hash") }
+    guard manifest.parts.allSatisfy(validHash), manifest.pageOrderRoots.count <= 131_072,
+      Set(manifest.pageOrderRoots).count == manifest.pageOrderRoots.count,
+      manifest.pageOrderRoots.allSatisfy(validHash), partHash == nil || manifest.pageOrderRoots.isEmpty else { throw NotebookStorageError.invalidTransaction("manifest part hash") }
     for record in manifest.records {
       let parts = record.address.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
       guard parts.count == 2, parts[0].hasSuffix(".json"), !record.address.contains(".."),
@@ -69,6 +71,8 @@ extension NotebookStore {
       if try database.rows("SELECT 1 FROM manifests WHERE hash=?", [.text(change.manifestHash)]).isEmpty {
         let manifest = try validatedManifest(change)
         try database.run("INSERT INTO manifests(hash,transaction_id) VALUES(?,?)", [.text(change.manifestHash), .text(change.transactionID.uuidString.lowercased())])
+        for hash in manifest.pageOrderRoots { try database.run("INSERT INTO manifest_order_nodes(manifest_hash,hash) VALUES(?,?)", [.text(change.manifestHash), .text(hash)]) }
+        try database.run("UPDATE manifests SET order_node_count=? WHERE hash=?", [.integer(Int64(manifest.pageOrderRoots.count)), .text(change.manifestHash)])
         for hash in manifest.parts { try database.run("INSERT INTO manifest_parts(manifest_hash,part_hash) VALUES(?,?)", [.text(change.manifestHash), .text(hash)]) }
         for record in manifest.records {
           try database.run("INSERT INTO manifest_records(manifest_hash,address,blob_hash) VALUES(?,?,?)", [.text(change.manifestHash), .text(record.address), record.blobHash.map(NotebookSQLValue.text) ?? .null])
@@ -87,7 +91,9 @@ extension NotebookStore {
         }
         try database.run("UPDATE manifest_parts SET loaded=1 WHERE manifest_hash=? AND part_hash=?", [.text(change.manifestHash), .text(hash)])
       }
-      return try database.rows("SELECT DISTINCT m.blob_hash FROM manifest_records m LEFT JOIN blobs b ON b.hash=m.blob_hash WHERE m.manifest_hash=? AND m.blob_hash>? AND b.hash IS NULL ORDER BY m.blob_hash LIMIT ?", [.text(change.manifestHash), .text(after ?? ""), .integer(Int64(limit))]).compactMap { $0[0].text }
+      let missing = try database.rows("SELECT DISTINCT m.blob_hash FROM manifest_records m LEFT JOIN blobs b ON b.hash=m.blob_hash WHERE m.manifest_hash=? AND m.blob_hash>? AND b.hash IS NULL ORDER BY m.blob_hash LIMIT ?", [.text(change.manifestHash), .text(after ?? ""), .integer(Int64(limit))]).compactMap { $0[0].text }
+      if !missing.isEmpty { return missing }
+      return try missingPageOrderBlobs(manifestHash: change.manifestHash, limit: limit)
     }
   }
 
@@ -108,8 +114,11 @@ extension NotebookStore {
         return
       }
       guard change.sequence == cursor + 1 else { throw NotebookStorageError.invalidTransaction("noncontiguous incoming cursor") }
-      _ = try validatedManifest(change)
+      let manifest = try validatedManifest(change)
       guard try missingBlobHashes(for: change, limit: 1).isEmpty else { throw NotebookStorageError.blobMissing(change.manifestHash) }
+      try validateIncomingPageOrderValues(manifest.pageOrderRoots)
+      try installPageOrderDependencies(manifestHash: change.manifestHash)
+      database.pageOrderRoots.formUnion(manifest.pageOrderRoots)
       var incoming: [String: [NotebookStoredFragment]] = [:], removals: [String: Set<String>] = [:]
       for recordRow in try database.rows("SELECT address,blob_hash FROM manifest_records WHERE manifest_hash=? ORDER BY address", [.text(change.manifestHash)]) {
         let record = NotebookRecordMutation(address: recordRow[0].text!, blobHash: recordRow[1].text)
@@ -118,9 +127,21 @@ extension NotebookStore {
           let row = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(hash))
           guard row.address == record.address, row.file == file,
             row.position >= 0, row.value.isValid else { throw NotebookStorageError.invalidTransaction("fragment identity") }
+          if file == "workspace.json", row.collection == "pageOrders" {
+            let order = try row.value.decode(NotebookPageOrderRegister.self)
+            try order.validate()
+            guard Set(order.heads.map(\.valueRoot) + [order.visibleRoot]).isSubset(of: Set(manifest.pageOrderRoots)) else {
+              throw NotebookStorageError.invalidTransaction("undeclared page order dependencies")
+            }
+          }
+          if file == "workspace.json", row.collection == "pageOrderNodes" {
+            guard row.parent == "workspace.json#", row.position == 0, row.collections.isEmpty,
+              row.address == "workspace.json#/pageOrderNodes/@" + row.member,
+              try row.value.decode(NotebookPageOrderNode.self).hash == row.member else { throw NotebookStorageError.blobHashMismatch }
+          }
           incoming[file, default: []].append(row)
         } else {
-          guard !file.hasPrefix("agent/") else { throw NotebookStorageError.invalidTransaction("agent history is immutable") }
+          guard !file.hasPrefix("agent/"), !record.address.hasPrefix("workspace.json#/pageOrderNodes/@") else { throw NotebookStorageError.invalidTransaction("agent history is immutable") }
           removals[file, default: []].insert(record.address)
         }
       }
@@ -222,4 +243,5 @@ extension NotebookStore {
     }
     return try peerCursor(peerID: peerID, direction: .incoming)
   }
+
 }

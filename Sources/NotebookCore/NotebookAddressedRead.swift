@@ -379,7 +379,14 @@ extension NotebookStore {
       let fields = try causalFragments(parent: root.address, collection: "collaboration/fields",
         memberPrefixes: items.map { "items/" + $0.id.uuidString.lowercased() + "/" }, includeKeys: ["items/order"])
       var value = try NotebookRecordCodec.decode([root] + fields, root: root.address)
-      value = value.setting("items", try .encode(items))
+      var orders: [String: NotebookPageOrderRegister] = [:], nodes: [String: NotebookPageOrderNode] = [:]
+      for item in items where item.kind == .notebook {
+        let order = try readPageOrder(item.id)
+        orders[item.id.uuidString.lowercased()] = order
+        for (hash, node) in try NotebookPageOrderVector.rightSpine(order.visibleRoot, read: { try readPageOrderNode($0) }) { nodes[hash] = node }
+      }
+      value = try value.setting("items", .encode(items)).setting("pageOrders", .encode(orders))
+        .setting("pageOrderNodes", .encode(nodes)).setting("isProjection", .bool(true))
       var projection = try value.decode(WorkspaceIndex.self)
       _ = projection.selectItem(selectedItemID, pageID: selectedPageID, actor: projection.stamp.actor)
       return projection

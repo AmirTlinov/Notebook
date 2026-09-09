@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { BridgeError, runBridge } from "../src/bridge.js";
-import { NotebookStore, visibleBounds } from "../src/store.js";
+import { NotebookStore, visibleBounds, workspaceProjection } from "../src/store.js";
 import { revision } from "../src/domain.js";
 import { appActor, itemID, pageID, rootBoardID, writeFixture, fixtureControl, fixtureSocket, stopFixture } from "./fixture.js";
 
@@ -17,6 +17,11 @@ async function withStore(body:(store:NotebookStore,root:string)=>Promise<void>):
 
 test("reads the selected physical page through the real IPC owner with no canonical JSON files",async()=>{
   await withStore(async(store,root)=>{
+    const canonical = await fixtureControl<{workspace:{format:number;isProjection:boolean;pageOrders:Record<string,unknown>;pageOrderNodes:Record<string,unknown>}}>(root,"readFixture");
+    assert.equal(canonical.workspace.format,5);
+    assert.equal(canonical.workspace.isProjection,false);
+    assert.equal(Object.keys(canonical.workspace.pageOrders).length,1);
+    assert.ok(Object.keys(canonical.workspace.pageOrderNodes).length > 0,"Core authors the immutable page-order witnesses");
     const page=await store.readCurrentPage();
     assert.equal(page.id.toLowerCase(),pageID);assert.equal(revision(page.agentStamp),`0@${appActor}`);
     for(const path of ["workspace.json","board.json","spatial-ink.json","last-context.json",`pages/${pageID}.json`]) {
@@ -54,6 +59,16 @@ test("reads one bounded board window, selected metadata, ink and presence",async
   await withStore(async(store)=>{
     const presence=await store.readPresence();const window=await store.readSceneWindow(rootBoardID,visibleBounds(presence),1);
     assert.equal(window.items[0]?.id.toLowerCase(),itemID);assert.equal(window.truncated,false);
+    const addressed = await store.readWorkspaceProjection([itemID,itemID.toUpperCase()]);
+    const scene = workspaceProjection(window);
+    const keys = ["items","rootBoardID","selectedItemID","selectedPageID","stamp"];
+    for (const projection of [addressed,scene]) {
+      assert.deepEqual(Object.keys(projection).sort(),keys,"A metadata projection never impersonates an archive format or causal witness");
+      assert.equal(projection.rootBoardID.toLowerCase(),rootBoardID);
+      assert.deepEqual(projection.items.map(item=>item.id.toLowerCase()),[itemID]);
+      assert.deepEqual(projection.stamp,window.header.stamp);
+      assert.equal(projection.selectedPageID?.toLowerCase(),pageID);
+    }
     const ink=await store.readSpatialInk([{kind:"board",ownerID:rootBoardID}]);assert.equal(ink.actions.length,0);
     assert.equal(presence.mode,"page");
   });

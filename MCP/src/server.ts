@@ -23,7 +23,7 @@ import type {
   SpatialElement,
   VersionStamp,
   WorldPoint,
-  WorkspaceIndex,
+  WorkspaceProjection,
   WorkspaceItem,
 } from "./domain.js";
 import {
@@ -132,9 +132,9 @@ export function createServer(store = new NotebookStore()): McpServer {
         cover_cursor:z.string().max(4096).optional(),cover_limit:z.number().int().min(1).max(32).default(32) }),
     },
     ({ notebook_id,start_page,limit,cover_cursor,cover_limit }) => readSafely(async () => {
-      const workspace = await store.readWorkspace([notebook_id]);
+      const workspace = await store.readWorkspaceProjection([notebook_id]);
       const [board, spatialInk, cover] = await Promise.all([
-        store.readItemBoard(notebook_id, workspace),
+        store.readItemBoard(notebook_id),
         store.readSpatialInk([{kind:"cover",ownerID:notebook_id}]),
         store.readCoverElements(notebook_id,canonicalPageSize,cover_cursor,cover_limit),
       ]);
@@ -379,7 +379,7 @@ async function observeContext(store: NotebookStore, contextID?: string) {
 }
 
 function visibleItems(
-  workspace: WorkspaceIndex,
+  workspace: WorkspaceProjection,
   board: BoardDocument,
   spatialInk: Awaited<ReturnType<NotebookStore["readSpatialInk"]>>,
   presence: SessionPresence,
@@ -481,7 +481,7 @@ function visibleItems(
 }
 
 function itemIdentity(
-  item: WorkspaceIndex["items"][number],
+  item: WorkspaceProjection["items"][number],
   board: BoardDocument,
   spatialInk: Awaited<ReturnType<NotebookStore["readSpatialInk"]>>,
 ): object {
@@ -631,7 +631,7 @@ function textPreview(value: string): string {
 }
 
 function joinedBoardNodes(
-  workspace: WorkspaceIndex,
+  workspace: WorkspaceProjection,
   board: BoardDocument,
   spatialInk: Awaited<ReturnType<NotebookStore["readSpatialInk"]>>,
   itemSizes: Map<string, PageSize>,
@@ -674,7 +674,7 @@ async function assertCurrentSurfaceSource(
     const surface = receipt.surface;
     const [page, workspace] = await Promise.all([
       store.readPage(surface.revision.pageID),
-      store.readWorkspace([surface.itemID]),
+      store.readWorkspaceProjection([surface.itemID]),
     ]);
     const owner = workspace.items.find((item) =>
       item.kind === "notebook"

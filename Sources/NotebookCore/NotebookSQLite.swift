@@ -21,6 +21,11 @@ final class NotebookSQLConnection {
   var dirtyReferenceRoots = Set<String>()
   var touchedItemIDs = Set<UUID>()
   var touchedCoverAddresses = Set<String>()
+  var pageOrderRoots = Set<String>()
+  var touchedPageOrders = Set<String>()
+  var touchedPageMemberships = Set<String>()
+  var capturedPageOrderRoots = Set<String>()
+  var previousPageOrderRoots: [String: String] = [:]
   private var statements: [String: OpaquePointer] = [:]
 
   init(url: URL, writable: Bool, create: Bool = false) throws {
@@ -150,7 +155,9 @@ struct NotebookRecordCodec {
         for key in fields.keys.sorted() {
           let value = fields[key]!, location = path + [key]
           let collectionKey = fieldKey(location)
-          if key == "fields", path.last == "collaboration", case .object(let versions) = value {
+          if ((key == "fields" && path.last == "collaboration")
+            || (file == "workspace.json" && path.isEmpty && ["pageOrders", "pageOrderNodes"].contains(key))),
+            case .object(let versions) = value {
             collections.append(.init(path: location, kind: .dictionary))
             for member in versions.keys.sorted() {
               try make(versions[member]!, address: address + "/" + collectionKey + "/@" + fieldKey([member]),
@@ -178,6 +185,9 @@ struct NotebookRecordCodec {
             collections.append(.init(path: location, kind: .value))
             try make(value, address: address + "/" + collectionKey, parent: address,
               collection: collectionKey, member: "", position: 0)
+          } else if file == "workspace.json", path.isEmpty, key == "isProjection" {
+            // Projection is a typed read/command envelope, never durable state.
+            output[key] = .bool(false)
           } else { output[key] = try strip(value, path: location) }
         }
         return .object(output)
@@ -269,7 +279,7 @@ extension NotebookStore {
     let database = try NotebookSQLConnection(url: databaseURL, writable: true, create: true)
     let applicationID = try database.rows("PRAGMA application_id").first?.first?.integer ?? 0
     let version = try database.rows("PRAGMA user_version").first?.first?.integer ?? 0
-    guard applicationID == 0 || (applicationID == 1_313_999_665 && version == 1) else { throw NotebookStorageError.unsupportedFormat }
+    guard applicationID == 0 || (applicationID == 1_313_999_665 && version == 2) else { throw NotebookStorageError.unsupportedFormat }
     try database.run("PRAGMA journal_mode=WAL")
     try database.run("PRAGMA wal_autocheckpoint=1000")
     if applicationID == 0 {
@@ -289,10 +299,13 @@ extension NotebookStore {
         try database.run("CREATE TABLE change_log(sequence INTEGER PRIMARY KEY AUTOINCREMENT, transaction_id TEXT NOT NULL UNIQUE, manifest_hash TEXT NOT NULL REFERENCES blobs(hash), byte_count INTEGER NOT NULL)")
         try database.run("CREATE TABLE change_records(sequence INTEGER NOT NULL REFERENCES change_log(sequence),address TEXT NOT NULL,blob_hash TEXT,PRIMARY KEY(sequence,address))")
         try database.run("CREATE INDEX change_record_history ON change_records(address,sequence)")
-        try database.run("CREATE TABLE manifests(hash TEXT PRIMARY KEY REFERENCES blobs(hash), transaction_id TEXT NOT NULL)")
+        try database.run("CREATE TABLE manifests(hash TEXT PRIMARY KEY REFERENCES blobs(hash), transaction_id TEXT NOT NULL,order_node_count INTEGER NOT NULL DEFAULT 0,order_node_bytes INTEGER NOT NULL DEFAULT 0)")
         try database.run("CREATE TABLE manifest_records(manifest_hash TEXT NOT NULL REFERENCES manifests(hash), address TEXT NOT NULL, blob_hash TEXT, PRIMARY KEY(manifest_hash,address))")
         try database.run("CREATE TABLE manifest_parts(manifest_hash TEXT NOT NULL REFERENCES manifests(hash), part_hash TEXT NOT NULL, loaded INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(manifest_hash,part_hash))")
         try database.run("CREATE INDEX manifest_blobs ON manifest_records(manifest_hash,blob_hash)")
+        try database.run("CREATE TABLE manifest_order_nodes(manifest_hash TEXT NOT NULL REFERENCES manifests(hash),hash TEXT NOT NULL,expanded INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(manifest_hash,hash))")
+        try database.run("CREATE INDEX manifest_order_pending ON manifest_order_nodes(manifest_hash,expanded,hash)")
+        try database.run("CREATE TABLE page_order_nodes(hash TEXT PRIMARY KEY REFERENCES blobs(hash),height INTEGER NOT NULL,count INTEGER NOT NULL)")
         try database.run("CREATE TABLE received_transactions(transaction_id TEXT PRIMARY KEY, manifest_hash TEXT NOT NULL, peer_id TEXT NOT NULL, sequence INTEGER NOT NULL)")
         try database.run("CREATE TABLE peer_cursors(peer_id TEXT NOT NULL, direction TEXT NOT NULL, sequence INTEGER NOT NULL, PRIMARY KEY(peer_id,direction))")
         try database.run("CREATE TABLE item_page_counts(address TEXT PRIMARY KEY REFERENCES records(address) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,count INTEGER NOT NULL CHECK(count>=0))")
@@ -318,7 +331,7 @@ extension NotebookStore {
         try database.run("CREATE TABLE ink_surfaces(address TEXT NOT NULL REFERENCES records(address) ON DELETE CASCADE, kind TEXT NOT NULL, owner_id TEXT NOT NULL, PRIMARY KEY(address,kind,owner_id))")
         try database.run("CREATE INDEX ink_owner ON ink_surfaces(kind,owner_id,address)")
         try database.run("PRAGMA application_id=1313999665")
-        try database.run("PRAGMA user_version=1")
+        try database.run("PRAGMA user_version=2")
         try database.run("COMMIT")
       } catch { try? database.run("ROLLBACK"); throw error }
     }
@@ -350,6 +363,7 @@ extension NotebookStore {
     var committed = false
     do {
       let result = try operation()
+      try validateChangedPageOrders(database: database)
       try validateChangedOwnership(database: database)
       try refreshBoardFrontier(database: database)
       try refreshReferenceIndex(database: database)
@@ -375,7 +389,7 @@ extension NotebookStore {
           }
         }
         let manifest = NotebookChangeManifest(transactionID: transactionID, workspaceID: workspaceID,
-          records: parts.isEmpty ? records : [], parts: parts)
+          records: parts.isEmpty ? records : [], parts: parts, pageOrderRoots: database.pageOrderRoots.sorted())
         let data = try Self.storageEncoder.encode(manifest)
         guard data.count <= 64 * 1024 * 1024 else { throw NotebookStorageError.limitExceeded("change_manifest") }
         let hash = try database.putBlob(data)
@@ -450,6 +464,7 @@ extension NotebookStore {
           value = value.setting("collaboration", try .encode(metadata))
         }
         let fragments = try NotebookRecordCodec.encode(value, file: file)
+        if file == "workspace.json" { try value.decode(WorkspaceIndex.self).validatePageOrderWitness() }
         let oldRows = try database.rows("SELECT address,hash FROM records WHERE file=?", [.text(file)])
         var old = Dictionary(uniqueKeysWithValues: oldRows.map { ($0[0].text!, $0[1].text!) })
         for fragment in fragments {
@@ -471,7 +486,7 @@ extension NotebookStore {
             database.changes[version.address] = .init(address: version.address, blobHash: hash)
           }
         }
-        for address in old.keys {
+        for address in old.keys where !address.hasPrefix("workspace.json#/pageOrderNodes/@") {
           try removeFragment(address, database: database)
         }
       }

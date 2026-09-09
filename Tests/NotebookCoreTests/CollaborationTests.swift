@@ -444,6 +444,31 @@ func collaborationBlockStateUndoAndMerge() throws {
   #expect(agent.value(for:"counter") == .number(11))
 }
 
+@Test("Имена метаданных каталога внутри состояния остаются содержанием и отменяются")
+func collaborationElementStatePreservesWorkspaceMetadataNames() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  func state(_ value: Int) -> JSONValue {
+    .object(["pageOrders": .number(Double(value)),
+      "nested": .array([.object(["pageOrderNodes": .string("nodes-\(value)"),
+        "isProjection": .bool(value != 0)])])])
+  }
+  let initial = state(0), edited = state(1)
+  var values = f.insert().values
+  values["state"] = initial
+  let insertion = CollaborationOperation(kind: .insertElement, target: f.page,
+    id: "idea", values: values)
+  _ = try f.store.applyCollaborationAction(f.action([insertion]), actor: f.agent)
+  let action = try f.action([.init(kind: .setElementState, target: f.page,
+    id: "idea", values: ["state": edited])])
+  let receipt = try f.store.applyCollaborationAction(action, actor: f.agent)
+  #expect(!receipt.changes.isEmpty)
+  #expect(try f.store.loadPage(f.pageID).elements[0].state == edited)
+  let undone = try f.store.undoCollaborationAction(action.id, actor: f.human)
+  #expect(undone.undo?.restored == receipt.changes.count)
+  #expect(undone.undo?.preserved.isEmpty == true)
+  #expect(try f.store.loadPage(f.pageID).elements[0].state == initial)
+}
+
 @Test("Публикация хода переносит изменённых владельцев и сохраняет остальную тетрадь")
 func collaborationSparsePublication() throws {
   let f = try CollaborationFixture(); defer { f.clean() }

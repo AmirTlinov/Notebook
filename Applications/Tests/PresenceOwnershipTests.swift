@@ -249,10 +249,17 @@ final class PresenceOwnershipTests: XCTestCase {
     retainNotebookUntilTeardown(model, removing: root)
     let size = PageSize(width: 834, height: 1_194)
     await model.start(pageSize: size)
+    let initialSaved = await model.finishPendingPersistence()
+    XCTAssertTrue(initialSaved, model.persistenceFailure ?? "")
     let originalPresence = try XCTUnwrap(model.presence)
     let originalItemID = try XCTUnwrap(model.workspace?.selectedItemID)
-    var workspace = try XCTUnwrap(model.workspace)
-    var board = try XCTUnwrap(model.boardHierarchy)
+    // An external full publication starts from canonical owners in one WAL cut.
+    let canonical = try store.readTransaction { store in
+      let index = try store.loadIndex()
+      return (index, try store.loadBoard(items: index.items))
+    }
+    var workspace = canonical.0
+    var board = canonical.1
     let created = try XCTUnwrap(workspace.createNotebook(
       title: "Новая",
       actor: UUID(),

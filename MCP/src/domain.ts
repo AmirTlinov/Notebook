@@ -55,9 +55,8 @@ export interface WorkspaceItem {
   pageIDs: string[];
 }
 
-export interface WorkspaceIndex {
-  format: 4;
-  collaboration?: {fields:Record<string,unknown>};
+/** Addressed metadata only; never a canonical archive or a workspace mutation. */
+export interface WorkspaceProjection {
   rootBoardID: string;
   items: WorkspaceItem[];
   selectedItemID: string;

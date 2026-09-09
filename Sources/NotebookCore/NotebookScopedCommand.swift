@@ -19,6 +19,32 @@ extension NotebookStore {
     if suppliedHash != nil { _ = try database.putBlob(data) }
     let previousHash = try database.rows("SELECT hash FROM records WHERE address=?", [.text(fragment.address)]).first?[0].text
     if previousHash == hash { return false }
+    if fragment.file == "workspace.json", fragment.collection == "pageOrderNodes" {
+      guard previousHash == nil, fragment.parent == "workspace.json#", fragment.position == 0,
+        fragment.address == "workspace.json#/pageOrderNodes/@" + fragment.member, fragment.collections.isEmpty else {
+        throw NotebookStorageError.invalidTransaction("immutable page order node")
+      }
+      let node = try fragment.value.decode(NotebookPageOrderNode.self)
+      try node.validate()
+      guard try node.hash == fragment.member else { throw NotebookStorageError.blobHashMismatch }
+      _ = try database.putBlob(node.canonicalData())
+    }
+    if fragment.file == "workspace.json", fragment.collection == "pageOrders" {
+      guard fragment.parent == "workspace.json#", fragment.position == 0,
+        UUID(uuidString: fragment.member)?.uuidString.lowercased() == fragment.member,
+        fragment.address == "workspace.json#/pageOrders/@" + fragment.member, fragment.collections.isEmpty else {
+        throw NotebookStorageError.invalidTransaction("page order address")
+      }
+      let order = try fragment.value.decode(NotebookPageOrderRegister.self)
+      try order.validate()
+      if database.capturedPageOrderRoots.insert(fragment.member).inserted, let previousHash {
+        let old = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(previousHash))
+        database.previousPageOrderRoots[fragment.member] = try old.value.decode(NotebookPageOrderRegister.self).visibleRoot
+      }
+      database.pageOrderRoots.insert(order.visibleRoot)
+      database.pageOrderRoots.formUnion(order.heads.map(\.valueRoot))
+      database.touchedPageOrders.insert(fragment.member)
+    }
     if previousHash != nil,
       (fragment.file.hasPrefix("pages/") && fragment.address.contains("#/drawingData/actions/@") && fragment.collection == "samples")
         || (fragment.file == "spatial-ink.json" && fragment.collection == "spans") {
@@ -27,7 +53,14 @@ extension NotebookStore {
     if fragment.file == "workspace.json", fragment.collection == "items", let id = UUID(uuidString: fragment.member) { database.touchedItemIDs.insert(id) }
     if fragment.file == "workspace.json", fragment.collection == "pageIDs", let parent = fragment.parent,
       let id = parent.components(separatedBy: "@").last.flatMap(UUID.init(uuidString:)) {
+      guard fragment.parent == "workspace.json#/items/@" + id.uuidString.lowercased(),
+        UUID(uuidString: fragment.member)?.uuidString.lowercased() == fragment.member,
+        fragment.value.string.flatMap(UUID.init(uuidString:))?.uuidString.lowercased() == fragment.member else {
+        throw NotebookStorageError.invalidTransaction("page membership identity")
+      }
       database.touchedItemIDs.insert(id)
+      database.touchedPageOrders.insert(id.uuidString.lowercased())
+      database.touchedPageMemberships.insert(fragment.address)
       if previousHash == nil { try database.run("INSERT INTO item_page_counts(address,count) VALUES(?,1) ON CONFLICT(address) DO UPDATE SET count=count+1", [.text(parent)]) }
     }
     if previousHash == nil, fragment.file == "workspace.json", fragment.collection == "items" {
@@ -45,14 +78,18 @@ extension NotebookStore {
   }
 
   func removeFragment(_ address: String, database: NotebookSQLConnection) throws {
+    guard !address.hasPrefix("workspace.json#/pageOrderNodes/@") else { throw NotebookStorageError.invalidTransaction("immutable page order node") }
     let rows = try database.rows("WITH RECURSIVE subtree(address) AS (SELECT address FROM records WHERE address=? UNION ALL SELECT r.address FROM records r JOIN subtree s ON r.parent=s.address) SELECT r.address,r.file,r.collection,r.member,r.hash FROM subtree s JOIN records r ON r.address=s.address", [.text(address)])
     for row in rows {
       let address = row[0].text!, file = row[1].text!, collection = row[2].text!, member = row[3].text!
+      if file == "workspace.json", collection == "pageOrders" { database.touchedPageOrders.insert(member) }
       if file == "workspace.json", collection == "items", let id = UUID(uuidString: member) {
         database.touchedItemIDs.insert(id)
         try database.run("UPDATE metadata SET value=CAST(value AS INTEGER)-1 WHERE key='item_count'")
       }
       if file == "workspace.json", collection == "pageIDs", let id = address.components(separatedBy: "@").dropLast().last?.split(separator: "/").first {
+        database.touchedPageOrders.insert(String(id))
+        database.touchedPageMemberships.insert(address)
         try database.run("UPDATE item_page_counts SET count=count-1 WHERE address=? AND count>0", [.text("workspace.json#/items/@" + id)])
       }
       if file == "board.json" {
@@ -93,7 +130,7 @@ extension NotebookStore {
     // actual sequence edit permutes their durable slots; unseen rows retain
     // theirs, and simultaneously inserted members retain authored order.
     func sequenceGroups(_ fragments: [String: NotebookStoredFragment]) -> [String: [NotebookStoredFragment]] {
-      Dictionary(grouping: fragments.values.filter { $0.parent != nil && !$0.collection.hasSuffix("collaboration/fields") },
+      Dictionary(grouping: fragments.values.filter { $0.parent != nil && !$0.collection.hasSuffix("collaboration/fields") && !["pageOrders", "pageOrderNodes"].contains($0.collection) },
         by: { $0.parent! + "|" + $0.collection })
     }
     let oldGroups = sequenceGroups(old), nextGroups = sequenceGroups(next)
@@ -149,7 +186,7 @@ extension NotebookStore {
         if stored == nil, previous != nil { throw NotebookStorageError.transactionConflict }
         let value = try projectionDelta(before: previous?.value, after: edited.value, current: stored?.value)
         guard let value else { throw NotebookStorageError.invalidTransaction("projection value") }
-        let position = edited.collection.hasSuffix("collaboration/fields") ? 0 : try positions[address] ?? stored?.position ?? Int(database.rows("SELECT COALESCE(MAX(position),-1)+1 FROM records WHERE parent=? AND collection=?", [edited.parent.map(NotebookSQLValue.text) ?? .null, .text(edited.collection)]).first![0].integer!)
+        let position = (edited.collection.hasSuffix("collaboration/fields") || ["pageOrders", "pageOrderNodes"].contains(edited.collection)) ? 0 : try positions[address] ?? stored?.position ?? Int(database.rows("SELECT COALESCE(MAX(position),-1)+1 FROM records WHERE parent=? AND collection=?", [edited.parent.map(NotebookSQLValue.text) ?? .null, .text(edited.collection)]).first![0].integer!)
         let changed = try writeFragment(edited.replacing(value: value, position: position), database: database)
         if changed, !edited.member.isEmpty, !edited.collection.hasSuffix("collaboration/fields"), let parent = edited.parent {
           let prefix = edited.collection.components(separatedBy: "/").last! + "/" + edited.member + "/"

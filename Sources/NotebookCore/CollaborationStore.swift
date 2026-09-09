@@ -161,7 +161,7 @@ extension NotebookStore {
       try requireIdleInput(for: receipt.action.operations.map(\.target))
       var after = before
       var preserved: [CollaborationFieldChange] = []
-      let protected = before.protectedCreationChanges(in: receipt)
+      let protected = try before.protectedCreationChanges(in: receipt, scope: self)
       var restored = 0
       for operation in receipt.action.operations where operation.kind == .appendInkStroke {
         if try after.undoInk(operation, actor: actor) { restored += 1 }
@@ -171,9 +171,9 @@ extension NotebookStore {
         let version = collaborationFieldVersion(file: before.files[change.file], path: change.path)
         let stillOwned = change.afterVersion == nil || (version?.stamp == change.afterVersion?.stamp
           && version?.human == change.afterVersion?.human)
-        guard !protected.contains(change.file),
+        guard !protected.contains(change),
           stillOwned,
-          collaborationComparable(current) == collaborationComparable(change.after) else {
+          collaborationComparable(current, file: change.file, path: change.path) == collaborationComparable(change.after, file: change.file, path: change.path) else {
           preserved.append(change)
           continue
         }
@@ -303,10 +303,30 @@ extension CollaborationReceipt {
     guard undo == nil else { return [] }
     return changes.compactMap { change in
       let current = files[change.file]?.value(at:change.path[...])
-      guard collaborationComparable(current) != collaborationComparable(change.after) else { return nil }
+      guard collaborationComparable(current, file: change.file, path: change.path) != collaborationComparable(change.after, file: change.file, path: change.path) else { return nil }
       let version = collaborationFieldVersion(file:files[change.file],path:change.path)
       return .init(file:change.file,path:change.path,author:current == nil ? .removed : version?.human == false ? .agent : .human)
     }
+  }
+}
+
+private struct CollaborationCreationProtection {
+  struct Address: Equatable {
+    let file: String
+    let path: [CollaborationPathComponent]
+
+    init(_ file: String, _ path: [CollaborationPathComponent] = []) {
+      self.file = file
+      self.path = path.map { if case .member(let id) = $0 { .member(collaborationIdentity(id)) } else { $0 } }
+    }
+
+    func contains(_ other: Self) -> Bool { file == other.file && other.path.starts(with: path) }
+  }
+
+  let addresses: [Address]
+  func contains(_ change: CollaborationFieldChange) -> Bool {
+    let address = Address(change.file, change.path)
+    return addresses.contains { $0.contains(address) }
   }
 }
 
@@ -703,19 +723,28 @@ private struct CollaborationWorkspace {
       switch target.kind {
       case .workspace: files["workspace.json"] = try advancing(files["workspace.json"]!, key: "stamp", actor: actor)
       case .page:
-        if files[pageFile(target.id)]?["elements"] != previous.files[pageFile(target.id)]?["elements"] {
-          files[pageFile(target.id)] = try advancing(files[pageFile(target.id)]!, key: "agentStamp", actor: actor)
+        guard let page = files[pageFile(target.id)] else {
+          throw invalid("Отмена не может оставить тетрадь без принадлежащего ей листа.")
+        }
+        if page["elements"] != previous.files[pageFile(target.id)]?["elements"] {
+          files[pageFile(target.id)] = try advancing(page, key: "agentStamp", actor: actor)
         }
       case .document:
-        if files[documentFile(target.id)] != previous.files[documentFile(target.id)] {
-          files[documentFile(target.id)] = try advancing(files[documentFile(target.id)]!, key: "contentStamp", actor: actor)
+        guard let document = files[documentFile(target.id)] else {
+          throw invalid("Отмена не может оставить предмет без принадлежащего ему документа.")
+        }
+        if document != previous.files[documentFile(target.id)] {
+          files[documentFile(target.id)] = try advancing(document, key: "contentStamp", actor: actor)
         }
         if var value = files[stateFile(target.id)], let old = previous.files[stateFile(target.id)], value != old {
           let next = try old["stamp"]!.decode(VersionStamp.self).advanced(by:actor)!
           var records = value["records"]?.array ?? []
           for index in records.indices {
             let prior = old["records"]?.array.first { $0.memberIdentity == records[index].memberIdentity }
-            if collaborationComparable(prior) != collaborationComparable(records[index]) {
+            guard let recordID = records[index].memberIdentity else { throw invalid("Состояние блока требует устойчивого ID.") }
+            let recordPath: [CollaborationPathComponent] = [.field("records"), .member(recordID)]
+            if collaborationComparable(prior, file: stateFile(target.id), path: recordPath)
+              != collaborationComparable(records[index], file: stateFile(target.id), path: recordPath) {
               let previousVersion = try prior?["fieldVersion"]?.decode(ContentFieldVersion.self)
               records[index] = records[index].setting("stamp",try .encode(next)).setting("fieldVersion",try .encode(ContentFieldVersion(stamp:next,human:true,previous:previousVersion)))
             }
@@ -769,29 +798,133 @@ private struct CollaborationWorkspace {
     }
   }
 
-  func protectedCreationChanges(in receipt: CollaborationReceipt) -> Set<String> {
-    let created = receipt.action.operations.filter { [.createNotebook, .createDocument, .createBoard].contains($0.kind) }
-    var result: Set<String> = []
-    for op in created {
-      guard let id = op.id.flatMap(UUID.init(uuidString:)) else { continue }
-      let pageID = op.values["pageID"]?.string.flatMap(UUID.init(uuidString:))
-      let owned = [documentFile(id), stateFile(id)] + (pageID.map { [pageFile($0)] } ?? [])
-      let adoptedFile = receipt.changes.contains { change in
-        owned.contains(change.file) && change.path.isEmpty
-          && collaborationComparable(files[change.file]) != collaborationComparable(change.after)
+  func protectedCreationChanges(in receipt: CollaborationReceipt, scope: NotebookStore) throws -> CollaborationCreationProtection {
+    typealias Address = CollaborationCreationProtection.Address
+    var created: [UUID: CollaborationOperation] = [:]
+    for op in receipt.action.operations where [.createNotebook, .createDocument, .createBoard].contains(op.kind) {
+      guard let id = op.id.flatMap(UUID.init(uuidString:)), created[id] == nil else {
+        throw invalid("Квитанция создания перечисляет каждого нового владельца ровно один раз.")
       }
-      let contributedIDs = Set(receipt.action.operations.filter { $0.kind == .appendInkStroke }.compactMap { $0.id.flatMap(UUID.init(uuidString:)) })
-      let adoptedInk = (try? ink.actions.contains { action in
-        action.isActive && action.spans.contains { $0.surface.ownerID == id }
-          && !contributedIDs.contains(action.id)
-      }) ?? false
-      let child = try? hierarchy.board(id)
-      let adoptedBoard = op.kind == .createBoard && (child?.elements.isEmpty == false || child?.itemIDs.isEmpty == false)
-      if adoptedFile || adoptedInk || adoptedBoard {
-        result.formUnion(owned + ["workspace.json", "board.json"])
+      created[id] = op
+    }
+    guard !created.isEmpty else { return .init(addresses: []) }
+    let changes = receipt.changes.map { (Address($0.file, $0.path), $0) }
+    func authored(_ address: Address) -> JSONValue? {
+      guard let (parent, change) = changes.first(where: { $0.0.contains(address) }) else { return nil }
+      return change.after?.value(at: Array(address.path.dropFirst(parent.path.count))[...])
+    }
+    func current(_ address: Address) -> JSONValue? { files[address.file]?.value(at: address.path[...]) }
+    var owned: [UUID: [Address]] = [:]
+    func own(_ address: Address, by id: UUID) {
+      guard created[id] != nil, authored(address) != nil, !owned[id, default: []].contains(address) else { return }
+      owned[id, default: []].append(address)
+    }
+    for (id, op) in created {
+      own(Address("workspace.json", [.field("items"), .member(id.uuidString)]), by: id)
+      switch op.kind {
+      case .createNotebook:
+        if let page = op.values["pageID"]?.string.flatMap(UUID.init(uuidString:)) { own(Address(pageFile(page)), by: id) }
+      case .createDocument:
+        own(Address(documentFile(id)), by: id); own(Address(stateFile(id)), by: id)
+      case .createBoard: own(Address("board.json", [.field("boards"), .member(id.uuidString)]), by: id)
+      default: break
       }
     }
-    return result
+    // Receipts may own a whole newly created node. Recover its authored
+    // placements, not a fresh full hierarchy, and retain exact member addresses.
+    var authoredTree = files["board.json"]
+    for (address, change) in changes where address.file == "board.json" {
+      authoredTree = authoredTree?.setting(at: address.path[...], to: change.after)
+    }
+    for tree in [authoredTree, files["board.json"]].compactMap({ $0 }) {
+      for node in tree["boards"]?.array ?? [] {
+        guard let boardID = node.memberIdentity else { continue }
+        let base: [CollaborationPathComponent] = [.field("boards"), .member(boardID), .field("board")]
+        for placement in node["board"]?["freeItems"]?.array ?? [] {
+          guard let id = placement["itemID"]?.string.flatMap(UUID.init(uuidString:)) else { continue }
+          own(Address("board.json", base + [.field("freeItems"), .member(id.uuidString)]), by: id)
+        }
+        for stack in node["board"]?["stacks"]?.array ?? [] {
+          guard let stackID = stack.memberIdentity else { continue }
+          for id in try stack["itemIDs"]?.decode([UUID].self) ?? [] {
+            own(Address("board.json", base + [.field("stacks"), .member(stackID)]), by: id)
+          }
+        }
+        for element in node["board"]?["elements"]?.array ?? [] {
+          guard let elementID = element.memberIdentity, let surface = try element["surface"]?.decode(SurfaceID.self),
+            surface.kind == .cover, let id = surface.ownerID else { continue }
+          own(Address("board.json", base + [.field("elements"), .member(elementID)]), by: id)
+        }
+      }
+    }
+    var protected = Set<UUID>()
+    for (id, op) in created {
+      guard current(Address("workspace.json", [.field("items"), .member(id.uuidString)])) != nil else { continue }
+      if (owned[id] ?? []).contains(where: { address in
+        let value = current(address)
+        if collaborationComparable(value, file: address.file, path: address.path)
+          != collaborationComparable(authored(address), file: address.file, path: address.path) { return true }
+        // Existence has its own causal owner: a human edit and later return to
+        // the same visible value must not detach a retained item from its paper.
+        guard let change = changes.first(where: { $0.0 == address })?.1, let expected = change.afterVersion else { return false }
+        let version = collaborationFieldVersion(file: files[address.file], path: address.path)
+        return version?.stamp != expected.stamp || version?.human != expected.human
+      }) { protected.insert(id) }
+      if op.kind == .createNotebook, try scope.pageCount(in: id) != 1 { protected.insert(id) }
+      // The command projection contains the authored members, not every later
+      // child. One indexed existence query detects outside adoption without
+      // materializing an unbounded board or relying on its arbitrary first row.
+      let node = Address("board.json", [.field("boards"), .member(id.uuidString)])
+      let authoredNode = authored(node)
+      var authoredChildren: [String] = []
+      for collection in ["freeItems", "stacks", "elements"] {
+        for member in authoredNode?["board"]?[collection]?.array ?? [] {
+          if let identity = member.memberIdentity { authoredChildren.append("board.json#/boards/@" + id.uuidString.lowercased() + "/board/" + collection + "/@" + fieldKey([identity])) }
+        }
+      }
+      let coverAddresses = (owned[id] ?? []).filter { $0.file == "board.json" && $0.path.count == 5 && $0.path[3] == .field("elements") }.map { address in
+        guard case .member(let board) = address.path[1], case .member(let element) = address.path[4] else { preconditionFailure("Typed cover address") }
+        return "board.json#/boards/@" + board + "/board/elements/@" + fieldKey([element])
+      }
+      let outside = try scope.sqlRead { database in
+        func excluding(_ addresses: [String]) -> String { addresses.isEmpty ? "" : " AND address NOT IN (" + addresses.map { _ in "?" }.joined(separator: ",") + ")" }
+        if op.kind == .createBoard,
+          try !database.rows("SELECT 1 FROM records WHERE parent=? AND collection IN ('board/freeItems','board/stacks','board/elements')" + excluding(authoredChildren) + " LIMIT 1",
+            [.text("board.json#/boards/@" + id.uuidString.lowercased())] + authoredChildren.map(NotebookSQLValue.text)).isEmpty { return true }
+        return try !database.rows("SELECT 1 FROM spatial_entries WHERE kind='coverElement' AND owner_id=?" + excluding(coverAddresses) + " LIMIT 1",
+          [.text(id.uuidString.lowercased())] + coverAddresses.map(NotebookSQLValue.text)).isEmpty
+      }
+      if outside { protected.insert(id) }
+    }
+    let contributedInk = Set(receipt.action.operations.filter { $0.kind == .appendInkStroke }.compactMap { $0.id.flatMap(UUID.init(uuidString:)) })
+    for action in try ink.actions where action.isActive && !contributedInk.contains(action.id) {
+      for span in action.spans { if let id = span.surface.ownerID, created[id] != nil { protected.insert(id) } }
+    }
+    let tree = try hierarchy
+    // Closure follows actual physical dependencies. An adopted newly-created
+    // node/stack is one receipt value, so its still-referenced created children
+    // remain complete; independent creations on another placement are undoable.
+    var pending = Array(protected)
+    while let id = pending.popLast() {
+      var required: Set<UUID> = []
+      if let parent = tree.ownerBoardID(of: id), created[parent] != nil { required.insert(parent) }
+      if created[id]?.kind == .createBoard, let board = tree.board(id) { required.formUnion(board.itemIDs.filter { created[$0] != nil }) }
+      for address in owned[id] ?? [] where address.path.count == 5 && address.path[3] == .field("stacks") {
+        required.formUnion(try current(address)?["itemIDs"]?.decode([UUID].self).filter { created[$0] != nil } ?? [])
+      }
+      for other in required where protected.insert(other).inserted { pending.append(other) }
+    }
+    var addresses: [Address] = []
+    for id in protected {
+      for address in owned[id] ?? [] {
+        if !addresses.contains(address) { addresses.append(address) }
+        if case .member? = address.path.last {
+          let order = Address(address.file, Array(address.path.dropLast()) + [.order])
+          if !addresses.contains(order) { addresses.append(order) }
+        }
+      }
+    }
+    return .init(addresses: addresses)
   }
 }
 
@@ -820,21 +953,110 @@ private func reordered(_ items: [JSONValue], values: [String: JSONValue]) throws
   return ids.map { id in items.first { $0["id"]?.string == id }! }
 }
 
-private let versionFields: Set<String> = ["stamp", "agentStamp", "drawingStamp", "stateStamp", "contentStamp", "portalStamp", "collaboration", "fieldVersion", "selectionVersion"]
-private func collaborationComparable(_ value: JSONValue?) -> JSONValue? {
-  guard let value else { return nil }
-  switch value {
-  case .object(let object): return .object(object.filter { !versionFields.contains($0.key) }.mapValues { collaborationComparable($0)! })
-  case .array(let array): return .array(array.map { collaborationComparable($0)! })
-  default: return value
+/// Versions belong to exact domain objects, never to a spelling inside a
+/// program's JSON. Diff, undo, adoption and continuation use this same owner.
+private enum CollaborationValueOwner: Equatable {
+  case workspace, workspaceItems, workspaceItem
+  case hierarchy, boards, boardNode, board
+  case page, pageElements, pageElement
+  case document, blocks, block
+  case stateJournal, stateRecords, stateRecord
+  case inkJournal, inkActions, inkAction
+  case placements, placement, stacks, stack, spatialElements, spatialElement
+  case value, opaque
+
+  init(file: String, path: [CollaborationPathComponent]) {
+    let root: Self
+    switch file {
+    case "workspace.json": root = .workspace
+    case "board.json": root = .hierarchy
+    case "spatial-ink.json": root = .inkJournal
+    default:
+      let parts = file.split(separator: "/")
+      if parts.count == 2, parts[1].hasSuffix(".json"), UUID(uuidString: String(parts[1].dropLast(5))) != nil {
+        switch parts[0] {
+        case "pages": root = .page
+        case "documents": root = .document
+        case "document-states": root = .stateJournal
+        default: root = .value
+        }
+      } else { root = .value }
+    }
+    self = path.reduce(root) { $0.child($1) }
   }
+
+  private func child(_ component: CollaborationPathComponent) -> Self {
+    switch (self, component) {
+    case (.workspace, .field("items")): .workspaceItems
+    case (.workspaceItems, .member(_)): .workspaceItem
+    case (.hierarchy, .field("boards")): .boards
+    case (.boards, .member(_)): .boardNode
+    case (.boardNode, .field("board")): .board
+    case (.board, .field("freeItems")): .placements
+    case (.placements, .member(_)): .placement
+    case (.board, .field("stacks")): .stacks
+    case (.stacks, .member(_)): .stack
+    case (.board, .field("elements")): .spatialElements
+    case (.spatialElements, .member(_)): .spatialElement
+    case (.page, .field("elements")): .pageElements
+    case (.pageElements, .member(_)): .pageElement
+    case (.document, .field("blocks")): .blocks
+    case (.blocks, .member(_)): .block
+    case (.stateJournal, .field("records")): .stateRecords
+    case (.stateRecords, .member(_)): .stateRecord
+    case (.inkJournal, .field("actions")): .inkActions
+    case (.inkActions, .member(_)): .inkAction
+    case (.pageElement, .field("state")), (.spatialElement, .field("state")),
+      (.block, .field("initialState")), (.stateRecord, .field("value")): .opaque
+    case (.opaque, _): .opaque
+    default: .value
+    }
+  }
+
+  func ownsMetadata(_ key: String) -> Bool {
+    switch (self, key) {
+    case (.workspace, "stamp"), (.workspace, "collaboration"),
+      (.workspace, "pageOrders"), (.workspace, "pageOrderNodes"), (.workspace, "isProjection"),
+      (.hierarchy, "stamp"), (.boardNode, "portalStamp"), (.board, "stamp"), (.board, "collaboration"),
+      (.page, "agentStamp"), (.page, "drawingStamp"), (.page, "collaboration"),
+      (.document, "contentStamp"), (.document, "collaboration"),
+      (.stateJournal, "stamp"), (.stateRecord, "stamp"), (.stateRecord, "fieldVersion"),
+      (.inkJournal, "stamp"), (.inkAction, "stamp"), (.inkAction, "stateStamp"),
+      (.placement, "stamp"), (.stack, "stamp"), (.spatialElement, "stamp"):
+      true
+    default: false
+    }
+  }
+
+  func comparable(_ value: JSONValue) -> JSONValue {
+    // These values contain no domain-owned descendants. In particular state,
+    // initialState and record.value retain every nested key and array entry.
+    if self == .value || self == .opaque || self == .workspaceItem || self == .pageElement || self == .block { return value }
+    switch value {
+    case .object(let object):
+      var result: [String: JSONValue] = [:]
+      for (key, value) in object where !ownsMetadata(key) { result[key] = child(.field(key)).comparable(value) }
+      return .object(result)
+    case .array(let values):
+      return .array(values.map { child(.member($0.memberIdentity ?? "")).comparable($0) })
+    default: return value
+    }
+  }
+}
+
+private func collaborationComparable(_ value: JSONValue?, file: String, path: [CollaborationPathComponent]) -> JSONValue? {
+  let owner = CollaborationValueOwner(file: file, path: path)
+  return value.map { owner.comparable($0) }
 }
 private func collaborationDiff(_ before: [String: JSONValue], _ after: [String: JSONValue]) -> [CollaborationFieldChange] {
   var result: [CollaborationFieldChange] = []
   func walk(_ file: String, _ path: [CollaborationPathComponent], _ a: JSONValue?, _ b: JSONValue?) {
-    guard collaborationComparable(a) != collaborationComparable(b) else { return }
-    if case .object(let left) = a, case .object(let right) = b {
-      for key in Set(left.keys).union(right.keys).sorted() where !versionFields.contains(key) {
+    let owner = CollaborationValueOwner(file: file, path: path)
+    guard a.map({ owner.comparable($0) }) != b.map({ owner.comparable($0) }) else { return }
+    if owner == .opaque {
+      result.append(.init(file: file, path: path, before: a, after: b))
+    } else if case .object(let left) = a, case .object(let right) = b {
+      for key in Set(left.keys).union(right.keys).sorted() where !owner.ownsMetadata(key) {
         walk(file, path + [.field(key)], left[key], right[key])
       }
     } else if case .array(let left) = a, case .array(let right) = b,

@@ -5,7 +5,7 @@ import { constants } from "node:fs";
 import { BridgeError, defaultSocketPath, runBridge } from "./bridge.js";
 import type { BoardDocument, BoardHierarchy, CurrentViewReceipt, DocumentDocument, DocumentStateJournal,
   PageDocument, PageSize, SessionPresence, SpatialElement, SpatialInkJournal, SurfaceID, VersionStamp, WorldPoint,
-  WorkspaceIndex, WorkspaceItem } from "./domain.js";
+  WorkspaceProjection, WorkspaceItem } from "./domain.js";
 import { canonicalPageSize, documentSpatialSize } from "./domain.js";
 
 export class StoreError extends Error {}
@@ -108,17 +108,17 @@ export class NotebookStore {
   }
 
   /** Metadata for these IDs only. It is a projection, never a complete catalog. */
-  async readWorkspace(itemIDs: string[] = []): Promise<WorkspaceIndex> {
+  async readWorkspaceProjection(itemIDs: string[] = []): Promise<WorkspaceProjection> {
     const header = await this.readHeader();
-    const ids = [...new Set([...itemIDs, ...(header.selectedItemID ? [header.selectedItemID] : [])])];
+    const ids = [...new Set([...itemIDs, ...(header.selectedItemID ? [header.selectedItemID] : [])].map(id => id.toLowerCase()))];
     const items = await Promise.all(ids.map(id => this.readItem(id)));
-    return { format: 4, rootBoardID: header.rootBoardID, items, stamp: header.stamp,
+    return { rootBoardID: header.rootBoardID, items, stamp: header.stamp,
       selectedItemID: header.selectedItemID ?? header.rootBoardID, ...(header.selectedPageID ? { selectedPageID: header.selectedPageID } : {}) };
   }
   readSceneWindow(boardID: string, bounds: SceneBounds, limit = 128, pinnedIDs: string[] = []): Promise<SceneWindow> {
     return this.read({ kind: "sceneWindow", id: boardID, bounds, limit, pinnedIDs });
   }
-  async readBoard(_workspace?: WorkspaceIndex, boardID?: string): Promise<BoardDocument> {
+  async readBoard(boardID?: string): Promise<BoardDocument> {
     const presence = await this.readPresence();
     const id = boardID ?? presence.boardID;
     const window = await this.readSceneWindow(id, visibleBounds(presence));
@@ -126,7 +126,7 @@ export class NotebookStore {
     if (!node) throw new StoreError("Доска не найдена.");
     return node.board;
   }
-  async readItemBoard(itemID: string, _workspace?: WorkspaceIndex): Promise<BoardDocument> {
+  async readItemBoard(itemID: string): Promise<BoardDocument> {
     const node = await this.read<BoardHierarchy["boards"][number] | null>({kind:"boardItem",id:itemID});
     if (!node) throw new StoreError("Предмет не принадлежит живой доске.");
     return node.board;
@@ -148,7 +148,7 @@ export class NotebookStore {
     const ink = await this.read<SpatialInkJournal>({ kind: "spatialInk", surfaces });
     return { ...ink, readSurfaces: surfaces };
   }
-  async readItemSizes(workspace: WorkspaceIndex, paper: Record<string, "a4" | "letter"> = {}): Promise<Map<string, PageSize>> {
+  async readItemSizes(workspace: WorkspaceProjection, paper: Record<string, "a4" | "letter"> = {}): Promise<Map<string, PageSize>> {
     return new Map(workspace.items.map(item => {
       const size = paper[item.id.toLowerCase()] ?? paper[item.id];
       if (item.kind === "document" && !size) throw new StoreError("Размер документа отсутствует в проекции сцены.");
@@ -191,12 +191,12 @@ export class NotebookStore {
   }
 
   async readCurrent(): Promise<
-    | { kind: "notebook"; workspace: WorkspaceIndex; presence: SessionPresence; item: WorkspaceItem; page: PageDocument }
-    | { kind: "document"; workspace: WorkspaceIndex; presence: SessionPresence; item: WorkspaceItem; document: DocumentDocument; state: DocumentStateJournal }
-    | { kind: "board"; workspace: WorkspaceIndex; presence: SessionPresence; item: WorkspaceItem }
+    | { kind: "notebook"; workspace: WorkspaceProjection; presence: SessionPresence; item: WorkspaceItem; page: PageDocument }
+    | { kind: "document"; workspace: WorkspaceProjection; presence: SessionPresence; item: WorkspaceItem; document: DocumentDocument; state: DocumentStateJournal }
+    | { kind: "board"; workspace: WorkspaceProjection; presence: SessionPresence; item: WorkspaceItem }
   > {
     const presence = await this.readPresence();
-    const workspace = await this.readWorkspace(presence.focusedItemID ? [presence.focusedItemID] : []);
+    const workspace = await this.readWorkspaceProjection(presence.focusedItemID ? [presence.focusedItemID] : []);
     const id = presence.focusedItemID ?? workspace.selectedItemID;
     const item = workspace.items.find(candidate => idEquals(candidate.id, id))
       ?? { id: presence.boardID, kind: "board" as const, title: "", pageIDs: [] };
@@ -235,9 +235,9 @@ function readConflict(): BridgeError {
   return new BridgeError({ code: "read_conflict", message: "Содержание меняется во время чтения. Повторите законченный запрос." });
 }
 
-export function workspaceProjection(window: SceneWindow): WorkspaceIndex {
+export function workspaceProjection(window: SceneWindow): WorkspaceProjection {
   const header = window.header;
-  return {format:4,rootBoardID:header.rootBoardID,stamp:header.stamp,items:window.items,
+  return {rootBoardID:header.rootBoardID,stamp:header.stamp,items:window.items,
     selectedItemID:header.selectedItemID ?? header.rootBoardID,
     ...(header.selectedPageID ? {selectedPageID:header.selectedPageID} : {})};
 }

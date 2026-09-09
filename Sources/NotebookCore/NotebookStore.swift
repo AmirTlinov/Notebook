@@ -145,6 +145,7 @@ public struct NotebookStore: Sendable {
     let data = try storedData(at: indexURL)
     guard var index = try? decoder.decode(WorkspaceIndex.self, from: data) else { throw corruptFile(at: indexURL) }
     guard index.isValid else { throw corruptFile(at: indexURL) }
+    try index.validatePageOrderWitness()
     if let presence = try? loadPresence(), let id = presence.selectedItemID {
       _ = index.selectItem(id, pageID: presence.notebookPageID, actor: index.stamp.actor)
     }
@@ -261,27 +262,16 @@ public struct NotebookStore: Sendable {
     }
   }
 
-  /// Persists a page landing without putting filesystem latency on the hand.
-  /// The caller may run this off the main actor. Under the store lock the
-  /// selection and membership converge independently. A new sheet and its
-  /// catalog entry use the same recoverable publication.
+  /// The input queue owns the creation fence. Its captured UUID becomes one
+  /// addressed page membership; a stale UI projection never replaces the
+  /// catalog or its tree. Selection changes only the current local presence.
   @discardableResult
   public func saveWorkspaceSelection(
     index: WorkspaceIndex,
     createdPage: PageDocument?
   ) throws -> WorkspaceIndex {
-    guard index.isValid else { throw corruptFile(at: indexURL) }
-    if let createdPage {
-      guard createdPage.isValid,
-        index.items.contains(where: { $0.pageIDs.contains(createdPage.id) })
-      else { throw corruptFile(at: indexURL) }
-    }
-    try prepare()
-    return try withMutationLock {
-      if let createdPage { _ = try publishWorkspace(index: index, pages: [createdPage]) }
-      if let presence = try? loadPresence() {
-        try savePresence(presence.selecting(itemID: index.selectedItemID, pageID: index.selectedPageID))
-      }
+    try commandTransaction {
+      try publishPageLanding(index: index, createdPage: createdPage)
       return index
     }
   }

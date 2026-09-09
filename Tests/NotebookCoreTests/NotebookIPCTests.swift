@@ -10,9 +10,9 @@ struct NotebookIPCTests {
       .object(["command": .string(command.command.rawValue)])
     }
     try server.start(); defer { server.stop() }
-    let result = try await Task.detached {
+    let result = try await blockingIPC {
       try NotebookIPCClient(socketURL: endpoint.socket).send(.init(command: .read))
-    }.value
+    }
     #expect(result == .object(["command": .string("read")]))
     let attributes = try FileManager.default.attributesOfItem(atPath: endpoint.socket.path)
     #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
@@ -25,7 +25,7 @@ struct NotebookIPCTests {
     }
     try server.start(); defer { server.stop() }
     do {
-      _ = try await Task.detached { try NotebookIPCClient(socketURL: endpoint.socket).send(.init(command: .read)) }.value
+      _ = try await blockingIPC { try NotebookIPCClient(socketURL: endpoint.socket).send(.init(command: .read)) }
       Issue.record("An explicit conflict cannot become a successful response")
     } catch let error as CollaborationError {
       #expect(error.code == "revision_conflict"); #expect(error.expected == "one"); #expect(error.actual == "two")
@@ -38,7 +38,7 @@ struct NotebookIPCTests {
     try server.start(); defer { server.stop() }
     let other = NotebookIPCServer(socketURL: endpoint.socket) { _ in .string("second") }
     #expect(throws: CollaborationError.self) { try other.start() }
-    let result = try await Task.detached { try NotebookIPCClient(socketURL: endpoint.socket).send(.init(command: .read)) }.value
+    let result = try await blockingIPC { try NotebookIPCClient(socketURL: endpoint.socket).send(.init(command: .read)) }
     #expect(result == .string("first"))
   }
 
@@ -74,13 +74,15 @@ struct NotebookIPCTests {
     let calls = IPCCount()
     let server = NotebookIPCServer(socketURL: endpoint.socket) { _ in calls.increment(); return .bool(true) }
     try server.start(); defer { server.stop() }
-    let value = try await Task.detached { try oversizedFrameResponse(endpoint.socket) }.value
+    let value = try await blockingIPC { try oversizedFrameResponse(endpoint.socket) }
     #expect(value["error"]?["code"] == .string("resource_limit"))
     #expect(calls.value == 0)
   }
 
   @Test func stopAcknowledgesOnlyAfterAnAcceptedWriterAndDisconnectedClientHaveDrained() async throws {
-    let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
+    let endpoint = try IPCEndpoint()
+    var drained = true
+    defer { if drained { endpoint.remove() } }
     let store = NotebookStore(root: endpoint.directory.appendingPathComponent("store")), actor = UUID()
     _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 100, height: 140))
     let pageID = try #require(store.readWorkspaceItems(limit: 1).first?.pageIDs.first)
@@ -93,29 +95,46 @@ struct NotebookIPCTests {
       return try .encode(request)
     }
     try server.start()
-    let client = Task.detached { try NotebookIPCClient(socketURL: endpoint.socket).send(.init(command: .pageVision)) }
-    let entered = await waitForIPC { gate.entered }
-    #expect(entered)
-    server.stop()
-    let first = Task { await server.stopAndDrain(); acknowledgements.increment() }
-    let second = Task { await server.stopAndDrain(); acknowledgements.increment() }
-    // The client loses its socket immediately; that is not the writer's ACK.
-    let disconnected = await client.result
-    if case .success = disconnected { Issue.record("Closing the server must close the accepted client socket") }
-    try? await Task.sleep(for: .milliseconds(40))
-    #expect(acknowledgements.value == 0)
-    #expect(calls.value == 0)
-    #expect(server.activeConnectionCount == 1)
-    gate.open()
-    await first.value; await second.value
-    #expect(acknowledgements.value == 2)
-    #expect(calls.value == 1)
-    #expect(server.activeConnectionCount == 0)
-    #expect(try store.targetRenderRequests().count == 1)
-    #expect(throws: CollaborationError.self) {
-      try NotebookIPCClient(socketURL: endpoint.socket).send(.init(command: .read))
+    drained = false
+    defer { gate.open(); server.stop() }
+    let client = IPCCompletion<Result<JSONValue, any Error>>("the disconnected IPC client")
+    // send is a blocking socket API. It must not occupy the cooperative pool
+    // that the real server uses to enter its async writer handler.
+    DispatchQueue(label: "Notebook.IPCTests.client").async {
+      let result = Result { try NotebookIPCClient(socketURL: endpoint.socket).send(.init(command: .pageVision)) }
+      gate.clientFinished(result)
+      client.resolve(.success(result))
     }
-    await server.stopAndDrain()
+    do {
+      try await gate.waitUntilEntered()
+      server.stop()
+      let first = IPCCompletion<Void>("the first IPC drain"), second = IPCCompletion<Void>("the second IPC drain")
+      Task { await server.stopAndDrain(); acknowledgements.increment(); first.resolve(.success(())) }
+      Task { await server.stopAndDrain(); acknowledgements.increment(); second.resolve(.success(())) }
+      // The client loses its socket immediately; that is not the writer's ACK.
+      let disconnected = try await client.value()
+      if case .success = disconnected { Issue.record("Closing the server must close the accepted client socket") }
+      try await Task.sleep(for: .milliseconds(40))
+      #expect(acknowledgements.value == 0)
+      #expect(calls.value == 0)
+      #expect(server.activeConnectionCount == 1)
+      gate.open()
+      try await first.value(); try await second.value()
+      drained = true
+      #expect(acknowledgements.value == 2)
+      #expect(calls.value == 1)
+      #expect(server.activeConnectionCount == 0)
+      #expect(try store.targetRenderRequests().count == 1)
+      #expect(throws: CollaborationError.self) {
+        try NotebookIPCClient(socketURL: endpoint.socket).send(.init(command: .read))
+      }
+      try await drainIPC(server)
+    } catch {
+      gate.open(); server.stop()
+      do { try await drainIPC(server); drained = true }
+      catch { Issue.record("IPC did not drain; preserving its store at \(endpoint.directory.path): \(error)") }
+      throw error
+    }
   }
 
   @Test func stopDrainsAnIncompleteFrameWithoutWaitingForItsSocketTimeout() async throws {
@@ -159,11 +178,19 @@ private final class IPCHandlerGate: @unchecked Sendable {
   private var continuation: CheckedContinuation<Void, Never>?
   private var isOpen = false
   private var didEnter = false
-  var entered: Bool { lock.withLock { didEnter } }
+  private let entry = IPCCompletion<Void>("the accepted IPC writer")
+  func waitUntilEntered() async throws { try await entry.value() }
+  func clientFinished(_ result: Result<JSONValue, any Error>) {
+    lock.withLock {
+      guard !didEnter else { return }
+      entry.resolve(.failure(IPCWaitFailure("The IPC client completed before its writer was accepted: \(result)")))
+    }
+  }
   func wait() async {
     await withCheckedContinuation { continuation in
       let resume = lock.withLock {
         didEnter = true
+        entry.resolve(.success(()))
         if isOpen { return true }
         self.continuation = continuation
         return false
@@ -179,6 +206,62 @@ private final class IPCHandlerGate: @unchecked Sendable {
     }
     waiting?.resume()
   }
+}
+
+private struct IPCWaitFailure: Error, CustomStringConvertible {
+  let description: String
+  init(_ description: String) { self.description = description }
+}
+
+/// A single protocol event, not a polled observation of another executor.
+/// Ten seconds is an external broken-test watchdog, not an IPC latency SLA:
+/// the full suite schedules long synchronous Core tests on the same pool as
+/// the handler. Only the handler's signal establishes acceptance before stop.
+private final class IPCCompletion<Value: Sendable>: @unchecked Sendable {
+  private let lock = NSLock()
+  private let event: String
+  private var result: Result<Value, any Error>?
+  private var continuation: CheckedContinuation<Value, any Error>?
+  init(_ event: String) { self.event = event }
+  func resolve(_ result: Result<Value, any Error>) {
+    let waiting = lock.withLock {
+      guard self.result == nil else { return nil as CheckedContinuation<Value, any Error>? }
+      self.result = result
+      let waiting = continuation; continuation = nil
+      return waiting
+    }
+    waiting?.resume(with: result)
+  }
+  func value() async throws -> Value {
+    let deadline = DispatchWorkItem { [self] in
+      resolve(.failure(IPCWaitFailure("Timed out waiting for \(event)")))
+    }
+    defer { deadline.cancel() }
+    DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 10, execute: deadline)
+    return try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        let completed: Result<Value, any Error>? = lock.withLock {
+          if let result { return result }
+          precondition(self.continuation == nil)
+          self.continuation = continuation
+          return nil as Result<Value, any Error>?
+        }
+        if let completed { continuation.resume(with: completed) }
+      }
+    } onCancel: { resolve(.failure(CancellationError())) }
+  }
+}
+
+private func drainIPC(_ server: NotebookIPCServer) async throws {
+  let drained = IPCCompletion<Void>("IPC cleanup")
+  Task { await server.stopAndDrain(); drained.resolve(.success(())) }
+  try await drained.value()
+}
+
+private func blockingIPC<Value: Sendable>(_ operation: @escaping @Sendable () throws -> Value) async throws -> Value {
+  let completed = IPCCompletion<Value>("the blocking IPC operation")
+  DispatchQueue(label: "Notebook.IPCTests.socket").async { completed.resolve(Result(catching: operation)) }
+  return try await completed.value()
 }
 
 private func waitForIPC(_ condition: () -> Bool) async -> Bool {

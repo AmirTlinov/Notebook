@@ -24,9 +24,10 @@ public struct NotebookChangeManifest: Codable, Equatable, Sendable {
   public let workspaceID: UUID
   public let records: [NotebookRecordMutation]
   public let parts: [String]
-  public init(transactionID: UUID, workspaceID: UUID, records: [NotebookRecordMutation], parts: [String] = []) {
-    format = 1; self.transactionID = transactionID; self.workspaceID = workspaceID
-    self.records = records; self.parts = parts
+  public let pageOrderRoots: [String]
+  public init(transactionID: UUID, workspaceID: UUID, records: [NotebookRecordMutation], parts: [String] = [], pageOrderRoots: [String] = []) {
+    format = 2; self.transactionID = transactionID; self.workspaceID = workspaceID
+    self.records = records; self.parts = parts; self.pageOrderRoots = pageOrderRoots
   }
 }
 

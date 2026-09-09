@@ -89,7 +89,7 @@ public struct WorkspacePageSelection: Equatable, Sendable {
 }
 
 public struct WorkspaceIndex: Codable, Equatable, Sendable {
-  public static let formatVersion = 4
+  public static let formatVersion = 5
   public static let maximumTitleLength = 240
 
   public let format: Int
@@ -102,6 +102,10 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
   public private(set) var selectedPageID: UUID?
   public private(set) var stamp: VersionStamp
   public private(set) var collaboration: CollaborativeContent
+  var pageOrders: [String: NotebookPageOrderRegister]
+  var pageOrderNodes: [String: NotebookPageOrderNode]
+  /// A bounded projection can author addressed edits, never a full merge.
+  var isProjection: Bool
 
   public init(
     items: [WorkspaceItem],
@@ -119,7 +123,8 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     self.selectedPageID = selectedPageID
     self.stamp = stamp
     collaboration = CollaborativeContent()
-    recordChanges(from: nil, human: true)
+    pageOrders = [:]; pageOrderNodes = [:]; isProjection = false
+    try! recordChanges(from: nil, human: true)
     precondition(isValid)
   }
 
@@ -306,7 +311,9 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     guard format == Self.formatVersion,
       !items.isEmpty,
       stamp.counter <= VersionStamp.maximumCounter,
-      collaboration.isValid(maximumFields: 1_000_000)
+      collaboration.isValid(maximumFields: 1_000_000),
+      pageOrders.count <= 1_000_000, pageOrderNodes.count <= 1_000_000,
+      items.filter({ $0.kind == .notebook }).allSatisfy({ pageOrders[$0.id.uuidString.lowercased()] != nil })
     else { return false }
 
     let itemIDs = items.map(\.id)
@@ -361,6 +368,16 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     }
 
     let page = PageDocument(size: pageSize, actor: actor)
+    guard let oldOrder = pageOrders[itemID.uuidString.lowercased()] else { return nil }
+    var nodes = pageOrderNodes
+    let nextOrder: NotebookPageOrderRegister
+    do {
+      let root = try NotebookPageOrderVector.append(to: oldOrder.visibleRoot, pageID: page.id,
+        read: { hash in guard let node = nodes[hash] else { throw NotebookStorageError.blobMissing(hash) }; return node },
+        write: { node in let hash = try node.hash; nodes[hash] = node; return hash })
+      nextOrder = try .authored(root: root, stamp: nextStamp, human: true, previous: oldOrder)
+    } catch { return nil }
+    pageOrderNodes = nodes; pageOrders[itemID.uuidString.lowercased()] = nextOrder
     items[itemIndex].pageIDs.append(page.id)
     self.selectedPageID = page.id
     stamp = nextStamp
@@ -385,10 +402,11 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     lhs.format == rhs.format && lhs.rootBoardID == rhs.rootBoardID
       && lhs.items == rhs.items && lhs.selectedItemID == rhs.selectedItemID
       && lhs.selectedPageID == rhs.selectedPageID && lhs.stamp == rhs.stamp
-      && lhs.collaboration == rhs.collaboration
+      && lhs.collaboration == rhs.collaboration && lhs.pageOrders == rhs.pageOrders
+      && lhs.pageOrderNodes == rhs.pageOrderNodes && lhs.isProjection == rhs.isProjection
   }
 
-  private enum CodingKeys: String, CodingKey { case format, items, stamp, collaboration, rootBoardID }
+  private enum CodingKeys: String, CodingKey { case format, items, stamp, collaboration, rootBoardID, pageOrders, pageOrderNodes, isProjection }
 
   public init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -400,6 +418,10 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     items = try values.decode([WorkspaceItem].self, forKey: .items)
     stamp = try values.decode(VersionStamp.self, forKey: .stamp)
     collaboration = try values.decode(CollaborativeContent.self, forKey: .collaboration)
+    pageOrders = try values.decode([String: NotebookPageOrderRegister].self, forKey: .pageOrders)
+    pageOrderNodes = try values.decode([String: NotebookPageOrderNode].self, forKey: .pageOrderNodes)
+    isProjection = try values.decode(Bool.self, forKey: .isProjection)
+    for order in pageOrders.values { try order.validate() }
     guard let first = items.first else { throw DecodingError.dataCorruptedError(forKey: .items, in: values, debugDescription: "A workspace retains one owner.") }
     selectedItemID = first.id; selectedPageID = first.pageIDs.first
     itemPositions = Self.makeItemPositions(items)
@@ -411,6 +433,8 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     try values.encode(format, forKey: .format); try values.encode(items, forKey: .items)
     try values.encode(rootBoardID, forKey: .rootBoardID); try values.encode(stamp, forKey: .stamp)
     try values.encode(collaboration, forKey: .collaboration)
+    try values.encode(pageOrders, forKey: .pageOrders); try values.encode(pageOrderNodes, forKey: .pageOrderNodes)
+    try values.encode(isProjection, forKey: .isProjection)
   }
 
   private static func itemField(_ id: UUID, _ field: String) -> String {
@@ -422,6 +446,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
   }
 
   private mutating func recordCreatedItem(_ item: WorkspaceItem) {
+    if item.kind == .notebook { try! recordPageOrder(item, human: true, previous: nil) }
     for field in ["exists", "title", "kind", "pageIDs"] {
       collaboration.recordField(Self.itemField(item.id, field), stamp: stamp, human: true)
     }
@@ -433,7 +458,9 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
 
   /// Native selection records one field; agent operations and undo use this
   /// same owner's comparison to record only the catalog fields they changed.
-  mutating func recordChanges(from previous: Self?, human: Bool) {
+  mutating func recordChanges(from previous: Self?, human: Bool) throws {
+    pageOrders = previous?.pageOrders ?? [:]
+    pageOrderNodes = previous?.pageOrderNodes ?? [:]
     collaboration = previous?.collaboration ?? CollaborativeContent()
     let oldIDs = previous?.items.map(\.id) ?? []
     let ids = items.map(\.id)
@@ -446,6 +473,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
       if old?.title != new.title { collaboration.recordField(Self.itemField(id, "title"), stamp: stamp, human: human) }
       if old?.kind != new.kind { collaboration.recordField(Self.itemField(id, "kind"), stamp: stamp, human: human) }
       if old?.pageIDs != new.pageIDs {
+        if new.kind == .notebook { try recordPageOrder(new, human: human, previous: previous?.pageOrders[id.uuidString.lowercased()]) }
         collaboration.recordField(Self.itemField(id, "pageIDs"), stamp: stamp, human: human)
         let oldPages = Set(old?.pageIDs ?? []), newPages = Set(new.pageIDs)
         for page in oldPages.symmetricDifference(newPages) {
@@ -455,16 +483,53 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     }
   }
 
+  private mutating func recordPageOrder(_ item: WorkspaceItem, human: Bool, previous: NotebookPageOrderRegister?) throws {
+    var nodes = pageOrderNodes
+    let root = try NotebookPageOrderVector.build(item.pageIDs, write: { node in
+      let hash = try node.hash; nodes[hash] = node; return hash
+    })
+    pageOrders[item.id.uuidString.lowercased()] = try .authored(root: root, stamp: stamp, human: human, previous: previous)
+    pageOrderNodes = nodes
+  }
+
+  /// Validation is deliberately separate from the bounded projection shape.
+  /// Missing provenance is never synthesized from already displayed pageIDs.
+  func validatePageOrderWitness() throws {
+    guard !isProjection else { throw NotebookStorageError.invalidTransaction("incomplete workspace order witness") }
+    for item in items where item.kind == .notebook {
+      guard let order = pageOrders[item.id.uuidString.lowercased()] else { throw NotebookStorageError.invalidTransaction("missing page order") }
+      try order.validate()
+      let read: (String) throws -> NotebookPageOrderNode = { hash in
+        guard let node = pageOrderNodes[hash] else { throw NotebookStorageError.blobMissing(hash) }; return node
+      }
+      guard try NotebookPageOrderVector.materialize(order.visibleRoot, read: read) == item.pageIDs else {
+        throw NotebookStorageError.invalidTransaction("materialized page order")
+      }
+      let normalized = try NotebookPageOrderRegister.normalize([order], live: Set(item.pageIDs), read: read,
+        write: { try $0.hash })
+      guard normalized.register == order, normalized.pages == item.pageIDs else {
+        throw NotebookStorageError.invalidTransaction("unauthored visible page order")
+      }
+    }
+  }
+
   public func merging(_ other: Self) throws -> Self {
-    guard isValid, other.isValid, rootBoardID == other.rootBoardID else {
+    guard isValid, other.isValid, !isProjection, !other.isProjection, rootBoardID == other.rootBoardID else {
       throw CollaborationError("invalid_content", "Каталоги должны принадлежать одному корню.")
     }
-    if self == other { return self }
+    if self == other { try validatePageOrderWitness(); return self }
     func incomingOwns(_ field: String) -> Bool {
       guard let incoming = other.collaboration.fields[field] else { return false }
       guard let current = collaboration.fields[field] else { return true }
       return incoming.wins(over: current)
     }
+    var nodes = pageOrderNodes
+    for (hash, node) in other.pageOrderNodes {
+      if let old = nodes[hash], old != node { throw NotebookStorageError.blobHashMismatch }
+      nodes[hash] = node
+    }
+    var orders = pageOrders
+    for (key, value) in other.pageOrders where orders[key] == nil { orders[key] = value }
     var byID: [UUID: WorkspaceItem] = [:]
     for id in Set(items.map(\.id)).union(other.items.map(\.id)) {
       let local = item(id: id), incoming = other.item(id: id)
@@ -480,8 +545,14 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
         let live = localPages.union(incomingPages).filter { page in
           incomingOwns(Self.pageField(id, page)) ? incomingPages.contains(page) : localPages.contains(page)
         }
-        let preferred = incomingOwns(Self.itemField(id, "pageIDs")) ? incoming.pageIDs : local.pageIDs
-        resolved.pageIDs = preferred.filter(live.contains) + live.subtracting(preferred).sorted { $0.uuidString < $1.uuidString }
+        if local.kind == .notebook {
+          let key = id.uuidString.lowercased()
+          guard let a = pageOrders[key], let b = other.pageOrders[key] else { throw NotebookStorageError.invalidTransaction("missing authored page order") }
+          let normalized = try NotebookPageOrderRegister.normalize([a, b], live: live,
+            read: { hash in guard let node = nodes[hash] else { throw NotebookStorageError.blobMissing(hash) }; return node },
+            write: { node in let hash = try node.hash; nodes[hash] = node; return hash })
+          resolved.pageIDs = normalized.pages; orders[key] = normalized.register
+        }
       }
       byID[id] = resolved
     }
@@ -500,16 +571,24 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     let frontier = max(stamp, other.stamp)
     var result = self
     result.items = order.compactMap { byID[$0] }
+    result.pageOrders = orders; result.pageOrderNodes = nodes
     result.itemPositions = Self.makeItemPositions(result.items)
     result.selectedItemID = selectedID
     result.selectedPageID = selectedPage
     result.stamp = frontier
     for (key, version) in other.collaboration.fields { result.collaboration.joinField(key, version: version) }
+    for item in result.items where item.kind == .notebook {
+      let key = item.id.uuidString.lowercased()
+      if let register = result.pageOrders[key] {
+        result.collaboration.setPageOrderVersion(Self.itemField(item.id, "pageIDs"), register: register)
+      }
+    }
     let newest = stamp > other.stamp ? self : other
     if result.items != newest.items {
       result.stamp = frontier.advanced(by: frontier.actor) ?? frontier
     }
     guard result.isValid else { throw CollaborationError("invalid_content", "Слияние каталога должно сохранить уникальных владельцев листов.") }
+    try result.validatePageOrderWitness()
     return result
   }
 }

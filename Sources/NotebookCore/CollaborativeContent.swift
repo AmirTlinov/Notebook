@@ -38,7 +38,7 @@ public struct ContentFieldVersion: Codable, Equatable, Sendable {
     return .init(stamp: winner.stamp, human: winner.human, observed: observations)
   }
 
-  private init(stamp: VersionStamp, human: Bool, observed: [String: UInt64]) {
+  init(stamp: VersionStamp, human: Bool, observed: [String: UInt64]) {
     self.stamp = stamp; self.human = human; self.observed = observed
   }
 }
@@ -54,6 +54,10 @@ public struct CollaborativeContent: Codable, Equatable, Sendable {
 
   mutating func joinField(_ key: String, version: ContentFieldVersion) {
     fields[key] = fields[key].map { $0.joining(version) } ?? version
+  }
+
+  mutating func setPageOrderVersion(_ key: String, register: NotebookPageOrderRegister) {
+    fields[key] = register.fieldVersion
   }
 
   /// Materialize implicit clocks before the aggregate Lamport frontier moves

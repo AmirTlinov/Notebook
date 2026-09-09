@@ -8,12 +8,10 @@ import { BridgeError } from "../src/bridge.js";
 import { deflateSync } from "node:zlib";
 
 import type {
-  BoardHierarchy,
   CurrentViewReceipt,
   PageDocument,
   SessionPresence,
-  SpatialInkJournal,
-  WorkspaceIndex,
+  VersionStamp,
 } from "../src/domain.js";
 import type { PageVisionReceipt } from "../src/page-vision.js";
 
@@ -27,59 +25,7 @@ const currentViewPNG = grayscalePNG(700, 900, 96);
 const regionPNG = grayscalePNG(52, 52, 0);
 
 export async function writeFixture(root: string): Promise<void> {
-  const workspace: WorkspaceIndex = {
-    format: 4,
-    collaboration:{fields:{}},
-    rootBoardID,
-    items: [
-      {
-        id: itemID,
-        kind: "notebook",
-        title: "Notebook 1",
-        pageIDs: [pageID],
-      },
-    ],
-    selectedItemID: itemID,
-    selectedPageID: pageID,
-    stamp: { counter: 0, actor: appActor },
-  };
-  const page: PageDocument = {
-    format: 1,
-    id: pageID,
-    size: { width: 834, height: 1194 },
-    drawingData: "",
-    drawingStamp: { counter: 0, actor: appActor },
-    elements: [],
-    agentStamp: { counter: 0, actor: appActor },
-  };
-  const board: BoardHierarchy = {
-    format: 1,
-    rootBoardID,
-    boards: [{
-      id: rootBoardID,
-      board: {
-        format: 2,
-        freeItems: [
-          {
-            itemID,
-            center: { tileX: 0, tileY: 0, localX: 0, localY: 0 },
-            zIndex: 0,
-            stamp: { counter: 0, actor: appActor },
-          },
-        ],
-        stacks: [],
-        elements: [],
-        stamp: { counter: 0, actor: appActor },
-      },
-    }],
-    stamp: { counter: 0, actor: appActor },
-  };
-  const spatialInk: SpatialInkJournal = {
-    format: 1,
-    actions: [],
-    stamp: { counter: 0, actor: appActor },
-  };
-  const presence: SessionPresence = {
+  const initialPresence: SessionPresence = {
     format: 5,
     boardID: rootBoardID,
     mode: "page",
@@ -93,11 +39,18 @@ export async function writeFixture(root: string): Promise<void> {
     openProgress: 1,
     documentPageIndex: 0,
   };
+  await startFixture(root);
+  const { workspaceStamp, page, spatialInkStamp, presence } = await fixtureControl<{
+    workspaceStamp: VersionStamp; page: PageDocument; spatialInkStamp: VersionStamp; presence: SessionPresence;
+  }>(root, "seed", {
+    actor: appActor, itemID, pageID, rootBoardID, title: "Notebook 1",
+    pageSize: { width: 834, height: 1194 }, presence: initialPresence,
+  });
   const currentViewReceipt: CurrentViewReceipt = {
     format: 6,
-    workspaceStamp: workspace.stamp,
+    workspaceStamp,
     boardRevision: "",
-    spatialInkStamp: spatialInk.stamp,
+    spatialInkStamp,
     presence,
     renderViewport: { x: 700, y: 900 },
     pngSHA256: createHash("sha256").update(currentViewPNG).digest("hex"),
@@ -143,8 +96,6 @@ export async function writeFixture(root: string): Promise<void> {
     previewPNG_SHA256: previewSHA256,
     inkPNG_SHA256: previewSHA256,
   };
-  await startFixture(root);
-  await fixtureControl(root,"seed",{workspace,page,board,spatialInk,presence});
   const boardRevision = (await new NotebookStore(fixtureSocket(root)).readHeader()).boardRevision;
   if (!boardRevision) throw new Error("Seeded Core scene has no completed identity");
   currentViewReceipt.boardRevision = boardRevision;

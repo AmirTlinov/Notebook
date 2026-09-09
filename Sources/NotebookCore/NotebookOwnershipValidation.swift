@@ -2,13 +2,28 @@ import Foundation
 
 extension NotebookStore {
   /// Derived address indexes are part of the command transaction. Validation
-  /// visits only changed owners; unrelated archive bodies are never decoded.
+  /// visits only changed owners and dependency edges. Previously committed
+  /// page memberships remain valid until one of their two endpoints changes.
   func validateChangedOwnership(database: NotebookSQLConnection) throws {
-    guard !database.touchedItemIDs.isEmpty || !database.dirtyBoardNodes.isEmpty || !database.touchedCoverAddresses.isEmpty else { return }
+    var itemIDs = database.touchedItemIDs, pageIDs = Set<UUID>()
+    for change in database.changes.values {
+      let address = change.address
+      if address.hasPrefix("workspace.json#/items/@"), address.contains("/pageIDs/@") {
+        let parts = address.dropFirst("workspace.json#/items/@".count).components(separatedBy: "/pageIDs/@")
+        guard parts.count == 2, let item = UUID(uuidString: parts[0]), let page = UUID(uuidString: parts[1]) else {
+          throw NotebookStorageError.corruptRecord("page membership address")
+        }
+        itemIDs.insert(item); pageIDs.insert(page)
+      } else if address.hasPrefix("pages/"), address.hasSuffix(".json#"),
+        let page = UUID(uuidString: String(address.dropFirst(6).dropLast(6))) {
+        pageIDs.insert(page)
+      }
+    }
+    guard !itemIDs.isEmpty || !pageIDs.isEmpty || !database.dirtyBoardNodes.isEmpty || !database.touchedCoverAddresses.isEmpty else { return }
     guard try hasStoredValue("workspace.json") else { return }
     let count = Int(try database.rows("SELECT value FROM metadata WHERE key='item_count'").first?[0].text ?? "0") ?? 0
     guard count > 0 else { throw NotebookStorageError.invalidTransaction("workspace retains one item") }
-    for itemID in database.touchedItemIDs {
+    for itemID in itemIDs {
       let id = itemID.uuidString.lowercased(), address = "workspace.json#/items/@" + id
       let item = try storedFragments(address: address, descendants: false).first
       let owners = try database.rows("SELECT board_id,address FROM spatial_entries WHERE owner_id=? AND kind='item' LIMIT 2", [.text(id)])
@@ -22,8 +37,8 @@ extension NotebookStore {
       }
       let kind = item?.value["kind"]?.string
       if kind == WorkspaceItemKind.notebook.rawValue {
-        let pages = try database.rows("SELECT r.member,p.address FROM records r LEFT JOIN records p ON p.address='pages/'||r.member||'.json#' WHERE r.parent=? AND r.collection='pageIDs' AND p.address IS NULL LIMIT 1", [.text(address)])
-        guard pages.isEmpty, try !database.rows("SELECT 1 FROM records WHERE parent=? AND collection='pageIDs' LIMIT 1", [.text(address)]).isEmpty else {
+        guard item?.collections.contains(.init(path: ["pageIDs"], kind: .array)) == true,
+          try pageCount(in: itemID) > 0 else {
           throw NotebookStorageError.corruptRecord("notebook page dependency: " + id)
         }
       } else if kind == WorkspaceItemKind.document.rawValue {
@@ -36,6 +51,17 @@ extension NotebookStore {
           next = try ownerBoardID(of: current)
         }
       } else { throw NotebookStorageError.corruptRecord("item kind: " + id) }
+    }
+    for pageID in pageIDs {
+      // record_identity answers this one UUID even in a notebook with 100000
+      // sheets. LIMIT 1 on a missing-dependency anti-join would still scan all.
+      let owners = try database.rows("SELECT parent FROM records INDEXED BY record_identity WHERE file='workspace.json' AND collection='pageIDs' AND member=? LIMIT 2", [.text(pageID.uuidString.lowercased())])
+      guard owners.count <= 1 else { throw NotebookStorageError.corruptRecord("page has multiple owners") }
+      if let parent = owners.first?[0].text {
+        let item = try storedFragments(address: parent, descendants: false).first
+        guard item?.value["kind"]?.string == WorkspaceItemKind.notebook.rawValue,
+          try hasStoredValue(pageFile(pageID)) else { throw NotebookStorageError.corruptRecord("notebook page dependency: " + pageID.uuidString.lowercased()) }
+      }
     }
     for id in database.dirtyBoardNodes {
       let exists = try !database.rows("SELECT 1 FROM records WHERE address=?", [.text("board.json#/boards/@" + id)]).isEmpty

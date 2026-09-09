@@ -700,7 +700,7 @@ func workspaceItemLookupFollowsMergeAndDecodeWithoutWireMetadata() throws {
   for value in reordered.items { #expect(workspace.item(id: value.id) == value) }
   let data = try JSONEncoder().encode(workspace)
   let fields = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-  #expect(Set(fields.keys) == Set(["format", "rootBoardID", "items", "stamp", "collaboration"]))
+  #expect(Set(fields.keys) == Set(["format", "rootBoardID", "items", "stamp", "collaboration", "pageOrders", "pageOrderNodes", "isProjection"]))
   let decoded = try JSONDecoder().decode(WorkspaceIndex.self, from: data)
   #expect(decoded == reordered)
   for value in reordered.items { #expect(decoded.item(id: value.id) == value) }
