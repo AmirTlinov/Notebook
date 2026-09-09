@@ -21,6 +21,7 @@ final class InputFrameMonitor: NSObject {
   }
 
   private static let signposter = OSSignposter(subsystem: "com.amirtlinov.notebook", category: "Input")
+  private static let logger = Logger(subsystem: "com.amirtlinov.notebook", category: "Input")
   private var span: OSSignpostIntervalState?
   private let root: URL
   private var displayLink: CADisplayLink?
@@ -32,6 +33,7 @@ final class InputFrameMonitor: NSObject {
   private var pending: Sample?
   private var pendingHistory: HistorySample?
   private var writeTask: Task<Void, Never>?
+  private(set) var writeFailure: String?
   @MainActor private final class Callback: NSObject {
     weak var monitor: InputFrameMonitor?
     init(_ monitor: InputFrameMonitor) { self.monitor = monitor }
@@ -93,20 +95,31 @@ final class InputFrameMonitor: NSObject {
         let sample = pending, history = pendingHistory
         pending = nil; pendingHistory = nil
         let root = root
-        await Task.detached(priority: .utility) {
-          if let sample {
-            let url = root.appendingPathComponent("runtime/input-frames.json")
-            var samples = (try? JSONDecoder().decode([Sample].self, from: Data(contentsOf: url))) ?? []
-            samples.append(sample)
-            try? JSONEncoder().encode(Array(samples.suffix(64))).write(to: url, options: .atomic)
-          }
-          if let history {
-            let url = root.appendingPathComponent("runtime/collaboration-ui.json")
-            var samples = (try? JSONDecoder().decode([HistorySample].self, from: Data(contentsOf: url))) ?? []
-            samples.append(history)
-            try? JSONEncoder().encode(Array(samples.suffix(32))).write(to: url, options: .atomic)
+        let failure = await Task.detached(priority: .utility) { () -> String? in
+          do {
+            // SQL owns the archive, not this optional diagnostic directory.
+            // Create it here before the first atomic write on a fresh install.
+            let directory = root.appendingPathComponent("runtime", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            if let sample {
+              let url = directory.appendingPathComponent("input-frames.json")
+              var samples = (try? JSONDecoder().decode([Sample].self, from: Data(contentsOf: url))) ?? []
+              samples.append(sample)
+              try JSONEncoder().encode(Array(samples.suffix(64))).write(to: url, options: .atomic)
+            }
+            if let history {
+              let url = directory.appendingPathComponent("collaboration-ui.json")
+              var samples = (try? JSONDecoder().decode([HistorySample].self, from: Data(contentsOf: url))) ?? []
+              samples.append(history)
+              try JSONEncoder().encode(Array(samples.suffix(32))).write(to: url, options: .atomic)
+            }
+            return nil
+          } catch {
+            return error.localizedDescription
           }
         }.value
+        writeFailure = failure
+        if let failure { Self.logger.error("Input diagnostic was not saved: \(failure)") }
       }
       writeTask = nil
     }
