@@ -218,11 +218,11 @@ xcodebuild \
   -quiet \
   -project Notebook.xcodeproj \
   -scheme Notebook \
-  -configuration Debug \
+  -configuration Release \
   -destination 'generic/platform=iOS Simulator' \
   -derivedDataPath "$DERIVED/ipad" \
   CODE_SIGNING_ALLOWED=NO \
-  build
+  build 2>&1 | tee "$EVIDENCE/ipad-release-build.log"
 
 read -r SIMULATOR_ID SIMULATOR_STATE <<<"$(
   xcrun simctl list devices available --json | python3 -c '

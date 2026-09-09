@@ -237,7 +237,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       recognizer.allowedTouchTypes = [
         NSNumber(value: UITouch.TouchType.pencil.rawValue)
       ]
-      #if targetEnvironment(simulator)
+      #if DEBUG && targetEnvironment(simulator)
         if !ProcessInfo.processInfo.arguments.contains(
           SimulatorDrawingFixture.fingerGestureArgument
         ) {
@@ -634,7 +634,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
 
     private func accepts(_ touch: UITouch) -> Bool {
       if touch.type == .pencil { return true }
-      #if targetEnvironment(simulator)
+      #if DEBUG && targetEnvironment(simulator)
         return touch.type == .direct
           && !ProcessInfo.processInfo.arguments.contains(
             SimulatorDrawingFixture.fingerGestureArgument

@@ -617,7 +617,7 @@ final class PaperInputView: UIView {
 
   private func acceptsDrawingTouch(_ touch: UITouch) -> Bool {
     if touch.type == .pencil { return true }
-    #if targetEnvironment(simulator)
+    #if DEBUG && targetEnvironment(simulator)
       return touch.type == .direct
         && (!ProcessInfo.processInfo.arguments.contains(
           SimulatorDrawingFixture.fingerGestureArgument
