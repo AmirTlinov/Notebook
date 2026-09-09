@@ -173,21 +173,32 @@ final class DocumentGeometryTests: XCTestCase {
         else { renderer.setPageIndex(1); }
         return originalTypeset(nodes);
       };
-      const makePayload = token => ({
-        documentID: documentID, renderToken: token, editable: true, states: {},
-        paper: {kind:'letter',widthPoints:612,heightPoints:792,marginPoints:72,cornerRadiusRatio:0.004},
-        blocks: [{id:'body',kind:'markdown',source:Array.from({length:40},(_,i)=>
-          '# ' + token + ' ' + i + '\\n\\nСодержание конечного листа.').join('\\n\\n')}]
-      });
+      const stateKey = 'test-state';
+      renderer.applyState({key:stateKey, documentID, states:{}});
+      const present = (token, pageIndex) => {
+        const sourceKey = 'test-source-' + token;
+        renderer.installSource({
+          key:sourceKey, documentID, sourceVersions:{},
+          paper: {kind:'letter',widthPoints:612,heightPoints:792,marginPoints:72,cornerRadiusRatio:0.004},
+          blocks: [{id:'body',kind:'markdown',source:Array.from({length:40},(_,i)=>
+            '# ' + token + ' ' + i + '\\n\\nСодержание конечного листа.').join('\\n\\n')}]
+        });
+        // A physical host submits its selected page separately from the shared
+        // source and state. The last queued frame owns the landing index.
+        return renderer.presentPage({documentID, sourceKey, stateKey, renderToken:token,
+          generation:token, runtimeID:'test-runtime', editable:true, pageIndex,
+          blockTokens:{}, programMode:'live', drafts:[]});
+      };
       try {
-        const finished = renderer.apply(makePayload('first'));
+        const finished = present('first', 0);
         await started;
-        renderer.apply(makePayload('superseded'));
-        renderer.apply(makePayload('latest'));
+        present('superseded', 0);
+        present('latest', 1);
         release();
         await finished;
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         return JSON.stringify({count, ...renderer.pageReceipt(),
+          childIDs:[...document.getElementById('document').children].map(node=>node.dataset.blockId),
           heading:document.querySelector('h1').textContent,
           offset:new DOMMatrix(getComputedStyle(document.querySelector('#page-track')).transform).m41});
       } finally { MathJax.typesetPromise = originalTypeset; }
@@ -202,6 +213,10 @@ final class DocumentGeometryTests: XCTestCase {
       JSONSerialization.jsonObject(with: Data(updated.utf8)) as? [String: Any])
     XCTAssertEqual(receipt["count"] as? Int, 2, "Ожидающие правки объединяются до последней")
     XCTAssertEqual(receipt["renderToken"] as? String, "latest")
+    XCTAssertEqual(receipt["sourceKey"] as? String, "test-source-latest")
+    XCTAssertEqual(receipt["stateKey"] as? String, "test-state")
+    XCTAssertEqual(receipt["layoutCanonical"] as? Bool, true)
+    XCTAssertEqual(receipt["childIDs"] as? [String], ["body"], "Прежний DOM не переживает замену исходника")
     XCTAssertEqual(receipt["heading"] as? String, "latest 0")
     XCTAssertEqual(receipt["pageIndex"] as? Int, 1, "Завершение набора сохраняет выбранный лист")
     XCTAssertLessThan(try XCTUnwrap(receipt["offset"] as? Double), -100)

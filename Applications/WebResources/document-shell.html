@@ -196,7 +196,14 @@
       const interactiveLayer = document.getElementById('interactive-layer');
       const interactiveFrames = new Map();
       let payload = null;
+      let sourceSnapshot = null;
+      let stateSnapshot = null;
+      let installedSourceKey = null;
+      let appliedStateKey = null;
       let pageLayout = null;
+      let measuredRegions = [];
+      let layoutCanonical = false;
+      const work = {sourceInstalls:0,stateApplications:0,layoutPasses:0,regionMeasurements:0,typesetPasses:0};
       let editingBlockID = null;
       let activeEditorFinish = null;
       let activeEditorLayout = null;
@@ -275,6 +282,7 @@
 
       const paginate = (requestedPage = pageLayout?.requestedPage ?? 0) => {
         if (!pageLayout) return 1;
+        work.layoutPasses += 1;
         const { contentWidth, columnGap, pageWidth, pageHeight, gap, side, stride } = pageLayout;
         const extent = Math.max(contentWidth, root.scrollWidth);
         const pageCount = Math.max(
@@ -311,7 +319,8 @@
         runtimeDiagnostics.push({kind, message:String(message), ...(blockID ? {blockID} : {})});
         runtimeDiagnostics = runtimeDiagnostics.slice(-64);
       };
-      const blockRegions = () => {
+      const measureBlockRegions = () => {
+        work.regionMeasurements += 1;
         if (!pageLayout) return [];
         const {stride,side,top,pageWidth,pageHeight,requestedPage} = pageLayout;
         const viewportRect = viewport.getBoundingClientRect();
@@ -324,12 +333,15 @@
         }).filter(rect => rect.width > 0 && rect.height > 0));
       };
 
+      const blockRegions = () => measuredRegions;
+
       const setPageIndex = (requestedIndex) => {
         if (!pageLayout || !payload || !Number.isInteger(requestedIndex)) {
           return null;
         }
         const maximum = Math.max(0, (pageLayout.pageCount || 1) - 1);
         const index = Math.max(0, Math.min(maximum, requestedIndex));
+        if (index === pageLayout.requestedPage) return;
         track.style.transform = `translate3d(${-index * pageLayout.stride}px, 0, 0)`;
         pageLayout.requestedPage = index;
       };
@@ -338,6 +350,11 @@
         if (!pageLayout || !payload) return null;
         return {
           documentID: payload.documentID,
+          sourceKey: payload.sourceKey,
+          generation: payload.generation,
+          stateKey: payload.stateKey,
+          layoutCanonical,
+          work: {...work},
           renderToken: payload.renderToken,
           pageIndex: currentPageIndex(),
           pageCount: pageLayout.pageCount,
@@ -351,6 +368,7 @@
       const schedulePagination = () => {
         if (!payload) return;
         paginate(currentPageIndex());
+        measuredRegions = measureBlockRegions();
         positionInteractiveFrames();
         activeEditorLayout?.();
       };
@@ -442,8 +460,14 @@
             diagnostic('program_completion_unknown', 'This is a captured frame. The program has not declared completion with notebook.ready(promise).', blockID);
           }
         }
+      };
+
+      const applyInteractiveState = async () => {
+        const blocks = new Map((payload.blocks || []).filter(block => block.kind === 'interactive').map(block => [block.id,block]));
         await Promise.all([...interactiveFrames].map(([blockID,runtime])=>new Promise(resolve=>{
-          const nextState=stateFor(blocks.get(blockID)), stateKey=stable(nextState);
+          const block = blocks.get(blockID);
+          if(!block){resolve();return}
+          const nextState=stateFor(block), stateKey=stable(nextState);
           if(runtime.appliedState===stateKey){resolve();return}
           const requestID=crypto.randomUUID(); runtime.stateRequestID=requestID; runtime.stateApplied=resolve;
           runtime.appliedState=stateKey;
@@ -482,6 +506,7 @@
 
       const typeset = async (nodes) => {
         if (nodes.length === 0) return;
+        work.typesetPasses += 1;
         try {
           await window.MathJax?.startup?.promise;
           if (typeof window.MathJax?.typesetPromise !== 'function') {
@@ -502,16 +527,14 @@
         }
       };
 
-      const render = async (nextPayload) => {
-        const requestedPage = nextPayload.pageIndex ?? currentPageIndex();
-        payload = nextPayload;
-        runtimeDiagnostics = [];
-        configurePaper(nextPayload, requestedPage);
+      const renderSource = async () => {
+        work.sourceInstalls += 1;
+        configurePaper(payload, payload.pageIndex);
         const oldByID = new Map([...root.children].map(node => [node.dataset.blockId, node]));
         const nextNodes = [];
         const typesetNodes = [];
 
-        for (const block of nextPayload.blocks || []) {
+        for (const block of payload.blocks || []) {
           const old = oldByID.get(block.id);
           const signature = signatureFor(block);
           if (old && (old.dataset.signature === signature || editingBlockID === block.id)) {
@@ -522,7 +545,10 @@
             oldByID.delete(block.id);
             continue;
           }
-          if (old && window.MathJax?.typesetClear) MathJax.typesetClear([old]);
+          if (old) {
+            if (window.MathJax?.typesetClear) MathJax.typesetClear([old]);
+            old.remove();
+          }
           const node = createBlock(block);
           nextNodes.push(node);
           if (block.kind !== 'interactive') typesetNodes.push(node);
@@ -537,37 +563,78 @@
         await typeset(typesetNodes);
         await document.fonts.ready;
         await Promise.all([...root.querySelectorAll('img')].map(image=>image.decode().catch(()=>{})));
-        const pageCount = paginate(currentPageIndex());
-        await prepareInteractiveFrames();
-        activeEditorLayout?.();
-        restoreEditor();
-        bridge({
-          kind: 'rendered',
-          documentID: nextPayload.documentID,
-          renderToken: nextPayload.renderToken,
-          pageCount
-        });
+        paginate(payload.pageIndex);
+        measuredRegions = measureBlockRegions();
+        // A peer may edit the same source while this textarea owns a draft.
+        // Keep that editor and its old flow node, but do not certify that mixed
+        // presentation as the new canonical layout.
+        layoutCanonical = (payload.blocks || []).every((block,index) =>
+          root.children[index]?.dataset.signature === signatureFor(block));
+        installedSourceKey = payload.sourceKey;
       };
 
-      // One renderer owns the DOM while MathJax and frames finish. A newer
-      // payload replaces the waiting payload; it follows the current render.
-      let pendingPayload = null;
+      const renderFrame = async (job) => {
+        currentFrame = job;
+        const localStates = job.refreshSource && payload?.stateKey === job.state.key ? payload.states : job.state.states;
+        const previousPage = currentPageIndex();
+        const sourceChanged = installedSourceKey !== job.source.key || job.refreshSource;
+        const stateChanged = appliedStateKey !== job.state.key;
+        const modeChanged = payload?.programMode !== job.frame.programMode;
+        payload = {...job.source,...job.frame,states:{...localStates}};
+        bridge({kind:'renderStarted',documentID:payload.documentID,renderToken:payload.renderToken,
+          sourceKey:payload.sourceKey,stateKey:payload.stateKey,generation:payload.generation});
+        if(sourceChanged){runtimeDiagnostics=[];await renderSource()}
+        else setPageIndex(payload.pageIndex);
+        if(sourceChanged || previousPage !== currentPageIndex() || modeChanged){
+          await prepareInteractiveFrames();
+          activeEditorLayout?.();
+          restoreEditor();
+        }
+        if(stateChanged || sourceChanged || previousPage !== currentPageIndex()){
+          work.stateApplications += 1;
+          await applyInteractiveState();
+          appliedStateKey = job.state.key;
+        }
+        bridge({kind:'rendered',documentID:payload.documentID,renderToken:payload.renderToken,
+          sourceKey:payload.sourceKey,stateKey:payload.stateKey,generation:payload.generation,layoutCanonical,pageCount:pageLayout.pageCount});
+      };
+
+      // Each pending frame retains its immutable inputs. A newer source or
+      // state packet cannot mutate the render that is already awaiting WebKit.
+      let pendingFrame = null;
+      let currentFrame = null;
       let renderTask = null;
-      const apply = (nextPayload) => {
-        pendingPayload = nextPayload;
+      const installSource = source => { sourceSnapshot = source; };
+      const applyState = state => { stateSnapshot = state; };
+      const enqueueFrame = job => {
+        pendingFrame = job;
         if (!renderTask) {
           renderTask = (async () => {
-            while (pendingPayload) {
-              const next = pendingPayload;
-              pendingPayload = null;
-              try { await render(next); } catch(error) {
+            while (pendingFrame) {
+              const next = pendingFrame;
+              pendingFrame = null;
+              try { await renderFrame(next); } catch(error) {
                 diagnostic('render_error',error);
-                bridge({kind:'renderFailed',documentID:next.documentID,renderToken:next.renderToken,message:String(error)});
+                bridge({kind:'renderFailed',documentID:next.frame.documentID,
+                  renderToken:next.frame.renderToken,sourceKey:next.frame.sourceKey,stateKey:next.frame.stateKey,
+                  generation:next.frame.generation,message:String(error)});
               }
             }
           })().finally(() => { renderTask = null; });
         }
         return renderTask;
+      };
+      const presentPage = frame => {
+        if(!sourceSnapshot || !stateSnapshot || frame.sourceKey !== sourceSnapshot.key
+          || frame.stateKey !== stateSnapshot.key || frame.documentID !== sourceSnapshot.documentID
+          || frame.documentID !== stateSnapshot.documentID){
+          throw new Error('Document frame does not match its immutable source and state');
+        }
+        return enqueueFrame({source:sourceSnapshot,state:stateSnapshot,frame,refreshSource:false});
+      };
+      const refreshSourcePresentation = () => {
+        const latest = pendingFrame || currentFrame;
+        if(latest)enqueueFrame({...latest,refreshSource:true});
       };
 
       const beginEditing = (blockID, restored = null) => {
@@ -667,7 +734,7 @@
           if(!commit){
             finishedSessionIDs.add(edit.sessionID.toLowerCase());
             bridge({kind:'discardDraft',documentID:edit.documentID,blockID,sessionID:edit.sessionID});
-            close(); apply(payload); return;
+            close(); refreshSourcePresentation(); return;
           }
           reportDraft(); waitingForCommit=true; editor.readOnly=true;
           status.textContent='Сохранение…';
@@ -680,7 +747,7 @@
           waitingForCommit=false;editor.readOnly=false;
           if(result.status==='committed'){
             finishedSessionIDs.add(edit.sessionID.toLowerCase());
-            close(); apply(payload);
+            close(); refreshSourcePresentation();
           }else{
             status.textContent=result.status==='conflict'?'Исходник изменился. Ваш черновик сохранён.'
               :result.status==='targetMissing'?'Блок удалён. Ваш черновик сохранён.':'Не удалось сохранить. Черновик остаётся здесь.';
@@ -704,11 +771,16 @@
       };
 
       const setEditingEnabled = (enabled, drafts = []) => {
+        // Editing authority belongs to the host, not to a source job that may
+        // have been queued before UIKit handed this ready page to the person.
+        const updating = job => job && {...job,frame:{...job.frame,editable:enabled,
+          drafts:enabled ? drafts : job.frame.drafts}};
+        pendingFrame=updating(pendingFrame);currentFrame=updating(currentFrame);
         if(!payload)return null;
         if(!enabled){
           const draft=activeEditor?.suspend() || null;
           payload.editable=false;
-          if(draft)apply(payload);
+          if(draft)refreshSourcePresentation();
           return draft;
         }
         payload.editable=true;payload.drafts=drafts;restoreEditor();return null;
@@ -758,20 +830,27 @@
         if(message.channel==='notebook-state-applied'){if(message.requestID===runtime.stateRequestID)runtime.stateApplied?.();return}
         if(message.channel!=='notebook-interactive')return;
         payload.states[blockID]=message.state;
+        runtime.appliedState=stable(message.state);
         bridge({kind:'state',documentID:payload.documentID,blockID,blockToken:runtime.token,value:message.state});
       });
       addEventListener('dragstart', event => event.preventDefault());
       // The laid-out viewport owns paper size, including a shrink back after
       // expansion. Window resize can arrive before WebKit updates this box.
+      let lastViewportWidth = null, lastViewportHeight = null;
       new ResizeObserver(() => {
         if (!payload) return;
+        const bounds = viewport.getBoundingClientRect();
+        if(bounds.width === lastViewportWidth && bounds.height === lastViewportHeight)return;
+        lastViewportWidth=bounds.width;lastViewportHeight=bounds.height;
         const requestedPage = currentPageIndex();
         configurePaper(payload, requestedPage);
         schedulePagination();
       }).observe(viewport);
 
       window.notebookRenderer = {
-        apply,
+        installSource,
+        applyState,
+        presentPage,
         setPageIndex,
         pageReceipt,
         setEditingEnabled,

@@ -123,76 +123,42 @@ struct DocumentThumbnailView: View {
   }
 }
 
-struct DocumentRuntimePayload: Codable {
-  struct Paper: Codable {
-    let kind: DocumentPaperSize
-    let widthPoints: Double
-    let heightPoints: Double
-    let marginPoints: Double
-    let cornerRadiusRatio: Double
-
-    init(_ size: DocumentPaperSize) {
-      kind = size
-      widthPoints = size.widthPoints
-      heightPoints = size.heightPoints
-      marginPoints = size.marginPoints
-      let geometry = WorkspaceItemGeometry.document(size)
-      cornerRadiusRatio = geometry.cornerRadius / geometry.width
-    }
-  }
-
-  let documentID: UUID
-  let paper: Paper
-  let blocks: [DocumentBlock]
-  let states: [String: JSONValue]
+@MainActor
+struct DocumentRuntimePayload {
+  let source: DocumentSourceSnapshot
+  let state: DocumentStateSnapshot
+  var documentID: UUID { source.message.documentID }
+  var paper: DocumentPaperLayout { source.message.paper }
+  var blocks: [DocumentBlock] { source.message.blocks }
+  var states: [String: JSONValue] { state.message.states }
+  var sourceVersions: [String: ContentFieldVersion] { source.message.sourceVersions }
   var editable: Bool
   let renderToken: String
   let pageIndex: Int
   var runtimeID: UUID
   let blockTokens: [String: String]
-  let sourceVersions: [String: ContentFieldVersion]
   let programMode: String
   var drafts: [DocumentEditingSession]
 
-  init(
-    document: DocumentDocument,
-    state: DocumentStateJournal,
-    editable: Bool,
-    selectedPageIndex: Int,
-    runtimeID: UUID = UUID(), blockTokens: [String: String] = [:],
-    programMode: String = "live", drafts: [DocumentEditingSession] = []
-  ) {
-    documentID = document.id
-    paper = Paper(document.paperSize)
-    blocks = document.blocks
-    states = Dictionary(
-      uniqueKeysWithValues: state.records.map { ($0.id, $0.value) }
-    )
-    self.editable = editable
-    pageIndex = selectedPageIndex
-    self.runtimeID = runtimeID; self.blockTokens = blockTokens
-    sourceVersions = Dictionary(uniqueKeysWithValues: document.blocks.map { ($0.id, document.sourceVersion(blockID: $0.id)) })
-    self.programMode = programMode; self.drafts = drafts
-    renderToken = DocumentSnapshotCache.token(document: document, state: state, pageIndex: selectedPageIndex)
+  func frame(generation: UInt64) -> DocumentRuntimeFrame {
+    .init(documentID: documentID, generation: String(generation), sourceKey: source.message.key, stateKey: state.message.key,
+      editable: editable, renderToken: renderToken, pageIndex: pageIndex, runtimeID: runtimeID,
+      blockTokens: blockTokens, programMode: programMode, drafts: drafts)
   }
 }
 
-struct DocumentRuntimePayloadKey: Equatable {
+struct DocumentRuntimeFrame: Encodable {
   let documentID: UUID
-  let contentStamp: VersionStamp
-  let stateStamp: VersionStamp
-  let snapshotPageIndex: Int
-
-  init(
-    document: DocumentDocument,
-    state: DocumentStateJournal,
-    selectedPageIndex: Int
-  ) {
-    documentID = document.id
-    contentStamp = document.contentStamp
-    stateStamp = state.stamp
-    snapshotPageIndex = selectedPageIndex
-  }
+  let generation: String
+  let sourceKey: String
+  let stateKey: String
+  let editable: Bool
+  let renderToken: String
+  let pageIndex: Int
+  let runtimeID: UUID
+  let blockTokens: [String: String]
+  let programMode: String
+  let drafts: [DocumentEditingSession]
 }
 
 @MainActor
@@ -212,6 +178,15 @@ final class DocumentWebCoordinator: NSObject,
   private(set) var ownsEditing = false
   private var physicalSize = CGSize(width: 1, height: 1)
   private var generation: UInt64 = 0
+  private(set) var renderSession: DocumentRenderSession?
+  private var frameTask: Task<Void, Never>?
+  private var frameTaskID: UUID?
+  private var frameEvaluationID: UUID?
+  private var frameContinuation: CheckedContinuation<Void, Error>?
+  private var sentSourceKey: String?
+  private var sentStateKey: String?
+  private var sentGeneration: UInt64?
+  private var layoutAccepted = false
   private let hostID = UUID()
   private var runtimeID = UUID()
   private var blockTokens: [String: String] = [:]
@@ -219,6 +194,7 @@ final class DocumentWebCoordinator: NSObject,
   private var onDraftChange: (DocumentEditingSession) -> Void = { _ in }
   private var onDraftDiscard: (UUID) -> Void = { _ in }
   private var preparationDeadlineTask: Task<Void, Never>?
+  private var preparationDeadlineGeneration: UInt64?
   private var recoveryAttempts = 0
   private var snapshotReservation: RasterReservation?
   private var readerTask: Task<Void, any Error>?
@@ -332,6 +308,7 @@ final class DocumentWebCoordinator: NSObject,
     onPreparationFailure = { _ in }
     onDraftChange = { _ in }; onDraftDiscard = { _ in }
     releaseWebSurface()
+    payload = nil; renderSession = nil
     host?.removeFallback()
   }
 
@@ -356,8 +333,10 @@ final class DocumentWebCoordinator: NSObject,
   }
 
   private func beginPreparationDeadline() {
+    guard preparationDeadlineTask == nil || preparationDeadlineGeneration != generation else { return }
     preparationDeadlineTask?.cancel()
     let expected = generation
+    preparationDeadlineGeneration = expected
     preparationDeadlineTask = Task { @MainActor [weak self] in
       do { try await Task.sleep(for: .seconds(8)) } catch { return }
       guard let self, !isInvalidated, generation == expected else { return }
@@ -426,7 +405,7 @@ final class DocumentWebCoordinator: NSObject,
   }
 
   private func refreshLiveReceipt() {
-    guard renderIsReady, snapshotPixelWidth == nil, acceptsInput, let payload,
+    guard renderIsReady, layoutAccepted, snapshotPixelWidth == nil, acceptsInput, let payload,
       appliedPageIndex == requestedPageIndex, let pageIndex = appliedPageIndex else { revokeLiveReceipt(); return }
     DocumentRenderRegistry.shared.publishLive(documentID: payload.documentID, token: payload.renderToken,
       pageIndex: pageIndex, hostID: hostID, generation: generation) { [weak self] in
@@ -478,7 +457,9 @@ final class DocumentWebCoordinator: NSObject,
     host?.removeSurface()
     webView = nil
     isReady = false
-    lastAppliedData = nil
+    frameTaskID = nil; frameTask?.cancel(); frameTask = nil
+    finishFrameEvaluation(throwing: CancellationError())
+    sentSourceKey = nil; sentStateKey = nil; sentGeneration = nil; layoutAccepted = false
     renderedToken = nil
     appliedPageIndex = nil
     pageIndexRequestID = nil
@@ -486,6 +467,8 @@ final class DocumentWebCoordinator: NSObject,
   }
 
   isolated deinit {
+    frameTask?.cancel()
+    finishFrameEvaluation(throwing: CancellationError())
     DocumentRenderRegistry.shared.unmountRenderer(hostID: hostID)
     finishReader(throwing: CancellationError())
     readerTask?.cancel()
@@ -503,8 +486,6 @@ final class DocumentWebCoordinator: NSObject,
   weak var webView: WKWebView?
   var isReady = false
   var payload: DocumentRuntimePayload?
-  var payloadKey: DocumentRuntimePayloadKey?
-  var lastAppliedData: Data?
   var requestedPageIndex: Int?
   var appliedPageIndex: Int?
   var pageIndexRequestID: UUID?
@@ -574,17 +555,18 @@ final class DocumentWebCoordinator: NSObject,
       // raster; landing a page must not start an unrelated full-size capture.
       self.capturesSnapshot = capturesSnapshot && snapshotPixelWidth != nil
     #endif
-    let nextKey = DocumentRuntimePayloadKey(
-      document: document,
-      state: state,
-      selectedPageIndex: selectedPageIndex
-    )
+    if renderSession?.documentID != document.id {
+      renderSession = DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources)
+    }
+    guard let renderSession else { return }
+    let nextSource = renderSession.source(document), nextState = renderSession.state(state)
     #if os(macOS)
       let programMode = capturesSnapshot ? "headless" : "live"
     #else
       let programMode = snapshotPixelWidth == nil ? "live" : "snapshot"
     #endif
-    if payloadKey != nextKey || payload?.programMode != programMode {
+    if payload?.pageIndex != selectedPageIndex || payload?.programMode != programMode
+      || payload?.source !== nextSource || payload?.state !== nextState {
       generation &+= 1
       snapshotCaptureID = nil
       snapshotOnlyComplete = false
@@ -595,7 +577,8 @@ final class DocumentWebCoordinator: NSObject,
       pageIndexRequestID = nil
       appliedPageIndex = nil
       renderedToken = nil
-      if payloadKey?.documentID != document.id {
+      layoutAccepted = false
+      if payload?.documentID != document.id {
         pageCount = 1; blockTokens = [:]
         draftsByID = Dictionary(uniqueKeysWithValues: drafts.filter { $0.edit.documentID == document.id }.map { ($0.id, $0) })
       }
@@ -610,16 +593,12 @@ final class DocumentWebCoordinator: NSObject,
         } else { nextTokens[block.id] = UUID().uuidString }
       }
       blockTokens = nextTokens
-      if payloadKey?.contentStamp != nextKey.contentStamp { recoveryAttempts = 0 }
-      payloadKey = nextKey
-      payload = DocumentRuntimePayload(
-        document: document,
-        state: state,
-        editable: ownsEditing,
-        selectedPageIndex: selectedPageIndex, runtimeID: runtimeID, blockTokens: blockTokens,
-        programMode: programMode, drafts: Array(draftsByID.values)
-      )
-      applyIfReady()
+      if payload?.source !== nextSource { recoveryAttempts = 0 }
+      payload = DocumentRuntimePayload(source: nextSource, state: nextState,
+        editable: ownsEditing, renderToken: DocumentSnapshotCache.token(document: document, state: state, pageIndex: selectedPageIndex),
+        pageIndex: selectedPageIndex, runtimeID: runtimeID, blockTokens: blockTokens,
+        programMode: programMode, drafts: Array(draftsByID.values))
+      sendFrameIfReady()
     } else if pageChanged {
       setRenderReady(false)
     }
@@ -633,7 +612,7 @@ final class DocumentWebCoordinator: NSObject,
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     guard !isInvalidated, self.webView === webView else { return }
     isReady = true
-    applyIfReady()
+    sendFrameIfReady()
   }
 
   func webView(
@@ -664,15 +643,29 @@ final class DocumentWebCoordinator: NSObject,
 
     if kind == "ready" {
       isReady = true
-      applyIfReady()
+      sendFrameIfReady()
       return
     }
     guard let documentID = body["documentID"] as? String,
       let payload,
       documentID.caseInsensitiveCompare(payload.documentID.uuidString) == .orderedSame
     else { return }
+    if kind == "renderStarted" {
+      guard body["runtimeID"] as? String == runtimeID.uuidString,
+        body["generation"] as? String == String(generation),
+        body["sourceKey"] as? String == payload.source.message.key,
+        body["stateKey"] as? String == payload.state.message.key,
+        body["renderToken"] as? String == payload.renderToken else { return }
+      layoutAccepted = false; renderedToken = nil; appliedPageIndex = nil; pageIndexRequestID = nil
+      setRenderReady(false); beginPreparationDeadline()
+      return
+    }
     if kind == "rendered" {
       guard let renderToken = body["renderToken"] as? String,
+        body["runtimeID"] as? String == runtimeID.uuidString,
+        body["generation"] as? String == String(generation),
+        body["sourceKey"] as? String == payload.source.message.key,
+        body["stateKey"] as? String == payload.state.message.key,
         renderToken == payload.renderToken
       else { return }
       renderedToken = renderToken
@@ -691,7 +684,11 @@ final class DocumentWebCoordinator: NSObject,
       return
     }
     if kind == "renderFailed" {
-      guard body["renderToken"] as? String == payload.renderToken else { return }
+      guard body["renderToken"] as? String == payload.renderToken,
+        body["runtimeID"] as? String == runtimeID.uuidString,
+        body["generation"] as? String == String(generation),
+        body["sourceKey"] as? String == payload.source.message.key,
+        body["stateKey"] as? String == payload.state.message.key else { return }
       failPreparation(SceneRenderError.snapshotPending(body["message"] as? String ?? payload.documentID.uuidString))
       return
     }
@@ -732,28 +729,58 @@ final class DocumentWebCoordinator: NSObject,
       && left.css == right.css && left.javaScript == right.javaScript
   }
 
-  private func applyIfReady() {
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys]
-    guard !isInvalidated, isReady, let webView, let payload,
-      let data = try? encoder.encode(payload),
-      data != lastAppliedData,
-      let json = String(data: data, encoding: .utf8)
-    else { return }
-    lastAppliedData = data
+  private func sendFrameIfReady() {
+    guard !isInvalidated, isReady, webView != nil, payload != nil,
+      sentGeneration != generation else { return }
+    // A latest frame needs its own deadline even while the single sender is
+    // still encoding or evaluating its predecessor.
     beginPreparationDeadline()
-    // Completion belongs to the rendered receipt; evaluating the JavaScript
-    // Promise itself produces an unsupported-result error in WebKit.
-    webView.evaluateJavaScript(
-      "void window.notebookRenderer.apply(\(json))"
-    ) { [weak self] _, error in
-      guard error != nil else { return }
-      Task { @MainActor [weak self] in
-        guard let self, !isInvalidated, lastAppliedData == data else { return }
-        lastAppliedData = nil
-        failPreparation(error!)
+    guard frameTask == nil else { return }
+    let taskID = UUID(); frameTaskID = taskID
+    frameTask = Task { @MainActor [weak self] in
+      defer {
+        if let self, frameTaskID == taskID { frameTask = nil; frameTaskID = nil }
+      }
+      while let self, !Task.isCancelled, !isInvalidated, isReady, frameTaskID == taskID,
+        let web = webView, let next = payload, sentGeneration != generation {
+        let expected = generation
+        do {
+          let source = sentSourceKey == next.source.message.key ? nil : try await next.source.encodedJSON()
+          let state = sentStateKey == next.state.message.key ? nil : try await next.state.encodedJSON()
+          guard !Task.isCancelled, !isInvalidated, frameTaskID == taskID, webView === web else { return }
+          guard generation == expected else { continue }
+          let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+          guard let current = payload else { return }
+          let frame = String(decoding: try encoder.encode(current.frame(generation: expected)), as: UTF8.self)
+          var script = ""
+          if let source { script += "window.notebookRenderer.installSource(\(source));" }
+          if let state { script += "window.notebookRenderer.applyState(\(state));" }
+          script += "void window.notebookRenderer.presentPage(\(frame));"
+          try await evaluateFrame(script, in: web)
+          guard !Task.isCancelled, !isInvalidated, frameTaskID == taskID, webView === web else { return }
+          sentSourceKey = next.source.message.key; sentStateKey = next.state.message.key; sentGeneration = expected
+        } catch {
+          guard !Task.isCancelled, !isInvalidated, frameTaskID == taskID, generation == expected else { continue }
+          failPreparation(error); return
+        }
       }
     }
+  }
+
+  private func evaluateFrame(_ script: String, in web: WKWebView) async throws {
+    try await withCheckedThrowingContinuation { continuation in
+      let id = UUID(); frameEvaluationID = id; frameContinuation = continuation
+      web.evaluateJavaScript(script) { [weak self] _, error in
+        self?.finishFrameEvaluation(id: id, throwing: error)
+      }
+    }
+  }
+
+  private func finishFrameEvaluation(id: UUID? = nil, throwing error: Error? = nil) {
+    if let id, frameEvaluationID != id { return }
+    frameEvaluationID = nil
+    let continuation = frameContinuation; frameContinuation = nil
+    if let error { continuation?.resume(throwing: error) } else { continuation?.resume() }
   }
 
   private func applyPageIndexIfReady() {
@@ -797,6 +824,9 @@ final class DocumentWebCoordinator: NSObject,
             == .orderedSame,
           let receiptRenderToken = receipt["renderToken"] as? String,
           receiptRenderToken == expectedRenderToken,
+          receipt["generation"] as? String == String(expectedGeneration),
+          receipt["sourceKey"] as? String == payload.source.message.key,
+          receipt["stateKey"] as? String == payload.state.message.key,
           let receiptPage = (receipt["pageIndex"] as? NSNumber)?.intValue,
           receiptPage == value
         else {
@@ -804,8 +834,13 @@ final class DocumentWebCoordinator: NSObject,
           setRenderReady(false)
           return
         }
-        DocumentRenderRegistry.shared.publish(documentID: payload.documentID, token: payload.renderToken, receipt: receipt,
-          geometry: .document(payload.paper.kind))
+        if receipt["layoutCanonical"] as? Bool == true {
+          do {
+            try DocumentRenderRegistry.shared.publish(documentID: payload.documentID, token: payload.renderToken, receipt: receipt,
+              geometry: .document(payload.paper.kind))
+            layoutAccepted = true
+          } catch { failPreparation(error); return }
+        } else { layoutAccepted = false }
         appliedPageIndex = receiptPage
         setRenderReady(requestedPageIndex == receiptPage)
         applyPageIndexIfReady()
@@ -815,7 +850,8 @@ final class DocumentWebCoordinator: NSObject,
   }
 
   private func setRenderReady(_ ready: Bool) {
-    guard !isInvalidated, renderIsReady != ready else { return }
+    guard !isInvalidated else { return }
+    guard renderIsReady != ready else { refreshLiveReceipt(); return }
     renderIsReady = ready
     refreshLiveReceipt()
     if ready, !capturesSnapshot { preparationDeadlineTask?.cancel(); preparationDeadlineTask = nil }
@@ -844,7 +880,7 @@ final class DocumentWebCoordinator: NSObject,
             readerPreparedLease?.release(); readerPreparedLease = cached; return
           }
           if let acquisitionError { throw acquisitionError }
-          if renderIsReady, snapshotPixelWidth == nil, webView != nil { break }
+          if renderIsReady, layoutAccepted, snapshotPixelWidth == nil, webView != nil { break }
           guard ContinuousClock.now < deadline else { throw SceneRenderError.snapshotPending("document_snapshot_producer") }
           try await Task.sleep(for: .milliseconds(20))
         }
@@ -921,7 +957,7 @@ final class DocumentWebCoordinator: NSObject,
   }
 
     private func capturePendingSnapshotIfReady() {
-      guard !isInvalidated, capturesSnapshot, !snapshotOnlyComplete, snapshotCaptureID == nil, pageIndexRequestID == nil,
+      guard !isInvalidated, layoutAccepted, capturesSnapshot, !snapshotOnlyComplete, snapshotCaptureID == nil, pageIndexRequestID == nil,
         let payload = pendingSnapshotPayload
       else { return }
       if let requestedPageIndex {

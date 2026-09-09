@@ -16,10 +16,29 @@ final class DocumentRenderRegistry {
   struct Entry {
     let token: String
     let pageIndex: Int
-    let regions: [DocumentBlockRegion]
+    let layout: DocumentLayoutRecord
+    var regions: [DocumentBlockRegion] { layout.regions }
     let diagnostics: [RenderDiagnostic]
   }
   private var entries: [UUID: [Entry]] = [:]
+  private struct SessionKey: Hashable {
+    let documentID: UUID
+    let resources: ObjectIdentifier
+  }
+  private final class WeakSession {
+    weak var value: DocumentRenderSession?
+    init(_ value: DocumentRenderSession) { self.value = value }
+  }
+  @ObservationIgnored private var sessions: [SessionKey: WeakSession] = [:]
+
+  func session(documentID: UUID, resources: SceneRenderResources) -> DocumentRenderSession {
+    let key = SessionKey(documentID: documentID, resources: ObjectIdentifier(resources))
+    if let value = sessions[key]?.value { return value }
+    sessions = sessions.filter { $0.value.value != nil }
+    let value = DocumentRenderSession(documentID: documentID)
+    sessions[key] = WeakSession(value)
+    return value
+  }
   private struct LiveSurface {
     let documentID: UUID
     let token: String
@@ -173,21 +192,22 @@ final class DocumentRenderRegistry {
     return entries[document.id]?.last(where: { $0.token.hasPrefix(token) })?.regions ?? []
   }
 
-  func publish(documentID: UUID, token: String, receipt: NSDictionary, geometry: WorkspaceItemGeometry) {
-    let width = (receipt["width"] as? NSNumber)?.doubleValue ?? geometry.width
-    let height = (receipt["height"] as? NSNumber)?.doubleValue ?? geometry.height
-    guard width > 0, height > 0, let pageIndex = (receipt["pageIndex"] as? NSNumber)?.intValue else { return }
-    let regions = (receipt["regions"] as? [[String: Any]] ?? []).compactMap { value -> DocumentBlockRegion? in
-      guard let id = value["id"] as? String, let page = value["pageIndex"] as? Int,
-        let x = value["x"] as? Double, let y = value["y"] as? Double,
-        let w = value["width"] as? Double, let h = value["height"] as? Double, w > 0, h > 0 else { return nil }
-      return .init(id: id, pageIndex: page, frame: .init(x:x * geometry.width / width,y:y * geometry.height / height,
-        width:w * geometry.width / width,height:h * geometry.height / height))
+  func publish(documentID: UUID, token: String, receipt: NSDictionary, geometry: WorkspaceItemGeometry) throws {
+    guard let pageIndex = receipt["pageIndex"] as? Int, let key = receipt["sourceKey"] as? String,
+      let source = sessions.values.lazy.compactMap(\.value)
+        .filter({ $0.documentID == documentID }).compactMap({ $0.source(key: key) }).first else {
+      throw DocumentSessionError.invalidLayout
     }
-    let diagnostics = (receipt["diagnostics"] as? [[String: String]] ?? []).map { RenderDiagnostic(kind: $0["kind"] ?? "render_error", elementID: $0["blockID"], message: $0["message"] ?? "") }
+    let layout = try source.acceptLayout(receipt, geometry: geometry)
+    guard (0..<layout.pageCount).contains(pageIndex) else { throw DocumentSessionError.invalidLayout }
+    let diagnostics = (receipt["diagnostics"] as? [[String: String]] ?? []).map {
+      RenderDiagnostic(kind: $0["kind"] ?? "render_error", elementID: $0["blockID"], message: $0["message"] ?? "")
+    }
     var values = entries[documentID] ?? []
+    if let previous = values.last(where: { $0.token == token && $0.pageIndex == pageIndex }),
+      previous.layout === layout, previous.diagnostics == diagnostics { return }
     values.removeAll { $0.token == token && $0.pageIndex == pageIndex }
-    values.append(.init(token: token, pageIndex: pageIndex, regions: regions, diagnostics: diagnostics))
+    values.append(.init(token: token, pageIndex: pageIndex, layout: layout, diagnostics: diagnostics))
     entries[documentID] = Array(values.suffix(8))
   }
 }

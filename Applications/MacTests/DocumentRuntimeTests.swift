@@ -16,7 +16,7 @@ final class DocumentRuntimeTests: XCTestCase {
 
   private func surface(document: DocumentDocument, state: DocumentStateJournal,
     resources suppliedResources: SceneRenderResources? = nil, snapshotPixelWidth: Int? = nil,
-    interactive: Bool = true,
+    interactive: Bool = true, pageIndex: Int = 0,
     drafts: [DocumentEditingSession] = [],
     source: @escaping (DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status = { _ in .committed },
     draft: @escaping (DocumentEditingSession) -> Void = { _ in },
@@ -24,7 +24,7 @@ final class DocumentRuntimeTests: XCTestCase {
     let resources = suppliedResources ?? SceneRenderResources(maximumWebSurfaces: 4)
     let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
       onPageLayout: { _ in }, onSourceChange: source, onStateChange: commit)
-    coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: snapshotPixelWidth != nil,
+    coordinator.update(document: document, state: state, selectedPageIndex: pageIndex, capturesSnapshot: snapshotPixelWidth != nil,
       onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: source, onStateChange: commit,
       snapshotPixelWidth: snapshotPixelWidth, drafts: drafts, onDraftChange: draft)
     let host = DocumentWebHost(), size = WorkspaceItemGeometry.document(document.paperSize)
@@ -313,6 +313,173 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertFalse(current.coordinator.ownsEditing)
     DocumentRenderRegistry.shared.removeDraft(documentID: document.id, sessionID: edit.sessionID)
     XCTAssertFalse(DocumentRenderRegistry.shared.recordDraft(draft), "A late old host cannot reopen a finished editing session")
+  }
+
+  func testStateEchoDoesNoSourceDOMLayoutOrMathWorkAndKeepsTheComposingEditor() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [
+      .markdown(id: "body", source: "# Источник $x^2$\n\nНе менять редактор при обновлении модели."),
+      .interactive(id: "counter", html: "<input><output></output>", javaScript:
+        "document.querySelector('input').value='uncommitted'; notebook.commit({boot:crypto.randomUUID()});", height: 100)])
+    var state = DocumentStateJournal(id: document.id, actor: UUID())
+    var commits: [JSONValue] = [], drafts: [DocumentEditingSession] = []
+    let surface = surface(document: document, state: state, draft: { drafts.append($0) }, commit: { _, value in commits.append(value) })
+    defer { surface.close() }
+    await waitUntil { surface.coordinator.renderIsReady && commits.count == 1 }
+    let web = try XCTUnwrap(surface.coordinator.webView), source = try XCTUnwrap(surface.coordinator.payload?.source)
+    _ = try await js("""
+      document.querySelector('[data-block-id=body]').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
+      window.savedEditor=document.querySelector('textarea');window.savedFrame=document.querySelector('iframe');
+      savedEditor.value='Незавершённый ввод 👩‍💻';savedEditor.setSelectionRange(3,7);
+      savedEditor.dispatchEvent(new Event('compositionstart'));savedEditor.dispatchEvent(new Event('input'));
+      window.flowMutations=0;window.flowObserver=new MutationObserver(changes=>window.flowMutations+=changes.length);
+      flowObserver.observe(document.getElementById('document'),{subtree:true,childList:true,attributes:true,characterData:true});
+      JSON.stringify(window.notebookRenderer.pageReceipt().work)
+      """, web)
+    let before = try await js("JSON.stringify(window.notebookRenderer.pageReceipt().work)", web)
+    let firstWork = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(before.utf8)) as? [String: Int])
+    for count in 1...12 {
+      XCTAssertTrue(state.commit(blockID: "counter", value: .object(["count": .number(Double(count))]), actor: UUID()))
+      surface.coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
+        onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed },
+        onStateChange: { _, value in commits.append(value) }, onDraftChange: { drafts.append($0) })
+      await waitUntil { surface.coordinator.renderIsReady }
+    }
+    let after = try await js("JSON.stringify(window.notebookRenderer.pageReceipt().work)", web)
+    let finalWork = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(after.utf8)) as? [String: Int])
+    for key in ["sourceInstalls", "layoutPasses", "regionMeasurements", "typesetPasses"] {
+      XCTAssertEqual(finalWork[key], firstWork[key], "State delivery cannot repeat \(key)")
+    }
+    XCTAssertGreaterThan(try XCTUnwrap(finalWork["stateApplications"]), try XCTUnwrap(firstWork["stateApplications"]))
+    let actual = try await js("JSON.stringify({sameEditor:savedEditor===document.querySelector('textarea'),sameFrame:savedFrame===document.querySelector('iframe'),text:savedEditor.value,start:savedEditor.selectionStart,end:savedEditor.selectionEnd,mutations:flowMutations})", web)
+    let value = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(actual.utf8)) as? [String: Any])
+    XCTAssertEqual(value["sameEditor"] as? Bool, true); XCTAssertEqual(value["sameFrame"] as? Bool, true)
+    XCTAssertEqual(value["text"] as? String, "Незавершённый ввод 👩‍💻")
+    XCTAssertEqual(value["start"] as? Int, 3); XCTAssertEqual(value["end"] as? Int, 7)
+    XCTAssertEqual(value["mutations"] as? Int, 0)
+    XCTAssertEqual(drafts.last?.isComposing, true)
+    XCTAssertEqual(commits.count, 1, "The iframe browsing context must not boot again")
+    XCTAssertTrue(surface.coordinator.payload?.source === source); XCTAssertEqual(source.encodingCount, 1)
+  }
+
+  func testFourRealPageWebKitsShareInputsAndOneAcceptedLayoutWithoutAnotherWebSurface() async throws {
+    let prose = (0..<80).map { "Абзац \($0). " + String(repeating: "Одна геометрия исходника и четыре физических листа. ", count: 4) }.joined(separator: "\n\n")
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "# Общая сессия $x^2$\n\n" + prose)])
+    let state = DocumentStateJournal(id: document.id, actor: UUID()), resources = SceneRenderResources(maximumWebSurfaces: 6)
+    let pages = (0..<4).map { surface(document: document, state: state, resources: resources, interactive: $0 == 0, pageIndex: $0) }
+    defer { pages.forEach { $0.close() } }
+    await waitUntil { pages.allSatisfy { $0.coordinator.renderIsReady } || pages.contains { $0.coordinator.acquisitionError != nil } }
+    let source = try XCTUnwrap(pages[0].coordinator.payload?.source), layout = try XCTUnwrap(source.layout)
+    XCTAssertGreaterThanOrEqual(layout.pageCount, 4)
+    for (index, page) in pages.enumerated() {
+      XCTAssertNil(page.coordinator.acquisitionError)
+      XCTAssertTrue(page.coordinator.renderIsReady)
+      XCTAssertTrue(page.coordinator.payload?.source === source)
+      XCTAssertTrue(page.coordinator.payload?.state === pages[0].coordinator.payload?.state)
+      XCTAssertTrue(DocumentRenderRegistry.shared.entry(document: document, state: state, pageIndex: index)?.layout === layout)
+      let web = try XCTUnwrap(page.coordinator.webView)
+      let pageNumber = try await js("String(window.notebookRenderer.pageReceipt().pageIndex)", web)
+      XCTAssertEqual(pageNumber, String(index))
+    }
+    XCTAssertEqual(source.encodingCount, 1)
+    XCTAssertEqual(pages[0].coordinator.payload?.state.encodingCount, 1)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 4); XCTAssertEqual(resources.pendingWebRequestCount, 0)
+  }
+
+  func testNewSourceAndStateWaitBehindAnActualTypesetWithoutChangingThePendingFrameInputs() async throws {
+    let actor = UUID()
+    var document = DocumentDocument(actor: actor, blocks: [.markdown(id: "body", source: "Original")])
+    var state = DocumentStateJournal(id: document.id, actor: actor)
+    let surface = surface(document: document, state: state)
+    defer { surface.close() }
+    await waitUntil { surface.coordinator.renderIsReady }
+    let web = try XCTUnwrap(surface.coordinator.webView)
+    _ = try await js("""
+      window.typesetEntered=false;
+      window.typesetGate=new Promise(resolve=>window.releaseTypeset=resolve);
+      window.originalTypeset=MathJax.typesetPromise.bind(MathJax);
+      MathJax.typesetPromise=async nodes=>{window.typesetEntered=true;await typesetGate;return originalTypeset(nodes)};
+      'typeset gate installed'
+      """, web)
+    XCTAssertTrue(document.replaceBlockSource(id: "body", source: "Intermediate $x^2$", actor: actor))
+    func update() {
+      surface.coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
+        onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in })
+    }
+    update()
+    var entered = false
+    for _ in 0..<200 {
+      if try await js("String(window.typesetEntered)", web) == "true" { entered = true; break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertTrue(entered, "The first source must actually be awaiting MathJax before the next update")
+    XCTAssertTrue(document.replaceBlockSource(id: "body", source: "Latest $y^3$", actor: actor))
+    XCTAssertTrue(state.commit(blockID: "counter", value: .number(9), actor: actor))
+    update()
+    let expected = try XCTUnwrap(surface.coordinator.payload)
+    _ = try await js("window.releaseTypeset(); 'released'", web)
+    await waitUntil { surface.coordinator.renderIsReady }
+    let text = try await js("document.getElementById('document').textContent", web)
+    XCTAssertTrue(text.contains("Latest")); XCTAssertFalse(text.contains("Intermediate"))
+    XCTAssertFalse(text.contains("Original"))
+    let childIDs = try await js("JSON.stringify([...document.getElementById('document').children].map(node=>node.dataset.blockId))", web)
+    XCTAssertEqual(childIDs, "[\"body\"]", "Replacing a block must remove its old flow node, not just its lookup entry")
+    let sourceKey = try await js("window.notebookRenderer.pageReceipt().sourceKey", web)
+    let stateKey = try await js("window.notebookRenderer.pageReceipt().stateKey", web)
+    XCTAssertEqual(sourceKey, expected.source.message.key); XCTAssertEqual(stateKey, expected.state.message.key)
+    XCTAssertEqual(surface.coordinator.renderedToken, expected.renderToken)
+    XCTAssertNil(surface.coordinator.acquisitionError)
+    var obsolete = ["Original", "Intermediate", "Latest"]
+    for revision in 1...3 {
+      let marker = "Replacement-\(revision)"
+      XCTAssertTrue(document.replaceBlockSource(id: "body", source: "\(marker) $z^{\(revision)}$", actor: actor))
+      update()
+      await waitUntil { surface.coordinator.renderIsReady }
+      let text = try await js("document.getElementById('document').textContent", web)
+      XCTAssertTrue(text.contains(marker))
+      for old in obsolete { XCTAssertFalse(text.contains(old), "The superseded source \(old) must leave the DOM") }
+      let childIDs = try await js("JSON.stringify([...document.getElementById('document').children].map(node=>node.dataset.blockId))", web)
+      XCTAssertEqual(childIDs, "[\"body\"]")
+      let mathCount = try await js("String(document.querySelectorAll('#document mjx-container').length)", web)
+      XCTAssertEqual(mathCount, "1", "MathJax must retain only the replacement's rendered expression")
+      XCTAssertNil(surface.coordinator.acquisitionError)
+      obsolete.append(marker)
+    }
+  }
+
+  func testTwoSynchronousGenerationsKeepTheLatestUnfinishedProgramBounded() async throws {
+    let actor = UUID(), resources = SceneRenderResources(maximumWebSurfaces: 1)
+    var document = DocumentDocument(actor: actor, blocks: [.markdown(id: "body", source: "Готовая страница")])
+    var state = DocumentStateJournal(id: document.id, actor: actor)
+    let surface = surface(document: document, state: state, resources: resources)
+    defer { surface.close() }
+    await waitUntil { surface.coordinator.renderIsReady }
+    XCTAssertTrue(document.replaceContent(blocks: document.blocks + [.interactive(id: "never-ready", html: "<p>Ожидание программы</p>",
+      javaScript: "notebook.ready(new Promise(()=>{}));", height: 100)], actor: actor))
+    func update() {
+      surface.coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
+        onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in })
+    }
+    // Both accepted generations precede the sender Task's first opportunity to
+    // execute. Its first deadline cannot be left naming the superseded one.
+    update()
+    XCTAssertTrue(state.commit(blockID: "never-ready", value: .number(1), actor: actor))
+    update()
+    let web = try XCTUnwrap(surface.coordinator.webView)
+    var started = false
+    for _ in 0..<200 {
+      if try await js("String(document.querySelectorAll('iframe').length)", web) == "1" { started = true; break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertTrue(started, "The bounded failure must come from the real pending program, not a missing shell")
+    // The production deadline remains eight seconds. This observation window
+    // allows it to fire; it does not replace WebKit readiness with a test timer.
+    await waitUntil(timeout: .seconds(10)) { surface.coordinator.acquisitionError != nil }
+    XCTAssertEqual(surface.coordinator.acquisitionError as? SceneRenderError,
+      .snapshotPending("document_preparation_timeout"))
+    XCTAssertFalse(surface.coordinator.renderIsReady)
+    XCTAssertNil(surface.coordinator.webView)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
   }
 
   private func js(_ source: String, _ web: WKWebView) async throws -> String {
