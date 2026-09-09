@@ -20,7 +20,7 @@ public struct ContentFieldVersion: Codable, Equatable, Sendable {
       && observed.allSatisfy { UUID(uuidString: $0.key) != nil && $0.value <= VersionStamp.maximumCounter }
   }
 
-  func includes(_ other: Self) -> Bool {
+  public func includes(_ other: Self) -> Bool {
     (observed[other.stamp.actor.uuidString.lowercased()] ?? 0) >= other.stamp.counter
   }
 

@@ -117,6 +117,7 @@ final class NotebookAppModel {
   @ObservationIgnored private var sceneWindowTask: Task<Void, Never>?
   @ObservationIgnored private var requestedScenePresence: SessionPresence?
   @ObservationIgnored private var scenePinnedElements: [UUID: [String]] = [:]
+  @ObservationIgnored private var scenePinnedItems: [UUID: [UUID]] = [:]
   @ObservationIgnored private var preparedScene: (index: WorkspaceSceneIndex?, changed: Bool, portals: [UUID: BoardPortalCamera], request: UInt64, coverageOnly: Bool)?
   private var scenePortalCameras: [UUID: BoardPortalCamera] = [:]
   @ObservationIgnored private(set) var sceneQueryCount: UInt64 = 0
@@ -186,13 +187,25 @@ final class NotebookAppModel {
   /// Called by the view's task, never by its body or a UIKit update callback.
   /// The camera can replace one pending coverage request without growing a queue.
   func prepareComposition(presence: SessionPresence, frame: WorkspaceSceneFrame?,
-    pinned: Set<WorkspaceSpatialID>, displayScale: Double) {
+    pinned: Set<WorkspaceSpatialID>, displayScale: Double, installedItemOwners: [UUID: UUID] = [:]) {
     let elements = pinned.compactMap { id -> String? in
       if case .element(let value) = id { return value }; return nil
     }.sorted()
     let missingPin = elements.contains { sceneIndex?.element(id: $0, boardID: presence.boardID) == nil }
     scenePinnedElements = elements.isEmpty ? [:] : [presence.boardID: elements]
-    if missingPin || sceneCoverage[presence.boardID]?.contains(NotebookSceneState.bounds(for: presence, margin: 64)) != true {
+    let itemIDs = pinned.compactMap { pin -> UUID? in if case .item(let id) = pin { return id }; return nil }
+    guard itemIDs.count <= 7, Set(installedItemOwners.keys).isSubset(of: Set(itemIDs)) else {
+      publicationFailure = "Слишком много одновременно удерживаемых предметов"
+      compositionTiles.cancelPreparation(); return
+    }
+    var itemPins: [UUID: [UUID]] = [:]
+    for id in itemIDs.sorted() {
+      let owner = installedItemOwners[id] ?? frame?.index.ownerBoard(itemID: id) ?? presence.boardID
+      itemPins[owner, default: []].append(id)
+    }
+    scenePinnedItems = itemPins
+    let missingItemPin = itemIDs.contains { sceneIndex?.item(id: $0) == nil }
+    if missingPin || missingItemPin || sceneCoverage[presence.boardID]?.contains(NotebookSceneState.bounds(for: presence, margin: 64)) != true {
       requestSceneCoverage(presence)
     }
     guard permitsBackgroundPreparation, !scenePreparationPending else { compositionTiles.cancelPreparation(); return }
@@ -232,11 +245,11 @@ final class NotebookAppModel {
       while let requested = requestedScenePresence, !Task.isCancelled {
         requestedScenePresence = nil
         let epoch = collaborationReadEpoch
-        let pins = scenePinnedElements
+        let pins = scenePinnedElements, itemPins = scenePinnedItems
         do {
           let state = try await persistence.submit { store in
             try NotebookSceneState.read(store: store, presence: requested,
-              viewport: requested.viewport, loadsLiveContent: false, pinnedElements: pins)
+              viewport: requested.viewport, loadsLiveContent: false, pinnedElements: pins, pinnedItems: itemPins)
           }
           guard epoch == collaborationReadEpoch, state.header.cursor == workspaceHeader?.cursor else {
             externalReloadPending = true
@@ -244,8 +257,10 @@ final class NotebookAppModel {
             return
           }
           guard !inputGate.hasActivePencil else { externalReloadPending = true; return }
+          guard itemPins == scenePinnedItems else { requestedScenePresence = self.presence; continue }
           guard self.presence?.boardID == requested.boardID,
             self.presence?.selectedItemID == requested.selectedItemID else { continue }
+          acceptItemOwnerInvalidations(state, requested: itemPins)
           workspace = state.workspace
           boardHierarchy = state.hierarchy
           documentPaperSizes = state.paperSizes.merging(documents.mapValues(\.paperSize)) { _, live in live }
@@ -348,6 +363,15 @@ final class NotebookAppModel {
   private(set) var persistenceFailure: String?
   private var pendingDeletions: [UUID: Set<UUID>] = [:]
   private var completedDeletions: [UUID: UInt64] = [:]
+  @ObservationIgnored private var itemOwnerObserver: (owner: UUID, receive: (UUID, UUID, UInt64) -> Void)?
+
+  func bindItemOwnerObserver(owner: UUID, receive: @escaping (UUID, UUID, UInt64) -> Void) {
+    itemOwnerObserver = (owner, receive)
+  }
+
+  func unbindItemOwnerObserver(owner: UUID) {
+    if itemOwnerObserver?.owner == owner { itemOwnerObserver = nil }
+  }
 
   var pendingDeletionItemIDs: Set<UUID> { Set(pendingDeletions.keys) }
   func isItemBeingDeleted(_ id: UUID) -> Bool { pendingDeletions[id] != nil }
@@ -895,6 +919,8 @@ final class NotebookAppModel {
         try $0.deleteWorkspaceItem(itemID: itemID, expected: expected, actor: actor)
       }
       completedDeletions[itemID] = header.cursor
+      itemOwnerObserver?.receive(itemID, ownerID, header.cursor)
+      scenePinnedItems = scenePinnedItems.mapValues { $0.filter { $0 != itemID } }
       for pageID in removed.pageIDs {
         persistence.discardPending(owner: .page(pageID))
         pages[pageID] = nil
@@ -1680,6 +1706,7 @@ final class NotebookAppModel {
         diskRefreshRequested = false
         let epoch = collaborationReadEpoch
         let draftEpoch = documentDraftEpoch
+        let elementPins = scenePinnedElements, itemPins = scenePinnedItems
         #if os(iOS)
           let receivingDeviceID: UUID? = actorID
         #else
@@ -1687,17 +1714,19 @@ final class NotebookAppModel {
         #endif
         do {
           let prepared = try await persistence.submit(publishesChanges: receivingDeviceID != nil) { store in
-            try NotebookDiskRefresh.prepare(store: store, presence: presence, receivingDeviceID: receivingDeviceID)
+            try NotebookDiskRefresh.prepare(store: store, presence: presence, receivingDeviceID: receivingDeviceID,
+              pinnedElements: elementPins, pinnedItems: itemPins)
           }
           publicationFailure = nil
           if persistence.failure == nil { persistenceFailure = nil }
           guard !inputGate.isActive, presencePhase != .active else { externalReloadPending = true; return }
           // Settled camera/selection can change without changing content. The
           // old read must not bring the person back after its SQL await.
-          guard epoch == collaborationReadEpoch, self.presence == presence else {
+          guard epoch == collaborationReadEpoch, self.presence == presence, itemPins == scenePinnedItems else {
             diskRefreshRequested = true; continue
           }
           let liveDrafts = documentEditingSessions
+          acceptItemOwnerInvalidations(prepared.scene, requested: itemPins)
           acceptSceneState(prepared.scene)
           if draftEpoch != documentDraftEpoch { documentEditingSessions = liveDrafts }
           acceptCollaborationMetadata(actions: prepared.actions, contexts: prepared.contexts, delivery: prepared.delivery)
@@ -2234,6 +2263,17 @@ final class NotebookAppModel {
       pages: Array(pages.values), documents: Array(documents.values), states: Array(documentStates.values))
   }
 
+  private func acceptItemOwnerInvalidations(_ state: NotebookSceneState, requested: [UUID: [UUID]]) {
+    let unavailable = state.missingPinnedItems.union(state.transferredPinnedItems.keys)
+    guard !unavailable.isEmpty else { return }
+    for (boardID, ids) in requested {
+      for id in ids where unavailable.contains(id) {
+        itemOwnerObserver?.receive(id, boardID, state.header.cursor)
+      }
+    }
+    scenePinnedItems = scenePinnedItems.mapValues { $0.filter { !unavailable.contains($0) } }
+  }
+
   private func acceptSceneState(_ state: NotebookSceneState) {
     workspaceHeader = state.header
     for (id, cursor) in completedDeletions where state.header.cursor >= cursor {
@@ -2416,6 +2456,7 @@ final class NotebookAppModel {
       guard agentStopped && inputSaved else { return false }
       isStopped = true
       inputGate.onActivityChange = nil
+      itemOwnerObserver = nil
       let readers = [scenePreparationTask, sceneWindowTask, diskRefreshTask, headerRefreshTask]
         .compactMap { $0 } + Array(pagePreparationTasks.values)
       for task in readers { task.cancel() }

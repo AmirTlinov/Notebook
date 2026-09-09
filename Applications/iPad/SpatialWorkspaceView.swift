@@ -77,7 +77,8 @@ struct SpatialWorkspaceView: View {
   @State private var cameraGesture: CameraGestureSnapshot?
   @State private var panStart: SessionPresence?
   @State private var selectedItemID: UUID?
-  @State private var liftedItemID: UUID?
+  @State private var liftedItemIDs: [UUID] = []
+  @State private var deletionObserverID = UUID()
   @State private var editingSpatialTextID: String?
   @State private var contentGestureActive = false
   @State private var pageTurnIsActive = false
@@ -88,7 +89,7 @@ struct SpatialWorkspaceView: View {
   @State private var cameraSettlement = SceneCameraSettlement()
   @State private var referencePageResolution = NotebookReferencePageResolution()
   @State private var spatialInkSurfaces = SpatialInkSurfaceRegistry()
-    @State private var openingFeedback = UIImpactFeedbackGenerator(style: .soft)
+  @State private var openingFeedback = UIImpactFeedbackGenerator(style: .soft)
 
   var body: some View {
     GeometryReader { geometry in
@@ -108,6 +109,7 @@ struct SpatialWorkspaceView: View {
       let compositionRequest = CompositionRequest(presence: presence, generation: model.sceneIndex?.generationID,
         publication: model.scenePublicationGeneration,
         revision: model.workspaceHeader?.cursor, pinned: scenePins(presence: presence),
+        itemOwners: sceneItemOwners(presence: presence, cohort: cohort),
         permitsPreparation: model.permitsBackgroundPreparation)
       let workset = frame?.workset(boardID: presence.boardID) ?? .empty
       let rendered = workset.items
@@ -176,6 +178,7 @@ struct SpatialWorkspaceView: View {
 
 
           SpatialInkCanvas(
+            cohort: cohort,
             boardID: presence.boardID,
             camera: presence.camera,
             viewport: viewport,
@@ -194,7 +197,9 @@ struct SpatialWorkspaceView: View {
             surfaceRegistry: spatialInkSurfaces,
             inputGate: model.inputGate,
             isItemBeingDeleted: model.isItemBeingDeleted,
-            admitsNewContact: { !model.scenePreparationPending },
+            // Admission is proved by this installed cohort and its native
+            // surface registrations, never by the newer pending scene index.
+            admitsNewContact: { cohort != nil },
             onCommit: model.appendSpatialInk,
             isEnabled: (presence.mode == .board || presence.mode == .cover)
               && !contentGestureActive
@@ -204,7 +209,7 @@ struct SpatialWorkspaceView: View {
           .allowsHitTesting(false)
 
         sceneItems(rendered, presence: presence, viewport: viewport, frame: frame, cohort: cohort)
-          .zIndex(liftedItemID == nil ? 0 : 9_000)
+          .zIndex(liftedItemIDs.isEmpty ? 0 : 9_000)
 
           WorkspaceGestureLayer(
             isEnabled: true,
@@ -246,9 +251,16 @@ struct SpatialWorkspaceView: View {
       .environment(\.sceneCompositionCohort, cohort)
       .task(id: compositionRequest) {
         model.prepareComposition(presence: presence, frame: requestedFrame,
-          pinned: compositionRequest.pinned, displayScale: displayScale)
+          pinned: compositionRequest.pinned, displayScale: displayScale, installedItemOwners: compositionRequest.itemOwners)
       }
       .onAppear {
+        let registry = spatialInkSurfaces, selection = $selectedItemID, owner = model
+        model.bindItemOwnerObserver(owner: deletionObserverID) { [weak registry, weak owner] id, boardID, revision in
+          guard let shown = owner?.compositionTiles.published, shown.plan.revision <= revision,
+            shown.frame.index.ownerBoard(itemID: id) == boardID else { return }
+          registry?.retirePhysicalOwner(id, on: boardID, through: revision)
+          if selection.wrappedValue == id { selection.wrappedValue = nil }
+        }
         publishViewportIfNeeded(viewport)
       }
       .task(id:model.requestedReference?.id) {
@@ -306,6 +318,7 @@ struct SpatialWorkspaceView: View {
         pageTurnIsActive = false
       }
       .onDisappear {
+        model.unbindItemOwnerObserver(owner: deletionObserverID)
         model.compositionTiles.cancelPreparation()
         referencePageResolution.cancel()
         cameraSettlement.cancel()
@@ -327,6 +340,7 @@ struct SpatialWorkspaceView: View {
     let publication: UInt64
     let revision: UInt64?
     let pinned: Set<WorkspaceSpatialID>
+    let itemOwners: [UUID: UUID]
     let permitsPreparation: Bool
   }
 
@@ -337,7 +351,7 @@ struct SpatialWorkspaceView: View {
   ) -> some View {
     if !model.isElementEditingEnabled,
       presence.mode == .board || presence.mode == .cover,
-      liftedItemID == nil,
+      !liftedItemIDs.contains(where: { spatialInkSurfaces.pose(for: .cover($0))?.isManipulating == true }),
       let selectedItemID,
       let rendered = model.sceneIndex?.renderedItem(id: selectedItemID, presence: presence)
     {
@@ -465,7 +479,7 @@ struct SpatialWorkspaceView: View {
     let focused: UUID?
     let open: Double
     let selected: UUID?
-    let lifted: UUID?
+    let lifted: [UUID]
     let candidate: UUID?
     let editingText: String?
     let contentGesture: Bool
@@ -485,7 +499,7 @@ struct SpatialWorkspaceView: View {
       contents: model.collaborationReadEpoch, ids: rendered.map(\.id),
       coverIDs: frame?.covers.mapValues { $0.elements.map { "element:" + $0.id } + $0.aggregates.map { "aggregate:" + String($0.id) } } ?? [:], mode: presence.mode,
       focused: presence.focusedItemID, open: presence.openProgress,
-      selected: selectedItemID, lifted: liftedItemID, candidate: cameraGesture?.candidateItemID,
+      selected: selectedItemID, lifted: liftedItemIDs, candidate: cameraGesture?.candidateItemID,
       editingText: editingSpatialTextID, contentGesture: contentGestureActive,
       pageTurn: pageTurnIsActive, isCameraGesture: cameraGesture != nil, settling: settling,
       pointing: model.isPointing, prepares: rendered.map { preparesContent($0.id, presence: presence) },
@@ -512,7 +526,7 @@ struct SpatialWorkspaceView: View {
     ForEach(rendered.filter {
           cohort?.plan.allowsLive(.item($0.id), in: .board(presence.boardID)) == true && (
           WorkspaceSceneProjection.mountsContent(of: $0, in: presence)
-            || $0.id == selectedItemID || $0.id == liftedItemID
+            || $0.id == selectedItemID || liftedItemIDs.contains($0.id)
             || $0.id == cameraGesture?.candidateItemID)
         }) { rendered in
           WorkspaceSceneItem(
@@ -557,12 +571,12 @@ struct SpatialWorkspaceView: View {
               && !settling
               && (!model.isElementEditingEnabled || presence.mode == .document),
             isSelected: selectedItemID == rendered.id,
-            isLifted: liftedItemID == rendered.id,
+            liftRank: liftRank(of: rendered.id),
             editingTextID: editingSpatialTextID,
             spatialInkSurfaces: spatialInkSurfaces,
             onDrop: { itemID, center in
-              guard !model.scenePreparationPending else { return }
-              dropItem(itemID, at: center, presence: model.presence ?? presence)
+              guard !model.scenePreparationPending else { return nil }
+              return dropItem(itemID, at: center, presence: model.presence ?? presence)
             },
             onSelect: { itemID in
               guard !model.isItemBeingDeleted(itemID) else { return }
@@ -572,10 +586,8 @@ struct SpatialWorkspaceView: View {
             },
             onLiftChanged: { itemID, lifted in
               if lifted { editingSpatialTextID = nil }
-              withAnimation(.spring(duration: 0.18, bounce: 0.18)) {
-                liftedItemID = lifted ? itemID : nil
-                if lifted { selectedItemID = itemID }
-              }
+              liftedItemIDs.removeAll { $0 == itemID }
+              if lifted { liftedItemIDs.append(itemID); selectedItemID = itemID }
             },
             onOpen: { itemID in
               guard !model.scenePreparationPending else { return }
@@ -606,7 +618,7 @@ struct SpatialWorkspaceView: View {
             }
           )
           .equatable()
-          .zIndex(liftedItemID == rendered.id ? 9_000 : (cohort?.plan.rank(id: .item(rendered.id), in: .board(presence.boardID)) ?? 0))
+          .zIndex(liftRank(of: rendered.id) ?? (cohort?.plan.rank(id: .item(rendered.id), in: .board(presence.boardID)) ?? 0))
         }
 
   }
@@ -764,10 +776,20 @@ struct SpatialWorkspaceView: View {
       model.updatePresence(normalizedPresence(for: viewport), settled: true)
   }
 
+  private func sceneItemOwners(presence: SessionPresence, cohort: SceneCompositionCohort?) -> [UUID: UUID] {
+    var owners: [UUID: UUID] = [:]
+    for pin in scenePins(presence: presence) {
+      guard case .item(let id) = pin else { continue }
+      if let owner = spatialInkSurfaces.pose(for: .cover(id))?.boardID
+        ?? cohort?.frame.index.ownerBoard(itemID: id) { owners[id] = owner }
+    }
+    return owners
+  }
+
   private func scenePins(presence: SessionPresence) -> Set<WorkspaceSpatialID> {
     var pins = Set<WorkspaceSpatialID>()
-    for id in [presence.focusedItemID, selectedItemID, liftedItemID, cameraGesture?.candidateItemID] {
-      if let id { pins.insert(.item(id)) }
+    for id in [presence.focusedItemID, selectedItemID, cameraGesture?.candidateItemID] + liftedItemIDs.map(Optional.some) {
+      if let id, !spatialInkSurfaces.isRetired(.cover(id)) { pins.insert(.item(id)) }
     }
     if case .spatial(let id) = model.elementEditingSession.selection { pins.insert(.element(id)) }
     if let editingSpatialTextID { pins.insert(.element(editingSpatialTextID)) }
@@ -1514,11 +1536,16 @@ struct SpatialWorkspaceView: View {
     return presence?.documentPageIndex ?? 0
   }
 
+  private func liftRank(of itemID: UUID) -> Double? {
+    liftedItemIDs.firstIndex(of: itemID).map { 9_000 + Double($0) }
+  }
+
   private func dropItem(
     _ itemID: UUID,
     at center: WorldPoint,
     presence: SessionPresence
-  ) {
+  ) -> WorkspaceItemPoseDestination? {
+    guard let before = model.board else { return nil }
     if model.board?.stack(containing: itemID) != nil {
       model.unstackItem(itemID, at: center)
     } else {
@@ -1527,7 +1554,7 @@ struct SpatialWorkspaceView: View {
 
     guard
       let moving = model.sceneIndex?.renderedItem(id: itemID, presence: presence)
-    else { return }
+    else { return nil }
     let target = sceneWorkset(presence: presence).items
       .reversed()
       .first { candidate in
@@ -1539,14 +1566,14 @@ struct SpatialWorkspaceView: View {
     if let target {
       _ = model.stackItem(moving.id, onto: target.id)
     }
+    guard let board = model.board else { return nil }
+    return .init(itemID: itemID, before: before, after: board)
   }
 
 }
 
 private struct WorkspaceSceneItem: View, Equatable {
   @Environment(NotebookAppModel.self) private var model
-  @Environment(\.scenePlaneProjection) private var planeProjection
-
   let rendered: RenderedWorkspaceItem
   let document: DocumentDocument?
   let documentState: DocumentStateJournal?
@@ -1565,10 +1592,11 @@ private struct WorkspaceSceneItem: View, Equatable {
   let contentIsInteractive: Bool
   let pageNavigationIsEnabled: Bool
   let isSelected: Bool
-  let isLifted: Bool
+  let liftRank: Double?
+  private var isLifted: Bool { liftRank != nil }
   let editingTextID: String?
   let spatialInkSurfaces: SpatialInkSurfaceRegistry
-  let onDrop: (UUID, WorldPoint) -> Void
+  let onDrop: (UUID, WorldPoint) -> WorkspaceItemPoseDestination?
   let onSelect: (UUID) -> Void
   let onLiftChanged: (UUID, Bool) -> Void
   let onOpen: (UUID) -> Void
@@ -1577,10 +1605,6 @@ private struct WorkspaceSceneItem: View, Equatable {
   let onElementSelected: () -> Void
   let onPageTurnStateChange: @MainActor @Sendable (Bool) -> Void
   let onDocumentPageLayout: (DocumentPageLayout) -> Void
-
-  @State private var dragTranslation = CGSize.zero
-  @State private var pendingPlacement: WorldPoint?
-  @State private var liftStarted = false
 
   nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.rendered.id == rhs.rendered.id && lhs.rendered.center == rhs.rendered.center
@@ -1591,19 +1615,23 @@ private struct WorkspaceSceneItem: View, Equatable {
       && lhs.preparesContent == rhs.preparesContent && lhs.openProgress == rhs.openProgress
       && lhs.contentIsInteractive == rhs.contentIsInteractive
       && lhs.pageNavigationIsEnabled == rhs.pageNavigationIsEnabled
-      && lhs.isSelected == rhs.isSelected && lhs.isLifted == rhs.isLifted
+      && lhs.isSelected == rhs.isSelected && lhs.liftRank == rhs.liftRank
       && lhs.editingTextID == rhs.editingTextID && lhs.documentPageIndex == rhs.documentPageIndex
       && lhs.documentPageCount == rhs.documentPageCount
       && (!(lhs.isSelected || lhs.rendered.item.kind == .board) || lhs.projectedScale == rhs.projectedScale)
   }
 
   var body: some View {
-    let screen = camera.worldToScreen(pendingPlacement ?? rendered.center, viewport: viewport)
-    let scale = camera.scale
     let contentIsLive = openProgress > 0.001 || contentIsInteractive
     let restingShadowVisibility =
       CoverOpeningPhysics.restingShadowVisibility(openProgress)
-    ZStack {
+    WorkspaceItemPose(rendered: rendered, camera: camera, viewport: viewport, boardID: boardID,
+      liftRank: liftRank, registry: spatialInkSurfaces,
+      onLiftChanged: { lifted in
+        if lifted { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
+        onLiftChanged(rendered.id, lifted)
+      }, onDrop: { onDrop(rendered.id, $0) }) {
+      ZStack {
       WorkspaceItemShadow(geometry: rendered.geometry,
         lifted: isLifted, visibility: restingShadowVisibility)
       WorkspaceItemDepthView(kind: rendered.item.kind, geometry: rendered.geometry)
@@ -1638,13 +1666,6 @@ private struct WorkspaceSceneItem: View, Equatable {
         .allowsHitTesting(false)
       }
     }
-    .scaleEffect(scale * (isLifted ? 1.035 : 1))
-    .rotationEffect(.degrees(isLifted ? -0.6 : 0))
-    .offset(dragTranslation)
-    .offset(y: isLifted ? -8 : 0)
-    .position(x: screen.x, y: screen.y)
-    .animation(.spring(duration: 0.18, bounce: 0.18), value: isLifted)
-    .onChange(of: model.sceneIndexGeneration) { _, _ in pendingPlacement = nil }
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier(
       "workspace-item-\(rendered.id.uuidString.lowercased())"
@@ -1653,6 +1674,8 @@ private struct WorkspaceSceneItem: View, Equatable {
     .accessibilityValue(
       isLifted ? "Готова к перемещению" : (isSelected ? "Выбрана" : "")
     )
+    }
+    .frame(width: viewport.x, height: viewport.y)
   }
 
   @ViewBuilder
@@ -1855,17 +1878,6 @@ private struct WorkspaceSceneItem: View, Equatable {
       portalOpenProgress: openProgress,
       portalViewport: viewport,
       onTap: handleTap,
-      onLiftChanged: { lifted in
-        if lifted { beginLift() } else { endLift() }
-      },
-      onTranslationChanged: { translation in
-        guard !model.isItemBeingDeleted(rendered.id) else { return }
-        let ratio = camera.scale / (planeProjection?.current.camera.scale ?? camera.scale)
-        dragTranslation = CGSize(width: translation.width * ratio, height: translation.height * ratio)
-      },
-      onTranslationEnded: { translation in
-        finishMove(translation: translation, scale: planeProjection?.current.camera.scale ?? camera.scale)
-      },
       onTextEditingEnded: onTextEditingEnded,
       onElementSelected: onElementSelected,
       showsDepth: false,
@@ -1903,29 +1915,5 @@ private struct WorkspaceSceneItem: View, Equatable {
     }
   }
 
-  private func finishMove(translation: CGSize, scale: Double) {
-    dragTranslation = .zero
-    guard !model.scenePreparationPending, !model.isItemBeingDeleted(rendered.id),
-      hypot(translation.width, translation.height) >= 2 else { return }
-    let center = rendered.center.offsetBy(
-      x: translation.width / max(scale, 0.001),
-      y: translation.height / max(scale, 0.001)
-    )
-    pendingPlacement = center
-    onDrop(rendered.id, center)
-    if !model.scenePreparationPending { pendingPlacement = nil }
-  }
-
-  private func beginLift() {
-    guard !model.scenePreparationPending, !model.isItemBeingDeleted(rendered.id), !liftStarted else { return }
-    liftStarted = true
-      UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-    onLiftChanged(rendered.id, true)
-  }
-
-  private func endLift() {
-    liftStarted = false
-    onLiftChanged(rendered.id, false)
-  }
 }
 

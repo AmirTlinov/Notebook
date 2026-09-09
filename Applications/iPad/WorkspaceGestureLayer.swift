@@ -596,6 +596,7 @@ struct BoardPanView: UIViewRepresentable {
 /// finger stream. Pencil touches remain owned by the window-level spatial ink
 /// recognizer.
 struct NotebookInteractionView: UIViewRepresentable {
+  let inputGate: NotebookInputGate
   let permitsManipulation: Bool
   let canBeginContact: () -> Bool
   let passthroughFrames: [CGRect]
@@ -603,9 +604,10 @@ struct NotebookInteractionView: UIViewRepresentable {
   let onLiftChanged: (Bool) -> Void
   let onTranslationChanged: (CGSize) -> Void
   let onTranslationEnded: (CGSize) -> Void
+  let onCancelled: () -> Void
 
   func makeUIView(context: Context) -> NotebookInteractionTouchView {
-    let view = NotebookInteractionTouchView()
+    let view = NotebookInteractionTouchView(inputGate: inputGate)
     view.backgroundColor = .clear
     view.isMultipleTouchEnabled = true
     view.accessibilityElementsHidden = true
@@ -617,11 +619,13 @@ struct NotebookInteractionView: UIViewRepresentable {
     context: Context
   ) {
     view.passthroughFrames = passthroughFrames
+    view.useInputGate(inputGate)
     view.canBeginContact = canBeginContact
     view.onTap = onTap
     view.onLiftChanged = onLiftChanged
     view.onTranslationChanged = onTranslationChanged
     view.onTranslationEnded = onTranslationEnded
+    view.onCancelled = onCancelled
     view.setPermitsManipulation(permitsManipulation)
   }
 
@@ -643,6 +647,7 @@ final class NotebookInteractionTouchView: UIView {
   var onLiftChanged: (Bool) -> Void = { _ in }
   var onTranslationChanged: (CGSize) -> Void = { _ in }
   var onTranslationEnded: (CGSize) -> Void = { _ in }
+  var onCancelled: () -> Void = {}
   var passthroughFrames: [CGRect] = []
   private(set) var permitsManipulation = true
 
@@ -656,6 +661,34 @@ final class NotebookInteractionTouchView: UIView {
   private var hasLiftedDuringContact = false
   private var contactGeneration = 0
   private var deferredLiftCancellation: (() -> Void)?
+  private var inputGate: NotebookInputGate
+  private let inputSource = UUID()
+  private var fingerGeneration: UInt64?
+
+  init(inputGate: NotebookInputGate) {
+    self.inputGate = inputGate
+    super.init(frame: .zero)
+    registerCancellation()
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("Use init(inputGate:)") }
+
+  func useInputGate(_ next: NotebookInputGate) {
+    guard inputGate !== next else { return }
+    inputGate.unregisterFingerCancellation(source: inputSource)
+    cancelInteraction(deferCallbacks: true)
+    inputGate = next
+    registerCancellation()
+  }
+
+  private func registerCancellation() {
+    inputGate.registerFingerCancellation(source: inputSource) { [weak self] in
+      self?.cancelInteraction()
+    }
+  }
+
+  isolated deinit { inputGate.unregisterFingerCancellation(source: inputSource) }
 
   /// Admission can close during a SwiftUI update. Release native ownership now,
   /// but notify the SwiftUI gesture owner only after that update has completed.
@@ -681,7 +714,7 @@ final class NotebookInteractionTouchView: UIView {
     with event: UIEvent?
   ) {
     flushLiftCancellation()
-    guard canBeginContact() else { return }
+    guard canBeginContact(), let generation = inputGate.beginFingerSequence() else { return }
     let directTouches = touches.filter { $0.type == .direct }
     guard activeTouch == nil, directTouches.count == 1,
       let touch = directTouches.first
@@ -690,6 +723,7 @@ final class NotebookInteractionTouchView: UIView {
       return
     }
     activeTouch = touch
+    fingerGeneration = generation
     startPoint = touch.location(in: window)
     latestTranslation = .zero
     maximumTravel = 0
@@ -704,6 +738,9 @@ final class NotebookInteractionTouchView: UIView {
     with event: UIEvent?
   ) {
     flushLiftCancellation()
+    guard let fingerGeneration, inputGate.acceptsFingerSequence(fingerGeneration) else {
+      cancelInteraction(); return
+    }
     guard let activeTouch,
       touches.contains(where: { $0 === activeTouch })
     else { return }
@@ -777,6 +814,7 @@ final class NotebookInteractionTouchView: UIView {
     let workItem = DispatchWorkItem { [weak self] in
       guard let self, activeTouch != nil,
         contactGeneration == generation, manipulationAllowedForContact,
+        let fingerGeneration, inputGate.acceptsFingerSequence(fingerGeneration),
         permitsManipulation,
         maximumTravel <= Self.movementTolerance
       else { return }
@@ -805,6 +843,7 @@ final class NotebookInteractionTouchView: UIView {
     liftWorkItem?.cancel()
     liftWorkItem = nil
     activeTouch = nil
+    fingerGeneration = nil
     latestTranslation = .zero
     maximumTravel = 0
     isLifted = false
@@ -828,10 +867,10 @@ final class NotebookInteractionTouchView: UIView {
 
   private func enqueueLiftCancellation() {
     guard deferredLiftCancellation == nil else { return }
-    let translationEnded = onTranslationEnded
+    let cancelled = onCancelled
     let liftChanged = onLiftChanged
     deferredLiftCancellation = {
-      translationEnded(.zero)
+      cancelled()
       liftChanged(false)
     }
     DispatchQueue.main.async { self.flushLiftCancellation() }

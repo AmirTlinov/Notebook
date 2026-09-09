@@ -30,8 +30,49 @@ struct SpatialWorkspaceItemSurface: Equatable, Identifiable {
 
 struct SpatialScreenSurface: Equatable {
   let id: SurfaceID
-  let frame: CGRect
+  let localBounds: CGRect
+  let localToScreen: CGAffineTransform
   let zIndex: Double
+  let liftRank: Double?
+
+  init(id: SurfaceID, localBounds: CGRect, localToScreen: CGAffineTransform, zIndex: Double, liftRank: Double? = nil) {
+    self.id = id; self.localBounds = localBounds; self.localToScreen = localToScreen
+    self.zIndex = zIndex; self.liftRank = liftRank
+  }
+
+  func isPaintedBelow(_ other: Self) -> Bool {
+    // The published lift tier is above the complete static composition, not a
+    // durable z coordinate. Resting ties use the renderer's one painter order.
+    switch (liftRank, other.liftRank) {
+    case (.some(let left), .some(let right)) where left != right: return left < right
+    case (.none, .some): return true
+    case (.some, .none): return false
+    default:
+      return ScenePaintPosition(layer: .covers, zIndex: zIndex, key: id.ownerID?.uuidString ?? "")
+        < ScenePaintPosition(layer: .covers, zIndex: other.zIndex, key: other.id.ownerID?.uuidString ?? "")
+    }
+  }
+
+  init(id: SurfaceID, frame: CGRect, zIndex: Double) {
+    self.init(id: id, localBounds: frame, localToScreen: .identity, zIndex: zIndex)
+  }
+
+  var frame: CGRect { localBounds.applying(localToScreen) }
+  var screenScale: CGFloat { hypot(localToScreen.a, localToScreen.b) }
+  func localPoint(_ point: CGPoint) -> CGPoint { point.applying(localToScreen.inverted()) }
+  func contains(_ point: CGPoint) -> Bool {
+    localToScreen.isFiniteAndInvertible && localBounds.contains(localPoint(point))
+  }
+  func localAzimuth(_ angle: CGFloat) -> CGFloat {
+    let inverse = localToScreen.inverted(), x = cos(angle), y = sin(angle)
+    return atan2(inverse.b * x + inverse.d * y, inverse.a * x + inverse.c * y)
+  }
+}
+
+extension CGAffineTransform {
+  var isFiniteAndInvertible: Bool {
+    [a, b, c, d, tx, ty].allSatisfy(\.isFinite) && abs(a * d - b * c) > 1e-12
+  }
 }
 
 struct SpatialSurfaceInterval: Equatable {
@@ -52,10 +93,11 @@ enum SpatialSurfaceRouter {
   ) -> [SpatialSurfaceInterval] {
     var breaks: [CGFloat] = [0, 1]
     for cover in covers {
+      guard cover.localToScreen.isFiniteAndInvertible else { continue }
       guard let range = intersectionRange(
-        from: start,
-        to: end,
-        rectangle: cover.frame
+        from: cover.localPoint(start),
+        to: cover.localPoint(end),
+        rectangle: cover.localBounds
       ) else { continue }
       breaks.append(range.lowerBound)
       breaks.append(range.upperBound)
@@ -99,8 +141,8 @@ enum SpatialSurfaceRouter {
     board: SurfaceID = .board
   ) -> SurfaceID {
     covers
-      .filter { $0.frame.contains(point) }
-      .max { $0.zIndex < $1.zIndex }?.id ?? board
+      .filter { $0.contains(point) }
+      .max { $0.isPaintedBelow($1) }?.id ?? board
   }
 
   private static func intersectionRange(

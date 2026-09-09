@@ -19,6 +19,8 @@ struct NotebookSceneState: Sendable {
   let coverage: [UUID: WorkspaceSpatialBounds]
   let truncatedBoards: Set<UUID>
   let missingPinnedElements: Set<String>
+  let missingPinnedItems: Set<UUID>
+  let transferredPinnedItems: [UUID: UUID]
 
   static func start(store: NotebookStore, actor: UUID, pageSize: PageSize,
     notebookID: UUID, pageID: UUID) throws -> Self {
@@ -34,9 +36,23 @@ struct NotebookSceneState: Sendable {
       height: (presence.viewport.y + margin * 2) / presence.camera.scale)
   }
 
-  static func read(store: NotebookStore, presence requested: SessionPresence?, viewport: SpatialPoint, loadsLiveContent: Bool = true, pinnedElements: [UUID: [String]] = [:]) throws -> Self {
-    try store.readTransaction { store in
+  static func read(store: NotebookStore, presence requested: SessionPresence?, viewport: SpatialPoint, loadsLiveContent: Bool = true, pinnedElements: [UUID: [String]] = [:], pinnedItems: [UUID: [UUID]] = [:]) throws -> Self {
+    let requestedItems = pinnedItems.values.flatMap { $0 }
+    guard requestedItems.count <= 7, Set(requestedItems).count == requestedItems.count else {
+      throw NotebookStorageError.limitExceeded("scene_item_pins")
+    }
+    return try store.readTransaction { store in
       let header = try store.workspaceHeader()
+      var missingPinnedItems = Set<UUID>(), transferredPinnedItems: [UUID: UUID] = [:]
+      var presentItemPins: [UUID: [UUID]] = [:]
+      for (expectedBoard, ids) in pinnedItems {
+        for id in ids {
+          guard try store.readItemHeader(id) != nil else { missingPinnedItems.insert(id); continue }
+          guard let owner = try store.ownerBoardID(of: id) else { throw NotebookStorageError.corruptRecord("item owner") }
+          if owner == expectedBoard { presentItemPins[owner, default: []].append(id) }
+          else { transferredPinnedItems[id] = owner }
+        }
+      }
       let storedPresence: SessionPresence?
       do { storedPresence = try store.loadPresence() }
       catch CocoaError.fileReadNoSuchFile { storedPresence = nil }
@@ -80,6 +96,7 @@ struct NotebookSceneState: Sendable {
         guard coverage[view.boardID] == nil else { continue }
         let bounds = bounds(for: view)
         var pins = view.focusedItemID.map { [$0] } ?? []
+        for id in presentItemPins[view.boardID] ?? [] where !pins.contains(id) { pins.append(id) }
         // Selection is an addressed owner even outside the camera. Its placement
         // must survive a bounded query so the next reveal can keep the same page.
         if view.boardID == owner, !pins.contains(selected.id) { pins.append(selected.id) }
@@ -141,7 +158,8 @@ struct NotebookSceneState: Sendable {
         documents: live.documents, states: live.states,
         drafts: loadsLiveContent && selected.kind == .document ? store.documentEditingSessions(documentID: selected.id) : [],
         hierarchy: hierarchy, ink: live.ink, inkSurfaces: Set(surfaces), presence: presence, paperSizes: paper,
-        pageCounts: counts, coverage: coverage, truncatedBoards: truncated, missingPinnedElements: missingPinnedElements)
+        pageCounts: counts, coverage: coverage, truncatedBoards: truncated, missingPinnedElements: missingPinnedElements,
+        missingPinnedItems: missingPinnedItems, transferredPinnedItems: transferredPinnedItems)
     }
   }
 }

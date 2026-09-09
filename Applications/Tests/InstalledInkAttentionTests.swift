@@ -7,7 +7,7 @@ import XCTest
 final class InstalledInkAttentionTests: XCTestCase {
   @MainActor
   func testFinishedPenAndEraserCaptureInstalledGeometryBeforeSQLOrCohortReplay() async throws {
-    let fixture = try await fixture(), driver = try Driver(model: fixture.model, presence: fixture.presence)
+    let fixture = try await fixture(), driver = try Driver(model: fixture.model, presence: fixture.presence, cohort: fixture.cohort)
     defer { driver.close() }
     let blocker = try NotebookSQLWriteBlocker(store: fixture.model.store)
     defer { try? blocker.release() }
@@ -34,7 +34,7 @@ final class InstalledInkAttentionTests: XCTestCase {
 
   @MainActor
   func testCommandFenceKeepsTheFirstContactAndQuestionWhileNextInkAndCameraProceed() async throws {
-    let fixture = try await fixture(), driver = try Driver(model: fixture.model, presence: fixture.presence)
+    let fixture = try await fixture(), driver = try Driver(model: fixture.model, presence: fixture.presence, cohort: fixture.cohort)
     defer { driver.close() }
     let blocker = try NotebookSQLWriteBlocker(store: fixture.model.store)
     defer { try? blocker.release() }
@@ -63,7 +63,7 @@ final class InstalledInkAttentionTests: XCTestCase {
 
   @MainActor
   func testUndoMustInstallItsOwnSourceAndDomainRejectionDoesNotPoisonNativeWrites() async throws {
-    let fixture = try await fixture(), driver = try Driver(model: fixture.model, presence: fixture.presence)
+    let fixture = try await fixture(), driver = try Driver(model: fixture.model, presence: fixture.presence, cohort: fixture.cohort)
     defer { driver.close() }
     _ = try driver.stroke(.pen)
     try await flush(fixture.model)
@@ -97,7 +97,7 @@ final class InstalledInkAttentionTests: XCTestCase {
     fixture.model.updatePresence(presence, settled: true)
     try await flush(fixture.model)
     try await waitUntil { !fixture.model.scenePreparationPending }
-    let driver = try Driver(model: fixture.model, presence: presence)
+    let driver = try Driver(model: fixture.model, presence: presence, cohort: fixture.cohort)
     defer { driver.close() }
     try await waitUntil { driver.registry.installedSource(on: .board(child)) != nil }
     let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start: .init(x: 100, y: 100),
@@ -116,7 +116,7 @@ final class InstalledInkAttentionTests: XCTestCase {
 
   @MainActor
   func testPointerWaitsForTheAcceptedPencilTailAndChangedStaticSourceCannotMintAContext() async throws {
-    let fixture = try await fixture(), driver = try Driver(model: fixture.model, presence: fixture.presence)
+    let fixture = try await fixture(), driver = try Driver(model: fixture.model, presence: fixture.presence, cohort: fixture.cohort)
     defer { driver.close() }
     driver.begin(.pen)
     fixture.model.afterPageInput { fixture.model.isPointing = true }
@@ -141,7 +141,7 @@ final class InstalledInkAttentionTests: XCTestCase {
 
   @MainActor
   func testCardRejectsANewPencilContactWithoutTruncatingAnAcceptedContactWhenItMoves() async throws {
-    let fixture = try await fixture(), driver = try Driver(model: fixture.model, presence: fixture.presence)
+    let fixture = try await fixture(), driver = try Driver(model: fixture.model, presence: fixture.presence, cohort: fixture.cohort)
     let card = NotebookControlRegionView(gate: fixture.model.inputGate)
     card.frame = .init(x: 100, y: 100, width: 100, height: 100)
     driver.attach(card)
@@ -193,16 +193,16 @@ final class InstalledInkAttentionTests: XCTestCase {
     let fixture = try await fixture(withChild: true, withNestedCover: true)
     let child = try XCTUnwrap(fixture.child), nested = try XCTUnwrap(fixture.nestedCover)
     XCTAssertTrue(fixture.cohort.plan.allowsLive(.item(nested), in: .board(child)))
-    let driver = try Driver(model: fixture.model, presence: fixture.presence)
+    let driver = try Driver(model: fixture.model, presence: fixture.presence, cohort: fixture.cohort)
     defer { driver.close() }
     let item = try XCTUnwrap(fixture.cohort.frame.workset(boardID: fixture.presence.boardID).items.first { $0.id == child })
     let portal = WorkspaceItemCoverView(item: item.item, geometry: item.geometry, spatialInkSurfaces: driver.registry,
       elements: [], editingTextID: nil, isElementEditingEnabled: false, portalOpenProgress: 0,
-      portalViewport: fixture.presence.viewport, onTap: { _, _ in }, onLiftChanged: { _ in },
-      onTranslationChanged: { _ in }, onTranslationEnded: { _ in }, onTextEditingEnded: { _ in }, onElementSelected: {})
-    let host = UIHostingController(rootView: portal
+      portalViewport: fixture.presence.viewport, onTap: { _, _ in },
+        onTextEditingEnded: { _ in }, onElementSelected: {})
+    let host = UIHostingController(rootView: AnyView(portal
       .frame(width: item.geometry.width, height: item.geometry.height).scaleEffect(0.3)
-      .environment(\.sceneCompositionCohort, fixture.cohort).environment(fixture.model))
+      .environment(\.sceneCompositionCohort, fixture.cohort).environment(fixture.model)))
     driver.attach(host)
     try await waitUntil {
       driver.registry.installedSource(on: .board(fixture.presence.boardID)) != nil
@@ -224,6 +224,9 @@ final class InstalledInkAttentionTests: XCTestCase {
     XCTAssertEqual(reference.revision, try fixture.model.store.referenceRevision(target: reference.target))
 
     let oldCanvas = try XCTUnwrap(driver.registry.canvas(for: .cover(nested)))
+    // End the former projection's real SwiftUI lifetime. Keeping that owner
+    // mounted would allow its next update to legitimately register it again.
+    driver.detach(host)
     let replacement = InkCanvasView(frame: oldCanvas.frame), coordinator = SpatialInkSurfaceView.Coordinator()
     coordinator.update(view: replacement, surface: .cover(nested), journal: fixture.cohort.liveData.ink, registry: driver.registry)
     defer { coordinator.unregister(replacement) }
@@ -315,24 +318,28 @@ final class InstalledInkAttentionTests: XCTestCase {
     let canvas = SpatialInkContainerView(frame: .init(x: 0, y: 0, width: 512, height: 512))
     private let model: NotebookAppModel, presence: SessionPresence, window: UIWindow
     private let coordinator: SpatialInkCanvas.Coordinator
+    private let cohort: SceneCompositionCohort
+    private let physical: WorkspaceInkFixture
     private let touch = CaptureTouch(), event = UIEvent()
     private var recognizer: SpatialPencilGestureRecognizer { window.gestureRecognizers!.compactMap { $0 as? SpatialPencilGestureRecognizer }.first! }
     var recognizerState: UIGestureRecognizer.State { recognizer.state }
     private(set) var didBeginContact = false
 
-    init(model: NotebookAppModel, presence: SessionPresence) throws {
-      self.model = model; self.presence = presence
+    init(model: NotebookAppModel, presence: SessionPresence, cohort: SceneCompositionCohort) throws {
+      self.model = model; self.presence = presence; self.cohort = cohort
       let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
       window = UIWindow(windowScene: scene)
       coordinator = .init(surfaceRegistry: registry, inputGate: model.inputGate, onCommit: model.appendSpatialInk)
       let host = UIViewController(); window.rootViewController = host
       host.view.addSubview(canvas); window.makeKeyAndVisible()
+      physical = try .init(cohort: cohort, presence: presence, canvas: canvas, parent: host,
+        registry: registry, gate: model.inputGate, journal: model.spatialInk)
       update(.pen)
     }
 
     func update(_ tool: DrawingTool) {
-      coordinator.update(view: canvas, boardID: presence.boardID, camera: presence.camera, viewport: presence.viewport,
-        items: [], journal: model.spatialInk, penStyle: .standard, eraserStyle: .standard, drawingTool: tool,
+      coordinator.update(view: canvas, cohort: cohort, boardID: presence.boardID, camera: presence.camera, viewport: presence.viewport,
+        items: physical.surfaces, journal: model.spatialInk, penStyle: .standard, eraserStyle: .standard, drawingTool: tool,
         surfaceRegistry: registry, inputGate: model.inputGate, isItemBeingDeleted: { _ in false },
         admitsNewContact: { true }, isEnabled: true, onCommit: model.appendSpatialInk)
     }
@@ -354,6 +361,11 @@ final class InstalledInkAttentionTests: XCTestCase {
       parent.addChild(host); parent.view.addSubview(host.view)
       host.view.frame = canvas.frame; host.didMove(toParent: parent); host.view.layoutIfNeeded()
     }
+    func detach(_ host: UIHostingController<AnyView>) {
+      host.rootView = AnyView(EmptyView())
+      host.view.layoutIfNeeded()
+      host.willMove(toParent: nil); host.view.removeFromSuperview(); host.removeFromParent()
+    }
     func moveAndEnd() {
       touch.point.x += 40; touch.sampleTime += 0.1
       recognizer.touchesMoved([touch], with: event); recognizer.touchesEnded([touch], with: event)
@@ -364,7 +376,7 @@ final class InstalledInkAttentionTests: XCTestCase {
       XCTAssertEqual(model.spatialInk?.actions.count, previous + 1)
       return try XCTUnwrap(model.spatialInk?.actions.last)
     }
-    func close() { coordinator.uninstall(); window.isHidden = true; window.rootViewController = nil }
+    func close() { coordinator.uninstall(); physical.close(); window.isHidden = true; window.rootViewController = nil }
   }
 }
 

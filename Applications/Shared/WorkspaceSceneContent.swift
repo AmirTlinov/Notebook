@@ -101,8 +101,7 @@ struct BoardPortalPreview: View {
               elements: cohort.frame.covers[item.id]?.elements ?? [],
               editingTextID: nil, isElementEditingEnabled: false,
               portalOpenProgress: 0, portalViewport: transitionViewport,
-              onTap: { _, _ in }, onLiftChanged: { _ in },
-              onTranslationChanged: { _ in }, onTranslationEnded: { _ in },
+              onTap: { _, _ in },
               onTextEditingEnded: { _ in }, onElementSelected: {},
               isPortalProjection: true, portalPixelScale: pixelScale * camera.scale / fill,
               remainingPortalPasses: remainingPortalPasses - 1)
@@ -147,6 +146,9 @@ struct WorkspaceCoverTitle: View {
 struct WorkspaceItemCoverView: View {
   @Environment(NotebookAppModel.self) private var model
   @Environment(\.sceneCompositionCohort) private var cohort
+  #if os(iOS)
+    @Environment(\.workspaceItemPose) private var pose
+  #endif
 
   let item: WorkspaceItem
   let geometry: WorkspaceItemGeometry
@@ -157,9 +159,6 @@ struct WorkspaceItemCoverView: View {
   let portalOpenProgress: Double
   let portalViewport: SpatialPoint
   let onTap: (CGPoint, Int) -> Void
-  let onLiftChanged: (Bool) -> Void
-  let onTranslationChanged: (CGSize) -> Void
-  let onTranslationEnded: (CGSize) -> Void
   let onTextEditingEnded: (String) -> Void
   let onElementSelected: () -> Void
   var showsDepth = true
@@ -238,8 +237,9 @@ struct WorkspaceItemCoverView: View {
       #if os(iOS)
         if (!isElementEditingEnabled || model.isItemBeingDeleted(item.id)) && !isPortalProjection {
           NotebookInteractionView(
+            inputGate: model.inputGate,
             permitsManipulation: !model.scenePreparationPending && !model.isItemBeingDeleted(item.id),
-            canBeginContact: { !model.isItemBeingDeleted(item.id) },
+            canBeginContact: { !model.isItemBeingDeleted(item.id) && !spatialInkSurfaces.isRetired(.cover(item.id)) },
             passthroughFrames: model.isItemBeingDeleted(item.id) ? [] : interactionPassthroughFrames,
             onTap: { location, count in
               guard !model.isItemBeingDeleted(item.id) else { return }
@@ -253,16 +253,18 @@ struct WorkspaceItemCoverView: View {
             },
             onLiftChanged: { lifted in
               guard !lifted || (!model.scenePreparationPending && !model.isItemBeingDeleted(item.id)) else { return }
-              onLiftChanged(lifted)
+              if lifted { pose?.owner?.beginLift() }
             },
             onTranslationChanged: { translation in
               guard !model.scenePreparationPending, !model.isItemBeingDeleted(item.id) else { return }
-              onTranslationChanged(translation)
+              pose?.owner?.changeTranslation(translation)
             },
             onTranslationEnded: { translation in
               guard !model.isItemBeingDeleted(item.id) else { return }
-              onTranslationEnded(model.scenePreparationPending ? .zero : translation)
-            }
+              if model.scenePreparationPending { pose?.owner?.cancelManipulation() }
+              else { pose?.owner?.endTranslation(translation) }
+            },
+            onCancelled: { pose?.owner?.cancelManipulation() }
           )
           .frame(
             width: geometry.width,

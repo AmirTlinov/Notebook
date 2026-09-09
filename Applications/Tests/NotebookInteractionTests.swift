@@ -6,7 +6,7 @@ import XCTest
 @MainActor
 final class NotebookInteractionTests: XCTestCase {
   func testPendingContactStillDeliversTheTapThatEndsTextEditing() async throws {
-    let view = NotebookInteractionTouchView()
+    let view = NotebookInteractionTouchView(inputGate: NotebookInputGate())
     let touch = CoverInteractionTouch()
     var lifts: [Bool] = []
     var taps: [Int] = []
@@ -21,7 +21,7 @@ final class NotebookInteractionTests: XCTestCase {
   }
 
   func testPreparationClosingAndReopeningDoesNotLiftTheSameContact() async throws {
-    let view = NotebookInteractionTouchView()
+    let view = NotebookInteractionTouchView(inputGate: NotebookInputGate())
     let touch = CoverInteractionTouch()
     var lifts: [Bool] = []
     view.onLiftChanged = { lifts.append($0) }
@@ -40,11 +40,12 @@ final class NotebookInteractionTests: XCTestCase {
   }
 
   func testPendingReleasesAnExistingLiftAfterTheRepresentableUpdate() async throws {
-    let view = NotebookInteractionTouchView()
+    let view = NotebookInteractionTouchView(inputGate: NotebookInputGate())
     let touch = CoverInteractionTouch()
     var events: [CoverInteractionEvent] = []
     view.onLiftChanged = { events.append(.lift($0)) }
     view.onTranslationEnded = { events.append(.end($0)) }
+    view.onCancelled = { events.append(.cancel) }
     view.touchesBegan([touch], with: nil)
     try await Task.sleep(for: .milliseconds(250))
     touch.point.x += 70
@@ -54,18 +55,19 @@ final class NotebookInteractionTests: XCTestCase {
     view.setPermitsManipulation(false)
     XCTAssertEqual(events, [.lift(true)], "updateUIView must not mutate SwiftUI state synchronously")
     try await Task.sleep(for: .milliseconds(10))
-    XCTAssertEqual(events, [.lift(true), .end(.zero), .lift(false)])
+    XCTAssertEqual(events, [.lift(true), .cancel, .lift(false)])
     XCTAssertTrue(view.yieldToCameraPan(), "Cancellation immediately releases native camera arbitration")
     XCTAssertEqual(events.count, 3)
   }
 
   func testFingerEndingBeforeDeferredCancellationCompletesTheLiftExactlyOnce() async throws {
-    let view = NotebookInteractionTouchView()
+    let view = NotebookInteractionTouchView(inputGate: NotebookInputGate())
     let touch = CoverInteractionTouch()
     var events: [CoverInteractionEvent] = []
     var taps = 0
     view.onLiftChanged = { events.append(.lift($0)) }
     view.onTranslationEnded = { events.append(.end($0)) }
+    view.onCancelled = { events.append(.cancel) }
     view.onTap = { _, _ in taps += 1 }
     view.touchesBegan([touch], with: nil)
     try await Task.sleep(for: .milliseconds(250))
@@ -73,18 +75,19 @@ final class NotebookInteractionTests: XCTestCase {
     view.touchesMoved([touch], with: nil)
     view.setPermitsManipulation(false)
     view.touchesEnded([touch], with: nil)
-    XCTAssertEqual(events, [.lift(true), .end(.zero), .lift(false)])
+    XCTAssertEqual(events, [.lift(true), .cancel, .lift(false)])
     try await Task.sleep(for: .milliseconds(10))
     XCTAssertEqual(events.count, 3)
     XCTAssertEqual(taps, 0, "A cancelled lifted contact cannot become a tap")
   }
 
   func testACompletedLiftCommitsItsMeasuredTranslation() async throws {
-    let view = NotebookInteractionTouchView()
+    let view = NotebookInteractionTouchView(inputGate: NotebookInputGate())
     let touch = CoverInteractionTouch()
     var events: [CoverInteractionEvent] = []
     view.onLiftChanged = { events.append(.lift($0)) }
     view.onTranslationEnded = { events.append(.end($0)) }
+    view.onCancelled = { events.append(.cancel) }
     view.touchesBegan([touch], with: nil)
     try await Task.sleep(for: .milliseconds(250))
     touch.point.x += 70
@@ -96,36 +99,39 @@ final class NotebookInteractionTests: XCTestCase {
   }
 
   func testUIKitCancellationDropsOnlyTheManipulationPreview() async throws {
-    let view = NotebookInteractionTouchView()
+    let view = NotebookInteractionTouchView(inputGate: NotebookInputGate())
     let touch = CoverInteractionTouch()
     var events: [CoverInteractionEvent] = []
     view.onLiftChanged = { events.append(.lift($0)) }
     view.onTranslationEnded = { events.append(.end($0)) }
+    view.onCancelled = { events.append(.cancel) }
     view.touchesBegan([touch], with: nil)
     try await Task.sleep(for: .milliseconds(250))
     touch.point.x += 70
     view.touchesMoved([touch], with: nil)
     view.touchesCancelled([touch], with: nil)
-    XCTAssertEqual(events, [.lift(true), .end(.zero), .lift(false)])
+    XCTAssertEqual(events, [.lift(true), .cancel, .lift(false)])
     try await Task.sleep(for: .milliseconds(10))
     XCTAssertEqual(events.count, 3)
   }
 
   func testDismantlingDefersCleanupAndKeepsItsOriginalOwnerCallbacks() async throws {
-    let view = NotebookInteractionTouchView()
+    let view = NotebookInteractionTouchView(inputGate: NotebookInputGate())
     let touch = CoverInteractionTouch()
     var oldEvents: [CoverInteractionEvent] = []
     var newEvents: [CoverInteractionEvent] = []
     view.onLiftChanged = { oldEvents.append(.lift($0)) }
     view.onTranslationEnded = { oldEvents.append(.end($0)) }
+    view.onCancelled = { oldEvents.append(.cancel) }
     view.touchesBegan([touch], with: nil)
     try await Task.sleep(for: .milliseconds(250))
     NotebookInteractionView.dismantleUIView(view, coordinator: ())
     XCTAssertEqual(oldEvents, [.lift(true)])
     view.onLiftChanged = { newEvents.append(.lift($0)) }
     view.onTranslationEnded = { newEvents.append(.end($0)) }
+    view.onCancelled = { newEvents.append(.cancel) }
     try await Task.sleep(for: .milliseconds(10))
-    XCTAssertEqual(oldEvents, [.lift(true), .end(.zero), .lift(false)])
+    XCTAssertEqual(oldEvents, [.lift(true), .cancel, .lift(false)])
     XCTAssertEqual(newEvents, [])
   }
 
@@ -136,7 +142,8 @@ final class NotebookInteractionTests: XCTestCase {
         frame: .init(x: Double(index * 100), y: 0, width: 80, height: 80), source: "Content",
         stamp: .init(counter: 0, actor: UUID()))
     }
-    let view = NotebookInteractionTouchView(frame: .init(x: 0, y: 0, width: 400, height: 400))
+    let view = NotebookInteractionTouchView(inputGate: NotebookInputGate())
+    view.frame = .init(x: 0, y: 0, width: 400, height: 400)
     view.passthroughFrames = WorkspaceItemCoverView.interactionPassthroughFrames(
       elements: elements, editingTextID: "element-0", scenePreparationPending: true)
     XCTAssertFalse(view.point(inside: .init(x: 20, y: 20), with: nil))
@@ -153,6 +160,7 @@ final class NotebookInteractionTests: XCTestCase {
 private enum CoverInteractionEvent: Equatable {
   case lift(Bool)
   case end(CGSize)
+  case cancel
 }
 
 @MainActor

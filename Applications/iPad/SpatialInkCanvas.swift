@@ -4,6 +4,7 @@ import NotebookCore
 import UIKit
 
 struct SpatialInkCanvas: UIViewRepresentable {
+  let cohort: SceneCompositionCohort?
   let boardID: UUID
   let camera: SpatialCamera
   let viewport: SpatialPoint
@@ -36,7 +37,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       coordinator.install(on: window, inside: view)
     }
     context.coordinator.update(
-      view: view,
+      view: view, cohort: cohort,
       boardID: boardID,
       camera: camera,
       viewport: viewport,
@@ -57,7 +58,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
 
   func updateUIView(_ view: SpatialInkContainerView, context: Context) {
     context.coordinator.update(
-      view: view,
+      view: view, cohort: cohort,
       boardID: boardID,
       camera: camera,
       viewport: viewport,
@@ -97,6 +98,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private var boardSurface = SurfaceID.board
     private var viewport = SpatialPoint(x: 1, y: 1)
     private var items: [SpatialWorkspaceItemSurface] = []
+    private var cohort: SceneCompositionCohort?
     private var journal: SpatialInkJournal?
     private var penStyle = PenStyle.standard
     private var eraserStyle = EraserStyle.standard
@@ -116,9 +118,10 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private struct ContactGeometry {
       let camera: SpatialCamera
       let viewport: SpatialPoint
-      let items: [UUID: SpatialWorkspaceItemSurface]
       let surfaces: [SpatialScreenSurface]
       let blockedSurfaces: Set<SurfaceID>
+      let cohort: SceneCompositionCohort?
+      let leases: [SpatialInkSurfaceRegistry.ContactLease]
     }
     private var actionGeometry: ContactGeometry?
     private var lastActionPoint: PKStrokePoint?
@@ -149,6 +152,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
 
     func update(
       view: SpatialInkContainerView,
+      cohort: SceneCompositionCohort?,
       boardID: UUID,
       camera: SpatialCamera,
       viewport: SpatialPoint,
@@ -174,6 +178,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         finishAction()
       }
       self.view = view
+      self.cohort = cohort
       let nextBoardSurface = SurfaceID.board(boardID)
       if boardSurface != nextBoardSurface {
         surfaceRegistry.unregister(view.inkView, for: boardSurface)
@@ -245,10 +250,11 @@ struct SpatialInkCanvas: UIViewRepresentable {
       recognizer.isEnabled = isEnabled
       recognizer.canBeginContact = { [weak self] touch in
         guard let self, isEnabled, admitsNewContact(),
-          inputGate.permitsSceneContact(at: touch.preciseLocation(in: self.window)) else { return false }
+          inputGate.permitsSceneContact(at: touch.preciseLocation(in: self.window)),
+          let surfaces = admissionSurfaces() else { return false }
         let surface = SpatialSurfaceRouter.surface(at: touch.preciseLocation(in: self.view ?? self.window),
-          covers: screenSurfaces(), board: boardSurface)
-        return surface.kind != .cover || surface.ownerID.map { !isItemBeingDeleted($0) } == true
+          covers: surfaces, board: boardSurface)
+        return surface.kind != .cover || surface.ownerID.map { !isItemBeingDeleted($0) && !surfaceRegistry.isRetired(surface) } == true
       }
       recognizer.onEvent = { [weak self] event in
         self?.handle(event)
@@ -291,14 +297,27 @@ struct SpatialInkCanvas: UIViewRepresentable {
 
     private func beginAction(touch: UITouch, event: UIEvent) {
       finishAction()
+      guard let view, let surfaces = admissionSurfaces() else { return }
+      var leases: [SpatialInkSurfaceRegistry.ContactLease] = []
+      var frozen: [SpatialScreenSurface] = []
+      for surface in surfaces {
+        guard let lease = surfaceRegistry.acquireContact(on: surface.id, in: view) else {
+          for lease in leases { lease.release() }
+          return
+        }
+        leases.append(lease)
+        frozen.append(lease.pose?.surface ?? surface)
+      }
+      if let lease = surfaceRegistry.acquireContact(on: boardSurface, in: view) { leases.append(lease) }
+      // Freeze the installed native pose before any finger cancellation can
+      // request a return animation. No sample is deferred or replayed later.
+      actionGeometry = .init(camera: camera, viewport: viewport, surfaces: frozen,
+        blockedSurfaces: Set(items.filter { isItemBeingDeleted($0.itemID) || surfaceRegistry.isRetired(.cover($0.itemID)) }.map { .cover($0.itemID) }),
+        cohort: cohort, leases: leases)
       setPencilActionActive(touch.type == .pencil)
       actionTool = drawingTool
       actionPenStyle = penStyle
       actionEraserStyle = eraserStyle
-      actionGeometry = .init(camera: camera, viewport: viewport,
-        items: Dictionary(uniqueKeysWithValues: items.map { ($0.itemID, $0) }),
-        surfaces: screenSurfaces(),
-        blockedSurfaces: Set(items.filter { isItemBeingDeleted($0.itemID) }.map { .cover($0.itemID) }))
       lastActionPoint = nil
       actionSpans = []
       segmentSamples = []
@@ -373,7 +392,12 @@ struct SpatialInkCanvas: UIViewRepresentable {
         cancelAction()
         return
       }
-      defer { setPencilActionActive(false) }
+      let geometry = actionGeometry
+      defer {
+        for lease in geometry?.leases ?? [] { lease.release() }
+        actionGeometry = nil
+        setPencilActionActive(false)
+      }
       activePen?.replacePredictions(with: [])
       finishCurrentSegment()
       let spans = actionSpans
@@ -392,7 +416,6 @@ struct SpatialInkCanvas: UIViewRepresentable {
       lastActionPoint = nil
       actionSpans = []
       segmentSamples = []
-      actionGeometry = nil
       previousFilteredForce = nil
       previousTimestamp = nil
       guard !spans.isEmpty else {
@@ -419,6 +442,12 @@ struct SpatialInkCanvas: UIViewRepresentable {
     }
 
     private func cancelAction() {
+      let geometry = actionGeometry
+      defer {
+        for lease in geometry?.leases ?? [] { lease.release() }
+        actionGeometry = nil
+        setPencilActionActive(false)
+      }
       if let currentSurface {
         surfaceRegistry.canvas(for: currentSurface)?.clearActiveAction()
       }
@@ -429,7 +458,6 @@ struct SpatialInkCanvas: UIViewRepresentable {
       lastActionPoint = nil
       actionSpans = []
       segmentSamples = []
-      actionGeometry = nil
       activePen = nil
       activeEraser = nil
       currentSurface = nil
@@ -443,7 +471,6 @@ struct SpatialInkCanvas: UIViewRepresentable {
         )
 
       }
-      setPencilActionActive(false)
     }
 
     private func setPencilActionActive(_ active: Bool) {
@@ -645,19 +672,49 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private func screenSurfaces() -> [SpatialScreenSurface] {
       if let actionGeometry { return actionGeometry.surfaces }
       return items.map { item in
+        if let view, let surface = surfaceRegistry.pose(for: .cover(item.itemID))?.screenSurface(in: view) { return surface }
         let center = camera.worldToScreen(item.center, viewport: viewport)
-        let rect = CGRect(
-          x: center.x - item.geometry.width * camera.scale / 2,
-          y: center.y - item.geometry.height * camera.scale / 2,
-          width: item.geometry.width * camera.scale,
-          height: item.geometry.height * camera.scale
-        )
         return SpatialScreenSurface(
           id: .cover(item.itemID),
-          frame: rect,
+          localBounds: .init(x: 0, y: 0, width: item.geometry.width, height: item.geometry.height),
+          localToScreen: CGAffineTransform(a: camera.scale, b: 0, c: 0, d: camera.scale,
+            tx: center.x - item.geometry.width * camera.scale / 2,
+            ty: center.y - item.geometry.height * camera.scale / 2),
           zIndex: item.zIndex
         )
       }
+    }
+
+    /// The caller passes the displayed cohort, not a newly prepared index. Its
+    /// complete tile coverage and native registrations are the admission proof
+    /// while a later placement is still being prepared. No unshown geometry
+    /// or test-specific admission path can replace this installed source.
+    private func admissionSurfaces() -> [SpatialScreenSurface]? {
+      guard let view, view.window != nil else { return nil }
+      let surfaces = screenSurfaces()
+      guard let cohort, let boardID = boardSurface.ownerID else { return nil }
+      let installedItems = cohort.frame.workset(boardID: boardID).items.map {
+        SpatialWorkspaceItemSurface(itemID: $0.id, geometry: $0.geometry, center: $0.center, zIndex: $0.zIndex)
+      }.sorted { $0.itemID < $1.itemID }
+      let suppliedItems = items.sorted { $0.itemID < $1.itemID }
+      guard cohort.plan.presentations[.board(boardID)] != nil,
+        installedItems == suppliedItems,
+        let coverage = cohort.plan.coverage[.board(boardID)]?.tiles,
+        let first = coverage.first, let last = coverage.last,
+        surfaceRegistry.canvas(for: boardSurface)?.installedSpatialSource?.surface == boardSurface,
+        cohort.plan.tiles.allSatisfy({ cohort.rasters[$0].map { !$0.isReleased } == true }) else { return nil }
+      let visible = WorkspaceSpatialBounds(origin: camera.screenToWorld(.zero, viewport: viewport),
+        width: viewport.x / camera.scale, height: viewport.y / camera.scale)
+      guard WorkspaceSpatialBounds(origin: first.origin, maximum: last.bounds.maximum).contains(visible) else { return nil }
+      let viewportRect = CGRect(x: 0, y: 0, width: viewport.x, height: viewport.y)
+      for surface in surfaces where surface.frame.intersects(viewportRect) {
+        guard let id = surface.id.ownerID, cohort.plan.allowsLive(.item(id), in: .board(boardID)) else { continue }
+        guard let pose = surfaceRegistry.pose(for: surface.id), pose.cohortID == cohort.id,
+          pose.boardID == boardID, pose.screenSurface(in: view) != nil,
+          let canvas = surfaceRegistry.canvas(for: surface.id), canvas.window === view.window, canvas.isDescendant(of: pose.contentView),
+          canvas.installedSpatialSource?.surface == surface.id else { return nil }
+      }
+      return surfaces
     }
 
     private func convert(
@@ -667,17 +724,12 @@ struct SpatialInkCanvas: UIViewRepresentable {
       let camera = actionGeometry?.camera ?? self.camera
       let viewport = actionGeometry?.viewport ?? self.viewport
       let local: SpatialPoint
-      if surface.kind == .cover,
-        let itemID = surface.ownerID,
-        let item = actionGeometry?.items[itemID] ?? items.first(where: { $0.itemID == itemID })
-      {
-        let center = camera.worldToScreen(item.center, viewport: viewport)
-        local = SpatialPoint(
-          x: (point.location.x - center.x) / camera.scale
-            + item.geometry.width / 2,
-          y: (point.location.y - center.y) / camera.scale
-            + item.geometry.height / 2
-        )
+      if surface.kind == .cover, let geometry = screenSurfaces().first(where: { $0.id == surface }) {
+        let converted = geometry.localPoint(point.location)
+        local = SpatialPoint(x: converted.x, y: converted.y)
+        return SpatialInkSample(point: local, timeOffset: point.timeOffset,
+          width: point.size.width / geometry.screenScale, opacity: point.opacity, force: point.force,
+          azimuth: geometry.localAzimuth(point.azimuth), altitude: point.altitude)
       } else {
         let world = camera.screenToWorld(
           SpatialPoint(x: point.location.x, y: point.location.y),
@@ -695,43 +747,23 @@ struct SpatialInkCanvas: UIViewRepresentable {
           altitude: point.altitude
         )
       }
-      return SpatialInkSample(
-        point: local,
-        timeOffset: point.timeOffset,
-        width: point.size.width / camera.scale,
-        opacity: point.opacity,
-        force: point.force,
-        azimuth: point.azimuth,
-        altitude: point.altitude
-      )
     }
 
     private func livePoint(
       _ point: PKStrokePoint,
       on surface: SurfaceID
     ) -> PKStrokePoint {
-      let camera = actionGeometry?.camera ?? self.camera
-      let viewport = actionGeometry?.viewport ?? self.viewport
-      guard surface.kind == .cover,
-        let itemID = surface.ownerID,
-        let item = actionGeometry?.items[itemID] ?? items.first(where: { $0.itemID == itemID })
-      else { return point }
-      let center = camera.worldToScreen(item.center, viewport: viewport)
+      guard surface.kind == .cover, let geometry = screenSurfaces().first(where: { $0.id == surface }) else { return point }
       return PKStrokePoint(
-        location: CGPoint(
-          x: (point.location.x - center.x) / camera.scale
-            + item.geometry.width / 2,
-          y: (point.location.y - center.y) / camera.scale
-            + item.geometry.height / 2
-        ),
+        location: geometry.localPoint(point.location),
         timeOffset: point.timeOffset,
         size: CGSize(
-          width: point.size.width / camera.scale,
-          height: point.size.height / camera.scale
+          width: point.size.width / geometry.screenScale,
+          height: point.size.height / geometry.screenScale
         ),
         opacity: point.opacity,
         force: point.force,
-        azimuth: point.azimuth,
+        azimuth: geometry.localAzimuth(point.azimuth),
         altitude: point.altitude
       )
     }

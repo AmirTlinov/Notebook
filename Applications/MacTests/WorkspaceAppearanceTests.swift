@@ -120,8 +120,8 @@ final class WorkspaceAppearanceTests: XCTestCase {
       spatialInkSurfaces: SpatialInkSurfaceRegistry(), elements: [],
       editingTextID: nil, isElementEditingEnabled: false,
       portalOpenProgress: 0, portalViewport: geometry.size,
-      onTap: { _, _ in }, onLiftChanged: { _ in }, onTranslationChanged: { _ in },
-      onTranslationEnded: { _ in }, onTextEditingEnded: { _ in }, onElementSelected: {})
+      onTap: { _, _ in },
+       onTextEditingEnded: { _ in }, onElementSelected: {})
       .environment(model)
   }
 

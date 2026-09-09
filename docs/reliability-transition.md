@@ -291,7 +291,7 @@ points, пересекающий несколько листов, остаётс
 | R1 | Пустой Metal-владелец готов без drawable/MSAA; `DrawingOwnershipTests` | Общий учёт drawable и текстур открыт |
 | R2 | Регистрация и готовый mesh сохраняются при передаче; `SpatialInkProjectionTests`, `PortalPassageTests` | Срез |
 | R3 | Учитываемые GPU-буферы и композиция SQL-порций в тайлы; `SpatialInkProjectionTests`, `SceneRenderResourcesTests`, `SceneCompositionSQLTests` | Интеграция; CPU-подготовка чернил и полная приёмка бюджета ещё открыты |
-| R4 | Pencil отменяет pan, камеру и удерживаемую отмену; `NotebookInputTests` | Перенос/подъём обложки ещё требует общего допуска |
+| R4 | `WorkspaceItemPose` удерживает целую обложку и причинную посадку; Pencil фиксирует показанную матрицу и тот же InkCanvas; `WorkspaceItemPoseTests`, `WorkspaceCoverContinuityTests`, `SceneItemOwnerRetirementTests` | Нативный срез проверен; физическая приёмка и общий байтовый бюджет композиции открыты |
 | R5 | Отмена pan сохраняет показанное положение; `NotebookInputTests` | Срез |
 | R6 | Pan уступает контролам и редактированию; `NotebookInputTests` | Полное согласование всех владельцев жестов открыто |
 | R7 | Отмена распространяется на подготовку, readback и публикацию; `DrawingOwnershipTests` | Уже отправленный GPU завершает владение ресурсами |
