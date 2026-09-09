@@ -13,6 +13,9 @@ public struct SharedContext: Codable, Equatable, Sendable, Identifiable {
   public mutating func merge(_ other: Self) throws {
     guard id == other.id else { throw CollaborationError("context_mismatch", "Указания принадлежат разным контекстам.") }
     try validate()
+    guard Set(other.entries.map(\.id)).count == other.entries.count else {
+      throw CollaborationError("context_entry_conflict", "Указания имеют устойчивые уникальные ID.")
+    }
     var byID = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
     for entry in other.entries {
       if let previous = byID[entry.id], previous != entry {
@@ -20,13 +23,25 @@ public struct SharedContext: Codable, Equatable, Sendable, Identifiable {
       }
       byID[entry.id] = entry
     }
-    entries = byID.values.sorted { $0.stamp == $1.stamp ? $0.id.uuidString < $1.id.uuidString : $0.stamp < $1.stamp }
-    try validate()
+    let merged = Self(id: id, entries: byID.values.sorted {
+      $0.stamp == $1.stamp ? $0.id.uuidString < $1.id.uuidString : $0.stamp < $1.stamp
+    })
+    // A rejected packet cannot replace the accepted history with an orphan or
+    // invalid entry. Partial replies may still address the existing context.
+    try merged.validate()
+    entries = merged.entries
   }
 
   public func validate() throws {
-    guard Set(entries.map(\.id)).count == entries.count else {
-      throw CollaborationError("context_entry_conflict", "Указания имеют устойчивые уникальные ID.")
+    var counters: [UUID: UInt64] = [:]
+    counters.reserveCapacity(entries.count)
+    for entry in entries {
+      guard entry.stamp.counter <= VersionStamp.maximumCounter else {
+        throw CollaborationError("invalid_context_clock", "Версия указания выходит за предел точного причинного счётчика.")
+      }
+      guard counters.updateValue(entry.stamp.counter, forKey: entry.id) == nil else {
+        throw CollaborationError("context_entry_conflict", "Указания имеют устойчивые уникальные ID.")
+      }
     }
     for entry in entries {
       guard (entry.text?.utf8.count ?? 0) <= 1_048_576,
@@ -36,7 +51,7 @@ public struct SharedContext: Codable, Equatable, Sendable, Identifiable {
         throw CollaborationError("invalid_reference", "Указание содержит до 32 уникальных фрагментов.")
       }
       if let reply = entry.replyTo {
-        guard let source = entries.first(where: { $0.id == reply }), source.stamp.counter < entry.stamp.counter else {
+        guard let sourceCounter = counters[reply], sourceCounter < entry.stamp.counter else {
           throw CollaborationError("source_missing", "Ответ называет ранее рассмотренное указание этого контекста.")
         }
       }
