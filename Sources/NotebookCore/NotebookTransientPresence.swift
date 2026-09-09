@@ -50,26 +50,3 @@ public struct DocumentPageSelectionRequest: Codable, Equatable, Sendable {
   }
 }
 
-public enum WireMessage: Codable, Equatable, Sendable {
-  case index(WorkspaceIndex)
-  case page(PageDocument)
-  case drawing(
-    pageID: UUID,
-    data: Data,
-    stamp: VersionStamp
-  )
-  case elements(
-    pageID: UUID,
-    elements: [AgentElement],
-    stamp: VersionStamp,
-    collaboration: CollaborativeContent?
-  )
-  case document(DocumentDocument)
-  case documentState(DocumentStateJournal)
-  case board(BoardHierarchy)
-  case spatialInk(SpatialInkJournal)
-  case presence(PresenceEnvelope)
-  case documentPageSelection(DocumentPageSelectionRequest)
-  case collaboration(CollaborationEnvelope)
-  case inputActivity(NotebookInputActivity)
-}

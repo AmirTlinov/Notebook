@@ -7,15 +7,15 @@ final class PresenceOwnershipTests: XCTestCase {
   func testPortalExitAndReentryKeepTheExactChildCamera() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
 
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
     let viewport = SpatialPoint(x: 1_366, y: 1_024)
-    model.start(pageSize: PageSize(width: viewport.x, height: viewport.y))
+    await model.start(pageSize: PageSize(width: viewport.x, height: viewport.y))
     let boardID = try XCTUnwrap(model.createBoard(at: .zero))
     model.enterBoard(boardID)
-    let inspected = SessionPresence(
+    var inspected = SessionPresence(
       boardID: boardID,
       mode: .board,
       camera: SpatialCamera(
@@ -24,6 +24,7 @@ final class PresenceOwnershipTests: XCTestCase {
       ),
       viewport: viewport
     )
+    inspected = inspected.selecting(itemID: model.presence?.selectedItemID, pageID: model.presence?.notebookPageID)
     model.updatePresence(inspected, settled: true)
 
     XCTAssertTrue(model.leaveBoard())
@@ -62,20 +63,22 @@ final class PresenceOwnershipTests: XCTestCase {
   func testActiveCameraFrameDoesNotReplaceTheDurableContext() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
 
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: PageSize(width: 834, height: 1_194))
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: PageSize(width: 834, height: 1_194))
     let stable = try store.loadPresence()
     let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
-    let active = SessionPresence(
+    var active = SessionPresence(
       mode: .cover,
       camera: SpatialCamera(center: stable.camera.center, scale: 0.84),
       viewport: stable.viewport,
       focusedItemID: itemID,
       openProgress: 0.5
     )
+
+    active = active.selecting(itemID: model.presence?.selectedItemID, pageID: model.presence?.notebookPageID)
 
     model.updatePresence(active, settled: false)
 
@@ -89,11 +92,11 @@ final class PresenceOwnershipTests: XCTestCase {
   func testSettledPageCannotPersistAtATransitionalScale() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
 
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: PageSize(width: 834, height: 1_194))
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: PageSize(width: 834, height: 1_194))
     let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
     let center = try XCTUnwrap(model.board?.placement(of: itemID)?.center)
     let broken = SessionPresence(
@@ -116,17 +119,19 @@ final class PresenceOwnershipTests: XCTestCase {
   func testSettledBoardKeepsTheScaleChosenForInspection() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
 
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: PageSize(width: 834, height: 1_194))
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: PageSize(width: 834, height: 1_194))
     let viewport = SpatialPoint(x: 834, y: 1_194)
-    let inspected = SessionPresence(
+    var inspected = SessionPresence(
       mode: .board,
       camera: SpatialCamera(center: WorldPoint(x: 90, y: -40), scale: 0.68),
       viewport: viewport
     )
+
+    inspected = inspected.selecting(itemID: model.presence?.selectedItemID, pageID: model.presence?.notebookPageID)
 
     model.updatePresence(inspected, settled: true)
 
@@ -139,13 +144,13 @@ final class PresenceOwnershipTests: XCTestCase {
   func testSettledPartialCoverKeepsTheExactCamera() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
 
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: PageSize(width: 834, height: 1_194))
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: PageSize(width: 834, height: 1_194))
     let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
-    let partial = SessionPresence(
+    var partial = SessionPresence(
       mode: .cover,
       camera: SpatialCamera(
         center: WorldPoint(x: 37, y: -22),
@@ -155,6 +160,8 @@ final class PresenceOwnershipTests: XCTestCase {
       focusedItemID: itemID,
       openProgress: 0.55
     )
+
+    partial = partial.selecting(itemID: model.presence?.selectedItemID, pageID: model.presence?.notebookPageID)
 
     model.updatePresence(partial, settled: true)
 
@@ -167,7 +174,6 @@ final class PresenceOwnershipTests: XCTestCase {
   func testSettledStackedPageCentersTheSelectedNotebook() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
 
     let store = NotebookStore(root: root)
     let actor = UUID()
@@ -226,7 +232,8 @@ final class PresenceOwnershipTests: XCTestCase {
     )
 
     let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: size)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: size)
 
     XCTAssertEqual(model.presence?.camera.center, expectedCenter)
     XCTAssertNotEqual(expectedCenter, stackCenter)
@@ -236,12 +243,12 @@ final class PresenceOwnershipTests: XCTestCase {
   func testExternalCatalogAndBoardChangeKeepTheHumanCamera() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
 
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
     let size = PageSize(width: 834, height: 1_194)
-    model.start(pageSize: size)
+    await model.start(pageSize: size)
     let originalPresence = try XCTUnwrap(model.presence)
     let originalItemID = try XCTUnwrap(model.workspace?.selectedItemID)
     var workspace = try XCTUnwrap(model.workspace)
@@ -268,20 +275,21 @@ final class PresenceOwnershipTests: XCTestCase {
 
     XCTAssertEqual(model.workspace?.selectedItemID, originalItemID)
     XCTAssertEqual(model.presence,originalPresence)
-    XCTAssertEqual(model.board?.placement(of:created.item.id)?.center,expectedCenter)
-    XCTAssertNotNil(model.pages[created.page.id])
+    XCTAssertEqual(try store.readBoardItem(created.item.id)?.board.placement(of: created.item.id)?.center, expectedCenter)
+    XCTAssertEqual(try store.loadPage(created.page.id).id, created.page.id)
+    XCTAssertNil(model.pages[created.page.id], "An offscreen page is not eagerly loaded when an unrelated catalog entry arrives")
   }
 
   @MainActor
   func testItemSelectionChangesMemoryBeforeItsDurableWrite() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
 
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
     let size = PageSize(width: 834, height: 1_194)
-    model.start(pageSize: size)
+    await model.start(pageSize: size)
     let originalID = try XCTUnwrap(model.workspace?.selectedItemID)
     let createdID = try XCTUnwrap(
       model.createNotebook(at: WorldPoint(x: 1_200, y: 0))

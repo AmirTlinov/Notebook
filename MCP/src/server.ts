@@ -5,7 +5,6 @@ import { registerCollaborationTools } from "./collaboration-tools.js";
 import { publicAction, type ActionReceipt, registerActionTools } from "./actions.js";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { McpServer } from "@modelcontextprotocol/server";
@@ -28,14 +27,14 @@ import type {
   WorkspaceItem,
 } from "./domain.js";
 import {
-  boardHierarchyRevision,
+  canonicalPageSize,
   publicDocument,
   publicPage,
   revision,
 } from "./domain.js";
 import {
   StoreError,
-  NotebookStore,
+  NotebookStore, workspaceProjection, visibleBounds,
 } from "./store.js";
 import { exportDocument } from "./latex.js";
 import {
@@ -97,32 +96,28 @@ export function createServer(store = new NotebookStore()): McpServer {
     {
       outputSchema: notebookResponseSchema,
       title: "Read the infinite Notebook board",
-      description:
-        "Read every free notebook or document, stack, and agent-authored board or cover element. "
-        + "Use notebook_observe for the settled visual context.",
-      inputSchema: z.object({ board_id: z.uuid().optional(), element_id: z.string().optional(), include_source: z.boolean().default(false) }),
+      description: "Read a bounded physical board region (human viewport by default), its placements and agent elements. coverage reports truncation; an omitted owner is not empty or deleted.",
+      inputSchema: z.object({ board_id:z.uuid().optional(), element_id:z.string().max(120).optional(), include_source:z.boolean().default(false),
+        bounds:z.object({origin:z.object({tileX:z.number().int(),tileY:z.number().int(),localX:z.number().finite(),localY:z.number().finite()}),
+          width:z.number().positive().max(10_000_000),height:z.number().positive().max(10_000_000)}).optional(),limit:z.number().int().min(1).max(128).default(128) }),
     },
-    ({ board_id, element_id, include_source }) => readSafely(async () => {
-      const workspace = await store.readWorkspace();
-      const boardID = board_id ?? (await store.readPresence()).boardID;
-      const [board, spatialInk, itemSizes] = await Promise.all([
-        store.readBoard(workspace, boardID),
-        store.readSpatialInk(),
-        store.readItemSizes(workspace),
+    ({ board_id, element_id, include_source, bounds, limit }) => readSafely(async () => {
+      const presence = await store.readPresence();
+      const boardID = board_id ?? presence.boardID;
+      const region = bounds ?? visibleBounds(presence);
+      const window = await store.readSceneWindow(boardID, region, limit);
+      const workspace = workspaceProjection(window);
+      const board = window.boards.find(node => sameID(node.id,boardID))?.board;
+      if (!board) throw new StoreError("Доска не найдена.");
+      const [spatialInk,itemSizes] = await Promise.all([
+        store.readSpatialInk([{kind:"board",ownerID:boardID}]),store.readItemSizes(workspace,window.documentPaper),
       ]);
-      return {
-        boardID,
-        rootBoardID: workspace.rootBoardID,
-        workspaceRevision: revision(workspace.stamp),
-        boardRevision: revision(board.stamp),
-        spatialInkRevision: revision(spatialInk.stamp),
-        nodes: joinedBoardNodes(workspace, board, spatialInk, itemSizes),
-        elements: board.elements.filter(element => !element_id || element.id === element_id)
-          .map(element => publicSpatialElement(element, include_source || !!element_id)),
-        appliedPencilActionCount: spatialInk.actions.filter(
-          (action) => action.isActive,
-        ).length,
-      };
+      const explicitElement = element_id ? await store.read<SpatialElement | null>({kind:"boardElement",id:boardID,elementID:element_id}) : undefined;
+      return {boardID,rootBoardID:workspace.rootBoardID,workspaceRevision:revision(workspace.stamp),boardRevision:revision(board.stamp),
+        spatialInkRevision:revision(spatialInk.stamp),coverage:{bounds:region,limit,truncated:window.truncated,matchesAtLeast:window.totalMatches},
+        nodes:joinedBoardNodes(workspace,board,spatialInk,itemSizes),
+        elements:(element_id ? explicitElement ? [explicitElement] : [] : board.elements).map(element=>publicSpatialElement(element,include_source || !!element_id)),
+        appliedPencilActionCount:spatialInk.actions.filter(action=>action.isActive).length};
     }),
   );
 
@@ -132,14 +127,16 @@ export function createServer(store = new NotebookStore()): McpServer {
       outputSchema: notebookResponseSchema,
       title: "Read a notebook and its cover",
       description:
-        "Read notebook pages, placement or stack ownership, and all agent-authored cover elements.",
-      inputSchema: z.object({ notebook_id: z.uuid() }),
+        "Read up to four notebook pages, placement or stack ownership, and up to 32 cover elements. Continue cover_cursor and nextPage explicitly.",
+      inputSchema: z.object({ notebook_id: z.uuid(), start_page:z.number().int().min(1).default(1),limit:z.number().int().min(1).max(4).default(4),
+        cover_cursor:z.string().max(4096).optional(),cover_limit:z.number().int().min(1).max(32).default(32) }),
     },
-    ({ notebook_id }) => readSafely(async () => {
-      const workspace = await store.readWorkspace();
-      const [board, spatialInk] = await Promise.all([
+    ({ notebook_id,start_page,limit,cover_cursor,cover_limit }) => readSafely(async () => {
+      const workspace = await store.readWorkspace([notebook_id]);
+      const [board, spatialInk, cover] = await Promise.all([
         store.readItemBoard(notebook_id, workspace),
-        store.readSpatialInk(),
+        store.readSpatialInk([{kind:"cover",ownerID:notebook_id}]),
+        store.readCoverElements(notebook_id,canonicalPageSize,cover_cursor,cover_limit),
       ]);
       const notebook = workspace.items.find((candidate) =>
         candidate.kind === "notebook" && sameID(candidate.id, notebook_id)
@@ -151,10 +148,11 @@ export function createServer(store = new NotebookStore()): McpServer {
       const stack = board.stacks.find(
         (candidate) => candidate.itemIDs.some((id) => sameID(id, notebook.id)),
       );
-      const pages = await Promise.all(notebook.pageIDs.map(async (pageID, index) => {
+      const selectedPageIDs = notebook.pageIDs.slice(start_page-1,start_page-1+limit);
+      const pages = await Promise.all(selectedPageIDs.map(async (pageID, index) => {
         const page = await store.readPage(pageID);
         return {
-          number: index + 1,
+          number: start_page + index,
           id: page.id,
           size: page.size,
           drawingRevision: revision(page.drawingStamp),
@@ -175,10 +173,9 @@ export function createServer(store = new NotebookStore()): McpServer {
         placement: placement ?? null,
         stack: stack ?? null,
         pages,
-        coverElements: board.elements.filter(
-          (element) => element.surface.kind === "cover"
-            && sameID(element.surface.ownerID!, notebook.id),
-        ).map(element => publicSpatialElement(element, false)),
+        nextPage: start_page-1+pages.length < notebook.pageIDs.length ? start_page+pages.length : null,
+        coverElements: cover.elements.map(element => publicSpatialElement(element, false)),
+        coverCoverage: cover.coverage,
         spatialInkRevision: revision(spatialInk.stamp),
         appliedCoverPencilActionCount: spatialInk.actions.filter(
           (action) => action.isActive && action.spans.some(
@@ -237,10 +234,10 @@ export function createServer(store = new NotebookStore()): McpServer {
         "Compile the complete LaTeX artifact locally with Tectonic, then publish its .tex and .pdf files under Notebook/exports.",
       inputSchema: z.object(documentSelection),
     },
-    ({ document_id }) => readSafely(async () => {
+    ({ document_id }) => safely(async () => {
       const documentID = await resolveDocumentID(store, document_id);
       const document = await store.readDocument(documentID);
-      const receipt = await exportDocument(document, join(store.root, "exports"));
+      const receipt = await exportDocument(document, store);
       return {
         ...receipt,
         contentRevision: revision(document.contentStamp),
@@ -310,18 +307,23 @@ export function createServer(store = new NotebookStore()): McpServer {
 async function observeContext(store: NotebookStore, contextID?: string) {
   return store.withReadSnapshot(async () => {
     const current = await store.readCurrent();
-    const { workspace, presence, item } = current;
-    const [hierarchy, spatialInk, sizes, shared, runtime] = await Promise.all([
-      store.readBoardHierarchy(workspace), store.readSpatialInk(), store.readItemSizes(workspace),
-      store.readCollaborationContexts<ContextSnapshot>(),
-      readFile(join(store.root, "previews", "runtime.json"), "utf8").then(JSON.parse).catch(() => null),
+    const { presence, item } = current;
+    const window = await store.readSceneWindow(presence.boardID,visibleBounds(presence),128,presence.focusedItemID?[presence.focusedItemID]:[]);
+    const workspace = workspaceProjection(window);
+    const surfaces = [{kind:"board" as const,ownerID:presence.boardID},...(presence.focusedItemID?[{kind:"cover" as const,ownerID:presence.focusedItemID}]:[])];
+    const [spatialInk, sizes, shared, runtime] = await Promise.all([
+      store.readSpatialInk(surfaces), store.readItemSizes(workspace,window.documentPaper),
+      store.readCollaborationContexts<ContextSnapshot>(contextID), store.readRuntime(),
     ]);
-    const board = hierarchy.boards.find(node => sameID(node.id, presence.boardID))?.board;
+    const board = window.boards.find(node => sameID(node.id, presence.boardID))?.board;
     if (!board) throw new StoreError("Текущая доска ожидает публикации.");
     let content: Record<string, unknown>;
     if (presence.mode === "cover") {
-      content = { kind: "cover", itemID: item.id, coverSize: sizes.get(item.id.toLowerCase()),
-        elements: board.elements.filter(e => e.surface.kind === "cover" && sameID(e.surface.ownerID!, item.id)).map(e => publicSpatialElement(e, false)) };
+      const size = sizes.get(item.id.toLowerCase());
+      if (!size) throw new StoreError("Размер обложки отсутствует в рассмотренной области.");
+      const cover = await store.readCoverElements(item.id,size);
+      content = { kind: "cover", itemID: item.id, coverSize: size, coverage:cover.coverage,
+        elements: cover.elements.map(e => publicSpatialElement(e, false)) };
     } else if (current.kind === "notebook") {
       try { content = await observedPage(store, current.page, item) as Record<string, unknown>; }
       catch (error) { content = { ...publicPage(current.page), kind: "page", pencilMap: { status: "pending", message: String(error) } }; }
@@ -332,18 +334,18 @@ async function observeContext(store: NotebookStore, contextID?: string) {
     if (contextID && !context) throw new BridgeError({code:"context_missing",message:"Общий фрагмент не найден."});
     const references = await Promise.all((context?.entries ?? []).flatMap(entry => entry.references.map(async reference => {
       try {
-        const fresh = await runBridge<{status:string;currentRevision?:string;fingerprint?:string}>(store.root,{command:"referenceStatus",reference});
+        const fresh = await runBridge<{status:string;currentRevision?:string;fingerprint?:string}>(store.socketPath,{command:"referenceStatus",reference});
         return {entryID:entry.id,author:entry.author,reference,...fresh,status:entry.requiresReview ? "review_required" : fresh.status};
       } catch (error) { return {entryID:entry.id,author:entry.author,reference,status:error instanceof BridgeError && error.detail.code === "target_missing" ? "target_missing" : "checking"}; }
     })));
-    const relatedActions = context ? (await store.readCollaborationActions<ActionReceipt[]>())
+    const relatedActions = context ? (await store.readCollaborationActions<ActionReceipt[]>(context.id,10))
       .filter(action => sameID(action.action.contextID ?? action.id, context.id)).slice(0,10) : [];
     let visual: Record<string, any> = { status: "pending" };
     let image: string | undefined;
     let surface: unknown = null;
     try {
       const receipt = await store.readCurrentViewReceipt();
-      assertFreshCurrentView(receipt, workspace.stamp, boardHierarchyRevision(hierarchy), spatialInk.stamp, presence);
+      assertFreshCurrentView(receipt, workspace.stamp, window.header.boardRevision ?? "", spatialInk.stamp, presence);
       await assertCurrentSurfaceSource(store, receipt);
       image = (await readCurrentViewPNG(store, receipt)).toString("base64");
       surface = receipt.surface;
@@ -370,6 +372,7 @@ async function observeContext(store: NotebookStore, contextID?: string) {
       visual, surface, changeKeys,
       connection: runtime && Date.now() / 1000 - runtime.updatedAt < 5 ? runtime : { status: "unavailable", lastKnown: runtime },
       revisions: { workspace: revision(workspace.stamp), board: revision(board.stamp), spatialInk: revision(spatialInk.stamp) },
+      coverage:{bounds:visibleBounds(presence),truncated:window.truncated,matchesAtLeast:window.totalMatches},
       nodes: joinedBoardNodes(workspace, board, spatialInk, sizes), visibleItems: visibleItems(workspace, board, spatialInk, presence, sizes),
     }, ...(image ? { image } : {}) };
   });
@@ -500,7 +503,7 @@ function itemIdentity(
     shortID,
     title: title || null,
     reference: title || `Безымянная #${shortID}`,
-    coverPencilActionCount,
+    coverPencilActionCount:spatialInk.readSurfaces.some(surface=>surface.kind==="cover" && sameID(surface.ownerID!,item.id)) ? coverPencilActionCount : null,
     coverElementIDs: coverElements.map((element) => element.id),
   };
 }
@@ -671,7 +674,7 @@ async function assertCurrentSurfaceSource(
     const surface = receipt.surface;
     const [page, workspace] = await Promise.all([
       store.readPage(surface.revision.pageID),
-      store.readWorkspace(),
+      store.readWorkspace([surface.itemID]),
     ]);
     const owner = workspace.items.find((item) =>
       item.kind === "notebook"
@@ -708,17 +711,7 @@ async function readCurrentViewPNG(
   store: NotebookStore,
   receipt: CurrentViewReceipt,
 ): Promise<Buffer> {
-  let png: Buffer;
-  try {
-    png = await readFile(store.currentViewPath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
-      throw new StoreError(
-        "Текущий вид еще создается. Notebook на Mac должен оставаться запущенным.",
-      );
-    }
-    throw error;
-  }
+  const png = await store.readArtifact({kind:"currentView",expectedSHA256:receipt.pngSHA256});
   if (createHash("sha256").update(png).digest("hex") !== receipt.pngSHA256) {
     throw new StoreError(
       "Снимок и его квитанция обновляются. Повторите notebook_observe через мгновение.",
@@ -763,28 +756,7 @@ async function resolvePageSelection(
   if (pageID) return store.readWorkspacePage(pageID);
   if (!notebookID) return store.readWorkspacePage();
 
-  const workspace = await store.readWorkspace();
-  const notebook = workspace.items.find((item) =>
-    item.kind === "notebook" && sameID(item.id, notebookID)
-  );
-  if (!notebook || notebook.kind !== "notebook") {
-    throw new StoreError("Тетрадь не найдена.");
-  }
-  const index = pageNumber === undefined
-    ? (sameID(workspace.selectedItemID, notebook.id)
-      ? Math.max(0, notebook.pageIDs.findIndex((id) =>
-          workspace.selectedPageID !== undefined
-            && sameID(id, workspace.selectedPageID)
-        ))
-      : 0)
-    : pageNumber - 1;
-  const selectedID = notebook.pageIDs[index];
-  if (!selectedID) {
-    throw new StoreError(
-      `У тетради ${notebook.pageIDs.length} листов; листа ${pageNumber} нет.`,
-    );
-  }
-  return store.readPage(selectedID);
+  return store.readNotebookPage(notebookID, pageNumber);
 }
 
 async function resolveDocumentID(
@@ -792,10 +764,7 @@ async function resolveDocumentID(
   requestedID: string | undefined,
 ): Promise<string> {
   if (requestedID) {
-    const workspace = await store.readWorkspace();
-    const item = workspace.items.find((candidate) =>
-      sameID(candidate.id, requestedID)
-    );
+    const item = await store.readItem(requestedID);
     if (!item || item.kind !== "document") {
       throw new StoreError("Документ не найден.");
     }

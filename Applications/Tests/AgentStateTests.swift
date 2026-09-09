@@ -6,9 +6,9 @@ final class AgentStateTests: XCTestCase {
   @MainActor
   func testTextCompletionAfterNavigationKeepsItsOriginalBoard() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: NotebookStore(root: root), startsNearbySync: false)
-    model.start(pageSize: PageSize(width: 834, height: 1194))
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: PageSize(width: 834, height: 1194))
     let boardA = try XCTUnwrap(model.presence?.boardID)
     let notebook = try XCTUnwrap(model.workspace?.selectedItemID)
     let elementID = try XCTUnwrap(model.addNativeText(boardID: boardA, on: notebook, at: .init(x: 100, y: 100)))
@@ -18,14 +18,14 @@ final class AgentStateTests: XCTestCase {
     // The editor's debounce or onDisappear can finish after camera ownership changes.
     model.finishNativeTextEditing(boardID: boardA, elementID: elementID, text: "Продолжение у исходника")
     await model.finishPendingPersistence()
-    let saved = try model.store.loadBoard(items: XCTUnwrap(model.workspace).items)
+    let saved = try model.store.loadBoard(items: model.store.loadIndex().items)
     XCTAssertEqual(saved.board(boardA)?.elements.first { $0.id == elementID }?.source,
       "Продолжение у исходника")
     XCTAssertTrue(saved.board(boardB)?.elements.isEmpty == true)
     model.finishNativeTextEditing(boardID: boardA, elementID: elementID, text: "")
     model.updateNativeText(boardID: boardA, elementID: elementID, text: "Не возвращать удалённый предмет")
     await model.finishPendingPersistence()
-    let afterDeletion = try model.store.loadBoard(items: XCTUnwrap(model.workspace).items)
+    let afterDeletion = try model.store.loadBoard(items: model.store.loadIndex().items)
     XCTAssertFalse(afterDeletion.board(boardA)?.elements.contains { $0.id == elementID } ?? true)
     XCTAssertTrue(afterDeletion.board(boardB)?.elements.isEmpty == true)
   }
@@ -33,48 +33,48 @@ final class AgentStateTests: XCTestCase {
   @MainActor
   func testAcceptedInteractiveInputIsNotDiscardedByNavigation() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: NotebookStore(root: root), startsNearbySync: false)
-    model.start(pageSize: PageSize(width: 834, height: 1194))
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: PageSize(width: 834, height: 1194))
     let boardA = try XCTUnwrap(model.presence?.boardID)
     let boardB = try XCTUnwrap(model.createBoard(at: .init(x: 2000, y: 0)))
     let creationSaved = await model.finishPendingPersistence()
     XCTAssertTrue(creationSaved, model.persistenceFailure ?? "")
-    var hierarchy = try XCTUnwrap(model.boardHierarchy)
+    var hierarchy = try model.store.loadBoard(items: model.store.loadIndex().items)
     let element = SpatialElement(id: "input-before-navigation", surface: .board(boardA), kind: .web,
       frame: .init(x: 0, y: 0, width: 300, height: 200), worldOrigin: .zero, source: "control",
       html: "<button>Continue</button>", stamp: .init(counter: 0, actor: model.actorID))
     XCTAssertTrue(hierarchy.upsertElement(element, in: boardA, expected: nil, actor: model.actorID))
-    try model.store.saveBoard(hierarchy, items: XCTUnwrap(model.workspace).items)
+    try model.store.saveBoard(hierarchy, items: model.store.loadIndex().items)
     await model.reloadExternalChanges()?.value
     model.updatePresence(.init(boardID: boardB, mode: .board, camera: .init(),
       viewport: .init(x: 1194, y: 834)), settled: true)
     model.commitSpatialElementState(boardID: boardA, rendered: element, state: .number(42))
     await model.finishPendingPersistence()
-    let saved = try model.store.loadBoard(items: XCTUnwrap(model.workspace).items)
+    let saved = try model.store.loadBoard(items: model.store.loadIndex().items)
     XCTAssertEqual(saved.board(boardA)?.elements.first { $0.id == element.id }?.state, .number(42))
     XCTAssertTrue(saved.board(boardB)?.elements.isEmpty == true)
-    var moved = try XCTUnwrap(model.boardHierarchy?.board(boardA)?.elements.first { $0.id == element.id })
+    var moved = try XCTUnwrap(try model.store.readSpatialElement(boardID: boardA, elementID: element.id))
     let beforeFrame = moved.stamp
     XCTAssertTrue(moved.update(frame: .init(x: 80, y: 40, width: 320, height: 220), actor: model.actorID))
-    hierarchy = try XCTUnwrap(model.boardHierarchy)
+    hierarchy = try model.store.loadBoard(items: model.store.loadIndex().items)
     XCTAssertTrue(hierarchy.upsertElement(moved, in: boardA, expected: beforeFrame, actor: model.actorID))
-    try model.store.saveBoard(hierarchy, items: XCTUnwrap(model.workspace).items)
+    try model.store.saveBoard(hierarchy, items: model.store.loadIndex().items)
     await model.reloadExternalChanges()?.value
     model.commitSpatialElementState(boardID: boardA, rendered: element, state: .number(43))
     await model.finishPendingPersistence()
-    XCTAssertEqual(model.boardHierarchy?.board(boardA)?.elements.first { $0.id == element.id }?.state, .number(43))
+    XCTAssertEqual(try model.store.readSpatialElement(boardID: boardA, elementID: element.id)?.state, .number(43))
 
-    var changed = try XCTUnwrap(model.boardHierarchy?.board(boardA)?.elements.first { $0.id == element.id })
+    var changed = try XCTUnwrap(try model.store.readSpatialElement(boardID: boardA, elementID: element.id))
     let beforeSource = changed.stamp
     XCTAssertTrue(changed.update(html: "<button>Different program</button>", actor: model.actorID))
-    hierarchy = try XCTUnwrap(model.boardHierarchy)
+    hierarchy = try model.store.loadBoard(items: model.store.loadIndex().items)
     XCTAssertTrue(hierarchy.upsertElement(changed, in: boardA, expected: beforeSource, actor: model.actorID))
-    try model.store.saveBoard(hierarchy, items: XCTUnwrap(model.workspace).items)
+    try model.store.saveBoard(hierarchy, items: model.store.loadIndex().items)
     await model.reloadExternalChanges()?.value
     model.commitSpatialElementState(boardID: boardA, rendered: element, state: .number(99))
     await model.finishPendingPersistence()
-    let afterLateReply = try model.store.loadBoard(items: XCTUnwrap(model.workspace).items)
+    let afterLateReply = try model.store.loadBoard(items: model.store.loadIndex().items)
     XCTAssertEqual(afterLateReply.board(boardA)?.elements.first { $0.id == element.id }?.state, .number(43),
       "The previous WebKit program cannot change its replacement")
   }
@@ -94,11 +94,11 @@ final class AgentStateTests: XCTestCase {
   func testNativeCoverTextKeepsOneDurableEditingLifecycle() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
 
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: PageSize(width: 834, height: 1_194))
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: PageSize(width: 834, height: 1_194))
     let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
     let boardID = try XCTUnwrap(model.presence?.boardID)
     let elementID = try XCTUnwrap(model.addNativeText(
@@ -144,11 +144,11 @@ final class AgentStateTests: XCTestCase {
   func testDocumentSourceAndInteractiveStatePersistThroughTheirOwners() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
 
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: PageSize(width: 834, height: 1_194))
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: PageSize(width: 834, height: 1_194))
     let documentID = try XCTUnwrap(
       model.createDocument(at: .zero, paperSize: .letter)
     )
@@ -189,11 +189,11 @@ final class AgentStateTests: XCTestCase {
   func testRemoteDocumentCatalogWaitsForAllDependencies() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
 
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: PageSize(width: 834, height: 1_194))
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: PageSize(width: 834, height: 1_194))
     let original = try XCTUnwrap(model.workspace)
     var remoteIndex = original
     var remoteBoard = try XCTUnwrap(model.boardHierarchy)
@@ -215,18 +215,20 @@ final class AgentStateTests: XCTestCase {
     )
     let state = DocumentStateJournal(id: item.id, actor: remoteActor)
 
-    model.receivePeerMessage(.index(remoteIndex))
-    XCTAssertEqual(model.workspace, original)
-    XCTAssertEqual(try store.loadIndex(), original)
-
-    model.receivePeerMessage(.document(document))
-    model.receivePeerMessage(.documentState(state))
-    XCTAssertEqual(model.workspace, original)
-    model.receivePeerMessage(.board(remoteBoard))
+    await model.finishPendingPersistence()
+    let peer = NotebookStore(root: root.appendingPathComponent("peer")), peerID = UUID()
+    try NotebookPeerFixture.copy(from: store, to: peer, peerID: model.actorID)
+    try peer.saveDocumentWorkspaceBundle(index: remoteIndex, document: document, state: state, board: remoteBoard)
+    let changes = try peer.changeJournal(after: 0, limit: 16)
+    let change = try XCTUnwrap(changes.last)
+    try NotebookPeerFixture.stage(change, from: peer, to: store)
+    XCTAssertEqual(model.workspace, original, "Staged blobs are not a visible publication")
+    XCTAssertEqual(try store.loadIndex().items, original.items)
+    try await NotebookPeerFixture.deliver(from: peer, to: model, peerID: peerID)
 
     let saved = await model.finishPendingPersistence()
     XCTAssertTrue(saved, model.persistenceFailure ?? "")
-    XCTAssertEqual(model.workspace?.items, remoteIndex.items)
+    XCTAssertNotNil(try store.readWorkspaceItem(item.id))
     XCTAssertEqual(try store.loadIndex().items, remoteIndex.items)
     XCTAssertEqual(model.workspace?.selectedItemID, original.selectedItemID,
       "Receiving independent content does not redirect the iPad's human selection")
@@ -246,38 +248,26 @@ final class AgentStateTests: XCTestCase {
   func testRemoteDocumentDeletionRemovesItsDurableOwners() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
 
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: PageSize(width: 834, height: 1_194))
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: PageSize(width: 834, height: 1_194))
     let documentID = try XCTUnwrap(
       model.createDocument(at: .zero, paperSize: .a4)
     )
-    var remoteIndex = try XCTUnwrap(model.workspace)
-    var remoteBoard = try XCTUnwrap(model.boardHierarchy)
-    let actor = UUID()
-    XCTAssertNotNil(remoteIndex.deleteItem(documentID, actor: actor))
-    XCTAssertTrue(remoteBoard.deleteItem(
-      documentID,
-      from: remoteIndex.rootBoardID,
-      kind: .document,
-      spatialInk: SpatialInkJournal(stamp: VersionStamp(counter: 0, actor: actor)),
-      actor: actor
-    ))
-
-    model.receivePeerMessage(.board(remoteBoard))
-    model.receivePeerMessage(.index(remoteIndex))
+    await model.finishPendingPersistence()
+    let peer = NotebookStore(root: root.appendingPathComponent("peer")), peerID = UUID()
+    try NotebookPeerFixture.copy(from: store, to: peer, peerID: model.actorID)
+    _ = try peer.deleteWorkspaceItem(itemID: documentID, actor: UUID())
+    try await NotebookPeerFixture.deliver(from: peer, to: model, peerID: peerID)
 
     let saved = await model.finishPendingPersistence()
     XCTAssertTrue(saved, model.persistenceFailure ?? "")
     XCTAssertNil(model.documents[documentID])
     XCTAssertNil(model.documentStates[documentID])
-    XCTAssertFalse(FileManager.default.fileExists(
-      atPath: store.documentURL(documentID).path
-    ))
-    XCTAssertFalse(FileManager.default.fileExists(
-      atPath: store.documentStateURL(documentID).path
-    ))
+    XCTAssertNil(try store.readWorkspaceItem(documentID))
+    XCTAssertThrowsError(try store.loadDocument(documentID))
+    XCTAssertThrowsError(try store.loadDocumentState(documentID))
   }
 }

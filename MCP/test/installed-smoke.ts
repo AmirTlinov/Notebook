@@ -8,9 +8,9 @@ import { waitForSettledSnapshot } from "../src/server.js";
 import { NotebookStore, StoreError } from "../src/store.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-delete process.env.NOTEBOOK_HOME;
+delete process.env.NOTEBOOK_SOCKET;
 const environment = getDefaultEnvironment();
-delete environment.NOTEBOOK_HOME;
+delete environment.NOTEBOOK_SOCKET;
 const client = new Client({ name: "notebook-installed-proof", version: "0.1.0" });
 const transport = new StdioClientTransport({ command: join(root, "run.sh"), env: environment, stderr: "pipe" });
 try {

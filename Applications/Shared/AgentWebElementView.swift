@@ -243,7 +243,7 @@ enum AgentSnapshotPolicy: Equatable {
     switch self {
     case .display(let scale):
       density = min(max(1, scale), 2048 / max(width, height), sqrt(4_194_304 / (width * height)))
-    case .exact(let scale): density = max(1, scale)
+    case .exact(let scale): density = scale
     }
     guard density.isFinite, density > 0 else { return nil }
     // WebKit derives height from the output width. Quantize that one axis and
@@ -286,7 +286,7 @@ struct AgentProgramSource: Equatable {
 final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
   private let lease: WebSurfaceLease
   private let resources: SceneRenderResources
-  private let snapshotPolicy: AgentSnapshotPolicy
+  private var snapshotPolicy: AgentSnapshotPolicy
   private(set) var snapshotFailure: SceneRenderError?
   private var onState: (JSONValue) -> Void
   private var onRenderReady: (Bool) -> Void
@@ -382,6 +382,17 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       } else if let token = loadToken { publishRenderReadiness(renderIsReady, token: token) }
       return
     }
+    recoveryAttempts = 0
+    beginLoad(element, in: webView)
+  }
+
+  /// One leased background executor may navigate between independent raster
+  /// jobs. Each navigation receives a fresh nonce; old scripts and snapshots
+  /// lose publication rights before the next source enters that same WebKit.
+  func loadRasterJob(_ element: AgentElement, policy: AgentSnapshotPolicy, in webView: WKWebView) {
+    precondition(lease.priority == .background)
+    guard !isInvalidated, !lease.isReleased, attachedWebView === webView else { return }
+    snapshotPolicy = policy
     recoveryAttempts = 0
     beginLoad(element, in: webView)
   }

@@ -1,9 +1,9 @@
 import Foundation
 
 /// A page owns the ordered pen and eraser operations that produced its pixels.
-/// A migrated page starts with the final visible PNG of its previous drawing.
+/// A converted page starts with the final visible PNG of its previous drawing.
 public struct PageInkDrawing: Codable, Equatable, Sendable {
-  private static let signature = Data("NotebookInk/1\n".utf8)
+  private static let signature = Data("NotebookInk/2\n".utf8)
   public let baselinePNG: Data?
   public let baselineActionCount: Int
   public private(set) var actions: [PageInkAction]
@@ -29,30 +29,19 @@ public struct PageInkDrawing: Codable, Equatable, Sendable {
       && actions.allSatisfy(\.isValid) && Set(actions.map(\.id)).count == actions.count
   }
 
-  public static func needsMigration(_ data: Data) -> Bool {
-    !data.isEmpty && !data.starts(with: signature)
-  }
-
   public static func decode(_ data: Data) throws -> Self {
     if data.isEmpty { return Self() }
-    guard data.starts(with: signature) else { throw InkError.migrationRequired }
-    var decoded = try PropertyListDecoder().decode(Self.self, from: data.dropFirst(signature.count))
-    guard decoded.isValid else { throw InkError.invalidDrawing }
-    // Native archives written before shared ink have array order but no clock.
-    // Adopt that exact order once; later appends carry their own sequence.
-    if decoded.actions.contains(where: { $0.sequence == 0 }) {
-      decoded.actions = decoded.actions.enumerated().map { index, action in
-        action.sequence == 0 ? action.ordered(UInt64(index + 1)) : action
-      }
-    }
+    guard data.starts(with: signature) else { throw InkError.invalidDrawing }
+    let decoded = try JSONDecoder().decode(Self.self, from: data.dropFirst(signature.count))
+    guard decoded.isValid, decoded.actions.allSatisfy({ $0.sequence > 0 }) else { throw InkError.invalidDrawing }
     return decoded
   }
 
   public func dataRepresentation() throws -> Data {
-    guard isValid else { throw InkError.invalidDrawing }
+    guard isValid, actions.allSatisfy({ $0.sequence > 0 }) else { throw InkError.invalidDrawing }
     if baselinePNG == nil && actions.isEmpty && baselineActionCount == 0 { return Data() }
-    let encoder = PropertyListEncoder()
-    encoder.outputFormat = .binary
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
     return Self.signature + (try encoder.encode(self))
   }
 
@@ -89,7 +78,7 @@ public struct PageInkDrawing: Codable, Equatable, Sendable {
       })
   }
 
-  public enum InkError: Error { case migrationRequired, invalidDrawing, incompatibleBaseline, actionIDConflict }
+  public enum InkError: Error { case invalidDrawing, incompatibleBaseline, actionIDConflict }
 }
 
 public struct PageInkAction: Codable, Equatable, Identifiable, Sendable {
@@ -126,8 +115,8 @@ public struct PageInkAction: Codable, Equatable, Identifiable, Sendable {
     tool = try values.decode(SpatialInkTool.self, forKey: .tool)
     color = try values.decode(SpatialInkColor.self, forKey: .color)
     samples = try values.decode([SpatialInkSample].self, forKey: .samples)
-    sequence = try values.decodeIfPresent(UInt64.self, forKey: .sequence) ?? 0
-    isActive = try values.decodeIfPresent(Bool.self, forKey: .isActive) ?? true
+    sequence = try values.decode(UInt64.self, forKey: .sequence)
+    isActive = try values.decode(Bool.self, forKey: .isActive)
     guard isValid else { throw PageInkDrawing.InkError.invalidDrawing }
   }
 

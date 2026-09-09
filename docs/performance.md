@@ -363,7 +363,6 @@ SVG и SVG размером `2689,263 × 3943,43`, затем меняет ма�
 ./verify.sh
 Tests/Performance/run.sh
 Tests/Performance/run.sh --workspace-copy
-Applications/install.sh <идентификатор-iPad>
 ```
 
 `verify.sh` проверяет Core, MCP, Mac, iPad и 37 сценариев пользовательского ввода

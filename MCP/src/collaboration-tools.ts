@@ -1,7 +1,5 @@
 import { notebookResponseSchema } from "./contracts.js";
 import { createHash, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { targetSchema, referenceSchema, actionResult } from "./actions.js";
@@ -23,9 +21,9 @@ export function registerCollaborationTools(server: McpServer, store: NotebookSto
   }, input => actionResult(async () => {
     const references = await Promise.all(input.references.map(async value => ({ id: randomUUID(), target: value.target,
       elementID: value.element_id, region: value.region, worldOrigin: value.world_origin, pageIndex: value.page_index,
-      label: value.label, revision: value.source_revision ?? (await runBridge<{revision:string}>(store.root,
+      label: value.label, revision: value.source_revision ?? (await runBridge<{revision:string}>(store.socketPath,
         {command:"reference",target:value.target,elementID:value.element_id})).revision })));
-    return { status: "saved", context: await runBridge(store.root, {command:"point",references,
+    return { status: "saved", context: await runBridge(store.socketPath, {command:"point",references,
       contextID:input.context_id,replyTo:input.reply_to}) };
   }));
   server.registerTool("notebook_render", {
@@ -37,17 +35,16 @@ export function registerCollaborationTools(server: McpServer, store: NotebookSto
   }, async input => {
     let png: Buffer | undefined;
     const result = await actionResult(async () => {
-      const request = await runBridge<{ id: string; sourceRevision: string }>(store.root, { command: "render", target: input.target,
+      const request = await runBridge<{ id: string; sourceRevision: string }>(store.socketPath, { command: "render", target: input.target,
         expectedRevision: input.expected_revision, region: input.region, worldOrigin: input.world_origin, pageIndex: input.page_index });
-      const path = join(store.root, "previews", "targets", request.id.toLowerCase());
       const deadline = Date.now() + input.wait_ms;
       do {
-        const receipt = await readFile(path + ".json", "utf8").then(JSON.parse).catch(() => null);
+        const receipt = await store.readTargetRenderReceipt(request.id);
         if (receipt?.request.sourceRevision === request.sourceRevision) {
           if (receipt.status === "ready") {
-            const current = await runBridge<{revision:string}>(store.root, {command:"reference",target:input.target});
+            const current = await runBridge<{revision:string}>(store.socketPath, {command:"reference",target:input.target});
             if (current.revision !== request.sourceRevision) throw new BridgeError({code:"revision_conflict",message:"Содержимое изменилось во время подготовки снимка."});
-            png = await readFile(path + ".png");
+            png = await store.readArtifact({ kind: "target", id: request.id, expectedSHA256: receipt.pngSHA256 });
             if (createHash("sha256").update(png).digest("hex") !== receipt.pngSHA256) throw new BridgeError({code:"snapshot_pending",message:"PNG догоняет квитанцию."});
           }
           return receipt;
@@ -69,7 +66,7 @@ export function registerCollaborationTools(server: McpServer, store: NotebookSto
         relative_to: referenceSchema.optional(), relative_to_id: z.string().min(1).max(120).optional(), direction: z.enum(["right","below","free"]).default("free") }).strict()).min(1).max(32),
       movable: z.array(z.object({target:targetSchema,element_id:z.string().min(1).max(120).optional()}).strict()).max(32).default([]) }).strict(),
     annotations: {readOnlyHint:true,openWorldHint:false},
-  }, input => actionResult(() => runBridge(store.root,{command:"placement",placement:{ target:input.target,expectedRevision:input.expected_revision,
+  }, input => actionResult(() => runBridge(store.socketPath,{command:"placement",placement:{ target:input.target,expectedRevision:input.expected_revision,
     contextID:input.context_id,additionalOwners:input.additional_owners,worldOrigin:input.world_origin,
     items:input.items.map(item=>({id:item.id,size:item.size,relativeTo:item.relative_to,relativeToID:item.relative_to_id,direction:item.direction})),
     movable:input.movable.map(subject=>({target:subject.target,elementID:subject.element_id})) }})));
@@ -80,5 +77,5 @@ export function registerCollaborationTools(server: McpServer, store: NotebookSto
     description: "Search titles, document blocks and agent text on pages, boards and covers. Each result includes its physical path and a stable reference. Handwriting is available through notebook_page_map and images.",
     inputSchema: z.object({ query: z.string().trim().min(1).max(500), limit: z.number().int().min(1).max(100).default(20) }).strict(),
     annotations: { readOnlyHint: true, openWorldHint: false },
-  }, ({ query, limit }) => actionResult(() => runBridge(store.root, {command:"search",query,limit})));
+  }, ({ query, limit }) => actionResult(() => runBridge(store.socketPath, {command:"search",query,limit})));
 }

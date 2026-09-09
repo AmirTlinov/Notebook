@@ -927,6 +927,6 @@ func storeCreatesBoardBesideExistingWorkspace() throws {
   let journal = try store.loadOrCreateSpatialInk(actor: actor)
   #expect(board.itemIDs == loaded.0.items.map(\.id))
   #expect(journal.actions.isEmpty)
-  #expect(FileManager.default.fileExists(atPath: store.boardURL.path))
-  #expect(FileManager.default.fileExists(atPath: store.spatialInkURL.path))
+  #expect(try store.hasStoredValue("board.json"))
+  #expect(try store.hasStoredValue("spatial-ink.json"))
 }

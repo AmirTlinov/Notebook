@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { BridgeError } from "../src/bridge.js";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,7 +11,7 @@ import {
   readVerifiedPageOverview,
 } from "../src/page-vision.js";
 import { NotebookStore, StoreError } from "../src/store.js";
-import { pageID, writeFixture } from "./fixture.js";
+import { pageID, writeFixture, fixtureControl, fixtureSocket, stopFixture } from "./fixture.js";
 
 async function withFixture(
   body: (store: NotebookStore, root: string) => Promise<void>,
@@ -18,8 +19,9 @@ async function withFixture(
   const root = await mkdtemp(join(tmpdir(), "notebook-vision-"));
   try {
     await writeFixture(root);
-    await body(new NotebookStore(root), root);
+    await body(new NotebookStore(fixtureSocket(root)), root);
   } finally {
+    await stopFixture(root);
     await rm(root, { recursive: true, force: true });
   }
 }
@@ -30,10 +32,10 @@ test("reads a fresh visible-pixel map for the exact page revision", async () => 
     const receipt = await readFreshPageVision(
       store,
       page,
-      `0@${page.drawingStamp.actor}`,
+      `0@${page.drawingStamp.actor.toLowerCase()}`,
     );
 
-    assert.equal(receipt.pageID, pageID);
+    assert.equal(receipt.pageID.toLowerCase(), pageID);
     assert.deepEqual(receipt.occupiedCells, [{ column: 0, row: 0 }]);
     assert.equal(receipt.regions[0]?.id, "r00-00-01-01");
     assert.equal(
@@ -45,12 +47,9 @@ test("reads a fresh visible-pixel map for the exact page revision", async () => 
 
 test("rejects a receipt from the previous drawing revision", async () => {
   await withFixture(async (store, root) => {
-    const pagePath = join(root, "pages", `${pageID}.json`);
-    const page = JSON.parse(await readFile(pagePath, "utf8")) as {
-      drawingStamp: { counter: number };
-    };
+    const page = await store.readPage(pageID);
     page.drawingStamp.counter += 1;
-    await writeFile(pagePath, JSON.stringify(page));
+    await fixtureControl(root,"page",page);
 
     await assert.rejects(
       readFreshPageVision(store, await store.readPage(pageID)),
@@ -92,16 +91,13 @@ test("a cold offscreen map requests one explicit page and reuses its identity", 
       return true;
     };
     await assert.rejects(readFreshPageVision(store, page), pending);
-    // Migration has finished. This subsequent addressed read must not decode an unrelated owner.
-    await writeFile(join(root, "pages", "7e7a0000-0000-4000-8000-000000000099.json"), "broken unrelated page");
     await assert.rejects(readFreshPageVision(store, page), pending);
-    const directory = join(root, "collaboration", "render-requests");
-    const files = await readdir(directory);
-    assert.equal(files.length, 1);
-    const request = JSON.parse(await readFile(join(directory, files[0]!), "utf8"));
+    const requests=await fixtureControl<Array<Record<string,any>>>(root,"renderRequests");
+    assert.equal(requests.length,1);
+    const request=requests[0]!;
     assert.equal(request.id.toLowerCase(), requestID!.toLowerCase());
     assert.deepEqual(request.target, { kind: "page", id: pageID.toUpperCase() });
-    assert.equal(request.pageVisionRevision, `0@${page.drawingStamp.actor}`);
+    assert.equal(request.pageVisionRevision, `0@${page.drawingStamp.actor.toLowerCase()}`);
     assert.equal(request.region, undefined);
   });
 });
@@ -110,8 +106,8 @@ test("a stale expected ink revision cannot request a different current drawing",
   await withFixture(async (store, root) => {
     const page = await store.readPage(pageID);
     await rm(join(root, "previews", `${pageID}.vision.json`));
-    await assert.rejects(readFreshPageVision(store, page, `9@${page.drawingStamp.actor}`), /Лист изменился/);
-    assert.equal(await readdir(join(root, "collaboration", "render-requests")).catch(() => []).then(v => v.length), 0);
+    await assert.rejects(readFreshPageVision(store, page, `9@${page.drawingStamp.actor.toLowerCase()}`), /Лист изменился/);
+    assert.equal((await fixtureControl<any[]>(root,"renderRequests")).length, 0);
   });
 });
 
@@ -125,13 +121,13 @@ test("an execution failure is not reported as an endlessly preparing map", async
       id = String(error.requestID).toLowerCase();
       return true;
     });
-    const request = JSON.parse(await readFile(join(root, "collaboration", "render-requests", `${id}.json`), "utf8"));
+    const request = (await fixtureControl<any[]>(root,"renderRequests")).find(value=>value.id.toLowerCase()===id)!;
     await writeFile(join(root, "previews", "targets", `${id}.json`), JSON.stringify({
       request, status: "error", diagnostics: [{ kind: "render_error", message: "GPU unavailable" }],
       inkRegions: [], completedAt: 0,
     }));
     await assert.rejects(readFreshPageVision(store, page), error => {
-      assert.ok(error instanceof StoreError);
+      assert.ok(error instanceof StoreError || error instanceof BridgeError);
       assert.match(error.message, /завершилась ошибкой: GPU unavailable/);
       assert.equal("requestID" in error, false);
       return true;
@@ -152,7 +148,7 @@ test("an evicted ready PNG reopens the same request instead of waiting forever",
       return true;
     });
     await writeFile(receiptPath, saved);
-    const request = JSON.parse(await readFile(join(root, "collaboration", "render-requests", `${id}.json`), "utf8"));
+    const request = (await fixtureControl<any[]>(root,"renderRequests")).find(value=>value.id.toLowerCase()===id)!;
     const targetReceiptPath = join(root, "previews", "targets", `${id}.json`);
     await writeFile(targetReceiptPath, JSON.stringify({ request, status: "ready", diagnostics: [], inkRegions: [], completedAt: 0 }));
     await rm(join(root, "previews", `${pageID}.png`));
@@ -204,8 +200,7 @@ test("rejects a map whose grid contradicts the rendered page", async () => {
     await assert.rejects(
       readFreshPageVision(store, await store.readPage(pageID)),
       (error: unknown) =>
-        error instanceof StoreError &&
-        /противоречивую геометрию/.test(error.message),
+        error instanceof BridgeError && error.detail.code === "invalid_artifact" && /Квитанция карты листа повреждена/.test(error.message),
     );
   });
 });
@@ -222,8 +217,7 @@ test("rejects a region whose points do not match its physical cells", async () =
     await assert.rejects(
       readFreshPageVision(store, await store.readPage(pageID)),
       (error: unknown) =>
-        error instanceof StoreError &&
-        /противоречивую геометрию/.test(error.message),
+        error instanceof BridgeError && error.detail.code === "invalid_artifact" && /Квитанция карты листа повреждена/.test(error.message),
     );
   });
 });

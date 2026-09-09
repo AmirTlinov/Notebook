@@ -126,7 +126,7 @@ func boardDeletionRechecksDurableContent() throws {
   #expect(throws: NotebookStoreError.self) {
     try store.deleteWorkspaceBundle(expectedIndex: workspace, index: removedIndex, board: removedBoard, pageIDs: [])
   }
-  #expect((try store.loadIndex() == workspace))
+  #expect((try store.loadIndex().items == workspace.items))
   #expect((try store.loadBoard(items: workspace.items) == newer))
 }
 
@@ -188,7 +188,7 @@ func boardDeletionProtectsRacingOwners(catalogChanged: Bool) throws {
     try store.deleteWorkspaceBundle(expectedIndex: workspace, index: removedIndex,
       board: removedBoard, pageIDs: [])
   }
-  #expect(try store.loadIndex() == latestIndex)
+  #expect(try store.loadIndex().items == latestIndex.items)
   #expect(try store.loadBoard(items: latestIndex.items) == publishedBoard)
   #expect(try store.loadSpatialInk() == ink)
 }

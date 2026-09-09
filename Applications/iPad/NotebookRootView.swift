@@ -3,8 +3,10 @@ import NotebookCore
 
 struct NotebookRootView: View {
   @Environment(NotebookAppModel.self) private var model
+  @State private var showsPairing = false
 
   var body: some View {
+    ZStack {
     GeometryReader { geometry in
       ZStack {
         Color(red: 0.965, green: 0.957, blue: 0.925)
@@ -32,10 +34,6 @@ struct NotebookRootView: View {
             .allowsHitTesting(false)
         }
 
-        NotebookCollaborationView()
-          .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.bottomLeading)
-          .padding(18)
-
         if let failure = model.persistenceFailure {
           VStack(alignment: .leading, spacing: 8) {
             Label("Изменения ещё не сохранены", systemImage: "exclamationmark.triangle")
@@ -52,7 +50,17 @@ struct NotebookRootView: View {
           .accessibilityIdentifier("persistence-failure")
         }
 
-        #if os(iOS)
+          Button { showsPairing = true } label: {
+            Label(model.isPeerConnected ? "Mac подключён" : "Подключить Mac",
+              systemImage: model.isPeerConnected ? "checkmark.shield" : "link")
+              .labelStyle(.iconOnly)
+              .frame(width: 44, height: 44)
+              .background(.regularMaterial, in: Circle())
+          }
+          .accessibilityIdentifier("pairing-settings")
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+          .padding(.trailing, 18).padding(.bottom, 80)
+          .sheet(isPresented: $showsPairing) { NotebookPairingView().environment(model) }
           PenControlsView()
             .frame(
               maxWidth: .infinity,
@@ -61,27 +69,23 @@ struct NotebookRootView: View {
             )
             .padding(.top, 18)
             .padding(.trailing, 18)
-        #else
-          Button { model.isPointing.toggle() } label: {
-            Label("Указать",systemImage:"hand.point.up.left")
-          }.buttonStyle(.bordered).keyboardShortcut("p",modifiers:[.command,.shift])
-            .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topTrailing).padding(18)
-        #endif
       }
-      .onAppear {
-        #if os(iOS)
-          model.start(
+      .task {
+          await model.start(
             pageSize: PageSize(
               width: geometry.size.width,
               height: geometry.size.height
             )
           )
-        #else
-          model.start(pageSize: NotebookAppModel.defaultPageSize)
-        #endif
       }
     }
     .ignoresSafeArea()
+    // Only the composer follows the keyboard safe area. The drawing geometry
+    // remains the full physical viewport while system input is open.
+    NotebookCollaborationView()
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+      .padding(18)
+    }
     .preferredColorScheme(.light)
   }
 

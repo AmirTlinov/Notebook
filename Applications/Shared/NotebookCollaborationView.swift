@@ -17,6 +17,9 @@ struct NotebookCollaborationView: View {
   }
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
+      if let question = model.agentQuestion {
+        NotebookAgentQuestionCard(question: question).id(question.id)
+      }
       if model.isPointing {
         Label("Укажите фрагмент · протяните для области", systemImage: "hand.point.up.left")
           .font(.callout).padding(12).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
@@ -65,6 +68,13 @@ struct NotebookCollaborationView: View {
           ForEach(contexts) { context in
             Section {
               ForEach(context.entries) { entry in
+                if let text = entry.text, !text.isEmpty {
+                  VStack(alignment: .leading, spacing: 5) {
+                    Text(entry.author == .human ? "Вы" : "Ответ агента")
+                      .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Text(text).textSelection(.enabled)
+                  }
+                }
                 ForEach(entry.references) { reference in
                   VStack(alignment: .leading, spacing: 5) {
                     Label(entry.author == .human ? "Вы указали" : "Понимание агента", systemImage: entry.author == .human ? "hand.point.up.left" : "quote.bubble")
@@ -91,6 +101,7 @@ struct NotebookCollaborationView: View {
             }
           }
         }
+        .accessibilityIdentifier("collaboration-history-list")
         .buttonStyle(.borderless)
         .navigationTitle("Совместные ходы")
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { showsHistory = false } } }

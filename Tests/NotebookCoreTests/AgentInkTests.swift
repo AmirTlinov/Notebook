@@ -163,11 +163,8 @@ func agentInkEnvelopeCarriesContentAndUndo() throws {
   let remoteRoot = f.root.appendingPathComponent("peer")
   let remote = NotebookStore(root: remoteRoot)
   let before = try f.store.collaborationContent()
-  for (path, value) in try before.sourceFiles() {
-    let url = remoteRoot.appendingPathComponent(path)
-    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try JSONEncoder().encode(value).write(to: url)
-  }
+  try remote.publishRecords(writes: before.sourceFiles())
+
   let action = try f.action([f.stroke(f.page), f.stroke(f.board)])
   let receipt = try f.store.applyCollaborationAction(action, actor: f.agent)
   let after = try f.store.collaborationContent()
@@ -181,8 +178,8 @@ func agentInkEnvelopeCarriesContentAndUndo() throws {
   #expect(try remote.loadSpatialInk().actions.allSatisfy { !$0.isActive })
 }
 
-@Test("Старый нативный архив получает порядок без изменения точек и переживает отмену")
-func agentInkAdoptsExistingNativeArchive() throws {
+@Test("Production отвергает старый нативный архив и записи без явных часов")
+func agentInkRejectsOldArchivesAndImplicitClocks() throws {
   let sample = SpatialInkSample(point: .init(x: 10, y: 20), timeOffset: 0, width: 3, opacity: 0.3, force: 0.1, azimuth: 0, altitude: 1)
   let pen = PageInkAction(tool: .pen, samples: [sample])
   let eraser = PageInkAction(tool: .eraser, samples: [sample])
@@ -192,13 +189,9 @@ func agentInkAdoptsExistingNativeArchive() throws {
   ]))
   let old = try JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy))
   let data = try Data("NotebookInk/1\n".utf8) + PropertyListSerialization.data(fromPropertyList: old, format: .binary, options: 0)
-  let adopted = try PageInkDrawing.decode(data)
-  #expect(adopted.actions.map(\.sequence) == [1, 2])
-  #expect(adopted.actions.map(\.samples) == [[sample], [sample]])
-  let later = adopted.appending(.init(tool: .pen, samples: [sample]))
-  #expect(later.actions.last?.sequence == 3)
-  let removed = later.removing([pen.id])
-  #expect(try removed.merging(adopted).activeActions.map(\.tool) == [.eraser, .pen])
+  #expect(throws: PageInkDrawing.InkError.self) { try PageInkDrawing.decode(data) }
+  let incompleteNew = Data("NotebookInk/2\n".utf8) + (try JSONEncoder().encode(legacy))
+  #expect(throws: (any Error).self) { try PageInkDrawing.decode(incompleteNew) }
 }
 
 @Test("Повторный сетевой обмен нативными чернилами перестаёт менять байты и версии")

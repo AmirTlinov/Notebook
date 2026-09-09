@@ -36,6 +36,19 @@
         }
         try? await Task.sleep(for: .milliseconds(50))
       }
+      if proof["status"] as? String != "ready" {
+        let header = model.workspaceHeader
+        proof["diagnostics"] = [
+          "loadState": String(describing: model.loadState),
+          "workspaceReady": header != nil,
+          "boardRevisionReady": header?.boardRevision != nil,
+          "spatialInkRevisionReady": header?.spatialInkStamp != nil,
+          "documentSourceReady": model.activeDocument != nil,
+          "documentStateReady": model.activeDocument.map { model.documentStates[$0.id] != nil } ?? false,
+          "permitsBackgroundPreparation": model.permitsBackgroundPreparation,
+          "persistenceFailure": model.persistenceFailure ?? ""
+        ] as [String: Any]
+      }
       do {
         if proof["status"] as? String == "ready" {
           // Keep the pixels alongside the receipt so the headless proof can be
@@ -78,13 +91,14 @@
           uuidString: "7E7A2000-0000-4000-8000-000000000004"
         )!
         let size = NotebookAppModel.defaultPageSize
-        let initial = WorkspaceIndex.initial(
+        let store = NotebookStore(root: root)
+        _ = try store.initializeWorkspace(
           actor: actor,
           pageSize: size,
-          itemID: notebookID,
-          pageID: pageID
+          initialNotebookID: notebookID,
+          initialPageID: pageID
         )
-        var index = initial.index
+        var index = try store.loadIndex()
         guard index.createDocument(
           title: "Mac WebKit launch proof",
           actor: actor,
@@ -115,20 +129,16 @@
           fatalError("Не удалось разместить документ проверки запуска Mac")
         }
         let viewport = SpatialPoint(x: size.width, y: size.height)
-        let store = NotebookStore(root: root)
-        try store.savePage(initial.page)
-        try store.saveDocument(document)
-        try store.saveDocumentState(state)
-        try store.saveBoard(
-          BoardHierarchy(
+        try store.saveDocumentWorkspaceBundle(
+          index: index,
+          document: document,
+          state: state,
+          board: BoardHierarchy(
             rootBoardID: index.rootBoardID,
             boards: [BoardNode(id: index.rootBoardID, board: board)],
             stamp: board.stamp
-          ),
-          items: index.items
+          )
         )
-        try store.saveWorkspaceBundle(index: index, page: initial.page,
-          board: store.loadBoard(items: index.items))
         try store.savePresence(
           SessionPresence(
             boardID: index.rootBoardID,

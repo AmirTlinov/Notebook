@@ -7,12 +7,12 @@ final class DocumentPageSelectionTests: XCTestCase {
   func testPeerRequestIsAppliedByTheIPadPresenceOwner() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(
       store: NotebookStore(root: root),
       startsNearbySync: false
     )
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let documentID = try XCTUnwrap(
       model.createDocument(at: .zero, paperSize: .a4)
     )
@@ -29,13 +29,16 @@ final class DocumentPageSelectionTests: XCTestCase {
       settled: true
     )
 
-    model.receivePeerMessage(
+    let peerID = UUID(), generation = UUID()
+    model.peerConnected(.init(deviceID: peerID, workspaceID: try model.store.workspaceHeader().workspaceID,
+      displayName: "Test Mac"), generation: generation)
+    model.receivePeerTransient(
       .documentPageSelection(
         DocumentPageSelectionRequest(
           documentID: documentID,
           pageIndex: 3
         )
-      )
+      ), peerID: peerID, generation: generation
     )
 
     XCTAssertEqual(model.presence?.documentPageIndex, 3)
@@ -48,12 +51,12 @@ final class DocumentPageSelectionTests: XCTestCase {
   func testRequestForAnotherDocumentCannotMoveTheFocusedDocument() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(
       store: NotebookStore(root: root),
       startsNearbySync: false
     )
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let documentID = try XCTUnwrap(
       model.createDocument(at: .zero, paperSize: .letter)
     )
@@ -69,13 +72,16 @@ final class DocumentPageSelectionTests: XCTestCase {
       settled: true
     )
 
-    model.receivePeerMessage(
+    let peerID = UUID(), generation = UUID()
+    model.peerConnected(.init(deviceID: peerID, workspaceID: try model.store.workspaceHeader().workspaceID,
+      displayName: "Test Mac"), generation: generation)
+    model.receivePeerTransient(
       .documentPageSelection(
         DocumentPageSelectionRequest(
           documentID: UUID(),
           pageIndex: 2
         )
-      )
+      ), peerID: peerID, generation: generation
     )
 
     XCTAssertEqual(model.presence?.documentPageIndex, 0)

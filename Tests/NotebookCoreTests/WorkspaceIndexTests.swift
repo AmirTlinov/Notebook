@@ -196,8 +196,8 @@ func absolutePageSelectionLandsOnTheRequestedSheet() throws {
   #expect(index.selectedPageIndex == 2)
 }
 
-@Test("Запоздавшая запись посадки не возвращает каталог на старый лист")
-func stalePageSelectionPersistenceCannotRewindTheWorkspace() throws {
+@Test("Выбор принадлежит последней команде Presence и не меняет состав листов")
+func orderedPresenceSelectionPreservesEveryCreatedPage() throws {
   let root = FileManager.default.temporaryDirectory
     .appendingPathComponent(UUID().uuidString, isDirectory: true)
   defer { try? FileManager.default.removeItem(at: root) }
@@ -216,6 +216,7 @@ func stalePageSelectionPersistenceCannotRewindTheWorkspace() throws {
     board: board
   )
 
+  try store.savePresence(SessionPresence(mode: .board, camera: .init(), viewport: .init(x: 834, y: 1194), selectedItemID: initial.index.selectedItemID, notebookPageID: initial.page.id))
   var firstLanding = initial.index
   let itemID = firstLanding.selectedItemID
   let secondPageResult = firstLanding.selectPage(
@@ -248,7 +249,8 @@ func stalePageSelectionPersistenceCannotRewindTheWorkspace() throws {
   )
 
   let persisted = try store.loadIndex()
-  #expect(persisted.selectedPageID == thirdPage.pageID)
+  #expect(persisted.selectedPageID == secondPage.pageID)
+  #expect(Set(persisted.selectedItem.pageIDs) == Set([initial.page.id, secondPage.pageID, thirdPage.pageID]))
   #expect(try store.loadPage(thirdPage.pageID).id == thirdPage.pageID)
 }
 
@@ -305,7 +307,7 @@ func storeDeletesOneCompleteNotebookBundle() throws {
     board: board
   )
   let pageURL = store.pageURL(created.page.id)
-  #expect(FileManager.default.fileExists(atPath: pageURL.path))
+  #expect(try store.hasStoredValue(at: pageURL))
 
   let expectedIndex = index
   let removed = index.deleteItem(created.item.id, actor: actor)
@@ -327,12 +329,12 @@ func storeDeletesOneCompleteNotebookBundle() throws {
 
   #expect(try store.loadIndex() == index)
   #expect(try store.loadBoard(items: index.items) == board)
-  #expect(!FileManager.default.fileExists(atPath: pageURL.path))
+  #expect(try !store.hasStoredValue(at: pageURL))
 
   #expect(throws: CocoaError.self) {
     try store.saveMergedPage(created.page)
   }
-  #expect(!FileManager.default.fileExists(atPath: pageURL.path))
+  #expect(try !store.hasStoredValue(at: pageURL))
 }
 
 @Test("Удаление выбранной тетради выбирает ближайшую живую тетрадь")
@@ -382,7 +384,7 @@ func pageFieldsMergeIndependently() {
   var pencil = PageDocument(id: id, size: size, actor: firstActor)
   var agent = pencil
 
-  pencil.replaceDrawing(Data("ink".utf8), actor: firstActor)
+  pencil.replaceDrawing(pageDrawingFixture(Data("ink".utf8)), actor: firstActor)
   agent.replaceElements(
     [
       AgentElement(
@@ -398,7 +400,7 @@ func pageFieldsMergeIndependently() {
 
   let changed = pencil.merge(agent)
   #expect(changed)
-  #expect(pencil.drawingData == Data("ink".utf8))
+  #expect(pencil.drawingData == pageDrawingFixture(Data("ink".utf8)))
   #expect(pencil.elements.map(\.id) == ["idea"])
 }
 
@@ -416,7 +418,7 @@ func pageMergeKeepsItsPhysicalSizeInvariant() {
     size: PageSize(width: 1_194, height: 834),
     actor: actor
   )
-  landscape.replaceDrawing(Data("landscape".utf8), actor: actor)
+  landscape.replaceDrawing(pageDrawingFixture(Data("landscape".utf8)), actor: actor)
 
   let changed = portrait.merge(landscape)
   #expect(!changed)
@@ -430,16 +432,16 @@ func exhaustedVersionDoesNotCrashOrMutate() {
   let size = PageSize(width: 834, height: 1_194)
   var page = PageDocument(size: size, actor: actor)
   let reachedLimit = page.replaceDrawing(
-    Data("last".utf8),
+    pageDrawingFixture(Data("last".utf8)),
     stamp: VersionStamp(
       counter: VersionStamp.maximumCounter,
       actor: actor
     )
   )
-  let overflowed = page.replaceDrawing(Data("overflow".utf8), actor: actor)
+  let overflowed = page.replaceDrawing(pageDrawingFixture(Data("overflow".utf8)), actor: actor)
   #expect(reachedLimit)
   #expect(!overflowed)
-  #expect(page.drawingData == Data("last".utf8))
+  #expect(page.drawingData == pageDrawingFixture(Data("last".utf8)))
 
   let pageID = UUID()
   let itemID = UUID()
@@ -497,7 +499,7 @@ func storeRoundTrip() throws {
   )
   let selectedPageID = try #require(created.0.selectedPageID)
   var page = try #require(created.1[selectedPageID])
-  page.replaceDrawing(Data([1, 2, 3]), actor: actor)
+  page.replaceDrawing(pageDrawingFixture(Data([1, 2, 3])), actor: actor)
   try store.savePage(page)
 
   let reopened = try store.loadOrCreate(actor: UUID(), pageSize: page.size)
@@ -505,29 +507,6 @@ func storeRoundTrip() throws {
   #expect(reopened.1[page.id] == page)
 }
 
-@Test("Notebook один раз переносит прежнее локальное хранилище")
-func storeMigratesLegacyDirectory() throws {
-  let parent = FileManager.default.temporaryDirectory
-    .appendingPathComponent(UUID().uuidString, isDirectory: true)
-  let legacyRoot = parent.appendingPathComponent("Tetrad", isDirectory: true)
-  let currentRoot = parent.appendingPathComponent("Notebook", isDirectory: true)
-  defer { try? FileManager.default.removeItem(at: parent) }
-
-  try FileManager.default.createDirectory(
-    at: legacyRoot,
-    withIntermediateDirectories: true
-  )
-  let marker = legacyRoot.appendingPathComponent("workspace.json")
-  try Data("saved pages".utf8).write(to: marker)
-
-  try NotebookStore.migrateLegacyStore(from: legacyRoot, to: currentRoot)
-
-  #expect(!FileManager.default.fileExists(atPath: legacyRoot.path))
-  #expect(
-    try Data(contentsOf: currentRoot.appendingPathComponent("workspace.json"))
-      == Data("saved pages".utf8)
-  )
-}
 
 @Test("Поздняя запись сохраняет новые штрихи и новые элементы вместе")
 func storeMergesConcurrentStreams() throws {
@@ -545,7 +524,7 @@ func storeMergesConcurrentStreams() throws {
   let selectedPageID = try #require(created.0.selectedPageID)
   var pencil = try #require(created.1[selectedPageID])
   var agent = pencil
-  pencil.replaceDrawing(Data("new ink".utf8), actor: pencilActor)
+  pencil.replaceDrawing(pageDrawingFixture(Data("new ink".utf8)), actor: pencilActor)
   agent.replaceElements(
     [
       AgentElement(
@@ -562,11 +541,10 @@ func storeMergesConcurrentStreams() throws {
   try store.savePage(agent)
   let resolved = try store.saveMergedPage(pencil)
 
-  #expect(resolved.drawingData == Data("new ink".utf8))
+  #expect(resolved.drawingData == pageDrawingFixture(Data("new ink".utf8)))
   #expect(resolved.elements.map(\.id) == ["new-agent-layer"])
   #expect(try store.loadPage(resolved.id) == resolved)
-  let lock = root.appendingPathComponent(".mutation.lock")
-  #expect(try lock.resourceValues(forKeys:[.isRegularFileKey]).isRegularFile == true)
+  #expect(try store.databaseURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true)
 }
 
 @Test("Хранилище отвергает два физических размера одного листа")
@@ -610,13 +588,13 @@ func storeRejectsInvalidDecodedPage() throws {
   let pageID = try #require(created.0.selectedPageID)
   let pageURL = store.pageURL(pageID)
   var json = try #require(
-    JSONSerialization.jsonObject(with: Data(contentsOf: pageURL))
+    JSONSerialization.jsonObject(with: store.storedData(at: pageURL))
       as? [String: Any]
   )
   var size = try #require(json["size"] as? [String: Any])
   size["width"] = 0
   json["size"] = size
-  try JSONSerialization.data(withJSONObject: json).write(to: pageURL)
+  try store.fixtureWrite(JSONSerialization.data(withJSONObject: json), to: pageURL)
 
   #expect(throws: CocoaError.self) {
     try store.loadPage(pageID)
@@ -637,13 +615,13 @@ func storeRejectsAPathologicalPageAllocation() throws {
   let pageID = try #require(created.0.selectedPageID)
   let pageURL = store.pageURL(pageID)
   var json = try #require(
-    JSONSerialization.jsonObject(with: Data(contentsOf: pageURL))
+    JSONSerialization.jsonObject(with: store.storedData(at: pageURL))
       as? [String: Any]
   )
   var size = try #require(json["size"] as? [String: Any])
   size["width"] = 1e100
   json["size"] = size
-  try JSONSerialization.data(withJSONObject: json).write(to: pageURL)
+  try store.fixtureWrite(JSONSerialization.data(withJSONObject: json), to: pageURL)
 
   #expect(throws: CocoaError.self) {
     try store.loadPage(pageID)
@@ -662,11 +640,11 @@ func storeRejectsInvalidDecodedWorkspace() throws {
     pageSize: PageSize(width: 834, height: 1_194)
   )
   var json = try #require(
-    JSONSerialization.jsonObject(with: Data(contentsOf: store.indexURL))
+    JSONSerialization.jsonObject(with: store.storedData(at: store.indexURL))
       as? [String: Any]
   )
   json["items"] = []
-  try JSONSerialization.data(withJSONObject: json).write(to: store.indexURL)
+  try store.fixtureWrite(JSONSerialization.data(withJSONObject: json), to: store.indexURL)
 
   #expect(throws: CocoaError.self) {
     try store.loadIndex()
@@ -722,7 +700,7 @@ func workspaceItemLookupFollowsMergeAndDecodeWithoutWireMetadata() throws {
   for value in reordered.items { #expect(workspace.item(id: value.id) == value) }
   let data = try JSONEncoder().encode(workspace)
   let fields = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-  #expect(Set(fields.keys) == Set(["format", "rootBoardID", "items", "selectedItemID", "stamp", "collaboration", "selectionVersion"]))
+  #expect(Set(fields.keys) == Set(["format", "rootBoardID", "items", "stamp", "collaboration"]))
   let decoded = try JSONDecoder().decode(WorkspaceIndex.self, from: data)
   #expect(decoded == reordered)
   for value in reordered.items { #expect(decoded.item(id: value.id) == value) }

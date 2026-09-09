@@ -12,7 +12,7 @@ private let legacyPageID = UUID(
   uuidString: "00000000-0000-4000-8000-000000000003"
 )!
 
-@Test("Старый каталог тетрадей становится каталогом с корневой доской")
+@Test("Старый каталог требует внешнего преобразования")
 func legacyWorkspaceDecodesWithRootBoard() throws {
   let data = try JSONSerialization.data(withJSONObject: [
     "format": 1,
@@ -26,27 +26,7 @@ func legacyWorkspaceDecodesWithRootBoard() throws {
     "stamp": ["counter": 4, "actor": legacyActor.uuidString]
   ])
 
-  let workspace = try JSONDecoder().decode(WorkspaceIndex.self, from: data)
-
-  #expect(workspace.format == WorkspaceIndex.formatVersion)
-  #expect(workspace.items == [
-    .notebook(
-      id: legacyItemID,
-      title: "Старая тетрадь",
-      pageIDs: [legacyPageID]
-    )
-  ])
-  #expect(workspace.selectedItemID == legacyItemID)
-  #expect(workspace.selectedPageID == legacyPageID)
-
-  let encoded = try JSONEncoder().encode(workspace)
-  let object = try #require(
-    JSONSerialization.jsonObject(with: encoded) as? [String: Any]
-  )
-  #expect(object["format"] as? Int == WorkspaceIndex.formatVersion)
-  #expect(object["rootBoardID"] as? String == WorkspaceRoot.boardID.uuidString)
-  #expect(object["items"] != nil)
-  #expect(object["notebooks"] == nil)
+  #expect(throws: DecodingError.self) { try JSONDecoder().decode(WorkspaceIndex.self, from: data) }
 }
 
 @Test("Старая доска и присутствие получают нового владельца itemID")
@@ -83,16 +63,8 @@ func legacySpatialOwnersDecodeAsVersionTwo() throws {
   ])
 
   let board = try JSONDecoder().decode(BoardDocument.self, from: boardData)
-  let presence = try JSONDecoder().decode(
-    SessionPresence.self,
-    from: presenceData
-  )
-
-  #expect(board.format == BoardDocument.formatVersion)
   #expect(board.freeItems.map(\.itemID) == [legacyItemID])
-  #expect(presence.format == SessionPresence.formatVersion)
-  #expect(presence.focusedItemID == legacyItemID)
-  #expect(presence.documentPageIndex == 0)
+  #expect(throws: DecodingError.self) { try JSONDecoder().decode(SessionPresence.self, from: presenceData) }
 }
 
 @Test("Присутствие до пагинации документа открывается на первом листе")
@@ -114,103 +86,10 @@ func versionTwoPresenceDefaultsToFirstDocumentPage() throws {
     "openProgress": 1.0
   ])
 
-  let presence = try JSONDecoder().decode(SessionPresence.self, from: data)
-
-  #expect(presence.format == SessionPresence.formatVersion)
-  #expect(presence.documentPageIndex == 0)
+  #expect(throws: DecodingError.self) { try JSONDecoder().decode(SessionPresence.self, from: data) }
 }
 
-@Test("Старая доска возвращает отсутствующие тетради из каталога")
-func legacyBoardRestoresMissingCatalogItems() throws {
-  let root = FileManager.default.temporaryDirectory
-    .appendingPathComponent(UUID().uuidString, isDirectory: true)
-  defer { try? FileManager.default.removeItem(at: root) }
-  let store = NotebookStore(root: root)
-  try store.prepare()
 
-  let itemIDs = (0..<6).map { _ in UUID() }
-  let pageIDs = (0..<6).map { _ in UUID() }
-  let workspace = WorkspaceIndex(
-    items: zip(itemIDs, pageIDs).map { itemID, pageID in
-      .notebook(id: itemID, title: "", pageIDs: [pageID])
-    },
-    selectedItemID: itemIDs[5],
-    selectedPageID: pageIDs[5],
-    stamp: VersionStamp(counter: 6, actor: legacyActor)
-  )
-  let world: [String: Any] = [
-    "tileX": 0,
-    "tileY": 0,
-    "localX": 0.0,
-    "localY": 0.0
-  ]
-  let stamp: [String: Any] = [
-    "counter": 0,
-    "actor": legacyActor.uuidString
-  ]
-  let legacyBoard = try JSONSerialization.data(withJSONObject: [
-    "format": 1,
-    "freeNotebooks": [[
-      "notebookID": itemIDs[0].uuidString,
-      "center": world,
-      "zIndex": 0,
-      "stamp": stamp
-    ]],
-    "stacks": [],
-    "elements": [],
-    "stamp": stamp
-  ])
-  try legacyBoard.write(to: store.boardURL, options: .atomic)
-
-  let board = try store.loadOrCreateBoard(
-    workspace: workspace,
-    actor: legacyActor
-  )
-
-  #expect(Set(board.itemIDs) == Set(itemIDs))
-  #expect(
-    board.board(workspace.rootBoardID)?.placement(of: itemIDs[0])?.center
-      == .zero
-  )
-  let persisted = try JSONSerialization.jsonObject(
-    with: Data(contentsOf: store.boardURL)
-  ) as? [String: Any]
-  #expect(persisted?["format"] as? Int == BoardHierarchy.formatVersion)
-  #expect(persisted?["boards"] != nil)
-}
-
-@Test("Незавершённый сетевой пакет открывает каталог и ждёт содержимое")
-func incompleteNetworkBundleCanResumeAfterLaunch() throws {
-  let root = FileManager.default.temporaryDirectory
-    .appendingPathComponent(UUID().uuidString, isDirectory: true)
-  defer { try? FileManager.default.removeItem(at: root) }
-  let store = NotebookStore(root: root)
-  let first = try store.loadOrCreate(
-    actor: legacyActor,
-    pageSize: PageSize(width: 834, height: 1_194),
-    initialNotebookID: legacyItemID,
-    initialPageID: legacyPageID
-  )
-  var workspace = first.0
-  let missingCreation = workspace.createNotebook(
-    title: "Ждёт сеть",
-    actor: legacyActor,
-    pageSize: first.1[legacyPageID]!.size
-  )
-  let missing = try #require(missingCreation)
-  // This fixture deliberately models an old interrupted network publication;
-  // production catalog writes now reject missing content and placement.
-  try JSONEncoder().encode(workspace).write(to: store.indexURL, options: .atomic)
-
-  let reopened = try store.loadOrCreate(
-    actor: UUID(),
-    pageSize: first.1[legacyPageID]!.size
-  )
-
-  #expect(reopened.0 == workspace)
-  #expect(reopened.1[legacyPageID] != nil)
-  #expect(reopened.1[missing.page.id] == nil)
-}
 
 @Test("Документ выбирается без тетрадного листа")
 func documentSelectionHasNoNotebookPage() throws {
@@ -430,9 +309,12 @@ func storePublishesAndDeletesDocumentBundle() throws {
     board: board
   )
 
-  #expect(try store.loadDocument(item.id) == document)
+  let persistedDocument = try store.loadDocument(item.id)
+  #expect(persistedDocument.blocks == document.blocks && persistedDocument.paperSize == document.paperSize)
+  #expect(persistedDocument.collaboration?.fields.isEmpty == false)
+  #expect(persistedDocument.collaboration?.fields.values.allSatisfy(\.human) == true)
   #expect(try store.loadDocumentState(item.id) == state)
-  #expect(FileManager.default.fileExists(atPath: store.documentURL(item.id).path))
+  #expect(try store.hasStoredValue(at: store.documentURL(item.id)))
 
   let expectedIndex = workspace
   let deletion = workspace.deleteItem(item.id, actor: legacyActor)
@@ -453,7 +335,7 @@ func storePublishesAndDeletesDocumentBundle() throws {
     documentIDs: [removed.id]
   )
 
-  #expect(!FileManager.default.fileExists(atPath: store.documentURL(item.id).path))
+  #expect(try !store.hasStoredValue(at: store.documentURL(item.id)))
   #expect(!FileManager.default.fileExists(
     atPath: store.documentStateURL(item.id).path
   ))
@@ -531,7 +413,7 @@ func remoteMixedCatalogPublicationCleansReplacedContent() throws {
   )
 
   #expect(removed.id == documentItem.id)
-  #expect(try store.loadIndex() == incoming)
+  #expect(try store.loadIndex().items == incoming.items)
   #expect(Set(try store.loadBoard(
     items: incoming.items
   ).itemIDs) == Set(incoming.items.map(\.id)))
@@ -600,27 +482,22 @@ func currentViewReceiptOwnsDocumentRevisions() {
   #expect(snapshotHash == String(repeating: "b", count: 64))
 }
 
-@Test("Wire переносит исходник и состояние документа как разных владельцев")
-func documentWireMessagesRoundTrip() throws {
-  let id = UUID()
-  let document = DocumentDocument(id: id, actor: legacyActor)
-  var state = DocumentStateJournal(id: id, actor: legacyActor)
-  let committed = state.commit(
-    blockID: "counter",
-    value: .number(1),
-    actor: legacyActor
-  )
-  #expect(committed)
-  let encoder = JSONEncoder()
-  let decoder = JSONDecoder()
-
-  for message in [WireMessage.document(document), .documentState(state)] {
-    let decoded = try decoder.decode(
-      WireMessage.self,
-      from: encoder.encode(message)
-    )
-    #expect(decoded == message)
-  }
+@Test("Durable offer переносит хеш завершённого изменения, а не весь документ")
+func documentDurableOfferReferencesCommittedManifest() throws {
+  let change = NotebookDurableChange(sequence: 7, transactionID: UUID(),
+    manifestHash: String(repeating: "a", count: 64), byteCount: 4_096)
+  let packet = NotebookTransportPacket(sequence: 1, message: .offer(change))
+  let frame = try NotebookTransportFraming.encode(packet)
+  #expect(frame.count < 512)
+  #expect(try NotebookTransportFraming.payloadLength(Data(frame.prefix(4))) == frame.count - 4)
+  #expect(try NotebookTransportFraming.decode(Data(frame.dropFirst(4))) == packet)
+  // Source and interactive state remain independently addressed SQL records;
+  // neither is silently encoded into a camera/contact transfer frame.
+  let manifest = NotebookChangeManifest(transactionID: change.transactionID, workspaceID: UUID(), records: [
+    .init(address: "documents/first.json", blobHash: String(repeating: "b", count: 64)),
+    .init(address: "document-state/first.json", blobHash: String(repeating: "c", count: 64)),
+  ])
+  #expect(try JSONDecoder().decode(NotebookChangeManifest.self, from: JSONEncoder().encode(manifest)) == manifest)
 }
 
 @Test("Mac просит страницу документа, не становясь владельцем presence")
@@ -629,9 +506,9 @@ func documentPageSelectionRequestRoundTrips() throws {
     documentID: UUID(),
     pageIndex: 7
   )
-  let message = WireMessage.documentPageSelection(request)
+  let message = NotebookTransportTransient.documentPageSelection(request)
   let encoded = try JSONEncoder().encode(message)
-  let decoded = try JSONDecoder().decode(WireMessage.self, from: encoded)
+  let decoded = try JSONDecoder().decode(NotebookTransportTransient.self, from: encoded)
 
   #expect(request.isValid)
   #expect(decoded == message)

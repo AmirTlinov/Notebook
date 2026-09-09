@@ -70,24 +70,17 @@ extension NotebookStore {
   private func documentDraftPath(_ id: UUID) -> String { "document-drafts/\(id.uuidString.lowercased()).json" }
 
   private func readDocumentEditingSession(_ id: UUID) throws -> DocumentEditingSession? {
-    let url = root.appendingPathComponent(documentDraftPath(id))
-    guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-    let value = try JSONDecoder().decode(DocumentEditingSession.self, from: Data(contentsOf: url))
-    try value.validate()
-    return value
+    guard let value = try storedValue(documentDraftPath(id))?.decode(DocumentEditingSession.self) else { return nil }
+    try value.validate(); return value
   }
 
   public func documentEditingSessions(documentID: UUID? = nil) throws -> [DocumentEditingSession] {
-    try prepare()
-    return try withMutationLock {
-      let directory = root.appendingPathComponent("document-drafts", isDirectory: true)
-      guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
-      return try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-        .filter { $0.pathExtension == "json" }.compactMap { url in
-          let value = try JSONDecoder().decode(DocumentEditingSession.self, from: Data(contentsOf: url))
-          try value.validate()
-          return value.isUnfinished && (documentID == nil || value.edit.documentID == documentID) ? value : nil
-        }.sorted { $0.id.uuidString < $1.id.uuidString }
+    try readTransaction { _ in
+      try storedValues(prefix: "document-drafts/").compactMap {
+        let value = try $0.decode(DocumentEditingSession.self)
+        try value.validate()
+        return value.isUnfinished && (documentID == nil || value.edit.documentID == documentID) ? value : nil
+      }.sorted { $0.id.uuidString < $1.id.uuidString }
     }
   }
 
@@ -124,16 +117,15 @@ extension NotebookStore {
         try validateDocumentSessionIdentity(edit, previous.edit)
         if previous.phase == .committed {
           guard previous.edit == edit else { throw CollaborationError("stale_draft", "Завершённый сеанс нельзя использовать для другого текста.") }
-          return .init(status: .committed, document: FileManager.default.fileExists(atPath: documentURL(edit.documentID).path)
+          return .init(status: .committed, document: (try hasStoredValue(at: documentURL(edit.documentID)))
             ? try loadDocument(edit.documentID) : nil)
         }
         guard previous.phase != .discarded, edit.sequence >= previous.edit.sequence else {
           throw CollaborationError("stale_draft", "Этот вариант черновика уже завершён или продолжен.")
         }
       }
-      let workspace = try loadIndex()
-      let exists = workspace.items.contains { $0.id == edit.documentID && $0.kind == .document }
-        && FileManager.default.fileExists(atPath: documentURL(edit.documentID).path)
+      let exists = try readItemHeader(edit.documentID)?.kind == .document
+        && (try hasStoredValue(at: documentURL(edit.documentID)))
       var document = exists ? try loadDocument(edit.documentID) : nil
       let block = document?.blocks.first { $0.id == edit.blockID }
       let status: DocumentSourceCommitResult.Status

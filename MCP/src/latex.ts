@@ -1,13 +1,13 @@
-import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 import { marked, type Token, type Tokens } from "marked";
 
 import type { DocumentBlock, DocumentDocument } from "./domain.js";
-import { StoreError } from "./store.js";
+import { NotebookStore, StoreError } from "./store.js";
+import { revision } from "./domain.js";
 
 export interface DocumentExportReceipt {
   documentID: string;
@@ -52,18 +52,23 @@ export function documentTeX(document: DocumentDocument): string {
   ].join("\n\n");
 }
 
+let activeExports=0;
+
 export async function exportDocument(
   document: DocumentDocument,
-  exportsRoot: string,
+  store: NotebookStore,
 ): Promise<DocumentExportReceipt> {
-  await mkdir(exportsRoot, { recursive: true });
-  const work = await mkdtemp(join(tmpdir(), "notebook-tex-"));
+  if(activeExports>=2) throw new StoreError("Две печатные формы уже собираются. Повторите после их завершения.");
+  activeExports++;
+  let work:string;
+  try {work=await mkdtemp(join(tmpdir(), "notebook-tex-"));} catch(error){activeExports--;throw error;}
   const sourcePath = join(work, "document.tex");
-  const source = documentTeX(document);
-  await writeFile(sourcePath, source, "utf8");
+  let source: string;
   const tectonic = process.env.TECTONIC_BIN || "/opt/homebrew/bin/tectonic";
   let output = "";
   try {
+    source=documentTeX(document);
+    await writeFile(sourcePath,source,"utf8");
     output = await run(
       tectonic,
       [
@@ -76,24 +81,19 @@ export async function exportDocument(
       ],
       120_000,
     );
-    const pdf = await readFile(join(work, "document.pdf"));
-    const stem = document.id.toLowerCase();
-    const texPath = join(exportsRoot, `${stem}.tex`);
-    const pdfPath = join(exportsRoot, `${stem}.pdf`);
-    const temporaryTex = join(exportsRoot, `.${stem}.${randomUUID()}.tex`);
-    const temporaryPDF = join(exportsRoot, `.${stem}.${randomUUID()}.pdf`);
-    await writeFile(temporaryTex, source, "utf8");
-    await writeFile(temporaryPDF, pdf);
-    await rename(temporaryTex, texPath);
-    await rename(temporaryPDF, pdfPath);
-    return {
-      documentID: document.id,
-      texPath,
-      pdfPath,
-      pdfSHA256: createHash("sha256").update(pdf).digest("hex"),
-      byteCount: pdf.byteLength,
-      log: output.slice(-8_000),
-    };
+    const file=await open(join(work,"document.pdf"),"r");
+    let pdf:Buffer;
+    try {
+      const info=await file.stat();
+      if(!info.isFile() || info.size>16*1024*1024) throw new StoreError("Печатный PDF превышает 16 МиБ.");
+      pdf=Buffer.alloc(info.size);
+      let offset=0;
+      while(offset<pdf.length){const {bytesRead}=await file.read(pdf,offset,pdf.length-offset,offset);if(!bytesRead)throw new StoreError("Печатный PDF не завершён.");offset+=bytesRead;}
+    } finally {await file.close();}
+    return await store.command<DocumentExportReceipt>({ command: "publishExport", export: {
+      documentID: document.id, expectedRevision: revision(document.contentStamp), source,
+      pdf: pdf.toString("base64"), log: output.slice(-8_000),
+    } });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       throw new StoreError(
@@ -105,6 +105,7 @@ export async function exportDocument(
       `LaTeX не собрался. ${String(error)}\n${output.slice(-8_000)}`,
     );
   } finally {
+    activeExports--;
     await rm(work, { recursive: true, force: true });
   }
 }
@@ -333,8 +334,8 @@ function run(command: string, args: string[], timeoutMS: number): Promise<string
     }, timeoutMS);
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => { output += chunk; });
-    child.stderr.on("data", (chunk: string) => { output += chunk; });
+    child.stdout.on("data", (chunk: string) => { output = (output + chunk).slice(-64_000); });
+    child.stderr.on("data", (chunk: string) => { output = (output + chunk).slice(-64_000); });
     child.once("error", (error) => {
       clearTimeout(timer);
       reject(error);

@@ -1,6 +1,5 @@
 #if DEBUG && targetEnvironment(simulator)
   import Foundation
-  import PencilKit
   import NotebookCore
 
   @MainActor
@@ -125,7 +124,7 @@
           id: pageID,
           size: size,
           actor: actor,
-          drawingData: denseDrawing(size: size).dataRepresentation(),
+          drawingData: try denseDrawing(size: size).dataRepresentation(),
           elements: startsWithAgentElement
             ? [
               AgentElement(
@@ -409,43 +408,22 @@
       }
     }
 
-    private static func denseDrawing(size: PageSize) -> PKDrawing {
-      let strokeCount = 80
-      let pointsPerStroke = 64
-      let horizontalInset = 80.0
-      let verticalInset = 80.0
-      let usableWidth = size.width - (horizontalInset * 2)
-      let usableHeight = size.height - (verticalInset * 2)
-
+    private static func denseDrawing(size: PageSize) -> PageInkDrawing {
+      let strokeCount = 80, pointsPerStroke = 64
+      let horizontalInset = 80.0, verticalInset = 80.0
+      let usableWidth = size.width - horizontalInset * 2
+      let usableHeight = size.height - verticalInset * 2
       let strokes = (0..<strokeCount).map { strokeIndex in
-        let xProgress = Double(strokeIndex) / Double(strokeCount - 1)
-        let baseX = horizontalInset + (usableWidth * xProgress)
-        let points = (0..<pointsPerStroke).map { pointIndex in
+        let baseX = horizontalInset + usableWidth * Double(strokeIndex) / Double(strokeCount - 1)
+        let samples = (0..<pointsPerStroke).map { pointIndex in
           let progress = Double(pointIndex) / Double(pointsPerStroke - 1)
-          let wave = sin((progress * .pi * 6) + Double(strokeIndex)) * 3
-          return PKStrokePoint(
-            location: CGPoint(
-              x: baseX + wave,
-              y: verticalInset + (usableHeight * progress)
-            ),
-            timeOffset: Double(pointIndex) / 120,
-            size: CGSize(width: 2.2, height: 2.2),
-            opacity: 1,
-            force: 1,
-            azimuth: 0,
-            altitude: .pi / 2
-          )
+          let wave = sin(progress * .pi * 6 + Double(strokeIndex)) * 3
+          return SpatialInkSample(point: .init(x: baseX + wave, y: verticalInset + usableHeight * progress),
+            timeOffset: Double(pointIndex) / 120, width: 2.2, opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
         }
-        return PKStroke(
-          ink: PKInk(.pen, color: .black),
-          path: PKStrokePath(
-            controlPoints: points,
-            creationDate: Date(timeIntervalSince1970: Double(strokeIndex))
-          ),
-          randomSeed: UInt32(strokeIndex)
-        )
+        return PageInkAction(tool: .pen, samples: samples, sequence: UInt64(strokeIndex + 1))
       }
-      return PKDrawing(strokes: strokes)
+      return PageInkDrawing(actions: strokes)
     }
   }
 #endif

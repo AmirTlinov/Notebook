@@ -73,8 +73,7 @@ final class WorkspaceSceneIndexTests: XCTestCase {
 
   @MainActor
   func testCameraDocumentSourceAndInteractiveStateKeepPreparedGeometryGeneration() async throws {
-    let (model, root) = makeModel()
-    defer { try? FileManager.default.removeItem(at: root) }
+    let model = await makeModel()
     let documentID = try XCTUnwrap(model.createDocument(at: .zero, paperSize: .letter))
     await model.finishPendingPersistence()
     try await waitForIndex(model)
@@ -94,7 +93,8 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     await model.finishPendingPersistence()
     var document = try XCTUnwrap(model.documents[documentID])
     XCTAssertTrue(document.replaceBlockSource(id: "body", source: "A changed sentence", actor: model.actorID))
-    model.receivePeerMessage(.document(document))
+    _ = try model.store.saveMergedDocument(document)
+    await model.reloadExternalChanges()?.value
     await model.finishPendingPersistence()
     try await waitForIndex(model)
     XCTAssertEqual(model.documents[documentID]?.blocks.first?.source, "A changed sentence")
@@ -108,43 +108,50 @@ final class WorkspaceSceneIndexTests: XCTestCase {
 
   @MainActor
   func testModelPublishesMovedAndDeletedSourceToItsExplicitBoardAfterNavigation() async throws {
-    let (model, root) = makeModel()
-    defer { try? FileManager.default.removeItem(at: root) }
+    let model = await makeModel()
     let boardA = try XCTUnwrap(model.presence?.boardID)
     let boardB = try XCTUnwrap(model.createBoard(at: .init(x: 40_000, y: 40_000)))
     let creationSaved = await model.finishPendingPersistence()
     XCTAssertTrue(creationSaved, model.persistenceFailure ?? "")
-    var hierarchy = try XCTUnwrap(model.boardHierarchy)
+    var hierarchy = try model.store.loadBoard(items: model.store.loadIndex().items)
     var source = element(0, boardID: boardA, origin: .zero, actor: model.actorID)
     XCTAssertTrue(hierarchy.upsertElement(source, in: boardA, expected: nil, actor: model.actorID))
-    try model.store.saveBoard(hierarchy, items: XCTUnwrap(model.workspace).items)
+    try model.store.saveBoard(hierarchy, items: model.store.loadIndex().items)
     await model.reloadExternalChanges()?.value
     try await waitForIndex(model)
     let viewport = SpatialPoint(x: 1194, y: 834)
     let original = SessionPresence(boardID: boardA, mode: .board, camera: .init(scale: 0.5), viewport: viewport)
     let elsewhere = SessionPresence(boardID: boardB, mode: .board, camera: .init(scale: 0.5), viewport: viewport)
     model.updatePresence(elsewhere, settled: true)
-    XCTAssertEqual(model.sceneWorkset(presence: original).elements.map(\.id), [source.id])
+    let originalRead = try await model.performStoreCommand { store in
+      try store.readSceneWindow(boardID: boardA, bounds: NotebookSceneState.bounds(for: original))
+    }
+    XCTAssertEqual(originalRead.boards.first { $0.id == boardA }?.board.elements.map(\.id), [source.id])
     XCTAssertTrue(model.sceneWorkset(presence: elsewhere).elements.isEmpty)
     let oldGeneration = model.sceneIndexGeneration
 
-    hierarchy = try XCTUnwrap(model.boardHierarchy)
+    hierarchy = try model.store.loadBoard(items: model.store.loadIndex().items)
     let before = source.stamp
     XCTAssertTrue(source.update(source: "Human continuation", worldOrigin: .init(x: 20_000, y: 30_000), actor: model.actorID))
     XCTAssertTrue(hierarchy.upsertElement(source, in: boardA, expected: before, actor: model.actorID))
-    try model.store.saveBoard(hierarchy, items: XCTUnwrap(model.workspace).items)
+    try model.store.saveBoard(hierarchy, items: model.store.loadIndex().items)
     await model.reloadExternalChanges()?.value
     try await waitForIndex(model)
     XCTAssertGreaterThan(model.sceneIndexGeneration, oldGeneration)
     XCTAssertTrue(model.sceneWorkset(presence: original).elements.isEmpty)
     let moved = SessionPresence(boardID: boardA, mode: .board,
       camera: .init(center: .init(x: 20_000, y: 30_000), scale: 0.5), viewport: viewport)
-    XCTAssertEqual(model.sceneWorkset(presence: moved).elements.first?.source, "Human continuation")
+    let movedRead = try await model.performStoreCommand { store in
+      try store.readSceneWindow(boardID: boardA, bounds: NotebookSceneState.bounds(for: moved))
+    }
+    XCTAssertEqual(movedRead.boards.first { $0.id == boardA }?.board.elements.first?.source, "Human continuation")
+    XCTAssertNil(model.sceneIndex?.element(id: source.id, boardID: boardA),
+      "Reading an addressed offscreen owner does not retain the archive in the scene")
     XCTAssertEqual(model.presence?.boardID, boardB, "Preparation does not take control of the person's camera")
 
-    hierarchy = try XCTUnwrap(model.boardHierarchy)
+    hierarchy = try model.store.loadBoard(items: model.store.loadIndex().items)
     XCTAssertEqual(hierarchy.removeElements(ids: [source.id], from: boardA, actor: model.actorID), 1)
-    try model.store.saveBoard(hierarchy, items: XCTUnwrap(model.workspace).items)
+    try model.store.saveBoard(hierarchy, items: model.store.loadIndex().items)
     await model.reloadExternalChanges()?.value
     try await waitForIndex(model)
     XCTAssertTrue(model.sceneWorkset(presence: moved, pinned: [.element(source.id)]).elements.isEmpty,
@@ -154,8 +161,7 @@ final class WorkspaceSceneIndexTests: XCTestCase {
 
   @MainActor
   func testNotebookPageSequenceDoesNotWaitForSpatialPreparation() async throws {
-    let (model, root) = makeModel()
-    defer { try? FileManager.default.removeItem(at: root) }
+    let model = await makeModel()
     let precedingID = try XCTUnwrap(model.workspace?.selectedItemID)
     let itemID = try XCTUnwrap(model.createNotebook(at: .zero))
     await model.finishPendingPersistence()
@@ -166,8 +172,9 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     model.inputGate.beginContact(source: contact)
     let deleted = await model.deleteItem(precedingID)
     XCTAssertTrue(deleted)
-    XCTAssertEqual(model.workspace?.items.first?.id, itemID,
-      "Deleting the preceding owner shifts the current notebook away from its prepared catalog slot")
+    XCTAssertNil(model.itemForDisplay(id: precedingID),
+      "A durably deleted owner cannot be displayed while an unrelated contact delays scene publication")
+    XCTAssertNotNil(model.itemForDisplay(id: itemID))
     for target in 1...3 {
       XCTAssertEqual(model.selectNotebookPage(target, notebookID: itemID), target)
       let current = try XCTUnwrap(model.itemForDisplay(id: itemID))
@@ -188,8 +195,7 @@ final class WorkspaceSceneIndexTests: XCTestCase {
 
   @MainActor
   func testPreparedReplacementWaitsForTheCurrentContactBeforePublishing() async throws {
-    let (model, root) = makeModel()
-    defer { try? FileManager.default.removeItem(at: root) }
+    let model = await makeModel()
     await model.finishPendingPersistence()
     try await waitForIndex(model)
     let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
@@ -215,14 +221,17 @@ final class WorkspaceSceneIndexTests: XCTestCase {
 
   @MainActor
   func testGeometryAndPortalProjectionPublishTogetherAfterTheSameContact() async throws {
-    let (model, root) = makeModel()
-    defer { try? FileManager.default.removeItem(at: root) }
+    let model = await makeModel()
+    func assertSaved(_ phase: String) async {
+      let saved = await model.finishPendingPersistence()
+      XCTAssertTrue(saved, "\(phase): \(model.persistenceFailure ?? "unsuccessful source publication")")
+    }
     let childID = try XCTUnwrap(model.createBoard(at: .zero))
-    await model.finishPendingPersistence()
+    await assertSaved("Create parent portal")
     try await waitForIndex(model)
     XCTAssertTrue(model.enterBoard(childID))
     let itemID = try XCTUnwrap(model.createNotebook(at: .zero))
-    await model.finishPendingPersistence()
+    await assertSaved("Create notebook in child")
     try await waitForIndex(model)
     let oldPortal = try XCTUnwrap(model.scenePortalCamera(boardID: childID))
     let generation = model.sceneIndexGeneration
@@ -237,7 +246,7 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     XCTAssertTrue(model.leaveBoard())
     let expectedPortal = try XCTUnwrap(model.boardHierarchy?.portalCamera(childID))
     XCTAssertNotEqual(expectedPortal, oldPortal)
-    await model.finishPendingPersistence()
+    await assertSaved("Move item and normalize portal during contact")
     try await Task.sleep(for: .milliseconds(100))
     XCTAssertTrue(model.scenePreparationPending)
     XCTAssertEqual(model.sceneIndexGeneration, generation)
@@ -249,13 +258,12 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     XCTAssertGreaterThan(model.sceneIndexGeneration, generation)
     XCTAssertEqual(model.scenePortalCamera(boardID: childID), expectedPortal)
     XCTAssertEqual(model.sceneIndex?.renderedItem(id: itemID, presence: childPresence)?.center, destination)
-    await model.finishPendingPersistence()
+    await assertSaved("Persist completed contact")
   }
 
   @MainActor
   func testLiveSceneMountsVisibleSVGWorksetInsteadOfThousandOffscreenWebViews() async throws {
-    let (model, root) = makeModel()
-    defer { try? FileManager.default.removeItem(at: root) }
+    let model = await makeModel()
     let workspace = try XCTUnwrap(model.workspace)
     let boardID = try XCTUnwrap(model.presence?.boardID)
     let stamp = VersionStamp(counter: 1, actor: model.actorID)
@@ -283,17 +291,20 @@ final class WorkspaceSceneIndexTests: XCTestCase {
       viewport: .init(x: window.bounds.width, y: window.bounds.height))
     model.updatePresence(presence, settled: true)
     window.makeKeyAndVisible()
-    defer { window.isHidden = true }
+    defer { window.isHidden = true; window.rootViewController = nil; model.compositionTiles.cancelPreparation() }
     let deadline = ContinuousClock.now + .seconds(8)
     let workset = model.sceneWorkset(presence: presence)
     XCTAssertEqual(workset.elements.count, 4)
-    while elements.prefix(4).contains(where: {
+    while model.compositionTiles.published == nil || elements.prefix(4).contains(where: {
       SceneRenderResources.shared.image(for: agentElementSnapshotSource($0)) == nil
     }) || !webViews(in: host.view).isEmpty {
       guard ContinuousClock.now < deadline else { break }
       try await Task.sleep(for: .milliseconds(30))
       XCTAssertLessThanOrEqual(webViews(in: host.view).count, 6)
     }
+    let cohort = try XCTUnwrap(model.compositionTiles.published, model.compositionTiles.failure ?? "Whole coverage must be shown before contact")
+    XCTAssertEqual(cohort.rasters.count, cohort.plan.tiles.count)
+    XCTAssertLessThanOrEqual(cohort.plan.liveOwners.count + 1, 8)
     XCTAssertTrue(elements.prefix(4).allSatisfy {
       SceneRenderResources.shared.image(for: agentElementSnapshotSource($0)) != nil
     })
@@ -316,6 +327,7 @@ final class WorkspaceSceneIndexTests: XCTestCase {
       XCTAssertEqual(Set(webViews(in: host.view).map(ObjectIdentifier.init)), identities)
     }
     XCTAssertEqual(model.sceneIndexGeneration, generation)
+    XCTAssertTrue(model.compositionTiles.published === cohort)
     model.updatePresence(try XCTUnwrap(model.presence), settled: true)
     model.selectElement(.spatial(elementID: elements[4].id))
     let pinDeadline = ContinuousClock.now + .seconds(5)
@@ -362,11 +374,12 @@ final class WorkspaceSceneIndexTests: XCTestCase {
   }
 
   @MainActor
-  private func makeModel() -> (NotebookAppModel, URL) {
+  private func makeModel() async -> NotebookAppModel {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
-    return (model, root)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    return model
   }
 
   @MainActor

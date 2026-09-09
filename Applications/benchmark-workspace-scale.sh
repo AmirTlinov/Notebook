@@ -9,9 +9,8 @@ python3 - "$ROOT" "$OUT" <<'PY'
 from pathlib import Path
 import hashlib, json, subprocess, sys
 root, out = map(Path, sys.argv[1:])
-path = 'Applications/Shared/SpatialWorkspaceView.swift'
-baseline = subprocess.check_output(['git', 'show', '231917a:' + path], text=True)
-current = (root / path).read_text()
+baseline = subprocess.check_output(['git', 'show', '231917a:Applications/Shared/SpatialWorkspaceView.swift'], text=True)
+current = (root / 'Applications/Shared/WorkspaceSceneContent.swift').read_text()
 start = baseline.index('enum WorkspaceSceneProjection {')
 end = baseline.index('\n#if os(macOS)', start)
 old_projection = baseline[start:end].replace('WorkspaceSceneProjection', 'BaselineSceneProjection')

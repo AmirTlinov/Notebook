@@ -1,144 +1,115 @@
 import AppKit
 import NotebookCore
-import PencilKit
 import XCTest
 @testable import Notebook
 
 final class MacModelLifecycleTests: XCTestCase {
   @MainActor
-  func testCoherentReadsLeaveTheWatchedDirectoryQuiet() async throws {
+  func testCoherentIPCReadsDoNotCreateDurableChanges() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at:root) }
-    let store = NotebookStore(root:root), actor = UUID()
-    _ = try store.loadOrCreate(actor:actor,pageSize:.init(width:834,height:1194))
-    _ = try store.loadOrCreateSpatialInk(actor:actor)
-    try store.migrateCollaborationStorage()
-    var notifications = 0
-    let watcher = DirectoryWatcher(urls:[root,store.collaborationURL]) { notifications += 1 }
-    watcher.start(); defer { watcher.stop() }
-    for _ in 0..<5 { _ = try store.collaborationSnapshot(); _ = try store.collaborationActions() }
-    try await Task.sleep(for:.milliseconds(250))
-    XCTAssertEqual(notifications,0,"Завершённое чтение сохраняет файловое наблюдение спокойным")
+    let fixture = MacCommandFixture(root: root)
+    retainNotebookUntilTeardown(fixture.model, removing: root)
+    try await fixture.start()
+    let saved = await fixture.model.finishPendingPersistence()
+    XCTAssertTrue(saved)
+    let cursor = try fixture.store.currentChangeCursor()
+    let header = try await fixture.read(.init(kind: .workspaceHeader)).decode(NotebookWorkspaceHeader.self)
+    for _ in 0..<5 {
+      let next = try await fixture.read(.init(kind: .workspaceHeader)).decode(NotebookWorkspaceHeader.self)
+      XCTAssertEqual(next.stamp, header.stamp)
+      _ = try await fixture.read(.init(kind: .actions, limit: 10))
+      _ = try await fixture.read(.init(kind: .contexts, limit: 10))
+    }
+    XCTAssertEqual(try fixture.store.currentChangeCursor(), cursor,
+      "A read does not become another publication or trigger synchronization echo")
+    for name in ["workspace.json", "board.json", "pages", "documents", "spatial-ink.json"] {
+      XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(name).path))
+    }
   }
 
   @MainActor
-  func testIncomingCatalogPreservesIndependentLocalBoardAndPortalEdits() async throws {
-    let root = FileManager.default.temporaryDirectory
-      .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
-
-    let store = NotebookStore(root: root)
-    let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+  func testAtomicIncomingCatalogPreservesIndependentLocalBoardAndPortalEdits() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let fixture = MacCommandFixture(root: root), peer = UUID()
+    retainNotebookUntilTeardown(fixture.model, removing: root)
+    let store = fixture.store, model = fixture.model
+    try await fixture.start()
     let childID = try XCTUnwrap(model.createBoard(at: .zero))
-    model.enterBoard(childID)
+    XCTAssertTrue(model.enterBoard(childID))
     let notebookID = try XCTUnwrap(model.createNotebook(at: .zero))
-    var incomingIndex = try XCTUnwrap(model.workspace)
-    var incomingBoard = try XCTUnwrap(model.boardHierarchy)
-    let actor = UUID()
-    let documentItem = try XCTUnwrap(incomingIndex.createDocument(
-      title: "Remote document",
-      actor: actor
-    ))
-    XCTAssertTrue(incomingBoard.addItem(
-      documentItem.id,
-      to: incomingIndex.rootBoardID,
-      near: .zero,
-      actor: actor
-    ))
+    let created = await model.finishPendingPersistence()
+    XCTAssertTrue(created)
+    let remote = NotebookStore(root: root.appendingPathComponent("peer"))
+    try NotebookPeerFixture.copy(from: store, to: remote, peerID: model.actorID)
+    var incomingIndex = try remote.loadIndex()
+    var incomingBoard = try remote.loadBoard(items: incomingIndex.items)
+    let item = try XCTUnwrap(incomingIndex.createDocument(title: "Remote document", actor: peer))
+    XCTAssertTrue(incomingBoard.addItem(item.id, to: incomingIndex.rootBoardID, near: .zero, actor: peer))
+    try remote.saveDocumentWorkspaceBundle(index: incomingIndex,
+      document: .init(id: item.id, actor: peer, blocks: [.markdown(id: "body", source: "# Delivered")]),
+      state: .init(id: item.id, actor: peer), board: incomingBoard)
+
     let movedCenter = WorldPoint(x: 370, y: -240)
     model.moveItem(notebookID, to: movedCenter)
-    let childPresence = SessionPresence(
-      boardID: childID,
-      mode: .board,
-      camera: SpatialCamera(center: movedCenter, scale: 0.51),
-      viewport: SpatialPoint(x: 834, y: 1_194)
-    )
+    let childPresence = SessionPresence(boardID: childID, mode: .board,
+      camera: .init(center: movedCenter, scale: 0.51), viewport: .init(x: 834, y: 1_194))
     model.updatePresence(childPresence, settled: true)
     XCTAssertTrue(model.leaveBoard())
-    // Selection on exit advances the local catalog. Give the remote catalog
-    // the later selection while keeping its independently captured board.
-    XCTAssertTrue(incomingIndex.selectItem(childID, actor: actor))
-    XCTAssertTrue(incomingIndex.selectItem(documentItem.id, actor: actor))
-    XCTAssertGreaterThan(incomingIndex.stamp, model.workspace!.stamp)
+    let humanSelection = model.presence?.selectedItemID
+    let humanSaved = await model.finishPendingPersistence()
+    XCTAssertTrue(humanSaved)
 
-    model.receivePeerMessage(.board(incomingBoard))
-    model.receivePeerMessage(.document(DocumentDocument(
-      id: documentItem.id,
-      actor: actor,
-      blocks: [.markdown(id: "body", source: "# Delivered")]
-    )))
-    model.receivePeerMessage(.documentState(DocumentStateJournal(
-      id: documentItem.id,
-      actor: actor
-    )))
-    model.receivePeerMessage(.index(incomingIndex))
-
-    let saved = await model.finishPendingPersistence()
-    XCTAssertTrue(saved, model.persistenceFailure ?? "")
-    XCTAssertEqual(model.workspace?.items, incomingIndex.items)
-    XCTAssertEqual(model.workspace?.selectedItemID, incomingIndex.selectedItemID)
-    let published = try store.loadBoard(items: incomingIndex.items)
-    XCTAssertEqual(model.boardHierarchy, published)
+    try await NotebookPeerFixture.deliver(from: remote, to: model, peerID: peer)
+    try await fixture.waitUntil { model.workspace?.item(id: item.id) != nil }
+    let published = try store.loadBoard(items: store.loadIndex().items)
+    XCTAssertEqual(try store.workspaceHeader().itemCount, incomingIndex.items.count)
+    XCTAssertEqual(try store.loadDocument(item.id).blocks.first?.source, "# Delivered")
+    XCTAssertEqual(model.presence?.selectedItemID, humanSelection,
+      "A peer catalogue publication cannot change the human's local selection")
     XCTAssertEqual(published.board(childID)?.focusedCenter(of: notebookID), movedCenter)
     XCTAssertEqual(published.portalCamera(childID), BoardPortalProjection.portalCamera(
-      from: childPresence.camera, viewport: childPresence.viewport
-    ))
+      from: childPresence.camera, viewport: childPresence.viewport))
+    let cursor = try store.currentChangeCursor()
+    try await NotebookPeerFixture.deliver(from: remote, to: model, peerID: peer)
+    XCTAssertEqual(try store.currentChangeCursor(), cursor, "A durable retransmission is idempotent")
   }
 
   @MainActor
-  func testPortalExitMergesAnIndependentBoardEditAlreadyOnDisk() async throws {
-    let root = FileManager.default.temporaryDirectory
-      .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
-
-    let store = NotebookStore(root: root)
-    let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let notebookID = try XCTUnwrap(model.workspace?.selectedItemID)
+  func testPortalExitPreservesAnIndependentIPCBoardEdit() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let fixture = MacCommandFixture(root: root)
+    retainNotebookUntilTeardown(fixture.model, removing: root)
+    let store = fixture.store, model = fixture.model
+    try await fixture.start()
+    let notebookID = try XCTUnwrap(model.presence?.selectedItemID)
+    let boardID = try XCTUnwrap(model.workspace?.rootBoardID)
     let childID = try XCTUnwrap(model.createBoard(at: .zero))
-    model.enterBoard(childID)
-    let creationSaved = await model.finishPendingPersistence()
-    XCTAssertTrue(creationSaved, model.persistenceFailure ?? "")
-    var diskBoard = try XCTUnwrap(model.boardHierarchy)
-    let workspace = try XCTUnwrap(model.workspace)
+    XCTAssertTrue(model.enterBoard(childID))
+    let saved = await model.finishPendingPersistence()
+    XCTAssertTrue(saved)
     let movedCenter = WorldPoint(x: 1_400, y: 320)
-    XCTAssertTrue(diskBoard.moveItem(
-      notebookID,
-      in: workspace.rootBoardID,
-      to: movedCenter,
-      actor: UUID()
-    ))
-    try store.saveBoard(diskBoard, items: workspace.items)
-    model.updatePresence(SessionPresence(
-      boardID: childID,
-      mode: .board,
-      camera: SpatialCamera(center: WorldPoint(x: 90, y: 120), scale: 0.7),
-      viewport: SpatialPoint(x: 834, y: 1_194)
-    ), settled: true)
-
+    try await fixture.move(notebookID, boardID: boardID, to: movedCenter)
+    model.updatePresence(.init(boardID: childID, mode: .board,
+      camera: .init(center: .init(x: 90, y: 120), scale: 0.7), viewport: .init(x: 834, y: 1_194)), settled: true)
     XCTAssertTrue(model.leaveBoard())
-
-    await model.finishPendingPersistence()
-    let published = try store.loadBoard(items: workspace.items)
-    XCTAssertEqual(model.boardHierarchy, published)
-    XCTAssertEqual(
-      published.board(workspace.rootBoardID)?.focusedCenter(of: notebookID),
-      movedCenter
-    )
+    let exitSaved = await model.finishPendingPersistence()
+    XCTAssertTrue(exitSaved, model.persistenceFailure ?? "")
+    XCTAssertEqual(try store.readBoardItem(notebookID)?.board.focusedCenter(of: notebookID), movedCenter)
+    let published = try XCTUnwrap(store.readBoardNodeHeader(childID))
+    XCTAssertEqual(published.portalCamera, BoardPortalProjection.portalCamera(
+      from: .init(center: .init(x: 90, y: 120), scale: 0.7), viewport: .init(x: 834, y: 1_194)))
   }
-
   @MainActor
   func testElementEditingSessionIsTheSingleTransientOwner() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
 
     let model = NotebookAppModel(
       store: NotebookStore(root: root),
       startsNearbySync: false
     )
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let page = try XCTUnwrap(model.activePage)
     let pageReference = EditableElementReference.page(
       pageID: page.id,
@@ -183,116 +154,60 @@ final class MacModelLifecycleTests: XCTestCase {
   }
 
   @MainActor
-  func testPersonCanMoveAndRemoveAgentElements() async throws {
-    let root = FileManager.default.temporaryDirectory
-      .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
-
-    let store = NotebookStore(root: root)
-    let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+  func testPersonCanMoveAndRemoveIPCAuthoredElements() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let fixture = MacCommandFixture(root: root)
+    retainNotebookUntilTeardown(fixture.model, removing: root)
+    let store = fixture.store, model = fixture.model
+    try await fixture.start(showingPage: true)
     let page = try XCTUnwrap(model.activePage)
-    let remoteActor = UUID()
-    let pageElement = AgentElement(
-      id: "shared-shape",
-      kind: .web,
-      frame: PageRect(x: 100, y: 120, width: 240, height: 180),
-      source: "",
-      html: "<svg></svg>"
-    )
-    model.receivePeerMessage(
-      .elements(
-        pageID: page.id,
-        elements: [pageElement],
-        stamp: VersionStamp(counter: 1, actor: remoteActor),
-        collaboration: nil
-      )
-    )
-
-    await model.finishPendingPersistence()
-    XCTAssertTrue(
-      model.transformPageElement(
-        pageID: page.id,
-        elementID: pageElement.id,
-        by: SpatialPoint(x: 10_000, y: -10_000)
-      )
-    )
-    let movedPageElement = try XCTUnwrap(
-      model.pages[page.id]?.elements.first
-    )
-    XCTAssertEqual(movedPageElement.frame.x, page.size.width - 240)
-    XCTAssertEqual(movedPageElement.frame.y, 0)
-    let source = movedPageElement.source, state = movedPageElement.state
-    XCTAssertTrue(model.transformPageElement(pageID: page.id, elementID: pageElement.id, by: .zero, resizeBy: .init(x: -40, y: 80)))
+    let pageTarget = CollaborationTarget(kind: .page, id: page.id)
+    try await fixture.apply([.init(kind: .insertElement, target: pageTarget, id: "shared-shape", values: [
+      "kind": .string("web"), "source": .string(""), "html": .string("<svg></svg>"),
+      "frame": try .encode(PageRect(x: 100, y: 120, width: 240, height: 180))])])
+    try await fixture.waitUntil { model.pages[page.id]?.elements.first?.id == "shared-shape" }
+    XCTAssertTrue(model.transformPageElement(pageID: page.id, elementID: "shared-shape", by: .init(x: 10_000, y: -10_000)))
+    let moved = try XCTUnwrap(model.pages[page.id]?.elements.first)
+    XCTAssertEqual(moved.frame.x, page.size.width - 240)
+    XCTAssertEqual(moved.frame.y, 0)
+    XCTAssertTrue(model.transformPageElement(pageID: page.id, elementID: moved.id, by: .zero, resizeBy: .init(x: -40, y: 80)))
     let resized = try XCTUnwrap(model.pages[page.id]?.elements.first)
     XCTAssertEqual(resized.frame.width, 200)
     XCTAssertEqual(resized.frame.height, 260)
-    XCTAssertEqual(resized.source, source)
-    XCTAssertEqual(resized.state, state)
+    XCTAssertEqual(resized.source, moved.source)
+    XCTAssertEqual(resized.state, moved.state)
+    let saved = await model.finishPendingPersistence()
+    XCTAssertTrue(saved)
 
-
-    let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
-    var board = try XCTUnwrap(model.boardHierarchy)
+    let itemID = try XCTUnwrap(model.presence?.selectedItemID)
     let boardID = try XCTUnwrap(model.presence?.boardID)
-    let coverElement = SpatialElement(
-      id: "shared-cover-shape",
-      surface: .cover(itemID),
-      kind: .web,
-      frame: SpatialRect(x: 90, y: 110, width: 260, height: 190),
-      source: "",
-      html: "<svg></svg>",
-      stamp: VersionStamp(counter: 0, actor: remoteActor)
-    )
-    XCTAssertTrue(
-      board.upsertElement(
-        coverElement,
-        in: boardID,
-        expected: nil,
-        actor: remoteActor
-      )
-    )
-    model.receivePeerMessage(.board(board))
-    await model.finishPendingPersistence()
-
-    XCTAssertTrue(
-      model.transformSpatialElement(
-        elementID: coverElement.id,
-        by: SpatialPoint(x: -10_000, y: 10_000)
-      )
-    )
-    let movedCoverElement = try XCTUnwrap(
-      model.board?.elements.first(where: { $0.id == coverElement.id })
-    )
-    XCTAssertEqual(movedCoverElement.frame.x, 0)
-    XCTAssertEqual(
-      movedCoverElement.frame.y,
-      WorkspaceItemGeometry.notebook.height - coverElement.frame.height
-    )
-
-    XCTAssertTrue(
-      model.removePageElement(pageID: page.id, elementID: pageElement.id)
-    )
+    let coverTarget = CollaborationTarget(kind: .cover, id: itemID, boardID: boardID)
+    try await fixture.apply([.init(kind: .insertElement, target: coverTarget, id: "shared-cover-shape", values: [
+      "kind": .string("web"), "source": .string(""), "html": .string("<svg></svg>"),
+      "frame": try .encode(SpatialRect(x: 90, y: 110, width: 260, height: 190))])])
+    try await fixture.waitUntil { model.board?.elements.contains(where: { $0.id == "shared-cover-shape" }) == true }
+    XCTAssertTrue(model.transformSpatialElement(elementID: "shared-cover-shape", by: .init(x: -10_000, y: 10_000)))
+    let movedCover = try XCTUnwrap(model.board?.elements.first(where: { $0.id == "shared-cover-shape" }))
+    XCTAssertEqual(movedCover.frame.x, 0)
+    XCTAssertEqual(movedCover.frame.y, WorkspaceItemGeometry.notebook.height - 190)
+    XCTAssertTrue(model.removePageElement(pageID: page.id, elementID: moved.id))
+    XCTAssertTrue(model.removeSpatialElement(elementID: movedCover.id))
+    let removed = await model.finishPendingPersistence()
+    XCTAssertTrue(removed)
     XCTAssertTrue(model.pages[page.id]?.elements.isEmpty == true)
-    XCTAssertTrue(model.removeSpatialElement(elementID: coverElement.id))
-    XCTAssertTrue(model.board?.elements.isEmpty == true)
-    await model.finishPendingPersistence()
     XCTAssertTrue(try store.loadPage(page.id).elements.isEmpty)
-    XCTAssertTrue(
-      try XCTUnwrap(
-        store.loadBoard(items: model.workspace!.items).board(boardID)
-      ).elements.isEmpty
-    )
+    XCTAssertNil(try store.readSpatialElement(boardID: boardID, elementID: movedCover.id))
   }
 
   @MainActor
   func testSettledPageReadoutUsesTheVerifiedPageRaster() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
 
-    let store = NotebookStore(root: root)
-    let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let fixture = MacCommandFixture(root: root)
+    retainNotebookUntilTeardown(fixture.model, removing: root)
+    let store = fixture.store, model = fixture.model
+    try await fixture.start(showingPage: true)
     let page = try XCTUnwrap(model.activePage)
     let clock = ContinuousClock()
     let deadline = clock.now + .seconds(4)
@@ -316,7 +231,15 @@ final class MacModelLifecycleTests: XCTestCase {
       return XCTFail("Текущий вид должен принадлежать листу")
     }
     XCTAssertEqual(revision.pageID, page.id)
-    XCTAssertEqual(snapshotHash, pageVision.previewPNG_SHA256)
+    let composed = try await PageCompositionRenderer.render(page) { _ in
+      throw CocoaError(.featureUnsupported)
+    }
+    XCTAssertEqual(snapshotHash, PageVisionRenderer.sha256(composed.png),
+      "The current surface certifies the common physical composition, not the separately encoded ink-map preview")
+    XCTAssertEqual(pageVision.pageID, page.id)
+    XCTAssertEqual(pageVision.drawingStamp, page.drawingStamp)
+    XCTAssertEqual(pageVision.previewPNG_SHA256,
+      PageVisionRenderer.sha256(try Data(contentsOf: store.previewURL(page.id))))
 
     let data = try Data(contentsOf: store.currentViewPreviewURL)
     let bitmap = try XCTUnwrap(NSBitmapImageRep(data: data))
@@ -337,216 +260,83 @@ final class MacModelLifecycleTests: XCTestCase {
   }
 
   @MainActor
-  func testVisualReadoutPublishesWithoutAMountedWindow() async throws {
-    let root = FileManager.default.temporaryDirectory
-      .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
-
-    let store = NotebookStore(root: root)
-    let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
-
-    let clock = ContinuousClock()
-    var deadline = clock.now + .seconds(3)
-    while !FileManager.default.fileExists(
-      atPath: store.currentViewRevisionURL.path
-    ), clock.now < deadline {
-      try await Task.sleep(for: .milliseconds(20))
-    }
-
-    var receipt = try JSONDecoder().decode(
-      CurrentViewReceipt.self,
-      from: Data(contentsOf: store.currentViewRevisionURL)
-    )
-    XCTAssertEqual(receipt.workspaceStamp, model.workspace?.stamp)
-    XCTAssertEqual(receipt.presence, model.presence)
-    XCTAssertEqual(
-      receipt.renderViewport,
-      SpatialPoint(
-        x: NotebookAppModel.defaultPageSize.width,
-        y: NotebookAppModel.defaultPageSize.height
-      )
-    )
-
-    var changed = try XCTUnwrap(model.boardHierarchy)
-    let workspace = try XCTUnwrap(model.workspace)
-    let boardID = try XCTUnwrap(model.presence?.boardID)
-    let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
-    XCTAssertTrue(
-      changed.moveItem(
-        itemID,
-        in: boardID,
-        to: WorldPoint(x: 700, y: 900),
-        actor: UUID()
-      )
-    )
-    try store.saveBoard(changed, items: workspace.items)
-    deadline = clock.now + .seconds(3)
-    repeat {
-      try await Task.sleep(for: .milliseconds(20))
-      receipt = try JSONDecoder().decode(
-        CurrentViewReceipt.self,
-        from: Data(contentsOf: store.currentViewRevisionURL)
-      )
-    } while receipt.boardRevision != changed.revision && clock.now < deadline
-
-    XCTAssertEqual(model.boardHierarchy?.stamp, changed.stamp)
-    XCTAssertEqual(receipt.boardRevision, changed.revision)
+  func testVisualReadoutPublishesIPCChangesWithoutAMountedWindow() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let fixture = MacCommandFixture(root: root)
+    retainNotebookUntilTeardown(fixture.model, removing: root)
+    let store = fixture.store, model = fixture.model
+    try await fixture.start(showingPage: true)
+    try await fixture.waitUntil(seconds: 3) { (try? store.loadCurrentViewReceipt()) != nil }
+    let original = try XCTUnwrap(store.loadCurrentViewReceipt())
+    XCTAssertEqual(original.workspaceStamp, model.workspace?.stamp)
+    XCTAssertEqual(original.presence, model.presence)
+    XCTAssertEqual(original.renderViewport, .init(x: NotebookAppModel.defaultPageSize.width, y: NotebookAppModel.defaultPageSize.height))
+    let itemID = try XCTUnwrap(model.presence?.selectedItemID), boardID = try XCTUnwrap(model.presence?.boardID)
+    try await fixture.move(itemID, boardID: boardID, to: .init(x: 700, y: 900))
+    let revision = try XCTUnwrap(store.workspaceHeader().boardRevision)
+    try await fixture.waitUntil(seconds: 3) { (try? store.loadCurrentViewReceipt())?.boardRevision == revision }
+    XCTAssertNotEqual(revision, original.boardRevision)
+    XCTAssertEqual(try store.readBoardItem(itemID)?.board.focusedCenter(of: itemID), .init(x: 700, y: 900))
   }
 
   @MainActor
-  func testMCPStyleFileChangeReloadsWithoutAMountedWindow() async throws {
-    let root = FileManager.default.temporaryDirectory
-      .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
-
-    let store = NotebookStore(root: root)
-    let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
-
-    var changed = try XCTUnwrap(model.boardHierarchy)
-    let workspace = try XCTUnwrap(model.workspace)
-    let boardID = try XCTUnwrap(model.presence?.boardID)
-    let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
-    let center = WorldPoint(x: 740, y: 960)
-    XCTAssertTrue(
-      changed.moveItem(itemID, in: boardID, to: center, actor: UUID())
-    )
-    try store.saveBoard(changed, items: workspace.items)
-
-    let clock = ContinuousClock()
-    let deadline = clock.now + .seconds(2)
-    while model.boardHierarchy?.stamp != changed.stamp,
-      clock.now < deadline
-    {
-      try await Task.sleep(for: .milliseconds(20))
-    }
-
-    XCTAssertEqual(model.boardHierarchy?.stamp, changed.stamp)
-    XCTAssertEqual(model.board?.focusedCenter(of: itemID), center)
+  func testIPCCommitReloadsWithoutAMountedWindow() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let fixture = MacCommandFixture(root: root), center = WorldPoint(x: 740, y: 960)
+    retainNotebookUntilTeardown(fixture.model, removing: root)
+    let model = fixture.model
+    try await fixture.start()
+    let boardID = try XCTUnwrap(model.presence?.boardID), itemID = try XCTUnwrap(model.presence?.selectedItemID)
+    try await fixture.move(itemID, boardID: boardID, to: center)
+    try await fixture.waitUntil { model.board?.focusedCenter(of: itemID) == center }
+    XCTAssertEqual(try fixture.store.readBoardItem(itemID)?.board.focusedCenter(of: itemID), center)
   }
 
   @MainActor
-  func testVisualReadoutReachesFinalPageAfterABurst() async throws {
-    let root = FileManager.default.temporaryDirectory
-      .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
-
-    let store = NotebookStore(root: root)
-    let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let page = try XCTUnwrap(model.activePage)
-    let actor = UUID()
-    var finalStamp = page.drawingStamp
-
-    for counter in 1 ... 24 {
-      finalStamp = VersionStamp(counter: UInt64(counter), actor: actor)
-      let points = [
-        PKStrokePoint(
-          location: CGPoint(x: 20, y: 20),
-          timeOffset: 0,
-          size: CGSize(width: 4, height: 4),
-          opacity: 1,
-          force: 1,
-          azimuth: 0,
-          altitude: .pi / 2
-        ),
-        PKStrokePoint(
-          location: CGPoint(x: 40 + counter, y: 40),
-          timeOffset: 0.1,
-          size: CGSize(width: 4, height: 4),
-          opacity: 1,
-          force: 1,
-          azimuth: 0,
-          altitude: .pi / 2
-        ),
-      ]
-      let drawing = PKDrawing(strokes: [
-        PKStroke(
-          ink: PKInk(.monoline, color: .black),
-          path: PKStrokePath(controlPoints: points, creationDate: Date())
-        ),
-      ])
-      model.receivePeerMessage(.drawing(
-        pageID: page.id,
-        data: try PageInkMigration.importDrawing(drawing.dataRepresentation(), size: page.size).dataRepresentation(),
-        stamp: finalStamp
-      ))
-      await Task.yield()
+  func testVisualReadoutReachesFinalPageAfterAnIPCInkBurst() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let fixture = MacCommandFixture(root: root)
+    retainNotebookUntilTeardown(fixture.model, removing: root)
+    let store = fixture.store, model = fixture.model
+    try await fixture.start(showingPage: true)
+    let page = try XCTUnwrap(model.activePage), target = CollaborationTarget(kind: .page, id: try XCTUnwrap(model.activePage).id)
+    for counter in 1...24 {
+      try await fixture.apply([.init(kind: .appendInkStroke, target: target, id: UUID().uuidString, values: [
+        "width": .number(4), "points": .array([
+          .object(["x": .number(20), "y": .number(20)]),
+          .object(["x": .number(Double(40 + counter)), "y": .number(40)])])])])
     }
-
-    let clock = ContinuousClock()
-    let deadline = clock.now + .seconds(5)
-    var receipt: PageVisionReceipt?
-    repeat {
-      try await Task.sleep(for: .milliseconds(20))
-      receipt = try? JSONDecoder().decode(
-        PageVisionReceipt.self,
-        from: Data(contentsOf: store.previewVisionReceiptURL(page.id))
-      )
-    } while receipt?.drawingStamp != finalStamp && clock.now < deadline
-
-    XCTAssertEqual(model.pages[page.id]?.drawingStamp, finalStamp)
-    XCTAssertEqual(receipt?.drawingStamp, finalStamp)
+    let final = try store.loadPage(page.id)
+    XCTAssertEqual(try PageInkDrawing.decode(final.drawingData).activeActions.count, 24)
+    try await fixture.waitUntil(seconds: 5) {
+      (try? store.loadPageVisionReceipt(page.id))?.drawingStamp == final.drawingStamp
+    }
+    XCTAssertEqual(model.pages[page.id]?.drawingStamp, final.drawingStamp)
   }
 
   @MainActor
-  func testMCPDocumentBundleAndPatchReloadWithoutAMountedWindow() async throws {
-    let root = FileManager.default.temporaryDirectory
-      .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
-
-    let store = NotebookStore(root: root)
-    let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let actor = UUID()
-    var workspace = try XCTUnwrap(model.workspace)
-    var board = try XCTUnwrap(model.boardHierarchy)
-    let boardID = try XCTUnwrap(model.presence?.boardID)
-    let item = try XCTUnwrap(
-      workspace.createDocument(title: "MCP", actor: actor)
-    )
-    XCTAssertTrue(
-      board.addItem(item.id, to: boardID, near: .zero, actor: actor)
-    )
-    var document = DocumentDocument(
-      id: item.id,
-      actor: actor,
-      blocks: [.markdown(id: "body", source: "# Первый текст")]
-    )
-    let state = DocumentStateJournal(id: item.id, actor: actor)
-    try store.saveDocumentWorkspaceBundle(
-      index: workspace,
-      document: document,
-      state: state,
-      board: board
-    )
-
-    let clock = ContinuousClock()
-    var deadline = clock.now + .seconds(2)
-    while model.documents[item.id]?.blocks.first?.source != "# Первый текст",
-      clock.now < deadline
-    {
-      try await Task.sleep(for: .milliseconds(20))
-    }
-    XCTAssertEqual(model.workspace?.selectedItemID, item.id)
-    XCTAssertEqual(model.documents[item.id]?.blocks.first?.source, "# Первый текст")
-
-    XCTAssertTrue(document.replaceBlockSource(
-      id: "body",
-      source: "# Изменено агентом",
-      actor: actor
-    ))
-    try store.saveDocument(document)
-    deadline = clock.now + .seconds(2)
-    while model.documents[item.id]?.contentStamp != document.contentStamp,
-      clock.now < deadline
-    {
-      try await Task.sleep(for: .milliseconds(20))
-    }
-    XCTAssertEqual(
-      model.documents[item.id]?.blocks.first?.source,
-      "# Изменено агентом"
-    )
+  func testIPCDocumentBundleAndPatchPreserveHumanSelectionWithoutAMountedWindow() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let fixture = MacCommandFixture(root: root)
+    retainNotebookUntilTeardown(fixture.model, removing: root)
+    let model = fixture.model, store = fixture.store
+    try await fixture.start()
+    let human = model.presence
+    let boardID = try XCTUnwrap(human?.boardID), documentID = UUID()
+    try await fixture.apply([.init(kind: .createDocument, target: .init(kind: .board, id: boardID), id: documentID.uuidString, values: [
+      "title": .string("MCP"), "center": try .encode(WorldPoint.zero), "paperSize": .string("a4"),
+      "blocks": try .encode([DocumentBlock.markdown(id: "body", source: "# Первый текст")])])])
+    try await fixture.waitUntil { model.workspace?.item(id: documentID) != nil }
+    XCTAssertEqual(try store.loadDocument(documentID).blocks.first?.source, "# Первый текст")
+    XCTAssertEqual(model.presence?.selectedItemID, human?.selectedItemID)
+    XCTAssertEqual(model.presence?.camera, human?.camera)
+    model.selectItem(documentID)
+    let selected = await model.finishPendingPersistence()
+    XCTAssertTrue(selected)
+    try await fixture.apply([.init(kind: .updateBlock, target: .init(kind: .document, id: documentID), id: "body",
+      values: ["source": .string("# Изменено агентом")])])
+    try await fixture.waitUntil { model.documents[documentID]?.blocks.first?.source == "# Изменено агентом" }
+    XCTAssertEqual(try store.loadDocument(documentID).blocks.first?.source, "# Изменено агентом")
+    XCTAssertEqual(model.presence?.selectedItemID, documentID)
   }
 }

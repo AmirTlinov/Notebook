@@ -1,38 +1,28 @@
 import Foundation
 import NotebookCore
 
-/// A completed disk read is prepared away from input, then accepted only while
-/// its captured in-memory version is still current. NotebookStore remains the
-/// sole transaction and merge owner.
+/// A durable-change notification reads the current scene and a bounded history
+/// page. It never merges a partial scene back into the authoritative store.
 struct NotebookDiskRefresh: Sendable {
-  let content: CollaborationContent
-  let contentChanged: Bool
-  let publication: CollaborationContent
+  let scene: NotebookSceneState
   let actions: [CollaborationReceipt]
   let contexts: SharedContextSnapshot
   let delivery: [DeviceActionReceipt]
-  let documentDrafts: [DocumentEditingSession]
 
-  static func prepare(store: NotebookStore, local: CollaborationContent?, incoming: [CollaborationEnvelope], receivingDeviceID: UUID?) throws -> Self {
-    let content: CollaborationContent
-    if !incoming.isEmpty {
-      let envelope = try incoming.reduce(CollaborationEnvelope()) { try $0.merging($1) }
-      content = try store.receiveCollaboration(envelope, local: local)
-        ?? store.mergeCollaborationContent(nil, local: local)
-    } else {
-      content = try store.mergeCollaborationContent(nil, local: local)
-    }
-    let actions = try store.collaborationActions()
-    var delivery = try store.deviceActionReceipts()
-    if let deviceID = receivingDeviceID {
-      for action in actions where !delivery.contains(where: { $0.id == action.id && $0.revisions == action.revisions }) {
-        let receipt = DeviceActionReceipt(id: action.id, deviceID: deviceID, revisions: action.revisions)
-        try store.saveDeviceActionReceipt(receipt)
-        delivery.removeAll { $0.id == receipt.id }; delivery.append(receipt)
+  static func prepare(store: NotebookStore, presence: SessionPresence,
+    receivingDeviceID: UUID?) throws -> Self {
+    if let receivingDeviceID {
+      let actions = try store.collaborationActions(afterID: nil, limit: 64)
+      let delivered = try store.deviceActionReceipts(actionIDs: actions.map(\.id))
+      for action in actions where !delivered.contains(where: { $0.id == action.id && $0.revisions == action.revisions }) {
+        try store.saveDeviceActionReceipt(.init(id: action.id, deviceID: receivingDeviceID, revisions: action.revisions))
       }
     }
-    return try .init(content: content, contentChanged: content != local,
-      publication: try content.publication(since: local), actions: actions,
-      contexts: store.sharedContexts(), delivery: delivery, documentDrafts: store.documentEditingSessions())
+    return try store.readTransaction { store in
+      let actions = try store.collaborationActions(afterID: nil, limit: 64)
+      return try Self(scene: NotebookSceneState.read(store: store, presence: presence, viewport: presence.viewport),
+        actions: actions, contexts: store.sharedContexts(contextID: nil, limit: 64),
+        delivery: store.deviceActionReceipts(actionIDs: actions.map(\.id)))
+    }
   }
 }

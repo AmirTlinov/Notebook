@@ -34,11 +34,11 @@ final class WorkspaceAppearanceTests: XCTestCase {
   }
 
   @MainActor
-  func testCoverMaterialsKeepStableIdentityAndReadablePencil() throws {
+  func testCoverMaterialsKeepStableIdentityAndReadablePencil() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: NotebookStore(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     var ids: [NotebookCoverPalette: UUID] = [:]
     for value in 1...200 {
       let id = UUID(uuidString: String(format: "7E7A4000-0000-4000-8000-%012d", value))!
@@ -77,26 +77,39 @@ final class WorkspaceAppearanceTests: XCTestCase {
   func testDocumentModelRestoresThePaperFitAfterWindowRotation() async throws {
     for paper in DocumentPaperSize.allCases {
       let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-      defer { try? FileManager.default.removeItem(at: root) }
       let store = NotebookStore(root: root)
       let model = NotebookAppModel(store: store, startsNearbySync: false)
-      model.start(pageSize: NotebookAppModel.defaultPageSize)
+      let sizes = [PageSize(width: 1_366, height: 1_024), NotebookAppModel.defaultPageSize]
+      let restoredModels = sizes.map { _ in NotebookAppModel(store: store, startsNearbySync: false) }
+      let models = [model] + restoredModels
+      addTeardownBlock { @MainActor in
+        var allStopped = true
+        for owner in models {
+          let stopped = await owner.shutdown()
+          allStopped = stopped && allStopped
+        }
+        XCTAssertTrue(allStopped, "Every restored model must drain before removing their shared store")
+        guard allStopped else { return }
+        try FileManager.default.removeItem(at: root)
+      }
+      await model.start(pageSize: NotebookAppModel.defaultPageSize)
       let id = try XCTUnwrap(model.createDocument(at: .zero, paperSize: paper))
       let geometry = WorkspaceItemGeometry.document(paper)
       let portrait = SpatialPoint(x: 834, y: 1_194)
       model.updatePresence(SessionPresence(mode: .document,
         camera: SpatialCamera(scale: geometry.fitScale(viewport: portrait)),
         viewport: portrait, focusedItemID: id, openProgress: 1), settled: true)
-      let creationSaved = await model.finishPendingPersistence()
+      let creationSaved = await model.shutdown()
       XCTAssertTrue(creationSaved, model.persistenceFailure ?? "")
-      for size in [PageSize(width: 1_366, height: 1_024), NotebookAppModel.defaultPageSize] {
-        let restored = NotebookAppModel(store: store, startsNearbySync: false)
-        restored.start(pageSize: size)
+      guard creationSaved else { return }
+      for (size, restored) in zip(sizes, restoredModels) {
+        await restored.start(pageSize: size)
         XCTAssertEqual(restored.itemGeometry(id), geometry)
         let presence = try XCTUnwrap(restored.presence)
         XCTAssertEqual(presence.camera.scale, geometry.fitScale(viewport: SpatialPoint(x: size.width, y: size.height)), accuracy: 1e-12)
-        let restoredSaved = await restored.finishPendingPersistence()
+        let restoredSaved = await restored.shutdown()
         XCTAssertTrue(restoredSaved)
+        guard restoredSaved else { return }
       }
     }
   }

@@ -24,16 +24,6 @@ enum PageVisionRenderer {
   private static let detailOverlapCells = 2
   private static let visibleAlphaThreshold: UInt8 = 1
 
-  /// Current-view composition needs paper and ink, not the reading map,
-  /// contrast pass, crops and their PNGs.
-  static func faithfulPNG(_ page: PageDocument) throws -> Data {
-    let pixels = PageVisionPixelSize(width: max(1, Int((page.size.width * scale).rounded())),
-      height: max(1, Int((page.size.height * scale).rounded())))
-    let bounds = NSRect(x: 0, y: 0, width: page.size.width, height: page.size.height)
-    let image = try drawingImage(page, bounds: bounds)
-    return try png(bitmap(size: page.size, pixels: pixels) { drawPaper(in: bounds); image?.draw(in: bounds) })
-  }
-
   static func render(_ page: PageDocument) throws -> PageVisionRender {
     let pixelSize = PageVisionPixelSize(
       width: max(1, Int((page.size.width * scale).rounded())),

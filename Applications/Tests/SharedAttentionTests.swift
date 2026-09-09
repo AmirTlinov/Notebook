@@ -6,19 +6,31 @@ final class SharedAttentionTests: XCTestCase {
   @MainActor
   func testReceivedCatalogKeepsThePhysicalReadersSelection() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at:root) }
     let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false)
-    model.start(pageSize:NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize)
     let original = try XCTUnwrap(model.workspace)
-    let presence = SessionPresence(boardID:original.rootBoardID,mode:.page,
+    var presence = SessionPresence(boardID:original.rootBoardID,mode:.page,
       camera:.init(center:try XCTUnwrap(model.board?.focusedCenter(of:original.selectedItemID)),scale:1),
       viewport:.init(x:834,y:1194),focusedItemID:original.selectedItemID,openProgress:1)
+    presence = presence.selecting(itemID: model.presence?.selectedItemID, pageID: model.presence?.notebookPageID)
     model.updatePresence(presence,settled:true)
     let newItem = try XCTUnwrap(model.createNotebook(at:.init(x:1600,y:0)))
     model.selectItem(original.selectedItemID)
     var remote = try XCTUnwrap(model.collaborationContent)
     XCTAssertTrue(remote.workspace.selectItem(newItem,actor:UUID()))
-    model.receivePeerMessage(.collaboration(.init(content:remote)))
+    let encoded = try JSONEncoder().encode(remote.workspace)
+    let values = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    XCTAssertNil(values["selectedItemID"])
+    XCTAssertNil(values["selectedPageID"])
+    let remoteRoot = root.appendingPathComponent("peer")
+    let peer = NotebookStore(root: remoteRoot), peerID = UUID()
+    await model.finishPendingPersistence()
+    try NotebookPeerFixture.copy(from: model.store, to: peer, peerID: model.actorID)
+    let remotePresence = try XCTUnwrap(model.presence).selecting(itemID: newItem,
+      pageID: remote.workspace.selectedPageID)
+    try peer.savePresence(remotePresence)
+    try await NotebookPeerFixture.deliver(from: peer, to: model, peerID: peerID)
     let saved = await model.finishPendingPersistence()
     XCTAssertTrue(saved, model.persistenceFailure ?? "")
     XCTAssertEqual(model.workspace?.selectedItemID,original.selectedItemID)
@@ -29,16 +41,18 @@ final class SharedAttentionTests: XCTestCase {
   @MainActor
   func testReferenceTracksItsPageWhenNotebookMovesAndSourceChanges() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at:root) }
     let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false)
-    model.start(pageSize:NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize)
     let workspace = try XCTUnwrap(model.workspace), page = try XCTUnwrap(model.activePage)
     let center = try XCTUnwrap(model.board?.focusedCenter(of:workspace.selectedItemID))
-    let presence = SessionPresence(boardID:workspace.rootBoardID,mode:.page,camera:.init(center:center,scale:1),
+    var presence = SessionPresence(boardID:workspace.rootBoardID,mode:.page,camera:.init(center:center,scale:1),
       viewport:.init(x:834,y:1194),focusedItemID:workspace.selectedItemID,openProgress:1)
+    presence = presence.selecting(itemID: model.presence?.selectedItemID, pageID: model.presence?.notebookPageID)
     model.updatePresence(presence,settled:true)
     try await waitForScene(model)
-    let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start:.init(x:100,y:100),end:.init(x:220,y:200),model:model,presence:presence))
+    let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start:.init(x:100,y:100),end:.init(x:220,y:200),model:model,presence:presence,
+      cohort: XCTUnwrap(model.compositionTiles.published)))
     let prepared = try await Task.detached { try selection.resolvedReferences() }.value
     let reference = try XCTUnwrap(prepared.first)
     XCTAssertEqual(reference.target,.init(kind:.page,id:page.id))
@@ -63,18 +77,19 @@ final class SharedAttentionTests: XCTestCase {
   @MainActor
   func testDeliveryAndDisplayRequireDifferentEvidence() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at:root) }
     let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false)
-    model.start(pageSize:NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize)
     let page = try XCTUnwrap(model.activePage), workspace = try XCTUnwrap(model.workspace)
     let target = CollaborationTarget(kind:.page,id:page.id)
     let action = CollaborationAction(summary:"Подпись",expected:[.init(target:target,revision:page.agentStamp.revision)],operations:[
       .init(kind:.insertElement,target:target,id:"caption",values:["kind":.string("web"),"source":.string("<p>Meaning</p>"),"frame":.object(["x":.number(300),"y":.number(80),"width":.number(200),"height":.number(80)])])])
-    let receipt = try model.store.applyCollaborationAction(action,actor:UUID())
-    model.receivePeerMessage(.collaboration(.init(content:try model.store.collaborationContent(),actions:[receipt])))
+    _ = try model.store.applyCollaborationAction(action,actor:UUID())
+    await model.reloadExternalChanges()?.value
     await model.finishPendingPersistence()
     XCTAssertFalse(try XCTUnwrap(model.store.deviceActionReceipts().first).displayComplete)
-    let presence = SessionPresence(boardID:workspace.rootBoardID,mode:.page,camera:.init(center:try XCTUnwrap(model.board?.focusedCenter(of:workspace.selectedItemID)),scale:1),viewport:.init(x:834,y:1194),focusedItemID:workspace.selectedItemID,openProgress:1)
+    var presence = SessionPresence(boardID:workspace.rootBoardID,mode:.page,camera:.init(center:try XCTUnwrap(model.board?.focusedCenter(of:workspace.selectedItemID)),scale:1),viewport:.init(x:834,y:1194),focusedItemID:workspace.selectedItemID,openProgress:1)
+    presence = presence.selecting(itemID: model.presence?.selectedItemID, pageID: model.presence?.notebookPageID)
     model.updatePresence(presence,settled:true)
     try await waitForScene(model)
     model.confirmVisibleActions(presence:presence)
@@ -92,18 +107,20 @@ final class SharedAttentionTests: XCTestCase {
   @MainActor
   func testOneAreaKeepsReferencesToSeveralPhysicalOwners() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let first = try XCTUnwrap(model.workspace?.selectedItemID)
     model.moveItem(first, to: .zero)
     let second = try XCTUnwrap(model.createNotebook(at: .init(x: 1100, y: 0)))
     let workspace = try XCTUnwrap(model.workspace)
-    let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
+    var presence = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
       camera: .init(center: .init(x: 550, y: 0), scale: 0.3), viewport: .init(x: 834, y: 1194))
+    presence = presence.selecting(itemID: model.presence?.selectedItemID, pageID: model.presence?.notebookPageID)
     model.updatePresence(presence, settled: true)
     try await waitForScene(model)
-    let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start: .init(x: 80, y: 350), end: .init(x: 760, y: 850), model: model, presence: presence))
+    let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start: .init(x: 80, y: 350), end: .init(x: 760, y: 850), model: model, presence: presence,
+      cohort: XCTUnwrap(model.compositionTiles.published)))
     let references = try await Task.detached { try selection.resolvedReferences() }.value
     XCTAssertTrue(references.contains { $0.target.id == first && $0.target.kind == .cover })
     XCTAssertTrue(references.contains { $0.target.id == second && $0.target.kind == .cover })
@@ -121,9 +138,9 @@ final class SharedAttentionTests: XCTestCase {
   @MainActor
   func testOverviewDoesNotAcknowledgeDetailedAgentResultAsShown() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     model.moveItem(try XCTUnwrap(model.workspace?.selectedItemID), to: .init(x: -20_000, y: -20_000))
     await model.finishPendingPersistence()
     let boardID = try XCTUnwrap(model.presence?.boardID)
@@ -137,13 +154,14 @@ final class SharedAttentionTests: XCTestCase {
           "worldOrigin": .object(["tileX": .number(0), "tileY": .number(0),
             "localX": .number(Double(index) * 150), "localY": .number(0)])])
       })
-    let receipt = try model.store.applyCollaborationAction(action, actor: UUID())
-    model.receivePeerMessage(.collaboration(.init(content: try model.store.collaborationContent(), actions: [receipt])))
+    _ = try model.store.applyCollaborationAction(action, actor: UUID())
+    await model.reloadExternalChanges()?.value
     await model.finishPendingPersistence()
     try await waitForScene(model)
     await model.refreshCollaborationDetails()
-    let presence = SessionPresence(boardID: boardID, mode: .board,
+    var presence = SessionPresence(boardID: boardID, mode: .board,
       camera: .init(center: .init(x: 100, y: 0), scale: 1), viewport: .init(x: 834, y: 1194))
+    presence = presence.selecting(itemID: model.presence?.selectedItemID, pageID: model.presence?.notebookPageID)
     model.updatePresence(presence, settled: true)
     let index = try XCTUnwrap(model.sceneIndex)
     let overview = index.workset(presence: presence, limit: 1)
@@ -171,21 +189,23 @@ final class SharedAttentionTests: XCTestCase {
   @MainActor
   func testPointingReturnsTheToolBeforePreparationAndKeepsTheSeenSourceAfterNavigation() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let first = try XCTUnwrap(model.workspace?.selectedItemID)
     let page = try XCTUnwrap(model.activePage)
     let second = try XCTUnwrap(model.createNotebook(at: .init(x: 2000, y: 0)))
     model.selectItem(first)
     let workspace = try XCTUnwrap(model.workspace)
     let center = try XCTUnwrap(model.board?.focusedCenter(of: first))
-    let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .page,
+    var presence = SessionPresence(boardID: workspace.rootBoardID, mode: .page,
       camera: .init(center: center, scale: 1), viewport: .init(x: 834, y: 1194), focusedItemID: first, openProgress: 1)
+    presence = presence.selecting(itemID: model.presence?.selectedItemID, pageID: model.presence?.notebookPageID)
     model.updatePresence(presence, settled: true)
     try await waitForScene(model)
     let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start: .init(x: 100, y: 100),
-      end: .init(x: 240, y: 180), model: model, presence: presence))
+      end: .init(x: 240, y: 180), model: model, presence: presence,
+      cohort: XCTUnwrap(model.compositionTiles.published)))
     model.isPointing = true
     model.publishHumanContext(selection)
     XCTAssertFalse(model.isPointing, "A control action must not wait for JSON, hashing or the file lock")
@@ -194,7 +214,8 @@ final class SharedAttentionTests: XCTestCase {
     var later = page
     XCTAssertTrue(later.replaceElements([.init(id: "later-text", kind: .markdown,
       frame: .init(x: 120, y: 120, width: 100, height: 40), source: "New meaning", html: "<p>New meaning</p>")], actor: UUID()))
-    model.receivePeerMessage(.page(later))
+    _ = try model.store.saveMergedPage(later)
+    await model.reloadExternalChanges()?.value
     await model.finishPendingPersistence()
     let context = try XCTUnwrap(model.activeSharedContext)
     let reference = try XCTUnwrap(context.entries.first?.references.first)
@@ -207,11 +228,23 @@ final class SharedAttentionTests: XCTestCase {
 
   @MainActor
   private func waitForScene(_ model: NotebookAppModel) async throws {
+    await model.finishPendingPersistence()
     let deadline = ContinuousClock.now + .seconds(5)
     while model.scenePreparationPending, ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(10))
     }
     XCTAssertFalse(model.scenePreparationPending)
     XCTAssertNotNil(model.sceneIndex)
+    let presence = try XCTUnwrap(model.presence), index = try XCTUnwrap(model.sceneIndex)
+    let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: model.scenePortalCamera)
+    model.prepareComposition(presence: presence, frame: frame,
+      pinned: presence.focusedItemID.map { [.item($0)] } ?? [], displayScale: 2)
+    let compositionDeadline = ContinuousClock.now + .seconds(5)
+    while model.compositionTiles.published?.plan.revision != model.workspaceHeader?.cursor,
+      model.compositionTiles.failure == nil, ContinuousClock.now < compositionDeadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertEqual(model.compositionTiles.published?.plan.revision, model.workspaceHeader?.cursor,
+      model.compositionTiles.failure ?? "A pointing contact needs a completed physical cohort")
   }
 }

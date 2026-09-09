@@ -37,10 +37,10 @@ final class InputLatencyTests: XCTestCase {
   @MainActor
   func testDiskLockCannotBlockCameraOrOverwriteInkPreparedDuringReload() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     await model.finishPendingPersistence()
     let page = try XCTUnwrap(model.activePage)
     func stroke(_ x: Double) -> PageInkAction {
@@ -52,22 +52,21 @@ final class InputLatencyTests: XCTestCase {
     let change = try disk.prepareInkChange(.append(remote), stamp: .init(counter: 5, actor: UUID()))
     XCTAssertTrue(disk.publishInkChange(change))
     _ = try store.saveMergedPage(disk)
-    let descriptor = open(root.appendingPathComponent(".mutation.lock").path, O_RDWR | O_CREAT, 0o600)
-    XCTAssertGreaterThanOrEqual(descriptor, 0)
-    defer { flock(descriptor, LOCK_UN); close(descriptor) }
-    XCTAssertEqual(flock(descriptor, LOCK_EX), 0)
+    let descriptor = try NotebookSQLWriteBlocker(store: store)
+    defer { try? descriptor.release() }
     let clock = ContinuousClock(), began = clock.now
     let initial = try XCTUnwrap(model.presence)
-    let presence = SessionPresence(boardID: initial.boardID, mode: .board,
+    var presence = SessionPresence(boardID: initial.boardID, mode: .board,
       camera: .init(center: .init(x: 80, y: 90), scale: 0.7), viewport: initial.viewport)
+    presence = presence.selecting(itemID: model.presence?.selectedItemID, pageID: model.presence?.notebookPageID)
     model.updatePresence(presence, settled: true)
     model.reloadExternalChanges()
     XCTAssertLessThan(began.duration(to: clock.now), .milliseconds(50))
     try await Task.sleep(for: .milliseconds(30))
     let stamp = try XCTUnwrap(model.reserveDrawingAction(pageID: page.id))
     let accepted = await model.commitDrawingAction(local, pageID: page.id, stamp: stamp)
-    XCTAssertNotNil(accepted, "Подготовка пера не ждёт файловый замок")
-    XCTAssertEqual(flock(descriptor, LOCK_UN), 0)
+    XCTAssertNotNil(accepted, "Подготовка пера не ждёт транзакцию SQLite")
+    try descriptor.release()
     await model.finishPendingPersistence()
     let drawing = try PageInkDrawing.decode(XCTUnwrap(model.pages[page.id]).drawingData)
     XCTAssertEqual(Set(drawing.activeActions.map(\.id)), [local.id, remote.id])

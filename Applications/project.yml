@@ -73,6 +73,7 @@ targets:
     deploymentTarget: "27.0"
     sources:
       - path: Tests
+      - path: TestSupport
     dependencies:
       - target: Notebook
     settings:
@@ -105,6 +106,11 @@ targets:
     sources:
       - path: Shared
       - path: Mac
+        excludes:
+          - AgentRuntime
+      - path: Mac/AgentRuntime
+        type: folder
+        buildPhase: resources
       - path: Assets.xcassets
       - path: WebResources
         type: folder
@@ -144,6 +150,7 @@ targets:
     platform: macOS
     sources:
       - path: MacTests
+      - path: TestSupport
     dependencies:
       - target: NotebookMac
     settings:

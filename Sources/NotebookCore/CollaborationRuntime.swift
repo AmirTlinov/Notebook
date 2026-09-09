@@ -145,7 +145,10 @@ extension NotebookStore {
   public func targetReceiptURL(_ id: UUID) -> URL { targetPreviewsURL.appendingPathComponent(id.uuidString.lowercased() + ".json") }
 
   public func referenceRevision(target: CollaborationTarget, elementID: String? = nil) throws -> String {
-    let files = try referenceSourceFiles(target: target)
+    if elementID == nil, target.kind == .board || target.kind == .cover {
+      return try referenceIdentities(targets: [target])[0].revision
+    }
+    let files = try referenceSourceFiles(target: target, elementID: elementID)
     return try Self.referenceRevision(target: target, elementID: elementID, files: files)
   }
 
@@ -157,18 +160,18 @@ extension NotebookStore {
     case .page:
       guard let page = files["pages/" + suffix] else { throw CollaborationError("target_missing", "Лист отсутствует.", target: target) }
       if let elementID {
-        guard let element = page["elements"]?.array.first(where: { $0["id"]?.string == elementID }) else { throw CollaborationError("target_missing", "Элемент листа отсутствует.", target: target) }
+        guard let element = page["elements"]?.array.first(where: { $0.memberIdentity == collaborationIdentity(elementID) }) else { throw CollaborationError("target_missing", "Элемент листа отсутствует.", target: target) }
         content = element.setting("frame", nil)
       } else { content = page.setting("collaboration", nil) }
     case .document:
       guard let document = files["documents/" + suffix] else { throw CollaborationError("target_missing", "Документ отсутствует.", target: target) }
       if let elementID {
-        guard let block = document["blocks"]?.array.first(where: { $0["id"]?.string == elementID }) else { throw CollaborationError("target_missing", "Блок документа отсутствует.", target: target) }
-        let state = files["document-states/" + suffix]?["records"]?.array.first { $0["id"]?.string == elementID }
+        guard let block = document["blocks"]?.array.first(where: { $0.memberIdentity == collaborationIdentity(elementID) }) else { throw CollaborationError("target_missing", "Блок документа отсутствует.", target: target) }
+        let state = files["document-states/" + suffix]?["records"]?.array.first { $0.memberIdentity == collaborationIdentity(elementID) }
         content = .object(["block": block, "state": state ?? .null])
       } else { content = .object(["document": document.setting("collaboration", nil), "state": files["document-states/" + suffix] ?? .null]) }
     case .board, .cover:
-      guard let hierarchy = files["board.json"], let workspace = files["workspace.json"] else { throw CollaborationError("target_missing", "Доска отсутствует.", target: target) }
+      guard let hierarchy = files["board.json"], files["workspace.json"] != nil else { throw CollaborationError("target_missing", "Доска отсутствует.", target: target) }
       let boardID = target.kind == .board ? target.id : target.boardID
       guard let boardID, let node = hierarchy["boards"]?.array.first(where: { $0.memberIdentity == boardID.uuidString.lowercased() }) else { throw CollaborationError("target_missing", "Доска отсутствует.", target: target) }
       let elements = node["board"]?["elements"]?.array.filter {
@@ -176,37 +179,10 @@ extension NotebookStore {
           && $0["surface"]?["kind"]?.string == target.kind.rawValue
       } ?? []
       if let elementID {
-        guard let element = elements.first(where: { $0["id"]?.string == elementID }) else { throw CollaborationError("target_missing", "Пространственный элемент отсутствует.", target: target) }
+        guard let element = elements.first(where: { $0.memberIdentity == collaborationIdentity(elementID) }) else { throw CollaborationError("target_missing", "Пространственный элемент отсутствует.", target: target) }
         content = element.setting("frame", nil).setting("worldOrigin", nil).setting("stamp", nil)
-      } else if target.kind == .cover {
-        let item = workspace["items"]?.array.first { $0.memberIdentity == target.id.uuidString.lowercased() }
-        guard item != nil, let boardValue = node["board"],
-          try boardValue.decode(BoardDocument.self).itemIDs.contains(target.id) else {
-          throw CollaborationError("target_missing", "Предмет принадлежит другой доске либо отсутствует.", target: target)
-        }
-        let actions = files["spatial-ink.json"]?["actions"]?.array.filter { action in
-          action["spans"]?.array.contains { $0["surface"]?["ownerID"]?.string.flatMap(UUID.init(uuidString:)) == target.id } == true
-        } ?? []
-        var cover: [String: JSONValue] = ["item": item ?? .null, "elements": .array(elements), "ink": .array(actions),
-          "paperSize": files["documents/" + suffix]?["paperSize"] ?? .null]
-        if item?["kind"]?.string == "board" {
-          cover["portal"] = .string(try referenceRevision(target: .init(kind: .board, id: target.id), files: files))
-        }
-        content = .object(cover)
       } else {
-        let tree = try hierarchy.decode(BoardHierarchy.self)
-        let descendants = tree.descendantBoardIDs(including: target.id)
-        let itemIDs = Set(tree.boards.filter { descendants.contains($0.id) }.flatMap { $0.board.itemIDs })
-        let nodes = (hierarchy["boards"]?.array ?? []).filter { $0["id"]?.string.flatMap(UUID.init(uuidString:)).map(descendants.contains) == true }
-        let items = (workspace["items"]?.array ?? []).filter { $0["id"]?.string.flatMap(UUID.init(uuidString:)).map(itemIDs.contains) == true }
-        let ink = (files["spatial-ink.json"]?["actions"]?.array ?? []).filter { action in
-          action["spans"]?.array.contains { span in
-            guard let id = span["surface"]?["ownerID"]?.string.flatMap(UUID.init(uuidString:)) else { return false }
-            return span["surface"]?["kind"]?.string == "board" ? descendants.contains(id) : itemIDs.contains(id)
-          } == true
-        }
-        let paper: [JSONValue] = itemIDs.compactMap { id -> JSONValue? in files["documents/\(id.uuidString.lowercased()).json"]?["paperSize"].map { .object(["id":.string(id.uuidString.lowercased()),"size":$0]) } }.sorted { ($0["id"]?.string ?? "") < ($1["id"]?.string ?? "") }
-        content = .object(["items":.array(items),"boards":.array(nodes),"ink":.array(ink),"paper":.array(paper)])
+        return try boundReferenceRevision(target: target, files: files) ?? completeReferenceRevision(target: target, files: files)
       }
     case .workspace: content = files["workspace.json"] ?? .null
     }
@@ -232,9 +208,8 @@ extension NotebookStore {
       }
     }
     guard (0...100_000).contains(pageIndex) else { throw CollaborationError("invalid_reference", "Номер страницы находится в допустимом диапазоне.") }
-    let files = try readReferenceSourceFiles(target: target)
-    let source = try Self.referenceRevision(target: target, files: files)
-    let actual = try Self.targetContentRevision(target: target, files: files)
+    let source = try referenceRevision(target: target)
+    let actual = try targetContentRevision(target: target)
     guard actual == expectedRevision.lowercased() else {
       throw CollaborationError("revision_conflict", "Перед снимком содержимое изменилось.", target: target, expected: expectedRevision, actual: actual)
     }
@@ -254,7 +229,7 @@ extension NotebookStore {
     try prepare()
     return try withMutationLock {
       let target = CollaborationTarget(kind: .page, id: pageID)
-      guard FileManager.default.fileExists(atPath: pageURL(pageID).path) else {
+      guard (try hasStoredValue(pageFile(pageID))) else {
         throw CollaborationError("target_missing", "Лист отсутствует.", target: target)
       }
       let page = try loadPage(pageID)
@@ -272,7 +247,7 @@ extension NotebookStore {
       for obsolete in try targetRenderRequests() where obsolete.target == target
         && obsolete.pageVisionRevision != nil && obsolete.id != request.id
         && !FileManager.default.fileExists(atPath: targetReceiptURL(obsolete.id).path) {
-        try FileManager.default.removeItem(at: renderRequestsURL.appendingPathComponent(obsolete.id.uuidString.lowercased() + ".json"))
+        try publishRecords(writes: [:], removals: ["collaboration/render-requests/" + obsolete.id.uuidString.lowercased() + ".json"])
       }
       // A deleted or corrupted derivative can be rebuilt with the same source
       // identity. An execution error remains explicit until the source changes.
@@ -299,14 +274,12 @@ extension NotebookStore {
       throw CollaborationError("snapshot_pending", "Очередь снимков занята активными запросами. Повторите после подготовки текущих областей.")
     }
     for obsolete in requests.filter({ FileManager.default.fileExists(atPath: targetReceiptURL($0.id).path) }).dropLast(64) {
-      try? FileManager.default.removeItem(at: renderRequestsURL.appendingPathComponent(obsolete.id.uuidString.lowercased() + ".json"))
+      try? publishRecords(writes: [:], removals: ["collaboration/render-requests/" + obsolete.id.uuidString.lowercased() + ".json"])
       try? FileManager.default.removeItem(at: targetPNGURL(obsolete.id))
       try? FileManager.default.removeItem(at: targetReceiptURL(obsolete.id))
     }
-    if FileManager.default.fileExists(atPath: url.path) {
-      return try JSONDecoder().decode(TargetRenderRequest.self, from: Data(contentsOf: url))
-    }
-    try JSONEncoder().encode(request).write(to: url, options: .atomic)
+    if let previous = try storedValue(logicalAddress(url)) { return try previous.decode(TargetRenderRequest.self) }
+    try publishRecords(writes: [logicalAddress(url): try .encode(request)])
     return request
   }
 
@@ -324,46 +297,63 @@ extension NotebookStore {
     return try stamp.decode(VersionStamp.self).revision
   }
 
-  public func targetRenderRequests() throws -> [TargetRenderRequest] {
-    try prepare()
-    return try FileManager.default.contentsOfDirectory(at: renderRequestsURL, includingPropertiesForKeys: nil)
-      .filter { $0.pathExtension == "json" }.map { try JSONDecoder().decode(TargetRenderRequest.self, from: Data(contentsOf: $0)) }
-      .sorted { $0.createdAt < $1.createdAt }
+  public func targetRenderRequests(target: CollaborationTarget? = nil, afterID: UUID? = nil, limit: Int = 80) throws -> [TargetRenderRequest] {
+    guard (1...128).contains(limit) else { throw NotebookStorageError.limitExceeded("render_request_page") }
+    return try readTransaction { _ in
+      var clause = "", arguments: [NotebookSQLValue] = []
+      if let target { clause += " AND context_id=?"; arguments.append(.text(Self.renderTargetKey(target))) }
+      if let afterID {
+        let address = "collaboration/render-requests/" + afterID.uuidString.lowercased() + ".json#"
+        guard let time = try currentSQL!.rows("SELECT created_at FROM metadata_index WHERE address=? AND kind='renderRequest'", [.text(address)]).first?[0] else { throw NotebookStorageError.transactionConflict }
+        clause += " AND (created_at>? OR (created_at=? AND address>?))"; arguments += [time, time, .text(address)]
+      }
+      arguments.append(.integer(Int64(limit)))
+      let rows = try currentSQL!.rows("SELECT address FROM metadata_index WHERE kind='renderRequest'" + clause + " ORDER BY created_at,address LIMIT ?", arguments)
+      return try rows.map { row in
+        guard let value = try storedValue(String(row[0].text!.dropLast())) else { throw NotebookStorageError.corruptRecord("render request") }
+        return try value.decode(TargetRenderRequest.self)
+      }
+    }
+  }
+
+  static func renderTargetKey(_ target: CollaborationTarget) -> String {
+    target.kind.rawValue + ":" + target.id.uuidString.lowercased() + ":" + (target.boardID?.uuidString.lowercased() ?? "")
   }
 
   public func saveTargetRender(_ receipt: TargetRenderReceipt, png: Data? = nil) throws {
     try prepare()
     if let png { try png.write(to: targetPNGURL(receipt.request.id), options: .atomic) }
     try JSONEncoder().encode(receipt).write(to: targetReceiptURL(receipt.request.id), options: .atomic)
+    try commandTransaction {
+      try currentSQL!.run("UPDATE metadata_index SET status=? WHERE address=? AND kind='renderRequest'", [.text(receipt.status), .text("collaboration/render-requests/" + receipt.request.id.uuidString.lowercased() + ".json#")])
+    }
   }
 
   public func deviceActionReceipts() throws -> [DeviceActionReceipt] {
-    try prepare()
-    return try FileManager.default.contentsOfDirectory(at: deviceReceiptsURL, includingPropertiesForKeys: nil)
-      .filter { $0.pathExtension == "json" }.map { try JSONDecoder().decode(DeviceActionReceipt.self, from: Data(contentsOf: $0)) }
-      .sorted { $0.id.uuidString < $1.id.uuidString }
+    try readTransaction { _ in
+      try storedValues(prefix: "collaboration/delivery/").map { try $0.decode(DeviceActionReceipt.self) }
+        .sorted { $0.id.uuidString < $1.id.uuidString }
+    }
   }
 
   public func saveDeviceActionReceipt(_ receipt: DeviceActionReceipt) throws {
-    try prepare()
-    try withMutationLock {
-      let url = deviceReceiptsURL.appendingPathComponent(receipt.id.uuidString.lowercased() + ".json")
-      var result = receipt
-      if let data = try? Data(contentsOf:url), let previous = try? JSONDecoder().decode(DeviceActionReceipt.self,from:data) {
-        result = previous.merging(receipt)
-        guard result != previous else { return }
-      }
-      try JSONEncoder().encode(result).write(to:url,options:.atomic)
+    try commandTransaction {
+      let path = "collaboration/delivery/" + receipt.id.uuidString.lowercased() + ".json"
+      let previous = try storedValue(path)?.decode(DeviceActionReceipt.self)
+      let result = previous?.merging(receipt) ?? receipt
+      if result != previous { try publishRecords(writes: [path: try .encode(result)]) }
     }
   }
 
   public func receiveCollaboration(_ envelope: CollaborationEnvelope, local: CollaborationContent? = nil) throws -> CollaborationContent? {
     try envelope.validate()
     try prepare()
+    return try commandTransaction {
     let resolved = envelope.content != nil || !envelope.actions.isEmpty || !envelope.contexts.isEmpty || envelope.selection != nil
       ? try mergeCollaborationContent(envelope.content,local:local,actions:envelope.actions, contexts:envelope.contexts, selection:envelope.selection) : nil
     for receipt in envelope.delivery { try saveDeviceActionReceipt(receipt) }
     return resolved
+    }
   }
 }
 

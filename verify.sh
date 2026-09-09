@@ -3,8 +3,10 @@ set -euo pipefail
 
 ROOT=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
 DERIVED=$(mktemp -d "${TMPDIR:-/tmp}/notebook-derived.XXXXXX")
-EVIDENCE=${NOTEBOOK_VERIFY_EVIDENCE_DIR:-"$DERIVED/evidence"}
+mkdir -p "$ROOT/.build"
+EVIDENCE=${NOTEBOOK_VERIFY_EVIDENCE_DIR:-"$(mktemp -d "$ROOT/.build/verification.XXXXXX")"}
 mkdir -p "$EVIDENCE"
+EVIDENCE=$(unset CDPATH; cd -- "$EVIDENCE" && pwd)
 SIMULATOR_ID=""
 SHUTDOWN_SIMULATOR=false
 MAC_SMOKE_PID=""
@@ -21,9 +23,36 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# A prior ready receipt must never satisfy this run's headless launch proof.
+if [[ -n "$(find "$EVIDENCE" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+  printf 'Для новой проверки нужен пустой каталог доказательств: %s\n' "$EVIDENCE" >&2
+  exit 1
+fi
+printf 'Доказательства проверки: %s\n' "$EVIDENCE"
+
 cd "$ROOT"
-swift test
-"$ROOT/Applications/test-load-fixture.sh"
+source_fingerprint() {
+  python3 - "$ROOT" "$1" <<'PY'
+import hashlib, json, pathlib, stat, subprocess, sys
+root, output = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+paths = subprocess.check_output([
+    "git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--",
+    "Package.swift", "Sources", "Tests", "Applications", "MCP", "verify.sh",
+], cwd=root).split(b"\0")
+files = []
+for path in sorted(set(p.decode() for p in paths if p)):
+    file = root / path
+    files.append({"path": path, "sha256": hashlib.sha256(file.read_bytes()).hexdigest(),
+                  "executable": bool(file.stat().st_mode & stat.S_IXUSR)} if file.is_file()
+                 else {"path": path, "deleted": True})
+data = json.dumps(files, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+output.write_text(json.dumps({"sha256": hashlib.sha256(data).hexdigest(), "files": files},
+                            ensure_ascii=False, sort_keys=True, indent=2) + "\n")
+PY
+}
+source_fingerprint "$EVIDENCE/source-before.json"
+swift test 2>&1 | tee "$EVIDENCE/core.log"
+"$ROOT/Applications/test-load-fixture.sh" 2>&1 | tee "$EVIDENCE/load-fixture.log"
 
 ICON_PROOF="$DERIVED/AppIcon.appiconset"
 "$ROOT/Applications/render-app-icon.sh" "$ICON_PROOF"
@@ -118,9 +147,9 @@ do
 done
 diff -qr node_modules/@mathjax/mathjax-newcm-font/svg \
   "$ROOT/Applications/WebResources/fonts/mathjax-newcm-font/svg"
-npm run check
-npm test
-npm run smoke
+npm run check 2>&1 | tee "$EVIDENCE/mcp-check.log"
+npm test 2>&1 | tee "$EVIDENCE/mcp-tests.log"
+npm run smoke 2>&1 | tee "$EVIDENCE/mcp-smoke.log"
 
 cd "$ROOT/Applications"
 xcodegen generate --spec project.yml
@@ -133,8 +162,14 @@ xcodebuild \
   -derivedDataPath "$DERIVED/mac" \
   CODE_SIGNING_ALLOWED=NO \
   build
+# Both probes use the pinned real App Server. The coordinator additionally links this build's real Core product.
+"$ROOT/Tests/NotebookAgentExecutorHarness/run.sh" 2>&1 | tee "$EVIDENCE/agent-executor.log"
+NOTEBOOK_CORE_PRODUCTS="$DERIVED/mac/Build/Products/Debug" \
+  "$ROOT/Tests/NotebookAgentExecutorHarness/coordinator-run.sh" 2>&1 | tee "$EVIDENCE/agent-coordinator.log"
+cp "$ROOT/.build/agent-executor-contract/report.json" "$EVIDENCE/agent-executor-contract.json"
+cp "$ROOT/.build/agent-coordinator-contract/report.json" "$EVIDENCE/agent-coordinator-contract.json"
 MAC_SMOKE_APP="$DERIVED/mac/Build/Products/Debug/Notebook.app"
-MAC_SMOKE_LOG="$DERIVED/mac-document-launch.log"
+MAC_SMOKE_LOG="$EVIDENCE/mac-helper.log"
 MAC_SMOKE_PROOF="$EVIDENCE/mac-helper-launch.json"
 NOTEBOOK_MAC_LAUNCH_PROOF="$MAC_SMOKE_PROOF" \
 "$MAC_SMOKE_APP/Contents/MacOS/Notebook" \
@@ -177,7 +212,7 @@ xcodebuild \
   -resultBundlePath "$EVIDENCE/mac.xcresult" \
   CODE_SIGNING_ALLOWED=NO \
   test \
-  -only-testing:NotebookMacTests
+  -only-testing:NotebookMacTests 2>&1 | tee "$EVIDENCE/mac.log"
 xcodebuild \
   -quiet \
   -project Notebook.xcodeproj \
@@ -227,7 +262,7 @@ xcodebuild \
   -resultBundlePath "$EVIDENCE/ipad.xcresult" \
   test \
   -only-testing:NotebookTests \
-  -only-testing:NotebookUITests/DrawingResponsivenessTests
+  -only-testing:NotebookUITests/DrawingResponsivenessTests 2>&1 | tee "$EVIDENCE/ipad.log"
 
 for platform in mac ipad; do
   xcrun xcresulttool get test-results summary \
@@ -253,18 +288,38 @@ done
 
 APP_CONTAINER=$(xcrun simctl get_app_container \
   "$SIMULATOR_ID" com.amirtlinov.notebook data)
-python3 - "$APP_CONTAINER/tmp/NotebookUITests/DrawingResponsiveness/pages" <<'PY'
+python3 - "$APP_CONTAINER/tmp/NotebookUITests/DrawingResponsiveness/notebook.sqlite" <<'PY'
 import json
 import pathlib
+import sqlite3
 import sys
 
-pages = list(pathlib.Path(sys.argv[1]).glob("*.json"))
+path = pathlib.Path(sys.argv[1])
+if not path.is_file():
+    raise SystemExit("Проверочный ввод должен сохраниться в новом SQLite-хранилище")
+connection = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
+try:
+    pages = connection.execute("""
+      SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash
+      WHERE r.parent IS NULL AND r.file LIKE 'pages/%'
+    """).fetchall()
+finally:
+    connection.close()
 if len(pages) != 1:
     raise SystemExit(f"Ожидался один проверочный лист, найдено: {len(pages)}")
-page = json.loads(pages[0].read_text())
+page = json.loads(pages[0][0])["value"]
 counter = page["drawingStamp"]["counter"]
 if counter != 1:
     raise SystemExit(f"Одно движение должно сохраниться один раз, получено: {counter}")
 PY
 
+if rg -n 'BUG IN CLIENT OF libsqlite3|vnode unlinked while in use' "$EVIDENCE"/*.log; then
+  printf '%s\n' 'Хранилище нельзя удалять до завершения его владельца и читателей.' >&2
+  exit 1
+fi
+source_fingerprint "$EVIDENCE/source-after.json"
+if ! cmp -s "$EVIDENCE/source-before.json" "$EVIDENCE/source-after.json"; then
+  printf '%s\n' 'Исходники изменились во время проверки: результат не удостоверяет один срез.' >&2
+  exit 1
+fi
 printf '\nNotebook проверен: Swift, локальные инструменты, MCP, macOS, iPadOS и отзывчивость Simulator прошли.\n'

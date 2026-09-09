@@ -7,7 +7,6 @@ final class AddressedTargetRenderTests: XCTestCase {
   @MainActor
   func testTargetUsesSavedPageWithoutLoadingTheArchiveIntoTheAppModel() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), actor = UUID()
     var (workspace, pages) = try store.loadOrCreate(actor: actor, pageSize: .init(width: 100, height: 140))
     var page = try XCTUnwrap(pages.values.first)
@@ -19,15 +18,21 @@ final class AddressedTargetRenderTests: XCTestCase {
     try store.saveWorkspaceBundle(index: workspace, page: other.page,
       board: .initial(rootBoardID: workspace.rootBoardID, itemIDs: workspace.items.map(\.id), actor: actor))
     _ = try store.loadOrCreateSpatialInk(actor: actor)
-    try Data("Unrelated source must not be opened by this render".utf8).write(to: store.pageURL(other.page.id))
+    var unrelated = other.page
+    XCTAssertTrue(unrelated.replaceElements([.init(id: "unrequested-program", kind: .web,
+      frame: .init(x: 0, y: 0, width: 100, height: 140), source: "An unrelated saved program",
+      html: "<div>Not requested</div>", javaScript: "throw Error('unrequested owner executed')")], actor: actor))
+    try store.savePage(unrelated)
     let request = try store.requestTargetRender(target: .init(kind: .page, id: page.id),
       expectedRevision: page.agentStamp.revision)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
     XCTAssertTrue(model.pages.isEmpty)
     XCTAssertNil(model.workspace)
     try await CurrentViewPreviewWriter.writeTarget(request, model: model)
     let receipt = try JSONDecoder().decode(TargetRenderReceipt.self, from: Data(contentsOf: store.targetReceiptURL(request.id)))
     XCTAssertEqual(receipt.status, "ready")
+    XCTAssertFalse(receipt.diagnostics.contains { $0.elementID == "unrequested-program" })
     XCTAssertEqual(receipt.request.sourceRevision, try store.referenceRevision(target: request.target))
     let bitmap = try XCTUnwrap(NSBitmapImageRep(data: Data(contentsOf: store.targetPNGURL(request.id))))
     let pixel = try XCTUnwrap(bitmap.colorAt(x: 100, y: 100)?.usingColorSpace(.deviceRGB))
@@ -40,22 +45,21 @@ final class AddressedTargetRenderTests: XCTestCase {
   @MainActor
   func testSavedLetterCoverUsesItsOwnPaperWithoutLoadingDocumentPrograms() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), actor = UUID()
     var (workspace, _) = try store.loadOrCreate(actor: actor, pageSize: .init(width: 100, height: 140))
     let item = try XCTUnwrap(workspace.createDocument(title: "Letter", actor: actor))
     let document = DocumentDocument(id: item.id, actor: actor, paperSize: .letter,
-      blocks: [.markdown(id: "body", source: "The document program is not its cover.")])
+      blocks: [.interactive(id: "body", html: "<h1>Not this cover</h1>", javaScript: "throw Error('the document program is not its cover')")])
     var hierarchy = BoardHierarchy.initial(rootBoardID: workspace.rootBoardID, itemIDs: workspace.items.map(\.id), actor: actor)
     try store.saveDocumentWorkspaceBundle(index: workspace, document: document,
       state: .init(id: document.id, actor: actor), board: hierarchy)
-    try FileManager.default.removeItem(at: store.documentStateURL(document.id))
     _ = try store.loadOrCreateSpatialInk(actor: actor)
-    // No document-state file is needed to see this physical cover.
+    // The saved document and state stay outside this cover-only render projection.
     let target = CollaborationTarget(kind: .cover, id: item.id, boardID: workspace.rootBoardID)
     let request = try store.requestTargetRender(target: target,
       expectedRevision: try XCTUnwrap(hierarchy.board(workspace.rootBoardID)).stamp.revision)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
     try await CurrentViewPreviewWriter.writeTarget(request, model: model)
     let receipt = try JSONDecoder().decode(TargetRenderReceipt.self, from: Data(contentsOf: store.targetReceiptURL(request.id)))
     XCTAssertEqual(receipt.status, "ready", "\(receipt.diagnostics)")
@@ -100,16 +104,25 @@ final class AddressedTargetRenderTests: XCTestCase {
   @MainActor
   func testPortalCoverRendersItsSavedChildAndChangesIdentityWithIt() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), actor = UUID()
     let author = NotebookAppModel(store: store, startsNearbySync: false)
-    author.start(pageSize: NotebookAppModel.defaultPageSize)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    addTeardownBlock { @MainActor in
+      let rendererStopped = await model.shutdown()
+      let authorStopped = await author.shutdown()
+      XCTAssertTrue(rendererStopped && authorStopped,
+        "Every model must acknowledge shutdown before the shared test store is removed")
+      guard rendererStopped && authorStopped else { return }
+      try FileManager.default.removeItem(at: root)
+    }
+    await author.start(pageSize: NotebookAppModel.defaultPageSize)
     let portal = try XCTUnwrap(author.createBoard(at: .zero))
-    await author.finishPendingPersistence()
+    let authorStopped = await author.shutdown()
+    XCTAssertTrue(authorStopped, "The restored renderer cannot run beside the preceding writer")
+    guard authorStopped else { return }
     let workspace = try store.loadIndex()
     var hierarchy = try store.loadBoard(items: workspace.items)
     let target = CollaborationTarget(kind: .cover, id: portal, boardID: workspace.rootBoardID)
-    let model = NotebookAppModel(store: store, startsNearbySync: false)
     var previous: TargetRenderRequest?
     for (counter, color) in ["red", "blue"].enumerated() {
       let element = SpatialElement(id: "child-program", surface: .board(portal), kind: .web,

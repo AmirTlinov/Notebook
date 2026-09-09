@@ -6,9 +6,9 @@ final class CollaborationReadTests: XCTestCase {
   @MainActor
   func testHistoryReadsDoNotPrepareContentAndInvalidateAfterHumanChanges() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let page = try XCTUnwrap(model.activePage)
     let target = CollaborationTarget(kind: .page, id: page.id)
     let action = try model.store.applyCollaborationAction(.init(summary: "Пояснение",
@@ -38,7 +38,8 @@ final class CollaborationReadTests: XCTestCase {
     var changed = try model.store.loadPage(page.id)
     _ = changed.replaceElements([.init(id: "idea", kind: .markdown,
       frame: .init(x: 130, y: 30, width: 200, height: 80), source: "Human", html: "Human")], actor: model.actorID)
-    model.receivePeerMessage(.page(changed))
+    _ = try model.store.saveMergedPage(changed)
+    await model.reloadExternalChanges()?.value
     await model.finishPendingPersistence()
     XCTAssertFalse(model.collaborationDetailsAreCurrent)
     XCTAssertTrue(model.results(for: action).isEmpty, "Старое положение не выдаётся за текущий результат")

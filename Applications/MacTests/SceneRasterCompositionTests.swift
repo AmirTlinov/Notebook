@@ -181,9 +181,9 @@ final class SceneRasterCompositionTests: XCTestCase {
   @MainActor
   func testBoardCompositionStreamsMoreSourcePixelsThanItsBudget() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     model.moveItem(try XCTUnwrap(model.workspace?.selectedItemID), to: .init(x: 10_000, y: 0))
     let workspace = try XCTUnwrap(model.workspace)
     var hierarchy = try XCTUnwrap(model.boardHierarchy)
@@ -198,8 +198,8 @@ final class SceneRasterCompositionTests: XCTestCase {
     }
     let resources = SceneRenderResources(byteLimit: 6 * 1024 * 1024, maximumBackgroundWebSurfaces: 1)
     let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: model.documents.mapValues(\.paperSize))
-    let painter = SceneCompositionRenderer(index: index, hierarchy: hierarchy,
-      journal: try XCTUnwrap(model.spatialInk), resources: resources)
+    let painter = SceneCompositionRenderer(source: SceneCompositionSource(index: index, hierarchy: hierarchy,
+      journal: try XCTUnwrap(model.spatialInk)), resources: resources)
     let result = try await painter.render(presence: .init(boardID: workspace.rootBoardID,
       mode: .board, camera: .init(), viewport: .init(x: 256, y: 256)))
     let rendered = try pixels(result.png)

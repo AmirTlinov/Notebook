@@ -1,36 +1,30 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { BridgeError, runBridge } from "../src/bridge.js";
-import { appActor, pageID, writeFixture } from "./fixture.js";
+import { NotebookStore } from "../src/store.js";
+import { revision } from "../src/domain.js";
+import { appActor, pageID, rootBoardID, writeFixture, fixtureSocket, stopFixture } from "./fixture.js";
 
-test("the native reference and render routes do not load a different page in the same notebook", async () => {
-  const root = await mkdtemp(join(tmpdir(), "notebook-reference-"));
-  try {
-    await writeFixture(root);
-    const otherID = "7e7a0000-0000-4000-8000-000000000099";
-    const workspace = JSON.parse(await readFile(join(root, "workspace.json"), "utf8"));
-    const page = JSON.parse(await readFile(join(root, "pages", `${pageID}.json`), "utf8"));
-    workspace.items[0].pageIDs.push(otherID);
-    await writeFile(join(root, "workspace.json"), JSON.stringify(workspace));
-    await writeFile(join(root, "pages", `${otherID}.json`), JSON.stringify({ ...page, id: otherID }));
-    const target = { kind: "page", id: pageID };
-    const before = await runBridge<{ revision: string }>(root, { command: "reference", target });
-    // The one-time migration has completed; only the requested owner may now be read.
-    await writeFile(join(root, "pages", `${otherID}.json`), "Unrelated unreadable source");
-    const input = { command: "render", target, expectedRevision: `0@${appActor}` };
-    const request = await runBridge<{ id: string; sourceRevision: string }>(root, input);
-    assert.equal(request.sourceRevision, before.revision);
-    assert.deepEqual(await runBridge(root, input), request);
-    assert.deepEqual(await runBridge(root, { command: "reference", target }), before);
-    await assert.rejects(runBridge(root, { ...input, expectedRevision: `99@${appActor}` }), error => {
-      assert.ok(error instanceof BridgeError);
-      assert.equal(error.detail.code, "revision_conflict");
-      return true;
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+test("native reference/render address one page despite unrelated catalog growth",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"notebook-reference-"));
+  try{
+    await writeFixture(root);const socket=fixtureSocket(root),store=new NotebookStore(socket);
+    const target={kind:"page",id:pageID};
+    const before=await runBridge<{revision:string}>(socket,{command:"reference",target});
+    const board=await store.readBoard(),header=await store.readHeader();
+    const owner={kind:"board",id:rootBoardID};
+    await store.command({command:"apply",action:{id:randomUUID(),summary:"Независимая тетрадь",references:[],
+      expected:[{target:owner,revision:revision(board.stamp)},{target:{kind:"workspace",id:rootBoardID},revision:revision(header.stamp)}],
+      operations:[{kind:"createNotebook",target:owner,id:randomUUID(),values:{title:"Независимая",center:{tileX:10,tileY:20,localX:0,localY:0},pageID:randomUUID()}}]}});
+    const input={command:"render",target,expectedRevision:`0@${appActor}`};
+    const request=await runBridge<{id:string;sourceRevision:string}>(socket,input);
+    assert.equal(request.sourceRevision,before.revision);
+    assert.deepEqual(await runBridge(socket,input),request);
+    assert.deepEqual(await runBridge(socket,{command:"reference",target}),before);
+    await assert.rejects(runBridge(socket,{...input,expectedRevision:`99@${appActor}`}),error=>error instanceof BridgeError && error.detail.code==="revision_conflict");
+  }finally{await stopFixture(root);await rm(root,{recursive:true,force:true});}
 });

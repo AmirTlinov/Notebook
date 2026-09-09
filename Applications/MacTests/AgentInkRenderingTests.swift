@@ -7,9 +7,9 @@ final class AgentInkRenderingTests: XCTestCase {
   @MainActor
   func testAgentPenReachesNativeCompositeAndUndoWithoutMovingCamera() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("agent-ink-render-\(UUID())")
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let page = try XCTUnwrap(model.activePage)
     let target = CollaborationTarget(kind: .page, id: page.id)
     let before = model.presence

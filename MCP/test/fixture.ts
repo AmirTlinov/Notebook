@@ -1,7 +1,10 @@
-import { boardHierarchyRevision } from "../src/domain.js";
-import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { NotebookStore } from "../src/store.js";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createInterface } from "node:readline";
+import { BridgeError } from "../src/bridge.js";
 import { deflateSync } from "node:zlib";
 
 import type {
@@ -25,7 +28,8 @@ const regionPNG = grayscalePNG(52, 52, 0);
 
 export async function writeFixture(root: string): Promise<void> {
   const workspace: WorkspaceIndex = {
-    format: 3,
+    format: 4,
+    collaboration:{fields:{}},
     rootBoardID,
     items: [
       {
@@ -76,7 +80,7 @@ export async function writeFixture(root: string): Promise<void> {
     stamp: { counter: 0, actor: appActor },
   };
   const presence: SessionPresence = {
-    format: 4,
+    format: 5,
     boardID: rootBoardID,
     mode: "page",
     camera: {
@@ -85,13 +89,14 @@ export async function writeFixture(root: string): Promise<void> {
     },
     viewport: { x: 834, y: 1_194 },
     focusedItemID: itemID,
+    selectedItemID:itemID,notebookPageID:pageID,
     openProgress: 1,
     documentPageIndex: 0,
   };
   const currentViewReceipt: CurrentViewReceipt = {
     format: 6,
     workspaceStamp: workspace.stamp,
-    boardRevision: boardHierarchyRevision(board),
+    boardRevision: "",
     spatialInkStamp: spatialInk.stamp,
     presence,
     renderViewport: { x: 700, y: 900 },
@@ -138,14 +143,13 @@ export async function writeFixture(root: string): Promise<void> {
     previewPNG_SHA256: previewSHA256,
     inkPNG_SHA256: previewSHA256,
   };
-  await mkdir(join(root, "pages"), { recursive: true });
-  await mkdir(join(root, "previews"), { recursive: true });
+  await startFixture(root);
+  await fixtureControl(root,"seed",{workspace,page,board,spatialInk,presence});
+  const boardRevision = (await new NotebookStore(fixtureSocket(root)).readHeader()).boardRevision;
+  if (!boardRevision) throw new Error("Seeded Core scene has no completed identity");
+  currentViewReceipt.boardRevision = boardRevision;
+  await mkdir(join(root, "previews/targets"), { recursive: true });
   await mkdir(join(root, "previews", `${pageID}.regions`), { recursive: true });
-  await writeFile(join(root, "workspace.json"), JSON.stringify(workspace));
-  await writeFile(join(root, "board.json"), JSON.stringify(board));
-  await writeFile(join(root, "spatial-ink.json"), JSON.stringify(spatialInk));
-  await writeFile(join(root, "last-context.json"), JSON.stringify(presence));
-  await writeFile(join(root, "pages", `${pageID}.json`), JSON.stringify(page));
   // A minimal valid PNG is sufficient for MCP content-path verification.
   await writeFile(join(root, "previews", `${pageID}.png`), previewPNG);
   await writeFile(join(root, "previews", `${pageID}.ink.png`), previewPNG);
@@ -203,4 +207,57 @@ function crc32(data: Buffer): number {
     }
   }
   return (crc ^ 0xffffffff) >>> 0;
+}
+
+interface FixtureHost {
+  process:ChildProcessWithoutNullStreams; socketPath:string; directory:string;
+  requests:Map<string,{resolve:(value:any)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>}>;
+}
+const hosts = new Map<string,FixtureHost>();
+export function fixtureSocket(root:string):string {
+  const host=hosts.get(root); if(!host) throw new Error("Fixture host is not running"); return host.socketPath;
+}
+async function startFixture(root:string):Promise<void> {
+  if(hosts.has(root)) throw new Error("Fixture already running");
+  const directory=await mkdtemp("/tmp/notebook-ipc-test-");
+  const socketPath=join(directory,"bridge.sock");
+  const binary=process.env.NOTEBOOK_IPC_TEST_HOST;
+  if(!binary) throw new Error("Run MCP/test/run.sh to build the isolated IPC test host");
+  const child=spawn(binary,[root,socketPath],{stdio:["pipe","pipe","pipe"]});
+  const host:FixtureHost={process:child,socketPath,directory,requests:new Map()};
+  hosts.set(root,host);
+  let diagnostics="";
+  child.stderr.on("data",(data:Buffer)=>{diagnostics=(diagnostics+data.toString()).slice(-16000);});
+  const ready=new Promise<void>((resolve,reject)=>{
+    const timer=setTimeout(()=>{reject(new Error("Fixture IPC startup timed out: "+diagnostics));child.kill();},10000);
+    createInterface({input:child.stdout}).on("line",line=>{
+      try {
+        const message=JSON.parse(line);
+        if(message.ready){clearTimeout(timer);resolve();return;}
+        const pending=host.requests.get(message.id);
+        if(pending){host.requests.delete(message.id);clearTimeout(pending.timer);
+          if(message.error) pending.reject(new BridgeError(message.error)); else pending.resolve(message.result);}
+      } catch(error){clearTimeout(timer);reject(error);}
+    });
+    child.once("error",error=>{clearTimeout(timer);reject(error);});
+    child.once("exit",code=>{clearTimeout(timer);reject(new Error(`Fixture host exited ${code}: ${diagnostics}`));
+      for(const request of host.requests.values()){clearTimeout(request.timer);request.reject(new Error("Fixture host exited: "+diagnostics));}host.requests.clear();});
+  });
+  await ready;
+}
+export function fixtureControl<T=any>(root:string,operation:string,value?:unknown):Promise<T> {
+  const host=hosts.get(root); if(!host) return Promise.reject(new Error("Fixture host is not running"));
+  const id=randomUUID();
+  return new Promise<T>((resolve,reject)=>{
+    const timer=setTimeout(()=>{host.requests.delete(id);reject(new Error("Fixture control timed out: "+operation));},10000);
+    host.requests.set(id,{resolve,reject,timer});
+    host.process.stdin.write(JSON.stringify({id,operation,value})+"\n");
+  });
+}
+export async function stopFixture(root:string):Promise<void> {
+  const host=hosts.get(root);if(!host)return;hosts.delete(root);
+  const exited=new Promise<void>(resolve=>host.process.once("exit",()=>resolve()));
+  host.process.stdin.end();
+  const timer=setTimeout(()=>host.process.kill(),2000);
+  await exited;clearTimeout(timer);await rm(host.directory,{recursive:true,force:true});
 }

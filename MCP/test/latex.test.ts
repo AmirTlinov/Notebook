@@ -4,11 +4,13 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { randomUUID } from "node:crypto";
+import { revision } from "../src/domain.js";
 
 import type { DocumentBlock, DocumentDocument } from "../src/domain.js";
 import { documentTeX, exportDocument } from "../src/latex.js";
-import { StoreError } from "../src/store.js";
-import { appActor } from "./fixture.js";
+import { NotebookStore, StoreError } from "../src/store.js";
+import { appActor, rootBoardID, writeFixture, fixtureSocket, stopFixture } from "./fixture.js";
 
 const documentID = "7e7a0000-0000-4000-8000-000000000040";
 
@@ -98,10 +100,19 @@ test("compiles Cyrillic, Markdown math, and raw LaTeX to a PDF with Tectonic", {
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), "notebook-latex-export-"));
   try {
-    const receipt = await exportDocument(document([
+    await writeFixture(root);
+    const store=new NotebookStore(fixtureSocket(root));
+    const source=document([
       markdown("intro", "# Документ\n\nРусский текст и формула $x_1$."),
       latex("equation", "\\[E=mc^2\\]"),
-    ]), root);
+    ]);
+    const board=await store.readBoard(),header=await store.readHeader();
+    const target={kind:"board",id:rootBoardID};
+    await store.command({command:"apply",action:{id:randomUUID(),summary:"Печать проверочного документа",references:[],
+      expected:[{target,revision:revision(board.stamp)},{target:{kind:"workspace",id:rootBoardID},revision:revision(header.stamp)}],
+      operations:[{kind:"createDocument",target,id:source.id,values:{title:"Печать",center:{tileX:0,tileY:0,localX:1000,localY:0},paperSize:source.paperSize,preamble:source.preamble,blocks:source.blocks}}]}});
+    const saved=await store.readDocument(source.id);
+    const receipt=await exportDocument(saved,store);
     const pdf = await readFile(receipt.pdfPath);
     const tex = await readFile(receipt.texPath, "utf8");
 
@@ -112,6 +123,7 @@ test("compiles Cyrillic, Markdown math, and raw LaTeX to a PDF with Tectonic", {
     assert.match(tex, /Русский текст/);
     assert.doesNotMatch(receipt.log, /Missing character/i);
   } finally {
+    await stopFixture(root);
     await rm(root, { recursive: true, force: true });
   }
 });

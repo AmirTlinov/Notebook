@@ -210,7 +210,7 @@ final class PageVisionPreviewTests: XCTestCase {
     )
     XCTAssertTrue(
       page.replaceDrawing(
-        try PageInkMigration.importDrawing(drawing.dataRepresentation(), size: size)
+        try LegacyPencilFixture.importDrawing(drawing.dataRepresentation(), size: size)
           .dataRepresentation(), actor: actor))
     return Fixture(root: root, store: store, page: page)
   }

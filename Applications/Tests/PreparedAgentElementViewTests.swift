@@ -9,8 +9,7 @@ import XCTest
 final class PreparedAgentElementViewTests: XCTestCase {
   @MainActor
   func testCachedStaticSourceReportsReadyWithoutMountingWebKit() async throws {
-    let fixture = makeModel()
-    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let model = makeModel()
     let source = element(id: UUID().uuidString, source: "cached")
     XCTAssertTrue(SceneRenderResources.shared.store(raster(), for: source))
     var ready = false
@@ -18,7 +17,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
       PreparedAgentElementView(element: source, allowsInteraction: true,
         focus: .board(boardID: UUID(), elementID: source.id),
         onRenderReady: { ready = $0 }, onState: { _ in XCTFail("Static content cannot commit state") })
-        .frame(width: 160, height: 120).environment(fixture.model)))
+        .frame(width: 160, height: 120).environment(model)))
     defer { host.close() }
     try await waitUntil("Cached raster must confirm its first mounted frame") { ready }
     XCTAssertTrue(webViews(in: host.controller.view).isEmpty)
@@ -26,8 +25,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
 
   @MainActor
   func testStaticSourceEditPreparesItsReplacementInsteadOfKeepingTheOldRaster() async throws {
-    let fixture = makeModel()
-    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let model = makeModel()
     let id = UUID().uuidString
     let first = element(id: id, source: "first")
     let second = element(id: id, source: "second")
@@ -38,7 +36,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
       AnyView(PreparedAgentElementView(element: source, allowsInteraction: true,
         focus: .board(boardID: WorkspaceRoot.boardID, elementID: source.id),
         onRenderReady: { readiness[source.source] = $0 }, onState: { _ in })
-        .frame(width: 160, height: 120).environment(fixture.model))
+        .frame(width: 160, height: 120).environment(model))
     }
     let host = try SurfaceHost(content: content(first))
     defer { host.close() }
@@ -53,8 +51,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
 
   @MainActor
   func testChangingFocusKeepsOnlyOneLiveInteractiveOwnerAndStopsPreviousCommits() async throws {
-    let fixture = makeModel()
-    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let model = makeModel()
     let boardID = UUID()
     let first = element(id: UUID().uuidString, source: "first", interactive: true)
     let second = element(id: UUID().uuidString, source: "second", interactive: true)
@@ -73,13 +70,13 @@ final class PreparedAgentElementViewTests: XCTestCase {
           })
           .frame(width: 160, height: 120)
       }
-    }.environment(fixture.model)))
+    }.environment(model)))
     defer { host.close() }
-    fixture.model.interactiveElementFocus = .board(boardID: boardID, elementID: first.id)
+    model.interactiveElementFocus = .board(boardID: boardID, elementID: first.id)
     try await waitUntil("First interactive owner mounted") {
       self.webViews(in: host.controller.view).count == 1 && commits[first.id, default: 0] > 0
     }
-    fixture.model.interactiveElementFocus = .board(boardID: boardID, elementID: second.id)
+    model.interactiveElementFocus = .board(boardID: boardID, elementID: second.id)
     try await waitUntil("Focus transfers to one live owner") {
       self.webViews(in: host.controller.view).count == 1 && commits[second.id, default: 0] > 0
     }
@@ -99,8 +96,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
 
   @MainActor
   func testPreparationFailureUnmountsHiddenWebKitWithoutAutomaticRetryStorm() async throws {
-    let fixture = makeModel()
-    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let model = makeModel()
     let id = UUID().uuidString
     let source = AgentElement(id: id, kind: .web,
       frame: .init(x: 0, y: 0, width: 160, height: 120), source: "native readiness failure",
@@ -113,7 +109,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
     let host = try SurfaceHost(content: AnyView(
       PreparedAgentElementView(element: source, allowsInteraction: false,
         focus: .board(boardID: UUID(), elementID: id), onRenderReady: { ready = $0 }, onState: { _ in })
-        .frame(width: 160, height: 120).environment(fixture.model)))
+        .frame(width: 160, height: 120).environment(model)))
     defer { host.close() }
     try await waitUntil("A failed snapshot must finish its lease, not remain hidden indefinitely") {
       SceneRenderResources.shared.diagnostics(for: [source]).contains { $0.kind == "render_error" }
@@ -129,38 +125,39 @@ final class PreparedAgentElementViewTests: XCTestCase {
 
   @MainActor
   func testPassivePageWithMatchingFocusDoesNotExecuteInteractiveContent() async throws {
-    let fixture = makeModel()
-    defer { try? FileManager.default.removeItem(at: fixture.root) }
-    fixture.model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let model = makeModel()
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let source = element(id: UUID().uuidString, source: "passive", interactive: true)
-    var page = try XCTUnwrap(fixture.model.activePage)
-    page.replaceElements([source], actor: fixture.model.actorID)
-    try fixture.model.store.savePage(page)
-    fixture.model.reloadExternalChanges()
-    await fixture.model.finishPendingPersistence()
-    page = try XCTUnwrap(fixture.model.pages[page.id])
+    var page = try XCTUnwrap(model.activePage)
+    page.replaceElements([source], actor: model.actorID)
+    try model.store.savePage(page)
+    model.reloadExternalChanges()
+    await model.finishPendingPersistence()
+    page = try XCTUnwrap(model.pages[page.id])
     XCTAssertEqual(page.elements, [source])
     let originalStamp = page.agentStamp
     XCTAssertTrue(SceneRenderResources.shared.store(raster(), for: source))
-    fixture.model.interactiveElementFocus = .page(pageID: page.id, elementID: source.id)
+    model.interactiveElementFocus = .page(pageID: page.id, elementID: source.id)
     var ready = false
     let host = try SurfaceHost(content: AnyView(PageSurface(page: page, isInteractive: false,
       isVisible: true, onRenderReady: .init { ready = $0 })
-      .environment(fixture.model)))
+      .environment(model)))
     defer { host.close() }
     try await waitUntil("A passive page renders its cached overlay") { ready }
     XCTAssertTrue(webViews(in: host.controller.view).isEmpty,
       "Page thumbnails and neighboring sheets do not activate the focused element.")
     try await Task.sleep(for: .milliseconds(100))
-    XCTAssertEqual(fixture.model.pages[page.id]?.agentStamp, originalStamp)
-    XCTAssertEqual(fixture.model.pages[page.id]?.elements, [source])
-    await fixture.model.finishPendingPersistence()
+    XCTAssertEqual(model.pages[page.id]?.agentStamp, originalStamp)
+    XCTAssertEqual(model.pages[page.id]?.elements, [source])
+    await model.finishPendingPersistence()
   }
 
   @MainActor
-  private func makeModel() -> (root: URL, model: NotebookAppModel) {
+  private func makeModel() -> NotebookAppModel {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    return (root, NotebookAppModel(store: .init(root: root), startsNearbySync: false))
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    return model
   }
 
   private func element(id: String, source: String, interactive: Bool = false) -> AgentElement {

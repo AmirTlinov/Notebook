@@ -22,9 +22,9 @@ final class CollaborationVisionTests: XCTestCase {
   @MainActor
   func testTargetPageCompositeKeepsCameraAndReportsRuntimeDiagnostics() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at:root) }
     let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false)
-    model.start(pageSize:NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize)
     let page = try XCTUnwrap(model.activePage)
     let target = CollaborationTarget(kind:.page,id:page.id)
     let action = CollaborationAction(summary:"Объяснение с диагностикой",expected:[.init(target:target,revision:page.agentStamp.revision)],operations:[
@@ -54,9 +54,9 @@ final class CollaborationVisionTests: XCTestCase {
   @MainActor
   func testTargetPageLargerThanTheRasterCachePublishesOneOrderedResult() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     var page = try XCTUnwrap(model.activePage)
     let elements = (0..<12).map { index in
       AgentElement(id: "large-\(UUID().uuidString)", kind: .web,
@@ -92,9 +92,9 @@ final class CollaborationVisionTests: XCTestCase {
   @MainActor
   func testRegionalReferenceIgnoresOutsideInkAndFollowsItsPhysicalOwner() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     var page = try XCTUnwrap(model.activePage)
     let actor = UUID(), target = CollaborationTarget(kind: .page, id: page.id)
     func stroke(_ y: Double, tool: SpatialInkTool = .pen) -> PageInkAction {

@@ -23,24 +23,109 @@ final class NotebookAppModel {
   private(set) var loadState: LoadState = .loading
   private(set) var workspace: WorkspaceIndex? { didSet { collaborationReadEpoch &+= 1; scheduleScenePreparation() } }
   private(set) var pages: [UUID: PageDocument] = [:] { didSet { collaborationReadEpoch &+= 1 } }
+  private struct PageAddress: Hashable { let itemID: UUID; let index: Int }
+  @ObservationIgnored private var pageAddresses: [PageAddress: UUID] = [:]
+  @ObservationIgnored private var pagePreparationTasks: [PageAddress: Task<Void, Never>] = [:]
+
+  func notebookPageCount(_ itemID: UUID) -> Int {
+    max(notebookPageCounts[itemID] ?? 0, workspace?.item(id: itemID)?.pageIDs.count ?? 0)
+  }
+
+  func notebookPage(at index: Int, in itemID: UUID) -> PageDocument? {
+    if let id = pageAddresses[.init(itemID: itemID, index: index)] { return pages[id] }
+    guard let item = workspace?.item(id: itemID), item.pageIDs.indices.contains(index) else { return nil }
+    return pages[item.pageIDs[index]]
+  }
+
+  /// An unloaded existing sheet never certifies a blank page. Preparation
+  /// returns its actual address and bytes before UIKit may admit the host.
+  func prepareNotebookPage(at index: Int, in itemID: UUID) async {
+    guard !isStopped, index >= 0, index < notebookPageCount(itemID), !isItemBeingDeleted(itemID) else { return }
+    let address = PageAddress(itemID: itemID, index: index)
+    if notebookPage(at: index, in: itemID) != nil { return }
+    if let pending = pagePreparationTasks[address] { await pending.value; return }
+    let task = Task { [weak self] in
+      guard let self else { return }
+      defer { pagePreparationTasks[address] = nil }
+      while !Task.isCancelled, let workspace, let presence, !isItemBeingDeleted(itemID) {
+        let epoch = collaborationReadEpoch
+        do {
+          let prepared = try await persistence.submit { store -> (PageDocument, WorkspaceIndex, Int) in
+            guard let item = try store.readWorkspaceItem(itemID), item.pageIDs.indices.contains(index) else {
+              throw NotebookStorageError.transactionConflict
+            }
+            let items = workspace.items.map { $0.id == itemID ? item : $0 }
+            let projection = try store.workspaceProjection(items: items, selectedItemID: workspace.selectedItemID,
+              selectedPageID: workspace.selectedPageID)
+            return (try store.loadPage(item.pageIDs[index]), projection, item.pageIDs.count)
+          }
+          guard epoch == collaborationReadEpoch else { continue }
+          guard !isItemBeingDeleted(itemID) else { return }
+          self.workspace = prepared.1
+          notebookPageCounts[itemID] = prepared.2
+          pageAddresses[address] = prepared.0.id
+          pages[prepared.0.id] = prepared.0
+          let activeID = presence.notebookPageID
+          let ordered = pages.keys.sorted { lhs, rhs in
+            @MainActor func score(_ id: UUID) -> Int {
+              if id == activeID { return 0 }
+              if id == prepared.0.id { return 1 }
+              guard let location = pageAddresses.first(where: { $0.value == id })?.key,
+                location.itemID == itemID else { return 1_000 }
+              return 2 + abs(location.index - index)
+            }
+            return score(lhs) == score(rhs) ? lhs.uuidString < rhs.uuidString : score(lhs) < score(rhs)
+          }
+          let retained = Set(ordered.prefix(4))
+          pages = pages.filter { retained.contains($0.key) }
+          pageAddresses = pageAddresses.filter { retained.contains($0.value) }
+          return
+        } catch {
+          publicationFailure = error.localizedDescription
+          persistenceFailure = error.localizedDescription
+          return
+        }
+      }
+    }
+    pagePreparationTasks[address] = task
+    await task.value
+  }
+
   private(set) var documents: [UUID: DocumentDocument] = [:] { didSet { collaborationReadEpoch &+= 1; scheduleScenePreparation() } }
   private(set) var documentEditingSessions: [DocumentEditingSession] = []
   @ObservationIgnored private var documentDraftEpoch: UInt64 = 0
   private(set) var documentStates: [UUID: DocumentStateJournal] = [:] { didSet { collaborationReadEpoch &+= 1 } }
   private(set) var boardHierarchy: BoardHierarchy? { didSet { collaborationReadEpoch &+= 1; scheduleScenePreparation() } }
   private(set) var spatialInk: SpatialInkJournal? { didSet { collaborationReadEpoch &+= 1 } }
+  private(set) var loadedInkSurfaces: Set<SurfaceID> = []
+  func renderingInk(on surface: SurfaceID, fallback: SpatialInkJournal?) -> SpatialInkJournal? {
+    loadedInkSurfaces.contains(surface) ? spatialInk : fallback
+  }
+  let compositionTiles: SceneCompositionTiles
   private(set) var sceneIndex: WorkspaceSceneIndex?
+  private(set) var workspaceHeader: NotebookWorkspaceHeader?
+  private(set) var documentPaperSizes: [UUID: DocumentPaperSize] = [:]
+  private(set) var notebookPageCounts: [UUID: Int] = [:]
+  private(set) var sceneCoverage: [UUID: WorkspaceSpatialBounds] = [:]
+  private(set) var truncatedSceneBoards: Set<UUID> = []
   private(set) var scenePreparationPending = false
   private(set) var sceneIndexGeneration: UInt64 = 0
+  private(set) var scenePublicationGeneration: UInt64 = 0
   @ObservationIgnored private var scenePreparationTask: Task<Void, Never>?
   @ObservationIgnored private var scenePreparationRequest: UInt64 = 0
-  @ObservationIgnored private var preparedScene: (index: WorkspaceSceneIndex?, changed: Bool, portals: [UUID: BoardPortalCamera], request: UInt64)?
+  @ObservationIgnored private var scenePreparationIsCoverageOnly = false
+  @ObservationIgnored private var sceneWindowTask: Task<Void, Never>?
+  @ObservationIgnored private var requestedScenePresence: SessionPresence?
+  @ObservationIgnored private var scenePinnedElements: [UUID: [String]] = [:]
+  @ObservationIgnored private var preparedScene: (index: WorkspaceSceneIndex?, changed: Bool, portals: [UUID: BoardPortalCamera], request: UInt64, coverageOnly: Bool)?
   private var scenePortalCameras: [UUID: BoardPortalCamera] = [:]
   @ObservationIgnored private(set) var sceneQueryCount: UInt64 = 0
 
   /// Coalesce a completed content publication before deriving the spatial
   /// read model. The old generation remains visible until the next is whole.
-  private func scheduleScenePreparation() {
+  private func scheduleScenePreparation(coverageOnly: Bool = false) {
+    guard !isStopped else { return }
+    scenePreparationIsCoverageOnly = coverageOnly
     scenePreparationRequest &+= 1
     scenePreparationPending = true
     preparedScene = nil
@@ -50,10 +135,10 @@ final class NotebookAppModel {
       guard let self else { return }
       while !Task.isCancelled, let workspace, let boardHierarchy {
         let request = scenePreparationRequest
-        let documents = documents
+        let coverageOnly = scenePreparationIsCoverageOnly
+        let paperSizes = documentPaperSizes.merging(documents.mapValues(\.paperSize)) { _, live in live }
         let previous = sceneIndex
         let result = await Task.detached(priority: .utility) {
-          let paperSizes = documents.mapValues(\.paperSize)
           let portals = Dictionary(uniqueKeysWithValues: boardHierarchy.boards.map { ($0.id, $0.portalCamera) })
           let changed = previous?.represents(workspace: workspace, hierarchy: boardHierarchy, paperSizes: paperSizes) != true
           let index = changed ? WorkspaceSceneIndex(workspace: workspace, hierarchy: boardHierarchy, paperSizes: paperSizes) : previous
@@ -62,7 +147,7 @@ final class NotebookAppModel {
         // At most one builder exists. Obsolete work cannot publish or enqueue
         // a second expensive build in parallel with the latest publication.
         guard request == scenePreparationRequest else { continue }
-        preparedScene = (result.0, result.1, result.2, request)
+        preparedScene = (result.0, result.1, result.2, request, coverageOnly)
         scenePreparationTask = nil
         publishPreparedSceneIfPossible()
         return
@@ -73,17 +158,18 @@ final class NotebookAppModel {
 
   private func publishPreparedSceneIfPossible() {
     guard let prepared = preparedScene, prepared.request == scenePreparationRequest,
-      !prepared.changed || (!inputIsActive && !peerInputIsActive) else { return }
+      !prepared.changed || (!peerInputIsActive && (!inputIsActive || (prepared.coverageOnly && !inputGate.hasActivePencil))) else { return }
     scenePortalCameras = prepared.portals
     if prepared.changed { sceneIndex = prepared.index; sceneIndexGeneration &+= 1 }
     preparedScene = nil
     scenePreparationPending = false
+    scenePublicationGeneration &+= 1
   }
 
   /// Pages are read from their current catalog owner, independently of the
   /// background geometry generation and any preceding membership changes.
   func itemForDisplay(id: UUID) -> WorkspaceItem? {
-    workspace?.item(id: id)
+    isItemBeingDeleted(id) ? nil : workspace?.item(id: id)
   }
 
   func scenePortalCamera(boardID: UUID) -> BoardPortalCamera? { scenePortalCameras[boardID] }
@@ -91,7 +177,92 @@ final class NotebookAppModel {
   func sceneWorkset(presence: SessionPresence, pinned: Set<WorkspaceSpatialID> = [],
     limit: Int = WorkspaceSceneIndex.detailLimit, pixelScale: Double? = nil) -> WorkspaceSceneWorkset {
     sceneQueryCount &+= 1
+    if sceneCoverage[presence.boardID]?.contains(NotebookSceneState.bounds(for: presence, margin: 64)) != true {
+      requestSceneCoverage(presence)
+    }
     return sceneIndex?.workset(presence: presence, pinned: pinned, limit: limit, pixelScale: pixelScale) ?? .empty
+  }
+
+  /// Called by the view's task, never by its body or a UIKit update callback.
+  /// The camera can replace one pending coverage request without growing a queue.
+  func prepareComposition(presence: SessionPresence, frame: WorkspaceSceneFrame?,
+    pinned: Set<WorkspaceSpatialID>, displayScale: Double) {
+    let elements = pinned.compactMap { id -> String? in
+      if case .element(let value) = id { return value }; return nil
+    }.sorted()
+    let missingPin = elements.contains { sceneIndex?.element(id: $0, boardID: presence.boardID) == nil }
+    scenePinnedElements = elements.isEmpty ? [:] : [presence.boardID: elements]
+    if missingPin || sceneCoverage[presence.boardID]?.contains(NotebookSceneState.bounds(for: presence, margin: 64)) != true {
+      requestSceneCoverage(presence)
+    }
+    guard permitsBackgroundPreparation, !scenePreparationPending else { compositionTiles.cancelPreparation(); return }
+    guard let header = workspaceHeader, let frame else { return }
+    let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID)
+    compositionTiles.prepare(source: source, presence: presence, frame: frame, pinned: pinned,
+      displayScale: displayScale, permitsPreparation: { [weak self] in self?.permitsBackgroundPreparation == true })
+  }
+
+  private func clearRemovedElementPins(_ ids: Set<String>) {
+    guard !ids.isEmpty else { return }
+    scenePinnedElements = scenePinnedElements.mapValues { $0.filter { !ids.contains($0) } }
+    if case .spatial(let id) = elementEditingSession.selection, ids.contains(id) {
+      elementEditingSession = .init()
+    }
+    if case .board(_, let id) = interactiveElementFocus, ids.contains(id) { interactiveElementFocus = nil }
+  }
+
+  /// Derived publication also uses the process's one ordered writer. Reads can
+  /// use separate WAL snapshots; a background renderer cannot open a write path.
+  func performStoreCommand<T: Sendable>(publishesChanges: Bool = false,
+    _ operation: @escaping @Sendable (NotebookStore) throws -> T) async throws -> T {
+    guard !isClosing else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
+    return try await persistence.submit(publishesChanges: publishesChanges, operation)
+  }
+
+  /// Camera queries replace one pending address, never enqueue an archive
+  /// read per frame. An old content revision cannot replace a newer scene.
+  private func requestSceneCoverage(_ view: SessionPresence) {
+    guard loadState == .ready, !isStopped else { return }
+    requestedScenePresence = view
+    guard sceneWindowTask == nil else { return }
+    sceneWindowTask = Task { [weak self] in
+      await Task.yield()
+      guard let self else { return }
+      defer { sceneWindowTask = nil }
+      while let requested = requestedScenePresence, !Task.isCancelled {
+        requestedScenePresence = nil
+        let epoch = collaborationReadEpoch
+        let pins = scenePinnedElements
+        do {
+          let state = try await persistence.submit { store in
+            try NotebookSceneState.read(store: store, presence: requested,
+              viewport: requested.viewport, loadsLiveContent: false, pinnedElements: pins)
+          }
+          guard epoch == collaborationReadEpoch, state.header.cursor == workspaceHeader?.cursor else {
+            externalReloadPending = true
+            if presencePhase == .settled, !inputIsActive { reloadExternalChanges() }
+            return
+          }
+          guard !inputGate.hasActivePencil else { externalReloadPending = true; return }
+          guard self.presence?.boardID == requested.boardID,
+            self.presence?.selectedItemID == requested.selectedItemID else { continue }
+          workspace = state.workspace
+          boardHierarchy = state.hierarchy
+          documentPaperSizes = state.paperSizes.merging(documents.mapValues(\.paperSize)) { _, live in live }
+          notebookPageCounts = state.pageCounts
+          sceneCoverage = state.coverage
+          truncatedSceneBoards = state.truncatedBoards
+          clearRemovedElementPins(state.missingPinnedElements)
+          spatialInk = state.ink
+          loadedInkSurfaces = state.inkSurfaces
+          alignWorkspaceSelection()
+          scheduleScenePreparation(coverageOnly: true)
+        } catch {
+          publicationFailure = error.localizedDescription
+          return
+        }
+      }
+    }
   }
 
   private(set) var presence: SessionPresence?
@@ -137,6 +308,19 @@ final class NotebookAppModel {
     return newest ?? activeSharedContext
   }
   var contextEntries: [SharedContextEntry] { presentedSharedContext?.entries ?? [] }
+  private(set) var agentQuestion: NotebookAgentQuestion?
+  private(set) var agentRequests: [AgentRequestSnapshot] = []
+  private(set) var agentRequestError: String?
+  private(set) var isSavingAgentQuestion = false
+  @ObservationIgnored private var pinnedAttentionSelections: [(UUID, NotebookAttentionSelection)] = []
+  @ObservationIgnored private var attentionGeneration = UUID()
+  @ObservationIgnored private var agentRefreshGeneration: UInt64 = 0
+  @ObservationIgnored private var hasRestoredAgentQuestion = false
+
+  var currentAgentRequest: AgentRequestSnapshot? {
+    agentRequests.first { $0.request.contextID == agentQuestion?.contextID }
+  }
+
   private(set) var actionCue: String?
   private(set) var penStyle: PenStyle
   private(set) var eraserStyle: EraserStyle
@@ -147,8 +331,8 @@ final class NotebookAppModel {
   /// The document bundle supplies its physical size. A notebook or an
   /// unselected board uses the canonical notebook/portal rectangle.
   func itemGeometry(_ itemID: UUID?) -> WorkspaceItemGeometry {
-    if let itemID, let document = documents[itemID] {
-      return .document(document.paperSize)
+    if let itemID, let paper = documents[itemID]?.paperSize ?? documentPaperSizes[itemID] {
+      return .document(paper)
     }
     return .notebook
   }
@@ -159,9 +343,11 @@ final class NotebookAppModel {
 
   private var pageSize = defaultPageSize
   private var started = false
+  @ObservationIgnored private var startupTask: Task<Void, Never>?
   @ObservationIgnored private let persistence: NotebookPersistenceQueue
   private(set) var persistenceFailure: String?
   private var pendingDeletions: [UUID: Set<UUID>] = [:]
+  private var completedDeletions: [UUID: UInt64] = [:]
 
   var pendingDeletionItemIDs: Set<UUID> { Set(pendingDeletions.keys) }
   func isItemBeingDeleted(_ id: UUID) -> Bool { pendingDeletions[id] != nil }
@@ -176,18 +362,7 @@ final class NotebookAppModel {
     }
   }
   private var publicationFailure: String?
-  private var peerPageTail: Task<Void, Never>?
-  private var peerPageGeneration: UInt64 = 0
   private var peerActivities: [UUID: NotebookInputActivity] = [:]
-  /// A peer sends a new page before publishing the catalog that owns it. Keep
-  /// that page out of the durable and visible page set until the newer index
-  /// arrives; the same boundary also makes a late page for a deleted notebook
-  /// harmless.
-  private var stagedRemotePages: [UUID: PageDocument] = [:]
-  private var stagedRemoteDocuments: [UUID: DocumentDocument] = [:]
-  private var stagedRemoteDocumentStates: [UUID: DocumentStateJournal] = [:]
-  private var stagedRemoteIndex: WorkspaceIndex?
-  private var stagedRemoteBoard: BoardHierarchy?
   private var cueTask: Task<Void, Never>?
   private var pencilUndoHistory = PencilUndoHistory()
   private var inkUndoInProgress = false
@@ -197,33 +372,42 @@ final class NotebookAppModel {
   private var lastSettledPresenceEnvelope: PresenceEnvelope?
   private var presenceSequenceTracker = PresenceSequenceTracker()
   private let startsNearbySync: Bool
-  private let sync: NearbySync
+  @ObservationIgnored private var sync: NearbySync?
+  private(set) var pairingState = NotebookPairingState.idle
+  private(set) var pairedPeers: [NotebookTransportIdentity] = []
+  @ObservationIgnored private var peerGenerations: [UUID: UUID] = [:]
   #if os(iOS)
     @ObservationIgnored private let inputFrameMonitor: InputFrameMonitor
   #endif
-  @ObservationIgnored private var incomingCollaboration: [CollaborationEnvelope] = []
   @ObservationIgnored private var diskRefreshTask: Task<Void, Never>?
+  @ObservationIgnored private var headerRefreshTask: Task<Void, Never>?
+  @ObservationIgnored private var headerRefreshRequested = false
   @ObservationIgnored private var diskRefreshRequested = false
   @ObservationIgnored private var externalReloadPending = false
+  @ObservationIgnored private var isStopped = false
+  @ObservationIgnored private var isClosing = false
+  @ObservationIgnored private var shutdownTask: Task<Bool, Never>?
   @ObservationIgnored private var inputSequence: UInt64 = 0
   private(set) var inputIsActive = false
   private(set) var peerInputIsActive = false { didSet { if !peerInputIsActive { publishPreparedSceneIfPossible() } } }
   var permitsBackgroundPreparation: Bool { !inputIsActive && !peerInputIsActive && presencePhase == .settled }
   #if os(macOS)
-    /// MCP writes the same files as the app. This observer belongs to the
-    /// long-lived model, so closing the mirror window cannot stop delivery to
-    /// the iPad while the Mac app is still running.
-    private var externalChangeWatcher: DirectoryWatcher?
+    private(set) var agentCoordinator: NotebookAgentCoordinator?
+    private(set) var agentStartupError: String?
+    @ObservationIgnored private var commandServer: NotebookIPCServer?
+    private let commandSocketURL: URL?
     /// Agent vision follows the process-level mirror, not a disposable window.
     private var previewPublisher: MacPreviewPublisher?
   #endif
 
   init(
     store: NotebookStore = NotebookStore(root: NotebookStore.defaultRoot),
-    startsNearbySync: Bool = true
+    startsNearbySync: Bool = true,
+    commandSocketURL: URL? = nil
   ) {
     self.store = store
     persistence = NotebookPersistenceQueue(store: store)
+    compositionTiles = SceneCompositionTiles(cacheRoot: store.root.appendingPathComponent("derived/composition", isDirectory: true))
     #if os(iOS)
       inputFrameMonitor = InputFrameMonitor(root: store.root)
     #endif
@@ -231,26 +415,28 @@ final class NotebookAppModel {
     penStyle = Self.loadPenStyle()
     eraserStyle = Self.loadEraserStyle()
     actorID = Self.loadActorID()
-    #if os(iOS)
-      let syncRole = NearbySync.Role.iPadConnector
-    #else
-      let syncRole = NearbySync.Role.macListener
+    #if os(macOS)
+      self.commandSocketURL = commandSocketURL ?? (startsNearbySync ? NotebookIPC.defaultSocketURL : nil)
     #endif
-    sync = NearbySync(
-      role: syncRole,
-      peerName: actorID.uuidString.lowercased()
-    )
-    sync.onMessage = { [weak self] message in
-      self?.receivePeerMessage(message)
+    persistence.onFailureChange = { [weak self] message in
+      guard let self else { return }
+      persistenceFailure = message ?? publicationFailure
     }
-    sync.onConnect = { [weak self] in
-      self?.isPeerConnected = true
-      self?.publishInputActivity()
-      self?.sendSnapshot()
-    }
-    sync.onDisconnect = { [weak self] in self?.peerDisconnected() }
-    persistence.onFailureChange = { [weak self] message in self?.persistenceFailure = message }
     persistence.onContentMerged = { [weak self] in self?.reloadExternalChanges() }
+    persistence.onCommit = { [weak self] owner in
+      guard self?.isStopped == false else { return }
+      self?.sync?.notifyDurableChanges()
+      switch owner {
+      case .page, .document, .documentState, .board, .spatialInk, .nativeText, .elementState:
+        self?.refreshCommittedHeader()
+      case nil, .presence, .inputActivity, .documentDraft: break
+      }
+      #if os(macOS)
+        // Native page/ink/camera writes cannot change a request's execution.
+        // Transactional commands (including durable peer packets) may do so.
+        if owner == nil { self?.agentCoordinator?.storeDidCommit() }
+      #endif
+    }
     inputGate.onActivityChange = { [weak self] active in
       guard let self else { return }
       inputIsActive = active
@@ -264,7 +450,7 @@ final class NotebookAppModel {
       publishInputActivity()
       if !active {
         publishPreparedSceneIfPossible()
-        if externalReloadPending || !incomingCollaboration.isEmpty {
+        if externalReloadPending {
           externalReloadPending = false
           reloadExternalChanges()
         }
@@ -273,6 +459,7 @@ final class NotebookAppModel {
   }
 
   private func publishInputActivity() {
+    guard !isStopped else { return }
     guard loadState == .ready else { return }
     inputSequence &+= 1
     var targets: [CollaborationTarget] = []
@@ -286,23 +473,129 @@ final class NotebookAppModel {
       } else { targets = [board] }
     }
     let activity = NotebookInputActivity(deviceID: actorID, sessionID: presenceSessionID, sequence: inputSequence, targets: targets)
-    sync.send(.inputActivity(activity))
+    sync?.sendTransient(.inputActivity(activity))
     enqueueStoreWrite(owner: .inputActivity(activity.deviceID)) { try $0.saveInputActivity(activity) }
   }
 
-  /// Connection teardown uses the same ordered runtime writes as receipt of a
-  /// contact. An already accepted active record cannot run after this reset.
-  func peerDisconnected() {
-    isPeerConnected = false
-    peerInputIsActive = false
-    peerActivities.removeAll()
-    let actor = actorID
-    enqueueStoreWrite { try $0.resetInputActivities(keeping: actor) }
-    restoreSettledPresenceAfterDisconnect()
+  /// Connection identity is established by TLS and both pairing approvals.
+  /// Only this generation may publish or release the peer's contact barrier.
+  func peerConnected(_ peer: NotebookTransportIdentity, generation: UUID) {
+    peerGenerations[peer.deviceID] = generation
+    isPeerConnected = true
+    pairedPeers = sync?.pairedPeers ?? []
+    publishInputActivity()
+    #if os(iOS)
+      if let lastSettledPresenceEnvelope { sync?.sendTransient(.presence(lastSettledPresenceEnvelope)) }
+    #endif
+  }
+
+  func peerDisconnected(peerID: UUID, generation: UUID) {
+    guard peerGenerations[peerID] == generation else { return }
+    peerGenerations[peerID] = nil
+    peerActivities[peerID] = nil
+    isPeerConnected = !peerGenerations.isEmpty
+    peerInputIsActive = peerActivities.values.contains(where: \.isActive)
+    enqueueStoreWrite { try $0.resetInputActivity(deviceID: peerID) }
+    if !isPeerConnected { restoreSettledPresenceAfterDisconnect() }
+  }
+
+  private func startTrustedSync() async throws {
+    guard sync == nil else { return }
+    let header = try await persistence.submit { try $0.workspaceHeader() }
+    let writer = persistence
+    let storage = NotebookTransportStorage(
+      changes: { cursor, limit in try await writer.submit { try $0.changeJournal(after: cursor, limit: limit) } },
+      incomingCursor: { peer in try await writer.submit { try $0.peerCursor(peerID: peer, direction: .incoming) } },
+      acknowledgePeer: { peer, cursor in try await writer.submit { try $0.acknowledgePeer(peerID: peer, through: cursor) } },
+      blobSize: { hash in try await writer.submit { try $0.blobSize(hash: hash) } },
+      readBlobChunk: { hash, offset, count in try await writer.submit { try $0.readBlobChunk(hash: hash, offset: offset, maxBytes: count) } },
+      stageBlob: { file, hash, count in try await writer.submit { try $0.stageBlob(file: file, expectedHash: hash, byteCount: count) } },
+      missingBlobHashes: { change, limit, after in
+        try await writer.submit { try $0.missingBlobHashes(for: change, limit: limit, after: after) }
+      },
+      applyRemoteChange: { [weak self] change, peer in
+        guard let self else { throw NotebookTransportError.disconnected }
+        return try await self.applyDurablePeerChange(change, peerID: peer)
+      })
+    #if os(iOS)
+      let role = NearbySync.Role.iPadConnector
+      let name = "iPad"
+    #else
+      let role = NearbySync.Role.macListener
+      let name = Host.current().localizedName ?? "Mac"
+    #endif
+    let connection = NearbySync(role: role,
+      identity: .init(deviceID: actorID, workspaceID: header.workspaceID, displayName: name),
+      storage: storage, stagingRoot: store.root.appendingPathComponent("transfer-staging", isDirectory: true))
+    connection.onPairingChange = { [weak self] state in
+      self?.pairingState = state
+      self?.pairedPeers = self?.sync?.pairedPeers ?? []
+    }
+    connection.onConnect = { [weak self] peer, generation in self?.peerConnected(peer, generation: generation) }
+    connection.onDisconnect = { [weak self] peer, generation in self?.peerDisconnected(peerID: peer, generation: generation) }
+    connection.onTransient = { [weak self] value, peer, generation in
+      self?.receivePeerTransient(value, peerID: peer, generation: generation)
+    }
+    connection.onDurableChange = { [weak self] _, peer, generation in
+      guard let self, peerGenerations[peer] == generation else { return }
+      reloadExternalChanges()
+    }
+    sync = connection
+    connection.start()
+    pairedPeers = connection.pairedPeers
+  }
+
+  /// Called only after the transport has authenticated the workspace and
+  /// staged every referenced hash. Completion is the durable ACK boundary.
+  func applyDurablePeerChange(_ change: NotebookDurableChange, peerID: UUID) async throws -> UInt64 {
+    guard !isClosing else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
+    // Wait outside the writer so the accepted Pencil tail and contact release
+    // can finish. Presence and transfer credits keep their independent lane.
+    while inputIsActive || presencePhase == .active {
+      guard !isClosing else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    guard !isClosing else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
+    try Task.checkCancellation()
+    let cursor = try await persistence.submit(publishesChanges: true) {
+      try $0.applyRemoteChange(change, peerID: peerID)
+    }
+    reloadExternalChanges()
+    return cursor
+  }
+
+  func createPairingInvitation() throws -> String {
+    guard let sync else { throw NotebookTransportError.storageUnavailable }
+    return try sync.createPairingInvitation().encoded()
+  }
+
+  func joinPairingInvitation(_ invitation: String) throws {
+    guard let sync else { throw NotebookTransportError.storageUnavailable }
+    try sync.joinPairingInvitation(invitation.trimmingCharacters(in: .whitespacesAndNewlines))
+  }
+
+  func confirmPairing(generation: UUID) throws {
+    guard let sync else { throw NotebookTransportError.storageUnavailable }
+    try sync.confirmPairing(generation: generation)
+  }
+
+  func cancelPairing() throws { try sync?.cancelPairing() }
+
+  func revokePeer(_ id: UUID) throws {
+    guard let sync else { throw NotebookTransportError.storageUnavailable }
+    try sync.revokePeer(id)
+    pairedPeers = sync.pairedPeers
+  }
+
+  isolated deinit {
+    sync?.stop()
+    #if os(macOS)
+      commandServer?.stop()
+    #endif
   }
 
   var activePage: PageDocument? {
-    guard let pageID = workspace?.selectedPageID, !isPageBeingDeleted(pageID) else { return nil }
+    guard let pageID = presence?.notebookPageID, !isPageBeingDeleted(pageID) else { return nil }
     return pages[pageID]
   }
 
@@ -314,7 +607,7 @@ final class NotebookAppModel {
   }
 
   var activeItem: WorkspaceItem? {
-    workspace?.selectedItem
+    presence?.selectedItemID.flatMap { workspace?.item(id: $0) }
   }
 
   var activeDocument: DocumentDocument? {
@@ -331,63 +624,58 @@ final class NotebookAppModel {
     presence?.mode == .page && (presence?.openProgress ?? 0) >= 0.999
   }
 
-  func start(pageSize: PageSize) {
+  func start(pageSize: PageSize) async {
+    guard !isStopped else { return }
+    if let startupTask { await startupTask.value; return }
     guard !started else { return }
     started = true
     self.pageSize = pageSize
+    let startup = Task<Void, Never> { [weak self] in
+      guard let self else { return }
+      await loadInitialState(pageSize: pageSize)
+    }
+    startupTask = startup
+    await startup.value
+    startupTask = nil
+  }
+
+  private func loadInitialState(pageSize: PageSize) async {
     do {
-      let stored = try store.loadOrCreate(
-        actor: actorID,
-        pageSize: pageSize,
-        initialNotebookID: Self.initialNotebookID,
-        initialPageID: Self.initialPageID
-      )
-      workspace = stored.0
-      pages = try PageInkMigration.migrate(stored.1,store:store)
-      let storedDocuments = try store.loadAvailableDocuments(
-        workspace: stored.0
-      )
-      documents = storedDocuments.documents
-      documentStates = storedDocuments.states
-      documentEditingSessions = try store.documentEditingSessions()
-      boardHierarchy = try store.loadOrCreateBoard(
-        workspace: stored.0,
-        actor: actorID
-      )
-      spatialInk = try store.loadOrCreateSpatialInk(actor: actorID)
-      presence = initialPresence(
-        workspace: stored.0,
-        board: boardHierarchy,
-        viewport: pageSize
-      )
-      if let diskPresence = try? store.loadPresence(),
-        presenceIsUsable(diskPresence, workspace: stored.0)
-      {
-        presence = settledPresence(
-          from: diskPresence,
-          workspace: stored.0,
-          board: boardHierarchy,
-          viewport: SpatialPoint(x: pageSize.width, y: pageSize.height)
-        )
+      let actor = actorID
+      let notebookID = Self.initialNotebookID, pageID = Self.initialPageID
+      let stored = try await persistence.submit { store in
+        try NotebookSceneState.start(store: store, actor: actor, pageSize: pageSize,
+          notebookID: notebookID, pageID: pageID)
       }
+      acceptSceneState(stored)
+      presence = settledPresence(from: stored.presence, workspace: stored.workspace,
+        board: stored.hierarchy, viewport: .init(x: pageSize.width, y: pageSize.height))
       if let presence {
-        try? store.savePresence(presence)
+        let selection = presence.selectedItemID.flatMap { workspace?.item(id: $0) }
+          ?? stored.workspace.selectedItem
+        let pageID = presence.notebookPageID.flatMap { selection.pageIDs.contains($0) ? $0 : nil }
+          ?? selection.pageIDs.first
+        let presence = presence.selecting(itemID: selection.id, pageID: pageID)
+        self.presence = presence
+        alignWorkspaceSelection()
+        try await persistence.submit { try $0.savePresence(presence) }
         lastSettledPresenceEnvelope = makePresenceEnvelope(
           presence,
           phase: .settled
         )
       }
-      try store.migrateCollaborationStorage()
-      try store.resetInputActivities()
       loadState = .ready
       reloadCollaborationMetadata()
       reloadExternalChanges()
       #if os(macOS)
-        startExternalChangeObservation()
+        try startCommandServer()
         startPreviewPublication()
       #endif
       if startsNearbySync {
-        sync.start()
+        try await startTrustedSync()
+        #if os(macOS)
+          await startAgentCoordinator()
+        #endif
       }
     } catch {
       loadState = .failed(error.localizedDescription)
@@ -411,10 +699,8 @@ final class NotebookAppModel {
       pages[createdPage.id] = createdPage
     }
     self.workspace = workspace
-    if let createdPage = selection.createdPage {
-      sync.send(.page(createdPage))
-    }
-    sync.send(.index(workspace))
+    updateSessionSelection(from: workspace)
+
     scheduleWorkspaceSelectionSave(
       workspace,
       createdPage: selection.createdPage
@@ -427,6 +713,7 @@ final class NotebookAppModel {
     guard var workspace, var board = boardHierarchy, let presence else {
       return nil
     }
+    let beforeWorkspace = workspace, beforeBoard = board
     guard let created = workspace.createNotebook(
       title: "",
       actor: actorID,
@@ -440,19 +727,17 @@ final class NotebookAppModel {
     else { return nil }
 
     enqueueStoreWrite(reload: true) { [workspace, board] store in
-      try store.saveWorkspaceBundle(
-        index: workspace,
-        page: created.page,
-        board: board
-      )
+      _ = try store.saveWorkspaceEdits(before: beforeWorkspace, after: workspace,
+        boardBefore: beforeBoard, boardAfter: board, pages: [created.page])
     }
 
     self.workspace = workspace
+    updateSessionSelection(from: workspace)
     boardHierarchy = board
     pages[created.page.id] = created.page
-    sync.send(.page(created.page))
-    sync.send(.board(board))
-    sync.send(.index(workspace))
+
+
+
     showCue("Новая тетрадь")
     return created.item.id
   }
@@ -462,8 +747,9 @@ final class NotebookAppModel {
     at center: WorldPoint,
     paperSize: DocumentPaperSize
   ) -> UUID? {
-    guard var workspace, var board = boardHierarchy, let presence,
-      let item = workspace.createDocument(title: "", actor: actorID),
+    guard let beforeWorkspace = workspace, let beforeBoard = boardHierarchy, let presence else { return nil }
+    var workspace = beforeWorkspace, board = beforeBoard
+    guard let item = workspace.createDocument(title: "", actor: actorID),
       board.addItem(
         item.id,
         to: presence.boardID,
@@ -479,30 +765,28 @@ final class NotebookAppModel {
     )
     let state = DocumentStateJournal(id: item.id, actor: actorID)
     enqueueStoreWrite(reload: true) { [workspace, board] store in
-      try store.saveDocumentWorkspaceBundle(
-        index: workspace,
-        document: document,
-        state: state,
-        board: board
-      )
+      _ = try store.saveWorkspaceEdits(before: beforeWorkspace, after: workspace,
+        boardBefore: beforeBoard, boardAfter: board, documents: [document], states: [state])
     }
 
     self.workspace = workspace
     boardHierarchy = board
     documents[item.id] = document
+    updateSessionSelection(from: workspace)
     documentStates[item.id] = state
-    sync.send(.document(document))
-    sync.send(.documentState(state))
-    sync.send(.board(board))
-    sync.send(.index(workspace))
+
+
+
+
     showCue("Новый документ")
     return item.id
   }
 
   @discardableResult
   func createBoard(at center: WorldPoint) -> UUID? {
-    guard var workspace, var hierarchy = boardHierarchy, let presence,
-      let item = workspace.createBoard(title: "", actor: actorID),
+    guard let beforeWorkspace = workspace, let beforeBoard = boardHierarchy, let presence else { return nil }
+    var workspace = beforeWorkspace, hierarchy = beforeBoard
+    guard let item = workspace.createBoard(title: "", actor: actorID),
       hierarchy.createBoard(
         item.id,
         in: presence.boardID,
@@ -512,28 +796,62 @@ final class NotebookAppModel {
     else { return nil }
 
     enqueueStoreWrite(reload: true) { [workspace, hierarchy] store in
-      try store.saveBoardWorkspaceBundle(
-        index: workspace,
-        board: hierarchy,
-        boardID: item.id
-      )
+      _ = try store.saveWorkspaceEdits(before: beforeWorkspace, after: workspace,
+        boardBefore: beforeBoard, boardAfter: hierarchy)
     }
 
     self.workspace = workspace
     boardHierarchy = hierarchy
-    sync.send(.board(hierarchy))
-    sync.send(.index(workspace))
+    updateSessionSelection(from: workspace)
+
+
     showCue("Новая доска")
     return item.id
   }
 
   func selectItem(_ itemID: UUID) {
-    guard !isItemBeingDeleted(itemID), var workspace,
-      workspace.selectItem(itemID, actor: actorID)
-    else { return }
-    self.workspace = workspace
-    sync.send(.index(workspace))
-    scheduleWorkspaceSelectionSave(workspace, createdPage: nil)
+    guard !isItemBeingDeleted(itemID), var workspace else { return }
+    if workspace.item(id: itemID) != nil {
+      guard workspace.selectItem(itemID, actor: actorID) else { return }
+      self.workspace = workspace
+      updateSessionSelection(from: workspace)
+      scheduleWorkspaceSelectionSave(workspace, createdPage: nil)
+      return
+    }
+    // An addressed navigation result can lie outside the current camera cache.
+    // Publish its selection intent now; the writer resolves the actual page.
+    guard let presence else { return }
+    let next = presence.selecting(itemID: itemID, pageID: nil)
+    self.presence = next
+    enqueueStoreWrite(reload: true) { store in
+      guard let item = try store.readItemHeader(itemID) else { return }
+      let durable = try store.loadPresence()
+      try store.savePresence(durable.selecting(itemID: itemID, pageID: item.firstPageID))
+    }
+    requestSceneCoverage(next)
+  }
+
+  /// The catalog value projects selection for existing geometry consumers;
+  /// SessionPresence is the only durable owner of that selection.
+  private func updateSessionSelection(from workspace: WorkspaceIndex) {
+    guard let presence else { return }
+    let next = presence.selecting(itemID: workspace.selectedItemID, pageID: workspace.selectedPageID)
+    self.presence = next
+    requestSceneCoverage(next)
+    #if os(iOS)
+      if let settled = lastSettledPresenceEnvelope?.presence {
+        lastSettledPresenceEnvelope = makePresenceEnvelope(
+          settled.selecting(itemID: workspace.selectedItemID, pageID: workspace.selectedPageID), phase: .settled)
+      }
+      if let envelope = makePresenceEnvelope(next, phase: presencePhase) { sync?.sendTransient(.presence(envelope)) }
+    #endif
+  }
+
+  private func alignWorkspaceSelection() {
+    guard var workspace, let presence, let id = presence.selectedItemID else { return }
+    if workspace.selectItem(id, pageID: presence.notebookPageID, actor: actorID) {
+      self.workspace = workspace
+    }
   }
 
   @discardableResult
@@ -550,100 +868,59 @@ final class NotebookAppModel {
       // serialization tail. Its generation also requires a fresh page drain.
       if !inputGate.hasActivePencil, inputGate.pencilGeneration == generation { break }
     }
-    guard !isItemBeingDeleted(itemID), var workspace, var board = boardHierarchy, let presence, let spatialInk else {
-      return false
-    }
-    let expectedIndex = workspace
-    guard let removed = workspace.deleteItem(itemID, actor: actorID) else {
+    guard !isItemBeingDeleted(itemID), let removed = workspace?.item(id: itemID),
+      let hierarchy = boardHierarchy, let ownerID = hierarchy.ownerBoardID(of: itemID),
+      let owner = hierarchy.board(ownerID) else { return false }
+    guard max(workspaceHeader?.itemCount ?? 0, workspace?.items.count ?? 0) > 1 else {
       showCue("Один рабочий элемент должен остаться")
       return false
     }
-    guard board.deleteItem(
-      itemID,
-      from: presence.boardID,
-      kind: removed.kind,
-      spatialInk: spatialInk,
-      actor: actorID
-    ) else {
-      if removed.kind == .board { showCue("Сначала очистите вложенную доску") }
-      return false
-    }
-
     pendingDeletions[itemID] = Set(removed.pageIDs)
-    defer { pendingDeletions[itemID] = nil }
-    // Reserve the deletion's causal clocks before yielding to disk. A later
-    // selection or move must not reuse this actor/counter with different values.
-    if var current = self.workspace {
-      current.observeCausalFrontier(workspace.stamp)
-      self.workspace = current
-    }
-    if var current = boardHierarchy {
-      current.observeCausalFrontiers(from: board)
+    let actor = actorID, expected = owner.stamp
+    // Reserve the exact command clock before yielding. Edits of other visible
+    // members remain admitted and cannot reuse the deletion's causal identity.
+    if let next = expected.advanced(by: actor), var current = boardHierarchy {
+      let frontier = BoardHierarchy(rootBoardID: hierarchy.rootBoardID,
+        boards: [.init(id: ownerID, board: .init(freeItems: [], stamp: next))],
+        stamp: max(hierarchy.stamp, next))
+      current.observeCausalFrontiers(from: frontier)
       boardHierarchy = current
     }
+    if var current = workspace, let next = current.stamp.advanced(by: actor) {
+      current.observeCausalFrontier(next)
+      workspace = current
+    }
     do {
-      board = try await persistence.submit { [workspace, board] store in try store.deleteWorkspaceBundle(
-        expectedIndex: expectedIndex,
-        index: workspace,
-        board: board,
-        pageIDs: removed.pageIDs,
-        documentIDs: removed.kind == .document ? [removed.id] : []
-      ) }
-    } catch NotebookStoreError.workspaceChanged {
-      reloadExternalChanges()
-      showCue("Каталог обновился. Повторите удаление")
-      return false
+      let header = try await persistence.submit(publishesChanges: true) {
+        try $0.deleteWorkspaceItem(itemID: itemID, expected: expected, actor: actor)
+      }
+      completedDeletions[itemID] = header.cursor
+      for pageID in removed.pageIDs {
+        persistence.discardPending(owner: .page(pageID))
+        pages[pageID] = nil
+        reservedDrawingCounters[pageID] = nil
+        pencilUndoHistory.discardChanges(for: pageID)
+      }
+      documents[removed.id] = nil
+      documentStates[removed.id] = nil
+      // The reload follows every already accepted native write. If another
+      // contact is active, keep the deleted owner guarded until publication.
+      if let task = reloadExternalChanges() { await task.value }
+      else { externalReloadPending = true }
     } catch NotebookStoreError.boardContainsContent {
+      pendingDeletions[itemID] = nil
       reloadExternalChanges()
       showCue("Сначала очистите вложенную доску")
       return false
-    } catch {
-      showCue("Не удалось удалить элемент")
+    } catch NotebookStorageError.transactionConflict {
+      pendingDeletions[itemID] = nil
+      reloadExternalChanges()
+      showCue("Элемент обновился. Повторите удаление")
       return false
-    }
-
-    for pageID in removed.pageIDs {
-      persistence.discardPending(owner: .page(pageID))
-      pages[pageID] = nil
-      stagedRemotePages[pageID] = nil
-      reservedDrawingCounters[pageID] = nil
-      pencilUndoHistory.discardChanges(for: pageID)
-    }
-    documents[removed.id] = nil
-    documentStates[removed.id] = nil
-    stagedRemoteDocuments[removed.id] = nil
-    stagedRemoteDocumentStates[removed.id] = nil
-    // The disk command may yield while a different owner is edited. Publish
-    // the deletion's causal fields, not its older whole in-memory snapshot.
-    if let current = self.workspace {
-      do { workspace = try current.merging(workspace) }
-      catch {
-        // The deletion is durable; retain the newer memory rather than
-        // replacing it with an incompatible snapshot while re-reading it.
-        reloadExternalChanges()
-        showCue("Удаление сохранено; обновляем каталог")
-        return true
-      }
-    }
-    if var current = boardHierarchy {
-      _ = current.merge(board, items: workspace.items)
-      board = current
-    }
-    self.workspace = workspace
-    boardHierarchy = board
-    sync.send(.board(board))
-    sync.send(.index(workspace))
-
-    if let currentPresence = self.presence, currentPresence.focusedItemID == itemID {
-      updatePresence(
-        SessionPresence(
-          boardID: currentPresence.boardID,
-          mode: .board,
-          camera: currentPresence.camera,
-          viewport: currentPresence.viewport
-        ),
-        settled: true
-      )
+    } catch {
+      pendingDeletions[itemID] = nil
+      showCue("Удаление не сохранено: \(error.localizedDescription)")
+      return false
     }
     switch removed.kind {
     case .notebook: showCue("Тетрадь удалена")
@@ -654,15 +931,15 @@ final class NotebookAppModel {
   }
 
   func moveItem(_ itemID: UUID, to center: WorldPoint) {
-    guard !isItemBeingDeleted(itemID), var board = boardHierarchy, let presence,
-      board.moveItem(
-        itemID,
-        in: presence.boardID,
-        to: center,
-        actor: actorID
-      )
-    else { return }
-    persistBoard(board)
+    guard !isItemBeingDeleted(itemID), let presence else { return }
+    if var board = boardHierarchy, board.moveItem(itemID, in: presence.boardID, to: center, actor: actorID) {
+      persistBoard(board)
+    } else {
+      let boardID = presence.boardID, actor = actorID
+      enqueueStoreWrite(reload: true) {
+        _ = try $0.moveWorkspaceItem(itemID: itemID, in: boardID, to: center, actor: actor)
+      }
+    }
   }
 
   @discardableResult
@@ -704,15 +981,15 @@ final class NotebookAppModel {
   @discardableResult
   func enterBoard(_ boardID: UUID, through parentCamera: SpatialCamera? = nil, settled: Bool = true) -> Bool {
     guard !isItemBeingDeleted(boardID), let workspace, let hierarchy = boardHierarchy, let presence else { return false }
-    let item = sceneIndex?.item(id: boardID)
-      ?? (sceneIndex == nil ? workspace.items.first { $0.id == boardID } : nil)
-    let boardExists = sceneIndex.map { $0.board(id: boardID) != nil } ?? (hierarchy.board(boardID) != nil)
+    // The accepted catalog owns navigation. A derived image index may still
+    // be preparing the newly created portal and cannot veto its identity.
+    let item = workspace.item(id: boardID)
+    let boardExists = hierarchy.board(boardID) != nil
     guard item?.kind == .board, boardExists else { return false }
-    let portal = scenePortalCamera(boardID: boardID) ?? hierarchy.portalCamera(boardID) ?? BoardPortalCamera()
+    let portal = hierarchy.portalCamera(boardID) ?? BoardPortalCamera()
     let camera: SpatialCamera
     if let parentCamera {
-      guard let center = sceneIndex?.focusedCenter(itemID: boardID, boardID: presence.boardID)
-        ?? (sceneIndex == nil ? hierarchy.focusedCenter(of: boardID, in: presence.boardID) : nil),
+      guard let center = hierarchy.focusedCenter(of: boardID, in: presence.boardID),
         let entered = BoardPortalProjection.enteringCamera(from: parentCamera,
           portalCamera: portal,
           portalCenter: center, viewport: presence.viewport) else { return false }
@@ -783,6 +1060,11 @@ final class NotebookAppModel {
   ) {
     guard presence.isValid else { return }
     let resolved: SessionPresence
+    let selectionItem = presence.selectedItemID ?? self.presence?.selectedItemID
+    let selectedPage = presence.notebookPageID
+      ?? (selectionItem == self.presence?.selectedItemID ? self.presence?.notebookPageID : nil)
+      ?? selectionItem.flatMap { workspace?.item(id: $0)?.pageIDs.first }
+    let presence = presence.selecting(itemID: selectionItem, pageID: selectedPage)
     if settled, let workspace {
       resolved = settledPresence(
         from: presence,
@@ -798,6 +1080,7 @@ final class NotebookAppModel {
       || self.presence?.focusedItemID != resolved.focusedItemID
     if inputOwnerChanged { interactiveElementFocus = nil }
     self.presence = resolved
+    alignWorkspaceSelection()
     // A continuous contact can cross a portal without ending. Transfer its
     // publication barrier with the physical owner, not with each camera frame.
     if inputIsActive && inputOwnerChanged { publishInputActivity() }
@@ -807,7 +1090,7 @@ final class NotebookAppModel {
       guard let envelope = makePresenceEnvelope(resolved, phase: phase) else {
         return
       }
-      sync.send(.presence(envelope))
+      sync?.sendTransient(.presence(envelope))
       if settled {
         lastSettledPresenceEnvelope = envelope
         schedulePresenceSave(resolved)
@@ -851,7 +1134,7 @@ final class NotebookAppModel {
     )
     #if os(macOS)
       if publishesRequest {
-        sync.send(
+        sync?.sendTransient(
           .documentPageSelection(
             DocumentPageSelectionRequest(
               documentID: documentID,
@@ -878,7 +1161,7 @@ final class NotebookAppModel {
       ) != nil
     else { return }
     spatialInk = journal
-    sync.send(.spatialInk(journal))
+
     scheduleSpatialInkSave()
   }
 
@@ -897,7 +1180,7 @@ final class NotebookAppModel {
       || (surface != nil && journal.undoLast(actor: actorID) != nil)
     else { return }
     spatialInk = journal
-    sync.send(.spatialInk(journal))
+
     scheduleSpatialInkSave()
     showCue("Отменено")
   }
@@ -945,72 +1228,49 @@ final class NotebookAppModel {
   }
 
   func updateNativeText(boardID: UUID, elementID: String, text: String) {
-    guard var hierarchy = boardHierarchy,
-      let board = hierarchy.board(boardID),
-      let index = board.elements.firstIndex(where: {
-        $0.id == elementID && $0.kind == .nativeText
-      })
-    else { return }
-    var element = board.elements[index]
-    guard surfaceAcceptsChanges(element.surface), element.source != text else { return }
-    let expected = element.stamp
-    guard element.update(source: text, actor: actorID),
-      hierarchy.upsertElement(
-        element,
-        in: boardID,
-        expected: expected,
-        actor: actorID
-      )
-    else { return }
-    persistBoard(hierarchy)
+    publishNativeText(boardID: boardID, elementID: elementID, text: text, finish: false)
   }
 
-  /// Ends the editor's ownership of one native text element. A blank draft has
-  /// no visible meaning, so ending its edit removes it from the cover and from
-  /// the durable board in the same mutation.
+  /// The editor keeps the address of its accepted input after its old board
+  /// leaves the finite scene. Disk admission checks that owner, not the camera.
   func finishNativeTextEditing(boardID: UUID, elementID: String, text: String) {
-    guard var hierarchy = boardHierarchy,
-      let board = hierarchy.board(boardID),
-      let element = board.elements.first(where: {
-        $0.id == elementID && $0.kind == .nativeText
-      })
-    else { return }
-    if text.isEmpty {
-      guard hierarchy.removeElements(
-        ids: [elementID],
-        from: boardID,
-        actor: actorID
-      ) == 1 else {
-        return
-      }
-      persistBoard(hierarchy)
-      return
-    }
-    guard element.source != text else { return }
-    updateNativeText(boardID: boardID, elementID: elementID, text: text)
+    publishNativeText(boardID: boardID, elementID: elementID, text: text, finish: true)
   }
 
-  /// Input belongs to the source that emitted it. A camera move and a frame edit
-  /// do not revoke it; a changed program or removed physical owner does.
+  private func publishNativeText(boardID: UUID, elementID: String, text: String, finish: Bool) {
+    guard !isItemBeingDeleted(boardID) else { return }
+    if var hierarchy = boardHierarchy,
+      var element = hierarchy.board(boardID)?.elements.first(where: { $0.id == elementID }),
+      element.kind == .nativeText {
+      guard surfaceAcceptsChanges(element.surface) else { return }
+      if finish && text.isEmpty {
+        _ = hierarchy.removeElements(ids: [elementID], from: boardID, actor: actorID)
+      } else {
+        let expected = element.stamp
+        if element.update(source: text, actor: actorID) {
+          _ = hierarchy.upsertElement(element, in: boardID, expected: expected, actor: actorID)
+        }
+      }
+      if hierarchy != boardHierarchy { boardHierarchy = hierarchy }
+    }
+    let actor = actorID
+    enqueueStoreWrite(owner: finish ? nil : .nativeText(boardID, elementID), reload: true) {
+      _ = try $0.updateNativeSpatialText(boardID: boardID, elementID: elementID, text: text, finish: finish, actor: actor)
+    }
+  }
+
+  /// Geometry/state changes do not revoke a program's accepted message. A
+  /// different program or an explicit deletion does, even if this view is gone.
   func commitSpatialElementState(boardID: UUID, rendered: SpatialElement, state: JSONValue) {
-    guard surfaceAcceptsChanges(rendered.surface), var hierarchy = boardHierarchy,
-      let board = hierarchy.board(boardID),
-      let index = board.elements.firstIndex(where: { $0.id == rendered.id })
-    else { return }
-    var element = board.elements[index]
-    guard element.surface == rendered.surface, element.kind == rendered.kind,
-      element.source == rendered.source, element.html == rendered.html,
-      element.css == rendered.css, element.javaScript == rendered.javaScript else { return }
-    let expected = element.stamp
-    guard element.update(state: state, actor: actorID),
-      hierarchy.upsertElement(
-        element,
-        in: boardID,
-        expected: expected,
-        actor: actorID
-      )
-    else { return }
-    persistBoard(hierarchy)
+    guard surfaceAcceptsChanges(rendered.surface) else { return }
+    let actor = actorID
+    enqueueStoreWrite(owner: .elementState(boardID, rendered.id), reload: true) { store in
+      do { _ = try store.commitSpatialElementState(boardID: boardID, rendered: rendered, state: state, actor: actor) }
+      catch let error as CollaborationError where error.code == "source_conflict" {
+        // A terminal rejection is not a failed disk write. The replacement
+        // program keeps its state; dependent writes must not wait for a retry.
+      }
+    }
   }
 
   func reserveDrawingAction(pageID: UUID) -> VersionStamp? {
@@ -1050,7 +1310,7 @@ final class NotebookAppModel {
       guard current.publishInkChange(change) else { continue }
       if change.stamp == change.baseStamp { return change }
       pages[pageID] = current
-      sync.send(.drawing(pageID: pageID, data: change.data, stamp: change.stamp))
+
       scheduleSave(pageID)
       return change
     }
@@ -1217,14 +1477,6 @@ final class NotebookAppModel {
     page.replaceElements(elements, actor: actorID)
     guard previous != page.agentStamp else { return }
     page = persistMerged(page)
-    sync.send(
-      .elements(
-        pageID: page.id,
-        elements: page.elements,
-        stamp: page.agentStamp,
-        collaboration: page.collaboration
-      )
-    )
   }
 
   @discardableResult
@@ -1352,15 +1604,7 @@ final class NotebookAppModel {
     guard mutation(page, &elements),
       page.replaceElements(elements, actor: actorID)
     else { return false }
-    let resolved = persistMerged(page)
-    sync.send(
-      .elements(
-        pageID: resolved.id,
-        elements: resolved.elements,
-        stamp: resolved.agentStamp,
-        collaboration: resolved.collaboration
-      )
-    )
+    persistMerged(page)
     return true
   }
 
@@ -1385,7 +1629,7 @@ final class NotebookAppModel {
       throw NotebookPersistenceQueue.Failure(message: "Документ удаляется; новые изменения временно недоступны.")
     }
     let actor = actorID
-    let result = try await persistence.submit { try $0.commitDocumentSource(edit: edit, actor: actor) }
+    let result = try await persistence.submit(publishesChanges: true) { try $0.commitDocumentSource(edit: edit, actor: actor) }
     documentDraftEpoch &+= 1
     if result.status == .committed {
       documentEditingSessions.removeAll { $0.id == edit.sessionID }
@@ -1393,7 +1637,7 @@ final class NotebookAppModel {
         var document = documents[incoming.id] ?? incoming
         _ = document.merge(incoming)
         documents[document.id] = document
-        sync.send(.document(document))
+
       }
     } else {
       let phase: DocumentEditingSession.Phase = result.status == .conflict ? .conflict : .targetMissing
@@ -1415,63 +1659,49 @@ final class NotebookAppModel {
       journal.commit(blockID: blockID, value: value, actor: actorID)
     else { return }
     documentStates[documentID] = journal
-    sync.send(.documentState(journal))
-    receiveContent(states: [journal])
+
+    persistence.enqueue(owner: .documentState(documentID)) { [journal] in try $0.saveMergedDocumentState(journal) != journal }
   }
 
   @discardableResult
   func reloadExternalChanges() -> Task<Void, Never>? {
-    guard loadState == .ready else { return nil }
+    guard loadState == .ready, !isStopped else { return nil }
     guard !inputGate.isActive, presencePhase != .active else { externalReloadPending = true; return nil }
     diskRefreshRequested = true
     if let diskRefreshTask { return diskRefreshTask }
     let task = Task { [weak self] in
       guard let self else { return }
       defer { diskRefreshTask = nil }
-      var attempts = 2
-      while diskRefreshRequested && !Task.isCancelled {
+      while diskRefreshRequested, !Task.isCancelled, let presence {
         guard !inputGate.isActive, presencePhase != .active else { externalReloadPending = true; return }
         diskRefreshRequested = false
-        let local = collaborationContent
         let epoch = collaborationReadEpoch
         let draftEpoch = documentDraftEpoch
-        let incoming = incomingCollaboration
-        incomingCollaboration.removeAll(keepingCapacity: true)
         #if os(iOS)
-        let receivingDeviceID: UUID? = actorID
+          let receivingDeviceID: UUID? = actorID
         #else
-        let receivingDeviceID: UUID? = nil
+          let receivingDeviceID: UUID? = nil
         #endif
-        let result: Result<NotebookDiskRefresh, Error>
         do {
-          result = .success(try await persistence.submit { store in
-            try NotebookDiskRefresh.prepare(store: store, local: local, incoming: incoming, receivingDeviceID: receivingDeviceID)
-          })
-        } catch { result = .failure(error) }
-        switch result {
-        case .success(let prepared):
+          let prepared = try await persistence.submit(publishesChanges: receivingDeviceID != nil) { store in
+            try NotebookDiskRefresh.prepare(store: store, presence: presence, receivingDeviceID: receivingDeviceID)
+          }
           publicationFailure = nil
           if persistence.failure == nil { persistenceFailure = nil }
           guard !inputGate.isActive, presencePhase != .active else { externalReloadPending = true; return }
-          guard epoch == collaborationReadEpoch else { diskRefreshRequested = true; continue }
-          let metadataChanged = collaborationActions != prepared.actions
-            || sharedContexts != prepared.contexts.contexts || contextSelection != prepared.contexts.selection
-            || deviceActionReceipts != prepared.delivery
-          if prepared.contentChanged { acceptCollaborationContent(prepared.content) }
-          acceptCollaborationMetadata(actions: prepared.actions, contexts: prepared.contexts, delivery: prepared.delivery)
-          if draftEpoch == documentDraftEpoch { documentEditingSessions = prepared.documentDrafts }
-          if prepared.contentChanged || metadataChanged { sendCollaboration(content: prepared.publication) }
-
-        case .failure(let error):
-          incomingCollaboration.insert(contentsOf: incoming, at: 0)
-          guard attempts > 0 else {
-            publicationFailure = error.localizedDescription
-            persistenceFailure = error.localizedDescription
-            return
+          // Settled camera/selection can change without changing content. The
+          // old read must not bring the person back after its SQL await.
+          guard epoch == collaborationReadEpoch, self.presence == presence else {
+            diskRefreshRequested = true; continue
           }
-          attempts -= 1
-          try? await Task.sleep(for: .milliseconds(60))
-          diskRefreshRequested = true
+          let liveDrafts = documentEditingSessions
+          acceptSceneState(prepared.scene)
+          if draftEpoch != documentDraftEpoch { documentEditingSessions = liveDrafts }
+          acceptCollaborationMetadata(actions: prepared.actions, contexts: prepared.contexts, delivery: prepared.delivery)
+        } catch {
+          publicationFailure = error.localizedDescription
+          persistenceFailure = error.localizedDescription
+          return
         }
       }
     }
@@ -1487,34 +1717,90 @@ final class NotebookAppModel {
       previewPublisher = publisher
     }
 
-    private func startExternalChangeObservation() {
-      guard externalChangeWatcher == nil else { return }
-      let watcher = DirectoryWatcher(urls: [
-        store.root,
-        store.pagesURL,
-        store.documentsURL,
-        store.documentStatesURL,
-        store.collaborationURL,
-        store.collaborationActionsURL,
-        store.deviceReceiptsURL,
-      ]) {
-        [weak self] in
-        self?.reloadExternalChanges()
+    private func startAgentCoordinator() async {
+      guard agentCoordinator == nil else { return }
+      guard let configuration = Bundle.main.url(forResource: "notebook.config", withExtension: "toml",
+        subdirectory: "AgentRuntime") else {
+        agentStartupError = "Проверенный профиль агента отсутствует в приложении. Агент недоступен."
+        return
       }
-      watcher.start()
-      externalChangeWatcher = watcher
+      let home = FileManager.default.homeDirectoryForCurrentUser
+      let runtime = home.appendingPathComponent("Library/Application Support/Notebook Agent", isDirectory: true)
+      let executor = NotebookAgentExecutor(binary: home.appendingPathComponent(".local/bin/codex"),
+        runtimeDirectory: runtime, configuration: configuration)
+      let persistence = persistence
+      let coordinator = NotebookAgentCoordinator(executor: executor, persistence: persistence, actorID: actorID) { authority, referenceID in
+        let source = try await persistence.submit { try $0.agentPinnedSource(authority, referenceID: referenceID) }
+        guard let image = source.image else {
+          return .init(value: .object(["status": .string("unavailable"),
+            "referenceID": .string(referenceID.uuidString), "visual": source.payload["visual"] ?? .null]))
+        }
+        // Decoding pixels is neither a database write nor main-thread UI work.
+        let preparation = Task.detached(priority: .utility) {
+          try Task.checkCancellation()
+          try image.validate(reference: source.reference)
+          let pixels = try NotebookAgentImage(png: image.png, sha256: image.sha256,
+            pixelWidth: image.pixelWidth, pixelHeight: image.pixelHeight)
+          try Task.checkCancellation()
+          return try NotebookAgentToolResult(value: .object(["status": .string("source_pixels"),
+            "reference": .encode(source.reference), "sha256": .string(image.sha256),
+            "pixelWidth": .number(Double(image.pixelWidth)), "pixelHeight": .number(Double(image.pixelHeight)),
+            "pixelsPerPoint": .number(image.pixelsPerPoint),
+            "evidence": .string("Frozen source pixels; not an iPad display acknowledgement.")]), images: [pixels])
+        }
+        return try await withTaskCancellationHandler { try await preparation.value } onCancel: { preparation.cancel() }
+      }
+      agentCoordinator = coordinator
+      await coordinator.start()
+    }
 
-      // Close the only race that a file watcher cannot observe: an MCP write
-      // may finish after the initial load but just before the descriptors are
-      // installed. A post-install read covers that interval.
-      reloadExternalChanges()
+    func stopAgentCoordinator() async -> Bool {
+      await agentCoordinator?.stop() ?? true
+    }
+
+    private func startCommandServer() throws {
+      guard commandServer == nil, let commandSocketURL else { return }
+      let server = NotebookIPCServer(socketURL: commandSocketURL) { [weak self] command in
+        guard let self else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
+        return try await self.executeLocalCommand(command)
+      }
+      try server.start()
+      commandServer = server
+    }
+
+    /// Wait outside the writer: a contact release must be able to commit while
+    /// an agent is waiting. Core rechecks activity and causal versions inside SQL.
+    func executeLocalCommand(_ command: NotebookCommand) async throws -> JSONValue {
+      guard loadState == .ready, !isClosing else {
+        throw CollaborationError("owner_unavailable", "Хранилище Notebook ещё не открыто.")
+      }
+      let deadline = ContinuousClock.now.advanced(by: .seconds(4))
+      while true {
+        if command.command == .apply || command.command == .undo {
+          while (inputIsActive || peerInputIsActive), ContinuousClock.now < deadline {
+            guard !isClosing else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
+            try await Task.sleep(for: .milliseconds(20))
+          }
+        }
+        do {
+          guard !isClosing else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
+          let result = try await persistence.submit(publishesChanges: command.changesStore) {
+            try NotebookCommandDispatcher(store: $0).handle(command)
+          }
+          if command.changesStore { reloadExternalChanges() }
+          return result
+        } catch let error as CollaborationError where error.code == "input_active" && ContinuousClock.now < deadline {
+          try await Task.sleep(for: .milliseconds(20))
+        }
+      }
     }
   #endif
 
-  func receivePeerMessage(_ message: WireMessage) {
+  func receivePeerTransient(_ message: NotebookTransportTransient, peerID: UUID, generation: UUID) {
+    guard !isClosing, peerGenerations[peerID] == generation else { return }
     switch message {
     case .inputActivity(let activity):
-      guard activity.isValid else { return }
+      guard activity.isValid, activity.deviceID == peerID else { return }
       // Stop optional preparation before the disk acknowledges the peer contact.
       if let previous = peerActivities[activity.deviceID], previous.sessionID == activity.sessionID,
         previous.sequence >= activity.sequence { return }
@@ -1524,33 +1810,6 @@ final class NotebookAppModel {
       if peerInputIsActive { previewPublisher?.suspendForInput() }
       #endif
       enqueueStoreWrite(owner: .inputActivity(activity.deviceID)) { try $0.saveInputActivity(activity) }
-    case .collaboration(let envelope):
-      incomingCollaboration.append(envelope)
-      reloadExternalChanges()
-    case .index(let incoming):
-      stageRemoteIndex(incoming)
-    case .page(let incoming):
-      guard workspaceContainsPage(incoming.id) else {
-        stageRemotePage(incoming)
-        return
-      }
-      receivePageChange(pageID: incoming.id) { page in _ = page.merge(incoming) }
-    case .drawing(let pageID, let data, let stamp):
-      receivePageChange(pageID: pageID) { page in _ = page.replaceDrawing(data, stamp: stamp) }
-    case .elements(let pageID, let elements, let stamp, let collaboration):
-      receivePageChange(pageID: pageID) { page in _ = page.mergeElements(elements, stamp: stamp, collaboration: collaboration) }
-    case .document(let incoming):
-      guard workspaceContainsDocument(incoming.id) else { stageRemoteDocument(incoming); return }
-      receiveContent(documents: [incoming])
-    case .documentState(let incoming):
-      guard workspaceContainsDocument(incoming.id) else { stageRemoteDocumentState(incoming); return }
-      receiveContent(states: [incoming])
-    case .board(let incoming):
-      guard let workspace else { return }
-      if incoming.isValid(items: workspace.items) { receiveContent(hierarchy: incoming) }
-      else { stageRemoteBoard(incoming); publishStagedWorkspaceIfReady() }
-    case .spatialInk(let incoming):
-      receiveContent(ink: incoming)
     case .presence(let envelope):
       #if os(macOS)
         guard presenceSequenceTracker.accepts(envelope), let workspace
@@ -1565,8 +1824,10 @@ final class NotebookAppModel {
           : envelope.presence
         guard presenceIsUsable(incoming, workspace: workspace) else { return }
         presence = incoming
+        alignWorkspaceSelection()
         presencePhase = envelope.phase
         if envelope.phase == .settled {
+          lastSettledPresenceEnvelope = envelope
           schedulePresenceSave(incoming)
           if externalReloadPending { externalReloadPending = false; reloadExternalChanges() }
         }
@@ -1583,36 +1844,95 @@ final class NotebookAppModel {
     }
   }
 
-  private func receiveContent(hierarchy: BoardHierarchy? = nil, ink: SpatialInkJournal? = nil,
-    documents: [DocumentDocument] = [], states: [DocumentStateJournal] = []) {
-    guard let workspace, let boardHierarchy, let spatialInk else { return }
-    incomingCollaboration.append(.init(content: .init(workspace: workspace, hierarchy: hierarchy ?? boardHierarchy,
-      ink: ink ?? .init(stamp: .init(counter: 0, actor: spatialInk.stamp.actor)), pages: [], documents: documents, states: states)))
-    reloadExternalChanges()
-  }
-
-  private func sendSnapshot() {
-    guard let workspace else { return }
-    _ = workspace
-    sendCollaboration(content: collaborationContent)
-    #if os(iOS)
-      if let lastSettledPresenceEnvelope {
-        sync.send(.presence(lastSettledPresenceEnvelope))
-      }
-    #endif
-  }
-
   func publishHumanContext(_ selection: NotebookAttentionSelection) {
-    let actor = actorID
+    let actor = actorID, generation = UUID()
+    attentionGeneration = generation
     isPointing = false
-    enqueueStoreWrite(reload: true) { store in
-      _ = try store.appendContext(references: selection.resolvedReferences(), author: .human, actor: actor, select: true)
+    enqueueStoreWrite(reload: true) { [weak self] store in
+      let references = try selection.resolvedReferences()
+      let context = try store.appendContext(references: references, author: .human, actor: actor, select: true)
+      guard let entry = context.entries.last else { return }
+      Task { @MainActor [weak self] in
+        guard let self else { return }
+        self.pinnedAttentionSelections.append((context.id, selection))
+        if self.pinnedAttentionSelections.count > 2 { self.pinnedAttentionSelections.removeFirst() }
+        guard self.attentionGeneration == generation else { return }
+        self.agentQuestion = .init(contextID: context.id, entryID: entry.id, references: references)
+        self.agentRequestError = nil
+      }
     }
   }
 
   func selectSharedContext(_ id: UUID?) {
     let actor = actorID
+    attentionGeneration = UUID()
+    agentQuestion = id.flatMap { id in
+      guard let entry = sharedContexts.first(where: { $0.id == id })?.entries.first(where: { $0.author == .human }) else { return nil }
+      return .init(contextID: id, entryID: entry.id, references: entry.references)
+    }
     enqueueStoreWrite(reload: true) { try $0.selectSharedContext(id, actor: actor) }
+  }
+
+  func dismissAgentQuestion() { agentQuestion = nil; attentionGeneration = UUID() }
+
+  /// The arguments, retained values and ID are captured before suspension.
+  /// Selection of a new object cannot redirect either this save or its reply.
+  func sendAgentQuestion(_ text: String, mode: RequestGrant.Mode,
+    question: NotebookAgentQuestion) async -> Bool {
+    guard !isSavingAgentQuestion else { return false }
+    isSavingAgentQuestion = true
+    defer { isSavingAgentQuestion = false }
+    let id = UUID(), actor = actorID
+    let retained = pinnedAttentionSelections.first { $0.0 == question.contextID }?.1
+    do {
+      let grant = try RequestGrant(mode: mode, references: question.references)
+      let visual = try await retained?.renderPinnedImages(references: question.references)
+      _ = try await persistence.submit(publishesChanges: true) { store in
+        let files = try retained?.sourceFiles()
+        let sources = try grant.references.map { reference in
+          try AgentPinnedSource.capture(requestID: id, reference: reference,
+            files: files ?? store.referenceSourceFiles(target: reference.target,
+              elementID: reference.elementID, region: reference.region, worldOrigin: reference.worldOrigin))
+            .withVisual(visual?.images[reference.id], unavailable: visual?.unavailable[reference.id]
+              ?? (visual == nil ? "historical_frame_unavailable" : nil))
+        }
+        return try store.createAgentRequest(id: id, contextID: question.contextID, replyTo: question.entryID,
+          question: text, grant: grant, sources: sources, actor: actor)
+      }
+      agentRequestError = nil
+      reloadExternalChanges()
+      await refreshAgentRequests()
+      return true
+    } catch {
+      // The field keeps its text; a failed save never looks like a queued run.
+      agentRequestError = error.localizedDescription
+      return false
+    }
+  }
+
+  func stopAgentRequest(_ id: UUID) async {
+    let actor = actorID
+    do {
+      try await persistence.submit(publishesChanges: true) { try $0.requestAgentStop(id, actor: actor) }
+      await refreshAgentRequests()
+    } catch { agentRequestError = error.localizedDescription }
+  }
+
+  func refreshAgentRequests() async {
+    guard loadState == .ready else { return }
+    agentRefreshGeneration &+= 1
+    let generation = agentRefreshGeneration, contextID = agentQuestion?.contextID
+    do {
+      let requests = try await persistence.submit { store in
+        try store.readTransaction { store in
+          let headers = try store.readAgentRequestHeaders(limit: 32)
+          let current = headers.first { $0.contextID == contextID }?.id
+          return try headers.compactMap { try store.agentRequest($0.id, includesResponse: $0.id == current) }
+        }
+      }
+      guard generation == agentRefreshGeneration else { return }
+      if agentRequests != requests { agentRequests = requests }
+    } catch { agentRequestError = error.localizedDescription }
   }
 
   func results(for action: CollaborationReceipt) -> [CollaborationReference] {
@@ -1778,15 +2098,15 @@ final class NotebookAppModel {
     guard collaborationUndoTask == nil else { return }
     afterPageInput { [weak self] in
       guard let self else { return }
-      let store = store, actor = actorID, local = collaborationContent
+      let actor = actorID
       collaborationUndoTask = Task { [weak self] in
-        let result = await Task.detached(priority:.userInitiated) { () -> Result<CollaborationReceipt, Error> in
-          do {
-            if let local { _ = try store.mergeCollaborationContent(local) }
-            return .success(try store.undoCollaborationAction(id,actor:actor,waitForInput:4))
-          } catch { return .failure(error) }
-        }.value
         guard let self else { return }
+        let result: Result<CollaborationReceipt, Error>
+        do {
+          result = .success(try await persistence.submit(publishesChanges: true) {
+            try $0.undoCollaborationAction(id, actor: actor, waitForInput: 0)
+          })
+        } catch { result = .failure(error) }
         collaborationUndoTask = nil
         switch result {
         case .success(let receipt):
@@ -1858,7 +2178,7 @@ final class NotebookAppModel {
       if !changed.isEmpty {
         let receipts = changed
         enqueueStoreWrite { store in for receipt in receipts { try store.saveDeviceActionReceipt(receipt) } }
-        sync.send(.collaboration(.init(delivery: changed)))
+
       }
     #endif
   }
@@ -1901,34 +2221,72 @@ final class NotebookAppModel {
       pages: Array(pages.values), documents: Array(documents.values), states: Array(documentStates.values))
   }
 
-  private func acceptCollaborationContent(_ content: CollaborationContent) {
-    guard collaborationContent != content else { return }
-    #if os(iOS)
-      let humanSelection = workspace
-    #endif
-    workspace = content.workspace; boardHierarchy = content.hierarchy; spatialInk = content.ink
-    pages = Dictionary(uniqueKeysWithValues: content.pages.map { ($0.id, $0) })
-    documents = Dictionary(uniqueKeysWithValues: content.documents.map { ($0.id, $0) })
-    documentStates = Dictionary(uniqueKeysWithValues: content.states.map { ($0.id, $0) })
-    #if os(iOS)
-      if let focus = presence?.focusedItemID, focus == humanSelection?.selectedItemID,
-        let item = content.workspace.items.first(where: { $0.id == focus }) {
-        selectItem(focus)
-        if item.kind == .notebook, let pageID = humanSelection?.selectedPageID, let index = item.pageIDs.firstIndex(of:pageID) {
-          _ = selectNotebookPage(index,notebookID:focus)
-        }
+  private func acceptSceneState(_ state: NotebookSceneState) {
+    workspaceHeader = state.header
+    for (id, cursor) in completedDeletions where state.header.cursor >= cursor {
+      pendingDeletions[id] = nil
+      completedDeletions[id] = nil
+    }
+    documentPaperSizes = state.paperSizes
+    notebookPageCounts = state.pageCounts
+    sceneCoverage = state.coverage
+    truncatedSceneBoards = state.truncatedBoards
+    workspace = state.workspace
+    boardHierarchy = state.hierarchy
+    spatialInk = state.ink
+          loadedInkSurfaces = state.inkSurfaces
+    pages = state.pages
+    pageAddresses = [:]
+    for item in state.workspace.items {
+      for (index, id) in item.pageIDs.enumerated() where state.pages[id] != nil {
+        pageAddresses[.init(itemID: item.id, index: index)] = id
       }
-    #endif
-    reconcilePresence(with: workspace ?? content.workspace, board: content.hierarchy)
+    }
+    documents = state.documents
+    documentStates = state.states
+    documentEditingSessions = state.drafts
+    presence = state.presence
+    alignWorkspaceSelection()
   }
 
   private func reloadCollaborationMetadata() { reloadExternalChanges() }
+
+  /// Native owners already published their local values. Advance only the
+  /// durable source identity; rereading the archive or replacing that input is
+  /// neither necessary nor safe. Peer commands publish a complete scene cut
+  /// through reloadExternalChanges instead.
+  private func refreshCommittedHeader() {
+    guard !isStopped else { return }
+    headerRefreshRequested = true
+    guard headerRefreshTask == nil else { return }
+    headerRefreshTask = Task { [weak self] in
+      guard let self else { return }
+      defer { headerRefreshTask = nil }
+      while headerRefreshRequested, !Task.isCancelled {
+        headerRefreshRequested = false
+        do {
+          let header = try await persistence.submit { try $0.workspaceHeader() }
+          if workspaceHeader?.workspaceID == header.workspaceID,
+            header.cursor >= (workspaceHeader?.cursor ?? 0) { workspaceHeader = header }
+        } catch {
+          publicationFailure = error.localizedDescription
+        }
+      }
+    }
+  }
 
   private func acceptCollaborationMetadata(actions: [CollaborationReceipt], contexts: SharedContextSnapshot,
     delivery: [DeviceActionReceipt]) {
     if collaborationActions != actions { collaborationActions = actions }
     if sharedContexts != contexts.contexts { sharedContexts = contexts.contexts }
     contextSelection = contexts.selection
+    if !hasRestoredAgentQuestion {
+      hasRestoredAgentQuestion = true
+      if let context = contexts.contexts.first(where: { $0.id == contexts.selection?.contextID }),
+        let entry = context.entries.first(where: { $0.author == .human }) {
+        agentQuestion = .init(contextID: context.id, entryID: entry.id, references: entry.references)
+      }
+    }
     deviceActionReceipts = delivery
     let latest = collaborationActions.first
     let attention = sharedContexts.flatMap(\.entries).filter { $0.author == .agent }.max { $0.createdAt < $1.createdAt }
@@ -1944,32 +2302,6 @@ final class NotebookAppModel {
       try? await Task.sleep(for: .seconds(6))
       guard !Task.isCancelled else { return }
       self?.showsCollaborationNotice = false
-    }
-  }
-
-  private func sendCollaboration(content: CollaborationContent? = nil) {
-    sync.send(.collaboration(.init(content: content,
-      actions: Array(collaborationActions.prefix(50)), contexts: sharedContexts, selection: contextSelection,
-      delivery: deviceActionReceipts)))
-  }
-
-  private func receivePageChange(pageID: UUID, mutation: @escaping @Sendable (inout PageDocument) -> Void) {
-    let previous = peerPageTail
-    peerPageGeneration &+= 1
-    let generation = peerPageGeneration
-    collaborationReadEpoch &+= 1
-    peerPageTail = Task { [weak self] in
-      if let previous { await previous.value }
-      guard let self else { return }
-      defer { if peerPageGeneration == generation { peerPageTail = nil } }
-      while let page = pages[pageID], !Task.isCancelled {
-        let resolved = await Task.detached(priority: .userInitiated) {
-          var copy = page; mutation(&copy); return copy
-        }.value
-        guard pages[pageID] == page else { continue }
-        if resolved != page { acceptRemotePage(resolved) }
-        return
-      }
     }
   }
 
@@ -1998,10 +2330,9 @@ final class NotebookAppModel {
   }
 
   private func persistBoard(_ board: BoardHierarchy) {
-    guard let workspace else { return }
+    guard let before = boardHierarchy else { return }
     boardHierarchy = board
-    sync.send(.board(board))
-    persistence.enqueue(owner: .board) { try $0.saveMergedBoard(board, items: workspace.items) != board }
+    persistence.enqueueBoardEdit(before: before, after: board)
   }
 
   @discardableResult
@@ -2037,12 +2368,59 @@ final class NotebookAppModel {
   /// and are returned to shutdown/cutover rather than disappearing with a cue.
   @discardableResult
   func finishPendingPersistence() async -> Bool {
+    if let startupTask { await startupTask.value }
     repeat {
-      if let task = peerPageTail { await task.value }
       if let task = diskRefreshTask { await task.value }
+      if let task = sceneWindowTask { await task.value }
+      if let task = headerRefreshTask { await task.value }
       guard await persistence.flush() else { return false }
-    } while peerPageTail != nil || diskRefreshTask != nil || persistence.pendingCount > 0
+    } while diskRefreshTask != nil || headerRefreshTask != nil || persistence.pendingCount > 0
     return publicationFailure == nil
+  }
+
+  /// Close service admission, finish accepted input, and join every background
+  /// reader before the store can be removed or its process can acknowledge quit.
+  /// A failed native write remains in the same queue and returns false.
+  @discardableResult
+  func shutdown() async -> Bool {
+    if let shutdownTask { return await shutdownTask.value }
+    isClosing = true
+    let task = Task { [self] in
+      if let startupTask { await startupTask.value }
+      sync?.stop(); sync = nil
+      #if os(macOS)
+        await commandServer?.stopAndDrain(); commandServer = nil
+        let agentStopped = await stopAgentCoordinator()
+        await previewPublisher?.stop()
+      #else
+        let agentStopped = true
+      #endif
+      let inputSaved = await finishPendingInteraction()
+      // A failed quit keeps admission closed but leaves the same writer and
+      // refresh owner available to the explicit repair/retry action. Terminal
+      // teardown would otherwise make publicationFailure impossible to clear.
+      guard agentStopped && inputSaved else { return false }
+      isStopped = true
+      inputGate.onActivityChange = nil
+      let readers = [scenePreparationTask, sceneWindowTask, diskRefreshTask, headerRefreshTask]
+        .compactMap { $0 } + Array(pagePreparationTasks.values)
+      for task in readers { task.cancel() }
+      for task in readers { await task.value }
+      scenePreparationTask = nil; sceneWindowTask = nil; diskRefreshTask = nil; headerRefreshTask = nil
+      pagePreparationTasks = [:]
+      collaborationReadTask?.cancel()
+      if let task = collaborationReadTask { _ = await task.result }
+      collaborationReadTask = nil
+      collaborationNoticeTask?.cancel(); referenceHighlightTask?.cancel(); cueTask?.cancel()
+      if let task = collaborationUndoTask { await task.value }
+      await compositionTiles.stop()
+      let saved = await persistence.flush()
+      return saved
+    }
+    shutdownTask = task
+    let saved = await task.value
+    shutdownTask = nil
+    return saved
   }
 
   private func showCue(_ text: String) {
@@ -2084,7 +2462,7 @@ final class NotebookAppModel {
       viewport: viewportPoint,
       focusedItemID: itemID,
       openProgress: 1
-    )
+    ).selecting(itemID: workspace.selectedItemID, pageID: workspace.selectedPageID)
   }
 
   private func settledPresence(
@@ -2130,15 +2508,15 @@ final class NotebookAppModel {
         openProgress: 1,
         documentPageIndex: presence.mode == .document
           ? presence.documentPageIndex
-          : 0
+          : 0,
+        selectedItemID: presence.selectedItemID,
+        notebookPageID: presence.notebookPageID
       )
     }
 
-    if presence.mode == .cover,
-      let itemID,
-      workspace.items.contains(where: { $0.id == itemID }),
-      board?.ownerBoardID(of: itemID) == presence.boardID
-    {
+    if presence.mode == .cover, let itemID, !isItemBeingDeleted(itemID) {
+      // No placement in a partial query is not evidence of deletion. The next
+      // addressed scene read validates this intent without snapping its camera.
       return adapted
     }
 
@@ -2146,7 +2524,9 @@ final class NotebookAppModel {
       boardID: presence.boardID,
       mode: .board,
       camera: adapted.camera,
-      viewport: viewport
+      viewport: viewport,
+      selectedItemID: presence.selectedItemID,
+      notebookPageID: presence.notebookPageID
     )
   }
 
@@ -2164,98 +2544,7 @@ final class NotebookAppModel {
     )
   }
 
-  private func acceptRemotePage(_ page: PageDocument) {
-    let previousDrawingStamp = pages[page.id]?.drawingStamp
-    pages[page.id] = page
-    if let previousDrawingStamp, previousDrawingStamp < page.drawingStamp, PageInkDrawing.needsMigration(page.drawingData) {
-      pencilUndoHistory.discardChanges(for: page.id)
-    }
-    scheduleSave(page.id)
-  }
-
-  private func workspaceContainsPage(_ pageID: UUID) -> Bool {
-    workspace?.items.contains(where: { $0.pageIDs.contains(pageID) }) == true
-  }
-
-  private func stageRemotePage(_ incoming: PageDocument) {
-    if var staged = stagedRemotePages[incoming.id] {
-      _ = staged.merge(incoming)
-      stagedRemotePages[incoming.id] = staged
-    } else {
-      stagedRemotePages[incoming.id] = incoming
-    }
-    publishStagedWorkspaceIfReady()
-  }
-
-  /// WorkspaceIndex is the publication boundary for pages. It promotes pages
-  /// sent ahead of a creation and evicts pages removed by a deletion before a
-  /// delayed serializer or peer can expose them again.
-  private func reconcileWorkspace(with workspace: WorkspaceIndex) {
-    let publishedPageIDs = Set(workspace.items.flatMap(\.pageIDs))
-    let obsoletePageIDs = pages.keys.filter { !publishedPageIDs.contains($0) }
-    for pageID in obsoletePageIDs {
-      persistence.discardPending(owner: .page(pageID))
-      pages[pageID] = nil
-      reservedDrawingCounters[pageID] = nil
-      pencilUndoHistory.discardChanges(for: pageID)
-    }
-
-    let promoted = stagedRemotePages.values.filter {
-      publishedPageIDs.contains($0.id)
-    }
-    stagedRemotePages.removeAll(keepingCapacity: true)
-    for page in promoted {
-      if var current = pages[page.id] {
-        _ = current.merge(page)
-        acceptRemotePage(current)
-      } else {
-        acceptRemotePage(page)
-      }
-    }
-
-    let publishedDocumentIDs = Set(
-      workspace.items.lazy.filter { $0.kind == .document }.map(\.id)
-    )
-    for id in documents.keys where !publishedDocumentIDs.contains(id) {
-      documents[id] = nil
-      documentStates[id] = nil
-    }
-
-    let promotedDocuments = stagedRemoteDocuments.values.filter {
-      publishedDocumentIDs.contains($0.id)
-    }
-    let promotedStates = stagedRemoteDocumentStates.values.filter {
-      publishedDocumentIDs.contains($0.id)
-    }
-    stagedRemoteDocuments.removeAll(keepingCapacity: true)
-    stagedRemoteDocumentStates.removeAll(keepingCapacity: true)
-    for incoming in promotedDocuments {
-      if var current = documents[incoming.id] {
-        _ = current.merge(incoming)
-        documents[incoming.id] = current
-        enqueueStoreWrite(owner: .document(current.id)) { [current] in _ = try $0.saveMergedDocument(current) }
-      } else {
-        documents[incoming.id] = incoming
-        enqueueStoreWrite(owner: .document(incoming.id)) { _ = try $0.saveMergedDocument(incoming) }
-      }
-    }
-    for incoming in promotedStates {
-      if var current = documentStates[incoming.id] {
-        _ = current.merge(incoming)
-        documentStates[incoming.id] = current
-        enqueueStoreWrite(owner: .documentState(current.id)) { [current] in _ = try $0.saveMergedDocumentState(current) }
-      } else {
-        documentStates[incoming.id] = incoming
-        enqueueStoreWrite(owner: .documentState(incoming.id)) { _ = try $0.saveMergedDocumentState(incoming) }
-      }
-    }
-
-    reconcilePresence(with: workspace, board: boardHierarchy)
-  }
-
-  /// Selection lives in the catalog while its screen anchor lives on the
-  /// board. A newer catalog or board therefore settles the camera from both
-  /// owners together. This keeps a deleted focus from leaving an empty view.
+  /// Content deletion can invalidate a session focus; visibility alone cannot.
   private func reconcilePresence(
     with workspace: WorkspaceIndex,
     board: BoardHierarchy?
@@ -2291,149 +2580,12 @@ final class NotebookAppModel {
     #endif
   }
 
-  private func workspaceContainsDocument(_ id: UUID) -> Bool {
-    workspace?.items.contains(where: {
-      $0.id == id && $0.kind == .document
-    }) == true
-  }
-
-  private func stageRemoteDocument(_ incoming: DocumentDocument) {
-    if var staged = stagedRemoteDocuments[incoming.id] {
-      _ = staged.merge(incoming)
-      stagedRemoteDocuments[incoming.id] = staged
-    } else {
-      stagedRemoteDocuments[incoming.id] = incoming
-    }
-    publishStagedWorkspaceIfReady()
-  }
-
-  private func stageRemoteDocumentState(_ incoming: DocumentStateJournal) {
-    if var staged = stagedRemoteDocumentStates[incoming.id] {
-      _ = staged.merge(incoming)
-      stagedRemoteDocumentStates[incoming.id] = staged
-    } else {
-      stagedRemoteDocumentStates[incoming.id] = incoming
-    }
-    publishStagedWorkspaceIfReady()
-  }
-
-  /// A catalog is the moment new content becomes discoverable. Keep a newer
-  /// catalog private until every page, document state and board placement it
-  /// names has arrived, then write those dependencies before the catalog.
-  private func stageRemoteIndex(_ incoming: WorkspaceIndex) {
-    guard workspace.map({ $0 != incoming }) ?? true
-    else { return }
-    if var stagedRemoteIndex {
-      _ = stagedRemoteIndex.merge(incoming)
-      self.stagedRemoteIndex = stagedRemoteIndex
-    } else {
-      stagedRemoteIndex = incoming
-    }
-    publishStagedWorkspaceIfReady()
-  }
-
-  private func stageRemoteBoard(_ incoming: BoardHierarchy) {
-    if let stagedRemoteBoard,
-      stagedRemoteBoard.stamp >= incoming.stamp
-    {
-      return
-    }
-    stagedRemoteBoard = incoming
-  }
-
-  private func publishStagedWorkspaceIfReady() {
-    guard let incoming = stagedRemoteIndex,
-      workspace.map({ $0 != incoming }) ?? true
-    else {
-      stagedRemoteIndex = nil
-      return
-    }
-
-    let pageIDs = incoming.items.flatMap(\.pageIDs)
-    guard pageIDs.allSatisfy({
-      pages[$0] != nil || stagedRemotePages[$0] != nil
-    }) else { return }
-
-    let documentIDs = incoming.items.compactMap { item in
-      item.kind == .document ? item.id : nil
-    }
-    guard documentIDs.allSatisfy({
-      (documents[$0] != nil || stagedRemoteDocuments[$0] != nil)
-        && (documentStates[$0] != nil
-          || stagedRemoteDocumentStates[$0] != nil)
-    }) else { return }
-
-    let expectedItemIDs = Set(incoming.items.map(\.id))
-    var boardCandidates = [BoardHierarchy]()
-    if let boardHierarchy, boardHierarchy.isValid(items: incoming.items) {
-      boardCandidates.append(boardHierarchy)
-    }
-    if let stagedRemoteBoard,
-      stagedRemoteBoard.isValid(items: incoming.items)
-    {
-      boardCandidates.append(stagedRemoteBoard)
-    }
-    let exactBoards = boardCandidates.filter {
-      Set($0.itemIDs) == expectedItemIDs
-    }
-    guard let candidateBoard = (exactBoards.isEmpty
-      ? boardCandidates
-      : exactBoards
-    ).max(by: { $0.stamp < $1.stamp }) else { return }
-
-    var resolvedPages: [UUID: PageDocument] = [:]
-    for id in pageIDs {
-      guard var page = pages[id] ?? stagedRemotePages[id] else { return }
-      if let staged = stagedRemotePages[id] { _ = page.merge(staged) }
-      resolvedPages[id] = page
-    }
-    var resolvedDocuments: [UUID: DocumentDocument] = [:]
-    var resolvedStates: [UUID: DocumentStateJournal] = [:]
-    for id in documentIDs {
-      guard var document = documents[id] ?? stagedRemoteDocuments[id],
-        var state = documentStates[id] ?? stagedRemoteDocumentStates[id]
-      else { return }
-      if let staged = stagedRemoteDocuments[id] {
-        _ = document.merge(staged)
-      }
-      if let staged = stagedRemoteDocumentStates[id] {
-        _ = state.merge(staged)
-      }
-      resolvedDocuments[id] = document
-      resolvedStates[id] = state
-    }
-
-    guard let spatialInk else { return }
-    // The same background transaction that receives collaboration publishes
-    // dependencies and topology together. Selection no longer serializes every
-    // page on MainActor or exposes a partially written catalog.
-    incomingCollaboration.append(.init(content: .init(
-      workspace: incoming, hierarchy: candidateBoard, ink: spatialInk,
-      pages: Array(resolvedPages.values), documents: Array(resolvedDocuments.values),
-      states: Array(resolvedStates.values)
-    )))
-    stagedRemoteIndex = nil
-    stagedRemoteBoard = nil
-    stagedRemotePages.removeAll(keepingCapacity: true)
-    stagedRemoteDocuments.removeAll(keepingCapacity: true)
-    stagedRemoteDocumentStates.removeAll(keepingCapacity: true)
-    reloadExternalChanges()
-  }
-
   private func restoreSettledPresenceAfterDisconnect() {
     #if os(macOS)
-      guard presencePhase == .active,
-        let workspace,
-        let stored = try? store.loadPresence(),
-        presenceIsUsable(stored, workspace: workspace)
-      else { return }
-      presence = settledPresence(
-        from: stored,
-        workspace: workspace,
-        board: boardHierarchy,
-        viewport: stored.viewport
-      )
+      guard presencePhase == .active, let stored = lastSettledPresenceEnvelope?.presence else { return }
+      presence = stored
       presencePhase = .settled
+      alignWorkspaceSelection()
     #endif
   }
 
@@ -2450,9 +2602,6 @@ final class NotebookAppModel {
     {
       return false
     }
-    if presence.mode != .board,
-      presence.focusedItemID != workspace.selectedItemID
-    { return false }
     if let itemID = presence.focusedItemID,
       let item = workspace.items.first(where: { $0.id == itemID })
     {

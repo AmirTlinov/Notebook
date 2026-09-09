@@ -8,13 +8,21 @@ final class NotebookPersistenceQueue {
   enum Owner: Hashable {
     case page(UUID), document(UUID), documentState(UUID), documentDraft(UUID)
     case board, spatialInk, presence, inputActivity(UUID)
+    case nativeText(UUID, String), elementState(UUID, String)
+  }
+
+  private struct Outcome {
+    let merged: Bool
+    let succeeded: Bool
   }
 
   private struct Write {
     let id = UUID()
     let owner: Owner?
-    let operation: @Sendable (NotebookStore) throws -> Bool
+    let operation: @Sendable (NotebookStore) throws -> Outcome
     var onBlocked: (@Sendable (String) -> Void)? = nil
+    var boardBaseline: BoardHierarchy? = nil
+    var notifiesCommit = true
   }
 
   struct Failure: LocalizedError, Sendable {
@@ -29,6 +37,7 @@ final class NotebookPersistenceQueue {
   private(set) var failure: String?
   var onFailureChange: ((String?) -> Void)?
   var onContentMerged: (() -> Void)?
+  var onCommit: ((Owner?) -> Void)?
 
   init(store: NotebookStore) { self.store = store }
 
@@ -38,8 +47,29 @@ final class NotebookPersistenceQueue {
   /// Coalescing never crosses it or replaces a write already executing.
   func enqueue(owner: Owner? = nil,
     _ operation: @escaping @Sendable (NotebookStore) throws -> Bool) {
-    let write = Write(owner: owner, operation: operation)
-    if let owner {
+    let write = Write(owner: owner, operation: { .init(merged: try operation($0), succeeded: true) })
+    if let owner, let index = coalescingIndex(for: owner) {
+      pending[index] = write
+      startIfNeeded()
+      return
+    }
+    pending.append(write)
+    startIfNeeded()
+  }
+
+  /// Coalesced deltas keep the first unsaved baseline. Replacing that baseline
+  /// with the next visible frame would lose an earlier insertion or deletion.
+  func enqueueBoardEdit(before: BoardHierarchy, after: BoardHierarchy) {
+    let index = coalescingIndex(for: .board)
+    let baseline = index.flatMap { pending[$0].boardBaseline } ?? before
+    let write = Write(owner: .board, operation: { store in
+      .init(merged: try store.saveBoardEdits(before: baseline, after: after) != after, succeeded: true)
+    }, boardBaseline: baseline)
+    if let index { pending[index] = write } else { pending.append(write) }
+    startIfNeeded()
+  }
+
+  private func coalescingIndex(for owner: Owner) -> Int? {
       for index in pending.indices.reversed() {
         guard pending[index].owner != nil else { break }
         // Contact release must not jump ahead of content accepted during that
@@ -47,14 +77,10 @@ final class NotebookPersistenceQueue {
         if case .inputActivity = owner, pending[index].owner != owner { break }
         if case .inputActivity? = pending[index].owner, pending[index].owner != owner { break }
         if pending[index].owner == owner, pending[index].id != executingID {
-          pending[index] = write
-          startIfNeeded()
-          return
+          return index
         }
       }
-    }
-    pending.append(write)
-    startIfNeeded()
+    return nil
   }
 
   func discardPending(owner: Owner) {
@@ -71,16 +97,21 @@ final class NotebookPersistenceQueue {
   /// On a storage failure callers are released, while their preceding drafts
   /// remain queued; retrying a command must revalidate its expectations.
   func submit<Value: Sendable>(
+    publishesChanges: Bool = false,
     _ operation: @escaping @Sendable (NotebookStore) throws -> Value
   ) async throws -> Value {
     if let failure { throw Failure(message: failure) }
     return try await withCheckedThrowingContinuation { continuation in
       let write = Write(owner: nil, operation: { store in
-        continuation.resume(with: Result { try operation(store) })
-        return false
+        let result = Result { try operation(store) }
+        continuation.resume(with: result)
+        switch result {
+        case .success: return .init(merged: false, succeeded: true)
+        case .failure: return .init(merged: false, succeeded: false)
+        }
       }, onBlocked: { message in
         continuation.resume(throwing: Failure(message: message))
-      })
+      }, notifiesCommit: publishesChanges)
       pending.append(write)
       startIfNeeded()
     }
@@ -107,9 +138,10 @@ final class NotebookPersistenceQueue {
       }.value
       executingID = nil
       switch result {
-      case .success(let merged):
+      case .success(let outcome):
         pending.removeFirst()
-        if merged { onContentMerged?() }
+        if outcome.merged { onContentMerged?() }
+        if next.notifiesCommit && outcome.succeeded { onCommit?(next.owner) }
       case .failure(let error):
         failure = error.localizedDescription
         onFailureChange?(failure)

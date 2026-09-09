@@ -10,6 +10,7 @@ private struct PreviewPageKey: Hashable {
 
 private struct PreviewCurrentViewKey: Hashable {
   let workspaceStamp: VersionStamp
+  let cursor: UInt64
   let boardRevision: String
   let spatialInkStamp: VersionStamp
   let presence: SessionPresence
@@ -57,9 +58,8 @@ private enum PreviewPublicationError: Error {
   case sourceChanged
 }
 
-/// Publishes the visual readout consumed by MCP for the lifetime of the Mac
-/// app. The publisher deliberately does not belong to a window: closing the
-/// mirror must not make the iPad invisible to an agent.
+/// The menu-bar helper owns publication independently from an application
+/// window. Stopping it drains every accepted preparation before storage closes.
 @MainActor
 final class MacPreviewPublisher {
   private weak var model: NotebookAppModel?
@@ -74,6 +74,8 @@ final class MacPreviewPublisher {
   private var documentSnapshotGeneration = 0
   private var currentView = PreviewPublicationSlot<PreviewCurrentViewKey>()
   private var started = false
+  private var stopped = false
+  private var stoppingTask: Task<Void, Never>?
   private var targetTask: Task<Void, Never>?
   private var targetInProgress: UUID?
   private var referenceVisionTask: Task<Void, Never>?
@@ -98,13 +100,13 @@ final class MacPreviewPublisher {
   }
 
   func start() {
-    guard !started else { return }
+    guard !started, !stopped else { return }
     started = true
     documentSnapshotObserver = NotificationCenter.default.publisher(
       for: DocumentSnapshotCache.didChange
     ).sink { [weak self] _ in
       Task { @MainActor [weak self] in
-        guard let self else { return }
+        guard let self, started else { return }
         documentSnapshotGeneration &+= 1
         scheduleCurrentView(for: makeCurrentViewKey())
       }
@@ -113,7 +115,7 @@ final class MacPreviewPublisher {
       for: SceneRenderResources.didChange
     ).sink { [weak self] _ in
       Task { @MainActor [weak self] in
-        guard let self else { return }
+        guard let self, started else { return }
         scheduleCurrentView(for: makeCurrentViewKey())
       }
     }
@@ -129,6 +131,31 @@ final class MacPreviewPublisher {
     }
   }
 
+  /// A publisher is single-use. The admission fence precedes the first await;
+  /// late Observation and snapshot notifications cannot restart a stopped owner.
+  func stop() async {
+    if let stoppingTask { await stoppingTask.value; return }
+    guard !stopped else { return }
+    stopped = true
+    started = false
+    documentSnapshotObserver?.cancel(); documentSnapshotObserver = nil
+    agentSnapshotObserver?.cancel(); agentSnapshotObserver = nil
+    let tasks = [currentViewTask, pageRequestTask, reconciliationTask, targetTask,
+      referenceVisionTask].compactMap { $0 }
+    for task in tasks { task.cancel() }
+    let drain = Task { @MainActor [weak self] in
+      for task in tasks { await task.value }
+      guard let self else { return }
+      currentViewTask = nil; pageRequestTask = nil; reconciliationTask = nil
+      targetTask = nil; referenceVisionTask = nil
+      targetInProgress = nil; referenceVisionKey = nil; requestedPageKey = nil
+      currentView = .init()
+      stoppingTask = nil
+    }
+    stoppingTask = drain
+    await drain.value
+  }
+
   func suspendForInput() {
     currentViewTask?.cancel()
     pageRequestTask?.cancel()
@@ -142,6 +169,7 @@ final class MacPreviewPublisher {
   /// if a burst coalesces observation callbacks, the final versions still get
   /// published without reopening the app.
   private func reconcilePublication() {
+    guard started else { return }
     scheduleCurrentView(for: makeCurrentViewKey())
     schedulePagePreview(for: pageKey)
     guard let model else { return }
@@ -155,48 +183,54 @@ final class MacPreviewPublisher {
   }
 
   private func scheduleTargetRender(_ model: NotebookAppModel) {
-    guard model.permitsBackgroundPreparation, targetInProgress == nil,
-      let request = (try? model.store.targetRenderRequests())?.sorted(by: { left, right in
-        let leftCurrent = left.pageVisionRevision != nil && left.target.id == pageKey?.pageID
-        let rightCurrent = right.pageVisionRevision != nil && right.target.id == pageKey?.pageID
-        return leftCurrent == rightCurrent ? left.createdAt < right.createdAt : leftCurrent
-      }).first(where: {
-      !FileManager.default.fileExists(atPath: model.store.targetReceiptURL($0.id).path)
-    }) else { return }
-    targetInProgress = request.id
+    guard started, model.permitsBackgroundPreparation, targetTask == nil else { return }
+    let selectedPage = pageKey?.pageID
     targetTask = Task { [weak self, weak model] in
       defer { self?.targetInProgress = nil; self?.targetTask = nil }
-      guard let model else { return }
-      do { try await CurrentViewPreviewWriter.writeTarget(request, model: model); self?.referenceVisionKey = nil }
-      catch {
-        guard !Task.isCancelled, model.permitsBackgroundPreparation else { return }
-        try? model.store.saveTargetRender(.init(request: request, status: "error", diagnostics: [
-          .init(kind: "render_error", message: String(describing: error))]))
-      }
+      guard self?.started == true, !Task.isCancelled, let model else { return }
+      do {
+        let request = try await model.performStoreCommand { store in
+          try store.targetRenderRequests().sorted { left, right in
+            let leftCurrent = left.pageVisionRevision != nil && left.target.id == selectedPage
+            let rightCurrent = right.pageVisionRevision != nil && right.target.id == selectedPage
+            return leftCurrent == rightCurrent ? left.createdAt < right.createdAt : leftCurrent
+          }.first { !FileManager.default.fileExists(atPath: store.targetReceiptURL($0.id).path) }
+        }
+        guard self?.started == true, !Task.isCancelled, model.permitsBackgroundPreparation, let request else { return }
+        self?.targetInProgress = request.id
+        do {
+          try await CurrentViewPreviewWriter.writeTarget(request, model: model)
+          self?.referenceVisionKey = nil
+        } catch {
+          guard self?.started == true, !Task.isCancelled, model.permitsBackgroundPreparation else { return }
+          let receipt = TargetRenderReceipt(request: request, status: "error", diagnostics: [
+            .init(kind: "render_error", message: String(describing: error))])
+          try await model.performStoreCommand { try $0.saveTargetRender(receipt) }
+        }
+      } catch { /* The next publisher observation can retry an unread request. */ }
     }
   }
 
   private func scheduleReferenceVision(_ model: NotebookAppModel) {
+    guard started, model.permitsBackgroundPreparation else { return }
     let references = Array(model.sharedContexts.sorted(by: { ($0.entries.last?.createdAt ?? .distantPast) > ($1.entries.last?.createdAt ?? .distantPast) })
       .prefix(8).flatMap({ $0.entries.flatMap(\.references) }).filter { $0.region != nil && $0.elementID == nil }.prefix(32))
     guard !references.isEmpty else { return }
     let key = String(model.collaborationReadEpoch)
     guard referenceVisionTask == nil, referenceVisionKey != key else { return }
     referenceVisionKey = key
-    let store = model.store
-    referenceVisionTask = Task { [weak self] in
+    referenceVisionTask = Task { [weak self, weak model] in
       defer { self?.referenceVisionTask = nil }
-      let worker = Task.detached(priority: .utility) {
-        for reference in references {
-          guard !Task.isCancelled else { return }
-          _ = try? store.referenceStatus(reference)
-        }
+      guard self?.started == true, !Task.isCancelled, let model else { return }
+      for reference in references {
+        guard self?.started == true, !Task.isCancelled else { return }
+        _ = try? await model.performStoreCommand { try $0.referenceStatus(reference) }
       }
-      await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
     }
   }
 
   private func observeCurrentView() {
+    guard started else { return }
     let key = withObservationTracking {
       makeCurrentViewKey()
     } onChange: { [weak self] in
@@ -208,6 +242,7 @@ final class MacPreviewPublisher {
   }
 
   private func observePages() {
+    guard started else { return }
     let key = withObservationTracking {
       pageKey
     } onChange: { [weak self] in
@@ -224,9 +259,8 @@ final class MacPreviewPublisher {
   }
 
   private func makeCurrentViewKey() -> PreviewCurrentViewKey? {
-    guard let model, let workspace = model.workspace,
-      let board = model.boardHierarchy,
-      let spatialInk = model.spatialInk,
+    guard let model, let workspace = model.workspace, let header = model.workspaceHeader,
+      let boardRevision = header.boardRevision, let inkStamp = header.spatialInkStamp,
       let presence = model.presence
     else { return nil }
     let focusedIsSelected = presence.focusedItemID == workspace.selectedItemID
@@ -234,9 +268,9 @@ final class MacPreviewPublisher {
     let document = focusedIsSelected ? model.activeDocument : nil
     let documentState = document.flatMap { model.documentStates[$0.id] }
     return PreviewCurrentViewKey(
-      workspaceStamp: workspace.stamp,
-      boardRevision: board.revision,
-      spatialInkStamp: spatialInk.stamp,
+      workspaceStamp: header.stamp, cursor: header.cursor,
+      boardRevision: boardRevision,
+      spatialInkStamp: inkStamp,
       presence: presence,
       presencePhase: model.presencePhase,
       pageDrawingStamp: page?.drawingStamp,
@@ -248,14 +282,17 @@ final class MacPreviewPublisher {
   }
 
   private func scheduleCurrentView(for key: PreviewCurrentViewKey?) {
+    guard started else { return }
     guard let key, key.presencePhase == .settled, model?.permitsBackgroundPreparation == true else { currentViewTask?.cancel(); return }
     guard currentView.request(key) else { return }
-    currentViewTask?.cancel()
+    // Keep the cancelled task owned until it has drained. Replacing its handle
+    // would let shutdown acknowledge while an older renderer still uses SQL.
+    if let currentViewTask { currentViewTask.cancel(); return }
     let generation = currentView.begin(key)
     currentViewTask = Task { [weak self] in
       try? await Task.sleep(for: self?.currentViewDelay ?? .zero)
       guard let self else { return }
-      guard !Task.isCancelled,
+      guard started, !Task.isCancelled,
         model?.permitsBackgroundPreparation == true,
         makeCurrentViewKey() == key
       else {
@@ -269,7 +306,7 @@ final class MacPreviewPublisher {
           let state = model.documentStates[document.id] {
           documentRaster = try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: model.presence?.documentPageIndex ?? 0)
         }
-        guard !Task.isCancelled, model?.permitsBackgroundPreparation == true, makeCurrentViewKey() == key else {
+        guard started, !Task.isCancelled, model?.permitsBackgroundPreparation == true, makeCurrentViewKey() == key else {
           throw PreviewPublicationError.sourceChanged
         }
         finishCurrentViewPublication(key, generation: generation,
@@ -287,25 +324,25 @@ final class MacPreviewPublisher {
   ) {
     guard currentView.pending == key,
       currentView.generation == generation else { return }
+    let wasSuperseded = currentView.desired != key
     currentView.finish(key, generation: generation, error: error)
     currentViewTask = nil
+    if started, wasSuperseded { scheduleCurrentView(for: makeCurrentViewKey()) }
   }
 
   /// Only the selected physical page is requested automatically. Explicit
   /// agent requests and this request share one queue and one render executor.
   private func schedulePagePreview(for key: PreviewPageKey?) {
-    guard let key, requestedPageKey != key, pageRequestTask == nil, let model,
+    guard started, let key, requestedPageKey != key, pageRequestTask == nil, let model,
       model.permitsBackgroundPreparation else { return }
-    let store = model.store
     pageRequestTask = Task { [weak self, weak model] in
       defer { self?.pageRequestTask = nil }
-      let worker = Task.detached(priority: .utility) {
-        try Task.checkCancellation()
-        return try store.requestPageVision(pageID: key.pageID, expectedRevision: key.drawingStamp.revision)
-      }
+      guard self?.started == true, !Task.isCancelled, let model else { return }
       do {
-        _ = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
-        guard !Task.isCancelled, let self, let model, pageKey == key else { return }
+        _ = try await model.performStoreCommand {
+          try $0.requestPageVision(pageID: key.pageID, expectedRevision: key.drawingStamp.revision)
+        }
+        guard !Task.isCancelled, let self, started, pageKey == key else { return }
         requestedPageKey = key
         scheduleTargetRender(model)
       } catch { }
@@ -313,9 +350,7 @@ final class MacPreviewPublisher {
   }
 
   private func writeCurrentView(documentRaster: RasterLease?) async -> (any Error)? {
-    guard let model, let workspace = model.workspace,
-      let board = model.boardHierarchy,
-      let spatialInk = model.spatialInk,
+    guard started, !Task.isCancelled, let model, let workspace = model.workspace,
       let presence = model.presence,
       presence.viewport.x > 0,
       presence.viewport.y > 0
@@ -334,9 +369,6 @@ final class MacPreviewPublisher {
           width: presence.viewport.x,
           height: presence.viewport.y
         ),
-        workspace: workspace,
-        board: board,
-        spatialInk: spatialInk,
         presence: presence,
         page: page,
         document: document,

@@ -1384,7 +1384,7 @@ public enum WorkspaceSemanticMode: String, Codable, Sendable {
 }
 
 public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
-  public static let formatVersion = 4
+  public static let formatVersion = 5
 
   public let format: Int
   public let boardID: UUID
@@ -1393,9 +1393,10 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
   public let viewport: SpatialPoint
   public let focusedItemID: UUID?
   public let openProgress: Double
-  /// The selected physical sheet inside a paginated document. Notebook page
-  /// selection remains durable in WorkspaceIndex; document pagination is a
-  /// view property and therefore travels with presence instead.
+  /// Selection is session state, never a catalog mutation. It survives a
+  /// camera that has left the selected item and returned to its board.
+  public let selectedItemID: UUID?
+  public let notebookPageID: UUID?
   public let documentPageIndex: Int
 
   public init(
@@ -1405,7 +1406,9 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
     viewport: SpatialPoint,
     focusedItemID: UUID? = nil,
     openProgress: Double = 0,
-    documentPageIndex: Int = 0
+    documentPageIndex: Int = 0,
+    selectedItemID: UUID? = nil,
+    notebookPageID: UUID? = nil
   ) {
     precondition(
       openProgress.isFinite && openProgress >= 0 && openProgress <= 1
@@ -1418,6 +1421,8 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
     self.viewport = viewport
     self.focusedItemID = focusedItemID
     self.openProgress = openProgress
+    self.selectedItemID = selectedItemID ?? focusedItemID
+    self.notebookPageID = notebookPageID
     self.documentPageIndex = documentPageIndex
   }
 
@@ -1426,6 +1431,7 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
       && viewport.isValid && viewport.x > 0 && viewport.y > 0
       && openProgress.isFinite && openProgress >= 0 && openProgress <= 1
       && documentPageIndex >= 0
+      && (notebookPageID == nil || selectedItemID != nil)
       && (mode == .board || focusedItemID != nil)
       && (mode == .cover || mode == .document || documentPageIndex == 0)
   }
@@ -1465,8 +1471,16 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
       viewport: targetViewport,
       focusedItemID: focusedItemID,
       openProgress: openProgress,
-      documentPageIndex: documentPageIndex
+      documentPageIndex: documentPageIndex,
+      selectedItemID: selectedItemID,
+      notebookPageID: notebookPageID
     )
+  }
+
+  public func selecting(itemID: UUID?, pageID: UUID?) -> Self {
+    Self(boardID: boardID, mode: mode, camera: camera, viewport: viewport,
+      focusedItemID: focusedItemID, openProgress: openProgress,
+      documentPageIndex: documentPageIndex, selectedItemID: itemID, notebookPageID: pageID)
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -1478,58 +1492,30 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
     case focusedItemID
     case openProgress
     case documentPageIndex
-    case legacyFocusedNotebookID = "focusedNotebookID"
+    case selectedItemID
+    case notebookPageID
   }
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     let storedFormat = try container.decode(Int.self, forKey: .format)
-    format = Self.formatVersion
+    guard storedFormat == Self.formatVersion else {
+      throw DecodingError.dataCorruptedError(forKey: .format, in: container,
+        debugDescription: "Presence requires an externally converted checkpoint")
+    }
+    format = storedFormat
     mode = try container.decode(WorkspaceSemanticMode.self, forKey: .mode)
     camera = try container.decode(SpatialCamera.self, forKey: .camera)
     viewport = try container.decode(SpatialPoint.self, forKey: .viewport)
     openProgress = try container.decode(Double.self, forKey: .openProgress)
-    switch storedFormat {
-    case Self.formatVersion:
-      boardID = try container.decode(UUID.self, forKey: .boardID)
-      focusedItemID = try container.decodeIfPresent(
-        UUID.self,
-        forKey: .focusedItemID
-      )
-      documentPageIndex = try container.decode(
-        Int.self,
-        forKey: .documentPageIndex
-      )
-    case 3:
-      boardID = WorkspaceRoot.boardID
-      focusedItemID = try container.decodeIfPresent(
-        UUID.self,
-        forKey: .focusedItemID
-      )
-      documentPageIndex = try container.decode(
-        Int.self,
-        forKey: .documentPageIndex
-      )
-    case 2:
-      boardID = WorkspaceRoot.boardID
-      focusedItemID = try container.decodeIfPresent(
-        UUID.self,
-        forKey: .focusedItemID
-      )
-      documentPageIndex = 0
-    case 1:
-      boardID = WorkspaceRoot.boardID
-      focusedItemID = try container.decodeIfPresent(
-        UUID.self,
-        forKey: .legacyFocusedNotebookID
-      )
-      documentPageIndex = 0
-    default:
-      throw DecodingError.dataCorruptedError(
-        forKey: .format,
-        in: container,
-        debugDescription: "Unsupported presence format: \(storedFormat)"
-      )
+    boardID = try container.decode(UUID.self, forKey: .boardID)
+    focusedItemID = try container.decodeIfPresent(UUID.self, forKey: .focusedItemID)
+    selectedItemID = try container.decodeIfPresent(UUID.self, forKey: .selectedItemID)
+    notebookPageID = try container.decodeIfPresent(UUID.self, forKey: .notebookPageID)
+    documentPageIndex = try container.decode(Int.self, forKey: .documentPageIndex)
+    guard isValid else {
+      throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+        debugDescription: "Invalid session selection or geometry"))
     }
   }
 
@@ -1543,5 +1529,7 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
     try container.encodeIfPresent(focusedItemID, forKey: .focusedItemID)
     try container.encode(openProgress, forKey: .openProgress)
     try container.encode(documentPageIndex, forKey: .documentPageIndex)
+    try container.encodeIfPresent(selectedItemID, forKey: .selectedItemID)
+    try container.encodeIfPresent(notebookPageID, forKey: .notebookPageID)
   }
 }

@@ -197,25 +197,22 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
       }
   }
 
-  /// Representation migration preserves the version of the same visible drawing.
-  mutating func migrateInkRepresentation(_ data: Data) throws {
-    _ = try PageInkDrawing.decode(data)
-    drawingData = data
-  }
-
   @discardableResult
   public mutating func replaceDrawing(_ data: Data, actor: UUID) -> Bool {
     guard data != drawingData,
       let stamp = drawingStamp.advanced(by: actor)
     else { return false }
-    if let current = try? PageInkDrawing.decode(drawingData),
-      let requested = try? PageInkDrawing.decode(data),
-      let next = try? current.removing(Set(current.activeActions.map(\.id))
-        .subtracting(requested.activeActions.map(\.id))).merging(requested),
-      let encoded = try? next.dataRepresentation() {
-      return replaceDrawing(encoded, stamp: stamp)
+    guard let current = try? PageInkDrawing.decode(drawingData),
+      let requested = try? PageInkDrawing.decode(data) else { return false }
+    do {
+      let next = try current.removing(Set(current.activeActions.map(\.id))
+        .subtracting(requested.activeActions.map(\.id))).merging(requested)
+      return try replaceDrawing(next.dataRepresentation(), stamp: stamp)
+    } catch PageInkDrawing.InkError.incompatibleBaseline {
+      return replaceDrawing(data, stamp: stamp)
+    } catch {
+      return false
     }
-    return replaceDrawing(data, stamp: stamp)
   }
 
   @discardableResult
@@ -223,7 +220,8 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     _ data: Data,
     stamp: VersionStamp
   ) -> Bool {
-    guard stamp.counter <= VersionStamp.maximumCounter else { return false }
+    guard stamp.counter <= VersionStamp.maximumCounter,
+      (try? PageInkDrawing.decode(data)) != nil else { return false }
     if data == drawingData {
       guard drawingStamp < stamp else { return false }
       drawingStamp = stamp

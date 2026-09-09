@@ -30,8 +30,9 @@ func catalogSelectionPreservesIndependentCreation() throws {
   _ = right.merge(creation)
   #expect(left.item(id: added.item.id) != nil)
   #expect(right.item(id: added.item.id) != nil)
-  #expect(left == right)
-  #expect(left.selectedPageID == selection.selectedPageID)
+  #expect(try JSONValue.encode(left) == JSONValue.encode(right))
+  #expect(left.selectedPageID == creation.selectedPageID)
+  #expect(right.selectedPageID == selection.selectedPageID)
 }
 
 @Test("Два независимо добавленных листа сохраняются в одной тетради")
@@ -46,7 +47,7 @@ func catalogConcurrentPageCreationPreservesBothPages() throws {
   _ = left.merge(right)
   _ = right.merge(originalLeft)
   #expect(Set(left.selectedItem.pageIDs) == Set([base.selectedPageID!, a.pageID, b.pageID]))
-  #expect(left == right)
+  #expect(try JSONValue.encode(left) == JSONValue.encode(right))
 }
 
 @Test("Устаревший выбор не возвращает явно удалённый предмет")
@@ -116,31 +117,6 @@ func collaborationSelectionPreservesPublishedPage() throws {
   }
 }
 
-@Test("Запуск сначала завершает прерванную публикацию каталога и его зависимостей", arguments: 0...3)
-func workspaceStartupRecoversEveryCreationPrefix(prefix: Int) throws {
-  try withPublicationStore { store, base, tree in
-    var created = base, createdTree = tree
-    let addedResult = created.createNotebook(title: "Recovered", actor: publicationActorA, pageSize: publicationSize)
-    let added = try #require(addedResult)
-    _ = createdTree.addItem(added.item.id, to: base.rootBoardID, near: .zero, actor: publicationActorA)
-    let ordered: [(String, JSONValue)] = [
-      ("pages/\(added.page.id.uuidString.lowercased()).json", try .encode(added.page)),
-      ("board.json", try .encode(createdTree)),
-      ("workspace.json", try .encode(created))
-    ]
-    let transaction = JSONValue.object(["writes": .object(Dictionary(uniqueKeysWithValues: ordered)), "removals": .array([])])
-    try JSONEncoder().encode(transaction).write(to: store.collaborationURL.appendingPathComponent("pending.json"), options: .atomic)
-    for (path, value) in ordered.prefix(prefix) {
-      try JSONEncoder().encode(value).write(to: store.root.appendingPathComponent(path), options: .atomic)
-    }
-    let reopened = NotebookStore(root: store.root)
-    let loaded = try reopened.loadOrCreate(actor: publicationActorA, pageSize: publicationSize)
-    #expect(loaded.0.item(id: added.item.id) != nil)
-    #expect(loaded.1[added.page.id] == added.page)
-    #expect(try reopened.loadOrCreateBoard(workspace: loaded.0, actor: publicationActorA).isValid(items: loaded.0.items))
-    #expect(!FileManager.default.fileExists(atPath: store.collaborationURL.appendingPathComponent("pending.json").path))
-  }
-}
 
 @Test("Повтор ID тяжёлого владельца отклоняется до удержания первого сетевого пакета", arguments: ["page", "document", "state"])
 func collaborationRejectsDuplicateHeavyOwners(kind: String) throws {
@@ -175,7 +151,10 @@ func staleNativeDocumentAndBoardCreation(kind: WorkspaceItemKind) throws {
       let document = DocumentDocument(id: id, actor: publicationActorA)
       try store.saveDocumentWorkspaceBundle(index: local, document: document,
         state: .init(id: id, actor: publicationActorA), board: localTree)
-      #expect(try store.loadDocument(id) == document)
+      let persisted = try store.loadDocument(id)
+      #expect(persisted.blocks == document.blocks && persisted.contentStamp == document.contentStamp)
+      #expect(persisted.collaboration?.fields.isEmpty == false)
+      #expect(persisted.collaboration?.fields.values.allSatisfy(\.human) == true)
       #expect(try store.loadDocumentState(id).id == id)
     } else {
       _ = local.createBoard(title: "Local board", actor: publicationActorA, boardID: id)
@@ -223,7 +202,7 @@ func delayedBlankPageCreationKeepsPublishedDrawing() throws {
     let selectionResult = index.selectPage(at: 1, in: base.selectedItemID, actor: publicationActorA, pageSize: publicationSize)
     let selection = try #require(selectionResult), blank = try #require(selection.createdPage)
     var drawn = blank
-    _ = drawn.replaceDrawing(Data("already published ink".utf8), actor: publicationActorA)
+    _ = drawn.replaceDrawing(pageDrawingFixture(Data("already published ink".utf8)), actor: publicationActorA)
     _ = try store.saveWorkspaceSelection(index: index, createdPage: drawn)
     _ = try store.saveWorkspaceSelection(index: index, createdPage: blank)
     #expect(try store.loadPage(blank.id).drawingData == drawn.drawingData)
@@ -282,7 +261,7 @@ func lateHeavyOwnerSaveDoesNotResurrectDeletion(kind: WorkspaceItemKind) throws 
       _ = board.addItem(id, to: base.rootBoardID, near: .zero, actor: publicationActorA)
       try store.saveWorkspaceBundle(index: index, page: created.page, board: board)
       capturedPage = created.page
-      _ = capturedPage?.replaceDrawing(Data("accepted input".utf8), actor: publicationActorA)
+      _ = capturedPage?.replaceDrawing(pageDrawingFixture(Data("accepted input".utf8)), actor: publicationActorA)
     } else {
       _ = index.createDocument(title: "Delete after input", actor: publicationActorA, documentID: id)
       _ = board.addItem(id, to: base.rootBoardID, near: .zero, actor: publicationActorA)
@@ -345,7 +324,7 @@ func conflictingPhysicalOwnersRejectWholePublication() throws {
     _ = try store.saveMergedBoard(local, items: index.items)
     let before = try store.collaborationContent()
     var page = try store.loadPage(base.selectedPageID!)
-    _ = page.replaceDrawing(Data("must not partially publish".utf8), actor: publicationActorB)
+    _ = page.replaceDrawing(pageDrawingFixture(Data("must not partially publish".utf8)), actor: publicationActorB)
     let content = CollaborationContent(workspace: index, hierarchy: incoming, ink: ink, pages: [page], documents: [], states: [])
     #expect(throws: CollaborationError.self) { _ = try store.receiveCollaboration(.init(content: content)) }
     #expect(try store.collaborationContent() == before)
@@ -371,16 +350,15 @@ func pendingDeletionReservesClockForLaterNavigation() throws {
   #expect(current.items == base.items)
   #expect(current.selectedItemID == base.selectedItemID)
   #expect(current.selectedPageID == base.selectedPageID)
-  #expect(current.selectionVersion == base.selectionVersion)
   #expect(current.collaboration == base.collaboration)
   #expect(current.stamp == deleted.stamp)
 
   _ = current.selectItem(c.item.id, actor: publicationActorA)
-  #expect(current.selectionVersion.stamp.counter == deleted.stamp.counter + 1)
+  #expect(current.stamp == deleted.stamp)
   let durable = try deleted.merging(current)
   let memory = try current.merging(deleted)
-  #expect(durable == memory)
-  #expect(durable.selectedItemID == c.item.id)
+  #expect(durable.items == memory.items)
+  #expect(memory.selectedItemID == c.item.id)
   #expect(durable.item(id: removedID) == nil)
 
   let accepted = current
@@ -426,7 +404,7 @@ func pendingBoardDeletionReservesSharedOwnerClocks() throws {
   let retained = items.filter { $0.id != removedID }
   let left = try current.merging(pending, items: retained)
   let right = try pending.merging(current, items: retained)
-  #expect(left == right)
+  #expect(try JSONValue.encode(left) == JSONValue.encode(right))
   #expect(left.focusedCenter(of: movedID, in: base.rootBoardID) == center)
   #expect(!left.itemIDs.contains(removedID))
 }

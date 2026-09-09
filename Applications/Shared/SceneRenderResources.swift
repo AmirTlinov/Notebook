@@ -7,6 +7,7 @@ import WebKit
 enum SceneRasterSource: Equatable, Sendable {
   case agent(AgentElement)
   case document(id: UUID, token: String)
+  case composition(SceneCompositionTileKey)
 
   /// A raster belongs to the element's local pixels. Moving those pixels in the
   /// scene does not change their source; size, program and state still do.
@@ -19,6 +20,7 @@ enum SceneRasterSource: Equatable, Sendable {
         && left.css == right.css && left.javaScript == right.javaScript && left.state == right.state
     case (.document(let leftID, let leftToken), .document(let rightID, let rightToken)):
       leftID == rightID && leftToken == rightToken
+    case (.composition(let left), .composition(let right)): left == right
     default: false
     }
   }
@@ -27,11 +29,12 @@ enum SceneRasterSource: Equatable, Sendable {
     switch self {
     case .agent(let element): .agent(element.id)
     case .document(let id, _): .document(id)
+    case .composition(let key): .composition(key)
     }
   }
 }
 
-fileprivate enum RasterOwner: Hashable { case agent(String), document(UUID) }
+fileprivate enum RasterOwner: Hashable { case agent(String), document(UUID), composition(SceneCompositionTileKey) }
 
 enum WebPriority: Int, Comparable, Sendable {
   case currentPage, input, neighbor, visible, background
@@ -458,7 +461,11 @@ final class SceneRenderResources {
   private func changed(_ owner: RasterOwner) {
     rasterGeneration &+= 1
     let id: Any
-    switch owner { case .agent(let element): id = element; case .document(let document): id = document }
+    switch owner {
+    case .agent(let element): id = element
+    case .document(let document): id = document
+    case .composition(let tile): id = tile
+    }
     NotificationCenter.default.post(name: Self.didChange, object: id)
   }
 
@@ -484,7 +491,7 @@ final class SceneRenderResources {
     let size: CGSize
     switch source {
     case .agent(let element): size = .init(width: element.frame.width, height: element.frame.height)
-    case .document: size = image.size
+    case .document, .composition: size = image.size
     }
     guard size.width > 0, size.height > 0 else { return nil }
     let horizontal = Double(cgImage.width) / size.width
@@ -499,51 +506,9 @@ final class SceneRenderResources {
     permitsPreparation: @MainActor () -> Bool = { true }) async throws -> RasterLease {
     try Task.checkCancellation()
     if let raster = retainRaster(for: element, minimumScale: requestedScale) { return raster }
-    while !permitsPreparation() {
-      try await Task.sleep(for: .milliseconds(30))
-    }
-    let slot = try await acquireWebSurface(priority: .background)
-    defer { slot.release() }
-    try Task.checkCancellation()
-    // Input may have started while this request waited for its executor.
-    guard permitsPreparation() else { throw CancellationError() }
-    let coordinator = AgentWebCoordinator(lease: slot, resources: self,
-      snapshotPolicy: .exact(scale: requestedScale), onState: { _ in })
-    let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
-    let size = CGSize(width: element.frame.width, height: element.frame.height)
-    #if os(macOS)
-    let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: -20_000, y: -20_000), size: size),
-      styleMask: .borderless, backing: .buffered, defer: false)
-    window.isReleasedWhenClosed = false; window.contentView = web; window.orderBack(nil)
-    defer { coordinator.invalidate(); window.orderOut(nil); window.close() }
-    #else
-    guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
-      .first(where: { $0.activationState == .foregroundActive }) else {
-      coordinator.invalidate()
-      throw SceneRenderError.snapshotPending(element.id)
-    }
-    let window = UIWindow(windowScene: scene)
-    // Never make the preparation window key: text, Pencil and camera keep the
-    // human's window. The viewport is outside the visible scene, not alpha-zero.
-    window.frame = CGRect(origin: CGPoint(x: -20_000 - size.width, y: -20_000 - size.height), size: size)
-    let controller = UIViewController()
-    controller.view.backgroundColor = .clear
-    controller.view.addSubview(web)
-    web.frame = CGRect(origin: .zero, size: size)
-    window.rootViewController = controller
-    window.isHidden = false
-    defer { coordinator.invalidate(); web.removeFromSuperview(); window.isHidden = true; window.rootViewController = nil }
-    #endif
-    coordinator.load(element, in: web)
-    let deadline = ContinuousClock.now + .seconds(8)
-    while true {
-      try Task.checkCancellation()
-      guard permitsPreparation() else { throw CancellationError() }
-      if let raster = retainRaster(for: element, minimumScale: requestedScale) { return raster }
-      if let failure = coordinator.snapshotFailure { throw failure }
-      guard ContinuousClock.now < deadline else { throw SceneRenderError.snapshotPending(element.id) }
-      try await Task.sleep(for: .milliseconds(20))
-    }
+    let preparation = try await SceneWebRasterPreparation.create(resources: self, permitsPreparation: permitsPreparation)
+    defer { preparation.close() }
+    return try await preparation.prepare(element, requestedScale: requestedScale, permitsPreparation: permitsPreparation)
   }
 
 }

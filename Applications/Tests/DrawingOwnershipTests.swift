@@ -344,11 +344,11 @@ final class DrawingOwnershipTests: XCTestCase {
   func testReservedLocalContactMergesWithNewerRemoteInkAndUndoesOnlyItself() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
 
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: PageSize(width: 834, height: 1_194))
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: PageSize(width: 834, height: 1_194))
     let pageID = try XCTUnwrap(model.activePage?.id)
     let localStamp = try XCTUnwrap(model.reserveDrawingAction(pageID: pageID))
     let localStroke = stroke(y: 40)

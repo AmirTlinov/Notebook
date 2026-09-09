@@ -6,6 +6,10 @@ import NotebookCore
 struct WorkspaceSceneIndex: Sendable {
   static let detailLimit = 96
   let generationID = UUID()
+  // Value-shared sources of this exact projection, retained with a shown
+  // cohort so a later model publication cannot redirect a pointing contact.
+  let capturedWorkspace: WorkspaceIndex
+  let capturedHierarchy: BoardHierarchy
 
   private struct Item: Sendable {
     let value: WorkspaceItem
@@ -32,6 +36,7 @@ struct WorkspaceSceneIndex: Sendable {
   private let boards: [UUID: Board]
 
   init(workspace: WorkspaceIndex, hierarchy: BoardHierarchy, paperSizes: [UUID: DocumentPaperSize]) {
+    capturedWorkspace = workspace; capturedHierarchy = hierarchy
     catalog = workspace.items
     self.paperSizes = paperSizes
     let values = Dictionary(uniqueKeysWithValues: workspace.items.map { ($0.id, $0) })
@@ -125,6 +130,11 @@ struct WorkspaceSceneIndex: Sendable {
   func pageOwner(pageID: UUID) -> UUID? { pageOwners[pageID] }
   func ownerBoard(itemID: UUID) -> UUID? { itemOwners[itemID] }
   func element(id: String, boardID: UUID) -> SpatialElement? { boards[boardID]?.elements[id] }
+  func paintEntry(id: WorkspaceSpatialID, boardID: UUID, coverID: UUID? = nil) -> WorkspaceSpatialEntry? {
+    guard let board = boards[boardID] else { return nil }
+    return coverID.flatMap { board.coverIndices[$0] }?.entry(id: id)
+      ?? (coverID == nil ? board.index.entry(id: id) : nil)
+  }
 
   func renderedItem(id: UUID, presence: SessionPresence) -> RenderedWorkspaceItem? {
     guard let item = boards[presence.boardID]?.items[id] else { return nil }

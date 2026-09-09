@@ -88,9 +88,9 @@ final class PortalInkTests: XCTestCase {
   @MainActor
   func testSpatialWebRetainsItsExactRasterWhileOwnerChanges() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: NotebookStore(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let element = SpatialElement(id: UUID().uuidString, surface: .board,
       kind: .web, frame: SpatialRect(x: 0, y: 0, width: 300, height: 180),
       worldOrigin: .zero, source: "<svg>",
@@ -144,9 +144,9 @@ final class PortalInkTests: XCTestCase {
   @MainActor
   func testPassivePortalRendersChangedContentOnceWithoutRestartingItsScripts() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: NotebookStore(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     var element = SpatialElement(id: UUID().uuidString, surface: .board, kind: .web,
       frame: .init(x: 0, y: 0, width: 300, height: 180), worldOrigin: .zero,
       source: "Portal state", html: "<div id='value'></div>",

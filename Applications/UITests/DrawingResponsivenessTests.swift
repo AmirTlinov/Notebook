@@ -41,7 +41,14 @@ final class DrawingResponsivenessTests: XCTestCase {
       thenDragTo:app.coordinate(withNormalizedOffset:.init(dx:0.45,dy:0.25)))
     XCTAssertFalse(app.staticTexts["Укажите фрагмент · протяните для области"].exists)
     app.buttons["collaboration-history"].tap()
-    app.buttons["show-action-result"].firstMatch.tap()
+    XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForExistence(timeout: 3))
+    let history = app.collectionViews["collaboration-history-list"]
+    let result = app.buttons["show-action-result"].firstMatch
+    // The newer human indication precedes the older action in the same history.
+    // Scroll the real list to that action rather than assuming all rows are mounted.
+    for _ in 0..<3 where !result.isHittable { history.swipeUp() }
+    XCTAssertTrue(result.isHittable)
+    result.tap()
     let showProof = XCTAttachment(screenshot: app.screenshot())
     showProof.name = "after-history-show"; showProof.lifetime = .keepAlways; add(showProof)
     XCTAssertTrue(element.waitForExistence(timeout:5))
@@ -53,7 +60,10 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertGreaterThan(element.frame.midX,initial.midX + 20)
     let moved = element.frame
     app.buttons["collaboration-history"].tap()
-    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label BEGINSWITH 'Ваша доработка'")).firstMatch.waitForExistence(timeout:3))
+    XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForExistence(timeout: 3))
+    let continuation = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Ваша доработка'")).firstMatch
+    for _ in 0..<3 where !continuation.isHittable { history.swipeUp() }
+    XCTAssertTrue(continuation.isHittable)
     app.buttons["Отменить этот ход"].firstMatch.tap()
     app.buttons["Готово"].tap()
     XCTAssertTrue(app.staticTexts["Ход отменён"].waitForExistence(timeout:5))
@@ -103,6 +113,39 @@ final class DrawingResponsivenessTests: XCTestCase {
     proof.name = "human-pointer-prepared-source"; proof.lifetime = .keepAlways; add(proof)
     app.buttons["Готово"].tap()
     XCTAssertTrue(app.buttons["drawing-tool-eraser"].isHittable)
+  }
+
+  func testQuestionCardPersistsOfflineWithoutOpeningKeyboardOnSelection() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-pointer-fixture"]
+    app.launch()
+    let pointer = app.buttons["drawing-tool-pointer"]
+    XCTAssertTrue(pointer.waitForExistence(timeout: 5))
+    pointer.tap()
+    app.coordinate(withNormalizedOffset: .init(dx: 0.24, dy: 0.20))
+      .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: .init(dx: 0.48, dy: 0.34)))
+    let field = app.descendants(matching: .any).matching(identifier: "agent-question-text").firstMatch
+    XCTAssertTrue(field.waitForExistence(timeout: 5))
+    XCTAssertFalse(app.keyboards.firstMatch.exists, "Выделение не раскрывает клавиатуру само")
+    XCTAssertTrue(app.buttons["drawing-tool-eraser"].isHittable, "Карточка не блокирует инструменты вне себя")
+    let paper = app.otherElements["paper-input"]
+    let originalPaperFrame = paper.frame
+    field.tap()
+    field.typeText("What is selected?")
+    XCTAssertEqual(paper.frame, originalPaperFrame, "Клавиатура сдвигает карточку, а не камеру или физическую бумагу")
+    XCTAssertTrue(app.buttons["agent-question-ask"].isHittable, "Отправка остаётся над системной клавиатурой")
+    app.buttons["agent-question-ask"].tap()
+    XCTAssertTrue(app.staticTexts["Сохранено на iPad · ждёт Mac"].waitForExistence(timeout: 8))
+    XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 2))
+    XCTAssertFalse(app.buttons["agent-question-ask"].isEnabled)
+    app.buttons["agent-question-stop"].tap()
+    XCTAssertTrue(app.staticTexts["Остановка запрошена · ждём подтверждения"].waitForExistence(timeout: 3))
+    app.buttons["collaboration-history"].tap()
+    XCTAssertTrue(app.staticTexts["What is selected?"].waitForExistence(timeout: 3))
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "offline-question-in-shared-context"; proof.lifetime = .keepAlways; add(proof)
   }
 
   func testEraserAndPenSelectDirectlyBeforeOpeningPenSettings() {
@@ -706,16 +749,26 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
 
     func createAndEnterBoard() {
+      let items = app.descendants(matching: .any).matching(
+        NSPredicate(format: "identifier BEGINSWITH 'workspace-item-'")
+      )
+      let before = Set(items.allElementsBoundByIndex.map(\.identifier))
       app.buttons["create-workspace-item"].tap()
       let createBoard = app.buttons["create-nested-board"]
       XCTAssertTrue(createBoard.waitForExistence(timeout: 2))
       createBoard.tap()
 
-      let portals = app.descendants(matching: .any).matching(
-        NSPredicate(format: "identifier BEGINSWITH 'workspace-item-'")
-      )
-      XCTAssertTrue(portals.element(boundBy: portals.count - 1).waitForExistence(timeout: 3))
-      portals.element(boundBy: portals.count - 1).doubleTap()
+      // Publication is asynchronous. Resolve the newly created physical owner,
+      // never the last old item or an unsigned index computed from an empty list.
+      let created = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        !Set(items.allElementsBoundByIndex.map(\.identifier)).subtracting(before).isEmpty
+      }, object: nil)
+      XCTAssertEqual(XCTWaiter.wait(for: [created], timeout: 3), .completed)
+      XCTAssertFalse(app.staticTexts["persistence-failure"].firstMatch.exists)
+      let identifier = Set(items.allElementsBoundByIndex.map(\.identifier)).subtracting(before).sorted().first
+      guard let identifier else { return XCTFail("Созданная доска не опубликована") }
+      let portal = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+      portal.doubleTap()
       XCTAssertTrue(app.buttons["leave-nested-board"].waitForExistence(timeout: 3))
       XCTAssertTrue(app.buttons["create-workspace-item"].exists)
     }

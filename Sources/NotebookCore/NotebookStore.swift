@@ -7,13 +7,17 @@ public enum NotebookStoreError: Error {
 }
 
 public struct NotebookStore: Sendable {
-  private static let lockName = ".mutation.lock"
-  private static let legacyDirectoryName = "Tetrad"
+  let storageFault: (@Sendable (NotebookStorageFault) throws -> Void)?
 
   public let root: URL
 
   public init(root: URL) {
     self.root = root
+    storageFault = nil
+  }
+
+  init(root: URL, storageFault: @escaping @Sendable (NotebookStorageFault) throws -> Void) {
+    self.root = root; self.storageFault = storageFault
   }
 
   public static var defaultRoot: URL {
@@ -25,13 +29,6 @@ public struct NotebookStore: Sendable {
       for: .applicationSupportDirectory,
       in: .userDomainMask
     )[0]
-  }
-
-  private static var legacyDefaultRoot: URL {
-    applicationSupportRoot.appendingPathComponent(
-      legacyDirectoryName,
-      isDirectory: true
-    )
   }
 
   public var indexURL: URL {
@@ -113,51 +110,9 @@ public struct NotebookStore: Sendable {
   }
 
   public func prepare() throws {
-    if root.standardizedFileURL == Self.defaultRoot.standardizedFileURL {
-      try Self.migrateLegacyStore(
-        from: Self.legacyDefaultRoot,
-        to: root
-      )
-    }
-    try FileManager.default.createDirectory(
-      at: pagesURL,
-      withIntermediateDirectories: true
-    )
-    try FileManager.default.createDirectory(
-      at: documentsURL,
-      withIntermediateDirectories: true
-    )
-    try FileManager.default.createDirectory(
-      at: documentStatesURL,
-      withIntermediateDirectories: true
-    )
-    try FileManager.default.createDirectory(
-      at: previewsURL,
-      withIntermediateDirectories: true
-    )
-    for url in [collaborationURL, collaborationActionsURL, renderRequestsURL, targetPreviewsURL, deviceReceiptsURL, runtimeURL] {
+    try prepareDatabase()
+    for url in [previewsURL, targetPreviewsURL] {
       try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-    }
-  }
-
-  static func migrateLegacyStore(
-    from legacyRoot: URL,
-    to currentRoot: URL,
-    fileManager: FileManager = .default
-  ) throws {
-    guard
-      !fileManager.fileExists(atPath: currentRoot.path),
-      fileManager.fileExists(atPath: legacyRoot.path)
-    else { return }
-
-    try fileManager.createDirectory(
-      at: currentRoot.deletingLastPathComponent(),
-      withIntermediateDirectories: true
-    )
-    do {
-      try fileManager.moveItem(at: legacyRoot, to: currentRoot)
-    } catch {
-      guard fileManager.fileExists(atPath: currentRoot.path) else { throw error }
     }
   }
 
@@ -169,11 +124,10 @@ public struct NotebookStore: Sendable {
   ) throws -> (WorkspaceIndex, [UUID: PageDocument]) {
     try prepare()
     return try withMutationLock {
-      if FileManager.default.fileExists(atPath: indexURL.path) {
+      if (try hasStoredValue(at: indexURL)) {
         let index = try loadIndex()
         var pages: [UUID: PageDocument] = [:]
-        for id in index.items.flatMap(\.pageIDs)
-        where FileManager.default.fileExists(atPath: pageURL(id).path) {
+        if let id = index.selectedPageID, try hasStoredValue(pageFile(id)) {
           pages[id] = try loadPage(id)
         }
         return (index, pages)
@@ -188,55 +142,27 @@ public struct NotebookStore: Sendable {
   }
 
   public func loadIndex() throws -> WorkspaceIndex {
-    let data = try Data(contentsOf: indexURL)
-    guard let index = try? decoder.decode(WorkspaceIndex.self, from: data) else { throw corruptFile(at: indexURL) }
+    let data = try storedData(at: indexURL)
+    guard var index = try? decoder.decode(WorkspaceIndex.self, from: data) else { throw corruptFile(at: indexURL) }
     guard index.isValid else { throw corruptFile(at: indexURL) }
+    if let presence = try? loadPresence(), let id = presence.selectedItemID {
+      _ = index.selectItem(id, pageID: presence.notebookPageID, actor: index.stamp.actor)
+    }
     return index
   }
 
-  public func loadOrCreateBoard(
-    workspace: WorkspaceIndex,
-    actor: UUID
-  ) throws -> BoardHierarchy {
-    try prepare()
-    if FileManager.default.fileExists(atPath: boardURL.path) {
-      let data = try Data(contentsOf: boardURL)
-      if let hierarchy = try? decoder.decode(BoardHierarchy.self, from: data),
-        hierarchy.isValid(items: workspace.items)
-      {
-        return hierarchy
-      }
-      var legacy = try decoder.decode(BoardDocument.self, from: data)
-      _ = legacy.reconcileItems(workspace.items.map(\.id), actor: actor)
-      let hierarchy = BoardHierarchy(
-        rootBoardID: workspace.rootBoardID,
-        boards: [BoardNode(id: workspace.rootBoardID, board: legacy)],
-        stamp: legacy.stamp
-      )
-      guard hierarchy.isValid(items: workspace.items) else {
-        throw corruptFile(at: boardURL)
-      }
-      try saveBoard(hierarchy, items: workspace.items)
-      return hierarchy
-    }
-    let board = BoardHierarchy.initial(
-      rootBoardID: workspace.rootBoardID,
-      itemIDs: workspace.items.map(\.id),
-      actor: actor
-    )
+  public func loadOrCreateBoard(workspace: WorkspaceIndex, actor: UUID) throws -> BoardHierarchy {
+    if try hasStoredValue("board.json") { return try loadBoard(items: workspace.items) }
+    let board = BoardHierarchy.initial(rootBoardID: workspace.rootBoardID,
+      itemIDs: workspace.items.map(\.id), actor: actor)
     try saveBoard(board, items: workspace.items)
     return board
-  }
-
-  private func storedFormat(in data: Data) -> Int? {
-    struct FormatEnvelope: Decodable { let format: Int }
-    return try? decoder.decode(FormatEnvelope.self, from: data).format
   }
 
   public func loadBoard(items: [WorkspaceItem]) throws -> BoardHierarchy {
     let board = try decoder.decode(
       BoardHierarchy.self,
-      from: Data(contentsOf: boardURL)
+      from: storedData(at: boardURL)
     )
     guard board.isValid(items: items) else {
       throw corruptFile(at: boardURL)
@@ -246,7 +172,7 @@ public struct NotebookStore: Sendable {
 
   public func loadOrCreateSpatialInk(actor: UUID) throws -> SpatialInkJournal {
     try prepare()
-    if FileManager.default.fileExists(atPath: spatialInkURL.path) {
+    if (try hasStoredValue(at: spatialInkURL)) {
       return try loadSpatialInk()
     }
     let journal = SpatialInkJournal(
@@ -259,7 +185,7 @@ public struct NotebookStore: Sendable {
   public func loadSpatialInk() throws -> SpatialInkJournal {
     let journal = try decoder.decode(
       SpatialInkJournal.self,
-      from: Data(contentsOf: spatialInkURL)
+      from: storedData(at: spatialInkURL)
     )
     guard journal.isValid else { throw corruptFile(at: spatialInkURL) }
     return journal
@@ -268,7 +194,7 @@ public struct NotebookStore: Sendable {
   public func loadPresence() throws -> SessionPresence {
     let presence = try decoder.decode(
       SessionPresence.self,
-      from: Data(contentsOf: presenceURL)
+      from: storedData(at: presenceURL)
     )
     guard presence.isValid else { throw corruptFile(at: presenceURL) }
     return presence
@@ -277,7 +203,7 @@ public struct NotebookStore: Sendable {
   public func loadPage(_ id: UUID) throws -> PageDocument {
     let page = try decoder.decode(
       PageDocument.self,
-      from: Data(contentsOf: pageURL(id))
+      from: storedData(at: pageURL(id))
     )
     guard page.id == id, page.isValid else {
       throw corruptFile(at: pageURL(id))
@@ -288,7 +214,7 @@ public struct NotebookStore: Sendable {
   public func loadDocument(_ id: UUID) throws -> DocumentDocument {
     let document = try decoder.decode(
       DocumentDocument.self,
-      from: Data(contentsOf: documentURL(id))
+      from: storedData(at: documentURL(id))
     )
     guard document.id == id, document.isValid else {
       throw corruptFile(at: documentURL(id))
@@ -299,7 +225,7 @@ public struct NotebookStore: Sendable {
   public func loadDocumentState(_ id: UUID) throws -> DocumentStateJournal {
     let journal = try decoder.decode(
       DocumentStateJournal.self,
-      from: Data(contentsOf: documentStateURL(id))
+      from: storedData(at: documentStateURL(id))
     )
     guard journal.id == id, journal.isValid else {
       throw corruptFile(at: documentStateURL(id))
@@ -317,10 +243,10 @@ public struct NotebookStore: Sendable {
     var documents: [UUID: DocumentDocument] = [:]
     var states: [UUID: DocumentStateJournal] = [:]
     for item in workspace.items where item.kind == .document {
-      if FileManager.default.fileExists(atPath: documentURL(item.id).path) {
+      if (try hasStoredValue(at: documentURL(item.id))) {
         documents[item.id] = try loadDocument(item.id)
       }
-      if FileManager.default.fileExists(atPath: documentStateURL(item.id).path) {
+      if (try hasStoredValue(at: documentStateURL(item.id))) {
         states[item.id] = try loadDocumentState(item.id)
       }
     }
@@ -352,7 +278,11 @@ public struct NotebookStore: Sendable {
     }
     try prepare()
     return try withMutationLock {
-      try publishWorkspace(index: index, pages: createdPage.map { [$0] } ?? []).index
+      if let createdPage { _ = try publishWorkspace(index: index, pages: [createdPage]) }
+      if let presence = try? loadPresence() {
+        try savePresence(presence.selecting(itemID: index.selectedItemID, pageID: index.selectedPageID))
+      }
+      return index
     }
   }
 
@@ -365,7 +295,7 @@ public struct NotebookStore: Sendable {
     }
     try prepare()
     try withMutationLock {
-      try encoder.encode(board).write(to: boardURL, options: [.atomic])
+      try publishCollaboration(writes: ["board.json": try .encode(board)])
     }
   }
 
@@ -388,7 +318,7 @@ public struct NotebookStore: Sendable {
     guard journal.isValid else { throw corruptFile(at: spatialInkURL) }
     try prepare()
     try withMutationLock {
-      try encoder.encode(journal).write(to: spatialInkURL, options: [.atomic])
+      try publishCollaboration(writes: ["spatial-ink.json": try .encode(journal)])
     }
   }
 
@@ -400,18 +330,15 @@ public struct NotebookStore: Sendable {
     try prepare()
     return try withMutationLock {
       var resolved = journal
-      if FileManager.default.fileExists(atPath: spatialInkURL.path) {
+      if (try hasStoredValue(at: spatialInkURL)) {
         let disk = try decoder.decode(
           SpatialInkJournal.self,
-          from: Data(contentsOf: spatialInkURL)
+          from: storedData(at: spatialInkURL)
         )
         guard disk.isValid else { throw corruptFile(at: spatialInkURL) }
         _ = resolved.merge(disk)
       }
-      try encoder.encode(resolved).write(
-        to: spatialInkURL,
-        options: [.atomic]
-      )
+      try publishCollaboration(writes: ["spatial-ink.json": try .encode(resolved)])
       return resolved
     }
   }
@@ -420,9 +347,7 @@ public struct NotebookStore: Sendable {
     guard presence.isValid else { throw corruptFile(at: presenceURL) }
     try prepare()
     try withMutationLock {
-      let data = try encoder.encode(presence)
-      guard (try? Data(contentsOf: presenceURL)) != data else { return }
-      try data.write(to: presenceURL, options: [.atomic])
+      try publishCollaboration(writes: ["last-context.json": try .encode(presence)])
     }
   }
 
@@ -506,7 +431,7 @@ public struct NotebookStore: Sendable {
       guard current.rootBoardID == expectedIndex.rootBoardID,
         current.items == expectedIndex.items else { throw NotebookStoreError.workspaceChanged }
       let resolved = try loadBoard(items: current.items)
-      let ink = FileManager.default.fileExists(atPath: spatialInkURL.path)
+      let ink = (try hasStoredValue(at: spatialInkURL))
         ? try loadSpatialInk()
         : SpatialInkJournal(stamp: VersionStamp(counter: 0, actor: current.stamp.actor))
       let retained = Set(index.items.map(\.id))
@@ -551,7 +476,7 @@ public struct NotebookStore: Sendable {
   private func publishWorkspace(index: WorkspaceIndex, board: BoardHierarchy? = nil,
     pages: [PageDocument] = [], documents: [DocumentDocument] = [], states: [DocumentStateJournal] = []) throws
     -> (index: WorkspaceIndex, board: BoardHierarchy) {
-    let current = FileManager.default.fileExists(atPath: indexURL.path) ? try loadIndex() : nil
+    let current = (try hasStoredValue(at: indexURL)) ? try loadIndex() : nil
     let resolved = try current.map { try $0.merging(index) } ?? index
     let currentBoard = try current.map { try loadBoard(items: $0.items) }
     guard var resolvedBoard = currentBoard ?? board else { throw corruptFile(at: boardURL) }
@@ -563,7 +488,7 @@ public struct NotebookStore: Sendable {
     let livePages = Set(resolved.items.flatMap(\.pageIDs))
     let liveDocuments = Set(resolved.items.filter { $0.kind == .document }.map(\.id))
     for var page in pages where livePages.contains(page.id) {
-      if FileManager.default.fileExists(atPath: pageURL(page.id).path) {
+      if (try hasStoredValue(at: pageURL(page.id))) {
         let old = try loadPage(page.id)
         guard old.size == page.size else { throw corruptFile(at: pageURL(page.id)) }
         _ = page.merge(old)
@@ -572,7 +497,7 @@ public struct NotebookStore: Sendable {
       writes["pages/\(page.id.uuidString.lowercased()).json"] = try .encode(page)
     }
     for var document in documents where liveDocuments.contains(document.id) {
-      if FileManager.default.fileExists(atPath: documentURL(document.id).path) {
+      if (try hasStoredValue(at: documentURL(document.id))) {
         let old = try loadDocument(document.id)
         guard old.paperSize == document.paperSize else { throw corruptFile(at: documentURL(document.id)) }
         _ = document.merge(old)
@@ -581,7 +506,7 @@ public struct NotebookStore: Sendable {
       writes["documents/\(document.id.uuidString.lowercased()).json"] = try .encode(document)
     }
     for var state in states where liveDocuments.contains(state.id) {
-      if FileManager.default.fileExists(atPath: documentStateURL(state.id).path) {
+      if (try hasStoredValue(at: documentStateURL(state.id))) {
         let old = try loadDocumentState(state.id)
         _ = state.merge(old)
         if state == old { continue }
@@ -590,7 +515,7 @@ public struct NotebookStore: Sendable {
     }
     let dependencies = livePages.map { "pages/\($0.uuidString.lowercased()).json" }
       + liveDocuments.flatMap { ["documents/\($0.uuidString.lowercased()).json", "document-states/\($0.uuidString.lowercased()).json"] }
-    guard dependencies.allSatisfy({ writes[$0] != nil || FileManager.default.fileExists(atPath: root.appendingPathComponent($0).path) }) else {
+    guard try dependencies.allSatisfy({ try writes[$0] != nil || hasStoredValue(at: root.appendingPathComponent($0)) }) else {
       throw CollaborationError("dependency_missing", "Публикация каталога требует содержание всех доступных владельцев.")
     }
     let removedPages = Set(current?.items.flatMap(\.pageIDs) ?? []).subtracting(livePages)
@@ -606,10 +531,7 @@ public struct NotebookStore: Sendable {
     guard document.isValid else { throw corruptFile(at: documentURL(document.id)) }
     try prepare()
     try withMutationLock {
-      try encoder.encode(document).write(
-        to: documentURL(document.id),
-        options: [.atomic]
-      )
+      try publishCollaboration(writes: [documentFile(document.id): try .encode(document)])
     }
   }
 
@@ -620,23 +542,15 @@ public struct NotebookStore: Sendable {
     guard document.isValid else { throw corruptFile(at: documentURL(document.id)) }
     try prepare()
     return try withMutationLock {
-      let index = try decoder.decode(
-        WorkspaceIndex.self,
-        from: Data(contentsOf: indexURL)
-      )
-      guard index.isValid,
-        index.items.contains(where: {
-          $0.id == document.id && $0.kind == .document
-        })
-      else { throw CocoaError(.fileNoSuchFile) }
+      guard try readItemHeader(document.id)?.kind == .document else { throw CocoaError(.fileNoSuchFile) }
       var resolved = document
       let url = documentURL(document.id)
-      if FileManager.default.fileExists(atPath: url.path) {
-        let disk = try decoder.decode(DocumentDocument.self, from: Data(contentsOf: url))
+      if (try hasStoredValue(at: url)) {
+        let disk = try decoder.decode(DocumentDocument.self, from: storedData(at: url))
         guard disk.id == document.id, disk.isValid else { throw corruptFile(at: url) }
         _ = resolved.merge(disk)
       }
-      try encoder.encode(resolved).write(to: url, options: [.atomic])
+      try publishCollaboration(writes: [logicalAddress(url): try .encode(resolved)])
       return resolved
     }
   }
@@ -645,10 +559,7 @@ public struct NotebookStore: Sendable {
     guard state.isValid else { throw corruptFile(at: documentStateURL(state.id)) }
     try prepare()
     try withMutationLock {
-      try encoder.encode(state).write(
-        to: documentStateURL(state.id),
-        options: [.atomic]
-      )
+      try publishCollaboration(writes: [stateFile(state.id): try .encode(state)])
     }
   }
 
@@ -659,26 +570,18 @@ public struct NotebookStore: Sendable {
     guard state.isValid else { throw corruptFile(at: documentStateURL(state.id)) }
     try prepare()
     return try withMutationLock {
-      let index = try decoder.decode(
-        WorkspaceIndex.self,
-        from: Data(contentsOf: indexURL)
-      )
-      guard index.isValid,
-        index.items.contains(where: {
-          $0.id == state.id && $0.kind == .document
-        })
-      else { throw CocoaError(.fileNoSuchFile) }
+      guard try readItemHeader(state.id)?.kind == .document else { throw CocoaError(.fileNoSuchFile) }
       var resolved = state
       let url = documentStateURL(state.id)
-      if FileManager.default.fileExists(atPath: url.path) {
+      if (try hasStoredValue(at: url)) {
         let disk = try decoder.decode(
           DocumentStateJournal.self,
-          from: Data(contentsOf: url)
+          from: storedData(at: url)
         )
         guard disk.id == state.id, disk.isValid else { throw corruptFile(at: url) }
         _ = resolved.merge(disk)
       }
-      try encoder.encode(resolved).write(to: url, options: [.atomic])
+      try publishCollaboration(writes: [logicalAddress(url): try .encode(resolved)])
       return resolved
     }
   }
@@ -689,23 +592,6 @@ public struct NotebookStore: Sendable {
         previewRegionsURL(pageID), previewVisionHistoryURL(pageID)] {
         try? FileManager.default.removeItem(at: url)
       }
-    }
-  }
-
-  public func migratePageInk(page: PageDocument, data: Data) throws -> PageDocument {
-    try withMutationLock {
-      var current = try loadPage(page.id)
-      guard current.drawingData == page.drawingData else { return current }
-      guard PageInkDrawing.needsMigration(current.drawingData) else { return current }
-      let backup = root.appendingPathComponent("migrations/before-ink-v1/pages",isDirectory:true)
-      try FileManager.default.createDirectory(at:backup,withIntermediateDirectories:true)
-      let original = backup.appendingPathComponent(page.id.uuidString.lowercased() + ".json")
-      if !FileManager.default.fileExists(atPath:original.path) {
-        try Data(contentsOf:pageURL(page.id)).write(to:original,options:.atomic)
-      }
-      try current.migrateInkRepresentation(data)
-      try writePage(current)
-      return current
     }
   }
 
@@ -724,26 +610,15 @@ public struct NotebookStore: Sendable {
     guard page.isValid else { throw corruptFile(at: pageURL(page.id)) }
     try prepare()
     return try withMutationLock {
-      if FileManager.default.fileExists(atPath: indexURL.path) {
-        let index = try decoder.decode(
-          WorkspaceIndex.self,
-          from: Data(contentsOf: indexURL)
-        )
-        guard index.isValid,
-          index.items.contains(where: { $0.pageIDs.contains(page.id) })
-        else {
-          throw CocoaError(
-            .fileNoSuchFile,
-            userInfo: [NSFilePathErrorKey: pageURL(page.id).path]
-          )
-        }
+      if try hasStoredValue("workspace.json"), try ownerItemID(ofPage: page.id) == nil {
+        throw CocoaError(.fileNoSuchFile)
       }
       var resolved = page
       let url = pageURL(page.id)
-      if FileManager.default.fileExists(atPath: url.path) {
+      if (try hasStoredValue(at: url)) {
         let disk = try decoder.decode(
           PageDocument.self,
-          from: Data(contentsOf: url)
+          from: storedData(at: url)
         )
         guard disk.id == page.id,
           disk.size == page.size,
@@ -760,7 +635,7 @@ public struct NotebookStore: Sendable {
   }
 
   private func writePage(_ page: PageDocument) throws {
-    try encoder.encode(page).write(to: pageURL(page.id), options: [.atomic])
+    try publishCollaboration(writes: [pageFile(page.id): try .encode(page)])
   }
 
   private func corruptFile(at url: URL) -> CocoaError {
@@ -771,24 +646,7 @@ public struct NotebookStore: Sendable {
   }
 
   func withMutationLock<T>(_ operation: () throws -> T) throws -> T {
-    // The kernel owns exclusion and releases it when a process exits. Reading
-    // a completed cut leaves directory entries intact, so a file watcher sees
-    // content publication rather than the act of observation itself.
-    let descriptor = open(root.appendingPathComponent(Self.lockName).path,O_CREAT | O_RDWR,0o600)
-    guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue:errno) ?? .EIO) }
-    defer { close(descriptor) }
-    let deadline = ProcessInfo.processInfo.systemUptime + 4
-    while flock(descriptor,LOCK_EX | LOCK_NB) != 0 {
-      try Task.checkCancellation()
-      guard errno == EWOULDBLOCK || errno == EINTR else { throw POSIXError(POSIXErrorCode(rawValue:errno) ?? .EIO) }
-      guard ProcessInfo.processInfo.systemUptime < deadline else {
-        throw CollaborationError("publication_pending", "Завершается публикация предыдущего хода. Повторите чтение.")
-      }
-      Thread.sleep(forTimeInterval:0.005)
-    }
-    defer { flock(descriptor,LOCK_UN) }
-    try recoverCollaborationTransaction()
-    return try operation()
+    try commandTransaction(operation)
   }
 
   private var encoder: JSONEncoder {

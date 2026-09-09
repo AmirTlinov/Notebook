@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 export interface VersionStamp {
   counter: number;
   actor: string;
@@ -58,7 +56,8 @@ export interface WorkspaceItem {
 }
 
 export interface WorkspaceIndex {
-  format: 3;
+  format: 4;
+  collaboration?: {fields:Record<string,unknown>};
   rootBoardID: string;
   items: WorkspaceItem[];
   selectedItemID: string;
@@ -200,18 +199,7 @@ export interface BoardHierarchy {
   stamp: VersionStamp;
 }
 
-export function boardHierarchyRevision(hierarchy: BoardHierarchy): string {
-  const rows = [...hierarchy.boards]
-    .sort((a, b) => {
-      const left = a.id.toLowerCase();
-      const right = b.id.toLowerCase();
-      return left < right ? -1 : left > right ? 1 : 0;
-    })
-    .map((node) => `${node.id.toLowerCase()}:${revision(node.board.stamp)}:`
-      + revision(node.portalStamp ?? { counter: 0, actor: node.board.stamp.actor }));
-  const source = ["board-v1", hierarchy.rootBoardID.toLowerCase(), ...rows].join("\n") + "\n";
-  return createHash("sha256").update(source).digest("hex");
-}
+
 
 export interface SpatialInkSample {
   point: SpatialPoint;
@@ -246,12 +234,14 @@ export interface SpatialInkJournal {
 }
 
 export interface SessionPresence {
-  format: 4;
+  format: 5;
   boardID: string;
   mode: "board" | "cover" | "page" | "document";
   camera: SpatialCamera;
   viewport: SpatialPoint;
   focusedItemID?: string;
+  selectedItemID?: string;
+  notebookPageID?: string;
   openProgress: number;
   documentPageIndex: number;
 }

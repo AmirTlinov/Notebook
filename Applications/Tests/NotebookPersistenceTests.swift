@@ -7,6 +7,44 @@ final class NotebookPersistenceTests: XCTestCase {
   private enum TestFailure: Error { case unavailable }
 
   @MainActor
+  func testNativeCommitAdvancesRenderIdentityWithoutReplacingTheCameraOrLocalOwner() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    _ = await model.finishPendingPersistence()
+    let item = try XCTUnwrap(model.presence?.selectedItemID)
+    let before = try XCTUnwrap(model.workspaceHeader), presence = model.presence
+    let center = WorldPoint(x: 140, y: -110)
+    model.moveItem(item, to: center)
+    let saved = await model.finishPendingPersistence()
+    XCTAssertTrue(saved)
+    let after = try XCTUnwrap(model.workspaceHeader)
+    XCTAssertGreaterThan(after.cursor, before.cursor,
+      "A native write equal to its optimistic value is still a new durable render revision")
+    XCTAssertEqual(after, try model.store.workspaceHeader())
+    XCTAssertEqual(model.board?.focusedCenter(of: item), center)
+    XCTAssertEqual(model.presence, presence)
+  }
+
+  @MainActor
+  func testRejectedCommandDoesNotWakeDeliveryOrExecutorAsIfItCommitted() async throws {
+    enum Rejected: Error { case sourceConflict }
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let queue = NotebookPersistenceQueue(store: .init(root: root))
+    var commits = 0
+    queue.onCommit = { _ in commits += 1 }
+    do {
+      let _: Bool = try await queue.submit(publishesChanges: true) { _ in throw Rejected.sourceConflict }
+      XCTFail("The rejected command cannot report success")
+    } catch Rejected.sourceConflict { }
+    let saved = await queue.flush()
+    XCTAssertTrue(saved, "A domain rejection does not poison the native input queue")
+    XCTAssertEqual(commits, 0, "No commit notification may create a retry loop after a rejected command")
+  }
+
+  @MainActor
   func testContentCommandDrainsTheLatestPencilGeneration() {
     let gate = NotebookInputGate(), page = UUID(), pencil = UUID()
     var tails: [NotebookInputCompletion] = []
@@ -28,9 +66,9 @@ final class NotebookPersistenceTests: XCTestCase {
   @MainActor
   func testDeletionWaitsAgainForASecondAlreadyLiftedPencilContact() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let first = try XCTUnwrap(model.workspace?.selectedItemID)
     _ = model.createNotebook(at: .init(x: 1_000, y: 0))
     let initiallySaved = await model.finishPendingPersistence()
@@ -74,9 +112,9 @@ final class NotebookPersistenceTests: XCTestCase {
   @MainActor
   func testDeletionRechecksPencilAfterItsContinuationResumes() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let first = try XCTUnwrap(model.workspace?.selectedItemID)
     _ = model.createNotebook(at: .init(x: 1_000, y: 0))
     let initiallySaved = await model.finishPendingPersistence()
@@ -112,9 +150,9 @@ final class NotebookPersistenceTests: XCTestCase {
   @MainActor
   func testSelectionAndBoardEditDuringDeletionKeepTheirLaterCausalVersions() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let first = try XCTUnwrap(model.workspace?.selectedItemID)
     let second = try XCTUnwrap(model.createNotebook(at: .init(x: 1_000, y: 0)))
     let third = try XCTUnwrap(model.createNotebook(at: .init(x: 2_000, y: 0)))
@@ -123,11 +161,8 @@ final class NotebookPersistenceTests: XCTestCase {
     XCTAssertTrue(initialSaved)
     let counter = try XCTUnwrap(model.workspace?.stamp.counter)
     let firstPage = try XCTUnwrap(model.workspace?.selectedPageID)
-    let lock = open(root.appendingPathComponent(".mutation.lock").path, O_RDWR | O_CREAT, 0o600)
-    XCTAssertGreaterThanOrEqual(lock, 0)
-    guard lock >= 0 else { return }
-    defer { flock(lock, LOCK_UN); close(lock) }
-    XCTAssertEqual(flock(lock, LOCK_EX), 0)
+    let lock = try NotebookSQLWriteBlocker(store: model.store)
+    defer { try? lock.release() }
     let deletion = Task { await model.deleteItem(first) }
     let deadline = ContinuousClock.now + .seconds(2)
     while model.workspace?.stamp.counter == counter, ContinuousClock.now < deadline {
@@ -143,11 +178,12 @@ final class NotebookPersistenceTests: XCTestCase {
     let moved = WorldPoint(x: 1_100, y: 200)
     model.moveItem(second, to: moved)
     let current = try XCTUnwrap(model.presence)
-    let nextPresence = SessionPresence(boardID: current.boardID, mode: .cover,
+    var nextPresence = SessionPresence(boardID: current.boardID, mode: .cover,
       camera: .init(center: .init(x: 2_000, y: 0), scale: 0.5), viewport: current.viewport,
       focusedItemID: third, openProgress: 0)
+    nextPresence = nextPresence.selecting(itemID: model.presence?.selectedItemID, pageID: model.presence?.notebookPageID)
     model.updatePresence(nextPresence, settled: true)
-    XCTAssertEqual(flock(lock, LOCK_UN), 0)
+    try lock.release()
     let deleted = await deletion.value
     XCTAssertTrue(deleted)
     XCTAssertFalse(model.isItemBeingDeleted(first))
@@ -157,7 +193,9 @@ final class NotebookPersistenceTests: XCTestCase {
     XCTAssertEqual(index.selectedItemID, third)
     XCTAssertEqual(model.workspace?.selectedItemID, third)
     XCTAssertFalse(index.items.contains { $0.id == first })
-    XCTAssertEqual(model.presence, nextPresence)
+    let resolvedPage = try XCTUnwrap(index.item(id: third)?.pageIDs.first)
+    XCTAssertEqual(model.presence, nextPresence.selecting(itemID: third, pageID: resolvedPage),
+      "Addressed selection resolves the unknown page without changing the exact camera")
     let board = try model.store.loadBoard(items: index.items)
     XCTAssertEqual(board.board(index.rootBoardID)?.focusedCenter(of: second), moved)
   }
@@ -187,9 +225,9 @@ final class NotebookPersistenceTests: XCTestCase {
   @MainActor
   func testCreationCannotOvertakeAnAcceptedBoardMove() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let first = try XCTUnwrap(model.workspace?.selectedItemID)
     let center = WorldPoint(x: -30_000, y: -30_000)
     model.moveItem(first, to: center)
@@ -200,23 +238,21 @@ final class NotebookPersistenceTests: XCTestCase {
     let board = try model.store.loadBoard(items: workspace.items)
     XCTAssertNotNil(board.board(portal))
     XCTAssertEqual(board.board(workspace.rootBoardID)?.focusedCenter(of: first), center)
-    XCTAssertEqual(model.boardHierarchy, board)
+    XCTAssertEqual(model.workspaceHeader?.boardRevision, try model.store.workspaceHeader().boardRevision)
+    XCTAssertEqual(model.boardHierarchy?.board(portal)?.stamp, board.board(portal)?.stamp)
   }
 
   @MainActor
   func testFirstStrokeOfProvisionalPageSurvivesDelayedCreationAndReload() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let initialSaved = await model.finishPendingPersistence()
     XCTAssertTrue(initialSaved)
-    let lock = open(root.appendingPathComponent(".mutation.lock").path, O_RDWR | O_CREAT, 0o600)
-    XCTAssertGreaterThanOrEqual(lock, 0)
-    guard lock >= 0 else { return }
-    defer { flock(lock, LOCK_UN); close(lock) }
-    XCTAssertEqual(flock(lock, LOCK_EX), 0)
+    let lock = try NotebookSQLWriteBlocker(store: model.store)
+    defer { try? lock.release() }
     let item = try XCTUnwrap(model.workspace?.selectedItemID)
     XCTAssertEqual(model.selectNotebookPage(1, notebookID: item), 1)
     let pageID = try XCTUnwrap(model.activePage?.id)
@@ -227,7 +263,7 @@ final class NotebookPersistenceTests: XCTestCase {
     ])
     let accepted = await model.commitDrawingAction(action, pageID: pageID, stamp: stamp)
     XCTAssertNotNil(accepted, "The contact finishes without waiting for the storage lock")
-    XCTAssertEqual(flock(lock, LOCK_UN), 0)
+    try lock.release()
     let saved = await model.finishPendingPersistence()
     XCTAssertTrue(saved)
     XCTAssertNil(model.persistenceFailure)
@@ -239,13 +275,17 @@ final class NotebookPersistenceTests: XCTestCase {
   @MainActor
   func testPeerDisconnectCannotBeOvertakenByAcceptedActiveContact() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let peer = UUID()
-    model.receivePeerMessage(.inputActivity(.init(deviceID: peer, sessionID: UUID(), sequence: 1,
-      targets: [.init(kind: .board, id: WorkspaceRoot.boardID)])))
-    model.peerDisconnected()
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let peer = UUID(), generation = UUID()
+    model.peerConnected(.init(deviceID: peer, workspaceID: try model.store.workspaceHeader().workspaceID,
+      displayName: "Test Mac"), generation: generation)
+    let activity = NotebookInputActivity(deviceID: peer, sessionID: UUID(), sequence: 1,
+      targets: [.init(kind: .board, id: WorkspaceRoot.boardID)])
+    model.receivePeerTransient(.inputActivity(activity), peerID: peer, generation: generation)
+    model.peerDisconnected(peerID: peer, generation: generation)
+    model.receivePeerTransient(.inputActivity(activity), peerID: peer, generation: generation)
     let saved = await model.finishPendingPersistence()
     XCTAssertTrue(saved)
     XCTAssertFalse(model.peerInputIsActive)

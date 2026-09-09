@@ -1,0 +1,340 @@
+import CryptoKit
+import Foundation
+
+/// A content identity of one complete physical owner. Scene projections carry
+/// this identity from their completed SQL cut; they do not hash unseen members.
+public struct NotebookReferenceIdentity: Codable, Equatable, Sendable {
+  public let target: CollaborationTarget
+  public let revision: String
+  public init(target: CollaborationTarget, revision: String) { self.target = target; self.revision = revision }
+}
+
+private struct NotebookBoundReferenceIdentities: Codable {
+  let projectionHash: String
+  let identities: [NotebookReferenceIdentity]
+}
+
+extension NotebookStore {
+  private static let referenceIdentitiesFile = "reference-identities.json"
+
+  /// The caller supplies identities retained with the shown scene, never tokens
+  /// fetched after the contact. The binding detects a changed frozen projection.
+  public static func bindReferenceIdentities(_ identities: [NotebookReferenceIdentity],
+    to files: [String: JSONValue]) throws -> [String: JSONValue] {
+    guard identities.count <= 512, Set(identities.map(\.target)).count == identities.count,
+      identities.allSatisfy({ [.board, .cover].contains($0.target.kind) && $0.revision.count == 64 }) else {
+      throw CollaborationError("invalid_reference", "Проекция сохраняет уникальные идентичности физических владельцев.")
+    }
+    var result = files; result.removeValue(forKey: referenceIdentitiesFile)
+    let binding = NotebookBoundReferenceIdentities(projectionHash: try collaborationHash(result), identities: identities)
+    result[referenceIdentitiesFile] = try .encode(binding)
+    return result
+  }
+
+  static func boundReferenceRevision(target: CollaborationTarget, files: [String: JSONValue]) throws -> String? {
+    guard let value = files[referenceIdentitiesFile] else { return nil }
+    let binding = try value.decode(NotebookBoundReferenceIdentities.self)
+    var projection = files; projection.removeValue(forKey: referenceIdentitiesFile)
+    guard try collaborationHash(projection) == binding.projectionHash else {
+      throw CollaborationError("source_conflict", "Закреплённая проекция изменилась после получения её идентичности.")
+    }
+    return binding.identities.first { $0.target == target }?.revision
+  }
+
+  public func referenceIdentities(targets: [CollaborationTarget]) throws -> [NotebookReferenceIdentity] {
+    guard targets.count <= 512, Set(targets).count == targets.count else { throw NotebookStorageError.limitExceeded("reference_identities") }
+    return try readTransaction { _ in
+      if let database = currentSQL, database.writable { try refreshReferenceIndex(database: database) }
+      return try targets.map { target in
+        guard [.board, .cover].contains(target.kind) else { throw CollaborationError("invalid_reference", "Токен проекции принадлежит доске или обложке.") }
+        if target.kind == .cover, try ownerBoardID(of: target.id) != target.boardID { throw CollaborationError("target_missing", "Обложка отсутствует на указанной доске.", target: target) }
+        let key = Self.referenceOwnerKey(target.kind.rawValue, target.id)
+        guard let hash = try currentSQL!.rows("SELECT hash FROM reference_owners WHERE owner_key=?", [.text(key)]).first?[0].text else {
+          throw CollaborationError("target_missing", "Физический владелец отсутствует.", target: target)
+        }
+        return .init(target: target, revision: hash)
+      }
+    }
+  }
+
+  private static func referenceOwnerKey(_ kind: String, _ id: UUID) -> String { kind + ":" + id.uuidString.lowercased() }
+  private static func referenceHash(_ bytes: Data) -> String { SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined() }
+  private static func referenceContribution(_ address: String, _ hash: String) -> Data {
+    Data(SHA256.hash(data: Data(("reference-contribution-v2\n" + address + "\n" + hash).utf8)))
+  }
+
+  /// Only roots of changed physical values are queued. Stroke samples, a source
+  /// program and a board's metadata are never expanded with unrelated owners.
+  func noteReferenceChange(_ address: String, file: String, database: NotebookSQLConnection) {
+    let prefixes: [String]
+    if file == "workspace.json" { prefixes = ["workspace.json#/items/@"] }
+    else if file == "board.json" {
+      let parts = address.components(separatedBy: "/")
+      guard parts.count >= 3, parts[1] == "boards", parts[2].hasPrefix("@") else { return }
+      let node = parts.prefix(3).joined(separator: "/")
+      if address == node { database.dirtyReferenceRoots.insert(node); return }
+      prefixes = [node + "/board/freeItems/@", node + "/board/stacks/@", node + "/board/elements/@"]
+    } else if file == "spatial-ink.json" { prefixes = [file + "#/actions/@"] }
+    else if file.hasPrefix("documents/"), address == file + "#" { database.dirtyReferenceRoots.insert(address); return }
+    else { return }
+    for prefix in prefixes where address.hasPrefix(prefix) {
+      let member = address.dropFirst(prefix.count).split(separator: "/", maxSplits: 1).first.map(String.init) ?? ""
+      if !member.isEmpty { database.dirtyReferenceRoots.insert(prefix + member) }
+    }
+  }
+
+  private func referenceContributions(address: String) throws -> [(String, String)] {
+    guard let fragment = try storedFragments(address: address, descendants: false).first else { return [] }
+    return try Self.referenceContributions(fragment: fragment) {
+      try NotebookRecordCodec.decode(storedFragments(address: address), root: address)
+    }
+  }
+
+  private static func referenceContributions(fragment: NotebookStoredFragment, read: () throws -> JSONValue) throws -> [(String, String)] {
+    let address = fragment.address
+    let value: JSONValue
+    let owners: [String]
+    if fragment.file == "workspace.json", fragment.collection == "items", let id = UUID(uuidString: fragment.member) {
+      // Page membership is not printed on a cover. A page edit or turn does not
+      // change the identity of its physical cover.
+      value = .object(["id": .string(id.uuidString.lowercased()), "kind": fragment.value["kind"] ?? .null, "title": fragment.value["title"] ?? .null])
+      owners = [Self.referenceOwnerKey("cover", id)]
+    } else if fragment.file.hasPrefix("documents/"), let id = UUID(uuidString: String(fragment.file.dropFirst(10).dropLast(5))) {
+      value = .object(["paperSize": fragment.value["paperSize"] ?? .null])
+      owners = [Self.referenceOwnerKey("cover", id)]
+    } else if fragment.file == "spatial-ink.json" {
+      let action = try read().decode(SpatialInkAction.self)
+      return try Set(action.spans.map(\.surface)).compactMap { surface in
+        guard let id = surface.ownerID else { return nil }
+        let full = try JSONValue.encode(action)
+        let content = full.setting("spans", try .encode(action.spans.filter { $0.surface == surface }))
+        return (Self.referenceOwnerKey(surface.kind.rawValue, id), try collaborationHash(content))
+      }
+    } else if fragment.file == "board.json" {
+      let parts = address.components(separatedBy: "/")
+      guard parts.count >= 3, let boardID = UUID(uuidString: String(parts[2].dropFirst())) else { return [] }
+      if fragment.collection == "board/elements" {
+        value = try read()
+        guard let surface = try value["surface"]?.decode(SurfaceID.self), let id = surface.ownerID else { return [] }
+        owners = [Self.referenceOwnerKey(surface.kind.rawValue, id)]
+      } else {
+        value = fragment.value
+        owners = [Self.referenceOwnerKey("board", boardID)]
+      }
+    } else { return [] }
+    let hash = try collaborationHash(value)
+    return owners.map { ($0, hash) }
+  }
+
+  private func referenceOwnerExists(_ key: String, database: NotebookSQLConnection) throws -> Bool {
+    let parts = key.split(separator: ":")
+    guard parts.count == 2 else { return false }
+    let address = parts[0] == "board" ? "board.json#/boards/@" + parts[1] : "workspace.json#/items/@" + parts[1]
+    return try !database.rows("SELECT 1 FROM records WHERE address=?", [.text(address)]).isEmpty
+  }
+
+  private func adjustReferenceOwner(_ key: String, contribution: Data, database: NotebookSQLConnection) throws {
+    var digest = try database.rows("SELECT digest FROM reference_owners WHERE owner_key=?", [.text(key)]).first?[0].blob ?? Data(repeating: 0, count: 32)
+    for (offset, byte) in contribution.enumerated() { digest[offset] ^= byte }
+    try database.run("INSERT INTO reference_owners(owner_key,digest) VALUES(?,?) ON CONFLICT(owner_key) DO UPDATE SET digest=excluded.digest", [.text(key), .blob(digest)])
+  }
+
+  /// The hierarchy is itself the Merkle graph: a board owns its covers, and a
+  /// portal cover owns its child board. A write updates only affected ancestors.
+  func refreshReferenceIndex(database: NotebookSQLConnection) throws {
+    let roots = database.dirtyReferenceRoots
+    guard !roots.isEmpty else { return }
+    database.dirtyReferenceRoots.removeAll(keepingCapacity: true)
+    var dirty = Set<String>()
+    for address in roots.sorted() {
+      if address.contains("/board/elements/@") { try updateReferenceOrder(address: address, database: database, dirty: &dirty) }
+      let old = try database.rows("SELECT owner_key,hash FROM reference_contributions WHERE address=?", [.text(address)])
+      let next = try referenceContributions(address: address)
+      let oldMap = Dictionary(uniqueKeysWithValues: old.map { ($0[0].text!, $0[1].text!) })
+      let nextMap = Dictionary(uniqueKeysWithValues: next)
+      for key in Set(oldMap.keys).union(nextMap.keys) where oldMap[key] != nextMap[key] {
+        for hash in [oldMap[key], nextMap[key]].compactMap({ $0 }) {
+          try adjustReferenceOwner(key, contribution: Self.referenceContribution(address, hash), database: database)
+        }
+        dirty.insert(key)
+      }
+      if oldMap != nextMap {
+        try database.run("DELETE FROM reference_contributions WHERE address=?", [.text(address)])
+        for (key, hash) in next { try database.run("INSERT INTO reference_contributions(address,owner_key,hash) VALUES(?,?,?)", [.text(address), .text(key), .text(hash)]) }
+      }
+      if address.hasPrefix("board.json#/boards/@"), let id = address.dropFirst("board.json#/boards/@".count).split(separator: "/").first.flatMap({ UUID(uuidString: String($0)) }) {
+        dirty.insert(Self.referenceOwnerKey("board", id))
+      }
+    }
+    for id in database.touchedItemIDs { dirty.insert(Self.referenceOwnerKey("cover", id)) }
+    for key in Array(dirty) {
+      let parts = key.split(separator: ":")
+      guard parts.count == 2, let id = UUID(uuidString: String(parts[1])) else { throw NotebookStorageError.corruptRecord("reference owner") }
+      let isBoard = parts[0] == "board"
+      let exists = try !database.rows("SELECT 1 FROM records WHERE address=?", [.text(isBoard ? "board.json#/boards/@" + id.uuidString.lowercased() : "workspace.json#/items/@" + id.uuidString.lowercased())]).isEmpty
+      let row = try database.rows("SELECT parent,hash FROM reference_owners WHERE owner_key=?", [.text(key)]).first
+      let oldParent = row?[0].text, oldHash = row?[1].text
+      let newParent: String?
+      if !exists { newParent = nil }
+      else if isBoard {
+        newParent = try !database.rows("SELECT 1 FROM records WHERE address=?", [.text("workspace.json#/items/@" + id.uuidString.lowercased())]).isEmpty ? Self.referenceOwnerKey("cover", id) : nil
+      } else { newParent = try ownerBoardID(of: id).map { Self.referenceOwnerKey("board", $0) } }
+      if oldParent != newParent || !exists {
+        for parent in [oldParent, newParent].compactMap({ $0 }) {
+          guard try referenceOwnerExists(parent, database: database) else { continue }
+          if let oldHash { try adjustReferenceOwner(parent, contribution: Self.referenceContribution("child:" + key, oldHash), database: database) }
+          dirty.insert(parent)
+        }
+      }
+      if exists {
+        try database.run("INSERT OR IGNORE INTO reference_owners(owner_key,digest) VALUES(?,?)", [.text(key), .blob(Data(repeating: 0, count: 32))])
+        try database.run("UPDATE reference_owners SET parent=? WHERE owner_key=?", [newParent.map(NotebookSQLValue.text) ?? .null, .text(key)])
+      } else {
+        try database.run("DELETE FROM reference_owners WHERE owner_key=?", [.text(key)])
+        try database.run("DELETE FROM reference_contributions WHERE owner_key=?", [.text(key)])
+        dirty.remove(key)
+      }
+    }
+    var pending = Array(dirty)
+    while let key = pending.popLast() {
+      guard let row = try database.rows("SELECT digest,hash,parent FROM reference_owners WHERE owner_key=?", [.text(key)]).first,
+        let digest = row[0].blob else { continue }
+      let next = Self.referenceHash(Data(("reference-owner-v2\n" + key + "\n").utf8) + digest), previous = row[1].text
+      guard next != previous else { continue }
+      try database.run("UPDATE reference_owners SET hash=? WHERE owner_key=?", [.text(next), .text(key)])
+      if let parent = row[2].text, try referenceOwnerExists(parent, database: database) {
+        for hash in [previous, next].compactMap({ $0 }) { try adjustReferenceOwner(parent, contribution: Self.referenceContribution("child:" + key, hash), database: database) }
+        pending.append(parent)
+      }
+    }
+  }
+}
+
+extension NotebookStore {
+  /// Explicit complete snapshots (checkpoint/test sources) use the same Merkle
+  /// algebra as SQL. A live partial scene instead supplies its bound identities.
+  static func completeReferenceRevision(target: CollaborationTarget, files: [String: JSONValue]) throws -> String {
+    guard let workspace = files["workspace.json"], let hierarchy = files["board.json"] else {
+      throw CollaborationError("target_missing", "Снимок владельца отсутствует.", target: target)
+    }
+    let items = workspace["items"]?.array ?? [], boards = hierarchy["boards"]?.array ?? []
+    var fragments: [String: NotebookStoredFragment] = [:]
+    var roots = Set<String>()
+    for (file, value) in files where file == "workspace.json" || file == "board.json" || file == "spatial-ink.json" || file.hasPrefix("documents/") {
+      for row in try NotebookRecordCodec.encode(value, file: file) {
+        fragments[row.address] = row
+        if (file == "workspace.json" && row.collection == "items") || (file == "board.json" && ["boards", "board/freeItems", "board/stacks", "board/elements"].contains(row.collection))
+          || (file == "spatial-ink.json" && row.collection == "actions") || (file.hasPrefix("documents/") && row.parent == nil) { roots.insert(row.address) }
+      }
+    }
+    var values: [String: [NotebookStoredFragment]] = [:]
+    for row in fragments.values { if let parent = row.parent { values[parent, default: []].append(row) } }
+    func read(_ address: String) throws -> JSONValue {
+      var rows: [NotebookStoredFragment] = [], pending = [address]
+      while let next = pending.popLast(), let row = fragments[next] {
+        rows.append(row); pending += (values[next] ?? []).map(\.address)
+      }
+      return try NotebookRecordCodec.decode(rows, root: address)
+    }
+    var digests: [String: Data] = [:], parents: [String: String] = [:], childCounts: [String: Int] = [:]
+    for item in items { if let id = item.memberIdentity.flatMap(UUID.init(uuidString:)) { childCounts[referenceOwnerKey("cover", id)] = 0 } }
+    let rootID = hierarchy["rootBoardID"]?.string.flatMap(UUID.init(uuidString:))
+    for node in boards {
+      guard let id = node.memberIdentity.flatMap(UUID.init(uuidString:)), let board = try node["board"]?.decode(BoardDocument.self) else { continue }
+      let key = referenceOwnerKey("board", id); childCounts[key] = childCounts[key] ?? 0
+      for item in board.itemIDs { parents[referenceOwnerKey("cover", item)] = key }
+      if id != rootID { parents[key] = referenceOwnerKey("cover", id) }
+    }
+    for (child, parent) in parents {
+      guard childCounts[child] != nil, childCounts[parent] != nil else { throw CollaborationError("source_incomplete", "Полный снимок не содержит владельцев связанной поверхности.", target: target) }
+      childCounts[parent, default: 0] += 1
+    }
+    func xor(_ key: String, _ contribution: Data) {
+      var digest = digests[key] ?? Data(repeating: 0, count: 32)
+      for (offset, byte) in contribution.enumerated() { digest[offset] ^= byte }
+      digests[key] = digest
+    }
+    for address in roots {
+      for (key, hash) in try referenceContributions(fragment: fragments[address]!, read: { try read(address) }) where childCounts[key] != nil {
+        xor(key, referenceContribution(address, hash))
+      }
+    }
+    var ordered: [String: [(Int, String)]] = [:]
+    for address in roots {
+      guard let row = fragments[address], row.collection == "board/elements", let surface = try row.value["surface"]?.decode(SurfaceID.self),
+        let id = surface.ownerID, let member = row.value["id"]?.string else { continue }
+      ordered[referenceOwnerKey(surface.kind.rawValue, id), default: []].append((row.position, member))
+    }
+    for (owner, entries) in ordered {
+      let ids = entries.sorted { $0.0 != $1.0 ? $0.0 < $1.0 : $0.1 < $1.1 }.map { $0.1 }
+      var previous: String?
+      for member in ids {
+        xor(owner, referenceContribution(referenceOrderAddress(owner: owner, from: previous), try collaborationHash(JSONValue.string(member))))
+        previous = member
+      }
+      if let previous { xor(owner, referenceContribution(referenceOrderAddress(owner: owner, from: previous), try collaborationHash(JSONValue.null))) }
+    }
+    var pending = childCounts.filter { $0.value == 0 }.map(\.key), revisions: [String: String] = [:]
+    while let key = pending.popLast() {
+      let hash = referenceHash(Data(("reference-owner-v2\n" + key + "\n").utf8) + (digests[key] ?? Data(repeating: 0, count: 32)))
+      revisions[key] = hash
+      if let parent = parents[key] {
+        xor(parent, referenceContribution("child:" + key, hash))
+        childCounts[parent]! -= 1
+        if childCounts[parent] == 0 { pending.append(parent) }
+      }
+    }
+    guard revisions.count == childCounts.count else { throw CollaborationError("invalid_content", "Цикл владельцев в снимке.", target: target) }
+    if target.kind == .cover, parents[referenceOwnerKey("cover", target.id)] != target.boardID.map({ referenceOwnerKey("board", $0) }) { throw CollaborationError("target_missing", "Обложка принадлежит другой доске.", target: target) }
+    guard let revision = revisions[referenceOwnerKey(target.kind.rawValue, target.id)] else { throw CollaborationError("target_missing", "Физический владелец отсутствует.", target: target) }
+    return revision
+  }
+}
+
+extension NotebookStore {
+  private static func referenceOrderAddress(owner: String, from: String?) -> String {
+    "reference-order:" + owner + ":" + (from.map { "node/" + fieldKey([$0]) } ?? "start")
+  }
+
+  private func setReferenceEdge(owner: String, from: String?, to: String?, remove: Bool = false,
+    database: NotebookSQLConnection, dirty: inout Set<String>) throws {
+    let address = Self.referenceOrderAddress(owner: owner, from: from)
+    let previous = try database.rows("SELECT hash FROM reference_contributions WHERE address=? AND owner_key=?", [.text(address), .text(owner)]).first?[0].text
+    let next = remove || (from == nil && to == nil) ? nil : try collaborationHash(to.map(JSONValue.string) ?? .null)
+    guard previous != next else { return }
+    for hash in [previous, next].compactMap({ $0 }) { try adjustReferenceOwner(owner, contribution: Self.referenceContribution(address, hash), database: database) }
+    if let next { try database.run("INSERT INTO reference_contributions(address,owner_key,hash) VALUES(?,?,?) ON CONFLICT(address,owner_key) DO UPDATE SET hash=excluded.hash", [.text(address), .text(owner), .text(next)]) }
+    else { try database.run("DELETE FROM reference_contributions WHERE address=? AND owner_key=?", [.text(address), .text(owner)]) }
+    dirty.insert(owner)
+  }
+
+  private func referenceNeighbors(owner: String, position: Int64, member: String, database: NotebookSQLConnection) throws -> (String?, String?) {
+    let args: [NotebookSQLValue] = [.text(owner), .integer(position), .integer(position), .text(member)]
+    let previous = try database.rows("SELECT member FROM reference_element_order WHERE owner_key=? AND (position<? OR (position=? AND member<?)) ORDER BY position DESC,member DESC LIMIT 1", args).first?[0].text
+    let next = try database.rows("SELECT member FROM reference_element_order WHERE owner_key=? AND (position>? OR (position=? AND member>?)) ORDER BY position,member LIMIT 1", args).first?[0].text
+    return (previous, next)
+  }
+
+  /// Relative adjacency, rather than absolute SQL slots, identifies painting
+  /// order. Moving one element changes at most four neighboring edges.
+  private func updateReferenceOrder(address: String, database: NotebookSQLConnection, dirty: inout Set<String>) throws {
+    let old = try database.rows("SELECT owner_key,position,member FROM reference_element_order WHERE address=?", [.text(address)]).first
+    let fragment = try storedFragments(address: address, descendants: false).first
+    let surface = try fragment?.value["surface"]?.decode(SurfaceID.self)
+    let owner = surface?.ownerID.map { Self.referenceOwnerKey(surface!.kind.rawValue, $0) }
+    let member = fragment?.value["id"]?.string
+    if old?[0].text == owner, old?[1].integer == fragment.map({ Int64($0.position) }), old?[2].text == member { return }
+    if let old, let oldOwner = old[0].text, let position = old[1].integer, let oldMember = old[2].text {
+      let (previous, next) = try referenceNeighbors(owner: oldOwner, position: position, member: oldMember, database: database)
+      try setReferenceEdge(owner: oldOwner, from: previous, to: next, database: database, dirty: &dirty)
+      try setReferenceEdge(owner: oldOwner, from: oldMember, to: nil, remove: true, database: database, dirty: &dirty)
+      try database.run("DELETE FROM reference_element_order WHERE address=?", [.text(address)])
+    }
+    if let fragment, let owner, let member {
+      let (previous, next) = try referenceNeighbors(owner: owner, position: Int64(fragment.position), member: member, database: database)
+      try setReferenceEdge(owner: owner, from: previous, to: member, database: database, dirty: &dirty)
+      try setReferenceEdge(owner: owner, from: member, to: next, database: database, dirty: &dirty)
+      try database.run("INSERT INTO reference_element_order(address,owner_key,position,member) VALUES(?,?,?,?)", [.text(address), .text(owner), .integer(Int64(fragment.position)), .text(member)])
+    }
+  }
+}

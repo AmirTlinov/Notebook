@@ -55,8 +55,8 @@ func addressedReferenceIgnoresUnrelatedSources() throws {
   let legacy = try f.store.collaborationSnapshot()
   let expected = try NotebookStore.referenceRevision(target: f.page, files: legacy)
   let request = try f.store.requestTargetRender(target: f.page, expectedRevision: f.expectation(f.page).revision)
-  try Data("unrelated damaged page".utf8).write(to: f.store.pageURL(otherPage))
-  try Data("unrelated damaged history".utf8).write(to:
+  try f.store.fixtureWrite(Data("unrelated damaged page".utf8), to: f.store.pageURL(otherPage))
+  try f.store.fixtureWrite(Data("unrelated damaged history".utf8), to:
     f.store.collaborationActionsURL.appendingPathComponent(UUID().uuidString.lowercased() + ".json"))
   let files = try f.store.referenceSourceFiles(target: f.page)
   #expect(Set(files.keys) == ["pages/\(f.pageID.uuidString.lowercased()).json"])
@@ -89,11 +89,11 @@ func addressedDocumentIncludesItsInteractiveState() throws {
   let after = try f.store.requestTargetRender(target: target, expectedRevision: version)
   #expect(before.id != after.id)
   #expect(before.sourceRevision != after.sourceRevision)
-  try Data("unrelated damaged drawing".utf8).write(to: f.store.pageURL(f.pageID))
+  try f.store.fixtureWrite(Data("unrelated damaged drawing".utf8), to: f.store.pageURL(f.pageID))
   #expect(try f.store.referenceRevision(target: target) == after.sourceRevision)
 }
 
-@Test("Доска и обложка сохраняют прежний отпечаток, читая бумагу только своей ветви")
+@Test("Доска и обложка сохраняют полную идентичность без чтения содержимого ветви")
 func addressedBoardPreservesHistoricalIdentityAndScope() throws {
   let f = try CollaborationFixture(); defer { f.clean() }
   let a = UUID(), b = UUID(), documentA = UUID(), documentB = UUID()
@@ -111,10 +111,11 @@ func addressedBoardPreservesHistoricalIdentityAndScope() throws {
   let targets = [CollaborationTarget(kind: .board, id: a), .init(kind: .cover, id: documentA, boardID: a)]
   let legacy = try f.store.collaborationSnapshot()
   let expected = try targets.map { try NotebookStore.referenceRevision(target: $0, files: legacy) }
-  try Data("unrelated damaged document".utf8).write(to: f.store.documentURL(documentB))
+  try f.store.fixtureWrite(Data("unrelated damaged document".utf8), to: f.store.documentURL(documentB))
   for (target, revision) in zip(targets, expected) {
     let files = try f.store.referenceSourceFiles(target: target)
-    #expect(files["documents/\(documentA.uuidString.lowercased()).json"] == .object(["paperSize": .string("letter")]))
+    if target.kind == .cover { #expect(files["documents/\(documentA.uuidString.lowercased()).json"] == .object(["paperSize": .string("letter")])) }
+    else { #expect(files["documents/\(documentA.uuidString.lowercased()).json"] == nil) }
     #expect(files["documents/\(documentB.uuidString.lowercased()).json"] == nil)
     #expect(!files.keys.contains { $0.hasPrefix("pages/") || $0.hasPrefix("document-states/") || $0.hasPrefix("collaboration/") })
     #expect(try f.store.referenceRevision(target: target) == revision)
@@ -134,7 +135,7 @@ func portalCoverReferenceOwnsItsVisibleChildSources() throws {
     targets: [child, f.index]), actor: f.agent)
   let portal = CollaborationTarget(kind: .cover, id: portalID, boardID: f.boardID)
   let files = try f.store.referenceSourceFiles(target: portal)
-  #expect(files["documents/\(documentID.uuidString.lowercased()).json"] == .object(["paperSize": .string("letter")]))
+  #expect(files["documents/\(documentID.uuidString.lowercased()).json"] == nil)
   let original = try f.store.referenceRevision(target: portal)
   let content = try f.store.collaborationContent()
   let memory = try content.sourceFiles(including: content.referenceFilePaths(for: [portal]))
@@ -152,22 +153,6 @@ func portalCoverReferenceOwnsItsVisibleChildSources() throws {
   #expect(try f.store.referenceStatus(.init(target: portal, revision: original)).status == .changed)
 }
 
-@Test("Отменённое чтение освобождает исполнителя, пока другой писатель держит замок")
-func addressedReferenceCancellationDoesNotWaitForTheWriterTimeout() async throws {
-  let f = try CollaborationFixture(); defer { f.clean() }
-  let descriptor = open(f.root.appendingPathComponent(".mutation.lock").path, O_CREAT | O_RDWR, 0o600)
-  #expect(descriptor >= 0)
-  guard descriptor >= 0 else { return }
-  defer { flock(descriptor, LOCK_UN); close(descriptor) }
-  #expect(flock(descriptor, LOCK_EX | LOCK_NB) == 0)
-  let read = Task.detached { try f.store.referenceSourceFiles(target: f.page) }
-  try await Task.sleep(for: .milliseconds(20))
-  read.cancel()
-  do {
-    _ = try await read.value
-    Issue.record("A cancelled reader must not acquire or wait out the writer's lock")
-  } catch { #expect(error is CancellationError) }
-}
 
 @Test("История готовит один срез только нужных владельцев и сохраняет точность доработок")
 func collaborationReadSnapshotUsesCurrentSources() throws {
@@ -323,30 +308,14 @@ func collaborationUndoAdoptedNotebook() throws {
     "center": try .encode(WorldPoint(x: 200, y: 200)), "pageID": .string(pageID.uuidString)])], targets: [f.board, f.index])
   _ = try f.store.applyCollaborationAction(create, actor: f.agent)
   var page = try f.store.loadPage(pageID)
-  _ = page.replaceDrawing(Data([1, 2, 3]), actor: f.human)
+  _ = page.replaceDrawing(pageDrawingFixture(Data([1, 2, 3])), actor: f.human)
   try f.store.savePage(page)
   let receipt = try f.store.undoCollaborationAction(create.id, actor: f.human)
   #expect(try f.store.loadIndex().items.contains { $0.id == item })
-  #expect(try f.store.loadPage(pageID).drawingData == Data([1, 2, 3]))
+  #expect(try f.store.loadPage(pageID).drawingData == pageDrawingFixture(Data([1, 2, 3])))
   #expect(receipt.undo?.preserved.isEmpty == false)
 }
 
-@Test("Подготовленная транзакция завершается следующим владельцем записи")
-func collaborationRecoversPreparedTransaction() throws {
-  let f = try CollaborationFixture(); defer { f.clean() }
-  let receipt = try f.store.applyCollaborationAction(f.action([f.insert()]), actor: f.agent)
-  let snapshot = try f.store.collaborationSnapshot()
-  let file = "pages/\(f.pageID.uuidString.lowercased()).json"
-  let finalPage = snapshot[file]!
-  var page = try f.store.loadPage(f.pageID)
-  _ = page.replaceElements([], actor: f.human)
-  try f.store.savePage(page)
-  let transaction: JSONValue = .object(["writes": .object([file: finalPage]), "removals": .array([])])
-  try JSONEncoder().encode(transaction).write(to: f.store.collaborationURL.appendingPathComponent("pending.json"), options: .atomic)
-  #expect(try f.store.collaborationAction(receipt.id) == receipt)
-  #expect(try f.store.loadPage(f.pageID).elements.map(\.id) == ["idea"])
-  #expect(!FileManager.default.fileExists(atPath: f.store.collaborationURL.appendingPathComponent("pending.json").path))
-}
 
 @Test("Параллельные правки одного элемента сохраняют человеческий смысл и агентское оформление")
 func collaborationConcurrentPageFields() throws {
@@ -447,17 +416,6 @@ func collaborationAtomicNetworkCut() throws {
   #expect(try f.store.collaborationContent() == merged)
 }
 
-@Test("Миграция сохраняет точную копию и выполняется один раз")
-func collaborationOneTimeMigration() throws {
-  let f = try CollaborationFixture(); defer { f.clean() }
-  let raw = try Data(contentsOf:f.store.pageURL(f.pageID))
-  try f.store.migrateCollaborationStorage()
-  let backup = f.root.appendingPathComponent("migrations/before-collaboration-v1/pages/\(f.pageID.uuidString.lowercased()).json")
-  #expect(try Data(contentsOf:backup) == raw)
-  #expect(try f.store.loadPage(f.pageID).collaboration != nil)
-  try f.store.migrateCollaborationStorage()
-  #expect(try Data(contentsOf:backup) == raw)
-}
 
 @Test("Состояние блока имеет явную операцию, отдельную версию и устойчивую отмену")
 func collaborationBlockStateUndoAndMerge() throws {
@@ -489,7 +447,6 @@ func collaborationBlockStateUndoAndMerge() throws {
 @Test("Публикация хода переносит изменённых владельцев и сохраняет остальную тетрадь")
 func collaborationSparsePublication() throws {
   let f = try CollaborationFixture(); defer { f.clean() }
-  try f.store.migrateCollaborationStorage()
   let previous = try f.store.collaborationContent()
   _ = try f.store.applyCollaborationAction(f.action([f.insert()]),actor:f.agent)
   let next = try f.store.collaborationContent()
@@ -521,7 +478,7 @@ func collaborationPlacementRejectsChangedInk() throws {
   let source = try f.store.referenceRevision(target:f.page)
   let expectation = CollaborationExpectation(target:f.page,revision:try f.expectation(f.page).revision,sourceRevision:source)
   var page = try f.store.loadPage(f.pageID)
-  let changed = page.replaceDrawing(Data([1,2,3]),actor:f.human)
+  let changed = page.replaceDrawing(pageDrawingFixture(Data([1,2,3])),actor:f.human)
   #expect(changed)
   try f.store.savePage(page)
   let action = CollaborationAction(summary:"Продолжение рядом",expected:[expectation],operations:[f.insert()])
@@ -566,7 +523,6 @@ func collaborationStateMergeNamesTheCombinedResult() {
 @Test("Новый общий фрагмент сохраняет прежнее указание и адрес начатого хода")
 func durableContextDoesNotFollowHumanSelection() throws {
   let f = try CollaborationFixture(); defer { f.clean() }
-  try f.store.migrateCollaborationStorage()
   let source = CollaborationReference(target: f.page, revision: try f.store.referenceRevision(target: f.page), label: "Рисунок")
   let first = try f.store.appendContext(references: [source], author: .human, actor: f.human, select: true)
   let next = try f.store.appendContext(references: [source], author: .human, actor: f.human, select: true)
@@ -621,32 +577,6 @@ func missingContextDoesNotPublishContent() throws {
   #expect(try f.store.collaborationActions().isEmpty)
 }
 
-@Test("Миграция указаний сохраняет точные исходные байты и не выдумывает связь")
-func contextMigrationRetainsSourcesAndBackup() throws {
-  let f = try CollaborationFixture(); defer { f.clean() }
-  try f.store.prepare()
-  try FileManager.default.createDirectory(at: f.store.collaborationURL, withIntermediateDirectories: true)
-  try Data("{\"format\":1}".utf8).write(to: f.store.collaborationURL.appendingPathComponent("format.json"))
-  let reference = CollaborationReference(target: f.page, region: .init(x: 10, y: 10, width: 40, height: 40),
-    revision: try f.store.referenceRevision(target: f.page), label: "Исходное указание")
-  let original = try JSONEncoder().encode(JSONValue.object(["author": .string("human"),
-    "reference": try .encode(reference), "stamp": try .encode(VersionStamp(counter: 7, actor: f.human))]))
-  let path = f.store.collaborationURL.appendingPathComponent("attention-human.json")
-  try original.write(to: path)
-  try f.store.migrateCollaborationStorage()
-  let migrated = try f.store.sharedContexts()
-  #expect(migrated.selection?.contextID == migrated.contexts.first?.id)
-  #expect(migrated.selection?.contextID != reference.id)
-  #expect(migrated.contexts.count == 1)
-  #expect(migrated.contexts[0].entries[0].requiresReview)
-  #expect(migrated.contexts[0].entries[0].references == [reference])
-  #expect(!FileManager.default.fileExists(atPath: path.path))
-  let backup = f.root.appendingPathComponent("migrations/before-collaboration-v2/collaboration/attention-human.json")
-  #expect(try Data(contentsOf: backup) == original)
-  try f.store.migrateCollaborationStorage()
-  #expect(try f.store.sharedContexts() == migrated)
-  #expect(try Data(contentsOf: backup) == original)
-}
 
 @Test("Общий поиск возвращает физический путь, исходник и версию одного завершённого снимка")
 func sharedSearchOwnsAppAndAgentResults() throws {
@@ -661,7 +591,7 @@ func sharedSearchOwnsAppAndAgentResults() throws {
   #expect(hit.path.last == "Лист 1")
   #expect(hit.preview == "Idea")
   #expect(hit.reference.revision == (try f.store.referenceRevision(target: f.page, elementID: "idea")))
-  let same = try NotebookStore.search("idea", files: f.store.collaborationSnapshot())
+  let same = try f.store.search("idea")
   #expect(same.results.map(\.preview) == found.results.map(\.preview))
   #expect(same.results.map(\.path) == found.results.map(\.path))
 }
@@ -758,11 +688,11 @@ func placementCannotOverwriteNewInk() throws {
   let f = try CollaborationFixture(); defer { f.clean() }
   let planned = try completePlacementMap(f, .init(target: f.page, expectedRevision: f.expectation(f.page).revision,
     items: [.init(id: "new", size: .init(width: 120, height: 80))]))
-  var page = try f.store.loadPage(f.pageID); page.replaceDrawing(Data([1, 2, 3]), actor: f.human); try f.store.savePage(page)
+  var page = try f.store.loadPage(f.pageID); page.replaceDrawing(pageDrawingFixture(Data([1, 2, 3])), actor: f.human); try f.store.savePage(page)
   let action = CollaborationAction(summary: "Поздняя запись", expected: planned.expected, operations: [f.insert("new")])
   #expect(throws: CollaborationError.self) { try f.store.applyCollaborationAction(action, actor: f.agent) }
   #expect(try f.store.loadPage(f.pageID).elements.isEmpty)
-  #expect(try f.store.loadPage(f.pageID).drawingData == Data([1, 2, 3]))
+  #expect(try f.store.loadPage(f.pageID).drawingData == pageDrawingFixture(Data([1, 2, 3])))
 }
 
 @Test("Непоместившийся пакет не возвращает частичное размещение")
@@ -843,8 +773,8 @@ func heldEnvelopesKeepOneCausalCut() throws {
   #expect(held.content?.pages.count == 1)
   #expect(held.content?.pages.first?.elements.isEmpty == true)
   #expect(throws: CollaborationError.self) { try held.merging(.init(actions: [first, first])) }
-  let wire = WireMessage.inputActivity(.init(deviceID: f.human, sessionID: UUID(), sequence: 1, targets: [f.page]))
-  #expect(try JSONDecoder().decode(WireMessage.self, from: JSONEncoder().encode(wire)) == wire)
+  let wire = NotebookTransportTransient.inputActivity(.init(deviceID: f.human, sessionID: UUID(), sequence: 1, targets: [f.page]))
+  #expect(try JSONDecoder().decode(NotebookTransportTransient.self, from: JSONEncoder().encode(wire)) == wire)
 }
 
 @Test("Диагностика кадров ограничивает память и отличает частоту от задержки")

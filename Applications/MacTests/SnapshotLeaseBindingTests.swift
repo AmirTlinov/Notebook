@@ -25,10 +25,12 @@ final class SnapshotLeaseBindingTests: XCTestCase {
   @MainActor
   func testDocumentCompositionReadsItsLeaseAfterALateSameSourceCapture() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let id = try XCTUnwrap(model.createDocument(at: .zero, paperSize: .a4))
+    let created = await model.finishPendingPersistence()
+    XCTAssertTrue(created, model.persistenceFailure ?? "")
     let document = try XCTUnwrap(model.documents[id])
     let state = try XCTUnwrap(model.documentStates[id])
     let geometry = WorkspaceItemGeometry.document(document.paperSize)
@@ -49,6 +51,8 @@ final class SnapshotLeaseBindingTests: XCTestCase {
       "A retained page cannot stand in for a different physical page")
     model.updatePresence(.init(mode: .document, camera: .init(),
       viewport: .init(x: 256, y: 256), focusedItemID: id, openProgress: 1), settled: true)
+    let settled = await model.finishPendingPersistence()
+    XCTAssertTrue(settled, model.persistenceFailure ?? "")
 
     try assertRed(try await publish(model, documentRaster: lease))
     await model.finishPendingPersistence()
@@ -82,8 +86,7 @@ final class SnapshotLeaseBindingTests: XCTestCase {
     let pngURL = model.store.root.appendingPathComponent("lease-bound.png")
     try await CurrentViewPreviewWriter.write(model: model,
       viewport: .init(width: presence.viewport.x, height: presence.viewport.y),
-      workspace: try XCTUnwrap(model.workspace), board: try XCTUnwrap(model.boardHierarchy),
-      spatialInk: try XCTUnwrap(model.spatialInk), presence: presence,
+      presence: presence,
       page: presence.mode == .page ? model.activePage : nil,
       document: document, documentState: document.flatMap { model.documentStates[$0.id] },
       documentRaster: documentRaster,

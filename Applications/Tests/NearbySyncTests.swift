@@ -1,242 +1,167 @@
+import CryptoKit
+import Foundation
+import Network
 import NotebookCore
 import XCTest
 @testable import Notebook
 
 final class NearbySyncTests: XCTestCase {
-  func testAnEmptySendQueueExposesNoMessages() {
-    XCTAssertEqual(WireSendQueue().messages, [])
+  func testFrameLengthIsRejectedBeforeBodyAllocation() throws {
+    XCTAssertThrowsError(try NotebookTransportFraming.payloadLength(Data([0, 4, 0, 0])))
+    XCTAssertThrowsError(try NotebookTransportFraming.payloadLength(Data([0, 0, 0, 0])))
+    XCTAssertThrowsError(try NotebookTransportFraming.payloadLength(Data([0, 0, 1])))
+    XCTAssertEqual(try NotebookTransportFraming.payloadLength(Data([0, 3, 255, 252])), 262_140)
+    let frame = try NotebookTransportFraming.encode(.init(sequence: 1, message: .blob(.init(
+      hash: String(repeating: "a", count: 64), offset: 0, totalBytes: 184_320, data: Data(repeating: 42, count: 184_320)))))
+    XCTAssertLessThanOrEqual(frame.count, NotebookTransportLimits.maximumFrameBytes)
+    let packet = try NotebookTransportFraming.decode(Data(frame.dropFirst(4)))
+    XCTAssertEqual(packet.sequence, 1)
+    XCTAssertThrowsError(try NotebookTransportFraming.decode(Data("{\"version\":1}".utf8)))
   }
 
-  func testPresenceSequenceRejectsDuplicatesAndOlderFrames() {
+  func testSixteenCreditsAreIndependentFromDurableAcknowledgement() throws {
+    var sender = NotebookTransportSendWindow()
+    for sequence in 1...16 { XCTAssertEqual(try sender.reserve(), UInt64(sequence)) }
+    XCTAssertThrowsError(try sender.reserve())
+    XCTAssertThrowsError(try sender.acknowledge([17]))
+    XCTAssertThrowsError(try sender.acknowledge([1, 1]))
+    try sender.acknowledge([2])
+    XCTAssertEqual(try sender.reserve(), 17)
+    try sender.acknowledge([2]) // retransmitted credit cannot free a different frame
+    XCTAssertEqual(sender.unacknowledged.count, 16)
+  }
+
+  func testReceiveWindowRejectsReplayGapsAndAnUnconsumedSeventeenthFrame() throws {
+    var receiver = NotebookTransportReceiveWindow()
+    XCTAssertThrowsError(try receiver.accept(2))
+    for sequence in 1...16 { try receiver.accept(UInt64(sequence)) }
+    XCTAssertThrowsError(try receiver.accept(17))
+    try receiver.consumed(3)
+    XCTAssertThrowsError(try receiver.accept(16))
+    try receiver.accept(17)
+    XCTAssertThrowsError(try receiver.consumed(3))
+  }
+
+  func testBulkReservesTwoCreditsForTheLatestContactAndCamera() throws {
+    var outgoing = NotebookTransportOutgoing()
+    for sequence in 1...16 { try outgoing.enqueue(.offer(change(sequence: UInt64(sequence)))) }
+    for _ in 0..<14 { XCTAssertNotNil(try outgoing.takeNext()) }
+    XCTAssertNil(try outgoing.takeNext())
+    let deviceID = UUID(), sessionID = UUID()
+    for sequence in 1...10_000 {
+      try outgoing.enqueue(.transient(.presence(envelope(sessionID: sessionID, sequence: UInt64(sequence), centerX: Double(sequence)))))
+      try outgoing.enqueue(.transient(.inputActivity(.init(deviceID: deviceID, sessionID: sessionID, sequence: UInt64(sequence), targets: []))))
+    }
+    XCTAssertEqual(outgoing.pendingCount, 4)
+    let contact = try XCTUnwrap(outgoing.takeNext())
+    guard case .transient(.inputActivity(let activity)) = contact.message else { return XCTFail("Contact must precede camera and bulk") }
+    XCTAssertEqual(activity.sequence, 10_000)
+    guard case .transient(.presence(let presence)) = try XCTUnwrap(outgoing.takeNext()).message else { return XCTFail("Camera uses the reserved second credit") }
+    XCTAssertEqual(presence.sequence, 10_000)
+    XCTAssertEqual(outgoing.window.unacknowledged.count, 16)
+    XCTAssertNil(try outgoing.takeNext())
+    try outgoing.acknowledge([1])
+    XCTAssertNil(try outgoing.takeNext(), "Bulk cannot consume the contact/camera reservation")
+    try outgoing.acknowledge([2, 3])
+    XCTAssertNotNil(try outgoing.takeNext())
+  }
+
+  func testInvitationRequires128BitsExpiryAndAValidWorkspaceIdentity() throws {
+    let identity = NotebookTransportIdentity(deviceID: UUID(), workspaceID: UUID(), displayName: "Mac")
+    XCTAssertThrowsError(try NotebookPairingInvitation(inviter: identity, secret: Data("123456".utf8), expiresAt: .now.addingTimeInterval(60)))
+    let now = Date(timeIntervalSince1970: 1_000)
+    let invitation = try NotebookPairingInvitation(inviter: identity, secret: Data(repeating: 4, count: 16), expiresAt: now.addingTimeInterval(600))
+    XCTAssertEqual(try NotebookPairingInvitation.decode(invitation.encoded(), now: now), invitation)
+    XCTAssertThrowsError(try NotebookPairingInvitation.decode(invitation.encoded(), now: now.addingTimeInterval(601)))
+    XCTAssertThrowsError(try NotebookPairingInvitation.decode(String(repeating: "x", count: 2_049), now: now))
+    XCTAssertThrowsError(try NotebookTransportAuthentication.pairedSecret(invitation: invitation,
+      joiner: .init(deviceID: UUID(), workspaceID: UUID(), displayName: "Wrong workspace")))
+  }
+
+  func testFreshNoncesBindProofToDeviceWorkspaceAndHumanConfirmation() throws {
+    let workspaceID = UUID(), pairID = UUID()
+    let first = NotebookTransportHello(identity: .init(deviceID: UUID(), workspaceID: workspaceID, displayName: "Mac"),
+      pairingID: pairID, credential: .invitation, nonce: Data(repeating: 1, count: 32))
+    let second = NotebookTransportHello(identity: .init(deviceID: UUID(), workspaceID: workspaceID, displayName: "iPad"),
+      pairingID: pairID, credential: .invitation, nonce: Data(repeating: 2, count: 32))
+    let secret = Data(repeating: 3, count: 16)
+    let transcript = try NotebookTransportAuthentication.transcript(first, second)
+    let proof = NotebookTransportAuthentication.proof(secret: secret, transcript: transcript, sender: first.identity.deviceID)
+    XCTAssertTrue(NotebookTransportAuthentication.verifies(proof, secret: secret, transcript: transcript, sender: first.identity.deviceID))
+    XCTAssertFalse(NotebookTransportAuthentication.verifies(proof, secret: Data(repeating: 4, count: 16), transcript: transcript, sender: first.identity.deviceID))
+    XCTAssertFalse(NotebookTransportAuthentication.verifies(proof, secret: secret, transcript: transcript, sender: second.identity.deviceID))
+    XCTAssertFalse(NotebookTransportAuthentication.verifiesConfirmation(proof, secret: secret, transcript: transcript, sender: first.identity.deviceID))
+    let freshSecond = NotebookTransportHello(identity: second.identity, pairingID: pairID, credential: .invitation, nonce: Data(repeating: 5, count: 32))
+    XCTAssertFalse(NotebookTransportAuthentication.verifies(proof, secret: secret,
+      transcript: try NotebookTransportAuthentication.transcript(first, freshSecond), sender: first.identity.deviceID))
+    let wrongWorkspace = NotebookTransportHello(identity: .init(deviceID: UUID(), workspaceID: UUID(), displayName: "Other"),
+      pairingID: pairID, credential: .invitation, nonce: second.nonce)
+    XCTAssertThrowsError(try NotebookTransportAuthentication.transcript(first, wrongWorkspace))
+  }
+
+  func testPresenceSequenceRejectsDuplicateAndOlderFrames() {
     var tracker = PresenceSequenceTracker()
-    let sessionID = UUID()
-    let newest = envelope(
-      sessionID: sessionID,
-      sequence: 4,
-      phase: .active,
-      centerX: 40
-    )
-    let older = envelope(
-      sessionID: sessionID,
-      sequence: 3,
-      phase: .active,
-      centerX: 30
-    )
-
-    XCTAssertTrue(tracker.accepts(newest))
-    XCTAssertFalse(tracker.accepts(newest))
-    XCTAssertFalse(tracker.accepts(older))
-    XCTAssertTrue(
-      tracker.accepts(
-        envelope(
-          sessionID: UUID(),
-          sequence: 1,
-          phase: .settled,
-          centerX: 50
-        )
-      )
-    )
+    let sessionID = UUID(), newest = envelope(sessionID: UUID(), sequence: 4, centerX: 40)
+    XCTAssertTrue(tracker.accepts(newest)); XCTAssertFalse(tracker.accepts(newest))
+    XCTAssertTrue(tracker.accepts(envelope(sessionID: sessionID, sequence: 4, centerX: 40)))
+    XCTAssertFalse(tracker.accepts(envelope(sessionID: sessionID, sequence: 3, centerX: 30)))
   }
 
-  func testConsecutiveCameraFramesKeepOnlyTheFreshestPendingPresence() {
-    var queue = WireSendQueue()
-    let sessionID = UUID()
-    let first = envelope(
-      sessionID: sessionID,
-      sequence: 1,
-      phase: .active,
-      centerX: 10
-    )
-    let newest = envelope(
-      sessionID: sessionID,
-      sequence: 2,
-      phase: .active,
-      centerX: 40
-    )
-
-    queue.enqueue(.presence(first))
-    queue.enqueue(.presence(newest))
-
-    XCTAssertEqual(queue.messages, [.presence(newest)])
+  private func change(sequence: UInt64) -> NotebookDurableChange {
+    .init(sequence: sequence, transactionID: UUID(), manifestHash: String(repeating: "a", count: 64), byteCount: 64)
   }
-
-  func testAStateMutationKeepsItsPlaceBetweenCameraFrames() {
-    var queue = WireSendQueue()
-    let actor = UUID()
-    let sessionID = UUID()
-    let first = envelope(
-      sessionID: sessionID,
-      sequence: 1,
-      phase: .active,
-      centerX: 10
-    )
-    let newest = envelope(
-      sessionID: sessionID,
-      sequence: 2,
-      phase: .active,
-      centerX: 40
-    )
-    let journal = SpatialInkJournal(
-      stamp: VersionStamp(counter: 0, actor: actor)
-    )
-
-    queue.enqueue(.presence(first))
-    queue.enqueue(.spatialInk(journal))
-    queue.enqueue(.presence(newest))
-
-    XCTAssertEqual(
-      queue.messages,
-      [.presence(first), .spatialInk(journal), .presence(newest)]
-    )
-  }
-
-  func testSettledPresenceCannotBeReplacedByTheNextGesture() {
-    var queue = WireSendQueue()
-    let sessionID = UUID()
-    let settled = envelope(
-      sessionID: sessionID,
-      sequence: 8,
-      phase: .settled,
-      centerX: 30
-    )
-    let nextGesture = envelope(
-      sessionID: sessionID,
-      sequence: 9,
-      phase: .active,
-      centerX: 34
-    )
-
-    queue.enqueue(.presence(settled))
-    queue.enqueue(.presence(nextGesture))
-
-    XCTAssertEqual(queue.messages, [.presence(settled), .presence(nextGesture)])
-  }
-
-  func testRapidSettledPagesKeepOnlyTheLatestUnsentPresence() {
-    var queue = WireSendQueue()
-    let sessionID = UUID()
-    let first = envelope(
-      sessionID: sessionID,
-      sequence: 10,
-      phase: .settled,
-      centerX: 10
-    )
-    let latest = envelope(
-      sessionID: sessionID,
-      sequence: 11,
-      phase: .settled,
-      centerX: 20
-    )
-
-    queue.enqueue(.presence(first))
-    queue.enqueue(.presence(latest))
-
-    XCTAssertEqual(queue.messages, [.presence(latest)])
-  }
-
-  func testPendingFullDrawingKeepsOnlyTheNewestRevision() {
-    var queue = WireSendQueue()
-    let pageID = UUID()
-    let actor = UUID()
-    queue.enqueue(
-      .drawing(
-        pageID: pageID,
-        data: Data([1]),
-        stamp: VersionStamp(counter: 1, actor: actor)
-      )
-    )
-    let newest = WireMessage.drawing(
-      pageID: pageID,
-      data: Data([2]),
-      stamp: VersionStamp(counter: 2, actor: actor)
-    )
-    queue.enqueue(newest)
-
-    XCTAssertEqual(queue.messages, [newest])
-  }
-
-  func testConsecutivePageSelectionsSendOnlyTheNewestCatalogSnapshot() throws {
-    let actor = UUID()
-    let size = PageSize(width: 834, height: 1_194)
-    var index = WorkspaceIndex.initial(actor: actor, pageSize: size).index
-    let itemID = index.selectedItemID
-    _ = try XCTUnwrap(index.selectPage(
-      at: 1,
-      in: itemID,
-      actor: actor,
-      pageSize: size
-    ))
-    _ = try XCTUnwrap(index.selectPage(
-      at: 0,
-      in: itemID,
-      actor: actor,
-      pageSize: size
-    ))
-    let older = index
-    _ = try XCTUnwrap(index.selectPage(
-      at: 1,
-      in: itemID,
-      actor: actor,
-      pageSize: size
-    ))
-
-    var queue = WireSendQueue()
-    queue.enqueue(.index(older))
-    queue.enqueue(.index(index))
-
-    XCTAssertEqual(queue.messages, [.index(index)])
-  }
-
-  func testRapidDocumentRequestsKeepOnlyTheLatestUnsentSheet() {
-    let documentID = UUID()
-    let latest = DocumentPageSelectionRequest(
-      documentID: documentID,
-      pageIndex: 4
-    )
-    var queue = WireSendQueue()
-    queue.enqueue(
-      .documentPageSelection(
-        DocumentPageSelectionRequest(documentID: documentID, pageIndex: 3)
-      )
-    )
-    queue.enqueue(.documentPageSelection(latest))
-
-    XCTAssertEqual(queue.messages, [.documentPageSelection(latest)])
-  }
-
-  func testOneMacSeenThroughManyInterfacesIsOnePeer() {
-    let peer = "mac-123"
-    let directory = BonjourPeerDirectory(
-      (1...13).map {
-        BonjourPeerCandidate(peerName: peer, endpointID: "endpoint-\($0)")
-      } + [
-        BonjourPeerCandidate(
-          peerName: "mac-456",
-          endpointID: "endpoint-other"
-        ),
-        BonjourPeerCandidate(peerName: peer, endpointID: "endpoint-1"),
-      ]
-    )
-
-    XCTAssertEqual(Set(directory.endpointIDsByPeer.keys), [peer, "mac-456"])
-    XCTAssertEqual(directory.endpointIDsByPeer[peer]?.count, 13)
-  }
-
-  private func envelope(
-    sessionID: UUID,
-    sequence: UInt64,
-    phase: PresencePhase,
-    centerX: Double
-  ) -> PresenceEnvelope {
-    PresenceEnvelope(
-      sessionID: sessionID,
-      sequence: sequence,
-      phase: phase,
-      presence: SessionPresence(
-        mode: .board,
-        camera: SpatialCamera(center: WorldPoint(x: centerX, y: 0)),
-        viewport: SpatialPoint(x: 1_024, y: 1_366)
-      )
-    )
+  private func envelope(sessionID: UUID, sequence: UInt64, centerX: Double) -> PresenceEnvelope {
+    .init(sessionID: sessionID, sequence: sequence, phase: .active,
+      presence: .init(mode: .board, camera: .init(center: .init(x: centerX, y: 0)), viewport: .init(x: 1_024, y: 1_366)))
   }
 }
+
+final class NotebookTransportBlobTests: XCTestCase, @unchecked Sendable {
+  func testBlobIsWrittenInBoundedChunksAndPublishedOnlyAfterExactHash() async throws {
+    let root = temporaryDirectory(); defer { try? FileManager.default.removeItem(at: root) }
+    let bytes = Data(repeating: 7, count: 400_000), hash = digest(bytes)
+    let assembly = try NotebookTransportBlobAssembly(stagingRoot: root, generation: UUID())
+    var complete: NotebookTransportCompletedBlob?
+    for offset in stride(from: 0, to: bytes.count, by: NotebookTransportLimits.maximumChunkBytes) {
+      let chunk = bytes.subdata(in: offset..<min(bytes.count, offset + NotebookTransportLimits.maximumChunkBytes))
+      complete = try await assembly.append(.init(hash: hash, offset: Int64(offset), totalBytes: Int64(bytes.count), data: chunk), expectedHash: hash, maximumBytes: 500_000)
+      if offset + chunk.count < bytes.count { XCTAssertNil(complete) }
+    }
+    let blob = try XCTUnwrap(complete)
+    XCTAssertEqual(blob.byteCount, Int64(bytes.count)); XCTAssertEqual(try Data(contentsOf: blob.file), bytes)
+    try await assembly.discardCompleted(blob); await assembly.cancel()
+    XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
+  }
+
+  func testWrongHashAndOffsetRemoveTheWholePartialGeneration() async throws {
+    for wrongHash in [false, true] {
+      let root = temporaryDirectory(); defer { try? FileManager.default.removeItem(at: root) }
+      let generation = UUID(), bytes = Data(repeating: 7, count: 4), hash = digest(bytes)
+      let assembly = try NotebookTransportBlobAssembly(stagingRoot: root, generation: generation)
+      _ = try await assembly.append(.init(hash: hash, offset: 0, totalBytes: 4, data: Data([7, 7])), expectedHash: hash, maximumBytes: 4)
+      do {
+        _ = try await assembly.append(.init(hash: hash, offset: wrongHash ? 2 : 1, totalBytes: 4,
+          data: wrongHash ? Data([8, 8]) : Data([7, 7])), expectedHash: hash, maximumBytes: 4)
+        XCTFail("Invalid bytes must not become a completed blob")
+      } catch { }
+      XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(generation.uuidString).path))
+    }
+  }
+
+  func testOversizedBlobIsRejectedWithoutCreatingItsFile() async throws {
+    let root = temporaryDirectory(); defer { try? FileManager.default.removeItem(at: root) }
+    let assembly = try NotebookTransportBlobAssembly(stagingRoot: root, generation: UUID())
+    let hash = digest(Data([1]))
+    do {
+      _ = try await assembly.append(.init(hash: hash, offset: 0, totalBytes: NotebookTransportLimits.maximumBlobBytes + 1, data: Data([1])),
+        expectedHash: hash, maximumBytes: NotebookTransportLimits.maximumBlobBytes)
+      XCTFail("No truncation or allocation for oversized owners")
+    } catch { }
+    XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
+  }
+}
+
+private func temporaryDirectory() -> URL {
+  FileManager.default.temporaryDirectory.appendingPathComponent("NotebookTransportTests-\(UUID())", isDirectory: true)
+}
+private func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }

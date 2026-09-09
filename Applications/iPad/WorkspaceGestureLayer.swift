@@ -222,10 +222,8 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       _ gestureRecognizer: UIGestureRecognizer,
       shouldReceive touch: UITouch
     ) -> Bool {
-      guard let sceneView, sceneView.window != nil else {
-        return false
-      }
-      return sceneView.bounds.contains(touch.location(in: sceneView))
+      guard let sceneView else { return false }
+      return sceneReceives(touch, inside: sceneView)
     }
 
     func gestureRecognizer(
@@ -235,6 +233,22 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       true
     }
   }
+}
+
+/// Window-level recognizers span embedded paper/WebKit hosts, but a presented
+/// UIKit menu or sheet has its own input owner even when it overlaps the board.
+@MainActor
+private func sceneReceives(_ touch: UITouch, inside anchor: UIView) -> Bool {
+  guard anchor.window != nil, anchor.bounds.contains(touch.location(in: anchor)) else { return false }
+  guard let source = touch.view else { return true }
+  var responder: UIResponder? = anchor
+  while let current = responder {
+    if let controller = current as? UIViewController {
+      return source.isDescendant(of: controller.view)
+    }
+    responder = current.next
+  }
+  return false
 }
 
 /// The existing window gesture owner observes contact lifetime independently
@@ -535,8 +549,8 @@ struct BoardPanView: UIViewRepresentable {
       // completion, even if disable and re-enable preceded the next run loop.
       flushPanCancellation()
       guard let revision = inputGate.beginFingerSequence(), !Self.ownsInteractiveInput(touch.view) else { return false }
+      guard sceneReceives(touch, inside: sceneView) else { return false }
       let point = touch.location(in: sceneView)
-      guard sceneView.bounds.contains(point) else { return false }
       let isFreeBoard = !itemFrames.contains(where: { $0.contains(point) })
       if gestureRecognizer === pan {
         panRevision = revision

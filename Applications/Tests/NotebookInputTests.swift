@@ -5,6 +5,37 @@ import XCTest
 
 final class NotebookInputTests: XCTestCase {
   @MainActor
+  func testPresentedUIKitSurfaceKeepsItsTouchOutsideWindowLevelSceneRecognizers() throws {
+    let gate = NotebookInputGate()
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene), host = UIViewController()
+    window.rootViewController = host
+    let anchor = UIView(frame: .init(x: 0, y: 0, width: 600, height: 800))
+    host.view.addSubview(anchor); window.makeKeyAndVisible()
+    let camera = WorkspaceGestureLayer.Coordinator(defersHorizontalMotionToPageTurn: false,
+      isEnabled: true, inputGate: gate, onCamera: { _ in }, onUndo: {})
+    camera.install(on: window, inside: anchor)
+    let pan = BoardPanView.Coordinator(isEnabled: true, itemFrames: [], inputGate: gate,
+      onTap: {}, onBegan: {}, onChanged: { _ in }, onEnded: { _ in }, onCancelled: {})
+    pan.install(on: window, inside: anchor)
+    defer { camera.uninstall(); pan.uninstall(); window.isHidden = true }
+    let gesture = try XCTUnwrap(window.gestureRecognizers?.first { $0 is TwoFingerPaperGestureRecognizer })
+    let panGesture = try XCTUnwrap(window.gestureRecognizers?.first { $0 is UIPanGestureRecognizer })
+    let observer = try XCTUnwrap(window.gestureRecognizers?.first { $0 is NotebookContactObserver })
+    let touch = InputTouch(); touch.inputType = .direct; touch.point = .init(x: 200, y: 300)
+    let embedded = UIViewController(); host.addChild(embedded); host.view.addSubview(embedded.view)
+    embedded.didMove(toParent: host)
+    touch.sourceView = embedded.view
+    XCTAssertTrue(camera.gestureRecognizer(gesture, shouldReceive: touch), "Embedded paper and WebKit keep the scene camera")
+    let menu = UIViewController(); window.addSubview(menu.view)
+    touch.sourceView = menu.view
+    XCTAssertFalse(camera.gestureRecognizer(gesture, shouldReceive: touch))
+    XCTAssertFalse(camera.gestureRecognizer(observer, shouldReceive: touch), "A menu press cannot invalidate the scene's published cut")
+    XCTAssertFalse(pan.gestureRecognizer(panGesture, shouldReceive: touch))
+    XCTAssertFalse(gate.isActive)
+  }
+
+  @MainActor
   func testPencilImmediatelyStopsAStationaryTwoFingerUndoHoldAndCamera() async throws {
     let gate = NotebookInputGate(), pencilSource = UUID()
     let windowScene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
@@ -570,9 +601,9 @@ final class NotebookInputTests: XCTestCase {
   @MainActor
   func testContactProtectionFollowsPortalWithoutEndingContact() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let parent = try XCTUnwrap(model.workspace?.rootBoardID)
     let child = try XCTUnwrap(model.createBoard(at: .zero))
     let viewport = BoardPortalProjection.viewport
@@ -606,15 +637,19 @@ final class NotebookInputTests: XCTestCase {
   @MainActor
   func testIncomingCompositionWaitsForFingerAndMergesHumanContinuation() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     var incoming = try XCTUnwrap(model.collaborationContent)
     let source = UUID()
     let element = AgentElement(id: "agent", kind: .web, frame: .init(x: 100, y: 100, width: 200, height: 80), source: "Agent", html: "Agent")
     XCTAssertTrue(incoming.pages[0].replaceElements([element], actor: UUID()))
     model.inputGate.beginContact(source: source)
-    for _ in 0..<50 { model.receivePeerMessage(.collaboration(.init(content: incoming))) }
+    let peer = NotebookStore(root: root.appendingPathComponent("peer")), peerID = UUID()
+    try NotebookPeerFixture.copy(from: model.store, to: peer, peerID: model.actorID)
+    _ = try peer.saveMergedPage(incoming.pages[0])
+    let delivery = Task { try await NotebookPeerFixture.deliver(from: peer, to: model, peerID: peerID) }
+    await Task.yield()
     XCTAssertTrue(try XCTUnwrap(model.activePage).elements.isEmpty)
     XCTAssertTrue(try model.store.loadPage(incoming.pages[0].id).elements.isEmpty)
     XCTAssertFalse(model.permitsBackgroundPreparation)
@@ -624,6 +659,9 @@ final class NotebookInputTests: XCTestCase {
     model.inputGate.endContact(source: source)
     for _ in 0..<100 where model.inputGate.isActive { await Task.yield() }
     XCTAssertFalse(model.inputGate.isActive)
+    try await delivery.value
+    let duplicate = try XCTUnwrap(peer.changeJournal(after: 0, limit: 16).last)
+    for _ in 0..<50 { _ = try await model.applyDurablePeerChange(duplicate, peerID: peerID) }
     await model.finishPendingPersistence()
     XCTAssertEqual(Set(try XCTUnwrap(model.activePage).elements.map(\.id)), ["agent", "human"])
     XCTAssertEqual(Set(try model.store.loadPage(human.id).elements.map(\.id)), ["agent", "human"])

@@ -1,12 +1,6 @@
 import NotebookCore
-import PencilKit
 import SwiftUI
-
-#if os(iOS)
-  import UIKit
-#elseif os(macOS)
-  import AppKit
-#endif
+import UIKit
 
 private struct CameraGestureSnapshot {
   struct PaperEngagement {
@@ -27,38 +21,6 @@ private struct CameraGestureSnapshot {
   var dockingCorrection: NotebookDockingCorrection
   var openingWasVisible: Bool
   var followsPortal = false
-}
-
-struct RenderedWorkspaceItem: Identifiable, Sendable {
-  let item: WorkspaceItem
-  let geometry: WorkspaceItemGeometry
-  let center: WorldPoint
-  let zIndex: Double
-  let stackID: UUID?
-
-  var id: UUID { item.id }
-}
-
-enum WorkspaceSceneProjection {
-  static let portalPasses = 32
-
-  static func showsPortal(pixelScale: Double, remainingPasses: Int) -> Bool {
-    remainingPasses > 0 && WorkspaceItemGeometry.notebook.width * pixelScale >= 8
-  }
-
-  /// Geometry and camera targeting still see every item. Only mounted content
-  /// is bounded by the viewport, with room for shadows and preparation before
-  /// an edge appears. A focused sheet keeps its input and page-turn owner.
-  static func mountsContent(of item: RenderedWorkspaceItem, in presence: SessionPresence) -> Bool {
-    if presence.focusedItemID == item.id { return true }
-    let center = presence.camera.worldToScreen(item.center, viewport: presence.viewport)
-    let halfWidth = item.geometry.width * presence.camera.scale / 2
-    let halfHeight = item.geometry.height * presence.camera.scale / 2
-    let margin = 96.0 + WorkspaceCoverRaster.shadowPadding * presence.camera.scale
-    return center.x + halfWidth >= -margin && center.x - halfWidth <= presence.viewport.x + margin
-      && center.y + halfHeight >= -margin && center.y - halfHeight <= presence.viewport.y + margin
-  }
-
 }
 
 /// A Show command may outlive its camera animation while WebKit finds a block's
@@ -108,6 +70,7 @@ final class NotebookReferencePageResolution {
 
 struct SpatialWorkspaceView: View {
   @Environment(\.scenePhase) private var scenePhase
+  @Environment(\.displayScale) private var displayScale
   @Environment(NotebookAppModel.self) private var model
 
   @State private var pointerPreview: CGRect?
@@ -125,9 +88,7 @@ struct SpatialWorkspaceView: View {
   @State private var cameraSettlement = SceneCameraSettlement()
   @State private var referencePageResolution = NotebookReferencePageResolution()
   @State private var spatialInkSurfaces = SpatialInkSurfaceRegistry()
-  #if os(iOS)
     @State private var openingFeedback = UIImpactFeedbackGenerator(style: .soft)
-  #endif
 
   var body: some View {
     GeometryReader { geometry in
@@ -136,22 +97,29 @@ struct SpatialWorkspaceView: View {
         y: geometry.size.height
       )
       let presence = normalizedPresence(for: viewport)
-      let frame = model.sceneIndex.map {
+      let requestedFrame = model.sceneIndex.map {
         WorkspaceSceneFrame(index: $0, presence: presence, portalCamera: model.scenePortalCamera,
           pinned: scenePins(presence: presence))
       }
+      let cohort = model.compositionTiles.published.flatMap {
+        $0.plan.presentations[.board(presence.boardID)] != nil ? $0 : nil
+      }
+      let frame = cohort?.frame
+      let compositionRequest = CompositionRequest(presence: presence, generation: model.sceneIndex?.generationID,
+        publication: model.scenePublicationGeneration,
+        revision: model.workspaceHeader?.cursor, pinned: scenePins(presence: presence),
+        permitsPreparation: model.permitsBackgroundPreparation)
       let workset = frame?.workset(boardID: presence.boardID) ?? .empty
       let rendered = workset.items
 
       ZStack {
         SpatialBoardGrid(camera: presence.camera)
-        if model.sceneIndex == nil && model.scenePreparationPending {
-          ProgressView("Подготовка пространства")
+        if cohort == nil {
+          ProgressView(model.compositionTiles.failure == nil ? "Подготовка пространства" : "Ожидание ресурсов изображения")
             .padding(12).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
             .zIndex(9_000)
         }
 
-        #if os(iOS)
           BoardPanView(
             isEnabled: (presence.mode == .board || presence.mode == .cover)
               && cameraGesture == nil && !settling && !model.isPointing,
@@ -202,21 +170,11 @@ struct SpatialWorkspaceView: View {
             }
           )
           .frame(width: viewport.x, height: viewport.y)
-        #endif
 
-        WorkspaceSceneAggregates(aggregates: workset.aggregates, presence: presence)
-        boardElements(workset.elements, presence: presence, viewport: viewport)
+        boardElements(workset.elements, presence: presence, viewport: viewport, cohort: cohort)
           .zIndex(model.isElementEditingEnabled ? 8_000 : 0)
 
-        #if os(macOS)
-          SpatialInkSurfaceView(
-            surface: .board(presence.boardID), journal: model.spatialInk, camera: presence.camera, viewport: viewport
-          )
-          .frame(width: viewport.x, height: viewport.y)
-          .allowsHitTesting(false)
-        #endif
 
-        #if os(iOS)
           SpatialInkCanvas(
             boardID: presence.boardID,
             camera: presence.camera,
@@ -244,12 +202,10 @@ struct SpatialWorkspaceView: View {
               && !model.isElementEditingEnabled && !model.isPointing
           )
           .allowsHitTesting(false)
-        #endif
 
-        sceneItems(rendered, presence: presence, viewport: viewport, frame: frame)
+        sceneItems(rendered, presence: presence, viewport: viewport, frame: frame, cohort: cohort)
           .zIndex(liftedItemID == nil ? 0 : 9_000)
 
-        #if os(iOS)
           WorkspaceGestureLayer(
             isEnabled: true,
             defersHorizontalMotionToPageTurn: (presence.mode == .page
@@ -264,14 +220,12 @@ struct SpatialWorkspaceView: View {
           .allowsHitTesting(false)
 
           itemSelectionControl(presence: presence, viewport: viewport)
-        #endif
 
         NotebookAttentionMarks(presence:presence)
-        #if os(iOS)
           if model.isPointing {
             NotebookPointerView(onPreview:{ pointerPreview = $0 },onPoint:{ start,end in
-              guard cameraGesture == nil, !settling, !model.scenePreparationPending else { return }
-              if let selection = NotebookAttentionProjection.capture(start:start,end:end,model:model,presence:presence) {
+              guard cameraGesture == nil, !settling, !model.scenePreparationPending, let cohort else { return }
+              if let selection = NotebookAttentionProjection.capture(start:start,end:end,model:model,presence:presence,cohort:cohort) {
                 model.publishHumanContext(selection)
               }
             })
@@ -284,19 +238,15 @@ struct SpatialWorkspaceView: View {
             guard cameraGesture == nil, !settling, !pageTurnIsActive, !contentGestureActive else { return }
             model.confirmVisibleActions(presence: presence, scene: workset)
           }.allowsHitTesting(false)
-        #else
-          if model.isPointing {
-            Color.clear.contentShape(Rectangle()).gesture(DragGesture(minimumDistance:0).onEnded { value in
-              if let selection = NotebookAttentionProjection.capture(start:value.startLocation,end:value.location,model:model,presence:presence) {
-                model.publishHumanContext(selection)
-              }
-            })
-          }
-        #endif
 
         controls(presence: presence, viewport: viewport)
       }
       .clipped()
+      .environment(\.sceneCompositionCohort, cohort)
+      .task(id: compositionRequest) {
+        model.prepareComposition(presence: presence, frame: requestedFrame,
+          pinned: compositionRequest.pinned, displayScale: displayScale)
+      }
       .onAppear {
         publishViewportIfNeeded(viewport)
       }
@@ -355,6 +305,7 @@ struct SpatialWorkspaceView: View {
         pageTurnIsActive = false
       }
       .onDisappear {
+        model.compositionTiles.cancelPreparation()
         referencePageResolution.cancel()
         cameraSettlement.cancel()
         cameraGesture = nil
@@ -367,6 +318,15 @@ struct SpatialWorkspaceView: View {
         model.clearElementSelection()
       }
     }
+  }
+
+  private struct CompositionRequest: Equatable {
+    let presence: SessionPresence
+    let generation: UUID?
+    let publication: UInt64
+    let revision: UInt64?
+    let pinned: Set<WorkspaceSpatialID>
+    let permitsPreparation: Bool
   }
 
   @ViewBuilder
@@ -416,7 +376,6 @@ struct SpatialWorkspaceView: View {
     presence: SessionPresence,
     viewport: SpatialPoint
   ) -> some View {
-    #if os(iOS)
       if presence.mode == .board && !settling {
         Menu {
           Button {
@@ -480,7 +439,6 @@ struct SpatialWorkspaceView: View {
         .zIndex(10_000)
       }
 
-    #endif
     NotebookNavigationView(presence: presence,
       documentPageCount: presence.focusedItemID.flatMap { documentPageLayouts[$0]?.pageCount } ?? 1,
       onBack: {
@@ -497,6 +455,7 @@ struct SpatialWorkspaceView: View {
   }
 
   private struct ItemPlaneRevision: Equatable {
+    let cohortID: UUID?
     let generation: UUID?
     let contents: UInt64
     let ids: [UUID]
@@ -520,8 +479,8 @@ struct SpatialWorkspaceView: View {
   }
 
   private func sceneItems(_ rendered: [RenderedWorkspaceItem], presence: SessionPresence,
-    viewport: SpatialPoint, frame: WorkspaceSceneFrame?) -> some View {
-    let revision = ItemPlaneRevision(generation: model.sceneIndex?.generationID,
+    viewport: SpatialPoint, frame: WorkspaceSceneFrame?, cohort: SceneCompositionCohort?) -> some View {
+    let revision = ItemPlaneRevision(cohortID: cohort?.id, generation: model.sceneIndex?.generationID,
       contents: model.collaborationReadEpoch, ids: rendered.map(\.id),
       coverIDs: frame?.covers.mapValues { $0.elements.map { "element:" + $0.id } + $0.aggregates.map { "aggregate:" + String($0.id) } } ?? [:], mode: presence.mode,
       focused: presence.focusedItemID, open: presence.openProgress,
@@ -534,22 +493,31 @@ struct SpatialWorkspaceView: View {
         || selectedItemID != nil ? presence.camera : nil)
     return SceneCameraPlane(presence: presence, revision: revision, reanchorsOnRevision: false,
       isCameraActive: cameraGesture != nil || panStart != nil || settling) { anchor in
-      ZStack { sceneItemContents(rendered, presence: presence, viewport: viewport, anchorCamera: anchor.camera, frame: frame) }
-        .environment(model).environment(\.workspaceSceneFrame, frame)
+      ZStack {
+        if let cohort {
+          ForEach(cohort.bands(in: .board(presence.boardID), layer: .covers)) { band in
+            SceneCompositionTileBandView(cohort: cohort, band: band, presence: anchor).zIndex(Double(band.rank))
+          }
+        }
+        sceneItemContents(rendered, presence: presence, viewport: viewport, anchorCamera: anchor.camera,
+          frame: frame, cohort: cohort)
+      }
+        .environment(model).environment(\.workspaceSceneFrame, frame).environment(\.sceneCompositionCohort, cohort)
     }
   }
 
   private func sceneItemContents(_ rendered: [RenderedWorkspaceItem], presence: SessionPresence,
-    viewport: SpatialPoint, anchorCamera: SpatialCamera, frame: WorkspaceSceneFrame?) -> some View {
+    viewport: SpatialPoint, anchorCamera: SpatialCamera, frame: WorkspaceSceneFrame?, cohort: SceneCompositionCohort?) -> some View {
     ForEach(rendered.filter {
+          cohort?.plan.allowsLive(.item($0.id), in: .board(presence.boardID)) == true && (
           WorkspaceSceneProjection.mountsContent(of: $0, in: presence)
             || $0.id == selectedItemID || $0.id == liftedItemID
-            || $0.id == cameraGesture?.candidateItemID
+            || $0.id == cameraGesture?.candidateItemID)
         }) { rendered in
           WorkspaceSceneItem(
             rendered: rendered,
-            document: model.documents[rendered.id],
-            documentState: model.documentStates[rendered.id],
+            document: presence.focusedItemID == rendered.id ? model.documents[rendered.id] : cohort?.liveData.documents[rendered.id],
+            documentState: presence.focusedItemID == rendered.id ? model.documentStates[rendered.id] : cohort?.liveData.states[rendered.id],
             documentPageIndex: presence.focusedItemID == rendered.id
               ? presence.documentPageIndex
               : 0,
@@ -559,7 +527,6 @@ struct SpatialWorkspaceView: View {
             boardID: presence.boardID,
             contentRevision: model.collaborationReadEpoch,
             coverElements: frame?.covers[rendered.id]?.elements ?? [],
-            coverAggregates: frame?.covers[rendered.id]?.aggregates ?? [],
             viewport: viewport,
             isFocused: presence.focusedItemID == rendered.id,
             preparesCoverMotion: presence.focusedItemID == rendered.id
@@ -638,13 +605,15 @@ struct SpatialWorkspaceView: View {
             }
           )
           .equatable()
-          .zIndex(liftedItemID == rendered.id ? 9_000 : rendered.zIndex)
+          .zIndex(liftedItemID == rendered.id ? 9_000 : (cohort?.plan.rank(id: .item(rendered.id), in: .board(presence.boardID)) ?? 0))
         }
 
   }
 
   private struct ElementPlaneRevision: Equatable {
+    let cohortID: UUID?
     let generation: UUID?
+    let focus: InteractiveElementReference?
     let elements: [String]
     let editing: Bool
     let selection: EditableElementReference?
@@ -657,16 +626,23 @@ struct SpatialWorkspaceView: View {
   }
 
   private func boardElements(_ elements: [SpatialElement], presence: SessionPresence,
-    viewport: SpatialPoint) -> some View {
+    viewport: SpatialPoint, cohort: SceneCompositionCohort?) -> some View {
     let selection = model.elementEditingSession.selection
-    let revision = ElementPlaneRevision(generation: model.sceneIndex?.generationID,
-      elements: elements.map(\.id), editing: model.isElementEditingEnabled,
+    let revision = ElementPlaneRevision(cohortID: cohort?.id, generation: model.sceneIndex?.generationID,
+      focus: model.interactiveElementFocus, elements: elements.map(\.id), editing: model.isElementEditingEnabled,
       selection: selection, translation: model.elementEditingSession.translation,
       resize: selection.map { model.elementResizeDelta($0) } ?? .zero,
       pending: model.scenePreparationPending, editingCamera: selection == nil ? nil : presence.camera)
     return SceneCameraPlane(presence: presence, revision: revision,
       isCameraActive: cameraGesture != nil || panStart != nil || settling) { anchor in
-      ZStack { boardElementContents(elements, presence: anchor, viewport: anchor.viewport) }
+      ZStack {
+        if let cohort {
+          ForEach(cohort.bands(in: .board(presence.boardID), layer: .elements)) { band in
+            SceneCompositionTileBandView(cohort: cohort, band: band, presence: anchor).zIndex(Double(band.rank))
+          }
+        }
+        boardElementContents(elements, presence: anchor, viewport: anchor.viewport, cohort: cohort)
+      }
         .environment(model)
     }
   }
@@ -675,9 +651,10 @@ struct SpatialWorkspaceView: View {
   private func boardElementContents(
     _ elements: [SpatialElement],
     presence: SessionPresence,
-    viewport: SpatialPoint
+    viewport: SpatialPoint,
+    cohort: SceneCompositionCohort?
   ) -> some View {
-    ForEach(elements) { element in
+    ForEach(elements.filter { cohort?.plan.allowsLive(.element($0.id), in: .board(presence.boardID)) == true }) { element in
         if let worldOrigin = element.worldOrigin {
           let reference = EditableElementReference.spatial(elementID: element.id)
           let base = presence.camera.worldToScreen(
@@ -729,6 +706,7 @@ struct SpatialWorkspaceView: View {
               x: origin.x + element.frame.width * presence.camera.scale / 2,
               y: origin.y + element.frame.height * presence.camera.scale / 2
             )
+            .zIndex(cohort?.plan.rank(id: .element(element.id), in: .board(presence.boardID)) ?? 0)
         }
       }
   }
@@ -779,12 +757,10 @@ struct SpatialWorkspaceView: View {
   }
 
   private func publishViewportIfNeeded(_ viewport: SpatialPoint) {
-    #if os(iOS)
       guard let presence = model.presence,
         presence.viewport != viewport
       else { return }
       model.updatePresence(normalizedPresence(for: viewport), settled: true)
-    #endif
   }
 
   private func scenePins(presence: SessionPresence) -> Set<WorkspaceSpatialID> {
@@ -794,6 +770,11 @@ struct SpatialWorkspaceView: View {
     }
     if case .spatial(let id) = model.elementEditingSession.selection { pins.insert(.element(id)) }
     if let editingSpatialTextID { pins.insert(.element(editingSpatialTextID)) }
+    if case .board(let boardID, let elementID) = model.interactiveElementFocus {
+      pins.insert(.element(elementID))
+      if let element = model.sceneIndex?.element(id: elementID, boardID: boardID),
+        element.surface.kind == .cover, let carrier = element.surface.ownerID { pins.insert(.item(carrier)) }
+    }
     return pins
   }
 
@@ -833,20 +814,14 @@ struct SpatialWorkspaceView: View {
     if let focusedItemID = presence.focusedItemID {
       return focusedItemID == itemID
     }
-    #if os(iOS)
       return model.workspace?.selectedItemID == itemID
-    #else
-      return false
-    #endif
   }
 
   private func handleBoardMagnification(_ phase: WorkspaceMagnificationPhase) {
     switch phase {
     case .began(let centroid, let isOpeningApproach):
       interruptSettlementForInput()
-      #if os(iOS)
         openingFeedback.prepare()
-      #endif
       selectedItemID = nil
       editingSpatialTextID = nil
       guard let currentPresence = model.presence else { return }
@@ -1482,15 +1457,8 @@ struct SpatialWorkspaceView: View {
   }
 
   private func performOpeningFeedback() {
-    #if os(iOS)
       openingFeedback.impactOccurred(intensity: 0.6)
       openingFeedback.prepare()
-    #elseif os(macOS)
-      NSHapticFeedbackManager.defaultPerformer.perform(
-        .alignment,
-        performanceTime: .now
-      )
-    #endif
   }
 
   private func createItem(
@@ -1588,7 +1556,6 @@ private struct WorkspaceSceneItem: View, Equatable {
   let boardID: UUID
   let contentRevision: UInt64
   let coverElements: [SpatialElement]
-  let coverAggregates: [WorkspaceSpatialAggregate]
   let viewport: SpatialPoint
   let isFocused: Bool
   let preparesCoverMotion: Bool
@@ -1618,7 +1585,6 @@ private struct WorkspaceSceneItem: View, Equatable {
     lhs.rendered.id == rhs.rendered.id && lhs.rendered.center == rhs.rendered.center
       && lhs.rendered.zIndex == rhs.rendered.zIndex && lhs.contentRevision == rhs.contentRevision
       && lhs.coverElements.map(\.id) == rhs.coverElements.map(\.id)
-      && lhs.coverAggregates == rhs.coverAggregates
       && lhs.boardID == rhs.boardID && lhs.camera == rhs.camera && lhs.viewport == rhs.viewport
       && lhs.isFocused == rhs.isFocused && lhs.preparesCoverMotion == rhs.preparesCoverMotion
       && lhs.preparesContent == rhs.preparesContent && lhs.openProgress == rhs.openProgress
@@ -1693,7 +1659,7 @@ private struct WorkspaceSceneItem: View, Equatable {
     if preparesContent, !notebookItem.pageIDs.isEmpty {
       PageTurnSurface(
         ownerID: rendered.id,
-        pageCount: notebookItem.pageIDs.count + 1,
+        pageCount: model.notebookPageCount(notebookItem.id) + 1,
         selectedIndex: notebookSelectedPageIndex,
         allowsTrailingPageCreation: true,
         navigationIsEnabled: pageNavigationIsEnabled,
@@ -1798,13 +1764,19 @@ private struct WorkspaceSceneItem: View, Equatable {
     isLive: Bool,
     onRenderReady: PageTurnReadiness
   ) -> AnyView {
-    guard index >= 0,
-      index < notebookItem.pageIDs.count,
-      let page = model.pages[notebookItem.pageIDs[index]]
-    else {
+    guard index >= 0, index < model.notebookPageCount(notebookItem.id) else {
       return AnyView(
         BlankPageSurface(fallbackSize: notebookFallbackSize)
-          .onAppear { onRenderReady(true) }
+          .onAppear { onRenderReady(index == model.notebookPageCount(notebookItem.id)) }
+      )
+    }
+    guard let page = model.notebookPage(at: index, in: notebookItem.id) else {
+      return AnyView(
+        BlankPageSurface(fallbackSize: notebookFallbackSize)
+          .overlay { ProgressView().allowsHitTesting(false) }
+          .onAppear { onRenderReady(false) }
+          .task { await model.prepareNotebookPage(at: index, in: notebookItem.id) }
+          .accessibilityLabel("Загружается лист \(index + 1)")
       )
     }
     return AnyView(
@@ -1864,13 +1836,11 @@ private struct WorkspaceSceneItem: View, Equatable {
   }
 
   private func announcePage(_ number: Int) {
-    #if os(iOS)
       UISelectionFeedbackGenerator().selectionChanged()
       UIAccessibility.post(
         notification: .pageScrolled,
         argument: "Страница \(number)"
       )
-    #endif
   }
 
   private var itemCover: some View {
@@ -1879,7 +1849,6 @@ private struct WorkspaceSceneItem: View, Equatable {
       geometry: rendered.geometry,
       spatialInkSurfaces: spatialInkSurfaces,
       elements: coverElements,
-      aggregates: coverAggregates,
       editingTextID: editingTextID,
       isElementEditingEnabled: model.isElementEditingEnabled && !model.scenePreparationPending,
       portalOpenProgress: openProgress,
@@ -1949,9 +1918,7 @@ private struct WorkspaceSceneItem: View, Equatable {
   private func beginLift() {
     guard !model.scenePreparationPending, !model.isItemBeingDeleted(rendered.id), !liftStarted else { return }
     liftStarted = true
-    #if os(iOS)
       UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-    #endif
     onLiftChanged(rendered.id, true)
   }
 
@@ -1961,690 +1928,3 @@ private struct WorkspaceSceneItem: View, Equatable {
   }
 }
 
-/// A portal is a read-only projection of the child board, not a decorative
-/// cover. It uses the same camera that becomes active at handoff. Recursive
-/// drawing follows a pixel threshold and a finite frame budget; the durable
-/// hierarchy itself has no depth bound.
-struct BoardPortalPreview: View {
-  @Environment(NotebookAppModel.self) private var model
-  @Environment(\.workspaceSceneFrame) private var frame
-  @State private var spatialInkSurfaces = SpatialInkSurfaceRegistry()
-
-  let boardID: UUID
-  let pixelScale: Double
-  let remainingPortalPasses: Int
-  let transitionViewport: SpatialPoint
-
-  var body: some View {
-    if model.sceneIndex?.board(id: boardID) != nil {
-      let camera = BoardPortalProjection.entryCamera(
-        portalCamera: model.scenePortalCamera(boardID: boardID) ?? BoardPortalCamera(),
-        viewport: transitionViewport
-      )
-      let viewport = BoardPortalProjection.renderViewport(viewport: transitionViewport)
-      let fill = BoardPortalProjection.fillScale(viewport: transitionViewport)
-      let presence = SessionPresence(
-        boardID: boardID,
-        mode: .board,
-        camera: camera,
-        viewport: viewport
-      )
-      let projectionFrame = frame ?? model.sceneIndex.map {
-        WorkspaceSceneFrame(index: $0, presence: presence, portalCamera: model.scenePortalCamera)
-      }
-      let workset = projectionFrame?.workset(boardID: boardID) ?? .empty
-      let rendered = workset.items
-      let elements = workset.elements
-
-      ZStack {
-        SpatialBoardGrid(camera: camera, outputScale: pixelScale / fill)
-        if workset.generationID == nil {
-          Text("Подготовка области").font(.caption).foregroundStyle(.secondary)
-            .padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-        }
-        WorkspaceSceneAggregates(aggregates: workset.aggregates, presence: presence)
-
-        ForEach(elements) {
-          element in
-          if let origin = element.worldOrigin {
-            let screen = camera.worldToScreen(origin, viewport: viewport)
-            SpatialElementContent(element: element, commitsState: false)
-              .frame(width: element.frame.width, height: element.frame.height)
-              .scaleEffect(camera.scale)
-              .frame(
-                width: element.frame.width * camera.scale,
-                height: element.frame.height * camera.scale
-              )
-              .position(
-                x: screen.x
-                  + (element.frame.x + element.frame.width / 2) * camera.scale,
-                y: screen.y
-                  + (element.frame.y + element.frame.height / 2) * camera.scale
-              )
-          }
-        }
-
-        #if os(iOS)
-          PortalBoardInkView(
-            boardID: boardID, journal: model.spatialInk,
-            camera: camera, viewport: viewport
-          )
-        #else
-          SpatialInkSurfaceView(surface: .board(boardID), journal: model.spatialInk, camera: camera, viewport: viewport)
-        #endif
-
-        ForEach(rendered.filter { WorkspaceSceneProjection.mountsContent(of: $0, in: presence) }) { item in
-          let screen = camera.worldToScreen(item.center, viewport: viewport)
-          WorkspaceItemCoverView(
-            item: item.item,
-            geometry: item.geometry,
-            spatialInkSurfaces: spatialInkSurfaces,
-            elements: projectionFrame?.covers[item.id]?.elements ?? [],
-            aggregates: projectionFrame?.covers[item.id]?.aggregates ?? [],
-            editingTextID: nil, isElementEditingEnabled: false,
-            portalOpenProgress: 0, portalViewport: transitionViewport,
-            onTap: { _, _ in }, onLiftChanged: { _ in },
-            onTranslationChanged: { _ in }, onTranslationEnded: { _ in },
-            onTextEditingEnded: { _ in }, onElementSelected: {},
-            isPortalProjection: true,
-            portalPixelScale: pixelScale * camera.scale / fill,
-            remainingPortalPasses: remainingPortalPasses - 1
-          )
-          .frame(
-            width: item.geometry.width,
-            height: item.geometry.height
-          )
-          .background { WorkspaceItemShadow(geometry: item.geometry) }
-          .scaleEffect(camera.scale)
-          .position(x: screen.x, y: screen.y)
-          .zIndex(item.zIndex)
-        }
-      }
-      .environment(\.workspaceSceneFrame, projectionFrame)
-      .frame(width: viewport.x, height: viewport.y)
-      .scaleEffect(1 / fill)
-      .frame(width: WorkspaceItemGeometry.notebook.width, height: WorkspaceItemGeometry.notebook.height)
-      .clipped()
-      .allowsHitTesting(false)
-      .accessibilityHidden(true)
-    } else {
-      Color(red: 0.94, green: 0.95, blue: 0.945)
-    }
-  }
-}
-
-struct WorkspaceCoverTitle: View {
-  let item: WorkspaceItem
-  let geometry: WorkspaceItemGeometry
-
-  var body: some View {
-    if item.kind != .board, !item.title.isEmpty {
-      Text(item.title)
-        .font(.system(size: geometry.width * (item.kind == .document ? 0.056 : 0.048),
-          weight: .medium, design: item.kind == .document ? .serif : .default))
-        .foregroundStyle(Color.black.opacity(0.76))
-        .lineLimit(3)
-        .frame(width: geometry.width * 0.72, alignment: .leading)
-        .offset(x: geometry.width * (item.kind == .document ? 0.105 : 0.145),
-          y: geometry.height * (item.kind == .document ? 0.145 : 0.148))
-    }
-  }
-}
-
-struct WorkspaceItemCoverView: View {
-  @Environment(NotebookAppModel.self) private var model
-
-  let item: WorkspaceItem
-  let geometry: WorkspaceItemGeometry
-  let spatialInkSurfaces: SpatialInkSurfaceRegistry
-  let elements: [SpatialElement]
-  var aggregates: [WorkspaceSpatialAggregate] = []
-  let editingTextID: String?
-  let isElementEditingEnabled: Bool
-  let portalOpenProgress: Double
-  let portalViewport: SpatialPoint
-  let onTap: (CGPoint, Int) -> Void
-  let onLiftChanged: (Bool) -> Void
-  let onTranslationChanged: (CGSize) -> Void
-  let onTranslationEnded: (CGSize) -> Void
-  let onTextEditingEnded: (String) -> Void
-  let onElementSelected: () -> Void
-  var showsDepth = true
-  var isPortalProjection = false
-  var portalPixelScale: Double = 1
-  var remainingPortalPasses = WorkspaceSceneProjection.portalPasses
-
-  var body: some View {
-    ZStack(alignment: .topLeading) {
-      coverBackground
-
-      WorkspaceCoverTitle(item: item, geometry: geometry)
-
-      if !aggregates.isEmpty {
-        WorkspaceSceneAggregates(aggregates: aggregates, presence: .init(mode: .board,
-          camera: .init(center: .init(x: geometry.width / 2, y: geometry.height / 2), scale: 1),
-          viewport: .init(x: geometry.width, y: geometry.height)))
-      }
-
-      ForEach(elements) { element in
-        let reference = EditableElementReference.spatial(elementID: element.id)
-        let retainsTextInput = !isPortalProjection
-          && element.kind == .nativeText && editingTextID == element.id
-        EditableElementContainer(
-          isEditingEnabled: isElementEditingEnabled && !model.scenePreparationPending,
-          isSelected: !model.scenePreparationPending && model.elementEditingSession.selection == reference,
-          coordinateScale: 1,
-          translation: model.scenePreparationPending ? .zero : elementTranslation(for: reference),
-          isContentInteractive: retainsTextInput || (!model.scenePreparationPending && !element.javaScript.isEmpty),
-          onSelect: {
-            guard !model.scenePreparationPending else { return }
-            model.selectElement(reference)
-            onElementSelected()
-          },
-          onDragChanged: { translation in
-            guard !model.scenePreparationPending else { return }
-            model.updateElementDrag(reference, translation: translation)
-          },
-          onDragEnded: { translation in
-            guard !model.scenePreparationPending else { return }
-            model.finishElementDrag(reference, translation: translation)
-          },
-          onResizeChanged: {
-            guard !model.scenePreparationPending else { return }
-            model.updateElementResize(reference, delta: $0)
-          },
-          onResizeEnded: {
-            guard !model.scenePreparationPending else { return }
-            model.finishElementResize(reference, delta: $0)
-          },
-          resizeDelta: model.scenePreparationPending ? .zero : model.elementResizeDelta(reference),
-          onDelete: {
-            guard !model.scenePreparationPending else { return }
-            model.deleteElement(reference)
-          }
-        ) {
-          SpatialElementContent(
-            element: element, commitsState: !isPortalProjection,
-            boardID: model.sceneIndex?.ownerBoard(itemID: item.id),
-            isTextEditing: retainsTextInput,
-            onTextEditingEnded: { onTextEditingEnded(element.id) }
-          )
-        }
-        .disabled(model.scenePreparationPending && !retainsTextInput)
-        .allowsHitTesting(!model.scenePreparationPending || retainsTextInput)
-        .frame(width: element.frame.width, height: element.frame.height)
-        .offset(x: element.frame.x, y: element.frame.y)
-        .opacity(portalOverlayOpacity)
-      }
-
-      #if os(iOS)
-        if (!isElementEditingEnabled || model.isItemBeingDeleted(item.id)) && !isPortalProjection {
-          NotebookInteractionView(
-            permitsManipulation: !model.scenePreparationPending && !model.isItemBeingDeleted(item.id),
-            canBeginContact: { !model.isItemBeingDeleted(item.id) },
-            passthroughFrames: model.isItemBeingDeleted(item.id) ? [] : interactionPassthroughFrames,
-            onTap: { location, count in
-              guard !model.isItemBeingDeleted(item.id) else { return }
-              // Finishing a text session does not need the next geometry index.
-              // Keep this input owner mounted while the saved text is prepared.
-              if model.scenePreparationPending {
-                if let editingTextID { onTextEditingEnded(editingTextID) }
-                return
-              }
-              onTap(location, count)
-            },
-            onLiftChanged: { lifted in
-              guard !lifted || (!model.scenePreparationPending && !model.isItemBeingDeleted(item.id)) else { return }
-              onLiftChanged(lifted)
-            },
-            onTranslationChanged: { translation in
-              guard !model.scenePreparationPending, !model.isItemBeingDeleted(item.id) else { return }
-              onTranslationChanged(translation)
-            },
-            onTranslationEnded: { translation in
-              guard !model.isItemBeingDeleted(item.id) else { return }
-              onTranslationEnded(model.scenePreparationPending ? .zero : translation)
-            }
-          )
-          .frame(
-            width: geometry.width,
-            height: geometry.height
-          )
-          .accessibilityHidden(true)
-        }
-      #endif
-
-      #if os(iOS)
-        SpatialInkSurfaceView(
-          surface: .cover(item.id),
-          journal: model.spatialInk,
-          registry: spatialInkSurfaces
-        )
-        .allowsHitTesting(false)
-        .opacity(portalOverlayOpacity)
-      #elseif os(macOS)
-        SpatialInkSurfaceView(surface: .cover(item.id), journal: model.spatialInk)
-          .allowsHitTesting(false).opacity(portalOverlayOpacity)
-      #endif
-    }
-    .frame(
-      width: geometry.width,
-      height: geometry.height
-    )
-    .clipShape(
-      RoundedRectangle(
-        cornerRadius: portalCornerRadius,
-        style: .continuous
-      )
-    )
-    .background {
-      if showsDepth { WorkspaceItemDepthView(kind: item.kind, geometry: geometry) }
-    }
-    .overlay {
-      if model.isItemBeingDeleted(item.id), !isPortalProjection {
-        ProgressView("Удаление")
-          .padding(16).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-          .allowsHitTesting(false)
-      }
-    }
-    .contentShape(
-      RoundedRectangle(
-        cornerRadius: geometry.cornerRadius,
-        style: .continuous
-      )
-    )
-    .onChange(of: model.scenePreparationPending) { _, pending in
-      guard pending, !isPortalProjection,
-        let selection = model.elementEditingSession.selection,
-        case .spatial(let selectedID) = selection,
-        elements.contains(where: { $0.id == selectedID })
-      else { return }
-      // A removed frame handle must not revive its unfinished translation when
-      // the next scene arrives. The native text session has a separate owner.
-      model.updateElementDrag(.spatial(elementID: selectedID), translation: .zero)
-    }
-  }
-
-  private var portalOverlayOpacity: Double {
-    item.kind == .board ? max(0, 1 - portalOpenProgress) : 1
-  }
-
-  private var portalCornerRadius: Double {
-    item.kind == .board
-      ? geometry.cornerRadius * max(0, 1 - portalOpenProgress)
-      : geometry.cornerRadius
-  }
-
-  private func elementTranslation(
-    for reference: EditableElementReference
-  ) -> SpatialPoint {
-    guard model.elementEditingSession.selection == reference else {
-      return .zero
-    }
-    return model.elementEditingSession.translation
-  }
-
-  @ViewBuilder
-  private var coverBackground: some View {
-    if item.kind == .board {
-      if WorkspaceSceneProjection.showsPortal(
-        pixelScale: portalPixelScale, remainingPasses: remainingPortalPasses
-      ) {
-        AnyView(BoardPortalPreview(
-          boardID: item.id,
-          pixelScale: portalPixelScale,
-          remainingPortalPasses: remainingPortalPasses,
-          transitionViewport: portalViewport
-        ))
-      } else {
-        Color(red: 0.9, green: 0.93, blue: 0.925)
-      }
-      RoundedRectangle(
-        cornerRadius: portalCornerRadius,
-        style: .continuous
-      )
-      .stroke(
-        Color.black.opacity(0.16 * max(0, 1 - portalOpenProgress)),
-        lineWidth: 2
-      )
-    } else {
-      WorkspaceCoverSurface(item: item, geometry: geometry)
-    }
-  }
-
-  private var interactionPassthroughFrames: [CGRect] {
-    Self.interactionPassthroughFrames(
-      elements: elements,
-      editingTextID: isPortalProjection ? nil : editingTextID,
-      scenePreparationPending: model.scenePreparationPending
-    )
-  }
-
-  static func interactionPassthroughFrames(
-    elements: [SpatialElement],
-    editingTextID: String?,
-    scenePreparationPending: Bool
-  ) -> [CGRect] {
-    elements.compactMap { element in
-      let isLiveEditor = element.kind == .nativeText && editingTextID == element.id
-      guard isLiveEditor || (!scenePreparationPending && element.kind != .nativeText) else {
-        return nil
-      }
-      return CGRect(
-        x: element.frame.x,
-        y: element.frame.y,
-        width: element.frame.width,
-        height: element.frame.height
-      )
-    }
-  }
-}
-
-struct SpatialElementContent: View {
-  @Environment(NotebookAppModel.self) private var model
-  let element: SpatialElement
-  let commitsState: Bool
-  let boardID: UUID?
-  let isTextEditing: Bool
-  let onTextEditingEnded: () -> Void
-
-  init(
-    element: SpatialElement,
-    commitsState: Bool = true,
-    boardID: UUID? = nil,
-    isTextEditing: Bool = false,
-    onTextEditingEnded: @escaping () -> Void = {}
-  ) {
-    self.element = element
-    self.commitsState = commitsState
-    self.boardID = boardID
-    self.isTextEditing = isTextEditing
-    self.onTextEditingEnded = onTextEditingEnded
-  }
-
-  var body: some View {
-    switch element.kind {
-    case .nativeText:
-      NativeTextElementView(
-        element: element,
-        boardID: sourceBoardID,
-        isEditing: isTextEditing && commitsState && sourceBoardID != nil,
-        onEditingEnded: onTextEditingEnded
-      )
-    case .markdown, .web:
-      let sourceBoardID = self.sourceBoardID
-      PreparedAgentElementView(element: agentElement,
-        allowsInteraction: commitsState && sourceBoardID != nil,
-        focus: .board(boardID: sourceBoardID ?? WorkspaceRoot.boardID, elementID: element.id), onRenderReady: { _ in },
-        onState: { state in
-          guard commitsState, let sourceBoardID else { return }
-          model.commitSpatialElementState(boardID: sourceBoardID, rendered: element, state: state)
-        })
-    }
-  }
-
-  private var agentElement: AgentElement {
-    agentElementSnapshotSource(element)
-  }
-
-  private var sourceBoardID: UUID? {
-    boardID ?? (element.surface.kind == .cover
-      ? element.surface.ownerID.flatMap { model.sceneIndex?.ownerBoard(itemID: $0) }
-      : element.surface.ownerID)
-  }
-
-}
-
-func agentElementSnapshotSource(_ element: SpatialElement) -> AgentElement {
-  AgentElement(
-    id: element.id,
-    kind: element.kind == .markdown ? .markdown : .web,
-    frame: PageRect(
-      x: 0,
-      y: 0,
-      width: element.frame.width,
-      height: element.frame.height
-    ),
-    source: element.source,
-    html: element.html,
-    css: element.css,
-    javaScript: element.javaScript,
-    state: element.state
-  )
-}
-
-struct SpatialTextSnapshot: View {
-  let element: SpatialElement
-
-  var body: some View {
-    Text(element.source)
-      .font(.system(size: element.textStyle.fontSize, weight: fontWeight(element.textStyle.weight)))
-      .foregroundStyle(Color(red: element.textStyle.red, green: element.textStyle.green,
-        blue: element.textStyle.blue, opacity: element.textStyle.alpha))
-      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-  }
-
-  private func fontWeight(_ value: Double) -> Font.Weight {
-    switch value {
-    case ..<0.2: .light
-    case ..<0.4: .regular
-    case ..<0.6: .medium
-    case ..<0.8: .semibold
-    default: .bold
-    }
-  }
-}
-
-private struct NativeTextElementView: View {
-  @Environment(NotebookAppModel.self) private var model
-  @FocusState private var focused: Bool
-  @State private var text: String
-  @State private var commitTask: Task<Void, Never>?
-  @State private var focusTask: Task<Void, Never>?
-  @State private var hasFinishedEditing = false
-  @State private var hasOwnedEditing = false
-
-  let element: SpatialElement
-  let boardID: UUID?
-  let isEditing: Bool
-  let onEditingEnded: () -> Void
-
-  init(
-    element: SpatialElement,
-    boardID: UUID?,
-    isEditing: Bool,
-    onEditingEnded: @escaping () -> Void
-  ) {
-    self.element = element
-    self.boardID = boardID
-    self.isEditing = isEditing
-    self.onEditingEnded = onEditingEnded
-    _text = State(initialValue: element.source)
-  }
-
-  var body: some View {
-    TextEditor(text: $text)
-      .scrollContentBackground(.hidden)
-      .background(.clear)
-      .font(
-        .system(
-          size: element.textStyle.fontSize,
-          weight: fontWeight(element.textStyle.weight)
-        )
-      )
-      .foregroundStyle(
-        Color(
-          red: element.textStyle.red,
-          green: element.textStyle.green,
-          blue: element.textStyle.blue,
-          opacity: element.textStyle.alpha
-        )
-      )
-      .focused($focused)
-      .allowsHitTesting(isEditing)
-      .accessibilityHidden(!isEditing)
-      .accessibilityIdentifier("native-text-editor")
-      .onAppear {
-        synchronizeEditingState()
-      }
-      .onChange(of: element.source) { _, source in
-        if !focused { text = source }
-      }
-      .onChange(of: text) { _, _ in
-        if isEditing { scheduleCommit() }
-      }
-      .onChange(of: isEditing) { _, _ in
-        synchronizeEditingState()
-      }
-      .onChange(of: focused) { _, isFocused in
-        if !isFocused, isEditing { finishEditing() }
-      }
-      .onDisappear {
-        focusTask?.cancel()
-        focusTask = nil
-        if isEditing { finishEditing() }
-      }
-  }
-
-  private func synchronizeEditingState() {
-    focusTask?.cancel()
-    focusTask = nil
-    if isEditing {
-      hasOwnedEditing = true
-      hasFinishedEditing = false
-      focusTask = Task { @MainActor in
-        await Task.yield()
-        guard !Task.isCancelled else { return }
-        focused = true
-      }
-    } else {
-      if focused { focused = false }
-      if hasOwnedEditing { finishEditing() }
-    }
-  }
-
-  private func scheduleCommit() {
-    commitTask?.cancel()
-    commitTask = Task { @MainActor in
-      try? await Task.sleep(for: .milliseconds(180))
-      guard !Task.isCancelled else { return }
-      commit()
-    }
-  }
-
-  private func commit() {
-    commitTask?.cancel()
-    commitTask = nil
-    guard text != element.source, let boardID else { return }
-    model.updateNativeText(boardID: boardID, elementID: element.id, text: text)
-  }
-
-  private func finishEditing() {
-    guard !hasFinishedEditing else { return }
-    hasFinishedEditing = true
-    commitTask?.cancel()
-    commitTask = nil
-    if let boardID { model.finishNativeTextEditing(boardID: boardID, elementID: element.id, text: text) }
-    onEditingEnded()
-  }
-
-  private func fontWeight(_ value: Double) -> Font.Weight {
-    switch value {
-    case ..<0.2: .light
-    case ..<0.4: .regular
-    case ..<0.6: .medium
-    case ..<0.8: .semibold
-    default: .bold
-    }
-  }
-}
-
-struct SpatialBoardGrid: View {
-  @Environment(\.displayScale) private var displayScale
-  let camera: SpatialCamera
-  var outputScale: Double = 1
-
-  var body: some View {
-    Canvas(opaque: true, colorMode: .nonLinear) { context, size in
-      context.fill(
-        Path(CGRect(origin: .zero, size: size)),
-        with: .color(BoardAppearance.background)
-      )
-
-      var worldStep = PhysicalPaper.gridSpacing
-      while worldStep * camera.scale * outputScale < BoardAppearance.minimumDotSpacing {
-        worldStep *= 2
-      }
-      let step = worldStep * camera.scale
-      let phaseX =
-        camera.center.localX
-        .truncatingRemainder(dividingBy: worldStep) * camera.scale
-      let phaseY =
-        camera.center.localY
-        .truncatingRemainder(dividingBy: worldStep) * camera.scale
-      let startX = (size.width / 2 - phaseX)
-        .truncatingRemainder(dividingBy: step)
-      let startY = (size.height / 2 - phaseY)
-        .truncatingRemainder(dividingBy: step)
-      let radius = max(0.65, 0.9 / displayScale) / outputScale
-      var dots = Path()
-      var x = startX < 0 ? startX + step : startX
-      while x <= size.width {
-        var y = startY < 0 ? startY + step : startY
-        while y <= size.height {
-          dots.addEllipse(
-            in: CGRect(
-              x: x - radius,
-              y: y - radius,
-              width: radius * 2,
-              height: radius * 2
-            )
-          )
-          y += step
-        }
-        x += step
-      }
-      context.fill(dots, with: .color(BoardAppearance.dot))
-    }
-    .ignoresSafeArea()
-  }
-}
-
-/// An overview represents the whole indexed region, not an invented thumbnail
-/// or an exact rendering of sources which have not been mounted.
-private struct WorkspaceSceneAggregates: View {
-  let aggregates: [WorkspaceSpatialAggregate]
-  let presence: SessionPresence
-
-  var body: some View {
-    let viewportBounds = WorkspaceSpatialBounds(
-      origin: presence.camera.screenToWorld(.init(x: -16, y: -16), viewport: presence.viewport),
-      width: (presence.viewport.x + 32) / presence.camera.scale,
-      height: (presence.viewport.y + 32) / presence.camera.scale)
-    ForEach(aggregates) { aggregate in
-      if let visible = aggregate.bounds.intersection(viewportBounds), visible.width > 0, visible.height > 0 {
-        let topLeft = presence.camera.worldToScreen(visible.origin, viewport: presence.viewport)
-        let left = topLeft.x, top = topLeft.y
-        let right = left + visible.width * presence.camera.scale
-        let bottom = top + visible.height * presence.camera.scale
-        RoundedRectangle(cornerRadius: 5)
-          .fill(Color.accentColor.opacity(0.08))
-          .overlay { RoundedRectangle(cornerRadius: 5).strokeBorder(Color.accentColor.opacity(0.4), style: .init(lineWidth: 1, dash: [3, 3])) }
-          .overlay {
-            if right - left > 52 && bottom - top > 24 {
-              Text("Область · \(aggregate.count)")
-                .font(.system(size: 11, weight: .medium))
-                .padding(5)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
-                .lineLimit(1)
-            }
-          }
-          .frame(width: max(2, right - left), height: max(2, bottom - top))
-          .position(x: (left + right) / 2, y: (top + bottom) / 2)
-          .accessibilityLabel("Область: \(aggregate.count) предметов. Приблизьте для подробностей.")
-          .accessibilityIdentifier("workspace-aggregate-\(aggregate.id)")
-          .allowsHitTesting(false)
-      }
-    }
-  }
-}

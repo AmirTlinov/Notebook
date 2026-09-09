@@ -9,9 +9,9 @@ final class PortalRenderingTests: XCTestCase {
   @MainActor
   func testPortalAndActiveBoardRenderTheSameContentAtHandoff() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: NotebookStore(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let childID = try XCTUnwrap(model.createBoard(at: .zero))
     let workspace = try XCTUnwrap(model.workspace)
     var hierarchy = try XCTUnwrap(model.boardHierarchy)
@@ -34,7 +34,6 @@ final class PortalRenderingTests: XCTestCase {
       XCTAssertTrue(hierarchy.upsertElement(element, in: childID, expected: nil, actor: actor))
     }
     XCTAssertTrue(hierarchy.updatePortalCamera(BoardPortalCamera(scale: 0.85), for: childID, actor: actor))
-    model.receivePeerMessage(.board(hierarchy))
     var ink = try XCTUnwrap(model.spatialInk)
     for (tool, y, width) in [(SpatialInkTool.pen, 280.0, 35.0), (.eraser, 280.0, 16.0)] {
       let points = [-240.0, 0, 240].map { x in
@@ -44,12 +43,11 @@ final class PortalRenderingTests: XCTestCase {
       }
       _ = ink.append(tool: tool, spans: [SpatialInkSpan(surface: .board(childID), samples: points)], actor: actor)
     }
-    model.receivePeerMessage(.spatialInk(ink))
     for size in [SpatialPoint(x: 834, y: 1_194), SpatialPoint(x: 1_366, y: 1_024)] {
       let camera = BoardPortalProjection.entryCamera(portalCamera: hierarchy.portalCamera(childID)!, viewport: size)
       let presence = SessionPresence(boardID: childID, mode: .board, camera: camera, viewport: size)
       let sourceIndex = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: model.documents.mapValues(\.paperSize))
-      let painter = SceneCompositionRenderer(index: sourceIndex, hierarchy: hierarchy, journal: ink)
+      let painter = SceneCompositionRenderer(source: SceneCompositionSource(index: sourceIndex, hierarchy: hierarchy, journal: ink))
       let parent = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
         camera: BoardPortalProjection.parentBoundaryCamera(portalCenter: .zero, viewport: size), viewport: size)
       let first = try pixels(try await painter.render(presence: parent, scale: 1).png, size: size)
@@ -72,9 +70,9 @@ final class PortalRenderingTests: XCTestCase {
   @MainActor
   func testSequentialCompositionKeepsOverlapsCoversAndNestedPortals() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let notebook = try XCTUnwrap(model.workspace?.selectedItemID)
     model.moveItem(notebook, to: .init(x: -350, y: 0))
     let portal = try XCTUnwrap(model.createBoard(at: .init(x: 650, y: 0)))
@@ -100,20 +98,18 @@ final class PortalRenderingTests: XCTestCase {
         in: element.surface == .board(portal) ? portal : workspace.rootBoardID, expected: nil, actor: actor))
     }
     _ = hierarchy.updatePortalCamera(.init(scale: 0.8), for: portal, actor: actor)
-    model.receivePeerMessage(.board(hierarchy))
     var ink = try XCTUnwrap(model.spatialInk)
     for (tool, width) in [(SpatialInkTool.pen, 42.0), (.eraser, 13.0)] {
       let samples = [100.0, 650.0].map { x in SpatialInkSample(point: .init(x: x, y: 550),
         timeOffset: x / 1000, width: width, opacity: 1, force: 1, azimuth: 0, altitude: 1) }
       _ = ink.append(tool: tool, spans: [.init(surface: .cover(notebook), samples: samples)], actor: actor)
     }
-    model.receivePeerMessage(.spatialInk(ink))
     let sourceIndex = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: model.documents.mapValues(\.paperSize))
     for scale in [0.3, 0.6] {
       let size = SpatialPoint(x: 1194, y: 834)
       let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
         camera: .init(center: .init(x: 400, y: 0), scale: scale), viewport: size)
-      let painter = SceneCompositionRenderer(index: sourceIndex, hierarchy: hierarchy, journal: ink)
+      let painter = SceneCompositionRenderer(source: SceneCompositionSource(index: sourceIndex, hierarchy: hierarchy, journal: ink))
       let result = try await painter.render(presence: presence, scale: 1)
       let actual = try XCTUnwrap(NSImage(data: result.png))
       let actualPixels = try pixels(result.png, size: size)
@@ -141,9 +137,9 @@ final class PortalRenderingTests: XCTestCase {
   @MainActor
   func testOffCenterPortalGridKeepsTheScreenPixelScaleAtHandoff() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let childID = try XCTUnwrap(model.createBoard(at: .zero))
     let workspace = try XCTUnwrap(model.workspace)
     let hierarchy = try XCTUnwrap(model.boardHierarchy)
@@ -155,7 +151,7 @@ final class PortalRenderingTests: XCTestCase {
         let camera = try XCTUnwrap(BoardPortalProjection.enteringCamera(from: parent,
           portalCamera: portalCamera, portalCenter: .zero, viewport: size))
         let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: model.documents.mapValues(\.paperSize))
-        let painter = SceneCompositionRenderer(index: index, hierarchy: hierarchy, journal: try XCTUnwrap(model.spatialInk))
+        let painter = SceneCompositionRenderer(source: SceneCompositionSource(index: index, hierarchy: hierarchy, journal: try XCTUnwrap(model.spatialInk)))
         let first = try pixels(try await painter.render(presence: .init(boardID: workspace.rootBoardID,
           mode: .board, camera: parent, viewport: size), scale: 1).png, size: size)
         let second = try pixels(try await painter.render(presence: .init(boardID: childID,
@@ -176,14 +172,20 @@ final class PortalRenderingTests: XCTestCase {
   @MainActor
   func testIndependentMergeRepublishesPNGWithTheSameHierarchyClock() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let notebookID = try XCTUnwrap(model.workspace?.selectedItemID)
     let childID = try XCTUnwrap(model.createBoard(at: .zero))
-    let base = try XCTUnwrap(model.boardHierarchy)
-    let workspace = try XCTUnwrap(model.workspace)
+    let created = await model.finishPendingPersistence()
+    XCTAssertTrue(created)
+    let workspace = try store.loadIndex()
+    let base = try store.loadBoard(items: workspace.items)
+    let leftStore = NotebookStore(root: root.appendingPathComponent("left"))
+    let rightStore = NotebookStore(root: root.appendingPathComponent("right"))
+    try NotebookPeerFixture.copy(from: store, to: leftStore, peerID: model.actorID)
+    try NotebookPeerFixture.copy(from: store, to: rightStore, peerID: model.actorID)
     var left = base
     var right = base
     let high = UUID(uuidString: "FFFFFFFF-FFFF-4FFF-8FFF-FFFFFFFFFFFF")!
@@ -196,14 +198,21 @@ final class PortalRenderingTests: XCTestCase {
     XCTAssertTrue(right.upsertElement(element, in: childID, expected: nil, actor: low))
     model.updatePresence(SessionPresence(boardID: workspace.rootBoardID, mode: .board,
       camera: SpatialCamera(scale: 0.6), viewport: SpatialPoint(x: 834, y: 1_194)), settled: true)
-    model.receivePeerMessage(.board(left))
-    let before = try await receipt(store: store, revision: left.revision)
-    model.receivePeerMessage(.board(right))
+    try leftStore.saveBoard(left, items: workspace.items)
+    try rightStore.saveBoard(right, items: workspace.items)
+    try await NotebookPeerFixture.deliver(from: leftStore, to: model, peerID: high)
+    let firstSaved = await model.finishPendingPersistence()
+    XCTAssertTrue(firstSaved, model.persistenceFailure ?? "")
+    let beforeRevision = try XCTUnwrap(store.workspaceHeader().boardRevision)
+    let before = try await receipt(store: store, revision: beforeRevision)
+    try await NotebookPeerFixture.deliver(from: rightStore, to: model, peerID: low)
     await model.finishPendingPersistence()
-    let merged = try XCTUnwrap(model.boardHierarchy)
+    let merged = try store.loadBoard(items: workspace.items)
     XCTAssertEqual(merged.stamp, left.stamp)
     XCTAssertNotEqual(merged.revision, left.revision)
-    let after = try await receipt(store: store, revision: merged.revision)
+    let afterRevision = try XCTUnwrap(store.workspaceHeader().boardRevision)
+    XCTAssertNotEqual(afterRevision, beforeRevision, "The SQL owner identity includes the independent child edit, not just the maximum hierarchy clock")
+    let after = try await receipt(store: store, revision: afterRevision)
     XCTAssertNotEqual(after.pngSHA256, before.pngSHA256)
     XCTAssertNotNil(SceneRenderResources.shared.image(for: agentElementSnapshotSource(element)))
     XCTAssertEqual(after.pngSHA256, SHA256.hash(data: try Data(contentsOf: store.currentViewPreviewURL))
@@ -213,10 +222,10 @@ final class PortalRenderingTests: XCTestCase {
   @MainActor
   func testMinimumZoomExitAndReentryPersistsTheSameCamera() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let childID = try XCTUnwrap(model.createBoard(at: .zero))
     model.enterBoard(childID)
     let camera = SpatialCamera(center: WorldPoint(x: 7_000, y: -4_000), scale: SpatialCamera.minimumScale)

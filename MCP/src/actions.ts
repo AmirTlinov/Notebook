@@ -1,6 +1,4 @@
 import { notebookResponseSchema } from "./contracts.js";
-import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/server";
 import { marked } from "marked";
@@ -83,7 +81,7 @@ export function registerActionTools(server: McpServer, store: NotebookStore): vo
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   }, (input) => actionResult(async () => {
     const prepared = await prepareAction(input, store);
-    const receipt = await runBridge<ActionReceipt>(store.root, { command: "apply", action: prepared });
+    const receipt = await runBridge<ActionReceipt>(store.socketPath, { command: "apply", action: prepared });
     return publicAction(receipt, store);
   }));
   server.registerTool("notebook_undo", {
@@ -91,29 +89,27 @@ export function registerActionTools(server: McpServer, store: NotebookStore): vo
     description: "Restore fields still owned by the action. Later human changes remain and are listed as preserved. Repeating undo returns its existing result.",
     inputSchema: z.object({ action_id: z.uuid() }).strict(), outputSchema,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  }, ({ action_id }) => actionResult(async () => publicAction(await runBridge<ActionReceipt>(store.root, { command: "undo", actionID: action_id }), store)));
+  }, ({ action_id }) => actionResult(async () => publicAction(await runBridge<ActionReceipt>(store.socketPath, { command: "undo", actionID: action_id }), store)));
   server.registerTool("notebook_action", {
     title: "Read an action and its exact publication state",
     description: "Read one action by ID, or the latest actions. The saved result and device display confirmation are distinct facts.",
     inputSchema: z.object({ action_id: z.uuid().optional(), limit: z.number().int().min(1).max(50).default(10) }).strict(), outputSchema,
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ action_id, limit }) => actionResult(async () => action_id
-    ? publicAction(await runBridge<ActionReceipt>(store.root, { command: "action", actionID: action_id }), store)
-    : { status: "ready", actions: await Promise.all((await runBridge<ActionReceipt[]>(store.root, { command: "actions" })).slice(0, limit).map(receipt => publicAction(receipt, store))) }));
+    ? publicAction(await runBridge<ActionReceipt>(store.socketPath, { command: "action", actionID: action_id }), store)
+    : { status: "ready", actions: await Promise.all((await runBridge<ActionReceipt[]>(store.socketPath, { command: "actions", limit })).slice(0, limit).map(receipt => publicAction(receipt, store))) }));
 }
 
 export async function publicAction(receipt: ActionReceipt, store: NotebookStore): Promise<Record<string, unknown>> {
-  const continuations = await runBridge(store.root,{command:"continuations",actionID:receipt.id});
-  const delivery = await runBridge<Array<{id:string;revisions:unknown[];shown:Array<{target:Target;revision:string}>;displayComplete:boolean;visibleRegions:unknown[]}>>(store.root,{command:"delivery"});
+  const continuations = await runBridge(store.socketPath,{command:"continuations",actionID:receipt.id});
+  const delivery = await runBridge<Array<{id:string;revisions:unknown[];shown:Array<{target:Target;revision:string}>;displayComplete:boolean;visibleRegions:unknown[]}>>(store.socketPath,{command:"delivery",actionID:receipt.id});
   const device = delivery.find(value => value.id.toLowerCase() === receipt.id.toLowerCase());
   const same = (a:unknown,b:unknown) => JSON.stringify(a) === JSON.stringify(b);
   const received = device && same(device.revisions,receipt.revisions);
   const shown = received && device.displayComplete;
-  const directory = join(store.root,"previews","targets");
-  const names = await readdir(directory).catch(()=>[]);
-  const snapshots = (await Promise.all(names.filter(name=>name.endsWith(".json")).map(name => readFile(join(directory,name),"utf8").then(JSON.parse).catch(()=>null))))
-    .filter(value => value?.status === "ready" && typeof value.pngSHA256 === "string" && receipt.revisions.some(r => r.target.id.toLowerCase() === value.request.target.id.toLowerCase() && r.target.kind === value.request.target.kind))
-    .map(value => ({target:value.request.target,sourceRevision:value.request.sourceRevision,region:value.request.region ?? null,pageIndex:value.request.pageIndex,pngSHA256:value.pngSHA256,diagnostics:value.diagnostics}));
+  const snapshots = (await store.readActionSnapshots<Array<Record<string, any>>>(receipt.id))
+    .map(value => ({target:value.request.target,sourceRevision:value.request.sourceRevision,region:value.request.region ?? null,
+      pageIndex:value.request.pageIndex,pngSHA256:value.pngSHA256,diagnostics:value.diagnostics}));
   return { status: "saved", action: {id:receipt.id,contextID:receipt.action.contextID ?? receipt.id,summary:receipt.action.summary,references:receipt.action.references,
     createdAt:receipt.createdAt,revisions:receipt.revisions,continuations,results:receipt.action.operations.map(({kind,target,id,values})=>({kind,target,id,frame:values.frame})),
     ...(receipt.undo ? {undo:{...receipt.undo,preserved:receipt.undo.preserved.map(value=>{const field=value as {file:string;path:unknown};return {file:field.file,path:field.path};})}} : {})},
@@ -140,10 +136,13 @@ async function prepareAction(input: z.infer<typeof actionSchema>, store: Noteboo
     if (operation.kind === "insertElement") kinds.set(key, String(operation.values.kind));
     if (operation.kind === "updateElement" && typeof operation.values.source === "string") {
       if (!kinds.has(key)) {
-        const elements = operation.target.kind === "page"
-          ? (await store.readPage(operation.target.id)).elements
-          : (await store.readBoard(undefined, operation.target.kind === "cover" ? operation.target.boardID : operation.target.id)).elements;
-        kinds.set(key, elements.find(e => e.id === operation.id)?.kind ?? "");
+        if (operation.target.kind === "page") {
+          const elements = (await store.readPage(operation.target.id)).elements;
+          kinds.set(key,elements.find(e=>e.id===operation.id)?.kind ?? "");
+        } else {
+          const element = await store.read<{kind:string}|null>({kind:"boardElement",id:operation.target.kind==="cover"?operation.target.boardID:operation.target.id,elementID:operation.id});
+          kinds.set(key,element?.kind ?? "");
+        }
       }
     }
     if (kinds.get(key) === "markdown" && typeof operation.values.source === "string") {

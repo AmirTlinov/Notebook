@@ -1,9 +1,12 @@
 import SwiftUI
 import ServiceManagement
+import NotebookCore
 
 @main
 struct NotebookMacApp: App {
   @NSApplicationDelegateAdaptor(NotebookMacLifecycle.self) private var lifecycle
+  @State private var pairingError: String?
+  @State private var agentLoginError: String?
 
   var body: some Scene {
     MenuBarExtra("Notebook", systemImage: "book.closed") {
@@ -14,6 +17,69 @@ struct NotebookMacApp: App {
       if let failure = lifecycle.model.persistenceFailure {
         Text("Изменения ещё не сохранены: \(failure)")
         Button("Повторить сохранение") { lifecycle.model.retryPendingPersistence() }
+      }
+      Menu("Сопряжение устройств") {
+        Button("Скопировать приглашение для iPad") {
+          do {
+            let invitation = try lifecycle.model.createPairingInvitation()
+            NSPasteboard.general.clearContents()
+            guard NSPasteboard.general.setString(invitation, forType: .string) else {
+              throw NotebookTransportError.storageUnavailable
+            }
+            pairingError = nil
+          } catch { pairingError = error.localizedDescription }
+        }
+        if case .confirmation(let peer, let generation, let locallyConfirmed) = lifecycle.model.pairingState {
+          Text(peer.displayName)
+          Text("Устройство: \(peer.deviceID.uuidString.lowercased())")
+          Text("Архив: \(peer.workspaceID.uuidString.lowercased())")
+          if locallyConfirmed { Text("Ожидается подтверждение на iPad") }
+          else {
+            Button("Разрешить этому iPad доступ") {
+              do { try lifecycle.model.confirmPairing(generation: generation); pairingError = nil }
+              catch { pairingError = error.localizedDescription }
+            }
+          }
+        }
+        if case .failed(let message) = lifecycle.model.pairingState { Text(message) }
+        Button("Отменить сопряжение") {
+          do { try lifecycle.model.cancelPairing(); pairingError = nil }
+          catch { pairingError = error.localizedDescription }
+        }
+        ForEach(lifecycle.model.pairedPeers, id: \.deviceID) { peer in
+          Button("Отозвать доступ: \(peer.displayName)", role: .destructive) {
+            do { try lifecycle.model.revokePeer(peer.deviceID); pairingError = nil }
+            catch { pairingError = error.localizedDescription }
+          }
+        }
+        if let pairingError { Text(pairingError) }
+      }
+      Menu("Агент Notebook") {
+        if let agent = lifecycle.model.agentCoordinator {
+          if agent.isCheckingAvailability { Text("Проверяется совместимость агента…") }
+          switch agent.availability {
+          case .ready:
+            Text(agent.isRunning ? "Рассматривает вопрос с iPad" : "Готов к вопросам с iPad")
+          case .signInRequired:
+            Text("Нужен отдельный вход ChatGPT для Notebook")
+            Button("Войти через ChatGPT") {
+              Task {
+                do {
+                  let url = try await agent.signIn()
+                  guard NSWorkspace.shared.open(url) else { throw NotebookAgentFailure.signInRequired }
+                  agentLoginError = nil
+                } catch { agentLoginError = "Не удалось открыть вход ChatGPT: \(error.localizedDescription)" }
+              }
+            }
+          case .unavailable:
+            Text("Исполнитель недоступен: ограничения не ослабляются")
+          }
+          if let error = agent.lastError { Text(error) }
+          if let agentLoginError { Text(agentLoginError) }
+          Button("Проверить готовность агента") { Task { await agent.refreshAvailability() } }
+        } else {
+          Text(lifecycle.model.agentStartupError ?? "Агент ждёт открытия хранилища")
+        }
       }
       if let loginError = lifecycle.loginError { Text(loginError) }
       Toggle("Запускать при входе", isOn: Binding(
@@ -47,7 +113,7 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
       model = NotebookAppModel(startsNearbySync: !isRunningTests)
     #endif
     super.init()
-    if !isRunningTests { model.start(pageSize: NotebookAppModel.defaultPageSize) }
+    if !isRunningTests { Task { await model.start(pageSize: NotebookAppModel.defaultPageSize) } }
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -76,8 +142,7 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     Task {
-      let saved = await model.finishPendingInteraction()
-      sender.reply(toApplicationShouldTerminate: saved)
+      sender.reply(toApplicationShouldTerminate: await model.shutdown())
     }
     return .terminateLater
   }

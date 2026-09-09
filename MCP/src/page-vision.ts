@@ -1,8 +1,6 @@
 import { notebookResponseSchema } from "./contracts.js";
 import { BridgeError, runBridge } from "./bridge.js";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
@@ -106,14 +104,9 @@ class PageVisionPending extends StoreError {
 }
 
 async function requestPageVision(store: NotebookStore, page: PageDocument): Promise<never> {
-  const request = await runBridge<{ id: string }>(store.root, { command: "pageVision",
+  const request = await runBridge<{ id: string }>(store.socketPath, { command: "pageVision",
     target: { kind: "page", id: page.id }, expectedRevision: revision(page.drawingStamp) });
-  let receipt: { status?: string; diagnostics?: Array<{ message?: string }> } | undefined;
-  try {
-    receipt = JSON.parse(await readFile(join(store.root, "previews/targets", `${request.id.toLowerCase()}.json`), "utf8"));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
+  const receipt = await store.readTargetRenderReceipt<{ status?: string; diagnostics?: Array<{ message?: string }> }>(request.id);
   if (receipt?.status === "error") {
     throw new StoreError("Подготовка карты завершилась ошибкой: " +
       (receipt.diagnostics?.slice(0, 3).map(value => value.message ?? "Ошибка исполнения").join("; ") ?? "Ошибка исполнения"));
@@ -273,20 +266,8 @@ export async function readFreshPageVision(
   if (expectedDrawingRevision && expectedDrawingRevision !== currentRevision) {
     throw new StoreError("Лист изменился после карты. Сначала снова вызовите notebook_page_map.");
   }
-  let stored: unknown;
-  try {
-    stored = JSON.parse(
-      await readFile(visionReceiptPath(store, page.id), "utf8"),
-    );
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
-      return requestPageVision(store, page);
-    }
-    if (error instanceof SyntaxError) {
-      throw new StoreError("Квитанция карты листа содержит поврежденный JSON.");
-    }
-    throw error;
-  }
+  const stored = await store.readPageVisionReceipt(page.id);
+  if (!stored) return requestPageVision(store, page);
   const parsed = receiptSchema.safeParse(stored);
   if (!parsed.success) {
     throw new StoreError(
@@ -315,13 +296,8 @@ export async function readVerifiedPageOverview(
   receipt: PageVisionReceipt,
   mode: VisionMode,
 ): Promise<Buffer> {
-  const path =
-    mode === "faithful"
-      ? previewPath(store, receipt.pageID)
-      : inkPath(store, receipt.pageID);
-  const expectedSHA256 =
-    mode === "faithful" ? receipt.previewPNG_SHA256 : receipt.inkPNG_SHA256;
-  return readVerifiedPNG(store, receipt, path, expectedSHA256, receipt.pixelSize);
+  const expectedSHA256 = mode === "faithful" ? receipt.previewPNG_SHA256 : receipt.inkPNG_SHA256;
+  return readVerifiedPNG(store, receipt, {kind:"pageOverview",id:receipt.pageID,mode,expectedSHA256}, receipt.pixelSize);
 }
 
 function publicPageMap(
@@ -407,20 +383,9 @@ async function readHistoricalPageVision(
   if (!match) {
     throw new StoreError("since_drawing_revision имеет неверный формат.");
   }
-  const path = join(
-    store.root,
-    "previews",
-    `${pageID.toLowerCase()}.vision-history`,
-    `${match[1]}-${match[2]!.toLowerCase()}.json`,
-  );
   let stored: unknown;
-  try {
-    stored = JSON.parse(await readFile(path, "utf8"));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return null;
-    if (error instanceof SyntaxError) return null;
-    throw error;
-  }
+  try { stored = await store.readPageVisionReceipt(pageID, requestedRevision); }
+  catch (error) { if (error instanceof BridgeError && error.detail.code === "invalid_artifact") return null; throw error; }
   const parsed = receiptSchema.safeParse(stored);
   if (
     !parsed.success ||
@@ -684,28 +649,7 @@ async function resolvePage(
   }
   if (pageID) return store.readWorkspacePage(pageID);
   if (!notebookID) return store.readWorkspacePage();
-  const workspace = await store.readWorkspace();
-  const notebook = workspace.items.find((item) =>
-    item.kind === "notebook" && sameID(item.id, notebookID)
-  );
-  if (!notebook || notebook.kind !== "notebook") {
-    throw new StoreError("Тетрадь не найдена.");
-  }
-  const index = pageNumber === undefined
-    ? (sameID(workspace.selectedItemID, notebook.id)
-      ? Math.max(0, notebook.pageIDs.findIndex((id) =>
-          workspace.selectedPageID !== undefined
-            && sameID(id, workspace.selectedPageID)
-        ))
-      : 0)
-    : pageNumber - 1;
-  const selectedID = notebook.pageIDs[index];
-  if (!selectedID) {
-    throw new StoreError(
-      `У тетради ${notebook.pageIDs.length} листов; листа ${pageNumber} нет.`,
-    );
-  }
-  return store.readPage(selectedID);
+  return store.readNotebookPage(notebookID, pageNumber);
 }
 
 function findRegion(
@@ -732,8 +676,7 @@ async function readVerifiedRegion(
   return readVerifiedPNG(
     store,
     receipt,
-    join(regionsPath(store, receipt.pageID), `${region.id}.${mode}.png`),
-    expectedSHA256,
+    {kind:"pageRegion",id:receipt.pageID,regionID:region.id,mode,expectedSHA256},
     {
       width: region.cropPixels.width,
       height: region.cropPixels.height,
@@ -744,21 +687,20 @@ async function readVerifiedRegion(
 async function readVerifiedPNG(
   store: NotebookStore,
   receipt: PageVisionReceipt,
-  path: string,
-  expectedSHA256: string,
+  artifact: import("./store.js").ArtifactRequest,
   expectedSize: { width: number; height: number },
 ): Promise<Buffer> {
   let image: Buffer;
   try {
-    image = await readFile(path);
+    image = await store.readArtifact(artifact);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+    if (error instanceof BridgeError && error.detail.code === "artifact_missing") {
       return rebuildPageVision(store, receipt);
     }
     throw error;
   }
   const actualSHA256 = createHash("sha256").update(image).digest("hex");
-  if (actualSHA256 !== expectedSHA256) {
+  if (actualSHA256 !== artifact.expectedSHA256) {
     return rebuildPageVision(store, receipt);
   }
   const actualSize = pngSize(image);
@@ -794,22 +736,6 @@ function pngSize(image: Buffer): { width: number; height: number } | null {
   const width = image.readUInt32BE(16);
   const height = image.readUInt32BE(20);
   return width > 0 && height > 0 ? { width, height } : null;
-}
-
-function previewPath(store: NotebookStore, pageID: string): string {
-  return join(store.root, "previews", `${pageID.toLowerCase()}.png`);
-}
-
-function inkPath(store: NotebookStore, pageID: string): string {
-  return join(store.root, "previews", `${pageID.toLowerCase()}.ink.png`);
-}
-
-function visionReceiptPath(store: NotebookStore, pageID: string): string {
-  return join(store.root, "previews", `${pageID.toLowerCase()}.vision.json`);
-}
-
-function regionsPath(store: NotebookStore, pageID: string): string {
-  return join(store.root, "previews", `${pageID.toLowerCase()}.regions`);
 }
 
 function sameID(left: string, right: string): boolean {

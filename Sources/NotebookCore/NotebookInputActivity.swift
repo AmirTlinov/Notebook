@@ -23,13 +23,12 @@ extension NotebookStore {
   private var inputActivityURL: URL { runtimeURL.appendingPathComponent("input.json") }
 
   private func readInputActivities() throws -> [NotebookInputActivity] {
-    guard FileManager.default.fileExists(atPath: inputActivityURL.path) else { return [] }
-    return try JSONDecoder().decode([NotebookInputActivity].self, from: Data(contentsOf: inputActivityURL))
+    try storedValue("runtime/input.json")?.decode([NotebookInputActivity].self) ?? []
   }
 
   public func inputActivities() throws -> [NotebookInputActivity] {
     try prepare()
-    return try withMutationLock { try readInputActivities() }
+    return try readTransaction { _ in try readInputActivities() }
   }
 
   public func saveInputActivity(_ activity: NotebookInputActivity) throws {
@@ -41,7 +40,7 @@ extension NotebookStore {
         old.sessionID == activity.sessionID, old.sequence >= activity.sequence { return }
       activities.removeAll { $0.deviceID == activity.deviceID }
       activities.append(activity)
-      try JSONEncoder().encode(activities).write(to: inputActivityURL, options: .atomic)
+      try publishRecords(writes: ["runtime/input.json": try .encode(activities)])
     }
   }
 
@@ -51,7 +50,7 @@ extension NotebookStore {
     try prepare()
     try withMutationLock {
       let remaining = try readInputActivities().filter { $0.deviceID == deviceID }
-      try JSONEncoder().encode(remaining).write(to: inputActivityURL, options: .atomic)
+      try publishRecords(writes: ["runtime/input.json": try .encode(remaining)])
     }
   }
 
@@ -71,30 +70,44 @@ extension NotebookStore {
     }
   }
 
-  func requireIdleInput(for targets: [CollaborationTarget], files: [String: JSONValue]) throws {
+  func requireIdleInput(for targets: [CollaborationTarget]) throws {
     let activities = try readInputActivities().filter(\.isActive)
     guard !activities.isEmpty else { return }
-    let index = try files["workspace.json"]?.decode(WorkspaceIndex.self)
-    let hierarchy = try files["board.json"]?.decode(BoardHierarchy.self)
-    func carrier(_ target: CollaborationTarget) -> UUID {
-      target.kind == .page ? (index?.items.first { $0.pageIDs.contains(target.id) }?.id ?? target.id) : target.id
+    var carriers: [CollaborationTarget: UUID] = [:], ancestors: [CollaborationTarget: Set<UUID>] = [:]
+    func carrier(_ target: CollaborationTarget) throws -> UUID {
+      if let cached = carriers[target] { return cached }
+      let value = target.kind == .page ? try ownerItemID(ofPage: target.id) ?? target.id : target.id
+      carriers[target] = value; return value
     }
-    func boards(_ target: CollaborationTarget) -> Set<UUID> {
+    func boards(_ target: CollaborationTarget) throws -> Set<UUID> {
+      if let cached = ancestors[target] { return cached }
       var result = Set<UUID>()
-      var next = target.kind == .board ? target.id : hierarchy?.ownerBoardID(of: carrier(target))
-      while let id = next, result.insert(id).inserted { next = hierarchy?.ownerBoardID(of: id) }
-      return result
+      var next = target.kind == .board ? target.id : try ownerBoardID(of: carrier(target))
+      while let id = next {
+        guard result.insert(id).inserted else { throw NotebookStorageError.corruptRecord("board cycle") }
+        next = try ownerBoardID(of: id)
+      }
+      ancestors[target] = result; return result
     }
     for activity in activities {
       for target in targets {
-        if activity.targets.contains(where: { held in
-          held == target || carrier(held) == carrier(target)
+        if try activity.targets.contains(where: { held in
+          try held == target || carrier(held) == carrier(target)
             || (held.kind == .board && boards(target).contains(held.id))
             || (target.kind == .board && boards(held).contains(target.id))
         }) {
           throw CollaborationError("input_active", "Ход пока не сохранён: человек взаимодействует с этой поверхностью. Повторите тот же запрос после завершения касания; версии будут проверены заново.", target: target)
         }
       }
+    }
+  }
+}
+
+extension NotebookStore {
+  public func resetInputActivity(deviceID: UUID) throws {
+    try commandTransaction {
+      let remaining = try readInputActivities().filter { $0.deviceID != deviceID }
+      try publishRecords(writes: ["runtime/input.json": try .encode(remaining)])
     }
   }
 }

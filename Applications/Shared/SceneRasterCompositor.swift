@@ -64,6 +64,13 @@ final class SceneRasterCompositor {
     try checkPreparation()
   }
 
+  /// The caller keeps the source allocation charged until this copy completes.
+  func drawImage(_ image: CGImage, in frame: CGRect) async throws {
+    try checkPreparation()
+    try await buffer.draw(image, in: frame)
+    try checkPreparation()
+  }
+
   /// Use the retained entry, not a cache lookup after an asynchronous boundary.
   /// A newer capture of the same program cannot replace the borrowed pixels.
   func draw(_ raster: RasterLease, in frame: CGRect) async throws {
@@ -195,6 +202,23 @@ final class SceneRasterCompositor {
     isFinished = true
     reservation.release()
     return png
+  }
+
+  /// Ownership transfers directly from the accounted output buffer to the
+  /// shared image cache. No decode or unaccounted image survives this boundary.
+  func finishRaster(for source: SceneRasterSource) async throws -> RasterLease {
+    try checkPreparation()
+    let pixels = try await buffer.finishImage()
+    try checkPreparation()
+    #if os(iOS)
+      let image = UIImage(cgImage: pixels, scale: 1, orientation: .up)
+    #else
+      let image = NSImage(cgImage: pixels, size: .init(width: pixels.width, height: pixels.height))
+    #endif
+    guard resources.store(image, for: source, reservation: reservation),
+      let retained = resources.retainRaster(for: source) else { throw SceneRenderError.resourceLimit }
+    isFinished = true
+    return retained
   }
 
   private func checkPreparation() throws {

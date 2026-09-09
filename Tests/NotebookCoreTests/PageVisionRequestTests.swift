@@ -22,7 +22,7 @@ func pageVisionRequestHasAnAddressedSource() throws {
   let fixture = PageVisionRequestFixture(); defer { fixture.remove() }
   let page = try fixture.page(), store = fixture.store
   for url in [store.indexURL, store.boardURL, store.spatialInkURL, store.pageURL(UUID())] {
-    try Data("unrelated damaged source".utf8).write(to: url)
+    try fixture.store.fixtureWrite(Data("unrelated damaged source".utf8), to: url)
   }
   let first = try store.requestPageVision(pageID: page.id, expectedRevision: page.drawingStamp.revision)
   let reopened = NotebookStore(root: fixture.root)

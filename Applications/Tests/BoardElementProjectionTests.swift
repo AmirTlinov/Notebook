@@ -9,9 +9,9 @@ final class BoardElementProjectionTests: XCTestCase {
   @MainActor
   func testThinDiagramLinesSurviveFractionalMinificationInLiveAndPortalLayers() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let lines = (0..<10).map { "<path d='M \(50 + $0 * 100) 50 V 450'/>" }.joined()
     let element = SpatialElement(id: UUID().uuidString, surface: .board, kind: .web,
       frame: .init(x: 0, y: 0, width: 1000, height: 500), worldOrigin: .zero,
@@ -20,7 +20,7 @@ final class BoardElementProjectionTests: XCTestCase {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene)
     window.frame = CGRect(x: 0, y: 0, width: 600, height: 400)
-    defer { window.isHidden = true }
+    defer { window.isHidden = true; window.rootViewController = nil; model.compositionTiles.cancelPreparation() }
     func content(scale: Double, phase: Double, passive: Bool) -> some View {
       SpatialElementContent(element: element, commitsState: !passive)
         .frame(width: 1000, height: 500).scaleEffect(scale).offset(x: phase)
@@ -90,9 +90,9 @@ final class BoardElementProjectionTests: XCTestCase {
   @MainActor
   func testZoomKeepsLiveBoardObjectsRigidWithoutResizingTheirWebViewports() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    model.start(pageSize: NotebookAppModel.defaultPageSize)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
     model.moveItem(try XCTUnwrap(model.workspace?.selectedItemID), to: .init(x: -30_000, y: -30_000))
     await model.finishPendingPersistence()
     var hierarchy = try XCTUnwrap(model.boardHierarchy)
@@ -105,13 +105,13 @@ final class BoardElementProjectionTests: XCTestCase {
       XCTAssertTrue(hierarchy.upsertElement(element, in: boardID, expected: nil, actor: model.actorID))
     }
     try model.store.saveBoard(hierarchy, items: XCTUnwrap(model.workspace).items)
-    model.reloadExternalChanges()
+    await model.reloadExternalChanges()?.value
     await model.finishPendingPersistence()
     let originalBoard = model.board
 
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene)
-    defer { window.isHidden = true }
+    defer { window.isHidden = true; window.rootViewController = nil; model.compositionTiles.cancelPreparation() }
     let host = UIHostingController(rootView: SpatialWorkspaceView().environment(model).ignoresSafeArea())
     window.rootViewController = host
     let viewport = SpatialPoint(x: window.bounds.width, y: window.bounds.height)
@@ -119,7 +119,12 @@ final class BoardElementProjectionTests: XCTestCase {
       model.updatePresence(.init(boardID: boardID, mode: .board, camera: camera, viewport: viewport), settled: false)
     }
     show(.init(scale: 0.4))
+    model.updatePresence(try XCTUnwrap(model.presence), settled: true)
     window.makeKeyAndVisible()
+    let compositionDeadline = ContinuousClock.now + .seconds(8)
+    while model.compositionTiles.published == nil, model.compositionTiles.failure == nil,
+      ContinuousClock.now < compositionDeadline { try await Task.sleep(for: .milliseconds(20)) }
+    XCTAssertNotNil(model.compositionTiles.published, model.compositionTiles.failure ?? "Initial settled composition must be ready before testing a camera contact")
     func activate(_ element: SpatialElement) async throws -> WKWebView {
       model.interactiveElementFocus = .board(boardID: boardID, elementID: element.id)
       let deadline = ContinuousClock.now + .seconds(8)
@@ -179,6 +184,10 @@ final class BoardElementProjectionTests: XCTestCase {
       }
     }
     XCTAssertEqual(model.board, originalBoard, "Зум не меняет содержание и сохранённые расстояния между предметами")
+    // The next operation is a new resize contact, not another camera sample.
+    // Its SQL publication and exact cohort require the preceding pinch to end.
+    model.updatePresence(try XCTUnwrap(model.presence), settled: true)
+    await model.finishPendingPersistence()
     let proof = XCTAttachment(image: UIGraphicsImageRenderer(size: host.view.bounds.size).image { _ in
       host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
     })
@@ -191,14 +200,24 @@ final class BoardElementProjectionTests: XCTestCase {
     try await Task.sleep(for: .milliseconds(35))
     XCTAssertEqual(web.bounds.size, CGSize(width: 340, height: 260), "Пробная рамка сохраняет содержание под рукой")
     model.finishElementResize(reference, delta: .init(x: 90, y: 80))
+    let accepted = try XCTUnwrap(model.board?.elements.first { $0.id == elements[0].id })
+    XCTAssertEqual(accepted.frame.width, 430, "The physical owner accepts the completed resize before persistence")
+    XCTAssertEqual(accepted.frame.height, 340)
     await model.finishPendingPersistence()
+    let committed = try model.store.workspaceHeader()
     let resizedDeadline = ContinuousClock.now + .seconds(3)
     var resized: [String: Double] = [:]
     repeat {
       try await Task.sleep(for: .milliseconds(30))
       let value = try await web.evaluateJavaScript("({width:innerWidth,height:innerHeight})")
       resized = try XCTUnwrap(value as? [String: Double])
-    } while resized != ["width": 430, "height": 340] && ContinuousClock.now < resizedDeadline
+    } while (resized != ["width": 430, "height": 340]
+      || model.compositionTiles.published?.plan.revision != committed.cursor)
+      && model.compositionTiles.failure == nil && ContinuousClock.now < resizedDeadline
+    XCTAssertEqual(model.workspaceHeader?.cursor, committed.cursor, "The successful content commit must advance the render source cursor")
+    let shown = model.compositionTiles.published
+    XCTAssertEqual(shown?.plan.revision, committed.cursor, model.compositionTiles.failure ?? "The whole cohort must publish the resized owner")
+    XCTAssertEqual(shown?.frame.index.element(id: elements[0].id, boardID: boardID)?.frame.width, 430)
     XCTAssertEqual(web.bounds.size, CGSize(width: 430, height: 340), "Завершённое изменение размера обновляет физический холст")
     XCTAssertEqual(resized, ["width": 430, "height": 340])
     _ = try await web.evaluateJavaScript("notebook.commit({count:7})")

@@ -4,18 +4,38 @@ import SwiftUI
 /// One finite description accounts for all board projections in this frame.
 /// A child portal consumes the root's remaining budget, never another full one.
 struct WorkspaceSceneFrame {
+  let index: WorkspaceSceneIndex
   let rootBoardID: UUID
   let worksets: [UUID: WorkspaceSceneWorkset]
   let covers: [UUID: WorkspaceSceneWorkset]
+  let presences: [UUID: SessionPresence]
+  let pixelScales: [UUID: Double]
   let primitiveCount: Int
   let visitedNodes: Int
   let budget: Int
+
+  /// Pixels may cover the next viewport before its addressed SQL window has
+  /// arrived. Reusing those pixels must not keep the old hit-test/live owners.
+  struct SourceIdentity: Equatable {
+    let generation: UUID
+    let rootBoardID: UUID
+    let boards: [UUID: [WorkspaceSpatialID]]
+    let covers: [UUID: [WorkspaceSpatialID]]
+  }
+  var sourceIdentity: SourceIdentity {
+    func ids(_ workset: WorkspaceSceneWorkset) -> [WorkspaceSpatialID] {
+      workset.items.map { .item($0.id) } + workset.elements.map { .element($0.id) }
+    }
+    return .init(generation: index.generationID, rootBoardID: rootBoardID,
+      boards: worksets.mapValues(ids), covers: covers.mapValues(ids))
+  }
 
   func workset(boardID: UUID) -> WorkspaceSceneWorkset { worksets[boardID] ?? .empty }
 
   init(index: WorkspaceSceneIndex, presence: SessionPresence,
     portalCamera: (UUID) -> BoardPortalCamera?, pinned: Set<WorkspaceSpatialID> = [],
     budget: Int = WorkspaceSceneIndex.detailLimit) {
+    self.index = index
     var pinned = pinned
     if let id = presence.focusedItemID { pinned.insert(.item(id)) }
     precondition(budget > pinned.count)
@@ -28,6 +48,8 @@ struct WorkspaceSceneFrame {
     }
     var sets: [UUID: WorkspaceSceneWorkset] = [:]
     var covers: [UUID: WorkspaceSceneWorkset] = [:]
+    var presences: [UUID: SessionPresence] = [:]
+    var pixelScales: [UUID: Double] = [:]
     var queue = [Pending(presence: presence, pixelScale: presence.camera.scale,
       passes: WorkspaceSceneProjection.portalPasses)]
     var remaining = budget
@@ -55,6 +77,8 @@ struct WorkspaceSceneFrame {
       guard used <= remaining else { continue }
       remaining -= used
       sets[next.presence.boardID] = workset
+      presences[next.presence.boardID] = next.presence
+      pixelScales[next.presence.boardID] = next.pixelScale
       let protectedCovers = Set(pins.compactMap { id -> UUID? in
         switch id {
         case .item(let itemID): return itemID
@@ -97,6 +121,7 @@ struct WorkspaceSceneFrame {
     }
     worksets = sets
     self.covers = covers
+    self.presences = presences; self.pixelScales = pixelScales
     primitiveCount = budget - remaining
     visitedNodes = visits
   }

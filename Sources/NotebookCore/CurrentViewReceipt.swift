@@ -159,11 +159,21 @@ public struct CurrentViewReceipt: Codable, Equatable, Sendable {
     surface: CurrentViewSurfaceRevision,
     pngSHA256: String
   ) {
+    self.init(workspaceStamp: workspace.stamp, boardRevision: board.revision,
+      spatialInkStamp: spatialInk.stamp, presence: presence,
+      renderViewport: renderViewport, surface: surface, pngSHA256: pngSHA256)
+  }
+
+  /// SQL readers supply the completed header's Merkle revision, never the
+  /// revision of a bounded display projection of the board tree.
+  public init(workspaceStamp: VersionStamp, boardRevision: String,
+    spatialInkStamp: VersionStamp, presence: SessionPresence,
+    renderViewport: SpatialPoint, surface: CurrentViewSurfaceRevision, pngSHA256: String) {
     precondition(renderViewport.x > 0 && renderViewport.y > 0)
     format = Self.formatVersion
-    workspaceStamp = workspace.stamp
-    boardRevision = board.revision
-    spatialInkStamp = spatialInk.stamp
+    self.workspaceStamp = workspaceStamp
+    self.boardRevision = boardRevision
+    self.spatialInkStamp = spatialInkStamp
     self.presence = presence
     self.renderViewport = renderViewport
     self.surface = surface

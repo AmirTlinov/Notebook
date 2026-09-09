@@ -6,14 +6,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
-import { appActor, itemID, pageID, rootBoardID, writeFixture } from "./fixture.js";
+import { appActor, itemID, pageID, rootBoardID, writeFixture, fixtureControl, fixtureSocket, stopFixture } from "./fixture.js";
+import { NotebookStore } from "../src/store.js";
 import { documentSpatialSize } from "../src/domain.js";
 
 const mcpRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const root = await mkdtemp(join(tmpdir(), "notebook-bridge-smoke-"));
 const client = new Client({ name: "notebook-collaboration-proof", version: "0.1.0" });
-const transport = new StdioClientTransport({ command: join(mcpRoot, "run.sh"),
-  env: { ...getDefaultEnvironment(), NOTEBOOK_HOME: root }, stderr: "pipe" });
+
 type Data = Record<string, any>;
 const checked: string[] = [];
 async function call(name: string, args: Data = {}): Promise<Data> {
@@ -45,7 +45,10 @@ async function apply(operations: Data[], expected: Data[], actionID = randomUUID
 
 try {
   await writeFixture(root);
+const transport = new StdioClientTransport({ command: join(mcpRoot, "run.sh"),
+  env: { ...getDefaultEnvironment(), NOTEBOOK_SOCKET: fixtureSocket(root) }, stderr: "pipe" });
   await client.connect(transport);
+  const store=new NotebookStore(fixtureSocket(root));
   const { version } = JSON.parse(await readFile(join(mcpRoot, "package.json"), "utf8")) as { version: string };
   assert.equal(client.getServerVersion()?.version, version);
   const tools = (await client.listTools()).tools;
@@ -93,12 +96,11 @@ try {
   checked.push("atomic batch, idempotency, explicit conflicts and preserved state");
 
   const edited = await apply([{ kind: "updateElement", target: page, id: "meaning", values: { source: "Changed", css: "p { color: red }" } }], await pageExpectation());
-  const pagePath = join(root, "pages", `${pageID}.json`);
-  const humanPage = JSON.parse(await readFile(pagePath, "utf8"));
-  const meaning = humanPage.elements.find((e: Data) => e.id === "meaning");
+  const humanPage = await store.readPage(pageID);
+  const meaning = humanPage.elements.find((e: Data) => e.id === "meaning")!;
   meaning.source = "Human understanding"; meaning.html = "Human understanding";
   humanPage.agentStamp = { counter: humanPage.agentStamp.counter + 1, actor: appActor };
-  await writeFile(pagePath, JSON.stringify(humanPage));
+  await fixtureControl(root,"page",humanPage);
   const continued = await call("notebook_action",{action_id:edited.action.id});
   assert.ok(continued.action.continuations.length >= 2);
   const interpretation = await call("notebook_point",{context_id:pointing.context.id,reply_to:pointing.context.entries[0].id,references:[{target:page,element_id:"meaning",
@@ -131,9 +133,8 @@ try {
     {kind:"updateElement",target:page,id:"meaning",values:{frame}}]},"composition_scope");
   checked.push("atomic composition proposal, explicit movement scope and context-bound application");
 
-  const inputPath = join(root,"runtime","input.json");
   const inputActivity = {deviceID:appActor,sessionID:randomUUID(),sequence:1,targets:[page]};
-  await writeFile(inputPath,JSON.stringify([inputActivity]));
+  await fixtureControl(root,"input",inputActivity);
   const heldAction = {action_id:randomUUID(),summary:"После касания",expected:await pageExpectation(),operations:[
     {kind:"insertElement",target:page,id:"after-contact",values:{kind:"markdown",source:"Continued",frame}}]};
   const heldResult = await client.callTool({name:"notebook_apply",arguments:heldAction});
@@ -142,12 +143,10 @@ try {
   assert.equal((heldResult.structuredContent as Data).status,"pending");
   assert.equal((heldResult.structuredContent as Data).acceptance,"not_saved");
   await rejected("notebook_action",{action_id:heldAction.action_id},"target_missing");
-  const release = setTimeout(()=>{ void writeFile(inputPath,JSON.stringify([{...inputActivity,sequence:2,targets:[]}])); },150);
-  try {
-    const resumed = await call("notebook_apply",heldAction);
-    assert.equal(resumed.action.id.toLowerCase(),heldAction.action_id);
-    assert.deepEqual((await call("notebook_apply",heldAction)).action,resumed.action);
-  } finally { clearTimeout(release); }
+  await fixtureControl(root,"input",{...inputActivity,sequence:2,targets:[]});
+  const resumed = await call("notebook_apply",heldAction);
+  assert.equal(resumed.action.id.toLowerCase(),heldAction.action_id);
+  assert.deepEqual((await call("notebook_apply",heldAction)).action,resumed.action);
   await call("notebook_undo",{action_id:heldAction.action_id});
   checked.push("bounded contact wait, truthful not-saved status and idempotent retry after release");
 
@@ -156,13 +155,12 @@ try {
   const readA = await call("notebook_read_board", { board_id: a });
   const readB = await call("notebook_read_board", { board_id: b });
   assert.equal(readA.boardRevision, readB.boardRevision);
-  const presencePath = join(root, "last-context.json");
-  const presence = JSON.parse(await readFile(presencePath, "utf8"));
-  await writeFile(presencePath, JSON.stringify({ ...presence, mode: "board", openProgress: 0, focusedItemID: undefined, boardID: b }));
+  const presence=await store.readPresence();
+  await fixtureControl(root,"presence",{...presence,mode:"board",openProgress:0,focusedItemID:undefined,boardID:b});
   await apply([{ kind: "insertElement", target: board(a), id: "belongs-to-a", values: {
     kind: "markdown", source: "A", frame, worldOrigin: point } }], [{ target: board(a), revision: readA.boardRevision }]);
-  assert.equal((await call("notebook_read_board", { board_id: a })).elements.length, 1);
-  assert.equal((await call("notebook_read_board", { board_id: b })).elements.length, 0);
+  assert.equal((await call("notebook_read_board", { board_id: a,element_id:"belongs-to-a" })).elements.length, 1);
+  assert.equal((await call("notebook_read_board", { board_id: b,element_id:"belongs-to-a" })).elements.length, 0);
   checked.push("board identity survives a human camera change and equal revisions");
 
   for (const paper of ["a4", "letter"] as const) {
@@ -187,11 +185,13 @@ try {
     await rejected("notebook_apply", { action_id: randomUUID(), summary: "Outside", additional_owners:[cover], expected: [{ target: cover, revision: changedBoard.boardRevision }], operations: [
       { kind: "updateElement", target: cover, id: `corner-${paper}`, values: { frame: { x: size.width - 99, y: 20, width: 100, height: 80 } } }] }, "invalid_operation");
   }
-  const workspace = JSON.parse(await readFile(join(root, "workspace.json"), "utf8"));
-  assert.equal(workspace.selectedItemID.toLowerCase(), itemID);
+  const finalPresence = await store.readPresence();
+  assert.equal(finalPresence?.selectedItemID?.toLowerCase(), itemID);
+  assert.equal(finalPresence?.notebookPageID?.toLowerCase(), pageID);
   checked.push("block-local edits, physical A4/Letter cover bounds and human selection");
   console.log(JSON.stringify({ status: "passed", scenarios: checked }, null, 2));
 } finally {
   await client.close();
-  await rm(root, { recursive: true, force: true });
+  await stopFixture(root);
+    await rm(root, { recursive: true, force: true });
 }
