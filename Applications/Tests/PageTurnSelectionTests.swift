@@ -30,6 +30,211 @@ final class PageTurnSelectionTests: XCTestCase {
   }
 
   @MainActor
+  func testDistantRequestsDuringCurlKeepFourContentsAndOnlyTheLatestTargetSurvivesTheLocalAcknowledgement() async throws {
+    let controller = IPadPageTurnController(), owner = UUID()
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene)
+    var commits: [Int] = [], rendered = Set<Int>()
+    func configure(_ selected: Int) {
+      controller.update(ownerID: owner, pageCount: 20, selectedIndex: selected,
+        navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+        page: { index, _, ready in
+          XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4,
+            "The limit applies while a new child is being created, not just after reconciliation")
+          rendered.insert(index); ready(true)
+          return AnyView(Text("Page \(index)"))
+        }, onCommit: { commits.append($0) }, onTransitioningChange: { _ in })
+    }
+    configure(4); window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    let source = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
+    let landing = try XCTUnwrap(controller.pageViewController(controller.pageViewController, viewControllerAfter: source))
+    let preparedChild = try XCTUnwrap(landing.children.first)
+    controller.pageViewController(controller.pageViewController, willTransitionTo: [landing])
+    let frozenWindow = controller.cachedPageIdentities
+    for target in [12, 17, 9] {
+      configure(target)
+      XCTAssertEqual(controller.cachedPageIdentities, frozenWindow,
+        "An external request cannot add or replace a child under an active curl")
+      XCTAssertFalse(rendered.contains(target))
+      XCTAssertFalse(source.view.isUserInteractionEnabled)
+    }
+    controller.pageViewController.setViewControllers([landing], direction: .forward, animated: false)
+    controller.pageViewController(controller.pageViewController, didFinishAnimating: true,
+      previousViewControllers: [source], transitionCompleted: true)
+    XCTAssertEqual(controller.displayedIndex, 5)
+    XCTAssertTrue(landing.children.first === preparedChild, "The hand lands on its original prepared child")
+    XCTAssertEqual(commits, [5], "The native landing still owns its normal selection publication")
+    let targetIdentity = try XCTUnwrap(controller.cachedPageIdentities[9])
+    XCTAssertNil(controller.cachedPageIdentities[12]); XCTAssertNil(controller.cachedPageIdentities[17])
+    configure(5) // The ordered native writer acknowledges the intermediate landing.
+    let deadline = ContinuousClock.now + .seconds(2)
+    while controller.displayedIndex != 9, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertEqual(controller.displayedIndex, 9)
+    XCTAssertEqual(controller.visiblePageIdentity, targetIdentity)
+    XCTAssertEqual(commits, [5, 9], "The delayed external target must not be replaced by the local acknowledgement")
+    configure(9)
+    XCTAssertEqual(controller.displayedIndex, 9)
+    XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
+    XCTAssertFalse(rendered.contains(12)); XCTAssertFalse(rendered.contains(17))
+  }
+
+  @MainActor
+  func testReturningExternalSelectionToTheSourceCancelsTheQueuedJumpWithoutReplacingCurlChildren() async throws {
+    let controller = IPadPageTurnController(), owner = UUID()
+    var rendered = Set<Int>(), commits: [Int] = []
+    func configure(_ selected: Int) {
+      controller.update(ownerID: owner, pageCount: 20, selectedIndex: selected,
+        navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+        page: { index, _, ready in
+          XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
+          rendered.insert(index); ready(true); return AnyView(Text("Page \(index)"))
+        }, onCommit: { commits.append($0) }, onTransitioningChange: { _ in })
+    }
+    configure(0); controller.loadViewIfNeeded()
+    let source = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
+    let sourceChild = try XCTUnwrap(source.children.first)
+    let landing = try XCTUnwrap(controller.pageViewController(controller.pageViewController, viewControllerAfter: source))
+    let landingChild = try XCTUnwrap(landing.children.first)
+    controller.pageViewController(controller.pageViewController, willTransitionTo: [landing])
+    let frozenWindow = controller.cachedPageIdentities
+    for target in [7, 12, 0] {
+      configure(target)
+      XCTAssertEqual(controller.cachedPageIdentities, frozenWindow)
+    }
+    controller.pageViewController(controller.pageViewController, didFinishAnimating: true,
+      previousViewControllers: [source], transitionCompleted: false)
+    XCTAssertEqual(controller.displayedIndex, 0)
+    XCTAssertTrue(source.children.first === sourceChild)
+    XCTAssertTrue(source.view.isUserInteractionEnabled)
+    XCTAssertTrue(commits.isEmpty)
+    XCTAssertFalse(rendered.contains(7)); XCTAssertFalse(rendered.contains(12))
+    let next = try XCTUnwrap(controller.pageViewController(controller.pageViewController, viewControllerAfter: source))
+    XCTAssertTrue(next === landing); XCTAssertTrue(next.children.first === landingChild)
+    controller.pageViewController(controller.pageViewController, willTransitionTo: [next])
+    controller.pageViewController.setViewControllers([next], direction: .forward, animated: false)
+    controller.pageViewController(controller.pageViewController, didFinishAnimating: true,
+      previousViewControllers: [source], transitionCompleted: true)
+    configure(1)
+    XCTAssertEqual(controller.displayedIndex, 1, "The next ordinary turn cannot replay the cancelled external jump")
+    XCTAssertEqual(commits, [1])
+  }
+
+  @MainActor
+  func testAnUnpreparedExternalTargetReleasesThePreviousWindowBeforeCreatingItsReplacement() async throws {
+    let controller = IPadPageTurnController(), owner = UUID()
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene)
+    var readiness: [Int: PageTurnReadiness] = [:], commits: [Int] = []
+    func configure(_ selected: Int) {
+      controller.update(ownerID: owner, pageCount: 20, selectedIndex: selected,
+        navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+        page: { index, _, ready in
+          XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
+          if index >= 8 { XCTAssertNil(controller.cachedPageIdentities[2]) }
+          readiness[index] = ready
+          if index < 8 { ready(true) }
+          return AnyView(Text("Page \(index)"))
+        }, onCommit: { commits.append($0) }, onTransitioningChange: { _ in })
+    }
+    configure(4); window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    configure(12)
+    let expired = try XCTUnwrap(readiness[12])
+    configure(17)
+    XCTAssertNil(controller.cachedPageIdentities[12]); XCTAssertNil(controller.cachedPageIdentities[13])
+    configure(9)
+    XCTAssertNil(controller.cachedPageIdentities[17]); XCTAssertNil(controller.cachedPageIdentities[18])
+    expired(true)
+    XCTAssertEqual(controller.displayedIndex, 4, "A retired target cannot satisfy the latest target's readiness")
+    let targetIdentity = try XCTUnwrap(controller.cachedPageIdentities[9])
+    try XCTUnwrap(readiness[9])(true)
+    let deadline = ContinuousClock.now + .seconds(2)
+    while controller.displayedIndex != 9, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertEqual(controller.displayedIndex, 9)
+    XCTAssertEqual(controller.visiblePageIdentity, targetIdentity)
+    XCTAssertTrue(commits.isEmpty, "An external selection already present in the model is not published twice")
+    XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
+  }
+
+  @MainActor
+  func testExternalTransitionsKeepTheirOwnFourContentsWhileNewerRequestsWait() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene), controller = IPadPageTurnController(), owner = UUID()
+    var rendered = Set<Int>()
+    func configure(_ selected: Int) {
+      controller.update(ownerID: owner, pageCount: 20, selectedIndex: selected,
+        navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+        page: { index, _, ready in
+          XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
+          rendered.insert(index); ready(true); return AnyView(Text("Page \(index)"))
+        }, onCommit: { _ in }, onTransitioningChange: { _ in })
+    }
+    configure(4); window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    configure(12)
+    XCTAssertEqual(controller.displayedIndex, 4, "This assertion samples the active external animation, before its completion")
+    let frozenWindow = controller.cachedPageIdentities
+    configure(17); XCTAssertEqual(controller.cachedPageIdentities, frozenWindow)
+    configure(9); XCTAssertEqual(controller.cachedPageIdentities, frozenWindow)
+    XCTAssertFalse(rendered.contains(17)); XCTAssertFalse(rendered.contains(9))
+    let deadline = ContinuousClock.now + .seconds(2)
+    while controller.displayedIndex != 9, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertEqual(controller.displayedIndex, 9)
+    XCTAssertFalse(rendered.contains(17))
+    XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
+  }
+
+  @MainActor
+  func testQueuedExternalSelectionPreservesTrailingBlankCreationBeforeItsFinalSelection() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene), controller = IPadPageTurnController(), owner = UUID()
+    var reportedPageCount = 5, commits: [Int] = [], rendered = Set<Int>()
+    func configure(_ selected: Int) {
+      controller.update(ownerID: owner, pageCount: reportedPageCount, selectedIndex: selected,
+        allowsTrailingPageCreation: true, navigationIsEnabled: true, pageIsInteractive: true,
+        canBeginNavigation: { true }, page: { index, _, ready in
+          XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
+          rendered.insert(index); ready(true); return AnyView(Text("Page \(index)"))
+        }, onCommit: { target in
+          commits.append(target)
+          if target == reportedPageCount - 1 { reportedPageCount += 1 }
+        }, onTransitioningChange: { _ in })
+    }
+    configure(3); window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    let source = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
+    let blank = try XCTUnwrap(controller.pageViewController(controller.pageViewController, viewControllerAfter: source))
+    controller.pageViewController(controller.pageViewController, willTransitionTo: [blank])
+    let frozenWindow = controller.cachedPageIdentities
+    configure(0)
+    XCTAssertEqual(controller.cachedPageIdentities, frozenWindow)
+    controller.pageViewController.setViewControllers([blank], direction: .forward, animated: false)
+    controller.pageViewController(controller.pageViewController, didFinishAnimating: true,
+      previousViewControllers: [source], transitionCompleted: true)
+    XCTAssertEqual(commits, [4])
+    XCTAssertEqual(reportedPageCount, 6, "Landing still creates exactly one notebook page")
+    XCTAssertTrue(rendered.contains(5), "The next trailing blank is prepared before a later SwiftUI update")
+    configure(4)
+    let deadline = ContinuousClock.now + .seconds(2)
+    while controller.displayedIndex != 0, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertEqual(controller.displayedIndex, 0)
+    XCTAssertEqual(commits, [4, 0])
+    XCTAssertEqual(reportedPageCount, 6)
+    configure(0)
+    XCTAssertEqual(controller.displayedIndex, 0)
+    XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
+  }
+
+  @MainActor
   func testFiniteThreePageDocumentKeepsTheSameChildThroughAnImmediateReverse() throws {
     let controller = IPadPageTurnController(), owner = UUID()
     var committed = 0

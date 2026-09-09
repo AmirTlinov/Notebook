@@ -5,6 +5,7 @@ typealias NotebookInputFinisher = (_ waitsForPublication: Bool, @escaping Notebo
 
 @MainActor
 final class NotebookInputGate {
+  private var controlRegions: [UUID: @MainActor (CGPoint) -> Bool] = [:]
   private var pageFinishers: [UUID: NotebookInputFinisher] = [:]
   private var currentPageSource: UUID?
   private var activePencilSources: Set<UUID> = []
@@ -17,6 +18,19 @@ final class NotebookInputGate {
   private(set) var isActive = false
   var hasActivePencil: Bool { !activePencilSources.isEmpty }
   var onActivityChange: ((Bool) -> Void)?
+
+  /// Native control bounds are evaluated when a contact starts. A card can
+  /// move with the keyboard without changing the scene camera or taking a
+  /// contact which already belongs to Pencil outside it.
+  func registerControlRegion(source: UUID, contains: @escaping @MainActor (CGPoint) -> Bool) {
+    controlRegions[source] = contains
+  }
+
+  func unregisterControlRegion(source: UUID) { controlRegions[source] = nil }
+
+  func permitsSceneContact(at windowPoint: CGPoint) -> Bool {
+    !controlRegions.values.contains { $0(windowPoint) }
+  }
 
   func beginContact(source: UUID) {
     contactSources.insert(source)

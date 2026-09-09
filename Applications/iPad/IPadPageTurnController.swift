@@ -57,6 +57,7 @@ final class IPadPageTurnController: UIViewController,
 
   private var hasInstalledPage = false
   private var isTransitioning = false
+  private var isUpdatingContents = false
   private var pendingExternalIndex: Int?
   private var anticipatedIndex: Int?
   private var lastTurnDirection: Int?
@@ -116,6 +117,8 @@ final class IPadPageTurnController: UIViewController,
     onTransitioningChange: @escaping @MainActor (Bool) -> Void
   ) {
     let ownerChanged = self.ownerID != ownerID
+    let previousSelectedIndex = self.selectedIndex
+    let awaitedLocalAcknowledgement = selection.awaitsLocalAcknowledgement
     self.ownerID = ownerID
     self.allowsTrailingPageCreation = allowsTrailingPageCreation
     let reportedPageCount = max(1, pageCount)
@@ -144,6 +147,12 @@ final class IPadPageTurnController: UIViewController,
       forModelIndex: self.selectedIndex
     ) {
       requestExternalSelection(target)
+    } else if previousSelectedIndex != self.selectedIndex,
+      !awaitedLocalAcknowledgement,
+      isTransitioning || pendingExternalIndex != nil {
+      // Returning to the source is also a new external intent. A repeated
+      // source index during an ordinary curl, or a local acknowledgement, is not.
+      requestExternalSelection(self.selectedIndex)
     }
 
     guard isViewLoaded else { return }
@@ -151,6 +160,7 @@ final class IPadPageTurnController: UIViewController,
     refreshRenderedPages()
     refreshControllerState()
     configureSystemGestures()
+    runPendingExternalSelection()
   }
 
   func pageViewController(
@@ -248,16 +258,19 @@ final class IPadPageTurnController: UIViewController,
   private func installDisplayedPage() {
     guard isViewLoaded, !hasInstalledPage else { return }
     hasInstalledPage = true
-    let controller = controllerForPage(at: displayedIndex)
+    isUpdatingContents = true
+    guard let controller = controllerForPage(at: displayedIndex) else { isUpdatingContents = false; return }
     transferToPageViewController(controller)
     pageViewController.setViewControllers(
       [controller],
       direction: .forward,
       animated: false
     )
+    isUpdatingContents = false
     retainNeededControllers()
     refreshRenderedPages()
     refreshControllerState()
+    runPendingExternalSelection()
   }
 
   private func replaceOwnerPages() {
@@ -267,17 +280,21 @@ final class IPadPageTurnController: UIViewController,
     retiredControllers.removeAll()
     readyPages.removeAll()
     hasInstalledPage = true
+    isUpdatingContents = true
 
-    let controller = controllerForPage(at: displayedIndex)
+    // UIKit can retain the old shells, but their content must release its
+    // resource before the replacement owner creates its first hosting child.
+    for oldController in oldControllers {
+      retireContent(of: oldController, preservingUIKitIdentity: false)
+    }
+    guard let controller = controllerForPage(at: displayedIndex) else { isUpdatingContents = false; return }
     transferToPageViewController(controller)
     pageViewController.setViewControllers(
       [controller],
       direction: .forward,
       animated: false
     )
-    for oldController in oldControllers where oldController !== controller {
-      retireContent(of: oldController, preservingUIKitIdentity: false)
-    }
+    isUpdatingContents = false
     retainNeededControllers()
     refreshRenderedPages()
     refreshControllerState()
@@ -286,8 +303,8 @@ final class IPadPageTurnController: UIViewController,
   private func preparedController(
     at index: Int
   ) -> IPadIndexedPageController? {
-    guard index >= 0, index < pageCount else { return nil }
-    let controller = controllerForPage(at: index)
+    guard index >= 0, index < pageCount,
+      let controller = controllers[index] else { return nil }
     mountForPrewarming(controller)
     guard readyPages[index] == true else { return nil }
     transferToPageViewController(controller)
@@ -296,8 +313,12 @@ final class IPadPageTurnController: UIViewController,
 
   private func controllerForPage(
     at index: Int
-  ) -> IPadIndexedPageController {
+  ) -> IPadIndexedPageController? {
     if let controller = controllers[index] { return controller }
+    guard !isTransitioning, controllers.count < PageTurnPrewarmWindow.capacity else { return nil }
+    let wasUpdating = isUpdatingContents
+    isUpdatingContents = true
+    defer { isUpdatingContents = wasUpdating }
 
     readyPages[index] = false
     let restored = retiredControllers.removeValue(forKey: index)?.controller
@@ -319,34 +340,42 @@ final class IPadPageTurnController: UIViewController,
   }
 
   private func retainNeededControllers() {
-    guard isViewLoaded else { return }
+    // A curl keeps its exact prepared window until UIKit returns both source
+    // and landing. External requests replace one index, never add live content.
+    guard isViewLoaded, !isTransitioning, !isUpdatingContents else { return }
+    isUpdatingContents = true
+    defer { isUpdatingContents = false }
     retiredControllers = retiredControllers.filter { $0.value.controller != nil }
-    var required = PageTurnPrewarmWindow.indices(
+    let target = anticipatedIndex ?? pendingExternalIndex.map(clamped)
+    let required = PageTurnPrewarmWindow.indices(
       displayedIndex: displayedIndex,
-      anticipatedIndex: anticipatedIndex,
+      anticipatedIndex: target,
       lastDirection: lastTurnDirection,
       pageCount: pageCount
     )
-    if let pendingExternalIndex { required.insert(clamped(pendingExternalIndex)) }
-
     // UIKit may retain a controller after its curl finishes. That identity is
     // not a reason to retain every WebKit/Metal page visited in this document.
     // Keep the live window and the complete in-flight turn; retire only content
     // that neither can display. Never reparent a controller already handed off.
-    if !isTransitioning {
-      let visible = Set((pageViewController.viewControllers ?? []).map(ObjectIdentifier.init))
-      for index in Array(controllers.keys) where !required.contains(index) {
-        guard let controller = controllers[index],
-          !visible.contains(ObjectIdentifier(controller))
-        else { continue }
-        controllers[index] = nil
-        readyPages[index] = nil
-        retireContent(of: controller)
-      }
+    let visible = Set((pageViewController.viewControllers ?? []).map(ObjectIdentifier.init))
+    for index in Array(controllers.keys) where !required.contains(index) {
+      guard let controller = controllers[index],
+        !visible.contains(ObjectIdentifier(controller))
+      else { continue }
+      controllers[index] = nil
+      readyPages[index] = nil
+      retireContent(of: controller)
     }
 
-    for index in required {
-      let controller = controllerForPage(at: index)
+    // Retire the old window first. The current sheet and requested landing
+    // get admission before speculative neighbours, including a shrinking count.
+    let ordered = required.sorted {
+      let left = $0 == displayedIndex ? 0 : ($0 == target ? 1 : 2)
+      let right = $1 == displayedIndex ? 0 : ($1 == target ? 1 : 2)
+      return left == right ? $0 < $1 : left < right
+    }
+    for index in ordered {
+      guard let controller = controllerForPage(at: index) else { continue }
       if index != displayedIndex { mountForPrewarming(controller) }
     }
   }
@@ -371,6 +400,9 @@ final class IPadPageTurnController: UIViewController,
   }
 
   private func refreshRenderedPages() {
+    let wasUpdating = isUpdatingContents
+    isUpdatingContents = true
+    defer { isUpdatingContents = wasUpdating }
     for (index, controller) in controllers {
       controller.rootView = hostedPage(
         at: index,
@@ -413,20 +445,17 @@ final class IPadPageTurnController: UIViewController,
 
   private func requestExternalSelection(_ requestedIndex: Int) {
     let target = clamped(requestedIndex)
+    pendingExternalIndex = target
+    guard isViewLoaded, !isTransitioning, !isUpdatingContents else { return }
     guard target != displayedIndex else {
       pendingExternalIndex = nil
-      return
-    }
-    pendingExternalIndex = target
-    let targetController = controllerForPage(at: target)
-    mountForPrewarming(targetController)
-    guard isViewLoaded,
-      !isTransitioning,
-      readyPages[target] == true
-    else {
       retainNeededControllers()
       return
     }
+    retainNeededControllers()
+    guard let targetController = controllers[target] else { return }
+    mountForPrewarming(targetController)
+    guard readyPages[target] == true else { return }
 
     pendingExternalIndex = nil
     anticipatedIndex = target
@@ -468,9 +497,13 @@ final class IPadPageTurnController: UIViewController,
   }
 
   private func completeExternalSelection(_ target: Int, finished: Bool) {
+    // A local landing may have published its selection while this external
+    // target waited. Confirm the final target without overwriting a newer one.
+    let confirmsSelection = finished && pendingExternalIndex == nil && target != selectedIndex
     if finished {
       let source = displayedIndex
-      selection.recordExternalLanding(at: target)
+      if confirmsSelection { selection.recordLocalLanding(at: target) }
+      else { selection.recordExternalLanding(at: target) }
       lastTurnDirection = target > source ? 1 : -1
     }
     anticipatedIndex = nil
@@ -478,11 +511,13 @@ final class IPadPageTurnController: UIViewController,
     retainNeededControllers()
     refreshRenderedPages()
     refreshControllerState()
+    if confirmsSelection { onCommit(target) }
     runPendingExternalSelection()
   }
 
   private func runPendingExternalSelection() {
-    guard !selection.awaitsLocalAcknowledgement else { return }
+    guard !isTransitioning, !isUpdatingContents,
+      !selection.awaitsLocalAcknowledgement else { return }
     let target = pendingExternalIndex ?? selectedIndex
     guard target != displayedIndex else {
       pendingExternalIndex = nil

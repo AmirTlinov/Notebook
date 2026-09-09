@@ -17,9 +17,6 @@ struct NotebookCollaborationView: View {
   }
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      if let question = model.agentQuestion {
-        NotebookAgentQuestionCard(question: question).id(question.id)
-      }
       if model.isPointing {
         Label("Укажите фрагмент · протяните для области", systemImage: "hand.point.up.left")
           .font(.callout).padding(12).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))

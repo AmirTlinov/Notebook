@@ -129,13 +129,25 @@ final class DrawingResponsivenessTests: XCTestCase {
     let field = app.descendants(matching: .any).matching(identifier: "agent-question-text").firstMatch
     XCTAssertTrue(field.waitForExistence(timeout: 5))
     XCTAssertFalse(app.keyboards.firstMatch.exists, "Выделение не раскрывает клавиатуру само")
+    let card = app.descendants(matching: .any).matching(identifier: "agent-question-card").firstMatch
+    XCTAssertTrue(card.waitForExistence(timeout: 2))
+    let selection = CGRect(x: app.frame.width * 0.24, y: app.frame.height * 0.20,
+      width: app.frame.width * 0.24, height: app.frame.height * 0.14)
+    XCTAssertFalse(card.frame.intersects(selection), "Карточка располагается рядом, не закрывая указанный фрагмент")
+    XCTAssertLessThan(card.frame.minY, app.frame.height * 0.5, "Указание наверху не отправляет вопрос в дальний нижний угол")
     XCTAssertTrue(app.buttons["drawing-tool-eraser"].isHittable, "Карточка не блокирует инструменты вне себя")
     let paper = app.otherElements["paper-input"]
     let originalPaperFrame = paper.frame
+    let cardProof = XCTAttachment(screenshot: app.screenshot())
+    cardProof.name = "question-next-to-selection"; cardProof.lifetime = .keepAlways; add(cardProof)
+    card.pinch(withScale: 1.25, velocity: 1)
+    XCTAssertEqual(paper.frame, originalPaperFrame, "Два пальца в карточке не двигают камеру сцены")
     field.tap()
     field.typeText("What is selected?")
     XCTAssertEqual(paper.frame, originalPaperFrame, "Клавиатура сдвигает карточку, а не камеру или физическую бумагу")
     XCTAssertTrue(app.buttons["agent-question-ask"].isHittable, "Отправка остаётся над системной клавиатурой")
+    let keyboardProof = XCTAttachment(screenshot: app.screenshot())
+    keyboardProof.name = "question-with-system-keyboard"; keyboardProof.lifetime = .keepAlways; add(keyboardProof)
     app.buttons["agent-question-ask"].tap()
     XCTAssertTrue(app.staticTexts["Сохранено на iPad · ждёт Mac"].waitForExistence(timeout: 8))
     XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 2))
@@ -146,6 +158,39 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(app.staticTexts["What is selected?"].waitForExistence(timeout: 3))
     let proof = XCTAttachment(screenshot: app.screenshot())
     proof.name = "offline-question-in-shared-context"; proof.lifetime = .keepAlways; add(proof)
+  }
+
+  func testQuestionDraftSurvivesRotationAndRemainsReachableAboveKeyboard() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    defer { XCUIDevice.shared.orientation = .portrait }
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-pointer-fixture"]
+    app.launch()
+    let pointer = app.buttons["drawing-tool-pointer"]
+    XCTAssertTrue(pointer.waitForExistence(timeout: 5))
+    pointer.tap()
+    app.coordinate(withNormalizedOffset: .init(dx: 0.24, dy: 0.20))
+      .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: .init(dx: 0.48, dy: 0.34)))
+    let field = app.descendants(matching: .any).matching(identifier: "agent-question-text").firstMatch
+    XCTAssertTrue(field.waitForExistence(timeout: 5))
+    field.tap(); field.typeText("Keep this draft")
+    XCUIDevice.shared.orientation = .landscapeLeft
+    let rotated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.width > app.frame.height }, object: app)
+    XCTAssertEqual(XCTWaiter.wait(for: [rotated], timeout: 4), .completed)
+    XCTAssertEqual(field.value as? String, "Keep this draft", "Поворот и клавиатура не создают вторую сессию редактора")
+    let card = app.descendants(matching: .any).matching(identifier: "agent-question-card").firstMatch
+    let ask = app.buttons["agent-question-ask"]
+    if !ask.isHittable { card.swipeUp() }
+    XCTAssertTrue(ask.isHittable, "При малой высоте содержание карточки прокручивается, а отправка остаётся доступна")
+    XCTAssertLessThanOrEqual(card.frame.maxY, app.keyboards.firstMatch.frame.minY)
+    XCTAssertTrue(app.frame.insetBy(dx: -1, dy: -1).contains(card.frame), "Карточка целиком остаётся в окне после поворота")
+    XCTAssertTrue(app.buttons["agent-question-change"].isHittable, "Вторая отправка тоже доступна после поворота")
+    let proof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    proof.name = "question-landscape-keyboard"; proof.lifetime = .keepAlways; add(proof)
+    ask.tap()
+    XCTAssertTrue(app.staticTexts["Сохранено на iPad · ждёт Mac"].waitForExistence(timeout: 8))
+    XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 2))
   }
 
   func testEraserAndPenSelectDirectlyBeforeOpeningPenSettings() {

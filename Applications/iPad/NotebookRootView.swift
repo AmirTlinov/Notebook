@@ -4,6 +4,10 @@ import NotebookCore
 struct NotebookRootView: View {
   @Environment(NotebookAppModel.self) private var model
   @State private var showsPairing = false
+  @State private var sceneOrigin = CGPoint.zero
+  @State private var collaborationHeight: CGFloat = 0
+  @State private var penControlsFrame = CGRect.zero
+  @State private var pairingFrame = CGRect.zero
 
   var body: some View {
     ZStack {
@@ -57,11 +61,15 @@ struct NotebookRootView: View {
               .frame(width: 44, height: 44)
               .background(.regularMaterial, in: Circle())
           }
+          .background(NotebookControlRegion(gate: model.inputGate))
           .accessibilityIdentifier("pairing-settings")
+          .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { pairingFrame = $0 }
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
           .padding(.trailing, 18).padding(.bottom, 80)
           .sheet(isPresented: $showsPairing) { NotebookPairingView().environment(model) }
           PenControlsView()
+            .background(NotebookControlRegion(gate: model.inputGate))
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { penControlsFrame = $0 }
             .frame(
               maxWidth: .infinity,
               maxHeight: .infinity,
@@ -80,11 +88,17 @@ struct NotebookRootView: View {
       }
     }
     .ignoresSafeArea()
+    .onGeometryChange(for: CGPoint.self) { $0.frame(in: .global).origin } action: { sceneOrigin = $0 }
     // Only the composer follows the keyboard safe area. The drawing geometry
     // remains the full physical viewport while system input is open.
     NotebookCollaborationView()
+      .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { collaborationHeight = $0 }
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
       .padding(18)
+    if let question = model.agentQuestion {
+      NotebookQuestionOverlay(question: question, sceneOrigin: sceneOrigin,
+        footerHeight: collaborationHeight, controls: [penControlsFrame, pairingFrame]).id(question.id)
+    }
     }
     .preferredColorScheme(.light)
   }

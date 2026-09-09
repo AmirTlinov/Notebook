@@ -1,4 +1,5 @@
 import NotebookCore
+import Observation
 import UIKit
 import SwiftUI
 import WebKit
@@ -169,6 +170,67 @@ final class DocumentResourceLeaseTests: XCTestCase {
     }
   }
 
+  func testDistantSelectionsDuringARealDocumentCurlNeverAcquireAFifthWebSurface() async throws {
+    let resources = SceneRenderResources(maximumWebSurfaces: 6)
+    let peak = DocumentWebSurfacePeak(resources: resources)
+    let paragraphs = (0..<160).map {
+      "Paragraph \($0). " + String(repeating: "The physical page keeps its own content. ", count: 12)
+    }.joined(separator: "\n\n")
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: paragraphs)])
+    let state = DocumentStateJournal(id: document.id, actor: UUID())
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene), controller = IPadPageTurnController()
+    var commits: [Int] = []
+    func configure(_ selected: Int) {
+      controller.update(ownerID: document.id, pageCount: 16, selectedIndex: selected,
+        navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+        page: { index, current, readiness in
+          XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
+          return AnyView(DocumentWebView(document: document, state: state, isInteractive: current,
+            selectedPageIndex: index, capturesSnapshot: false, onRenderReady: readiness,
+            onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in }, resources: resources))
+        }, onCommit: { commits.append($0) }, onTransitioningChange: { _ in })
+    }
+    configure(0); window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    let source = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
+    var destination: UIViewController?
+    await waitUntil(timeout: .seconds(10)) {
+      destination = controller.pageViewController(controller.pageViewController, viewControllerAfter: source)
+      return destination != nil && resources.activeWebSurfaceCount == 4
+    }
+    let landing = try XCTUnwrap(destination)
+    let preparedWeb = try XCTUnwrap(descendants(landing.view).first)
+    controller.pageViewController(controller.pageViewController, willTransitionTo: [landing])
+    let frozenWindow = controller.cachedPageIdentities
+    for target in [7, 12, 9] {
+      configure(target)
+      await Task.yield()
+      XCTAssertEqual(controller.cachedPageIdentities, frozenWindow)
+      XCTAssertLessThanOrEqual(resources.activeWebSurfaceCount, 4)
+      XCTAssertLessThanOrEqual(peak.maximum, 4)
+    }
+    controller.pageViewController.setViewControllers([landing], direction: .forward, animated: false)
+    controller.pageViewController(controller.pageViewController, didFinishAnimating: true,
+      previousViewControllers: [source], transitionCompleted: true)
+    XCTAssertTrue(descendants(landing.view).first === preparedWeb)
+    XCTAssertEqual(commits, [1])
+    configure(1)
+    await waitUntil(timeout: .seconds(10), message: {
+      "Latest target 9, actual \(controller.displayedIndex); web \(resources.activeWebSurfaceCount), peak \(peak.maximum), contents \(controller.cachedPageIdentities.keys.sorted())"
+    }) { controller.displayedIndex == 9 }
+    XCTAssertEqual(commits, [1, 9])
+    configure(9)
+    let visible = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
+    let web = try XCTUnwrap(descendants(visible.view).first)
+    let receipt = try await web.evaluateJavaScript("window.notebookRenderer.pageReceipt()") as? [String: Any]
+    XCTAssertEqual(receipt?["pageIndex"] as? Int, 9)
+    peak.sample()
+    XCTAssertLessThanOrEqual(peak.maximum, 4,
+      "Release-before-create must hold for actual WebKit leases throughout the handoff, not only the final dictionary")
+    XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
+  }
+
   func testSixThumbnailsFinishBesideThreeLivePagesThenReleaseAllPreviewWebKit() async throws {
     let resources = SceneRenderResources(maximumWebSurfaces: 6, maximumBackgroundWebSurfaces: 2)
     let paragraphs = (0..<120).map { "Paragraph \($0). " + String(repeating: "A preview preserves the physical page. ", count: 12) }.joined(separator: "\n\n")
@@ -328,5 +390,22 @@ final class DocumentResourceLeaseTests: XCTestCase {
     let deadline = ContinuousClock.now + timeout
     while !condition(), ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
     XCTAssertTrue(condition(), message())
+  }
+}
+
+/// Observation reports before each assignment. Re-arm synchronously so the
+/// following release also records a transient peak between two run-loop turns.
+@MainActor
+private final class DocumentWebSurfacePeak {
+  private weak var resources: SceneRenderResources?
+  private(set) var maximum = 0
+  init(resources: SceneRenderResources) { self.resources = resources; observe() }
+  func sample() {
+    if let resources { maximum = max(maximum, resources.activeWebSurfaceCount) }
+  }
+  private func observe() {
+    withObservationTracking { sample() } onChange: { [weak self] in
+      MainActor.assumeIsolated { self?.observe() }
+    }
   }
 }

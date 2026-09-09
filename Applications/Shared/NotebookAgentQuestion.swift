@@ -15,10 +15,25 @@ import SwiftUI
 struct NotebookAgentQuestionCard: View {
   @Environment(NotebookAppModel.self) private var model
   let question: NotebookAgentQuestion
+  let maximumHeight: CGFloat
   @State private var text = ""
+  @State private var contentHeight: CGFloat = 320
   @FocusState private var isEditing: Bool
 
   var body: some View {
+    ScrollView {
+      content.padding(14)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+    }
+    .scrollBounceBehavior(.basedOnSize)
+    .frame(height: min(contentHeight, max(1, maximumHeight)))
+    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("agent-question-card")
+    .task(id: "\(model.workspaceHeader?.cursor ?? 0)|\(question.contextID)") { await model.refreshAgentRequests() }
+  }
+
+  private var content: some View {
     VStack(alignment: .leading, spacing: 10) {
       HStack(alignment: .top) {
         VStack(alignment: .leading, spacing: 3) {
@@ -71,10 +86,6 @@ struct NotebookAgentQuestionCard: View {
         .font(.caption2).foregroundStyle(.secondary)
       if let error = model.agentRequestError { Text(error).font(.caption).foregroundStyle(.red) }
     }
-    .padding(14).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
-    .accessibilityElement(children: .contain)
-    .accessibilityIdentifier("agent-question-card")
-    .task(id: "\(model.workspaceHeader?.cursor ?? 0)|\(question.contextID)") { await model.refreshAgentRequests() }
   }
 
   private func send(_ mode: RequestGrant.Mode) {
