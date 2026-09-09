@@ -205,6 +205,8 @@
       let layoutCanonical = false;
       const work = {sourceInstalls:0,stateApplications:0,layoutPasses:0,regionMeasurements:0,typesetPasses:0};
       let editingBlockID = null;
+      let presentationEpoch = 0n;
+      let presentationIsRendering = true;
       let activeEditorFinish = null;
       let activeEditorLayout = null;
       let activeEditor = null;
@@ -214,6 +216,21 @@
       const bridge = (message) => {
         const handler = window.webkit?.messageHandlers?.notebook;
         if (handler) handler.postMessage({ ...message, runtimeID: payload?.runtimeID });
+      };
+
+      // Source layout and the pixels currently covering it have different
+      // owners. An editor never becomes a canonical-source screenshot merely
+      // because the underlying block still has the same signature.
+      const presentationReceipt = () => payload && ({
+        documentID:payload.documentID,runtimeID:payload.runtimeID,generation:payload.generation,
+        sourceKey:payload.sourceKey,stateKey:payload.stateKey,renderToken:payload.renderToken,
+        pageIndex:currentPageIndex(),presentationEpoch:String(presentationEpoch),
+        presentationKind:editingBlockID ? 'editor' : presentationIsRendering || !layoutCanonical ? 'preparing' : 'canonical'
+      });
+      const presentationChanged = () => {
+        if(presentationEpoch === 18446744073709551615n)throw new Error('Document presentation epoch exhausted');
+        presentationEpoch += 1n;
+        bridge({kind:'presentationChanged',...presentationReceipt()});
       };
 
       const canonical = value => Array.isArray(value) ? value.map(canonical)
@@ -349,10 +366,7 @@
       const pageReceipt = () => {
         if (!pageLayout || !payload) return null;
         return {
-          documentID: payload.documentID,
-          sourceKey: payload.sourceKey,
-          generation: payload.generation,
-          stateKey: payload.stateKey,
+          ...presentationReceipt(),
           layoutCanonical,
           work: {...work},
           renderToken: payload.renderToken,
@@ -581,6 +595,8 @@
         const stateChanged = appliedStateKey !== job.state.key;
         const modeChanged = payload?.programMode !== job.frame.programMode;
         payload = {...job.source,...job.frame,states:{...localStates}};
+        presentationIsRendering = true;
+        presentationChanged();
         bridge({kind:'renderStarted',documentID:payload.documentID,renderToken:payload.renderToken,
           sourceKey:payload.sourceKey,stateKey:payload.stateKey,generation:payload.generation});
         if(sourceChanged){runtimeDiagnostics=[];await renderSource()}
@@ -595,6 +611,8 @@
           await applyInteractiveState();
           appliedStateKey = job.state.key;
         }
+        presentationIsRendering = false;
+        presentationChanged();
         bridge({kind:'rendered',documentID:payload.documentID,renderToken:payload.renderToken,
           sourceKey:payload.sourceKey,stateKey:payload.stateKey,generation:payload.generation,layoutCanonical,pageCount:pageLayout.pageCount});
       };
@@ -645,6 +663,7 @@
         if (!section) return;
         if (window.MathJax?.typesetClear) MathJax.typesetClear([section]);
         editingBlockID = blockID;
+        presentationChanged();
         const minimumHeight = 144;
         let editorTop = pageLayout.margin;
         const editor = document.createElement('textarea');
@@ -728,6 +747,8 @@
         const close = () => {
           editor.remove(); status.remove(); section.style.visibility='';
           editingBlockID=null; activeEditorFinish=null; activeEditorLayout=null; activeEditor=null;
+          presentationIsRendering=true;
+          presentationChanged();
         };
         const finish = commit => {
           if(waitingForCommit||composing)return;
@@ -853,6 +874,7 @@
         presentPage,
         setPageIndex,
         pageReceipt,
+        presentationReceipt,
         setEditingEnabled,
         completeSourceEdit: result => {if(activeEditor?.sessionID.toLowerCase()===result.sessionID.toLowerCase())activeEditor.complete(result)}
       };
