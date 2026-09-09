@@ -369,15 +369,19 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
 
     let page = PageDocument(size: pageSize, actor: actor)
     guard let oldOrder = pageOrders[itemID.uuidString.lowercased()] else { return nil }
-    var nodes = pageOrderNodes
+    var addedNodes: [String: NotebookPageOrderNode] = [:]
     let nextOrder: NotebookPageOrderRegister
     do {
       let root = try NotebookPageOrderVector.append(to: oldOrder.visibleRoot, pageID: page.id,
-        read: { hash in guard let node = nodes[hash] else { throw NotebookStorageError.blobMissing(hash) }; return node },
-        write: { node in let hash = try node.hash; nodes[hash] = node; return hash })
+        read: { hash in
+          guard let node = addedNodes[hash] ?? pageOrderNodes[hash] else { throw NotebookStorageError.blobMissing(hash) }
+          return node
+        },
+        write: { node in let hash = try node.hash; addedNodes[hash] = node; return hash })
       nextOrder = try .authored(root: root, stamp: nextStamp, human: true, previous: oldOrder)
     } catch { return nil }
-    pageOrderNodes = nodes; pageOrders[itemID.uuidString.lowercased()] = nextOrder
+    pageOrderNodes.merge(addedNodes) { _, added in added }
+    pageOrders[itemID.uuidString.lowercased()] = nextOrder
     items[itemIndex].pageIDs.append(page.id)
     self.selectedPageID = page.id
     stamp = nextStamp
@@ -484,12 +488,15 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
   }
 
   private mutating func recordPageOrder(_ item: WorkspaceItem, human: Bool, previous: NotebookPageOrderRegister?) throws {
-    var nodes = pageOrderNodes
+    // Stage only this order's new immutable nodes. Aliasing the whole catalog
+    // here would copy every earlier notebook's nodes on each first insertion.
+    var addedNodes: [String: NotebookPageOrderNode] = [:]
     let root = try NotebookPageOrderVector.build(item.pageIDs, write: { node in
-      let hash = try node.hash; nodes[hash] = node; return hash
+      let hash = try node.hash; addedNodes[hash] = node; return hash
     })
-    pageOrders[item.id.uuidString.lowercased()] = try .authored(root: root, stamp: stamp, human: human, previous: previous)
-    pageOrderNodes = nodes
+    let order = try NotebookPageOrderRegister.authored(root: root, stamp: stamp, human: human, previous: previous)
+    pageOrderNodes.merge(addedNodes) { _, added in added }
+    pageOrders[item.id.uuidString.lowercased()] = order
   }
 
   /// Validation is deliberately separate from the bounded projection shape.
