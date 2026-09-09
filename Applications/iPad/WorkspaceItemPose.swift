@@ -62,7 +62,7 @@ struct WorkspaceItemPose<Content: View>: UIViewControllerRepresentable {
   @Environment(NotebookAppModel.self) private var model
   @Environment(\.scenePlaneProjection) private var projection
   @Environment(\.workspaceSceneFrame) private var frame
-  @Environment(\.sceneCompositionCohort) private var cohort
+  @Environment(\.sceneComposition) private var composition
   let rendered: RenderedWorkspaceItem
   let camera: SpatialCamera
   let viewport: SpatialPoint
@@ -78,13 +78,15 @@ struct WorkspaceItemPose<Content: View>: UIViewControllerRepresentable {
   }
 
   func updateUIViewController(_ controller: WorkspaceItemPoseController, context: Context) {
+    let cohort = composition.cohort
+    controller.bindSceneLifecycle(to: model)
     controller.update(rendered: rendered, camera: camera, viewport: viewport, boardID: boardID,
       cohortID: cohort?.id, cohortRevision: cohort?.plan.revision, sourceBoard: frame?.index.board(id: boardID), publishedLiftRank: liftRank, projection: projection,
       registry: registry, inputGate: model.inputGate, onLiftChanged: onLiftChanged, onDrop: onDrop,
       content: AnyView(content().environment(model)
         .environment(\.scenePlaneProjection, projection)
         .environment(\.workspaceSceneFrame, frame)
-        .environment(\.sceneCompositionCohort, cohort)
+        .environment(\.sceneComposition, composition)
         .environment(\.workspaceItemPose, controller.handle)))
   }
 
@@ -94,14 +96,15 @@ struct WorkspaceItemPose<Content: View>: UIViewControllerRepresentable {
 }
 
 @MainActor
-final class WorkspaceItemPoseController: UIViewController {
+final class WorkspaceItemPoseController: UIViewController, NotebookScenePresentationOwner {
   struct Pose: Equatable {
     let center: CGPoint
     let transform: CGAffineTransform
   }
 
   let handle = WorkspaceItemPoseHandle()
-  private let host = UIHostingController(rootView: AnyView(EmptyView()))
+  private var host: UIHostingController<AnyView>? = UIHostingController(rootView: AnyView(EmptyView()))
+  private weak var sceneModel: NotebookAppModel?
   private weak var registry: SpatialInkSurfaceRegistry?
   private weak var inputGate: NotebookInputGate?
   private var projection: ScenePlaneProjection?
@@ -130,11 +133,23 @@ final class WorkspaceItemPoseController: UIViewController {
   private var animationStart: Pose?
   private var installed = false
   private var retired = false
+  private(set) var isContentReleased = false
   private var lifetime: UInt64 = 0
   private var deferredUpdate: (() -> Void)?
   private var isReleasingPose = false
-  var contentView: UIView { host.view }
+  var contentView: UIView {
+    if let host { return host.view }
+    precondition(isContentReleased, "Only a terminal pose has no content host")
+    return view
+  }
   var surfaceID: SurfaceID? { rendered.map { .cover($0.id) } }
+
+  func bindSceneLifecycle(to model: NotebookAppModel) {
+    guard !retired, sceneModel !== model else { return }
+    sceneModel?.unregisterScenePresentation(self)
+    sceneModel = model
+    model.registerScenePresentation(self)
+  }
 
   override func loadView() {
     let container = WorkspaceItemPoseContainer()
@@ -142,6 +157,7 @@ final class WorkspaceItemPoseController: UIViewController {
     container.isOpaque = false
     container.clipsToBounds = false
     view = container
+    guard let host else { return }
     host.view.backgroundColor = .clear
     host.view.isOpaque = false
     host.view.clipsToBounds = false
@@ -177,6 +193,7 @@ final class WorkspaceItemPoseController: UIViewController {
       return
     }
     loadViewIfNeeded()
+    guard let host else { return }
     if self.rendered != nil, self.rendered?.id != rendered.id || self.boardID != boardID { detach() }
     let oldCamera = self.camera, oldViewport = self.viewport, previousTarget = targetPose
     self.rendered = rendered; self.camera = camera; self.viewport = viewport
@@ -232,7 +249,8 @@ final class WorkspaceItemPoseController: UIViewController {
     translation = value
     if publishedLift {
       stopAtPresentation()
-      let pose = presentationPose, ratio = camera.scale / currentPresence.camera.scale
+      guard let pose = presentationPose else { return }
+      let ratio = camera.scale / currentPresence.camera.scale
       // Drag follows the measured finger delta immediately. Only the remaining
       // lift spring resumes; movement never jumps to its not-yet-presented end.
       install(.init(center: .init(x: pose.center.x + delta.width * ratio,
@@ -263,8 +281,8 @@ final class WorkspaceItemPoseController: UIViewController {
   }
 
   func screenSurface(in coordinateView: UIView) -> SpatialScreenSurface? {
-    guard installed, let rendered, view.window != nil, view.window === coordinateView.window else { return nil }
-    let pose = presentationPose
+    guard installed, let rendered, let host, let pose = presentationPose,
+      view.window != nil, view.window === coordinateView.window else { return nil }
     func convert(_ p: CGPoint) -> CGPoint {
       let local = CGPoint(x: p.x - host.view.bounds.midX, y: p.y - host.view.bounds.midY).applying(pose.transform)
       return view.convert(.init(x: local.x + pose.center.x, y: local.y + pose.center.y), to: coordinateView)
@@ -296,6 +314,7 @@ final class WorkspaceItemPoseController: UIViewController {
   fileprivate func releasePose(lifetime: UInt64) {
     guard leaseCount > 0 else { return }
     leaseCount -= 1
+    if retired { releaseRetiredContentIfPossible(); return }
     if leaseCount == 0, self.lifetime == lifetime, !retired {
       isReleasingPose = true
       let update = deferredUpdate; deferredUpdate = nil; update?()
@@ -314,7 +333,41 @@ final class WorkspaceItemPoseController: UIViewController {
     // Pins and new input exclude this exact SQL-confirmed owner, not its peers.
   }
 
-  func uninstall() { retired = true; detach() }
+  func uninstall() {
+    guard !retired else { return }
+    retired = true
+    sceneModel?.unregisterScenePresentation(self)
+    sceneModel = nil
+    detach()
+    releaseRetiredContentIfPossible()
+  }
+
+  /// A Pencil lease can outlive UIKit unmount while its accepted tail finishes.
+  /// That same body remains owned until the last lease, but not until a cached
+  /// controller happens to deallocate. Late updates cannot revive this host.
+  private func releaseRetiredContentIfPossible() {
+    guard retired, leaseCount == 0, !isContentReleased else { return }
+    isContentReleased = true
+    if let host {
+      host.rootView = AnyView(EmptyView())
+      // The last accepted contact has ended. Process the empty value in this
+      // hosting view so its cached DisplayList cannot retain retired paint after
+      // UIKit keeps or detaches the controller without scheduling another frame.
+      if host.isViewLoaded {
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+      }
+      if host.parent != nil { host.willMove(toParent: nil) }
+      if host.isViewLoaded { host.view.removeFromSuperview() }
+      host.removeFromParent()
+      // SwiftUI's focus bridge can retain this controller from the old hosting
+      // view. A terminal owner no longer owns that host in the opposite direction.
+      self.host = nil
+    }
+    onLiftChanged = { _ in }; onDrop = { _ in nil }
+    projection = nil; rendered = nil; boardID = nil; cohortRevision = nil
+    publishedLiftRank = nil; handle.owner = nil
+  }
 
   private func detach() {
     lifetime &+= 1; deferredUpdate = nil
@@ -352,7 +405,8 @@ final class WorkspaceItemPoseController: UIViewController {
         .scaledBy(x: camera.scale * (lift ? 1.035 : 1), y: camera.scale * (lift ? 1.035 : 1)))
   }
 
-  private var presentationPose: Pose {
+  private var presentationPose: Pose? {
+    guard let host else { return nil }
     if let layer = host.view.layer.presentation() {
       return .init(center: layer.position, transform: layer.affineTransform())
     }
@@ -361,6 +415,7 @@ final class WorkspaceItemPoseController: UIViewController {
   }
 
   private func install(_ pose: Pose) {
+    guard let host else { return }
     CATransaction.begin(); CATransaction.setDisableActions(true)
     host.view.center = pose.center; host.view.transform = pose.transform
     CATransaction.commit()
@@ -370,14 +425,14 @@ final class WorkspaceItemPoseController: UIViewController {
     let pose = presentationPose
     generation &+= 1
     animator?.stopAnimation(true); animator = nil; animationStart = nil
-    install(pose)
+    if let pose { install(pose) }
     endActivity()
   }
 
   private func retargetAnimation() { stopAtPresentation(); animateToTarget() }
 
   private func animateToTarget(duration: TimeInterval = 0.18) {
-    guard installed, retiredAtRevision == nil, leaseCount == 0 else { return }
+    guard installed, retiredAtRevision == nil, leaseCount == 0, let host else { return }
     stopAtPresentation()
     let target = targetPose
     let start = Pose(center: host.view.center, transform: host.view.transform)
@@ -385,8 +440,8 @@ final class WorkspaceItemPoseController: UIViewController {
     animationStart = start
     let generation = self.generation
     let animator = UIViewPropertyAnimator(duration: duration, dampingRatio: 0.82) {
-      self.host.view.center = target.center
-      self.host.view.transform = target.transform
+      self.host?.view.center = target.center
+      self.host?.view.transform = target.transform
     }
     self.animator = animator
     beginActivity()

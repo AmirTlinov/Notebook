@@ -55,40 +55,65 @@ import WebKit
   /// Rasterization is needed even for layer.contents: filtering that image alone
   /// loses subpixel strokes at fractional scales. Its exact source stays cached.
   struct AgentElementSnapshotView: UIViewRepresentable {
-    let raster: RasterLease
+    @Environment(NotebookAppModel.self) private var model: NotebookAppModel?
+    weak var raster: RasterLease?
 
     func makeUIView(context: Context) -> AgentSnapshotRasterView {
       AgentSnapshotRasterView()
     }
 
     func updateUIView(_ view: AgentSnapshotRasterView, context: Context) {
+      view.bindSceneLifecycle(to: model)
+      guard let raster, !raster.isReleased else { return }
       view.updateRaster(raster, displayScale: context.environment.displayScale)
     }
 
     static func dismantleUIView(_ view: AgentSnapshotRasterView, coordinator: ()) {
-      view.removeRaster()
+      view.uninstall()
     }
   }
 
   /// The physical bounds determine backing allocation. An external camera
   /// transform only projects this completed raster and never raises its density.
-  final class AgentSnapshotRasterView: UIView {
+  final class AgentSnapshotRasterView: UIView, NotebookScenePresentationOwner {
+    private weak var sceneModel: NotebookAppModel?
+    private var isRetired = false
     private var pixelSize: CGSize = .zero
     private var displayScale: CGFloat = 1
     private var retainedRaster: RasterLease?
 
-    init() {
+    init(rasterizesContent: Bool = true) {
       super.init(frame: .zero)
       isOpaque = false
       isUserInteractionEnabled = false
-      layer.shouldRasterize = true
+      layer.shouldRasterize = rasterizesContent
       layer.minificationFilter = .trilinear
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Use init()") }
 
-    func updateRaster(_ raster: RasterLease, displayScale: CGFloat) {
+    func bindSceneLifecycle(to model: NotebookAppModel?) {
+      guard !isRetired, sceneModel !== model else { return }
+      sceneModel?.unregisterScenePresentation(self)
+      sceneModel = model
+      model?.registerScenePresentation(self)
+    }
+
+    /// A tile's cohort may end while this native view is still shown. Its
+    /// independent lease retains the same cache entry, without another bitmap.
+    func updateRaster(_ source: RasterLease, displayScale: CGFloat) {
+      guard !isRetired else { return }
+      if let current = retainedRaster,
+        !current.isReleased, current.entryID == source.entryID {
+        installRaster(current, displayScale: displayScale)
+      } else if let copy = source.retainedCopy() {
+        installRaster(copy, displayScale: displayScale)
+      }
+    }
+
+    private func installRaster(_ raster: RasterLease, displayScale: CGFloat) {
+      guard !isRetired else { return }
       let image = raster.image
       if (layer.contents as AnyObject?) !== image.cgImage { layer.contents = image.cgImage }
       retainedRaster = raster
@@ -98,7 +123,14 @@ import WebKit
       updateRasterizationScale()
     }
 
-    func removeRaster() {
+    /// Window transfer preserves this presenter's pixels. Actual dismantle or
+    /// the model's durable shutdown ends its lease even if UIKit caches the view.
+    /// Other borrowers of the same cache entry are not revoked.
+    func uninstall() {
+      guard !isRetired else { return }
+      isRetired = true
+      sceneModel?.unregisterScenePresentation(self)
+      sceneModel = nil
       layer.contents = nil
       retainedRaster = nil
       pixelSize = .zero
@@ -152,38 +184,61 @@ import WebKit
   }
 
   struct AgentElementSnapshotView: NSViewRepresentable {
-    let raster: RasterLease
+    @Environment(NotebookAppModel.self) private var model: NotebookAppModel?
+    weak var raster: RasterLease?
 
     func makeNSView(context: Context) -> AgentSnapshotRasterView {
       AgentSnapshotRasterView()
     }
 
     func updateNSView(_ view: AgentSnapshotRasterView, context: Context) {
+      view.bindSceneLifecycle(to: model)
+      guard let raster, !raster.isReleased else { return }
       view.updateRaster(raster, displayScale: context.environment.displayScale)
     }
 
     static func dismantleNSView(_ view: AgentSnapshotRasterView, coordinator: ()) {
-      view.removeRaster()
+      view.uninstall()
     }
   }
 
-  final class AgentSnapshotRasterView: NSImageView {
+  final class AgentSnapshotRasterView: NSImageView, NotebookScenePresentationOwner {
+    private weak var sceneModel: NotebookAppModel?
+    private var isRetired = false
     private var retainedRaster: RasterLease?
     private var pixelSize: CGSize = .zero
     private var displayScale: CGFloat = 1
 
-    init() {
+    init(rasterizesContent: Bool = true) {
       super.init(frame: .zero)
       imageScaling = .scaleAxesIndependently
       wantsLayer = true
-      layer?.shouldRasterize = true
+      layer?.shouldRasterize = rasterizesContent
       layer?.minificationFilter = .trilinear
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Use init()") }
 
-    func updateRaster(_ raster: RasterLease, displayScale: CGFloat) {
+    func bindSceneLifecycle(to model: NotebookAppModel?) {
+      guard !isRetired, sceneModel !== model else { return }
+      sceneModel?.unregisterScenePresentation(self)
+      sceneModel = model
+      model?.registerScenePresentation(self)
+    }
+
+    func updateRaster(_ source: RasterLease, displayScale: CGFloat) {
+      guard !isRetired else { return }
+      if let current = retainedRaster,
+        !current.isReleased, current.entryID == source.entryID {
+        installRaster(current, displayScale: displayScale)
+      } else if let copy = source.retainedCopy() {
+        installRaster(copy, displayScale: displayScale)
+      }
+    }
+
+    private func installRaster(_ raster: RasterLease, displayScale: CGFloat) {
+      guard !isRetired else { return }
       let image = raster.image
       if self.image !== image { self.image = image }
       retainedRaster = raster
@@ -193,7 +248,11 @@ import WebKit
       updateRasterizationScale()
     }
 
-    func removeRaster() {
+    func uninstall() {
+      guard !isRetired else { return }
+      isRetired = true
+      sceneModel?.unregisterScenePresentation(self)
+      sceneModel = nil
       image = nil
       layer?.contents = nil
       retainedRaster = nil
@@ -282,6 +341,46 @@ struct AgentProgramSource: Equatable {
   }
 }
 
+/// Publication can be revoked before WebKit returns. Its submitted backing
+/// and executor remain owned by the actual completion, not by the reader task.
+@MainActor
+final class AgentSnapshotCapture {
+  let id = UUID()
+  private let reservation: RasterReservation
+  private var lease: WebSurfaceLease?
+  private(set) var isCancelled = false
+  private(set) var isComplete = false
+  private var waiters: [UUID: CheckedContinuation<Void, Error>] = [:]
+  init(reservation: RasterReservation, lease: WebSurfaceLease) {
+    precondition(!reservation.isReleased && !lease.isReleased)
+    self.reservation = reservation; self.lease = lease
+  }
+  func cancel() { isCancelled = true }
+  func finish() {
+    guard !isComplete else { return }
+    isComplete = true; reservation.release(); lease = nil
+    let pending = waiters; waiters.removeAll()
+    for waiter in pending.values { waiter.resume() }
+  }
+  /// A deadline stops the reader, never the accounting of submitted work.
+  func waitForCompletion(deadline: ContinuousClock.Instant? = nil) async throws {
+    guard !isComplete else { return }
+    let id = UUID()
+    var timeout: Task<Void, Never>?
+    defer { timeout?.cancel() }
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+      waiters[id] = continuation
+      if let deadline {
+        timeout = Task { @MainActor [weak self] in
+          do { try await Task.sleep(until: deadline, clock: .continuous) } catch { return }
+          self?.waiters.removeValue(forKey: id)?.resume(throwing: SceneRenderError.snapshotPending("agent_capture_drain"))
+        }
+      }
+    }
+  }
+  isolated deinit { reservation.release() }
+}
+
 @MainActor
 final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
   private let lease: WebSurfaceLease
@@ -301,7 +400,9 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private var appliedState: JSONValue?
   private var stateApplication: Task<Void, Never>?
   private var stateApplicationID: UUID?
-  private var snapshotReservation: RasterReservation?
+  private var currentCapture: AgentSnapshotCapture?
+  private var submittedCaptures: [UUID: AgentSnapshotCapture] = [:]
+  var pendingSnapshotCaptures: [AgentSnapshotCapture] { Array(submittedCaptures.values) }
   private var snapshotInFlight = false
   private var needsSnapshot = false
   private var preparationDeadline: Task<Void, Never>?
@@ -350,7 +451,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     renderIsReady = false
     stateApplicationID = nil; stateApplication?.cancel(); stateApplication = nil
     preparationDeadline?.cancel(); preparationDeadline = nil
-    snapshotReservation?.release(); snapshotReservation = nil
+    currentCapture?.cancel(); currentCapture = nil
     onRenderReady = { _ in }
     onFailure = { _ in }
     onState = { _ in }
@@ -399,7 +500,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
 
   private func beginLoad(_ element: AgentElement, in webView: WKWebView) {
     stateApplicationID = nil; stateApplication?.cancel(); stateApplication = nil
-    snapshotReservation?.release(); snapshotReservation = nil
+    currentCapture?.cancel(); currentCapture = nil
     snapshotInFlight = false; needsSnapshot = false; runtimeLoaded = false
     activeNavigation = nil
     webView.stopLoading()
@@ -452,7 +553,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     preparationDeadline = Task { @MainActor [weak self] in
       do { try await Task.sleep(for: .seconds(8)) } catch { return }
       guard let self, accepts(token) else { return }
-      snapshotReservation?.release(); snapshotReservation = nil
+      currentCapture?.cancel(); currentCapture = nil
       fail(.init(kind: "preparation_timeout", elementID: loadedElement?.id,
         message: "WebKit did not complete source preparation and a snapshot before the deadline."), token: token)
     }
@@ -542,15 +643,25 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       return
     }
     snapshotInFlight = true
-    snapshotReservation = reservation
-    webView.takeSnapshot(with: configuration) { [weak self] image, error in
-      guard let self else { reservation.release(); return }
-      if accepts(token) { snapshotInFlight = false; snapshotReservation = nil }
+    let capture = holdSubmittedSnapshot(reservation)
+    webView.takeSnapshot(with: configuration) { [weak self, capture] image, error in
+      defer { capture.finish(); self?.submittedCaptures[capture.id] = nil }
+      guard let self, !capture.isCancelled else { return }
+      if accepts(token) { snapshotInFlight = false; currentCapture = nil }
       completeSnapshot(image, error: error, token: token, element: element, reservation: reservation)
       if accepts(token), needsSnapshot, let web = attachedWebView {
         needsSnapshot = false; captureSnapshot(of: web, token: token)
       }
     }
+  }
+
+  /// The same grant stays alive when a representable is dismantled while its
+  /// callback is held by WebKit. This does not acquire another surface slot.
+  func holdSubmittedSnapshot(_ reservation: RasterReservation) -> AgentSnapshotCapture {
+    precondition(!isInvalidated)
+    let capture = AgentSnapshotCapture(reservation: reservation, lease: lease)
+    currentCapture = capture; submittedCaptures[capture.id] = capture
+    return capture
   }
 
   func completeSnapshot(_ image: AgentSnapshotImage?, error: (any Error)?, token: String,
@@ -610,7 +721,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     guard accepts(token), let element = loadedElement else { return }
     snapshotFailure = diagnostic.kind == "resource_limit" ? .resourceLimit : .snapshotPending(element.id)
     preparationDeadline?.cancel(); preparationDeadline = nil
-    snapshotReservation?.release(); snapshotReservation = nil
+    currentCapture?.cancel(); currentCapture = nil
     resources.record(diagnostic, for: element)
     setRenderReady(false, token: token)
     Task { @MainActor [weak self] in

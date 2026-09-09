@@ -11,6 +11,11 @@ final class SceneWebRasterPreparationTests: XCTestCase {
     let preparation = try await SceneWebRasterPreparation.create(resources: resources, permitsPreparation: { true })
     defer { preparation.close() }
     let identity = preparation.webIdentity
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+    let window = try XCTUnwrap(scene.windows.compactMap { $0 as? NotebookPreparationWindow }.last)
+    XCTAssertFalse(window.canBecomeKey)
+    XCTAssertFalse(window.isUserInteractionEnabled)
+    XCTAssertTrue(window.accessibilityElementsHidden)
     for index in 0..<8 {
       let element = AgentElement(id: "sequential-\(index)", kind: .web,
         frame: .init(x: 0, y: 0, width: 2689.263, height: 3943.43), source: "Distinct program \(index)",

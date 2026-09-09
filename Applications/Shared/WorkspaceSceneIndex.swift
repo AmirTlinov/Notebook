@@ -35,6 +35,10 @@ struct WorkspaceSceneIndex: Sendable {
   private let paperSizes: [UUID: DocumentPaperSize]
   private let boards: [UUID: Board]
 
+  /// A return-boundary projection extends this bounded scene with one addressed
+  /// parent window. Paper geometry travels unchanged with its existing owners.
+  var documentPaperSizes: [UUID: DocumentPaperSize] { paperSizes }
+
   init(workspace: WorkspaceIndex, hierarchy: BoardHierarchy, paperSizes: [UUID: DocumentPaperSize]) {
     capturedWorkspace = workspace; capturedHierarchy = hierarchy
     catalog = workspace.items

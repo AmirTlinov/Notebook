@@ -34,10 +34,6 @@ struct PreparedAgentElementView: View {
     self.focus = focus
     self.onRenderReady = onRenderReady
     self.onState = onState
-    // A prepared portal must have pixels in its first frame, before .task runs.
-    let retained = SceneRenderResources.shared.retainRaster(for: element)
-    _raster = State(initialValue: retained)
-    _preparedSource = State(initialValue: retained == nil ? nil : element)
   }
 
   private var isActive: Bool {
@@ -63,7 +59,7 @@ struct PreparedAgentElementView: View {
         AgentWebElementView(element: element, lease: web,
           snapshotPolicy: .display(scale: displayScale),
           onRenderReady: { ready in
-            guard self.web?.id == web.id, !web.isReleased else { return }
+            guard model.shutdownPhase != .stopped, self.web?.id == web.id, !web.isReleased else { return }
             if ready, let next = SceneRenderResources.shared.retainRaster(for: element) {
               liveProgram = AgentProgramSource(element)
               raster = next
@@ -77,7 +73,7 @@ struct PreparedAgentElementView: View {
               onRenderReady(false)
             }
           }, onFailure: { diagnostic in
-            guard self.web?.id == web.id, !web.isReleased else { return }
+            guard model.shutdownPhase != .stopped, self.web?.id == web.id, !web.isReleased else { return }
             switch diagnostic.kind {
             case "resource_limit": failure = "Недостаточно ресурсов для изображения"
             case "load_error": failure = "Не удалось загрузить схему"
@@ -125,6 +121,16 @@ struct PreparedAgentElementView: View {
           .allowsHitTesting(false)
       }
     }
+    .onAppear {
+      guard model.shutdownPhase != .stopped else { return }
+      // Mounting, not constructing a cached SwiftUI value, acquires the lease.
+      // This synchronous callback supplies cached pixels before the first frame;
+      // asynchronous WebKit preparation remains the existing task's job.
+      if let cached = SceneRenderResources.shared.retainRaster(for: element) {
+        raster = cached
+        preparedSource = element
+      }
+    }
     .task(id: demand) { await prepare(demand) }
     .onChange(of: SceneRenderResources.shared.webAdmissionGeneration) { _, _ in
       guard waitingForAdmission else { return }
@@ -143,6 +149,7 @@ struct PreparedAgentElementView: View {
 
   @MainActor
   private func prepare(_ demand: Demand) async {
+    guard model.shutdownPhase != .stopped else { return }
     waitingForAdmission = false
     if failedSource == demand.source { return }
     failure = nil
@@ -162,7 +169,7 @@ struct PreparedAgentElementView: View {
     do {
       let acquired = try await SceneRenderResources.shared.acquireWebSurface(
         priority: demand.active ? .input : .visible)
-      guard !Task.isCancelled else { acquired.release(); return }
+      guard !Task.isCancelled, model.shutdownPhase != .stopped else { acquired.release(); return }
       web = acquired
     } catch is CancellationError {
       return

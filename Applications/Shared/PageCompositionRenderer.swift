@@ -81,7 +81,7 @@ enum PageCompositionRenderer {
       baselineBytes = width * height * 8
     }
     guard geometryBytes <= resources.byteLimit - baselineBytes,
-      let geometry = resources.reserveDerivedBytes(max(1, geometryBytes + baselineBytes)) else {
+      let geometry = resources.reserveDerivedBytes(max(1, geometryBytes + baselineBytes), priority: .passive) else {
       throw SceneRenderError.resourceLimit
     }
     defer { geometry.release() }

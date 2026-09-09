@@ -10,7 +10,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-collaboration-fixture", "--notebook-history-performance-fixture"]
-    app.launch()
+    launchPortraitFixture(app)
     XCTAssertTrue(app.buttons["collaboration-history"].waitForExistence(timeout: 15))
     for _ in 0..<5 {
       app.buttons["collaboration-history"].tap()
@@ -29,7 +29,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-collaboration-fixture"]
-    app.launch()
+    launchPortraitFixture(app)
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout:8))
     let drawing = paper.value as? String
@@ -88,7 +88,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-collaboration-fixture"]
-    app.launch()
+    launchPortraitFixture(app)
     let notice = app.buttons["collaboration-dismiss"]
     XCTAssertTrue(notice.waitForExistence(timeout:3))
     let historyFrame = app.buttons["collaboration-history"].frame
@@ -103,7 +103,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-pointer-fixture"]
-    app.launch()
+    launchPortraitFixture(app)
     let pointer = app.buttons["drawing-tool-pointer"]
     XCTAssertTrue(pointer.waitForExistence(timeout:5))
     pointer.tap()
@@ -130,7 +130,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-pointer-fixture"]
-    app.launch()
+    launchPortraitFixture(app)
     let pointer = app.buttons["drawing-tool-pointer"]
     XCTAssertTrue(pointer.waitForExistence(timeout: 5))
     pointer.tap()
@@ -176,7 +176,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     defer { XCUIDevice.shared.orientation = .portrait }
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-pointer-fixture"]
-    app.launch()
+    launchPortraitFixture(app)
     let pointer = app.buttons["drawing-tool-pointer"]
     XCTAssertTrue(pointer.waitForExistence(timeout: 5))
     pointer.tap()
@@ -185,19 +185,34 @@ final class DrawingResponsivenessTests: XCTestCase {
     let field = app.descendants(matching: .any).matching(identifier: "agent-question-text").firstMatch
     XCTAssertTrue(field.waitForExistence(timeout: 5))
     field.tap(); field.typeText("Keep this draft")
+    let keyboard = app.keyboards.firstMatch
+    XCTAssertTrue(keyboard.waitForExistence(timeout: 3))
     XCUIDevice.shared.orientation = .landscapeLeft
-    let rotated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.width > app.frame.height }, object: app)
-    XCTAssertEqual(XCTWaiter.wait(for: [rotated], timeout: 4), .completed)
+    // The app and system keyboard publish orientation independently. A landscape
+    // app frame alone can still accompany the keyboard's transformed portrait
+    // frame. Wait for a landscape keyboard inside the actual window, not for
+    // card overlap to disappear. The keyboard's accessibility body need not
+    // include its bottom system margin; card containment is checked below.
+    let rotated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      guard keyboard.exists else { return false }
+      let window = app.frame, keys = keyboard.frame
+      return window.width > window.height && abs(keys.width - window.width) <= 1
+        && keys.height > 0 && window.contains(keys) && keys.midY > window.midY
+    }, object: app)
+    let rotationResult = XCTWaiter.wait(for: [rotated], timeout: 4)
+    XCTAssertEqual(rotationResult, .completed)
     XCTAssertEqual(field.value as? String, "Keep this draft", "Поворот и клавиатура не создают вторую сессию редактора")
     let card = app.descendants(matching: .any).matching(identifier: "agent-question-card").firstMatch
     let ask = app.buttons["agent-question-ask"]
     if !ask.isHittable { card.swipeUp() }
     XCTAssertTrue(ask.isHittable, "При малой высоте содержание карточки прокручивается, а отправка остаётся доступна")
-    XCTAssertLessThanOrEqual(card.frame.maxY, app.keyboards.firstMatch.frame.minY)
-    XCTAssertTrue(app.frame.insetBy(dx: -1, dy: -1).contains(card.frame), "Карточка целиком остаётся в окне после поворота")
-    XCTAssertTrue(app.buttons["agent-question-change"].isHittable, "Вторая отправка тоже доступна после поворота")
+    let geometryProof = XCTAttachment(string: "window=\(app.frame) keyboard=\(keyboard.frame) card=\(card.frame)")
+    geometryProof.name = "question-rotated-geometry"; geometryProof.lifetime = .keepAlways; add(geometryProof)
     let proof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
     proof.name = "question-landscape-keyboard"; proof.lifetime = .keepAlways; add(proof)
+    XCTAssertLessThanOrEqual(card.frame.maxY, keyboard.frame.minY)
+    XCTAssertTrue(app.frame.insetBy(dx: -1, dy: -1).contains(card.frame), "Карточка целиком остаётся в окне после поворота")
+    XCTAssertTrue(app.buttons["agent-question-change"].isHittable, "Вторая отправка тоже доступна после поворота")
     ask.tap()
     XCTAssertTrue(app.staticTexts["Сохранено на iPad · ждёт Mac"].waitForExistence(timeout: 8))
     XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 2))
@@ -207,7 +222,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
-    app.launch()
+    launchPortraitFixture(app)
 
     let pen = app.buttons["pen-controls-toggle"]
     let eraser = app.buttons["drawing-tool-eraser"]
@@ -288,7 +303,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-drawing-responsiveness-fixture",
       "--notebook-agent-element-fixture",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let sharedElement = app.otherElements["agent-element-shared-element"]
     XCTAssertTrue(sharedElement.waitForExistence(timeout: 8))
@@ -330,7 +345,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-drawing-responsiveness-fixture",
       "--notebook-document-runtime-fixture",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     // HTML page regions are siblings of the continuous text flow in WebKit's
     // accessibility tree. The UIKit shell owns the actual current document.
@@ -381,7 +396,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-drawing-responsiveness-fixture",
       "--notebook-document-runtime-fixture",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let runtime = app.descendants(matching: .any)
       .matching(identifier: "document-runtime")
@@ -412,7 +427,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-drawing-responsiveness-fixture",
       "--notebook-document-runtime-fixture",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let firstPage = app.otherElements.matching(
       NSPredicate(format: "label BEGINSWITH 'Страница 1 из '")
@@ -451,7 +466,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-document-runtime-fixture",
       "--notebook-document-page-three-fixture",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let selectedSheet = app.otherElements["page-turn-page-2"]
     let thirdPage = selectedSheet.otherElements.matching(
@@ -487,7 +502,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
-    app.launch()
+    launchPortraitFixture(app)
 
     let surface = app.otherElements["page-turn-surface"]
     XCTAssertTrue(surface.waitForExistence(timeout: 5))
@@ -513,7 +528,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
-    app.launch()
+    launchPortraitFixture(app)
 
     let surface = app.otherElements["page-turn-surface"]
     XCTAssertTrue(surface.waitForExistence(timeout: 5))
@@ -539,7 +554,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-drawing-responsiveness-fixture",
       "--notebook-document-runtime-fixture",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let surface = app.otherElements["page-turn-surface"]
     XCTAssertTrue(surface.waitForExistence(timeout: 8))
@@ -590,7 +605,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-document-runtime-fixture", "--notebook-document-prose-fixture"]
-    app.launch()
+    launchPortraitFixture(app)
     let surface = app.otherElements["page-turn-surface"]
     XCTAssertTrue(surface.waitForExistence(timeout: 8))
     await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Страница 1 из ' AND value != 'Страница 1 из 1'"), object: surface)], timeout: 5)
@@ -619,7 +634,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture",
       "--notebook-document-runtime-fixture", "--notebook-document-prose-fixture"]
-    app.launch()
+    launchPortraitFixture(app)
     let surface = app.otherElements["page-turn-surface"]
     XCTAssertTrue(surface.waitForExistence(timeout: 8))
     await fulfillment(of: [XCTNSPredicateExpectation(
@@ -663,6 +678,23 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(topicIDs(first), topicIDs(returned))
   }
 
+  private func workspaceWindow(in app: XCUIApplication) -> XCUIElement {
+    app.windows.containing(.button, identifier: "pairing-settings").firstMatch
+  }
+
+  private func launchPortraitFixture(_ app: XCUIApplication) {
+    XCUIDevice.shared.orientation = .portrait
+    app.launch()
+    let window = workspaceWindow(in: app)
+    let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      guard window.exists else { return false }
+      let frame = window.frame
+      return frame.width > 0 && frame.height > frame.width && frame.origin == .zero
+    }, object: app)
+    XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 8), .completed,
+      "The real workspace, not an offscreen preparation window, owns the portrait fixture")
+  }
+
   private func visibleDocumentText(app: XCUIApplication, surface: XCUIElement, name: String) throws -> String {
     let screenshot = app.screenshot()
     let attachment = XCTAttachment(screenshot: screenshot)
@@ -671,13 +703,17 @@ final class DrawingResponsivenessTests: XCTestCase {
     add(attachment)
     let request = VNRecognizeTextRequest()
     request.recognitionLevel = .accurate
-    request.recognitionLanguages = ["ru-RU", "en-US"]
+    request.recognitionLanguages = ["ru-RU"]
     let frame = surface.frame.intersection(app.frame)
-    request.regionOfInterest = CGRect(x: frame.minX / app.frame.width,
-      y: 1 - frame.maxY / app.frame.height, width: frame.width / app.frame.width,
-      height: frame.height / app.frame.height)
+    let pageRegion = CGRect(x: (frame.minX - app.frame.minX) / app.frame.width,
+      y: 1 - (frame.maxY - app.frame.minY) / app.frame.height,
+      width: frame.width / app.frame.width, height: frame.height / app.frame.height)
     try VNImageRequestHandler(cgImage: screenshot.image.cgImage!, options: [:]).perform([request])
-    let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+    // Recognize complete screen glyphs, then address observations to the real
+    // sheet. Cropping the recognizer's input changes its word segmentation.
+    let text = (request.results ?? []).filter {
+      pageRegion.contains(CGPoint(x: $0.boundingBox.midX, y: $0.boundingBox.midY))
+    }.compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     XCTAssertFalse(text.isEmpty)
     let proof = XCTAttachment(string: text); proof.name = name + "-text"; proof.lifetime = .keepAlways; add(proof)
     return text
@@ -689,7 +725,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     try await Task.sleep(for: .milliseconds(450))
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
-    app.launch()
+    launchPortraitFixture(app)
 
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
@@ -714,7 +750,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-drawing-responsiveness-fixture",
       "--notebook-simulator-finger-gestures",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
@@ -736,19 +772,9 @@ final class DrawingResponsivenessTests: XCTestCase {
       )
       .firstMatch
     XCTAssertTrue(notebook.waitForExistence(timeout: 3))
-    let distantNotebookWidth = notebook.frame.width
-    notebook.pinch(withScale: 1.2, velocity: 0.4)
-    XCTAssertTrue(
-      app.buttons["create-workspace-item"].exists,
-      "Небольшой щипок должен только приблизить доску"
-    )
-    XCTAssertGreaterThan(notebook.frame.width, distantNotebookWidth)
-    notebook.pinch(withScale: 1.4, velocity: 0.5)
-    XCTAssertTrue(
-      app.buttons["create-workspace-item"].exists,
-      "Тетрадь вдали должна приближаться вместе с доской"
-    )
-    notebook.pinch(withScale: 4, velocity: 2)
+    // This is the system end-to-end route, not a calibrated scale measurement.
+    // Exact small approaches run against the mounted native scene in PortalPassageTests.
+    workspaceWindow(in: app).pinch(withScale: 4, velocity: 2)
     XCTAssertTrue(
       paper.waitForExistence(timeout: 5),
       "Щипок над тетрадью должен снова открыть её лист"
@@ -766,7 +792,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-drawing-responsiveness-fixture",
       "--notebook-simulator-finger-gestures",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
@@ -796,7 +822,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-drawing-responsiveness-fixture",
       "--notebook-simulator-finger-gestures",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
@@ -849,7 +875,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-drawing-responsiveness-fixture",
       "--notebook-simulator-finger-gestures",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
@@ -865,27 +891,27 @@ final class DrawingResponsivenessTests: XCTestCase {
     )
     let portal = portals.element(boundBy: portals.count - 1)
     XCTAssertTrue(portal.waitForExistence(timeout: 3))
-    portal.pinch(withScale: 4, velocity: 2)
+    workspaceWindow(in: app).pinch(withScale: 3, velocity: 2)
     XCTAssertTrue(portal.waitForNonExistence(timeout: 4), "Вложенная сцена заменяет рамку портала")
     XCTAssertTrue(
       app.buttons["leave-nested-board"].waitForExistence(timeout: 4),
       "Щипок наружу должен продолжить окно портала во вложенную доску"
     )
 
-    app.windows.firstMatch.pinch(withScale: 0.55, velocity: -2)
+    workspaceWindow(in: app).pinch(withScale: 0.55, velocity: -2)
     XCTAssertTrue(
       !portal.exists && app.buttons["leave-nested-board"].exists,
       "Обычное уменьшение внутри доски не должно выводить наружу по доле отдельного жеста"
     )
-    app.windows.firstMatch.pinch(withScale: 0.5, velocity: -2)
+    workspaceWindow(in: app).pinch(withScale: 0.35, velocity: -2)
     XCTAssertTrue(
       portal.waitForExistence(timeout: 4),
       "Уменьшение за входной масштаб должно продолжить тот же вид на родительской доске"
     )
-    XCTAssertLessThan(portal.frame.width, app.windows.firstMatch.frame.width)
-    // Releasing at the portal's edge does not automatically zoom to overview.
-    // A further explicit pinch reveals the parent's creation controls.
-    app.windows.firstMatch.pinch(withScale: 0.4, velocity: -2)
+    XCTAssertLessThan(portal.frame.width, workspaceWindow(in: app).frame.width)
+    // Continue the system gesture route to the parent's overview. Exact boundary
+    // scales and release continuity are measured by the native PortalPassageTests.
+    workspaceWindow(in: app).pinch(withScale: 0.4, velocity: -2)
     XCTAssertTrue(app.buttons["create-workspace-item"].exists)
   }
 
@@ -897,7 +923,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-simulator-finger-gestures",
       "--notebook-nearby-cover-fixture",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let notebook = app.descendants(matching: .any)
       .matching(
@@ -953,7 +979,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-simulator-finger-gestures",
       "--notebook-stacked-board-fixture",
     ]
-    app.launch()
+    launchPortraitFixture(app)
     XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
 
     let removed = app.descendants(matching: .any)
@@ -973,7 +999,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     let delete = app.buttons["delete-workspace-item"]
     XCTAssertTrue(delete.waitForExistence(timeout: 2))
 
-    app.windows.firstMatch.coordinate(
+    workspaceWindow(in: app).coordinate(
       withNormalizedOffset: CGVector(dx: 0.04, dy: 0.08)
     ).tap()
     XCTAssertFalse(
@@ -998,7 +1024,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-simulator-finger-gestures",
       "--notebook-stacked-board-fixture",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let covers = ["002", "004"].map { suffix in
       app.descendants(matching: .any).matching(
@@ -1035,7 +1061,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-simulator-finger-gestures",
       "--notebook-cover-eraser-fixture",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let notebook = app.descendants(matching: .any)
       .matching(
@@ -1081,7 +1107,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-drawing-responsiveness-fixture",
       "--notebook-nearby-cover-fixture",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let notebook = app.descendants(matching: .any)
       .matching(
@@ -1108,7 +1134,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     )
     wait(for: [firstCommitted], timeout: 2)
 
-    let window = app.windows.firstMatch
+    let window = workspaceWindow(in: app)
     XCTAssertTrue(window.exists)
     window.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.18))
       .press(
@@ -1133,7 +1159,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-drawing-responsiveness-fixture",
       "--notebook-cover-eraser-fixture",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let notebook = app.descendants(matching: .any)
       .matching(
@@ -1174,7 +1200,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-simulator-finger-gestures",
       "--notebook-off-center-cover-fixture",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let notebook = app.descendants(matching: .any)
       .matching(
@@ -1183,7 +1209,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       .firstMatch
     XCTAssertTrue(notebook.waitForExistence(timeout: 3))
     let coverFrame = notebook.frame
-    let window = app.windows.firstMatch
+    let window = workspaceWindow(in: app)
     XCTAssertTrue(window.exists)
     let coverOffset = abs(coverFrame.midX - window.frame.midX)
     XCTAssertGreaterThan(coverOffset, 80)
@@ -1210,14 +1236,14 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-simulator-finger-gestures",
       "--notebook-off-center-cover-fixture",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let notebook = app.descendants(matching: .any)
       .matching(
         identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000002"
       )
       .firstMatch
-    let window = app.windows.firstMatch
+    let window = workspaceWindow(in: app)
     XCTAssertTrue(notebook.waitForExistence(timeout: 3))
     XCTAssertTrue(window.exists)
     notebook.pinch(withScale: 1.04, velocity: 0.15)
@@ -1245,7 +1271,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-cover-eraser-fixture",
       "--notebook-partial-cover-fixture",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let notebook = app.descendants(matching: .any)
       .matching(
@@ -1283,7 +1309,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       width: notebook.frame.width * 0.36,
       height: 9
     )
-    let window = app.windows.firstMatch
+    let window = workspaceWindow(in: app)
     XCTAssertTrue(window.exists)
     XCTAssertLessThan(
       opaqueGrayPixelShare(
@@ -1308,7 +1334,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-simulator-finger-gestures",
       "--notebook-document-runtime-fixture",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let page = app.otherElements["page-turn-surface"]
     XCTAssertTrue(page.waitForExistence(timeout: 8))
@@ -1322,7 +1348,7 @@ final class DrawingResponsivenessTests: XCTestCase {
         identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000006"
       )
       .firstMatch
-    let window = app.windows.firstMatch
+    let window = workspaceWindow(in: app)
     XCTAssertTrue(document.exists)
     XCTAssertTrue(window.exists)
     XCTAssertEqual(app.state, .runningForeground)
@@ -1364,7 +1390,7 @@ final class DrawingResponsivenessTests: XCTestCase {
         "--notebook-simulator-finger-gestures",
         "--notebook-document-runtime-fixture",
       ] + (letter ? ["--notebook-document-letter-fixture"] : [])
-      app.launch()
+      launchPortraitFixture(app)
       for landscape in [false, true] {
         XCUIDevice.shared.orientation = landscape ? .landscapeLeft : .portrait
         try await Task.sleep(for: .milliseconds(600))
@@ -1422,7 +1448,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-simulator-finger-gestures",
       "--notebook-off-center-cover-fixture",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let notebook = app.descendants(matching: .any)
       .matching(
@@ -1430,7 +1456,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       )
       .firstMatch
     XCTAssertTrue(notebook.waitForExistence(timeout: 3))
-    let window = app.windows.firstMatch
+    let window = workspaceWindow(in: app)
     XCTAssertTrue(window.exists)
     XCTAssertGreaterThan(
       abs(notebook.frame.midX - window.frame.midX),
@@ -1495,7 +1521,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-simulator-finger-gestures",
       "--notebook-stacked-board-fixture",
     ]
-    app.launch()
+    launchPortraitFixture(app)
     XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
 
     let selected = app.descendants(matching: .any)
@@ -1510,7 +1536,7 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
-    let window = app.windows.firstMatch
+    let window = workspaceWindow(in: app)
     XCTAssertTrue(window.exists)
     try await Task.sleep(for: .milliseconds(350))
     assertFittedAndCentered(paper.frame, in: window.frame)
@@ -1539,11 +1565,11 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-drawing-responsiveness-fixture",
       launchArgument,
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
-    let window = app.windows.firstMatch
+    let window = workspaceWindow(in: app)
     XCTAssertTrue(window.exists)
     try await Task.sleep(for: .milliseconds(250))
 
@@ -1793,7 +1819,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
-    app.launch()
+    launchPortraitFixture(app)
 
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
@@ -1836,7 +1862,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
-    app.launch()
+    launchPortraitFixture(app)
 
     let controls = app.buttons["pen-controls-toggle"]
     XCTAssertTrue(controls.waitForExistence(timeout: 5))
@@ -1913,7 +1939,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-simulator-finger-gestures",
       "--notebook-simulator-mixed-input",
     ]
-    app.launch()
+    launchPortraitFixture(app)
 
     let controls = app.buttons["pen-controls-toggle"]
     XCTAssertTrue(controls.waitForExistence(timeout: 5))

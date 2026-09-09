@@ -86,8 +86,8 @@ final class PageVisionDemandTests: XCTestCase {
     let page = try XCTUnwrap(model.activePage)
     let captured = try await requestVision(page, model: model)
     let stamp = try XCTUnwrap(model.reserveDrawingAction(pageID: page.id))
-    let change = await model.commitDrawingAction(.init(tool: .pen, samples: [.init(point: .init(x: 30, y: 40),
-      timeOffset: 0, width: 6, opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)]), pageID: page.id, stamp: stamp)
+    let change = await model.acceptDrawingAction(.init(tool: .pen, samples: [.init(point: .init(x: 30, y: 40),
+      timeOffset: 0, width: 6, opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)]), pageID: page.id, stamp: stamp).value
     XCTAssertNotNil(change)
     let saved = await model.finishPendingPersistence()
     XCTAssertTrue(saved)

@@ -55,13 +55,29 @@ enum SceneRenderError: Error, Equatable, CustomStringConvertible {
   }
 }
 
+enum SceneAllocationPriority: Equatable, Sendable { case input, passive }
+
+/// Headless export has no future Pencil contact. An interactive scene reserves
+/// half of this same pool; it does not acquire a second allocator or quota.
+enum SceneResourceProfile: Equatable, Sendable {
+  case interactive, headless
+  static var currentPlatform: Self {
+    #if os(iOS)
+      .interactive
+    #else
+      .headless
+    #endif
+  }
+}
+
 /// A retained image is charged until its final lease ends. Released leases cannot
 /// keep an unaccounted strong image reference alive.
 @MainActor
 final class RasterLease {
   let source: SceneRasterSource
   let pixelScale: Double
-  private let entryID: UUID
+  let accountedByteCount: Int
+  let entryID: UUID
   private var resources: SceneRenderResources?
   private var retainedImage: AgentSnapshotImage?
   var isReleased: Bool { resources == nil }
@@ -76,9 +92,12 @@ final class RasterLease {
     return retainedImage
   }
   fileprivate init(source: SceneRasterSource, pixelScale: Double, image: AgentSnapshotImage,
-    entryID: UUID, resources: SceneRenderResources) {
-    self.source = source; self.pixelScale = pixelScale; retainedImage = image
+    byteCount: Int, entryID: UUID, resources: SceneRenderResources) {
+    self.source = source; self.pixelScale = pixelScale; retainedImage = image; accountedByteCount = byteCount
     self.entryID = entryID; self.resources = resources
+  }
+  func retainedCopy() -> RasterLease? {
+    resources?.retainRasterEntry(entryID)
   }
   func release() {
     guard let owner = resources else { return }
@@ -132,6 +151,60 @@ final class WebSurfaceLease {
   isolated deinit { release() }
 }
 
+/// A portal's cover and the ink of the board seen through it are different
+/// physical owners. Element IDs are local to their physical source plane.
+enum ScenePhysicalOwner: Hashable {
+  case boardInk(UUID)
+  case item(UUID)
+  case element(boardID: UUID, coverID: UUID?, id: String)
+}
+
+@MainActor
+final class ScenePhysicalOwnerLease {
+  let owners: Set<ScenePhysicalOwner>
+  fileprivate var resources: SceneRenderResources?
+  var isReleased: Bool { resources == nil }
+  var allocationPriority: SceneAllocationPriority {
+    guard owners.count == 1, let id = owners.first else { return .passive }
+    return resources?.physicalPriority(for: id) ?? .passive
+  }
+  fileprivate init(owners: Set<ScenePhysicalOwner>, resources: SceneRenderResources) {
+    self.owners = owners; self.resources = resources
+  }
+  func release() {
+    let owner = resources; resources = nil
+    owner?.releasePhysicalOwners(owners)
+  }
+  isolated deinit { release() }
+}
+
+/// A read of the existing pool, not a reservation or a second quota. Held
+/// entries cannot be evicted; temporary allocations remain charged separately.
+struct SceneRasterAdmission: Sendable, Equatable {
+  let pinnedBytes: Int
+  let reservedBytes: Int
+  let pinnedCount: Int
+  let reservedCount: Int
+  let byteLimit: Int
+  let countLimit: Int
+  let passiveReservedBytes: Int
+  let passiveByteLimit: Int
+  var heldBytes: Int { pinnedBytes + reservedBytes }
+  func fits(additionalBytes: Int, additionalCount: Int) -> Bool {
+    additionalBytes >= 0 && additionalCount >= 0
+      && additionalBytes <= byteLimit - heldBytes
+      && additionalBytes <= passiveByteLimit - pinnedBytes - passiveReservedBytes
+      && additionalCount <= countLimit - pinnedCount - reservedCount
+  }
+}
+
+struct SceneRasterRefusal: Sendable, Equatable {
+  let generation: UInt64
+  let requestedBytes: Int
+  let requestedCount: Int
+  let admission: SceneRasterAdmission
+}
+
 /// One admission owner for derived rasters and WebKit execution. Content and
 /// interactive state remain in their existing documents; this store is disposable.
 @MainActor
@@ -140,6 +213,8 @@ final class SceneRenderResources {
   static let shared = SceneRenderResources()
   static let didChange = Notification.Name("NotebookSceneRenderResourcesDidChange")
   let byteLimit: Int
+  let profile: SceneResourceProfile
+  let passiveByteLimit: Int
   let maximumWebSurfaces: Int
   let maximumBackgroundWebSurfaces: Int
   let maximumPendingWebRequests: Int
@@ -148,6 +223,8 @@ final class SceneRenderResources {
   private let diagnosticCapacity: Int
   private(set) var residentBytes = 0
   private(set) var reservedBytes = 0
+  private(set) var passiveReservedBytes = 0
+  @ObservationIgnored private(set) var peakAccountedBytes = 0
   private(set) var rasterCount = 0
   private(set) var activeWebSurfaceCount = 0
   /// All raster-only executors, including visible work promoted ahead of export.
@@ -159,6 +236,58 @@ final class SceneRenderResources {
   /// eviction and snapshot completion never create a web retry signal.
   private(set) var webAdmissionGeneration: UInt64 = 0
   private(set) var rasterGeneration: UInt64 = 0
+  private struct PhysicalOwnerEntry {
+    var retains: Int
+    var priority: SceneAllocationPriority
+    var reservedBytes: Int = 0
+  }
+  private var physicalOwners: [ScenePhysicalOwner: PhysicalOwnerEntry] = [:]
+  var activePhysicalOwnerCount: Int { physicalOwners.count }
+  var retainedPhysicalOwners: Set<ScenePhysicalOwner> { Set(physicalOwners.keys) }
+
+  /// Candidate and shown cohorts share IDs, not two independent eight-owner
+  /// quotas. Admission precedes construction of a new native physical canvas.
+  func reservePhysicalOwners(_ owners: Set<ScenePhysicalOwner>, priority: SceneAllocationPriority = .passive) -> ScenePhysicalOwnerLease? {
+    guard Set(physicalOwners.keys).union(owners).count <= SceneCompositionPlan.maximumLiveOwners else { return nil }
+    for owner in owners {
+      if physicalOwners[owner] != nil { physicalOwners[owner]?.retains += 1 }
+      else { physicalOwners[owner] = .init(retains: 1, priority: priority) }
+    }
+    return .init(owners: owners, resources: self)
+  }
+
+  fileprivate func physicalPriority(for owner: ScenePhysicalOwner) -> SceneAllocationPriority? { physicalOwners[owner]?.priority }
+
+  /// A portal handoff reclassifies both existing physical allocations at once.
+  /// Per-owner byte totals avoid walking any samples or mesh batches on input.
+  @discardableResult
+  func updatePhysicalPriorities(_ updates: [ScenePhysicalOwner: SceneAllocationPriority]) -> Bool {
+    var nextPassive = passiveReservedBytes
+    var changed: [ScenePhysicalOwner: SceneAllocationPriority] = [:]
+    for (id, priority) in updates {
+      guard let entry = physicalOwners[id] else { return false }
+      if entry.priority != priority {
+        changed[id] = priority
+        nextPassive += priority == .passive ? entry.reservedBytes : -entry.reservedBytes
+      }
+    }
+    // updateUIView can reaffirm the same installed role. Mutating even an
+    // equal @Observable value here invalidates that graph from its own update.
+    guard !changed.isEmpty else { return true }
+    guard makeRoom(for: 0, additionalEntry: false, priority: .passive, passiveReserved: nextPassive) else { return false }
+    for (id, priority) in changed { physicalOwners[id]?.priority = priority }
+    if passiveReservedBytes != nextPassive { passiveReservedBytes = nextPassive }
+    return true
+  }
+
+  fileprivate func releasePhysicalOwners(_ owners: Set<ScenePhysicalOwner>) {
+    for owner in owners {
+      guard var entry = physicalOwners[owner], entry.retains > 0 else { continue }
+      entry.retains -= 1
+      if entry.retains == 0 && entry.reservedBytes == 0 { physicalOwners[owner] = nil }
+      else { physicalOwners[owner] = entry }
+    }
+  }
 
   private struct RasterEntry {
     let source: SceneRasterSource
@@ -194,6 +323,8 @@ final class SceneRenderResources {
   private struct ReservedAllocation {
     let bytes: Int
     let rasterCount: Int
+    let priority: SceneAllocationPriority
+    let physicalOwner: ScenePhysicalOwner?
   }
   @ObservationIgnored private var reservations: [UUID: ReservedAllocation] = [:]
   @ObservationIgnored private var reservedRasterCount = 0
@@ -203,18 +334,30 @@ final class SceneRenderResources {
   @ObservationIgnored private var accessClock: UInt64 = 0
   @ObservationIgnored private var waiterClock: UInt64 = 0
 
-  init(byteLimit: Int = 256 * 1024 * 1024, maximumWebSurfaces: Int = 6,
+  init(byteLimit: Int = 256 * 1024 * 1024, profile: SceneResourceProfile = .currentPlatform, maximumWebSurfaces: Int = 6,
     maximumBackgroundWebSurfaces: Int = 2, maximumPendingWebRequests: Int = 32,
     diagnosticCapacity: Int = 256, maximumRasterCount: Int = 2048, reservedInteractiveSlots: Int = 2) {
     precondition(byteLimit >= 0 && maximumWebSurfaces > 0 && maximumBackgroundWebSurfaces >= 0
       && maximumPendingWebRequests >= 0 && diagnosticCapacity >= 0 && maximumRasterCount >= 0
       && reservedInteractiveSlots >= 0)
-    self.byteLimit = byteLimit; self.maximumWebSurfaces = maximumWebSurfaces
+    self.byteLimit = byteLimit; self.profile = profile
+    passiveByteLimit = profile == .interactive ? byteLimit / 2 : byteLimit
+    self.maximumWebSurfaces = maximumWebSurfaces
     self.maximumBackgroundWebSurfaces = min(maximumWebSurfaces, maximumBackgroundWebSurfaces)
     self.maximumPendingWebRequests = maximumPendingWebRequests
     self.reservedInteractiveSlots = min(reservedInteractiveSlots, maximumWebSurfaces - 1)
     self.diagnosticCapacity = diagnosticCapacity; self.maximumRasterCount = maximumRasterCount
   }
+
+  var rasterAdmission: SceneRasterAdmission {
+    let pinned = entries.values.filter { $0.retains > 0 }
+    return .init(pinnedBytes: pinned.reduce(0) { $0 + $1.cost }, reservedBytes: reservedBytes,
+      pinnedCount: pinned.count, reservedCount: reservedRasterCount,
+      byteLimit: byteLimit, countLimit: maximumRasterCount,
+      passiveReservedBytes: passiveReservedBytes, passiveByteLimit: passiveByteLimit)
+  }
+  @ObservationIgnored private(set) var lastRasterRefusal: SceneRasterRefusal?
+  @ObservationIgnored private var refusalGeneration: UInt64 = 0
 
   func image(for element: AgentElement, minimumScale: Double = 0) -> AgentSnapshotImage? {
     image(for: .agent(element), minimumScale: minimumScale)
@@ -229,31 +372,46 @@ final class SceneRenderResources {
     retainRaster(for: .agent(element), minimumScale: minimumScale)
   }
   func retainRaster(for source: SceneRasterSource, minimumScale: Double = 0) -> RasterLease? {
-    guard let id = matchingRaster(source, minimumScale: minimumScale), var entry = entries[id] else { return nil }
+    guard let id = matchingRaster(source, minimumScale: minimumScale) else { return nil }
+    return retainRasterEntry(id)
+  }
+  fileprivate func retainRasterEntry(_ id: UUID) -> RasterLease? {
+    guard var entry = entries[id] else { return nil }
     accessClock &+= 1; entry.access = accessClock; entry.retains += 1; entries[id] = entry
-    return RasterLease(source: source, pixelScale: entry.pixelScale, image: entry.image,
-      entryID: id, resources: self)
+    return RasterLease(source: entry.source, pixelScale: entry.pixelScale, image: entry.image,
+      byteCount: entry.cost, entryID: id, resources: self)
   }
 
   func reserveRaster(pixelWidth: Int, pixelHeight: Int, backingCount: Int = 2) -> RasterReservation? {
     guard (1...16).contains(backingCount),
       let pair = Self.estimatedRasterBytes(pixelWidth: pixelWidth, pixelHeight: pixelHeight) else { return nil }
     let allocation = (pair / 2).multipliedReportingOverflow(by: backingCount)
-    guard !allocation.overflow, makeRoom(for: allocation.partialValue, additionalEntry: true) else { return nil }
-    return reserveAllocation(bytes: allocation.partialValue, rasterCount: 1)
+    guard !allocation.overflow, makeRoom(for: allocation.partialValue, additionalEntry: true, priority: .passive) else { return nil }
+    return reserveAllocation(bytes: allocation.partialValue, rasterCount: 1, priority: .passive, physicalOwner: nil)
   }
 
   /// Buffers and drawable backing compete with images for the same byte pool,
   /// but do not consume an image-cache entry or create another resource owner.
-  func reserveDerivedBytes(_ byteCount: Int) -> RasterReservation? {
-    guard byteCount > 0, makeRoom(for: byteCount, additionalEntry: false) else { return nil }
-    return reserveAllocation(bytes: byteCount, rasterCount: 0)
+  func reserveDerivedBytes(_ byteCount: Int, priority: SceneAllocationPriority,
+    owner: ScenePhysicalOwnerLease? = nil) -> RasterReservation? {
+    var identity: ScenePhysicalOwner?
+    if let owner {
+      guard owner.resources === self, owner.owners.count == 1, let id = owner.owners.first,
+        physicalOwners[id]?.priority == priority else { return nil }
+      identity = id
+    }
+    guard byteCount > 0, makeRoom(for: byteCount, additionalEntry: false, priority: priority) else { return nil }
+    return reserveAllocation(bytes: byteCount, rasterCount: 0, priority: priority, physicalOwner: identity)
   }
 
-  private func reserveAllocation(bytes: Int, rasterCount: Int) -> RasterReservation {
+  private func reserveAllocation(bytes: Int, rasterCount: Int, priority: SceneAllocationPriority,
+    physicalOwner: ScenePhysicalOwner?) -> RasterReservation {
     let id = UUID()
-    reservations[id] = .init(bytes: bytes, rasterCount: rasterCount)
+    reservations[id] = .init(bytes: bytes, rasterCount: rasterCount, priority: priority, physicalOwner: physicalOwner)
+    if priority == .passive { passiveReservedBytes += bytes }
+    if let physicalOwner { physicalOwners[physicalOwner]?.reservedBytes += bytes }
     reservedBytes += bytes; reservedRasterCount += rasterCount
+    peakAccountedBytes = max(peakAccountedBytes, residentBytes + reservedBytes)
     return RasterReservation(id: id, byteCount: bytes, resources: self)
   }
 
@@ -270,7 +428,7 @@ final class SceneRenderResources {
       reservation.release()
     }
     guard let raster = Self.rasterDescription(image, source: source),
-      makeRoom(for: raster.cost, additionalEntry: true) else {
+      makeRoom(for: raster.cost, additionalEntry: true, priority: .passive) else {
       if case .agent(let element) = source {
         record(.init(kind: "resource_limit", elementID: element.id,
           message: "Недостаточно ресурсов для точного снимка"), for: element)
@@ -288,6 +446,7 @@ final class SceneRenderResources {
       cost: raster.cost, access: accessClock, retains: 0)
     rasterOwners[source.owner, default: []].append(id)
     residentBytes += raster.cost; rasterCount = entries.count
+    peakAccountedBytes = max(peakAccountedBytes, residentBytes + reservedBytes)
     if case .agent(let element) = source, var diagnostics = diagnosticEntries[element.id], diagnostics.element == element {
       diagnostics.values.removeAll { $0.kind == "resource_limit" }
       diagnosticEntries[element.id] = diagnostics
@@ -355,6 +514,13 @@ final class SceneRenderResources {
   }
   fileprivate func releaseReservation(_ id: UUID) {
     if let allocation = reservations.removeValue(forKey: id) {
+      let priority = allocation.physicalOwner.flatMap { physicalOwners[$0]?.priority } ?? allocation.priority
+      if priority == .passive { passiveReservedBytes -= allocation.bytes }
+      if let id = allocation.physicalOwner, var owner = physicalOwners[id] {
+        owner.reservedBytes -= allocation.bytes
+        if owner.retains == 0 && owner.reservedBytes == 0 { physicalOwners[id] = nil }
+        else { physicalOwners[id] = owner }
+      }
       reservedBytes -= allocation.bytes; reservedRasterCount -= allocation.rasterCount
     }
   }
@@ -435,20 +601,33 @@ final class SceneRenderResources {
     guard var entry = entries[id] else { return }
     accessClock &+= 1; entry.access = accessClock; entries[id] = entry
   }
-  private func makeRoom(for cost: Int, additionalEntry: Bool) -> Bool {
+  private func makeRoom(for cost: Int, additionalEntry: Bool, priority: SceneAllocationPriority,
+    passiveReserved: Int? = nil) -> Bool {
+    let passive = passiveReserved ?? passiveReservedBytes
+    let passiveCost = priority == .passive ? cost : 0
     guard cost >= 0, cost <= byteLimit - reservedBytes,
-      !additionalEntry || maximumRasterCount > 0 else { return false }
+      passive >= 0, passiveCost <= passiveByteLimit - passive,
+      !additionalEntry || maximumRasterCount > 0 else { return refuseRaster(cost: cost, additionalEntry: additionalEntry) }
     let neededCount = additionalEntry ? 1 : 0
     let candidates = entries.filter { $0.value.retains == 0 }.sorted { $0.value.access < $1.value.access }
     let recoverable = candidates.reduce(0) { $0 + $1.value.cost }
-    guard residentBytes - recoverable <= byteLimit - reservedBytes - cost,
-      entries.count - candidates.count + reservedRasterCount + neededCount <= maximumRasterCount else { return false }
+    let residentLimit = min(byteLimit - reservedBytes - cost, passiveByteLimit - passive - passiveCost)
+    guard residentBytes - recoverable <= residentLimit,
+      entries.count - candidates.count + reservedRasterCount + neededCount <= maximumRasterCount else {
+      return refuseRaster(cost: cost, additionalEntry: additionalEntry)
+    }
     var position = 0
-    while residentBytes > byteLimit - reservedBytes - cost
+    while residentBytes > residentLimit
       || entries.count + reservedRasterCount + neededCount > maximumRasterCount {
       removeRaster(candidates[position].key); position += 1
     }
     return true
+  }
+  private func refuseRaster(cost: Int, additionalEntry: Bool) -> Bool {
+    refusalGeneration &+= 1
+    lastRasterRefusal = .init(generation: refusalGeneration, requestedBytes: cost,
+      requestedCount: additionalEntry ? 1 : 0, admission: rasterAdmission)
+    return false
   }
   private func removeRaster(_ id: UUID) {
     guard let entry = entries.removeValue(forKey: id) else { return }
@@ -469,7 +648,7 @@ final class SceneRenderResources {
     NotificationCenter.default.post(name: Self.didChange, object: id)
   }
 
-  static func estimatedRasterBytes(pixelWidth: Int, pixelHeight: Int) -> Int? {
+  nonisolated static func estimatedRasterBytes(pixelWidth: Int, pixelHeight: Int) -> Int? {
     guard pixelWidth > 0, pixelHeight > 0 else { return nil }
     let (rawRow, overflow) = pixelWidth.multipliedReportingOverflow(by: 4)
     guard !overflow, rawRow <= Int.max - 63 else { return nil }

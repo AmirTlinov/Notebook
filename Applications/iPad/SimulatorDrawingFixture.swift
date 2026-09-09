@@ -23,10 +23,6 @@
     static let historyArgument = "--notebook-history-performance-fixture"
     static let pointerArgument = "--notebook-pointer-fixture"
 
-    static var isRequested: Bool {
-      ProcessInfo.processInfo.arguments.contains(launchArgument)
-    }
-
     static func makeModel() -> NotebookAppModel {
       let fileManager = FileManager.default
       let startsAtCover = ProcessInfo.processInfo.arguments.contains(

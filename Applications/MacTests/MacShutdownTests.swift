@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import NotebookCore
 import SQLite3
@@ -6,8 +7,39 @@ import XCTest
 
 @MainActor
 final class MacShutdownTests: XCTestCase {
+  func testShutdownRetiresCachedAppKitRasterWithoutRevokingAnotherBorrower() async throws {
+    let (model, _) = try await fixture()
+    let resources = SceneRenderResources()
+    let element = AgentElement(id: UUID().uuidString, kind: .web,
+      frame: .init(x: 0, y: 0, width: 32, height: 32), source: "Native raster", html: "red")
+    let context = try XCTUnwrap(CGContext(data: nil, width: 32, height: 32, bitsPerComponent: 8,
+      bytesPerRow: 128, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    context.setFillColor(NSColor.red.cgColor); context.fill(.init(x: 0, y: 0, width: 32, height: 32))
+    let image = NSImage(cgImage: try XCTUnwrap(context.makeImage()), size: .init(width: 32, height: 32))
+    XCTAssertTrue(resources.store(image, for: element))
+    let borrowed = try XCTUnwrap(resources.retainRaster(for: element))
+    let view = AgentSnapshotRasterView()
+    view.bindSceneLifecycle(to: model)
+    view.updateRaster(borrowed, displayScale: 1)
+    XCTAssertNotNil(view.image)
+    let parent = NSView(); parent.addSubview(view); view.removeFromSuperview()
+    XCTAssertNotNil(view.image, "Temporary transfer does not retire a prepared presenter")
+    let stopped = await model.shutdown()
+    XCTAssertTrue(stopped)
+    XCTAssertNil(view.image)
+    XCTAssertFalse(borrowed.isReleased)
+    XCTAssertEqual(resources.rasterAdmission.pinnedBytes, borrowed.accountedByteCount)
+    view.updateRaster(borrowed, displayScale: 1)
+    XCTAssertNil(view.image, "A late update cannot revive a terminal AppKit owner")
+    borrowed.release()
+    XCTAssertEqual(resources.rasterAdmission.pinnedBytes, 0)
+  }
+
   func testReadPublicationFailureCanBeRepairedAfterARefusedShutdown() async throws {
     let (model, fault) = try await fixture()
+    XCTAssertEqual(model.shutdownPhase, .running)
+    let presentation = ShutdownPresentationProbe(model: model)
+    model.registerScenePresentation(presentation)
     let page = try XCTUnwrap(model.activePage)
     try fault.rejectReadsAndWrites()
     await model.reloadExternalChanges()?.value
@@ -20,6 +52,11 @@ final class MacShutdownTests: XCTestCase {
     XCTAssertTrue(queueRemainsAvailable)
     let refused = await model.shutdown()
     XCTAssertFalse(refused)
+    XCTAssertEqual(model.shutdownPhase, .closing)
+    XCTAssertTrue(presentation.terminalPhases.isEmpty, "A failed publication cannot retire the human's scene")
+    XCTAssertFalse(model.inputGate.permitsNewContact)
+    XCTAssertFalse(model.inputGate.beginPencilAction(source: UUID()))
+    XCTAssertNil(model.inputGate.beginFingerSequence())
     do {
       _ = try await model.performStoreCommand { _ in true }
       XCTFail("A refused quit keeps external admission closed during explicit repair")
@@ -33,10 +70,19 @@ final class MacShutdownTests: XCTestCase {
     XCTAssertEqual(try model.store.loadPage(page.id), page)
     let stopped = await model.shutdown()
     XCTAssertTrue(stopped, "A refused quit must leave the refresh owner available for explicit repair")
+    XCTAssertEqual(model.shutdownPhase, .stopped)
+    XCTAssertEqual(presentation.terminalPhases, [.stopped])
+    XCTAssertFalse(model.permitsBackgroundPreparation)
+    let stoppedAgain = await model.shutdown()
+    XCTAssertTrue(stoppedAgain)
+    XCTAssertEqual(presentation.terminalPhases, [.stopped], "The terminal ACK is delivered once")
   }
 
   func testAcceptedInkSurvivesWriteFailureRefusedShutdownAndExplicitRetry() async throws {
     let (model, fault) = try await fixture()
+    XCTAssertEqual(model.shutdownPhase, .running)
+    let presentation = ShutdownPresentationProbe(model: model)
+    model.registerScenePresentation(presentation)
     let page = try XCTUnwrap(model.activePage)
     try fault.rejectReadsAndWrites()
     await model.reloadExternalChanges()?.value
@@ -49,7 +95,7 @@ final class MacShutdownTests: XCTestCase {
         opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
     ])
     let stamp = try XCTUnwrap(model.reserveDrawingAction(pageID: page.id))
-    let accepted = await model.commitDrawingAction(action, pageID: page.id, stamp: stamp)
+    let accepted = await model.acceptDrawingAction(action, pageID: page.id, stamp: stamp).value
     XCTAssertNotNil(accepted, "The native contact has already been accepted in memory")
     let inMemory = try PageInkDrawing.decode(XCTUnwrap(model.activePage).drawingData)
     XCTAssertEqual(inMemory.activeActions.map(\.id), [action.id])
@@ -62,6 +108,8 @@ final class MacShutdownTests: XCTestCase {
     } catch is NotebookPersistenceQueue.Failure { }
     let refused = await model.shutdown()
     XCTAssertFalse(refused)
+    XCTAssertEqual(model.shutdownPhase, .closing)
+    XCTAssertTrue(presentation.terminalPhases.isEmpty)
 
     try fault.restore()
     XCTAssertEqual(try model.store.loadPage(page.id), page,
@@ -84,6 +132,46 @@ final class MacShutdownTests: XCTestCase {
     XCTAssertEqual(try model.store.currentChangeCursor(), cursor, "Retry cannot append the contact a second time")
     let stopped = await model.shutdown()
     XCTAssertTrue(stopped)
+    XCTAssertEqual(model.shutdownPhase, .stopped)
+    XCTAssertEqual(presentation.terminalPhases, [.stopped])
+    XCTAssertEqual(try model.store.currentChangeCursor(), cursor)
+  }
+
+  func testSceneRegistrationIsWeakAndALateOwnerReceivesTheTerminalBoundary() async throws {
+    let (model, _) = try await fixture()
+    var temporary: ShutdownPresentationProbe? = ShutdownPresentationProbe(model: model)
+    weak let released = temporary
+    model.registerScenePresentation(try XCTUnwrap(temporary))
+    temporary = nil
+    XCTAssertNil(released, "The model owns a terminal signal, not the lifetime of a cached UIKit host")
+    let stopped = await model.shutdown()
+    XCTAssertTrue(stopped)
+    let late = ShutdownPresentationProbe(model: model)
+    model.registerScenePresentation(late)
+    XCTAssertEqual(late.terminalPhases, [.stopped], "A stale mount cannot recreate a terminal presentation")
+  }
+
+  func testShutdownClosesNewContactsBeforeItWaitsForTheMeasuredPencil() async throws {
+    let (model, _) = try await fixture()
+    let pencil = UUID()
+    XCTAssertTrue(model.inputGate.beginPencilAction(source: pencil))
+    defer { model.inputGate.endPencilAction(source: pencil) }
+    let closing = Task { await model.shutdown() }
+    let deadline = ContinuousClock.now + .seconds(3)
+    while model.shutdownPhase == .running, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertEqual(model.shutdownPhase, .closing)
+    XCTAssertTrue(model.inputGate.hasActivePencil, "Closing does not discard the already measured contact")
+    XCTAssertFalse(model.inputGate.permitsNewContact)
+    XCTAssertFalse(model.inputGate.beginPencilAction(source: UUID()), "A second native contact cannot race the final drain")
+    XCTAssertTrue(model.inputGate.beginPencilAction(source: pencil), "The same accepted source keeps its completion route")
+    XCTAssertNil(model.inputGate.beginFingerSequence())
+    model.inputGate.endPencilAction(source: pencil)
+    let stopped = await closing.value
+    XCTAssertTrue(stopped)
+    XCTAssertEqual(model.shutdownPhase, .stopped)
+    XCTAssertFalse(model.inputGate.hasActivePencil)
   }
 
   private func fixture() async throws -> (NotebookAppModel, SchemaVersionFault) {
@@ -104,6 +192,17 @@ final class MacShutdownTests: XCTestCase {
     let ready = await model.finishPendingPersistence()
     XCTAssertTrue(ready, model.persistenceFailure ?? "The isolated fixture did not finish startup")
     return (model, fault)
+  }
+}
+
+@MainActor
+private final class ShutdownPresentationProbe: NotebookScenePresentationOwner {
+  private weak var model: NotebookAppModel?
+  private(set) var terminalPhases: [NotebookAppModel.ShutdownPhase] = []
+  init(model: NotebookAppModel) { self.model = model }
+  func uninstall() {
+    guard terminalPhases.isEmpty, let model else { return }
+    terminalPhases.append(model.shutdownPhase)
   }
 }
 

@@ -236,17 +236,19 @@ final class DrawingOwnershipTests: XCTestCase {
         counter += 1
         return VersionStamp(counter: counter, actor: actorID)
       },
-      commitAction: { action, _, stamp in
+      releaseAction: { _, _ in },
+      acceptAction: { action, _, stamp in
         let change = try! page.prepareInkChange(.append(action), stamp: stamp)
         _ = page.publishInkChange(change)
         delivered.fulfill()
-        return change
+        return Task { change }
       }
     )
     let paper = PaperCanvasContainerView()
     coordinator.attach(to: paper)
     coordinator.apply(try base.dataRepresentation(), pageID: pageID, to: paper)
 
+    XCTAssertTrue(paper.touchView.onActionWillBegin?() == true)
     coordinator.commit(stroke(y: 40), on: paper)
     coordinator.apply(try base.dataRepresentation(), pageID: pageID, to: paper)
 
@@ -270,12 +272,13 @@ final class DrawingOwnershipTests: XCTestCase {
         counter += 1
         return VersionStamp(counter: counter, actor: actorID)
       },
-      commitAction: { action, _, stamp in
+      releaseAction: { _, _ in },
+      acceptAction: { action, _, stamp in
         let change = try! page.prepareInkChange(.append(action), stamp: stamp)
         _ = page.publishInkChange(change)
         finalData = change.data
         delivered.fulfill()
-        return change
+        return Task { change }
       }
     )
     let paper = PaperCanvasContainerView()
@@ -297,7 +300,9 @@ final class DrawingOwnershipTests: XCTestCase {
       creationDate: Date()
     )
 
+    XCTAssertTrue(paper.touchView.onActionWillBegin?() == true)
     coordinator.commit(PageInkAction(tool: .eraser, points: Array(first)), on: paper)
+    XCTAssertTrue(paper.touchView.onActionWillBegin?() == true)
     coordinator.commit(PageInkAction(tool: .eraser, points: Array(second)), on: paper)
     XCTAssertEqual(
       counter,
@@ -363,17 +368,17 @@ final class DrawingOwnershipTests: XCTestCase {
     try store.savePage(remote)
     await model.reloadExternalChanges()?.value
 
-    let accepted = await model.commitDrawingAction(
+    let accepted = await model.acceptDrawingAction(
       localStroke,
       pageID: pageID,
       stamp: localStamp
-    )
+    ).value
 
     let merged = try XCTUnwrap(accepted).drawing
     XCTAssertEqual(Set(merged.activeActions.map(\.id)), [localStroke.id, firstRemote.id, secondRemote.id])
     XCTAssertEqual(model.activePage?.drawingData, accepted?.data)
     XCTAssertGreaterThan(try XCTUnwrap(model.activePage?.drawingStamp), remote.drawingStamp)
-    await model.undoLastDrawingAction()
+    _ = await model.acceptDrawingUndo().value
     let undone = try PageInkDrawing.decode(XCTUnwrap(model.activePage?.drawingData))
     XCTAssertEqual(undone.activeActions.map(\.id), [firstRemote.id, secondRemote.id])
     XCTAssertEqual(undone.actions.first { $0.id == localStroke.id }?.isActive, false)

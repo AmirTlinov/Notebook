@@ -3,6 +3,13 @@ import CoreGraphics
 import Observation
 import NotebookCore
 
+/// A retained native host must relinquish its last presentation when the same
+/// model that admitted its input acknowledges terminal shutdown.
+@MainActor
+protocol NotebookScenePresentationOwner: AnyObject {
+  func uninstall()
+}
+
 @MainActor
 @Observable
 final class NotebookAppModel {
@@ -10,6 +17,16 @@ final class NotebookAppModel {
     case loading
     case ready
     case failed(String)
+  }
+
+  enum ShutdownPhase: Equatable {
+    case running
+    /// External admission is closed; an unsuccessful save may still be repaired.
+    case closing
+    /// Accepted input is saved, but derived owners and the final write drain remain.
+    case draining
+    /// Every drain succeeded. No mounted presentation may retain this scene.
+    case stopped
   }
 
   static let initialNotebookID = UUID(
@@ -391,6 +408,46 @@ final class NotebookAppModel {
   private var pencilUndoHistory = PencilUndoHistory()
   private var inkUndoInProgress = false
   private var reservedDrawingCounters: [UUID: UInt64] = [:]
+  typealias PageInkPreparation = @Sendable (PageDocument, PageInkMutation, VersionStamp) async throws -> PreparedPageInkChange
+  @MainActor private final class AcceptedPageInk {
+    let pageID: UUID
+    enum Intent { case append(PageInkAction), undoLast }
+    let intent: Intent
+    var mutation: PageInkMutation?
+    let stamp: VersionStamp
+    var page: PageDocument
+    var next: AcceptedPageInk?
+    var nextOnPage: AcceptedPageInk?
+    private enum Delivery { case pending, completed(PreparedPageInkChange?) }
+    private var delivery = Delivery.pending
+    private var waiters: [CheckedContinuation<PreparedPageInkChange?, Never>] = []
+
+    init(page: PageDocument, intent: Intent, stamp: VersionStamp) {
+      self.pageID = page.id; self.page = page; self.intent = intent; self.stamp = stamp
+      if case .append(let action) = intent { mutation = .append(action) }
+    }
+    func value() async -> PreparedPageInkChange? {
+      if case .completed(let result) = delivery { return result }
+      return await withCheckedContinuation { waiters.append($0) }
+    }
+    func resolve(_ result: PreparedPageInkChange?) {
+      guard case .pending = delivery else { return }
+      delivery = .completed(result)
+      let completions = waiters; waiters = []
+      for waiter in completions { waiter.resume(returning: result) }
+    }
+  }
+  @ObservationIgnored private let preparePageInk: PageInkPreparation
+  private struct DrawingReservationKey: Hashable { let pageID: UUID; let stamp: VersionStamp }
+  @ObservationIgnored private var drawingReservations: [DrawingReservationKey: PageDocument] = [:]
+  @ObservationIgnored private var acceptedPageInkHead: AcceptedPageInk?
+  @ObservationIgnored private var acceptedPageInkTail: AcceptedPageInk?
+  @ObservationIgnored private var lastAcceptedPageInk: [UUID: AcceptedPageInk] = [:]
+  private var acceptedPageInkCount = 0
+  @ObservationIgnored private var pageInkPreparationTask: Task<Void, Never>?
+  private(set) var acceptedPageInkFailure: String?
+  var pendingAcceptedPageInkCount: Int { acceptedPageInkCount }
+  var pendingPageDrawingReservationCount: Int { drawingReservations.count }
   private let presenceSessionID = UUID()
   private var presenceSequence: UInt64 = 0
   private var lastSettledPresenceEnvelope: PresenceEnvelope?
@@ -408,13 +465,18 @@ final class NotebookAppModel {
   @ObservationIgnored private var headerRefreshRequested = false
   @ObservationIgnored private var diskRefreshRequested = false
   @ObservationIgnored private var externalReloadPending = false
-  @ObservationIgnored private var isStopped = false
-  @ObservationIgnored private var isClosing = false
+  private(set) var shutdownPhase = ShutdownPhase.running
+  private var isStopped: Bool { shutdownPhase == .draining || shutdownPhase == .stopped }
+  private var isClosing: Bool { shutdownPhase != .running }
+  private struct WeakScenePresentationOwner {
+    weak var value: (any NotebookScenePresentationOwner)?
+  }
+  @ObservationIgnored private var scenePresentationOwners: [ObjectIdentifier: WeakScenePresentationOwner] = [:]
   @ObservationIgnored private var shutdownTask: Task<Bool, Never>?
   @ObservationIgnored private var inputSequence: UInt64 = 0
   private(set) var inputIsActive = false
   private(set) var peerInputIsActive = false { didSet { if !peerInputIsActive { publishPreparedSceneIfPossible() } } }
-  var permitsBackgroundPreparation: Bool { !inputIsActive && !peerInputIsActive && presencePhase == .settled }
+  var permitsBackgroundPreparation: Bool { !isStopped && !inputIsActive && !peerInputIsActive && presencePhase == .settled }
   #if os(macOS)
     private(set) var agentCoordinator: NotebookAgentCoordinator?
     private(set) var agentStartupError: String?
@@ -427,9 +489,15 @@ final class NotebookAppModel {
   init(
     store: NotebookStore = NotebookStore(root: NotebookStore.defaultRoot),
     startsNearbySync: Bool = true,
-    commandSocketURL: URL? = nil
+    commandSocketURL: URL? = nil,
+    preparePageInk: @escaping PageInkPreparation = { page, mutation, stamp in
+      try await Task.detached(priority: .userInitiated) {
+        try page.prepareInkChange(mutation, stamp: stamp)
+      }.value
+    }
   ) {
     self.store = store
+    self.preparePageInk = preparePageInk
     persistence = NotebookPersistenceQueue(store: store)
     compositionTiles = SceneCompositionTiles(cacheRoot: store.root.appendingPathComponent("derived/composition", isDirectory: true))
     #if os(iOS)
@@ -442,9 +510,10 @@ final class NotebookAppModel {
     #if os(macOS)
       self.commandSocketURL = commandSocketURL ?? (startsNearbySync ? NotebookIPC.defaultSocketURL : nil)
     #endif
+    inputGate.bindNewContactAdmission { [weak self] in self?.shutdownPhase == .running }
     persistence.onFailureChange = { [weak self] message in
       guard let self else { return }
-      persistenceFailure = message ?? publicationFailure
+      persistenceFailure = message ?? acceptedPageInkFailure ?? publicationFailure
     }
     persistence.onContentMerged = { [weak self] in self?.reloadExternalChanges() }
     persistence.onCommit = { [weak self] owner in
@@ -888,8 +957,9 @@ final class NotebookAppModel {
       await withCheckedContinuation { continuation in
         inputGate.performAfterPageInput { continuation.resume() }
       }
-      // A second contact may already be lifted but still have an unpublished
-      // serialization tail. Its generation also requires a fresh page drain.
+      guard await finishAcceptedPageInk() else { return false }
+      // A second contact may already be lifted but still have unpublished ink.
+      // Its generation also requires a fresh page drain.
       if !inputGate.hasActivePencil, inputGate.pencilGeneration == generation { break }
     }
     guard !isItemBeingDeleted(itemID), let removed = workspace?.item(id: itemID),
@@ -1194,9 +1264,10 @@ final class NotebookAppModel {
   }
 
   func undoLastSurfaceAction() {
-    guard presence?.mode != .document else { return }
+    guard inputGate.permitsNewContact, !inputGate.hasActivePencil,
+      presence?.mode != .document else { return }
     if isPageOpen {
-      Task { [weak self] in await self?.undoLastDrawingAction() }
+      _ = acceptDrawingUndo()
       return
     }
     guard var journal = spatialInk else { return }
@@ -1311,50 +1382,133 @@ final class NotebookAppModel {
     guard latestCounter < VersionStamp.maximumCounter else { return nil }
     let stamp = VersionStamp(counter: latestCounter + 1, actor: actorID)
     reservedDrawingCounters[pageID] = stamp.counter
+    drawingReservations[.init(pageID: pageID, stamp: stamp)] = page
     return stamp
   }
 
-  func commitDrawingAction(
+  func releaseDrawingReservation(pageID: UUID, stamp: VersionStamp) {
+    drawingReservations[.init(pageID: pageID, stamp: stamp)] = nil
+  }
+
+  /// Admission is synchronous with Pencil-up. The model, not a mounted sheet,
+  /// retains the measured action before any preparation task can suspend.
+  func acceptDrawingAction(
     _ action: PageInkAction,
     pageID: UUID,
     stamp: VersionStamp
-  ) async -> PreparedPageInkChange? {
-    guard stamp.actor == actorID,
-      stamp.counter <= reservedDrawingCounters[pageID, default: 0] else { return nil }
-    guard let change = await publishInkMutation(.append(action), pageID: pageID, stamp: stamp) else { return nil }
-    pencilUndoHistory.recordAction(pageID: pageID, actionID: action.id)
-    return change
+  ) -> Task<PreparedPageInkChange?, Never> {
+    acceptInkIntent(.append(action), pageID: pageID, stamp: stamp)
   }
 
-  /// Only a prepared, still-current drawing crosses back to MainActor. A peer
-  /// that advanced this page during preparation is included in the retry.
-  private func publishInkMutation(
-    _ mutation: PageInkMutation, pageID: UUID, stamp: VersionStamp
-  ) async -> PreparedPageInkChange? {
-    while !Task.isCancelled, !isPageBeingDeleted(pageID), let snapshot = pages[pageID] {
-      let prepared = await Task.detached(priority: .userInitiated) {
-        try? snapshot.prepareInkChange(mutation, stamp: stamp)
-      }.value
-      guard !Task.isCancelled, !isPageBeingDeleted(pageID), let change = prepared, var current = pages[pageID] else { return nil }
-      guard current.publishInkChange(change) else { continue }
-      if change.stamp == change.baseStamp { return change }
-      pages[pageID] = current
+  private func acceptInkIntent(_ intent: AcceptedPageInk.Intent, pageID: UUID,
+    stamp: VersionStamp) -> Task<PreparedPageInkChange?, Never> {
+    guard let page = drawingReservations.removeValue(forKey: .init(pageID: pageID, stamp: stamp)),
+      !isPageBeingDeleted(pageID) else { return Task { nil } }
+    let accepted = AcceptedPageInk(page: page, intent: intent, stamp: stamp)
+    if let tail = acceptedPageInkTail { tail.next = accepted }
+    else { acceptedPageInkHead = accepted }
+    acceptedPageInkTail = accepted
+    lastAcceptedPageInk[pageID]?.nextOnPage = accepted
+    lastAcceptedPageInk[pageID] = accepted
+    acceptedPageInkCount += 1
+    if acceptedPageInkFailure != nil { accepted.resolve(nil) }
+    startAcceptedPageInkPreparation()
+    // This task only observes delivery. Cancelling or discarding it cannot
+    // cancel the accepted action, whose lifetime belongs to this model.
+    return Task { await accepted.value() }
+  }
 
-      scheduleSave(pageID)
+  private func startAcceptedPageInkPreparation() {
+    guard pageInkPreparationTask == nil, acceptedPageInkFailure == nil,
+      acceptedPageInkHead != nil else { return }
+    pageInkPreparationTask = Task { [self] in
+      defer { pageInkPreparationTask = nil }
+      while let accepted = acceptedPageInkHead {
+        if accepted.mutation == nil {
+          guard let ids = pencilUndoHistory.lastContribution(for: accepted.pageID) else {
+            accepted.nextOnPage?.page = pages[accepted.pageID] ?? accepted.page
+            completeAcceptedPageInk(accepted, result: nil)
+            continue
+          }
+          // Resolve the queued undo once, after its predecessors. A failed
+          // preparation or a peer CAS retry cannot redirect it to other UUIDs.
+          accepted.mutation = .remove(ids)
+        }
+        guard let mutation = accepted.mutation else { preconditionFailure("Accepted ink has no resolved mutation") }
+        do {
+          let change = try await publishInkMutation(accepted, mutation: mutation)
+          switch mutation {
+          case .append(let action):
+            // An exact repeated UUID is a no-op, not another human contribution.
+            if change.stamp != change.baseStamp {
+              pencilUndoHistory.recordAction(pageID: accepted.pageID, actionID: action.id)
+            }
+          case .remove(let ids):
+            pencilUndoHistory.didRemoveContribution(ids, for: accepted.pageID)
+            if change.stamp != change.baseStamp { showCue("Отменено") }
+          }
+          completeAcceptedPageInk(accepted, result: change)
+        } catch {
+          acceptedPageInkFailure = error.localizedDescription
+          persistenceFailure = error.localizedDescription
+          // A failed preparation releases observers with failure, but retains
+          // this action and its dependencies for the same explicit retry path.
+          var next = acceptedPageInkHead
+          while let pending = next { pending.resolve(nil); next = pending.next }
+          return
+        }
+      }
+    }
+  }
+
+  private func completeAcceptedPageInk(_ accepted: AcceptedPageInk, result: PreparedPageInkChange?) {
+    acceptedPageInkHead = accepted.next
+    accepted.next = nil
+    accepted.nextOnPage = nil
+    if acceptedPageInkHead == nil { acceptedPageInkTail = nil }
+    if lastAcceptedPageInk[accepted.pageID] === accepted { lastAcceptedPageInk[accepted.pageID] = nil }
+    acceptedPageInkCount -= 1
+    if case .undoLast = accepted.intent { inkUndoInProgress = false }
+    accepted.resolve(result)
+  }
+
+  /// A page evicted by navigation is retained by its accepted action, not by
+  /// the disposable coordinator. A newer in-memory peer value joins the CAS.
+  private func publishInkMutation(_ accepted: AcceptedPageInk, mutation: PageInkMutation) async throws -> PreparedPageInkChange {
+    while !isPageBeingDeleted(accepted.pageID) {
+      let snapshot = pages[accepted.pageID] ?? accepted.page
+      let change = try await preparePageInk(snapshot, mutation, accepted.stamp)
+      guard !isPageBeingDeleted(accepted.pageID) else { throw NotebookStorageError.transactionConflict }
+      var current = pages[accepted.pageID] ?? snapshot
+      guard current.publishInkChange(change) else { accepted.page = current; continue }
+      // A later queued action may outlive this page's working-set entry too.
+      // Hand it the published baseline before releasing this accepted owner.
+      accepted.nextOnPage?.page = current
+      accepted.page = current
+      if change.stamp != change.baseStamp {
+        pages[accepted.pageID] = current
+        scheduleSave(accepted.pageID)
+      }
       return change
     }
-    return nil
+    throw NotebookStorageError.transactionConflict
   }
 
-  func undoLastDrawingAction() async {
-    guard !inkUndoInProgress, let page = activePage,
-      let ids = pencilUndoHistory.lastContribution(for: page.id),
-      let stamp = reserveDrawingAction(pageID: page.id) else { return }
+  @discardableResult
+  private func finishAcceptedPageInk() async -> Bool {
+    while let task = pageInkPreparationTask { await task.value }
+    return acceptedPageInkHead == nil && acceptedPageInkFailure == nil
+  }
+
+  /// Capture the human command before returning to its caller. The same FIFO
+  /// resolves its last contribution after prior accepted strokes, even if the
+  /// page has left the working set or shutdown starts before it is prepared.
+  func acceptDrawingUndo() -> Task<PreparedPageInkChange?, Never> {
+    guard inputGate.permitsNewContact, !inputGate.hasActivePencil,
+      !inkUndoInProgress, let page = activePage,
+      let stamp = reserveDrawingAction(pageID: page.id) else { return Task { nil } }
     inkUndoInProgress = true
-    defer { inkUndoInProgress = false }
-    guard await publishInkMutation(.remove(ids), pageID: page.id, stamp: stamp) != nil else { return }
-    pencilUndoHistory.didRemoveContribution(ids, for: page.id)
-    showCue("Отменено")
+    return acceptInkIntent(.undoLast, pageID: page.id, stamp: stamp)
   }
 
   func selectPenColor(_ color: PenColor) {
@@ -1718,7 +1872,7 @@ final class NotebookAppModel {
               pinnedElements: elementPins, pinnedItems: itemPins)
           }
           publicationFailure = nil
-          if persistence.failure == nil { persistenceFailure = nil }
+          if persistence.failure == nil { persistenceFailure = acceptedPageInkFailure }
           guard !inputGate.isActive, presencePhase != .active else { externalReloadPending = true; return }
           // Settled camera/selection can change without changing content. The
           // old read must not bring the person back after its SQL await.
@@ -2405,17 +2559,25 @@ final class NotebookAppModel {
   }
 
   func retryPendingPersistence() {
+    acceptedPageInkFailure = nil
+    startAcceptedPageInkPreparation()
     persistence.retry()
     if publicationFailure != nil { reloadExternalChanges() }
   }
 
   @discardableResult
   func finishPendingInteraction() async -> Bool {
-    await withCheckedContinuation { continuation in
-      inputGate.performAfterPageInput { continuation.resume() }
+    while true {
+      let generation = inputGate.pencilGeneration
+      await withCheckedContinuation { continuation in
+        inputGate.performAfterPageInput { continuation.resume() }
+      }
+      if presencePhase == .active, let presence { updatePresence(presence, settled: true) }
+      guard await finishPendingPersistence() else { return false }
+      // The await itself is not a contact boundary: a later Pencil may have
+      // started or even lifted while the preceding publication was draining.
+      if !inputGate.hasActivePencil, generation == inputGate.pencilGeneration { return true }
     }
-    if presencePhase == .active, let presence { updatePresence(presence, settled: true) }
-    return await finishPendingPersistence()
   }
 
   /// A completed wait is not a successful save: failures retain their writes
@@ -2424,11 +2586,13 @@ final class NotebookAppModel {
   func finishPendingPersistence() async -> Bool {
     if let startupTask { await startupTask.value }
     repeat {
+      guard await finishAcceptedPageInk() else { return false }
       if let task = diskRefreshTask { await task.value }
       if let task = sceneWindowTask { await task.value }
       if let task = headerRefreshTask { await task.value }
       guard await persistence.flush() else { return false }
     } while diskRefreshTask != nil || headerRefreshTask != nil || persistence.pendingCount > 0
+      || pageInkPreparationTask != nil || acceptedPageInkHead != nil
     return publicationFailure == nil
   }
 
@@ -2438,7 +2602,8 @@ final class NotebookAppModel {
   @discardableResult
   func shutdown() async -> Bool {
     if let shutdownTask { return await shutdownTask.value }
-    isClosing = true
+    if shutdownPhase == .stopped { return true }
+    if shutdownPhase == .running { shutdownPhase = .closing }
     let task = Task { [self] in
       if let startupTask { await startupTask.value }
       sync?.stop(); sync = nil
@@ -2454,7 +2619,7 @@ final class NotebookAppModel {
       // refresh owner available to the explicit repair/retry action. Terminal
       // teardown would otherwise make publicationFailure impossible to clear.
       guard agentStopped && inputSaved else { return false }
-      isStopped = true
+      shutdownPhase = .draining
       inputGate.onActivityChange = nil
       itemOwnerObserver = nil
       let readers = [scenePreparationTask, sceneWindowTask, diskRefreshTask, headerRefreshTask]
@@ -2470,12 +2635,30 @@ final class NotebookAppModel {
       if let task = collaborationUndoTask { await task.value }
       await compositionTiles.stop()
       let saved = await persistence.flush()
+      if saved {
+        shutdownPhase = .stopped
+        // A hidden UIHostingController may not evaluate its observed body again.
+        // Deliver the terminal boundary directly, without a display/layout tick.
+        let owners = scenePresentationOwners.values.compactMap(\.value)
+        scenePresentationOwners.removeAll()
+        for owner in owners { owner.uninstall() }
+      }
       return saved
     }
     shutdownTask = task
     let saved = await task.value
     shutdownTask = nil
     return saved
+  }
+
+  func registerScenePresentation(_ owner: any NotebookScenePresentationOwner) {
+    guard shutdownPhase != .stopped else { owner.uninstall(); return }
+    scenePresentationOwners = scenePresentationOwners.filter { $0.value.value != nil }
+    scenePresentationOwners[ObjectIdentifier(owner)] = .init(value: owner)
+  }
+
+  func unregisterScenePresentation(_ owner: any NotebookScenePresentationOwner) {
+    scenePresentationOwners.removeValue(forKey: ObjectIdentifier(owner))
   }
 
   private func showCue(_ text: String) {

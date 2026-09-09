@@ -27,6 +27,24 @@ struct SpatialInkInstalledSource: Sendable {
     }
     return try .init(surface: surface, actions: Array(actions.values))
   }
+
+  /// Runs on the mesh worker. Canonical undo wins by the journal's existing
+  /// causal rule; a finished local contact not yet echoed by SQL is retained.
+  /// The old baseline is not merged back into a newly read source.
+  func reconciled(with journal: SpatialInkJournal) throws -> SpatialInkJournal {
+    let incoming = journal.actions.filter { $0.spans.contains { $0.surface == surface } }
+    let byID = Dictionary(uniqueKeysWithValues: incoming.map { ($0.id, $0) })
+    for action in finished {
+      if let other = byID[action.id],
+        (other.stamp != action.stamp || other.tool != action.tool || other.color != action.color || other.spans != action.spans) {
+        throw CollaborationError("capture_source_changed", "Неизменяемые точки принятого контакта получили другой источник.")
+      }
+    }
+    var result = SpatialInkJournal(actions: incoming, stamp: journal.stamp)
+    let tailStamp = finished.reduce(baseline.stamp) { max($0, max($1.stamp, $1.stateStamp)) }
+    _ = result.merge(.init(actions: finished, stamp: tailStamp))
+    return result
+  }
 }
 import PencilKit
 

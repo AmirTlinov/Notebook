@@ -12,14 +12,16 @@ final class InstalledInkAttentionTests: XCTestCase {
     let blocker = try NotebookSQLWriteBlocker(store: fixture.model.store)
     defer { try? blocker.release() }
     let pen = try driver.stroke(.pen), eraser = try driver.stroke(.eraser)
-    XCTAssertGreaterThan(driver.canvas.inkView.committedVertexCount, 0)
-    XCTAssertGreaterThan(driver.canvas.inkView.committedEraserVertexCount, 0)
-    let meshInstalls = driver.canvas.inkView.spatialMeshInstallCount
+    let ink = try XCTUnwrap(driver.canvas.inkView)
+    XCTAssertGreaterThan(ink.committedVertexCount, 0)
+    XCTAssertGreaterThan(ink.committedEraserVertexCount, 0)
+    let meshInstalls = ink.spatialMeshInstallCount
     let start = ContinuousClock.now
     let selection = try capture(fixture, driver: driver)
     fixture.model.publishHumanContext(selection)
     XCTAssertLessThan(start.duration(to: .now), .milliseconds(50))
-    XCTAssertEqual(driver.canvas.inkView.spatialMeshInstallCount, meshInstalls,
+    XCTAssertTrue(driver.canvas.inkView === ink)
+    XCTAssertEqual(ink.spatialMeshInstallCount, meshInstalls,
       "Capturing installed source must not replay geometry or wait for a new cohort")
     let records = try await Task.detached { try selection.sourceFiles()["spatial-ink.json"]?.decode(SpatialInkJournal.self) }.value
     XCTAssertEqual(records?.actions.map(\.id), [pen.id, eraser.id])
@@ -74,7 +76,7 @@ final class InstalledInkAttentionTests: XCTestCase {
     try await waitUntil { fixture.model.agentRequestError != nil }
     XCTAssertNil(fixture.model.persistenceFailure)
     XCTAssertTrue(try fixture.model.store.sharedContexts(contextID: nil).contexts.isEmpty)
-    driver.update(.pen)
+    try await driver.publishCurrentComposition()
     try await waitUntil {
       (try? driver.registry.installedSource(on: .board(fixture.presence.boardID))?.referenceInk().actions.first?.isActive) == false
     }
@@ -88,11 +90,17 @@ final class InstalledInkAttentionTests: XCTestCase {
   }
 
   @MainActor
-  func testPreparedParentHandsOffANonemptyChildWithoutAnOldHeavyInkPayload() async throws {
+  func testPreparedParentHandsOffTheSameNonemptyChildOwnerAndExactSource() async throws {
     let fixture = try await fixture(withChild: true)
     let child = try XCTUnwrap(fixture.child)
     XCTAssertNotNil(fixture.cohort.plan.presentations[.board(child)])
-    XCTAssertFalse(fixture.cohort.liveData.ink.actions.contains { $0.spans.contains { $0.surface == .board(child) } })
+    let prepared = try XCTUnwrap(fixture.cohort.nativeInk.owners[.board(child)]?.canvas)
+    let preparedSource = try XCTUnwrap(prepared.installedSpatialSource?.referenceInk())
+    XCTAssertEqual(preparedSource.actions, fixture.cohort.liveData.ink.actions.filter {
+      $0.spans.contains { $0.surface == .board(child) }
+    })
+    XCTAssertGreaterThan(prepared.committedVertexCount, 0)
+    let meshInstallations = prepared.spatialMeshInstallCount
     let presence = SessionPresence(boardID: child, mode: .board, camera: .init(scale: 1), viewport: .init(x: 512, y: 512))
     fixture.model.updatePresence(presence, settled: true)
     try await flush(fixture.model)
@@ -100,6 +108,9 @@ final class InstalledInkAttentionTests: XCTestCase {
     let driver = try Driver(model: fixture.model, presence: presence, cohort: fixture.cohort)
     defer { driver.close() }
     try await waitUntil { driver.registry.installedSource(on: .board(child)) != nil }
+    XCTAssertTrue(driver.canvas.inkView === prepared)
+    XCTAssertEqual(prepared.spatialMeshInstallCount, meshInstallations)
+    XCTAssertEqual(try driver.registry.installedSource(on: .board(child))?.referenceInk(), preparedSource)
     let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start: .init(x: 100, y: 100),
       end: .init(x: 180, y: 160), model: fixture.model, presence: presence, cohort: fixture.cohort,
       installedInk: driver.registry.installedSources()))
@@ -124,7 +135,7 @@ final class InstalledInkAttentionTests: XCTestCase {
     XCTAssertNil(driver.registry.installedSource(on: .board(fixture.presence.boardID)))
     driver.moveAndEnd()
     try await waitUntil { fixture.model.isPointing }
-    XCTAssertGreaterThan(driver.canvas.inkView.committedVertexCount, 0)
+    XCTAssertGreaterThan(try XCTUnwrap(driver.canvas.inkView).committedVertexCount, 0)
     let selection = try capture(fixture, driver: driver)
     let item = try XCTUnwrap(fixture.model.store.readWorkspaceItems(limit: 1).first?.id)
     fixture.model.moveItem(item, to: .init(x: 15_000, y: 15_000))
@@ -148,7 +159,8 @@ final class InstalledInkAttentionTests: XCTestCase {
     defer { card.unregister(); driver.close() }
     let previousActions = fixture.model.spatialInk?.actions.count ?? 0
     let previousGeneration = fixture.model.inputGate.pencilGeneration
-    let previousVertices = driver.canvas.inkView.committedVertexCount
+    let ink = try XCTUnwrap(driver.canvas.inkView)
+    let previousVertices = ink.committedVertexCount
 
     XCTAssertFalse(fixture.model.inputGate.permitsSceneContact(at: .init(x: 120, y: 120)))
     driver.begin(.pen)
@@ -159,7 +171,8 @@ final class InstalledInkAttentionTests: XCTestCase {
     XCTAssertEqual(fixture.model.inputGate.pencilGeneration, previousGeneration)
     driver.moveAndEnd()
     XCTAssertEqual(fixture.model.spatialInk?.actions.count ?? 0, previousActions)
-    XCTAssertEqual(driver.canvas.inkView.committedVertexCount, previousVertices)
+    XCTAssertTrue(driver.canvas.inkView === ink)
+    XCTAssertEqual(ink.committedVertexCount, previousVertices)
 
     card.frame.origin = .init(x: 320, y: 320)
     driver.begin(.pen)
@@ -202,14 +215,15 @@ final class InstalledInkAttentionTests: XCTestCase {
         onTextEditingEnded: { _ in }, onElementSelected: {})
     let host = UIHostingController(rootView: AnyView(portal
       .frame(width: item.geometry.width, height: item.geometry.height).scaleEffect(0.3)
-      .environment(\.sceneCompositionCohort, fixture.cohort).environment(fixture.model)))
+      .environment(\.sceneComposition, .init(fixture.cohort)).environment(fixture.model)))
     driver.attach(host)
     try await waitUntil {
       driver.registry.installedSource(on: .board(fixture.presence.boardID)) != nil
         && driver.registry.installedSource(on: .cover(child)) != nil
         && driver.registry.installedSource(on: .cover(nested)) != nil
     }
-    XCTAssertNil(driver.registry.canvas(for: .board(child)), "Passive child-board ink belongs to completed tiles, not a second live Metal owner")
+    XCTAssertTrue(driver.registry.canvas(for: .board(child)) === fixture.cohort.nativeInk.owners[.board(child)]?.canvas,
+      "The child portal mounts the same admitted physical ink owner")
     let nestedSource = try XCTUnwrap(driver.registry.installedSource(on: .cover(nested)))
     XCTAssertEqual(try nestedSource.referenceInk().actions.count, 1)
     let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start: .init(x: 40, y: 40),
@@ -227,9 +241,11 @@ final class InstalledInkAttentionTests: XCTestCase {
     // End the former projection's real SwiftUI lifetime. Keeping that owner
     // mounted would allow its next update to legitimately register it again.
     driver.detach(host)
-    let replacement = InkCanvasView(frame: oldCanvas.frame), coordinator = SpatialInkSurfaceView.Coordinator()
-    coordinator.update(view: replacement, surface: .cover(nested), journal: fixture.cohort.liveData.ink, registry: driver.registry)
-    defer { coordinator.unregister(replacement) }
+    let replacement = InkCanvasView(frame: oldCanvas.frame)
+    replacement.applySpatial(try .prepare(surface: .cover(nested), journal: fixture.cohort.liveData.ink))
+    replacement.installSpatialSource(fixture.cohort.liveData.ink, on: .cover(nested))
+    driver.registry.register(replacement, for: .cover(nested))
+    defer { driver.registry.unregister(replacement, for: .cover(nested)) }
     try await waitUntil { driver.registry.installedSource(on: .cover(nested)) != nil }
     driver.registry.unregister(oldCanvas, for: .cover(nested))
     XCTAssertTrue(driver.registry.canvas(for: .cover(nested)) === replacement)
@@ -286,8 +302,12 @@ final class InstalledInkAttentionTests: XCTestCase {
     model.updatePresence(presence, settled: true)
     try await flush(model)
     try await waitUntil { !model.scenePreparationPending }
-    let frame = WorkspaceSceneFrame(index: try XCTUnwrap(model.sceneIndex), presence: presence, portalCamera: model.scenePortalCamera)
-    model.prepareComposition(presence: presence, frame: frame, pinned: child.map { [.item($0)] } ?? [], displayScale: 1)
+    // This fixture asks to capture these physical ink owners, not an optional
+    // overview image of a nested cover that the byte planner may flatten.
+    let requestedOwners = Set([child, nestedCover].compactMap { $0 }.map(WorkspaceSpatialID.item))
+    let frame = WorkspaceSceneFrame(index: try XCTUnwrap(model.sceneIndex), presence: presence,
+      portalCamera: model.scenePortalCamera, pinned: requestedOwners)
+    model.prepareComposition(presence: presence, frame: frame, pinned: requestedOwners, displayScale: 1)
     try await waitUntil { model.compositionTiles.published != nil || model.compositionTiles.failure != nil }
     let cohort = try XCTUnwrap(model.compositionTiles.published, model.compositionTiles.failure ?? "")
     return .init(model: model, cohort: cohort, presence: presence, child: child, nestedCover: nestedCover)
@@ -296,7 +316,7 @@ final class InstalledInkAttentionTests: XCTestCase {
   @MainActor
   private func capture(_ fixture: Fixture, driver: Driver) throws -> NotebookAttentionSelection {
     try XCTUnwrap(NotebookAttentionProjection.capture(start: .init(x: 100, y: 100), end: .init(x: 180, y: 160),
-      model: fixture.model, presence: fixture.presence, cohort: fixture.cohort, installedInk: driver.registry.installedSources()))
+      model: fixture.model, presence: fixture.presence, cohort: driver.cohort, installedInk: driver.registry.installedSources()))
   }
 
   @MainActor
@@ -314,19 +334,19 @@ final class InstalledInkAttentionTests: XCTestCase {
 
   @MainActor
   private final class Driver {
-    let registry = SpatialInkSurfaceRegistry()
+    let registry: SpatialInkSurfaceRegistry
     let canvas = SpatialInkContainerView(frame: .init(x: 0, y: 0, width: 512, height: 512))
     private let model: NotebookAppModel, presence: SessionPresence, window: UIWindow
     private let coordinator: SpatialInkCanvas.Coordinator
-    private let cohort: SceneCompositionCohort
-    private let physical: WorkspaceInkFixture
+    private(set) var cohort: SceneCompositionCohort
+    private var physical: WorkspaceInkFixture
     private let touch = CaptureTouch(), event = UIEvent()
     private var recognizer: SpatialPencilGestureRecognizer { window.gestureRecognizers!.compactMap { $0 as? SpatialPencilGestureRecognizer }.first! }
     var recognizerState: UIGestureRecognizer.State { recognizer.state }
     private(set) var didBeginContact = false
 
     init(model: NotebookAppModel, presence: SessionPresence, cohort: SceneCompositionCohort) throws {
-      self.model = model; self.presence = presence; self.cohort = cohort
+      self.model = model; self.presence = presence; self.cohort = cohort; registry = cohort.nativeInk.registry
       let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
       window = UIWindow(windowScene: scene)
       coordinator = .init(surfaceRegistry: registry, inputGate: model.inputGate, onCommit: model.appendSpatialInk)
@@ -342,6 +362,35 @@ final class InstalledInkAttentionTests: XCTestCase {
         items: physical.surfaces, journal: model.spatialInk, penStyle: .standard, eraserStyle: .standard, drawingTool: tool,
         surfaceRegistry: registry, inputGate: model.inputGate, isItemBeingDeleted: { _ in false },
         admitsNewContact: { true }, isEnabled: true, onCommit: model.appendSpatialInk)
+    }
+
+    func publishCurrentComposition() async throws {
+      XCTAssertFalse(model.inputGate.hasActivePencil)
+      let deadline = ContinuousClock.now + .seconds(5)
+      while model.scenePreparationPending, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(5))
+      }
+      XCTAssertFalse(model.scenePreparationPending)
+      let cursor = try XCTUnwrap(model.workspaceHeader).cursor
+      let previous = cohort
+      let installedCanvas = try XCTUnwrap(canvas.inkView)
+      let frame = WorkspaceSceneFrame(index: try XCTUnwrap(model.sceneIndex), presence: presence,
+        portalCamera: model.scenePortalCamera)
+      model.prepareComposition(presence: presence, frame: frame, pinned: [], displayScale: 1)
+      while model.compositionTiles.published?.plan.revision != cursor,
+        model.compositionTiles.failure == nil, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(5))
+      }
+      let prepared = try XCTUnwrap(model.compositionTiles.published, model.compositionTiles.failure ?? "")
+      XCTAssertEqual(prepared.plan.revision, cursor, model.compositionTiles.failure ?? "")
+      XCTAssertNotEqual(prepared.id, previous.id)
+      physical.close()
+      cohort = prepared
+      physical = try .init(cohort: prepared, presence: presence, canvas: canvas,
+        parent: try XCTUnwrap(window.rootViewController), registry: registry,
+        gate: model.inputGate, journal: model.spatialInk)
+      update(.pen)
+      XCTAssertTrue(canvas.inkView === installedCanvas, "The new canonical source uses the same physical ink owner")
     }
 
     func begin(_ tool: DrawingTool) {

@@ -7,12 +7,151 @@ import XCTest
 
 @MainActor
 final class PortalPassageTests: XCTestCase {
+  func testSmallMeasuredApproachesKeepTheDistantNotebookOnTheBoardUntilOpening() async throws {
+    let scene = try await makeScene()
+    let rootID = try XCTUnwrap(scene.model.presence?.boardID)
+    let center = CGPoint(x: scene.viewport.x / 2, y: scene.viewport.y / 2)
+    scene.model.updatePresence(.init(boardID: rootID, mode: .board,
+      camera: .init(center: .init(x: -30_000, y: -30_000), scale: 0.28),
+      viewport: scene.viewport), settled: true)
+    let deadline = ContinuousClock.now + .seconds(5)
+    while scene.model.compositionTiles.published?.frame.workset(boardID: rootID)
+      .items.contains(where: { $0.id == scene.distantID }) != true, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    XCTAssertTrue(scene.model.compositionTiles.published?.frame.workset(boardID: rootID)
+      .items.contains { $0.id == scene.distantID } == true)
+
+    for factor in [CGFloat(1.2), 1.4] {
+      let before = try XCTUnwrap(scene.model.presence)
+      try scene.send(.began(centroid: center, isOpeningApproach: true))
+      try scene.send(.changed(scale: factor, velocity: 0.4, elapsed: 0.2, centroid: center))
+      let measured = try XCTUnwrap(scene.model.presence)
+      XCTAssertEqual(measured.camera.scale, before.camera.scale * Double(factor), accuracy: 1e-10)
+      XCTAssertEqual(measured.mode, .board)
+      XCTAssertEqual(measured.openProgress, 0)
+      try scene.send(.ended(scale: factor, velocity: 0.4, elapsed: 0.3, centroid: center))
+      try await Task.sleep(for: .milliseconds(350))
+      let released = try XCTUnwrap(scene.model.presence)
+      XCTAssertEqual(released.mode, .board, "A small real approach cannot silently dock after release")
+      XCTAssertEqual(released.camera.scale, measured.camera.scale, accuracy: 1e-10)
+    }
+    try scene.send(.began(centroid: center, isOpeningApproach: true))
+    for scale in [CGFloat(1.5), 2, 3, 4] {
+      try scene.send(.changed(scale: scale, velocity: 2, elapsed: Double(scale) / 10, centroid: center))
+    }
+    try scene.send(.ended(scale: 4, velocity: 2, elapsed: 0.5, centroid: center))
+    let openedDeadline = ContinuousClock.now + .seconds(3)
+    while scene.model.presence?.mode != .page, ContinuousClock.now < openedDeadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    let opened = try XCTUnwrap(scene.model.presence)
+    XCTAssertEqual(opened.mode, .page)
+    XCTAssertEqual(opened.focusedItemID, scene.distantID)
+    XCTAssertEqual(opened.openProgress, 1)
+    XCTAssertEqual(opened.camera.scale,
+      scene.model.itemGeometry(scene.distantID).fitScale(viewport: scene.viewport), accuracy: 1e-10)
+  }
+
   func testPinchCrossesThePortalBeforeReleaseAndKeepsTheSameVisiblePoint() async throws {
     try await assertPassage()
   }
 
   func testLandscapePassagePreservesTheSameVisiblePoint() async throws {
     try await assertPassage(viewport: .init(x: 1194, y: 834))
+  }
+
+  func testSeparatePinchesExitAtThePortalBoundaryNotAtTheGestureFraction() async throws {
+    let scene = try await makeScene()
+    let parentID = try XCTUnwrap(scene.model.presence?.boardID)
+    let center = CGPoint(x: scene.viewport.x / 2, y: scene.viewport.y / 2)
+    let portal = try XCTUnwrap(scene.model.boardHierarchy?.portalCamera(scene.childID))
+    let boundary = BoardPortalProjection.entryCamera(portalCamera: portal, viewport: scene.viewport).scale
+    let entryFactor = BoardPortalProjection.fillScale(viewport: scene.viewport) / 0.35 * 2.5
+    try scene.send(.began(centroid: center, isOpeningApproach: true))
+    try scene.send(.changed(scale: entryFactor, velocity: 1, elapsed: 0.2, centroid: center))
+    try scene.send(.ended(scale: entryFactor, velocity: 1, elapsed: 0.3, centroid: center))
+    let entered = try XCTUnwrap(scene.model.presence)
+    XCTAssertEqual(entered.boardID, scene.childID)
+    XCTAssertEqual(entered.camera.scale, boundary * 2.5, accuracy: 1e-10)
+
+    try scene.send(.began(centroid: center, isOpeningApproach: false))
+    try scene.send(.changed(scale: 0.55, velocity: -1, elapsed: 0.2, centroid: center))
+    try scene.send(.ended(scale: 0.55, velocity: -1, elapsed: 0.3, centroid: center))
+    let inside = try XCTUnwrap(scene.model.presence)
+    XCTAssertEqual(inside.boardID, scene.childID)
+    XCTAssertEqual(inside.camera.scale, entered.camera.scale * 0.55, accuracy: 1e-10)
+    XCTAssertGreaterThan(inside.camera.scale, boundary)
+
+    try scene.send(.began(centroid: center, isOpeningApproach: false))
+    try scene.send(.changed(scale: 0.5, velocity: -1, elapsed: 0.2, centroid: center))
+    let exiting = try XCTUnwrap(scene.model.presence)
+    XCTAssertEqual(exiting.boardID, parentID)
+    try scene.send(.ended(scale: 0.5, velocity: -1, elapsed: 0.3, centroid: center))
+    try await Task.sleep(for: .milliseconds(350))
+    let released = try XCTUnwrap(scene.model.presence)
+    XCTAssertEqual(released.boardID, parentID)
+    XCTAssertEqual(released.camera.scale, exiting.camera.scale, accuracy: 1e-10)
+    XCTAssertEqual(released.camera.center, exiting.camera.center,
+      "Release must preserve the last boundary projection, not add an overview jump")
+  }
+
+  func testSettledBoardExitKeepsContentVisibleBeforeRelease() async throws {
+    try await assertSettledBoardExit(viewport: .init(x: 834, y: 1194))
+  }
+
+  func testLandscapeSettledBoardExitKeepsContentVisibleBeforeRelease() async throws {
+    try await assertSettledBoardExit(viewport: .init(x: 1194, y: 834))
+  }
+
+  private func assertSettledBoardExit(viewport: SpatialPoint? = nil) async throws {
+    let scene = try await makeScene(viewport: viewport)
+    let parentID = try XCTUnwrap(scene.model.presence?.boardID)
+    let original = try XCTUnwrap(scene.model.compositionTiles.published)
+    scene.model.enterBoard(scene.childID)
+    let deadline = ContinuousClock.now + .seconds(15)
+    while (scene.model.compositionTiles.published?.plan.rootBoardID != scene.childID
+      || scene.model.compositionTiles.published?.plan.revision != scene.model.workspaceHeader?.cursor
+      || scene.model.scenePreparationPending || scene.model.compositionTiles.isPreparing),
+      scene.model.compositionTiles.failure == nil, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    let settled = try XCTUnwrap(scene.model.compositionTiles.published)
+    XCTAssertEqual(settled.plan.rootBoardID, scene.childID,
+      "Exit is tested after the child has replaced the entry cohort, not after a short timing guess")
+    XCTAssertNotEqual(settled.id, original.id)
+    XCTAssertNil(scene.model.compositionTiles.failure)
+    let start = try XCTUnwrap(scene.model.presence)
+    XCTAssertEqual(start.boardID, scene.childID)
+    let before = try redPoint(in: scene.host.view)
+    let marker = start.camera.worldToScreen(.init(x: 200, y: 150), viewport: scene.viewport)
+    XCTAssertEqual(before.x, marker.x, accuracy: 2)
+    XCTAssertEqual(before.y, marker.y, accuracy: 2)
+
+    // Keep the preparation gate closed through the actual return contact. New
+    // pixels after finger lift cannot retroactively satisfy the visible handoff.
+    let input = UUID()
+    scene.model.inputGate.beginContact(source: input)
+    defer { scene.model.inputGate.endContact(source: input) }
+    let center = CGPoint(x: scene.viewport.x / 2, y: scene.viewport.y / 2)
+    try scene.send(.began(centroid: center, isOpeningApproach: false))
+    try scene.send(.changed(scale: 0.75, velocity: -1, elapsed: 0.2, centroid: center))
+    XCTAssertEqual(scene.model.presence?.boardID, parentID)
+    XCTAssertFalse(scene.model.permitsBackgroundPreparation)
+    scene.host.view.setNeedsLayout()
+    scene.host.view.layoutIfNeeded()
+    let after = try redPoint(in: scene.host.view)
+    XCTAssertEqual(after.x, center.x + (before.x - center.x) * 0.75, accuracy: 2)
+    XCTAssertEqual(after.y, center.y + (before.y - center.y) * 0.75, accuracy: 2)
+    XCTAssertEqual(scene.model.compositionTiles.published?.id, settled.id,
+      "The same complete cohort supplies both sides while preparation is forbidden")
+    XCTAssertTrue(agentWebViews(in: scene.host.view).isEmpty)
+    XCTAssertLessThanOrEqual(settled.plan.primitiveCount, 96)
+    XCTAssertTrue(settled.rasters.values.allSatisfy { !$0.isReleased })
+    try scene.send(.ended(scale: 0.75, velocity: -1, elapsed: 0.3, centroid: center))
+    scene.model.inputGate.endContact(source: input)
+    let saved = await scene.model.finishPendingPersistence()
+    XCTAssertTrue(saved)
   }
 
   private func assertPassage(viewport: SpatialPoint? = nil) async throws {
@@ -90,6 +229,23 @@ final class PortalPassageTests: XCTestCase {
       "Entering a board does not activate every prepared source")
     let interactive = try XCTUnwrap(scene.model.boardHierarchy?.board(scene.childID)?.elements.first { !$0.javaScript.isEmpty })
     scene.model.interactiveElementFocus = .board(boardID: scene.childID, elementID: interactive.id)
+    let mounted: Set<ObjectIdentifier> = [try await interactiveIdentity(in: scene)]
+    XCTAssertEqual(agentWebViews(in: scene.host.view).count, 1,
+      "Явное обращение активирует одну схему, а не всю доску")
+    scene.model.inputGate.beginContact(source: input)
+    try scene.send(.began(centroid: center, isOpeningApproach: true))
+    try scene.send(.changed(scale: 1.04, velocity: 1, elapsed: 0.2, centroid: center))
+    try await Task.sleep(for: .milliseconds(30))
+    XCTAssertEqual(Set(agentWebViews(in: scene.host.view).map(ObjectIdentifier.init)), mounted,
+      "Следующий щипок не размонтирует уже живые интерактивные элементы")
+    try scene.send(.ended(scale: 1.04, velocity: 1, elapsed: 0.3, centroid: center))
+    scene.model.inputGate.endContact(source: input)
+    await scene.model.finishPendingPersistence()
+  }
+
+  private func interactiveIdentity(in scene: Scene) async throws -> ObjectIdentifier {
+    // Return identity, not a second owner of WebKit in the XCTest async frame.
+    // The mounted scene remains the runtime owner during the following gesture.
     let deadline = ContinuousClock.now + .seconds(5)
     var active: WKWebView?
     while active == nil, ContinuousClock.now < deadline {
@@ -101,19 +257,8 @@ final class PortalPassageTests: XCTestCase {
       if active != nil { break }
       try await Task.sleep(for: .milliseconds(20))
     }
-    let activated = try XCTUnwrap(active, "The next contact belongs to the explicit interactive program, not a temporary preparatory WebKit")
-    XCTAssertEqual(agentWebViews(in: scene.host.view).count, 1,
-      "Явное обращение активирует одну схему, а не всю доску")
-    let mounted: Set<ObjectIdentifier> = [ObjectIdentifier(activated)]
-    scene.model.inputGate.beginContact(source: input)
-    try scene.send(.began(centroid: center, isOpeningApproach: true))
-    try scene.send(.changed(scale: 1.04, velocity: 1, elapsed: 0.2, centroid: center))
-    try await Task.sleep(for: .milliseconds(30))
-    XCTAssertEqual(Set(agentWebViews(in: scene.host.view).map(ObjectIdentifier.init)), mounted,
-      "Следующий щипок не размонтирует уже живые интерактивные элементы")
-    try scene.send(.ended(scale: 1.04, velocity: 1, elapsed: 0.3, centroid: center))
-    scene.model.inputGate.endContact(source: input)
-    await scene.model.finishPendingPersistence()
+    return ObjectIdentifier(try XCTUnwrap(active,
+      "The next contact belongs to the explicit interactive program, not a temporary preparatory WebKit"))
   }
 
   func testPortalExitDoesNotMountDistantPaperSurfaces() async throws {
@@ -129,16 +274,29 @@ final class PortalPassageTests: XCTestCase {
       viewport: start.viewport, focusedItemID: distant.id, openProgress: 0)
     XCTAssertTrue(WorkspaceSceneProjection.mountsContent(of: distant, in: focused),
       "Сфокусированный предмет удерживает своего владельца ввода даже за краем кадра")
-    func inkSurfaces(in view: UIView) -> Int {
-      (view is InkCanvasView ? 1 : 0) + view.subviews.reduce(0) { $0 + inkSurfaces(in: $1) }
+    func inkCanvases(in view: UIView) -> [InkCanvasView] {
+      (view as? InkCanvasView).map { [$0] } ?? view.subviews.flatMap { inkCanvases(in: $0) }
     }
-    XCTAssertEqual(inkSurfaces(in: scene.host.view), 2,
-      "Живы текущая доска и обложка портала; пассивные чернила дочерней доски принадлежат композиции")
+    func assertPhysicalSurfaces(_ expected: Set<SurfaceID>) throws {
+      let mounted = inkCanvases(in: scene.host.view)
+      let surfaces = try mounted.map { try XCTUnwrap($0.installedSpatialSource?.surface) }
+      XCTAssertEqual(Set(surfaces), expected)
+      XCTAssertEqual(mounted.count, expected.count, "Каждый физический адрес имеет ровно один Canvas")
+      for canvas in mounted {
+        let surface = try XCTUnwrap(canvas.installedSpatialSource?.surface)
+        XCTAssertTrue(scene.model.compositionTiles.surfaceRegistry.canvas(for: surface) === canvas)
+      }
+    }
+    let portalSurfaces: Set<SurfaceID> = [.board(start.boardID), .cover(scene.childID), .board(scene.childID)]
+    try assertPhysicalSurfaces(portalSurfaces)
+    XCTAssertNil(scene.model.compositionTiles.surfaceRegistry.canvas(for: .cover(scene.distantID)),
+      "Подготовка портала не создаёт владельца далёкой тетради")
     scene.model.enterBoard(scene.childID)
     try await Task.sleep(for: .milliseconds(40))
     scene.model.leaveBoard()
     try await Task.sleep(for: .milliseconds(40))
-    XCTAssertEqual(inkSurfaces(in: scene.host.view), 2,
+    try assertPhysicalSurfaces(portalSurfaces)
+    XCTAssertNil(scene.model.compositionTiles.surfaceRegistry.canvas(for: .cover(scene.distantID)),
       "Выход из портала не монтирует невидимые предметы родительской доски")
     let presence = try XCTUnwrap(scene.model.presence)
     scene.model.updatePresence(.init(boardID: presence.boardID, mode: .board,
@@ -146,7 +304,7 @@ final class PortalPassageTests: XCTestCase {
       viewport: scene.viewport), settled: true)
     let coverageDeadline = ContinuousClock.now + .seconds(5)
     while (scene.model.compositionTiles.published?.frame.workset(boardID: start.boardID).items.contains(where: { $0.id == distant.id }) != true
-      || inkSurfaces(in: scene.host.view) != 2),
+      || Set(inkCanvases(in: scene.host.view).compactMap { $0.installedSpatialSource?.surface }) != Set([.board(start.boardID), .cover(distant.id)])),
       scene.model.compositionTiles.failure == nil, ContinuousClock.now < coverageDeadline {
       try await Task.sleep(for: .milliseconds(20))
     }
@@ -154,9 +312,43 @@ final class PortalPassageTests: XCTestCase {
     let coverage = "failure=\(scene.model.compositionTiles.failure ?? "nil"); modelFrame=\(String(describing: scene.model.sceneIndex?.generationID)); shownFrame=\(String(describing: reached?.frame.index.generationID)); modelContainsOwner=\(scene.model.sceneIndex?.renderedItem(id: distant.id, presence: scene.model.presence ?? start) != nil); pending=\(scene.model.scenePreparationPending); preparing=\(scene.model.compositionTiles.isPreparing); permits=\(scene.model.permitsBackgroundPreparation); publication=\(scene.model.scenePublicationGeneration)"
     XCTAssertTrue(scene.model.compositionTiles.published?.frame.workset(boardID: start.boardID).items.contains { $0.id == distant.id } == true,
       "The new physical coverage must contain the reached notebook: " + coverage)
-    XCTAssertEqual(inkSurfaces(in: scene.host.view), 2,
-      "Камера открывает обложку той же тетради; прежний портал теперь за пределами кадра")
+    try assertPhysicalSurfaces([.board(start.boardID), .cover(distant.id)])
     await scene.model.finishPendingPersistence()
+  }
+
+  func testTenDistantCameraRoundTripsReleaseSupersededNativeTilesBeforeShutdown() async throws {
+    let scene = try await makeScene()
+    let start = try XCTUnwrap(scene.model.presence)
+    let resources = SceneRenderResources.shared
+    func shownBytes() -> Int {
+      guard let cohort = scene.model.compositionTiles.published else { return 0 }
+      var entries: [UUID: Int] = [:]
+      for raster in Array(cohort.rasters.values) + Array(cohort.liveRasters.values) {
+        entries[raster.entryID] = raster.accountedByteCount
+      }
+      return entries.values.reduce(0, +)
+    }
+    for round in 0..<10 {
+      for center in [WorldPoint(x: -30_000, y: -30_000), start.camera.center] {
+        let presence = SessionPresence(boardID: start.boardID, mode: .board,
+          camera: .init(center: center, scale: 0.35), viewport: scene.viewport)
+        scene.model.updatePresence(presence, settled: true)
+        let deadline = ContinuousClock.now + .seconds(5)
+        while scene.model.compositionTiles.published?.plan.presentations[.board(start.boardID)]?.camera.center != center,
+          scene.model.compositionTiles.failure == nil, ContinuousClock.now < deadline {
+          try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertNil(scene.model.compositionTiles.failure)
+        XCTAssertEqual(scene.model.compositionTiles.published?.plan.presentations[.board(start.boardID)]?.camera.center, center)
+        scene.host.view.setNeedsLayout(); scene.host.view.layoutIfNeeded()
+        let retirement = ContinuousClock.now + .seconds(3)
+        while resources.rasterAdmission.pinnedBytes > shownBytes(), ContinuousClock.now < retirement {
+          try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(resources.rasterAdmission.pinnedBytes, shownBytes(),
+          "Round \(round): a live scene must retire superseded tiles without waiting for model shutdown")
+      }
+    }
   }
 
   private func agentWebViews(in view: UIView) -> [WKWebView] {
@@ -198,13 +390,42 @@ final class PortalPassageTests: XCTestCase {
     await scene.model.finishPendingPersistence()
   }
 
-  @MainActor private struct Scene {
+  @MainActor private final class Scene {
     let model: NotebookAppModel
     let childID: UUID
     let distantID: UUID
     let viewport: SpatialPoint
     let window: UIWindow
-    let host: UIViewController
+    private var mountedHost: UIHostingController<AnyView>?
+    var host: UIViewController {
+      precondition(mountedHost != nil, "A closed portal fixture has no mounted content")
+      return mountedHost!
+    }
+
+    init(model: NotebookAppModel, childID: UUID, distantID: UUID, viewport: SpatialPoint,
+      window: UIWindow, host: UIHostingController<AnyView>) {
+      self.model = model; self.childID = childID; self.distantID = distantID
+      self.viewport = viewport; self.window = window; mountedHost = host
+    }
+
+    func close() {
+      // UIKit can keep the detached hosting controller and its cached graph.
+      // This fixture owns that root value, so close relinquishes its content
+      // before removing the native host; it never revokes a borrowed raster.
+      if let host = mountedHost {
+        host.rootView = AnyView(EmptyView())
+        // Process the actual conditional unmount while the host is still in
+        // its window. Hiding first may leave SwiftUI's old graph deferred.
+        host.viewIfLoaded?.setNeedsLayout()
+        host.viewIfLoaded?.layoutIfNeeded()
+      }
+      window.isHidden = true
+      window.rootViewController = nil
+      // XCTest can retain the completed async test frame and its Scene. The
+      // fixture, not model.shutdown, must relinquish this external UI borrower.
+      mountedHost = nil
+      model.compositionTiles.cancelPreparation()
+    }
 
     func send(_ phase: WorkspaceMagnificationPhase) throws {
       let coordinator = try XCTUnwrap(window.gestureRecognizers?.compactMap {
@@ -216,6 +437,25 @@ final class PortalPassageTests: XCTestCase {
   }
 
   private func makeScene(viewport requestedViewport: SpatialPoint? = nil, elementCount: Int = 1) async throws -> Scene {
+    let resources = SceneRenderResources.shared
+    let baseline = resources.rasterAdmission
+    weak var retiredHost: UIViewController?
+    weak var initialCohort: SceneCompositionCohort?
+    addTeardownBlock { @MainActor in
+      let deadline = ContinuousClock.now + .seconds(2)
+      while resources.rasterAdmission.pinnedBytes > baseline.pinnedBytes, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+      }
+      let receipt = "hostAlive=\(retiredHost != nil) initialCohortAlive=\(initialCohort != nil) before=\(baseline) after=\(resources.rasterAdmission)"
+      XCTContext.runActivity(named: "Closed portal resource ownership") { activity in
+        let attachment = XCTAttachment(string: receipt)
+        attachment.name = "portal-retirement"; attachment.lifetime = .keepAlways
+        activity.add(attachment)
+      }
+      XCTAssertNil(initialCohort, "A retired scene cannot retain its first composition indefinitely")
+      XCTAssertEqual(resources.rasterAdmission.pinnedBytes, baseline.pinnedBytes,
+        "Closing the scene and draining the model must release its raster pins")
+    }
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
@@ -241,14 +481,13 @@ final class PortalPassageTests: XCTestCase {
     await model.finishPendingPersistence()
     let windowScene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: windowScene)
-    addTeardownBlock { @MainActor in
-      window.isHidden = true
-      window.rootViewController = nil
-      model.compositionTiles.cancelPreparation()
-    }
     if let size = requestedViewport { window.frame = CGRect(x: 0, y: 0, width: size.x, height: size.y) }
     let viewport = SpatialPoint(x: window.bounds.width, y: window.bounds.height)
-    let host = UIHostingController(rootView: SpatialWorkspaceView().environment(model).ignoresSafeArea())
+    let host = UIHostingController(rootView: AnyView(SpatialWorkspaceView().environment(model).ignoresSafeArea()))
+    let scene = Scene(model: model, childID: childID, distantID: distantID,
+      viewport: viewport, window: window, host: host)
+    addTeardownBlock { @MainActor in scene.close() }
+    retiredHost = host
     window.rootViewController = host
     model.updatePresence(.init(boardID: try XCTUnwrap(model.workspace?.rootBoardID), mode: .board,
       camera: .init(scale: 0.35), viewport: viewport), settled: true)
@@ -261,6 +500,7 @@ final class PortalPassageTests: XCTestCase {
     let currentHeader = try model.store.workspaceHeader()
     let readiness = "failure=\(model.compositionTiles.failure ?? "nil"); header=\(String(describing: model.workspaceHeader?.cursor)); SQL=\(currentHeader.cursor); scenePending=\(model.scenePreparationPending); scene=\(String(describing: model.sceneIndex?.generationID)); tilesPreparing=\(model.compositionTiles.isPreparing); input=\(model.inputIsActive); pencil=\(model.inputGate.hasActivePencil); phase=\(model.presencePhase); permits=\(model.permitsBackgroundPreparation); WK=\(SceneRenderResources.shared.activeWebSurfaceCount); waitingWK=\(SceneRenderResources.shared.pendingWebRequestCount)"
     let cohort = try XCTUnwrap(model.compositionTiles.published, "Whole portal coverage must be ready: " + readiness)
+    initialCohort = cohort
     XCTAssertEqual(cohort.rasters.count, cohort.plan.tiles.count)
     XCTAssertNotNil(cohort.plan.presentations[.board(childID)], "The continuing gesture transfers an already prepared physical plane")
     XCTAssertLessThanOrEqual(cohort.plan.liveOwners.count + 1, 8)
@@ -269,7 +509,7 @@ final class PortalPassageTests: XCTestCase {
       try await Task.sleep(for: .milliseconds(20))
     }
     XCTAssertTrue(agentWebViews(in: host.view).isEmpty, "Preparation completes before the fixed warm gesture route")
-    return Scene(model: model, childID: childID, distantID: distantID, viewport: viewport, window: window, host: host)
+    return scene
   }
 
   private func redPoint(in view: UIView) throws -> CGPoint {

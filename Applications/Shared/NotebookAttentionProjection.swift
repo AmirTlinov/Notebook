@@ -86,8 +86,8 @@ enum NotebookAttentionProjection {
     var requiredInk = Set<SurfaceID>()
     for fragment in fragments where fragment.elementID == nil {
       if fragment.target.kind == .board {
-        requiredInk.insert(.board(fragment.target.id))
         let descendants = sources.hierarchy.descendantBoardIDs(including: fragment.target.id)
+        for id in cohort.plan.inkBoardIDs where descendants.contains(id) { requiredInk.insert(.board(id)) }
         for owner in cohort.plan.liveOwners where descendants.contains(owner.plane.boardID) {
           if case .item(let id) = owner.id { requiredInk.insert(.cover(id)) }
         }

@@ -45,7 +45,8 @@ enum WorkspaceSceneProjection {
 /// hierarchy itself has no depth bound.
 struct BoardPortalPreview: View {
   @Environment(NotebookAppModel.self) private var model
-  @Environment(\.sceneCompositionCohort) private var cohort
+  @Environment(\.sceneComposition) private var composition
+  private var cohort: SceneCompositionCohort? { composition.cohort }
 
   let boardID: UUID
   let spatialInkSurfaces: SpatialInkSurfaceRegistry
@@ -69,8 +70,8 @@ struct BoardPortalPreview: View {
       ZStack {
         SpatialBoardGrid(camera: camera, outputScale: pixelScale / fill)
         ZStack {
-          ForEach(cohort.bands(in: plane, layer: .elements)) { band in
-            SceneCompositionTileBandView(cohort: cohort, band: band, presence: presence).zIndex(Double(band.rank))
+          ForEach(SceneCompositionTileBandView.bands(in: cohort, plane: plane, layer: .elements, presence: presence)) { band in
+            band.zIndex(Double(band.rank))
           }
           ForEach(workset.elements.filter { cohort.plan.allowsLive(.element($0.id), in: plane) }) { element in
             if let origin = element.worldOrigin {
@@ -85,14 +86,16 @@ struct BoardPortalPreview: View {
             }
           }
         }
-        // Passive board ink belongs to the same completed tile cohort. A
-        // second Metal owner here would both double-paint it and evade the cap.
-        ForEach(cohort.bands(in: plane, layer: .ink)) { band in
-          SceneCompositionTileBandView(cohort: cohort, band: band, presence: presence)
-        }
+        #if os(iOS)
+          SpatialBoardInkView(cohort: cohort, boardID: boardID, camera: camera)
+        #else
+          ForEach(SceneCompositionTileBandView.bands(in: cohort, plane: plane, layer: .ink, presence: presence)) { band in
+            band
+          }
+        #endif
         ZStack {
-          ForEach(cohort.bands(in: plane, layer: .covers)) { band in
-            SceneCompositionTileBandView(cohort: cohort, band: band, presence: presence).zIndex(Double(band.rank))
+          ForEach(SceneCompositionTileBandView.bands(in: cohort, plane: plane, layer: .covers, presence: presence)) { band in
+            band.zIndex(Double(band.rank))
           }
           ForEach(workset.items.filter { cohort.plan.allowsLive(.item($0.id), in: plane) }) { item in
             let screen = camera.worldToScreen(item.center, viewport: viewport)
@@ -145,7 +148,8 @@ struct WorkspaceCoverTitle: View {
 
 struct WorkspaceItemCoverView: View {
   @Environment(NotebookAppModel.self) private var model
-  @Environment(\.sceneCompositionCohort) private var cohort
+  @Environment(\.sceneComposition) private var composition
+  private var cohort: SceneCompositionCohort? { composition.cohort }
   #if os(iOS)
     @Environment(\.workspaceItemPose) private var pose
   #endif
@@ -174,9 +178,8 @@ struct WorkspaceItemCoverView: View {
       coverBackground.zIndex(-2)
       WorkspaceCoverTitle(item: item, geometry: geometry).zIndex(-1)
       if let cohort, let plane, let presentation = cohort.plan.presentations[plane] {
-        ForEach(cohort.bands(in: plane, layer: .elements)) { band in
-          SceneCompositionTileBandView(cohort: cohort, band: band, presence: presentation)
-            .zIndex(Double(band.rank)).opacity(portalOverlayOpacity)
+        ForEach(SceneCompositionTileBandView.bands(in: cohort, plane: plane, layer: .elements, presence: presentation)) { band in
+          band.zIndex(Double(band.rank)).opacity(portalOverlayOpacity)
         }
       }
       ForEach(elements.filter { element in
@@ -275,13 +278,12 @@ struct WorkspaceItemCoverView: View {
       #endif
 
       #if os(iOS)
-        SpatialInkSurfaceView(
-          surface: .cover(item.id),
-          journal: model.renderingInk(on: .cover(item.id), fallback: cohort?.liveData.ink ?? model.spatialInk),
-          registry: spatialInkSurfaces
-        )
-        .allowsHitTesting(false)
-        .opacity(portalOverlayOpacity).zIndex(1_000)
+        if let cohort {
+          SpatialInkSurfaceView(surface: .cover(item.id), cohort: cohort,
+            boardID: cohort.plan.liveOwners.first(where: { $0.id == .item(item.id) })?.plane.boardID ?? cohort.plan.rootBoardID,
+            isActive: !isPortalProjection)
+            .allowsHitTesting(false).opacity(portalOverlayOpacity).zIndex(1_000)
+        }
       #elseif os(macOS)
         SpatialInkSurfaceView(surface: .cover(item.id), journal: model.renderingInk(on: .cover(item.id), fallback: cohort?.liveData.ink ?? model.spatialInk))
           .allowsHitTesting(false).opacity(portalOverlayOpacity).zIndex(1_000)
@@ -672,12 +674,29 @@ struct SpatialBoardGrid: View {
 }
 
 
-private struct SceneCompositionCohortKey: EnvironmentKey {
-  static let defaultValue: SceneCompositionCohort? = nil
+/// UIKit copies the SwiftUI environment into cached trait collections. Those
+/// copies may outlive an unmounted view; they locate, but never own, its paint.
+/// The published cohort and concrete tile/ink views retain their actual leases.
+struct SceneCompositionReference: Equatable, Sendable {
+  let id: UUID?
+  private(set) weak var cohort: SceneCompositionCohort?
+
+  init() { id = nil; cohort = nil }
+
+  @MainActor
+  init(_ cohort: SceneCompositionCohort?) {
+    id = cohort?.id; self.cohort = cohort
+  }
+
+  static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
+}
+
+private struct SceneCompositionKey: EnvironmentKey {
+  static let defaultValue = SceneCompositionReference()
 }
 extension EnvironmentValues {
-  var sceneCompositionCohort: SceneCompositionCohort? {
-    get { self[SceneCompositionCohortKey.self] }
-    set { self[SceneCompositionCohortKey.self] = newValue }
+  var sceneComposition: SceneCompositionReference {
+    get { self[SceneCompositionKey.self] }
+    set { self[SceneCompositionKey.self] = newValue }
   }
 }

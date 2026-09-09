@@ -17,7 +17,15 @@ final class NotebookInputGate {
   private var activityGeneration: UInt64 = 0
   private(set) var isActive = false
   var hasActivePencil: Bool { !activePencilSources.isEmpty }
+  private var newContactAdmission: @MainActor () -> Bool = { true }
+  var permitsNewContact: Bool { newContactAdmission() }
   var onActivityChange: ((Bool) -> Void)?
+
+  /// The model's lifecycle remains the only admission state. Closing it never
+  /// cancels a contact already measured by this gate or skips its final delivery.
+  func bindNewContactAdmission(_ admission: @escaping @MainActor () -> Bool) {
+    newContactAdmission = admission
+  }
 
   /// Native control bounds are evaluated when a contact starts. A card can
   /// move with the keyboard without changing the scene camera or taking a
@@ -29,10 +37,11 @@ final class NotebookInputGate {
   func unregisterControlRegion(source: UUID) { controlRegions[source] = nil }
 
   func permitsSceneContact(at windowPoint: CGPoint) -> Bool {
-    !controlRegions.values.contains { $0(windowPoint) }
+    permitsNewContact && !controlRegions.values.contains { $0(windowPoint) }
   }
 
   func beginContact(source: UUID) {
+    guard contactSources.contains(source) || permitsNewContact else { return }
     contactSources.insert(source)
     updateActivity()
   }
@@ -95,8 +104,8 @@ final class NotebookInputGate {
     }
     let generation = pencilGeneration
     finishPage(waitsForPublication: true) {
-      // The page finisher captures one serialization tail. A later contact
-      // can already be lifted when that older tail completes.
+      // A finisher joins the deliveries known when it is called. A later
+      // contact can already be lifted before those deliveries complete.
       if !self.activePencilSources.isEmpty || self.pencilGeneration != generation {
         self.performAfterPageInput(action)
       } else {
@@ -123,13 +132,17 @@ final class NotebookInputGate {
   /// Pencil owns the surface from contact to lift. A later finger command may
   /// wait for the page finisher, while any pair overlapping this contact stays
   /// part of the hand movement rather than becoming a second command.
-  func beginPencilAction(source: UUID) {
-    guard activePencilSources.insert(source).inserted else { return }
+  @discardableResult
+  func beginPencilAction(source: UUID) -> Bool {
+    if activePencilSources.contains(source) { return true }
+    guard permitsNewContact else { return false }
+    activePencilSources.insert(source)
     pencilGeneration &+= 1
     updateActivity()
     // Cancel a camera already moving before this Pencil-down synchronously.
     // Waiting for SwiftUI or the next finger event would move measured ink.
     for cancel in Array(fingerCancellations.values) { cancel() }
+    return true
   }
 
   func registerFingerCancellation(source: UUID, _ cancel: @escaping @MainActor () -> Void) {
@@ -150,7 +163,7 @@ final class NotebookInputGate {
   }
 
   func beginFingerSequence() -> UInt64? {
-    activePencilSources.isEmpty ? pencilGeneration : nil
+    permitsNewContact && activePencilSources.isEmpty ? pencilGeneration : nil
   }
 
   func acceptsFingerSequence(_ revision: UInt64) -> Bool {

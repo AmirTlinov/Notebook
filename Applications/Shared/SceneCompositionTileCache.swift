@@ -22,6 +22,12 @@ actor SceneCompositionTileCache {
   init(root: URL, byteLimit: Int = 512 * 1_024 * 1_024, entryLimit: Int = 512) {
     self.root = root; self.byteLimit = max(0, byteLimit); self.entryLimit = max(0, entryLimit)
   }
+  /// This is only an existence hint. The charged decode checks the record
+  /// again; removal between these calls is an ordinary cache miss.
+  func hasRecord(_ key: SceneCompositionTileKey) throws -> Bool {
+    try Task.checkCancellation()
+    return FileManager.default.fileExists(atPath: try file(key).path)
+  }
   func load(_ key: SceneCompositionTileKey) throws -> CGImage? {
     try Task.checkCancellation()
     let url = try file(key)

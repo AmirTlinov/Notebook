@@ -12,14 +12,16 @@ struct PencilCanvasView: UIViewRepresentable {
   let drawingTool: DrawingTool
   let inputGate: NotebookInputGate
   let reserveAction: (UUID) -> VersionStamp?
-  let commitAction: (PageInkAction, UUID, VersionStamp) async -> PreparedPageInkChange?
+  let releaseAction: (UUID, VersionStamp) -> Void
+  let acceptAction: (PageInkAction, UUID, VersionStamp) -> Task<PreparedPageInkChange?, Never>
   let onRenderReady: (Bool) -> Void
 
   func makeCoordinator() -> Coordinator {
     Coordinator(
       inputGate: inputGate,
       reserveAction: reserveAction,
-      commitAction: commitAction
+      releaseAction: releaseAction,
+      acceptAction: acceptAction
     )
   }
 
@@ -49,7 +51,8 @@ struct PencilCanvasView: UIViewRepresentable {
     context.coordinator.use(inputGate)
     context.coordinator.setPageFinisherCurrent(isInputEnabled)
     context.coordinator.reserveAction = reserveAction
-    context.coordinator.commitAction = commitAction
+    context.coordinator.releaseAction = releaseAction
+    context.coordinator.acceptAction = acceptAction
     context.coordinator.apply(
       penStyle,
       eraserStyle: eraserStyle,
@@ -70,7 +73,9 @@ struct PencilCanvasView: UIViewRepresentable {
   @MainActor
   final class Coordinator: NSObject {
     var reserveAction: (UUID) -> VersionStamp?
-    var commitAction: (PageInkAction, UUID, VersionStamp) async -> PreparedPageInkChange?
+    var releaseAction: (UUID, VersionStamp) -> Void
+    private var actionReservation: (pageID: UUID, stamp: VersionStamp)?
+    var acceptAction: (PageInkAction, UUID, VersionStamp) -> Task<PreparedPageInkChange?, Never>
 
     private let inputSourceID = UUID()
     private var inputGate: NotebookInputGate
@@ -81,7 +86,8 @@ struct PencilCanvasView: UIViewRepresentable {
     private var appliedPenStyle: PenStyle?
     private var appliedEraserStyle: EraserStyle?
     private var appliedDrawingTool: DrawingTool?
-    private var serializationTails: [UUID: Task<Void, Never>] = [:]
+    private var deliveryWaiters: [UUID: [NotebookInputCompletion]] = [:]
+    private var unpublishedActions: [UUID: Set<UUID>] = [:]
     private var pendingLocalDeliveries: [UUID: Int] = [:]
     private var decodeTask: Task<Void, Never>?
     private var decodeGeneration: UInt64 = 0
@@ -91,15 +97,20 @@ struct PencilCanvasView: UIViewRepresentable {
     init(
       inputGate: NotebookInputGate,
       reserveAction: @escaping (UUID) -> VersionStamp?,
-      commitAction: @escaping (PageInkAction, UUID, VersionStamp) async -> PreparedPageInkChange?
+      releaseAction: @escaping (UUID, VersionStamp) -> Void,
+      acceptAction: @escaping (PageInkAction, UUID, VersionStamp) -> Task<PreparedPageInkChange?, Never>
     ) {
       self.inputGate = inputGate
       self.reserveAction = reserveAction
-      self.commitAction = commitAction
+      self.releaseAction = releaseAction
+      self.acceptAction = acceptAction
     }
 
     func attach(to paper: PaperCanvasContainerView) {
       attachedPaper = paper
+      paper.touchView.canBeginAction = { [weak self] in self?.inputGate.permitsNewContact == true }
+      paper.touchView.onActionWillBegin = { [weak self] in self?.reserveMeasuredAction() == true }
+      paper.touchView.onActionCancelled = { [weak self] in self?.releaseMeasuredAction() }
       paper.touchView.onActionActivityChange = { [weak self] active in
         self?.setPencilActionActive(active)
       }
@@ -110,33 +121,43 @@ struct PencilCanvasView: UIViewRepresentable {
       registerPageFinisher(on: paper)
     }
 
-    /// The touch owner ends at Pencil-up. This task owns ordered archive encoding
-    /// and file delivery from that point onward, so a following
-    /// gesture can begin immediately while completed actions stay ordered.
+    /// Admission happens in the same actor segment as the measured lift. The
+    /// returned task observes the model's work; this sheet never serializes it.
     func commit(
       _ mutation: PageInkAction,
       on paper: PaperCanvasContainerView
     ) {
-      guard let pageID,
-        let stamp = reserveAction(pageID)
-      else {
+      guard let reservation = actionReservation else {
         restoreModelDrawing(on: paper)
         return
       }
+      actionReservation = nil
+      let pageID = reservation.pageID, stamp = reservation.stamp
       decodeTask?.cancel()
       decodeTask = nil
       pendingLocalDeliveries[pageID, default: 0] += 1
-      let previous = serializationTails[pageID]
-      let deliver = commitAction
-      serializationTails[pageID] = Task { [self, weak paper] in
-        await previous?.value
-        let accepted = await deliver(mutation, pageID, stamp)
+      unpublishedActions[pageID, default: []].insert(mutation.id)
+      let delivery = acceptAction(mutation, pageID, stamp)
+      Task { [self, weak paper] in
+        let accepted = await delivery.value
         if pageID == self.pageID, let accepted {
           appliedDrawing = accepted.drawing
           paper?.touchView.acceptCommittedDrawing(accepted.drawing)
         }
-        completeLocalDelivery(on: pageID, accepted: accepted, paper: paper)
+        completeLocalDelivery(on: pageID, actionID: mutation.id, accepted: accepted, paper: paper)
       }
+    }
+
+    private func reserveMeasuredAction() -> Bool {
+      guard actionReservation == nil, let pageID, let stamp = reserveAction(pageID) else { return false }
+      actionReservation = (pageID, stamp)
+      return true
+    }
+
+    private func releaseMeasuredAction() {
+      guard let reservation = actionReservation else { return }
+      actionReservation = nil
+      releaseAction(reservation.pageID, reservation.stamp)
     }
 
     private func registerPageFinisher(on paper: PaperCanvasContainerView) {
@@ -184,6 +205,13 @@ struct PencilCanvasView: UIViewRepresentable {
     }
 
     func detach(from paper: PaperCanvasContainerView) {
+      // A retiring sheet still owns its final measured samples. Transfer them
+      // before removing callbacks or releasing the gate's Pencil source.
+      paper.touchView.finishCurrentAction {}
+      releaseMeasuredAction()
+      paper.touchView.canBeginAction = { false }
+      paper.touchView.onActionWillBegin = nil
+      paper.touchView.onActionCancelled = nil
       paper.touchView.onActionActivityChange = nil
       paper.touchView.onDrawingMutation = nil
       inputGate.setCurrentPageSource(
@@ -241,6 +269,7 @@ struct PencilCanvasView: UIViewRepresentable {
         if decodeTask != nil { paper.setInputEnabled(false) }
         return
       }
+      if pageChanged { paper.touchView.finishCurrentAction {} }
       self.pageID = pageID
       modelDrawingData = data
       if !pageChanged,
@@ -249,13 +278,25 @@ struct PencilCanvasView: UIViewRepresentable {
       decodeGeneration &+= 1
       let generation = decodeGeneration
       paper.setInputEnabled(false)
-      paper.inkView.prepareForDrawing()
+      if unpublishedActions[pageID, default: []].isEmpty { paper.inkView.prepareForDrawing() }
+      let unpublished = unpublishedActions[pageID, default: []]
       decodeTask = Task { [weak self, weak paper] in
-        let drawing = await Task.detached(priority: .userInitiated) { try? PageInkDrawing.decode(data) }.value
+        let prepared = await Task.detached(priority: .userInitiated) {
+          guard let drawing = try? PageInkDrawing.decode(data) else { return (Optional<PageInkDrawing>.none, false) }
+          let represented = unpublished.isEmpty || unpublished.isSubset(of: Set(drawing.actions.map(\.id)))
+          return (Optional(drawing), represented)
+        }.value
         guard !Task.isCancelled, let self, let paper,
           decodeGeneration == generation, self.pageID == pageID else { return }
         decodeTask = nil
-        guard let drawing else { return }
+        guard let drawing = prepared.0 else { return }
+        // Incoming snapshots cannot erase accepted ink whose preparation failed.
+        // The successful retry is recognized by the same action UUIDs.
+        guard prepared.1 else {
+          paper.setInputEnabled(pageFinisherIsCurrent)
+          return
+        }
+        unpublishedActions[pageID] = nil
         appliedDrawing = drawing
         paper.apply(drawing)
         paper.setInputEnabled(pageFinisherIsCurrent)
@@ -264,6 +305,7 @@ struct PencilCanvasView: UIViewRepresentable {
 
     private func completeLocalDelivery(
       on deliveredPageID: UUID,
+      actionID: UUID,
       accepted: PreparedPageInkChange?,
       paper: PaperCanvasContainerView?
     ) {
@@ -276,17 +318,19 @@ struct PencilCanvasView: UIViewRepresentable {
         ? nil
         : remaining
 
-      if remaining == 0 {
-        serializationTails[deliveredPageID] = nil
+      if accepted != nil {
+        unpublishedActions[deliveredPageID]?.remove(actionID)
+        if unpublishedActions[deliveredPageID]?.isEmpty == true { unpublishedActions[deliveredPageID] = nil }
       }
+      let waiters = remaining == 0 ? (deliveryWaiters.removeValue(forKey: deliveredPageID) ?? []) : []
+      defer { for waiter in waiters { waiter() } }
       guard remaining == 0,
         deliveredPageID == pageID,
         let paper
       else { return }
-      guard let accepted else {
-        restoreModelDrawing(on: paper)
-        return
-      }
+      // A failed preparation is retained by the model. Leave its measured
+      // Metal ink visible until retry publishes the corresponding action UUID.
+      guard let accepted else { return }
       modelDrawingData = accepted.data
       appliedDrawing = accepted.drawing
       paper.settle(accepted.drawing)
@@ -294,16 +338,13 @@ struct PencilCanvasView: UIViewRepresentable {
 
     private func afterLocalDeliveries(
       on pageID: UUID?,
-      perform action: @escaping @MainActor () -> Void
+      perform action: @escaping NotebookInputCompletion
     ) {
-      guard let pageID, let tail = serializationTails[pageID] else {
+      guard let pageID, pendingLocalDeliveries[pageID, default: 0] > 0 else {
         action()
         return
       }
-      Task {
-        await tail.value
-        action()
-      }
+      deliveryWaiters[pageID, default: []].append(action)
     }
 
     private func restoreModelDrawing(on paper: PaperCanvasContainerView?) {
@@ -381,6 +422,9 @@ final class PaperCanvasContainerView: UIView {
 
 @MainActor
 final class PaperInputView: UIView {
+  var canBeginAction: () -> Bool = { true }
+  var onActionWillBegin: (() -> Bool)?
+  var onActionCancelled: (() -> Void)?
   var onDrawingMutation: ((PageInkAction) -> Void)?
   var onActionActivityChange: ((Bool) -> Void)?
   var presentActivePen: ((ActiveInkStroke) -> Void)?
@@ -563,9 +607,11 @@ final class PaperInputView: UIView {
   }
 
   private func beginAction(with touch: UITouch, event: UIEvent?) {
+    guard canBeginAction() else { return }
     if actionTool != nil {
       finalizeAction()
     }
+    guard onActionWillBegin?() != false else { return }
 
     activeTouch = touch
     actionTool = drawingTool
@@ -946,8 +992,9 @@ final class PaperInputView: UIView {
     } else if tool == .eraser {
       commitActiveEraser?()
     }
-    clearAction()
+    let reportedPencilActivity = clearAction()
     onDrawingMutation?(mutation)
+    if reportedPencilActivity { onActionActivityChange?(false) }
     for completion in completions {
       completion()
     }
@@ -955,7 +1002,9 @@ final class PaperInputView: UIView {
 
   private func finishActionWithoutMutation() {
     let completions = actionCompletions
-    clearAction()
+    let reportedPencilActivity = clearAction()
+    onActionCancelled?()
+    if reportedPencilActivity { onActionActivityChange?(false) }
     for completion in completions {
       completion()
     }
@@ -964,10 +1013,12 @@ final class PaperInputView: UIView {
   private func cancelCurrentAction() {
     finalizationTask?.cancel()
     finalizationTask = nil
-    clearAction()
+    let reportedPencilActivity = clearAction()
+    onActionCancelled?()
+    if reportedPencilActivity { onActionActivityChange?(false) }
   }
 
-  private func clearAction() {
+  private func clearAction() -> Bool {
     let reportedPencilActivity = reportsPencilActivity
     clearActiveAction?()
     activeTouch = nil
@@ -983,7 +1034,7 @@ final class PaperInputView: UIView {
     actionHasEnded = false
     actionCompletions = []
     reportsPencilActivity = false
-    if reportedPencilActivity { onActionActivityChange?(false) }
+    return reportedPencilActivity
   }
 
   private func updateAccessibilityValue() {

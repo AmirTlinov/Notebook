@@ -126,9 +126,9 @@ final class WorkspaceItemPoseTests: XCTestCase {
     let cohort = try await WorkspaceInkFixture.prepare(boardID: boardID, camera: presence.camera,
       viewport: presence.viewport, items: [
         .init(itemID: a, geometry: .notebook, center: .zero, zIndex: 0),
-        .init(itemID: b, geometry: .notebook, center: .zero, zIndex: 1)])
+        .init(itemID: b, geometry: .notebook, center: .zero, zIndex: 1)], registry: registry)
     let host = UIHostingController(rootView: OrderedPoseHost(cohort: cohort, presence: presence, registry: registry)
-      .environment(model).environment(\.workspaceSceneFrame, cohort.frame).environment(\.sceneCompositionCohort, cohort))
+      .environment(model).environment(\.workspaceSceneFrame, cohort.frame).environment(\.sceneComposition, .init(cohort)))
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     window.rootViewController = host; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
@@ -161,9 +161,9 @@ final class WorkspaceItemPoseTests: XCTestCase {
       let cohort = try await WorkspaceInkFixture.prepare(boardID: boardID, camera: presence.camera,
         viewport: presence.viewport, items: [
           .init(itemID: a, geometry: .notebook, center: .zero, zIndex: 10_000),
-          .init(itemID: b, geometry: .notebook, center: .zero, zIndex: upperZ)])
+          .init(itemID: b, geometry: .notebook, center: .zero, zIndex: upperZ)], registry: registry)
       let host = UIHostingController(rootView: OrderedPoseHost(cohort: cohort, presence: presence, registry: registry)
-        .environment(model).environment(\.workspaceSceneFrame, cohort.frame).environment(\.sceneCompositionCohort, cohort))
+        .environment(model).environment(\.workspaceSceneFrame, cohort.frame).environment(\.sceneComposition, .init(cohort)))
       let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
       let parent = UIViewController()
       window.rootViewController = parent
@@ -172,9 +172,8 @@ final class WorkspaceItemPoseTests: XCTestCase {
       parent.addChild(host); parent.view.addSubview(host.view)
       host.view.frame = parent.view.bounds; host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
       host.didMove(toParent: parent); window.makeKeyAndVisible()
-      canvas.inkView.applySpatial(try .prepare(surface: .board(boardID), journal: cohort.liveData.ink))
-      canvas.inkView.installSpatialSource(cohort.liveData.ink, on: .board(boardID))
-      registry.register(canvas.inkView, for: .board(boardID))
+      canvas.update(lease: cohort.nativeInk, surface: .board(boardID), boardID: boardID,
+        camera: presence.camera, active: true)
       let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: model.inputGate) { _, _, _ in nil }
       defer { coordinator.uninstall(); window.isHidden = true; window.rootViewController = nil }
       try await waitUntil {
@@ -423,7 +422,8 @@ final class WorkspaceItemPoseTests: XCTestCase {
 
   @MainActor
   private final class Driver {
-    let gate = NotebookInputGate(), registry = SpatialInkSurfaceRegistry()
+    let gate = NotebookInputGate()
+    let registry: SpatialInkSurfaceRegistry
     let host = UIViewController(), canvas = SpatialInkContainerView(frame: .init(x: 0, y: 0, width: 800, height: 600))
     let window: UIWindow, boardID: UUID, coverIDs: [UUID], actor: UUID, presence: SessionPresence
     let physical: WorkspaceInkFixture
@@ -447,6 +447,7 @@ final class WorkspaceItemPoseTests: XCTestCase {
     }
     private init(cohort: SceneCompositionCohort, presence: SessionPresence, ids: [UUID], actor: UUID) throws {
       boardID = presence.boardID; coverIDs = ids; self.actor = actor; self.presence = presence
+      registry = cohort.nativeInk.registry
       journal = .init(stamp: .init(counter: 0, actor: actor))
       window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
       window.rootViewController = host; host.view.addSubview(canvas); window.makeKeyAndVisible()
@@ -505,7 +506,7 @@ private struct OrderedPoseHost: View {
             if value { engaged.append(item.id) }
           }, onDrop: { _ in nil }) {
             Color.blue.frame(width: item.geometry.width, height: item.geometry.height)
-              .overlay { SpatialInkSurfaceView(surface: .cover(item.id), journal: cohort.liveData.ink, registry: registry) }
+              .overlay { SpatialInkSurfaceView(surface: .cover(item.id), cohort: cohort, boardID: presence.boardID, isActive: true) }
           }
           .frame(width: presence.viewport.x, height: presence.viewport.y)
           .zIndex(rank ?? cohort.plan.rank(id: .item(item.id), in: .board(presence.boardID)) ?? 0)

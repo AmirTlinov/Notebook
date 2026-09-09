@@ -218,7 +218,7 @@ final class NotebookInputTests: XCTestCase {
     let canvas = SpatialInkContainerView(frame: .init(x: 0, y: 0, width: 600, height: 800))
     window.rootViewController = host; host.view.addSubview(canvas); window.makeKeyAndVisible()
     let cohort = try await WorkspaceInkFixture.prepare(boardID: board, camera: .init(scale: 0.1),
-      viewport: .init(x: 600, y: 800), items: [.init(itemID: cover, geometry: .notebook, center: .zero, zIndex: 1)], journal: nil)
+      viewport: .init(x: 600, y: 800), items: [.init(itemID: cover, geometry: .notebook, center: .zero, zIndex: 1)], journal: nil, registry: registry)
     let physical = try WorkspaceInkFixture(cohort: cohort,
       presence: .init(boardID: board, mode: .board, camera: .init(scale: 0.1), viewport: .init(x: 600, y: 800)),
       canvas: canvas, parent: host, registry: registry, gate: gate, journal: nil)
@@ -262,7 +262,7 @@ final class NotebookInputTests: XCTestCase {
     window.rootViewController = host; host.view.addSubview(canvas); window.makeKeyAndVisible()
     let cohort = try await WorkspaceInkFixture.prepare(boardID: board, camera: .init(scale: 0.3),
       viewport: .init(x: 1000, y: 800), items: [.init(itemID: deleting, geometry: .notebook, center: .zero, zIndex: 1),
-        .init(itemID: other, geometry: .notebook, center: .init(x: 1000, y: 0), zIndex: 2)], journal: nil)
+        .init(itemID: other, geometry: .notebook, center: .init(x: 1000, y: 0), zIndex: 2)], journal: nil, registry: registry)
     let physical = try WorkspaceInkFixture(cohort: cohort,
       presence: .init(boardID: board, mode: .board, camera: .init(scale: 0.3), viewport: .init(x: 1000, y: 800)),
       canvas: canvas, parent: host, registry: registry, gate: gate, journal: nil)
@@ -339,7 +339,7 @@ final class NotebookInputTests: XCTestCase {
     let canvas = SpatialInkContainerView(frame: .init(x: 0, y: 0, width: 600, height: 800))
     window.rootViewController = host; host.view.addSubview(canvas); window.makeKeyAndVisible()
     let cohort = try await WorkspaceInkFixture.prepare(boardID: board, camera: .init(scale: 0.3),
-      viewport: .init(x: 600, y: 800), items: [.init(itemID: cover, geometry: .notebook, center: .zero, zIndex: 1)], journal: nil)
+      viewport: .init(x: 600, y: 800), items: [.init(itemID: cover, geometry: .notebook, center: .zero, zIndex: 1)], journal: nil, registry: registry)
     let physical = try WorkspaceInkFixture(cohort: cohort,
       presence: .init(boardID: board, mode: .board, camera: .init(scale: 0.3), viewport: .init(x: 600, y: 800)),
       canvas: canvas, parent: host, registry: registry, gate: gate, journal: nil)
@@ -392,8 +392,9 @@ final class NotebookInputTests: XCTestCase {
   }
 
   @MainActor
-  func testFinishedSpatialEraserKeepsTheBoardVisibleWhileItsJournalReplays() async throws {
+  func testFinishedSpatialEraserKeepsTheSameGeometryThroughCanonicalEchoAndCameraUpdates() async throws {
     let actor = UUID(), board = UUID(), gate = NotebookInputGate(), registry = SpatialInkSurfaceRegistry()
+    let resources = SceneRenderResources()
     var journal = SpatialInkJournal(stamp: .init(counter: 0, actor: actor))
     let samples = [-240.0, 240.0].enumerated().map { index, x in
       SpatialInkSample(point: .init(x: x, y: -180), worldPoint: .init(x: x, y: -180),
@@ -405,7 +406,7 @@ final class NotebookInputTests: XCTestCase {
     let canvas = SpatialInkContainerView(frame: .init(x: 0, y: 0, width: 600, height: 800))
     window.rootViewController = host; host.view.addSubview(canvas); window.makeKeyAndVisible()
     let cohort = try await WorkspaceInkFixture.prepare(boardID: board, camera: .init(scale: 1),
-      viewport: .init(x: 600, y: 800), items: [], journal: journal)
+      viewport: .init(x: 600, y: 800), items: [], journal: journal, registry: registry, resources: resources)
     let physical = try WorkspaceInkFixture(cohort: cohort,
       presence: .init(boardID: board, mode: .board, camera: .init(scale: 1), viewport: .init(x: 600, y: 800)),
       canvas: canvas, parent: host, registry: registry, gate: gate, journal: journal)
@@ -420,39 +421,49 @@ final class NotebookInputTests: XCTestCase {
         })
     }
     update()
-    for _ in 0..<200 where canvas.inkView.committedVertexCount == 0 { try await Task.sleep(for: .milliseconds(5)) }
-    let baseline = canvas.inkView.committedVertexCount
+    let installedCanvas = try XCTUnwrap(canvas.inkView)
+    for _ in 0..<200 where installedCanvas.committedVertexCount == 0 { try await Task.sleep(for: .milliseconds(5)) }
+    let baseline = installedCanvas.committedVertexCount
     XCTAssertGreaterThan(baseline, 0)
     let pencil = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SpatialPencilGestureRecognizer }.first)
     let touch = InputTouch(), event = UIEvent()
     pencil.touchesBegan([touch], with: event)
     update()
-    XCTAssertEqual(canvas.inkView.committedVertexCount, baseline, "Первое касание не очищает рисунок")
+    XCTAssertEqual(installedCanvas.committedVertexCount, baseline, "Первое касание не очищает рисунок")
     touch.point.x += 80; touch.sampleTime += 0.1
     pencil.touchesMoved([touch], with: event)
     pencil.touchesEnded([touch], with: event)
-    let committed = canvas.inkView.committedVertexCount
+    let committed = installedCanvas.committedVertexCount
     XCTAssertGreaterThan(committed, baseline)
-    XCTAssertGreaterThan(canvas.inkView.committedEraserVertexCount, 0)
-    let installations = canvas.inkView.spatialMeshInstallCount
+    XCTAssertGreaterThan(installedCanvas.committedEraserVertexCount, 0)
+    let installations = installedCanvas.spatialMeshInstallCount
+    let installedSource = try XCTUnwrap(installedCanvas.installedSpatialSource?.referenceInk())
+    let eraserVertices = installedCanvas.committedEraserVertexCount
     update()
-    XCTAssertEqual(canvas.inkView.committedVertexCount, committed,
+    XCTAssertEqual(installedCanvas.committedVertexCount, committed,
       "Публикация стирания не подменяет ту же доску пустой геометрией")
-    XCTAssertEqual(canvas.inkView.spatialMeshInstallCount, installations,
+    XCTAssertEqual(installedCanvas.spatialMeshInstallCount, installations,
       "До готовности новой геометрии остаётся уже показанный результат")
     for frame in 0..<200 {
       update(camera: .init(center: .init(x: Double(frame), y: 0), scale: 1 + Double(frame) / 500))
-      XCTAssertGreaterThan(canvas.inkView.committedVertexCount, 0)
-      if canvas.inkView.spatialMeshInstallCount > installations { break }
-      try await Task.sleep(for: .milliseconds(5))
+      XCTAssertGreaterThan(installedCanvas.committedVertexCount, 0)
     }
-    XCTAssertEqual(canvas.inkView.spatialMeshInstallCount, installations + 1)
-    XCTAssertGreaterThan(canvas.inkView.committedEraserVertexCount, 0)
-    let settled = canvas.inkView.spatialMeshInstallCount
+    let echo = try await registry.prepareSceneInk(plan: cohort.plan, frame: cohort.frame,
+      liveData: .init(documents: cohort.liveData.documents, states: cohort.liveData.states,
+        pages: cohort.liveData.pages, ink: journal), resources: resources, displayScale: 1)
+    try echo.install()
+    XCTAssertTrue(registry.canvas(for: .board(board)) === installedCanvas)
+    XCTAssertEqual(installedCanvas.spatialMeshInstallCount, installations,
+      "The canonical echo adopts the accepted source without reinstalling identical pen/eraser geometry")
+    XCTAssertEqual(try installedCanvas.installedSpatialSource?.referenceInk(), installedSource)
+    XCTAssertEqual(installedSource.actions, journal.actions)
+    XCTAssertEqual(installedCanvas.committedVertexCount, committed)
+    XCTAssertEqual(installedCanvas.committedEraserVertexCount, eraserVertices)
+    let settled = installedCanvas.spatialMeshInstallCount
     for frame in 0..<100 {
       update(camera: .init(center: .init(x: Double(frame), y: 0), scale: 0.5))
     }
-    XCTAssertEqual(canvas.inkView.spatialMeshInstallCount, settled,
+    XCTAssertEqual(installedCanvas.spatialMeshInstallCount, settled,
       "Следующий зум не перезагружает готовые чернила")
   }
 
@@ -482,11 +493,16 @@ final class NotebookInputTests: XCTestCase {
   }
 
   @MainActor
+  func testTerminalDismantleCompletesMeasuredInkAndCannotReinstallItsRecognizer() async throws {
+    try await assertSpatialCompletion(.retired)
+  }
+
+  @MainActor
   func testOwnerChangeFinishesInkAgainstItsOriginalBoard() async throws {
     try await assertSpatialCompletion(.ownerChanged)
   }
 
-  private enum InputEnding { case disabled, reset, cancelled, lifted, detached, ownerChanged }
+  private enum InputEnding { case disabled, reset, cancelled, lifted, detached, retired, ownerChanged }
 
   @MainActor
   private func assertSpatialCompletion(_ ending: InputEnding) async throws {
@@ -503,7 +519,7 @@ final class NotebookInputTests: XCTestCase {
     host.view.addSubview(canvas)
     window.makeKeyAndVisible()
     let cohort = try await WorkspaceInkFixture.prepare(boardID: boardID, camera: projection,
-      viewport: .init(x: 600, y: 800), items: [], journal: nil)
+      viewport: .init(x: 600, y: 800), items: [], journal: nil, registry: registry)
     let physical = try WorkspaceInkFixture(cohort: cohort,
       presence: .init(boardID: boardID, mode: .board, camera: projection, viewport: .init(x: 600, y: 800)),
       canvas: canvas, parent: host, registry: registry, gate: gate, journal: nil)
@@ -529,6 +545,7 @@ final class NotebookInputTests: XCTestCase {
     case .cancelled: recognizer.touchesCancelled([touch], with: event)
     case .lifted: recognizer.touchesEnded([touch], with: event)
     case .detached: coordinator.uninstall()
+    case .retired: SpatialInkCanvas.dismantleUIView(canvas, coordinator: coordinator)
     case .ownerChanged:
       nextBoardID = UUID()
       projection = .init(center: .init(x: 1_000, y: 2_000), scale: 0.4)
@@ -546,6 +563,14 @@ final class NotebookInputTests: XCTestCase {
     XCTAssertGreaterThanOrEqual(span.samples.count, 2)
     XCTAssertEqual(span.samples.first?.worldPoint, WorldPoint(x: -180, y: -180))
     XCTAssertEqual(span.samples.last?.worldPoint, WorldPoint(x: -100, y: -180))
+
+    if ending == .retired {
+      update(enabled: true)
+      coordinator.install(on: window, inside: canvas)
+      XCTAssertFalse(window.gestureRecognizers?.contains { $0 is SpatialPencilGestureRecognizer } ?? false,
+        "A late configuration cannot give a retired input owner a new recognizer")
+      XCTAssertEqual(commits.count, 1)
+    }
 
     for pinch in [false, true] {
       let camera = TwoFingerPaperGestureRecognizer()

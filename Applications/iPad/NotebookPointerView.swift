@@ -49,8 +49,8 @@ final class PointerContactRecognizer: UIGestureRecognizer {
   override func reset() { super.reset(); touch = nil; onPreview?(nil) }
 }
 
-/// A window-backed display link supplies a physical frame boundary. Only a
-/// foreground, attached scene can confirm that its matching region was shown.
+/// A window-backed display link supplies an opportunity to inspect the current
+/// scene. Its callback is scheduling evidence, not a compositor presentation ACK.
 struct NotebookDisplayConfirmation: UIViewRepresentable {
   let onFrame: () -> Void
   func makeUIView(context: Context) -> DisplayConfirmationView { DisplayConfirmationView() }

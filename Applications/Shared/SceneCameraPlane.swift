@@ -83,6 +83,7 @@ struct SceneCameraPlane<Revision: Equatable, Content: View>: View {
 
 #if os(iOS)
 private struct NativeSceneCameraPlane<Revision: Equatable, Content: View>: UIViewControllerRepresentable {
+  @Environment(NotebookAppModel.self) private var model: NotebookAppModel?
   let presence: SessionPresence
   let revision: Revision
   let reanchorsOnRevision: Bool
@@ -93,28 +94,42 @@ private struct NativeSceneCameraPlane<Revision: Equatable, Content: View>: UIVie
     SceneCameraPlaneController()
   }
   func updateUIViewController(_ controller: SceneCameraPlaneController<Revision>, context: Context) {
+    controller.bindSceneLifecycle(to: model)
     controller.update(presence: presence, revision: revision, reanchorsOnRevision: reanchorsOnRevision, isCameraActive: isCameraActive) { anchor, projection in
       AnyView(content(anchor).environment(\.scenePlaneProjection, projection)
         .frame(width: anchor.viewport.x, height: anchor.viewport.y).ignoresSafeArea())
     }
   }
+  static func dismantleUIViewController(_ controller: SceneCameraPlaneController<Revision>, coordinator: ()) {
+    controller.uninstall()
+  }
 }
 
 @MainActor
-final class SceneCameraPlaneController<Revision: Equatable>: UIViewController, SceneCameraPlaneActivity {
-  private let host = UIHostingController(rootView: AnyView(EmptyView()))
+final class SceneCameraPlaneController<Revision: Equatable>: UIViewController, SceneCameraPlaneActivity, NotebookScenePresentationOwner {
+  private weak var sceneModel: NotebookAppModel?
+  private var host: UIHostingController<AnyView>? = UIHostingController(rootView: AnyView(EmptyView()))
   private var anchor: SessionPresence?
   private var revision: Revision?
   private var projection: ScenePlaneProjection?
+  private(set) var isRetired = false
   private(set) var contentPublicationCount = 0
   private(set) var cameraProjectionCount = 0
-  var contentView: UIView { host.view }
+  var contentView: UIView { host?.view ?? view }
+
+  func bindSceneLifecycle(to model: NotebookAppModel?) {
+    guard !isRetired, sceneModel !== model else { return }
+    sceneModel?.unregisterScenePresentation(self)
+    sceneModel = model
+    model?.registerScenePresentation(self)
+  }
 
   override func loadView() {
     let container = ScenePlaneContainer()
     container.backgroundColor = .clear
     container.isOpaque = false
     view = container
+    guard let host else { return }
     host.view.backgroundColor = .clear
     host.view.isOpaque = false
     host.view.clipsToBounds = false
@@ -129,7 +144,9 @@ final class SceneCameraPlaneController<Revision: Equatable>: UIViewController, S
   func update(presence: SessionPresence, revision: Revision, reanchorsOnRevision: Bool = true,
     isCameraActive: Bool = false,
     content: (SessionPresence, ScenePlaneProjection) -> AnyView) {
+    guard !isRetired else { return }
     loadViewIfNeeded()
+    guard let host else { return }
     let needsRebase = anchor.map {
       SceneCameraProjection.requiresRebase(anchor: $0, current: presence)
         || (!isCameraActive && $0.camera != presence.camera)
@@ -156,6 +173,31 @@ final class SceneCameraPlaneController<Revision: Equatable>: UIViewController, S
     CATransaction.commit()
     cameraProjectionCount += 1
   }
+
+  /// UIKit may retain an unmounted controller. Its last content is no longer a
+  /// shown owner: release the SwiftUI subtree rather than waiting for deinit.
+  /// Dismantling is terminal; a new representable creates its own ready owner.
+  func uninstall() {
+    guard !isRetired else { return }
+    isRetired = true
+    sceneModel?.unregisterScenePresentation(self)
+    sceneModel = nil
+    if let host {
+      host.rootView = AnyView(EmptyView())
+      // Replacing the value alone leaves the previous DisplayList in a UIKit-
+      // retained hosting view. Retire this host's paint before detaching it;
+      // an offscreen owner cannot rely on another frame to process the change.
+      if host.isViewLoaded {
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+      }
+      if host.parent != nil { host.willMove(toParent: nil) }
+      if host.isViewLoaded { host.view.removeFromSuperview() }
+      host.removeFromParent()
+      self.host = nil
+    }
+    anchor = nil; revision = nil; projection = nil
+  }
 }
 
 private final class ScenePlaneContainer: UIView {
@@ -167,6 +209,7 @@ private final class ScenePlaneContainer: UIView {
 }
 #else
 private struct NativeSceneCameraPlane<Revision: Equatable, Content: View>: NSViewRepresentable {
+  @Environment(NotebookAppModel.self) private var model: NotebookAppModel?
   let presence: SessionPresence
   let revision: Revision
   let reanchorsOnRevision: Bool
@@ -175,23 +218,36 @@ private struct NativeSceneCameraPlane<Revision: Equatable, Content: View>: NSVie
 
   func makeNSView(context: Context) -> SceneCameraPlaneView<Revision> { SceneCameraPlaneView() }
   func updateNSView(_ view: SceneCameraPlaneView<Revision>, context: Context) {
+    view.bindSceneLifecycle(to: model)
     view.update(presence: presence, revision: revision, reanchorsOnRevision: reanchorsOnRevision, isCameraActive: isCameraActive) { anchor, projection in
       AnyView(content(anchor).environment(\.scenePlaneProjection, projection)
         .frame(width: anchor.viewport.x, height: anchor.viewport.y).ignoresSafeArea())
     }
   }
+  static func dismantleNSView(_ view: SceneCameraPlaneView<Revision>, coordinator: ()) {
+    view.uninstall()
+  }
 }
 
 @MainActor
-final class SceneCameraPlaneView<Revision: Equatable>: NSView, SceneCameraPlaneActivity {
+final class SceneCameraPlaneView<Revision: Equatable>: NSView, SceneCameraPlaneActivity, NotebookScenePresentationOwner {
+  private weak var sceneModel: NotebookAppModel?
   private let host = NSHostingView(rootView: AnyView(EmptyView()))
   private var anchor: SessionPresence?
   private var revision: Revision?
   private var projection: ScenePlaneProjection?
+  private(set) var isRetired = false
   private(set) var contentPublicationCount = 0
   private(set) var cameraProjectionCount = 0
   override var isFlipped: Bool { true }
   var contentView: NSView { host }
+
+  func bindSceneLifecycle(to model: NotebookAppModel?) {
+    guard !isRetired, sceneModel !== model else { return }
+    sceneModel?.unregisterScenePresentation(self)
+    sceneModel = model
+    model?.registerScenePresentation(self)
+  }
 
   init() {
     super.init(frame: .zero)
@@ -205,6 +261,7 @@ final class SceneCameraPlaneView<Revision: Equatable>: NSView, SceneCameraPlaneA
   func update(presence: SessionPresence, revision: Revision, reanchorsOnRevision: Bool = true,
     isCameraActive: Bool = false,
     content: (SessionPresence, ScenePlaneProjection) -> AnyView) {
+    guard !isRetired else { return }
     let needsRebase = anchor.map {
       SceneCameraProjection.requiresRebase(anchor: $0, current: presence)
         || (!isCameraActive && $0.camera != presence.camera)
@@ -229,6 +286,15 @@ final class SceneCameraPlaneView<Revision: Equatable>: NSView, SceneCameraPlaneA
       y: -matrix.translation.y / matrix.scale,
       width: presence.viewport.x / matrix.scale, height: presence.viewport.y / matrix.scale)
     cameraProjectionCount += 1
+  }
+
+  func uninstall() {
+    guard !isRetired else { return }
+    isRetired = true
+    sceneModel?.unregisterScenePresentation(self)
+    sceneModel = nil
+    host.rootView = AnyView(EmptyView())
+    anchor = nil; revision = nil; projection = nil
   }
 
   override func hitTest(_ point: NSPoint) -> NSView? {

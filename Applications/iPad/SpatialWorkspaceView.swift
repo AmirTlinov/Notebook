@@ -88,10 +88,16 @@ struct SpatialWorkspaceView: View {
   @State private var settling = false
   @State private var cameraSettlement = SceneCameraSettlement()
   @State private var referencePageResolution = NotebookReferencePageResolution()
-  @State private var spatialInkSurfaces = SpatialInkSurfaceRegistry()
+  private var spatialInkSurfaces: SpatialInkSurfaceRegistry { model.compositionTiles.surfaceRegistry }
   @State private var openingFeedback = UIImpactFeedbackGenerator(style: .soft)
 
   var body: some View {
+    if model.shutdownPhase != .stopped {
+      mountedScene.allowsHitTesting(model.shutdownPhase != .draining)
+    }
+  }
+
+  private var mountedScene: some View {
     GeometryReader { geometry in
       let viewport = SpatialPoint(
         x: geometry.size.width,
@@ -199,7 +205,7 @@ struct SpatialWorkspaceView: View {
             isItemBeingDeleted: model.isItemBeingDeleted,
             // Admission is proved by this installed cohort and its native
             // surface registrations, never by the newer pending scene index.
-            admitsNewContact: { cohort != nil },
+            admitsNewContact: { [weak cohort] in cohort != nil },
             onCommit: model.appendSpatialInk,
             isEnabled: (presence.mode == .board || presence.mode == .cover)
               && !contentGestureActive
@@ -218,9 +224,7 @@ struct SpatialWorkspaceView: View {
               && presence.openProgress >= 0.999 && !model.isPointing,
             inputGate: model.inputGate,
             onCamera: handleWorkspaceMagnification,
-            onUndo: {
-              model.afterPageInput { model.undoLastSurfaceAction() }
-            }
+            onUndo: model.undoLastSurfaceAction
           )
           .allowsHitTesting(false)
 
@@ -248,7 +252,7 @@ struct SpatialWorkspaceView: View {
         controls(presence: presence, viewport: viewport)
       }
       .clipped()
-      .environment(\.sceneCompositionCohort, cohort)
+      .environment(\.sceneComposition, .init(cohort))
       .task(id: compositionRequest) {
         model.prepareComposition(presence: presence, frame: requestedFrame,
           pinned: compositionRequest.pinned, displayScale: displayScale, installedItemOwners: compositionRequest.itemOwners)
@@ -510,14 +514,14 @@ struct SpatialWorkspaceView: View {
       isCameraActive: model.presencePhase == .active || cameraGesture != nil || panStart != nil || settling) { anchor in
       ZStack {
         if let cohort {
-          ForEach(cohort.bands(in: .board(presence.boardID), layer: .covers)) { band in
-            SceneCompositionTileBandView(cohort: cohort, band: band, presence: anchor).zIndex(Double(band.rank))
+          ForEach(SceneCompositionTileBandView.bands(in: cohort, plane: .board(presence.boardID), layer: .covers, presence: anchor)) { band in
+            band.zIndex(Double(band.rank))
           }
         }
         sceneItemContents(rendered, presence: presence, viewport: viewport, anchorCamera: anchor.camera,
           frame: frame, cohort: cohort)
       }
-        .environment(model).environment(\.workspaceSceneFrame, frame).environment(\.sceneCompositionCohort, cohort)
+        .environment(model).environment(\.workspaceSceneFrame, frame).environment(\.sceneComposition, .init(cohort))
     }
   }
 
@@ -650,8 +654,8 @@ struct SpatialWorkspaceView: View {
       isCameraActive: model.presencePhase == .active || cameraGesture != nil || panStart != nil || settling) { anchor in
       ZStack {
         if let cohort {
-          ForEach(cohort.bands(in: .board(presence.boardID), layer: .elements)) { band in
-            SceneCompositionTileBandView(cohort: cohort, band: band, presence: anchor).zIndex(Double(band.rank))
+          ForEach(SceneCompositionTileBandView.bands(in: cohort, plane: .board(presence.boardID), layer: .elements, presence: anchor)) { band in
+            band.zIndex(Double(band.rank))
           }
         }
         boardElementContents(elements, presence: anchor, viewport: anchor.viewport, cohort: cohort)

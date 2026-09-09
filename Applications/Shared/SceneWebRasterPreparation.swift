@@ -15,6 +15,8 @@ final class SceneWebRasterPreparation {
     private let window: NSWindow
   #endif
   private var isClosed = false
+  private var closingCaptures: [AgentSnapshotCapture] = []
+  private var closeTask: Task<Void, Never>?
   private var isPreparing = false
   private(set) var completedJobCount = 0
   var webIdentity: ObjectIdentifier { ObjectIdentifier(web) }
@@ -40,7 +42,7 @@ final class SceneWebRasterPreparation {
         .first(where: { $0.activationState == .foregroundActive }) else {
         coordinator.invalidate(); throw SceneRenderError.snapshotPending("preparation_scene")
       }
-      window = UIWindow(windowScene: scene)
+      window = NotebookPreparationWindow(windowScene: scene)
       let controller = UIViewController()
       controller.view.backgroundColor = .clear
       controller.view.addSubview(web)
@@ -97,7 +99,23 @@ final class SceneWebRasterPreparation {
     #else
       window.orderOut(nil); window.contentView = nil; window.close()
     #endif
-    lease.release()
+    closingCaptures = coordinator.pendingSnapshotCaptures
+    if closingCaptures.isEmpty { lease.release() }
+    else {
+      // The callback may outlive this executor. A bounded reader timeout does
+      // not free its WebKit slot or submitted snapshot backing prematurely.
+      closeTask = Task { [captures = closingCaptures, lease] in
+        for capture in captures { try? await capture.waitForCompletion() }
+        lease.release()
+      }
+    }
+  }
+
+  func closeAndDrain() async throws {
+    close()
+    let deadline = ContinuousClock.now + .seconds(8)
+    for capture in closingCaptures { try await capture.waitForCompletion(deadline: deadline) }
+    if let closeTask { await closeTask.value }
   }
   isolated deinit { close() }
 }

@@ -227,7 +227,6 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
         let isOpeningApproach = TwoFingerIntentArbiter.isOpeningApproach(
           magnification: magnification
         )
-        beginMagnificationFromCurrentPair()
         self.isOpeningApproach = isOpeningApproach
         intent = .magnification
         state = .began
@@ -327,6 +326,8 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     fingerSequenceRevision = nil
   }
 
+  /// The second touchdown establishes the pair once. Intent recognition must
+  /// retain subsequent measured travel, even if release is the very next sample.
   private func beginTrackingPair() {
     startLocations = activeTouches.mapValues { $0.location(in: view) }
     let centroid = currentCentroid()
@@ -349,28 +350,6 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
       intent = .hold
       state = .began
     }
-  }
-
-  /// The second finger may arrive a few hardware samples after the first one.
-  /// The intent arbiter already waits for both fingers, so the owned pinch must
-  /// start from that confirmed pair rather than from their staggered touchdown.
-  /// Otherwise the first reported scale can be much larger than the motion the
-  /// person actually made.
-  private func beginMagnificationFromCurrentPair() {
-    let timestamp = currentTimestamp()
-    startLocations = activeTouches.mapValues { $0.location(in: view) }
-    let current = currentCentroid()
-    startCentroid = current
-    centroid = current
-    startDistance = currentDistance()
-    startTimestamp = timestamp
-    translation = .zero
-    velocity = .zero
-    fingerDisplacements = activeTouches.values.map { _ in .zero }
-    magnification = 1
-    magnificationVelocity = 0
-    centroidSamples = [CentroidSample(timestamp: timestamp, point: current)]
-    magnificationSamples = [(timestamp: timestamp, value: 1)]
   }
 
   private func updateMetrics() {

@@ -65,26 +65,33 @@ final class SpatialInkProjectionTests: XCTestCase {
 
   @MainActor
   func testRoutingRegistryHandoffNeverReinstallsTheSamePhysicalMesh() async throws {
-    let view = InkCanvasView(frame: .init(x: 0, y: 0, width: 834, height: 1194))
-    let coordinator = SpatialInkSurfaceView.Coordinator()
-    let journal = projectionJournal()
-    var registry = SpatialInkSurfaceRegistry()
-    coordinator.update(view: view, surface: .board, journal: journal, registry: registry)
-    for _ in 0..<200 where view.committedVertexCount == 0 {
-      try await Task.sleep(for: .milliseconds(5))
-    }
+    let journal = projectionJournal(), boardID = SurfaceID.board.ownerID!
+    let camera = SpatialCamera(center: .init(tileX: 1_000_000, tileY: -1_000_000, localX: 10, localY: 20), scale: 1)
+    let cohort = try await WorkspaceInkFixture.prepare(boardID: boardID, camera: camera,
+      viewport: .init(x: 512, y: 512), items: [], journal: journal)
+    let registry = cohort.nativeInk.registry
+    let view = try XCTUnwrap(registry.canvas(for: .board))
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let host = UIViewController(); window.rootViewController = host; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    let first = SpatialInkPhysicalMountView(frame: .init(x: 0, y: 0, width: 512, height: 512))
+    let second = SpatialInkPhysicalMountView(frame: first.frame)
+    host.view.addSubview(first); host.view.addSubview(second)
     XCTAssertGreaterThan(view.committedVertexCount, 0)
     let installations = view.spatialMeshInstallCount
-    for _ in 0..<120 {
-      let previous = registry
-      registry = SpatialInkSurfaceRegistry()
-      coordinator.update(view: view, surface: .board, journal: journal, registry: registry)
-      XCTAssertNil(previous.canvas(for: .board))
+    for index in 0..<120 {
+      let old = index.isMultiple(of: 2) ? second : first
+      let next = index.isMultiple(of: 2) ? first : second
+      next.update(lease: cohort.nativeInk, surface: .board, boardID: boardID, camera: camera, active: true)
+      old.unmount()
+      XCTAssertTrue(next.inkView === view)
       XCTAssertTrue(registry.canvas(for: .board) === view)
       XCTAssertEqual(view.spatialMeshInstallCount, installations,
-        "Передача маршрутизации не обнуляет готовую геометрию и GPU buffers")
+        "Передача физического mount не обнуляет готовую геометрию и GPU buffers")
     }
-    coordinator.unregister(view)
+    first.unmount(); second.unmount()
+    await registry.stopSceneInk()
+
   }
 
   func testWorldProjectionPreservesPrecisionAtDistantTiles() throws {

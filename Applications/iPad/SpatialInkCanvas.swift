@@ -4,7 +4,9 @@ import NotebookCore
 import UIKit
 
 struct SpatialInkCanvas: UIViewRepresentable {
-  let cohort: SceneCompositionCohort?
+  // The actual input coordinator and its accepted contact own this basis.
+  // A cached SwiftUI configuration must not prolong a dismantled scene.
+  weak var cohort: SceneCompositionCohort?
   let boardID: UUID
   let camera: SpatialCamera
   let viewport: SpatialPoint
@@ -80,11 +82,12 @@ struct SpatialInkCanvas: UIViewRepresentable {
     _ view: SpatialInkContainerView,
     coordinator: Coordinator
   ) {
-    coordinator.uninstall()
+    coordinator.retire()
   }
 
   @MainActor
   final class Coordinator {
+    private(set) var isRetired = false
     private var surfaceRegistry: SpatialInkSurfaceRegistry
     private let inputSourceID = UUID()
     private var inputGate: NotebookInputGate
@@ -92,7 +95,6 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private weak var view: SpatialInkContainerView?
     private weak var window: UIWindow?
     private var recognizer: SpatialPencilGestureRecognizer?
-    private let preparation = SpatialInkMeshPreparation()
 
     private var camera = SpatialCamera()
     private var boardSurface = SurfaceID.board
@@ -172,6 +174,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         [SpatialInkSpan]
       ) -> SpatialInkAction?
     ) {
+      guard !isRetired else { return }
       // Finish against the geometry that received the samples, before a new
       // owner or disabled input can cancel UIKit without a final touch event.
       if !isEnabled || boardSurface != .board(boardID) {
@@ -180,15 +183,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
       self.view = view
       self.cohort = cohort
       let nextBoardSurface = SurfaceID.board(boardID)
-      if boardSurface != nextBoardSurface {
-        surfaceRegistry.unregister(view.inkView, for: boardSurface)
-        boardSurface = nextBoardSurface
-        preparation.cancel()
-      }
+      if boardSurface != nextBoardSurface { boardSurface = nextBoardSurface }
       self.camera = camera
       self.viewport = viewport
-      view.inkView.project(camera: actionGeometry?.camera ?? camera,
-        viewport: actionGeometry?.viewport ?? viewport)
       self.items = items.sorted { $0.zIndex < $1.zIndex }
       if self.journal != journal {
         view.accessibilityValue = "\(journal?.actions.filter(\.isActive).count ?? 0) действий"
@@ -198,9 +195,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
       self.eraserStyle = eraserStyle
       self.drawingTool = drawingTool
       if self.surfaceRegistry !== surfaceRegistry {
-        self.surfaceRegistry.unregister(view.inkView, for: boardSurface)
+        finishAction()
+        view.unmount()
         self.surfaceRegistry = surfaceRegistry
-        preparation.cancel()
       }
       if self.inputGate !== inputGate {
         if pencilActionIsActive {
@@ -215,24 +212,25 @@ struct SpatialInkCanvas: UIViewRepresentable {
       self.isItemBeingDeleted = isItemBeingDeleted
       self.admitsNewContact = admitsNewContact
       self.onCommit = onCommit
-      surfaceRegistry.register(view.inkView, for: boardSurface)
+      refreshNativeMount()
       recognizer?.isEnabled = isEnabled
       if let window = view.window { install(on: window, inside: view) }
-      scheduleRenderIfNeeded()
+      refreshNativeMount()
     }
 
     func install(on window: UIWindow?, inside view: SpatialInkContainerView) {
+      guard !isRetired else { return }
       guard let window else {
         uninstall()
         return
       }
       guard self.window !== window else {
         recognizer?.isEnabled = isEnabled
-        surfaceRegistry.register(view.inkView, for: boardSurface)
+        refreshNativeMount()
         return
       }
       uninstall()
-      surfaceRegistry.register(view.inkView, for: boardSurface)
+      refreshNativeMount()
       let recognizer = SpatialPencilGestureRecognizer()
       recognizer.allowedTouchTypes = [
         NSNumber(value: UITouch.TouchType.pencil.rawValue)
@@ -263,20 +261,32 @@ struct SpatialInkCanvas: UIViewRepresentable {
       self.window = window
       self.view = view
       self.recognizer = recognizer
-      scheduleRenderIfNeeded()
+      refreshNativeMount()
     }
 
     func uninstall() {
       finishAction()
-      preparation.cancel()
       recognizer?.onEvent = nil
       recognizer?.canBeginContact = nil
       if let recognizer { window?.removeGestureRecognizer(recognizer) }
       recognizer = nil
       window = nil
-      if let view {
-        surfaceRegistry.unregister(view.inkView, for: boardSurface)
-      }
+      view?.unmount()
+    }
+
+    /// Temporary window transfer keeps input state for the same coordinator.
+    /// SwiftUI dismantle is terminal: finish accepted samples first, then drop
+    /// the source and callbacks even if UIKit still retains this coordinator.
+    func retire() {
+      guard !isRetired else { return }
+      isRetired = true
+      uninstall()
+      view?.onWindowChange = nil
+      view = nil; cohort = nil; journal = nil; items.removeAll()
+      isEnabled = false
+      isItemBeingDeleted = { _ in false }
+      admitsNewContact = { false }
+      onCommit = { _, _, _ in nil }
     }
 
     private func handle(_ input: SpatialPencilGestureRecognizer.Event) {
@@ -296,6 +306,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     }
 
     private func beginAction(touch: UITouch, event: UIEvent) {
+      guard inputGate.permitsNewContact else { return }
       finishAction()
       guard let view, let surfaces = admissionSurfaces() else { return }
       var leases: [SpatialInkSurfaceRegistry.ContactLease] = []
@@ -397,6 +408,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         for lease in geometry?.leases ?? [] { lease.release() }
         actionGeometry = nil
         setPencilActionActive(false)
+        refreshNativeMount()
       }
       activePen?.replacePredictions(with: [])
       finishCurrentSegment()
@@ -437,8 +449,6 @@ struct SpatialInkCanvas: UIViewRepresentable {
         )
       }
       touchedSurfaces = []
-      preparation.invalidateSource()
-      view?.inkView.project(camera: camera, viewport: viewport)
     }
 
     private func cancelAction() {
@@ -447,6 +457,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         for lease in geometry?.leases ?? [] { lease.release() }
         actionGeometry = nil
         setPencilActionActive(false)
+        refreshNativeMount()
       }
       if let currentSurface {
         surfaceRegistry.canvas(for: currentSurface)?.clearActiveAction()
@@ -697,8 +708,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
         SpatialWorkspaceItemSurface(itemID: $0.id, geometry: $0.geometry, center: $0.center, zIndex: $0.zIndex)
       }.sorted { $0.itemID < $1.itemID }
       let suppliedItems = items.sorted { $0.itemID < $1.itemID }
-      guard cohort.plan.presentations[.board(boardID)] != nil,
-        installedItems == suppliedItems,
+      guard cohort.nativeInk.isInstalled, cohort.nativeInk.registry === surfaceRegistry,
+        view.inkView === surfaceRegistry.canvas(for: boardSurface), view.inkView?.window === view.window,
+        cohort.plan.presentations[.board(boardID)] != nil, installedItems == suppliedItems,
         let coverage = cohort.plan.coverage[.board(boardID)]?.tiles,
         let first = coverage.first, let last = coverage.last,
         surfaceRegistry.canvas(for: boardSurface)?.installedSpatialSource?.surface == boardSurface,
@@ -707,6 +719,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         width: viewport.x / camera.scale, height: viewport.y / camera.scale)
       guard WorkspaceSpatialBounds(origin: first.origin, maximum: last.bounds.maximum).contains(visible) else { return nil }
       let viewportRect = CGRect(x: 0, y: 0, width: viewport.x, height: viewport.y)
+      guard let native = view.inkView, native.bounds.contains(native.convert(viewportRect, from: view)) else { return nil }
       for surface in surfaces where surface.frame.intersects(viewportRect) {
         guard let id = surface.id.ownerID, cohort.plan.allowsLive(.item(id), in: .board(boardID)) else { continue }
         guard let pose = surfaceRegistry.pose(for: surface.id), pose.cohortID == cohort.id,
@@ -753,7 +766,14 @@ struct SpatialInkCanvas: UIViewRepresentable {
       _ point: PKStrokePoint,
       on surface: SurfaceID
     ) -> PKStrokePoint {
-      guard surface.kind == .cover, let geometry = screenSurfaces().first(where: { $0.id == surface }) else { return point }
+      guard surface.kind == .cover, let geometry = screenSurfaces().first(where: { $0.id == surface }) else {
+        guard let view, let canvas = surfaceRegistry.canvas(for: surface) else { return point }
+        // The retained board canvas has a fixed centered crop. Measured points
+        // are expressed in that same canvas before building live GPU chunks.
+        return PKStrokePoint(location: canvas.convert(point.location, from: view),
+          timeOffset: point.timeOffset, size: point.size, opacity: point.opacity,
+          force: point.force, azimuth: point.azimuth, altitude: point.altitude)
+      }
       return PKStrokePoint(
         location: geometry.localPoint(point.location),
         timeOffset: point.timeOffset,
@@ -769,21 +789,16 @@ struct SpatialInkCanvas: UIViewRepresentable {
     }
 
 
-    private func scheduleRenderIfNeeded() {
-      guard actionTool == nil, let view else { return }
-      let surface = boardSurface
-      let pending = preparation.update(surface: surface, journal: journal) { [weak self, weak view] mesh, source in
-        guard let self, let view else { return }
-        surfaceRegistry.applyStable(mesh, source: source, to: surface, in: view.inkView)
-      }
-      if pending { view.inkView.prepareForDrawing() }
+    private func refreshNativeMount() {
+      guard !isRetired, actionGeometry == nil, let view, let id = boardSurface.ownerID else { return }
+      view.update(lease: cohort?.nativeInk, surface: boardSurface, boardID: id, camera: camera, active: true)
     }
+
   }
 }
 
 @MainActor
-final class SpatialInkContainerView: UIView {
-  let inkView = InkCanvasView(frame: .zero)
+final class SpatialInkContainerView: SpatialInkPhysicalMountView {
   var onWindowChange: ((UIWindow?) -> Void)?
 
   override init(frame: CGRect) {
@@ -794,17 +809,11 @@ final class SpatialInkContainerView: UIView {
     isAccessibilityElement = true
     accessibilityLabel = "Чернила доски и обложек"
     accessibilityIdentifier = "spatial-ink"
-    addSubview(inkView)
   }
 
   @available(*, unavailable)
   required init?(coder: NSCoder) {
     fatalError("init(coder:) is unavailable")
-  }
-
-  override func layoutSubviews() {
-    super.layoutSubviews()
-    inkView.frame = bounds
   }
 
   override func didMoveToWindow() {

@@ -261,7 +261,7 @@ final class NotebookPersistenceTests: XCTestCase {
       .init(point: .init(x: 20, y: 30), timeOffset: 0, width: 3, opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2),
       .init(point: .init(x: 120, y: 130), timeOffset: 0.1, width: 3, opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
     ])
-    let accepted = await model.commitDrawingAction(action, pageID: pageID, stamp: stamp)
+    let accepted = await model.acceptDrawingAction(action, pageID: pageID, stamp: stamp).value
     XCTAssertNotNil(accepted, "The contact finishes without waiting for the storage lock")
     try lock.release()
     let saved = await model.finishPendingPersistence()

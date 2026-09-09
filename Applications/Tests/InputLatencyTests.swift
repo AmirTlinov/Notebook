@@ -11,8 +11,8 @@ final class InputLatencyTests: XCTestCase {
     let stamp = VersionStamp(counter: 1, actor: UUID())
     var release: CheckedContinuation<PreparedPageInkChange?, Never>?
     let began = expectation(description: "preparation suspended")
-    let coordinator = PencilCanvasView.Coordinator(inputGate: gate, reserveAction: { _ in stamp }, commitAction: { _, _, _ in
-      await withCheckedContinuation { continuation in release = continuation; began.fulfill() }
+    let coordinator = PencilCanvasView.Coordinator(inputGate: gate, reserveAction: { _ in stamp }, releaseAction: { _, _ in }, acceptAction: { _, _, _ in
+      Task { await withCheckedContinuation { continuation in release = continuation; began.fulfill() } }
     })
     let paper = PaperCanvasContainerView()
     coordinator.attach(to: paper)
@@ -20,6 +20,7 @@ final class InputLatencyTests: XCTestCase {
     coordinator.apply(Data(), pageID: page.id, to: paper)
     let action = PageInkAction(tool: .pen, samples: [.init(point: .init(x: 10, y: 20), timeOffset: 0,
       width: 2, opacity: 1, force: 1, azimuth: 0, altitude: 1)])
+    XCTAssertTrue(paper.touchView.onActionWillBegin?() == true)
     coordinator.commit(action, on: paper)
     await fulfillment(of: [began], timeout: 2)
     var cameraStarted = false, publicationFinished = false
@@ -64,7 +65,7 @@ final class InputLatencyTests: XCTestCase {
     XCTAssertLessThan(began.duration(to: clock.now), .milliseconds(50))
     try await Task.sleep(for: .milliseconds(30))
     let stamp = try XCTUnwrap(model.reserveDrawingAction(pageID: page.id))
-    let accepted = await model.commitDrawingAction(local, pageID: page.id, stamp: stamp)
+    let accepted = await model.acceptDrawingAction(local, pageID: page.id, stamp: stamp).value
     XCTAssertNotNil(accepted, "Подготовка пера не ждёт транзакцию SQLite")
     try descriptor.release()
     await model.finishPendingPersistence()

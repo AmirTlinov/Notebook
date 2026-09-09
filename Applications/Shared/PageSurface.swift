@@ -36,8 +36,9 @@ struct PageSurface: View {
             drawingTool: model.drawingTool,
             inputGate: model.inputGate,
             reserveAction: model.reserveDrawingAction,
-            commitAction: { action, pageID, stamp in
-              await model.commitDrawingAction(action, pageID: pageID, stamp: stamp)
+            releaseAction: { model.releaseDrawingReservation(pageID: $0, stamp: $1) },
+            acceptAction: { action, pageID, stamp in
+              model.acceptDrawingAction(action, pageID: pageID, stamp: stamp)
             },
             onRenderReady: { ready in
               inkIsReady = ready

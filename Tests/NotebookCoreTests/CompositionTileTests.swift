@@ -12,7 +12,9 @@ struct CompositionTileTests {
         let right = try #require(tile.offset(columns: 1, rows: 0))
         #expect(abs(tile.origin.delta(to: right.origin).x - tile.worldSize) < tile.worldSize * 1e-10)
         #expect(right.offset(columns: -1, rows: 0) == tile)
-        #expect(tile.parent?.bounds.contains(tile.bounds) == true, "level \(level), point \(center), tile \(tile), parent \(String(describing: tile.parent))")
+        let below = try #require(tile.offset(columns: 0, rows: 1))
+        #expect(tile.bounds.maximum.tileX == right.origin.tileX && tile.bounds.maximum.localX == right.origin.localX)
+        #expect(tile.bounds.maximum.tileY == below.origin.tileY && tile.bounds.maximum.localY == below.origin.localY)
         #expect(try JSONDecoder().decode(CompositionTile.self, from: JSONEncoder().encode(tile)) == tile)
       }
     }
@@ -35,16 +37,33 @@ struct CompositionTileTests {
     }
   }
 
-  @Test func unrepresentableCoverageIsNotReportedAsAnEmptyBoard() throws {
+  @Test func oneCentredCellCoversBothSidesOfTheOriginWithoutCropping() throws {
     let bounds = WorkspaceSpatialBounds(origin: .init(x: -1, y: -1), width: 2, height: 2)
-    #expect(throws: CompositionTileError.projectionUnavailable) {
-      try CompositionTileCoverage(bounds: bounds, pixelsPerWorldPoint: 1, maximumTiles: 1)
+    for density in [1.0, 2, 1000, Double.leastNonzeroMagnitude, Double.greatestFiniteMagnitude] {
+      let coverage = try CompositionTileCoverage(bounds: bounds, pixelsPerWorldPoint: density, maximumTiles: 1)
+      #expect(coverage.tiles.count == 1)
+      #expect(coverage.tiles[0].bounds.contains(bounds))
     }
-    for density in [Double.leastNonzeroMagnitude, Double.greatestFiniteMagnitude] {
-      let coverage = try CompositionTileCoverage(bounds: bounds, pixelsPerWorldPoint: density)
-      #expect(!coverage.tiles.isEmpty)
-      #expect(coverage.tiles.count <= 32)
+  }
+
+  @Test func everyFiniteBudgetCoarsensAllFourQuadrantsAndLargeWorldAddressesWithoutLosingEdges() throws {
+    for center in [WorldPoint.zero, .init(x: 80, y: -90),
+      .init(tileX: 9_000_000_000_000, tileY: -9_000_000_000_000, localX: 700, localY: 100)] {
+      let bounds = WorkspaceSpatialBounds(origin: center.offsetBy(x: -1000, y: -1200), width: 2300, height: 3000)
+      for limit in [1, 2, 3, 4, 8, 12, 16, 24, 32] {
+        let coverage = try CompositionTileCoverage(bounds: bounds, pixelsPerWorldPoint: 2, maximumTiles: limit)
+        #expect(!coverage.tiles.isEmpty && coverage.tiles.count <= limit)
+        let first = try #require(coverage.tiles.first), last = try #require(coverage.tiles.last)
+        #expect(WorkspaceSpatialBounds(origin: first.origin, maximum: last.bounds.maximum).contains(bounds))
+      }
     }
+  }
+
+  @Test func oldCornerAlignedCacheKeysCannotBeReusedAsCentredPixels() throws {
+    let old = Data(#"{"level":0,"column":0,"row":0,"localColumn":0,"localRow":0}"#.utf8)
+    #expect(throws: DecodingError.self) { try JSONDecoder().decode(CompositionTile.self, from: old) }
+    let invalid = Data(#"{"format":2,"level":36,"column":9223372036854775807,"row":0,"localColumn":0,"localRow":0}"#.utf8)
+    #expect(throws: DecodingError.self) { try JSONDecoder().decode(CompositionTile.self, from: invalid) }
   }
 
   @Test func painterPagesBoundWorkAndPreserveExactOrderWithoutDroppingCoincidentSources() throws {

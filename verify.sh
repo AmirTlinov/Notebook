@@ -83,14 +83,8 @@ if [[ "$(rg -l ': MTKView' "$ROOT/Applications/Shared/InkCanvasView.swift" --glo
     'На iPad должна быть одна реализация Metal-рендера: InkCanvasView.' >&2
   exit 1
 fi
-if ! rg -q 'struct SpatialInkSurfaceView: UIViewRepresentable' \
-  "$ROOT/Applications/Shared/SpatialInkSurfaceView.swift" \
-  || ! rg -q 'makeUIView\(context: Context\) -> InkCanvasView' \
-    "$ROOT/Applications/Shared/SpatialInkSurfaceView.swift"; then
-  printf '%s\n' \
-    'Каждая обложка должна носить собственный InkCanvasView внутри своего transform.' >&2
-  exit 1
-fi
+# SpatialInkHandoffTests and WorkspaceCoverContinuityTests below assert the
+# physical canvas identity across mounts; a representable return type cannot.
 if rg -n 'SpatialInkTransitionView|drawing\.image\(' \
   "$ROOT/Applications/Shared/SpatialInkSurfaceView.swift"; then
   printf '%s\n' \
@@ -208,6 +202,7 @@ xcodebuild \
   -scheme NotebookMac \
   -configuration Debug \
   -collect-test-diagnostics never \
+  -parallel-testing-enabled NO \
   -destination 'platform=macOS' \
   -derivedDataPath "$DERIVED/mac-tests" \
   -resultBundlePath "$EVIDENCE/mac.xcresult" \
@@ -232,13 +227,14 @@ devices = [
     device
     for runtime in data["devices"].values()
     for device in runtime
-    if device.get("isAvailable") and device["name"].startswith("iPad")
+    if device.get("isAvailable")
+    and device.get("deviceTypeIdentifier", "").startswith("com.apple.CoreSimulator.SimDeviceType.iPad-")
 ]
 if not devices:
     raise SystemExit("Нужен установленный iPad Simulator")
 devices.sort(key=lambda d: (
     d["state"] != "Booted",
-    "11-inch" not in d["name"],
+    "11-inch" not in d["deviceTypeIdentifier"],
     d["name"],
 ))
 chosen = devices[0]
@@ -258,6 +254,8 @@ xcodebuild \
   -scheme Notebook \
   -configuration Debug \
   -collect-test-diagnostics never \
+  -parallel-testing-enabled NO \
+  -maximum-concurrent-test-simulator-destinations 1 \
   -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
   -derivedDataPath "$DERIVED/ipad-tests" \
   -resultBundlePath "$EVIDENCE/ipad.xcresult" \

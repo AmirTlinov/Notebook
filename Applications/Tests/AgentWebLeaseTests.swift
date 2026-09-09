@@ -186,7 +186,7 @@ final class AgentWebLeaseTests: XCTestCase {
     XCTAssertTrue(resources.store(image, for: source))
     let raster = try XCTUnwrap(resources.retainRaster(for: source))
     let view = AgentSnapshotRasterView()
-    defer { view.removeRaster(); raster.release() }
+    defer { view.uninstall(); raster.release() }
     view.bounds = CGRect(x: 0, y: 0, width: source.frame.width, height: source.frame.height)
     view.updateRaster(raster, displayScale: 3)
     view.layoutIfNeeded()
@@ -206,20 +206,23 @@ final class AgentWebLeaseTests: XCTestCase {
   @MainActor
   func testNativeSnapshotPresenterKeepsItsRasterAccountedUntilContentsAreCleared() throws {
     let source = element(source: "retained by native presenter")
-    let resources = SceneRenderResources(byteLimit: 8_192)
+    let resources = SceneRenderResources(byteLimit: 8_192, profile: .headless)
     XCTAssertTrue(resources.store(raster(), for: source))
     var lease: RasterLease? = try XCTUnwrap(resources.retainRaster(for: source))
-    weak let nativeRetainedLease = lease
+    weak let configurationLease = lease
+    let shownBytes = try XCTUnwrap(lease).accountedByteCount
     let view = AgentSnapshotRasterView()
     view.bounds = CGRect(x: 0, y: 0, width: 32, height: 32)
     view.updateRaster(try XCTUnwrap(lease), displayScale: 2)
     lease = nil
-    XCTAssertNotNil(nativeRetainedLease, "Dropping SwiftUI state must not release pixels still owned by a native layer.")
+    XCTAssertNil(configurationLease, "The configuration is not the native presenter’s independent lease.")
+    XCTAssertNotNil(view.layer.contents)
+    XCTAssertEqual(resources.rasterAdmission.pinnedBytes, shownBytes)
     XCTAssertNil(resources.reserveRaster(pixelWidth: 32, pixelHeight: 32),
       "The native presenter pins its source against eviction.")
-    view.removeRaster()
+    view.uninstall()
     XCTAssertNil(view.layer.contents)
-    XCTAssertNil(nativeRetainedLease)
+    XCTAssertNil(configurationLease)
     let admitted = resources.reserveRaster(pixelWidth: 32, pixelHeight: 32)
     XCTAssertNotNil(admitted)
     admitted?.release()

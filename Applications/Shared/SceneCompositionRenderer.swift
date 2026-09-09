@@ -251,25 +251,58 @@ final class SceneCompositionRenderer {
     canvas.recordDiagnostics(resources.diagnostics(for: [source]))
   }
 
-  /// Excluding a source from the static bands is not readiness. The same
-  /// sequential executor prepares each newly admitted live element first, and
-  /// its cohort retains those pixels until the physical view takes its lease.
-  func prepareLiveRasters(plan: SceneCompositionPlan, displayScale: Double) async throws -> [SceneCompositionLiveOwner: RasterLease] {
-    var rasters: [SceneCompositionLiveOwner: RasterLease] = [:]
+  /// Source values and their quantized WebKit extent are read once for this
+  /// finite candidate set. Both admission and execution use this same request.
+  struct LiveRasterRequest: Sendable {
+    let owner: SceneCompositionLiveOwner
+    let source: AgentElement
+    let requestedScale: Double
+    let residentBytes: Int
+    let snapshotAdditionalBytes: Int
+    init(owner: SceneCompositionLiveOwner, element: SpatialElement, displayScale: Double) throws {
+      self.owner = owner; source = agentElementSnapshotSource(element)
+      guard let display = AgentSnapshotPolicy.display(scale: displayScale).pixelSize(for: source) else {
+        throw SceneRenderError.resourceLimit
+      }
+      requestedScale = display.width / source.frame.width
+      guard let exact = AgentSnapshotPolicy.exact(scale: requestedScale).pixelSize(for: source),
+        exact.width < Double(Int.max - 2), exact.height < Double(Int.max - 2),
+        let resident = SceneRenderResources.estimatedRasterBytes(pixelWidth: Int(exact.width), pixelHeight: Int(exact.height)),
+        let capture = SceneRenderResources.estimatedRasterBytes(pixelWidth: Int(exact.width) + 2, pixelHeight: Int(exact.height) + 2)
+      else { throw SceneRenderError.resourceLimit }
+      residentBytes = resident; snapshotAdditionalBytes = max(0, capture - resident)
+    }
+  }
+
+  func liveRasterRequests(plan: SceneCompositionPlan, displayScale: Double) async throws -> [LiveRasterRequest] {
+    var requests: [LiveRasterRequest] = []
+    for owner in plan.liveOwners {
+      try checkPreparation()
+      guard case .element(let id) = owner.id else { continue }
+      guard let element = try await source.element(id, boardID: owner.plane.boardID),
+        element.surface == (owner.plane.coverID.map(SurfaceID.cover) ?? .board(owner.plane.boardID)) else {
+        throw SceneRenderError.snapshotPending("live_element_source")
+      }
+      if element.kind != .nativeText { requests.append(try .init(owner: owner, element: element, displayScale: displayScale)) }
+    }
+    return requests
+  }
+
+  /// Exclusion from static bands is not readiness. Cache hits already borrowed
+  /// by the candidate keep their exact entry across every asynchronous step.
+  func prepareLiveRasters(_ requests: [LiveRasterRequest],
+    retained: [SceneCompositionLiveOwner: RasterLease]) async throws -> [SceneCompositionLiveOwner: RasterLease] {
+    var rasters = retained
     do {
-      for owner in plan.liveOwners {
+      for request in requests {
         try checkPreparation()
-        guard case .element(let id) = owner.id else { continue }
-        guard let element = try await source.element(id, boardID: owner.plane.boardID),
-          element.surface == (owner.plane.coverID.map(SurfaceID.cover) ?? .board(owner.plane.boardID)) else {
-          throw SceneRenderError.snapshotPending("live_element_source")
+        if let hit = rasters[request.owner] {
+          guard hit.image(for: .agent(request.source), minimumScale: request.requestedScale) != nil else {
+            throw SceneRenderError.snapshotPending("live_raster_lease")
+          }
+        } else {
+          rasters[request.owner] = try await prepareRaster(request.source, requestedScale: request.requestedScale)
         }
-        guard element.kind != .nativeText else { continue }
-        let agent = agentElementSnapshotSource(element)
-        guard let pixels = AgentSnapshotPolicy.display(scale: displayScale).pixelSize(for: agent) else {
-          throw SceneRenderError.resourceLimit
-        }
-        rasters[owner] = try await prepareRaster(agent, requestedScale: pixels.width / agent.frame.width)
       }
       return rasters
     } catch {
@@ -288,6 +321,11 @@ final class SceneCompositionRenderer {
   }
 
   func finishPreparation() { webPreparation?.close(); webPreparation = nil }
+  func finishPreparationAndDrain() async throws {
+    guard let preparation = webPreparation else { return }
+    webPreparation = nil
+    try await preparation.closeAndDrain()
+  }
   isolated deinit { finishPreparation() }
 
   private func checkPreparation() throws {

@@ -467,6 +467,30 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
   }
 
   @MainActor
+  func testFirstConfirmedPairMotionIsNotDiscardedAtRecognition() {
+    for direction: CGFloat in [-1, 1] {
+      let gate = NotebookInputGate(), view = UIView(frame: .init(x: 0, y: 0, width: 500, height: 500))
+      let recognizer = TwoFingerPaperGestureRecognizer()
+      recognizer.inputGate = gate; view.addGestureRecognizer(recognizer)
+      let first = PairMotionTouch(x: 60), second = PairMotionTouch(x: 300), event = UIEvent()
+      recognizer.touchesBegan([first], with: event)
+      first.point.x = 100
+      recognizer.touchesMoved([first], with: event)
+      recognizer.touchesBegan([second], with: event)
+      first.point.x -= 4 * direction; second.point.x += 4 * direction
+      first.time = 1.1; second.time = 1.1
+      recognizer.touchesMoved([first, second], with: event)
+      XCTAssertEqual(recognizer.intent, .magnification)
+      XCTAssertEqual(recognizer.startCentroidValue, CGPoint(x: 200, y: 200))
+      XCTAssertEqual(recognizer.magnification, 1 + 0.04 * direction, accuracy: 0.0001,
+        "Recognition owns the measured motion from the established pair, not a second zero baseline")
+      recognizer.touchesEnded([first, second], with: event)
+      XCTAssertEqual(recognizer.magnification, 1 + 0.04 * direction, accuracy: 0.0001)
+      view.removeGestureRecognizer(recognizer)
+    }
+  }
+
+  @MainActor
   func testOneRecognizerOwnsTheWholeTwoFingerSequence() {
     let host = UIView(frame: CGRect(x: 0, y: 0, width: 800, height: 1_100))
     let scene = UIView(frame: host.bounds)
@@ -494,4 +518,13 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
       }
     )
   }
+}
+
+@MainActor
+private final class PairMotionTouch: UITouch {
+  var point: CGPoint, time: TimeInterval = 1
+  init(x: CGFloat) { point = .init(x: x, y: 200); super.init() }
+  override var timestamp: TimeInterval { time }
+  override var type: UITouch.TouchType { .direct }
+  override func location(in view: UIView?) -> CGPoint { point }
 }

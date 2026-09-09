@@ -5,27 +5,90 @@ import XCTest
 
 final class SceneRenderResourcesTests: XCTestCase {
   @MainActor
+  func testInteractiveHalfCountsPinnedRastersAndTemporaryPassiveWorkWithoutReservingTwice() throws {
+    let raster = image(), cost = try byteCost(raster)
+    let resources = SceneRenderResources(byteLimit: cost * 4, profile: .interactive)
+    XCTAssertEqual(resources.passiveByteLimit, cost * 2)
+    XCTAssertTrue(resources.store(raster, for: element("shown")))
+    let shown = try XCTUnwrap(resources.retainRaster(for: element("shown")))
+    let scratch = try XCTUnwrap(resources.reserveDerivedBytes(cost, priority: .passive))
+    XCTAssertEqual(resources.residentBytes + resources.passiveReservedBytes, resources.passiveByteLimit)
+    XCTAssertNil(resources.reserveDerivedBytes(1, priority: .passive))
+    XCTAssertFalse(resources.rasterAdmission.fits(additionalBytes: 1, additionalCount: 0))
+    XCTAssertFalse(resources.store(raster, for: element("would-take-input")))
+    let pen = try XCTUnwrap(resources.reserveDerivedBytes(cost * 2, priority: .input))
+    XCTAssertEqual(resources.residentBytes + resources.reservedBytes, resources.byteLimit)
+    XCTAssertNil(resources.reserveDerivedBytes(1, priority: .input))
+    XCTAssertTrue(shown.image === raster)
+    scratch.release(); pen.release(); shown.release()
+    XCTAssertEqual(resources.passiveReservedBytes, 0)
+    XCTAssertEqual(resources.reservedBytes, 0)
+  }
+
+  @MainActor
+  func testInputCanBorrowUnusedPassiveSpaceButPassiveCannotBorrowTheProtectedHalf() throws {
+    let resources = SceneRenderResources(byteLimit: 1_024, profile: .interactive)
+    XCTAssertNil(resources.reserveDerivedBytes(513, priority: .passive))
+    let input = try XCTUnwrap(resources.reserveDerivedBytes(1_024, priority: .input))
+    XCTAssertEqual(resources.reservedBytes, resources.byteLimit)
+    XCTAssertEqual(resources.passiveReservedBytes, 0)
+    input.release()
+    let passive = try XCTUnwrap(resources.reserveDerivedBytes(512, priority: .passive))
+    let firstContact = try XCTUnwrap(resources.reserveDerivedBytes(512, priority: .input))
+    passive.release(); firstContact.release()
+    XCTAssertEqual(resources.reservedBytes, 0)
+  }
+
+  @MainActor
+  func testPhysicalHandoffChangesRolesAtomicallyAndSubmittedBytesOutliveTheOwnerLease() throws {
+    let resources = SceneRenderResources(byteLimit: 1_024, profile: .interactive)
+    let parentID = ScenePhysicalOwner.boardInk(UUID()), childID = ScenePhysicalOwner.boardInk(UUID())
+    let parent = try XCTUnwrap(resources.reservePhysicalOwners([parentID], priority: .input))
+    let child = try XCTUnwrap(resources.reservePhysicalOwners([childID], priority: .passive))
+    let parentBytes = try XCTUnwrap(resources.reserveDerivedBytes(512, priority: .input, owner: parent))
+    let childBytes = try XCTUnwrap(resources.reserveDerivedBytes(512, priority: .passive, owner: child))
+    XCTAssertFalse(resources.updatePhysicalPriorities([parentID: .passive]))
+    XCTAssertEqual(parent.allocationPriority, .input)
+    XCTAssertEqual(child.allocationPriority, .passive)
+    XCTAssertEqual(resources.passiveReservedBytes, 512)
+    XCTAssertTrue(resources.updatePhysicalPriorities([parentID: .passive, childID: .input]))
+    XCTAssertEqual(parent.allocationPriority, .passive)
+    XCTAssertEqual(child.allocationPriority, .input)
+    XCTAssertEqual(resources.passiveReservedBytes, 512)
+    parent.release(); child.release()
+    XCTAssertEqual(resources.activePhysicalOwnerCount, 2,
+      "Submitted allocations are still real physical owners after UI teardown")
+    parentBytes.release()
+    XCTAssertEqual(resources.passiveReservedBytes, 0)
+    XCTAssertEqual(resources.reservedBytes, 512)
+    XCTAssertEqual(resources.activePhysicalOwnerCount, 1)
+    childBytes.release()
+    XCTAssertEqual(resources.reservedBytes, 0)
+    XCTAssertEqual(resources.activePhysicalOwnerCount, 0)
+  }
+
+  @MainActor
   func testGeometryBuffersAndRastersHaveOneBudgetButNotOneEntryCount() throws {
     let resources = SceneRenderResources(byteLimit: 1_024, maximumRasterCount: 0)
-    let first = try XCTUnwrap(resources.reserveDerivedBytes(512))
-    let second = try XCTUnwrap(resources.reserveDerivedBytes(512))
+    let first = try XCTUnwrap(resources.reserveDerivedBytes(512, priority: .input))
+    let second = try XCTUnwrap(resources.reserveDerivedBytes(512, priority: .input))
     XCTAssertEqual(resources.reservedBytes, 1_024)
-    XCTAssertNil(resources.reserveDerivedBytes(1))
+    XCTAssertNil(resources.reserveDerivedBytes(1, priority: .input))
     XCTAssertNil(resources.reserveRaster(pixelWidth: 1, pixelHeight: 1))
     first.release()
-    let third = try XCTUnwrap(resources.reserveDerivedBytes(512))
+    let third = try XCTUnwrap(resources.reserveDerivedBytes(512, priority: .input))
     second.release(); third.release()
     XCTAssertEqual(resources.reservedBytes, 0)
-    XCTAssertNil(resources.reserveDerivedBytes(0))
-    XCTAssertNil(resources.reserveDerivedBytes(-1))
-    XCTAssertNil(resources.reserveDerivedBytes(Int.max))
+    XCTAssertNil(resources.reserveDerivedBytes(0, priority: .input))
+    XCTAssertNil(resources.reserveDerivedBytes(-1, priority: .input))
+    XCTAssertNil(resources.reserveDerivedBytes(Int.max, priority: .input))
   }
 
   @MainActor
   func testRasterLRUEvictsOnlyTheLeastRecentlyUsedUnretainedImage() throws {
     let raster = image()
     let cost = try byteCost(raster)
-    let resources = SceneRenderResources(byteLimit: cost * 2)
+    let resources = SceneRenderResources(byteLimit: cost * 2, profile: .headless)
     let a = element("a"), b = element("b"), c = element("c")
     XCTAssertTrue(resources.store(raster, for: a))
     XCTAssertTrue(resources.store(raster, for: b))
@@ -41,7 +104,7 @@ final class SceneRenderResourcesTests: XCTestCase {
   @MainActor
   func testRetainedRasterRefusesNewAllocationUntilItsFinalLeaseEnds() throws {
     let raster = image(), cost = try byteCost(raster)
-    let resources = SceneRenderResources(byteLimit: cost)
+    let resources = SceneRenderResources(byteLimit: cost, profile: .headless)
     let a = element("pinned"), b = element("replacement")
     XCTAssertTrue(resources.store(raster, for: a))
     let first = try XCTUnwrap(resources.retainRaster(for: a))
@@ -61,7 +124,7 @@ final class SceneRenderResourcesTests: XCTestCase {
   @MainActor
   func testRasterLeaseDeinitializationReleasesItsPin() throws {
     let raster = image(), cost = try byteCost(raster)
-    let resources = SceneRenderResources(byteLimit: cost)
+    let resources = SceneRenderResources(byteLimit: cost, profile: .headless)
     let a = element("a"), b = element("b")
     XCTAssertTrue(resources.store(raster, for: a))
     var lease = resources.retainRaster(for: a)
@@ -74,7 +137,7 @@ final class SceneRenderResourcesTests: XCTestCase {
   @MainActor
   func testReservationChargesBeforeSnapshotAndIsConsumedExactlyOnce() throws {
     let raster = image(), cost = try byteCost(raster)
-    let resources = SceneRenderResources(byteLimit: cost)
+    let resources = SceneRenderResources(byteLimit: cost, profile: .headless)
     let reservation = try XCTUnwrap(resources.reserveRaster(pixelWidth: 16, pixelHeight: 16))
     XCTAssertEqual(resources.reservedBytes, cost)
     XCTAssertNil(resources.reserveRaster(pixelWidth: 16, pixelHeight: 16))
@@ -91,7 +154,7 @@ final class SceneRenderResourcesTests: XCTestCase {
   @MainActor
   func testOversizedRequestDoesNotEvictAUsefulRaster() throws {
     let raster = image(), cost = try byteCost(raster)
-    let resources = SceneRenderResources(byteLimit: cost)
+    let resources = SceneRenderResources(byteLimit: cost, profile: .headless)
     let source = element("kept")
     XCTAssertTrue(resources.store(raster, for: source))
     XCTAssertNil(resources.reserveRaster(pixelWidth: 1000, pixelHeight: 1000))
@@ -101,7 +164,7 @@ final class SceneRenderResourcesTests: XCTestCase {
 
   @MainActor
   func testMultisampleInkReservationAccountsEverySimultaneousBacking() throws {
-    let resources = SceneRenderResources(byteLimit: 8 * 1024 * 1024)
+    let resources = SceneRenderResources(byteLimit: 8 * 1024 * 1024, profile: .headless)
     let tile = try XCTUnwrap(resources.reserveRaster(pixelWidth: 512, pixelHeight: 512, backingCount: 8))
     XCTAssertEqual(resources.reservedBytes, resources.byteLimit)
     XCTAssertNil(resources.reserveRaster(pixelWidth: 1, pixelHeight: 1))
@@ -117,7 +180,7 @@ final class SceneRenderResourcesTests: XCTestCase {
   @MainActor
   func testDocumentAndAgentRastersShareTheSameByteBudget() throws {
     let raster = image(), cost = try byteCost(raster)
-    let resources = SceneRenderResources(byteLimit: cost)
+    let resources = SceneRenderResources(byteLimit: cost, profile: .headless)
     let agent = element("agent")
     let document = SceneRasterSource.document(id: UUID(), token: "content-state-page")
     XCTAssertTrue(resources.store(raster, for: agent))
