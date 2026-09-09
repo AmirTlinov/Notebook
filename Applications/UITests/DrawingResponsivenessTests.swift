@@ -54,6 +54,16 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(element.waitForExistence(timeout:5))
     element.tap()
     XCTAssertTrue(app.buttons["delete-agent-element"].waitForExistence(timeout:3))
+    let card = app.descendants(matching: .any).matching(identifier: "agent-question-card").firstMatch
+    XCTAssertTrue(card.exists, "Editing does not dismiss the pinned question or discard its draft")
+    for id in ["move-agent-element", "delete-agent-element", "resize-agent-element"] {
+      let handle = app.descendants(matching: .any).matching(identifier: id).firstMatch
+      XCTAssertTrue(handle.isHittable)
+      XCTAssertFalse(card.frame.intersects(handle.frame), "The question must not cover \(id)")
+    }
+    let editingProof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    editingProof.name = "pinned-question-keeps-editing-handles-reachable"
+    editingProof.lifetime = .keepAlways; add(editingProof)
     let initial = element.frame
     app.descendants(matching: .any)["move-agent-element"].coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).press(forDuration:0.05,
       thenDragTo:app.descendants(matching: .any)["move-agent-element"].coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).withOffset(.init(dx:100,dy:60)),withVelocity:.slow,thenHoldForDuration:0)

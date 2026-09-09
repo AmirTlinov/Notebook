@@ -25,6 +25,18 @@ final class NotebookQuestionPlacementTests: XCTestCase {
     XCTAssertFalse(card.intersects(selection))
   }
 
+  func testPinnedRegionDoesNotCoverTheDifferentElementBeingEdited() {
+    let area = CGRect(x: 18, y: 18, width: 784, height: 1080)
+    let pinned = CGRect(x: 180, y: 212, width: 190, height: 83)
+    let moveAndDelete = CGRect(x: 440, y: 229, width: 94, height: 44)
+    let resize = CGRect(x: 503, y: 466, width: 44, height: 44)
+    let card = NotebookQuestionPlacement.frame(size: .init(width: 420, height: 230),
+      in: area, near: pinned, avoiding: [moveAndDelete, resize])
+    XCTAssertTrue(area.contains(card))
+    XCTAssertFalse(card.intersects(moveAndDelete))
+    XCTAssertFalse(card.intersects(resize))
+  }
+
   func testKeyboardAndRotationLimitTheCardNotThePhysicalSelection() {
     let selection = CGRect(x: 380, y: 700, width: 140, height: 160)
     for area in [CGRect(x: 18, y: 18, width: 800, height: 510), CGRect(x: 18, y: 18, width: 1150, height: 260)] {

@@ -8,6 +8,7 @@ struct NotebookRootView: View {
   @State private var collaborationHeight: CGFloat = 0
   @State private var penControlsFrame = CGRect.zero
   @State private var pairingFrame = CGRect.zero
+  @State private var elementControlFrames: [CGRect] = []
 
   var body: some View {
     ZStack {
@@ -89,6 +90,7 @@ struct NotebookRootView: View {
     }
     .ignoresSafeArea()
     .onGeometryChange(for: CGPoint.self) { $0.frame(in: .global).origin } action: { sceneOrigin = $0 }
+    .onPreferenceChange(ElementEditingControlFrames.self) { elementControlFrames = $0 }
     // Only the composer follows the keyboard safe area. The drawing geometry
     // remains the full physical viewport while system input is open.
     NotebookCollaborationView()
@@ -97,7 +99,7 @@ struct NotebookRootView: View {
       .padding(18)
     if let question = model.agentQuestion {
       NotebookQuestionOverlay(question: question, sceneOrigin: sceneOrigin,
-        footerHeight: collaborationHeight, controls: [penControlsFrame, pairingFrame]).id(question.id)
+        footerHeight: collaborationHeight, controls: [penControlsFrame, pairingFrame] + elementControlFrames).id(question.id)
     }
     }
     .preferredColorScheme(.light)

@@ -1,6 +1,24 @@
 import NotebookCore
 import SwiftUI
 
+/// Editing handles publish their actual layout bounds. The question composer
+/// may avoid these controls without owning the element's selection or camera.
+struct ElementEditingControlFrames: PreferenceKey {
+  static let defaultValue: [CGRect] = []
+  static func reduce(value: inout [CGRect], nextValue: () -> [CGRect]) {
+    value.append(contentsOf: nextValue())
+  }
+}
+
+private struct ElementEditingControlBounds: View {
+  var body: some View {
+    GeometryReader { geometry in
+      Color.clear.preference(key: ElementEditingControlFrames.self,
+        value: [geometry.frame(in: .global)])
+    }.allowsHitTesting(false)
+  }
+}
+
 /// The content accepts its own controls; explicit frame handles own editing gestures.
 struct EditableElementContainer<Content: View>: View {
   let isEditingEnabled: Bool
@@ -39,7 +57,8 @@ struct EditableElementContainer<Content: View>: View {
           Button(role: .destructive, action: onDelete) {
             Image(systemName: "trash").frame(width: 44, height: 44).background(.regularMaterial, in: Circle())
           }.buttonStyle(.plain).accessibilityLabel("Удалить элемент").accessibilityIdentifier("delete-agent-element")
-        }.font(.system(size: 17, weight: .medium)).offset(x: 16, y: -48)
+        }.font(.system(size: 17, weight: .medium))
+          .background(ElementEditingControlBounds()).offset(x: 16, y: -48)
       }
     }
     .overlay {
@@ -54,6 +73,7 @@ struct EditableElementContainer<Content: View>: View {
       if isSelected {
         Image(systemName: "arrow.up.left.and.arrow.down.right")
           .frame(width: 44, height: 44).background(.regularMaterial, in: Circle()).contentShape(Circle())
+          .background(ElementEditingControlBounds())
           .offset(x: 16 + resizeDelta.x * coordinateScale, y: 16 + resizeDelta.y * coordinateScale)
           .gesture(DragGesture(minimumDistance: 3)
             .onChanged { onResizeChanged(logicalTranslation($0.translation)) }
