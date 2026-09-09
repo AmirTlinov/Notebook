@@ -79,6 +79,79 @@ struct NotebookIPCTests {
     #expect(calls.value == 0)
   }
 
+  @Test func aRawMalformedPeerUsesTheProductionSocketAdmissionPolicy() async throws {
+    let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
+    let calls = IPCCount()
+    let server = NotebookIPCServer(socketURL: endpoint.socket) { _ in calls.increment(); return .bool(true) }
+    try server.start(); defer { server.stop() }
+    let policy = try await blockingIPC {
+      let fd = try connectIPC(endpoint.socket); defer { close(fd) }
+      var receive = timeval(), send = timeval(), noSignal: Int32 = 0
+      var timeSize = socklen_t(MemoryLayout<timeval>.size), intSize = socklen_t(MemoryLayout<Int32>.size)
+      guard getsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &receive, &timeSize) == 0,
+        getsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &send, &timeSize) == 0,
+        getsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, &intSize) == 0 else {
+        throw IPCWaitFailure("Reading the raw peer's socket policy failed: errno=\(errno)")
+      }
+      let flags = fcntl(fd, F_GETFD)
+      guard flags >= 0 else { throw IPCWaitFailure("Reading descriptor flags failed: errno=\(errno)") }
+      return (receive.tv_sec, send.tv_sec, flags & FD_CLOEXEC != 0, noSignal)
+    }
+    #expect(policy.0 >= Int(NotebookIPC.requestTimeout))
+    #expect(policy.1 >= Int(NotebookIPC.requestTimeout))
+    #expect(policy.2)
+    #expect(policy.3 == 1)
+    #expect(calls.value == 0)
+  }
+
+  @Test func frameReaderRejectsImpossibleHeadersWhileThePeerKeepsItsBodyOpen() async throws {
+    for size in [UInt32(0), UInt32(NotebookIPC.maximumFrameBytes + 1), UInt32.max] {
+      let code = try await blockingIPC {
+        try withIPCSocketPair { reader, peer in
+          var prefix = size.bigEndian
+          try writeRawIPCBytes(withUnsafeBytes(of: &prefix) { Data($0) }, fd: peer)
+          // The peer stays open and sends no body. Reading any declared payload
+          // would wait for the socket deadline instead of rejecting its header.
+          do { _ = try SocketIO.readFrame(fd: reader); return "success" }
+          catch let error as CollaborationError { return error.code }
+        }
+      }
+      #expect(code == "resource_limit")
+    }
+  }
+
+  @Test func frameReaderReturnsExactlyTheRawPeerPayload() async throws {
+    let payload = Data([0, 255, 128, 240, 159, 146])
+    let result = try await blockingIPC {
+      try withIPCSocketPair { reader, peer in
+        // Hand-authored bytes keep this control independent from writeFrame
+        // and JSON command encoding, including zero and non-UTF8 payload bytes.
+        try writeRawIPCBytes(Data([0, 0, 0, 6]) + payload, fd: peer)
+        guard shutdown(peer, SHUT_WR) == 0 else {
+          throw IPCWaitFailure("Closing the peer's write half failed: errno=\(errno)")
+        }
+        return try SocketIO.readFrame(fd: reader)
+      }
+    }
+    #expect(result == payload)
+  }
+
+  @Test func frameReaderRejectsTruncatedHeaderAndPayloadWithoutDecoding() async throws {
+    for bytes in [Data([0, 0]), Data([0, 0, 0, 2, 1])] {
+      let code = try await blockingIPC {
+        try withIPCSocketPair { reader, peer in
+          try writeRawIPCBytes(bytes, fd: peer)
+          guard shutdown(peer, SHUT_WR) == 0 else {
+            throw IPCWaitFailure("Closing the peer's write half failed: errno=\(errno)")
+          }
+          do { _ = try SocketIO.readFrame(fd: reader); return "success" }
+          catch let error as CollaborationError { return error.code }
+        }
+      }
+      #expect(code == "ipc_unavailable")
+    }
+  }
+
   @Test func stopAcknowledgesOnlyAfterAnAcceptedWriterAndDisconnectedClientHaveDrained() async throws {
     let endpoint = try IPCEndpoint()
     var drained = true
@@ -146,7 +219,8 @@ struct NotebookIPCTests {
     do { fd = try connectIPC(endpoint.socket) }
     catch { await server.stopAndDrain(); throw error }
     defer { close(fd) }
-    _ = Data([0, 0]).withUnsafeBytes { write(fd, $0.baseAddress!, $0.count) }
+    do { try writeRawIPCBytes(Data([0, 0]), fd: fd) }
+    catch { await server.stopAndDrain(); throw error }
     let accepted = await waitForIPC { server.activeConnectionCount == 1 }
     #expect(accepted)
     let start = ContinuousClock.now
@@ -271,34 +345,44 @@ private func waitForIPC(_ condition: () -> Bool) async -> Bool {
 }
 
 private func connectIPC(_ url: URL) throws -> Int32 {
-  let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-  guard fd >= 0 else { throw CocoaError(.fileReadUnknown) }
-  var address = sockaddr_un(); address.sun_family = sa_family_t(AF_UNIX)
-  let bytes = Array(url.path.utf8CString)
-  withUnsafeMutableBytes(of: &address.sun_path) { buffer in bytes.withUnsafeBytes { buffer.copyBytes(from: $0) } }
-  let connected = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) } }
-  guard connected == 0 else { close(fd); throw CocoaError(.fileReadUnknown) }
-  return fd
+  try SocketIO.validateDirectory(url.deletingLastPathComponent(), create: false)
+  try SocketIO.validateSocket(url)
+  let fd = try SocketIO.makeSocket()
+  do {
+    try SocketIO.connect(fd, url: url)
+    try SocketIO.authenticate(fd)
+    return fd
+  } catch { close(fd); throw error }
 }
 
 private func oversizedFrameResponse(_ url: URL) throws -> JSONValue {
   let fd = try connectIPC(url); defer { close(fd) }
-  var timeout = timeval(tv_sec: 3, tv_usec: 0)
-  _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-  _ = Data([255, 255, 255, 255]).withUnsafeBytes { write(fd, $0.baseAddress!, $0.count) }
-  func take(_ count: Int) throws -> Data {
-    var output = Data(count: count)
-    let completed = output.withUnsafeMutableBytes { buffer -> Bool in
-      var offset = 0
-      while offset < count {
-        let n = read(fd, buffer.baseAddress!.advanced(by: offset), count - offset)
-        if n <= 0 { return false }; offset += n
-      }
-      return true
-    }
-    guard completed else { throw CocoaError(.fileReadUnknown) }; return output
+  // Only the deliberately invalid request bypasses production framing. The
+  // response has the same bounds, interrupt handling and deadline as the client.
+  try writeRawIPCBytes(Data([255, 255, 255, 255]), fd: fd)
+  return try JSONDecoder().decode(JSONValue.self, from: SocketIO.readFrame(fd: fd))
+}
+
+private func withIPCSocketPair<Value>(_ operation: (Int32, Int32) throws -> Value) throws -> Value {
+  var descriptors: [Int32] = [-1, -1]
+  guard socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0 else {
+    throw IPCWaitFailure("Creating the controlled peer failed: errno=\(errno)")
   }
-  let length = try take(4).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
-  guard length <= 65_536 else { throw CocoaError(.fileReadTooLarge) }
-  return try JSONDecoder().decode(JSONValue.self, from: take(Int(length)))
+  defer { close(descriptors[0]); close(descriptors[1]) }
+  try SocketIO.configure(descriptors[0]); try SocketIO.configure(descriptors[1])
+  return try operation(descriptors[0], descriptors[1])
+}
+
+/// A malformed peer alone writes unframed bytes; receiving them still belongs
+/// to SocketIO. Check every byte and preserve the actual syscall on failure.
+private func writeRawIPCBytes(_ bytes: Data, fd: Int32) throws {
+  try bytes.withUnsafeBytes { buffer in
+    var offset = 0
+    while offset < buffer.count {
+      let written = Darwin.write(fd, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
+      if written < 0 && errno == EINTR { continue }
+      guard written > 0 else { throw IPCWaitFailure("Writing raw peer bytes failed: result=\(written), errno=\(errno)") }
+      offset += written
+    }
+  }
 }

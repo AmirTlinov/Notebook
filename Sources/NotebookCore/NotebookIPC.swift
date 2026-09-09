@@ -218,7 +218,7 @@ private final class IPCJob: @unchecked Sendable {
   func shutdown() { lock.withLock { if !workerFinished { Darwin.shutdown(fd, SHUT_RDWR) } } }
 }
 
-private enum SocketIO {
+enum SocketIO {
   static func failure(_ message: String) -> CollaborationError { .init("ipc_unavailable", message) }
   static func makeSocket() throws -> Int32 {
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
