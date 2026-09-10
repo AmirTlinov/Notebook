@@ -1,3 +1,5 @@
+import NotebookCore
+
 import Foundation
 import NotebookCodex
 

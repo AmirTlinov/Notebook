@@ -6,12 +6,6 @@ public enum CodexBridgeEvent: Sendable {
   case unavailable(CodexBridgeError)
 }
 
-public enum CodexUserDecision: Sendable {
-  case allowOnce, decline
-  case answers([String: [String]])
-  case elicitation(JSONValue)
-}
-
 /// All model execution goes to the discovered desktop owner, with its settings unchanged.
 public actor CodexDesktopBridge {
   public nonisolated let events: AsyncStream<CodexBridgeEvent>

@@ -36,54 +36,6 @@ extension JSONValue {
   }
 }
 
-public struct CodexTask: Codable, Equatable, Sendable, Identifiable {
-  public let id: String
-  public let title: String
-  public let cwd: String
-}
-
-public struct CodexTaskPage: Codable, Equatable, Sendable {
-  public let tasks: [CodexTask]
-  public let nextCursor: String?
-}
-
-public struct CodexMessage: Codable, Equatable, Sendable, Identifiable {
-  public enum Role: String, Codable, Sendable { case user, assistant }
-  public let id: String
-  public let turnID: String
-  public let clientID: String?
-  public let role: Role
-  public let text: String
-}
-
-public struct CodexUserRequest: Codable, Equatable, Sendable, Identifiable {
-  // Request IDs are native JSON-RPC string OR integer IDs, not newly assigned UUIDs.
-  public let nativeID: JSONValue
-  public let method: String
-  public let turnID: String
-  public let parameters: JSONValue
-  public var id: String { (try? String(data: JSONEncoder().encode(nativeID), encoding: .utf8)) ?? "" }
-}
-
-public struct CodexConversation: Codable, Equatable, Sendable {
-  public let threadID: String
-  public let revision: Int
-  public let title: String
-  public let ready: Bool
-  public let busy: Bool
-  public let activeTurnID: String?
-  public let messages: [CodexMessage]
-  public let requests: [CodexUserRequest]
-  /// Native user items with a real turn ID, never an optimistic local composer item.
-  public let acceptedMessages: [String: String]
-  public let turnStatuses: [String: String]
-}
-
-public struct CodexHistoryPage: Codable, Equatable, Sendable {
-  public let messages: [CodexMessage]
-  public let nextCursor: String?
-}
-
 /// Implements the desktop's revisioned Immer patch contract. A failed batch publishes nothing.
 struct CodexStreamState: Sendable {
   let threadID: String
@@ -211,6 +163,6 @@ struct CodexStreamState: Sendable {
     default: return nil
     }
     return CodexMessage(id: id, turnID: turnID, clientID: item["clientId"]?.string, role: role,
-      text: String(text.prefix(16_384)))
+      text: String(text.prefix(16_384)), isTruncated: text.count > 16_384)
   }
 }

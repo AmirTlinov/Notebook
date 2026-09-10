@@ -4,7 +4,7 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  public static let protocolVersion = 1
+  public static let protocolVersion = 2
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 180 * 1_024
   public static let maximumUnacknowledgedFrames = 16
@@ -51,13 +51,13 @@ public struct NotebookPairingInvitation: Codable, Equatable, Sendable {
 
   public func encoded() throws -> String {
     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-    return "notebook-pair:v1:" + (try encoder.encode(self)).base64EncodedString()
+    return "notebook-pair:v2:" + (try encoder.encode(self)).base64EncodedString()
       .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
       .replacingOccurrences(of: "=", with: "")
   }
 
   public static func decode(_ text: String, now: Date = Date()) throws -> Self {
-    let prefix = "notebook-pair:v1:"
+    let prefix = "notebook-pair:v2:"
     guard text.utf8.count <= 2_048, text.hasPrefix(prefix) else { throw NotebookTransportError.invalidPairingInvitation }
     var encoded = String(text.dropFirst(prefix.count)).replacingOccurrences(of: "-", with: "+")
       .replacingOccurrences(of: "_", with: "/")
@@ -78,12 +78,14 @@ public enum NotebookTransportTransient: Codable, Equatable, Sendable {
   case presence(PresenceEnvelope)
   case inputActivity(NotebookInputActivity)
   case documentPageSelection(DocumentPageSelectionRequest)
+  case codex(NotebookChatEnvelope)
 
   public func isValid(from identity: NotebookTransportIdentity) -> Bool {
     switch self {
     case .presence(let value): value.isValid
     case .inputActivity(let value): value.isValid && value.deviceID == identity.deviceID
     case .documentPageSelection(let value): value.isValid
+    case .codex(let value): value.isValid(from: identity.deviceID)
     }
   }
 
@@ -92,6 +94,7 @@ public enum NotebookTransportTransient: Codable, Equatable, Sendable {
     case .inputActivity: 0
     case .presence: 1
     case .documentPageSelection: 2
+    case .codex: 3
     }
   }
 }

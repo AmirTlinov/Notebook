@@ -141,7 +141,7 @@ extension NotebookStore {
           }
           incoming[file, default: []].append(row)
         } else {
-          guard !file.hasPrefix("agent/"), !record.address.hasPrefix("workspace.json#/pageOrderNodes/@") else { throw NotebookStorageError.invalidTransaction("agent history is immutable") }
+          guard !file.hasPrefix("agent/"), !file.hasPrefix("collaboration/attention/"), !record.address.hasPrefix("workspace.json#/pageOrderNodes/@") else { throw NotebookStorageError.invalidTransaction("agent history is immutable") }
           removals[file, default: []].insert(record.address)
         }
       }
@@ -207,6 +207,10 @@ extension NotebookStore {
         } else if file.hasPrefix("collaboration/delivery/") {
           let receipt = try value.decode(DeviceActionReceipt.self)
           writes[file] = try .encode(old?.decode(DeviceActionReceipt.self).merging(receipt) ?? receipt)
+        } else if file.hasPrefix("collaboration/attention/") {
+          guard old == nil || old == value else { throw NotebookStorageError.transactionConflict }
+          try value.decode(AgentPinnedSource.self).validate()
+          writes[file] = value
         } else if file.hasPrefix("agent/") {
           writes[file] = try mergeAgentRecord(file: file, value: value, previous: old)
         } else if file == "collaboration/selection.json" {
@@ -237,6 +241,9 @@ extension NotebookStore {
       // validator. A page, response chunk or receipt does not scan all catalog
       // members merely to prove an unchanged archive's dependencies again.
       try publishRecords(writes: writes, removals: removedFiles)
+      for (file, value) in writes where file.hasPrefix("collaboration/attention/") {
+        try validateAttentionEvidence(file: file, value: value, previous: before[file])
+      }
       try validateReplicatedAgentDependencies(writes: writes, previous: before)
       try database.run("INSERT INTO received_transactions(transaction_id,manifest_hash,peer_id,sequence) VALUES(?,?,?,?)", [.text(transaction), .text(change.manifestHash), .text(peer), .integer(Int64(change.sequence))])
       try database.run("INSERT INTO peer_cursors(peer_id,direction,sequence) VALUES(?,'incoming',?) ON CONFLICT(peer_id,direction) DO UPDATE SET sequence=excluded.sequence", [.text(peer), .integer(Int64(change.sequence))])

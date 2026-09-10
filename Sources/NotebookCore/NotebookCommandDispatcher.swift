@@ -55,12 +55,13 @@ public struct NotebookReadQuery: Codable, Sendable {
   public enum Kind: String, Codable, Sendable {
     case workspaceHeader, itemHeaders, itemHeader, workingSet, sceneWindow, scenePaintOrder
     case page, document, documentState, boardItem, boardElement, ownerBoard, notebookPages, notebookDirectory, notebookPosition, spatialInk, presence
-    case contexts, actions, currentViewReceipt, pageVisionReceipt, targetRenderReceipt
+    case attentionEvidence, contexts, actions, currentViewReceipt, pageVisionReceipt, targetRenderReceipt
     case renderRequests, delivery, actionSnapshots, runtime
   }
   public var kind: Kind
   public var id: UUID?
   public var after: UUID?
+  public var referenceID: UUID?
   public var revision: String?
   public var limit: Int?
   public var itemIDs: [UUID]?
@@ -151,7 +152,7 @@ public struct NotebookCommandDispatcher: Sendable {
           + (query.itemIDs ?? []) + (query.boardIDs ?? [])
       })
       let windowPages = queries.filter { $0.kind == .notebookPages }.reduce(0) { $0 + ($1.pages?.count ?? 0) }
-      guard pages.count + windowPages <= 4, heavy.count <= 8 else { throw invalid("resource_limit", "Один срез удерживает до четырёх листов и восьми тяжёлых владельцев.") }
+      guard pages.count + windowPages <= 4, heavy.count <= 8, queries.filter({ $0.kind == .attentionEvidence }).count <= 4 else { throw invalid("resource_limit", "Один срез удерживает до четырёх листов и восьми тяжёлых владельцев.") }
       return try store.readTransaction { snapshot in
         let cursor = String(try snapshot.currentReadCursor())
         guard request.expectedCursor == nil || request.expectedCursor == cursor else {
@@ -224,6 +225,7 @@ public struct NotebookCommandDispatcher: Sendable {
       return try .encode(store.resolveNotebookPage(pageID, in: itemID, expectedVisibleRoot: query.visibleRoot))
     case .spatialInk: return try .encode(store.readSpatialInk(surfaces: query.surfaces ?? []))
     case .presence: return try .encode(store.loadPresence())
+    case .attentionEvidence: return try .encode(store.attentionEvidence(contextID: required(query.id), referenceID: required(query.referenceID)))
     case .contexts: return try .encode(store.sharedContexts(contextID: query.id, limit: boundedLimit(query.limit)))
     case .actions: return try .encode(store.collaborationActions(afterID: query.after, contextID: query.contextID, limit: boundedLimit(query.limit)))
     case .currentViewReceipt: return try .encode(store.loadCurrentViewReceipt())

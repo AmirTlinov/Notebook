@@ -335,6 +335,12 @@ extension NotebookStore {
         try database.run("COMMIT")
       } catch { try? database.run("ROLLBACK"); throw error }
     }
+    // Device-local chat delivery is deliberately absent from the shared content manifest.
+    try database.run("CREATE TABLE IF NOT EXISTS chat_jobs(ordinal INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,author TEXT NOT NULL,state TEXT NOT NULL,value BLOB NOT NULL)")
+    try database.run("CREATE INDEX IF NOT EXISTS chat_pending ON chat_jobs(state,ordinal)")
+    try database.run("CREATE INDEX IF NOT EXISTS chat_author ON chat_jobs(author,ordinal)")
+    try database.run("CREATE TABLE IF NOT EXISTS chat_panel(id TEXT PRIMARY KEY,value BLOB NOT NULL)")
+
   }
 
   /// All typed reads in the closure observe the same WAL snapshot. A read
@@ -350,7 +356,7 @@ extension NotebookStore {
     catch { try? database.run("ROLLBACK"); throw error }
   }
 
-  func commandTransaction<T>(_ operation: () throws -> T) throws -> T {
+  func commandTransaction<T>(advancesReadRevision: Bool = true, _ operation: () throws -> T) throws -> T {
     if let currentSQL {
       guard currentSQL.writable else { throw NotebookStorageError.readOnlyTransaction }
       return try operation()
@@ -367,7 +373,8 @@ extension NotebookStore {
       try validateChangedOwnership(database: database)
       try refreshBoardFrontier(database: database)
       try refreshReferenceIndex(database: database)
-      if sqlite3_total_changes64(database.handle) > 0 {
+      if !advancesReadRevision, !database.changes.isEmpty { throw NotebookStorageError.invalidTransaction("local chat changed shared content") }
+      if advancesReadRevision && sqlite3_total_changes64(database.handle) > 0 {
         let revision = try currentReadCursor()
         guard revision < UInt64(Int64.max) else { throw NotebookStorageError.limitExceeded("read_revision") }
         try database.run("UPDATE metadata SET value=? WHERE key='read_revision'", [.text(String(revision + 1))])
