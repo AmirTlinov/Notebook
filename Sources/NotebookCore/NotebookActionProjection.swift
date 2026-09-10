@@ -19,6 +19,7 @@ extension NotebookStore {
     var pageIDs = Set<UUID>(), documentIDs = Set<UUID>()
     var elementIDs: [UUID: Set<String>] = [:], creationInkSurfaces = Set<SurfaceID>()
     var spatialActionIDs = Set<UUID>()
+    var stateBlockIDs: [UUID: Set<String>] = [:], fullDocumentIDs = Set<UUID>()
     func include(_ target: CollaborationTarget) throws {
       switch target.kind {
       case .workspace: break
@@ -35,6 +36,11 @@ extension NotebookStore {
     for target in action.operations.map(\.target) + action.expected.map(\.target)
       + action.references.map(\.target) + references.map(\.target) + (action.additionalOwners ?? []) { try include(target) }
     for operation in action.operations {
+      if operation.target.kind == .document {
+        if operation.kind == .setBlockState, let id = operation.id {
+          stateBlockIDs[operation.target.id, default: []].insert(collaborationIdentity(id))
+        } else { fullDocumentIDs.insert(operation.target.id) }
+      }
       if [.createNotebook, .createDocument, .createBoard, .renameItem, .moveItem].contains(operation.kind),
         let id = operation.id.flatMap(UUID.init(uuidString:)) { itemIDs.insert(id) }
       if operation.kind == .createNotebook, let page = operation.values["pageID"]?.string.flatMap(UUID.init(uuidString:)) { pageIDs.insert(page) }
@@ -71,6 +77,7 @@ extension NotebookStore {
         guard let id = operation.id.flatMap(UUID.init(uuidString:)) else { continue }
         creationInkSurfaces.insert(.cover(id))
         if operation.kind == .createBoard { creationInkSurfaces.insert(.board(id)) }
+        if operation.kind == .createDocument { fullDocumentIDs.insert(id) }
       }
     }
     var boardRows: [String: NotebookStoredFragment] = [:]
@@ -135,11 +142,29 @@ extension NotebookStore {
     for id in pageIDs where try hasStoredValue(pageFile(id)) { files[pageFile(id)] = try storedValue(pageFile(id)) }
     for item in items where item.kind == .document {
       let file = documentFile(item.id)
-      if documentIDs.contains(item.id) {
-        if try hasStoredValue(file) { files[file] = try storedValue(file); files[stateFile(item.id)] = try storedValue(stateFile(item.id)) }
+      if fullDocumentIDs.contains(item.id) {
+        files[file] = try storedValue(file)
       } else {
-        let rows = try storedFragments(address: file + "#", descendants: false)
+        var rows = try storedFragments(address: file + "#", descendants: false)
+        // State needs the addressed program's kind and initial value for undo,
+        // not the other programs or the document's historical causal fields.
+        for id in (stateBlockIDs[item.id] ?? []).sorted() {
+          rows += try storedFragments(address: file + "#/blocks/@" + fieldKey([id]))
+        }
         if !rows.isEmpty { files[file] = try NotebookRecordCodec.decode(rows, root: file + "#") }
+      }
+      if documentIDs.contains(item.id) {
+        let file = stateFile(item.id)
+        if receipt?.action.operations.contains(where: { $0.kind == .createDocument && $0.id.flatMap(UUID.init(uuidString:)) == item.id }) == true {
+          // Whole-owner undo still checks every later human adoption.
+          files[file] = try storedValue(file)
+        } else {
+          var rows = try storedFragments(address: file + "#", descendants: false)
+          for id in (stateBlockIDs[item.id] ?? []).sorted() {
+            rows += try storedFragments(address: file + "#/records/@" + fieldKey([id]))
+          }
+          if !rows.isEmpty { files[file] = try NotebookRecordCodec.decode(rows, root: file + "#") }
+        }
       }
     }
     var inkRows = try storedFragments(address: "spatial-ink.json#", descendants: false), seenInk = Set<String>()

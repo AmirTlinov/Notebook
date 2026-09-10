@@ -227,12 +227,13 @@ extension NotebookStore {
         stamp: .init(counter: 1, actor: receipt.id), createdAt: receipt.createdAt)
       writes[contextFile(receipt.action.resolvedContextID)] = try .encode(SharedContext(id: receipt.action.resolvedContextID, entries: [entry]))
     }
-    // The command's catalogue/tree/ink are addressed projections. Publish only
+    // The command's catalogue/tree/ink/state are addressed projections. Publish only
     // fields changed from its baseline; unseen SQL members retain their owners.
-    let projected = writes.filter { ["workspace.json", "board.json", "spatial-ink.json"].contains($0.key) }
+    let projected = writes.filter { before[$0.key] != nil
+      && (["workspace.json", "board.json", "spatial-ink.json"].contains($0.key) || $0.key.hasPrefix("document-states/")) }
     for file in projected.keys { writes[file] = nil }
     try publishCollaboration(writes: writes, removals: before.keys.filter { after[$0] == nil })
-    for file in ["workspace.json", "board.json", "spatial-ink.json"] {
+    for file in projected.keys.sorted() {
       if let old = before[file], let next = projected[file] {
         try publishProjectionEdits(file: file, before: old, after: next)
       }
