@@ -253,32 +253,13 @@ extension NotebookStore {
     var unresolved = movable.filter { !additionalOwners.contains($0.subject.target) }
     guard !unresolved.isEmpty else { return }
     guard let contextID else { throw Self.compositionScopeError(unresolved[0].subject) }
-    let parent = contextFile(contextID) + "#"
-    var after = "", entries = 0
-    while !unresolved.isEmpty {
-      // A reply can contain a long answer. Scope reads only its reference list,
-      // not the answer text or every other context in the archive.
-      let rows = try currentSQL!.rows("""
-        SELECT r.member,length(b.data),CASE WHEN length(b.data)<=2097152 THEN json_extract(CAST(b.data AS TEXT),'$.value.references') END
-        FROM records r JOIN blobs b ON b.hash=r.hash
-        WHERE r.parent=? AND r.collection='entries' AND r.member>? ORDER BY r.member LIMIT 16
-        """, [.text(parent), .text(after)])
-      for row in rows {
-        entries += 1
-        guard entries <= 1_024, let text = row[2].text else { throw NotebookPlacementBudget.exceeded("context_entries") }
-        try budget.inspectMetadata(bytes: Int(row[1].integer!))
-        let references = try JSONDecoder().decode([CollaborationReference].self, from: Data(text.utf8))
-        guard references.count <= 32 else { throw NotebookStorageError.corruptRecord(parent) }
-        for reference in references {
-          unresolved = try unresolved.filter { obstacle in
-            try !Self.compositionScopeContains(obstacle.subject, reference: reference,
-              pageOwner: ownerItemID(ofPage:), boardOwner: ownerBoardID(of:), geometry: { obstacle.source })
-          }
-        }
-        if unresolved.isEmpty { return }
+    for reference in try contextReferences(contextID) {
+      try budget.inspectMetadata(bytes: Self.storageEncoder.encode(reference).count)
+      unresolved = try unresolved.filter { obstacle in
+        try !Self.compositionScopeContains(obstacle.subject, reference: reference,
+          pageOwner: ownerItemID(ofPage:), boardOwner: ownerBoardID(of:), geometry: { obstacle.source })
       }
-      guard rows.count == 16 else { break }
-      after = rows.last![0].text!
+      if unresolved.isEmpty { return }
     }
     if let first = unresolved.first { throw Self.compositionScopeError(first.subject) }
   }

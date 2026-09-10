@@ -2,12 +2,15 @@ import Foundation
 
 extension NotebookStore {
   static func createContextOrderIndex(_ database: NotebookSQLConnection) throws {
-    try database.run("CREATE TABLE context_entry_order(address TEXT PRIMARY KEY REFERENCES records(address) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,context TEXT NOT NULL,counter INTEGER NOT NULL CHECK(counter>=0 AND counter<=9007199254740991),actor TEXT NOT NULL)")
+    try database.run("CREATE TABLE context_entry_order(address TEXT PRIMARY KEY REFERENCES records(address) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,context TEXT NOT NULL,counter INTEGER NOT NULL CHECK(counter>=0 AND counter<=9007199254740991),actor TEXT NOT NULL,author TEXT NOT NULL)")
     try database.run("CREATE INDEX context_causal_order ON context_entry_order(context,counter,actor,address)")
+    try database.run("CREATE INDEX context_author_order ON context_entry_order(context,author,counter,actor,address)")
+    try database.run("CREATE TABLE context_references(address TEXT NOT NULL REFERENCES context_entry_order(address) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,reference_id TEXT NOT NULL,context TEXT NOT NULL,hash TEXT NOT NULL,author TEXT NOT NULL,PRIMARY KEY(address,reference_id))")
+    try database.run("CREATE INDEX context_reference_lookup ON context_references(context,hash,author,address,reference_id)")
   }
 
   func requireContextOrderIndex() throws {
-    guard try currentSQL!.rows("SELECT name FROM sqlite_master WHERE (type='table' AND name='context_entry_order') OR (type='index' AND name='context_causal_order' AND tbl_name='context_entry_order')").count == 2 else {
+    guard try currentSQL!.rows("SELECT name FROM sqlite_master WHERE (type='table' AND name IN ('context_entry_order','context_references')) OR (type='index' AND name IN ('context_causal_order','context_author_order','context_reference_lookup'))").count == 5 else {
       throw NotebookStorageError.unsupportedFormat
     }
   }
@@ -17,26 +20,50 @@ extension NotebookStore {
     guard entry.stamp.counter <= VersionStamp.maximumCounter else {
       throw CollaborationError("invalid_context_clock", "Версия указания выходит за предел точного причинного счётчика.")
     }
-    try database.run("INSERT INTO context_entry_order(address,context,counter,actor) VALUES(?,?,?,?) ON CONFLICT(address) DO UPDATE SET context=excluded.context,counter=excluded.counter,actor=excluded.actor",
-      [.text(fragment.address), .text(fragment.file + "#"), .integer(Int64(entry.stamp.counter)), .text(entry.stamp.actor.uuidString.lowercased())])
+    try database.run("INSERT INTO context_entry_order(address,context,counter,actor,author) VALUES(?,?,?,?,?) ON CONFLICT(address) DO UPDATE SET context=excluded.context,counter=excluded.counter,actor=excluded.actor,author=excluded.author",
+      [.text(fragment.address), .text(fragment.file + "#"), .integer(Int64(entry.stamp.counter)), .text(entry.stamp.actor.uuidString.lowercased()), .text(entry.author.rawValue)])
+    guard entry.references.count <= 32, Set(entry.references.map(\.id)).count == entry.references.count else {
+      throw NotebookStorageError.corruptRecord(fragment.address)
+    }
+    try database.run("DELETE FROM context_references WHERE address=?", [.text(fragment.address)])
+    for reference in entry.references {
+      try database.run("INSERT INTO context_references(address,reference_id,context,hash,author) VALUES(?,?,?,?,?)",
+        [.text(fragment.address), .text(reference.id.uuidString.lowercased()), .text(fragment.file + "#"),
+         .text(try collaborationHash(reference)), .text(entry.author.rawValue)])
+    }
   }
 
   func validateContextOrderIndex() throws {
     try requireContextOrderIndex()
     let database = currentSQL!
-    guard try database.rows("PRAGMA index_info(context_causal_order)").compactMap({ $0[2].text }) == ["context", "counter", "actor", "address"] else {
-      throw NotebookStorageError.corruptRecord("context causal index definition")
+    for (name, columns) in [
+      ("context_causal_order", ["context", "counter", "actor", "address"]),
+      ("context_author_order", ["context", "author", "counter", "actor", "address"]),
+      ("context_reference_lookup", ["context", "hash", "author", "address", "reference_id"])
+    ] {
+      guard try database.rows("PRAGMA index_info(\(name))").compactMap({ $0[2].text }) == columns else {
+        throw NotebookStorageError.corruptRecord("context index definition: " + name)
+      }
     }
     var after = "collaboration/contexts/", count: Int64 = 0
     while true {
-      let rows = try database.rows("SELECT r.address,o.context,o.counter,o.actor FROM records r LEFT JOIN context_entry_order o ON o.address=r.address WHERE r.address>? AND r.address<'collaboration/contexts0' AND r.collection='entries' ORDER BY r.address LIMIT 64", [.text(after)])
+      let rows = try database.rows("SELECT r.address,o.context,o.counter,o.actor,o.author FROM records r LEFT JOIN context_entry_order o ON o.address=r.address WHERE r.address>? AND r.address<'collaboration/contexts0' AND r.collection='entries' ORDER BY r.address LIMIT 64", [.text(after)])
       if rows.isEmpty { break }
       for row in rows {
         after = row[0].text!; count += 1
         guard let entry = try storedEntry(at: after),
           row[1].text == String(after.split(separator: "#", maxSplits: 1)[0]) + "#",
-          row[2].integer == Int64(exactly: entry.stamp.counter), row[3].text == entry.stamp.actor.uuidString.lowercased() else {
+          row[2].integer == Int64(exactly: entry.stamp.counter), row[3].text == entry.stamp.actor.uuidString.lowercased(), row[4].text == entry.author.rawValue else {
           throw NotebookStorageError.corruptRecord("context causal index: " + after)
+        }
+        let indexed = try database.rows("SELECT reference_id,hash,context,author FROM context_references WHERE address=?", [.text(after)])
+        guard indexed.count == entry.references.count else { throw NotebookStorageError.corruptRecord("context reference count: " + after) }
+        for reference in entry.references {
+          let hash = try collaborationHash(reference)
+          guard indexed.contains(where: { $0[0].text == reference.id.uuidString.lowercased() && $0[1].text == hash
+            && $0[2].text == row[1].text && $0[3].text == entry.author.rawValue }) else {
+            throw NotebookStorageError.corruptRecord("context reference index: " + after)
+          }
         }
       }
     }
@@ -51,6 +78,7 @@ extension NotebookStore {
   public func prepareContextOrderIndexForTransfer() throws {
     try commandTransaction {
       let database = currentSQL!
+      try database.run("DROP TABLE IF EXISTS context_references")
       try database.run("DROP TABLE IF EXISTS context_entry_order")
       try Self.createContextOrderIndex(database)
       var after = "collaboration/contexts/"

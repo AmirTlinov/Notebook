@@ -179,12 +179,6 @@ extension NotebookStore {
     }
   }
 
-  static func placementContext(_ id: UUID?, in contexts: [SharedContext]) throws -> SharedContext? {
-    guard let id else { return nil }
-    guard let context = contexts.first(where: { $0.id == id }) else { throw CollaborationError("context_missing", "Общий фрагмент не найден.") }
-    return context
-  }
-
   public static func freeCollaborationFrame(size: PageSize, extent: PageSize, anchor: PageRect,
     direction: String, obstacles: [PageRect]) -> PageRect? {
     findCollaborationFrame(size: size, extent: extent, anchor: anchor, direction: direction,

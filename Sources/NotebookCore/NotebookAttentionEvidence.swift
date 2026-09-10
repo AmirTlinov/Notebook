@@ -30,8 +30,7 @@ extension NotebookStore {
 
   public func hasAttentionEvidence(contextID: UUID) throws -> Bool {
     try readTransaction { _ in
-      guard let context = try storedValue(contextFile(contextID))?.decode(SharedContext.self),
-        let entry = context.entries.first(where: { $0.author == .human }) else { return false }
+      guard let entry = try firstHumanContextEntry(contextID) else { return false }
       return try entry.references.allSatisfy { try attentionEvidence(contextID: contextID, referenceID: $0.id) != nil }
     }
   }
@@ -40,8 +39,7 @@ extension NotebookStore {
     let source = try value.decode(AgentPinnedSource.self)
     try source.validate()
     guard file == attentionEvidenceFile(source.requestID, source.id), previous == nil || previous == value,
-      let context = try storedValue(contextFile(source.requestID))?.decode(SharedContext.self),
-      context.entries.contains(where: { $0.author == .human && $0.references.contains(source.reference) }) else {
+      try contextContainsHumanReference(source.reference, contextID: source.requestID) else {
       throw NotebookStorageError.invalidTransaction("immutable attention owner")
     }
   }

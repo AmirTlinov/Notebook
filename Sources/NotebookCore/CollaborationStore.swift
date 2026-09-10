@@ -72,11 +72,10 @@ extension NotebookStore {
         action.references.count <= 32, (action.additionalOwners?.count ?? 0) <= 32 else {
         throw CollaborationError("invalid_action", "Ход содержит описание и от 1 до 512 операций.")
       }
-      let contexts = try action.contextID.flatMap { try storedValue(contextFile($0))?.decode(SharedContext.self) }.map { [$0] } ?? []
-      let context = try Self.placementContext(action.contextID, in: contexts)
-      let before = try CollaborationWorkspace(files: actionSourceProjection(action, references: context?.entries.flatMap(\.references) ?? []))
+      let contextReferences = try action.contextID.map { try self.contextReferences($0) }
+      let before = try CollaborationWorkspace(files: actionSourceProjection(action, references: contextReferences ?? []))
       try requireIdleInput(for: action.operations.map(\.target))
-      let scopeReferences = context?.entries.flatMap(\.references) ?? action.references
+      let scopeReferences = contextReferences ?? action.references
       for expectation in action.expected {
         let actual = try before.revision(of: expectation.target)
         if let expectedInk = expectation.inkRevision, try before.inkRevision(of: expectation.target) != expectedInk.lowercased() {
@@ -214,13 +213,15 @@ extension NotebookStore {
     receipt: CollaborationReceipt) throws {
     var writes = after.filter { before[$0.key] != $0.value }
     writes[actionFile(receipt.id)] = try .encode(receipt)
-    let existing = try storedValue(contextFile(receipt.action.resolvedContextID))?.decode(SharedContext.self)
-    if let existing, receipt.action.contextID == nil {
-      guard existing.entries.contains(where: { $0.id == receipt.id && $0.author == .agent && $0.references == receipt.action.references }) else {
+    let contextID = receipt.action.resolvedContextID
+    let exists = try hasStoredValue(contextFile(contextID))
+    if exists, receipt.action.contextID == nil {
+      guard let entry = try sharedContextEntry(contextID: contextID, entryID: receipt.id),
+        entry.author == .agent, entry.references == receipt.action.references else {
         throw CollaborationError("context_id_conflict", "ID самостоятельного хода уже принадлежит другому контексту.")
       }
     }
-    if existing == nil {
+    if !exists {
       if receipt.action.contextID != nil { throw CollaborationError("context_missing", "Контекст хода не найден.") }
       let entry = SharedContextEntry(id: receipt.id, author: .agent, references: receipt.action.references, text: receipt.action.summary,
         stamp: .init(counter: 1, actor: receipt.id), createdAt: receipt.createdAt)
