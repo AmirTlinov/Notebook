@@ -47,48 +47,42 @@ extension NotebookStore {
     return value
   }
 
-  func validateReplicatedAgentDependencies(writes: [String: JSONValue], previous: [String: JSONValue]) throws {
-    let requests = Set(writes.keys.filter { $0.hasPrefix("agent/") }.compactMap { file in
-      file.split(separator: "/").dropFirst(2).first.flatMap { UUID(uuidString: String($0.prefix(36))) }
-    })
-    for id in requests {
-      guard let request = try storedValue(agentRequestFile(id))?.decode(AgentRequest.self),
-        let question = try storedMember(file: contextFile(request.contextID), collection: "entries", id: request.questionEntryID.uuidString)?.decode(SharedContextEntry.self),
-        question.author == .human, !(question.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-        question.references == request.grant.references else { throw NotebookStorageError.invalidTransaction("request context dependency") }
-      try request.validate()
-      var sourceBytes = 0
-      for sourceID in request.sourceIDs {
-        guard let source = try storedValue(agentSourceFile(id, sourceID))?.decode(AgentPinnedSource.self),
-          source.requestID == id, source.id == sourceID, request.grant.references.contains(source.reference) else { throw NotebookStorageError.invalidTransaction("request source dependency") }
-        try source.validate()
-        sourceBytes += try Self.storageEncoder.encode(source).count
+  func validateReplicatedAgentDependencies(requestID id: UUID, previousExecution old: AgentExecution?) throws {
+    guard let request = try storedValue(agentRequestFile(id))?.decode(AgentRequest.self),
+      let question = try storedMember(file: contextFile(request.contextID), collection: "entries", id: request.questionEntryID.uuidString)?.decode(SharedContextEntry.self),
+      question.author == .human, !(question.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      question.references == request.grant.references else { throw NotebookStorageError.invalidTransaction("request context dependency") }
+    try request.validate()
+    var sourceBytes = 0
+    for sourceID in request.sourceIDs {
+      guard let source = try storedValue(agentSourceFile(id, sourceID))?.decode(AgentPinnedSource.self),
+        source.requestID == id, source.id == sourceID, request.grant.references.contains(source.reference) else { throw NotebookStorageError.invalidTransaction("request source dependency") }
+      try source.validate()
+      sourceBytes += try Self.storageEncoder.encode(source).count
+    }
+    guard sourceBytes <= 8_388_608 else { throw NotebookStorageError.limitExceeded("request_sources") }
+    if let stop = try storedValue(agentStopFile(id))?.decode(AgentStopIntent.self) {
+      guard stop.authorDeviceID == request.authorDeviceID else { throw NotebookStorageError.invalidTransaction("request stop author") }
+    }
+    if let execution = try storedValue(agentExecutionFile(id))?.decode(AgentExecution.self) {
+      try execution.validate()
+      var bytes = old?.responseBytes ?? 0
+      let first = (old?.responseSequence ?? 0) + 1
+      if first <= execution.responseSequence {
+        for sequence in first...execution.responseSequence {
+          guard let chunk = try storedValue(agentChunkFile(id, sequence))?.decode(AgentResponseChunk.self),
+            chunk.requestID == id, chunk.executionID == execution.executionID, chunk.sequence == sequence else { throw NotebookStorageError.invalidTransaction("response sequence dependency") }
+          try chunk.validate(); bytes += chunk.text.utf8.count
+        }
       }
-      guard sourceBytes <= 8_388_608 else { throw NotebookStorageError.limitExceeded("request_sources") }
-      if let stop = try storedValue(agentStopFile(id))?.decode(AgentStopIntent.self) {
-        guard stop.authorDeviceID == request.authorDeviceID else { throw NotebookStorageError.invalidTransaction("request stop author") }
+      guard bytes == execution.responseBytes else { throw NotebookStorageError.invalidTransaction("response byte count") }
+      for receiptID in execution.receiptIDs where old?.receiptIDs.contains(receiptID) != true {
+        guard let receipt = try storedValue("collaboration/actions/" + receiptID.uuidString.lowercased() + ".json")?.decode(CollaborationReceipt.self),
+          receipt.id == receiptID, receipt.action.requestID == id else { throw NotebookStorageError.invalidTransaction("agent receipt dependency") }
       }
-      if let execution = try storedValue(agentExecutionFile(id))?.decode(AgentExecution.self) {
-        try execution.validate()
-        let old = try previous[agentExecutionFile(id)]?.decode(AgentExecution.self)
-        var bytes = old?.responseBytes ?? 0
-        let first = (old?.responseSequence ?? 0) + 1
-        if first <= execution.responseSequence {
-          for sequence in first...execution.responseSequence {
-            guard let chunk = try storedValue(agentChunkFile(id, sequence))?.decode(AgentResponseChunk.self),
-              chunk.requestID == id, chunk.executionID == execution.executionID, chunk.sequence == sequence else { throw NotebookStorageError.invalidTransaction("response sequence dependency") }
-            try chunk.validate(); bytes += chunk.text.utf8.count
-          }
-        }
-        guard bytes == execution.responseBytes else { throw NotebookStorageError.invalidTransaction("response byte count") }
-        for receiptID in execution.receiptIDs where old?.receiptIDs.contains(receiptID) != true {
-          guard let receipt = try storedValue("collaboration/actions/" + receiptID.uuidString.lowercased() + ".json")?.decode(CollaborationReceipt.self),
-            receipt.id == receiptID, receipt.action.requestID == id else { throw NotebookStorageError.invalidTransaction("agent receipt dependency") }
-        }
-        if let answerID = execution.answerEntryID {
-          guard let answer = try storedMember(file: contextFile(request.contextID), collection: "entries", id: answerID.uuidString)?.decode(SharedContextEntry.self),
-            answer.author == .agent, answer.replyTo == request.questionEntryID else { throw NotebookStorageError.invalidTransaction("agent answer dependency") }
-        }
+      if let answerID = execution.answerEntryID {
+        guard let answer = try storedMember(file: contextFile(request.contextID), collection: "entries", id: answerID.uuidString)?.decode(SharedContextEntry.self),
+          answer.author == .agent, answer.replyTo == request.questionEntryID else { throw NotebookStorageError.invalidTransaction("agent answer dependency") }
       }
     }
   }

@@ -120,126 +120,181 @@ extension NotebookStore {
       try installPageOrderDependencies(manifestHash: change.manifestHash)
       for root in manifest.pageOrderRoots { try database.noteOwner(.orderRoot, root) }
       try applyReplicatedContextEntries(manifestHash: change.manifestHash)
-      var incoming: [String: [NotebookStoredFragment]] = [:], removals: [String: Set<String>] = [:]
-      for recordRow in try database.rows("SELECT address,blob_hash FROM manifest_records WHERE manifest_hash=? AND (address<'collaboration/contexts/' OR address>='collaboration/contexts0') AND (address<'spatial-ink.json#' OR address>='spatial-ink.json$') ORDER BY address", [.text(change.manifestHash)]) {
-        let record = NotebookRecordMutation(address: recordRow[0].text!, blobHash: recordRow[1].text)
-        let file = String(record.address.split(separator: "#", maxSplits: 1)[0])
-        if let hash = record.blobHash {
-          let row = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(hash))
-          guard row.address == record.address, row.file == file,
-            row.position >= 0, row.value.isValid else { throw NotebookStorageError.invalidTransaction("fragment identity") }
-          if file == "workspace.json", row.collection == "pageOrders" {
-            let order = try row.value.decode(NotebookPageOrderRegister.self)
-            try order.validate()
-            guard Set(order.heads.map(\.valueRoot) + [order.visibleRoot]).isSubset(of: Set(manifest.pageOrderRoots)) else {
-              throw NotebookStorageError.invalidTransaction("undeclared page order dependencies")
+      // These are transaction-local dependency checks, not another archive.
+      // Even one manifest spanning many requests keeps only an indexed row per
+      // request and the prior execution required by its causal validator.
+      try database.run("CREATE TEMP TABLE IF NOT EXISTS replication_agent_checks(request_id TEXT PRIMARY KEY, execution_before BLOB)")
+      try database.run("PRAGMA temp.cache_size=-2048")
+      try database.run("DELETE FROM replication_agent_checks")
+      let declaredOrderRoots = Set(manifest.pageOrderRoots)
+      func applyFile(_ file: String) throws {
+        // A typed merger still owns this complete logical file. Releasing it
+        // before advancing keeps independent owners out of one giant packet
+        // dictionary; partial heavy-owner merging remains a separate contract.
+        let root = file + "#", oldRows = try storedFragments(address: file + "#")
+        let before = oldRows.isEmpty ? nil : try NotebookRecordCodec.decode(oldRows, root: root)
+        var rows = Dictionary(uniqueKeysWithValues: oldRows.map { ($0.address, $0) })
+        var afterAddress = file
+        while true {
+          let records = try database.rows("SELECT address,blob_hash FROM manifest_records WHERE manifest_hash=? AND address>? AND address<? ORDER BY address LIMIT 64",
+            [.text(change.manifestHash), .text(afterAddress), .text(file + "$")])
+          if records.isEmpty { break }
+          for record in records {
+            let address = record[0].text!; afterAddress = address
+            if let hash = record[1].text {
+              let row = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(hash))
+              guard row.address == address, row.file == file,
+                row.position >= 0, row.value.isValid else { throw NotebookStorageError.invalidTransaction("fragment identity") }
+              if file == "workspace.json", row.collection == "pageOrders" {
+                let order = try row.value.decode(NotebookPageOrderRegister.self)
+                try order.validate()
+                guard Set(order.heads.map(\.valueRoot) + [order.visibleRoot]).isSubset(of: declaredOrderRoots) else {
+                  throw NotebookStorageError.invalidTransaction("undeclared page order dependencies")
+                }
+              }
+              if file == "workspace.json", row.collection == "pageOrderNodes" {
+                guard row.parent == root, row.position == 0, row.collections.isEmpty,
+                  row.address == "workspace.json#/pageOrderNodes/@" + row.member,
+                  try row.value.decode(NotebookPageOrderNode.self).hash == row.member else { throw NotebookStorageError.blobHashMismatch }
+              }
+              rows[address] = row
+            } else {
+              guard !file.hasPrefix("agent/"), !file.hasPrefix("collaboration/attention/"),
+                !address.hasPrefix("workspace.json#/pageOrderNodes/@") else { throw NotebookStorageError.invalidTransaction("agent history is immutable") }
+              rows[address] = nil
             }
           }
-          if file == "workspace.json", row.collection == "pageOrderNodes" {
-            guard row.parent == "workspace.json#", row.position == 0, row.collections.isEmpty,
-              row.address == "workspace.json#/pageOrderNodes/@" + row.member,
-              try row.value.decode(NotebookPageOrderNode.self).hash == row.member else { throw NotebookStorageError.blobHashMismatch }
+        }
+        var resolved: JSONValue?
+        if rows[root] != nil {
+          var value = try NotebookRecordCodec.decode(Array(rows.values), root: root)
+          if file == "workspace.json" {
+            let index = try value.decode(WorkspaceIndex.self)
+            resolved = try .encode(before.map { try $0.decode(WorkspaceIndex.self).merging(index) } ?? index)
+          } else if file == "board.json" {
+            if let previous = try before?["stamp"]?.decode(VersionStamp.self),
+              let incoming = try value["stamp"]?.decode(VersionStamp.self) {
+              // Retained local nodes cannot be assigned an older aggregate
+              // clock while the incoming delta's typed tree is reconstructed.
+              value = value.setting("stamp", try .encode(max(previous, incoming)))
+            }
+            let hierarchy = try value.decode(BoardHierarchy.self)
+            guard let index = try storedValue("workspace.json")?.decode(WorkspaceIndex.self) else { throw NotebookStorageError.corruptRecord("workspace") }
+            resolved = try .encode(before.map { try $0.decode(BoardHierarchy.self).merging(hierarchy, items: index.items) } ?? hierarchy)
+          } else if file.hasPrefix("pages/") {
+            var page = try value.decode(PageDocument.self)
+            if let before {
+              let previous = try before.decode(PageDocument.self)
+              guard previous.size == page.size else { throw NotebookStorageError.transactionConflict }
+              _ = try page.joinedComputations(previous.computations ?? []); _ = page.merge(previous)
+            }
+            guard page.isValid else { throw NotebookStorageError.corruptRecord(file) }; resolved = try .encode(page)
+          } else if file.hasPrefix("documents/") {
+            var document = try value.decode(DocumentDocument.self)
+            if let before {
+              let previous = try before.decode(DocumentDocument.self)
+              guard previous.paperSize == document.paperSize else { throw NotebookStorageError.transactionConflict }
+              _ = document.merge(previous)
+            }
+            guard document.isValid else { throw NotebookStorageError.corruptRecord(file) }; resolved = try .encode(document)
+          } else if file.hasPrefix("document-states/") {
+            var state = try value.decode(DocumentStateJournal.self)
+            if let before { _ = try state.merge(before.decode(DocumentStateJournal.self)) }
+            guard state.isValid else { throw NotebookStorageError.corruptRecord(file) }; resolved = try .encode(state)
+          } else if file.hasPrefix("collaboration/actions/") {
+            let receipt = try value.decode(CollaborationReceipt.self)
+            guard receipt.id == receipt.action.id else { throw NotebookStorageError.invalidTransaction("receipt identity") }
+            if let before {
+              let previous = try before.decode(CollaborationReceipt.self)
+              guard previous.action == receipt.action else { throw NotebookStorageError.transactionConflict }
+              resolved = try .encode(previous.undo == nil ? receipt : previous)
+            } else { resolved = value }
+          } else if file.hasPrefix("collaboration/delivery/") {
+            let receipt = try value.decode(DeviceActionReceipt.self)
+            resolved = try .encode(before?.decode(DeviceActionReceipt.self).merging(receipt) ?? receipt)
+          } else if file.hasPrefix("collaboration/attention/") {
+            guard before == nil || before == value else { throw NotebookStorageError.transactionConflict }
+            try value.decode(AgentPinnedSource.self).validate(); resolved = value
+          } else if file.hasPrefix("agent/") {
+            resolved = try mergeAgentRecord(file: file, value: value, previous: before)
+          } else if file == "collaboration/selection.json" {
+            let next = try value.decode(SharedContextSelection.self)
+            let previous = try before?.decode(SharedContextSelection.self)
+            resolved = try .encode(previous.map { $0.stamp < next.stamp ? next : $0 } ?? next)
+          } else { throw NotebookStorageError.invalidTransaction("unsupported replicated owner") }
+        }
+        // Read canonical membership after the catalog merge. A delayed heavy
+        // packet cannot resurrect an owner whose deletion has already won.
+        if before != nil || resolved != nil,
+          let id = UUID(uuidString: URL(fileURLWithPath: file).deletingPathExtension().lastPathComponent) {
+          let belongs: Bool
+          if file.hasPrefix("pages/") { belongs = try ownerItemID(ofPage: id) != nil }
+          else if file.hasPrefix("documents/") || file.hasPrefix("document-states/") { belongs = try readItemHeader(id)?.kind == .document }
+          else { belongs = true }
+          if !belongs { try publishRecords(writes: [:], removals: [file]); return }
+        }
+        guard let resolved else { return }
+        try publishRecords(writes: [file: resolved])
+        if file.hasPrefix("agent/"),
+          let id = file.split(separator: "/").dropFirst(2).first.flatMap({ UUID(uuidString: String($0.prefix(36))) }) {
+          try database.run("INSERT OR IGNORE INTO replication_agent_checks(request_id) VALUES(?)", [.text(id.uuidString.lowercased())])
+          if file == agentExecutionFile(id), let before {
+            try database.run("UPDATE replication_agent_checks SET execution_before=? WHERE request_id=?",
+              [.blob(try Self.storageEncoder.encode(before)), .text(id.uuidString.lowercased())])
           }
-          incoming[file, default: []].append(row)
-        } else {
-          guard !file.hasPrefix("agent/"), !file.hasPrefix("collaboration/attention/"), !record.address.hasPrefix("workspace.json#/pageOrderNodes/@") else { throw NotebookStorageError.invalidTransaction("agent history is immutable") }
-          removals[file, default: []].insert(record.address)
         }
       }
-      var before: [String: JSONValue] = [:], candidate: [String: JSONValue] = [:]
-      for file in Set(incoming.keys).union(removals.keys) {
-        let oldRows = try storedFragments(address: file + "#")
-        if !oldRows.isEmpty { before[file] = try NotebookRecordCodec.decode(oldRows, root: file + "#") }
-        var rows = Dictionary(uniqueKeysWithValues: oldRows.map { ($0.address, $0) })
-        for address in removals[file] ?? [] { rows[address] = nil }
-        for row in incoming[file] ?? [] { rows[row.address] = row }
-        if rows[file + "#"] != nil {
-          var value = try NotebookRecordCodec.decode(Array(rows.values), root: file + "#")
-          if file == "board.json", let previous = try before[file]?["stamp"]?.decode(VersionStamp.self),
-            let incoming = try value["stamp"]?.decode(VersionStamp.self) {
-            // A manifest is a delta over retained local nodes, not a complete
-            // old tree. Its aggregate clock cannot move those retained portal
-            // versions back in time before the causal node merge validates it.
-            value = value.setting("stamp", try .encode(max(previous, incoming)))
-          }
-          candidate[file] = value
-        }
+      func hasIncoming(_ file: String) throws -> Bool {
+        try !database.rows("SELECT 1 FROM manifest_records WHERE manifest_hash=? AND address>=? AND address<? LIMIT 1",
+          [.text(change.manifestHash), .text(file + "#"), .text(file + "$")]).isEmpty
       }
-      var writes: [String: JSONValue] = [:]
-      if let next = candidate["workspace.json"] {
-        let index = try next.decode(WorkspaceIndex.self)
-        writes["workspace.json"] = try .encode(before["workspace.json"].map { try $0.decode(WorkspaceIndex.self).merging(index) } ?? index)
+      // Preserve publishRecords' dependency order: catalog, document paper,
+      // other content, then placements. A new document's spatial index needs
+      // its paper header; intermediate owner mismatches cannot escape commit.
+      if try hasIncoming("workspace.json") { try applyFile("workspace.json") }
+      guard try hasStoredValue("workspace.json") else { throw NotebookStorageError.corruptRecord("workspace") }
+      var afterFile = "documents/"
+      while let address = try database.rows("SELECT address FROM manifest_records WHERE manifest_hash=? AND address>? AND address<'documents0' ORDER BY address LIMIT 1",
+        [.text(change.manifestHash), .text(afterFile)]).first?[0].text {
+        let file = String(address.split(separator: "#", maxSplits: 1)[0])
+        try applyFile(file); afterFile = file + "$"
       }
-      if let next = candidate["board.json"] {
-        let hierarchy = try next.decode(BoardHierarchy.self)
-        let index = try (writes["workspace.json"] ?? storedValue("workspace.json"))?.decode(WorkspaceIndex.self)
-        guard let index else { throw NotebookStorageError.corruptRecord("workspace") }
-        writes["board.json"] = try .encode(before["board.json"].map { try $0.decode(BoardHierarchy.self).merging(hierarchy, items: index.items) } ?? hierarchy)
+      afterFile = ""
+      while let address = try database.rows("""
+        SELECT address FROM manifest_records WHERE manifest_hash=? AND address>?
+        AND (address<'workspace.json#' OR address>='workspace.json$')
+        AND (address<'board.json#' OR address>='board.json$')
+        AND (address<'documents/' OR address>='documents0')
+        AND (address<'collaboration/contexts/' OR address>='collaboration/contexts0')
+        AND (address<'spatial-ink.json#' OR address>='spatial-ink.json$')
+        ORDER BY address LIMIT 1
+        """, [.text(change.manifestHash), .text(afterFile)]).first?[0].text {
+        let file = String(address.split(separator: "#", maxSplits: 1)[0])
+        try applyFile(file)
+        afterFile = file + "$"
       }
-      for (file, value) in candidate where !["workspace.json", "board.json"].contains(file) {
-        let old = before[file]
-        if file.hasPrefix("pages/") {
-          var resolved = try value.decode(PageDocument.self)
-          if let old { let previous = try old.decode(PageDocument.self); guard previous.size == resolved.size else { throw NotebookStorageError.transactionConflict }; _ = try resolved.joinedComputations(previous.computations ?? []); _ = resolved.merge(previous) }
-          guard resolved.isValid else { throw NotebookStorageError.corruptRecord(file) }; writes[file] = try .encode(resolved)
-        } else if file.hasPrefix("documents/") {
-          var resolved = try value.decode(DocumentDocument.self)
-          if let old { let previous = try old.decode(DocumentDocument.self); guard previous.paperSize == resolved.paperSize else { throw NotebookStorageError.transactionConflict }; _ = resolved.merge(previous) }
-          guard resolved.isValid else { throw NotebookStorageError.corruptRecord(file) }; writes[file] = try .encode(resolved)
-        } else if file.hasPrefix("document-states/") {
-          var resolved = try value.decode(DocumentStateJournal.self)
-          if let old { _ = try resolved.merge(old.decode(DocumentStateJournal.self)) }
-          guard resolved.isValid else { throw NotebookStorageError.corruptRecord(file) }; writes[file] = try .encode(resolved)
-        } else if file.hasPrefix("collaboration/actions/") {
-          let receipt = try value.decode(CollaborationReceipt.self)
-          guard receipt.id == receipt.action.id else { throw NotebookStorageError.invalidTransaction("receipt identity") }
-          if let old {
-            let previous = try old.decode(CollaborationReceipt.self)
-            guard previous.action == receipt.action else { throw NotebookStorageError.transactionConflict }
-            writes[file] = try .encode(previous.undo == nil ? receipt : previous)
-          } else { writes[file] = value }
-        } else if file.hasPrefix("collaboration/delivery/") {
-          let receipt = try value.decode(DeviceActionReceipt.self)
-          writes[file] = try .encode(old?.decode(DeviceActionReceipt.self).merging(receipt) ?? receipt)
-        } else if file.hasPrefix("collaboration/attention/") {
-          guard old == nil || old == value else { throw NotebookStorageError.transactionConflict }
-          try value.decode(AgentPinnedSource.self).validate()
-          writes[file] = value
-        } else if file.hasPrefix("agent/") {
-          writes[file] = try mergeAgentRecord(file: file, value: value, previous: old)
-        } else if file == "collaboration/selection.json" {
-          let next = try value.decode(SharedContextSelection.self)
-          let previous = try old?.decode(SharedContextSelection.self)
-          writes[file] = try .encode(previous.map { $0.stamp < next.stamp ? next : $0 } ?? next)
-        } else { throw NotebookStorageError.invalidTransaction("unsupported replicated owner") }
-      }
-      // A heavy owner only disappears when its canonical catalog tombstone
-      // wins. A delayed page packet cannot recreate a deleted page.
-      let index = try writes["workspace.json"]?.decode(WorkspaceIndex.self)
-      guard try index != nil || hasStoredValue("workspace.json") else { throw NotebookStorageError.corruptRecord("workspace") }
-      let livePages = index.map { Set($0.items.flatMap(\.pageIDs)) }
-      let liveDocuments = index.map { Set($0.items.filter { $0.kind == .document }.map(\.id)) }
-      var removedFiles: [String] = []
-      for file in Set(before.keys).union(writes.keys) {
-        let id = UUID(uuidString: URL(fileURLWithPath: file).deletingPathExtension().lastPathComponent)
-        guard let id else { continue }
-        let belongs: Bool
-        if file.hasPrefix("pages/") { belongs = try livePages?.contains(id) ?? (ownerItemID(ofPage: id) != nil) }
-        else if file.hasPrefix("documents/") || file.hasPrefix("document-states/") { belongs = try liveDocuments?.contains(id) ?? (readItemHeader(id)?.kind == .document) }
-        else { continue }
-        if !belongs {
-          writes[file] = nil; removedFiles.append(file)
-        }
-      }
-      // Catalog edits register their changed members with the SQL ownership
-      // validator. A page, response chunk or receipt does not scan all catalog
-      // members merely to prove an unchanged archive's dependencies again.
-      try publishRecords(writes: writes, removals: removedFiles)
+      if try hasIncoming("board.json") { try applyFile("board.json") }
       try applyReplicatedSpatialInk(manifestHash: change.manifestHash)
-      for (file, value) in writes where file.hasPrefix("collaboration/attention/") {
-        try validateAttentionEvidence(file: file, value: value, previous: before[file])
+      // Immutable attention sources were compared with their previous value by
+      // applyFile. Resolve their dependencies only after every owner is present.
+      afterFile = "collaboration/attention/"
+      while let address = try database.rows("SELECT address FROM manifest_records WHERE manifest_hash=? AND address>? AND address<'collaboration/attention0' ORDER BY address LIMIT 1",
+        [.text(change.manifestHash), .text(afterFile)]).first?[0].text {
+        let file = String(address.split(separator: "#", maxSplits: 1)[0])
+        if let value = try storedValue(file) { try validateAttentionEvidence(file: file, value: value, previous: nil) }
+        afterFile = file + "$"
       }
-      try validateReplicatedAgentDependencies(writes: writes, previous: before)
+      var afterRequest = ""
+      while true {
+        let requests = try database.rows("SELECT request_id,execution_before FROM replication_agent_checks WHERE request_id>? ORDER BY request_id LIMIT 64", [.text(afterRequest)])
+        if requests.isEmpty { break }
+        for request in requests {
+          let id = request[0].text!; afterRequest = id
+          try validateReplicatedAgentDependencies(requestID: UUID(uuidString: id)!,
+            previousExecution: request[1].blob.map { try JSONDecoder().decode(AgentExecution.self, from: $0) })
+        }
+      }
+      try database.run("DELETE FROM replication_agent_checks")
       try database.run("INSERT INTO received_transactions(transaction_id,manifest_hash,peer_id,sequence) VALUES(?,?,?,?)", [.text(transaction), .text(change.manifestHash), .text(peer), .integer(Int64(change.sequence))])
       try database.run("INSERT INTO peer_cursors(peer_id,direction,sequence) VALUES(?,'incoming',?) ON CONFLICT(peer_id,direction) DO UPDATE SET sequence=excluded.sequence", [.text(peer), .integer(Int64(change.sequence))])
     }
