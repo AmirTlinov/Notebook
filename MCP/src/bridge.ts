@@ -31,7 +31,7 @@ export async function runBridge<T = Record<string, unknown>>(
     }
   } catch (error) {
     if (error instanceof BridgeError) throw error;
-    throw new BridgeError({ code: "ipc_unavailable", message: "Notebook helper не запущен. Откройте Notebook на Mac." });
+    throw new BridgeError({ code: "ipc_unavailable", message: "Канал связи с Notebook на Mac недоступен. Проверьте запуск совместимой сборки Mac-помощника: наличие процесса Notebook не подтверждает готовность IPC." });
   }
   return new Promise<T>((fulfill, reject) => {
     const socket = createConnection(socketPath);

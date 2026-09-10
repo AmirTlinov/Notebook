@@ -38,10 +38,16 @@ test("the production transport cannot accept a different root or filesystem path
   });
 });
 
-test("unavailable helper never creates a second store writer",async()=>{
+test("missing IPC reports endpoint availability, not process state, and never creates a second writer",async()=>{
   const root=await mkdtemp(join(tmpdir(),"notebook-no-owner-"));
   try {
-    await assert.rejects(new NotebookStore(join(root,"absent.sock")).readHeader(),error=>error instanceof BridgeError && error.detail.code==="ipc_unavailable");
+    await assert.rejects(new NotebookStore(join(root,"absent.sock")).readHeader(),error=>{
+      assert.ok(error instanceof BridgeError);
+      assert.equal(error.detail.code,"ipc_unavailable");
+      assert.match(error.message,/совместимой сборки Mac-помощника/);
+      assert.doesNotMatch(error.message,/helper не запущен/);
+      return true;
+    });
     await assert.rejects(lstat(join(root,"notebook.sqlite")),{code:"ENOENT"});
   }finally{await rm(root,{recursive:true,force:true});}
 });
