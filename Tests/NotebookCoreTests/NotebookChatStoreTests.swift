@@ -131,7 +131,7 @@ struct NotebookAttentionEvidenceTests {
     try store.savePage(page)
     #expect(try store.referenceRevision(target: target) != reference.revision)
     #expect(try NotebookStore(root: root).attentionEvidence(contextID: context.id, referenceID: reference.id) == source)
-    #expect(try store.readAgentRequestHeaders(limit: 32).isEmpty)
+    #expect(try store.sqlRead { try $0.rows("SELECT address FROM records WHERE file LIKE 'agent/requests/%' LIMIT 1").isEmpty })
     let changed = try source.withVisual(nil, unavailable: "cannot replace the historical reason")
     #expect(throws: NotebookStorageError.self) { try store.saveAttentionEvidence([changed], contextID: context.id) }
   }

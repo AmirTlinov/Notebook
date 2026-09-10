@@ -108,9 +108,6 @@ extension NotebookStore {
       let request = try fragment.value.decode(TargetRenderRequest.self)
       try database.run("INSERT INTO metadata_index(address,kind,context_id,created_at,status) VALUES(?,'renderRequest',?,?,'pending') ON CONFLICT(address) DO UPDATE SET context_id=excluded.context_id,created_at=excluded.created_at", [.text(fragment.address), .text(Self.renderTargetKey(request.target)), .real(request.createdAt.timeIntervalSince1970)])
     }
-    if fragment.parent == nil, fragment.file.hasPrefix("agent/") {
-      try updateAgentMetadata(fragment, database: database)
-    }
     if fragment.parent == nil, fragment.file.hasPrefix("collaboration/actions/") {
       let receipt = try fragment.value.decode(CollaborationReceipt.self)
       try database.run("INSERT INTO metadata_index(address,kind,context_id,created_at) VALUES(?,'action',?,?) ON CONFLICT(address) DO UPDATE SET context_id=excluded.context_id,created_at=excluded.created_at", [.text(fragment.address), .text(receipt.action.resolvedContextID.uuidString.lowercased()), .real(receipt.createdAt.timeIntervalSince1970)])

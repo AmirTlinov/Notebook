@@ -143,9 +143,12 @@ struct NotebookArchiveActivationTests {
     let context = try store.appendContext(references: [reference], author: .human, actor: actor, text: "Existing question", select: false)
     let id = UUID(), source = try AgentPinnedSource.capture(requestID: UUID(), reference: reference, files: content.sourceFiles())
     let pinned = AgentPinnedSource(id: source.id, requestID: id, reference: reference, payload: source.payload, image: nil)
-    let request = try store.createAgentRequest(id: id, contextID: context.id, replyTo: context.entries[0].id,
-      question: "Keep stopped", grant: .init(mode: .question, references: [reference]), sources: [pinned], actor: actor)
-    try store.requestAgentStop(request.id, actor: actor)
+    let request = AgentRequest(id: id, contextID: context.id, questionEntryID: context.entries[0].id,
+      grant: try .init(mode: .question, references: [reference]), authorDeviceID: actor, sourceIDs: [reference.id])
+    // Import a historical stopped record, never start a removed executor to seed it.
+    try store.publishRecords(writes: [store.agentRequestFile(id): .encode(request),
+      store.agentSourceFile(id, reference.id): .encode(pinned),
+      store.agentStopFile(id): .encode(AgentStopIntent(requestID: id, authorDeviceID: actor))])
     _ = try store.collaborationActorID()
     let job = NotebookChatInput(author: actor, action: .create(title: "Do not execute twice"))
     _ = try store.saveChatInput(job)

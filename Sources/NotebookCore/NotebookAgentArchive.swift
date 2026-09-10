@@ -1,46 +1,8 @@
 import Foundation
 
+/// Replication and archive import preserve immutable historical inputs and
+/// monotonic recorded outcomes without reviving an execution owner.
 extension NotebookStore {
-  func updateAgentMetadata(_ fragment: NotebookStoredFragment, database: NotebookSQLConnection) throws {
-    if fragment.file.hasPrefix("agent/requests/") {
-      let request = try fragment.value.decode(AgentRequest.self)
-      try request.validate()
-      let status = try database.rows("SELECT status FROM metadata_index WHERE address=?", [.text(agentExecutionFile(request.id) + "#")]).first?[0].text ?? "queued"
-      try database.run("INSERT INTO metadata_index(address,kind,context_id,created_at,status) VALUES(?,'agentRequest',?,?,?) ON CONFLICT(address) DO UPDATE SET status=excluded.status", [.text(fragment.address), .text(request.contextID.uuidString.lowercased()), .real(request.createdAt.timeIntervalSince1970), .text(status)])
-    } else if fragment.file.hasPrefix("agent/executions/") {
-      let execution = try fragment.value.decode(AgentExecution.self)
-      try execution.validate()
-      try database.run("INSERT INTO metadata_index(address,kind,context_id,created_at,status) VALUES(?,'agentExecution',?,0,?) ON CONFLICT(address) DO UPDATE SET status=excluded.status", [.text(fragment.address), .text(execution.requestID.uuidString.lowercased()), .text(execution.status.rawValue)])
-      try database.run("UPDATE metadata_index SET status=? WHERE address=?", [.text(execution.status.rawValue), .text(agentRequestFile(execution.requestID) + "#")])
-    }
-  }
-
-  public func readAgentRequestHeaders(afterID: UUID? = nil, limit: Int = 64) throws -> [AgentRequest] {
-    guard (1...128).contains(limit) else { throw NotebookStorageError.limitExceeded("request_page") }
-    return try readTransaction { _ in
-      var clause = "", arguments: [NotebookSQLValue] = []
-      if let afterID {
-        let address = agentRequestFile(afterID) + "#"
-        guard let time = try currentSQL!.rows("SELECT created_at FROM metadata_index WHERE address=? AND kind='agentRequest'", [.text(address)]).first?[0] else { throw NotebookStorageError.transactionConflict }
-        clause = " AND (created_at<? OR (created_at=? AND address<?))"
-        arguments = [time, time, .text(address)]
-      }
-      arguments.append(.integer(Int64(limit)))
-      let rows = try currentSQL!.rows("SELECT address FROM metadata_index WHERE kind='agentRequest'" + clause + " ORDER BY created_at DESC,address DESC LIMIT ?", arguments)
-      return try rows.map { try storedValue(String($0[0].text!.dropLast()))!.decode(AgentRequest.self) }
-    }
-  }
-
-  /// Completed history cannot hide a queued offline question. This indexed
-  /// worker page loads immutable request headers, never accumulated responses.
-  public func pendingAgentRequests(limit: Int = 16) throws -> [AgentRequest] {
-    guard (1...16).contains(limit) else { throw NotebookStorageError.limitExceeded("pending_requests") }
-    return try readTransaction { _ in
-      let rows = try currentSQL!.rows("SELECT address FROM metadata_index WHERE kind='agentRequest' AND status IN ('queued','running') ORDER BY created_at,address LIMIT ?", [.integer(Int64(limit))])
-      return try rows.map { try storedValue(String($0[0].text!.dropLast()))!.decode(AgentRequest.self) }
-    }
-  }
-
   func mergeAgentRecord(file: String, value: JSONValue, previous: JSONValue?) throws -> JSONValue {
     let parts = file.split(separator: "/").map(String.init)
     guard parts.count >= 3, let requestID = UUID(uuidString: String(parts[2].prefix(36))) else { throw NotebookStorageError.invalidTransaction("agent record address") }

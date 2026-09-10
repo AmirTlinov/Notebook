@@ -134,7 +134,7 @@ struct NotebookReplicationTests {
     #expect(remote.collaboration?.fields.values.allSatisfy { $0.human && $0.stamp.actor == actor } == true)
   }
 
-  @Test func oneRequestAndItsStreamReconnectWithoutRepeatingOrReopeningExecution() throws {
+  @Test func historicalRequestAndResponseReplicateWithoutReopeningExecution() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let a = NotebookStore(root: root.appendingPathComponent("a")), b = NotebookStore(root: root.appendingPathComponent("b")), human = UUID(), mac = UUID(), peerA = UUID(), peerB = UUID()
@@ -144,19 +144,19 @@ struct NotebookReplicationTests {
     let reference = CollaborationReference(target: target, revision: try NotebookStore.referenceRevision(target: target, files: files))
     let context = try a.appendContext(references: [reference], author: .human, actor: human, text: "Selection")
     let id = UUID(), source = try AgentPinnedSource.capture(requestID: id, reference: reference, files: files)
-    _ = try a.createAgentRequest(id: id, contextID: context.id, replyTo: context.entries[0].id, question: "Question",
-      grant: .init(mode: .question, references: [reference]), sources: [source], actor: human)
+    let request = AgentRequest(id: id, contextID: context.id, questionEntryID: context.entries[0].id,
+      grant: try .init(mode: .question, references: [reference]), authorDeviceID: human, sourceIDs: [source.id])
+    try a.publishRecords(writes: [a.agentRequestFile(id): .encode(request), a.agentSourceFile(id, source.id): .encode(source)])
     try b.prepareEmptyWorkspace(workspaceID: header.workspaceID)
     for change in try a.changeJournal(after: 0) { _ = try transfer(change, from: a, to: b, peer: peerA) }
-    #expect(try b.pendingAgentRequests().map(\.id) == [id])
-    let authority = try b.claimAgentRequest(id, actor: mac)
-    try b.appendAgentResponse(authority, sequence: 1, text: "Answer")
-    try b.appendAgentResponse(authority, sequence: 1, text: "Answer")
-    _ = try b.finishAgentRequest(authority, status: .completed)
+    #expect(try b.agentRequest(id)?.request == request)
+    let execution = AgentExecution(requestID: id, executionID: UUID(), status: .completed,
+      stamp: .init(counter: 2, actor: mac), responseSequence: 1, responseBytes: 6, receiptIDs: [])
+    let chunk = AgentResponseChunk(requestID: id, executionID: execution.executionID, sequence: 1, text: "Answer")
+    try b.publishRecords(writes: [b.agentExecutionFile(id): .encode(execution), b.agentChunkFile(id, 1): .encode(chunk)])
     for change in try b.changeJournal(after: 0) { _ = try transfer(change, from: b, to: a, peer: peerB) }
     let result = try #require(try a.agentRequest(id))
     #expect(result.status == .completed && result.responseText == "Answer")
-    #expect(try a.pendingAgentRequests().isEmpty)
     let before = try a.currentChangeCursor(), received = try a.peerCursor(peerID: peerB, direction: .incoming)
     var stale = try #require(result.execution)
     stale.status = .running; stale.answerEntryID = nil

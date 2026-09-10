@@ -48,22 +48,24 @@ extension NotebookStore {
   }
 
   @discardableResult
-  public func applyCollaborationAction(_ action: CollaborationAction, actor: UUID, waitForInput: TimeInterval = 0,
-    agentAuthority: AgentActionAuthority? = nil) throws -> CollaborationReceipt {
-    try waitingForInput(waitForInput) { try applyCollaborationActionImmediately(action, actor: actor, agentAuthority: agentAuthority) }
+  public func applyCollaborationAction(_ action: CollaborationAction, actor: UUID, waitForInput: TimeInterval = 0) throws -> CollaborationReceipt {
+    try waitingForInput(waitForInput) { try applyCollaborationActionImmediately(action, actor: actor) }
   }
 
-  private func applyCollaborationActionImmediately(_ action: CollaborationAction, actor: UUID,
-    agentAuthority: AgentActionAuthority?) throws -> CollaborationReceipt {
+  private func applyCollaborationActionImmediately(_ action: CollaborationAction, actor: UUID) throws -> CollaborationReceipt {
     try prepare()
     return try withMutationLock {
-      try validateAgentAction(action, authority: agentAuthority)
       if try hasStoredValue(actionFile(action.id)) {
         let previous = try loadAction(action.id)
         guard previous.action == action else {
           throw CollaborationError("action_id_conflict", "Этот ID уже принадлежит другому ходу.")
         }
         return previous
+      }
+      // Old receipts remain readable/idempotent, but their archived request ID
+      // cannot authorize a new mutation after the embedded executor is removed.
+      guard action.requestID == nil else {
+        throw CollaborationError("archived_request", "Архивный запрос не может исполнять новые действия.")
       }
       guard !action.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
         action.summary.count <= 1000, (1...512).contains(action.operations.count),
@@ -142,7 +144,6 @@ extension NotebookStore {
             inkRevision: action.containsInk ? try after.inkRevision(of: $0) : nil)
         }, changes: changes)
       try commitCollaboration(before: before.files, after: after.files, receipt: receipt)
-      try attachAgentReceipt(receipt, authority: agentAuthority)
       return receipt
     }
   }

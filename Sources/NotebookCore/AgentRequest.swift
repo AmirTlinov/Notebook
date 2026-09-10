@@ -1,14 +1,5 @@
 import Foundation
 
-/// A private executor holds this lease; tool arguments cannot supply authority.
-public struct AgentActionAuthority: Codable, Equatable, Sendable {
-  public let requestID: UUID
-  public let executionID: UUID
-  public init(requestID: UUID, executionID: UUID) {
-    self.requestID = requestID; self.executionID = executionID
-  }
-}
-
 public struct RequestGrant: Codable, Equatable, Sendable {
   public enum Mode: String, Codable, Sendable { case question, change }
   public let id: UUID
@@ -60,8 +51,8 @@ public struct RequestGrant: Codable, Equatable, Sendable {
   }
 }
 
-/// The question and grant are immutable. Runtime state, stop intent and stream
-/// chunks have separate durable identities; reconnecting does not create a run.
+/// Historical archive schema only. There is no Notebook executor or permission
+/// authority behind these records; new conversations belong to Codex.
 public struct AgentRequest: Codable, Equatable, Identifiable, Sendable {
   public let id: UUID
   public let contextID: UUID

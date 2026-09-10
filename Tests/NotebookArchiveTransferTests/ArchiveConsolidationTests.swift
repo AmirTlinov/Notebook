@@ -1,5 +1,5 @@
 import Foundation
-import NotebookCore
+@testable import NotebookCore
 import Testing
 @testable import NotebookArchiveTransfer
 
@@ -33,9 +33,11 @@ struct ArchiveConsolidationTests {
       let context = try current.appendContext(references: [reference], author: .human, actor: actor, text: "Фрагмент", select: true)
       let id = UUID()
       let source = try AgentPinnedSource.capture(requestID: id, reference: reference, files: content.sourceFiles())
-      request = try current.createAgentRequest(id: id, contextID: context.id, replyTo: context.entries[0].id,
-        question: "Остановленный вопрос", grant: .init(mode: .question, references: [reference]), sources: [source], actor: actor)
-      try current.requestAgentStop(request.id, actor: actor)
+      request = AgentRequest(id: id, contextID: context.id, questionEntryID: context.entries[0].id,
+        grant: try .init(mode: .question, references: [reference]), authorDeviceID: actor, sourceIDs: [reference.id])
+      try current.publishRecords(writes: [current.agentRequestFile(id): .encode(request),
+        current.agentSourceFile(id, reference.id): .encode(source),
+        current.agentStopFile(id): .encode(AgentStopIntent(requestID: id, authorDeviceID: actor))])
       try Data("keep non-SQL application data".utf8).write(to: current.root.appendingPathComponent("retained-local-file"))
     }
 
