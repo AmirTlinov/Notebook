@@ -64,7 +64,7 @@ public enum NotebookArchiveLaunch: Equatable, Sendable {
 }
 
 enum NotebookArchiveActivationFault: CaseIterable {
-  case afterCandidateCopy, beforeManifestPublication, beforeSwap, afterSwap, beforeReceipt, afterReceipt
+  case afterCandidateCopy, beforeManifestPublication, afterLocalDurability, beforeSwap, afterSwap, beforeReceipt, afterReceipt
 }
 
 private struct NotebookArchiveActivationMarker: Codable, Equatable {
@@ -78,10 +78,13 @@ private struct NotebookArchiveActivationMarker: Codable, Equatable {
 public struct NotebookArchiveActivation: Sendable {
   private let fault: (@Sendable (NotebookArchiveActivationFault) throws -> Void)?
   private let availableBytes: (@Sendable (URL) throws -> UInt64)?
-  public init() { fault = nil; availableBytes = nil }
+  private let localSyncFile: @Sendable (URL) throws -> Void
+  public init() { fault = nil; availableBytes = nil; localSyncFile = { try NotebookArchiveFiles.syncFile($0) } }
   init(fault: (@Sendable (NotebookArchiveActivationFault) throws -> Void)? = nil,
-    availableBytes: (@Sendable (URL) throws -> UInt64)? = nil) {
+    availableBytes: (@Sendable (URL) throws -> UInt64)? = nil,
+    localSyncFile: (@Sendable (URL) throws -> Void)? = nil) {
     self.fault = fault; self.availableBytes = availableBytes
+    self.localSyncFile = localSyncFile ?? { try NotebookArchiveFiles.syncFile($0) }
   }
   public static func controlURL(for root: URL) -> URL {
     root.deletingLastPathComponent().appendingPathComponent(root.lastPathComponent + ".activation", isDirectory: true)
@@ -159,6 +162,10 @@ public struct NotebookArchiveActivation: Sendable {
           try NotebookArchiveFingerprint.read(prepared) == manifest.candidate else { throw NotebookStorageError.transactionConflict }
         let bytes = try availableBytes?(root) ?? (manager.attributesOfFileSystem(forPath: root.path)[.systemFreeSize] as? NSNumber)?.uint64Value ?? 0
         guard bytes >= 64 * 1024 * 1024 else { throw NotebookStorageError.limitExceeded("activation_disk_reserve") }
+        // Preparation may have happened on another device. Hash equality
+        // proves copied bytes, not their durability on this destination.
+        try syncLocalArchives([(root, manifest.source), (prepared, manifest.candidate)], control: control)
+        try fault?(.afterLocalDurability)
         try fault?(.beforeSwap)
         guard try NotebookArchiveFingerprint.read(root) == manifest.source,
           try NotebookArchiveFingerprint.read(prepared) == manifest.candidate else { throw NotebookStorageError.transactionConflict }
@@ -171,6 +178,14 @@ public struct NotebookArchiveActivation: Sendable {
       }
       guard try NotebookArchiveFingerprint.read(root) == manifest.candidate,
         try NotebookArchiveFingerprint.read(prepared) == manifest.source else { throw NotebookStorageError.transactionConflict }
+      if marker == expectedMarker {
+        // A prior exchange without its receipt recovers forward. Its files
+        // must be durable here too; neither archive is exchanged back.
+        try syncLocalArchives([(root, manifest.candidate), (prepared, manifest.source)], control: control)
+        try fault?(.afterLocalDurability)
+        guard try NotebookArchiveFingerprint.read(root) == manifest.candidate,
+          try NotebookArchiveFingerprint.read(prepared) == manifest.source else { throw NotebookStorageError.transactionConflict }
+      }
       try NotebookArchiveFiles.syncDirectory(root.deletingLastPathComponent())
       try NotebookArchiveFiles.syncDirectory(control)
       try fault?(.beforeReceipt)
@@ -178,6 +193,13 @@ public struct NotebookArchiveActivation: Sendable {
       try fault?(.afterReceipt)
     }
     return try admissionStatus(root: root, receipt: receipt)
+  }
+
+  private func syncLocalArchives(_ archives: [(URL, NotebookArchiveFingerprint)], control: URL) throws {
+    for (root, proof) in archives { try NotebookArchiveFiles.syncTree(root, proof: proof, syncFile: localSyncFile) }
+    try localSyncFile(control.appendingPathComponent("transition.json"))
+    try NotebookArchiveFiles.syncDirectory(control)
+    try NotebookArchiveFiles.syncDirectory(control.deletingLastPathComponent())
   }
 
   /// Bounded waiting/cold-start check: never re-hashes SQLite after new input.
@@ -197,6 +219,10 @@ public struct NotebookArchiveActivation: Sendable {
     let admission = try NotebookArchiveFiles.read(NotebookArchiveAdmission.self, at: admissionURL)
     _ = try NotebookArchiveAdmission(receipts: admission.receipts)
     guard admission.receipts.contains(receipt) else { throw NotebookStorageError.invalidTransaction("pair admission mismatch") }
+    // A copied admission is not necessarily durable yet. Model/network
+    // admission follows the destination's flush of this small control file.
+    try localSyncFile(admissionURL)
+    try NotebookArchiveFiles.syncDirectory(control)
     return .admitted(receipt)
   }
 }

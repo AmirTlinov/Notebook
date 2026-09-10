@@ -65,7 +65,7 @@ func convertLegacyHierarchy(_ data: Data) throws -> BoardHierarchy {
     }
     let converted = try convertLegacyBoard(archiveData(board))
     node["board"] = try archiveObject(JSONEncoder().encode(converted))
-    // Before portals, an absent camera meant the origin at scale one and its
+    // Before portals, an absent camera used BoardPortalCamera's default and its
     // clock belonged to this board's actor. Explicit malformed values still fail.
     if node["portalCamera"] == nil {
       node["portalCamera"] = try archiveObject(JSONEncoder().encode(BoardPortalCamera()))

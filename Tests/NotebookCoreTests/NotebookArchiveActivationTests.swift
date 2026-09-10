@@ -1,8 +1,16 @@
 import Foundation
+import Darwin
 import Testing
 @testable import NotebookCore
 
 private enum ActivationFailure: Error { case injected }
+
+private final class ActivationFlushes: @unchecked Sendable {
+  private let lock = NSLock()
+  private var paths: [String] = []
+  func record(_ url: URL) { lock.withLock { paths.append(url.path) } }
+  var values: [String] { lock.withLock { paths } }
+}
 
 @Suite("Archive activation never exposes an incomplete or rolled-back owner")
 struct NotebookArchiveActivationTests {
@@ -69,11 +77,18 @@ struct NotebookArchiveActivationTests {
     }
     let admission = try NotebookArchiveAdmission(receipts: [receipt, mac])
     try admission.publish(at: value.control); try admission.publish(at: macControl)
+    let activeBefore = try NotebookArchiveFingerprint.read(value.source)
+    let failedAdmission = NotebookArchiveActivation(localSyncFile: { file in
+      #expect(file.lastPathComponent == "admission.json")
+      throw NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC))
+    })
+    #expect(throws: NSError.self) { try value.launch(failedAdmission) }
+    #expect(try NotebookArchiveFingerprint.read(value.source) == activeBefore)
     #expect(try value.launch() == .admitted(receipt))
     #expect(try NotebookArchiveActivation().launch(root: macRoot, target: target) == .admitted(mac))
   }
 
-  @Test(arguments: [NotebookArchiveActivationFault.beforeSwap, .afterSwap, .beforeReceipt, .afterReceipt])
+  @Test(arguments: [NotebookArchiveActivationFault.afterLocalDurability, .beforeSwap, .afterSwap, .beforeReceipt, .afterReceipt])
   func everyInterruptedActivationRecoversWithoutASwapBack(point: NotebookArchiveActivationFault) throws {
     let value = try Fixture(); defer { try? FileManager.default.removeItem(at: value.base) }
     let manifest = try value.prepare()
@@ -84,6 +99,62 @@ struct NotebookArchiveActivationTests {
     #expect(try NotebookArchiveFingerprint.read(value.source) == manifest.candidate)
     #expect(try NotebookArchiveFingerprint.read(value.control.appendingPathComponent("candidate")) == manifest.source)
     #expect(try value.launch() == .waitingForPair(receipt))
+  }
+
+  @Test func destinationFlushesBothArchivesAndManifestBeforeExchange() throws {
+    let value = try Fixture(); defer { try? FileManager.default.removeItem(at: value.base) }
+    let manifest = try value.prepare(), flushes = ActivationFlushes()
+    let expected = manifest.source.files.map { value.source.appendingPathComponent($0.path).path }
+      + manifest.candidate.files.map { value.control.appendingPathComponent("candidate").appendingPathComponent($0.path).path }
+      + [value.control.appendingPathComponent("transition.json").path]
+    let owner = NotebookArchiveActivation(fault: { phase in
+      if phase == .beforeSwap {
+        #expect(flushes.values == expected)
+        #expect(try NotebookArchiveFingerprint.read(value.source) == manifest.source)
+        throw ActivationFailure.injected
+      }
+    }, localSyncFile: { file in
+      try NotebookArchiveFiles.syncFile(file)
+      flushes.record(file)
+    })
+    #expect(throws: ActivationFailure.self) { try value.launch(owner) }
+    #expect(try NotebookArchiveFingerprint.read(value.source) == manifest.source)
+    #expect(try NotebookArchiveFingerprint.read(value.control.appendingPathComponent("candidate")) == manifest.candidate)
+    #expect(!FileManager.default.fileExists(atPath: value.control.appendingPathComponent("activation.json").path))
+  }
+
+  @Test(arguments: ["source", "candidate", "manifest"])
+  func destinationFlushFailureNeverExchangesArchives(stage: String) throws {
+    let value = try Fixture(); defer { try? FileManager.default.removeItem(at: value.base) }
+    let manifest = try value.prepare()
+    let failingPath = stage == "source" ? value.source.appendingPathComponent(manifest.source.files[0].path)
+      : stage == "candidate" ? value.control.appendingPathComponent("candidate").appendingPathComponent(manifest.candidate.files[0].path)
+      : value.control.appendingPathComponent("transition.json")
+    let owner = NotebookArchiveActivation(localSyncFile: { file in
+      if file == failingPath { throw NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC)) }
+      try NotebookArchiveFiles.syncFile(file)
+    })
+    do { _ = try value.launch(owner); Issue.record("A failed flush must refuse activation") }
+    catch { #expect((error as NSError).domain == NSPOSIXErrorDomain); #expect((error as NSError).code == Int(ENOSPC)) }
+    #expect(try NotebookArchiveFingerprint.read(value.source) == manifest.source)
+    #expect(try NotebookArchiveFingerprint.read(value.control.appendingPathComponent("candidate")) == manifest.candidate)
+    #expect(!FileManager.default.fileExists(atPath: value.control.appendingPathComponent("activation.json").path))
+    guard case .waitingForPair = try value.launch() else { Issue.record("Retry must finish the one exchange"); return }
+    #expect(try NotebookArchiveFingerprint.read(value.source) == manifest.candidate)
+  }
+
+  @Test func interruptedExchangeCannotPublishReceiptAfterADestinationFlushFailure() throws {
+    let value = try Fixture(); defer { try? FileManager.default.removeItem(at: value.base) }
+    let manifest = try value.prepare()
+    #expect(throws: ActivationFailure.self) {
+      try value.launch(.init(fault: { if $0 == .afterSwap { throw ActivationFailure.injected } }))
+    }
+    let failure = NotebookArchiveActivation(localSyncFile: { _ in throw NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC)) })
+    #expect(throws: NSError.self) { try value.launch(failure) }
+    #expect(try NotebookArchiveFingerprint.read(value.source) == manifest.candidate)
+    #expect(try NotebookArchiveFingerprint.read(value.control.appendingPathComponent("candidate")) == manifest.source)
+    #expect(!FileManager.default.fileExists(atPath: value.control.appendingPathComponent("activation.json").path))
+    guard case .waitingForPair = try value.launch() else { Issue.record("Recovery must proceed without swapping back"); return }
   }
 
   @Test func aNewWriteIsNeverReplacedByThePreparedSnapshot() throws {

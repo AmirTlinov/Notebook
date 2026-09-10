@@ -102,13 +102,16 @@ enum NotebookArchiveFiles {
     guard fsync(descriptor) == 0 else { throw failure("flush archive directory") }
   }
 
-  static func syncTree(_ root: URL, proof: NotebookArchiveFingerprint) throws {
-    for file in proof.files {
-      let descriptor = open(root.appendingPathComponent(file.path).path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-      guard descriptor >= 0 else { throw failure("open prepared archive") }
-      defer { close(descriptor) }
-      guard fsync(descriptor) == 0, fcntl(descriptor, F_FULLFSYNC) == 0 else { throw failure("flush prepared archive") }
-    }
+  static func syncFile(_ url: URL) throws {
+    let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+    guard descriptor >= 0 else { throw failure("open prepared archive") }
+    defer { close(descriptor) }
+    guard fsync(descriptor) == 0, fcntl(descriptor, F_FULLFSYNC) == 0 else { throw failure("flush prepared archive") }
+  }
+
+  static func syncTree(_ root: URL, proof: NotebookArchiveFingerprint,
+    syncFile: (URL) throws -> Void = NotebookArchiveFiles.syncFile) throws {
+    for file in proof.files { try syncFile(root.appendingPathComponent(file.path)) }
     let directories = Set(proof.files.flatMap { file -> [String] in
       var path = (file.path as NSString).deletingLastPathComponent, result: [String] = []
       while !path.isEmpty { result.append(path); path = (path as NSString).deletingLastPathComponent }
