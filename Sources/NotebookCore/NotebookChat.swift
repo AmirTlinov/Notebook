@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 public struct CodexTask: Codable, Equatable, Sendable, Identifiable {
   public let id: String
@@ -78,6 +79,27 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
     case .send(let id, _, _), .stop(let id, _), .respond(let id, _, _): id
     case .create: nil
     }
+  }
+
+  /// One human decision belongs to one native request; reopening a panel or
+  /// tapping Stop again cannot mint another delivery of that same control.
+  /// Text messages and task creation remain independent human submissions.
+  public func controlID(author: UUID) -> UUID? {
+    let address: [String]
+    switch self {
+    case .stop(let thread, let turn): address = ["stop", thread.lowercased(), turn.lowercased()]
+    case .respond(let thread, let request, _):
+      address = ["respond", thread.lowercased(), request.turnID.lowercased(), request.method, request.id]
+    case .send, .create: return nil
+    }
+    var data = Data()
+    for part in ["NotebookChatControl/1", author.uuidString.lowercased()] + address {
+      data.append(Data("\(part.utf8.count):".utf8)); data.append(Data(part.utf8))
+    }
+    var bytes = Array(SHA256.hash(data: data).prefix(16))
+    bytes[6] = (bytes[6] & 0x0f) | 0x80; bytes[8] = (bytes[8] & 0x3f) | 0x80
+    return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+      bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
   }
 }
 

@@ -8,6 +8,8 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   var busy = false, unknown = false
   var sent: [UUID] = [], interrupted: [String] = [], decisions: [CodexUserDecision] = []
   var accepted: [CodexMessage] = []
+  var stopIsStale = false
+  func finishBeforeStop() { stopIsStale = true }
   func configure(busy: Bool = false, unknown: Bool = false) { self.busy = busy; self.unknown = unknown }
   func counts() -> (Int, Int) { (sent.count, interrupted.count) }
   func attach(threadID: String) { }
@@ -23,7 +25,10 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
     if unknown { throw CodexBridgeError.acceptanceUnknown }
     return turn
   }
-  func interrupt(threadID: String, turnID: String) { interrupted.append(turnID) }
+  func interrupt(threadID: String, turnID: String) throws {
+    if stopIsStale { throw CodexBridgeError.staleTurn }
+    interrupted.append(turnID)
+  }
   func respond(threadID: String, request: CodexUserRequest, decision: CodexUserDecision) { decisions.append(decision) }
   func tasks(cursor: String?) -> CodexTaskPage { .init(tasks: [.init(id: thread, title: "Математика", cwd: "/tmp")], nextCursor: nil) }
   func history(threadID: String, cursor: String?) -> CodexHistoryPage { .init(messages: accepted, nextCursor: nil) }
@@ -99,6 +104,21 @@ final class NotebookCodexSidecarTests: XCTestCase {
       let decisions = await native.decisions; XCTAssertTrue(decisions.isEmpty)
       let rejected = await service.receive(.init(body: .request(.job(input))), peerID: UUID())
       XCTAssertNil(rejected)
+      await service.stop()
+    }
+  }
+
+  func testTurnFinishedOnMacRejectsStopWithoutAnUnknownOrRepeatedInterruption() async throws {
+    try await fixture { store, queue, native, peer in
+      await native.configure(busy: true); await native.finishBeforeStop()
+      let service = try sidecar(store, queue, native)
+      let action = NotebookChatAction.stop(threadID: native.thread, turnID: native.turn)
+      let input = NotebookChatInput(id: try XCTUnwrap(action.controlID(author: peer)), author: peer, action: action)
+      let request = NotebookChatEnvelope(body: .request(.job(input)))
+      _ = await service.receive(request, peerID: peer); service.start()
+      try await wait { try await queue.submit { try $0.chatJob(input.id)?.state == .rejected } }
+      _ = await service.receive(request, peerID: peer)
+      let counts = await native.counts(); XCTAssertEqual(counts.1, 0)
       await service.stop()
     }
   }

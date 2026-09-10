@@ -24,6 +24,7 @@ final class NotebookChatController {
   @ObservationIgnored private let send: (NotebookChatEnvelope, UUID) -> Void
   @ObservationIgnored private var peer: UUID?
   @ObservationIgnored private var loaded = false
+  @ObservationIgnored private var stopped = false
   @ObservationIgnored private var loop: Task<Void, Never>?
   @ObservationIgnored private var pending: (NotebookChatEnvelope, CheckedContinuation<NotebookChatReply, Error>)?
   @ObservationIgnored private var retry: Task<Void, Never>?
@@ -50,7 +51,7 @@ final class NotebookChatController {
         while !Task.isCancelled {
           if connected {
             let query: NotebookChatQuery?
-            let outgoing = jobs.filter { !$0.isTerminal }.sorted { $0.input.createdAt < $1.input.createdAt }
+            let outgoing = jobs.reversed().filter { !$0.isTerminal }
             offeredJobs.formIntersection(outgoing.map(\.id))
             if !queries.isEmpty { query = queries.removeFirst() }
             else if !outgoing.isEmpty, !pollConversation || !expanded {
@@ -73,6 +74,7 @@ final class NotebookChatController {
   }
 
   func stop() async {
+    stopped = true
     loop?.cancel(); retry?.cancel()
     pending?.1.resume(throwing: NotebookTransportError.disconnected); pending = nil
     await loop?.value; loop = nil
@@ -96,6 +98,7 @@ final class NotebookChatController {
   }
 
   func catalogue(next: Bool = false) { enqueue(.catalogue(cursor: next ? taskCursor : nil)) }
+  func latestHistory() { guard let threadID else { return }; enqueue(.history(threadID: threadID, cursor: nil)) }
   func older() { guard let threadID else { return }; enqueue(.history(threadID: threadID, cursor: historyCursor)) }
   func select(_ task: CodexTask) {
     threadID = task.id; conversation = nil; history = []; historyCursor = nil
@@ -108,22 +111,37 @@ final class NotebookChatController {
     }
     return false
   }
-  func stopTurn() async {
-    guard let threadID, let turn = conversation?.activeTurnID else { return }
-    _ = await submit(.stop(threadID: threadID, turnID: turn))
+  func stopTurn(threadID: String, turnID: String) async {
+    _ = await submit(.stop(threadID: threadID, turnID: turnID))
   }
-  func respond(_ request: CodexUserRequest, decision: CodexUserDecision) async {
-    guard let threadID else { return }
+  func respond(_ request: CodexUserRequest, decision: CodexUserDecision, threadID: String) async {
     _ = await submit(.respond(threadID: threadID, request: request, decision: decision))
   }
+  func decisionJob(_ request: CodexUserRequest, threadID: String) -> NotebookChatJob? {
+    let id = NotebookChatAction.respond(threadID: threadID, request: request, decision: .decline).controlID(author: author)
+    return jobs.first { $0.id == id }
+  }
+
+  var selectedJob: NotebookChatJob? { jobs.first { $0.input.action.threadID == threadID } }
 
   private func submit(_ action: NotebookChatAction, attentionContextID: UUID? = nil) async -> Bool {
-    guard loaded, !saving else { return false }
+    guard loaded, !stopped, !saving else { return false }
     saving = true; defer { saving = false }
+    let controlID = action.controlID(author: author)
+    if savingInput == nil, let controlID {
+      do {
+        if let previous = try await persistence.submit({ try $0.chatJob(controlID) }) {
+          guard previous.input.action == action else {
+            error = "Для этого запроса уже сохранено другое решение. Повторно оно не отправляется."; return false
+          }
+          try await refreshJobs(); return true
+        }
+      } catch { self.error = error.localizedDescription; return false }
+    }
     if let savingInput, savingInput.action != action || savingInput.attentionContextID != attentionContextID {
       error = "Сначала завершите сохранение предыдущего сообщения."; return false
     }
-    let input = savingInput ?? NotebookChatInput(author: author, action: action, attentionContextID: attentionContextID)
+    let input = savingInput ?? NotebookChatInput(id: controlID ?? UUID(), author: author, action: action, attentionContextID: attentionContextID)
     savingInput = input
     do {
       _ = try await persistence.submit { try $0.saveChatSubmission(input) }
@@ -141,7 +159,9 @@ final class NotebookChatController {
     jobs = try await persistence.submit { store in
       let recent = try store.recentChatJobs(author: author)
       let pending = try store.pendingChatJobs().filter { $0.input.author == author }
-      return (recent + pending.filter { job in !recent.contains { $0.id == job.id } }).sorted { $0.input.createdAt > $1.input.createdAt }
+      // SQL admission order, not wall time: changing the iPad clock may not
+      // reorder offline messages. Extra pending rows all precede the recent page.
+      return recent + pending.filter { job in !recent.contains { $0.id == job.id } }.reversed()
     }
   }
   private func persistPanel() {

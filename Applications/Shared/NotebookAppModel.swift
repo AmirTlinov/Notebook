@@ -443,6 +443,7 @@ final class NotebookAppModel {
 
   #if os(iOS)
     private(set) var chat: NotebookChatController?
+    @ObservationIgnored private var chatSubmissionTask: Task<Void, Never>?
   #endif
 
   private(set) var actionCue: String?
@@ -2192,39 +2193,45 @@ final class NotebookAppModel {
   #if os(iOS)
     /// Selection narrows attention, not the agent's tool authority. This value
     /// captures the physical owner and camera before any save/network suspension.
-    func sendChatMessage() async {
-      guard let chat, let submittedThread = chat.threadID, !isSavingAgentQuestion else { return }
+    @discardableResult func sendChatMessage() -> Task<Void, Never>? {
+      guard !isClosing, let chat, let submittedThread = chat.threadID, !isSavingAgentQuestion,
+        !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
       let submittedText = chat.draft
-      isSavingAgentQuestion = true; defer { isSavingAgentQuestion = false }
+      isSavingAgentQuestion = true
       let question = agentQuestion
       let retained = question.flatMap { q in pinnedAttentionSelections.first { $0.0 == q.contextID }?.1 }
       let capturedPresence = presence, capturedWorkspace = workspaceHeader?.workspaceID
-      do {
-        if let question {
-          let visual = try await retained?.renderPinnedImages(references: question.references)
-          try await persistence.submit(publishesChanges: true) { store in
-            if try store.hasAttentionEvidence(contextID: question.contextID) { return }
-            guard let retained else { throw CollaborationError("source_missing", "Историческое изображение не сохранено. Укажите фрагмент снова.") }
-            let files = try retained.sourceFiles()
-            let sources = try question.references.map { reference in
-              try AgentPinnedSource.capture(requestID: question.contextID, reference: reference, files: files)
-                .withVisual(visual?.images[reference.id], unavailable: visual?.unavailable[reference.id] ?? "source_pixels_unavailable")
+      let task = Task { [self] in
+        defer { isSavingAgentQuestion = false; chatSubmissionTask = nil }
+        do {
+          if let question {
+            let visual = try await retained?.renderPinnedImages(references: question.references)
+            try await persistence.submit(publishesChanges: true) { store in
+              if try store.hasAttentionEvidence(contextID: question.contextID) { return }
+              guard let retained else { throw CollaborationError("source_missing", "Историческое изображение не сохранено. Укажите фрагмент снова.") }
+              let files = try retained.sourceFiles()
+              let sources = try question.references.map { reference in
+                try AgentPinnedSource.capture(requestID: question.contextID, reference: reference, files: files)
+                  .withVisual(visual?.images[reference.id], unavailable: visual?.unavailable[reference.id] ?? "source_pixels_unavailable")
+              }
+              try store.saveAttentionEvidence(sources, contextID: question.contextID)
             }
-            try store.saveAttentionEvidence(sources, contextID: question.contextID)
           }
-        }
-        let context: JSONValue = .object([
-          "workspaceID": capturedWorkspace.map { .string($0.uuidString) } ?? .null,
-          "presence": try capturedPresence.map(JSONValue.encode) ?? .null,
-          "attention": try question.map { question in
-            .object(["contextID": .string(question.contextID.uuidString),
-              "entryID": .string(question.entryID.uuidString), "references": try .encode(question.references)])
-          } ?? .null,
-          "meaning": .string("Read frozen attention via notebook_read_attention(context_id, reference_id). Shared Notebook workspace. Selection directs attention, not permissions. Use Notebook tools for source/version checks, undoable edits and delivery receipts. Do not move the camera.")
-        ])
-        let text = String(decoding: try JSONEncoder().encode(context), as: UTF8.self)
-        _ = await chat.sendMessage(threadID: submittedThread, text: submittedText, context: text, attentionContextID: question?.contextID)
-      } catch { agentRequestError = error.localizedDescription }
+          let context: JSONValue = .object([
+            "workspaceID": capturedWorkspace.map { .string($0.uuidString) } ?? .null,
+            "presence": try capturedPresence.map(JSONValue.encode) ?? .null,
+            "attention": try question.map { question in
+              .object(["contextID": .string(question.contextID.uuidString),
+                "entryID": .string(question.entryID.uuidString), "references": try .encode(question.references)])
+            } ?? .null,
+            "meaning": .string("Read frozen attention via notebook_read_attention(context_id, reference_id). Shared Notebook workspace. Selection directs attention, not permissions. Use Notebook tools for source/version checks, undoable edits and delivery receipts. Do not move the camera.")
+          ])
+          let text = String(decoding: try JSONEncoder().encode(context), as: UTF8.self)
+          _ = await chat.sendMessage(threadID: submittedThread, text: submittedText, context: text, attentionContextID: question?.contextID)
+        } catch { agentRequestError = error.localizedDescription }
+      }
+      chatSubmissionTask = task
+      return task
     }
   #endif
 
@@ -2678,6 +2685,9 @@ final class NotebookAppModel {
   @discardableResult
   func finishPendingPersistence() async -> Bool {
     if let startupTask { await startupTask.value }
+    #if os(iOS)
+      await chatSubmissionTask?.value
+    #endif
     repeat {
       guard await finishAcceptedPageInk() else { return false }
       if let task = diskRefreshTask { await task.value }
@@ -2706,6 +2716,7 @@ final class NotebookAppModel {
         let agentStopped = true
         await previewPublisher?.stop()
       #else
+        await chatSubmissionTask?.value
         await chat?.stop()
         let agentStopped = true
       #endif

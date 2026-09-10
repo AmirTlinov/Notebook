@@ -163,14 +163,18 @@ final class NotebookCodexSidecar {
         try await bridge.respond(threadID: thread, request: request, decision: decision); result = .acknowledged
       }
     } catch {
-      // busy/unavailable are guaranteed pre-dispatch by send(). Everything else
-      // is uncertain, including a successful native request whose reply was lost.
+      // These local checks fail before native dispatch. A turn that finished on
+      // the Mac is a definite stale Stop, not an indefinitely unknown acceptance.
+      let code = error as? CodexBridgeError
+      let rejected = code == .staleTurn || code == .staleRequest || code == .unsupportedRequest || code == .invalidInput
+      // busy/unavailable are guaranteed pre-dispatch by send(). Other failures
+      // remain uncertain, including success whose native reply was lost.
       let retryable: Bool
       if case .send = job.input.action {
         retryable = (error as? CodexBridgeError) == .busy || (error as? CodexBridgeError) == .unavailable
       } else { retryable = false }
       _ = try await persistence.submit {
-        try $0.advanceChatJob(job.id, from: .attempting, to: retryable ? .saved : .uncertain, error: Self.message(error))
+        try $0.advanceChatJob(job.id, from: .attempting, to: rejected ? .rejected : (retryable ? .saved : .uncertain), error: Self.message(error))
       }
       return
     }
@@ -203,6 +207,9 @@ final class NotebookCodexSidecar {
     case .incompatibleVersion: return "Версия Codex несовместима с проверенным протоколом Notebook."
     case .busy: return "Задача занята; сообщение остаётся в очереди."
     case .acceptanceUnknown: return "Принятие сообщения проверяется. Повторно оно не отправляется."
+    case .staleTurn: return "Этот ход уже завершён или сменился на Mac. Другой ход не остановлен."
+    case .staleRequest: return "Этот запрос уже обработан или сменился в Codex. Решение не отправлено."
+    case .unsupportedRequest: return "Этот запрос нужно обработать в Codex на Mac."
     default: return "Codex: \(bridge.rawValue)"
     }
   }

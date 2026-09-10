@@ -34,18 +34,51 @@ final class NotebookChatControllerTests: XCTestCase {
       }
       controller.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
     }
-    await controller.start()
-    var expected: [UUID] = []
-    for text in ["Первый", "Второй", "Третий"] {
-      let saved = await controller.sendMessage(threadID: thread, text: text, context: "")
-      XCTAssertTrue(saved)
-      expected.append(try XCTUnwrap(controller.jobs.first).id)
+    let inputs = [300, 100, 200].map { time in
+      NotebookChatInput(author: author, action: .send(threadID: thread, text: "Часы \(time)", context: ""),
+        createdAt: Date(timeIntervalSince1970: Double(time)))
     }
+    for input in inputs { _ = try store.saveChatSubmission(input) }
+    let expected = inputs.map(\.id)
+    await controller.start()
     controller.connect(peer)
     await fulfillment(of: [admitted], timeout: 10)
     await controller.stop()
     XCTAssertEqual(offers, expected)
     XCTAssertEqual(Set(offers).count, 3)
+    let flushed = await queue.flush(); XCTAssertTrue(flushed)
+  }
+
+  func testPermissionAndStopKeepTheirNativeAddressAcrossTapsTaskChangesAndRestart() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-chat-controls-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), author = UUID(), thread = UUID().uuidString
+    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let queue = NotebookPersistenceQueue(store: store)
+    let request = CodexUserRequest(nativeID: .number(7), method: "item/commandExecution/requestApproval",
+      turnID: UUID().uuidString, parameters: .object(["command": .string("read this file")]))
+    let first = NotebookChatController(persistence: queue, author: author) { _, _ in XCTFail("An offline approval cannot send itself") }
+    await first.start(); first.select(.init(id: thread, title: "Урок", cwd: "/tmp"))
+    await first.respond(request, decision: .allowOnce, threadID: thread)
+    let job = try XCTUnwrap(first.decisionJob(request, threadID: thread))
+    first.expanded = false; first.expanded = true
+    await first.respond(request, decision: .allowOnce, threadID: thread)
+    XCTAssertEqual(first.jobs, [job])
+    await first.stop()
+    let second = NotebookChatController(persistence: queue, author: author) { _, _ in XCTFail("An offline approval cannot send itself") }
+    await second.start()
+    XCTAssertEqual(second.threadID, thread)
+    second.select(.init(id: UUID().uuidString, title: "Другая задача", cwd: "/tmp"))
+    await second.respond(request, decision: .allowOnce, threadID: thread)
+    XCTAssertEqual(second.jobs, [job])
+    await second.respond(request, decision: .decline, threadID: thread)
+    XCTAssertNotNil(second.error)
+    XCTAssertEqual(second.jobs, [job], "A second button cannot rewrite the accepted human decision")
+    await second.stopTurn(threadID: thread, turnID: request.turnID)
+    await second.stopTurn(threadID: thread, turnID: request.turnID)
+    XCTAssertEqual(second.jobs.count, 2)
+    XCTAssertTrue(second.jobs.allSatisfy { $0.input.action.threadID == thread }, "A delayed tap addresses the shown task, not the later selection")
+    await second.stop()
     let flushed = await queue.flush(); XCTAssertTrue(flushed)
   }
 }

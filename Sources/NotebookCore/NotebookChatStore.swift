@@ -51,7 +51,7 @@ extension NotebookStore {
       guard let old = try chatJob(id), old.state == expected else { throw NotebookStorageError.invalidTransaction("chat transition conflict") }
       let allowed: Bool
       switch (expected, state) {
-      case (.saved, .attempting), (.saved, .rejected), (.attempting, .accepted), (.attempting, .uncertain),
+      case (.saved, .attempting), (.saved, .rejected), (.attempting, .accepted), (.attempting, .rejected), (.attempting, .uncertain),
         (.attempting, .saved), (.uncertain, .accepted): allowed = true
       default: allowed = false
       }

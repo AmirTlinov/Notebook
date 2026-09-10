@@ -59,7 +59,7 @@ final class InstalledInkAttentionTests: XCTestCase {
     let chat = try XCTUnwrap(fixture.model.chat)
     chat.select(.init(id: UUID().uuidString, title: "Чернила", cwd: "/tmp"))
     chat.draft = "Что я указал?"
-    await fixture.model.sendChatMessage()
+    await fixture.model.sendChatMessage()?.value
     let job = try XCTUnwrap(chat.jobs.first)
     guard case .send(_, _, let context) = job.input.action else { return XCTFail("Expected Codex message") }
     XCTAssertTrue(context.contains(reference.revision), "Chat pins the shown source version, not the newer camera/source")

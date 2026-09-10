@@ -24,6 +24,21 @@ struct NotebookChatStoreTests {
       #expect(try store.pendingChatJobs() == [saved])
     }
   }
+  @Test func controlIdentityNamesAuthorThreadTurnAndNativeRequestButNotTheDecision() throws {
+    let author = UUID(), thread = UUID().uuidString, turn = UUID().uuidString
+    let request = CodexUserRequest(nativeID: .number(7), method: "item/commandExecution/requestApproval", turnID: turn, parameters: .object([:]))
+    let allow = NotebookChatAction.respond(threadID: thread, request: request, decision: .allowOnce)
+    let decline = NotebookChatAction.respond(threadID: thread, request: request, decision: .decline)
+    #expect(allow.controlID(author: author) == decline.controlID(author: author))
+    #expect(allow.controlID(author: author) != allow.controlID(author: UUID()))
+    let stringID = CodexUserRequest(nativeID: .string("7"), method: request.method, turnID: turn, parameters: request.parameters)
+    #expect(allow.controlID(author: author) != NotebookChatAction.respond(threadID: thread, request: stringID, decision: .allowOnce).controlID(author: author))
+    let stop = NotebookChatAction.stop(threadID: thread, turnID: turn)
+    #expect(stop.controlID(author: author) == stop.controlID(author: author))
+    #expect(stop.controlID(author: author) != NotebookChatAction.stop(threadID: thread, turnID: UUID().uuidString).controlID(author: author))
+    #expect(stop.controlID(author: author) != allow.controlID(author: author))
+    #expect(NotebookChatAction.send(threadID: thread, text: "Вопрос", context: "").controlID(author: author) == nil)
+  }
   @Test func draftBindingAndQueueDoNotInvalidateCanvasOrReplicateHistory() throws {
     try fixture { store, author in
       let read = try store.currentReadCursor(), changes = try store.currentChangeCursor()

@@ -95,7 +95,7 @@ final class NotebookAgentQuestionTests: XCTestCase {
       let thread = CodexTask(id: UUID().uuidString, title: "Математика", cwd: "/tmp")
       chat.select(thread); chat.draft = "Что здесь?"
       let presence = model.presence
-      await model.sendChatMessage()
+      await model.sendChatMessage()?.value
       let job = try XCTUnwrap(chat.jobs.first)
       guard case .send(let id, let text, let context) = job.input.action else { return XCTFail("Expected native Codex message") }
       XCTAssertEqual(id, thread.id); XCTAssertEqual(text, "Что здесь?")
@@ -111,6 +111,27 @@ final class NotebookAgentQuestionTests: XCTestCase {
       XCTAssertEqual(resumed.chat?.draft, "Следующий вопрос")
       XCTAssertEqual(resumed.chat?.jobs.first, job)
       let finished = await resumed.shutdown(); XCTAssertTrue(finished)
+    }
+  }
+
+  @MainActor
+  func testSendAdmissionPinsTheShownTaskAndShutdownWaitsForItsDurableMessage() async throws {
+    try await fixture { model in
+      let chat = try XCTUnwrap(model.chat)
+      let first = CodexTask(id: UUID().uuidString, title: "Первый урок", cwd: "/tmp")
+      let second = CodexTask(id: UUID().uuidString, title: "Другой урок", cwd: "/tmp")
+      chat.select(first); chat.draft = "Исходный вопрос"
+      let accepted = try XCTUnwrap(model.sendChatMessage())
+      XCTAssertNil(model.sendChatMessage(), "A second tap cannot enter before the first save")
+      chat.select(second); chat.draft = "Следующий черновик"
+      let stopped = await model.shutdown(); XCTAssertTrue(stopped)
+      await accepted.value
+      let job = try XCTUnwrap(model.store.recentChatJobs(author: model.actorID).first)
+      guard case .send(let thread, let text, _) = job.input.action else { return XCTFail("Expected the admitted message") }
+      XCTAssertEqual(thread, first.id); XCTAssertEqual(text, "Исходный вопрос")
+      let panel = try model.store.chatPanel(author: model.actorID)
+      XCTAssertEqual(panel.threadID, second.id); XCTAssertEqual(panel.draft, "Следующий черновик")
+      XCTAssertNil(model.sendChatMessage(), "Shutdown closes new submission admission")
     }
   }
 }

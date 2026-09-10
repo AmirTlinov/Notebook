@@ -32,21 +32,25 @@ struct NotebookChatPanel: View {
         HStack {
           Text(status).font(.caption).foregroundStyle(.secondary)
           Spacer()
-          if chat.conversation?.activeTurnID != nil {
-            Button("Стоп") { Task { await chat.stopTurn() } }.frame(minHeight: 44)
+          if let conversation = chat.conversation, let turnID = conversation.activeTurnID {
+            Button("Стоп") { Task { await chat.stopTurn(threadID: conversation.threadID, turnID: turnID) } }.frame(minHeight: 44)
               .accessibilityIdentifier("notebook-chat-stop")
           }
         }
         if chat.threadID != nil {
           HStack {
-            Button("История") { showsHistory = true; chat.older() }.font(.caption).frame(minHeight: 36)
-            if showsHistory { Button("К ответу") { showsHistory = false }.font(.caption) }
+            if showsHistory {
+              if chat.historyCursor != nil { Button("Ранее") { chat.older() }.font(.caption).frame(minHeight: 36) }
+              Button("К ответу") { showsHistory = false }.font(.caption)
+            } else {
+              Button("История") { showsHistory = true; chat.latestHistory() }.font(.caption).frame(minHeight: 36)
+            }
           }
           NotebookChatTranscript(messages: showsHistory ? chat.history : (chat.conversation?.messages ?? chat.history))
             .frame(minHeight: 80, idealHeight: 230, maxHeight: 280)
             .onChange(of: chat.threadID) { showsHistory = false }
-          if let request = chat.conversation?.requests.first {
-            NotebookCodexRequestView(request: request, chat: chat).id(request.id)
+          if let conversation = chat.conversation, let request = conversation.requests.first {
+            NotebookCodexRequestView(request: request, threadID: conversation.threadID, chat: chat).id(request.id)
           }
         }
         if let question = model.agentQuestion {
@@ -56,13 +60,13 @@ struct NotebookChatPanel: View {
           .lineLimit(2...4).textFieldStyle(.roundedBorder)
           .accessibilityIdentifier("notebook-chat-text")
         HStack {
-          Button("Отправить") { Task { await model.sendChatMessage() } }
+          Button("Отправить") { model.sendChatMessage() }
             .buttonStyle(.borderedProminent).frame(minHeight: 44)
             .disabled(chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || chat.threadID == nil || chat.saving || model.isSavingAgentQuestion)
             .accessibilityIdentifier("notebook-chat-send")
           if chat.saving || model.isSavingAgentQuestion { ProgressView() }
         }
-        if let job = chat.jobs.first, !job.isTerminal {
+        if let job = chat.selectedJob, !job.isTerminal {
           Text(job.state == .saved ? "Сохранено на iPad · ожидает Codex" : job.state == .uncertain ? "Принятие проверяется · без повторной отправки" : "Передано Mac · ожидается подтверждение")
             .font(.caption).foregroundStyle(.secondary)
         }
@@ -83,7 +87,7 @@ struct NotebookChatPanel: View {
     if !chat.connected { return "Mac недоступен" }
     if chat.conversation?.requests.isEmpty == false { return "Требуется ваше действие" }
     if chat.conversation?.busy == true { return "Агент отвечает" }
-    if chat.jobs.first?.state == .accepted { return "Принято Codex" }
+    if chat.selectedJob?.state == .accepted { return "Принято Codex" }
     return "Mac подключён"
   }
 }
@@ -95,6 +99,7 @@ private struct NotebookCodexRequestView: View {
     let id: String; let question: String; let options: [Option]?
   }
   let request: CodexUserRequest
+  let threadID: String
   let chat: NotebookChatController
   @State private var answers: [String: String] = [:]
   @State private var submitted = false
@@ -128,7 +133,11 @@ private struct NotebookCodexRequestView: View {
             Text("Для заполнения этой формы откройте задачу в Codex.").font(.caption)
           } else { Text("Этот запрос нужно обработать в Codex на Mac.").font(.caption) }
         }
-      }.disabled(submitted)
+        if let job = chat.decisionJob(request, threadID: threadID) {
+          Text(job.state == .uncertain ? "Принятие решения проверяется. Повтора нет." : "Решение сохранено и ожидает Codex.")
+            .font(.caption).foregroundStyle(.secondary)
+        }
+      }.disabled(submitted || chat.decisionJob(request, threadID: threadID) != nil)
     }.frame(maxHeight: 200)
   }
   private var questions: Questions? { try? JSONDecoder().decode(Questions.self, from: JSONEncoder().encode(request.parameters)) }
@@ -138,7 +147,7 @@ private struct NotebookCodexRequestView: View {
   }
   private func decide(_ decision: CodexUserDecision) {
     submitted = true
-    Task { await chat.respond(request, decision: decision); submitted = false }
+    Task { await chat.respond(request, decision: decision, threadID: threadID); submitted = false }
   }
 }
 
