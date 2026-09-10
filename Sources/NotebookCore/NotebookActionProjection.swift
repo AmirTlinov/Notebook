@@ -17,7 +17,8 @@ extension NotebookStore {
     let header = try workspaceHeader()
     var itemIDs = Set<UUID>(), boardIDs: Set<UUID> = [header.rootBoardID]
     var pageIDs = Set<UUID>(), documentIDs = Set<UUID>()
-    var elementIDs: [UUID: Set<String>] = [:], inkSurfaces = Set<SurfaceID>()
+    var elementIDs: [UUID: Set<String>] = [:], creationInkSurfaces = Set<SurfaceID>()
+    var spatialActionIDs = Set<UUID>()
     func include(_ target: CollaborationTarget) throws {
       switch target.kind {
       case .workspace: break
@@ -54,7 +55,7 @@ extension NotebookStore {
         }
       }
       if operation.kind == .appendInkStroke, operation.target.kind != .page {
-        inkSurfaces.insert(operation.target.kind == .board ? .board(operation.target.id) : .cover(operation.target.id))
+        if let id = operation.id.flatMap(UUID.init(uuidString:)) { spatialActionIDs.insert(id) }
       }
     }
     // Undo also considers fields created by the original operation and any
@@ -68,8 +69,8 @@ extension NotebookStore {
       }
       for operation in receipt.action.operations where [.createNotebook, .createDocument, .createBoard].contains(operation.kind) {
         guard let id = operation.id.flatMap(UUID.init(uuidString:)) else { continue }
-        inkSurfaces.insert(.cover(id))
-        if operation.kind == .createBoard { inkSurfaces.insert(.board(id)) }
+        creationInkSurfaces.insert(.cover(id))
+        if operation.kind == .createBoard { creationInkSurfaces.insert(.board(id)) }
       }
     }
     var boardRows: [String: NotebookStoredFragment] = [:]
@@ -142,7 +143,17 @@ extension NotebookStore {
       }
     }
     var inkRows = try storedFragments(address: "spatial-ink.json#", descendants: false), seenInk = Set<String>()
-    for surface in inkSurfaces {
+    // Append checks its UUID globally, not just on the requested surface. Undo
+    // reads that same immutable action. Neither operation needs the thousands
+    // of other contacts which happen to share its board or cover.
+    for id in spatialActionIDs.sorted() {
+      let address = "spatial-ink.json#/actions/@" + id.uuidString.lowercased()
+      seenInk.insert(address)
+      inkRows += try storedFragments(address: address)
+    }
+    // Adoption of a created owner is a separate read contract: it must still
+    // retain later contacts before removing that owner as a whole.
+    for surface in creationInkSurfaces {
       guard let id = surface.ownerID else { continue }
       for row in try currentSQL!.rows("SELECT address FROM ink_surfaces WHERE kind=? AND owner_id=?", [.text(surface.kind.rawValue), .text(id.uuidString.lowercased())]) where seenInk.insert(row[0].text!).inserted {
         inkRows += try storedFragments(address: row[0].text!)
