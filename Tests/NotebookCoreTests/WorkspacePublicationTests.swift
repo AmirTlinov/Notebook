@@ -255,7 +255,7 @@ func lateHeavyOwnerSaveDoesNotResurrectDeletion(kind: WorkspaceItemKind) throws 
     let id = UUID()
     var capturedPage: PageDocument?
     let capturedDocument = DocumentDocument(id: id, actor: publicationActorA)
-    let capturedState = DocumentStateJournal(id: id, actor: publicationActorA)
+    var capturedState = DocumentStateJournal(id: id, actor: publicationActorA)
     if kind == .notebook {
       let creation = index.createNotebook(title: "Delete after input", actor: publicationActorA,
         pageSize: publicationSize, itemID: id)
@@ -269,6 +269,10 @@ func lateHeavyOwnerSaveDoesNotResurrectDeletion(kind: WorkspaceItemKind) throws 
       _ = board.addItem(id, to: base.rootBoardID, near: .zero, actor: publicationActorA)
       try store.saveDocumentWorkspaceBundle(index: index, document: capturedDocument, state: capturedState, board: board)
     }
+    let accepted = capturedState.commit(blockID: "accepted", value: .number(1), actor: publicationActorA)
+    #expect(accepted)
+    let stateCommand = NotebookDocumentStateCommand(documentID: id,
+      record: try #require(capturedState.records.first), journalStamp: capturedState.stamp)
     let beforeDeletion = index
     _ = index.deleteItem(id, actor: publicationActorA)
     _ = board.deleteItem(id, from: base.rootBoardID, kind: kind,
@@ -280,7 +284,7 @@ func lateHeavyOwnerSaveDoesNotResurrectDeletion(kind: WorkspaceItemKind) throws 
       #expect(!FileManager.default.fileExists(atPath: store.pageURL(capturedPage.id).path))
     } else {
       #expect(throws: CocoaError.self) { _ = try store.saveMergedDocument(capturedDocument) }
-      #expect(throws: CocoaError.self) { _ = try store.saveMergedDocumentState(capturedState) }
+      #expect(throws: CocoaError.self) { _ = try store.commitDocumentState(stateCommand) }
       #expect(!FileManager.default.fileExists(atPath: store.documentURL(id).path))
       #expect(!FileManager.default.fileExists(atPath: store.documentStateURL(id).path))
     }

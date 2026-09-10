@@ -534,29 +534,6 @@ public struct NotebookStore: Sendable {
     }
   }
 
-  @discardableResult
-  public func saveMergedDocumentState(
-    _ state: DocumentStateJournal
-  ) throws -> DocumentStateJournal {
-    guard state.isValid else { throw corruptFile(at: documentStateURL(state.id)) }
-    try prepare()
-    return try withMutationLock {
-      guard try readItemHeader(state.id)?.kind == .document else { throw CocoaError(.fileNoSuchFile) }
-      var resolved = state
-      let url = documentStateURL(state.id)
-      if (try hasStoredValue(at: url)) {
-        let disk = try decoder.decode(
-          DocumentStateJournal.self,
-          from: storedData(at: url)
-        )
-        guard disk.id == state.id, disk.isValid else { throw corruptFile(at: url) }
-        _ = resolved.merge(disk)
-      }
-      try publishCollaboration(writes: [logicalAddress(url): try .encode(resolved)])
-      return resolved
-    }
-  }
-
   private func removePagePreviews(_ pageIDs: [UUID]) {
     for pageID in pageIDs {
       for url in [previewURL(pageID), previewInkURL(pageID), previewVisionReceiptURL(pageID),

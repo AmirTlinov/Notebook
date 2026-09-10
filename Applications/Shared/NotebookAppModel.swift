@@ -1958,12 +1958,14 @@ final class NotebookAppModel {
     blockID: String,
     value: JSONValue
   ) {
-    guard !isItemBeingDeleted(documentID), var journal = documentStates[documentID],
+    guard !isStopped, !isItemBeingDeleted(documentID), var journal = documentStates[documentID],
       journal.commit(blockID: blockID, value: value, actor: actorID)
     else { return }
     documentStates[documentID] = journal
 
-    persistence.enqueue(owner: .documentState(documentID)) { [journal] in try $0.saveMergedDocumentState(journal) != journal }
+    guard let record = journal.records.first(where: { $0.id == blockID }) else { return }
+    let command = NotebookDocumentStateCommand(documentID: documentID, record: record, journalStamp: journal.stamp)
+    persistence.enqueue(owner: .documentState(documentID)) { try $0.commitDocumentState(command) != command.expectedResult }
   }
 
   @discardableResult

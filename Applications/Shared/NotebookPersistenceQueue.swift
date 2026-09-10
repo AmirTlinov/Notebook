@@ -70,9 +70,10 @@ final class NotebookPersistenceQueue {
   }
 
   private func coalescingIndex(for owner: Owner) -> Int? {
-      // An append and its later undo are separate causal commands, not complete
-      // replacement journals. Coalescing either would lose the accepted contact.
+      // Addressed commands carry only their accepted contact/block, not a full
+      // replacement journal. Coalescing would drop an earlier value or undo.
       if case .spatialInk = owner { return nil }
+      if case .documentState = owner { return nil }
       for index in pending.indices.reversed() {
         guard pending[index].owner != nil else { break }
         // Contact release must not jump ahead of content accepted during that

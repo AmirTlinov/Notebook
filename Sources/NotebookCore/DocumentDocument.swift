@@ -339,6 +339,7 @@ public struct DocumentStateRecord: Codable, Equatable, Identifiable, Sendable {
   func isValid(in journalStamp: VersionStamp) -> Bool {
     !id.isEmpty && id.utf16.count <= 120 && value.isValid
       && stamp.counter <= VersionStamp.maximumCounter && stamp <= journalStamp
+      && (fieldVersion.map { $0.isValid && $0.stamp == stamp } ?? true)
   }
 
   mutating func replace(_ value: JSONValue, version: ContentFieldVersion) -> Bool {

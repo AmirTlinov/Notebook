@@ -158,7 +158,9 @@ func collaborationComparableDocumentStateReceiptAndUndo(stateKey: String) throws
   var state = try f.store.loadDocumentState(target.id)
   let committed = state.commit(blockID: "confirmation", value: initial, actor: f.human)
   #expect(committed)
-  state = try f.store.saveMergedDocumentState(state)
+  _ = try f.store.commitDocumentState(.init(documentID: target.id,
+    record: #require(state.records.first { $0.id == "confirmation" }), journalStamp: state.stamp))
+  state = try f.store.loadDocumentState(target.id)
   let document = try f.store.loadDocument(target.id)
   let action = try f.action([.init(kind: .setBlockState, target: target, id: "confirmation", values: ["state": edited])], targets: [target])
   let receipt = try f.store.applyCollaborationAction(action, actor: f.agent)
@@ -178,8 +180,9 @@ func collaborationComparableDocumentStateReceiptAndUndo(stateKey: String) throws
   #expect(restored.stamp > delivered.stamp)
   #expect(restored.records[0].stamp > delivered.records[0].stamp)
   #expect(restored.records[0].fieldVersion?.human == true)
-  let afterEcho = try f.store.saveMergedDocumentState(delivered)
-  #expect(afterEcho.value(for: "confirmation") == initial)
+  let afterEcho = try f.store.commitDocumentState(.init(documentID: target.id,
+    record: #require(delivered.records.first { $0.id == "confirmation" }), journalStamp: delivered.stamp))
+  #expect(afterEcho.record.value == initial)
 }
 
 @Test("Начальное состояние блока тоже является авторским содержанием, а не служебными полями",

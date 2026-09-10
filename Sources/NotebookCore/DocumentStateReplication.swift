@@ -29,15 +29,8 @@ extension NotebookStore {
     }
     let deliveredRoot = try rootMutation?[0].text.map { try fragment(rootAddress, $0) }
     guard let candidateRoot = deliveredRoot ?? previousRoot else { throw NotebookStorageError.corruptRecord(rootAddress) }
-    func header(_ root: NotebookStoredFragment) throws -> DocumentStateJournal {
-      let journal = try NotebookRecordCodec.decode([root], root: rootAddress).decode(DocumentStateJournal.self)
-      guard journal.id == id, journal.isValid,
-        try NotebookRecordCodec.encode(.encode(journal), file: file) == [root] else {
-        throw NotebookStorageError.corruptRecord(rootAddress)
-      }
-      return journal
-    }
-    let candidate = try header(candidateRoot), previous = try previousRoot.map(header)
+    let candidate = try documentStateHeader(candidateRoot, id: id)
+    let previous = try previousRoot.map { try documentStateHeader($0, id: id) }
     let frontier = max(previous?.stamp ?? candidate.stamp, candidate.stamp)
     let root = candidateRoot.replacing(value: candidateRoot.value.setting("stamp", try .encode(frontier)))
     if previousRoot != root { try writeFragment(root, database: database) }
@@ -109,6 +102,7 @@ extension NotebookStore {
           // policy. Keeping that direction also preserves the existing tie rule.
           _ = resolved.replace(old.value, version: old.fieldVersion ?? .init(stamp: old.stamp, human: true))
         }
+        guard resolved.isValid(in: frontier) else { throw NotebookStorageError.invalidTransaction("document state causal version") }
         let newestValue: JSONValue?
         if let previous, candidate.stamp <= previous.stamp { newestValue = old?.value }
         else { newestValue = value["value"] }

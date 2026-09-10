@@ -170,7 +170,7 @@ struct DocumentStateReplicationTests {
     }
   }
 
-  @Test(arguments: ["owner", "collection", "orphan", "remove-root"])
+  @Test(arguments: ["owner", "collection", "orphan", "remove-root", "causal-version"])
   func malformedStateCannotPublishItsOtherValidBlocks(kind: String) throws {
     try fixture { a, b, actor, id in
       var source = try a.loadDocumentState(id)
@@ -186,6 +186,10 @@ struct DocumentStateReplicationTests {
         let value = fragments[index]
         if kind == "owner" {
           fragments[index] = value.replacing(value: value.value.setting("id", .string("a")))
+        }
+        if kind == "causal-version" {
+          let version = ContentFieldVersion(stamp: .init(counter: 3, actor: actor), human: true)
+          fragments[index] = value.replacing(value: value.value.setting("fieldVersion", try .encode(version)))
         }
         if kind == "collection" {
           fragments[index] = .init(address: value.address, file: value.file, parent: value.parent,

@@ -135,7 +135,9 @@ func creationUndoMixedDocumentsPreservesOnlyAdoptedOwner() throws {
   var state = try f.store.loadDocumentState(first)
   let changed = state.commit(blockID: "choice", value: .object(["fieldVersion": .string("Точный ответ человека")]), actor: f.human)
   #expect(changed)
-  state = try f.store.saveMergedDocumentState(state)
+  _ = try f.store.commitDocumentState(.init(documentID: first,
+    record: #require(state.records.first { $0.id == "choice" }), journalStamp: state.stamp))
+  state = try f.store.loadDocumentState(first)
   let undone = try f.store.undoCollaborationAction(action.id, actor: f.human)
   #expect(try f.store.loadDocument(first) == document)
   #expect(try f.store.loadDocumentState(first) == state)
