@@ -138,8 +138,12 @@ struct CodexConnectionTests {
     let channel = try CodexChannel.connect(peer.endpoint)
     let rpc = CodexRPC(channel: channel, surface: .metadata)
     channel.start(receive: { _ in }, ended: { _ in })
-    for method in ["turn/start", "thread/resume", "thread/fork", "account/login/start", "config/value/write"] {
+    for method in ["turn/start", "thread/resume", "thread/fork", "account/login/start", "account/logout", "account/login/cancel", "account/chatgptAuthTokens/refresh", "config/value/write"] {
       await #expect(throws: CodexBridgeError.unsupportedRequest) { try await rpc.request(method, params: .object([:])) }
+    }
+    for params: JSONValue in [.object([:]), .object(["refreshToken": .bool(true)]),
+      .object(["refreshToken": .bool(false), "account": .string("another")])] {
+      await #expect(throws: CodexBridgeError.invalidInput) { try await rpc.request("account/read", params: params) }
     }
     await rpc.stop()
   }

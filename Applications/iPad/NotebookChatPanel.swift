@@ -29,6 +29,9 @@ struct NotebookChatPanel: View {
         Text(chat.conversation?.title ?? chat.tasks.first(where: { $0.id == chat.threadID })?.title ?? "Выберите задачу Codex на Mac")
           .font(.subheadline.weight(.semibold)).lineLimit(2)
         if let id = chat.threadID { Text(id).font(.caption2.monospaced()).textSelection(.enabled).lineLimit(1) }
+        if chat.defaultProviderNeedsSignIn {
+          Text("Для новых задач войдите в Codex на Mac. Отдельного входа Notebook нет.").font(.caption).foregroundStyle(.secondary)
+        }
         HStack {
           Text(status).font(.caption).foregroundStyle(.secondary)
           Spacer()
@@ -66,9 +69,20 @@ struct NotebookChatPanel: View {
             .accessibilityIdentifier("notebook-chat-send")
           if chat.saving || model.isSavingAgentQuestion { ProgressView() }
         }
-        if let job = chat.selectedJob, !job.isTerminal {
-          Text(job.state == .saved ? "Сохранено на iPad · ожидает Codex" : job.state == .uncertain ? "Принятие проверяется · без повторной отправки" : "Передано Mac · ожидается подтверждение")
-            .font(.caption).foregroundStyle(.secondary)
+        if !chat.pendingMessages.isEmpty {
+          VStack(alignment: .leading, spacing: 8) {
+            Text("Исходящие · \(chat.pendingMessages.count)").font(.caption.weight(.semibold))
+            ForEach(chat.pendingMessages.suffix(4)) { job in
+              if case .send(_, let text, _) = job.input.action {
+                VStack(alignment: .leading, spacing: 3) {
+                  Text(text).font(.callout).lineLimit(3).textSelection(.enabled)
+                  Text(job.state == .saved ? "Сохранено на iPad · ожидает Codex" : job.state == .uncertain ? "Принятие проверяется · без повторной отправки" : "Передано Mac · ожидается подтверждение")
+                    .font(.caption2).foregroundStyle(.secondary)
+                }.accessibilityIdentifier("notebook-chat-outgoing-" + job.id.uuidString)
+              }
+            }
+            if chat.pendingMessages.count > 4 { Text("Более ранние сообщения сохранены в той же очереди.").font(.caption2) }
+          }
         }
         if let error = chat.error ?? model.agentRequestError { Text(error).font(.caption).foregroundStyle(.red).lineLimit(3) }
       }

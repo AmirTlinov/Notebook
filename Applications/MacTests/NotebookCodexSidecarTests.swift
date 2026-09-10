@@ -9,6 +9,8 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   var sent: [UUID] = [], interrupted: [String] = [], decisions: [CodexUserDecision] = []
   var accepted: [CodexMessage] = []
   var stopIsStale = false
+  var needsSignIn = false
+  func requireSignIn(_ required: Bool) { needsSignIn = required }
   func finishBeforeStop() { stopIsStale = true }
   func configure(busy: Bool = false, unknown: Bool = false) { self.busy = busy; self.unknown = unknown }
   func counts() -> (Int, Int) { (sent.count, interrupted.count) }
@@ -30,9 +32,12 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
     interrupted.append(turnID)
   }
   func respond(threadID: String, request: CodexUserRequest, decision: CodexUserDecision) { decisions.append(decision) }
-  func tasks(cursor: String?) -> CodexTaskPage { .init(tasks: [.init(id: thread, title: "Математика", cwd: "/tmp")], nextCursor: nil) }
+  func tasks(cursor: String?) -> CodexTaskPage { .init(tasks: [.init(id: thread, title: "Математика", cwd: "/tmp")], nextCursor: nil, defaultProviderNeedsSignIn: needsSignIn) }
   func history(threadID: String, cursor: String?) -> CodexHistoryPage { .init(messages: accepted, nextCursor: nil) }
-  func create(directory: URL, title: String, workspaceID: UUID) -> CodexTask { .init(id: thread, title: title, cwd: directory.path) }
+  func create(directory: URL, title: String, workspaceID: UUID) throws -> CodexTask {
+    if needsSignIn { throw CodexBridgeError.signInRequired }
+    return .init(id: thread, title: title, cwd: directory.path)
+  }
 }
 
 @MainActor
@@ -122,4 +127,26 @@ final class NotebookCodexSidecarTests: XCTestCase {
       await service.stop()
     }
   }
+  func testMissingDefaultAccountRejectsCreationBeforeDispatchAndKeepsCodexAsLoginOwner() async throws {
+    try await fixture { store, queue, native, peer in
+      await native.requireSignIn(true)
+      let service = try sidecar(store, queue, native)
+      let catalogue = await service.receive(.init(body: .request(.catalogue(cursor: nil))), peerID: peer)
+      guard case .reply(.catalogue(let page)) = catalogue?.body else { return XCTFail("Expected the native catalogue") }
+      XCTAssertTrue(page.defaultProviderNeedsSignIn)
+      let input = NotebookChatInput(author: peer, action: .create(title: "Математика"))
+      _ = await service.receive(.init(body: .request(.job(input))), peerID: peer)
+      service.start()
+      try await wait { try await queue.submit { try $0.chatJob(input.id)?.state == .rejected } }
+      XCTAssertEqual(try store.chatJob(input.id)?.error, "Войдите в Codex на Mac. Отдельного входа Notebook нет.")
+      await native.requireSignIn(false)
+      _ = await service.receive(.init(body: .request(.job(input))), peerID: peer)
+      XCTAssertEqual(try store.chatJob(input.id)?.state, .rejected, "Sign-in never silently replays a rejected creation")
+      let next = NotebookChatInput(author: peer, action: .create(title: "Математика"))
+      _ = await service.receive(.init(body: .request(.job(next))), peerID: peer)
+      try await wait { try await queue.submit { try $0.chatJob(next.id)?.state == .accepted } }
+      await service.stop()
+    }
+  }
+
 }

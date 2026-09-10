@@ -12,7 +12,11 @@ public struct CodexTask: Codable, Equatable, Sendable, Identifiable {
 public struct CodexTaskPage: Codable, Equatable, Sendable {
   public let tasks: [CodexTask]
   public let nextCursor: String?
-  public init(tasks: [CodexTask], nextCursor: String?) { self.tasks = tasks; self.nextCursor = nextCursor }
+  /// Codex's default provider, not an override of an existing task's provider.
+  public let defaultProviderNeedsSignIn: Bool
+  public init(tasks: [CodexTask], nextCursor: String?, defaultProviderNeedsSignIn: Bool = false) {
+    self.tasks = tasks; self.nextCursor = nextCursor; self.defaultProviderNeedsSignIn = defaultProviderNeedsSignIn
+  }
 
 }
 

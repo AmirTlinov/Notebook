@@ -77,6 +77,7 @@ public actor CodexMetadata {
 
   public func tasks(cursor: String? = nil) async throws -> CodexTaskPage {
     try await session { rpc in
+      let needsSignIn = try Self.defaultProviderNeedsSignIn(await rpc.request("account/read", params: .object(["refreshToken": .bool(false)])))
       var params: [String: JSONValue] = ["limit": .number(32), "modelProviders": .array([]),
         "sourceKinds": .array([.string("appServer"), .string("cli"), .string("vscode")]), "archived": .bool(false)]
       if let cursor { params["cursor"] = .string(cursor) }
@@ -88,8 +89,14 @@ public actor CodexMetadata {
         }
         return CodexTask(id: id, title: String((value["name"]?.string ?? value["preview"]?.string ?? "Codex").prefix(256)), cwd: cwd)
       }
-      return CodexTaskPage(tasks: tasks, nextCursor: result["nextCursor"]?.string)
+      return CodexTaskPage(tasks: tasks, nextCursor: result["nextCursor"]?.string, defaultProviderNeedsSignIn: needsSignIn)
     }
+  }
+
+  nonisolated static func defaultProviderNeedsSignIn(_ result: JSONValue) throws -> Bool {
+    guard case .bool(let requires) = result["requiresOpenaiAuth"], let account = result["account"],
+      account == .null || account.object != nil else { throw CodexBridgeError.invalidResponse }
+    return requires && account == .null
   }
 
   public func history(threadID: String, cursor: String? = nil) async throws -> CodexHistoryPage {
@@ -113,6 +120,12 @@ public actor CodexMetadata {
   public func create(directory: URL, title: String, workspaceID: UUID) async throws -> CodexTask {
     guard directory.isFileURL, title.utf8.count <= 256 else { throw CodexBridgeError.invalidInput }
     return try await session { rpc in
+      // Read Codex's account state only. Never copy/refresh tokens or begin a login.
+      // This default-provider gate applies to creation, not to an existing task
+      // which can deliberately use another provider and keeps its own settings.
+      if try Self.defaultProviderNeedsSignIn(await rpc.request("account/read", params: .object(["refreshToken": .bool(false)]))) {
+        throw CodexBridgeError.signInRequired
+      }
       // A meaningful initial context makes the empty task durable without running a model.
       // The sidecar supplies no model, tools, approvals, account or project override.
       let response = try await rpc.request("thread/start", params: .object(["cwd": .string(directory.path), "ephemeral": .bool(false)]))

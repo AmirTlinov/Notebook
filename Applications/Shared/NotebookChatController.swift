@@ -12,6 +12,7 @@ final class NotebookChatController {
   private(set) var threadID: String?
   private(set) var tasks: [CodexTask] = []
   private(set) var taskCursor: String?
+  private(set) var defaultProviderNeedsSignIn = false
   private(set) var conversation: CodexConversation?
   private(set) var history: [CodexMessage] = []
   private(set) var historyCursor: String?
@@ -124,6 +125,15 @@ final class NotebookChatController {
 
   var selectedJob: NotebookChatJob? { jobs.first { $0.input.action.threadID == threadID } }
 
+  /// Outgoing text remains visible after its editor is cleared. This is the
+  /// durable outbox, not a second conversation: a native client ID replaces it.
+  var pendingMessages: [NotebookChatJob] {
+    jobs.reversed().filter { job in
+      guard !job.isTerminal, case .send(let thread, _, _) = job.input.action, thread == threadID else { return false }
+      return conversation?.acceptedMessages[job.id.uuidString.lowercased()] == nil
+    }
+  }
+
   private func submit(_ action: NotebookChatAction, attentionContextID: UUID? = nil) async -> Bool {
     guard loaded, !stopped, !saving else { return false }
     saving = true; defer { saving = false }
@@ -202,7 +212,7 @@ final class NotebookChatController {
       }
       try await refreshJobs(); error = job.error
     case (.catalogue, .catalogue(let page)):
-      tasks = page.tasks; taskCursor = page.nextCursor; error = nil
+      tasks = page.tasks; taskCursor = page.nextCursor; defaultProviderNeedsSignIn = page.defaultProviderNeedsSignIn; error = nil
     case (.conversation(let id), .conversation(let value)):
       guard value.threadID == id else { throw NotebookTransportError.invalidAcknowledgement }
       if threadID == id { conversation = value; error = nil }

@@ -181,4 +181,17 @@ struct CodexProtocolTests {
     let response = try CodexDesktopBridge.response(request: request, decision: .answers(["method": ["Геометрия"]]))
     #expect(response.2["answers"]?["method"]?["answers"] == .array([.string("Геометрия")]))
   }
+  @Test func defaultProviderSignInComesFromCodexWithoutChangingExistingTaskSettings() throws {
+    #expect(try CodexMetadata.defaultProviderNeedsSignIn(.object(["account": .null, "requiresOpenaiAuth": .bool(true)])))
+    #expect(try !CodexMetadata.defaultProviderNeedsSignIn(.object(["account": .null, "requiresOpenaiAuth": .bool(false)])))
+    for type in ["chatgpt", "apiKey", "amazonBedrock"] {
+      #expect(try !CodexMetadata.defaultProviderNeedsSignIn(.object([
+        "account": .object(["type": .string(type)]), "requiresOpenaiAuth": .bool(true)])))
+    }
+    for invalid: JSONValue in [.object([:]), .object(["account": .null]),
+      .object(["account": .string("token"), "requiresOpenaiAuth": .bool(true)])] {
+      #expect(throws: CodexBridgeError.invalidResponse) { try CodexMetadata.defaultProviderNeedsSignIn(invalid) }
+    }
+  }
+
 }

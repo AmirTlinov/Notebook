@@ -29,7 +29,8 @@ final class NotebookChatControllerTests: XCTestCase {
         let job = NotebookChatJob(input: input, state: .accepted, result: .turn(UUID().uuidString), revision: 2)
         reply = .job(job)
         if offers.count == 3 { admitted.fulfill() }
-      case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil))
+      case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil, defaultProviderNeedsSignIn: true))
+      case .history: reply = .history(.init(messages: [], nextCursor: nil))
       default: return XCTFail("Collapsed panel must not poll a conversation")
       }
       controller.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
@@ -41,12 +42,19 @@ final class NotebookChatControllerTests: XCTestCase {
     for input in inputs { _ = try store.saveChatSubmission(input) }
     let expected = inputs.map(\.id)
     await controller.start()
+    controller.select(.init(id: thread, title: "Урок", cwd: "/tmp"))
+    XCTAssertEqual(controller.pendingMessages.map(\.id), expected, "Clearing the editor cannot hide saved outgoing text")
+    controller.select(.init(id: UUID().uuidString, title: "Другая задача", cwd: "/tmp"))
+    XCTAssertTrue(controller.pendingMessages.isEmpty, "Another task never displays this outbox")
+    controller.select(.init(id: thread, title: "Урок", cwd: "/tmp"))
     controller.connect(peer)
     await fulfillment(of: [admitted], timeout: 10)
     await controller.stop()
     XCTAssertEqual(offers, expected)
     XCTAssertEqual(Set(offers).count, 3)
+    XCTAssertTrue(controller.defaultProviderNeedsSignIn, "Default-provider notice must not block a saved existing task's own provider")
     let flushed = await queue.flush(); XCTAssertTrue(flushed)
+    XCTAssertTrue(controller.pendingMessages.isEmpty, "Native acceptance removes the local outgoing projection")
   }
 
   func testPermissionAndStopKeepTheirNativeAddressAcrossTapsTaskChangesAndRestart() async throws {

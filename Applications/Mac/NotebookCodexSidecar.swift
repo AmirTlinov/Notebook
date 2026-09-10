@@ -166,7 +166,7 @@ final class NotebookCodexSidecar {
       // These local checks fail before native dispatch. A turn that finished on
       // the Mac is a definite stale Stop, not an indefinitely unknown acceptance.
       let code = error as? CodexBridgeError
-      let rejected = code == .staleTurn || code == .staleRequest || code == .unsupportedRequest || code == .invalidInput
+      let rejected = code == .staleTurn || code == .staleRequest || code == .unsupportedRequest || code == .invalidInput || code == .signInRequired
       // busy/unavailable are guaranteed pre-dispatch by send(). Other failures
       // remain uncertain, including success whose native reply was lost.
       let retryable: Bool

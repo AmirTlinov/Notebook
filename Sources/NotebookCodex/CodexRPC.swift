@@ -17,7 +17,7 @@ actor CodexRPC {
     let continuation: CheckedContinuation<JSONValue, Error>
     let timer: Task<Void, Never>
   }
-  private static let metadataMethods: Set<String> = ["initialize", "thread/list", "thread/turns/list",
+  private static let metadataMethods: Set<String> = ["initialize", "account/read", "thread/list", "thread/turns/list",
     "thread/start", "thread/inject_items", "thread/name/set", "thread/unsubscribe"]
 
   init(channel: CodexChannel, surface: Surface) { self.channel = channel; self.surface = surface }
@@ -42,6 +42,9 @@ actor CodexRPC {
   func request(_ method: String, params: JSONValue, owner: String? = nil) async throws -> JSONValue {
     guard surface == .desktop ? CodexDesktopProtocol.versions[method] != nil : Self.metadataMethods.contains(method) else {
       throw CodexBridgeError.unsupportedRequest
+    }
+    if surface == .metadata, method == "account/read", params != .object(["refreshToken": .bool(false)]) {
+      throw CodexBridgeError.invalidInput
     }
     if let failure { throw failure }
     guard pending.count < 16 else { throw CodexBridgeError.busy }
