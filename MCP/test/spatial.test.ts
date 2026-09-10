@@ -25,3 +25,20 @@ test("offset across the last exact tile refuses instead of silently rounding", (
   assert.throws(() => offsetWorld(point, Infinity, 0));
   assert.equal(offsetWorld(point, -1, 0).tileX, Number.MAX_SAFE_INTEGER - 1);
 });
+
+test("stroke-local offsets use the full exact range on both axes", () => {
+  for (const tile of [1_000_000_000_001, -1_000_000_000_001, Number.MAX_SAFE_INTEGER, Number.MIN_SAFE_INTEGER]) {
+    const point = {tileX: tile, tileY: -tile, localX: 256, localY: 512};
+    assert.deepEqual(offsetWorld(point, 100, 120), {...point, localX: 356, localY: 632});
+    assert.deepEqual(offsetWorld(point, 160, 190), {...point, localX: 416, localY: 702});
+  }
+  for (const axis of ["x", "y"] as const) {
+    for (const sign of [-1, 1]) {
+      const point = {tileX: axis === "x" ? sign * Number.MAX_SAFE_INTEGER : 0,
+        tileY: axis === "y" ? sign * Number.MAX_SAFE_INTEGER : 0,
+        localX: axis === "x" && sign > 0 ? TILE_SIZE - 1 : 0,
+        localY: axis === "y" && sign > 0 ? TILE_SIZE - 1 : 0};
+      assert.throws(() => offsetWorld(point, axis === "x" ? sign * 2 : 0, axis === "y" ? sign * 2 : 0));
+    }
+  }
+});

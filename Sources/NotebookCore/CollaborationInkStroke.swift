@@ -30,11 +30,7 @@ struct CollaborationInkStroke {
     guard color.isValid else { throw invalid() }
     if operation.target.kind == .board {
       guard let origin = values["worldOrigin"] else { throw invalid() }
-      let decoded = try origin.decode(WorldPoint.self)
-      // Reserve enough tile headroom for offsetBy and subsequent camera deltas.
-      guard decoded.isValid, abs(Double(decoded.tileX)) <= 1e12,
-        abs(Double(decoded.tileY)) <= 1e12 else { throw invalid() }
-      worldOrigin = decoded
+      worldOrigin = try origin.decode(WorldPoint.self)
     } else {
       guard values["worldOrigin"] == nil else { throw invalid() }
       worldOrigin = nil
@@ -47,7 +43,12 @@ struct CollaborationInkStroke {
         case .number(let alpha) = value["opacity"] ?? opacity,
         x.isFinite, y.isFinite, abs(x) <= 1e6, abs(y) <= 1e6,
         w.isFinite, w > 0, w <= 128, alpha.isFinite, (0...1).contains(alpha) else { throw invalid() }
-      return SpatialInkSample(point: .init(x: x, y: y), worldPoint: origin?.offsetBy(x: x, y: y),
+      let worldPoint = origin?.offsetBy(x: x, y: y)
+      // The finite point delta is already bounded above. Validate its actual
+      // address before SpatialInkAction accepts measurements, not an arbitrary
+      // smaller origin range and not a later encoding failure.
+      guard worldPoint?.isValid ?? true else { throw invalid() }
+      return SpatialInkSample(point: .init(x: x, y: y), worldPoint: worldPoint,
         timeOffset: Double(index) / 120, width: w, opacity: alpha, force: 1, azimuth: 0, altitude: .pi / 2)
     }
     let minX = samples.map { $0.point.x - $0.width / 2 }.min()!

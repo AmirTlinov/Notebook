@@ -96,6 +96,51 @@ func agentInkUndoPreservesLaterContacts() throws {
   #expect(try f.store.loadSpatialInk().actions.filter(\.isActive).map(\.id) == [humanSpatial.id])
 }
 
+@Test("Агентская ручка принимает оба точных края диапазона, а не отдельный предел origin")
+func agentInkUsesTheExactWorldAddressRange() throws {
+  let f = try AgentInkFixture(); defer { f.clean() }
+  for tile in [Int64(1_000_000_000_001), -1_000_000_000_001,
+    WorldPoint.maximumTileIndex, -WorldPoint.maximumTileIndex] {
+    let origin = WorldPoint(tileX: tile, tileY: -tile, localX: 256, localY: 512)
+    let prototype = try f.stroke(f.board)
+    let operation = CollaborationOperation(kind: .appendInkStroke, target: f.board,
+      id: prototype.id, values: prototype.values.merging(["worldOrigin": try .encode(origin)]) { _, new in new })
+    let receipt = try f.store.applyCollaborationAction(f.action([operation]), actor: f.agent)
+    #expect(receipt.action.operations == [operation])
+    let stored = try #require(try f.store.loadSpatialInk().actions.first { $0.id.uuidString == operation.id })
+    #expect(stored.spans[0].samples[0].worldPoint == origin.offsetBy(x: 100, y: 120))
+    #expect(stored.spans[0].samples[1].worldPoint == origin.offsetBy(x: 160, y: 190))
+    #expect(try JSONValue.encode(stored).decode(SpatialInkAction.self) == stored)
+  }
+}
+
+@Test("Выход измеренной точки за край адреса отклоняет весь ход до изменения и квитанции")
+func agentInkRejectsWorldEndpointCrossingBeforePublishing() throws {
+  let f = try AgentInkFixture(); defer { f.clean() }
+  let before = try f.store.collaborationContent(), cursor = try f.store.currentChangeCursor()
+  let valid = try f.stroke(f.page)
+  for axis in ["x", "y"] {
+    for sign: Int64 in [-1, 1] {
+      let origin = WorldPoint(tileX: axis == "x" ? sign * WorldPoint.maximumTileIndex : 0,
+        tileY: axis == "y" ? sign * WorldPoint.maximumTileIndex : 0,
+        localX: axis == "x" && sign > 0 ? WorldPoint.tileSize - 1 : 0,
+        localY: axis == "y" && sign > 0 ? WorldPoint.tileSize - 1 : 0)
+      let bad = CollaborationOperation(kind: .appendInkStroke, target: f.board, id: UUID().uuidString,
+        values: ["worldOrigin": try .encode(origin), "points": .array([.object([
+          "x": .number(axis == "x" ? Double(sign) * 2 : 0),
+          "y": .number(axis == "y" ? Double(sign) * 2 : 0)])])])
+      do {
+        _ = try f.store.applyCollaborationAction(f.action([valid, bad]), actor: f.agent)
+        Issue.record("The stroke crossed the exact world address range")
+      }
+      catch let error as CollaborationError { #expect(error.code == "invalid_operation") }
+      #expect(try f.store.currentChangeCursor() == cursor)
+      #expect(try f.store.collaborationContent() == before)
+      #expect(try f.store.collaborationActions().isEmpty)
+    }
+  }
+}
+
 @Test("Две независимые ручки сходятся по UUID, порядку и отмене, а не заменяют лист")
 func pageInkConcurrentAppendAndUndoConverge() throws {
   let actor = UUID(), peer = UUID()
