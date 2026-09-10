@@ -198,21 +198,20 @@ export function createServer(store = new NotebookStore()): McpServer {
     },
     ({ document_id, block_id, include_source }) => readSafely(async () => {
       const documentID = await resolveDocumentID(store, document_id);
+      if (block_id) {
+        const read = await store.readDocumentBlock(documentID, block_id);
+        if (!read) throw new StoreError(`Блок не найден: ${block_id}`);
+        return {
+          documentID: read.documentID,
+          contentRevision: revision(read.contentStamp),
+          stateRevision: revision(read.stateStamp),
+          block: publicDocumentBlock(read.block, read.state),
+        };
+      }
       const [document, state] = await Promise.all([
         store.readDocument(documentID),
         store.readDocumentState(documentID),
       ]);
-      if (block_id) {
-        const block = document.blocks.find((candidate) => candidate.id === block_id);
-        if (!block) throw new StoreError(`Блок не найден: ${block_id}`);
-        const value = state.records.find((record) => record.id === block.id)?.value;
-        return {
-          documentID: document.id,
-          contentRevision: revision(document.contentStamp),
-          stateRevision: revision(state.stamp),
-          block: publicDocumentBlock(block, value),
-        };
-      }
       return include_source
         ? publicDocument(document, state)
         : observedDocument(document, state);
@@ -594,7 +593,7 @@ function observedDocument(
       hasCSS: block.kind === "interactive" && block.css.length > 0,
       hasJavaScript: block.kind === "interactive" && block.javaScript.length > 0,
       state: block.kind === "interactive"
-        ? stateByID.get(block.id) ?? block.initialState
+        ? stateByID.has(block.id) ? stateByID.get(block.id) : block.initialState
         : null,
     })),
   };
@@ -612,7 +611,7 @@ function publicDocumentBlock(
       css: block.css,
       javascript: block.javaScript,
       initial_state: block.initialState,
-      state: state ?? block.initialState,
+      state: state === undefined ? block.initialState : state,
       height: block.height,
     };
   }
@@ -761,11 +760,14 @@ async function resolveDocumentID(
     }
     return item.id;
   }
-  const current = await store.readCurrent();
-  if (current.kind !== "document") {
+  const presence = await store.readPresence();
+  const id = presence.focusedItemID ?? presence.selectedItemID;
+  if (presence.mode !== "document" || !id) {
     throw new StoreError("Сейчас открыт лист тетради, а не документ.");
   }
-  return current.document.id;
+  const item = await store.readItem(id);
+  if (item?.kind !== "document") throw new StoreError("Документ не найден.");
+  return item.id;
 }
 
 function worldToScreen(

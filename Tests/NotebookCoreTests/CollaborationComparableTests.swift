@@ -281,3 +281,34 @@ func collaborationComparableQualifiedDomainMetadata() throws {
     ([.field("stamp")], stamp), (actionPath + [.field("stamp")], stamp), (actionPath + [.field("stateStamp")], stamp)])
   #expect(laterInk.isValid)
 }
+
+@Test("Экранированный предмет читает собственную причинную версию и сохраняет принятие человеком",
+  arguments: ["counter/a~😀", "A1451830-782E-4D5D-9131-64C0FDA01C24"])
+func collaborationEscapedSpatialCausalOwnerSurvivesAValueRoundTrip(id: String) throws {
+  let f = try ComparableFixture(); defer { f.clean() }
+  let template = try f.insert(f.board, state: .number(1))
+  _ = try f.store.applyCollaborationAction(f.action([
+    .init(kind: .insertElement, target: f.board, id: id, values: template.values)
+  ], targets: [f.board]), actor: f.agent)
+  let action = try f.action([.init(kind: .setElementState, target: f.board, id: id,
+    values: ["state": .number(2)])], targets: [f.board])
+  let key = fieldKey(["elements", collaborationIdentity(id), "state"])
+  let full = try #require(try f.store.loadBoard(items: f.store.loadIndex().items).board(f.boardID))
+  let expected = try #require(full.collaboration?.fields[key])
+  let files = try f.store.readTransaction { _ in try f.store.actionSourceProjection(action) }
+  let projected = try #require(files["board.json"]).decode(BoardHierarchy.self)
+  #expect(projected.board(f.boardID)?.collaboration?.fields[key] == expected,
+    "The partial owner must not substitute the aggregate board stamp for this field")
+  let receipt = try f.store.applyCollaborationAction(action, actor: f.agent)
+  let authored = try #require(receipt.changes.first?.afterVersion)
+  var rendered = try #require(try f.store.readSpatialElement(boardID: f.boardID, elementID: id))
+  rendered = try #require(try f.store.commitSpatialElementState(boardID: f.boardID, rendered: rendered,
+    state: .number(3), actor: f.human))
+  _ = try f.store.commitSpatialElementState(boardID: f.boardID, rendered: rendered,
+    state: .number(2), actor: f.human)
+  let human = try #require(try f.store.loadBoard(items: f.store.loadIndex().items).board(f.boardID)?.collaboration?.fields[key])
+  #expect(human.human && human.includes(authored))
+  let undo = try f.store.undoCollaborationAction(action.id, actor: f.human)
+  #expect(undo.undo?.restored == 0 && undo.undo?.preserved.count == 1)
+  #expect(try f.store.readSpatialElement(boardID: f.boardID, elementID: id)?.state == .number(2))
+}

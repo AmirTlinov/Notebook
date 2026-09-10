@@ -44,6 +44,7 @@ public struct ContentFieldVersion: Codable, Equatable, Sendable {
 }
 
 public struct CollaborativeContent: Codable, Equatable, Sendable {
+  static let maximumFieldCount = 100_000
   public private(set) var fields: [String: ContentFieldVersion] = [:]
 
   public init() {}
@@ -70,7 +71,7 @@ public struct CollaborativeContent: Codable, Equatable, Sendable {
   }
 
   var isValid: Bool {
-    isValid(maximumFields: 100_000)
+    isValid(maximumFields: Self.maximumFieldCount)
   }
 
   func isValid(maximumFields: Int) -> Bool {

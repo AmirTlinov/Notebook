@@ -86,6 +86,28 @@ test("read batches refuse more than four physical pages and unbounded scene limi
     await assert.rejects(store.command({command:"read",queries:Array.from({length:5},()=>({kind:"page",id:randomUUID()}))}),error=>error instanceof BridgeError && error.detail.code==="resource_limit");
     const presence=await store.readPresence();
     await assert.rejects(store.readSceneWindow(rootBoardID,visibleBounds(presence),100_000));
+    await assert.rejects(store.command({command:"read",queries:Array.from({length:5},()=>({kind:"documentBlock",id:randomUUID(),elementID:"body"}))}),
+      error=>error instanceof BridgeError && error.detail.code==="resource_limit");
+  });
+});
+
+test("one document block uses an explicit bounded query instead of whole source and state reads",async()=>{
+  await withStore(async(store,root)=>{
+    const header=await store.readHeader(),board=await store.readItemBoard(itemID),id=randomUUID(),blockID=randomUUID().toUpperCase();
+    const target={kind:"board",id:rootBoardID};
+    await store.command({command:"apply",action:{id:randomUUID(),summary:"One selected program",references:[],
+      expected:[{target,revision:revision(board.stamp)},{target:{kind:"workspace",id:rootBoardID},revision:revision(header.stamp)}],
+      operations:[{kind:"createDocument",target,id,values:{center:{tileX:0,tileY:0,localX:20,localY:20},paperSize:"a4",
+        blocks:[{id:blockID,kind:"interactive",html:"<button>+</button>",initialState:{count:3}}]}}]}});
+    await fixtureControl(root,"readQueries");
+    const read=await store.readDocumentBlock(id,blockID.toLowerCase());
+    assert.ok(read);
+    assert.equal(read.block.id,blockID);
+    assert.equal(Object.hasOwn(read,"state"),false);
+    assert.deepEqual(read.block.initialState,{count:3});
+    assert.equal(Object.hasOwn(read,"format"),false);
+    assert.deepEqual(await fixtureControl(root,"readQueries"),["documentBlock"]);
+    assert.equal(await store.readDocumentBlock(id,"absent"),null);
   });
 });
 

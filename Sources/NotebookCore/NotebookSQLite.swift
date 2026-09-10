@@ -464,7 +464,7 @@ extension NotebookStore {
         let affected = Set(try fragments.compactMap { member -> String? in
           guard try database.hasChange(member.address), !member.member.isEmpty,
             !member.collection.hasSuffix("collaboration/fields"), let parent = member.parent else { return nil }
-          return parent + "|" + member.collection.components(separatedBy: "/").last! + "/" + member.member
+          return parent + "|" + fieldKey([member.collection.components(separatedBy: "/").last!, member.member])
         })
         for version in fragments where version.collection.hasSuffix("collaboration/fields") {
           guard try !database.hasChange(version.address) else { continue }

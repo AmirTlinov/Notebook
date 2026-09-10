@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { open } from "node:fs/promises";
 import { constants } from "node:fs";
 import { BridgeError, defaultSocketPath, runBridge } from "./bridge.js";
-import type { BoardDocument, BoardHierarchy, CurrentViewReceipt, DocumentDocument, DocumentStateJournal,
+import type { BoardDocument, BoardHierarchy, CurrentViewReceipt, DocumentBlock, DocumentDocument, DocumentStateJournal, JSONValue,
   PageDocument, PageSize, SessionPresence, SpatialElement, SpatialInkJournal, SurfaceID, VersionStamp,
   WorkspaceProjection, NotebookItemHeader } from "./domain.js";
 import { canonicalPageSize, documentSpatialSize } from "./domain.js";
@@ -19,6 +19,7 @@ export interface NotebookPagePosition { itemID:string;pageID:string;index:number
 export interface NotebookPageHeader { workspaceID:string;item:NotebookItemHeader;visibleRoot:string;readCursor:string;selectedPageID?:string;selectedPageIndex?:number }
 export interface NotebookPageWindow { header:NotebookPageHeader;pages:Array<{position:NotebookPagePosition;document:PageDocument}> }
 export interface NotebookPageDirectory { header:NotebookPageHeader;pages:Array<{position:NotebookPagePosition;size:PageSize;drawingStamp:VersionStamp;agentStamp:VersionStamp}>;nextIndex?:number }
+export interface DocumentBlockRead { documentID:string;contentStamp:VersionStamp;stateStamp:VersionStamp;block:DocumentBlock;state?:JSONValue }
 export interface SceneWindow {
   header: WorkspaceHeader; boardID: string; items: NotebookItemHeader[]; boards: BoardHierarchy["boards"];
   documentPaper: Record<string, "a4" | "letter">; pageCounts: Record<string, number>; totalMatches: number; truncated: boolean;
@@ -161,6 +162,9 @@ export class NotebookStore {
   readPage(id: string): Promise<PageDocument> { return this.read({ kind: "page", id }); }
   readDocument(id: string): Promise<DocumentDocument> { return this.read({ kind: "document", id }); }
   readDocumentState(id: string): Promise<DocumentStateJournal> { return this.read({ kind: "documentState", id }); }
+  readDocumentBlock(id: string, blockID: string): Promise<DocumentBlockRead | null> {
+    return this.read({kind:"documentBlock",id,elementID:blockID});
+  }
   readCollaborationContexts<T>(id?: string, limit = 20): Promise<T> { return this.read({ kind: "contexts", id, limit }); }
   readCollaborationActions<T>(contextID?: string, limit = 20): Promise<T> { return this.read({ kind: "actions", contextID, limit }); }
   readRuntime(): Promise<{ status: string; updatedAt: number } | null> { return this.read({ kind: "runtime" }); }

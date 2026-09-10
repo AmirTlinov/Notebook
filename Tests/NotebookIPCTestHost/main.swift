@@ -20,11 +20,20 @@ struct Seed: Decodable {
 }
 actor TestOwner {
   let store: NotebookStore
+  private var readQueries: [String] = []
   init(root: URL) { store = NotebookStore(root: root) }
-  func handle(_ command: NotebookCommand) throws -> JSONValue { try NotebookCommandDispatcher(store: store).handle(command) }
+  func handle(_ command: NotebookCommand) throws -> JSONValue {
+    if command.command == .read {
+      readQueries = Array((readQueries + (command.queries ?? []).map { $0.kind.rawValue }).suffix(256))
+    }
+    return try NotebookCommandDispatcher(store: store).handle(command)
+  }
   func control(_ command: FixtureControl) throws -> JSONValue {
     let value = command.value ?? .null
     switch command.operation {
+    case "readQueries":
+      let queries = readQueries; readQueries = []
+      return try .encode(queries)
     case "seed":
       let fixture = try value.decode(Seed.self)
       // The fixture submits creation intent, never a handwritten archive or a

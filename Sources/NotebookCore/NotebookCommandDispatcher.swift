@@ -55,7 +55,7 @@ public struct NotebookReadBounds: Codable, Sendable {
 public struct NotebookReadQuery: Codable, Sendable {
   public enum Kind: String, Codable, Sendable {
     case workspaceHeader, itemHeaders, itemHeader, workingSet, sceneWindow, scenePaintOrder
-    case page, document, documentState, boardItem, boardElement, ownerBoard, notebookPages, notebookDirectory, notebookPosition, spatialInk, presence
+    case page, document, documentState, documentBlock, boardItem, boardElement, ownerBoard, notebookPages, notebookDirectory, notebookPosition, spatialInk, presence
     case attentionEvidence, contexts, contextEntries, actions, currentViewReceipt, pageVisionReceipt, targetRenderReceipt
     case renderRequests, delivery, actionSnapshots, runtime
   }
@@ -153,10 +153,13 @@ public struct NotebookCommandDispatcher: Sendable {
       }
       let pages = Set(queries.flatMap { query in (query.kind == .page ? query.id.map { [$0] } ?? [] : []) + (query.pageIDs ?? []) })
       let heavy = Set(queries.flatMap { query in
-        ([.document, .documentState, .boardItem].contains(query.kind) ? query.id.map { [$0] } ?? [] : [])
+        ([.document, .documentState, .documentBlock, .boardItem].contains(query.kind) ? query.id.map { [$0] } ?? [] : [])
           + (query.itemIDs ?? []) + (query.boardIDs ?? [])
       })
       let windowPages = queries.filter { $0.kind == .notebookPages }.reduce(0) { $0 + ($1.pages?.count ?? 0) }
+      guard queries.filter({ $0.kind == .documentBlock }).count <= 4 else {
+        throw invalid("resource_limit", "Один срез читает до четырёх блоков документа по 4 МиБ каждый.")
+      }
       guard pages.count + windowPages <= 4, heavy.count <= 8, queries.filter({ $0.kind == .attentionEvidence }).count <= 4 else { throw invalid("resource_limit", "Один срез удерживает до четырёх листов и восьми тяжёлых владельцев.") }
       return try store.readTransaction { snapshot in
         let cursor = String(try snapshot.currentReadCursor())
@@ -213,6 +216,9 @@ public struct NotebookCommandDispatcher: Sendable {
     case .page: return try .encode(store.loadPage(required(query.id)))
     case .document: return try .encode(store.loadDocument(required(query.id)))
     case .documentState: return try .encode(store.loadDocumentState(required(query.id)))
+    case .documentBlock:
+      guard let blockID = query.elementID else { throw invalid("invalid_reference", "Нужен ID блока документа.") }
+      return try .encode(store.readDocumentBlock(documentID: required(query.id), blockID: blockID))
     case .boardItem: return try .encode(store.readBoardItem(required(query.id)))
     case .boardElement:
       guard let elementID = query.elementID, elementID.utf8.count <= 120 else { throw invalid("invalid_reference", "Нужен ID элемента.") }

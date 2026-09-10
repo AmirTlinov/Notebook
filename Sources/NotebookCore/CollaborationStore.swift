@@ -227,14 +227,29 @@ extension NotebookStore {
         stamp: .init(counter: 1, actor: receipt.id), createdAt: receipt.createdAt)
       writes[contextFile(receipt.action.resolvedContextID)] = try .encode(SharedContext(id: receipt.action.resolvedContextID, entries: [entry]))
     }
-    // The command's catalogue/tree/ink/state are addressed projections. Publish only
+    // The command's catalogue/tree/ink/document/state are addressed projections. Publish only
     // fields changed from its baseline; unseen SQL members retain their owners.
     let projected = writes.filter { before[$0.key] != nil
-      && (["workspace.json", "board.json", "spatial-ink.json"].contains($0.key) || $0.key.hasPrefix("document-states/")) }
+      && (["workspace.json", "board.json", "spatial-ink.json"].contains($0.key)
+        || $0.key.hasPrefix("documents/") || $0.key.hasPrefix("document-states/")) }
     for file in projected.keys { writes[file] = nil }
     try publishCollaboration(writes: writes, removals: before.keys.filter { after[$0] == nil })
     for file in projected.keys.sorted() {
       if let old = before[file], let next = projected[file] {
+        if file.hasPrefix("documents/") {
+          let oldFields = old["collaboration"]?["fields"]?.object ?? [:]
+          let nextFields = next["collaboration"]?["fields"]?.object ?? [:]
+          let added = Set(nextFields.keys).subtracting(oldFields.keys)
+          if !added.isEmpty {
+            // Existing-source edits normally replace already materialized
+            // clocks. An implicit field still needs the whole owner's count,
+            // not this projection's count, before it can allocate a new clock.
+            let count = try currentSQL!.rows("SELECT count(*) FROM records WHERE parent=? AND collection='collaboration/fields'", [.text(file + "#")]).first![0].integer!
+            guard count + Int64(added.count) <= Int64(CollaborativeContent.maximumFieldCount) else {
+              throw NotebookStorageError.limitExceeded("document_causal_fields")
+            }
+          }
+        }
         try publishProjectionEdits(file: file, before: old, after: next)
       }
     }

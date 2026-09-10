@@ -70,7 +70,31 @@ final class WorkspaceAppearanceTests: XCTestCase {
         }
       }
     }.padding(36).background(Color(red: 0.925, green: 0.928, blue: 0.915))
-    try save(proof, size: CGSize(width: 908, height: height * 2 + 102), name: "notebook-materials")
+    let size = CGSize(width: 908, height: height * 2 + 102)
+    let image = try attachRendering(proof, size: size, name: "notebook-materials")
+    for (index, item) in items.enumerated() {
+      let x = 36.0 + Double(index % 3) * 288
+      let y = 36.0 + Double(index / 3) * (height + 30)
+      let (r, g, b) = NotebookCoverPalette(itemID: item.id).rgb
+      let sample = try XCTUnwrap(image.colorAt(x: Int((x + 130) * Double(image.pixelsWide) / size.width),
+        y: Int((y + height * 0.65) * Double(image.pixelsHigh) / size.height))?.usingColorSpace(.sRGB))
+      XCTAssertEqual(sample.redComponent, r, accuracy: 0.08, "The native cover must contain its material, not a renderer placeholder")
+      XCTAssertEqual(sample.greenComponent, g, accuracy: 0.08)
+      XCTAssertEqual(sample.blueComponent, b, accuracy: 0.08)
+      let sx = Double(image.pixelsWide) / size.width, sy = Double(image.pixelsHigh) / size.height
+      var titlePixels = 0
+      for py in Int((y + height * 0.148) * sy)..<Int((y + height * 0.148 + 20) * sy) {
+        for px in Int((x + 260 * 0.145) * sx)..<Int((x + 260 * 0.865) * sx) {
+          let color = try XCTUnwrap(image.colorAt(x: px, y: py)?.usingColorSpace(.sRGB))
+          if max(color.redComponent, color.greenComponent, color.blueComponent) < 0.4 { titlePixels += 1 }
+        }
+      }
+      // Each 12-point glyph must contribute at least a four-pixel dark stem
+      // at 1x. Scale the coverage with both the text and actual backing density.
+      let minimumTitlePixels = Int(Double(item.title.count * 4) * sx * sy)
+      XCTAssertGreaterThanOrEqual(titlePixels, minimumTitlePixels,
+        "Every native cover must contain its dark title above the material")
+    }
   }
 
   @MainActor
@@ -126,19 +150,27 @@ final class WorkspaceAppearanceTests: XCTestCase {
   }
 
   @MainActor
-  private func save<V: View>(_ view: V, size: CGSize, name: String) throws {
-    let renderer = ImageRenderer(content: view.frame(width: size.width, height: size.height))
-    renderer.proposedSize = ProposedViewSize(size)
-    renderer.scale = 2
-    let image = try XCTUnwrap(renderer.cgImage)
-    let data = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
-    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-      .appendingPathComponent(".build/material-proof", isDirectory: true)
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    try data.write(to: root.appendingPathComponent("\(name).png"), options: .atomic)
+  private func attachRendering<V: View>(_ view: V, size: CGSize, name: String) throws -> NSBitmapImageRep {
+    // ImageRenderer cannot render the cover's NSViewRepresentable ink owner.
+    // Capture the installed native hierarchy, as the cover curl itself does.
+    let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
+    let window = NSWindow(contentRect: CGRect(origin: CGPoint(x: -20_000, y: -20_000), size: size),
+      styleMask: .borderless, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    window.contentView = host
+    window.orderBack(nil)
+    defer { window.orderOut(nil); window.contentView = nil; window.close() }
+    host.layoutSubtreeIfNeeded()
+    host.displayIfNeeded()
+    let image = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+    host.cacheDisplay(in: host.bounds, to: image)
+    let data = try XCTUnwrap(image.representation(using: .png, properties: [:]))
+    // The immutable test result owns this rendering. A second fixed output
+    // beside the source would replace another run's evidence on the UI actor.
     let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.png")
     attachment.name = name
     attachment.lifetime = .keepAlways
     add(attachment)
+    return image
   }
 }

@@ -212,7 +212,7 @@ extension NotebookStore {
         let position = (edited.collection.hasSuffix("collaboration/fields") || ["pageOrders", "pageOrderNodes"].contains(edited.collection)) ? 0 : try positions[address] ?? stored?.position ?? Int(database.rows("SELECT COALESCE(MAX(position),-1)+1 FROM records WHERE parent=? AND collection=?", [edited.parent.map(NotebookSQLValue.text) ?? .null, .text(edited.collection)]).first![0].integer!)
         let changed = try writeFragment(edited.replacing(value: value, position: position), database: database)
         if changed, !edited.member.isEmpty, !edited.collection.hasSuffix("collaboration/fields"), let parent = edited.parent {
-          let prefix = edited.collection.components(separatedBy: "/").last! + "/" + edited.member + "/"
+          let prefix = fieldKey([edited.collection.components(separatedBy: "/").last!, edited.member]) + "/"
           let collection = edited.collection.hasPrefix("board/") ? "board/collaboration/fields" : "collaboration/fields"
           for row in try database.rows("SELECT address,hash FROM records WHERE parent=? AND collection=? AND member>=? AND member<?", [.text(parent), .text(collection), .text(prefix), .text(prefix + "\u{10ffff}")]) {
             try database.recordChange(.init(address: row[0].text!, blobHash: row[1].text!))

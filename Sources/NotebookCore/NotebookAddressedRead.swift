@@ -1,6 +1,43 @@
 import Foundation
 
 extension NotebookStore {
+  /// Admit indexed fragment lengths before decoding any value. The caller
+  /// names disjoint points/subtrees, never a partial archive to be replaced.
+  func boundedStoredFragments(_ roots: [(String, Bool)], maximumCount: Int,
+    maximumBytes: Int64, budget: String) throws -> [NotebookStoredFragment] {
+    guard maximumCount > 0, maximumBytes >= 0, roots.count <= maximumCount else {
+      throw NotebookStorageError.limitExceeded(budget)
+    }
+    return try sqlRead { database in
+      var metadata: [(address: String, hash: String)] = [], remainingBytes = maximumBytes
+      for (address, descendants) in roots {
+        let point = try database.rows("SELECT r.address,r.hash,length(b.data) FROM records r LEFT JOIN blobs b ON b.hash=r.hash WHERE r.address=?", [.text(address)])
+        let children = try descendants ? database.rows("""
+          SELECT r.address,r.hash,length(b.data) FROM records r LEFT JOIN blobs b ON b.hash=r.hash
+          WHERE r.address>=? AND r.address<? ORDER BY r.address LIMIT ?
+          """, [.text(address + "/"), .text(address + "0"), .integer(Int64(maximumCount - metadata.count + 1))]) : []
+        for row in point + children {
+          guard let bytes = row[2].integer, bytes >= 0 else { throw NotebookStorageError.corruptRecord(row[0].text!) }
+          guard metadata.count < maximumCount, bytes <= remainingBytes else {
+            throw NotebookStorageError.limitExceeded(budget)
+          }
+          remainingBytes -= bytes
+          metadata.append((row[0].text!, row[1].text!))
+        }
+      }
+      guard Set(metadata.map(\.address)).count == metadata.count else {
+        throw NotebookStorageError.invalidTransaction("overlapping fragment read")
+      }
+      return try metadata.map { row in
+        let value = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(row.hash))
+        guard value.address == row.address, value.position >= 0, value.value.isValid else {
+          throw NotebookStorageError.corruptRecord(row.address)
+        }
+        return value
+      }
+    }
+  }
+
   func storedFragments(address: String, descendants: Bool = true) throws -> [NotebookStoredFragment] {
     try sqlRead { database in
       // The addressed subtree drives both joins. Without CROSS JOIN, SQLite
@@ -392,7 +429,7 @@ extension NotebookStore {
   func appendBoardCausalFragments(to rows: inout [NotebookStoredFragment], address: String) throws {
     let members = rows.filter { $0.parent == address && ["board/freeItems", "board/stacks", "board/elements"].contains($0.collection) }
     rows += try causalFragments(parent: address, collection: "board/collaboration/fields",
-      memberPrefixes: members.map { $0.collection.replacingOccurrences(of: "board/", with: "") + "/" + $0.member + "/" },
+      memberPrefixes: members.map { fieldKey([$0.collection.replacingOccurrences(of: "board/", with: ""), $0.member]) + "/" },
       includeKeys: ["freeItems/order", "stacks/order", "elements/order"])
   }
 }

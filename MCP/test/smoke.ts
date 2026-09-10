@@ -195,6 +195,27 @@ const transport = new StdioClientTransport({ command: join(mcpRoot, "run.sh"),
     const source = await call("notebook_read_document", { document_id: id, include_source: true });
     assert.deepEqual(source.blocks.map((v: Data) => v.id), ["second", "first", "live"]);
     assert.equal(source.preamble, "\\newcommand{\\meaning}{M}");
+    await fixtureControl(root,"readQueries");
+    const initialBlock = await call("notebook_read_document", {document_id:id,block_id:"live"});
+    assert.deepEqual(initialBlock.block.state,{count:1});
+    let queryKinds = await fixtureControl<string[]>(root,"readQueries");
+    assert.ok(queryKinds.includes("documentBlock"));
+    assert.ok(!queryKinds.includes("document") && !queryKinds.includes("documentState"),"One requested block must not load either full owner");
+    await apply([{kind:"setBlockState",target,id:"live",values:{state:null}}],
+      [{target,revision:initialBlock.contentRevision,stateRevision:initialBlock.stateRevision}]);
+    const previousPresence = await store.readPresence();
+    await fixtureControl(root,"presence",{...previousPresence,boardID:rootBoardID,mode:"document",openProgress:1,
+      focusedItemID:id,selectedItemID:id,notebookPageID:undefined,documentPageIndex:0});
+    await fixtureControl(root,"readQueries");
+    const selectedBlock = await call("notebook_read_document", {block_id:"live"});
+    assert.equal(selectedBlock.documentID.toLowerCase(),id.toLowerCase());
+    assert.equal(selectedBlock.block.state,null,"A committed JSON null is not the program's initial value");
+    queryKinds = await fixtureControl<string[]>(root,"readQueries");
+    assert.ok(queryKinds.includes("documentBlock") && queryKinds.includes("presence"));
+    assert.ok(!queryKinds.includes("document") && !queryKinds.includes("documentState"),"Resolving the current document must also remain addressed");
+    const compactState = await call("notebook_read_document", {document_id:id});
+    assert.equal(compactState.blocks.find((block:Data)=>block.id==="live").state,null);
+    await fixtureControl(root,"presence",previousPresence);
     const size = documentSpatialSize(paper);
     const cover = { kind: "cover", id, boardID: rootBoardID };
     const readBoard = await call("notebook_read_board", { board_id: rootBoardID });
@@ -208,6 +229,7 @@ const transport = new StdioClientTransport({ command: join(mcpRoot, "run.sh"),
   assert.equal(finalPresence?.selectedItemID?.toLowerCase(), itemID);
   assert.equal(finalPresence?.notebookPageID?.toLowerCase(), pageID);
   checked.push("block-local edits, physical A4/Letter cover bounds and human selection");
+  checked.push("one addressed document block with explicit or current selection and a committed JSON null");
   console.log(JSON.stringify({ status: "passed", scenarios: checked }, null, 2));
 } finally {
   await client.close();

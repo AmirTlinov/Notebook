@@ -19,7 +19,8 @@ extension NotebookStore {
     var pageIDs = Set<UUID>(), documentIDs = Set<UUID>()
     var elementIDs: [UUID: Set<String>] = [:], creationInkSurfaces = Set<SurfaceID>()
     var spatialActionIDs = Set<UUID>()
-    var stateBlockIDs: [UUID: Set<String>] = [:], fullDocumentIDs = Set<UUID>()
+    var stateBlockIDs: [UUID: Set<String>] = [:], sourceBlockIDs: [UUID: Set<String>] = [:]
+    var sourceDocumentIDs = Set<UUID>(), fullDocumentIDs = Set<UUID>()
     func include(_ target: CollaborationTarget) throws {
       switch target.kind {
       case .workspace: break
@@ -37,9 +38,21 @@ extension NotebookStore {
       + action.references.map(\.target) + references.map(\.target) + (action.additionalOwners ?? []) { try include(target) }
     for operation in action.operations {
       if operation.target.kind == .document {
-        if operation.kind == .setBlockState, let id = operation.id {
-          stateBlockIDs[operation.target.id, default: []].insert(collaborationIdentity(id))
-        } else { fullDocumentIDs.insert(operation.target.id) }
+        if [.setBlockState, .updateBlock].contains(operation.kind) {
+          guard let id = operation.id, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            id.utf16.count <= 120 else {
+            throw CollaborationError("invalid_operation", "Изменение блока называет допустимый ID длиной до 120 знаков UTF-16.")
+          }
+        }
+        switch operation.kind {
+        case .setBlockState:
+          if let id = operation.id { stateBlockIDs[operation.target.id, default: []].insert(collaborationIdentity(id)) }
+        case .updateBlock:
+          sourceDocumentIDs.insert(operation.target.id)
+          if let id = operation.id { sourceBlockIDs[operation.target.id, default: []].insert(collaborationIdentity(id)) }
+        case .setPreamble: sourceDocumentIDs.insert(operation.target.id)
+        default: fullDocumentIDs.insert(operation.target.id)
+        }
       }
       if [.createNotebook, .createDocument, .createBoard, .renameItem, .moveItem].contains(operation.kind),
         let id = operation.id.flatMap(UUID.init(uuidString:)) { itemIDs.insert(id) }
@@ -140,18 +153,41 @@ extension NotebookStore {
     rows += try storedFragments(address: "board.json#", descendants: false)
     var files = ["workspace.json": try JSONValue.encode(workspace), "board.json": try NotebookRecordCodec.decode(rows, root: "board.json#")]
     for id in pageIDs where try hasStoredValue(pageFile(id)) { files[pageFile(id)] = try storedValue(pageFile(id)) }
+    let sourceAddresses = items.filter { $0.kind == .document && !fullDocumentIDs.contains($0.id) }.flatMap { item -> [(String, Bool)] in
+      let file = documentFile(item.id)
+      let ids = (stateBlockIDs[item.id] ?? []).union(sourceBlockIDs[item.id] ?? [])
+      var addresses = [(file + "#", false)] + ids.sorted().map { (file + "#/blocks/@" + fieldKey([$0]), true) }
+      if sourceDocumentIDs.contains(item.id) {
+        // Editing an existing program cannot create a new source field or
+        // reorder its neighbours. Read exactly its causal owners, including
+        // adoption of existence, not every retired field of this document.
+        let fields = ["exists", "id", "content", "css", "javaScript", "initialState", "height"]
+        let keys = ["preamble", "blocks/order"] + ids.sorted().flatMap { id in
+          fields.map { fieldKey(["blocks", id, $0]) }
+        }
+        addresses += keys.map { (file + "#/collaboration/fields/@" + fieldKey([$0]), false) }
+      }
+      return addresses
+    }
+    // A batch shares one source admission, not four MiB per addressed document.
+    let sourceRows = Dictionary(grouping: try boundedStoredFragments(sourceAddresses,
+      maximumCount: 4_096, maximumBytes: 4 * 1_024 * 1_024, budget: "document_source_command"), by: \.file)
     for item in items where item.kind == .document {
       let file = documentFile(item.id)
       if fullDocumentIDs.contains(item.id) {
         files[file] = try storedValue(file)
       } else {
-        var rows = try storedFragments(address: file + "#", descendants: false)
-        // State needs the addressed program's kind and initial value for undo,
-        // not the other programs or the document's historical causal fields.
-        for id in (stateBlockIDs[item.id] ?? []).sorted() {
-          rows += try storedFragments(address: file + "#/blocks/@" + fieldKey([id]))
+        let rows = sourceRows[file] ?? []
+        if !rows.isEmpty {
+          let value = try NotebookRecordCodec.decode(rows, root: file + "#")
+          let stored = Dictionary(uniqueKeysWithValues: rows.map { ($0.address, $0) })
+          let canonical = try NotebookRecordCodec.encode(value, file: file)
+          guard canonical.count == stored.count, canonical.allSatisfy({ row in
+            guard let prior = stored[row.address] else { return false }
+            return row.replacing(value: row.value, position: prior.position) == prior
+          }) else { throw NotebookStorageError.corruptRecord(file) }
+          files[file] = value
         }
-        if !rows.isEmpty { files[file] = try NotebookRecordCodec.decode(rows, root: file + "#") }
       }
       if documentIDs.contains(item.id) {
         let file = stateFile(item.id)

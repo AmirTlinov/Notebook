@@ -61,7 +61,7 @@ public struct DocumentSourceCommitResult: Equatable, Sendable {
 
 extension DocumentDocument {
   public func sourceVersion(blockID: String) -> ContentFieldVersion {
-    collaboration?.fields[fieldKey(["blocks", blockID, "content"])]
+    collaboration?.fields[fieldKey(["blocks", collaborationIdentity(blockID), "content"])]
       ?? .init(stamp: contentStamp, human: true)
   }
 }
