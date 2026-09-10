@@ -19,6 +19,16 @@ extension NotebookStore {
     if suppliedHash != nil { _ = try database.putBlob(data) }
     let previousHash = try database.rows("SELECT hash FROM records WHERE address=?", [.text(fragment.address)]).first?[0].text
     if previousHash == hash { return false }
+    if fragment.file.hasPrefix("pages/"), fragment.collection == "computations" {
+      let record = try fragment.value.decode(NotebookComputation.self)
+      let file = pageFile(record.source.pageID)
+      guard data.count <= 262_144, record.isValid, fragment.file == file, fragment.parent == file + "#",
+        fragment.member == record.id.uuidString.lowercased(), fragment.position == 0,
+        fragment.address == file + "#/computations/@" + fragment.member, fragment.collections.isEmpty,
+        try ownerItemID(ofPage: record.source.pageID) == record.source.notebookID else {
+        throw NotebookStorageError.invalidTransaction("computation address")
+      }
+    }
     if fragment.file == "workspace.json", fragment.collection == "pageOrderNodes" {
       guard previousHash == nil, fragment.parent == "workspace.json#", fragment.position == 0,
         fragment.address == "workspace.json#/pageOrderNodes/@" + fragment.member, fragment.collections.isEmpty else {

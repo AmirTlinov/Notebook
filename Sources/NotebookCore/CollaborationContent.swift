@@ -32,7 +32,9 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
     try validateOwners()
     let pageIDs = Set(workspace.items.flatMap(\.pageIDs))
     let documentIDs = Set(workspace.items.filter { $0.kind == .document }.map(\.id))
-    guard pages.allSatisfy({ pageIDs.contains($0.id) }),
+    let owners = Dictionary(uniqueKeysWithValues: workspace.items.flatMap { item in item.pageIDs.map { ($0, item.id) } })
+    guard pages.allSatisfy({ page in (page.computations ?? []).allSatisfy { owners[page.id] == $0.source.notebookID } }),
+      pages.allSatisfy({ pageIDs.contains($0.id) }),
       documents.allSatisfy({ documentIDs.contains($0.id) }),
       states.allSatisfy({ documentIDs.contains($0.id) }) else {
       throw CollaborationError("invalid_content", "Содержание принадлежит владельцам переданного каталога.")
@@ -101,8 +103,11 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
     if ink != incoming.ink { _ = ink.merge(incoming.ink) }
     var pages = Dictionary(uniqueKeysWithValues: self.pages.map { ($0.id, $0) })
     for other in incoming.pages {
-      if let current = pages[other.id], current.size != other.size {
-        throw CollaborationError("invalid_content", "UUID листа сохраняет физический размер.")
+      if let current = pages[other.id] {
+        guard current.size == other.size else {
+          throw CollaborationError("invalid_content", "UUID листа сохраняет физический размер.")
+        }
+        _ = try current.joinedComputations(other.computations ?? [])
       }
     }
     for other in incoming.pages where pages[other.id] != other { if pages[other.id] != nil { _ = pages[other.id]!.merge(other) } else { pages[other.id] = other } }

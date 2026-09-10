@@ -179,7 +179,7 @@ extension NotebookStore {
         let old = before[file]
         if file.hasPrefix("pages/") {
           var resolved = try value.decode(PageDocument.self)
-          if let old { let previous = try old.decode(PageDocument.self); guard previous.size == resolved.size else { throw NotebookStorageError.transactionConflict }; _ = resolved.merge(previous) }
+          if let old { let previous = try old.decode(PageDocument.self); guard previous.size == resolved.size else { throw NotebookStorageError.transactionConflict }; _ = try resolved.joinedComputations(previous.computations ?? []); _ = resolved.merge(previous) }
           guard resolved.isValid else { throw NotebookStorageError.corruptRecord(file) }; writes[file] = try .encode(resolved)
         } else if file.hasPrefix("documents/") {
           var resolved = try value.decode(DocumentDocument.self)

@@ -148,6 +148,7 @@ npm run smoke 2>&1 | tee "$EVIDENCE/mcp-smoke.log"
 
 # Dependency proof only: handwriting recognition still has its own explicit
 # acceptance gates in docs/executable-ink.md, not a fake recognizer in the app.
+"$ROOT/Tests/NotebookComputationQueueHarness/run.sh" 2> "$EVIDENCE/computation-queue-build.log" | tee "$EVIDENCE/computation-queue.json"
 "$ROOT/Tests/NotebookComputationHarness/run.sh" 2>&1 | tee "$EVIDENCE/computation-dependencies.log"
 cp "$ROOT/.build/computation-contract/result.json" "$EVIDENCE/computation-dependencies.json"
 npm ci --ignore-scripts --prefix "$ROOT/Tests/NotebookRecognitionHarness"

@@ -148,6 +148,7 @@ struct NotebookRecordCodec {
         for key in fields.keys.sorted() {
           let value = fields[key]!, location = path + [key]
           let collectionKey = fieldKey(location)
+          let isComputationCollection = file.hasPrefix("pages/") && address == file + "#" && path.isEmpty && key == "computations"
           if ((key == "fields" && path.last == "collaboration")
             || (file == "workspace.json" && path.isEmpty && ["pageOrders", "pageOrderNodes"].contains(key))),
             case .object(let versions) = value {
@@ -157,7 +158,7 @@ struct NotebookRecordCodec {
                 parent: address, collection: collectionKey, member: member, position: 0)
             }
           } else if case .array(let values) = value,
-            ["items", "boards", "freeItems", "stacks", "elements", "blocks", "records", "actions", "entries", "pageIDs"].contains(key),
+            (["items", "boards", "freeItems", "stacks", "elements", "blocks", "records", "actions", "entries", "pageIDs"].contains(key) || isComputationCollection),
             values.allSatisfy({ $0.memberIdentity != nil || (key == "pageIDs" && $0.string != nil) }) {
             let ids = values.compactMap { $0.memberIdentity ?? $0.string?.lowercased() }
             guard Set(ids).count == ids.count else { throw NotebookStorageError.invalidTransaction("duplicate IDs in \(file)/\(collectionKey)") }
@@ -165,7 +166,7 @@ struct NotebookRecordCodec {
             for (offset, value) in values.enumerated() {
               let member = ids[offset]
               try make(value, address: address + "/" + collectionKey + "/@" + fieldKey([member]),
-                parent: address, collection: collectionKey, member: member, position: offset)
+                parent: address, collection: collectionKey, member: member, position: isComputationCollection ? 0 : offset)
             }
           } else if key == "drawingData", file.hasPrefix("pages/") {
             let drawing = try PageInkDrawing.decode(value.decode(Data.self))
@@ -222,6 +223,9 @@ struct NotebookRecordCodec {
             left.stamp == right.stamp ? left.row.member < right.row.member : left.stamp < right.stamp
           }
           matching = stamped.map(\.row)
+        } else if row.file.hasPrefix("pages/"), row.parent == nil, collection.path == ["computations"] {
+          let records = try members.map { ($0, try $0.value.decode(NotebookComputation.self)) }
+          matching = records.sorted { NotebookComputation.ordered($0.1, $1.1) }.map(\.0)
         } else {
           matching = members.sorted { $0.position == $1.position ? $0.member < $1.member : $0.position < $1.position }
         }

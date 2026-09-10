@@ -131,6 +131,8 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   public private(set) var elements: [AgentElement]
   public private(set) var agentStamp: VersionStamp
   public private(set) var collaboration: CollaborativeContent?
+  /// Absent until a user activates ink; not a second page or editor.
+  public internal(set) var computations: [NotebookComputation]?
 
   /// Decoding and encoding happen before publication. The drawing stamp is the
   /// compare-and-swap boundary; unrelated element edits remain on this page.
@@ -183,6 +185,8 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   var isValid: Bool {
     guard format == Self.formatVersion,
       collaboration?.isValid ?? true,
+      computationsAreValid,
+      collaboration?.fields["computations"] == nil,
       size.isValid,
       drawingStamp.counter <= VersionStamp.maximumCounter,
       agentStamp.counter <= VersionStamp.maximumCounter
@@ -273,7 +277,8 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     candidate.agentStamp = stamp
     var metadata = collaboration ?? CollaborativeContent()
     if let before = try? JSONValue.encode(self), let after = try? JSONValue.encode(candidate) {
-      metadata.record(before: before, after: after, beforeStamp: agentStamp, stamp: stamp, human: true)
+      metadata.record(before: before.setting("computations", nil), after: after.setting("computations", nil),
+        beforeStamp: agentStamp, stamp: stamp, human: true)
       candidate.collaboration = metadata
     }
     guard candidate.isValid else { return false }
@@ -283,12 +288,18 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
 
   public mutating func merge(_ other: Self) -> Bool {
     guard id == other.id, size == other.size, other.isValid else { return false }
-    var changed = false
+    let joined: [NotebookComputation]?
+    do { joined = try joinedComputations(other.computations ?? []) } catch { return false }
+    var changed = computations != joined
+    computations = joined
     if replaceDrawing(other.drawingData, stamp: other.drawingStamp) { changed = true }
     if elements == other.elements && collaboration == other.collaboration && agentStamp == other.agentStamp {
       return changed
     }
-    if let local = try? JSONValue.encode(self), let incoming = try? JSONValue.encode(other) {
+    // The typed computation owner joins above. Agent field clocks never own
+    // this collection, including while merging an unrelated element edit.
+    if let local = try? JSONValue.encode(self).setting("computations", nil),
+      let incoming = try? JSONValue.encode(other).setting("computations", nil) {
       let merged = CollaborativeContent.merge(local: local, incoming: incoming,
         localState: collaboration, incomingState: other.collaboration,
         localStamp: agentStamp, incomingStamp: other.agentStamp)
@@ -301,6 +312,25 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
       }
     }
     return changed
+  }
+
+  private var computationsAreValid: Bool {
+    guard let computations else { return true }
+    return !computations.isEmpty && computations.count <= 256
+      && Set(computations.map(\.id)).count == computations.count
+      && computations.allSatisfy { $0.isValid && $0.source.pageID == id && $0.source.region.isContained(in: size) }
+      && computations == computations.sorted(by: NotebookComputation.ordered)
+  }
+
+  /// Persistent merge owners call this throwing validation before their ordinary
+  /// page merge, so an identity collision cannot be interpreted as "no change".
+  func joinedComputations(_ incoming: [NotebookComputation]) throws -> [NotebookComputation]? {
+    var result = Dictionary(uniqueKeysWithValues: (computations ?? []).map { ($0.id, $0) })
+    for record in incoming {
+      result[record.id] = try result[record.id].map { try $0.joining(record) } ?? record
+    }
+    guard result.count <= 256 else { throw NotebookStorageError.limitExceeded("page_computations") }
+    return result.isEmpty ? nil : result.values.sorted(by: NotebookComputation.ordered)
   }
 
   @discardableResult

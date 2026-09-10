@@ -597,6 +597,7 @@ public struct NotebookStore: Sendable {
         else {
           throw corruptFile(at: url)
         }
+        _ = try resolved.joinedComputations(disk.computations ?? [])
         _ = resolved.merge(disk)
         if resolved == disk { return resolved }
       }
@@ -606,7 +607,11 @@ public struct NotebookStore: Sendable {
   }
 
   private func writePage(_ page: PageDocument) throws {
-    try publishCollaboration(writes: [pageFile(page.id): try .encode(page)])
+    var resolved = page
+    if try ownerItemID(ofPage: page.id) != nil {
+      resolved.computations = try resolved.joinedComputations(computationRecords(pageID: page.id))
+    }
+    try publishCollaboration(writes: [pageFile(page.id): try .encode(resolved)])
   }
 
   private func corruptFile(at url: URL) -> CocoaError {

@@ -793,7 +793,9 @@ struct CollaborationWorkspace {
       let beforeStamp = try old[stampKey]?.decode(VersionStamp.self) ?? stamp
       var metadata = try old["collaboration"]?.decode(CollaborativeContent.self) ?? CollaborativeContent()
       let previousMetadata = metadata
-      metadata.record(before: old, after: current, beforeStamp: beforeStamp, stamp: stamp, human: human)
+      let oldContent = target.kind == .page ? old.setting("computations", nil) : old
+      let newContent = target.kind == .page ? current.setting("computations", nil) : current
+      metadata.record(before: oldContent, after: newContent, beforeStamp: beforeStamp, stamp: stamp, human: human)
       guard metadata != previousMetadata else { continue }
       files[file] = files[file]!.setting(at: path[...], to: current.setting("collaboration", try .encode(metadata)))
     }
