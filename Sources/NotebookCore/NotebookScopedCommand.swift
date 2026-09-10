@@ -37,20 +37,24 @@ extension NotebookStore {
       }
       let order = try fragment.value.decode(NotebookPageOrderRegister.self)
       try order.validate()
-      if database.capturedPageOrderRoots.insert(fragment.member).inserted, let previousHash {
-        let old = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(previousHash))
-        database.previousPageOrderRoots[fragment.member] = try old.value.decode(NotebookPageOrderRegister.self).visibleRoot
+      if try !database.hasOwner(.capturedPageOrder, fragment.member) {
+        let previousRoot: String?
+        if let previousHash {
+          let old = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(previousHash))
+          previousRoot = try old.value.decode(NotebookPageOrderRegister.self).visibleRoot
+        } else { previousRoot = nil }
+        try database.noteOwner(.capturedPageOrder, fragment.member, value: previousRoot)
       }
-      database.pageOrderRoots.insert(order.visibleRoot)
-      database.pageOrderRoots.formUnion(order.heads.map(\.valueRoot))
-      database.touchedPageOrders.insert(fragment.member)
+      try database.noteOwner(.orderRoot, order.visibleRoot)
+      for head in order.heads { try database.noteOwner(.orderRoot, head.valueRoot) }
+      try database.noteOwner(.pageOrder, fragment.member)
     }
     if previousHash != nil,
       (fragment.file.hasPrefix("pages/") && fragment.address.contains("#/drawingData/actions/@") && fragment.collection == "samples")
         || (fragment.file == "spatial-ink.json" && fragment.collection == "spans") {
       throw NotebookStorageError.invalidTransaction("stroke samples are immutable")
     }
-    if fragment.file == "workspace.json", fragment.collection == "items", let id = UUID(uuidString: fragment.member) { database.touchedItemIDs.insert(id) }
+    if fragment.file == "workspace.json", fragment.collection == "items", let id = UUID(uuidString: fragment.member) { try database.noteOwner(.item, id.uuidString.lowercased()) }
     if fragment.file == "workspace.json", fragment.collection == "pageIDs", let parent = fragment.parent,
       let id = parent.components(separatedBy: "@").last.flatMap(UUID.init(uuidString:)) {
       guard fragment.parent == "workspace.json#/items/@" + id.uuidString.lowercased(),
@@ -58,9 +62,9 @@ extension NotebookStore {
         fragment.value.string.flatMap(UUID.init(uuidString:))?.uuidString.lowercased() == fragment.member else {
         throw NotebookStorageError.invalidTransaction("page membership identity")
       }
-      database.touchedItemIDs.insert(id)
-      database.touchedPageOrders.insert(id.uuidString.lowercased())
-      database.touchedPageMemberships.insert(fragment.address)
+      try database.noteOwner(.item, id.uuidString.lowercased())
+      try database.noteOwner(.pageOrder, id.uuidString.lowercased())
+      try database.noteOwner(.pageMembership, fragment.address)
       if previousHash == nil { try database.run("INSERT INTO item_page_counts(address,count) VALUES(?,1) ON CONFLICT(address) DO UPDATE SET count=count+1", [.text(parent)]) }
     }
     if previousHash == nil, fragment.file == "workspace.json", fragment.collection == "items" {
@@ -72,8 +76,8 @@ extension NotebookStore {
     try updateBoardContribution(address: fragment.address, previous: previousHash, next: hash, database: database)
     try updateAddressIndexes(fragment, database: database)
     try updateSearchIndex(fragment, database: database)
-    noteReferenceChange(fragment.address, file: fragment.file, database: database)
-    if !Self.localRecord(fragment.file) { database.changes[fragment.address] = .init(address: fragment.address, blobHash: hash) }
+    try noteReferenceChange(fragment.address, file: fragment.file, database: database)
+    if !Self.localRecord(fragment.file) { try database.recordChange(.init(address: fragment.address, blobHash: hash)) }
     return true
   }
 
@@ -87,24 +91,24 @@ extension NotebookStore {
         ? database.rows("SELECT address,file,collection,member,hash FROM records WHERE address=?", [.text(address)]) : descendants
       for row in rows {
         let address = row[0].text!, file = row[1].text!, collection = row[2].text!, member = row[3].text!
-        if file == "workspace.json", collection == "pageOrders" { database.touchedPageOrders.insert(member) }
+        if file == "workspace.json", collection == "pageOrders" { try database.noteOwner(.pageOrder, member) }
         if file == "workspace.json", collection == "items", let id = UUID(uuidString: member) {
-          database.touchedItemIDs.insert(id)
+          try database.noteOwner(.item, id.uuidString.lowercased())
           try database.run("UPDATE metadata SET value=CAST(value AS INTEGER)-1 WHERE key='item_count'")
         }
         if file == "workspace.json", collection == "pageIDs", let id = address.components(separatedBy: "@").dropLast().last?.split(separator: "/").first {
-          database.touchedPageOrders.insert(String(id))
-          database.touchedPageMemberships.insert(address)
+          try database.noteOwner(.pageOrder, String(id))
+          try database.noteOwner(.pageMembership, address)
           try database.run("UPDATE item_page_counts SET count=count-1 WHERE address=? AND count>0", [.text("workspace.json#/items/@" + id)])
         }
         if file == "board.json" {
           let owned = try database.rows("SELECT item_id FROM item_owners WHERE address=?", [.text(address)]).compactMap { $0[0].text.flatMap(UUID.init(uuidString:)) }
-          database.touchedItemIDs.formUnion(owned)
+          for id in owned { try database.noteOwner(.item, id.uuidString.lowercased()) }
         }
         try updateBoardContribution(address: address, previous: row[4].text, next: nil, database: database)
-        noteReferenceChange(address, file: file, database: database)
+        try noteReferenceChange(address, file: file, database: database)
         try database.run("DELETE FROM records WHERE address=?", [.text(address)])
-        if !Self.localRecord(file) { database.changes[address] = .init(address: address, blobHash: nil) }
+        if !Self.localRecord(file) { try database.recordChange(.init(address: address, blobHash: nil)) }
       }
       if descendants.isEmpty { return }
     }
@@ -199,7 +203,7 @@ extension NotebookStore {
           let prefix = edited.collection.components(separatedBy: "/").last! + "/" + edited.member + "/"
           let collection = edited.collection.hasPrefix("board/") ? "board/collaboration/fields" : "collaboration/fields"
           for row in try database.rows("SELECT address,hash FROM records WHERE parent=? AND collection=? AND member>=? AND member<?", [.text(parent), .text(collection), .text(prefix), .text(prefix + "\u{10ffff}")]) {
-            database.changes[row[0].text!] = .init(address: row[0].text!, blobHash: row[1].text!)
+            try database.recordChange(.init(address: row[0].text!, blobHash: row[1].text!))
           }
         }
       } else if let stored {

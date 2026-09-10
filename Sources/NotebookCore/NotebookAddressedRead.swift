@@ -130,7 +130,7 @@ extension NotebookStore {
       let boardString = parent.components(separatedBy: "@").last, let boardID = UUID(uuidString: boardString),
       ["board/freeItems", "board/stacks", "board/elements"].contains(fragment.collection) else { return }
     let previousOwners = try database.rows("SELECT item_id FROM item_owners WHERE address=?", [.text(fragment.address)]).compactMap { $0[0].text.flatMap(UUID.init(uuidString:)) }
-    database.touchedItemIDs.formUnion(previousOwners)
+    for id in previousOwners { try database.noteOwner(.item, id.uuidString.lowercased()) }
     try database.run("DELETE FROM spatial_entries WHERE address=?", [.text(fragment.address)])
     try database.run("DELETE FROM item_owners WHERE address=?", [.text(fragment.address)])
     func geometry(_ id: UUID) throws -> WorkspaceItemGeometry {
@@ -148,9 +148,9 @@ extension NotebookStore {
       try database.run("INSERT INTO spatial_entries(entry_id,address,board_id,owner_id,kind,layer,z_index,paint_key,min_tx,min_ty,min_x,min_y,max_tx,max_ty,max_x,max_y) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [
         .text(fragment.address + ":" + id), .text(fragment.address), .text(boardID.uuidString.lowercased()), .text(id), .text(kind), .integer(Int64(layer)), .real(z), .text(key),
         .integer(origin.tileX), .integer(origin.tileY), .real(origin.localX), .real(origin.localY), .integer(maximum.tileX), .integer(maximum.tileY), .real(maximum.localX), .real(maximum.localY)])
-      if kind == "coverElement" { database.touchedCoverAddresses.insert(fragment.address) }
+      if kind == "coverElement" { try database.noteOwner(.cover, fragment.address) }
       if let owner {
-        database.touchedItemIDs.insert(owner)
+        try database.noteOwner(.item, owner.uuidString.lowercased())
         try database.run("INSERT INTO item_owners(item_id,board_id,address) VALUES(?,?,?) ON CONFLICT(item_id) DO UPDATE SET board_id=excluded.board_id,address=excluded.address", [.text(owner.uuidString.lowercased()), .text(boardID.uuidString.lowercased()), .text(fragment.address)])
       }
     }

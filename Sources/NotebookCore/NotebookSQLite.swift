@@ -16,16 +16,8 @@ enum NotebookSQLValue {
 final class NotebookSQLConnection {
   let handle: OpaquePointer
   let writable: Bool
-  var changes: [String: NotebookRecordMutation] = [:]
-  var dirtyBoardNodes = Set<String>()
-  var dirtyReferenceRoots = Set<String>()
-  var touchedItemIDs = Set<UUID>()
-  var touchedCoverAddresses = Set<String>()
-  var pageOrderRoots = Set<String>()
-  var touchedPageOrders = Set<String>()
-  var touchedPageMemberships = Set<String>()
-  var capturedPageOrderRoots = Set<String>()
-  var previousPageOrderRoots: [String: String] = [:]
+  var pendingChangeCount = 0
+  var pendingOwnersPrepared = false
   private var statements: [String: OpaquePointer] = [:]
 
   init(url: URL, writable: Bool, create: Bool = false) throws {
@@ -39,6 +31,7 @@ final class NotebookSQLConnection {
     sqlite3_busy_timeout(handle, 4_000)
     try run("PRAGMA foreign_keys=ON")
     try run("PRAGMA synchronous=FULL")
+    try run("PRAGMA temp_store=FILE")
   }
 
   deinit {
@@ -373,39 +366,14 @@ extension NotebookStore {
       try validateChangedOwnership(database: database)
       try refreshBoardFrontier(database: database)
       try refreshReferenceIndex(database: database)
-      if !advancesReadRevision, !database.changes.isEmpty { throw NotebookStorageError.invalidTransaction("local chat changed shared content") }
+      if !advancesReadRevision, database.pendingChangeCount > 0 { throw NotebookStorageError.invalidTransaction("local chat changed shared content") }
       if advancesReadRevision && sqlite3_total_changes64(database.handle) > 0 {
         let revision = try currentReadCursor()
         guard revision < UInt64(Int64.max) else { throw NotebookStorageError.limitExceeded("read_revision") }
         try database.run("UPDATE metadata SET value=? WHERE key='read_revision'", [.text(String(revision + 1))])
       }
       try storageFault?(.afterRecordWrites)
-      if !database.changes.isEmpty {
-        let transactionID = UUID()
-        guard let workspaceID = try database.rows("SELECT value FROM metadata WHERE key='workspace_id'").first?[0].text.flatMap(UUID.init(uuidString:)),
-          database.changes.count <= 8_388_608 else { throw NotebookStorageError.limitExceeded("change_manifest") }
-        let records = database.changes.values.sorted { $0.address < $1.address }
-        var parts: [String] = []
-        if records.count > 16_384 {
-          for start in stride(from: 0, to: records.count, by: 16_384) {
-            let part = NotebookChangeManifest(transactionID: transactionID, workspaceID: workspaceID,
-              records: Array(records[start..<min(start + 16_384, records.count)]))
-            let data = try Self.storageEncoder.encode(part)
-            guard data.count <= 64 * 1024 * 1024 else { throw NotebookStorageError.limitExceeded("change_manifest_part") }
-            parts.append(try database.putBlob(data))
-          }
-        }
-        let manifest = NotebookChangeManifest(transactionID: transactionID, workspaceID: workspaceID,
-          records: parts.isEmpty ? records : [], parts: parts, pageOrderRoots: database.pageOrderRoots.sorted())
-        let data = try Self.storageEncoder.encode(manifest)
-        guard data.count <= 64 * 1024 * 1024 else { throw NotebookStorageError.limitExceeded("change_manifest") }
-        let hash = try database.putBlob(data)
-        try database.run("INSERT INTO change_log(transaction_id,manifest_hash,byte_count) VALUES(?,?,?)", [.text(transactionID.uuidString.lowercased()), .text(hash), .integer(Int64(data.count))])
-        let sequence = try database.rows("SELECT last_insert_rowid()").first![0].integer!
-        for record in records {
-          try database.run("INSERT INTO change_records(sequence,address,blob_hash) VALUES(?,?,?)", [.integer(sequence), .text(record.address), record.blobHash.map(NotebookSQLValue.text) ?? .null])
-        }
-      }
+      try publishPendingChanges(database: database)
       try storageFault?(.beforeCommit)
       try database.run("COMMIT"); committed = true
       try storageFault?(.afterCommit)
@@ -480,17 +448,18 @@ extension NotebookStore {
           if old.removeValue(forKey: fragment.address) == hash { continue }
           try writeFragment(fragment, data: data, hash: hash, database: database)
         }
-        let affected = Set(fragments.compactMap { member -> String? in
-          guard database.changes[member.address] != nil, !member.member.isEmpty,
+        let affected = Set(try fragments.compactMap { member -> String? in
+          guard try database.hasChange(member.address), !member.member.isEmpty,
             !member.collection.hasSuffix("collaboration/fields"), let parent = member.parent else { return nil }
           return parent + "|" + member.collection.components(separatedBy: "/").last! + "/" + member.member
         })
-        for version in fragments where version.collection.hasSuffix("collaboration/fields") && database.changes[version.address] == nil {
+        for version in fragments where version.collection.hasSuffix("collaboration/fields") {
+          guard try !database.hasChange(version.address) else { continue }
           let parts = version.member.split(separator: "/", maxSplits: 2)
           guard parts.count >= 2, let parent = version.parent,
             affected.contains(parent + "|" + parts[0] + "/" + parts[1]) else { continue }
           if let hash = try database.rows("SELECT hash FROM records WHERE address=?", [.text(version.address)]).first?[0].text {
-            database.changes[version.address] = .init(address: version.address, blobHash: hash)
+            try database.recordChange(.init(address: version.address, blobHash: hash))
           }
         }
         for address in old.keys where !address.hasPrefix("workspace.json#/pageOrderNodes/@") {

@@ -118,7 +118,7 @@ extension NotebookStore {
       guard try missingBlobHashes(for: change, limit: 1).isEmpty else { throw NotebookStorageError.blobMissing(change.manifestHash) }
       try validateIncomingPageOrderValues(manifest.pageOrderRoots)
       try installPageOrderDependencies(manifestHash: change.manifestHash)
-      database.pageOrderRoots.formUnion(manifest.pageOrderRoots)
+      for root in manifest.pageOrderRoots { try database.noteOwner(.orderRoot, root) }
       var incoming: [String: [NotebookStoredFragment]] = [:], removals: [String: Set<String>] = [:]
       for recordRow in try database.rows("SELECT address,blob_hash FROM manifest_records WHERE manifest_hash=? ORDER BY address", [.text(change.manifestHash)]) {
         let record = NotebookRecordMutation(address: recordRow[0].text!, blobHash: recordRow[1].text)

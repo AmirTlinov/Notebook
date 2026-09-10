@@ -107,7 +107,9 @@ struct ArchiveTransferTests {
       try ArchiveTransfer.prepare(source: fixture.root, destination: link.appendingPathComponent("nested"), workspaceID: UUID())
     }
     try FileManager.default.createSymbolicLink(at: fixture.root.appendingPathComponent("previews"), withDestinationURL: root)
-    #expect(throws: ArchiveTransferError.self) { try ArchiveTransfer.prepare(source: fixture.root, destination: output, workspaceID: UUID()) }
+    #expect(throws: NotebookStorageError.invalidTransaction("archive contains a link or special file")) {
+      try ArchiveTransfer.prepare(source: fixture.root, destination: output, workspaceID: UUID())
+    }
     #expect(!FileManager.default.fileExists(atPath: output.path))
   }
   @Test func restoresOnlyReceiptBoundEmptyAgentEntries() throws {

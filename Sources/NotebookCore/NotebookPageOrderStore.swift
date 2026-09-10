@@ -50,7 +50,7 @@ extension NotebookStore {
   /// immutable; append verifies its changed right spine, not an old prefix.
   func validateChangedPageOrders(database: NotebookSQLConnection) throws {
     var visiting = Set<String>(), loaded = Set<String>(), work = 0, bytes = 0
-    for root in database.pageOrderRoots {
+    try database.visitOwners(.orderRoot) { root in
       var stack: [(String, Bool)] = [(root, false)]
       while let (hash, finishing) = stack.popLast() {
         if loaded.contains(hash) { continue }
@@ -83,9 +83,9 @@ extension NotebookStore {
         }
       }
     }
-    for item in database.touchedPageOrders {
+    try database.visitOwners(.pageOrder) { item in
       let itemAddress = "workspace.json#/items/@" + item
-      guard let kind = try storedFragments(address: itemAddress, descendants: false).first?.value["kind"]?.string else { continue }
+      guard let kind = try storedFragments(address: itemAddress, descendants: false).first?.value["kind"]?.string else { return }
       guard kind == "notebook", let id = UUID(uuidString: item) else { throw NotebookStorageError.invalidTransaction("page order owner") }
       let order = try readPageOrder(id), node = try readPageOrderNode(order.visibleRoot)
       guard try node.count == pageCount(in: id), node.height == 0 || node.children.count >= 2 else {
@@ -93,8 +93,8 @@ extension NotebookStore {
       }
       let maximum = try database.rows("SELECT MAX(position) FROM records INDEXED BY record_order WHERE parent=? AND collection='pageIDs'", [.text(itemAddress)]).first?[0].integer
       guard maximum == Int64(node.count - 1) else { throw NotebookStorageError.invalidTransaction("noncontiguous page order") }
-      if database.capturedPageOrderRoots.contains(item) {
-        try NotebookPageOrderVector.visitChangedPages(from: database.previousPageOrderRoots[item], to: order.visibleRoot,
+      if try database.hasOwner(.capturedPageOrder, item) {
+        try NotebookPageOrderVector.visitChangedPages(from: database.ownerValue(.capturedPageOrder, item), to: order.visibleRoot,
           read: { try readPageOrderNode($0) }, visit: { position, page in
             let address = itemAddress + "/pageIDs/@" + page.uuidString.lowercased()
             guard try database.rows("SELECT position FROM records WHERE address=?", [.text(address)]).first?[0].integer == Int64(position) else {
@@ -103,10 +103,10 @@ extension NotebookStore {
           })
       }
     }
-    for address in database.touchedPageMemberships {
+    try database.visitOwners(.pageMembership) { address in
       guard let row = try database.rows("SELECT parent,member,position FROM records WHERE address=?", [.text(address)]).first,
         let item = row[0].text?.components(separatedBy: "@").last.flatMap(UUID.init(uuidString:)),
-        let page = row[1].text.flatMap(UUID.init(uuidString:)), let position = row[2].integer else { continue }
+        let page = row[1].text.flatMap(UUID.init(uuidString:)), let position = row[2].integer else { return }
       let order = try readPageOrder(item)
       guard try NotebookPageOrderVector.pageID(at: Int(position), in: order.visibleRoot, read: { try readPageOrderNode($0) }) == page else {
         throw NotebookStorageError.invalidTransaction("page membership position")

@@ -219,21 +219,21 @@ extension NotebookStore {
 
   /// Only roots of changed physical values are queued. Stroke samples, a source
   /// program and a board's metadata are never expanded with unrelated owners.
-  func noteReferenceChange(_ address: String, file: String, database: NotebookSQLConnection) {
+  func noteReferenceChange(_ address: String, file: String, database: NotebookSQLConnection) throws {
     let prefixes: [String]
     if file == "workspace.json" { prefixes = ["workspace.json#/items/@"] }
     else if file == "board.json" {
       let parts = address.components(separatedBy: "/")
       guard parts.count >= 3, parts[1] == "boards", parts[2].hasPrefix("@") else { return }
       let node = parts.prefix(3).joined(separator: "/")
-      if address == node { database.dirtyReferenceRoots.insert(node); return }
+      if address == node { try database.noteOwner(.referenceRoot, node); return }
       prefixes = [node + "/board/freeItems/@", node + "/board/stacks/@", node + "/board/elements/@"]
     } else if file == "spatial-ink.json" { prefixes = [file + "#/actions/@"] }
-    else if file.hasPrefix("documents/"), address == file + "#" { database.dirtyReferenceRoots.insert(address); return }
+    else if file.hasPrefix("documents/"), address == file + "#" { try database.noteOwner(.referenceRoot, address); return }
     else { return }
     for prefix in prefixes where address.hasPrefix(prefix) {
       let member = address.dropFirst(prefix.count).split(separator: "/", maxSplits: 1).first.map(String.init) ?? ""
-      if !member.isEmpty { database.dirtyReferenceRoots.insert(prefix + member) }
+      if !member.isEmpty { try database.noteOwner(.referenceRoot, prefix + member) }
     }
   }
 
@@ -296,12 +296,9 @@ extension NotebookStore {
   /// The hierarchy is itself the Merkle graph: a board owns its covers, and a
   /// portal cover owns its child board. A write updates only affected ancestors.
   func refreshReferenceIndex(database: NotebookSQLConnection) throws {
-    let roots = database.dirtyReferenceRoots
-    guard !roots.isEmpty else { return }
-    database.dirtyReferenceRoots.removeAll(keepingCapacity: true)
-    var dirty = Set<String>()
-    for address in roots.sorted() {
-      if address.contains("/board/elements/@") { try updateReferenceOrder(address: address, database: database, dirty: &dirty) }
+    guard try database.hasOwner(.referenceRoot) else { return }
+    try database.visitOwners(.referenceRoot) { address in
+      if address.contains("/board/elements/@") { try updateReferenceOrder(address: address, database: database) }
       let old = try database.rows("SELECT owner_key,hash FROM reference_contributions WHERE address=?", [.text(address)])
       let next = try referenceContributions(address: address)
       let oldMap = Dictionary(uniqueKeysWithValues: old.map { ($0[0].text!, $0[1].text!) })
@@ -310,18 +307,21 @@ extension NotebookStore {
         for hash in [oldMap[key], nextMap[key]].compactMap({ $0 }) {
           try adjustReferenceOwner(key, contribution: Self.referenceContribution(address, hash), database: database)
         }
-        dirty.insert(key)
+        try markReferenceOwner(key, database: database)
       }
       if oldMap != nextMap {
         try database.run("DELETE FROM reference_contributions WHERE address=?", [.text(address)])
         for (key, hash) in next { try database.run("INSERT INTO reference_contributions(address,owner_key,hash) VALUES(?,?,?)", [.text(address), .text(key), .text(hash)]) }
       }
       if address.hasPrefix("board.json#/boards/@"), let id = address.dropFirst("board.json#/boards/@".count).split(separator: "/").first.flatMap({ UUID(uuidString: String($0)) }) {
-        dirty.insert(Self.referenceOwnerKey("board", id))
+        try markReferenceOwner(Self.referenceOwnerKey("board", id), database: database)
       }
     }
-    for id in database.touchedItemIDs { dirty.insert(Self.referenceOwnerKey("cover", id)) }
-    for key in Array(dirty) {
+    try database.visitOwners(.item) { id in
+      guard let id = UUID(uuidString: id) else { throw NotebookStorageError.corruptRecord("reference item") }
+      try markReferenceOwner(Self.referenceOwnerKey("cover", id), database: database)
+    }
+    try database.visitOwners(.referenceTouched) { key in
       let parts = key.split(separator: ":")
       guard parts.count == 2, let id = UUID(uuidString: String(parts[1])) else { throw NotebookStorageError.corruptRecord("reference owner") }
       let isBoard = parts[0] == "board"
@@ -337,7 +337,7 @@ extension NotebookStore {
         for parent in [oldParent, newParent].compactMap({ $0 }) {
           guard try referenceOwnerExists(parent, database: database) else { continue }
           if let oldHash { try adjustReferenceOwner(parent, contribution: Self.referenceContribution("child:" + key, oldHash), database: database) }
-          dirty.insert(parent)
+          try database.noteOwner(.referencePending, parent)
         }
       }
       if exists {
@@ -346,11 +346,10 @@ extension NotebookStore {
       } else {
         try database.run("DELETE FROM reference_owners WHERE owner_key=?", [.text(key)])
         try database.run("DELETE FROM reference_contributions WHERE owner_key=?", [.text(key)])
-        dirty.remove(key)
+        try database.forgetOwner(.referencePending, key)
       }
     }
-    var pending = Array(dirty)
-    while let key = pending.popLast() {
+    while let key = try database.takeOwner(.referencePending) {
       guard let row = try database.rows("SELECT digest,hash,parent FROM reference_owners WHERE owner_key=?", [.text(key)]).first,
         let digest = row[0].blob else { continue }
       let next = Self.referenceHash(Data(("reference-owner-v2\n" + key + "\n").utf8) + digest), previous = row[1].text
@@ -358,7 +357,7 @@ extension NotebookStore {
       try database.run("UPDATE reference_owners SET hash=? WHERE owner_key=?", [.text(next), .text(key)])
       if let parent = row[2].text, try referenceOwnerExists(parent, database: database) {
         for hash in [previous, next].compactMap({ $0 }) { try adjustReferenceOwner(parent, contribution: Self.referenceContribution("child:" + key, hash), database: database) }
-        pending.append(parent)
+        try database.noteOwner(.referencePending, parent)
       }
     }
   }
@@ -446,12 +445,17 @@ extension NotebookStore {
 }
 
 extension NotebookStore {
+  private func markReferenceOwner(_ key: String, database: NotebookSQLConnection) throws {
+    try database.noteOwner(.referenceTouched, key)
+    try database.noteOwner(.referencePending, key)
+  }
+
   private static func referenceOrderAddress(owner: String, from: String?) -> String {
     "reference-order:" + owner + ":" + (from.map { "node/" + fieldKey([$0]) } ?? "start")
   }
 
   private func setReferenceEdge(owner: String, from: String?, to: String?, remove: Bool = false,
-    database: NotebookSQLConnection, dirty: inout Set<String>) throws {
+    database: NotebookSQLConnection) throws {
     let address = Self.referenceOrderAddress(owner: owner, from: from)
     let previous = try database.rows("SELECT hash FROM reference_contributions WHERE address=? AND owner_key=?", [.text(address), .text(owner)]).first?[0].text
     let next = remove || (from == nil && to == nil) ? nil : try collaborationHash(to.map(JSONValue.string) ?? .null)
@@ -459,7 +463,7 @@ extension NotebookStore {
     for hash in [previous, next].compactMap({ $0 }) { try adjustReferenceOwner(owner, contribution: Self.referenceContribution(address, hash), database: database) }
     if let next { try database.run("INSERT INTO reference_contributions(address,owner_key,hash) VALUES(?,?,?) ON CONFLICT(address,owner_key) DO UPDATE SET hash=excluded.hash", [.text(address), .text(owner), .text(next)]) }
     else { try database.run("DELETE FROM reference_contributions WHERE address=? AND owner_key=?", [.text(address), .text(owner)]) }
-    dirty.insert(owner)
+    try markReferenceOwner(owner, database: database)
   }
 
   private func referenceNeighbors(owner: String, position: Int64, member: String, database: NotebookSQLConnection) throws -> (String?, String?) {
@@ -471,7 +475,7 @@ extension NotebookStore {
 
   /// Relative adjacency, rather than absolute SQL slots, identifies painting
   /// order. Moving one element changes at most four neighboring edges.
-  private func updateReferenceOrder(address: String, database: NotebookSQLConnection, dirty: inout Set<String>) throws {
+  private func updateReferenceOrder(address: String, database: NotebookSQLConnection) throws {
     let old = try database.rows("SELECT owner_key,position,member FROM reference_element_order WHERE address=?", [.text(address)]).first
     let fragment = try storedFragments(address: address, descendants: false).first
     let surface = try fragment?.value["surface"]?.decode(SurfaceID.self)
@@ -480,14 +484,14 @@ extension NotebookStore {
     if old?[0].text == owner, old?[1].integer == fragment.map({ Int64($0.position) }), old?[2].text == member { return }
     if let old, let oldOwner = old[0].text, let position = old[1].integer, let oldMember = old[2].text {
       let (previous, next) = try referenceNeighbors(owner: oldOwner, position: position, member: oldMember, database: database)
-      try setReferenceEdge(owner: oldOwner, from: previous, to: next, database: database, dirty: &dirty)
-      try setReferenceEdge(owner: oldOwner, from: oldMember, to: nil, remove: true, database: database, dirty: &dirty)
+      try setReferenceEdge(owner: oldOwner, from: previous, to: next, database: database)
+      try setReferenceEdge(owner: oldOwner, from: oldMember, to: nil, remove: true, database: database)
       try database.run("DELETE FROM reference_element_order WHERE address=?", [.text(address)])
     }
     if let fragment, let owner, let member {
       let (previous, next) = try referenceNeighbors(owner: owner, position: Int64(fragment.position), member: member, database: database)
-      try setReferenceEdge(owner: owner, from: previous, to: member, database: database, dirty: &dirty)
-      try setReferenceEdge(owner: owner, from: member, to: next, database: database, dirty: &dirty)
+      try setReferenceEdge(owner: owner, from: previous, to: member, database: database)
+      try setReferenceEdge(owner: owner, from: member, to: next, database: database)
       try database.run("INSERT INTO reference_element_order(address,owner_key,position,member) VALUES(?,?,?,?)", [.text(address), .text(owner), .integer(Int64(fragment.position)), .text(member)])
     }
   }

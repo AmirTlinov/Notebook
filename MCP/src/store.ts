@@ -259,4 +259,3 @@ export function visibleBounds(presence: SessionPresence): SceneBounds {
   const height = presence.viewport.y / presence.camera.scale;
   return {origin:offsetWorld(presence.camera.center, -width / 2, -height / 2),width,height};
 }
-
