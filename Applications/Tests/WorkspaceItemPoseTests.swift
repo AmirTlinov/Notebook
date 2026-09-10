@@ -421,6 +421,25 @@ final class WorkspaceItemPoseTests: XCTestCase {
   }
 
   @MainActor
+  func testDropCannotPublishACenterBeyondTheWorldEdgeButCanReturnInside() async throws {
+    for sign in [-1, 1] {
+      let center = WorldPoint(tileX: Int64(sign) * WorldPoint.maximumTileIndex, tileY: 0,
+        localX: sign > 0 ? WorldPoint.tileSize - 1 : 0, localY: 0)
+      let driver = try await Driver.make(center: center)
+      defer { driver.close() }
+      let id = driver.coverIDs[0], pose = try XCTUnwrap(driver.physical.poses[id])
+      var drops: [WorldPoint] = []
+      driver.physical.onDrop = { _, point in drops.append(point); return nil }
+      pose.beginLift(); driver.physical.publish(id)
+      pose.endTranslation(.init(width: Double(sign) * 60, height: 0))
+      XCTAssertTrue(drops.isEmpty, "A release outside the address range is not a persisted placement")
+      pose.cancelManipulation(); pose.beginLift(); driver.physical.publish(id)
+      pose.endTranslation(.init(width: Double(sign) * -60, height: 0))
+      XCTAssertEqual(drops, [try XCTUnwrap(center.addressOffset(x: Double(sign) * -200, y: 0))])
+    }
+  }
+
+  @MainActor
   private final class Driver {
     let gate = NotebookInputGate()
     let registry: SpatialInkSurfaceRegistry
@@ -437,10 +456,10 @@ final class WorkspaceItemPoseTests: XCTestCase {
     private var tool: DrawingTool = .pen
     private var pencil: SpatialPencilGestureRecognizer { window.gestureRecognizers!.compactMap { $0 as? SpatialPencilGestureRecognizer }.first! }
 
-    static func make(boardID: UUID = UUID(), coverIDs: [UUID] = [UUID()], actor: UUID = UUID(), separated: Bool = false) async throws -> Driver {
-      let presence = SessionPresence(boardID: boardID, mode: .board, camera: .init(scale: 0.3), viewport: .init(x: 800, y: 600))
+    static func make(boardID: UUID = UUID(), coverIDs: [UUID] = [UUID()], actor: UUID = UUID(), separated: Bool = false, center: WorldPoint = .zero) async throws -> Driver {
+      let presence = SessionPresence(boardID: boardID, mode: .board, camera: .init(center: center, scale: 0.3), viewport: .init(x: 800, y: 600))
       let items = coverIDs.enumerated().map { index, id in
-        SpatialWorkspaceItemSurface(itemID: id, geometry: .notebook, center: separated ? .init(x: Double(index) * 1_050 - 525, y: 0) : .zero, zIndex: Double(index))
+        SpatialWorkspaceItemSurface(itemID: id, geometry: .notebook, center: center.offsetBy(x: separated ? Double(index) * 1_050 - 525 : 0, y: 0), zIndex: Double(index))
       }
       let cohort = try await WorkspaceInkFixture.prepare(boardID: boardID, camera: presence.camera, viewport: presence.viewport, items: items)
       return try .init(cohort: cohort, presence: presence, ids: coverIDs, actor: actor)

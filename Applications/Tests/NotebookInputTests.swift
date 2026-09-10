@@ -744,3 +744,79 @@ private final class InputTouch: UITouch {
   override func preciseLocation(in view: UIView?) -> CGPoint { point }
   override func azimuthAngle(in view: UIView?) -> CGFloat { 0 }
 }
+
+extension NotebookInputTests {
+  @MainActor
+  func testPencilKeepsValidSpansWithoutDrawingAcrossTheFiniteWorldEdge() async throws {
+    for tool in [DrawingTool.pen, .eraser] {
+      for sign in [-1, 1] {
+        for axis in ["x", "y"] {
+          let edge = sign > 0 ? WorldPoint.tileSize - 32 : 32
+          let center = WorldPoint(tileX: axis == "x" ? Int64(sign) * WorldPoint.maximumTileIndex : 0,
+            tileY: axis == "y" ? Int64(sign) * WorldPoint.maximumTileIndex : 0,
+            localX: axis == "x" ? edge : 0, localY: axis == "y" ? edge : 0)
+          let camera = SpatialCamera(center: center, scale: 1), viewport = SpatialPoint(x: 600, y: 800)
+          let gate = NotebookInputGate(), registry = SpatialInkSurfaceRegistry(), board = WorkspaceRoot.boardID
+          var commits: [SpatialInkAction] = []
+          let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+          let window = UIWindow(windowScene: scene), host = UIViewController()
+          let canvas = SpatialInkContainerView(frame: .init(x: 0, y: 0, width: 600, height: 800))
+          window.rootViewController = host; host.view.addSubview(canvas); window.makeKeyAndVisible()
+          let cohort = try await WorkspaceInkFixture.prepare(boardID: board, camera: camera,
+            viewport: viewport, items: [], registry: registry)
+          let physical = try WorkspaceInkFixture(cohort: cohort,
+            presence: .init(boardID: board, mode: .board, camera: camera, viewport: viewport),
+            canvas: canvas, parent: host, registry: registry, gate: gate)
+          defer { physical.close() }
+          let commit: (SpatialInkTool, SpatialInkColor, [SpatialInkSpan]) -> SpatialInkAction? = { tool, color, spans in
+            let value = self.acceptedAction(tool, color, spans); commits.append(value); return value
+          }
+          let owner = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate, onCommit: commit)
+          defer { owner.uninstall(); window.isHidden = true }
+          owner.update(view: canvas, cohort: cohort, boardID: board, camera: camera, viewport: viewport,
+            items: [], journal: cohort.liveData.ink, penStyle: .standard, eraserStyle: .standard, drawingTool: tool,
+            surfaceRegistry: registry, inputGate: gate, isItemBeingDeleted: { _ in false },
+            admitsNewContact: { true }, isEnabled: true, onCommit: commit)
+          let pencil = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SpatialPencilGestureRecognizer }.first)
+          let touch = InputTouch(), event = UIEvent()
+          func point(_ delta: Double) -> CGPoint {
+            .init(x: 300 + (axis == "x" ? Double(sign) * delta : 0),
+              y: 400 + (axis == "y" ? Double(sign) * delta : 0))
+          }
+          touch.point = point(-24); pencil.touchesBegan([touch], with: event)
+          XCTAssertTrue(gate.hasActivePencil, "The actual installed cohort admitted this contact")
+          for delta in [24.0, 64, 24, -24] {
+            touch.point = point(delta); touch.sampleTime += 0.1
+            pencil.touchesMoved([touch], with: event)
+          }
+          pencil.touchesEnded([touch], with: event)
+          XCTAssertFalse(gate.hasActivePencil)
+          XCTAssertGreaterThan(owner.rejectedWorldAddressCount, 0)
+          XCTAssertEqual(commits.count, 1)
+          let action = try XCTUnwrap(commits.first)
+          XCTAssertEqual(action.spans.count, 2, "No bridge through an unaddressable interval")
+          XCTAssertEqual(action.spans.map { $0.samples.count }, [2, 2])
+          let expected = [-24.0, 24, 24, -24].map { camera.worldAddress(at: .init(x: point($0).x, y: point($0).y), viewport: viewport) }
+          XCTAssertEqual(action.spans.flatMap { $0.samples.map(\.worldPoint) }, expected)
+          XCTAssertEqual(try JSONDecoder().decode(SpatialInkAction.self, from: JSONEncoder().encode(action)), action)
+          XCTAssertEqual(action.tool, tool == .pen ? .pen : .eraser)
+          let stored = try await Task.detached {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("edge-contact-" + UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let store = NotebookStore(root: root)
+            _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+            _ = try store.commitSpatialInk(.append(action, journalStamp: action.stamp))
+            return try store.readSpatialInk(surfaces: [.board(board)])
+          }.value
+          XCTAssertEqual(stored.actions, [action], "Both accepted spans keep their UUID, exact points and tool in SQLite")
+          // A subsequent wholly outside contact has no accepted content and must
+          // not publish an empty action or retain a Pencil gate/lease.
+          touch.point = point(96); touch.sampleTime += 1
+          pencil.touchesBegan([touch], with: event); pencil.touchesEnded([touch], with: event)
+          XCTAssertEqual(commits.count, 1)
+          XCTAssertFalse(gate.hasActivePencil)
+        }
+      }
+    }
+  }
+}

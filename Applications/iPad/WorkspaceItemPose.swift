@@ -264,9 +264,10 @@ final class WorkspaceItemPoseController: UIViewController, NotebookScenePresenta
     translation = value
     if let rendered, hypot(value.width, value.height) >= 2 {
       let base = pendingDestination?.center(itemID: rendered.id, presence: currentPresence) ?? rendered.center
-      let center = base.offsetBy(x: value.width / currentPresence.camera.scale,
-        y: value.height / currentPresence.camera.scale)
-      pendingDestination = onDrop(center)
+      if let center = base.addressOffset(x: value.width / currentPresence.camera.scale,
+        y: value.height / currentPresence.camera.scale) {
+        pendingDestination = onDrop(center)
+      }
     }
     wantsLift = false; awaitsLiftPublication = false; translation = .zero
     animateToTarget()

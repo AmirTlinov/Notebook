@@ -84,3 +84,48 @@ struct CameraWorldAddressTests {
     #expect(result.center == point && result.scale == 2)
   }
 }
+
+@Suite("Physical screen addresses reject the outside, not valid projected geometry")
+struct PhysicalWorldAddressTests {
+  @Test(arguments: [Int64(-1), 1])
+  func bothAxesRetainLocalPrecisionAndRefuseOutsideWorld(sign: Int64) throws {
+    for axis in ["x", "y"] {
+      let edge = sign > 0 ? WorldPoint.tileSize - 32 : 32
+      let origin = WorldPoint(tileX: axis == "x" ? sign * WorldPoint.maximumTileIndex : 0,
+        tileY: axis == "y" ? sign * WorldPoint.maximumTileIndex : 0,
+        localX: axis == "x" ? edge : 0, localY: axis == "y" ? edge : 0)
+      let camera = SpatialCamera(center: origin, scale: 1), viewport = SpatialPoint(x: 600, y: 800)
+      func point(_ delta: Double) -> SpatialPoint {
+        .init(x: 300 + (axis == "x" ? Double(sign) * delta : 0),
+          y: 400 + (axis == "y" ? Double(sign) * delta : 0))
+      }
+      let inside = try #require(camera.worldAddress(at: point(24), viewport: viewport))
+      #expect(inside == origin.offsetBy(x: axis == "x" ? Double(sign) * 24 : 0,
+        y: axis == "y" ? Double(sign) * 24 : 0))
+      #expect(try JSONValue.encode(inside).decode(WorldPoint.self) == inside)
+      #expect(camera.worldAddress(at: point(64), viewport: viewport) == nil)
+      #expect(camera.worldAddress(at: point(-24), viewport: viewport) != nil)
+      // A renderer still has a location for the outside of the finite canvas;
+      // that geometry must not be confused with permission to persist a sample.
+      #expect(!camera.screenToWorld(point(64), viewport: viewport).isValid)
+    }
+  }
+
+  @Test(arguments: [Int64(-1), 1])
+  func portalEntryDoesNotInstallAnUnaddressableChildCenter(sign: Int64) {
+    let child = BoardPortalCamera(center: .init(tileX: sign * WorldPoint.maximumTileIndex, tileY: 0,
+      localX: sign > 0 ? WorldPoint.tileSize - 1 : 0, localY: 0), scale: 1)
+    let outside = SpatialCamera(center: .init(x: Double(sign) * 2, y: 0), scale: 2)
+    let inside = SpatialCamera(center: .init(x: Double(sign) * -2, y: 0), scale: 2)
+    #expect(BoardPortalProjection.enteringCamera(from: outside, portalCamera: child,
+      portalCenter: .zero, viewport: .init(x: 100, y: 100)) == nil)
+    #expect(BoardPortalProjection.enteringCamera(from: inside, portalCamera: child,
+      portalCenter: .zero, viewport: .init(x: 100, y: 100))?.center.isValid == true)
+  }
+
+  @Test func overflowDoesNotConstructAnInvalidAddress() {
+    let camera = SpatialCamera(), viewport = SpatialPoint(x: 600, y: 800)
+    #expect(camera.worldAddress(at: .init(x: .greatestFiniteMagnitude, y: 0), viewport: viewport) == nil)
+    #expect(camera.worldAddress(at: .init(x: -.greatestFiniteMagnitude, y: 0), viewport: viewport) == nil)
+  }
+}

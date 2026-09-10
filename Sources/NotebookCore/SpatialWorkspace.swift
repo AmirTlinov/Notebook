@@ -55,7 +55,7 @@ public struct WorldPoint: Codable, Equatable, Hashable, Sendable {
 
   /// Admission for a new physical address. Projection geometry may extend
   /// beyond the stored world; a camera center or measured sample may not.
-  func addressOffset(x: Double, y: Double) -> Self? {
+  public func addressOffset(x: Double, y: Double) -> Self? {
     guard isValid, x.isFinite, y.isFinite else { return nil }
     func axis(_ tile: Int64, _ local: Double, _ delta: Double) -> (Int64, Double)? {
       let value = local + delta
@@ -223,6 +223,14 @@ public struct SpatialCamera: Codable, Equatable, Hashable, Sendable {
       x: (point.x - viewport.x / 2) / scale,
       y: (point.y - viewport.y / 2) / scale
     )
+  }
+
+  /// A measured contact or new physical owner needs an admitted address.
+  /// Rendering may use screenToWorld for geometry beyond the finite world.
+  public func worldAddress(at point: SpatialPoint, viewport: SpatialPoint) -> WorldPoint? {
+    guard isValid, point.isValid, viewport.isValid else { return nil }
+    return center.addressOffset(x: (point.x - viewport.x / 2) / scale,
+      y: (point.y - viewport.y / 2) / scale)
   }
 
   /// Refuses an unrepresentable center without publishing part of a gesture.

@@ -130,6 +130,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private var actionSpans: [SpatialInkSpan] = []
     private var segmentSamples: [SpatialInkSample] = []
     private(set) var routedSegmentCount = 0
+    private(set) var rejectedWorldAddressCount = 0
     private var activePen: ActiveInkStroke?
     private var activeEraser: ActiveEraserStroke?
     private var currentSurface: SurfaceID?
@@ -333,6 +334,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       actionSpans = []
       segmentSamples = []
       routedSegmentCount = 0
+      rejectedWorldAddressCount = 0
       currentSurface = nil
       touchedSurfaces = []
       previousFilteredForce = nil
@@ -389,7 +391,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
               at: prediction.location,
               covers: screenSurfaces(),
               board: boardSurface
-            ) == currentSurface
+            ) == currentSurface && convert(prediction, to: currentSurface) != nil
           }
           .map { livePoint($0, on: currentSurface) }
         activePen.replacePredictions(with: Array(predictions))
@@ -517,9 +519,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
           finishCurrentSegment()
           beginSegment(on: interval.surface, with: lower)
         }
-        appendToCurrentSegment(
-          interpolate(start, end, t: Double(interval.upperBound))
-        )
+        let upper = interpolate(start, end, t: Double(interval.upperBound))
+        if currentSurface == nil { beginSegment(on: interval.surface, with: upper) }
+        else { appendToCurrentSegment(upper) }
       }
     }
 
@@ -527,6 +529,11 @@ struct SpatialInkCanvas: UIViewRepresentable {
       on surface: SurfaceID,
       with point: PKStrokePoint
     ) {
+      guard convert(point, to: surface) != nil else {
+        rejectedWorldAddressCount += 1
+        finishCurrentSegment()
+        return
+      }
       currentSurface = surface
       touchedSurfaces.insert(surface)
       surfaceRegistry.beginAction(on: surface)
@@ -545,7 +552,14 @@ struct SpatialInkCanvas: UIViewRepresentable {
       guard let currentSurface else { return }
       // This is the same measured segment used by the live canvas. Persist
       // its physical address now; Pencil-up never routes the whole action again.
-      segmentSamples.append(convert(point, to: currentSurface))
+      guard let sample = convert(point, to: currentSurface) else {
+        // The valid prefix remains accepted. Re-entry starts a distinct span,
+        // never a line through unaddressable space or a discarded whole contact.
+        rejectedWorldAddressCount += 1
+        finishCurrentSegment()
+        return
+      }
+      segmentSamples.append(sample)
       let localPoint = livePoint(point, on: currentSurface)
       if let activePen {
         activePen.replaceMeasuredTail(
@@ -733,21 +747,22 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private func convert(
       _ point: PKStrokePoint,
       to surface: SurfaceID
-    ) -> SpatialInkSample {
+    ) -> SpatialInkSample? {
       let camera = actionGeometry?.camera ?? self.camera
       let viewport = actionGeometry?.viewport ?? self.viewport
       let local: SpatialPoint
-      if surface.kind == .cover, let geometry = screenSurfaces().first(where: { $0.id == surface }) {
+      if surface.kind == .cover {
+        guard let geometry = screenSurfaces().first(where: { $0.id == surface }) else { return nil }
         let converted = geometry.localPoint(point.location)
         local = SpatialPoint(x: converted.x, y: converted.y)
         return SpatialInkSample(point: local, timeOffset: point.timeOffset,
           width: point.size.width / geometry.screenScale, opacity: point.opacity, force: point.force,
           azimuth: geometry.localAzimuth(point.azimuth), altitude: point.altitude)
       } else {
-        let world = camera.screenToWorld(
-          SpatialPoint(x: point.location.x, y: point.location.y),
+        guard let world = camera.worldAddress(
+          at: SpatialPoint(x: point.location.x, y: point.location.y),
           viewport: viewport
-        )
+        ) else { return nil }
         local = SpatialPoint(x: world.localX, y: world.localY)
         return SpatialInkSample(
           point: local,

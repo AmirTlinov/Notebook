@@ -110,7 +110,8 @@ public enum BoardPortalProjection {
     let scale = parentCamera.scale * portal.scale
     guard scale >= SpatialCamera.minimumScale, scale <= SpatialCamera.maximumScale else { return nil }
     let offset = portalCenter.delta(to: parentCamera.center)
-    return SpatialCamera(center: portal.center.offsetBy(x: offset.x / portal.scale, y: offset.y / portal.scale), scale: scale)
+    guard let center = portal.center.addressOffset(x: offset.x / portal.scale, y: offset.y / portal.scale) else { return nil }
+    return SpatialCamera(center: center, scale: scale)
   }
 
   public struct ExitProjection: Equatable, Sendable {
