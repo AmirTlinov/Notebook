@@ -428,7 +428,6 @@ final class NotebookAppModel {
     }
     return newest ?? activeSharedContext
   }
-  var contextEntries: [SharedContextEntry] { presentedSharedContext?.entries ?? [] }
   private(set) var agentQuestion: NotebookAgentQuestion?
   private(set) var agentRequests: [AgentRequestSnapshot] = []
   private(set) var agentRequestError: String?
@@ -2167,6 +2166,7 @@ final class NotebookAppModel {
   func selectSharedContext(_ id: UUID?) {
     let actor = actorID
     attentionGeneration = UUID()
+    hasRestoredAgentQuestion = true
     agentQuestion = id.flatMap { id in
       guard let entry = sharedContexts.first(where: { $0.id == id })?.entries.first(where: { $0.author == .human }) else { return nil }
       return .init(contextID: id, entryID: entry.id, references: entry.references)
@@ -2174,7 +2174,10 @@ final class NotebookAppModel {
     enqueueStoreWrite(reload: true) { try $0.selectSharedContext(id, actor: actor) }
   }
 
-  func dismissAgentQuestion() { agentQuestion = nil; attentionGeneration = UUID() }
+  /// Close the local indication immediately and persist deselection in the
+  /// same order as accepted pointing. History and running grants stay intact;
+  /// neither a late pointer completion nor restart may reopen the fragment.
+  func dismissAgentQuestion() { selectSharedContext(nil) }
 
   /// The arguments, retained values and ID are captured before suspension.
   /// Selection of a new object cannot redirect either this save or its reply.

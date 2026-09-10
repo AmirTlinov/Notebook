@@ -125,6 +125,49 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(app.buttons["drawing-tool-eraser"].isHittable)
   }
 
+  func testClosingQuestionRemovesVisibleIndicationAndHistoryCanResumeIt() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-pointer-fixture"]
+    launchPortraitFixture(app)
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 5))
+    let drawing = paper.value as? String
+    let baseline = app.screenshot()
+    // Read the real pixels along the bottom of the dragged rectangle, away
+    // from the adjacent question card and its material/shadow.
+    let edge = CGRect(x: 0.28, y: 0.338, width: 0.12, height: 0.004)
+    app.buttons["drawing-tool-pointer"].tap()
+    app.coordinate(withNormalizedOffset: .init(dx: 0.24, dy: 0.20))
+      .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: .init(dx: 0.48, dy: 0.34)))
+    let card = app.descendants(matching: .any).matching(identifier: "agent-question-card").firstMatch
+    XCTAssertTrue(card.waitForExistence(timeout: 5))
+    for attempt in 0..<2 {
+      let indicated = app.screenshot()
+      let indicatedProof = XCTAttachment(screenshot: indicated)
+      indicatedProof.name = "indication-visible-\(attempt)"; indicatedProof.lifetime = .keepAlways; add(indicatedProof)
+      XCTAssertGreaterThan(changedPixelShare(from: baseline, to: indicated, normalizedRect: edge), 0.08,
+        "The selected frame must actually be visible before testing its removal")
+      app.buttons["agent-question-dismiss"].tap()
+      XCTAssertTrue(card.waitForNonExistence(timeout: 2))
+      let closed = app.screenshot()
+      let closedProof = XCTAttachment(screenshot: closed)
+      closedProof.name = "indication-removed-\(attempt)"; closedProof.lifetime = .keepAlways; add(closedProof)
+      XCTAssertLessThan(changedPixelShare(from: baseline, to: closed, normalizedRect: edge), 0.02,
+        "Closing removes the actual selection pixels, not just the question card")
+      XCTAssertEqual(paper.value as? String, drawing, "Removing indication never erases handwriting")
+      if attempt == 0 {
+        app.buttons["collaboration-history"].tap()
+        XCTAssertTrue(app.staticTexts["Амир указал область"].firstMatch.waitForExistence(timeout: 3))
+        let resume = app.buttons["Продолжить этот фрагмент"]
+        XCTAssertTrue(resume.waitForExistence(timeout: 2))
+        resume.tap()
+        app.buttons["Готово"].tap()
+        XCTAssertTrue(card.waitForExistence(timeout: 3))
+      }
+    }
+  }
+
   func testQuestionCardPersistsOfflineWithoutOpeningKeyboardOnSelection() {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait

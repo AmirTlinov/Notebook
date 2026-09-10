@@ -46,7 +46,7 @@ struct NotebookAgentQuestionCard: View {
         }
         Spacer(minLength: 8)
         Button { model.dismissAgentQuestion() } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }
-          .accessibilityLabel("Скрыть карточку вопроса").accessibilityIdentifier("agent-question-dismiss")
+          .accessibilityLabel("Снять указание и закрыть карточку").accessibilityIdentifier("agent-question-dismiss")
       }
       if let request = model.currentAgentRequest {
         VStack(alignment: .leading, spacing: 6) {

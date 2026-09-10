@@ -156,10 +156,22 @@ struct NotebookAttentionMarks: View {
   let presence: SessionPresence
   var body: some View {
     ZStack(alignment:.topLeading) {
-      ForEach(model.contextEntries) { attention in
-        ForEach(attention.references) { reference in
-          if (attention.author == .human || model.showsCollaborationNotice), let rect = NotebookAttentionProjection.frame(reference,model:model,presence:presence) {
-            mark(rect, human:attention.author == .human, label:(attention.author == .human ? "Указано" : "Понимание агента") + (model.referenceStatusLabel(reference).map { " · " + $0 } ?? ""), changed:attention.requiresReview)
+      // A retained history entry is not a live indication. The same question
+      // owns both its card and its frame, even during delayed SQL publication.
+      if let question = model.agentQuestion {
+        let entry = model.sharedContexts.first { $0.id == question.contextID }?.entries.first { $0.id == question.entryID }
+        ForEach(question.references) { reference in
+          if let rect = NotebookAttentionProjection.frame(reference,model:model,presence:presence) {
+            mark(rect, human:true, label:"Указано" + (model.referenceStatusLabel(reference).map { " · " + $0 } ?? ""), changed:entry?.requiresReview ?? false)
+          }
+        }
+      }
+      if model.showsCollaborationNotice {
+        ForEach(model.presentedSharedContext?.entries.filter { $0.author == .agent } ?? []) { attention in
+          ForEach(attention.references) { reference in
+            if let rect = NotebookAttentionProjection.frame(reference,model:model,presence:presence) {
+              mark(rect, human:false, label:"Понимание агента" + (model.referenceStatusLabel(reference).map { " · " + $0 } ?? ""), changed:attention.requiresReview)
+            }
           }
         }
       }
