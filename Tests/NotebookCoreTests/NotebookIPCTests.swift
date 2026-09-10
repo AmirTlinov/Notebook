@@ -224,8 +224,15 @@ struct NotebookIPCTests {
     let accepted = await waitForIPC { server.activeConnectionCount == 1 }
     #expect(accepted)
     let start = ContinuousClock.now
-    await server.stopAndDrain()
-    #expect(start.duration(to: .now) < .seconds(1))
+    let draining = await server.stopAndDrain()
+    let awaitingCaller = start.duration(to: .now)
+    // The full suite also runs synchronous 100,000-owner tests on Swift's
+    // cooperative pool. Their scheduling cannot become the socket's latency.
+    // Keep the one-second bound at the real server completion, not after this
+    // test eventually receives another executor slot.
+    print("IPC incomplete-frame drain: server=\(draining), caller=\(awaitingCaller)")
+    #expect(draining < .seconds(1))
+    #expect(draining <= awaitingCaller)
     #expect(server.activeConnectionCount == 0)
     #expect(calls.value == 0)
   }

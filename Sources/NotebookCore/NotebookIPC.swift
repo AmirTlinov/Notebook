@@ -123,10 +123,15 @@ public final class NotebookIPCServer: @unchecked Sendable {
 
   /// Closing a socket does not cancel an already accepted store command. The
   /// application awaits this boundary before flushing and releasing its writer.
-  public func stopAndDrain() async {
+  /// The duration ends at the server's completion notification, before the
+  /// caller waits for its own executor. It measures drain, not task scheduling.
+  @discardableResult public func stopAndDrain() async -> Duration {
+    let started = ContinuousClock.now
     stop()
-    await withCheckedContinuation { continuation in
-      lifetime.notify(queue: .global(qos: .utility)) { continuation.resume() }
+    return await withCheckedContinuation { continuation in
+      lifetime.notify(queue: .global(qos: .utility)) {
+        continuation.resume(returning: started.duration(to: .now))
+      }
     }
   }
 
