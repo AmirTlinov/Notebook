@@ -32,14 +32,30 @@ final class WorkspaceSceneIndexTests: XCTestCase {
   }
 
   func testColdSceneRestoresAnOutsideFanAsAnOverviewAtItsStoredAnchor() throws {
+    try assertColdStackRestoration(firstCatalogueItemIsOutside: true)
+  }
+
+  func testColdSceneOpensTheInsideFanWhenItIsTheFirstCatalogueAddress() throws {
+    try assertColdStackRestoration(firstCatalogueItemIsOutside: false)
+  }
+
+  private func assertColdStackRestoration(firstCatalogueItemIsOutside: Bool) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), actor = UUID(), viewport = SpatialPoint(x: 834, y: 1194)
     let pageSize = PageSize(width: viewport.x, height: viewport.y)
-    let header = try store.initializeWorkspace(actor: actor, pageSize: pageSize)
+    // Without persisted presence, the scene selects the first UUID from the
+    // addressed catalog, not the transient selection of a WorkspaceIndex.
+    // Exercise both physical outcomes without letting random UUID order choose
+    // which branch this test actually visits.
+    let low = try XCTUnwrap(UUID(uuidString: "00000000-0000-4000-8000-000000000001"))
+    let high = try XCTUnwrap(UUID(uuidString: "FFFFFFFF-FFFF-4FFF-8FFF-FFFFFFFFFFFF"))
+    let firstID = firstCatalogueItemIsOutside ? high : low
+    let secondID = firstCatalogueItemIsOutside ? low : high
+    let header = try store.initializeWorkspace(actor: actor, pageSize: pageSize, initialNotebookID: firstID)
     var workspace = try store.loadIndex()
-    let firstID = workspace.selectedItemID
-    let second = try XCTUnwrap(workspace.createNotebook(title: "Outer fan", actor: actor, pageSize: pageSize))
+    let second = try XCTUnwrap(workspace.createNotebook(title: "Outer fan", actor: actor,
+      pageSize: pageSize, itemID: secondID))
     var hierarchy = try store.loadBoard(items: [workspace.items[0]])
     let anchor = WorldPoint(tileX: WorldPoint.maximumTileIndex, tileY: 0,
       localX: WorldPoint.tileSize - 1, localY: 100)
@@ -48,14 +64,20 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     _ = try XCTUnwrap(hierarchy.createStack(moving: second.item.id, onto: firstID, in: header.rootBoardID, actor: actor))
     try store.saveWorkspaceBundle(index: workspace, page: second.page, board: hierarchy)
     let before = try store.workspaceHeader()
+    XCTAssertNil(before.selectedItemID, "The fixture must not supply a stored selection")
+    let selectedID = firstCatalogueItemIsOutside ? secondID : firstID
+    XCTAssertEqual(try store.readItemHeaders(limit: 1).first?.id, selectedID)
+    let insideFocus = try XCTUnwrap(hierarchy.focusedCenter(of: firstID, in: header.rootBoardID))
+    let focus = try XCTUnwrap(hierarchy.focusedCenter(of: secondID, in: header.rootBoardID))
+    XCTAssertTrue(insideFocus.isValid)
+    XCTAssertFalse(focus.isValid)
     let scene = try NotebookSceneState.read(store: store, presence: nil, viewport: viewport)
     XCTAssertTrue(scene.presence.isValid)
-    XCTAssertEqual(scene.presence.mode, .board)
-    XCTAssertEqual(scene.presence.camera.center, anchor)
-    XCTAssertNil(scene.presence.focusedItemID)
-    XCTAssertEqual(scene.presence.selectedItemID, second.item.id)
-    XCTAssertEqual(try store.workspaceHeader(), before, "Restoring an overview cannot relocate the stack or rewrite the catalog")
-    let focus = try XCTUnwrap(hierarchy.focusedCenter(of: second.item.id, in: header.rootBoardID))
+    XCTAssertEqual(scene.presence.mode, firstCatalogueItemIsOutside ? .board : .page)
+    XCTAssertEqual(scene.presence.camera.center, firstCatalogueItemIsOutside ? anchor : insideFocus)
+    XCTAssertEqual(scene.presence.focusedItemID, firstCatalogueItemIsOutside ? nil : firstID)
+    XCTAssertEqual(scene.presence.selectedItemID, selectedID)
+    XCTAssertEqual(try store.workspaceHeader(), before, "Restoration cannot relocate the stack or rewrite the catalog")
     let size = WorkspaceItemGeometry.notebook
     let fan = WorkspaceSpatialBounds(origin: focus.offsetBy(x: -size.width / 2, y: -size.height / 2),
       width: size.width, height: size.height)
