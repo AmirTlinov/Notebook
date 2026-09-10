@@ -1,136 +1,174 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
   <title id="title">Notebook</title>
-  <desc id="description">A warm ivory notebook fills the app icon. Seven brushed steel binding rings hold its left edge; a woven slate-blue elastic secures the right side. Fine page edges remain visible below the cover.</desc>
+  <desc id="description">An ivory, wire-bound notebook on a deep ink-blue field. Seven continuous steel loops pass through the cover and return behind its visible left edge. An amber woven elastic wraps the cover and layered page block.</desc>
   <defs>
-    <linearGradient id="paperEdge" x1="0" y1="946" x2="0" y2="1024" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#f8f5ed"/>
-      <stop offset=".55" stop-color="#ded8cd"/>
-      <stop offset="1" stop-color="#bdb5a8"/>
+    <linearGradient id="inkField" x1="134" y1="0" x2="850" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#245574"/>
+      <stop offset=".52" stop-color="#143b56"/>
+      <stop offset="1" stop-color="#091e32"/>
     </linearGradient>
-    <linearGradient id="cover" x1="192" y1="0" x2="832" y2="1040" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#fffdf7"/>
-      <stop offset=".48" stop-color="#f7f2e7"/>
-      <stop offset="1" stop-color="#e9e1d2"/>
-    </linearGradient>
-    <radialGradient id="coverLight" cx="34%" cy="22%" r="91%">
-      <stop stop-color="#ffffff" stop-opacity=".52"/>
-      <stop offset=".65" stop-color="#ffffff" stop-opacity="0"/>
-      <stop offset="1" stop-color="#b2a48b" stop-opacity=".08"/>
+    <radialGradient id="fieldLight" cx="22%" cy="16%" r="85%">
+      <stop stop-color="#6391aa" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#6391aa" stop-opacity="0"/>
     </radialGradient>
-    <linearGradient id="bindingFold" x1="0" y1="0" x2="175" y2="0" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#b8b0a0" stop-opacity=".35"/>
-      <stop offset=".29" stop-color="#d0c7b6" stop-opacity=".07"/>
-      <stop offset=".49" stop-color="#998b73" stop-opacity=".19"/>
-      <stop offset=".62" stop-color="#ffffff" stop-opacity=".24"/>
+    <linearGradient id="backCover" x1="200" y1="130" x2="840" y2="915" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#426275"/>
+      <stop offset="1" stop-color="#112c3f"/>
+    </linearGradient>
+    <linearGradient id="paperEdge" x1="250" y1="820" x2="600" y2="924" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff9e8"/>
+      <stop offset=".66" stop-color="#e9dfc9"/>
+      <stop offset="1" stop-color="#b9ab8e"/>
+    </linearGradient>
+    <linearGradient id="coverStock" x1="242" y1="105" x2="821" y2="888" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fffdf5"/>
+      <stop offset=".52" stop-color="#f8f2e4"/>
+      <stop offset="1" stop-color="#e6dcc5"/>
+    </linearGradient>
+    <linearGradient id="bindingCrease" x1="203" y1="0" x2="303" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#b2a48b" stop-opacity=".28"/>
+      <stop offset=".54" stop-color="#b2a48b" stop-opacity="0"/>
+      <stop offset=".83" stop-color="#998a71" stop-opacity=".07"/>
+      <stop offset=".88" stop-color="#ffffff" stop-opacity=".36"/>
       <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
-    <linearGradient id="steel" x1="0" y1="-20" x2="0" y2="36" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#536267"/>
-      <stop offset=".16" stop-color="#b6c1c2"/>
-      <stop offset=".32" stop-color="#f8faf6"/>
-      <stop offset=".43" stop-color="#d9deda"/>
-      <stop offset=".59" stop-color="#778689"/>
-      <stop offset=".83" stop-color="#46565b"/>
-      <stop offset="1" stop-color="#98a6a8"/>
+    <linearGradient id="steel" x1="0" y1="-34" x2="0" y2="34" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#647d89"/>
+      <stop offset=".14" stop-color="#c3d1d2"/>
+      <stop offset=".31" stop-color="#fffdf0"/>
+      <stop offset=".45" stop-color="#d3d9d1"/>
+      <stop offset=".64" stop-color="#77909a"/>
+      <stop offset=".84" stop-color="#314b5d"/>
+      <stop offset="1" stop-color="#a8bcc3"/>
     </linearGradient>
-    <linearGradient id="steelTip" x1="83" y1="0" x2="129" y2="0" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#a5b1b2" stop-opacity="0"/>
-      <stop offset="1" stop-color="#29383c" stop-opacity=".62"/>
+    <linearGradient id="wireEntryShade" x1="0" y1="-6" x2="0" y2="14" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#293a3f" stop-opacity="0"/>
+      <stop offset="1" stop-color="#293a3f" stop-opacity=".7"/>
     </linearGradient>
-    <linearGradient id="punchedHole" x1="111" y1="-17" x2="135" y2="17" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#675e4e"/>
-      <stop offset=".5" stop-color="#323431"/>
-      <stop offset="1" stop-color="#a59c89"/>
+    <clipPath id="wireEntryClip"><ellipse cx="267" cy="0" rx="14" ry="12"/></clipPath>
+    <linearGradient id="hole" x1="254" y1="-13" x2="277" y2="14" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6a6252"/>
+      <stop offset=".45" stop-color="#373c38"/>
+      <stop offset="1" stop-color="#8b8068"/>
     </linearGradient>
-    <linearGradient id="elastic" x1="794" y1="0" x2="875" y2="0" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#354b5b"/>
-      <stop offset=".07" stop-color="#677d8b"/>
-      <stop offset=".18" stop-color="#718693"/>
-      <stop offset=".51" stop-color="#607685"/>
-      <stop offset=".88" stop-color="#526877"/>
-      <stop offset="1" stop-color="#344a5a"/>
+    <linearGradient id="elastic" x1="724" y1="0" x2="782" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#a54b18"/>
+      <stop offset=".075" stop-color="#e99538"/>
+      <stop offset=".23" stop-color="#ffc46c"/>
+      <stop offset=".5" stop-color="#ed9a3f"/>
+      <stop offset=".91" stop-color="#db7d27"/>
+      <stop offset="1" stop-color="#a84e18"/>
     </linearGradient>
-    <linearGradient id="elasticLight" x1="0" y1="0" x2="0" y2="1024" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#d8e4e6" stop-opacity=".14"/>
-      <stop offset=".3" stop-color="#d8e4e6" stop-opacity="0"/>
-      <stop offset=".83" stop-color="#142d3e" stop-opacity=".03"/>
-      <stop offset="1" stop-color="#142d3e" stop-opacity=".25"/>
+    <linearGradient id="elasticTurn" x1="0" y1="850" x2="0" y2="905" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#e89b45"/>
+      <stop offset=".24" stop-color="#f6b25b"/>
+      <stop offset=".5" stop-color="#c7772a"/>
+      <stop offset="1" stop-color="#83441d"/>
     </linearGradient>
-    <linearGradient id="elasticContact" x1="875" y1="0" x2="904" y2="0" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#746650" stop-opacity=".23"/>
-      <stop offset="1" stop-color="#746650" stop-opacity="0"/>
+    <linearGradient id="elasticContact" x1="779" y1="0" x2="800" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5c4127" stop-opacity=".23"/>
+      <stop offset="1" stop-color="#5c4127" stop-opacity="0"/>
     </linearGradient>
-    <pattern id="wovenElastic" width="6" height="8" patternUnits="userSpaceOnUse">
-      <path d="M1 0V8" stroke="#d4dfe0" stroke-opacity=".16" stroke-width="1"/>
-      <path d="M3 0V8" stroke="#213e50" stroke-opacity=".19" stroke-width="1"/>
-      <path d="M0 2H6M0 6H6" stroke="#172f41" stroke-opacity=".065" stroke-width="1"/>
+    <pattern id="coverFibre" width="14" height="14" patternUnits="userSpaceOnUse">
+      <path d="M1 3h1M10 1h1M6 9h1M12 12h1" stroke="#89704d" stroke-opacity=".055" stroke-width=".8"/>
+      <path d="M6 2h1M2 10h1M11 6h1" stroke="#ffffff" stroke-opacity=".46" stroke-width=".75"/>
     </pattern>
-    <pattern id="paperFibre" width="12" height="12" patternUnits="userSpaceOnUse">
-      <path d="M1 2h1M8 1h1M4 7h1M10 9h1M1 11h1" stroke="#8f8169" stroke-opacity=".038" stroke-width=".7"/>
-      <path d="M5 3h1M2 8h1M9 5h1M6 11h1" stroke="#ffffff" stroke-opacity=".38" stroke-width=".6"/>
+    <pattern id="elasticWeave" width="5" height="6" patternUnits="userSpaceOnUse">
+      <path d="M1 0v6" stroke="#fff2c6" stroke-opacity=".22" stroke-width=".9"/>
+      <path d="M3 0v6" stroke="#743811" stroke-opacity=".14" stroke-width=".8"/>
+      <path d="M0 2h5M0 5h5" stroke="#743811" stroke-opacity=".055" stroke-width=".7"/>
     </pattern>
-    <linearGradient id="elasticUnder" x1="784" y1="0" x2="889" y2="0" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#514b3e" stop-opacity="0"/>
-      <stop offset=".09" stop-color="#514b3e" stop-opacity=".13"/>
-      <stop offset=".18" stop-color="#514b3e" stop-opacity=".22"/>
-      <stop offset=".87" stop-color="#514b3e" stop-opacity=".22"/>
-      <stop offset="1" stop-color="#514b3e" stop-opacity="0"/>
-    </linearGradient>
-    <clipPath id="coverClip"><path d="M-16-20H1040V934Q1040 990 976 990H60Q-16 990-16 914Z"/></clipPath>
-    <path id="ringCurve" d="M123-4C90-17 43-20 5-16C-31-12-48 2-40 17C-29 37 23 43 87 35" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-    <g id="bindingRing">
-      <rect x="103" y="-19" width="37" height="35" rx="14" fill="#fffdf5" fill-opacity=".72"/>
-      <rect x="105" y="-17" width="33" height="31" rx="13" fill="url(#punchedHole)"/>
-      <path d="M111 11Q122 18 134 9" fill="none" stroke="#b9ae99" stroke-width="1.3"/>
-      <g transform="translate(2 5)" stroke="#645a48">
-        <g opacity=".014"><use href="#ringCurve" stroke-width="30"/></g>
-        <g opacity=".020"><use href="#ringCurve" stroke-width="26"/></g>
-        <g opacity=".034"><use href="#ringCurve" stroke-width="22"/></g>
-        <g opacity=".055"><use href="#ringCurve" stroke-width="18"/></g>
-        <g opacity=".080"><use href="#ringCurve" stroke-width="14"/></g>
-      </g>
-      <g fill="none" stroke-linecap="round" stroke-linejoin="round">
-        <use href="#ringCurve" stroke="#435154" stroke-width="16"/>
-        <use href="#ringCurve" stroke="url(#steel)" stroke-width="12"/>
-        <use href="#ringCurve" stroke="url(#steelTip)" stroke-width="12"/>
-        <path d="M114-7C79-19 38-21 3-17" stroke="#fffef9" stroke-opacity=".85" stroke-width="1.6"/>
-        <path d="M1 36Q37 42 83 36" stroke="#d6deda" stroke-opacity=".68" stroke-width="1.4"/>
-      </g>
+    <rect id="coverShape" x="203" y="105" width="626" height="765" rx="32"/>
+    <clipPath id="coverClip"><use href="#coverShape"/></clipPath>
+    <path id="ringLoop" d="M266 0C264-20 238-33 207-32C178-31 156-18 156 0C156 18 178 31 207 32C238 33 264 20 266 0Z" fill="none"/>
+    <path id="ringFront" d="M156 0C156-18 178-31 207-32C238-33 264-20 266 0" fill="none" stroke-linecap="round"/>
+    <!-- One closed wire; the cover edge and punched hole hide its return. -->
+    <clipPath id="exposedWire">
+      <rect x="145" y="-50" width="58" height="100"/>
+      <rect x="203" y="-50" width="92" height="50"/>
+      <ellipse cx="267" cy="0" rx="14" ry="12"/>
+    </clipPath>
+    <clipPath id="outsideCover"><rect x="130" y="-50" width="73" height="104"/></clipPath>
+    <g id="steelLoop" fill="none">
+      <use href="#ringLoop" stroke="#294557" stroke-width="16"/>
+      <use href="#ringLoop" stroke="url(#steel)" stroke-width="12"/>
+      <path d="M165-15C175-28 201-35 225-30C240-27 251-20 257-12" stroke="#fffef5" stroke-opacity=".92" stroke-width="1.8" stroke-linecap="round"/>
     </g>
+    <g id="bindingRing">
+      <g clip-path="url(#outsideCover)">
+        <g opacity=".18" transform="translate(3 7)"><use href="#ringLoop" stroke="#001021" stroke-width="20"/></g>
+      </g>
+      <rect x="250" y="-15" width="33" height="32" rx="14" fill="#fffdf5"/>
+      <rect x="252" y="-14" width="30" height="28" rx="12" fill="url(#hole)"/>
+      <path d="M258 11Q268 17 278 9" fill="none" stroke="#baa98a" stroke-width="1.2"/>
+      <g clip-path="url(#ringSurfaceClip)">
+        <g transform="translate(3 6)" stroke="#6b5333">
+          <g opacity=".025"><use href="#ringFront" stroke-width="29"/></g>
+          <g opacity=".035"><use href="#ringFront" stroke-width="23"/></g>
+          <g opacity=".065"><use href="#ringFront" stroke-width="17"/></g>
+        </g>
+      </g>
+      <use href="#steelLoop" clip-path="url(#exposedWire)"/>
+      <use href="#ringLoop" clip-path="url(#wireEntryClip)" stroke="url(#wireEntryShade)" stroke-width="12"/>
+    </g>
+    <clipPath id="ringSurfaceClip"><rect x="203" y="-52" width="108" height="104"/></clipPath>
   </defs>
 
-  <g id="pageBlock">
-    <rect width="1024" height="1024" fill="url(#paperEdge)"/>
-    <path d="M-10 948Q-2 1005 67 1005H978Q1017 1005 1034 983M-10 961Q1 1013 67 1013H978Q1017 1013 1034 992M-10 974Q6 1021 70 1021H978Q1019 1021 1034 1002" fill="none" stroke="#958b79" stroke-opacity=".35" stroke-width="2"/>
-    <path d="M6 968Q18 1001 75 1001H974" fill="none" stroke="#fffdf5" stroke-opacity=".9" stroke-width="2"/>
+  <g id="inkBlueBackground">
+    <rect width="1024" height="1024" fill="url(#inkField)"/>
+    <rect width="1024" height="1024" fill="url(#fieldLight)"/>
   </g>
-  <g id="ivoryCover">
-    <path d="M-16-20H1040V938Q1040 996 976 996H60Q-16 996-16 920Z" fill="#7e725e" fill-opacity=".22"/>
-    <g clip-path="url(#coverClip)">
-      <rect x="-16" y="-20" width="1056" height="1030" fill="url(#cover)"/>
-      <rect width="1024" height="1000" fill="url(#paperFibre)"/>
-      <rect width="1024" height="1000" fill="url(#coverLight)"/>
-      <rect width="175" height="1000" fill="url(#bindingFold)"/>
+  <g id="boundNotebook" transform="rotate(-7 512 512)">
+    <g id="castShadow" fill="#020f1d" stroke="#020f1d" transform="translate(13 27)">
+      <g opacity=".010"><use href="#coverShape" stroke-width="96"/></g>
+      <g opacity=".012"><use href="#coverShape" stroke-width="88"/></g>
+      <g opacity=".014"><use href="#coverShape" stroke-width="80"/></g>
+      <g opacity=".018"><use href="#coverShape" stroke-width="72"/></g>
+      <g opacity=".022"><use href="#coverShape" stroke-width="64"/></g>
+      <g opacity=".026"><use href="#coverShape" stroke-width="56"/></g>
+      <g opacity=".032"><use href="#coverShape" stroke-width="48"/></g>
+      <g opacity=".038"><use href="#coverShape" stroke-width="40"/></g>
+      <g opacity=".05"><use href="#coverShape" stroke-width="32"/></g>
+      <g opacity=".065"><use href="#coverShape" stroke-width="24"/></g>
+      <g opacity=".075"><use href="#coverShape" stroke-width="16"/></g>
+      <g opacity=".11"><use href="#coverShape" stroke-width="8"/></g>
     </g>
-    <path d="M6 936Q7 982 67 982H973Q1022 982 1028 947" fill="none" stroke="#fffdf6" stroke-opacity=".76" stroke-width="2.5"/>
-    <path d="M63 990H976" fill="none" stroke="#ad9f87" stroke-opacity=".33" stroke-width="1.5"/>
-  </g>
-  <g id="sevenSteelRings">
-    <use href="#bindingRing" transform="translate(0 102)"/>
-    <use href="#bindingRing" transform="translate(0 235)"/>
-    <use href="#bindingRing" transform="translate(0 368)"/>
-    <use href="#bindingRing" transform="translate(0 501)"/>
-    <use href="#bindingRing" transform="translate(0 634)"/>
-    <use href="#bindingRing" transform="translate(0 767)"/>
-    <use href="#bindingRing" transform="translate(0 900)"/>
-  </g>
-  <g id="slateElastic">
-    <rect x="784" width="105" height="1024" fill="url(#elasticUnder)"/>
-    <rect x="875" width="29" height="1024" fill="url(#elasticContact)"/>
-    <rect x="794" y="-4" width="81" height="1032" fill="url(#elastic)"/>
-    <rect x="797" width="75" height="1024" fill="url(#wovenElastic)"/>
-    <rect x="794" width="81" height="1024" fill="url(#elasticLight)"/>
-    <path d="M797 0V1024" stroke="#b4c4c9" stroke-opacity=".48" stroke-width="1.2"/>
-    <path d="M872 0V1024" stroke="#243c4b" stroke-opacity=".40" stroke-width="1.2"/>
+    <g id="pageBlock">
+      <rect x="204" y="128" width="640" height="783" rx="35" fill="url(#backCover)"/>
+      <path d="M235 121H800Q839 121 839 162V863Q839 901 801 901H236Q212 901 212 876V144Q212 121 235 121Z" fill="url(#paperEdge)"/>
+      <g fill="none" stroke="#a6987b" stroke-opacity=".44" stroke-width="1.4">
+        <path d="M827 161V854Q827 879 799 879H233"/>
+        <path d="M831 164V861Q831 887 799 887H234"/>
+        <path d="M835 168V867Q835 895 799 895H235"/>
+      </g>
+      <path d="M838 170V865Q838 901 802 901H240" fill="none" stroke="#fffbeb" stroke-opacity=".66" stroke-width="1.7"/>
+    </g>
+    <g id="ivoryCover">
+      <g transform="translate(0 5)"><use href="#coverShape" fill="#a99a7b"/></g>
+      <use href="#coverShape" fill="url(#coverStock)"/>
+      <g clip-path="url(#coverClip)">
+        <rect x="203" y="105" width="626" height="765" fill="url(#coverFibre)"/>
+        <rect x="203" y="105" width="103" height="765" fill="url(#bindingCrease)"/>
+        <rect x="779" y="105" width="21" height="765" fill="url(#elasticContact)"/>
+      </g>
+      <rect x="205" y="107" width="622" height="761" rx="30" fill="none" stroke="#fffef6" stroke-opacity=".65" stroke-width="1.5"/>
+    </g>
+    <g id="sevenBindingPassages">
+      <use href="#bindingRing" transform="translate(0 186)"/>
+      <use href="#bindingRing" transform="translate(0 286)"/>
+      <use href="#bindingRing" transform="translate(0 386)"/>
+      <use href="#bindingRing" transform="translate(0 486)"/>
+      <use href="#bindingRing" transform="translate(0 586)"/>
+      <use href="#bindingRing" transform="translate(0 686)"/>
+      <use href="#bindingRing" transform="translate(0 786)"/>
+    </g>
+    <g id="amberElastic">
+      <path d="M724 116Q724 102 737 102H767Q780 102 780 116V861Q780 889 783 903H730Q724 885 724 860Z" fill="url(#elasticTurn)"/>
+      <path d="M724 116Q724 103 737 103H767Q780 103 780 116V854Q780 870 777 876H727Q724 866 724 854Z" fill="url(#elastic)"/>
+      <path d="M728 110H776V868H728Z" fill="url(#elasticWeave)"/>
+      <path d="M727 117V851Q727 863 730 870" fill="none" stroke="#ffe0a0" stroke-opacity=".65" stroke-width="1.2"/>
+      <path d="M777 117V851Q777 863 775 870" fill="none" stroke="#9b4516" stroke-opacity=".42" stroke-width="1.3"/>
+      <path d="M731 893H780" stroke="#f4bf72" stroke-opacity=".42" stroke-width="1.5"/>
+    </g>
   </g>
 </svg>
