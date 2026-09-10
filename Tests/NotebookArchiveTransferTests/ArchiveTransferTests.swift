@@ -7,50 +7,9 @@ private enum TransferFault: Error { case injected }
 
 @Suite("Offline conversion preserves source owners and refuses unsafe publication")
 struct ArchiveTransferTests {
-  private struct Fixture {
-    let root: URL
-    let page: PageDocument
-    let context: SharedContext
-  }
-
-  private func temporaryRoot() throws -> URL {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent("transfer-test-" + UUID().uuidString)
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    return root
-  }
-
-  private func write(_ value: some Encodable, to url: URL) throws {
-    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try JSONEncoder().encode(value).write(to: url)
-  }
-
-  private func fixture(at root: URL) throws -> Fixture {
-    let actor = UUID()
-    let initial = WorkspaceIndex.initial(actor: actor, pageSize: .init(width: 834, height: 1194))
-    var catalog = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(initial.index)) as? [String: Any])
-    catalog["format"] = 3
-    catalog["selectedItemID"] = initial.index.selectedItemID.uuidString
-    catalog["selectedPageID"] = initial.page.id.uuidString
-    for key in ["collaboration", "pageOrders", "pageOrderNodes", "isProjection"] { catalog.removeValue(forKey: key) }
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    try JSONSerialization.data(withJSONObject: catalog).write(to: root.appendingPathComponent("workspace.json"))
-    try write(BoardHierarchy.initial(rootBoardID: initial.index.rootBoardID, itemIDs: initial.index.items.map(\.id), actor: actor), to: root.appendingPathComponent("board.json"))
-    try write(SpatialInkJournal(stamp: .init(counter: 0, actor: actor)), to: root.appendingPathComponent("spatial-ink.json"))
-    let presence = SessionPresence(mode: .board, camera: .init(), viewport: .init(x: 834, y: 1194))
-    var oldPresence = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(presence)) as? [String: Any])
-    oldPresence["format"] = 4
-    try JSONSerialization.data(withJSONObject: oldPresence).write(to: root.appendingPathComponent("last-context.json"))
-    try write(initial.page, to: root.appendingPathComponent("pages/\(initial.page.id.uuidString.lowercased()).json"))
-    let context = SharedContext(entries: [.init(author: .human, references: [], text: "Сохрани вопрос", stamp: .init(counter: 1, actor: actor))])
-    try write(context, to: root.appendingPathComponent("collaboration/contexts/\(context.id.uuidString.lowercased()).json"))
-    try write(SharedContextSelection(contextID: context.id, stamp: .init(counter: 2, actor: actor)), to: root.appendingPathComponent("collaboration/selection.json"))
-    try write(["format": 2], to: root.appendingPathComponent("collaboration/format.json"))
-    return .init(root: root, page: initial.page, context: context)
-  }
-
   @Test func copiesEveryLiveOwnerWithoutChangingSourceAndRetainsOrphanEvidence() throws {
-    let root = try temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
-    let fixture = try fixture(at: root.appendingPathComponent("backup"))
+    let root = try transferTestRoot(); defer { try? FileManager.default.removeItem(at: root) }
+    let fixture = try LegacyArchiveFixture.make(at: root.appendingPathComponent("backup"))
     let orphan = "pages/\(UUID().uuidString.lowercased()).json"
     let orphanBytes = Data("not a live page; never resurrect it".utf8)
     try orphanBytes.write(to: fixture.root.appendingPathComponent(orphan))
@@ -97,24 +56,24 @@ struct ArchiveTransferTests {
   }
 
   @Test func unknownCanonicalOwnerRefusesBeforeAnyOutput() throws {
-    let root = try temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
-    let fixture = try fixture(at: root.appendingPathComponent("backup")), output = root.appendingPathComponent("prepared")
+    let root = try transferTestRoot(); defer { try? FileManager.default.removeItem(at: root) }
+    let fixture = try LegacyArchiveFixture.make(at: root.appendingPathComponent("backup")), output = root.appendingPathComponent("prepared")
     try Data("pending human input".utf8).write(to: fixture.root.appendingPathComponent("unrecognized-journal.json"))
     #expect(throws: ArchiveTransferError.self) { try ArchiveTransfer.prepare(source: fixture.root, destination: output, workspaceID: UUID()) }
     #expect(!FileManager.default.fileExists(atPath: output.path))
   }
 
   @Test func missingPageRefusesWithoutPublishing() throws {
-    let root = try temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
-    let fixture = try fixture(at: root.appendingPathComponent("backup")), output = root.appendingPathComponent("prepared")
+    let root = try transferTestRoot(); defer { try? FileManager.default.removeItem(at: root) }
+    let fixture = try LegacyArchiveFixture.make(at: root.appendingPathComponent("backup")), output = root.appendingPathComponent("prepared")
     try FileManager.default.removeItem(at: fixture.root.appendingPathComponent("pages/\(fixture.page.id.uuidString.lowercased()).json"))
     #expect(throws: ArchiveTransferError.self) { try ArchiveTransfer.prepare(source: fixture.root, destination: output, workspaceID: UUID()) }
     #expect(!FileManager.default.fileExists(atPath: output.path))
   }
 
   @Test func finalSourceChangeOrFailurePublishesNothingAndRemovesOnlyOwnStaging() throws {
-    let root = try temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
-    let fixture = try fixture(at: root.appendingPathComponent("backup")), output = root.appendingPathComponent("prepared")
+    let root = try transferTestRoot(); defer { try? FileManager.default.removeItem(at: root) }
+    let fixture = try LegacyArchiveFixture.make(at: root.appendingPathComponent("backup")), output = root.appendingPathComponent("prepared")
     #expect(throws: TransferFault.self) {
       try ArchiveTransfer.prepare(source: fixture.root, destination: output, workspaceID: UUID()) { throw TransferFault.injected }
     }
@@ -128,8 +87,8 @@ struct ArchiveTransferTests {
   }
 
   @Test func existingOrConcurrentDestinationIsNeverReplaced() throws {
-    let root = try temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
-    let fixture = try fixture(at: root.appendingPathComponent("backup")), output = root.appendingPathComponent("prepared")
+    let root = try transferTestRoot(); defer { try? FileManager.default.removeItem(at: root) }
+    let fixture = try LegacyArchiveFixture.make(at: root.appendingPathComponent("backup")), output = root.appendingPathComponent("prepared")
     let bytes = Data("another owner's destination".utf8)
     #expect(throws: (any Error).self) {
       try ArchiveTransfer.prepare(source: fixture.root, destination: output, workspaceID: UUID()) { try bytes.write(to: output) }
@@ -140,8 +99,8 @@ struct ArchiveTransferTests {
   }
 
   @Test func symlinkAndNestedDestinationCannotRedirectTransfer() throws {
-    let root = try temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
-    let fixture = try fixture(at: root.appendingPathComponent("backup")), output = root.appendingPathComponent("prepared")
+    let root = try transferTestRoot(); defer { try? FileManager.default.removeItem(at: root) }
+    let fixture = try LegacyArchiveFixture.make(at: root.appendingPathComponent("backup")), output = root.appendingPathComponent("prepared")
     let link = root.appendingPathComponent("link")
     try FileManager.default.createSymbolicLink(at: link, withDestinationURL: fixture.root)
     #expect(throws: ArchiveTransferError.self) {

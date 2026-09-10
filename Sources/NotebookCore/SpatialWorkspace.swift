@@ -931,6 +931,47 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     freeItems.map(\.itemID) + stacks.flatMap(\.itemIDs)
   }
 
+  /// Import is an explicit adoption of independent members, not replication
+  /// between two cuts of the same board. Existing values and field versions
+  /// stay owned by their authors; only new membership and combined ordering
+  /// receive the importing human's causal version.
+  public func importingIndependent(_ other: Self, actor: UUID) throws -> Self {
+    guard isValid(itemIDs: []), other.isValid(itemIDs: []),
+      Set(itemIDs).isDisjoint(with: other.itemIDs),
+      Set(stacks.map(\.id)).isDisjoint(with: other.stacks.map(\.id)),
+      Set(elements.map(\.id)).isDisjoint(with: other.elements.map(\.id)),
+      let next = max(stamp, other.stamp).advanced(by: actor) else {
+      throw CollaborationError("import_collision", "Импорт добавляет независимых владельцев, не заменяя существующих.")
+    }
+    var local = collaboration ?? .init(), incoming = other.collaboration ?? .init()
+    try local.materializeVersions(in: .encode(self), fallback: stamp)
+    try incoming.materializeVersions(in: .encode(other), fallback: other.stamp)
+    let orders = Set(["freeItems", "stacks", "elements"].map { fieldKey([$0, "order"]) })
+    var fields = local.fields
+    for (key, version) in incoming.fields {
+      if orders.contains(key) { fields[key] = fields[key].map { $0.joining(version) } ?? version }
+      else {
+        guard fields[key] == nil else {
+          throw CollaborationError("import_collision", "Исторический владелец поля уже присутствует на доске.")
+        }
+        fields[key] = version
+      }
+    }
+    var metadata = CollaborativeContent(fields: fields)
+    for key in orders { metadata.recordField(key, stamp: next, human: true) }
+    let members = other.freeItems.map { fieldKey(["freeItems", $0.itemID.uuidString.lowercased(), "exists"]) }
+      + other.stacks.map { fieldKey(["stacks", $0.id.uuidString.lowercased(), "exists"]) }
+      + other.elements.map { fieldKey(["elements", collaborationIdentity($0.id), "exists"]) }
+    for key in members { metadata.recordField(key, stamp: next, human: true) }
+    var result = self
+    result.freeItems += other.freeItems; result.stacks += other.stacks; result.elements += other.elements
+    result.collaboration = metadata; result.stamp = next
+    guard result.isValid(itemIDs: Set(itemIDs + other.itemIDs)) else {
+      throw CollaborationError("invalid_content", "Импорт должен сохранить полный состав доски.")
+    }
+    return result
+  }
+
   /// Reserve the pending mutation's clock, keeping the actual field versions
   /// at their previous frontier even when they were still implicit.
   @discardableResult

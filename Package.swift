@@ -19,8 +19,8 @@ let package = Package(
     .target(name: "NotebookCore", dependencies: ["CSQLite"]),
     .executableTarget(name: "NotebookBridge", dependencies: ["NotebookCore"]),
     .executableTarget(name: "NotebookIPCTestHost", dependencies: ["NotebookCore"], path: "Tests/NotebookIPCTestHost"),
-    .executableTarget(name: "NotebookArchiveTransfer", dependencies: ["NotebookCore"]),
+    .executableTarget(name: "NotebookArchiveTransfer", dependencies: ["NotebookCore", "CSQLite"]),
     .testTarget(name: "NotebookCoreTests", dependencies: ["NotebookCore"]),
-    .testTarget(name: "NotebookArchiveTransferTests", dependencies: ["NotebookArchiveTransfer"]),
+    .testTarget(name: "NotebookArchiveTransferTests", dependencies: ["NotebookArchiveTransfer"], resources: [.copy("Resources")]),
   ]
 )

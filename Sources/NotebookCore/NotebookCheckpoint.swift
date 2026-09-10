@@ -22,12 +22,8 @@ public struct NotebookCheckpoint: Codable, Equatable, Sendable {
     guard let content = envelope.content else {
       throw NotebookStorageError.invalidTransaction("checkpoint requires complete content")
     }
-    try content.workspace.validatePageOrderWitness()
-    let pages = Set(content.workspace.items.flatMap(\.pageIDs))
-    let documents = Set(content.workspace.items.filter { $0.kind == .document }.map(\.id))
-    guard pages == Set(content.pages.map(\.id)),
-      documents == Set(content.documents.map(\.id)), documents == Set(content.states.map(\.id)),
-      presence.isValid, content.hierarchy.board(presence.boardID) != nil,
+    try content.validateComplete()
+    guard presence.isValid, content.hierarchy.board(presence.boardID) != nil,
       presence.selectedItemID.map({ content.workspace.item(id: $0) != nil }) ?? true,
       presence.focusedItemID.map({ content.hierarchy.ownerBoardID(of: $0) == presence.boardID }) ?? true,
       presence.notebookPageID.map({ page in

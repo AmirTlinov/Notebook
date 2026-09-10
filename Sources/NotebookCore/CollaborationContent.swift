@@ -39,6 +39,17 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
     }
   }
 
+  /// Offline import/checkpoint owns every body; replication may be partial.
+  func validateComplete() throws {
+    try validate(); try workspace.validatePageOrderWitness()
+    let pageIDs = Set(workspace.items.flatMap(\.pageIDs))
+    let documentIDs = Set(workspace.items.filter { $0.kind == .document }.map(\.id))
+    guard pageIDs == Set(pages.map(\.id)), documentIDs == Set(documents.map(\.id)),
+      documentIDs == Set(states.map(\.id)) else {
+      throw NotebookStorageError.invalidTransaction("complete archive dependencies")
+    }
+  }
+
   private func validateOwners() throws {
     guard workspace.isValid, hierarchy.isValid(items: workspace.items), ink.isValid,
       Set(pages.map(\.id)).count == pages.count,
@@ -56,6 +67,32 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
     try result.mergeValidated(incoming)
     try result.validate()
     self = result
+  }
+
+  /// Prepares an additive cross-archive import. The shared factory root is the
+  /// only shared physical identity; importing a second incarnation of any item
+  /// or stroke requires an explicit conflict decision, never an LWW guess.
+  public func importingIndependent(_ other: Self, actor: UUID) throws -> Self {
+    try validateComplete(); try other.validateComplete()
+    let ours = Set(workspace.items.map(\.id) + pages.map(\.id))
+    let theirs = Set(other.workspace.items.map(\.id) + other.pages.map(\.id))
+    guard workspace.rootBoardID == other.workspace.rootBoardID, ours.isDisjoint(with: theirs),
+      Set(ink.actions.map(\.id)).isDisjoint(with: other.ink.actions.map(\.id)),
+      let root = hierarchy.boards.first(where: { $0.id == workspace.rootBoardID }),
+      let incomingRoot = other.hierarchy.board(workspace.rootBoardID),
+      let next = max(hierarchy.stamp, other.hierarchy.stamp).advanced(by: actor) else {
+      throw CollaborationError("import_collision", "Архивы должны содержать независимые физические UUID.")
+    }
+    let combinedRoot = BoardNode(id: root.id, board: try root.board.importingIndependent(incomingRoot, actor: actor),
+      portalCamera: root.portalCamera, portalStamp: root.portalStamp)
+    let result = try Self(workspace: workspace.merging(other.workspace),
+      hierarchy: .init(rootBoardID: root.id,
+        boards: [combinedRoot] + hierarchy.boards.filter { $0.id != root.id } + other.hierarchy.boards.filter { $0.id != root.id },
+        stamp: next),
+      ink: .init(actions: ink.actions + other.ink.actions, stamp: max(ink.stamp, other.ink.stamp)),
+      pages: pages + other.pages, documents: documents + other.documents, states: states + other.states)
+    try result.validate()
+    return result
   }
 
   private mutating func mergeValidated(_ incoming: Self) throws {
