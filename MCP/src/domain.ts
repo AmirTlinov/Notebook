@@ -48,17 +48,18 @@ export interface PageDocument {
 
 export type WorkspaceItemKind = "notebook" | "document" | "board";
 
-export interface WorkspaceItem {
+export interface NotebookItemHeader {
   id: string;
   kind: WorkspaceItemKind;
   title: string;
-  pageIDs: string[];
+  firstPageID?: string;
+  pageCount: number;
 }
 
 /** Addressed metadata only; never a canonical archive or a workspace mutation. */
 export interface WorkspaceProjection {
   rootBoardID: string;
-  items: WorkspaceItem[];
+  items: NotebookItemHeader[];
   selectedItemID: string;
   selectedPageID?: string;
   stamp: VersionStamp;

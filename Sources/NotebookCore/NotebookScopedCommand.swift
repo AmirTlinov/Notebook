@@ -79,27 +79,34 @@ extension NotebookStore {
 
   func removeFragment(_ address: String, database: NotebookSQLConnection) throws {
     guard !address.hasPrefix("workspace.json#/pageOrderNodes/@") else { throw NotebookStorageError.invalidTransaction("immutable page order node") }
-    let rows = try database.rows("WITH RECURSIVE subtree(address) AS (SELECT address FROM records WHERE address=? UNION ALL SELECT r.address FROM records r JOIN subtree s ON r.parent=s.address) SELECT r.address,r.file,r.collection,r.member,r.hash FROM subtree s JOIN records r ON r.address=s.address", [.text(address)])
-    for row in rows {
-      let address = row[0].text!, file = row[1].text!, collection = row[2].text!, member = row[3].text!
-      if file == "workspace.json", collection == "pageOrders" { database.touchedPageOrders.insert(member) }
-      if file == "workspace.json", collection == "items", let id = UUID(uuidString: member) {
-        database.touchedItemIDs.insert(id)
-        try database.run("UPDATE metadata SET value=CAST(value AS INTEGER)-1 WHERE key='item_count'")
+    let prefix = address + "/"
+    while true {
+      let descendants = try database.rows("SELECT address,file,collection,member,hash FROM records WHERE address>=? AND address<? ORDER BY address DESC LIMIT 64",
+        [.text(prefix), .text(prefix + "\u{10ffff}")])
+      let rows = try descendants.isEmpty
+        ? database.rows("SELECT address,file,collection,member,hash FROM records WHERE address=?", [.text(address)]) : descendants
+      for row in rows {
+        let address = row[0].text!, file = row[1].text!, collection = row[2].text!, member = row[3].text!
+        if file == "workspace.json", collection == "pageOrders" { database.touchedPageOrders.insert(member) }
+        if file == "workspace.json", collection == "items", let id = UUID(uuidString: member) {
+          database.touchedItemIDs.insert(id)
+          try database.run("UPDATE metadata SET value=CAST(value AS INTEGER)-1 WHERE key='item_count'")
+        }
+        if file == "workspace.json", collection == "pageIDs", let id = address.components(separatedBy: "@").dropLast().last?.split(separator: "/").first {
+          database.touchedPageOrders.insert(String(id))
+          database.touchedPageMemberships.insert(address)
+          try database.run("UPDATE item_page_counts SET count=count-1 WHERE address=? AND count>0", [.text("workspace.json#/items/@" + id)])
+        }
+        if file == "board.json" {
+          let owned = try database.rows("SELECT item_id FROM item_owners WHERE address=?", [.text(address)]).compactMap { $0[0].text.flatMap(UUID.init(uuidString:)) }
+          database.touchedItemIDs.formUnion(owned)
+        }
+        try updateBoardContribution(address: address, previous: row[4].text, next: nil, database: database)
+        noteReferenceChange(address, file: file, database: database)
+        try database.run("DELETE FROM records WHERE address=?", [.text(address)])
+        if !Self.localRecord(file) { database.changes[address] = .init(address: address, blobHash: nil) }
       }
-      if file == "workspace.json", collection == "pageIDs", let id = address.components(separatedBy: "@").dropLast().last?.split(separator: "/").first {
-        database.touchedPageOrders.insert(String(id))
-        database.touchedPageMemberships.insert(address)
-        try database.run("UPDATE item_page_counts SET count=count-1 WHERE address=? AND count>0", [.text("workspace.json#/items/@" + id)])
-      }
-      if file == "board.json" {
-        let owned = try database.rows("SELECT item_id FROM item_owners WHERE address=?", [.text(address)]).compactMap { $0[0].text.flatMap(UUID.init(uuidString:)) }
-        database.touchedItemIDs.formUnion(owned)
-      }
-      try updateBoardContribution(address: address, previous: row[4].text, next: nil, database: database)
-      noteReferenceChange(address, file: file, database: database)
-      try database.run("DELETE FROM records WHERE address=?", [.text(address)])
-      if !Self.localRecord(file) { database.changes[address] = .init(address: address, blobHash: nil) }
+      if descendants.isEmpty { return }
     }
   }
 
@@ -243,7 +250,7 @@ extension NotebookStore {
     try commandTransaction {
       let header = try workspaceHeader()
       guard header.itemCount > 1 else { throw NotebookStorageError.invalidTransaction("workspace retains one item") }
-      guard let item = try readWorkspaceItem(itemID), let parent = try readBoardItem(itemID) else { throw CocoaError(.fileNoSuchFile) }
+      guard let item = try readItemHeader(itemID), let parent = try readBoardItem(itemID) else { throw CocoaError(.fileNoSuchFile) }
       if let expected, parent.board.stamp != expected { throw NotebookStorageError.transactionConflict }
       if item.kind == .board {
         let address = "board.json#/boards/@" + itemID.uuidString.lowercased()
@@ -268,7 +275,21 @@ extension NotebookStore {
         try writeFragment(.init(address: address, file: "board.json", parent: nodeAddress, collection: "board/collaboration/fields", member: key, position: 0, value: try .encode(version), collections: []), database: currentSQL!)
         try removeFragment(element[0].text!, database: currentSQL!)
       }
-      try removeFragment("workspace.json#/items/@" + itemID.uuidString.lowercased(), database: currentSQL!)
+      let itemAddress = "workspace.json#/items/@" + itemID.uuidString.lowercased()
+      // Enumerate the durable memberships, not the UI's finite projection.
+      // Each body and membership is removed before requesting the next 64.
+      while true {
+        let pages = try currentSQL!.rows("SELECT member,address FROM records WHERE parent=? AND collection='pageIDs' ORDER BY member LIMIT 64", [.text(itemAddress)])
+        if pages.isEmpty { break }
+        for row in pages {
+          guard let id = row[0].text.flatMap(UUID.init(uuidString:)), let address = row[1].text else {
+            throw NotebookStorageError.corruptRecord(itemAddress)
+          }
+          try removeFragment(pageFile(id) + "#", database: currentSQL!)
+          try removeFragment(address, database: currentSQL!)
+        }
+      }
+      try removeFragment(itemAddress, database: currentSQL!)
       guard let root = try storedFragments(address: "workspace.json#", descendants: false).first,
         let stamp = header.stamp.advanced(by: actor) else { throw NotebookStorageError.invalidTransaction("workspace clock") }
       try writeFragment(root.replacing(value: root.value.setting("stamp", try .encode(stamp))), database: currentSQL!)
@@ -277,10 +298,10 @@ extension NotebookStore {
       let oldVersion = try storedFragments(address: address, descendants: false).first?.value.decode(ContentFieldVersion.self)
       let version = ContentFieldVersion(stamp: stamp, human: true, previous: oldVersion)
       try writeFragment(.init(address: address, file: "workspace.json", parent: "workspace.json#", collection: "collaboration/fields", member: key, position: 0, value: try .encode(version), collections: []), database: currentSQL!)
-      try publishRecords(writes: [:], removals: item.pageIDs.map(pageFile) + (item.kind == .document ? [documentFile(itemID), stateFile(itemID)] : []))
+      try publishRecords(writes: [:], removals: item.kind == .document ? [documentFile(itemID), stateFile(itemID)] : [])
       if let presence = try? loadPresence(), presence.selectedItemID == itemID,
-        let replacement = try readWorkspaceItems(limit: 1).first {
-        try savePresence(presence.selecting(itemID: replacement.id, pageID: replacement.pageIDs.first))
+        let replacement = try readItemHeaders(limit: 1).first {
+        try savePresence(presence.selecting(itemID: replacement.id, pageID: replacement.firstPageID))
       }
     }
     return try workspaceHeader()

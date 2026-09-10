@@ -124,6 +124,104 @@ struct PageWindowFixture {
 
 @Suite("Notebook read windows follow one immutable page order")
 struct NotebookPageWindowTests {
+  @Test func deletionEnumeratesDurableMembershipsAndRollsBackEveryRemovedPage() throws {
+    let fixture = try PageWindowFixture(count: 129); defer { fixture.clean() }
+    var workspace = try fixture.store.loadIndex()
+    let created = workspace.createNotebook(title: "Retained", actor: fixture.actor, pageSize: fixture.size)
+    let remaining = try #require(created)
+    var board = try fixture.store.loadBoard(items: [workspace.items[0]])
+    let placed = board.addItem(remaining.item.id, to: workspace.rootBoardID, near: .zero, actor: fixture.actor)
+    #expect(placed)
+    try fixture.store.saveWorkspaceBundle(index: workspace, page: remaining.page, board: board)
+    try fixture.select(fixture.pages[100])
+    let before = try fixture.store.workspaceHeader(), presence = try fixture.store.loadPresence()
+    enum Failure: Error { case storage }
+    let failing = NotebookStore(root: fixture.root) { if $0 == .beforeCommit { throw Failure.storage } }
+    #expect(throws: Failure.self) { try failing.deleteWorkspaceItem(itemID: fixture.itemID, actor: fixture.actor) }
+    #expect(try fixture.store.workspaceHeader() == before)
+    #expect(try fixture.store.loadPresence() == presence)
+    #expect(try fixture.store.pageCount(in: fixture.itemID) == 129)
+    for id in fixture.pages { #expect(try fixture.store.loadPage(id).id == id) }
+    // Deletion needs indexed identities, not these unrequested member bytes.
+    try fixture.corruptBlob(at: "workspace.json#/items/@" + fixture.itemID.uuidString.lowercased() + "/pageIDs/@" + fixture.pages[17].uuidString.lowercased())
+    _ = try fixture.store.deleteWorkspaceItem(itemID: fixture.itemID, actor: fixture.actor)
+    #expect(try fixture.store.readItemHeader(fixture.itemID) == nil)
+    #expect(try fixture.store.loadPresence().selectedItemID == remaining.item.id)
+    #expect(try fixture.store.loadPresence().notebookPageID == remaining.page.id)
+    for id in fixture.pages { #expect(try !fixture.store.hasStoredValue(pageFile(id))) }
+    #expect(try fixture.store.loadPage(remaining.page.id) == remaining.page)
+  }
+
+
+  @Test func wireReadTargetsAndCursorsAreExactAndRejectOldUnboundedQueries() throws {
+    for target in [NotebookPageReadTarget.index(4), .page(UUID()), .selection] {
+      let wire = try JSONValue.encode(target)
+      #expect(wire["kind"]?.string != nil && wire["_0"] == nil)
+      #expect(try wire.decode(NotebookPageReadTarget.self) == target)
+    }
+    let position = NotebookPagePosition(itemID: UUID(), pageID: UUID(), index: 99,
+      visibleRoot: String(repeating: "a", count: 64), readCursor: UInt64.max)
+    let wire = try JSONValue.encode(position)
+    #expect(wire["readCursor"] == .string(String(UInt64.max)))
+    #expect(try wire.decode(NotebookPagePosition.self) == position)
+    #expect(throws: (any Error).self) { try wire.setting("readCursor", .number(1)).decode(NotebookPagePosition.self) }
+    for kind in ["workspaceItems", "workspaceItem", "pageAtIndex", "pageCount"] {
+      #expect(throws: CollaborationError.self) {
+        try NotebookIPC.decodeCommand(Data("{\"command\":\"read\",\"queries\":[{\"kind\":\"\(kind)\"}]}".utf8))
+      }
+    }
+  }
+
+  @Test func dispatcherSharesTheBodyBudgetAcrossWindowAndAddressedQueries() throws {
+    let fixture = try PageWindowFixture(count: 8); defer { fixture.clean() }
+    let dispatcher = NotebookCommandDispatcher(store: fixture.store)
+    var first = NotebookReadQuery(kind: .notebookPages, id: fixture.itemID)
+    first.pages = [.index(0), .index(1), .index(2)]
+    var second = NotebookReadQuery(kind: .notebookPages, id: fixture.itemID)
+    second.pages = [.index(3), .index(4)]
+    var request = NotebookCommand(command: .read)
+    request.queries = [first, second]
+    #expect(throws: CollaborationError.self) { try dispatcher.handle(request) }
+    request.queries = [first, .init(kind: .page, id: fixture.pages[3]), .init(kind: .page, id: fixture.pages[4])]
+    #expect(throws: CollaborationError.self) { try dispatcher.handle(request) }
+    first.pages = [.selection, .index(7)]
+    request.queries = [first, .init(kind: .notebookDirectory, id: fixture.itemID, limit: 3),
+      .init(kind: .notebookPosition, id: fixture.pages[7]), .init(kind: .itemHeader, id: fixture.itemID)]
+    let response = try dispatcher.handle(request)
+    let values = try #require(response["values"]?.array)
+    #expect(try values[0].decode(NotebookPageWindow.self).pages.map(\.document.id) == [fixture.pages[0], fixture.pages[7]])
+    #expect(values[0]["header"]?["readCursor"] == values[2]["readCursor"])
+    #expect(values[3]["pageCount"] == .number(8) && values[3]["pageIDs"] == nil)
+    #expect(try values[2].decode(NotebookPagePosition.self).index == 7)
+    request.queries = [.init(kind: .notebookPosition, id: UUID())]
+    #expect(try dispatcher.handle(request)["values"]?.array == [.null])
+  }
+
+  @Test func projectionAppendUsesTheRootTailAndRetainsOnlyPreparedWitnesses() throws {
+    let fixture = try PageWindowFixture(count: 1024); defer { fixture.clean() }
+    let item = try #require(try fixture.store.readItemHeader(fixture.itemID))
+    var projection = try fixture.store.workspaceProjection(items: [item.item], selectedItemID: item.id, selectedPageID: item.firstPageID)
+    let original = projection
+    #expect(projection.selectedPageIndex == nil, "An incomplete projection cannot claim an array index")
+    #expect(projection.selectPage(at: 1, in: item.id, actor: fixture.actor, pageSize: fixture.size) == nil)
+    for index in 1024..<1088 {
+      let prepared = projection.appendPage(in: item.id, actor: fixture.actor, pageSize: fixture.size)
+      let append = try #require(prepared)
+      #expect(append.pageIndex == index)
+      _ = try fixture.store.saveWorkspaceSelection(index: projection, createdPage: append.createdPage)
+      try projection.retainPageProjection([append.pageID])
+      #expect(projection.selectedItem.pageIDs.count == 2)
+      #expect(projection.pageOrderNodes.count <= 3)
+      #expect(projection.collaboration.fields.count <= 8)
+    }
+    #expect(original.selectedItem.pageIDs == [fixture.pages[0]])
+    #expect(original.notebookPageOrder(in: item.id)?.count == 1024)
+    #expect(projection.notebookPageOrder(in: item.id)?.count == 1088)
+    #expect(try fixture.store.resolveNotebookPage(projection.selectedPageID!, in: item.id)?.index == 1087)
+    #expect(try fixture.store.resolveNotebookPage(fixture.pages[700], in: item.id)?.index == 700)
+  }
+
+
   @Test func selectionFirstLastAndDirectoryCarryTheirActualUUIDAndRoot() throws {
     let fixture = try PageWindowFixture(count: 100); defer { fixture.clean() }
     try fixture.select(fixture.pages[35])
@@ -316,7 +414,15 @@ func assertBoundedPageReads(_ fixture: PageWindowFixture) throws {
     #expect(trace.queries.contains("COMMIT"))
     #expect(!trace.queries.contains { $0.contains("r.member>=") || $0.contains("WHERE r.file='workspace.json'") })
   }
-  print("PAGE_WINDOW_SCALE pages=\(count) window_vm=\(windowTrace.steps) directory64_vm=\(directoryTrace.steps) resolve_vm=\(resolveTrace.steps)")
+  let (projection, projectionTrace) = try measuredPageRead(fixture.store) {
+    let header = try #require(try fixture.store.readItemHeaders(limit: 1).first)
+    return try fixture.store.workspaceProjection(items: [header.item], selectedItemID: header.id, selectedPageID: header.firstPageID)
+  }
+  #expect(projection.selectedItem.pageIDs == [fixture.pages[0]])
+  #expect(projection.collaboration.fields.count <= 8 && projection.pageOrderNodes.count <= 4)
+  #expect(projectionTrace.steps > 0 && projectionTrace.steps < 4_000)
+  #expect(!projectionTrace.queries.contains { $0.contains("r.member>=") || $0.contains("WITH RECURSIVE") })
+  print("PAGE_WINDOW_SCALE pages=\(count) window_vm=\(windowTrace.steps) directory64_vm=\(directoryTrace.steps) resolve_vm=\(resolveTrace.steps) projection_vm=\(projectionTrace.steps)")
 }
 
 private final class PageWindowConcurrentWriter: @unchecked Sendable {

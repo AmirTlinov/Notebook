@@ -231,7 +231,7 @@ final class AgentStateTests: XCTestCase {
 
     let saved = await model.finishPendingPersistence()
     XCTAssertTrue(saved, model.persistenceFailure ?? "")
-    XCTAssertNotNil(try store.readWorkspaceItem(item.id))
+    XCTAssertNotNil(try store.readItemHeader(item.id))
     XCTAssertEqual(try store.loadIndex().items, remoteIndex.items)
     XCTAssertEqual(model.workspace?.selectedItemID, original.selectedItemID,
       "Receiving independent content does not redirect the iPad's human selection")
@@ -269,7 +269,7 @@ final class AgentStateTests: XCTestCase {
     XCTAssertTrue(saved, model.persistenceFailure ?? "")
     XCTAssertNil(model.documents[documentID])
     XCTAssertNil(model.documentStates[documentID])
-    XCTAssertNil(try store.readWorkspaceItem(documentID))
+    XCTAssertNil(try store.readItemHeader(documentID))
     XCTAssertThrowsError(try store.loadDocument(documentID))
     XCTAssertThrowsError(try store.loadDocumentState(documentID))
   }

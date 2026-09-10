@@ -5,7 +5,7 @@ import { constants } from "node:fs";
 import { BridgeError, defaultSocketPath, runBridge } from "./bridge.js";
 import type { BoardDocument, BoardHierarchy, CurrentViewReceipt, DocumentDocument, DocumentStateJournal,
   PageDocument, PageSize, SessionPresence, SpatialElement, SpatialInkJournal, SurfaceID, VersionStamp, WorldPoint,
-  WorkspaceProjection, WorkspaceItem } from "./domain.js";
+  WorkspaceProjection, NotebookItemHeader } from "./domain.js";
 import { canonicalPageSize, documentSpatialSize } from "./domain.js";
 
 export class StoreError extends Error {}
@@ -13,16 +13,21 @@ export interface WorkspaceHeader {
   rootBoardID: string; stamp: VersionStamp; itemCount: number; cursor: number;
   selectedItemID?: string; selectedPageID?: string; boardRevision?: string; spatialInkStamp?: VersionStamp;
 }
+export type NotebookPageTarget = {kind:"index";index:number} | {kind:"page";id:string} | {kind:"selection"};
+export interface NotebookPagePosition { itemID:string;pageID:string;index:number;visibleRoot:string;readCursor:string }
+export interface NotebookPageHeader { workspaceID:string;item:NotebookItemHeader;visibleRoot:string;readCursor:string;selectedPageID?:string;selectedPageIndex?:number }
+export interface NotebookPageWindow { header:NotebookPageHeader;pages:Array<{position:NotebookPagePosition;document:PageDocument}> }
+export interface NotebookPageDirectory { header:NotebookPageHeader;pages:Array<{position:NotebookPagePosition;size:PageSize;drawingStamp:VersionStamp;agentStamp:VersionStamp}>;nextIndex?:number }
 export interface SceneBounds { origin: WorldPoint; width: number; height: number }
 export interface SceneWindow {
-  header: WorkspaceHeader; boardID: string; items: WorkspaceItem[]; boards: BoardHierarchy["boards"];
+  header: WorkspaceHeader; boardID: string; items: NotebookItemHeader[]; boards: BoardHierarchy["boards"];
   documentPaper: Record<string, "a4" | "letter">; pageCounts: Record<string, number>; totalMatches: number; truncated: boolean;
 }
 export interface ScenePaintPage {
   revision: string; entries: Array<{kind:"item"|"element";id:string;zIndex:number}>; nextCursor: string | null;
 }
 export interface WorkingSet {
-  header: WorkspaceHeader; items: WorkspaceItem[]; boards: BoardHierarchy["boards"];
+  header: WorkspaceHeader; items: NotebookItemHeader[]; boards: BoardHierarchy["boards"];
   pages: Record<string, PageDocument>; documents: Record<string, DocumentDocument>;
   states: Record<string, DocumentStateJournal>; ink: SpatialInkJournal;
 }
@@ -95,14 +100,11 @@ export class NotebookStore {
   }
 
   readHeader(): Promise<WorkspaceHeader> { return this.read({ kind: "workspaceHeader" }); }
-  readWorkspaceItems(after?: string, limit = 128): Promise<WorkspaceItem[]> {
-    return this.read({ kind: "workspaceItems", after, limit });
-  }
   readWorkingSet(itemIDs: string[] = [], pageIDs: string[] = [], boardIDs: string[] = [], surfaces: SurfaceID[] = []): Promise<WorkingSet> {
     return this.read({ kind: "workingSet", itemIDs, pageIDs, boardIDs, surfaces });
   }
-  async readItem(id: string): Promise<WorkspaceItem> {
-    const item = await this.read<WorkspaceItem | null>({kind:"workspaceItem",id});
+  async readItem(id: string): Promise<NotebookItemHeader> {
+    const item = await this.read<NotebookItemHeader | null>({kind:"itemHeader",id});
     if (!item) throw new StoreError("Предмет не найден.");
     return item;
   }
@@ -182,24 +184,33 @@ export class NotebookStore {
   }
   async readNotebookPage(notebookID: string, pageNumber?: number): Promise<PageDocument> {
     const header = await this.readHeader();
-    if (pageNumber === undefined && header.selectedItemID && idEquals(header.selectedItemID, notebookID) && header.selectedPageID) {
-      return this.readPage(header.selectedPageID);
-    }
-    const id = await this.read<string | null>({ kind: "pageAtIndex", id: notebookID, pageIndex: (pageNumber ?? 1) - 1 });
-    if (!id) throw new StoreError("Листа с таким номером нет.");
-    return this.readPage(id);
+    const target: NotebookPageTarget = pageNumber !== undefined ? {kind:"index",index:pageNumber-1}
+      : header.selectedItemID && idEquals(header.selectedItemID, notebookID) && header.selectedPageID
+        ? {kind:"page",id:header.selectedPageID} : {kind:"index",index:0};
+    const window = await this.readNotebookPages(notebookID,[target]);
+    return window.pages[0]!.document;
+  }
+
+  readNotebookPages(id: string, pages: NotebookPageTarget[], visibleRoot?: string): Promise<NotebookPageWindow> {
+    return this.read({kind:"notebookPages",id,pages,visibleRoot});
+  }
+  readNotebookDirectory(id: string, pageIndex: number, limit: number, visibleRoot?: string): Promise<NotebookPageDirectory> {
+    return this.read({kind:"notebookDirectory",id,pageIndex,limit,visibleRoot});
+  }
+  readNotebookPosition(id: string, itemID?: string): Promise<NotebookPagePosition | null> {
+    return this.read({kind:"notebookPosition",id,itemID});
   }
 
   async readCurrent(): Promise<
-    | { kind: "notebook"; workspace: WorkspaceProjection; presence: SessionPresence; item: WorkspaceItem; page: PageDocument }
-    | { kind: "document"; workspace: WorkspaceProjection; presence: SessionPresence; item: WorkspaceItem; document: DocumentDocument; state: DocumentStateJournal }
-    | { kind: "board"; workspace: WorkspaceProjection; presence: SessionPresence; item: WorkspaceItem }
+    | { kind: "notebook"; workspace: WorkspaceProjection; presence: SessionPresence; item: NotebookItemHeader; page: PageDocument }
+    | { kind: "document"; workspace: WorkspaceProjection; presence: SessionPresence; item: NotebookItemHeader; document: DocumentDocument; state: DocumentStateJournal }
+    | { kind: "board"; workspace: WorkspaceProjection; presence: SessionPresence; item: NotebookItemHeader }
   > {
     const presence = await this.readPresence();
     const workspace = await this.readWorkspaceProjection(presence.focusedItemID ? [presence.focusedItemID] : []);
     const id = presence.focusedItemID ?? workspace.selectedItemID;
     const item = workspace.items.find(candidate => idEquals(candidate.id, id))
-      ?? { id: presence.boardID, kind: "board" as const, title: "", pageIDs: [] };
+      ?? { id: presence.boardID, kind: "board" as const, title: "", pageCount: 0 };
     if (presence.mode === "board" || item.kind === "board") return { kind: "board", workspace, presence, item };
     if (item.kind === "document") {
       const [document, state] = await Promise.all([this.readDocument(item.id), this.readDocumentState(item.id)]);

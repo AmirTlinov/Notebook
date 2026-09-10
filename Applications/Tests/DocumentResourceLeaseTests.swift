@@ -123,13 +123,13 @@ final class DocumentResourceLeaseTests: XCTestCase {
     window.rootViewController = controller
     var committed = 0
     func configure() {
-      controller.update(ownerID: document.id, pageCount: 8, selectedIndex: committed,
+      controller.update(ownerID: document.id, sequenceRevision: "fixture-order", pageCount: 8, selectedIndex: committed,
         navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
         page: { index, current, readiness in
           AnyView(DocumentWebView(document: document, state: state, isInteractive: current,
             selectedPageIndex: index, capturesSnapshot: false, onRenderReady: readiness,
             onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in }, resources: resources))
-        }, onCommit: { committed = $0 }, onTransitioningChange: { _ in })
+        }, onCommit: { index, _ in committed = index }, onTransitioningChange: { _ in })
     }
     configure(); window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
@@ -182,14 +182,14 @@ final class DocumentResourceLeaseTests: XCTestCase {
     let window = UIWindow(windowScene: scene), controller = IPadPageTurnController()
     var commits: [Int] = []
     func configure(_ selected: Int) {
-      controller.update(ownerID: document.id, pageCount: 16, selectedIndex: selected,
+      controller.update(ownerID: document.id, sequenceRevision: "fixture-order", pageCount: 16, selectedIndex: selected,
         navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
         page: { index, current, readiness in
           XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
           return AnyView(DocumentWebView(document: document, state: state, isInteractive: current,
             selectedPageIndex: index, capturesSnapshot: false, onRenderReady: readiness,
             onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in }, resources: resources))
-        }, onCommit: { commits.append($0) }, onTransitioningChange: { _ in })
+        }, onCommit: { index, _ in commits.append(index) }, onTransitioningChange: { _ in })
     }
     configure(0); window.rootViewController = controller; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }

@@ -65,6 +65,16 @@ const transport = new StdioClientTransport({ command: join(mcpRoot, "run.sh"),
   assert.notEqual(detail.isError, true, JSON.stringify(detail));
   checked.push("settled view and faithful visible ink regions");
 
+  const catalogue = await call("notebook_read_notebook", {notebook_id:itemID});
+  assert.equal(catalogue.notebook.pageCount,1);
+  assert.equal(catalogue.pages[0].id.toLowerCase(),pageID);
+  assert.equal(catalogue.pages[0].number,1);
+  assert.equal(catalogue.pages[0].agentElementCount,undefined,"Metadata does not load or pretend to count a page's element body");
+  assert.match(catalogue.pageOrder,/^[a-f0-9]{64}$/);
+  assert.equal(catalogue.nextPage,null);
+  await rejected("notebook_read_notebook",{notebook_id:itemID,page_order:"0".repeat(64)},"read_conflict");
+  checked.push("bounded notebook metadata and an immutable page-order continuation");
+
   const firstExpectation = await pageExpectation();
   const actionID = randomUUID();
   const operations = [{ kind: "insertElement", target: page, id: "counter", values: {

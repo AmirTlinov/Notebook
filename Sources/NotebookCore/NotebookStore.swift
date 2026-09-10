@@ -265,14 +265,16 @@ public struct NotebookStore: Sendable {
   /// The input queue owns the creation fence. Its captured UUID becomes one
   /// addressed page membership; a stale UI projection never replaces the
   /// catalog or its tree. Selection changes only the current local presence.
+  /// Returns the published page-order root, or nil for a non-notebook, so a
+  /// caller can detect a concurrent append without reading the full catalogue.
   @discardableResult
   public func saveWorkspaceSelection(
     index: WorkspaceIndex,
     createdPage: PageDocument?
-  ) throws -> WorkspaceIndex {
+  ) throws -> String? {
     try commandTransaction {
       try publishPageLanding(index: index, createdPage: createdPage)
-      return index
+      return index.selectedItem.kind == .notebook ? try readPageOrder(index.selectedItemID).visibleRoot : nil
     }
   }
 

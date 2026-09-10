@@ -82,13 +82,13 @@ func collaborationComparableProtectsHumanAdoptedNotebook(stateKey: String) throw
 
   let undone = try f.store.undoCollaborationAction(action.id, actor: f.human)
   let pageRetained = try f.store.hasStoredValue(pageFile(pageID))
-  let itemRetained = try f.store.readWorkspaceItem(itemID) != nil
+  let itemRetained = try f.store.readItemHeader(itemID) != nil
   #expect(itemRetained)
   #expect(pageRetained)
   #expect(undone.undo?.restored == 0)
   #expect(undone.undo?.preserved.count == receipt.changes.count)
   if pageRetained { #expect(try f.store.loadPage(pageID).elements[0].state == state) }
-  if itemRetained { #expect(try f.store.readWorkspaceItem(itemID)?.pageIDs == [pageID]) }
+  if itemRetained { #expect(try f.store.readNotebookPageDirectory(itemID: itemID, limit: 4).pages.map(\.position.pageID) == [pageID]) }
 }
 
 @Test("Квитанция и отмена листа сохраняют все имена во вложенном JSON", arguments: programMetadataNames)
@@ -193,7 +193,7 @@ func collaborationComparableProtectsHumanDocumentInitialState(stateKey: String) 
   #expect(changed)
   _ = try f.store.saveMergedDocument(document)
   let undone = try f.store.undoCollaborationAction(action.id, actor: f.human)
-  #expect(try f.store.readWorkspaceItem(target.id) != nil)
+  #expect(try f.store.readItemHeader(target.id) != nil)
   let retained = try f.store.hasStoredValue(documentFile(target.id))
   #expect(retained)
   #expect(try f.store.hasStoredValue(stateFile(target.id)))

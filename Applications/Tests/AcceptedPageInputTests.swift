@@ -124,9 +124,10 @@ final class AcceptedPageInputTests: XCTestCase {
     let barrier = AcceptedInkPreparationBarrier(arrivals: [entered])
     let (model, root) = await makeModel(barrier: barrier)
     let itemID = try XCTUnwrap(model.activeItem?.id)
-    for index in 1...7 { XCTAssertEqual(model.selectNotebookPage(index, notebookID: itemID), index) }
+    for index in 1...7 { XCTAssertEqual(model.selectNotebookPage(index, notebookID: itemID, expectedRoot: model.notebookPageRoot(itemID) ?? ""), index) }
     var saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
-    XCTAssertEqual(model.selectNotebookPage(0, notebookID: itemID), 0)
+    await model.prepareNotebookPage(at: 0, in: itemID)
+    XCTAssertEqual(model.selectNotebookPage(0, notebookID: itemID, expectedRoot: model.notebookPageRoot(itemID) ?? ""), 0)
     saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
     await model.reloadExternalChanges()?.value
     await model.prepareNotebookPage(at: 0, in: itemID)
@@ -148,8 +149,9 @@ final class AcceptedPageInputTests: XCTestCase {
     paper.touchView.touchesBegan([touch], with: nil)
     XCTAssertEqual(model.pendingPageDrawingReservationCount, 1)
     XCTAssertEqual(model.pendingAcceptedPageInkCount, 0)
-    XCTAssertEqual(model.selectNotebookPage(7, notebookID: itemID), 7)
     await model.prepareNotebookPage(at: 7, in: itemID)
+    XCTAssertEqual(model.selectNotebookPage(7, notebookID: itemID, expectedRoot: model.notebookPageRoot(itemID) ?? ""), 7)
+    await model.prepareNotebookPage(at: 6, in: itemID)
     XCTAssertNil(model.pages[page.id], "The real addressed preparation must evict the old page in this reproduction")
     XCTAssertTrue(paper.touchView.hasActiveAction)
     XCTAssertTrue(model.inputGate.hasActivePencil)
@@ -221,7 +223,7 @@ final class AcceptedPageInputTests: XCTestCase {
     XCTAssertTrue(paper.touchView.onActionWillBegin?() == true)
     coordinator.commit(mutation, on: paper)
     await fulfillment(of: [entered], timeout: 2)
-    XCTAssertEqual(model.selectNotebookPage(1, notebookID: itemID), 1)
+    XCTAssertEqual(model.selectNotebookPage(1, notebookID: itemID, expectedRoot: model.notebookPageRoot(itemID) ?? ""), 1)
     let next = try XCTUnwrap(model.activePage)
     XCTAssertNotEqual(next.id, page.id)
     if detach { coordinator.detach(from: paper) }
@@ -312,7 +314,7 @@ final class AcceptedPageInputTests: XCTestCase {
     }
     await fulfillment(of: [undoStarted], timeout: 2)
     let itemID = try XCTUnwrap(model.activeItem?.id)
-    XCTAssertEqual(model.selectNotebookPage(1, notebookID: itemID), 1)
+    XCTAssertEqual(model.selectNotebookPage(1, notebookID: itemID, expectedRoot: model.notebookPageRoot(itemID) ?? ""), 1)
     XCTAssertNotEqual(model.activePage?.id, page.id)
     await barrier.releaseNext()
     await fulfillment(of: [remove], timeout: 2)
@@ -355,6 +357,7 @@ final class AcceptedPageInputTests: XCTestCase {
     _ = await appendDelivery.value
     let saved = await stop.value
     XCTAssertTrue(saved)
+    XCTAssertLessThanOrEqual(model.pages.count, 4)
     let drawing = try PageInkDrawing.decode(NotebookStore(root: root).loadPage(page.id).drawingData)
     XCTAssertEqual(drawing.actions.map(\.id), [action.id])
     XCTAssertTrue(drawing.activeActions.isEmpty)
@@ -367,9 +370,10 @@ final class AcceptedPageInputTests: XCTestCase {
     let barrier = AcceptedInkPreparationBarrier(arrivals: [append, undo])
     let (model, root) = await makeModel(barrier: barrier)
     let itemID = try XCTUnwrap(model.activeItem?.id)
-    for index in 1...7 { XCTAssertEqual(model.selectNotebookPage(index, notebookID: itemID), index) }
+    for index in 1...7 { XCTAssertEqual(model.selectNotebookPage(index, notebookID: itemID, expectedRoot: model.notebookPageRoot(itemID) ?? ""), index) }
     var saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
-    XCTAssertEqual(model.selectNotebookPage(0, notebookID: itemID), 0)
+    await model.prepareNotebookPage(at: 0, in: itemID)
+    XCTAssertEqual(model.selectNotebookPage(0, notebookID: itemID, expectedRoot: model.notebookPageRoot(itemID) ?? ""), 0)
     saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
     await model.reloadExternalChanges()?.value
     await model.prepareNotebookPage(at: 0, in: itemID)
@@ -381,14 +385,17 @@ final class AcceptedPageInputTests: XCTestCase {
     await fulfillment(of: [append], timeout: 2)
     model.undoLastSurfaceAction()
     XCTAssertEqual(model.pendingAcceptedPageInkCount, 2)
-    XCTAssertEqual(model.selectNotebookPage(7, notebookID: itemID), 7)
     await model.prepareNotebookPage(at: 7, in: itemID)
+    XCTAssertEqual(model.selectNotebookPage(7, notebookID: itemID, expectedRoot: model.notebookPageRoot(itemID) ?? ""), 7)
+    await model.prepareNotebookPage(at: 6, in: itemID)
     XCTAssertNil(model.pages[page.id], "This is actual bounded-workset eviction, not merely a selection change")
     await barrier.releaseNext()
     await fulfillment(of: [undo], timeout: 2)
     await barrier.releaseNext()
     _ = await appendDelivery.value
     saved = await model.finishPendingInteraction(); XCTAssertTrue(saved)
+    XCTAssertLessThanOrEqual(model.pages.count, 4)
+    XCTAssertNil(model.pages[page.id], "Finishing an offscreen input does not enlarge the scene's read window")
     let drawing = try PageInkDrawing.decode(NotebookStore(root: root).loadPage(page.id).drawingData)
     XCTAssertEqual(drawing.actions.map(\.id), [action.id])
     XCTAssertTrue(drawing.activeActions.isEmpty)
@@ -464,6 +471,7 @@ final class AcceptedPageInputTests: XCTestCase {
     await barrier.releaseNext()
     _ = await delivery.value
     let saved = await drain.value; XCTAssertTrue(saved)
+    XCTAssertLessThanOrEqual(model.pages.count, 4)
     let drawing = try PageInkDrawing.decode(NotebookStore(root: root).loadPage(page.id).drawingData)
     XCTAssertEqual(drawing.actions.map(\.id), [action.id])
     XCTAssertTrue(drawing.activeActions.isEmpty)
@@ -486,6 +494,7 @@ final class AcceptedPageInputTests: XCTestCase {
     model.inputGate.endPencilAction(source: pencil)
     let accepted = await model.acceptDrawingUndo().value; XCTAssertNotNil(accepted)
     let saved = await model.finishPendingInteraction(); XCTAssertTrue(saved)
+    XCTAssertLessThanOrEqual(model.pages.count, 4)
     let drawing = try PageInkDrawing.decode(NotebookStore(root: root).loadPage(page.id).drawingData)
     XCTAssertEqual(drawing.actions.map(\.id), [action.id])
     XCTAssertTrue(drawing.activeActions.isEmpty)

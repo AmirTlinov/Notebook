@@ -158,7 +158,7 @@ struct NotebookIPCTests {
     defer { if drained { endpoint.remove() } }
     let store = NotebookStore(root: endpoint.directory.appendingPathComponent("store")), actor = UUID()
     _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 100, height: 140))
-    let pageID = try #require(store.readWorkspaceItems(limit: 1).first?.pageIDs.first)
+    let pageID = try #require(store.readItemHeaders(limit: 1).first?.firstPageID)
     let page = try store.loadPage(pageID)
     let gate = IPCHandlerGate(), calls = IPCCount(), acknowledgements = IPCCount()
     let server = NotebookIPCServer(socketURL: endpoint.socket) { _ in

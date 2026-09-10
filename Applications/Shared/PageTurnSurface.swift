@@ -164,6 +164,7 @@ struct PageTurnSurface: View {
   @Environment(\.rendersSettledPageSnapshot) private var rendersSettledSnapshot
 
   let ownerID: UUID
+  let sequenceRevision: String
   let pageCount: Int
   let selectedIndex: Int
   let allowsTrailingPageCreation: Bool
@@ -176,7 +177,7 @@ struct PageTurnSurface: View {
       _ isCurrent: Bool,
       _ readiness: PageTurnReadiness
     ) -> AnyView
-  let onCommit: @MainActor (Int) -> Void
+  let onCommit: @MainActor (Int, String) -> Void
   let onTransitioningChange: @MainActor (Bool) -> Void
 
   var body: some View {
@@ -196,6 +197,7 @@ struct PageTurnSurface: View {
       } else {
         PlatformPageTurnSurface(
           ownerID: ownerID,
+          sequenceRevision: sequenceRevision,
           pageCount: max(1, pageCount),
           selectedIndex: clampedSelectedIndex,
           allowsTrailingPageCreation: allowsTrailingPageCreation,
@@ -221,6 +223,7 @@ struct PageTurnSurface: View {
 #if os(iOS)
   private struct PlatformPageTurnSurface: UIViewControllerRepresentable {
     let ownerID: UUID
+    let sequenceRevision: String
     let pageCount: Int
     let selectedIndex: Int
     let allowsTrailingPageCreation: Bool
@@ -233,7 +236,7 @@ struct PageTurnSurface: View {
         Bool,
         PageTurnReadiness
       ) -> AnyView
-    let onCommit: @MainActor (Int) -> Void
+    let onCommit: @MainActor (Int, String) -> Void
     let onTransitioningChange: @MainActor (Bool) -> Void
 
     func makeUIViewController(context: Context) -> IPadPageTurnController {
@@ -252,6 +255,7 @@ struct PageTurnSurface: View {
     private func update(_ controller: IPadPageTurnController) {
       controller.update(
         ownerID: ownerID,
+        sequenceRevision: sequenceRevision,
         pageCount: pageCount,
         selectedIndex: selectedIndex,
         allowsTrailingPageCreation: allowsTrailingPageCreation,

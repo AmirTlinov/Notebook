@@ -46,18 +46,6 @@ extension NotebookStore {
     return try workspaceHeader()
   }
 
-  public func readWorkspaceItems(after id: UUID? = nil, limit: Int = 128) throws -> [WorkspaceItem] {
-    guard (1...256).contains(limit) else { throw NotebookStorageError.limitExceeded("catalog_page") }
-    return try readTransaction { _ in
-      let ids = try currentSQL!.rows("SELECT member FROM records WHERE parent='workspace.json#' AND collection='items' AND member>? ORDER BY member LIMIT ?", [.text(id?.uuidString.lowercased() ?? ""), .integer(Int64(limit))]).compactMap { $0[0].text }
-      return try ids.compactMap { try storedMember(file: "workspace.json", collection: "items", id: $0)?.decode(WorkspaceItem.self) }
-    }
-  }
-
-  public func readWorkspaceItem(_ id: UUID) throws -> WorkspaceItem? {
-    try storedMember(file: "workspace.json", collection: "items", id: id.uuidString)?.decode(WorkspaceItem.self)
-  }
-
   public func pageID(at index: Int, in itemID: UUID) throws -> UUID? {
     guard index >= 0 else { throw NotebookStorageError.invalidTransaction("negative page index") }
     return try sqlRead { database in
@@ -96,7 +84,7 @@ extension NotebookStore {
     guard itemIDs.count + boardIDs.count <= 8, pageIDs.count <= 4,
       Set(itemIDs).count == itemIDs.count, Set(pageIDs).count == pageIDs.count, Set(boardIDs).count == boardIDs.count else { throw NotebookStorageError.limitExceeded("working_set") }
     return try readTransaction { _ in
-      let items = try itemIDs.compactMap(readWorkspaceItem)
+      let items = try itemIDs.compactMap { try readItemHeader($0) }
       var pages: [UUID: PageDocument] = [:], documents: [UUID: DocumentDocument] = [:], states: [UUID: DocumentStateJournal] = [:]
       for id in pageIDs where try hasStoredValue(pageFile(id)) { pages[id] = try loadPage(id) }
       for item in items where item.kind == .document {
@@ -343,11 +331,27 @@ extension NotebookStore {
 extension NotebookStore {
   public func readItemHeader(_ id: UUID) throws -> NotebookItemHeader? {
     try readTransaction { _ in
-      guard let fragment = try storedFragments(address: "workspace.json#/items/@" + id.uuidString.lowercased(), descendants: false).first,
-        let kind = fragment.value["kind"]?.string.flatMap(WorkspaceItemKind.init(rawValue:)), let title = fragment.value["title"]?.string else { return nil }
+      guard let fragment = try storedFragments(address: "workspace.json#/items/@" + id.uuidString.lowercased(), descendants: false).first else { return nil }
+      guard fragment.value["id"]?.string.flatMap(UUID.init(uuidString:)) == id,
+        let kind = fragment.value["kind"]?.string.flatMap(WorkspaceItemKind.init(rawValue:)), let title = fragment.value["title"]?.string,
+        title.utf16.count <= WorkspaceIndex.maximumTitleLength else { throw NotebookStorageError.corruptRecord("item header") }
       let first = try pageID(at: 0, in: id), count = try pageCount(in: id)
-      guard kind != .notebook || (first != nil && count > 0) else { throw NotebookStorageError.corruptRecord("notebook page header") }
+      guard kind == .notebook ? (first != nil && count > 0) : (first == nil && count == 0) else { throw NotebookStorageError.corruptRecord("notebook page header") }
       return .init(id: id, kind: kind, title: title, firstPageID: first, pageCount: count)
+    }
+  }
+
+  public func readItemHeaders(after id: UUID? = nil, limit: Int = 128) throws -> [NotebookItemHeader] {
+    guard (1...256).contains(limit) else { throw NotebookStorageError.limitExceeded("catalog_headers") }
+    return try readTransaction { _ in
+      let ids = try currentSQL!.rows("SELECT member FROM records WHERE parent='workspace.json#' AND collection='items' AND member>? ORDER BY member LIMIT ?",
+        [.text(id?.uuidString.lowercased() ?? ""), .integer(Int64(limit))])
+      return try ids.map { row in
+        guard let id = row[0].text.flatMap(UUID.init(uuidString:)), let header = try readItemHeader(id) else {
+          throw NotebookStorageError.corruptRecord("item header")
+        }
+        return header
+      }
     }
   }
 
@@ -376,8 +380,15 @@ extension NotebookStore {
     guard !items.isEmpty, items.count <= 4096, Set(items.map(\.id)).count == items.count else { throw NotebookStorageError.limitExceeded("workspace_projection") }
     return try readTransaction { _ in
       guard let root = try storedFragments(address: "workspace.json#", descendants: false).first else { throw CocoaError(.fileNoSuchFile) }
+      // The projection carries only the fields of the represented members.
+      // A prefix read would silently decode every page's birth version.
+      let keys = ["items/order"] + items.flatMap { item in
+        let prefix = "items/" + item.id.uuidString.lowercased() + "/"
+        return ["exists", "kind", "title", "pageIDs"].map { prefix + $0 }
+          + item.pageIDs.map { prefix + "pageIDs/" + $0.uuidString.lowercased() }
+      }
       let fields = try causalFragments(parent: root.address, collection: "collaboration/fields",
-        memberPrefixes: items.map { "items/" + $0.id.uuidString.lowercased() + "/" }, includeKeys: ["items/order"])
+        memberPrefixes: [], includeKeys: keys)
       var value = try NotebookRecordCodec.decode([root] + fields, root: root.address)
       var orders: [String: NotebookPageOrderRegister] = [:], nodes: [String: NotebookPageOrderNode] = [:]
       for item in items where item.kind == .notebook {

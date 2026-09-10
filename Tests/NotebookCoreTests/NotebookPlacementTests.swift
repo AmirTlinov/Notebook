@@ -8,13 +8,13 @@ struct NotebookPlacementTests {
     let store: NotebookStore
     let actor = UUID()
     let header: NotebookWorkspaceHeader
-    let item: WorkspaceItem
+    let item: NotebookItemHeader
     var board: CollaborationTarget { .init(kind: .board, id: header.rootBoardID) }
 
     init() throws {
       store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent("notebook-placement-" + UUID().uuidString))
       header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
-      item = try #require(store.readWorkspaceItems(limit: 1).first)
+      item = try #require(store.readItemHeaders(limit: 1).first)
     }
     func clean() { try? FileManager.default.removeItem(at: store.root) }
     func request(target: CollaborationTarget? = nil, origin: WorldPoint? = .init(x: 3000, y: 3000),
@@ -255,7 +255,7 @@ struct NotebookPlacementTests {
 
   @Test func aSourceByteLimitIsCheckedBeforeRehydrationAndCancellationDoesNotEnqueue() async throws {
     let f = try Fixture(); defer { f.clean() }
-    let target = CollaborationTarget(kind: .page, id: f.item.pageIDs[0]), request = try f.request(target: target)
+    let target = CollaborationTarget(kind: .page, id: try #require(f.item.firstPageID)), request = try f.request(target: target)
     let file = "pages/" + target.id.uuidString.lowercased() + ".json"
     let address = file + "#/drawingData"
     try f.store.commandTransaction {

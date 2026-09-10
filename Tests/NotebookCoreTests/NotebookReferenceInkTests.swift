@@ -19,7 +19,7 @@ struct NotebookReferenceInkTests {
 
   @Test func finishedPenEraseAndUndoRebaseWithoutWaitingForANewCohort() throws {
     try fixture { store, actor, header in
-      let item = try #require(try store.readWorkspaceItems(limit: 1).first)
+      let item = try #require(try store.readItemHeaders(limit: 1).first)
       let targets = [CollaborationTarget(kind: .board, id: header.rootBoardID),
         .init(kind: .cover, id: item.id, boardID: header.rootBoardID)]
       let surfaces = [SurfaceID.board(header.rootBoardID), .cover(item.id)]
@@ -84,7 +84,7 @@ struct NotebookReferenceInkTests {
       #expect(try identity.revision == store.referenceRevision(target: target))
       let reference = CollaborationReference(target: target, region: .init(x: 0, y: 0, width: 10, height: 10),
         worldOrigin: .zero, revision: identity.revision, label: "Captured")
-      let item = try #require(try store.readWorkspaceItems(limit: 1).first)
+      let item = try #require(try store.readItemHeaders(limit: 1).first)
       #expect(try store.moveWorkspaceItem(itemID: item.id, in: header.rootBoardID, to: .init(x: 150, y: 0), actor: actor))
       #expect(throws: CollaborationError.self) {
         try store.appendContext(references: [reference], author: .human, actor: actor, select: true, sourceWorkspaceID: header.workspaceID)

@@ -15,7 +15,7 @@ private final class CoordinatorFixture {
     let a = arguments
     store = NotebookStore(root: URL(fileURLWithPath: a[2]).appendingPathComponent("archive"))
     _ = try store.initializeWorkspace(actor: human, pageSize: .init(width: 834, height: 1194))
-    guard let pageID = try store.readWorkspaceItems(limit: 1).first?.pageIDs.first else { throw NotebookAgentFailure.invalidRequest }
+    guard let pageID = try store.readItemHeaders(limit: 1).first?.firstPageID else { throw NotebookAgentFailure.invalidRequest }
     target = .init(kind: .page, id: pageID)
     var page = try store.loadPage(pageID)
     _ = page.replaceElements([

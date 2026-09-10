@@ -167,7 +167,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
   }
 
   public var selectedPageIndex: Int? {
-    guard let selectedPageID else { return nil }
+    guard !isProjection, let selectedPageID else { return nil }
     return selectedItem.pageIDs.firstIndex(of: selectedPageID)
   }
 
@@ -342,7 +342,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     actor: UUID,
     pageSize: PageSize
   ) -> WorkspacePageSelection? {
-    guard pageIndex >= 0,
+    guard !isProjection, pageIndex >= 0,
       selectedItemID == itemID,
       selectedItem.kind == .notebook,
       let selectedPageID
@@ -352,8 +352,7 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
       of: selectedPageID
     ),
       pageIndex != currentIndex,
-      pageIndex <= items[itemIndex].pageIDs.count,
-      let nextStamp = stamp.advanced(by: actor)
+      pageIndex <= items[itemIndex].pageIDs.count
     else { return nil }
 
     if pageIndex < items[itemIndex].pageIDs.count {
@@ -367,8 +366,51 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
       )
     }
 
+    return appendPage(in: itemID, actor: actor, pageSize: pageSize)
+  }
+
+  /// A projection carries the immutable root and right branch, not all slots.
+  /// Appending uses that root's count; its finite pageIDs are never an index.
+  public func notebookPageOrder(in itemID: UUID) -> (root: String, count: Int)? {
+    guard let order = pageOrders[itemID.uuidString.lowercased()],
+      let root = pageOrderNodes[order.visibleRoot] else { return nil }
+    return (order.visibleRoot, root.count)
+  }
+
+  /// Drop prepared read members, never canonical membership. Captured writes
+  /// retain their own value, including the new page's birth and append branch.
+  public mutating func retainPageProjection(_ retained: Set<UUID>) throws {
+    guard isProjection else { return }
+    var nodes: [String: NotebookPageOrderNode] = [:]
+    for order in pageOrders.values {
+      // Every projection is prepared with these paths before publication.
+      let spine = try NotebookPageOrderVector.rightSpine(order.visibleRoot, read: { hash in
+        guard let node = pageOrderNodes[hash] else { throw NotebookStorageError.blobMissing(hash) }
+        return node
+      })
+      nodes.merge(spine) { existing, _ in existing }
+    }
+    var pageFields = Set<String>()
+    for index in items.indices {
+      let first = items[index].pageIDs.first
+      items[index].pageIDs.removeAll { $0 != first && $0 != selectedPageID && !retained.contains($0) }
+      for id in items[index].pageIDs { pageFields.insert(Self.pageField(items[index].id, id)) }
+    }
+    collaboration = .init(fields: collaboration.fields.filter { key, _ in
+      let parts = key.split(separator: "/")
+      return parts.count != 4 || parts[0] != "items" || parts[2] != "pageIDs" || pageFields.contains(key)
+    })
+    pageOrderNodes = nodes
+  }
+
+  @discardableResult
+  public mutating func appendPage(in itemID: UUID, actor: UUID, pageSize: PageSize) -> WorkspacePageSelection? {
+    guard selectedItemID == itemID, selectedItem.kind == .notebook,
+      let nextStamp = stamp.advanced(by: actor),
+      let oldOrder = pageOrders[itemID.uuidString.lowercased()],
+      let pageIndex = pageOrderNodes[oldOrder.visibleRoot]?.count else { return nil }
+    let itemIndex = selectedItemIndex
     let page = PageDocument(size: pageSize, actor: actor)
-    guard let oldOrder = pageOrders[itemID.uuidString.lowercased()] else { return nil }
     var addedNodes: [String: NotebookPageOrderNode] = [:]
     let nextOrder: NotebookPageOrderRegister
     do {

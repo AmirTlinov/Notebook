@@ -176,7 +176,7 @@ final class WorkspaceSceneIndexTests: XCTestCase {
       "A durably deleted owner cannot be displayed while an unrelated contact delays scene publication")
     XCTAssertNotNil(model.itemForDisplay(id: itemID))
     for target in 1...3 {
-      XCTAssertEqual(model.selectNotebookPage(target, notebookID: itemID), target)
+      XCTAssertEqual(model.selectNotebookPage(target, notebookID: itemID, expectedRoot: model.notebookPageRoot(itemID) ?? ""), target)
       let current = try XCTUnwrap(model.itemForDisplay(id: itemID))
       XCTAssertEqual(current.pageIDs.count, target + 1)
       XCTAssertEqual(current.pageIDs[target], model.workspace?.selectedPageID,

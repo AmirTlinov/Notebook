@@ -36,6 +36,7 @@ final class IPadPageTurnController: UIViewController,
   private var retiredControllers: [Int: WeakIPadPageController] = [:]
   private var readyPages: [Int: Bool] = [:]
   private var ownerID: UUID?
+  private var sequenceRevision = ""
   private var pageCount = 1
   private var selectedIndex = 0
   private var selection = PageTurnSelectionTracker(displayedIndex: 0)
@@ -52,7 +53,7 @@ final class IPadPageTurnController: UIViewController,
       readiness(true)
       return AnyView(EmptyView())
     }
-  private var onCommit: @MainActor (Int) -> Void = { _ in }
+  private var onCommit: @MainActor (Int, String) -> Void = { _, _ in }
   private var onTransitioningChange: @MainActor (Bool) -> Void = { _ in }
 
   private var hasInstalledPage = false
@@ -101,6 +102,7 @@ final class IPadPageTurnController: UIViewController,
 
   func update(
     ownerID: UUID,
+    sequenceRevision: String,
     pageCount: Int,
     selectedIndex: Int,
     allowsTrailingPageCreation: Bool = false,
@@ -113,13 +115,14 @@ final class IPadPageTurnController: UIViewController,
         Bool,
         PageTurnReadiness
       ) -> AnyView,
-    onCommit: @escaping @MainActor (Int) -> Void,
+    onCommit: @escaping @MainActor (Int, String) -> Void,
     onTransitioningChange: @escaping @MainActor (Bool) -> Void
   ) {
-    let ownerChanged = self.ownerID != ownerID
+    let ownerChanged = self.ownerID != ownerID || self.sequenceRevision != sequenceRevision
     let previousSelectedIndex = self.selectedIndex
     let awaitedLocalAcknowledgement = selection.awaitsLocalAcknowledgement
     self.ownerID = ownerID
+    self.sequenceRevision = sequenceRevision
     self.allowsTrailingPageCreation = allowsTrailingPageCreation
     let reportedPageCount = max(1, pageCount)
     self.pageCount =
@@ -168,7 +171,8 @@ final class IPadPageTurnController: UIViewController,
     viewControllerBefore viewController: UIViewController
   ) -> UIViewController? {
     guard navigationIsEnabled,
-      let current = viewController as? IPadIndexedPageController
+      let current = viewController as? IPadIndexedPageController,
+      controllers[current.pageIndex] === current
     else { return nil }
     return preparedController(at: current.pageIndex - 1)
   }
@@ -178,7 +182,8 @@ final class IPadPageTurnController: UIViewController,
     viewControllerAfter viewController: UIViewController
   ) -> UIViewController? {
     guard navigationIsEnabled,
-      let current = viewController as? IPadIndexedPageController
+      let current = viewController as? IPadIndexedPageController,
+      controllers[current.pageIndex] === current
     else { return nil }
     return preparedController(at: current.pageIndex + 1)
   }
@@ -212,6 +217,11 @@ final class IPadPageTurnController: UIViewController,
     previousViewControllers: [UIViewController],
     transitionCompleted completed: Bool
   ) {
+    guard previousViewControllers.allSatisfy({ old in
+      guard let old = old as? IPadIndexedPageController else { return false }
+      return controllers[old.pageIndex] === old
+    }), let shown = pageViewController.viewControllers?.first as? IPadIndexedPageController,
+      controllers[shown.pageIndex] === shown else { return }
     if completed,
       let visible = pageViewController.viewControllers?.first
         as? IPadIndexedPageController
@@ -244,7 +254,7 @@ final class IPadPageTurnController: UIViewController,
     refreshControllerState()
 
     if completed, displayedIndex != selectedIndex {
-      onCommit(displayedIndex)
+      onCommit(displayedIndex, sequenceRevision)
     }
     runPendingExternalSelection()
   }
@@ -511,7 +521,7 @@ final class IPadPageTurnController: UIViewController,
     retainNeededControllers()
     refreshRenderedPages()
     refreshControllerState()
-    if confirmsSelection { onCommit(target) }
+    if confirmsSelection { onCommit(target, sequenceRevision) }
     runPendingExternalSelection()
   }
 

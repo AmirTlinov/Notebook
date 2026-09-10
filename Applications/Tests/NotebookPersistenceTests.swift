@@ -171,7 +171,7 @@ final class NotebookPersistenceTests: XCTestCase {
     XCTAssertGreaterThan(try XCTUnwrap(model.workspace?.stamp.counter), counter,
       "A suspended deletion reserves its clock before another human command")
     XCTAssertTrue(model.isItemBeingDeleted(first))
-    XCTAssertNil(model.selectNotebookPage(1, notebookID: first),
+    XCTAssertNil(model.selectNotebookPage(1, notebookID: first, expectedRoot: model.notebookPageRoot(first) ?? ""),
       "A deleted notebook cannot accept a new page behind its deletion fence")
     XCTAssertNil(model.reserveDrawingAction(pageID: firstPage))
     model.selectItem(third)
@@ -254,7 +254,7 @@ final class NotebookPersistenceTests: XCTestCase {
     let lock = try NotebookSQLWriteBlocker(store: model.store)
     defer { try? lock.release() }
     let item = try XCTUnwrap(model.workspace?.selectedItemID)
-    XCTAssertEqual(model.selectNotebookPage(1, notebookID: item), 1)
+    XCTAssertEqual(model.selectNotebookPage(1, notebookID: item, expectedRoot: model.notebookPageRoot(item) ?? ""), 1)
     let pageID = try XCTUnwrap(model.activePage?.id)
     let stamp = try XCTUnwrap(model.reserveDrawingAction(pageID: pageID))
     let action = PageInkAction(tool: .pen, samples: [

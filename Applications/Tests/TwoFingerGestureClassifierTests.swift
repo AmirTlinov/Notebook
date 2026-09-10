@@ -63,13 +63,14 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
       }
     controller.update(
       ownerID: ownerID,
+      sequenceRevision: "fixture-order",
       pageCount: 5,
       selectedIndex: 1,
       navigationIsEnabled: true,
       pageIsInteractive: true,
       canBeginNavigation: { true },
       page: renderPage,
-      onCommit: { _ in },
+      onCommit: { _, _ in },
       onTransitioningChange: { _ in }
     )
     controller.loadViewIfNeeded()
@@ -106,6 +107,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
       }
     controller.update(
       ownerID: ownerID,
+      sequenceRevision: "fixture-order",
       pageCount: 2,
       selectedIndex: 0,
       allowsTrailingPageCreation: true,
@@ -113,7 +115,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
       pageIsInteractive: true,
       canBeginNavigation: { true },
       page: renderPage,
-      onCommit: { _ in },
+      onCommit: { _, _ in },
       onTransitioningChange: { _ in }
     )
     controller.loadViewIfNeeded()
@@ -154,6 +156,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
     let ownerID = UUID()
     controller.update(
       ownerID: ownerID,
+      sequenceRevision: "fixture-order",
       pageCount: 2,
       selectedIndex: 0,
       navigationIsEnabled: true,
@@ -163,7 +166,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
         readiness(true)
         return AnyView(Text("Page \(index)"))
       },
-      onCommit: { _ in },
+      onCommit: { _, _ in },
       onTransitioningChange: { _ in }
     )
     controller.loadViewIfNeeded()
@@ -174,6 +177,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
 
     controller.update(
       ownerID: ownerID,
+      sequenceRevision: "fixture-order",
       pageCount: 2,
       selectedIndex: 1,
       navigationIsEnabled: true,
@@ -183,7 +187,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
         readiness(true)
         return AnyView(Text("Page \(index)"))
       },
-      onCommit: { _ in },
+      onCommit: { _, _ in },
       onTransitioningChange: { _ in }
     )
     try? await Task.sleep(for: .milliseconds(650))
@@ -208,13 +212,14 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
       }
     controller.update(
       ownerID: ownerID,
+      sequenceRevision: "fixture-order",
       pageCount: 3,
       selectedIndex: 1,
       navigationIsEnabled: true,
       pageIsInteractive: true,
       canBeginNavigation: { true },
       page: renderPage,
-      onCommit: { _ in },
+      onCommit: { _, _ in },
       onTransitioningChange: { _ in }
     )
     controller.loadViewIfNeeded()
@@ -234,13 +239,14 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
     // candidate for a page curl. The outer container must not adopt it again.
     controller.update(
       ownerID: ownerID,
+      sequenceRevision: "fixture-order",
       pageCount: 3,
       selectedIndex: 1,
       navigationIsEnabled: true,
       pageIsInteractive: true,
       canBeginNavigation: { true },
       page: renderPage,
-      onCommit: { _ in },
+      onCommit: { _, _ in },
       onTransitioningChange: { _ in }
     )
 

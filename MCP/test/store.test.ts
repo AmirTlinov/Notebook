@@ -169,3 +169,40 @@ test("a rich cover is read in bounded physical paint pages and stale cursors fai
       error=>error instanceof BridgeError && error.detail.code==="read_conflict");
   });
 });
+
+test("notebook header, directory and page windows share exact UUID/root ownership",async()=>{
+  await withStore(async(store,root)=>{
+    const added=await fixtureControl<string[]>(root,"appendPages",8);
+    const item=await store.readItem(itemID);
+    assert.equal(item?.pageCount,9);
+    assert.equal(item?.firstPageID?.toLowerCase(),pageID);
+    assert.equal(Object.hasOwn(item!,"pageIDs"),false,"The wire never presents a partial array as canonical membership");
+    const first=await store.readNotebookDirectory(itemID,0,4);
+    assert.deepEqual(first.pages.map(page=>page.position.pageID.toLowerCase()),[pageID,...added.slice(0,3).map(id=>id.toLowerCase())]);
+    assert.equal(first.nextIndex,4);
+    assert.equal(first.header.selectedPageIndex,8);
+    assert.match(first.header.readCursor,/^\d+$/);
+    const second=await store.readNotebookDirectory(itemID,4,4,first.header.visibleRoot);
+    const last=await store.readNotebookDirectory(itemID,second.nextIndex!,4,first.header.visibleRoot);
+    assert.equal(last.pages.length,1);assert.equal(last.nextIndex,undefined);
+    const window=await store.readNotebookPages(itemID,[{kind:"selection"},{kind:"index",index:0}]);
+    assert.deepEqual(window.pages.map(page=>page.position.index),[8,0]);
+    assert.equal(window.pages[0]?.document.id,added[7]);
+    assert.equal(window.pages[0]?.position.readCursor,window.header.readCursor);
+    assert.equal((await store.readNotebookPage(itemID)).id,added[7]);
+    assert.equal((await store.readNotebookPage(itemID,5)).id,added[3]);
+    assert.equal((await store.readNotebookPosition(added[3]!,itemID))?.index,4);
+    assert.equal(await store.readNotebookPosition(randomUUID()),null);
+    await assert.rejects(store.readNotebookPages(itemID,[{kind:"index",index:0},{kind:"page",id:pageID}]));
+    await assert.rejects(store.command({command:"read",queries:[
+      {kind:"notebookPages",id:itemID,pages:[{kind:"index",index:0},{kind:"index",index:1},{kind:"index",index:2}]},
+      {kind:"notebookPages",id:itemID,pages:[{kind:"index",index:3},{kind:"index",index:4}]},
+    ]}),error=>error instanceof BridgeError&&error.detail.code==="resource_limit");
+    await fixtureControl(root,"appendPages",1);
+    await assert.rejects(store.readNotebookDirectory(itemID,4,4,first.header.visibleRoot),
+      error=>error instanceof BridgeError&&error.detail.code==="read_conflict");
+    for(const kind of ["workspaceItems","workspaceItem","pageAtIndex","pageCount"]){
+      await assert.rejects(store.read({kind,id:itemID}),error=>error instanceof BridgeError&&error.detail.code==="invalid_command");
+    }
+  });
+});

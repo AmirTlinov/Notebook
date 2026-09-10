@@ -9,7 +9,7 @@ struct NotebookReferenceIndexTests {
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), actor = UUID()
     let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
-    let item = try #require(try store.readWorkspaceItems(limit: 1).first)
+    let item = try #require(try store.readItemHeaders(limit: 1).first)
     let targets = [CollaborationTarget(kind: .board, id: header.rootBoardID), .init(kind: .cover, id: item.id, boardID: header.rootBoardID)]
     let complete = try store.collaborationSnapshot()
     for target in targets {
@@ -36,8 +36,8 @@ struct NotebookReferenceIndexTests {
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), actor = UUID()
     let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
-    let item = try #require(try store.readWorkspaceItems(limit: 1).first), target = CollaborationTarget(kind: .cover, id: item.id, boardID: header.rootBoardID)
-    let before = try store.loadBoard(items: [item])
+    let item = try #require(try store.readItemHeaders(limit: 1).first), target = CollaborationTarget(kind: .cover, id: item.id, boardID: header.rootBoardID)
+    let before = try store.loadBoard(items: [item.item])
     var after = before
     let ids = (0..<40).map { "element-" + String(format: "%03d", $0) }
     for id in ids {

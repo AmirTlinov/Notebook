@@ -47,6 +47,7 @@ public struct CollaborativeContent: Codable, Equatable, Sendable {
   public private(set) var fields: [String: ContentFieldVersion] = [:]
 
   public init() {}
+  init(fields: [String: ContentFieldVersion]) { self.fields = fields }
 
   mutating func recordField(_ key: String, stamp: VersionStamp, human: Bool) {
     fields[key] = .init(stamp: stamp, human: human, previous: fields[key])

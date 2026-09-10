@@ -8,12 +8,60 @@ public struct NotebookPagePosition: Codable, Equatable, Sendable {
   public let index: Int
   public let visibleRoot: String
   public let readCursor: UInt64
+
+  private enum Keys: String, CodingKey { case itemID, pageID, index, visibleRoot, readCursor }
+  init(itemID: UUID, pageID: UUID, index: Int, visibleRoot: String, readCursor: UInt64) {
+    self.itemID = itemID
+    self.pageID = pageID
+    self.index = index
+    self.visibleRoot = visibleRoot
+    self.readCursor = readCursor
+  }
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: Keys.self)
+    itemID = try values.decode(UUID.self, forKey: .itemID)
+    pageID = try values.decode(UUID.self, forKey: .pageID)
+    index = try values.decode(Int.self, forKey: .index)
+    visibleRoot = try values.decode(String.self, forKey: .visibleRoot)
+    let cursor = try values.decode(String.self, forKey: .readCursor)
+    guard let exact = UInt64(cursor), String(exact) == cursor else {
+      throw DecodingError.dataCorruptedError(forKey: .readCursor, in: values, debugDescription: "Expected an exact decimal read cursor")
+    }
+    readCursor = exact
+  }
+  public func encode(to encoder: Encoder) throws {
+    var values = encoder.container(keyedBy: Keys.self)
+    try values.encode(itemID, forKey: .itemID)
+    try values.encode(pageID, forKey: .pageID)
+    try values.encode(index, forKey: .index)
+    try values.encode(visibleRoot, forKey: .visibleRoot)
+    try values.encode(String(readCursor), forKey: .readCursor)
+  }
 }
 
 public enum NotebookPageReadTarget: Codable, Equatable, Sendable {
   case index(Int)
   case page(UUID)
   case selection
+
+  private enum Keys: String, CodingKey { case kind, index, id }
+  private enum Kind: String, Codable { case index, page, selection }
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: Keys.self)
+    switch try values.decode(Kind.self, forKey: .kind) {
+    case .index: self = .index(try values.decode(Int.self, forKey: .index))
+    case .page: self = .page(try values.decode(UUID.self, forKey: .id))
+    case .selection: self = .selection
+    }
+  }
+  public func encode(to encoder: Encoder) throws {
+    var values = encoder.container(keyedBy: Keys.self)
+    switch self {
+    case .index(let index): try values.encode(Kind.index, forKey: .kind); try values.encode(index, forKey: .index)
+    case .page(let id): try values.encode(Kind.page, forKey: .kind); try values.encode(id, forKey: .id)
+    case .selection: try values.encode(Kind.selection, forKey: .kind)
+    }
+  }
 }
 
 /// A read projection only. Selection still belongs to SessionPresence; a
@@ -25,6 +73,38 @@ public struct NotebookPageWindowHeader: Codable, Equatable, Sendable {
   public let readCursor: UInt64
   public let selectedPageID: UUID?
   public let selectedPageIndex: Int?
+
+  private enum Keys: String, CodingKey { case workspaceID, item, visibleRoot, readCursor, selectedPageID, selectedPageIndex }
+  init(workspaceID: UUID, item: NotebookItemHeader, visibleRoot: String, readCursor: UInt64, selectedPageID: UUID?, selectedPageIndex: Int?) {
+    self.workspaceID = workspaceID
+    self.item = item
+    self.visibleRoot = visibleRoot
+    self.readCursor = readCursor
+    self.selectedPageID = selectedPageID
+    self.selectedPageIndex = selectedPageIndex
+  }
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: Keys.self)
+    workspaceID = try values.decode(UUID.self, forKey: .workspaceID)
+    item = try values.decode(NotebookItemHeader.self, forKey: .item)
+    visibleRoot = try values.decode(String.self, forKey: .visibleRoot)
+    let cursor = try values.decode(String.self, forKey: .readCursor)
+    guard let exact = UInt64(cursor), String(exact) == cursor else {
+      throw DecodingError.dataCorruptedError(forKey: .readCursor, in: values, debugDescription: "Expected an exact decimal read cursor")
+    }
+    readCursor = exact
+    selectedPageID = try values.decodeIfPresent(UUID.self, forKey: .selectedPageID)
+    selectedPageIndex = try values.decodeIfPresent(Int.self, forKey: .selectedPageIndex)
+  }
+  public func encode(to encoder: Encoder) throws {
+    var values = encoder.container(keyedBy: Keys.self)
+    try values.encode(workspaceID, forKey: .workspaceID)
+    try values.encode(item, forKey: .item)
+    try values.encode(visibleRoot, forKey: .visibleRoot)
+    try values.encode(String(readCursor), forKey: .readCursor)
+    try values.encodeIfPresent(selectedPageID, forKey: .selectedPageID)
+    try values.encodeIfPresent(selectedPageIndex, forKey: .selectedPageIndex)
+  }
 }
 
 public struct NotebookPageWindowEntry: Codable, Equatable, Sendable {

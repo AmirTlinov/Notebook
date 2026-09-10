@@ -7,6 +7,7 @@ struct NotebookSceneState: Sendable {
   let header: NotebookWorkspaceHeader
   let workspace: WorkspaceIndex
   let pages: [UUID: PageDocument]
+  let pagePositions: [NotebookPagePosition]
   let documents: [UUID: DocumentDocument]
   let states: [UUID: DocumentStateJournal]
   let drafts: [DocumentEditingSession]
@@ -15,7 +16,6 @@ struct NotebookSceneState: Sendable {
   let inkSurfaces: Set<SurfaceID>
   let presence: SessionPresence
   let paperSizes: [UUID: DocumentPaperSize]
-  let pageCounts: [UUID: Int]
   let coverage: [UUID: WorkspaceSpatialBounds]
   let truncatedBoards: Set<UUID>
   let missingPinnedElements: Set<String>
@@ -36,7 +36,10 @@ struct NotebookSceneState: Sendable {
       height: (presence.viewport.y + margin * 2) / presence.camera.scale)
   }
 
-  static func read(store: NotebookStore, presence requested: SessionPresence?, viewport: SpatialPoint, loadsLiveContent: Bool = true, pinnedElements: [UUID: [String]] = [:], pinnedItems: [UUID: [UUID]] = [:]) throws -> Self {
+  static func read(store: NotebookStore, presence requested: SessionPresence?, viewport: SpatialPoint, loadsLiveContent: Bool = true, pinnedElements: [UUID: [String]] = [:], pinnedItems: [UUID: [UUID]] = [:], preparedPages: [UUID] = []) throws -> Self {
+    guard preparedPages.count <= 4, Set(preparedPages).count == preparedPages.count else {
+      throw NotebookStorageError.limitExceeded("scene_page_pins")
+    }
     let requestedItems = pinnedItems.values.flatMap { $0 }
     guard requestedItems.count <= 7, Set(requestedItems).count == requestedItems.count else {
       throw NotebookStorageError.limitExceeded("scene_item_pins")
@@ -59,14 +62,41 @@ struct NotebookSceneState: Sendable {
       catch CocoaError.fileNoSuchFile { storedPresence = nil }
       let considered = requested ?? storedPresence
       let selectedID = considered?.selectedItemID ?? header.selectedItemID
-      let selected = try selectedID.flatMap { try store.readWorkspaceItem($0) }
-        ?? store.readWorkspaceItems(limit: 1).first
-      guard let selected else { throw NotebookStorageError.corruptRecord("empty workspace") }
+      let selectedHeader = try selectedID.flatMap { try store.readItemHeader($0) }
+        ?? store.readItemHeaders(limit: 1).first
+      guard let selectedHeader else { throw NotebookStorageError.corruptRecord("empty workspace") }
+      var selected = selectedHeader.item
+      var pagePositions: [NotebookPagePosition] = [], pages: [UUID: PageDocument] = [:]
+      var pageID: UUID?
+      if selected.kind == .notebook {
+        let notebook = try store.readNotebookPageWindow(itemID: selected.id, pages: []).header
+        let requestedID = considered?.notebookPageID ?? notebook.selectedPageID
+        let position = try requestedID.flatMap { try store.resolveNotebookPage($0, in: selected.id, expectedVisibleRoot: notebook.visibleRoot) }
+          ?? store.resolveNotebookPage(selectedHeader.firstPageID!, in: selected.id, expectedVisibleRoot: notebook.visibleRoot)
+        guard let position else { throw NotebookStorageError.corruptRecord("selected notebook page") }
+        pageID = position.pageID
+        if !preparedPages.isEmpty {
+          let requested = [position.pageID] + preparedPages.filter { $0 != position.pageID }
+          pagePositions = try requested.prefix(4).compactMap {
+            try store.resolveNotebookPage($0, in: selected.id, expectedVisibleRoot: notebook.visibleRoot)
+          }
+        } else {
+          let first = max(0, min(position.index - 1, selectedHeader.pageCount - 4))
+          let directory = try store.readNotebookPageDirectory(itemID: selected.id, from: first, limit: 4,
+            expectedVisibleRoot: notebook.visibleRoot)
+          pagePositions = directory.pages.map(\.position)
+        }
+        if loadsLiveContent {
+          let window = try store.readNotebookPageWindow(itemID: selected.id,
+            pages: pagePositions.map { .page($0.pageID) }, expectedVisibleRoot: notebook.visibleRoot)
+          pages = Dictionary(uniqueKeysWithValues: window.pages.map { ($0.document.id, $0.document) })
+        }
+        selected = .notebook(id: selected.id, title: selected.title,
+          pageIDs: [selectedHeader.firstPageID!] + pagePositions.map(\.pageID).filter { $0 != selectedHeader.firstPageID })
+      }
       let owner = try store.ownerBoardID(of: selected.id) ?? header.rootBoardID
       let desiredBoard = considered?.boardID ?? owner
       let boardID = try store.readBoardNodeHeader(desiredBoard) == nil ? header.rootBoardID : desiredBoard
-      let pageID = considered?.notebookPageID.flatMap { selected.pageIDs.contains($0) ? $0 : nil }
-        ?? selected.pageIDs.first
       let selectedPaper = selected.kind == .document ? try store.readDocumentPaperSize(selected.id) : nil
       let geometry = selectedPaper.map(WorkspaceItemGeometry.document) ?? .notebook
       let presence: SessionPresence
@@ -86,7 +116,7 @@ struct NotebookSceneState: Sendable {
       }
       var items: [UUID: WorkspaceItem] = [selected.id: selected]
       var nodes: [UUID: BoardNode] = [:]
-      var paper: [UUID: DocumentPaperSize] = [:], counts: [UUID: Int] = [:]
+      var paper: [UUID: DocumentPaperSize] = [:]
       var coverage: [UUID: WorkspaceSpatialBounds] = [:], truncated = Set<UUID>()
       var pending: [SessionPresence] = [presence]
       var remainingEntries = 96
@@ -109,7 +139,6 @@ struct NotebookSceneState: Sendable {
         for item in window.items where item.id != selected.id { items[item.id] = item }
         for node in window.boards { nodes[node.id] = node }
         paper.merge(window.documentPaper) { _, next in next }
-        counts.merge(window.pageCounts) { _, next in next }
         coverage[view.boardID] = bounds
         if window.truncated { truncated.insert(view.boardID) }
         remainingEntries -= min(remainingEntries, window.totalMatches)
@@ -133,32 +162,26 @@ struct NotebookSceneState: Sendable {
       }
       if nodes[owner] == nil, let placement = try store.readBoardItem(selected.id) { nodes[owner] = placement }
       let boardIDs = [boardID] + nodes.keys.filter { $0 != boardID }.sorted { $0.uuidString < $1.uuidString }.prefix(6)
-      var heavyIDs = [selected.id]
+      var heavyIDs = selected.kind == .document ? [selected.id] : []
       let candidates = items.values.filter { $0.id != selected.id && $0.kind == .document }
         .sorted { $0.id.uuidString < $1.id.uuidString }
       heavyIDs += candidates.prefix(max(0, 8 - boardIDs.count - 1)).map(\.id)
-      var pageIDs: [UUID] = []
-      if let pageID, let index = selected.pageIDs.firstIndex(of: pageID) {
-        pageIDs = [index, index - 1, index + 1, index + 2].compactMap {
-          selected.pageIDs.indices.contains($0) ? selected.pageIDs[$0] : nil
-        }
-      }
-      let surfaces = (boardIDs.map(SurfaceID.board) + heavyIDs.map(SurfaceID.cover)).prefix(8)
-      let live = try store.readWorkingSet(itemIDs: loadsLiveContent ? heavyIDs : [], pageIDs: loadsLiveContent ? pageIDs : [],
+      let coverIDs = [selected.id] + heavyIDs.filter { $0 != selected.id }
+      let surfaces = (boardIDs.map(SurfaceID.board) + coverIDs.map(SurfaceID.cover)).prefix(8)
+      let live = try store.readWorkingSet(itemIDs: loadsLiveContent ? heavyIDs : [], pageIDs: [],
         boardIDs: boardIDs, surfaces: Array(surfaces))
-      for item in live.items { items[item.id] = item }
+      for item in live.items where item.id != selected.id { items[item.id] = item.item }
       paper.merge(live.documents.mapValues(\.paperSize)) { _, next in next }
-      counts[selected.id] = selected.pageIDs.count
       let workspace = try store.workspaceProjection(items: items.values.sorted { $0.id.uuidString < $1.id.uuidString },
         selectedItemID: selected.id, selectedPageID: pageID)
       let hierarchy = BoardHierarchy(rootBoardID: header.rootBoardID,
         boards: nodes.values.sorted { $0.id.uuidString < $1.id.uuidString },
         stamp: header.boardStamp ?? nodes.values.map { max($0.board.stamp, $0.portalStamp) }.max() ?? header.stamp)
-      return try Self(header: header, workspace: workspace, pages: live.pages,
+      return try Self(header: header, workspace: workspace, pages: pages, pagePositions: pagePositions,
         documents: live.documents, states: live.states,
         drafts: loadsLiveContent && selected.kind == .document ? store.documentEditingSessions(documentID: selected.id) : [],
         hierarchy: hierarchy, ink: live.ink, inkSurfaces: Set(surfaces), presence: presence, paperSizes: paper,
-        pageCounts: counts, coverage: coverage, truncatedBoards: truncated, missingPinnedElements: missingPinnedElements,
+        coverage: coverage, truncatedBoards: truncated, missingPinnedElements: missingPinnedElements,
         missingPinnedItems: missingPinnedItems, transferredPinnedItems: transferredPinnedItems)
     }
   }

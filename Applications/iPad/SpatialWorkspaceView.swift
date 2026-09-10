@@ -273,6 +273,10 @@ struct SpatialWorkspaceView: View {
         while cameraGesture != nil || settling || pageTurnIsActive || contentGestureActive || model.presencePhase != .settled {
           do { try await Task.sleep(for:.milliseconds(40)) } catch { return }
         }
+        if reference.target.kind == .page {
+          guard await model.navigateToNotebookPage(id: reference.target.id,
+            isCurrent: { model.requestedReference?.id == reference.id }) else { return }
+        }
         model.afterPageInput {
           guard model.requestedReference?.id == reference.id else { return }
           showReference(reference,viewport:viewport)
@@ -284,16 +288,17 @@ struct SpatialWorkspaceView: View {
         while cameraGesture != nil || settling || pageTurnIsActive || contentGestureActive || model.presencePhase != .settled {
           do { try await Task.sleep(for: .milliseconds(40)) } catch { return }
         }
+        if let pageID = place.pageID {
+          guard await model.navigateToNotebookPage(id: pageID,
+            isCurrent: { model.requestedReturn?.id == place.id }) else { return }
+        }
         model.afterPageInput {
           guard model.requestedReturn?.id == place.id else { return }
           defer { model.completeReturnToPlace() }
           guard model.boardHierarchy?.board(place.presence.boardID) != nil else { return }
           if let itemID = place.presence.focusedItemID {
-            guard let item = model.workspace?.items.first(where: { $0.id == itemID }) else { return }
-            model.selectItem(itemID)
-            if let pageID = place.pageID, let index = item.pageIDs.firstIndex(of: pageID) {
-              _ = model.selectNotebookPage(index, notebookID: itemID)
-            }
+            guard model.workspace?.item(id: itemID) != nil else { return }
+            if place.pageID == nil { model.selectItem(itemID) }
           }
           animateSettlement(to: place.presence.adapted(to: viewport, geometry: model.itemGeometry(place.presence.focusedItemID)), duration: 0.3)
         }
@@ -1360,9 +1365,9 @@ struct SpatialWorkspaceView: View {
   }
 
   private func showReference(_ reference: CollaborationReference, viewport: SpatialPoint) {
-    guard let workspace = model.workspace, let hierarchy = model.boardHierarchy else { return }
+    guard let hierarchy = model.boardHierarchy else { return }
     let target = reference.target
-    let itemID = target.kind == .page ? workspace.items.first(where: { $0.pageIDs.contains(target.id) })?.id : target.id
+    let itemID = target.kind == .page ? model.notebookPageOwner(target.id) : target.id
     let boardID = target.kind == .board ? target.id : itemID.flatMap { hierarchy.ownerBoardID(of:$0) }
     guard let boardID, let board = hierarchy.board(boardID) else { return }
     if target.kind == .board {
@@ -1376,10 +1381,7 @@ struct SpatialWorkspaceView: View {
       let scale = min(1.5,max(SpatialCamera.minimumScale,min(viewport.x/(region.width+100),viewport.y/(region.height+100))))
       animateSettlement(to:.init(boardID:boardID,mode:.board,camera:.init(center:center,scale:scale),viewport:viewport),duration:0.3)
     } else if let itemID, let center = board.focusedCenter(of:itemID) {
-      model.selectItem(itemID)
-      if target.kind == .page, let item = workspace.items.first(where: { $0.id == itemID }), let index = item.pageIDs.firstIndex(of:target.id) {
-        _ = model.selectNotebookPage(index,notebookID:itemID)
-      }
+      if target.kind != .page { model.selectItem(itemID) }
       var pageIndex = reference.pageIndex ?? 0
       if target.kind == .document, let id = reference.elementID, let document = model.documents[itemID], let state = model.documentStates[itemID],
         let region = DocumentRenderRegistry.shared.regions(document:document,state:state).first(where: { $0.id == id }) { pageIndex = region.pageIndex }
@@ -1684,9 +1686,10 @@ private struct WorkspaceSceneItem: View, Equatable {
 
   @ViewBuilder
   private func notebookContents(isLive: Bool) -> some View {
-    if preparesContent, !notebookItem.pageIDs.isEmpty {
+    if preparesContent, let root = model.notebookPageRoot(notebookItem.id) {
       PageTurnSurface(
         ownerID: rendered.id,
+        sequenceRevision: root,
         pageCount: model.notebookPageCount(notebookItem.id) + 1,
         selectedIndex: notebookSelectedPageIndex,
         allowsTrailingPageCreation: true,
@@ -1730,6 +1733,7 @@ private struct WorkspaceSceneItem: View, Equatable {
     if preparesContent, let document, let documentState {
       PageTurnSurface(
         ownerID: rendered.id,
+        sequenceRevision: "\(document.contentStamp.actor):\(document.contentStamp.counter)",
         pageCount: max(documentPageCount, documentPageIndex + 1),
         selectedIndex: documentPageIndex,
         allowsTrailingPageCreation: false,
@@ -1774,7 +1778,7 @@ private struct WorkspaceSceneItem: View, Equatable {
 
   private var notebookSelectedPageIndex: Int {
     guard let selectedPageID = model.workspace?.selectedPageID,
-      let index = notebookItem.pageIDs.firstIndex(of: selectedPageID)
+      let index = model.notebookPageIndex(selectedPageID, in: notebookItem.id)
     else { return 0 }
     return index
   }
@@ -1848,15 +1852,15 @@ private struct WorkspaceSceneItem: View, Equatable {
     )
   }
 
-  private func commitNotebookPage(_ targetIndex: Int) {
+  private func commitNotebookPage(_ targetIndex: Int, _ root: String) {
     guard model.selectNotebookPage(
       targetIndex,
-      notebookID: rendered.id
+      notebookID: rendered.id, expectedRoot: root
     ) != nil else { return }
     announcePage(targetIndex + 1)
   }
 
-  private func commitDocumentPage(_ targetIndex: Int) {
+  private func commitDocumentPage(_ targetIndex: Int, _ revision: String) {
     guard targetIndex >= 0, targetIndex < documentPageCount,
       model.selectDocumentPage(targetIndex, documentID: rendered.id) != nil
     else { return }

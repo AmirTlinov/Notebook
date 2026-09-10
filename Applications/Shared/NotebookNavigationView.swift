@@ -12,9 +12,9 @@ struct NotebookNavigationView: View {
 
   private var item: WorkspaceItem? { model.workspace?.items.first { $0.id == presence.focusedItemID } }
   private var pageIndex: Int {
-    presence.mode == .document ? presence.documentPageIndex : item?.pageIDs.firstIndex(of: model.workspace?.selectedPageID ?? UUID()) ?? 0
+    presence.mode == .document ? presence.documentPageIndex : presence.notebookPageID.flatMap { id in item.flatMap { model.notebookPageIndex(id, in: $0.id) } } ?? 0
   }
-  private var pageCount: Int { presence.mode == .document ? max(documentPageCount, pageIndex + 1) : item?.pageIDs.count ?? 1 }
+  private var pageCount: Int { presence.mode == .document ? max(documentPageCount, pageIndex + 1) : item.map { model.notebookPageCount($0.id) } ?? 1 }
   private var path: [String] {
     var names: [String] = [], id: UUID? = presence.boardID, seen: Set<UUID> = []
     while let current = id, seen.insert(current).inserted {
@@ -47,7 +47,7 @@ struct NotebookNavigationView: View {
         HStack(spacing: 0) {
           Button { select(pageIndex - 1) } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44) }
             .disabled(pageIndex == 0).accessibilityLabel("Предыдущая страница").accessibilityIdentifier("previous-page")
-          Button { pageWindow = pageIndex / 6; showsPages = true } label: { Text("\(pageIndex + 1) / \(pageCount)").monospacedDigit().frame(minWidth: 64, minHeight: 44) }
+          Button { pageWindow = pageIndex / 4; showsPages = true } label: { Text("\(pageIndex + 1) / \(pageCount)").monospacedDigit().frame(minWidth: 64, minHeight: 44) }
             .accessibilityLabel("Страница \(pageIndex + 1) из \(pageCount)")
             .accessibilityHint("Открыть список страниц").accessibilityIdentifier("page-overview")
             .popover(isPresented: $showsPages, arrowEdge: .bottom) { pageOverview }
@@ -68,10 +68,10 @@ struct NotebookNavigationView: View {
           Spacer()
           Text("Страницы").font(.headline)
           Spacer()
-          Button { pageWindow += 1 } label: { Image(systemName: "chevron.right").frame(width: 44, height: 44) }.disabled((pageWindow + 1) * 6 >= pageCount).accessibilityLabel("Следующие миниатюры")
+          Button { pageWindow += 1 } label: { Image(systemName: "chevron.right").frame(width: 44, height: 44) }.disabled((pageWindow + 1) * 4 >= pageCount).accessibilityLabel("Следующие миниатюры")
         }.buttonStyle(.plain)
         LazyVGrid(columns: [.init(.adaptive(minimum: 100))], spacing: 16) {
-          ForEach((pageWindow * 6)..<min(pageCount, (pageWindow + 1) * 6), id: \.self) { index in
+          ForEach((pageWindow * 4)..<min(pageCount, (pageWindow + 1) * 4), id: \.self) { index in
             Button { select(index); showsPages = false } label: {
               VStack {
                 NotebookPageThumbnail(itemID: item?.id, index: index)
@@ -89,9 +89,16 @@ struct NotebookNavigationView: View {
 
   private func select(_ index: Int) {
     guard let item, index >= 0 else { return }
+    let expectedRoot = model.notebookPageRoot(item.id)
     model.afterPageInput {
       if presence.mode == .document { _ = model.selectDocumentPage(index, documentID: item.id) }
-      else { _ = model.selectNotebookPage(index, notebookID: item.id) }
+      else if let root = expectedRoot {
+        if index == model.notebookPageCount(item.id) || model.notebookPage(at: index, in: item.id) != nil {
+          _ = model.selectNotebookPage(index, notebookID: item.id, expectedRoot: root)
+        } else {
+          Task { await model.navigateToNotebookPage(at: index, in: item.id, expectedRoot: root) }
+        }
+      }
     }
   }
 }
@@ -119,11 +126,15 @@ private struct NotebookPageThumbnail: View {
           .frame(width: geometry.width, height: geometry.height)
           .scaleEffect(90 / geometry.width)
           .frame(width: 90, height: 128)
-      } else if let item = model.workspace?.items.first(where: { $0.id == itemID }), item.pageIDs.indices.contains(index),
-        let page = model.pages[item.pageIDs[index]] {
+      } else if let itemID, let page = model.notebookPage(at: index, in: itemID) {
         PageSurface(page: page, isInteractive: false, isVisible: true, onRenderReady: .init { value in Task { @MainActor in ready = value } })
       }
-      if !ready {
+      if let itemID, model.documents[itemID] == nil, model.notebookPage(at: index, in: itemID) == nil {
+        VStack(spacing: 8) {
+          Image(systemName: "doc.text").font(.title2)
+          Text("Открыть лист").font(.caption2)
+        }.foregroundStyle(.secondary)
+      } else if !ready {
         if preparationFailed {
           Image(systemName: "exclamationmark.triangle").font(.caption).foregroundStyle(.secondary)
             .accessibilityLabel("Миниатюра недоступна. Страницу можно открыть.")

@@ -10,6 +10,7 @@ final class PageTurnSurfaceTests: XCTestCase {
     var prepared: [Int] = []
     let surface = PageTurnSurface(
       ownerID: UUID(),
+      sequenceRevision: "fixture-order",
       pageCount: 2,
       selectedIndex: 1,
       allowsTrailingPageCreation: false,
@@ -21,7 +22,7 @@ final class PageTurnSurfaceTests: XCTestCase {
         readiness(true)
         return AnyView(Text("Page \(index)"))
       },
-      onCommit: { _ in XCTFail("Mac preparation cannot navigate the iPad") },
+      onCommit: { _, _ in XCTFail("Mac preparation cannot navigate the iPad") },
       onTransitioningChange: { _ in XCTFail("Mac has no page-turn transition") }
     )
     let host = NSHostingView(rootView: surface)

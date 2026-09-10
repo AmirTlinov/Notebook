@@ -36,8 +36,8 @@ final class PageVisionDemandTests: XCTestCase {
     removeAfterShutdown(model, root: root)
     await model.start(pageSize: size)
     XCTAssertEqual(try store.workspaceHeader().itemCount, 64)
-    let canonicalPageCount = try store.readWorkspaceItems(limit: 128).reduce(0) { count, item in
-      count + (try store.pageCount(in: item.id))
+    let canonicalPageCount = try store.readItemHeaders(limit: 128).reduce(0) { count, item in
+      count + item.pageCount
     }
     XCTAssertEqual(canonicalPageCount, 64)
     XCTAssertLessThanOrEqual(model.pages.count, 4, "The live model is a bounded working set, not the saved archive")

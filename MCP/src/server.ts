@@ -24,7 +24,7 @@ import type {
   VersionStamp,
   WorldPoint,
   WorkspaceProjection,
-  WorkspaceItem,
+  NotebookItemHeader,
 } from "./domain.js";
 import {
   canonicalPageSize,
@@ -127,53 +127,45 @@ export function createServer(store = new NotebookStore()): McpServer {
       outputSchema: notebookResponseSchema,
       title: "Read a notebook and its cover",
       description:
-        "Read up to four notebook pages, placement or stack ownership, and up to 32 cover elements. Continue cover_cursor and nextPage explicitly.",
-      inputSchema: z.object({ notebook_id: z.uuid(), start_page:z.number().int().min(1).default(1),limit:z.number().int().min(1).max(4).default(4),
+        "Read metadata for up to four notebook pages without loading their ink or elements, placement or stack ownership, and up to 32 cover elements. Continue cover_cursor and nextPage explicitly, retaining pageOrder as page_order for page continuation.",
+      inputSchema: z.object({ notebook_id: z.uuid(), page_order:z.string().regex(/^[a-f0-9]{64}$/).optional(), start_page:z.number().int().min(1).default(1),limit:z.number().int().min(1).max(4).default(4),
         cover_cursor:z.string().max(4096).optional(),cover_limit:z.number().int().min(1).max(32).default(32) }),
     },
-    ({ notebook_id,start_page,limit,cover_cursor,cover_limit }) => readSafely(async () => {
-      const workspace = await store.readWorkspaceProjection([notebook_id]);
-      const [board, spatialInk, cover] = await Promise.all([
+    ({ notebook_id,page_order,start_page,limit,cover_cursor,cover_limit }) => readSafely(async () => {
+      const [workspace, directory, board, spatialInk, cover] = await Promise.all([
+        store.readHeader(),
+        store.readNotebookDirectory(notebook_id,start_page-1,limit,page_order),
         store.readItemBoard(notebook_id),
         store.readSpatialInk([{kind:"cover",ownerID:notebook_id}]),
         store.readCoverElements(notebook_id,canonicalPageSize,cover_cursor,cover_limit),
       ]);
-      const notebook = workspace.items.find((candidate) =>
-        candidate.kind === "notebook" && sameID(candidate.id, notebook_id)
-      );
-      if (!notebook) throw new StoreError("Тетрадь не найдена.");
+      const notebook = directory.header.item;
       const placement = board.freeItems.find(
         (candidate) => sameID(candidate.itemID, notebook.id),
       );
       const stack = board.stacks.find(
         (candidate) => candidate.itemIDs.some((id) => sameID(id, notebook.id)),
       );
-      const selectedPageIDs = notebook.pageIDs.slice(start_page-1,start_page-1+limit);
-      const pages = await Promise.all(selectedPageIDs.map(async (pageID, index) => {
-        const page = await store.readPage(pageID);
-        return {
-          number: start_page + index,
-          id: page.id,
-          size: page.size,
-          drawingRevision: revision(page.drawingStamp),
-          agentRevision: revision(page.agentStamp),
-          agentElementCount: page.elements.length,
-        };
+      const pages = directory.pages.map(page => ({
+        number: page.position.index + 1,
+        id: page.position.pageID,
+        size: page.size,
+        drawingRevision: revision(page.drawingStamp),
+        agentRevision: revision(page.agentStamp),
       }));
       return {
         notebook: {
           id: notebook.id,
           title: notebook.title || null,
-          pageCount: notebook.pageIDs.length,
+          pageCount: notebook.pageCount,
         },
         identity: itemIdentity(notebook, board, spatialInk),
-        selectedPageID: sameID(workspace.selectedItemID, notebook.id)
-          ? workspace.selectedPageID
-          : null,
+        selectedPageID: directory.header.selectedPageID ?? null,
         placement: placement ?? null,
         stack: stack ?? null,
         pages,
-        nextPage: start_page-1+pages.length < notebook.pageIDs.length ? start_page+pages.length : null,
+        pageOrder: directory.header.visibleRoot,
+        nextPage: directory.nextIndex === undefined ? null : directory.nextIndex + 1,
         coverElements: cover.elements.map(element => publicSpatialElement(element, false)),
         coverCoverage: cover.coverage,
         spatialInkRevision: revision(spatialInk.stamp),
@@ -528,8 +520,10 @@ function publicSpatialElement(element: SpatialElement, includeSource = true): ob
 async function observedPage(
   store: NotebookStore,
   page: PageDocument,
-  item: WorkspaceItem,
+  item: NotebookItemHeader,
 ): Promise<object> {
+  const position = await store.readNotebookPosition(page.id,item.id);
+  if (!position) throw new StoreError("Лист больше не принадлежит этой тетради.");
   const vision = await readFreshPageVision(store, page);
   const occupied = vision.occupiedCells;
   const columns = occupied.map((cell) => cell.column);
@@ -539,8 +533,8 @@ async function observedPage(
     selector: {
       itemID: item.id,
       pageID: page.id,
-      pageNumber: item.pageIDs.findIndex((id) => sameID(id, page.id)) + 1,
-      pageCount: item.pageIDs.length,
+      pageNumber: position.index + 1,
+      pageCount: item.pageCount,
     },
     size: page.size,
     drawingRevision: revision(page.drawingStamp),
@@ -672,17 +666,10 @@ async function assertCurrentSurfaceSource(
 ): Promise<void> {
   if (receipt.surface.kind === "page") {
     const surface = receipt.surface;
-    const [page, workspace] = await Promise.all([
+    const [page, owner] = await Promise.all([
       store.readPage(surface.revision.pageID),
-      store.readWorkspaceProjection([surface.itemID]),
+      store.readNotebookPosition(surface.revision.pageID,surface.itemID),
     ]);
-    const owner = workspace.items.find((item) =>
-      item.kind === "notebook"
-        && sameID(item.id, surface.itemID)
-        && item.pageIDs.some((pageID) =>
-          sameID(pageID, surface.revision.pageID)
-        )
-    );
     if (!owner) {
       throw new StoreError("Квитанция связывает лист с другой тетрадью.");
     }

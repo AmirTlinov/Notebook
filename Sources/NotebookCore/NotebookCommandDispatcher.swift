@@ -53,8 +53,8 @@ public struct NotebookReadBounds: Codable, Sendable {
 
 public struct NotebookReadQuery: Codable, Sendable {
   public enum Kind: String, Codable, Sendable {
-    case workspaceHeader, workspaceItems, workspaceItem, workingSet, sceneWindow, scenePaintOrder
-    case page, document, documentState, boardItem, boardElement, ownerBoard, pageAtIndex, pageCount, spatialInk, presence
+    case workspaceHeader, itemHeaders, itemHeader, workingSet, sceneWindow, scenePaintOrder
+    case page, document, documentState, boardItem, boardElement, ownerBoard, notebookPages, notebookDirectory, notebookPosition, spatialInk, presence
     case contexts, actions, currentViewReceipt, pageVisionReceipt, targetRenderReceipt
     case renderRequests, delivery, actionSnapshots, runtime
   }
@@ -72,6 +72,9 @@ public struct NotebookReadQuery: Codable, Sendable {
   public var coverID: UUID?
   public var paintCursor: String?
   public var pageIndex: Int?
+  public var pages: [NotebookPageReadTarget]?
+  public var itemID: UUID?
+  public var visibleRoot: String?
   public var contextID: UUID?
   public var elementID: String?
   public init(kind: Kind, id: UUID? = nil, revision: String? = nil, limit: Int? = nil) {
@@ -147,7 +150,8 @@ public struct NotebookCommandDispatcher: Sendable {
         ([.document, .documentState, .boardItem].contains(query.kind) ? query.id.map { [$0] } ?? [] : [])
           + (query.itemIDs ?? []) + (query.boardIDs ?? [])
       })
-      guard pages.count <= 4, heavy.count <= 8 else { throw invalid("resource_limit", "Один срез удерживает до четырёх листов и восьми тяжёлых владельцев.") }
+      let windowPages = queries.filter { $0.kind == .notebookPages }.reduce(0) { $0 + ($1.pages?.count ?? 0) }
+      guard pages.count + windowPages <= 4, heavy.count <= 8 else { throw invalid("resource_limit", "Один срез удерживает до четырёх листов и восьми тяжёлых владельцев.") }
       return try store.readTransaction { snapshot in
         let cursor = String(try snapshot.currentReadCursor())
         guard request.expectedCursor == nil || request.expectedCursor == cursor else {
@@ -168,8 +172,8 @@ public struct NotebookCommandDispatcher: Sendable {
   private func read(_ query: NotebookReadQuery) throws -> JSONValue {
     switch query.kind {
     case .workspaceHeader: return try .encode(store.workspaceHeader())
-    case .workspaceItems: return try .encode(store.readWorkspaceItems(after: query.after, limit: query.limit ?? 128))
-    case .workspaceItem: return try .encode(store.readWorkspaceItem(required(query.id)))
+    case .itemHeaders: return try .encode(store.readItemHeaders(after: query.after, limit: query.limit ?? 128))
+    case .itemHeader: return try .encode(store.readItemHeader(required(query.id)))
     case .workingSet:
       let set = try store.readWorkingSet(itemIDs: query.itemIDs ?? [], pageIDs: query.pageIDs ?? [],
         boardIDs: query.boardIDs ?? [], surfaces: query.surfaces ?? [])
@@ -180,7 +184,7 @@ public struct NotebookCommandDispatcher: Sendable {
       let window = try store.readSceneWindow(boardID: required(query.id), bounds: bounds.validated(),
         limit: query.limit ?? 128, pinnedIDs: query.pinnedIDs ?? [])
       return .object(["header": try .encode(window.header), "boardID": try .encode(window.boardID),
-        "items": try .encode(window.items), "boards": try .encode(window.boards), "documentPaper": try keyed(window.documentPaper),
+        "items": try .encode(window.items.compactMap { try store.readItemHeader($0.id) }), "boards": try .encode(window.boards), "documentPaper": try keyed(window.documentPaper),
         "pageCounts": try keyed(window.pageCounts), "totalMatches": .number(Double(window.totalMatches)), "truncated": .bool(window.truncated)])
     case .scenePaintOrder:
       guard let bounds = query.bounds else { throw invalid("invalid_region", "Нужна конечная область чтения.") }
@@ -208,11 +212,16 @@ public struct NotebookCommandDispatcher: Sendable {
       guard let elementID = query.elementID, elementID.utf8.count <= 120 else { throw invalid("invalid_reference", "Нужен ID элемента.") }
       return try .encode(store.readSpatialElement(boardID: required(query.id), elementID: elementID))
     case .ownerBoard: return try .encode(store.ownerBoardID(of: required(query.id)))
-    case .pageAtIndex:
-      let index = query.pageIndex ?? 0
-      guard (0...100_000).contains(index) else { throw invalid("invalid_reference", "Неверный номер листа.") }
-      return try .encode(store.pageID(at: index, in: required(query.id)))
-    case .pageCount: return try .encode(store.pageCount(in: required(query.id)))
+    case .notebookPages:
+      return try .encode(store.readNotebookPageWindow(itemID: required(query.id), pages: query.pages ?? [],
+        expectedVisibleRoot: query.visibleRoot))
+    case .notebookDirectory:
+      return try .encode(store.readNotebookPageDirectory(itemID: required(query.id), from: query.pageIndex ?? 0,
+        limit: query.limit ?? 32, expectedVisibleRoot: query.visibleRoot))
+    case .notebookPosition:
+      let pageID = try required(query.id)
+      guard let itemID = try query.itemID ?? store.ownerItemID(ofPage: pageID) else { return .null }
+      return try .encode(store.resolveNotebookPage(pageID, in: itemID, expectedVisibleRoot: query.visibleRoot))
     case .spatialInk: return try .encode(store.readSpatialInk(surfaces: query.surfaces ?? []))
     case .presence: return try .encode(store.loadPresence())
     case .contexts: return try .encode(store.sharedContexts(contextID: query.id, limit: boundedLimit(query.limit)))

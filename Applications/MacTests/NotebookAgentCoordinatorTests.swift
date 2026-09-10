@@ -10,7 +10,7 @@ final class NotebookAgentCoordinatorTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), human = UUID(), mac = UUID()
     _ = try store.initializeWorkspace(actor: human, pageSize: .init(width: 834, height: 1194))
-    let pageID = try XCTUnwrap(store.readWorkspaceItems(limit: 1).first?.pageIDs.first)
+    let pageID = try XCTUnwrap(store.readItemHeaders(limit: 1).first?.firstPageID)
     let target = CollaborationTarget(kind: .page, id: pageID)
     let files = try store.referenceSourceFiles(target: target)
     let reference = CollaborationReference(target: target, region: .init(x: 0, y: 0, width: 200, height: 150),

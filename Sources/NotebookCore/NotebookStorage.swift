@@ -50,7 +50,7 @@ public struct NotebookWorkspaceHeader: Codable, Sendable, Equatable {
 /// absence from this projection, never implicit deletion commands.
 public struct NotebookWorkingSet: Codable, Sendable {
   public let header: NotebookWorkspaceHeader
-  public let items: [WorkspaceItem]
+  public let items: [NotebookItemHeader]
   public let boards: [BoardNode]
   public let pages: [UUID: PageDocument]
   public let documents: [UUID: DocumentDocument]

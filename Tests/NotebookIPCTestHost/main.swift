@@ -42,6 +42,22 @@ actor TestOwner {
       return .object(["workspaceStamp": try .encode(store.workspaceHeader().stamp),
         "page": try .encode(store.loadPage(page.id)), "spatialInkStamp": try .encode(store.loadSpatialInk().stamp),
         "presence": try .encode(store.loadPresence())])
+    case "appendPages":
+      let count = try value.decode(Int.self)
+      guard (1...128).contains(count) else { throw NotebookStorageError.limitExceeded("fixture_pages") }
+      let presence = try store.loadPresence()
+      guard let id = presence.selectedItemID, let item = try store.readItemHeader(id) else { throw CocoaError(.fileNoSuchFile) }
+      var projection = try store.workspaceProjection(items: [item.item], selectedItemID: id, selectedPageID: item.firstPageID)
+      var pages: [UUID] = []
+      for _ in 0..<count {
+        guard let append = projection.appendPage(in: id, actor: projection.stamp.actor, pageSize: .init(width: 834, height: 1194)) else {
+          throw NotebookStorageError.invalidTransaction("fixture append")
+        }
+        _ = try store.saveWorkspaceSelection(index: projection, createdPage: append.createdPage)
+        pages.append(append.pageID)
+        try projection.retainPageProjection([append.pageID])
+      }
+      return try .encode(pages)
     case "page": try store.savePage(value.decode(PageDocument.self))
     case "presence": try store.savePresence(value.decode(SessionPresence.self))
     case "ink": try store.saveSpatialInk(value.decode(SpatialInkJournal.self))

@@ -40,62 +40,72 @@ final class NotebookAppModel {
   private(set) var loadState: LoadState = .loading
   private(set) var workspace: WorkspaceIndex? { didSet { collaborationReadEpoch &+= 1; scheduleScenePreparation() } }
   private(set) var pages: [UUID: PageDocument] = [:] { didSet { collaborationReadEpoch &+= 1 } }
-  private struct PageAddress: Hashable { let itemID: UUID; let index: Int }
+  /// A prepared slot belongs to one immutable order. This finite view cache
+  /// is not the notebook's membership list; SQLite/vector remain its owner.
+  private struct PageAddress: Hashable { let itemID: UUID; let index: Int; let root: String }
   @ObservationIgnored private var pageAddresses: [PageAddress: UUID] = [:]
   @ObservationIgnored private var pagePreparationTasks: [PageAddress: Task<Void, Never>] = [:]
 
   func notebookPageCount(_ itemID: UUID) -> Int {
-    max(notebookPageCounts[itemID] ?? 0, workspace?.item(id: itemID)?.pageIDs.count ?? 0)
+    workspace?.notebookPageOrder(in: itemID)?.count ?? 0
+  }
+
+  func notebookPageRoot(_ itemID: UUID) -> String? {
+    workspace?.notebookPageOrder(in: itemID)?.root
+  }
+
+  func notebookPageIndex(_ pageID: UUID, in itemID: UUID) -> Int? {
+    guard let root = notebookPageRoot(itemID) else { return nil }
+    return pageAddresses.first { $0.key.itemID == itemID && $0.key.root == root && $0.value == pageID }?.key.index
+  }
+
+  func notebookPageOwner(_ pageID: UUID) -> UUID? {
+    pageAddresses.first { $0.value == pageID && notebookPageRoot($0.key.itemID) == $0.key.root }?.key.itemID
   }
 
   func notebookPage(at index: Int, in itemID: UUID) -> PageDocument? {
-    if let id = pageAddresses[.init(itemID: itemID, index: index)] { return pages[id] }
-    guard let item = workspace?.item(id: itemID), item.pageIDs.indices.contains(index) else { return nil }
-    return pages[item.pageIDs[index]]
+    guard let root = notebookPageRoot(itemID), let id = pageAddresses[.init(itemID: itemID, index: index, root: root)] else { return nil }
+    return pages[id]
   }
 
-  /// An unloaded existing sheet never certifies a blank page. Preparation
-  /// returns its actual address and bytes before UIKit may admit the host.
+  /// An unloaded existing sheet never certifies a blank page. The requested
+  /// immutable slot must still exist before its bytes can become UIKit content.
   func prepareNotebookPage(at index: Int, in itemID: UUID) async {
-    guard !isStopped, index >= 0, index < notebookPageCount(itemID), !isItemBeingDeleted(itemID) else { return }
-    let address = PageAddress(itemID: itemID, index: index)
+    guard !isStopped, index >= 0, index < notebookPageCount(itemID), !isItemBeingDeleted(itemID),
+      let root = notebookPageRoot(itemID) else { return }
+    let address = PageAddress(itemID: itemID, index: index, root: root)
     if notebookPage(at: index, in: itemID) != nil { return }
     if let pending = pagePreparationTasks[address] { await pending.value; return }
     let task = Task { [weak self] in
       guard let self else { return }
       defer { pagePreparationTasks[address] = nil }
-      while !Task.isCancelled, let workspace, let presence, !isItemBeingDeleted(itemID) {
+      while !Task.isCancelled, let workspace, let presence, !isItemBeingDeleted(itemID), notebookPageRoot(itemID) == root {
         let epoch = collaborationReadEpoch
         do {
-          let prepared = try await persistence.submit { store -> (PageDocument, WorkspaceIndex, Int) in
-            guard let item = try store.readWorkspaceItem(itemID), item.pageIDs.indices.contains(index) else {
-              throw NotebookStorageError.transactionConflict
+          let prepared = try await persistence.submit { store -> (NotebookPageWindow, WorkspaceIndex) in
+            try store.readTransaction { _ in
+              let window = try store.readNotebookPageWindow(itemID: itemID, pages: [.index(index)], expectedVisibleRoot: root)
+              let id = window.pages[0].document.id
+              let items = workspace.items.map { item in
+                guard item.id == itemID else { return item }
+                return .notebook(id: item.id, title: item.title,
+                  pageIDs: item.pageIDs.contains(id) ? item.pageIDs : item.pageIDs + [id])
+              }
+              let projection = try store.workspaceProjection(items: items, selectedItemID: workspace.selectedItemID,
+                selectedPageID: workspace.selectedPageID)
+              return (window, projection)
             }
-            let items = workspace.items.map { $0.id == itemID ? item : $0 }
-            let projection = try store.workspaceProjection(items: items, selectedItemID: workspace.selectedItemID,
-              selectedPageID: workspace.selectedPageID)
-            return (try store.loadPage(item.pageIDs[index]), projection, item.pageIDs.count)
           }
           guard epoch == collaborationReadEpoch else { continue }
-          guard !isItemBeingDeleted(itemID) else { return }
+          guard !Task.isCancelled, !isItemBeingDeleted(itemID), notebookPageRoot(itemID) == root else { return }
           self.workspace = prepared.1
-          notebookPageCounts[itemID] = prepared.2
-          pageAddresses[address] = prepared.0.id
-          pages[prepared.0.id] = prepared.0
-          let activeID = presence.notebookPageID
-          let ordered = pages.keys.sorted { lhs, rhs in
-            @MainActor func score(_ id: UUID) -> Int {
-              if id == activeID { return 0 }
-              if id == prepared.0.id { return 1 }
-              guard let location = pageAddresses.first(where: { $0.value == id })?.key,
-                location.itemID == itemID else { return 1_000 }
-              return 2 + abs(location.index - index)
-            }
-            return score(lhs) == score(rhs) ? lhs.uuidString < rhs.uuidString : score(lhs) < score(rhs)
-          }
-          let retained = Set(ordered.prefix(4))
-          pages = pages.filter { retained.contains($0.key) }
-          pageAddresses = pageAddresses.filter { retained.contains($0.value) }
+          let page = prepared.0.pages[0].document
+          pageAddresses[address] = page.id
+          pages[page.id] = page
+          retainPreparedPages(near: address, selectedPageID: presence.notebookPageID)
+          return
+        } catch NotebookStorageError.transactionConflict {
+          reloadExternalChanges()
           return
         } catch {
           publicationFailure = error.localizedDescription
@@ -106,6 +116,73 @@ final class NotebookAppModel {
     }
     pagePreparationTasks[address] = task
     await task.value
+  }
+
+  /// A numbered command is leased to the order seen at the button press.
+  /// It can wait for content/input, but it cannot adopt a new slot occupant.
+  func navigateToNotebookPage(at index: Int, in itemID: UUID, expectedRoot: String) async {
+    guard await finishPendingInteraction(), notebookPageRoot(itemID) == expectedRoot else { return }
+    await prepareNotebookPage(at: index, in: itemID)
+    afterPageInput { [weak self] in
+      guard let self else { return }
+      _ = selectNotebookPage(index, notebookID: itemID, expectedRoot: expectedRoot)
+    }
+  }
+
+  /// A reference is a UUID intent, not an old page number. Resolve it and the
+  /// physical notebook into one bounded scene, then publish only if no new
+  /// input, selection, or cancellation overtook that read.
+  func navigateToNotebookPage(id pageID: UUID, isCurrent: @MainActor () -> Bool) async -> Bool {
+    while !Task.isCancelled, !isStopped, isCurrent() {
+      guard await finishPendingInteraction(), let presence, isCurrent() else { return false }
+      let epoch = collaborationReadEpoch, generation = inputGate.pencilGeneration
+      do {
+        let state = try await persistence.submit { store in
+          try store.readTransaction { _ in
+            guard let itemID = try store.ownerItemID(ofPage: pageID),
+              try store.resolveNotebookPage(pageID, in: itemID) != nil,
+              let boardID = try store.ownerBoardID(of: itemID) else { throw NotebookStorageError.transactionConflict }
+            let selection = SessionPresence(boardID: boardID, mode: .page, camera: presence.camera,
+              viewport: presence.viewport, focusedItemID: itemID, openProgress: 1,
+              selectedItemID: itemID, notebookPageID: pageID)
+            return try NotebookSceneState.read(store: store, presence: selection, viewport: presence.viewport)
+          }
+        }
+        guard !Task.isCancelled, isCurrent() else { return false }
+        guard epoch == collaborationReadEpoch, generation == inputGate.pencilGeneration, !inputGate.hasActivePencil else { continue }
+        guard let itemID = state.presence.selectedItemID, !isItemBeingDeleted(itemID), state.presence.notebookPageID == pageID else { return false }
+        acceptSceneState(state)
+        // The caller owns its camera animation. Selection changes now, not the
+        // old camera, and the same actor segment returns its prepared target.
+        self.presence = presence.selecting(itemID: itemID, pageID: pageID)
+        scheduleWorkspaceSelectionSave(state.workspace, createdPage: nil)
+        return true
+      } catch {
+        showCue("Лист недоступен: \(error.localizedDescription)")
+        return false
+      }
+    }
+    return false
+  }
+
+  private func retainPreparedPages(near address: PageAddress, selectedPageID: UUID?) {
+    let ordered = pages.keys.sorted { lhs, rhs in
+      @MainActor func score(_ id: UUID) -> Int {
+        if id == selectedPageID { return 0 }
+        if id == pageAddresses[address] { return 1 }
+        guard let location = pageAddresses.first(where: { $0.value == id && $0.key.root == address.root })?.key,
+          location.itemID == address.itemID else { return 1_000 }
+        return 2 + abs(location.index - address.index)
+      }
+      return score(lhs) == score(rhs) ? lhs.uuidString < rhs.uuidString : score(lhs) < score(rhs)
+    }
+    let retained = Set(ordered.prefix(4))
+    pages = pages.filter { retained.contains($0.key) }
+    pageAddresses = pageAddresses.filter { retained.contains($0.value) && notebookPageRoot($0.key.itemID) == $0.key.root }
+    if var workspace {
+      do { try workspace.retainPageProjection(retained); self.workspace = workspace }
+      catch { publicationFailure = error.localizedDescription }
+    }
   }
 
   private(set) var documents: [UUID: DocumentDocument] = [:] { didSet { collaborationReadEpoch &+= 1; scheduleScenePreparation() } }
@@ -122,7 +199,6 @@ final class NotebookAppModel {
   private(set) var sceneIndex: WorkspaceSceneIndex?
   private(set) var workspaceHeader: NotebookWorkspaceHeader?
   private(set) var documentPaperSizes: [UUID: DocumentPaperSize] = [:]
-  private(set) var notebookPageCounts: [UUID: Int] = [:]
   private(set) var sceneCoverage: [UUID: WorkspaceSpatialBounds] = [:]
   private(set) var truncatedSceneBoards: Set<UUID> = []
   private(set) var scenePreparationPending = false
@@ -263,10 +339,11 @@ final class NotebookAppModel {
         requestedScenePresence = nil
         let epoch = collaborationReadEpoch
         let pins = scenePinnedElements, itemPins = scenePinnedItems
+        let preparedIDs = preparedNotebookPageIDs(in: requested.selectedItemID)
         do {
           let state = try await persistence.submit { store in
             try NotebookSceneState.read(store: store, presence: requested,
-              viewport: requested.viewport, loadsLiveContent: false, pinnedElements: pins, pinnedItems: itemPins)
+              viewport: requested.viewport, loadsLiveContent: false, pinnedElements: pins, pinnedItems: itemPins, preparedPages: preparedIDs)
           }
           guard epoch == collaborationReadEpoch, state.header.cursor == workspaceHeader?.cursor else {
             externalReloadPending = true
@@ -279,9 +356,13 @@ final class NotebookAppModel {
             self.presence?.selectedItemID == requested.selectedItemID else { continue }
           acceptItemOwnerInvalidations(state, requested: itemPins)
           workspace = state.workspace
+          let retained = Set(state.pagePositions.map(\.pageID))
+          pages = pages.filter { retained.contains($0.key) }
+          pageAddresses = Dictionary(uniqueKeysWithValues: state.pagePositions.map {
+            (PageAddress(itemID: $0.itemID, index: $0.index, root: $0.visibleRoot), $0.pageID)
+          })
           boardHierarchy = state.hierarchy
           documentPaperSizes = state.paperSizes.merging(documents.mapValues(\.paperSize)) { _, live in live }
-          notebookPageCounts = state.pageCounts
           sceneCoverage = state.coverage
           truncatedSceneBoards = state.truncatedBoards
           clearRemovedElementPins(state.missingPinnedElements)
@@ -295,6 +376,14 @@ final class NotebookAppModel {
         }
       }
     }
+  }
+
+  /// A scene refresh follows the UUIDs already prepared by the page owner. It
+  /// resolves their positions again, without replacing a distant curl target
+  /// with an unrelated neighbor of the current selection.
+  private func preparedNotebookPageIDs(in itemID: UUID?) -> [UUID] {
+    pageAddresses.filter { $0.key.itemID == itemID && pages[$0.value] != nil }
+      .values.sorted { $0.uuidString < $1.uuidString }
   }
 
   private(set) var presence: SessionPresence?
@@ -778,27 +867,36 @@ final class NotebookAppModel {
   @discardableResult
   func selectNotebookPage(
     _ pageIndex: Int,
-    notebookID: UUID
+    notebookID: UUID, expectedRoot: String
   ) -> Int? {
-    guard !isItemBeingDeleted(notebookID), var workspace,
-      let selection = workspace.selectPage(
-        at: pageIndex,
-        in: notebookID,
-        actor: actorID,
-        pageSize: pageSize
-      )
-    else { return nil }
-    if let createdPage = selection.createdPage {
-      pages[createdPage.id] = createdPage
+    guard !isItemBeingDeleted(notebookID), var workspace, workspace.selectedItemID == notebookID,
+      let order = workspace.notebookPageOrder(in: notebookID), order.root == expectedRoot, pageIndex >= 0, pageIndex <= order.count else { return nil }
+    let pageID: UUID, createdPage: PageDocument?
+    if pageIndex == order.count {
+      guard let selection = workspace.appendPage(in: notebookID, actor: actorID, pageSize: pageSize),
+        let page = selection.createdPage, let next = workspace.notebookPageOrder(in: notebookID) else { return nil }
+      pageID = page.id; createdPage = page
+      pages[page.id] = page
+      // An append preserves every existing slot. Move only our finite prepared
+      // identities to its new root; a peer reorder is never treated this way.
+      pageAddresses = Dictionary(uniqueKeysWithValues: pageAddresses.map { address, id in
+        (address.itemID == notebookID && address.root == order.root
+          ? PageAddress(itemID: notebookID, index: address.index, root: next.root) : address, id)
+      })
+      pageAddresses[.init(itemID: notebookID, index: pageIndex, root: next.root)] = pageID
+    } else {
+      guard let page = notebookPage(at: pageIndex, in: notebookID),
+        workspace.selectedPageID != page.id,
+        workspace.selectItem(notebookID, pageID: page.id, actor: actorID) else { return nil }
+      pageID = page.id; createdPage = nil
     }
     self.workspace = workspace
     updateSessionSelection(from: workspace)
-
-    scheduleWorkspaceSelectionSave(
-      workspace,
-      createdPage: selection.createdPage
-    )
-    return selection.pageIndex
+    scheduleWorkspaceSelectionSave(workspace, createdPage: createdPage)
+    if let root = notebookPageRoot(notebookID) {
+      retainPreparedPages(near: .init(itemID: notebookID, index: pageIndex, root: root), selectedPageID: pageID)
+    }
+    return pageIndex
   }
 
   @discardableResult
@@ -828,6 +926,10 @@ final class NotebookAppModel {
     updateSessionSelection(from: workspace)
     boardHierarchy = board
     pages[created.page.id] = created.page
+    if let root = notebookPageRoot(created.item.id) {
+      pageAddresses[.init(itemID: created.item.id, index: 0, root: root)] = created.page.id
+      retainPreparedPages(near: .init(itemID: created.item.id, index: 0, root: root), selectedPageID: created.page.id)
+    }
 
 
 
@@ -969,7 +1071,8 @@ final class NotebookAppModel {
       showCue("Один рабочий элемент должен остаться")
       return false
     }
-    pendingDeletions[itemID] = Set(removed.pageIDs)
+    let loadedPageIDs = Set(removed.pageIDs).union(pageAddresses.filter { $0.key.itemID == itemID }.values)
+    pendingDeletions[itemID] = loadedPageIDs
     let actor = actorID, expected = owner.stamp
     // Reserve the exact command clock before yielding. Edits of other visible
     // members remain admitted and cannot reuse the deletion's causal identity.
@@ -991,12 +1094,13 @@ final class NotebookAppModel {
       completedDeletions[itemID] = header.cursor
       itemOwnerObserver?.receive(itemID, ownerID, header.cursor)
       scenePinnedItems = scenePinnedItems.mapValues { $0.filter { $0 != itemID } }
-      for pageID in removed.pageIDs {
+      for pageID in loadedPageIDs {
         persistence.discardPending(owner: .page(pageID))
         pages[pageID] = nil
         reservedDrawingCounters[pageID] = nil
         pencilUndoHistory.discardChanges(for: pageID)
       }
+      pageAddresses = pageAddresses.filter { $0.key.itemID != itemID }
       documents[removed.id] = nil
       documentStates[removed.id] = nil
       // The reload follows every already accepted native write. If another
@@ -1486,8 +1590,8 @@ final class NotebookAppModel {
       accepted.nextOnPage?.page = current
       accepted.page = current
       if change.stamp != change.baseStamp {
-        pages[accepted.pageID] = current
-        scheduleSave(accepted.pageID)
+        if pages[accepted.pageID] != nil { pages[accepted.pageID] = current }
+        scheduleSave(current)
       }
       return change
     }
@@ -1861,6 +1965,7 @@ final class NotebookAppModel {
         let epoch = collaborationReadEpoch
         let draftEpoch = documentDraftEpoch
         let elementPins = scenePinnedElements, itemPins = scenePinnedItems
+        let preparedIDs = preparedNotebookPageIDs(in: presence.selectedItemID)
         #if os(iOS)
           let receivingDeviceID: UUID? = actorID
         #else
@@ -1869,7 +1974,7 @@ final class NotebookAppModel {
         do {
           let prepared = try await persistence.submit(publishesChanges: receivingDeviceID != nil) { store in
             try NotebookDiskRefresh.prepare(store: store, presence: presence, receivingDeviceID: receivingDeviceID,
-              pinnedElements: elementPins, pinnedItems: itemPins)
+              pinnedElements: elementPins, pinnedItems: itemPins, preparedPages: preparedIDs)
           }
           publicationFailure = nil
           if persistence.failure == nil { persistenceFailure = acceptedPageInkFailure }
@@ -2260,7 +2365,7 @@ final class NotebookAppModel {
 
   func locationTitle(for reference: CollaborationReference) -> String {
     let itemID = reference.target.kind == .page
-      ? sceneIndex?.pageOwner(pageID: reference.target.id) : reference.target.id
+      ? notebookPageOwner(reference.target.id) : reference.target.id
     guard let itemID, let item = workspace?.item(id: itemID) else { return referenceTitle(reference) }
     let kind: String = switch item.kind {
       case .notebook: "Тетрадь"
@@ -2268,7 +2373,7 @@ final class NotebookAppModel {
       case .board: "Доска"
     }
     let title = item.title.isEmpty ? kind : item.title
-    if reference.target.kind == .page, let index = item.pageIDs.firstIndex(of: reference.target.id) {
+    if reference.target.kind == .page, let index = notebookPageIndex(reference.target.id, in: itemID) {
       return "\(title) · лист \(index + 1)"
     }
     return title
@@ -2435,20 +2540,16 @@ final class NotebookAppModel {
       completedDeletions[id] = nil
     }
     documentPaperSizes = state.paperSizes
-    notebookPageCounts = state.pageCounts
     sceneCoverage = state.coverage
     truncatedSceneBoards = state.truncatedBoards
     workspace = state.workspace
     boardHierarchy = state.hierarchy
     spatialInk = state.ink
-          loadedInkSurfaces = state.inkSurfaces
+    loadedInkSurfaces = state.inkSurfaces
     pages = state.pages
-    pageAddresses = [:]
-    for item in state.workspace.items {
-      for (index, id) in item.pageIDs.enumerated() where state.pages[id] != nil {
-        pageAddresses[.init(itemID: item.id, index: index)] = id
-      }
-    }
+    pageAddresses = Dictionary(uniqueKeysWithValues: state.pagePositions.map {
+      (PageAddress(itemID: $0.itemID, index: $0.index, root: $0.visibleRoot), $0.pageID)
+    })
     documents = state.documents
     documentStates = state.states
     documentEditingSessions = state.drafts
@@ -2512,9 +2613,8 @@ final class NotebookAppModel {
     }
   }
 
-  private func scheduleSave(_ pageID: UUID) {
-    guard let page = pages[pageID] else { return }
-    persistence.enqueue(owner: .page(pageID)) { try $0.saveMergedPage(page) != page }
+  private func scheduleSave(_ page: PageDocument) {
+    persistence.enqueue(owner: .page(page.id)) { try $0.saveMergedPage(page) != page }
   }
 
   private func scheduleSpatialInkSave(_ command: NotebookSpatialInkCommand) {
@@ -2528,8 +2628,9 @@ final class NotebookAppModel {
     createdPage: PageDocument?
   ) {
     // Creation is a fence: the following first stroke cannot overtake it.
-    enqueueStoreWrite { store in
-      _ = try store.saveWorkspaceSelection(index: workspace, createdPage: createdPage)
+    persistence.enqueue { store in
+      let accepted = try store.saveWorkspaceSelection(index: workspace, createdPage: createdPage)
+      return accepted != workspace.notebookPageOrder(in: workspace.selectedItemID)?.root
     }
   }
 
@@ -2546,7 +2647,7 @@ final class NotebookAppModel {
   @discardableResult
   private func persistMerged(_ page: PageDocument) -> PageDocument {
     pages[page.id] = page
-    scheduleSave(page.id)
+    scheduleSave(page)
     return page
   }
 

@@ -69,7 +69,7 @@ final class SpatialInkPersistenceTests: XCTestCase {
     try blocker.release()
     let saved = await model.finishPendingPersistence()
     XCTAssertTrue(saved, model.persistenceFailure ?? "")
-    XCTAssertNotNil(try model.store.readWorkspaceItem(cover))
+    XCTAssertNotNil(try model.store.readItemHeader(cover))
     let journal = try model.store.readSpatialInk(surfaces: [.board(boardID), .cover(cover)])
     XCTAssertEqual(journal.actions.map(\.id), [first.id, second.id])
     XCTAssertEqual(journal.actions.map(\.isActive), [false, true])

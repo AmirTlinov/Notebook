@@ -137,7 +137,7 @@ final class InstalledInkAttentionTests: XCTestCase {
     try await waitUntil { fixture.model.isPointing }
     XCTAssertGreaterThan(try XCTUnwrap(driver.canvas.inkView).committedVertexCount, 0)
     let selection = try capture(fixture, driver: driver)
-    let item = try XCTUnwrap(fixture.model.store.readWorkspaceItems(limit: 1).first?.id)
+    let item = try XCTUnwrap(fixture.model.store.readItemHeaders(limit: 1).first?.id)
     fixture.model.moveItem(item, to: .init(x: 15_000, y: 15_000))
     fixture.model.publishHumanContext(selection)
     try await flush(fixture.model)

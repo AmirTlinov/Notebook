@@ -23,10 +23,10 @@ final class MacCommandFixture {
   func start(pageSize: PageSize = NotebookAppModel.defaultPageSize, showingPage: Bool = false) async throws {
     if showingPage {
       let header = try store.initializeWorkspace(actor: UUID(), pageSize: pageSize)
-      let item = try XCTUnwrap(store.readWorkspaceItems(limit: 1).first)
+      let item = try XCTUnwrap(store.readItemHeaders(limit: 1).first)
       try store.savePresence(.init(boardID: header.rootBoardID, mode: .page,
         camera: .init(), viewport: .init(x: pageSize.width, y: pageSize.height),
-        focusedItemID: item.id, openProgress: 1, selectedItemID: item.id, notebookPageID: item.pageIDs.first))
+        focusedItemID: item.id, openProgress: 1, selectedItemID: item.id, notebookPageID: item.firstPageID))
     }
     await model.start(pageSize: pageSize)
     XCTAssertTrue(FileManager.default.fileExists(atPath: socketURL.path), "The actual Mac command owner must start")

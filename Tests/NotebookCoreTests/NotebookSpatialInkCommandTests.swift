@@ -34,7 +34,7 @@ struct NotebookSpatialInkCommandTests {
 
   @Test func firstAppendStoresOneMultiSurfaceActionAndUndoNeverRepublishesSpans() throws {
     try fixture { store, actor, header in
-      let cover = try #require(try store.readWorkspaceItems(limit: 1).first?.id)
+      let cover = try #require(try store.readItemHeaders(limit: 1).first?.id)
       let surfaces = [SurfaceID.board(header.rootBoardID), .cover(cover), .board(header.rootBoardID)]
       let action = SpatialInkAction(tool: .pen, spans: surfaces.enumerated().map { span($0.element, x: Double($0.offset)) },
         stamp: .init(counter: 1, actor: actor))
@@ -124,7 +124,7 @@ struct NotebookSpatialInkCommandTests {
       #expect(throws: CollaborationError.self) { try store.commitSpatialInk(state(action, active: true, counter: 3)) }
       let next = SpatialInkAction(tool: .pen, spans: action.spans, stamp: .init(counter: 3, actor: actor))
       #expect(throws: CollaborationError.self) { try store.commitSpatialInk(.append(next, journalStamp: next.stamp)) }
-      #expect(try store.readWorkspaceItem(deleted) == nil)
+      #expect(try store.readItemHeader(deleted) == nil)
       let journal = try store.readSpatialInk(surfaces: [.board(header.rootBoardID), .cover(deleted)])
       #expect(journal.actions.count == 1 && !journal.actions[0].isActive)
       #expect(journal.actions[0].spans == action.spans)
@@ -157,7 +157,7 @@ struct NotebookSpatialInkCommandTests {
 
   @Test func appendUndoAndEchoAmongOneHundredThousandOtherActionsStayAddressed() throws {
     try fixture { store, actor, header in
-      let foreign = try #require(try store.readWorkspaceItems(limit: 1).first?.id)
+      let foreign = try #require(try store.readItemHeaders(limit: 1).first?.id)
       let clock = VersionStamp(counter: 100_000, actor: actor)
       let firstID = UUID()
       let seedStarted = ContinuousClock.now

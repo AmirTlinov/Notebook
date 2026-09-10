@@ -12,7 +12,7 @@ final class WorkspaceItemPoseTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at: root) }
     let (boardID, coverID) = try await Task.detached {
       let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
-      return (header.rootBoardID, try XCTUnwrap(store.readWorkspaceItems(limit: 1).first?.id))
+      return (header.rootBoardID, try XCTUnwrap(store.readItemHeaders(limit: 1).first?.id))
     }.value
     let driver = try await Driver.make(boardID: boardID, coverIDs: [coverID], actor: actor)
     defer { driver.close() }
