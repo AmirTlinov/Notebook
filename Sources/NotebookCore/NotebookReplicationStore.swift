@@ -121,7 +121,7 @@ extension NotebookStore {
       for root in manifest.pageOrderRoots { try database.noteOwner(.orderRoot, root) }
       try applyReplicatedContextEntries(manifestHash: change.manifestHash)
       var incoming: [String: [NotebookStoredFragment]] = [:], removals: [String: Set<String>] = [:]
-      for recordRow in try database.rows("SELECT address,blob_hash FROM manifest_records WHERE manifest_hash=? AND (address<'collaboration/contexts/' OR address>='collaboration/contexts0') ORDER BY address", [.text(change.manifestHash)]) {
+      for recordRow in try database.rows("SELECT address,blob_hash FROM manifest_records WHERE manifest_hash=? AND (address<'collaboration/contexts/' OR address>='collaboration/contexts0') AND (address<'spatial-ink.json#' OR address>='spatial-ink.json$') ORDER BY address", [.text(change.manifestHash)]) {
         let record = NotebookRecordMutation(address: recordRow[0].text!, blobHash: recordRow[1].text)
         let file = String(record.address.split(separator: "#", maxSplits: 1)[0])
         if let hash = record.blobHash {
@@ -190,10 +190,6 @@ extension NotebookStore {
           var resolved = try value.decode(DocumentStateJournal.self)
           if let old { _ = try resolved.merge(old.decode(DocumentStateJournal.self)) }
           guard resolved.isValid else { throw NotebookStorageError.corruptRecord(file) }; writes[file] = try .encode(resolved)
-        } else if file == "spatial-ink.json" {
-          var resolved = try value.decode(SpatialInkJournal.self)
-          if let old { _ = try resolved.merge(old.decode(SpatialInkJournal.self)) }
-          guard resolved.isValid else { throw NotebookStorageError.corruptRecord(file) }; writes[file] = try .encode(resolved)
         } else if file.hasPrefix("collaboration/actions/") {
           let receipt = try value.decode(CollaborationReceipt.self)
           guard receipt.id == receipt.action.id else { throw NotebookStorageError.invalidTransaction("receipt identity") }
@@ -239,6 +235,7 @@ extension NotebookStore {
       // validator. A page, response chunk or receipt does not scan all catalog
       // members merely to prove an unchanged archive's dependencies again.
       try publishRecords(writes: writes, removals: removedFiles)
+      try applyReplicatedSpatialInk(manifestHash: change.manifestHash)
       for (file, value) in writes where file.hasPrefix("collaboration/attention/") {
         try validateAttentionEvidence(file: file, value: value, previous: before[file])
       }

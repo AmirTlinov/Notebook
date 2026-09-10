@@ -29,7 +29,7 @@ public struct NotebookSpatialInkResult: Equatable, Sendable {
   public let journalStamp: VersionStamp
 }
 
-private struct SpatialInkActionHeader: Codable {
+struct SpatialInkActionHeader: Codable {
   let id: UUID
   let tool: SpatialInkTool
   let color: SpatialInkColor
@@ -53,6 +53,15 @@ extension NotebookStore {
   /// SQL commit/journal. An exact retry is a no-op, even after an ambiguous ACK.
   @discardableResult
   public func commitSpatialInk(_ command: NotebookSpatialInkCommand) throws -> NotebookSpatialInkResult {
+    try publishSpatialInk(command, origin: .contact)
+  }
+
+  enum SpatialInkPublicationOrigin { case contact, replication }
+
+  /// Replication retains measured history even after its cover was deleted;
+  /// it cannot create that cover. A new local contact requires a live owner.
+  @discardableResult
+  func publishSpatialInk(_ command: NotebookSpatialInkCommand, origin: SpatialInkPublicationOrigin) throws -> NotebookSpatialInkResult {
     let expected = command.expectedResult
     guard expected.creationStamp.counter <= VersionStamp.maximumCounter,
       expected.stateStamp.counter <= VersionStamp.maximumCounter,
@@ -95,7 +104,7 @@ extension NotebookStore {
           throw NotebookStorageError.transactionConflict
         }
         if expected.stateStamp > header.stateStamp {
-          if expected.isActive && !header.isActive {
+          if origin == .contact, expected.isActive && !header.isActive {
             let surfaces = try database.rows("SELECT kind,owner_id FROM ink_surfaces WHERE address=?", [.text(address)]).map { row -> SurfaceID in
               guard let kind = row[0].text.flatMap(SurfaceKind.init(rawValue:)),
                 let id = row[1].text.flatMap(UUID.init(uuidString:)) else { throw NotebookStorageError.corruptRecord(address) }
@@ -110,7 +119,7 @@ extension NotebookStore {
         guard case .append(let action, _) = command else {
           throw NotebookStorageError.invalidTransaction("spatial ink action is missing")
         }
-        try requireSpatialInkOwners(action.spans.map(\.surface), database: database)
+        if origin == .contact { try requireSpatialInkOwners(action.spans.map(\.surface), database: database) }
         header = .init(action)
         let last = try database.rows("SELECT position FROM records WHERE parent=? AND collection='actions' ORDER BY position DESC,member DESC LIMIT 1", [.text(rootAddress)]).first?[0].integer ?? -1
         guard last < Int64.max else { throw NotebookStorageError.limitExceeded("spatial ink sequence") }
