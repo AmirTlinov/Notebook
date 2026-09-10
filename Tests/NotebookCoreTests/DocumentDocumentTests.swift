@@ -29,8 +29,8 @@ func legacyWorkspaceDecodesWithRootBoard() throws {
   #expect(throws: DecodingError.self) { try JSONDecoder().decode(WorkspaceIndex.self, from: data) }
 }
 
-@Test("Старая доска и присутствие получают нового владельца itemID")
-func legacySpatialOwnersDecodeAsVersionTwo() throws {
+@Test("Старая доска и присутствие требуют внешнего преобразования")
+func legacySpatialOwnersRequireExternalConversion() throws {
   let stamp: [String: Any] = [
     "counter": 2,
     "actor": legacyActor.uuidString
@@ -62,8 +62,7 @@ func legacySpatialOwnersDecodeAsVersionTwo() throws {
     "openProgress": 1.0
   ])
 
-  let board = try JSONDecoder().decode(BoardDocument.self, from: boardData)
-  #expect(board.freeItems.map(\.itemID) == [legacyItemID])
+  #expect(throws: DecodingError.self) { try JSONDecoder().decode(BoardDocument.self, from: boardData) }
   #expect(throws: DecodingError.self) { try JSONDecoder().decode(SessionPresence.self, from: presenceData) }
 }
 
@@ -130,8 +129,8 @@ func documentPaperSizesHavePhysicalDimensions() {
   #expect(DocumentPaperSize.letter.heightPoints / DocumentPaperSize.letter.widthPoints < 1.30)
 }
 
-@Test("Старый бесконечный документ мигрирует в A4")
-func legacyDocumentDecodesAsPaginatedA4() throws {
+@Test("Старый бесконечный документ требует внешнего преобразования")
+func legacyDocumentRequiresExternalConversion() throws {
   let current = DocumentDocument(
     id: legacyItemID,
     actor: legacyActor,
@@ -146,18 +145,7 @@ func legacyDocumentDecodesAsPaginatedA4() throws {
   object["paperSize"] = nil
 
   let legacy = try JSONSerialization.data(withJSONObject: object)
-  let decoded = try JSONDecoder().decode(DocumentDocument.self, from: legacy)
-
-  #expect(decoded.format == DocumentDocument.formatVersion)
-  #expect(decoded.paperSize == .a4)
-  #expect(decoded.blocks == current.blocks)
-  let migrated = try #require(
-    JSONSerialization.jsonObject(
-      with: JSONEncoder().encode(decoded)
-    ) as? [String: Any]
-  )
-  #expect(migrated["format"] as? Int == 2)
-  #expect(migrated["paperSize"] as? String == "a4")
+  #expect(throws: DecodingError.self) { try JSONDecoder().decode(DocumentDocument.self, from: legacy) }
 }
 
 @Test("Новый формат всегда называет размер бумаги")
@@ -518,4 +506,13 @@ func documentPageSelectionRequestRoundTrips() throws {
       pageIndex: -1
     ).isValid
   )
+}
+
+@Test("Канонический узел не восстанавливает отсутствующую камеру портала", arguments: ["portalCamera", "portalStamp"])
+func boardNodeRequiresItsOwnPortalFields(key: String) throws {
+  let node = BoardNode(id: UUID(), board: .initial(itemIDs: [], actor: legacyActor))
+  var value = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(node)) as? [String: Any])
+  value.removeValue(forKey: key)
+  let bytes = try JSONSerialization.data(withJSONObject: value)
+  #expect(throws: DecodingError.self) { try JSONDecoder().decode(BoardNode.self, from: bytes) }
 }

@@ -260,6 +260,17 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
     return true
   }
 
+  /// Publication makes implicit field clocks explicit without editing source
+  /// or advancing its frontier. Offline preparation uses the same owner so a
+  /// checked checkpoint already equals the archive that SQLite will publish.
+  public func materializingCausalVersions() throws -> Self {
+    guard collaboration == nil else { return self }
+    var result = self, metadata = CollaborativeContent()
+    try metadata.materializeVersions(in: .encode(self), fallback: contentStamp)
+    result.collaboration = metadata
+    return result
+  }
+
   private enum CodingKeys: String, CodingKey {
     case format
     case id
@@ -273,7 +284,7 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     let decodedFormat = try container.decode(Int.self, forKey: .format)
-    guard decodedFormat == 1 || decodedFormat == Self.formatVersion else {
+    guard decodedFormat == Self.formatVersion else {
       throw DecodingError.dataCorruptedError(
         forKey: .format,
         in: container,
@@ -282,9 +293,7 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
     }
     format = Self.formatVersion
     id = try container.decode(UUID.self, forKey: .id)
-    paperSize = decodedFormat == 1
-      ? .a4
-      : try container.decode(DocumentPaperSize.self, forKey: .paperSize)
+    paperSize = try container.decode(DocumentPaperSize.self, forKey: .paperSize)
     preamble = try container.decode(String.self, forKey: .preamble)
     blocks = try container.decode([DocumentBlock].self, forKey: .blocks)
     contentStamp = try container.decode(

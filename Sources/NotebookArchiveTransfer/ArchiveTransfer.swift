@@ -9,11 +9,20 @@ struct ArchiveTransferError: Error, CustomStringConvertible {
 
 typealias SourceFileProof = NotebookArchiveFileProof
 
+/// The prepared logical owner is hashed independently of the original file.
+/// These are format/implicit-clock conversions, never new human edits.
+struct ArchiveOwnerConversion: Codable, Equatable {
+  let path: String
+  let sourceSHA256: String
+  let preparedOwnerSHA256: String
+}
+
 struct ArchiveSource {
   let root: URL
   let files: [SourceFileProof]
   let checkpoint: NotebookCheckpoint
   let convertedPageIDs: [UUID]
+  let convertedOwners: [ArchiveOwnerConversion]
   let restoredSummaryEntryIDs: [UUID]
   let unreferencedFiles: [String]
 
@@ -53,9 +62,19 @@ struct ArchiveSource {
         return value
       }
     }
+    var convertedOwners: [ArchiveOwnerConversion] = []
+    func recordConversion<T: Encodable>(_ value: T, path: String, original: Data) throws -> T {
+      let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+      let prepared = try encoder.encode(value)
+      if try JSONDecoder().decode(JSONValue.self, from: original) != JSONDecoder().decode(JSONValue.self, from: prepared) {
+        convertedOwners.append(.init(path: path, sourceSHA256: digest(original), preparedOwnerSHA256: digest(prepared)))
+      }
+      return value
+    }
     let workspace = try decode("workspace.json", LegacyWorkspace.self).converted()
     let presence = try decode("last-context.json", LegacyPresence.self).converted(workspace: workspace)
-    let hierarchy = try decode("board.json", BoardHierarchy.self)
+    let boardBytes = try data("board.json")
+    let hierarchy = try recordConversion(convertLegacyHierarchy(boardBytes), path: "board.json", original: boardBytes)
     let ink = try decode("spatial-ink.json", SpatialInkJournal.self)
     let pages = try workspace.items.flatMap(\.pageIDs).map { id in
       let value = try convertLegacyPage(data("pages/\(id.uuidString.lowercased()).json"))
@@ -63,7 +82,8 @@ struct ArchiveSource {
       return value
     }
     let documents = try workspace.items.filter { $0.kind == .document }.map { item in
-      let value = try decode("documents/\(item.id.uuidString.lowercased()).json", DocumentDocument.self)
+      let path = "documents/\(item.id.uuidString.lowercased()).json", bytes = try data(path)
+      let value = try recordConversion(convertLegacyDocument(bytes), path: path, original: bytes)
       guard value.id == item.id else { throw ArchiveTransferError.invalidSource("document UUID differs from address") }
       return value
     }
@@ -95,6 +115,7 @@ struct ArchiveSource {
     }.sorted()
     return Self(root: root, files: files, checkpoint: checkpoint,
       convertedPageIDs: pages.filter { !$0.drawingData.isEmpty }.map(\.id).sorted { $0.uuidString < $1.uuidString },
+      convertedOwners: convertedOwners.sorted { $0.path < $1.path },
       restoredSummaryEntryIDs: contexts.restoredSummaryEntryIDs,
       unreferencedFiles: unreferenced)
   }
@@ -106,6 +127,7 @@ struct ArchiveTransferReport: Codable {
   let sourceFiles: [SourceFileProof]
   let checkpoint: NotebookCheckpointReceipt
   let convertedPageIDs: [UUID]
+  let convertedOwners: [ArchiveOwnerConversion]
   let restoredSummaryEntryIDs: [UUID]
   let unreferencedFilesRetainedInSource: [String]
   let inputQuiescenceProven: Bool
@@ -143,7 +165,7 @@ enum ArchiveTransfer {
       throw ArchiveTransferError.invalidSource("checkpoint readback differs from the prepared owners")
     }
     let report = ArchiveTransferReport(format: 1, source: root.path, sourceFiles: source.files,
-      checkpoint: receipt, convertedPageIDs: source.convertedPageIDs,
+      checkpoint: receipt, convertedPageIDs: source.convertedPageIDs, convertedOwners: source.convertedOwners,
       restoredSummaryEntryIDs: source.restoredSummaryEntryIDs,
       unreferencedFilesRetainedInSource: source.unreferencedFiles,
       inputQuiescenceProven: false, installedApplicationsChanged: false)

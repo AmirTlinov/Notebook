@@ -440,9 +440,7 @@ extension NotebookStore {
         if file.hasPrefix("documents/"), value["collaboration"] == nil {
           let document = try value.decode(DocumentDocument.self)
           guard document.isValid else { throw NotebookStorageError.corruptRecord(file) }
-          var metadata = CollaborativeContent()
-          metadata.materializeVersions(in: value, fallback: document.contentStamp)
-          value = value.setting("collaboration", try .encode(metadata))
+          value = try .encode(document.materializingCausalVersions())
         }
         let fragments = try NotebookRecordCodec.encode(value, file: file)
         if file == "workspace.json" { try value.decode(WorkspaceIndex.self).validatePageOrderWitness() }

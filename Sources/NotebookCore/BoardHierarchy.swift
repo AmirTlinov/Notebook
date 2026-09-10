@@ -46,14 +46,8 @@ public struct BoardNode: Codable, Equatable, Identifiable, Sendable {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     id = try container.decode(UUID.self, forKey: .id)
     board = try container.decode(BoardDocument.self, forKey: .board)
-    portalCamera = try container.decodeIfPresent(
-      BoardPortalCamera.self,
-      forKey: .portalCamera
-    ) ?? BoardPortalCamera()
-    portalStamp = try container.decodeIfPresent(
-      VersionStamp.self,
-      forKey: .portalStamp
-    ) ?? VersionStamp(counter: 0, actor: board.stamp.actor)
+    portalCamera = try container.decode(BoardPortalCamera.self, forKey: .portalCamera)
+    portalStamp = try container.decode(VersionStamp.self, forKey: .portalStamp)
   }
 }
 

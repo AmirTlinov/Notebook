@@ -1380,75 +1380,20 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     case elements
     case stamp
     case collaboration
-    case legacyFreeNotebooks = "freeNotebooks"
-  }
-
-  private struct LegacyFreeNotebookPlacement: Codable {
-    let notebookID: UUID
-    let center: WorldPoint
-    let zIndex: Int
-    let stamp: VersionStamp
-  }
-
-  private struct LegacyNotebookStack: Codable {
-    let id: UUID
-    let center: WorldPoint
-    let zIndex: Int
-    let notebookIDs: [UUID]
-    let stamp: VersionStamp
   }
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    let storedFormat = try container.decode(Int.self, forKey: .format)
-    format = Self.formatVersion
+    format = try container.decode(Int.self, forKey: .format)
+    guard format == Self.formatVersion else {
+      throw DecodingError.dataCorruptedError(forKey: .format, in: container,
+        debugDescription: "Unsupported board format: \(format)")
+    }
+    freeItems = try container.decode([FreeItemPlacement].self, forKey: .freeItems)
+    stacks = try container.decode([WorkspaceItemStack].self, forKey: .stacks)
     elements = try container.decode([SpatialElement].self, forKey: .elements)
     stamp = try container.decode(VersionStamp.self, forKey: .stamp)
     collaboration = try container.decodeIfPresent(CollaborativeContent.self, forKey: .collaboration)
-
-    switch storedFormat {
-    case Self.formatVersion:
-      freeItems = try container.decode(
-        [FreeItemPlacement].self,
-        forKey: .freeItems
-      )
-      stacks = try container.decode(
-        [WorkspaceItemStack].self,
-        forKey: .stacks
-      )
-    case 1:
-      let legacyFree = try container.decode(
-        [LegacyFreeNotebookPlacement].self,
-        forKey: .legacyFreeNotebooks
-      )
-      let legacyStacks = try container.decode(
-        [LegacyNotebookStack].self,
-        forKey: .stacks
-      )
-      freeItems = legacyFree.map {
-        FreeItemPlacement(
-          itemID: $0.notebookID,
-          center: $0.center,
-          zIndex: $0.zIndex,
-          stamp: $0.stamp
-        )
-      }
-      stacks = legacyStacks.map {
-        WorkspaceItemStack(
-          id: $0.id,
-          center: $0.center,
-          zIndex: $0.zIndex,
-          itemIDs: $0.notebookIDs,
-          stamp: $0.stamp
-        )
-      }
-    default:
-      throw DecodingError.dataCorruptedError(
-        forKey: .format,
-        in: container,
-        debugDescription: "Unsupported board format: \(storedFormat)"
-      )
-    }
   }
 
   public func encode(to encoder: Encoder) throws {

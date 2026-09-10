@@ -13,6 +13,7 @@ struct ArchiveConsolidationReport: Codable {
   let format: Int
   let workspaceID: UUID
   let inputs: [String: [SourceFileProof]]
+  let convertedOwners: [String: [ArchiveOwnerConversion]]
   let beforeRecords: [ArchiveRecordProof]
   let afterRecords: [ArchiveRecordProof]
   let importedCheckpointSHA256: String
@@ -108,6 +109,7 @@ enum ArchiveConsolidation {
     }
     let report = try ArchiveConsolidationReport(format: 1, workspaceID: workspaceID,
       inputs: Dictionary(uniqueKeysWithValues: zip(roots.map(\.path), inventories)),
+      convertedOwners: [roots[0].path: primary.convertedOwners, roots[1].path: secondary.convertedOwners],
       beforeRecords: beforeRecords, afterRecords: afterRecords,
       importedCheckpointSHA256: collaborationHash(primary.checkpoint), combinedContentSHA256: collaborationHash(after),
       selectedIPadBaselines: equivalentPages, retainedCurrentRecordCount: protected.count,
