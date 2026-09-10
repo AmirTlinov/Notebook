@@ -40,6 +40,50 @@ final class SceneCompositionTests: XCTestCase {
   }
 
   @MainActor
+  func testNativePressureRemovesOnlyOptionalCarriersWithoutCoarseningTheirBacking() async throws {
+    let actor = UUID(), stamp = VersionStamp(counter: 0, actor: actor)
+    let items = (0..<3).map { WorkspaceItem.notebook(title: "Carrier \($0)", pageIDs: [UUID()]) }
+    let workspace = WorkspaceIndex(items: items, selectedItemID: items[0].id,
+      selectedPageID: items[0].pageIDs[0], stamp: stamp)
+    let element = SpatialElement(id: "unrelated-raster", surface: .board(workspace.rootBoardID), kind: .nativeText,
+      frame: .init(x: 0, y: 0, width: 100, height: 100), worldOrigin: .zero, source: "Retained", stamp: stamp)
+    let board = BoardDocument(freeItems: items.enumerated().map { index, item in
+      .init(itemID: item.id, center: .init(x: Double(index) * 100, y: 0), zIndex: index, stamp: stamp)
+    }, elements: [element], stamp: stamp)
+    let hierarchy = BoardHierarchy(rootBoardID: workspace.rootBoardID,
+      boards: [.init(id: workspace.rootBoardID, board: board)], stamp: stamp)
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
+    let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
+      camera: .init(scale: 0.15), viewport: .init(x: 512, y: 512))
+    let pin = WorkspaceSpatialID.item(items[0].id)
+    let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil }, pinned: [pin])
+    let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: .init(stamp: stamp))
+    let initial = try await SceneCompositionPlan.prepare(source: source, presence: presence,
+      frame: frame, pinned: [pin], displayScale: 2, previous: nil)
+    XCTAssertEqual(initial.nativeOwnerCount, 4)
+    let plane = SceneCompositionPlane.board(presence.boardID)
+    var reduced = initial, reductions = 0
+    while let next = try reduced.reducingNativeOwners(presence: presence, frame: frame, displayScale: 2) {
+      XCTAssertLessThan(next.nativeOwnerCount, reduced.nativeOwnerCount)
+      XCTAssertLessThan(next.reductionPotential, reduced.reductionPotential)
+      XCTAssertEqual(next.protectedOwners, initial.protectedOwners)
+      XCTAssertTrue(next.allowsLive(.element(element.id), in: plane),
+        "Dropping a raster-only element cannot make a native cover allocation smaller")
+      XCTAssertTrue(next.allowsLive(pin, in: plane))
+      for item in items {
+        let entry = try XCTUnwrap(index.paintEntry(id: .item(item.id), boardID: presence.boardID))
+        let live = next.allowsLive(entry.id, in: plane) ? 1 : 0
+        let painted = next.bands.filter { $0.plane == plane && $0.range.contains(entry) }.count
+        XCTAssertEqual(live + painted, 1)
+      }
+      reduced = next; reductions += 1
+    }
+    XCTAssertEqual(reductions, 2)
+    XCTAssertEqual(reduced.nativeOwnerCount, 2, "Root ink and the pinned carrier cannot yield to pressure")
+    XCTAssertEqual(reduced.inkBoardIDs, initial.inkBoardIDs)
+  }
+
+  @MainActor
   func testBytePressureCoarsensWholeBoundsWithoutChangingPinsOrPainterSources() async throws {
     let fixture = Fixture(count: 2)
     let presence = SessionPresence(mode: .board,

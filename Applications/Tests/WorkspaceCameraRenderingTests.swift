@@ -142,7 +142,19 @@ final class WorkspaceCameraRenderingTests: XCTestCase {
     let deadline = ContinuousClock.now + .seconds(10)
     while model.compositionTiles.published == nil, model.compositionTiles.failure == nil,
       ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
-    let cohort = try XCTUnwrap(model.compositionTiles.published, model.compositionTiles.failure ?? "A frame with real ink must precede the camera measurement")
+    let resourcesAtPublication = SceneRenderResources.shared
+    let preparation = "preparing=\(model.compositionTiles.isPreparing); permits=\(model.permitsBackgroundPreparation); scenePending=\(model.scenePreparationPending); publication=\(model.scenePublicationGeneration); revision=\(model.workspaceHeader?.cursor.description ?? "nil"); physical=\(resourcesAtPublication.activePhysicalOwnerCount); resident=\(resourcesAtPublication.residentBytes); reserved=\(resourcesAtPublication.reservedBytes); refusals=\(model.compositionTiles.budgetFailures)"
+    let preparationAttachment = XCTAttachment(string: preparation)
+    preparationAttachment.name = "Dense board publication and resource state"
+    preparationAttachment.lifetime = .keepAlways; add(preparationAttachment)
+    let cohort = try XCTUnwrap(model.compositionTiles.published,
+      model.compositionTiles.failure ?? "A frame with real ink must precede the camera measurement: " + preparation)
+    let nativeRefusals = model.compositionTiles.budgetFailures.filter { $0.allocation == .nativeInk }
+    XCTAssertFalse(nativeRefusals.isEmpty, "Eight inked covers exceed the passive backing allowance")
+    for (previous, next) in zip(nativeRefusals, nativeRefusals.dropFirst()) {
+      XCTAssertLessThan(next.nativeOwners, previous.nativeOwners,
+        "Coarsening static tiles cannot retry the same refused native cover set")
+    }
     XCTAssertEqual(cohort.rasters.count, cohort.plan.tiles.count)
     let resources = SceneRenderResources.shared
     let resourcesBefore = "web=\(resources.activeWebSurfaceCount); pending=\(resources.pendingWebRequestCount); rasterBytes=\(resources.residentBytes)"

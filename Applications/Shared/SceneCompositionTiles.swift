@@ -65,6 +65,9 @@ struct SceneCompositionPlan: Sendable {
   /// Every resource retry removes an optional owner or a static tile. Keeping
   /// this integer strictly decreasing bounds preparation without a timer retry.
   var reductionPotential: Int { liveOwners.count - protectedOwners.count + tiles.count }
+  var nativeOwnerCount: Int {
+    inkBoardIDs.count + liveOwners.filter { if case .item = $0.id { return true }; return false }.count
+  }
 
   func rank(id: WorkspaceSpatialID, in plane: SceneCompositionPlane) -> Double? {
     guard let owner = liveOwners.first(where: { $0.id == id && $0.plane == plane }) else { return nil }
@@ -165,6 +168,20 @@ struct SceneCompositionPlan: Sendable {
     } catch SceneRenderError.resourceLimit { return nil }
     catch SceneRenderError.snapshotPending { return nil }
     catch { throw error }
+  }
+
+  /// Native cover backing follows paper size, not overview tile density.
+  /// After its refusal, another allocation must remove an optional physical
+  /// carrier. Coarsening the same static ranges cannot admit that same set.
+  func reducingNativeOwners(presence: SessionPresence, frame: WorkspaceSceneFrame,
+    displayScale: Double) throws -> Self? {
+    for owner in liveOwners.reversed() where !protectedOwners.contains(owner) {
+      guard case .item = owner.id,
+        let next = try demoting(owner, presence: presence, frame: frame, displayScale: displayScale),
+        next.nativeOwnerCount < nativeOwnerCount else { continue }
+      return next
+    }
+    return nil
   }
 
   private static func assemble(revision: UInt64, workspaceID: UUID, owners requestedOwners: [SceneCompositionLiveOwner],
@@ -384,6 +401,7 @@ final class SceneCompositionTiles {
           guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
           self?.preparingPlan = plan
           var phase = "live_source"
+          var allocation = BudgetAllocation.raster
           let priorRefusal = resources.lastRasterRefusal?.generation
           #if os(iOS)
             var nativeInk: SpatialInkSceneLease?
@@ -412,9 +430,11 @@ final class SceneCompositionTiles {
               // any new native canvases. Their real grants then join this same
               // pool, so recheck rather than treating the first read as credit.
               phase = "native_ink"
+              allocation = .nativeInk
               nativeInk = try await surfaceRegistry.prepareSceneInk(plan: plan, frame: frame,
                 liveData: liveData, resources: resources, displayScale: displayScale)
               phase = "raster_native_preflight"
+              allocation = .raster
               let admission = resources.rasterAdmission
               guard borrowed.fits(admission, profile: resources.profile) else {
                 self?.recordBudgetFailure(phase: phase, plan: plan, attempt: attempt,
@@ -456,7 +476,7 @@ final class SceneCompositionTiles {
           } catch SceneRenderError.resourceLimit {
             if !phase.hasSuffix("preflight") {
               let refusal = resources.lastRasterRefusal.flatMap { $0.generation != priorRefusal ? $0 : nil }
-              self?.recordBudgetFailure(phase: phase, plan: plan, attempt: attempt,
+              self?.recordBudgetFailure(phase: phase, allocation: allocation, plan: plan, attempt: attempt,
                 requestedBytes: refusal?.requestedBytes ?? 0, admission: refusal?.admission ?? resources.rasterAdmission)
             }
             for raster in rasters.values { raster.release() }; rasters.removeAll()
@@ -469,7 +489,7 @@ final class SceneCompositionTiles {
             try await renderer.finishPreparationAndDrain()
             try Task.checkCancellation()
             guard self?.requestID == id, permitsPreparation(), attempt + 1 < maximumAttempts,
-              let smaller = try Self.lowerCostPlan(plan, requests: requests, previous: previous,
+              let smaller = try Self.lowerCostPlan(plan, allocation: allocation, requests: requests, previous: previous,
                 presence: presence, frame: frame, displayScale: displayScale, resources: resources),
               smaller.reductionPotential < plan.reductionPotential
             else { throw SceneRenderError.resourceLimit }
@@ -508,19 +528,24 @@ final class SceneCompositionTiles {
     removePublishedCoverage()
   }
 
+  enum BudgetAllocation: Sendable { case raster, nativeInk }
   struct BudgetFailure: Sendable {
     let phase: String
+    let allocation: BudgetAllocation
     let attempt: Int
     let liveOwners: Int
+    let nativeOwners: Int
     let tiles: Int
     let requestedBytes: Int
     let admission: SceneRasterAdmission
   }
   private(set) var budgetFailures: [BudgetFailure] = []
-  private func recordBudgetFailure(phase: String, plan: SceneCompositionPlan, attempt: Int,
+  private func recordBudgetFailure(phase: String, allocation: BudgetAllocation = .raster,
+    plan: SceneCompositionPlan, attempt: Int,
     requestedBytes: Int, admission: SceneRasterAdmission) {
     guard budgetFailures.count <= SceneCompositionPlan.maximumLiveOwners + SceneCompositionPlan.maximumTiles else { return }
-    budgetFailures.append(.init(phase: phase, attempt: attempt, liveOwners: plan.liveOwners.count,
+    budgetFailures.append(.init(phase: phase, allocation: allocation, attempt: attempt,
+      liveOwners: plan.liveOwners.count, nativeOwners: plan.nativeOwnerCount,
       tiles: plan.tiles.count, requestedBytes: requestedBytes, admission: admission))
     print("SCENE_COMPOSITION_BUDGET phase=\(phase) attempt=\(attempt) live=\(plan.liveOwners.count) tiles=\(plan.tiles.count) requested=\(requestedBytes) pinned=\(admission.pinnedBytes) reserved=\(admission.reservedBytes) limit=\(admission.byteLimit) passiveReserved=\(admission.passiveReservedBytes) passiveLimit=\(admission.passiveByteLimit)")
   }
@@ -608,10 +633,13 @@ final class SceneCompositionTiles {
     return sum.partialValue
   }
 
-  private static func lowerCostPlan(_ plan: SceneCompositionPlan,
+  private static func lowerCostPlan(_ plan: SceneCompositionPlan, allocation: BudgetAllocation,
     requests: [SceneCompositionRenderer.LiveRasterRequest], previous: SceneCompositionCohort?,
     presence: SessionPresence, frame: WorkspaceSceneFrame, displayScale: Double,
     resources: SceneRenderResources) throws -> SceneCompositionPlan? {
+    if allocation == .nativeInk {
+      return try plan.reducingNativeOwners(presence: presence, frame: frame, displayScale: displayScale)
+    }
     // Passive overview density yields before a physical input owner. Flattening
     // a cover first would remove its native gestures and accessibility even
     // when a complete, slightly coarser background leaves room for both.
