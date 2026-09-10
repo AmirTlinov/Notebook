@@ -146,6 +146,13 @@ npm run check 2>&1 | tee "$EVIDENCE/mcp-check.log"
 npm test 2>&1 | tee "$EVIDENCE/mcp-tests.log"
 npm run smoke 2>&1 | tee "$EVIDENCE/mcp-smoke.log"
 
+# Dependency proof only: handwriting recognition still has its own explicit
+# acceptance gates in docs/executable-ink.md, not a fake recognizer in the app.
+"$ROOT/Tests/NotebookComputationHarness/run.sh" 2>&1 | tee "$EVIDENCE/computation-dependencies.log"
+cp "$ROOT/.build/computation-contract/result.json" "$EVIDENCE/computation-dependencies.json"
+npm ci --ignore-scripts --prefix "$ROOT/Tests/NotebookRecognitionHarness"
+npm test --prefix "$ROOT/Tests/NotebookRecognitionHarness" 2>&1 | tee "$EVIDENCE/recognition-preparation.log"
+
 cd "$ROOT/Applications"
 xcodegen generate --spec project.yml
 xcodebuild \

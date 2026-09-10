@@ -1,0 +1,51 @@
+{
+  "repository": "onnx-community/TexTeller3-ONNX",
+  "revision": "ed90c6164810242882ca90863bb85697a76f4841",
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 751,
+      "sha256": "f59cfc05af8ef7c2c72df180c11359d8c85ece6ac4e6985dc0e6549f6576b934"
+    },
+    {
+      "path": "config.json",
+      "bytes": 4667,
+      "sha256": "d94417e62061a944f002c9d838ef5428df99fca2b8b54b089e30a1d5964cab65"
+    },
+    {
+      "path": "generation_config.json",
+      "bytes": 132,
+      "sha256": "6bf3790b65ff35b3f2e745c4ea71d236e3a44e23af5fb6ed3003a814871b22f1"
+    },
+    {
+      "path": "onnx/decoder_model_merged_quantized.onnx",
+      "bytes": 229140257,
+      "sha256": "1e26574671fdbff033c1e213b23a4ad2f9afef24e1b227709fd6daf3ccd67aa1"
+    },
+    {
+      "path": "onnx/encoder_model_quantized.onnx",
+      "bytes": 88188728,
+      "sha256": "cccb5b13753a96ac2ab1f1d806e81571b32153d682c8ee9824b9ac64e0587194"
+    },
+    {
+      "path": "preprocessor_config.json",
+      "bytes": 352,
+      "sha256": "9e30687f05b936e9f74915206a5425d0a19517910514bca7b348e619d7ec9349"
+    },
+    {
+      "path": "special_tokens_map.json",
+      "bytes": 958,
+      "sha256": "f23c8e6099631c233c16d9bf8dab198f610826cdd1b358f270f6d55c1863e857"
+    },
+    {
+      "path": "tokenizer.json",
+      "bytes": 1370259,
+      "sha256": "ec4ca954798a092faf6fefcfa47fb5f85d76cdf6ab170b624ae1a683d53dae14"
+    },
+    {
+      "path": "tokenizer_config.json",
+      "bytes": 592769,
+      "sha256": "74c8bdcd769acae371f98980fe929be1172fab3df844a50159c61998a3832eea"
+    }
+  ]
+}

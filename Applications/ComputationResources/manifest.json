@@ -1,0 +1,109 @@
+{
+  "release": "314.0.6",
+  "source": "https://github.com/pyodide/pyodide/releases/tag/314.0.6",
+  "coreArchiveSHA256": "1016c31e39ce3764d9a418cbb491a392c802c1b86ccc1367f009f5c59bf8f5fd",
+  "python": "3.14.2",
+  "packages": {
+    "mpmath": "1.4.1",
+    "numpy": "2.4.6",
+    "scipy": "1.18.0",
+    "sympy": "1.14.0"
+  },
+  "files": [
+    {
+      "path": "Licenses/Pyodide.txt",
+      "bytes": 16725,
+      "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+    },
+    {
+      "path": "Licenses/Python.txt",
+      "bytes": 13804,
+      "sha256": "b0e25a78cffb43f4d92de8b61ccfa1f1f98ecbc22330b54b5251e7b6ba010231"
+    },
+    {
+      "path": "Licenses/mpmath-LICENSE",
+      "bytes": 1537,
+      "sha256": "01cb9dc26c9afd5804c2ebf72f9ef03b5fd48972875ed59a483a45f441971f1e"
+    },
+    {
+      "path": "Licenses/numpy-COPYING",
+      "bytes": 690,
+      "sha256": "3f2c1ffa76383a55ae0aac01c9737cd70050dff63e1f026694fbe9d662573c98"
+    },
+    {
+      "path": "Licenses/numpy-LICENSE",
+      "bytes": 1593,
+      "sha256": "05f3b88351988ecfad10abe92c0c50e5875c6452d5009a0084cc291551ffcca6"
+    },
+    {
+      "path": "Licenses/numpy-LICENSE.md",
+      "bytes": 332,
+      "sha256": "268b0ca06759d31ea3ca68dd35f20e877916e927b1c2a835e4592a3c4354b1f9"
+    },
+    {
+      "path": "Licenses/numpy-LICENSE.txt",
+      "bytes": 2266,
+      "sha256": "a14cc25e10d40a3aa705b7de2fb764a6535d8ee9b2db4e1724900585457dfd55"
+    },
+    {
+      "path": "Licenses/numpy-dragon4_LICENSE.txt",
+      "bytes": 1414,
+      "sha256": "f7b14309e5f54e5022b26448eefd419988ada2aec01d3c1162d84a0ea8f21f2c"
+    },
+    {
+      "path": "Licenses/scipy-LICENSE.txt",
+      "bytes": 1531,
+      "sha256": "221e59f5e910fd7f94e44f0dac77436a11338c285c6346232e4a850a50da0e94"
+    },
+    {
+      "path": "Licenses/sympy-LICENSE",
+      "bytes": 7885,
+      "sha256": "07a5e9819f727b4986ad2829c7a29a6320d42575f720eb24d71b7fef573a0286"
+    },
+    {
+      "path": "mpmath-1.4.1-py3-none-any.whl",
+      "bytes": 430985,
+      "sha256": "2e52d90a17736922c2724d34d03e2c7547e9a44a212dab154f046d763e8bced9"
+    },
+    {
+      "path": "numpy-2.4.6-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+      "bytes": 2918760,
+      "sha256": "32959d4137cec8143d75016d029281df3d2e80a232896ed903c2b59e1c44ee9f"
+    },
+    {
+      "path": "pyodide-lock.json",
+      "bytes": 1256,
+      "sha256": "24f440ecf183b228a598b23b8432d1b226bb1f39a185b98faf7a68fd43fc0825"
+    },
+    {
+      "path": "pyodide.asm.mjs",
+      "bytes": 1250344,
+      "sha256": "2ac5eba365ec12839c75c03b39b3be1dd63b798852cc460b014b52238be042f7"
+    },
+    {
+      "path": "pyodide.asm.wasm",
+      "bytes": 9598218,
+      "sha256": "3a0a00dfeaa348ac20f9ef09904233d32d33f644339662d4af368f8a2010f37a"
+    },
+    {
+      "path": "pyodide.mjs",
+      "bytes": 17931,
+      "sha256": "69e3f6ccec3e14b465df60be577ca62f536251406b9a00cce019eac5252a2495"
+    },
+    {
+      "path": "python_stdlib.zip",
+      "bytes": 2545564,
+      "sha256": "80c5be6babfe03297069703410c3c29404dcf2525d2b128746bae5536f94831f"
+    },
+    {
+      "path": "scipy-1.18.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+      "bytes": 14029768,
+      "sha256": "8512aee3e4b36b5a79523628d97d0d34612a366aecbb5b44a08c7ae45dd50d57"
+    },
+    {
+      "path": "sympy-1.14.0-py3-none-any.whl",
+      "bytes": 4185567,
+      "sha256": "28f3303c4409a3c3983409040b9e88b750a70da89cb56968fbf16327f7408f0e"
+    }
+  ]
+}

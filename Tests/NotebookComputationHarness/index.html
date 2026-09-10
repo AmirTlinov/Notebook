@@ -1,0 +1,37 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob:; worker-src blob:; connect-src notebook-computation:;">
+<script>
+// Only this parent has a native reply channel. The worker has no archive bridge.
+const base = 'notebook-computation://bundle/';
+let worker, generation = 0;
+const reply = value => webkit.messageHandlers.probe.postMessage(JSON.stringify(value));
+const moduleURL = async name => URL.createObjectURL(new Blob(
+  [await (await fetch(base + name)).text()], {type: 'application/javascript'}));
+const modules = Promise.all(['pyodide.mjs', 'pyodide.asm.mjs', 'worker.mjs'].map(moduleURL));
+window.startProbe = async (id, scenario) => {
+  const mine = ++generation;
+  worker?.terminate();
+  const [loader, factory, source] = await modules;
+  if (mine !== generation) return;
+  // WebKit accepts custom-scheme fetch, but not custom-scheme module imports.
+  // Blob modules and loadPyodide's factory option use unmodified upstream bytes.
+  const entry = URL.createObjectURL(new Blob([
+    `import { run } from ${JSON.stringify(source)}; run(${JSON.stringify({id, scenario, base, loader, factory})});`
+  ], {type: 'application/javascript'}));
+  worker = new Worker(entry, {type: 'module'});
+  worker.onmessage = ({data}) => {
+    if (mine !== generation || typeof data !== 'string' || data.length > 32768) return;
+    let message;
+    try { message = JSON.parse(data); } catch { return; }
+    if (message.id !== id || !['ready', 'result', 'failure', 'progress'].includes(message.kind)) return;
+    if (message.kind === 'ready') URL.revokeObjectURL(entry);
+    reply(message);
+  };
+  worker.onerror = event => {
+    if (mine === generation) reply({id, kind: 'failure', error: String(event.message)});
+  };
+};
+window.stopProbe = () => { ++generation; worker?.terminate(); worker = undefined; };
+modules.then(() => reply({kind: 'shell-ready'})).catch(error => reply({kind: 'failure', error: String(error)}));
+</script>

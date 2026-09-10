@@ -1,0 +1,32 @@
+{
+  "source": "https://github.com/opendatalab/UniMERNet/tree/5a2c80d96b1d2dba447ff18d873e5fb73ba03c35/asset/streamlit_demo/DirectRecognition",
+  "license": "Apache-2.0",
+  "labels": "Visually transcribed for this diagnostic; not a held-out accuracy benchmark",
+  "samples": [
+    {
+      "file": "hwe_0000001.png",
+      "expected": "NH_{4}Cl+NaOH=NaCl+NH_{3}\\uparrow+H_{2}O",
+      "sha256": "829742ff4be6fed18a7723e544cca70421da3cd1cd8e552958d9a4634167935f"
+    },
+    {
+      "file": "hwe_0000047.png",
+      "expected": "9\\times9+13\\times13-(3+3+1)=243",
+      "sha256": "2ed28c8293055e1d26b290ab9b88297b9e01bdcaada42ae8c73dcf2746151f8c"
+    },
+    {
+      "file": "hwe_0000050.png",
+      "expected": "\\frac{5}{8}+\\frac{1}{8}=\\frac{6}{8}=\\frac{3}{4}",
+      "sha256": "9701315deaa2308fce24bd92433b58d02dc0df4a81872e03841596b98af384e0"
+    },
+    {
+      "file": "hwe_0000083.png",
+      "expected": "\\angle BDE=\\angle BED=\\frac{1}{2}(180^{\\circ}-30^{\\circ})=75^{\\circ}",
+      "sha256": "e0289d9ed907a8c0635fbf7c6572be6dde102f0d2ac51b691265399eea1f89d8"
+    },
+    {
+      "file": "hwe_0000135.png",
+      "expected": "x^{2}+\\frac{15}{4}-10x+4=\\frac{169}{4}+x^{2}-14x",
+      "sha256": "755a12a9ad06d661be80ca07cf1cfa3dd1d8d369e897ee64d0fa5c8772bb48e6"
+    }
+  ]
+}

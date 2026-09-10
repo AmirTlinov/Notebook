@@ -1,0 +1,15 @@
+{
+  "name": "notebook-recognition-proof",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test preprocess.test.mjs",
+    "evaluate": "node evaluate.mjs"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "3.8.1"
+  },
+  "overrides": {
+    "sharp": "0.35.4"
+  }
+}
