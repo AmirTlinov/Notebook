@@ -330,7 +330,7 @@ private struct CollaborationCreationProtection {
   }
 }
 
-private struct CollaborationWorkspace {
+struct CollaborationWorkspace {
   var files: [String: JSONValue]
   init(files: [String: JSONValue]) { self.files = files }
   var ink: SpatialInkJournal { get throws { try files["spatial-ink.json"]!.decode(SpatialInkJournal.self) } }
@@ -798,7 +798,7 @@ private struct CollaborationWorkspace {
     }
   }
 
-  func protectedCreationChanges(in receipt: CollaborationReceipt, scope: NotebookStore) throws -> CollaborationCreationProtection {
+  fileprivate func protectedCreationChanges(in receipt: CollaborationReceipt, scope: NotebookStore) throws -> CollaborationCreationProtection {
     typealias Address = CollaborationCreationProtection.Address
     var created: [UUID: CollaborationOperation] = [:]
     for op in receipt.action.operations where [.createNotebook, .createDocument, .createBoard].contains(op.kind) {
