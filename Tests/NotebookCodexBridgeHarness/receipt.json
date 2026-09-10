@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "checkedAt": "2026-09-10T10:04:15.096128+00:00",
+  "scope": "existing_desktop_owner_readonly",
+  "threadID": "01a08ab0-85ae-76d1-888a-b6e24567cc9e",
+  "preflight": "blocked",
+  "featureReady": false,
+  "observations": {
+    "owner": {
+      "status": "available",
+      "ownerClientID": "4f970adb-a022-4d5e-9b89-d6e127c0ceea",
+      "supportsUntrustedAppInput": true
+    },
+    "catalogue": {
+      "status": "unavailable",
+      "error": "no-client-found"
+    },
+    "appToolsOnRouter": {
+      "status": "unavailable",
+      "error": "no-client-found"
+    },
+    "appToolsExternalClient": {
+      "status": "unavailable",
+      "error": "peer_closed"
+    }
+  },
+  "notTested": [
+    "createTask",
+    "openUnloadedTask",
+    "sendMessage",
+    "streamReply",
+    "stopTurn",
+    "userApproval",
+    "deliveryRecovery",
+    "notebookTools",
+    "physicalIPad"
+  ],
+  "desktopVersion": {
+    "CFBundleIdentifier": "com.openai.codex",
+    "CFBundleShortVersionString": "26.903.61454",
+    "CFBundleVersion": "8378"
+  }
+}
