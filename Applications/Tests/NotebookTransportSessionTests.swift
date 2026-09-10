@@ -20,6 +20,32 @@ final class NotebookTransportSessionTests: XCTestCase {
     // 1.2 / 0xCCAC, PSK proof and both human-confirmation records.
   }
 
+  func testCodexEnvelopeUsesTheSameAuthenticatedPeerAndReceiptID() async throws {
+    let ready = expectation(description: "Existing pair ready"); ready.expectedFulfillmentCount = 2
+    let received = expectation(description: "Same chat ID returned through TLS")
+    let pair = try NotebookTransportTestPair()
+    defer { pair.stop() }
+    let input = NotebookChatInput(author: pair.clientIdentity.deviceID,
+      action: .send(threadID: UUID().uuidString, text: "x² ≥ 0", context: ""))
+    let envelope = NotebookChatEnvelope(body: .request(.job(input)))
+    pair.onReady = { _, _ in ready.fulfill() }
+    pair.onTransient = { value, peer in
+      guard case .codex(let value) = value else { return XCTFail("Expected the chat lane") }
+      XCTAssertEqual(value.id, envelope.id)
+      switch value.body {
+      case .request(.job(let actual)):
+        XCTAssertEqual(actual, input); XCTAssertEqual(peer.deviceID, input.author)
+        pair.server?.sendTransient(.codex(.init(id: value.id, body: .reply(.job(.init(input: actual))))))
+      case .reply(.job(let job)):
+        XCTAssertEqual(job.input, input); XCTAssertNotEqual(peer.deviceID, input.author); received.fulfill()
+      default: XCTFail("Unexpected chat reply")
+      }
+    }
+    try pair.start(); await fulfillment(of: [ready], timeout: 10)
+    pair.client?.sendTransient(.codex(envelope))
+    await fulfillment(of: [received], timeout: 10)
+  }
+
   func testWrongTLSSecretNeverReachesApplicationAdmission() async throws {
     let failed = expectation(description: "TLS rejects the wrong secret")
     let pair = try NotebookTransportTestPair(wrongSecret: true)

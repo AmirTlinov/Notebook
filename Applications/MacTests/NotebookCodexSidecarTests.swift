@@ -1,0 +1,105 @@
+import XCTest
+import NotebookCore
+import NotebookCodex
+@testable import Notebook
+
+private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogueOwner {
+  let thread = UUID().uuidString, turn = UUID().uuidString
+  var busy = false, unknown = false
+  var sent: [UUID] = [], interrupted: [String] = [], decisions: [CodexUserDecision] = []
+  var accepted: [CodexMessage] = []
+  func configure(busy: Bool = false, unknown: Bool = false) { self.busy = busy; self.unknown = unknown }
+  func counts() -> (Int, Int) { (sent.count, interrupted.count) }
+  func attach(threadID: String) { }
+  func detach(threadID: String) { }
+  func close() { }
+  func snapshot(threadID: String) -> CodexConversation? {
+    .init(threadID: threadID, revision: 1, title: "Математика", ready: true, busy: busy, activeTurnID: busy ? turn : nil,
+      messages: accepted, requests: [], acceptedMessages: [:], turnStatuses: [:])
+  }
+  func send(threadID: String, clientMessageID: UUID, text: String, context: String?) throws -> String {
+    sent.append(clientMessageID)
+    accepted.append(.init(id: UUID().uuidString, turnID: turn, clientID: clientMessageID.uuidString.lowercased(), role: .user, text: text))
+    if unknown { throw CodexBridgeError.acceptanceUnknown }
+    return turn
+  }
+  func interrupt(threadID: String, turnID: String) { interrupted.append(turnID) }
+  func respond(threadID: String, request: CodexUserRequest, decision: CodexUserDecision) { decisions.append(decision) }
+  func tasks(cursor: String?) -> CodexTaskPage { .init(tasks: [.init(id: thread, title: "Математика", cwd: "/tmp")], nextCursor: nil) }
+  func history(threadID: String, cursor: String?) -> CodexHistoryPage { .init(messages: accepted, nextCursor: nil) }
+  func create(directory: URL, title: String, workspaceID: UUID) -> CodexTask { .init(id: thread, title: title, cwd: directory.path) }
+}
+
+@MainActor
+final class NotebookCodexSidecarTests: XCTestCase {
+  private func fixture(_ body: (NotebookStore, NotebookPersistenceQueue, NativeOwner, UUID) async throws -> Void) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-sidecar-test-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), peer = UUID()
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    let queue = NotebookPersistenceQueue(store: store)
+    try await body(store, queue, NativeOwner(), peer)
+    let saved = await queue.flush(); XCTAssertTrue(saved)
+  }
+  private func sidecar(_ store: NotebookStore, _ queue: NotebookPersistenceQueue, _ native: NativeOwner) throws -> NotebookCodexSidecar {
+    .init(persistence: queue, bridge: native, metadata: native,
+      workspaceID: try store.workspaceHeader().workspaceID, directory: store.root.appendingPathComponent("task"))
+  }
+  private func wait(_ predicate: () async throws -> Bool) async throws {
+    let deadline = ContinuousClock.now + .seconds(8)
+    while !(try await predicate()), .now < deadline { try await Task.sleep(for: .milliseconds(50)) }
+    let ready = try await predicate(); XCTAssertTrue(ready)
+  }
+
+  func testRepeatedTransportRequestExecutesOneNativeMessageAndKeepsSameThread() async throws {
+    try await fixture { store, queue, native, peer in
+      let service = try sidecar(store, queue, native), thread = native.thread
+      let input = NotebookChatInput(author: peer, action: .send(threadID: thread, text: "2 + 2", context: ""))
+      let request = NotebookChatEnvelope(body: .request(.job(input)))
+      for _ in 0..<3 { _ = await service.receive(request, peerID: peer) }
+      service.start()
+      try await wait { try await queue.submit { try $0.chatJob(input.id)?.state == .accepted } }
+      for _ in 0..<3 { _ = await service.receive(request, peerID: peer) }
+      let count = await native.counts(); XCTAssertEqual(count.0, 1); XCTAssertEqual(count.1, 0)
+      let receipt = try XCTUnwrap(store.chatJob(input.id)); XCTAssertEqual(receipt.input.action.threadID, thread)
+      await service.stop()
+      let restarted = try sidecar(store, queue, native); restarted.start()
+      _ = await restarted.receive(request, peerID: peer)
+      try await Task.sleep(for: .milliseconds(1100))
+      let final = await native.counts(); XCTAssertEqual(final.0, 1)
+      await restarted.stop()
+    }
+  }
+
+  func testBusyTaskQueuesWithoutSteeringAndUnknownAcceptanceReconcilesHistory() async throws {
+    try await fixture { store, queue, native, peer in
+      await native.configure(busy: true, unknown: true)
+      let service = try sidecar(store, queue, native)
+      let input = NotebookChatInput(author: peer, action: .send(threadID: native.thread, text: "Объясни", context: ""))
+      _ = await service.receive(.init(body: .request(.job(input))), peerID: peer)
+      service.start()
+      try await Task.sleep(for: .milliseconds(1200))
+      let counts = await native.counts(); XCTAssertEqual(counts.0, 0); XCTAssertEqual(counts.1, 0)
+      XCTAssertEqual(try store.chatJob(input.id)?.state, .saved)
+      await native.configure(unknown: true)
+      try await wait { try await queue.submit { try $0.chatJob(input.id)?.state == .accepted } }
+      let final = await native.counts(); XCTAssertEqual(final.0, 1)
+      await service.stop()
+    }
+  }
+
+  func testRestartWithoutAcceptanceProofCannotRepeatAttemptOrApproveAnything() async throws {
+    try await fixture { store, queue, native, peer in
+      let input = NotebookChatInput(author: peer, action: .send(threadID: native.thread, text: "Объясни", context: ""))
+      _ = try store.saveChatInput(input)
+      _ = try store.advanceChatJob(input.id, from: .saved, to: .attempting)
+      let service = try sidecar(store, queue, native); service.start()
+      try await wait { try await queue.submit { try $0.chatJob(input.id)?.state == .uncertain } }
+      let counts = await native.counts(); XCTAssertEqual(counts.0, 0)
+      let decisions = await native.decisions; XCTAssertTrue(decisions.isEmpty)
+      let rejected = await service.receive(.init(body: .request(.job(input))), peerID: UUID())
+      XCTAssertNil(rejected)
+      await service.stop()
+    }
+  }
+}

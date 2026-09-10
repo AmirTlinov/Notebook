@@ -56,10 +56,17 @@ final class InstalledInkAttentionTests: XCTestCase {
     let frozen = try await Task.detached { try selection.sourceFiles()["spatial-ink.json"]?.decode(SpatialInkJournal.self) }.value
     XCTAssertEqual(frozen?.actions.map(\.id), [first.id])
     XCTAssertEqual(try fixture.model.store.readSpatialInk(surfaces: [.board(fixture.presence.boardID)]).actions.map(\.id), [first.id, second.id])
-    let sent = await fixture.model.sendAgentQuestion("Что я указал?", mode: .question, question: question)
-    XCTAssertTrue(sent, fixture.model.agentRequestError ?? "")
-    let request = try XCTUnwrap(fixture.model.currentAgentRequest)
-    XCTAssertEqual(request.request.grant.references, question.references)
+    let chat = try XCTUnwrap(fixture.model.chat)
+    chat.select(.init(id: UUID().uuidString, title: "Чернила", cwd: "/tmp"))
+    chat.draft = "Что я указал?"
+    await fixture.model.sendChatMessage()
+    let job = try XCTUnwrap(chat.jobs.first)
+    guard case .send(_, _, let context) = job.input.action else { return XCTFail("Expected Codex message") }
+    XCTAssertTrue(context.contains(reference.revision), "Chat pins the shown source version, not the newer camera/source")
+    let evidence = try XCTUnwrap(fixture.model.store.attentionEvidence(contextID: question.contextID, referenceID: reference.id))
+    XCTAssertEqual(evidence.reference, reference)
+    XCTAssertEqual(evidence.requestID, question.contextID)
+    if let image = evidence.image { XCTAssertEqual(image.sourceRevision, reference.revision) }
     XCTAssertEqual(fixture.model.presence?.camera, moved.camera)
   }
 
@@ -297,14 +304,26 @@ final class InstalledInkAttentionTests: XCTestCase {
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let presence = SessionPresence(boardID: header.rootBoardID, mode: .board,
+    let requestedPresence = SessionPresence(boardID: header.rootBoardID, mode: .board,
       camera: .init(scale: withChild ? 0.3 : 1), viewport: .init(x: 512, y: 512))
-    model.updatePresence(presence, settled: true)
+    model.updatePresence(requestedPresence, settled: true)
     try await flush(model)
+    // Scene admission resolves an optional selection. A fixture must use that
+    // admitted address just like the scene, not race its nil-selection request
+    // against startup readback and have the coverage owner correctly reject it.
+    await model.reloadExternalChanges()?.value
+    let presence = try XCTUnwrap(model.presence)
+    XCTAssertEqual(presence.camera, requestedPresence.camera)
+    XCTAssertEqual(presence.boardID, requestedPresence.boardID)
     try await waitUntil { !model.scenePreparationPending }
     // This fixture asks to capture these physical ink owners, not an optional
     // overview image of a nested cover that the byte planner may flatten.
-    let requestedOwners = Set([child, nestedCover].compactMap { $0 }.map(WorkspaceSpatialID.item))
+    let requestedItems = [child, nestedCover].compactMap { $0 }
+    let requestedOwners = Set(requestedItems.map(WorkspaceSpatialID.item))
+    // Read the addressed pinned owners before constructing the immutable frame;
+    // an idle raster preparer is not an acknowledgement of the address window.
+    model.prepareComposition(presence: presence, frame: nil, pinned: requestedOwners, displayScale: 1)
+    try await waitUntil { !model.scenePreparationPending && requestedItems.allSatisfy { model.sceneIndex?.item(id: $0) != nil } }
     let frame = WorkspaceSceneFrame(index: try XCTUnwrap(model.sceneIndex), presence: presence,
       portalCamera: model.scenePortalCamera, pinned: requestedOwners)
     model.prepareComposition(presence: presence, frame: frame, pinned: requestedOwners, displayScale: 1)
@@ -326,10 +345,10 @@ final class InstalledInkAttentionTests: XCTestCase {
   }
 
   @MainActor
-  private func waitUntil(_ predicate: () -> Bool) async throws {
+  private func waitUntil(file: StaticString = #filePath, line: UInt = #line, _ predicate: () -> Bool) async throws {
     let deadline = ContinuousClock.now + .seconds(5)
     while !predicate(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
-    XCTAssertTrue(predicate(), "The exact source publication did not complete")
+    XCTAssertTrue(predicate(), "The exact source publication did not complete", file: file, line: line)
   }
 
   @MainActor

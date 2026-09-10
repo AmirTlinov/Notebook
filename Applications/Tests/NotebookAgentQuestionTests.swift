@@ -38,10 +38,7 @@ final class NotebookAgentQuestionTests: XCTestCase {
   func testDismissRemovesIndicationAcrossReloadAndRestartWithoutDeletingQuestion() async throws {
     try await fixture { model in
       let question = try await point(model)
-      let saved = await model.sendAgentQuestion("Что здесь?", mode: .question, question: question)
-      XCTAssertTrue(saved, model.agentRequestError ?? "")
       let context = try XCTUnwrap(model.store.sharedContexts().contexts.first)
-      let request = try XCTUnwrap(model.store.readAgentRequestHeaders(limit: 1).first)
       let presence = model.presence
 
       model.dismissAgentQuestion()
@@ -52,8 +49,6 @@ final class NotebookAgentQuestionTests: XCTestCase {
       XCTAssertNil(model.activeSharedContext, "A closed indication is not the active shared selection")
       XCTAssertNil(try model.store.sharedContexts().selection?.contextID)
       XCTAssertEqual(try model.store.sharedContexts().contexts, [context])
-      XCTAssertEqual(try model.store.agentRequest(request.id)?.status, .queued)
-      XCTAssertEqual(try model.store.agentRequest(request.id)?.request.grant.references, question.references)
       XCTAssertEqual(model.presence, presence)
 
       let stopped = await model.shutdown()
@@ -93,56 +88,29 @@ final class NotebookAgentQuestionTests: XCTestCase {
   }
 
   @MainActor
-  func testOfflineQuestionKeepsItsOriginalContextAcrossSelectionAndRestart() async throws {
+  func testOfflineChatKeepsContextDraftAndTaskAcrossSelectionAndRestart() async throws {
     try await fixture { model in
       let first = try await point(model)
-      let second = try await point(model, x: 240)
+      let chat = try XCTUnwrap(model.chat)
+      let thread = CodexTask(id: UUID().uuidString, title: "Математика", cwd: "/tmp")
+      chat.select(thread); chat.draft = "Что здесь?"
       let presence = model.presence
-      let saved = await model.sendAgentQuestion("Что здесь?", mode: .question, question: first)
-      XCTAssertTrue(saved, model.agentRequestError ?? "")
-      let request = try XCTUnwrap(model.store.readAgentRequestHeaders(limit: 1).first)
-      XCTAssertEqual(request.contextID, first.contextID)
-      XCTAssertEqual(request.grant.references, first.references)
-      XCTAssertEqual(model.agentQuestion, second)
+      await model.sendChatMessage()
+      let job = try XCTUnwrap(chat.jobs.first)
+      guard case .send(let id, let text, let context) = job.input.action else { return XCTFail("Expected native Codex message") }
+      XCTAssertEqual(id, thread.id); XCTAssertEqual(text, "Что здесь?")
+      XCTAssertTrue(context.contains(first.contextID.uuidString))
+      _ = try await point(model, x: 240)
+      XCTAssertEqual(try model.store.chatJob(job.id), job)
       XCTAssertEqual(model.presence, presence)
-      XCTAssertEqual(try model.store.agentRequest(request.id)?.status, .queued)
-      let stopped = await model.shutdown()
-      XCTAssertTrue(stopped)
+      chat.draft = "Следующий вопрос"
+      let stopped = await model.shutdown(); XCTAssertTrue(stopped)
       let resumed = NotebookAppModel(store: model.store, startsNearbySync: false)
-      addTeardownBlock {
-        let stopped = await resumed.shutdown()
-        XCTAssertTrue(stopped)
-      }
       await resumed.start(pageSize: NotebookAppModel.defaultPageSize)
-      _ = await resumed.finishPendingPersistence()
-      await resumed.refreshAgentRequests()
-      XCTAssertEqual(resumed.agentRequests.first?.id, request.id)
-      XCTAssertEqual(resumed.agentRequests.first?.status, .queued)
-      XCTAssertEqual(try resumed.store.readAgentRequestHeaders(limit: 32).count, 1)
-    }
-  }
-
-  @MainActor
-  func testResponseDoesNotChangeCameraSelectionOrActivePencil() async throws {
-    try await fixture { model in
-      let question = try await point(model)
-      let saved = await model.sendAgentQuestion("Объясни", mode: .question, question: question)
-      XCTAssertTrue(saved, model.agentRequestError ?? "")
-      let request = try XCTUnwrap(model.store.readAgentRequestHeaders(limit: 1).first)
-      let authority = try model.store.claimAgentRequest(request.id, actor: UUID())
-      let pencil = UUID(), presence = model.presence
-      model.inputGate.beginPencilAction(source: pencil)
-      let generation = model.inputGate.pencilGeneration
-      try model.store.appendAgentResponse(authority, sequence: 1, text: "Ответ относится только к указанному фрагменту.")
-      _ = try model.store.finishAgentRequest(authority, status: .completed)
-      await model.refreshAgentRequests()
-      XCTAssertEqual(model.currentAgentRequest?.responseText, "Ответ относится только к указанному фрагменту.")
-      XCTAssertEqual(model.presence, presence)
-      XCTAssertEqual(model.agentQuestion, question)
-      XCTAssertTrue(model.inputGate.hasActivePencil)
-      XCTAssertEqual(model.inputGate.pencilGeneration, generation)
-      model.inputGate.endPencilAction(source: pencil)
-      _ = await model.finishPendingPersistence()
+      XCTAssertEqual(resumed.chat?.threadID, thread.id)
+      XCTAssertEqual(resumed.chat?.draft, "Следующий вопрос")
+      XCTAssertEqual(resumed.chat?.jobs.first, job)
+      let finished = await resumed.shutdown(); XCTAssertTrue(finished)
     }
   }
 }

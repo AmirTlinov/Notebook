@@ -2,6 +2,9 @@ import Foundation
 import CoreGraphics
 import Observation
 import NotebookCore
+#if os(macOS)
+import NotebookCodex
+#endif
 
 /// A retained native host must relinquish its last presentation when the same
 /// model that admitted its input acknowledges terminal shutdown.
@@ -301,6 +304,9 @@ final class NotebookAppModel {
     if missingPin || missingItemPin || sceneCoverage[presence.boardID]?.contains(NotebookSceneState.bounds(for: presence, margin: 64)) != true {
       requestSceneCoverage(presence)
     }
+    // An addressed pin is still being fetched. Do not turn the previous
+    // partial index into a failed complete source for this new request.
+    if missingPin || missingItemPin { compositionTiles.cancelPreparation(); return }
     guard permitsBackgroundPreparation, !scenePreparationPending else { compositionTiles.cancelPreparation(); return }
     guard let header = workspaceHeader, let frame else { return }
     let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID)
@@ -429,17 +435,15 @@ final class NotebookAppModel {
     return newest ?? activeSharedContext
   }
   private(set) var agentQuestion: NotebookAgentQuestion?
-  private(set) var agentRequests: [AgentRequestSnapshot] = []
   private(set) var agentRequestError: String?
   private(set) var isSavingAgentQuestion = false
   @ObservationIgnored private var pinnedAttentionSelections: [(UUID, NotebookAttentionSelection)] = []
   @ObservationIgnored private var attentionGeneration = UUID()
-  @ObservationIgnored private var agentRefreshGeneration: UInt64 = 0
   @ObservationIgnored private var hasRestoredAgentQuestion = false
 
-  var currentAgentRequest: AgentRequestSnapshot? {
-    agentRequests.first { $0.request.contextID == agentQuestion?.contextID }
-  }
+  #if os(iOS)
+    private(set) var chat: NotebookChatController?
+  #endif
 
   private(set) var actionCue: String?
   private(set) var penStyle: PenStyle
@@ -566,7 +570,7 @@ final class NotebookAppModel {
   private(set) var peerInputIsActive = false { didSet { if !peerInputIsActive { publishPreparedSceneIfPossible() } } }
   var permitsBackgroundPreparation: Bool { !isStopped && !inputIsActive && !peerInputIsActive && presencePhase == .settled }
   #if os(macOS)
-    private(set) var agentCoordinator: NotebookAgentCoordinator?
+    @ObservationIgnored private var codexSidecar: NotebookCodexSidecar?
     private(set) var agentStartupError: String?
     @ObservationIgnored private var commandServer: NotebookIPCServer?
     private let commandSocketURL: URL?
@@ -616,11 +620,7 @@ final class NotebookAppModel {
         self?.refreshCommittedHeader()
       case nil, .presence, .inputActivity, .documentDraft: break
       }
-      #if os(macOS)
-        // Native page/ink/camera writes cannot change a request's execution.
-        // Transactional commands (including durable peer packets) may do so.
-        if owner == nil { self?.agentCoordinator?.storeDidCommit() }
-      #endif
+
     }
     inputGate.onActivityChange = { [weak self] active in
       guard let self else { return }
@@ -670,12 +670,16 @@ final class NotebookAppModel {
     pairedPeers = sync?.pairedPeers ?? []
     publishInputActivity()
     #if os(iOS)
+      chat?.connect(peer.deviceID)
       if let lastSettledPresenceEnvelope { sync?.sendTransient(.presence(lastSettledPresenceEnvelope)) }
     #endif
   }
 
   func peerDisconnected(peerID: UUID, generation: UUID) {
     guard peerGenerations[peerID] == generation else { return }
+    #if os(iOS)
+      chat?.disconnect(peerID)
+    #endif
     peerGenerations[peerID] = nil
     peerActivities[peerID] = nil
     isPeerConnected = !peerGenerations.isEmpty
@@ -856,10 +860,17 @@ final class NotebookAppModel {
         try startCommandServer()
         startPreviewPublication()
       #endif
+      #if os(iOS)
+        let chat = NotebookChatController(persistence: persistence, author: actorID) { [weak self] envelope, peer in
+          self?.sync?.sendTransient(.codex(envelope), to: peer)
+        }
+        self.chat = chat
+        await chat.start()
+      #endif
       if startsNearbySync {
         try await startTrustedSync()
         #if os(macOS)
-          await startAgentCoordinator()
+          await startCodexSidecar()
         #endif
       }
     } catch {
@@ -2011,45 +2022,23 @@ final class NotebookAppModel {
       previewPublisher = publisher
     }
 
-    private func startAgentCoordinator() async {
-      guard agentCoordinator == nil else { return }
-      guard let configuration = Bundle.main.url(forResource: "notebook.config", withExtension: "toml",
-        subdirectory: "AgentRuntime") else {
-        agentStartupError = "Проверенный профиль агента отсутствует в приложении. Агент недоступен."
-        return
-      }
-      let home = FileManager.default.homeDirectoryForCurrentUser
-      let runtime = home.appendingPathComponent("Library/Application Support/Notebook Agent", isDirectory: true)
-      let executor = NotebookAgentExecutor(binary: home.appendingPathComponent(".local/bin/codex"),
-        runtimeDirectory: runtime, configuration: configuration)
-      let persistence = persistence
-      let coordinator = NotebookAgentCoordinator(executor: executor, persistence: persistence, actorID: actorID) { authority, referenceID in
-        let source = try await persistence.submit { try $0.agentPinnedSource(authority, referenceID: referenceID) }
-        guard let image = source.image else {
-          return .init(value: .object(["status": .string("unavailable"),
-            "referenceID": .string(referenceID.uuidString), "visual": source.payload["visual"] ?? .null]))
+    private func startCodexSidecar() async {
+      guard codexSidecar == nil, let workspaceID = workspaceHeader?.workspaceID else { return }
+      do {
+        guard allowsCodexRegistration else {
+          agentStartupError = "Запуск Codex из этого архива закрыт до безопасной активации пары. Действующие инструменты Notebook не перенаправлены."
+          return
         }
-        // Decoding pixels is neither a database write nor main-thread UI work.
-        let preparation = Task.detached(priority: .utility) {
-          try Task.checkCancellation()
-          try image.validate(reference: source.reference)
-          let pixels = try NotebookAgentImage(png: image.png, sha256: image.sha256,
-            pixelWidth: image.pixelWidth, pixelHeight: image.pixelHeight)
-          try Task.checkCancellation()
-          return try NotebookAgentToolResult(value: .object(["status": .string("source_pixels"),
-            "reference": .encode(source.reference), "sha256": .string(image.sha256),
-            "pixelWidth": .number(Double(image.pixelWidth)), "pixelHeight": .number(Double(image.pixelHeight)),
-            "pixelsPerPoint": .number(image.pixelsPerPoint),
-            "evidence": .string("Frozen source pixels; not an iPad display acknowledgement.")]), images: [pixels])
-        }
-        return try await withTaskCancellationHandler { try await preparation.value } onCancel: { preparation.cancel() }
-      }
-      agentCoordinator = coordinator
-      await coordinator.start()
-    }
-
-    func stopAgentCoordinator() async -> Bool {
-      await agentCoordinator?.stop() ?? true
+        let installation = try CodexDesktopInstallation.discover()
+        guard let entry = Bundle.main.resourceURL?.appendingPathComponent("NotebookTools/dist/index.mjs"),
+          let commandSocketURL else { throw CodexBridgeError.notInstalled }
+        try await installation.registerNotebookTools(entry: entry, socket: commandSocketURL)
+        let directory = FileManager.default.homeDirectoryForCurrentUser
+          .appendingPathComponent("Library/Application Support/Notebook/Codex", isDirectory: true)
+        let sidecar = NotebookCodexSidecar(persistence: persistence, installation: installation,
+          workspaceID: workspaceID, directory: directory)
+        codexSidecar = sidecar; sidecar.start(); agentStartupError = nil
+      } catch { agentStartupError = NotebookCodexSidecar.message(error) }
     }
 
     private func startCommandServer() throws {
@@ -2093,6 +2082,23 @@ final class NotebookAppModel {
   func receivePeerTransient(_ message: NotebookTransportTransient, peerID: UUID, generation: UUID) {
     guard !isClosing, peerGenerations[peerID] == generation else { return }
     switch message {
+    case .codex(let envelope):
+      #if os(iOS)
+        chat?.receive(envelope, peerID: peerID)
+      #else
+        Task { [weak self] in
+          guard let self else { return }
+          let reply: NotebookChatEnvelope
+          if let codexSidecar {
+            guard let response = await codexSidecar.receive(envelope, peerID: peerID) else { return }
+            reply = response
+          } else {
+            reply = .init(id: envelope.id, body: .reply(.failure(agentStartupError ?? "Codex недоступен")))
+          }
+          guard peerGenerations[peerID] == generation, !isClosing else { return }
+          sync?.sendTransient(.codex(reply), to: peerID)
+        }
+      #endif
     case .inputActivity(let activity):
       guard activity.isValid, activity.deviceID == peerID else { return }
       // Stop optional preparation before the disk acknowledges the peer contact.
@@ -2183,65 +2189,44 @@ final class NotebookAppModel {
   /// neither a late pointer completion nor restart may reopen the fragment.
   func dismissAgentQuestion() { selectSharedContext(nil) }
 
-  /// The arguments, retained values and ID are captured before suspension.
-  /// Selection of a new object cannot redirect either this save or its reply.
-  func sendAgentQuestion(_ text: String, mode: RequestGrant.Mode,
-    question: NotebookAgentQuestion) async -> Bool {
-    guard !isSavingAgentQuestion else { return false }
-    isSavingAgentQuestion = true
-    defer { isSavingAgentQuestion = false }
-    let id = UUID(), actor = actorID
-    let retained = pinnedAttentionSelections.first { $0.0 == question.contextID }?.1
-    do {
-      let grant = try RequestGrant(mode: mode, references: question.references)
-      let visual = try await retained?.renderPinnedImages(references: question.references)
-      _ = try await persistence.submit(publishesChanges: true) { store in
-        let files = try retained?.sourceFiles()
-        let sources = try grant.references.map { reference in
-          try AgentPinnedSource.capture(requestID: id, reference: reference,
-            files: files ?? store.referenceSourceFiles(target: reference.target,
-              elementID: reference.elementID, region: reference.region, worldOrigin: reference.worldOrigin))
-            .withVisual(visual?.images[reference.id], unavailable: visual?.unavailable[reference.id]
-              ?? (visual == nil ? "historical_frame_unavailable" : nil))
+  #if os(iOS)
+    /// Selection narrows attention, not the agent's tool authority. This value
+    /// captures the physical owner and camera before any save/network suspension.
+    func sendChatMessage() async {
+      guard let chat, let submittedThread = chat.threadID, !isSavingAgentQuestion else { return }
+      let submittedText = chat.draft
+      isSavingAgentQuestion = true; defer { isSavingAgentQuestion = false }
+      let question = agentQuestion
+      let retained = question.flatMap { q in pinnedAttentionSelections.first { $0.0 == q.contextID }?.1 }
+      let capturedPresence = presence, capturedWorkspace = workspaceHeader?.workspaceID
+      do {
+        if let question {
+          let visual = try await retained?.renderPinnedImages(references: question.references)
+          try await persistence.submit(publishesChanges: true) { store in
+            if try store.hasAttentionEvidence(contextID: question.contextID) { return }
+            guard let retained else { throw CollaborationError("source_missing", "Историческое изображение не сохранено. Укажите фрагмент снова.") }
+            let files = try retained.sourceFiles()
+            let sources = try question.references.map { reference in
+              try AgentPinnedSource.capture(requestID: question.contextID, reference: reference, files: files)
+                .withVisual(visual?.images[reference.id], unavailable: visual?.unavailable[reference.id] ?? "source_pixels_unavailable")
+            }
+            try store.saveAttentionEvidence(sources, contextID: question.contextID)
+          }
         }
-        return try store.createAgentRequest(id: id, contextID: question.contextID, replyTo: question.entryID,
-          question: text, grant: grant, sources: sources, actor: actor)
-      }
-      agentRequestError = nil
-      reloadExternalChanges()
-      await refreshAgentRequests()
-      return true
-    } catch {
-      // The field keeps its text; a failed save never looks like a queued run.
-      agentRequestError = error.localizedDescription
-      return false
+        let context: JSONValue = .object([
+          "workspaceID": capturedWorkspace.map { .string($0.uuidString) } ?? .null,
+          "presence": try capturedPresence.map(JSONValue.encode) ?? .null,
+          "attention": try question.map { question in
+            .object(["contextID": .string(question.contextID.uuidString),
+              "entryID": .string(question.entryID.uuidString), "references": try .encode(question.references)])
+          } ?? .null,
+          "meaning": .string("Read frozen attention via notebook_read_attention(context_id, reference_id). Shared Notebook workspace. Selection directs attention, not permissions. Use Notebook tools for source/version checks, undoable edits and delivery receipts. Do not move the camera.")
+        ])
+        let text = String(decoding: try JSONEncoder().encode(context), as: UTF8.self)
+        _ = await chat.sendMessage(threadID: submittedThread, text: submittedText, context: text, attentionContextID: question?.contextID)
+      } catch { agentRequestError = error.localizedDescription }
     }
-  }
-
-  func stopAgentRequest(_ id: UUID) async {
-    let actor = actorID
-    do {
-      try await persistence.submit(publishesChanges: true) { try $0.requestAgentStop(id, actor: actor) }
-      await refreshAgentRequests()
-    } catch { agentRequestError = error.localizedDescription }
-  }
-
-  func refreshAgentRequests() async {
-    guard loadState == .ready else { return }
-    agentRefreshGeneration &+= 1
-    let generation = agentRefreshGeneration, contextID = agentQuestion?.contextID
-    do {
-      let requests = try await persistence.submit { store in
-        try store.readTransaction { store in
-          let headers = try store.readAgentRequestHeaders(limit: 32)
-          let current = headers.first { $0.contextID == contextID }?.id
-          return try headers.compactMap { try store.agentRequest($0.id, includesResponse: $0.id == current) }
-        }
-      }
-      guard generation == agentRefreshGeneration else { return }
-      if agentRequests != requests { agentRequests = requests }
-    } catch { agentRequestError = error.localizedDescription }
-  }
+  #endif
 
   func results(for action: CollaborationReceipt) -> [CollaborationReference] {
     guard collaborationDetailsAreCurrent else { return [] }
@@ -2717,9 +2702,11 @@ final class NotebookAppModel {
       sync?.stop(); sync = nil
       #if os(macOS)
         await commandServer?.stopAndDrain(); commandServer = nil
-        let agentStopped = await stopAgentCoordinator()
+        await codexSidecar?.stop(); codexSidecar = nil
+        let agentStopped = true
         await previewPublisher?.stop()
       #else
+        await chat?.stop()
         let agentStopped = true
       #endif
       let inputSaved = await finishPendingInteraction()

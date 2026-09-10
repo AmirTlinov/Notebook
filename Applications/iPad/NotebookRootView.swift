@@ -97,7 +97,13 @@ struct NotebookRootView: View {
       .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { collaborationHeight = $0 }
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
       .padding(18)
-    if let question = model.agentQuestion {
+    if let chat = model.chat {
+      GeometryReader { geometry in
+        NotebookChatPanel(chat: chat, maximumHeight: geometry.size.height - 36)
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing).padding(18)
+      }
+    }
+    if let question = model.agentQuestion, model.chat?.expanded != true {
       NotebookQuestionOverlay(question: question, sceneOrigin: sceneOrigin,
         footerHeight: collaborationHeight, controls: [penControlsFrame, pairingFrame] + elementControlFrames).id(question.id)
     }

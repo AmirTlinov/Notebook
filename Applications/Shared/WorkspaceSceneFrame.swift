@@ -69,8 +69,17 @@ struct WorkspaceSceneFrame {
       let isReturn = next.presence.boardID == returnBoardID
       // The return portal is the aperture of the already shown child, never a
       // flattened replacement. Its one parent window shares this frame's cap.
+      // A pinned nested cover belongs to its child's physical board. Dropping
+      // that pin at a portal made the byte planner flatten the very source the
+      // attention capture had retained; the compositor correctly refused it.
+      let childPins = Set(pinned.filter { pin in
+        switch pin {
+        case .item(let id): index.ownerBoard(itemID: id) == next.presence.boardID
+        case .element(let id): index.element(id: id, boardID: next.presence.boardID) != nil
+        }
+      })
       let pins: Set<WorkspaceSpatialID> = next.presence.boardID == rootBoardID ? pinned
-        : (isReturn ? [.item(rootBoardID)] : [])
+        : (isReturn ? [.item(rootBoardID)] : childPins)
       let peers = queue.count - cursor + 1
       let returnBudget = min(Self.maximumReturnPrimitives, max(1, budget / 4))
       let reservedReturn = !isReturn && returnBoardID.map({ sets[$0] == nil }) == true ? returnBudget : 0

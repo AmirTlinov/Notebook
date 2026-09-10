@@ -107,18 +107,26 @@ targets:
     sources:
       - path: Shared
       - path: Mac
-        excludes:
-          - AgentRuntime
-      - path: Mac/AgentRuntime
-        type: folder
-        buildPhase: resources
       - path: Assets.xcassets
       - path: WebResources
         type: folder
         buildPhase: resources
+    preBuildScripts:
+      - name: Bundle Notebook tools
+        script: |
+          /usr/bin/env node "$SRCROOT/../MCP/build-sidecar.mjs" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/NotebookTools"
+        inputFiles:
+          - $(SRCROOT)/../MCP/src
+          - $(SRCROOT)/../MCP/package-lock.json
+          - $(SRCROOT)/../MCP/build-sidecar.mjs
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/NotebookTools/dist/index.mjs
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/NotebookTools/package.json
     dependencies:
       - package: NotebookCore
         product: NotebookCore
+      - package: NotebookCore
+        product: NotebookCodex
     info:
       path: Mac/Info.plist
       properties:

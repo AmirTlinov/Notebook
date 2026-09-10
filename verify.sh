@@ -164,12 +164,7 @@ xcodebuild \
   -derivedDataPath "$DERIVED/mac" \
   CODE_SIGNING_ALLOWED=NO \
   build
-# Both probes use the pinned real App Server. The coordinator additionally links this build's real Core product.
-"$ROOT/Tests/NotebookAgentExecutorHarness/run.sh" 2>&1 | tee "$EVIDENCE/agent-executor.log"
-NOTEBOOK_CORE_PRODUCTS="$DERIVED/mac/Build/Products/Debug" \
-  "$ROOT/Tests/NotebookAgentExecutorHarness/coordinator-run.sh" 2>&1 | tee "$EVIDENCE/agent-coordinator.log"
-cp "$ROOT/.build/agent-executor-contract/report.json" "$EVIDENCE/agent-executor-contract.json"
-cp "$ROOT/.build/agent-coordinator-contract/report.json" "$EVIDENCE/agent-coordinator-contract.json"
+# Native Codex wire and delivery checks run in swift test; no second model executor.
 MAC_SMOKE_APP="$DERIVED/mac/Build/Products/Debug/Notebook.app"
 MAC_SMOKE_LOG="$EVIDENCE/mac-helper.log"
 MAC_SMOKE_PROOF="$EVIDENCE/mac-helper-launch.json"

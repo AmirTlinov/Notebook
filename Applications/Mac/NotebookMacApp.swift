@@ -6,7 +6,6 @@ import NotebookCore
 struct NotebookMacApp: App {
   @NSApplicationDelegateAdaptor(NotebookMacLifecycle.self) private var lifecycle
   @State private var pairingError: String?
-  @State private var agentLoginError: String?
 
   var body: some Scene {
     MenuBarExtra("Notebook", systemImage: "book.closed") {
@@ -55,32 +54,9 @@ struct NotebookMacApp: App {
           }
           if let pairingError { Text(pairingError) }
         }
-        Menu("Агент Notebook") {
-          if let agent = model.agentCoordinator {
-            if agent.isCheckingAvailability { Text("Проверяется совместимость агента…") }
-            switch agent.availability {
-            case .ready:
-              Text(agent.isRunning ? "Рассматривает вопрос с iPad" : "Готов к вопросам с iPad")
-            case .signInRequired:
-              Text("Нужен отдельный вход ChatGPT для Notebook")
-              Button("Войти через ChatGPT") {
-                Task {
-                  do {
-                    let url = try await agent.signIn()
-                    guard NSWorkspace.shared.open(url) else { throw NotebookAgentFailure.signInRequired }
-                    agentLoginError = nil
-                  } catch { agentLoginError = "Не удалось открыть вход ChatGPT: \(error.localizedDescription)" }
-                }
-              }
-            case .unavailable:
-              Text("Исполнитель недоступен: ограничения не ослабляются")
-            }
-            if let error = agent.lastError { Text(error) }
-            if let agentLoginError { Text(agentLoginError) }
-            Button("Проверить готовность агента") { Task { await agent.refreshAvailability() } }
-          } else {
-            Text(model.agentStartupError ?? "Агент ждёт открытия хранилища")
-          }
+        Menu("Codex") {
+          Text(model.agentStartupError ?? "Задачи Codex доступны из Notebook на iPad")
+          Text("Разговор, модель и разрешения принадлежат Codex")
         }
       } else {
         Text(lifecycle.launch.message)

@@ -234,9 +234,9 @@ final class NearbySync {
   }
 
   func notifyDurableChanges() { for session in sessions.values where session.isReady { session.notifyDurableChanges() } }
-  func sendTransient(_ value: NotebookTransportTransient) {
+  func sendTransient(_ value: NotebookTransportTransient, to peerID: UUID? = nil) {
     guard value.isValid(from: identity) else { return }
-    for session in sessions.values where session.isReady { session.sendTransient(value) }
+    for session in sessions.values where session.isReady && (peerID == nil || session.peerIdentity?.deviceID == peerID) { session.sendTransient(value) }
   }
 
   private func scheduleInvitationExpiry(_ value: NotebookPairingInvitation) {

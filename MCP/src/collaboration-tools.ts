@@ -10,6 +10,33 @@ import { NotebookStore } from "./store.js";
 const frame = z.object({ x: z.number().finite(), y: z.number().finite(), width: z.number().positive(), height: z.number().positive() }).strict();
 
 export function registerCollaborationTools(server: McpServer, store: NotebookStore) {
+  server.registerTool("notebook_read_attention", {
+    outputSchema: notebookResponseSchema,
+    title: "Read the frozen source the person pointed at",
+    description: "Read an immutable human indication by context_id and reference_id from Notebook chat. The pixels and reference version do not follow the camera or later ink. This is attention, not a restriction on other Notebook tools. Unavailable pixels are explicit, not replaced by the latest surface.",
+    inputSchema: z.object({ context_id: z.uuid(), reference_id: z.uuid() }).strict(),
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, async input => {
+    let png: string | undefined;
+    const result = await actionResult(async () => {
+      type Source = { id:string; requestID:string; reference:unknown; payload:unknown;
+        image?: { png:string; sha256:string; pixelWidth:number; pixelHeight:number } };
+      const response = await runBridge<{ values: Array<Source | null> }>(store.socketPath, {command:"read", queries:[
+        {kind:"attentionEvidence", id:input.context_id, referenceID:input.reference_id} ]});
+      const source = response.values[0];
+      if (!source) return {status:"pending",code:"attention_not_delivered"};
+      if (source.image) {
+        const bytes = Buffer.from(source.image.png, "base64");
+        if (createHash("sha256").update(bytes).digest("hex") !== source.image.sha256) {
+          throw new BridgeError({code:"invalid_snapshot",message:"Frozen image hash does not match its source."});
+        }
+        png = source.image.png;
+      }
+      return {status: png ? "source_pixels" : "source_pixels_unavailable", reference:source.reference, payload:source.payload,
+        sha256:source.image?.sha256, pixelWidth:source.image?.pixelWidth, pixelHeight:source.image?.pixelHeight};
+    });
+    return png ? {...result, content:[...result.content, {type:"image" as const, mimeType:"image/png", data:png}]} : result;
+  });
   server.registerTool("notebook_point", {
     outputSchema: notebookResponseSchema,
     title: "Point to the source and share your interpretation",
