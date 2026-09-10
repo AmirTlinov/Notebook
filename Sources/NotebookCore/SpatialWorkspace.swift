@@ -53,6 +53,23 @@ public struct WorldPoint: Codable, Equatable, Hashable, Sendable {
     )
   }
 
+  /// Admission for a new physical address. Projection geometry may extend
+  /// beyond the stored world; a camera center or measured sample may not.
+  func addressOffset(x: Double, y: Double) -> Self? {
+    guard isValid, x.isFinite, y.isFinite else { return nil }
+    func axis(_ tile: Int64, _ local: Double, _ delta: Double) -> (Int64, Double)? {
+      let value = local + delta
+      guard value.isFinite, let offset = Int64(exactly: floor(value / Self.tileSize)) else { return nil }
+      let (next, overflow) = tile.addingReportingOverflow(offset)
+      let remainder = value - Double(offset) * Self.tileSize
+      guard !overflow, (-Self.maximumTileIndex...Self.maximumTileIndex).contains(next),
+        remainder.isFinite, remainder >= 0, remainder < Self.tileSize else { return nil }
+      return (next, remainder)
+    }
+    guard let x = axis(tileX, localX, x), let y = axis(tileY, localY, y) else { return nil }
+    return .init(tileX: x.0, tileY: y.0, localX: x.1, localY: y.1)
+  }
+
   /// Returns `other - self` without first flattening both coordinates into
   /// huge floating-point numbers.
   public func delta(to other: Self) -> SpatialPoint {
@@ -208,12 +225,12 @@ public struct SpatialCamera: Codable, Equatable, Hashable, Sendable {
     )
   }
 
-  public mutating func pan(screenX: Double, screenY: Double) {
-    precondition(screenX.isFinite && screenY.isFinite)
-    center = center.offsetBy(
-      x: -screenX / scale,
-      y: -screenY / scale
-    )
+  /// Refuses an unrepresentable center without publishing part of a gesture.
+  @discardableResult
+  public mutating func pan(screenX: Double, screenY: Double) -> Bool {
+    guard let next = center.addressOffset(x: -screenX / scale, y: -screenY / scale) else { return false }
+    center = next
+    return true
   }
 
   /// Solves the complete two-finger camera transform from the gesture's
@@ -230,7 +247,6 @@ public struct SpatialCamera: Codable, Equatable, Hashable, Sendable {
     guard magnification.isFinite && magnification > 0,
       maximumScale.isFinite && maximumScale > 0
     else { return self }
-    let worldAnchor = screenToWorld(startCentroid, viewport: viewport)
     let upperScale = min(
       max(maximumScale, Self.minimumScale),
       Self.maximumScale
@@ -239,10 +255,12 @@ public struct SpatialCamera: Codable, Equatable, Hashable, Sendable {
       max(scale * magnification, Self.minimumScale),
       upperScale
     )
-    let resolvedCenter = worldAnchor.offsetBy(
-      x: -(currentCentroid.x - viewport.x / 2) / resolvedScale,
-      y: -(currentCentroid.y - viewport.y / 2) / resolvedScale
-    )
+    // Solve the local displacement before normalizing a world address. The
+    // finger anchor may lie beyond the edge while the final center is valid.
+    guard let resolvedCenter = center.addressOffset(
+      x: (startCentroid.x - viewport.x / 2) / scale - (currentCentroid.x - viewport.x / 2) / resolvedScale,
+      y: (startCentroid.y - viewport.y / 2) / scale - (currentCentroid.y - viewport.y / 2) / resolvedScale
+    ) else { return self }
     return Self(
       center: resolvedCenter,
       scale: resolvedScale

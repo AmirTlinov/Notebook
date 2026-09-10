@@ -43,11 +43,11 @@ struct CollaborationInkStroke {
         case .number(let alpha) = value["opacity"] ?? opacity,
         x.isFinite, y.isFinite, abs(x) <= 1e6, abs(y) <= 1e6,
         w.isFinite, w > 0, w <= 128, alpha.isFinite, (0...1).contains(alpha) else { throw invalid() }
-      let worldPoint = origin?.offsetBy(x: x, y: y)
+      let worldPoint = origin?.addressOffset(x: x, y: y)
       // The finite point delta is already bounded above. Validate its actual
       // address before SpatialInkAction accepts measurements, not an arbitrary
       // smaller origin range and not a later encoding failure.
-      guard worldPoint?.isValid ?? true else { throw invalid() }
+      guard origin == nil || worldPoint != nil else { throw invalid() }
       return SpatialInkSample(point: .init(x: x, y: y), worldPoint: worldPoint,
         timeOffset: Double(index) / 120, width: w, opacity: alpha, force: 1, azimuth: 0, altitude: .pi / 2)
     }
