@@ -51,6 +51,7 @@ enum ArchiveConsolidation {
     try manager.copyItem(at: roots[2], to: archive)
     guard try inventory(archive) == inventories[2] else { throw ArchiveTransferError.invalidSource("current archive copy changed") }
     let store = NotebookStore(root: archive)
+    try store.prepareContextOrderIndexForTransfer()
     let beforeRecords = try ArchiveRecordProof.read(archive)
     guard !beforeRecords.isEmpty else { throw ArchiveTransferError.invalidSource("current archive must already contain its owners") }
     let workspaceID = try store.workspaceHeader().workspaceID

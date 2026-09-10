@@ -114,6 +114,7 @@ extension NotebookStore {
     }
     if fragment.file.hasPrefix("collaboration/contexts/"), fragment.collection == "entries", let parent = fragment.parent {
       let entry = try fragment.value.decode(SharedContextEntry.self)
+      try indexContextEntry(fragment, entry: entry, database: database)
       try database.run("INSERT INTO metadata_index(address,kind,context_id,created_at) VALUES(?,'context',NULL,?) ON CONFLICT(address) DO UPDATE SET created_at=MAX(created_at,excluded.created_at)", [.text(parent), .real(entry.createdAt.timeIntervalSince1970)])
     }
     if fragment.file == "spatial-ink.json", fragment.collection == "actions" {

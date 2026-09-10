@@ -170,11 +170,10 @@ extension NotebookStore {
         guard replyTo == nil else { throw CollaborationError("context_required", "Для ответа нужен контекст.") }
         parent = nil
       }
-      let last = try database.rows("SELECT address,position FROM records WHERE parent=? AND collection='entries' ORDER BY position DESC,member DESC LIMIT 1", [.text(root)]).first
-      let lastEntry = try last.flatMap { try storedEntry(at: $0[0].text!) }
-      let counter = max(parent?.stamp.counter ?? 0, lastEntry?.stamp.counter ?? 0)
-      guard let stamp = VersionStamp(counter: counter, actor: actor).advanced(by: actor),
-        (last?[1].integer ?? -1) < Int64.max else {
+      try requireContextOrderIndex()
+      let last = try database.rows("SELECT counter FROM context_entry_order WHERE context=? ORDER BY counter DESC,actor DESC,address DESC LIMIT 1", [.text(root)]).first
+      let counter = max(parent?.stamp.counter ?? 0, UInt64(last?[0].integer ?? 0))
+      guard let stamp = VersionStamp(counter: counter, actor: actor).advanced(by: actor) else {
         throw CollaborationError("version_exhausted", "Версия указания достигла предела.")
       }
       let entry = SharedContextEntry(author: author, references: references, replyTo: replyTo, text: text, stamp: stamp)
@@ -185,7 +184,7 @@ extension NotebookStore {
       }
       try writeFragment(.init(address: root + "/entries/@" + entry.id.uuidString.lowercased(), file: file,
         parent: root, collection: "entries", member: entry.id.uuidString.lowercased(),
-        position: Int((last?[1].integer ?? -1) + 1), value: .encode(entry), collections: []), database: database)
+        position: 0, value: .encode(entry), collections: []), database: database)
       if select {
         try publishCollaboration(writes: ["collaboration/selection.json": .encode(nextContextSelection(id, actor: actor))])
       }

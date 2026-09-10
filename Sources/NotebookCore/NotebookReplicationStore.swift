@@ -119,8 +119,9 @@ extension NotebookStore {
       try validateIncomingPageOrderValues(manifest.pageOrderRoots)
       try installPageOrderDependencies(manifestHash: change.manifestHash)
       for root in manifest.pageOrderRoots { try database.noteOwner(.orderRoot, root) }
+      try applyReplicatedContextEntries(manifestHash: change.manifestHash)
       var incoming: [String: [NotebookStoredFragment]] = [:], removals: [String: Set<String>] = [:]
-      for recordRow in try database.rows("SELECT address,blob_hash FROM manifest_records WHERE manifest_hash=? ORDER BY address", [.text(change.manifestHash)]) {
+      for recordRow in try database.rows("SELECT address,blob_hash FROM manifest_records WHERE manifest_hash=? AND (address<'collaboration/contexts/' OR address>='collaboration/contexts0') ORDER BY address", [.text(change.manifestHash)]) {
         let record = NotebookRecordMutation(address: recordRow[0].text!, blobHash: recordRow[1].text)
         let file = String(record.address.split(separator: "#", maxSplits: 1)[0])
         if let hash = record.blobHash {
@@ -193,9 +194,6 @@ extension NotebookStore {
           var resolved = try value.decode(SpatialInkJournal.self)
           if let old { _ = try resolved.merge(old.decode(SpatialInkJournal.self)) }
           guard resolved.isValid else { throw NotebookStorageError.corruptRecord(file) }; writes[file] = try .encode(resolved)
-        } else if file.hasPrefix("collaboration/contexts/") {
-          var resolved = try old?.decode(SharedContext.self) ?? value.decode(SharedContext.self)
-          try resolved.merge(value.decode(SharedContext.self)); writes[file] = try .encode(resolved)
         } else if file.hasPrefix("collaboration/actions/") {
           let receipt = try value.decode(CollaborationReceipt.self)
           guard receipt.id == receipt.action.id else { throw NotebookStorageError.invalidTransaction("receipt identity") }

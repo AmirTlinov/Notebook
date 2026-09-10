@@ -39,7 +39,13 @@ extension NotebookStore {
     guard let row = try currentSQL!.rows("SELECT r.hash,length(b.data) FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.address=?", [.text(address)]).first else { return nil }
     guard let bytes = row[1].integer, bytes <= 2_097_152 else { throw NotebookStorageError.limitExceeded("context_entry") }
     let fragment = try JSONDecoder().decode(NotebookStoredFragment.self, from: currentSQL!.blob(row[0].text!))
-    guard fragment.address == address, fragment.collections.isEmpty,
+    guard fragment.address == address else { throw NotebookStorageError.corruptRecord(address) }
+    return try contextEntry(from: fragment)
+  }
+
+  func contextEntry(from fragment: NotebookStoredFragment) throws -> SharedContextEntry {
+    let address = fragment.address
+    guard fragment.collections.isEmpty, fragment.file.hasPrefix("collaboration/contexts/"),
       fragment.collection == "entries", fragment.parent == fragment.file + "#" else { throw NotebookStorageError.corruptRecord(address) }
     let entry = try fragment.value.decode(SharedContextEntry.self)
     guard fragment.member == entry.id.uuidString.lowercased(),
@@ -81,12 +87,13 @@ extension NotebookStore {
     return try readTransaction { _ in
       let cursor = try contextReadCursor(expectedCursor, file: contextFile(contextID)), root = contextFile(contextID) + "#"
       guard try hasStoredValue(contextFile(contextID)) else { throw CollaborationError("context_missing", "Общий фрагмент не найден.") }
-      var position: Int64 = -1, member = ""
+      try requireContextOrderIndex()
+      var counter: Int64 = -1, actor = "", address = ""
       if let afterEntryID {
-        guard let row = try currentSQL!.rows("SELECT position,member FROM records WHERE parent=? AND collection='entries' AND member=?", [.text(root), .text(afterEntryID.uuidString.lowercased())]).first else { throw NotebookStorageError.transactionConflict }
-        position = row[0].integer!; member = row[1].text!
+        guard let row = try currentSQL!.rows("SELECT counter,actor,address FROM context_entry_order WHERE context=? AND address=?", [.text(root), .text(root + "/entries/@" + afterEntryID.uuidString.lowercased())]).first else { throw NotebookStorageError.transactionConflict }
+        counter = row[0].integer!; actor = row[1].text!; address = row[2].text!
       }
-      let rows = try currentSQL!.rows("SELECT r.address,length(b.data) FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.parent=? AND r.collection='entries' AND (r.position,r.member)>(?,?) ORDER BY r.position,r.member LIMIT ?", [.text(root), .integer(position), .text(member), .integer(Int64(limit + 1))])
+      let rows = try currentSQL!.rows("SELECT o.address,length(b.data) FROM context_entry_order o JOIN records r ON r.address=o.address JOIN blobs b ON b.hash=r.hash WHERE o.context=? AND (o.counter,o.actor,o.address)>(?,?,?) ORDER BY o.counter,o.actor,o.address LIMIT ?", [.text(root), .integer(counter), .text(actor), .text(address), .integer(Int64(limit + 1))])
       var entries: [SharedContextEntry] = [], bytes: Int64 = 0
       for row in rows.prefix(limit) {
         let size = row[1].integer!
@@ -105,6 +112,7 @@ extension NotebookStore {
     expectedCursor: String? = nil) throws -> SharedContextDirectory {
     guard (1...64).contains(limit), afterContextID == nil || (expectedCursor != nil && contextID == nil) else { throw NotebookStorageError.limitExceeded("context_directory") }
     return try readTransaction { _ in
+      try requireContextOrderIndex()
       let cursor = try contextReadCursor(expectedCursor), selection = try readContextSelection()
       var files: [String]
       if let contextID { files = [contextFile(contextID)] }
@@ -118,8 +126,8 @@ extension NotebookStore {
       for file in files.prefix(limit) {
         guard let id = UUID(uuidString: String(file.dropFirst("collaboration/contexts/".count).dropLast(5))), try hasStoredValue(file) else { continue }
         let root = file + "#"
-        let first = try currentSQL!.rows("SELECT address FROM records WHERE parent=? AND collection='entries' ORDER BY position,member LIMIT 1", [.text(root)]).first?[0].text
-        let last = try currentSQL!.rows("SELECT address FROM records WHERE parent=? AND collection='entries' ORDER BY position DESC,member DESC LIMIT 1", [.text(root)]).first?[0].text
+        let first = try currentSQL!.rows("SELECT address FROM context_entry_order WHERE context=? ORDER BY counter,actor,address LIMIT 1", [.text(root)]).first?[0].text
+        let last = try currentSQL!.rows("SELECT address FROM context_entry_order WHERE context=? ORDER BY counter DESC,actor DESC,address DESC LIMIT 1", [.text(root)]).first?[0].text
         let firstEntry = try first.flatMap { try storedEntry(at: $0) }
         let lastEntry = try last == first ? firstEntry : last.flatMap { try storedEntry(at: $0) }
         let summary = SharedContextSummary(id: id, firstEntry: firstEntry, lastEntry: lastEntry)

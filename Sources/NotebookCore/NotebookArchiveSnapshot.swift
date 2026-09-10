@@ -34,7 +34,9 @@ extension NotebookStore {
     defer { try? manager.removeItem(at: staging) }
     try manager.copyItem(at: source, to: staging)
     guard try NotebookArchiveFingerprint.read(staging) == original else { throw NotebookStorageError.transactionConflict }
-    let replica = NotebookStore(root: staging), before = try replica.validateArchiveSnapshot()
+    let replica = NotebookStore(root: staging)
+    try replica.prepareContextOrderIndexForTransfer()
+    let before = try replica.validateArchiveSnapshot()
     try replica.commandTransaction {
       let database = replica.currentSQL!
       var after = ""
@@ -75,6 +77,7 @@ extension NotebookStore {
         try database.rows("PRAGMA foreign_key_check").isEmpty else {
         throw NotebookStorageError.corruptRecord("archive integrity")
       }
+      try store.validateContextOrderIndex()
       let header = try store.workspaceHeader(), contexts = try store.sharedContexts()
       let checkpoint = try NotebookCheckpoint(workspaceID: header.workspaceID,
         envelope: .init(content: store.collaborationContent(), actions: store.collaborationActions(),

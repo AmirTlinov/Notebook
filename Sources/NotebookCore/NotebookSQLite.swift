@@ -166,7 +166,7 @@ struct NotebookRecordCodec {
             for (offset, value) in values.enumerated() {
               let member = ids[offset]
               try make(value, address: address + "/" + collectionKey + "/@" + fieldKey([member]),
-                parent: address, collection: collectionKey, member: member, position: isComputationCollection ? 0 : offset)
+                parent: address, collection: collectionKey, member: member, position: (isComputationCollection || (file.hasPrefix("collaboration/contexts/") && key == "entries")) ? 0 : offset)
             }
           } else if key == "drawingData", file.hasPrefix("pages/") {
             let drawing = try PageInkDrawing.decode(value.decode(Data.self))
@@ -209,8 +209,9 @@ struct NotebookRecordCodec {
         }
         let members = (children[address] ?? []).filter { $0.collection == fieldKey(collection.path) }
         let matching: [NotebookStoredFragment]
-        if row.file == "spatial-ink.json", collection.path == ["actions"] {
-          // Contact order is authored by its creation stamp and UUID, not by
+        if (row.file == "spatial-ink.json" && collection.path == ["actions"])
+          || (row.file.hasPrefix("collaboration/contexts/") && collection.path == ["entries"]) {
+          // Causal order is authored by the entry stamp and UUID, not by
           // arrival or SQL slot. An addressed insertion never renumbers peers.
           var stamped: [(row: NotebookStoredFragment, stamp: VersionStamp)] = []
           for member in members {
@@ -292,6 +293,7 @@ extension NotebookStore {
         try database.run("CREATE INDEX record_members ON records(parent,collection,member)")
         try database.run("CREATE INDEX record_identity ON records(file,collection,member)")
         try database.run("CREATE INDEX record_order ON records(parent,collection,position,member)")
+        try Self.createContextOrderIndex(database)
         try Self.createSearchIndex(database: database)
         try database.run("CREATE TABLE change_log(sequence INTEGER PRIMARY KEY AUTOINCREMENT, transaction_id TEXT NOT NULL UNIQUE, manifest_hash TEXT NOT NULL REFERENCES blobs(hash), byte_count INTEGER NOT NULL)")
         try database.run("CREATE TABLE change_records(sequence INTEGER NOT NULL REFERENCES change_log(sequence),address TEXT NOT NULL,blob_hash TEXT,PRIMARY KEY(sequence,address))")
