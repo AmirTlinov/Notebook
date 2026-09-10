@@ -236,6 +236,39 @@ struct NotebookIPCTests {
     #expect(server.activeConnectionCount == 0)
     #expect(calls.value == 0)
   }
+
+  @Test func stopOwnsAcceptedSocketsBeforeTheirWorkerQueueRuns() async throws {
+    let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
+    let calls = IPCCount(), workers = DispatchQueue(label: "Notebook.IPCTests.suspended-workers")
+    workers.suspend()
+    var resumed = false
+    defer { if !resumed { workers.resume() } }
+    let server = NotebookIPCServer(socketURL: endpoint.socket, workerQueue: workers) { _ in
+      calls.increment(); return .bool(true)
+    }
+    try server.start()
+    var descriptors: [Int32] = []
+    defer { for descriptor in descriptors { close(descriptor) }; server.stop() }
+    for _ in 0..<NotebookIPC.maximumConnections {
+      let fd = try connectIPC(endpoint.socket)
+      descriptors.append(fd)
+      try writeRawIPCBytes(Data([0, 0]), fd: fd)
+    }
+    #expect(await waitForIPC { server.activeConnectionCount == NotebookIPC.maximumConnections })
+    let drained = IPCCompletion<Duration>("closed queued IPC sockets")
+    Task { drained.resolve(.success(await server.stopAndDrain())) }
+    let duration = try await drained.value()
+    #expect(duration < .seconds(1))
+    #expect(server.activeConnectionCount == 0)
+    #expect(calls.value == 0)
+    #expect(!FileManager.default.fileExists(atPath: endpoint.socket.path))
+    // Late closures are deliberately released only after drain. They cannot
+    // revive the handler or read a descriptor closed by the admission owner.
+    workers.resume(); resumed = true
+    await withCheckedContinuation { continuation in workers.async { continuation.resume() } }
+    #expect(calls.value == 0)
+    #expect(await server.stopAndDrain() == .zero)
+  }
 }
 
 private struct IPCEndpoint: Sendable {

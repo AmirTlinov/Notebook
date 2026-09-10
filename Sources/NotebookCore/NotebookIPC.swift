@@ -77,15 +77,26 @@ public final class NotebookIPCServer: @unchecked Sendable {
   public let socketURL: URL
   private let handler: Handler
   private let lock = NSLock()
-  private let lifetime = DispatchGroup()
+  private struct DrainWaiter {
+    let started: ContinuousClock.Instant
+    let continuation: CheckedContinuation<Duration, Never>
+  }
+  private var accepting = false
+  private var drainedAt: ContinuousClock.Instant?
+  private var drainWaiters: [DrainWaiter] = []
   private var listener: Int32 = -1
   private var stopped = false
   private var jobs: [UUID: IPCJob] = [:]
   private let acceptQueue = DispatchQueue(label: "Notebook.IPC.accept", qos: .utility)
-  private let workerQueue = DispatchQueue(label: "Notebook.IPC.requests", qos: .utility, attributes: .concurrent)
+  private let workerQueue: DispatchQueue
 
-  public init(socketURL: URL = NotebookIPC.defaultSocketURL, handler: @escaping Handler) {
-    self.socketURL = socketURL; self.handler = handler
+  public convenience init(socketURL: URL = NotebookIPC.defaultSocketURL, handler: @escaping Handler) {
+    self.init(socketURL: socketURL,
+      workerQueue: DispatchQueue(label: "Notebook.IPC.requests", qos: .utility, attributes: .concurrent), handler: handler)
+  }
+
+  init(socketURL: URL, workerQueue: DispatchQueue, handler: @escaping Handler) {
+    self.socketURL = socketURL; self.handler = handler; self.workerQueue = workerQueue
   }
 
   var activeConnectionCount: Int { lock.withLock { jobs.count } }
@@ -103,35 +114,40 @@ public final class NotebookIPCServer: @unchecked Sendable {
         }
         listener = fd
       } catch { close(fd); try? FileManager.default.removeItem(at: socketURL); throw error }
-      lifetime.enter()
+      accepting = true
       acceptQueue.async { [self] in
-        defer { lifetime.leave() }
+        defer { finishAccepting() }
         acceptConnections(fd)
       }
     }
   }
 
   public func stop() {
-    let fd: Int32 = lock.withLock {
+    let completion = lock.withLock {
       stopped = true
-      let previous = listener; listener = -1
+      let fd = listener; listener = -1
       for job in jobs.values { job.shutdown() }
-      return previous
+      jobs = jobs.filter { !$0.value.finished }
+      if fd >= 0 { shutdown(fd, SHUT_RDWR); close(fd); try? FileManager.default.removeItem(at: socketURL) }
+      return drainCompletionLocked()
     }
-    if fd >= 0 { shutdown(fd, SHUT_RDWR); close(fd); try? FileManager.default.removeItem(at: socketURL) }
+    resumeDrain(completion)
   }
 
   /// Closing a socket does not cancel an already accepted store command. The
   /// application awaits this boundary before flushing and releasing its writer.
-  /// The duration ends at the server's completion notification, before the
-  /// caller waits for its own executor. It measures drain, not task scheduling.
+  /// The final transport/handler release records completion under the owner's
+  /// lock. No notification queue or caller executor can move that timestamp.
   @discardableResult public func stopAndDrain() async -> Duration {
     let started = ContinuousClock.now
     stop()
     return await withCheckedContinuation { continuation in
-      lifetime.notify(queue: .global(qos: .utility)) {
-        continuation.resume(returning: started.duration(to: .now))
+      let completed: ContinuousClock.Instant? = lock.withLock {
+        if let drainedAt { return drainedAt }
+        drainWaiters.append(.init(started: started, continuation: continuation))
+        return nil
       }
+      if let completed { continuation.resume(returning: max(.zero, started.duration(to: completed))) }
     }
   }
 
@@ -146,15 +162,17 @@ public final class NotebookIPCServer: @unchecked Sendable {
       let id = UUID(), job = IPCJob(fd: fd)
       let accepted = lock.withLock {
         guard !stopped, jobs.count < NotebookIPC.maximumConnections else { return false }
-        lifetime.enter()
         jobs[id] = job; return true
       }
       guard accepted else { close(fd); continue }
-      workerQueue.async { [self] in serve(id: id, job: job) }
+      workerQueue.async { [weak self] in self?.serve(id: id, job: job) }
     }
   }
 
   private func serve(id: UUID, job: IPCJob) {
+    // Stop owns an admitted socket even before its worker gets a queue slot.
+    // A cancelled pending closure must never touch a reused descriptor.
+    guard job.beginWorker() else { return }
     defer {
       job.finishWorker()
       releaseFinishedJob(id, job: job)
@@ -197,30 +215,77 @@ public final class NotebookIPCServer: @unchecked Sendable {
     try SocketIO.writeFrame(JSONEncoder().encode(response), fd: fd)
   }
   private func releaseFinishedJob(_ id: UUID, job: IPCJob) {
-    lock.withLock {
-      guard jobs[id] === job, job.finished else { return }
+    let completion: DrainCompletion? = lock.withLock {
+      guard jobs[id] === job, job.finished else { return nil }
       jobs.removeValue(forKey: id)
-      lifetime.leave()
+      return drainCompletionLocked()
+    }
+    resumeDrain(completion)
+  }
+
+  private func finishAccepting() {
+    let completion = lock.withLock {
+      accepting = false
+      return drainCompletionLocked()
+    }
+    resumeDrain(completion)
+  }
+
+  private typealias DrainCompletion = (ContinuousClock.Instant, [DrainWaiter])
+
+  private func drainCompletionLocked() -> DrainCompletion? {
+    guard stopped, !accepting, jobs.isEmpty, drainedAt == nil else { return nil }
+    let completed = ContinuousClock.now
+    drainedAt = completed
+    let waiters = drainWaiters; drainWaiters.removeAll()
+    return (completed, waiters)
+  }
+
+  private func resumeDrain(_ completion: DrainCompletion?) {
+    guard let (completed, waiters) = completion else { return }
+    for waiter in waiters {
+      waiter.continuation.resume(returning: max(.zero, waiter.started.duration(to: completed)))
     }
   }
 }
 
 private final class IPCJob: @unchecked Sendable {
+  private enum WorkerPhase { case pending, running, finished }
   let fd: Int32
   let completion = DispatchSemaphore(value: 0)
   private let lock = NSLock()
-  private var workerFinished = false
+  private var workerPhase = WorkerPhase.pending
   private var handlerFinished = true
   private var response: Result<JSONValue, CollaborationError>?
   init(fd: Int32) { self.fd = fd }
-  var finished: Bool { lock.withLock { workerFinished && handlerFinished } }
+  var finished: Bool { lock.withLock { workerPhase == .finished && handlerFinished } }
   var result: Result<JSONValue, CollaborationError>? { lock.withLock { response } }
+  func beginWorker() -> Bool {
+    lock.withLock {
+      guard workerPhase == .pending else { return false }
+      workerPhase = .running
+      return true
+    }
+  }
   func beginHandler() { lock.withLock { handlerFinished = false } }
   func finishHandler(_ value: Result<JSONValue, CollaborationError>) {
     lock.withLock { response = value; handlerFinished = true }; completion.signal()
   }
-  func finishWorker() { lock.withLock { close(fd); workerFinished = true } }
-  func shutdown() { lock.withLock { if !workerFinished { Darwin.shutdown(fd, SHUT_RDWR) } } }
+  func finishWorker() {
+    lock.withLock {
+      guard workerPhase != .finished else { return }
+      close(fd); workerPhase = .finished
+    }
+  }
+  func shutdown() {
+    lock.withLock {
+      switch workerPhase {
+      case .pending: close(fd); workerPhase = .finished
+      case .running: Darwin.shutdown(fd, SHUT_RDWR)
+      case .finished: break
+      }
+    }
+  }
 }
 
 enum SocketIO {
