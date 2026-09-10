@@ -185,19 +185,37 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(paper.frame, before, "Only chat follows the keyboard safe area")
     toggle.tap(); toggle.tap()
     XCTAssertEqual(field.value as? String, "Keep this draft")
+    field.tap()
+    let keyboard = app.keyboards.firstMatch
+    XCTAssertTrue(keyboard.waitForExistence(timeout: 4), "The rotation scenario starts with actual system input, not a collapsed keyboard")
     XCUIDevice.shared.orientation = .landscapeLeft
     let panel = app.descendants(matching: .any).matching(identifier: "notebook-chat-panel").firstMatch
     var stableSince: Date?, previousWindow = CGRect.zero, previousPanel = CGRect.zero
     let inside = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-      let window = app.frame, frame = panel.frame
+      guard keyboard.exists else { stableSince = nil; return false }
+      let window = app.frame, frame = panel.frame, keys = keyboard.frame
       guard window.width > window.height, window.insetBy(dx: -1, dy: -1).contains(frame),
-        frame.width > 300, frame.height > 100, app.buttons["notebook-chat-tasks"].isHittable else { stableSince = nil; return false }
+        frame.width > 300, frame.height > 100, abs(keys.width - window.width) <= 1,
+        keys.height > 0, window.contains(keys), keys.midY > window.midY,
+        frame.maxY <= keys.minY + 1 else { stableSince = nil; return false }
       if window != previousWindow || frame != previousPanel { previousWindow = window; previousPanel = frame; stableSince = Date(); return false }
       if stableSince == nil { stableSince = Date() }
       return Date().timeIntervalSince(stableSince!) >= 0.5
     }, object: app)
-    XCTAssertEqual(XCTWaiter.wait(for: [inside], timeout: 5), .completed)
+    let rotation = XCTWaiter.wait(for: [inside], timeout: 5)
+    let keyboardDescription = keyboard.exists ? String(describing: keyboard.frame) : "absent"
+    let geometry = XCTAttachment(string: "window=\(app.frame) panel=\(panel.frame) keyboard=\(keyboardDescription)\n" + app.debugDescription)
+    geometry.name = "codex-keyboard-rotation-geometry"; geometry.lifetime = .keepAlways; add(geometry)
+    XCTAssertEqual(rotation, .completed)
     XCTAssertEqual(field.value as? String, "Keep this draft")
+    if !field.isHittable { panel.swipeUp() }
+    XCTAssertTrue(field.isHittable)
+    XCTAssertLessThanOrEqual(field.frame.maxY, keyboard.frame.minY + 1)
+    // Refocusing by touch can select a word; explicitly place the insertion
+    // point before testing an append, using the normal system editing command.
+    field.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: .command)
+    field.typeText(" after rotation")
+    XCTAssertEqual(field.value as? String, "Keep this draft after rotation")
     XCTAssertFalse(app.buttons["notebook-chat-send"].isEnabled, "An offline fixture invents neither a task nor an executor")
     let proof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
     proof.name = "codex-panel-keyboard-landscape"; proof.lifetime = .keepAlways; add(proof)
