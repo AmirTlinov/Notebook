@@ -81,28 +81,64 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     let size: CGSize
     let displayScale: Double
     var pixelSize: CGSize {
-      let density = min(displayScale, 4096 / max(size.width, size.height))
-      return .init(width: ceil(size.width * density), height: ceil(size.height * density))
+      .init(width: ceil(size.width * displayScale), height: ceil(size.height * displayScale))
+    }
+    func tileGrid() throws -> (columns: Int, rows: Int) {
+      let pixels = pixelSize
+      guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0,
+        displayScale.isFinite, displayScale > 0, pixels.width.isFinite, pixels.height.isFinite,
+        (1...16_384).contains(pixels.width), (1...16_384).contains(pixels.height) else {
+        throw SceneRenderError.resourceLimit
+      }
+      let columns = (Int(pixels.width) + SpatialTile.side - 1) / SpatialTile.side
+      let rows = (Int(pixels.height) + SpatialTile.side - 1) / SpatialTile.side
+      guard columns * rows <= 256 else { throw SceneRenderError.resourceLimit }
+      return (columns, rows)
     }
   }
 
-  /// One Canvas owns its installed target and at most one private replacement.
-  /// A target has no input, source or scene ownership. Its byte lease includes
-  /// the drawable pool and MSAA attachment before either can allocate pixels.
+  /// Fixed-size pools survive a layout change. A candidate borrows their next
+  /// drawables without resizing, relocating or presenting the installed ones.
+  /// The same Canvas remains the sole source, input and physical scene owner.
   @MainActor
-  fileprivate final class SpatialTarget {
-    let layout: SpatialTargetLayout
+  fileprivate final class SpatialTile {
+    nonisolated static let side = 512
     let layer: CAMetalLayer
     let multisample: (any MTLTexture)?
     let bytes: RasterReservation
     let physical: ScenePhysicalOwnerLease?
     let drawableByteCeiling: Int
-    init(layout: SpatialTargetLayout, layer: CAMetalLayer, multisample: (any MTLTexture)?,
+    init(layer: CAMetalLayer, multisample: (any MTLTexture)?,
       bytes: RasterReservation, physical: ScenePhysicalOwnerLease?, drawableByteCeiling: Int) {
-      self.layout = layout; self.layer = layer; self.multisample = multisample
+      self.layer = layer; self.multisample = multisample
       self.bytes = bytes; self.physical = physical; self.drawableByteCeiling = drawableByteCeiling
     }
     isolated deinit { layer.removeFromSuperlayer() }
+  }
+
+  @MainActor
+  fileprivate final class SpatialTarget {
+    let layout: SpatialTargetLayout
+    let columns: Int
+    let tiles: [SpatialTile]
+    init(layout: SpatialTargetLayout, columns: Int, tiles: [SpatialTile]) {
+      self.layout = layout; self.columns = columns; self.tiles = tiles
+    }
+    func detach() { for tile in tiles { tile.layer.removeFromSuperlayer() } }
+    func pixelOrigin(_ index: Int) -> CGPoint {
+      .init(x: (index % columns) * SpatialTile.side, y: (index / columns) * SpatialTile.side)
+    }
+    func viewport(_ index: Int) -> MTLViewport {
+      let origin = pixelOrigin(index), pixels = layout.pixelSize
+      return .init(originX: -origin.x, originY: -origin.y, width: pixels.width,
+        height: pixels.height, znear: 0, zfar: 1)
+    }
+    func logicalRect(_ index: Int) -> CGRect {
+      let origin = pixelOrigin(index), pixels = layout.pixelSize
+      let scaleX = layout.size.width / pixels.width, scaleY = layout.size.height / pixels.height
+      return .init(x: origin.x * scaleX, y: origin.y * scaleY,
+        width: CGFloat(SpatialTile.side) * scaleX, height: CGFloat(SpatialTile.side) * scaleY)
+    }
   }
 
   fileprivate struct GeometryBuffer {
@@ -130,6 +166,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   private static let framesInFlight = 3
+  /// A retained surface submits one GPU frame at a time beside its shown frame.
+  /// Preparation uses that same second slot, never a second full drawable pool.
+  nonisolated static let spatialFramesInFlight = 2
   nonisolated private static let stableRasterScale: CGFloat = 2
 
   private let commandQueue: (any MTLCommandQueue)?
@@ -151,16 +190,18 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private var spatialHandoffRetains = 0
   private var spatialDrawableScale: Double?
   private var spatialTarget: SpatialTarget?
-  var spatialMultisampleStorageMode: MTLStorageMode? { spatialTarget?.multisample?.storageMode }
-  var spatialMultisampleAllocatedBytes: Int { spatialTarget?.multisample?.allocatedSize ?? 0 }
-  var spatialDrawableAccountedBytes: Int { spatialTarget?.bytes.byteCount ?? 0 }
-  var spatialDrawableByteCeiling: Int { spatialTarget?.drawableByteCeiling ?? 0 }
+  var spatialMultisampleStorageMode: MTLStorageMode? { spatialTarget?.tiles.first?.multisample?.storageMode }
+  var spatialMultisampleAllocatedBytes: Int { spatialTarget?.tiles.reduce(0) { $0 + ($1.multisample?.allocatedSize ?? 0) } ?? 0 }
+  var spatialDrawableAccountedBytes: Int { spatialTarget?.tiles.reduce(0) { $0 + $1.bytes.byteCount } ?? 0 }
+  var spatialDrawableByteCeiling: Int { spatialTarget?.tiles.reduce(0) { $0 + $1.drawableByteCeiling } ?? 0 }
+  var spatialTilePoolIDs: [ObjectIdentifier] { spatialTarget?.tiles.map(ObjectIdentifier.init) ?? [] }
   private var physicalAdmission: ScenePhysicalOwnerLease?
   private var submittedFrameCount = 0
   private var submittedPresentationCount = 0
   private var frameDrainWaiters: [CheckedContinuation<Void, Never>] = []
   private var spatialHandoffIsStopping = false
   private var spatialStagingID: UUID?
+  private weak var stagedSpatialFrame: PreparedSpatialFrame?
   private var stableDrawing: PageInkDrawing?
   private var drawingIsPreparing = false
   private var stableDrawingRevision: UInt64 = 0
@@ -293,7 +334,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       if spatialHandoffRetains == 0 {
         releaseDrawables()
         releaseGeometryBuffers()
-        spatialTarget?.layer.removeFromSuperlayer(); spatialTarget = nil
+        spatialTarget?.detach(); spatialTarget = nil
       }
       return
     }
@@ -327,7 +368,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     installedSpatialSource = nil; spatialSourceGeneration &+= 1
     spatialStagingID = nil
     visibleCommittedVertexCount = 0; visibleCommittedChunkCount = 0
-    spatialTarget?.layer.removeFromSuperlayer(); spatialTarget = nil
+    spatialTarget?.detach(); spatialTarget = nil
     hasRevealedFirstFrame = false
     presentedStableContentRevision = nil
   }
@@ -345,7 +386,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     spatialHandoffRetains -= 1
     if spatialHandoffRetains == 0, window == nil {
       isPaused = true; releaseDrawables(); releaseGeometryBuffers()
-      spatialTarget?.layer.removeFromSuperlayer(); spatialTarget = nil
+      spatialTarget?.detach(); spatialTarget = nil
     }
   }
 
@@ -364,10 +405,18 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   private func makeSpatialTarget(layout: SpatialTargetLayout, samples: Int) throws -> SpatialTarget {
-    guard layout.size.width.isFinite, layout.size.height.isFinite,
-      layout.size.width > 0, layout.size.height > 0,
-      layout.displayScale.isFinite, layout.displayScale > 0, let device else { throw SceneRenderError.resourceLimit }
-    let width = Int(layout.pixelSize.width), height = Int(layout.pixelSize.height)
+    let (columns, rows) = try layout.tileGrid()
+    var tiles: [SpatialTile] = []
+    for index in 0..<(columns * rows) {
+      if let installed = spatialTarget, index < installed.tiles.count { tiles.append(installed.tiles[index]) }
+      else { tiles.append(try makeSpatialTile(samples: samples)) }
+    }
+    return .init(layout: layout, columns: columns, tiles: tiles)
+  }
+
+  private func makeSpatialTile(samples: Int) throws -> SpatialTile {
+    guard let device else { throw SceneRenderError.resourceLimit }
+    let width = SpatialTile.side, height = SpatialTile.side
     let memoryless = device.supportsFamily(.apple1)
     let drawableDescriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: colorPixelFormat,
       width: width, height: height, mipmapped: false)
@@ -393,7 +442,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       descriptor = value
       if !memoryless { attachmentBytes = allocationSize(value) }
     }
-    let bytes = drawableBytes * Self.framesInFlight + attachmentBytes
+    let bytes = drawableBytes * Self.spatialFramesInFlight + attachmentBytes
     guard let reservation = resources.reserveDerivedBytes(bytes, priority: physicalAdmission?.allocationPriority ?? .input, owner: physicalAdmission)
     else { throw SceneRenderError.resourceLimit }
     let multisample = descriptor.flatMap { device.makeTexture(descriptor: $0) }
@@ -402,26 +451,34 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     let layer = CAMetalLayer()
     layer.device = device; layer.pixelFormat = colorPixelFormat; layer.framebufferOnly = true
     layer.isOpaque = false; layer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
-    layer.maximumDrawableCount = Self.framesInFlight; layer.presentsWithTransaction = false
-    layer.frame = CGRect(origin: .zero, size: layout.size); layer.drawableSize = layout.pixelSize
-    return .init(layout: layout, layer: layer, multisample: multisample, bytes: reservation,
+    layer.maximumDrawableCount = Self.spatialFramesInFlight; layer.presentsWithTransaction = false
+    layer.drawableSize = .init(width: width, height: height)
+    return .init(layer: layer, multisample: multisample, bytes: reservation,
       physical: physicalAdmission, drawableByteCeiling: drawableBytes)
   }
 
   private func installSpatialTarget(_ target: SpatialTarget?) {
-    if spatialTarget !== target { spatialTarget?.layer.removeFromSuperlayer() }
+    let retained = Set(target?.tiles.map(ObjectIdentifier.init) ?? [])
+    for tile in spatialTarget?.tiles ?? [] where !retained.contains(ObjectIdentifier(tile)) {
+      tile.layer.removeFromSuperlayer()
+    }
     spatialTarget = target
     guard let target else { return }
-    #if os(iOS)
-      layer.addSublayer(target.layer)
-    #else
-      layer?.addSublayer(target.layer)
-    #endif
-    target.layer.frame = bounds
-    drawableSize = target.layout.pixelSize
+    let pixels = target.layout.pixelSize
+    for (index, tile) in target.tiles.enumerated() {
+      #if os(iOS)
+        layer.masksToBounds = true
+        layer.addSublayer(tile.layer)
+      #else
+        layer?.masksToBounds = true
+        layer?.addSublayer(tile.layer)
+      #endif
+      tile.layer.frame = target.logicalRect(index)
+    }
+    drawableSize = pixels
   }
 
-  private func spatialRenderPass(target: SpatialTarget, drawable: any CAMetalDrawable) -> MTLRenderPassDescriptor {
+  private func spatialRenderPass(target: SpatialTile, drawable: any CAMetalDrawable) -> MTLRenderPassDescriptor {
     let descriptor = MTLRenderPassDescriptor()
     descriptor.colorAttachments[0].texture = target.multisample ?? drawable.texture
     descriptor.colorAttachments[0].resolveTexture = target.multisample == nil ? nil : drawable.texture
@@ -586,6 +643,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   func draw(in view: MTKView) {
     guard window != nil, !spatialHandoffIsStopping, spatialStagingID == nil else { isPaused = true; return }
+    if spatialDrawableScale != nil, submittedFrameCount > 0 || submittedPresentationCount > 0 { return }
     if presentEmptyContentIfReady() { return }
     let samples = device?.supportsTextureSampleCount(4) == true ? 4 : 1
     guard admitSpatialDrawable(samples: samples) else { return }
@@ -602,50 +660,41 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
     drawableRequestCount += 1
     guard let commandQueue, let commandBuffer = commandQueue.makeCommandBuffer() else { return }
-    let descriptor: MTLRenderPassDescriptor, drawable: any CAMetalDrawable
+    var passes: [(MTLRenderPassDescriptor, any CAMetalDrawable, MTLViewport?, CGRect?)] = []
     if let target = spatialTarget {
-      guard let next = target.layer.nextDrawable(), next.texture.allocatedSize <= target.drawableByteCeiling else {
-        renderFailure = .resourceLimit; return
+      for (index, tile) in target.tiles.enumerated() {
+        guard let drawable = tile.layer.nextDrawable(), drawable.texture.allocatedSize <= tile.drawableByteCeiling else {
+          renderFailure = .resourceLimit; return
+        }
+        passes.append((spatialRenderPass(target: tile, drawable: drawable), drawable, target.viewport(index), target.logicalRect(index)))
       }
-      drawable = next; descriptor = spatialRenderPass(target: target, drawable: next)
     } else {
-      guard let pass = currentRenderPassDescriptor, let next = currentDrawable else { return }
-      descriptor = pass; drawable = next
+      guard let pass = currentRenderPassDescriptor, let drawable = currentDrawable else { return }
+      passes.append((pass, drawable, nil, nil))
     }
-    descriptor.colorAttachments[0].loadAction = .clear
-    descriptor.colorAttachments[0].clearColor = clearColor
-    guard let encoder = commandBuffer.makeRenderCommandEncoder(
-      descriptor: descriptor
-    ) else { return }
-
-    guard let visible = prepareCommittedBuffers() else {
-      encoder.endEncoding(); renderFailure = .resourceLimit
-      return
-    }
+    guard let visible = prepareCommittedBuffers() else { renderFailure = .resourceLimit; return }
     let active = prepareActiveBuffer(in: frameSlot)
     if (activeInkStroke != nil || activeEraserStroke != nil) && !activeMesh.vertices.isEmpty && active == nil {
-      encoder.endEncoding(); renderFailure = .resourceLimit
-      return
+      renderFailure = .resourceLimit; return
     }
-
-    if let stableTexture, let stableInkPipelineState {
-      encoder.label = "Stable Notebook Ink"
-      encoder.setRenderPipelineState(stableInkPipelineState)
-      encoder.setFragmentTexture(stableTexture, index: 0)
-      encoder.drawPrimitives(
-        type: .triangle,
-        vertexStart: 0,
-        vertexCount: 6
-      )
+    for (descriptor, _, viewport, clip) in passes {
+      descriptor.colorAttachments[0].loadAction = .clear
+      descriptor.colorAttachments[0].clearColor = clearColor
+      guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else { return }
+      if let viewport { encoder.setViewport(viewport) }
+      if let stableTexture, let stableInkPipelineState {
+        encoder.label = "Stable Notebook Ink"
+        encoder.setRenderPipelineState(stableInkPipelineState)
+        encoder.setFragmentTexture(stableTexture, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+      }
+      encodeSpatial(batches: committedBatches, visible: visible, active: active,
+        camera: spatialCamera, viewport: spatialViewport, size: bounds.size, clip: clip, encoder: encoder)
+      encoder.endEncoding()
     }
-
-    encodeSpatial(batches: committedBatches, visible: visible, active: active,
-      camera: spatialCamera, viewport: spatialViewport, size: bounds.size, encoder: encoder)
-    encoder.endEncoding()
-
     presentsWithTransaction = false
-    spatialTarget?.layer.presentsWithTransaction = false
-    commandBuffer.present(drawable)
+    for tile in spatialTarget?.tiles ?? [] { tile.layer.presentsWithTransaction = false }
+    for (_, drawable, _, _) in passes { commandBuffer.present(drawable) }
     let presentedRevision: UInt64? =
       activeInkStroke == nil
         && activeEraserStroke == nil
@@ -702,7 +751,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   private func encodeSpatial(batches: [CommittedBatch], visible: [(Int, Int)],
     active: (buffer: any MTLBuffer, operation: RenderOperation)?, camera: SpatialCamera?,
-    viewport: SpatialPoint, size: CGSize, encoder: any MTLRenderCommandEncoder) {
+    viewport: SpatialPoint, size: CGSize, clip: CGRect? = nil, encoder: any MTLRenderCommandEncoder) {
     guard inkPipelineState != nil, eraserPipelineState != nil else { return }
     encoder.label = "Notebook Ink"
     var viewportSize = SIMD2<Float>(Float(max(size.width, 1)), Float(max(size.height, 1)))
@@ -710,6 +759,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     for (batchIndex, chunkIndex) in visible {
       let batch = batches[batchIndex]
       var transform = batch.mesh.projection.transform(camera: camera, viewport: viewport)
+      if let clip, !batch.mesh.chunks[chunkIndex].intersects(viewport: clip, transform: transform) { continue }
       encoder.setVertexBytes(&transform, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
       draw(buffer: batch.buffers[chunkIndex]?.buffer, vertexCount: batch.mesh.chunks[chunkIndex].vertices.count,
         operation: batch.operation, with: encoder)
@@ -724,6 +774,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private func cancelSpatialStaging(id: UUID? = nil) {
     guard let current = spatialStagingID, id == nil || current == id else { return }
     spatialStagingID = nil
+    stagedSpatialFrame?.revoke()
+    stagedSpatialFrame = nil
     requestFrame()
   }
 
@@ -733,14 +785,16 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     fileprivate weak var canvas: InkCanvasView?
     fileprivate let sourceGeneration: UInt64
     fileprivate let contentRevision: UInt64
-    fileprivate let batches: [CommittedBatch]
+    fileprivate var batches: [CommittedBatch]
     fileprivate let replacesMesh: Bool
     fileprivate let layout: SpatialTargetLayout
     fileprivate let viewport: SpatialPoint
-    fileprivate let target: SpatialTarget?
-    fileprivate let drawable: (any CAMetalDrawable)?
+    fileprivate var target: SpatialTarget?
+    fileprivate var drawables: [any CAMetalDrawable]
     fileprivate var ready = false
     fileprivate var installed = false
+    private var revoked = false
+    private var gpuCompleted = false
     private var transactionCommitted = false
     private var transactionCompletion: (@MainActor () -> Void)?
     func afterPresentationTransaction(_ completion: @escaping @MainActor () -> Void) {
@@ -749,27 +803,38 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     }
     fileprivate func presentationTransactionCommitted() {
       transactionCommitted = true
+      // The installed Canvas now owns its pools. A retained scene receipt must
+      // not occupy a drawable slot or keep retired pools alive indefinitely.
+      drawables.removeAll(); target = nil; batches.removeAll()
       let completion = transactionCompletion; transactionCompletion = nil
       completion?()
     }
+    fileprivate func revoke() {
+      revoked = true
+      if gpuCompleted { drawables.removeAll(); target = nil; batches.removeAll() }
+    }
+    fileprivate func completeGPU() {
+      gpuCompleted = true
+      if revoked { drawables.removeAll(); target = nil; batches.removeAll() }
+    }
     fileprivate init(id: UUID, canvas: InkCanvasView, batches: [CommittedBatch], replacesMesh: Bool,
-      layout: SpatialTargetLayout, viewport: SpatialPoint, target: SpatialTarget?, drawable: (any CAMetalDrawable)?) {
-      self.id = id; self.canvas = canvas; self.batches = batches; self.drawable = drawable
+      layout: SpatialTargetLayout, viewport: SpatialPoint, target: SpatialTarget?, drawables: [any CAMetalDrawable]) {
+      self.id = id; self.canvas = canvas; self.batches = batches; self.drawables = drawables
       self.replacesMesh = replacesMesh; self.layout = layout; self.viewport = viewport; self.target = target
       sourceGeneration = canvas.spatialSourceGeneration; contentRevision = canvas.stableContentRevision
     }
     var isValid: Bool {
       guard let canvas else { return false }
-      return ready && !installed && !canvas.spatialHandoffIsStopping && canvas.spatialStagingID == id
+      return ready && !revoked && !installed && !canvas.spatialHandoffIsStopping && canvas.spatialStagingID == id
         && canvas.spatialSourceGeneration == sourceGeneration && canvas.stableContentRevision == contentRevision
         && canvas.spatialActionBase == nil
     }
     isolated deinit { if !installed { canvas?.cancelSpatialStaging(id: id) } }
   }
 
-  /// Source-only changes borrow the installed target's pool. A size/density
-  /// change owns a private replacement target, never mutating the displayed
-  /// layer or Canvas bounds before all pixels and source generations validate.
+  /// Source and layout changes borrow fixed pools. Only growth allocates new
+  /// tiles. No installed layer moves or presents before the whole candidate
+  /// validates; cancellation releases private drawables, not displayed pixels.
   func prepareSpatialFrame(_ mesh: SpatialInkMesh?, size: SpatialPoint, displayScale: Double) async throws -> PreparedSpatialFrame {
     try Task.checkCancellation()
     guard !spatialHandoffIsStopping, spatialActionBase == nil, spatialStagingID == nil,
@@ -784,34 +849,43 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     guard spatialStagingID == id, !spatialHandoffIsStopping else { throw CancellationError() }
     let oldSource = spatialSourceGeneration, oldProjection = stableContentRevision
     let layout = SpatialTargetLayout(size: .init(width: size.x, height: size.y), displayScale: displayScale)
+    _ = try layout.tileGrid()
     let viewport = size, camera = spatialCamera
     var batches = mesh?.batches.map(CommittedBatch.init) ?? committedBatches
     let visible = try prepareBuffers(in: &batches, camera: camera, viewport: viewport, size: layout.size)
     if visible.isEmpty {
       let result = PreparedSpatialFrame(id: id, canvas: self, batches: batches, replacesMesh: mesh != nil,
-        layout: layout, viewport: viewport, target: nil, drawable: nil)
-      result.ready = true; succeeded = true
+        layout: layout, viewport: viewport, target: nil, drawables: [])
+      result.completeGPU(); result.ready = true; succeeded = true; stagedSpatialFrame = result
       return result
     }
     let samples = device?.supportsTextureSampleCount(4) == true ? 4 : 1
     let target: SpatialTarget
     if let installed = spatialTarget, installed.layout == layout { target = installed }
     else { target = try makeSpatialTarget(layout: layout, samples: samples) }
-    guard let drawable = target.layer.nextDrawable(), drawable.texture.allocatedSize <= target.drawableByteCeiling,
-      let command = commandQueue.makeCommandBuffer() else { throw SceneRenderError.resourceLimit }
-    let descriptor = spatialRenderPass(target: target, drawable: drawable)
-    guard let encoder = command.makeRenderCommandEncoder(descriptor: descriptor) else { throw SceneRenderError.resourceLimit }
-    encodeSpatial(batches: batches, visible: visible, active: nil,
-      camera: camera, viewport: viewport, size: layout.size, encoder: encoder)
-    encoder.endEncoding()
+    guard let command = commandQueue.makeCommandBuffer() else { throw SceneRenderError.resourceLimit }
+    var drawables: [any CAMetalDrawable] = []
+    for (index, tile) in target.tiles.enumerated() {
+      guard let drawable = tile.layer.nextDrawable(), drawable.texture.allocatedSize <= tile.drawableByteCeiling else {
+        throw SceneRenderError.resourceLimit
+      }
+      drawables.append(drawable)
+      let descriptor = spatialRenderPass(target: tile, drawable: drawable)
+      guard let encoder = command.makeRenderCommandEncoder(descriptor: descriptor) else { throw SceneRenderError.resourceLimit }
+      encoder.setViewport(target.viewport(index))
+      encodeSpatial(batches: batches, visible: visible, active: nil,
+        camera: camera, viewport: viewport, size: layout.size, clip: target.logicalRect(index), encoder: encoder)
+      encoder.endEncoding()
+    }
     let result = PreparedSpatialFrame(id: id, canvas: self, batches: batches, replacesMesh: mesh != nil,
-      layout: layout, viewport: viewport, target: target, drawable: drawable)
+      layout: layout, viewport: viewport, target: target, drawables: drawables)
+    drawables.removeAll(); stagedSpatialFrame = result
     submittedFrameCount += 1
     let completed = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
       command.addCompletedHandler { [weak self, result] command in
         let completed = command.status == .completed
         Task { @MainActor [weak self, result] in
-          withExtendedLifetime(result) {}
+          result.completeGPU()
           if let self { finishSubmittedFrame() }
           continuation.resume(returning: completed)
         }
@@ -864,16 +938,17 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     bounds.size = frame.layout.size
     spatialViewport = frame.viewport; spatialDrawableScale = frame.layout.displayScale
     installSpatialTarget(frame.target)
-    frame.target?.layer.presentsWithTransaction = true
+    for tile in frame.target?.tiles ?? [] { tile.layer.presentsWithTransaction = true }
     #if os(iOS)
-      layer.opacity = frame.drawable == nil ? 0 : 1
+      layer.opacity = frame.drawables.isEmpty ? 0 : 1
     #else
-      layer?.opacity = frame.drawable == nil ? 0 : 1
+      layer?.opacity = frame.drawables.isEmpty ? 0 : 1
     #endif
-    frame.drawable?.present()
+    for drawable in frame.drawables { drawable.present() }
     CATransaction.commit()
     spatialStagingID = nil
-    hasRevealedFirstFrame = frame.drawable != nil
+    stagedSpatialFrame = nil
+    hasRevealedFirstFrame = !frame.drawables.isEmpty
     isPaused = true
   }
 
@@ -1031,7 +1106,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     isPaused = true
     if sampleCount != 1 { sampleCount = 1 }
     releaseDrawables()
-    spatialTarget?.layer.removeFromSuperlayer(); spatialTarget = nil
+    spatialTarget?.detach(); spatialTarget = nil
     hasRevealedFirstFrame = false
     CATransaction.begin()
     CATransaction.setDisableActions(true)

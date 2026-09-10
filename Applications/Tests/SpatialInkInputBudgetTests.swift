@@ -218,15 +218,16 @@ final class SpatialInkInputBudgetTests: XCTestCase {
     XCTAssertEqual(resources.byteLimit, 256 * 1024 * 1024)
     XCTAssertEqual(resources.passiveByteLimit, 128 * 1024 * 1024)
 
-    let device = try XCTUnwrap(canvas.device), layer = try XCTUnwrap(canvas.layer as? CAMetalLayer)
+    let device = try XCTUnwrap(canvas.device)
     let width = Int(ceil(canvas.bounds.width * 2)), height = Int(ceil(canvas.bounds.height * 2))
-    XCTAssertLessThanOrEqual(max(width, height), 4096, "This physical viewport may not silently lose its 2× input density")
+    let tileSide = 512
+    let tileCount = ((width + tileSide - 1) / tileSide) * ((height + tileSide - 1) / tileSide)
     let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: canvas.colorPixelFormat,
-      width: width, height: height, mipmapped: false)
+      width: tileSide, height: tileSide, mipmapped: false)
     descriptor.storageMode = .private; descriptor.usage = .renderTarget
     let footprint = device.heapTextureSizeAndAlign(descriptor: descriptor)
     let aligned = ((footprint.size + footprint.align - 1) / footprint.align) * footprint.align
-    let rowFloor = ((width * 4 + 255) / 256) * 256 * height
+    let rowFloor = ((tileSide * 4 + 255) / 256) * 256 * tileSide
     let drawableFootprint = max(aligned, rowFloor)
     var multisampleFootprint = 0
     if device.supportsTextureSampleCount(4), !device.supportsFamily(.apple1) {
@@ -234,7 +235,7 @@ final class SpatialInkInputBudgetTests: XCTestCase {
       let footprint = device.heapTextureSizeAndAlign(descriptor: descriptor)
       multisampleFootprint = ((footprint.size + footprint.align - 1) / footprint.align) * footprint.align
     }
-    let targetBytes = drawableFootprint * layer.maximumDrawableCount + multisampleFootprint
+    let targetBytes = (drawableFootprint * InkCanvasView.spatialFramesInFlight + multisampleFootprint) * tileCount
     let inputRoom = resources.byteLimit - beforeAdmission.heldBytes
     let before = capture(mount), beforePixels = try blackPixelCount(before)
     let pencil = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SpatialPencilGestureRecognizer }.first)
@@ -258,7 +259,7 @@ final class SpatialInkInputBudgetTests: XCTestCase {
     let after = capture(mount), afterPixels = try blackPixelCount(after)
     let report = "viewport=\(viewport); nativeBounds=\(canvas.bounds.size); requestedPixels=\(width)x\(height); "
       + "device=\(device.name); heapSize=\(footprint.size); heapAlign=\(footprint.align); rowFloor=\(rowFloor); "
-      + "drawableCount=\(layer.maximumDrawableCount); targetBytes=\(targetBytes); inputRoom=\(inputRoom); "
+      + "drawableCount=\(InkCanvasView.spatialFramesInFlight); tiles=\(tileCount); targetBytes=\(targetBytes); inputRoom=\(inputRoom); "
       + "passivePinned=\(beforeAdmission.pinnedBytes); actualDrawable=\(canvas.drawableSize); "
       + "admittedBytes=\(canvas.spatialDrawableAccountedBytes); nativeReserved=\(resources.reservedBytes); "
       + "blackBefore=\(beforePixels); blackAfter=\(afterPixels); failure=\(String(describing: canvas.renderFailure)); UUID=\(action.id)"

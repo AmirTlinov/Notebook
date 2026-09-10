@@ -334,7 +334,7 @@ final class SpatialInkHandoffTests: XCTestCase {
     if device.supportsFamily(.apple1) {
       XCTAssertEqual(canvas.spatialMultisampleStorageMode, .memoryless)
       XCTAssertEqual(canvas.spatialMultisampleAllocatedBytes, 0)
-      XCTAssertEqual(canvas.spatialDrawableAccountedBytes, canvas.spatialDrawableByteCeiling * 3)
+      XCTAssertEqual(canvas.spatialDrawableAccountedBytes, canvas.spatialDrawableByteCeiling * InkCanvasView.spatialFramesInFlight)
       XCTAssertGreaterThanOrEqual(canvas.spatialDrawableByteCeiling,
         Int(canvas.drawableSize.width) * Int(canvas.drawableSize.height) * 4)
     } else {
