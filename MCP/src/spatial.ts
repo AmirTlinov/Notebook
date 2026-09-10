@@ -11,6 +11,24 @@ export const worldPointSchema = z.object({
   localY: z.number().finite().min(0).lt(TILE_SIZE),
 }).strict();
 
+/** A finite read frame around a physical address may extend outside the world. */
+export const sceneBoundsSchema = z.object({
+  anchor: worldPointSchema,
+  region: z.object({
+    x: z.number().finite().min(-10_000_000).max(10_000_000),
+    y: z.number().finite().min(-10_000_000).max(10_000_000),
+    width: z.number().positive().max(10_000_000),
+    height: z.number().positive().max(10_000_000),
+  }).strict(),
+}).strict();
+export type SceneBounds = z.infer<typeof sceneBoundsSchema>;
+
+/** Derived endpoints are not WorldPoint addresses; decimal tiles stay exact. */
+export interface ProjectionBounds {
+  origin: {tileX:string;tileY:string;localX:number;localY:number};
+  maximum: {tileX:string;tileY:string;localX:number;localY:number};
+}
+
 export function offsetWorld(point: WorldPoint, x: number, y: number): WorldPoint {
   worldPointSchema.parse(point);
   if (!Number.isFinite(x) || !Number.isFinite(y)) throw new RangeError("World offset must be finite");

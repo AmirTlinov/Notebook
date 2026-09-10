@@ -70,6 +70,35 @@ public struct WorldPoint: Codable, Equatable, Hashable, Sendable {
     return .init(tileX: x.0, tileY: y.0, localX: x.1, localY: y.1)
   }
 
+  /// Interpolates an admitted address without flattening its tiles into a
+  /// world-sized Double. Rounding stays inside each pair of endpoint axes;
+  /// it cannot turn a convex camera trajectory into an out-of-world address.
+  public func interpolatedAddress(to other: Self, amount: Double) -> Self? {
+    guard isValid, other.isValid, amount.isFinite, (0...1).contains(amount) else { return nil }
+    if amount == 0 { return self }
+    if amount == 1 { return other }
+    func axis(_ a: (Int64, Double), _ b: (Int64, Double)) -> (Int64, Double) {
+      let (start, end, progress) = amount <= 0.5 ? (a, b, amount) : (b, a, 1 - amount)
+      // At most half the valid tile span is converted to an integer. The
+      // local interpolation never loses its bits in a huge world offset.
+      let tileDelta = Double(end.0 - start.0) * progress
+      let whole = Int64(floor(tileDelta)), fraction = tileDelta - floor(tileDelta)
+      let local = start.1 + (end.1 - start.1) * progress + fraction * Self.tileSize
+      let carry = Int64(floor(local / Self.tileSize))
+      let result = (start.0 + whole + carry, local - Double(carry) * Self.tileSize)
+      // Like a bounded scalar lerp, cap arithmetic rounding at the exact
+      // endpoints, not at a guessed global-coordinate epsilon.
+      func before(_ left: (Int64, Double), _ right: (Int64, Double)) -> Bool {
+        left.0 < right.0 || (left.0 == right.0 && left.1 < right.1)
+      }
+      let (lower, upper) = before(a, b) ? (a, b) : (b, a)
+      return before(result, lower) ? lower : before(upper, result) ? upper : result
+    }
+    let x = axis((tileX, localX), (other.tileX, other.localX))
+    let y = axis((tileY, localY), (other.tileY, other.localY))
+    return .init(tileX: x.0, tileY: y.0, localX: x.1, localY: y.1)
+  }
+
   /// Returns `other - self` without first flattening both coordinates into
   /// huge floating-point numbers.
   public func delta(to other: Self) -> SpatialPoint {
@@ -81,7 +110,7 @@ public struct WorldPoint: Codable, Equatable, Hashable, Sendable {
     )
   }
 
-  var isValid: Bool {
+  public var isValid: Bool {
     (-Self.maximumTileIndex...Self.maximumTileIndex).contains(tileX)
       && (-Self.maximumTileIndex...Self.maximumTileIndex).contains(tileY)
       && localX.isFinite && localY.isFinite
@@ -275,7 +304,7 @@ public struct SpatialCamera: Codable, Equatable, Hashable, Sendable {
     )
   }
 
-  var isValid: Bool {
+  public var isValid: Bool {
     center.isValid && scale.isFinite
       && scale >= Self.minimumScale && scale <= Self.maximumScale
   }
@@ -388,21 +417,21 @@ public enum NotebookDockingField {
     geometry: WorkspaceItemGeometry,
     correction: NotebookDockingCorrection
   ) -> SpatialCamera {
-    guard correction.centerWeight > 0 || correction.scaleWeight > 0 else {
+    guard camera.isValid, viewport.x > 0, viewport.y > 0,
+      (0...1).contains(correction.centerWeight), (0...1).contains(correction.scaleWeight),
+      correction.centerWeight > 0 || correction.scaleWeight > 0,
+      let center = camera.center.interpolatedAddress(to: notebookCenter, amount: correction.centerWeight) else {
       return camera
     }
-    let delta = camera.center.delta(to: notebookCenter)
     let targetScale = geometry.fitScale(viewport: viewport)
+    guard targetScale.isFinite, targetScale >= SpatialCamera.minimumScale else { return camera }
     let resolvedScale = exp(
       log(camera.scale)
         + (log(targetScale) - log(camera.scale)) * correction.scaleWeight
     )
     return SpatialCamera(
-      center: camera.center.offsetBy(
-        x: delta.x * correction.centerWeight,
-        y: delta.y * correction.centerWeight
-      ),
-      scale: resolvedScale
+      center: center,
+      scale: min(max(resolvedScale, min(camera.scale, targetScale)), max(camera.scale, targetScale))
     )
   }
 
@@ -606,7 +635,7 @@ public struct FreeItemPlacement: Codable, Equatable, Identifiable, Sendable {
   }
 
   mutating func move(to center: WorldPoint, zIndex: Int, actor: UUID) -> Bool {
-    guard let next = stamp.advanced(by: actor) else { return false }
+    guard center.isValid, zIndex >= 0, let next = stamp.advanced(by: actor) else { return false }
     self.center = center
     self.zIndex = zIndex
     stamp = next
@@ -666,7 +695,7 @@ public struct WorkspaceItemStack: Codable, Equatable, Identifiable, Sendable {
   }
 
   mutating func move(to center: WorldPoint, zIndex: Int, actor: UUID) -> Bool {
-    guard let next = stamp.advanced(by: actor) else { return false }
+    guard center.isValid, zIndex >= 0, let next = stamp.advanced(by: actor) else { return false }
     self.center = center
     self.zIndex = zIndex
     stamp = next
@@ -702,7 +731,7 @@ public enum WorkspaceItemStackPresentation {
     cameraScale: Double,
     viewport: SpatialPoint
   ) -> WorldPoint? {
-    guard cameraScale.isFinite, cameraScale > 0,
+    guard cameraScale.isFinite, (SpatialCamera.minimumScale...SpatialCamera.maximumScale).contains(cameraScale),
       viewport.x.isFinite, viewport.x > 0,
       viewport.y.isFinite, viewport.y > 0,
       let index = stack.itemIDs.firstIndex(of: itemID)
@@ -713,6 +742,7 @@ public enum WorkspaceItemStackPresentation {
       * WorkspaceItemGeometry.notebook.coverScale(viewport: viewport)
     let fanEnd = min(fanEndProjectedHeight, coverProjectedHeight)
     let fanStart = min(fanStartProjectedHeight, fanEnd * 0.75)
+    guard fanEnd.isFinite, fanEnd > fanStart else { return nil }
     let fan = min(
       max(
         (projectedHeight - fanStart) / (fanEnd - fanStart),
@@ -737,6 +767,8 @@ public enum WorkspaceItemStackPresentation {
       return nil
     }
     let fanned = fannedOffset(index: index, count: stack.itemIDs.count)
+    // This is projection geometry, including the fan's outside edge. A
+    // physical camera destination must separately admit this exact center.
     return stack.center.offsetBy(
       x: fanned.x,
       y: fanned.y
@@ -1130,7 +1162,7 @@ public struct BoardDocument: Codable, Equatable, Sendable {
   ) -> Bool {
     let contentBefore = self
     defer { recordCollaboration(from: contentBefore) }
-    guard !itemIDs.contains(itemID),
+    guard center.isValid, !itemIDs.contains(itemID),
       let next = stamp.advanced(by: actor)
     else { return false }
     freeItems.append(
@@ -1218,7 +1250,7 @@ public struct BoardDocument: Codable, Equatable, Sendable {
   ) -> Bool {
     let contentBefore = self
     defer { recordCollaboration(from: contentBefore) }
-    guard let stackIndex = stacks.firstIndex(where: {
+    guard center.isValid, let stackIndex = stacks.firstIndex(where: {
       $0.itemIDs.contains(itemID)
     }), let next = stamp.advanced(by: actor)
     else { return false }

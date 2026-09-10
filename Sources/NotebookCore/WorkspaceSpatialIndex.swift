@@ -7,11 +7,56 @@ public enum WorkspaceSpatialID: Hashable, Sendable {
 }
 
 /// Axis-aligned world bounds retain tiled endpoints even when an index node spans distant tiles.
-public struct WorkspaceSpatialBounds: Equatable, Sendable {
+public struct WorkspaceSpatialBounds: Codable, Equatable, Sendable {
   public let origin: WorldPoint
   public let width: Double
   public let height: Double
   public let maximum: WorldPoint
+
+  // These endpoints describe derived geometry, not a persistable item or
+  // camera address. Decimal tile strings preserve every Int64 through JSON
+  // without extending WorldPoint's physical, safe-integer admission range.
+  private struct Endpoint: Codable {
+    let tileX: String
+    let tileY: String
+    let localX: Double
+    let localY: Double
+
+    init(_ point: WorldPoint) {
+      tileX = String(point.tileX); tileY = String(point.tileY)
+      localX = point.localX; localY = point.localY
+    }
+
+    func point() throws -> WorldPoint {
+      guard let x = Int64(tileX), String(x) == tileX,
+        let y = Int64(tileY), String(y) == tileY,
+        localX.isFinite, localY.isFinite,
+        localX >= 0, localX < WorldPoint.tileSize,
+        localY >= 0, localY < WorldPoint.tileSize else {
+        throw NotebookStorageError.invalidTransaction("spatial projection endpoint")
+      }
+      return .init(tileX: x, tileY: y, localX: localX, localY: localY)
+    }
+  }
+
+  private enum CodingKeys: String, CodingKey { case origin, maximum }
+
+  public func encode(to encoder: Encoder) throws {
+    var values = encoder.container(keyedBy: CodingKeys.self)
+    try values.encode(Endpoint(origin), forKey: .origin)
+    try values.encode(Endpoint(maximum), forKey: .maximum)
+  }
+
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    let origin = try values.decode(Endpoint.self, forKey: .origin).point()
+    let maximum = try values.decode(Endpoint.self, forKey: .maximum).point()
+    guard Self.compare(origin.tileX, origin.localX, maximum.tileX, maximum.localX) <= 0,
+      Self.compare(origin.tileY, origin.localY, maximum.tileY, maximum.localY) <= 0 else {
+      throw NotebookStorageError.invalidTransaction("spatial projection bounds")
+    }
+    self.init(origin: origin, maximum: maximum)
+  }
 
   public init(origin: WorldPoint, width: Double, height: Double) {
     precondition(width.isFinite && height.isFinite && width >= 0 && height >= 0)

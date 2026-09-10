@@ -39,15 +39,16 @@ public struct NotebookCommand: Codable, Sendable {
 }
 
 public struct NotebookReadBounds: Codable, Sendable {
-  public var origin: WorldPoint
-  public var width: Double
-  public var height: Double
+  public var anchor: WorldPoint
+  public var region: PageRect
   func validated() throws -> WorkspaceSpatialBounds {
-    guard origin.isValid, width.isFinite, height.isFinite, width > 0, height > 0,
-      width <= 10_000_000, height <= 10_000_000 else {
-      throw CollaborationError("invalid_region", "Область чтения имеет конечный положительный размер до 10 миллионов points.")
+    guard anchor.isValid, region.x.isFinite, region.y.isFinite,
+      region.width.isFinite, region.height.isFinite, region.width > 0, region.height > 0,
+      abs(region.x) <= 10_000_000, abs(region.y) <= 10_000_000,
+      region.width <= 10_000_000, region.height <= 10_000_000 else {
+      throw CollaborationError("invalid_region", "Область чтения задаётся точным адресом и конечной рамкой до 10 миллионов points.")
     }
-    return .init(origin: origin, width: width, height: height)
+    return .init(origin: anchor.offsetBy(x: region.x, y: region.y), width: region.width, height: region.height)
   }
 }
 

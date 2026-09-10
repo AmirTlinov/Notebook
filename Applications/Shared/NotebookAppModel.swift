@@ -916,7 +916,7 @@ final class NotebookAppModel {
 
   @discardableResult
   func createNotebook(at center: WorldPoint) -> UUID? {
-    guard var workspace, var board = boardHierarchy, let presence else {
+    guard center.isValid, var workspace, var board = boardHierarchy, let presence else {
       return nil
     }
     let beforeWorkspace = workspace, beforeBoard = board
@@ -957,7 +957,7 @@ final class NotebookAppModel {
     at center: WorldPoint,
     paperSize: DocumentPaperSize
   ) -> UUID? {
-    guard let beforeWorkspace = workspace, let beforeBoard = boardHierarchy, let presence else { return nil }
+    guard center.isValid, let beforeWorkspace = workspace, let beforeBoard = boardHierarchy, let presence else { return nil }
     var workspace = beforeWorkspace, board = beforeBoard
     guard let item = workspace.createDocument(title: "", actor: actorID),
       board.addItem(
@@ -994,7 +994,7 @@ final class NotebookAppModel {
 
   @discardableResult
   func createBoard(at center: WorldPoint) -> UUID? {
-    guard let beforeWorkspace = workspace, let beforeBoard = boardHierarchy, let presence else { return nil }
+    guard center.isValid, let beforeWorkspace = workspace, let beforeBoard = boardHierarchy, let presence else { return nil }
     var workspace = beforeWorkspace, hierarchy = beforeBoard
     guard let item = workspace.createBoard(title: "", actor: actorID),
       hierarchy.createBoard(
@@ -1233,11 +1233,12 @@ final class NotebookAppModel {
   func leaveBoard(through passage: BoardPortalProjection.ExitProjection? = nil, settled: Bool = true) -> Bool {
     guard var hierarchy = boardHierarchy, let presence,
       let parentID = hierarchy.parentBoardID(of: presence.boardID),
-      let center = hierarchy.focusedCenter(of: presence.boardID, in: parentID)
+      let center = hierarchy.focusedCenter(of: presence.boardID, in: parentID), center.isValid
     else { return false }
     let projection = passage ?? BoardPortalProjection.exitingCamera(
       boundary: presence.camera, centroid: .init(x: presence.viewport.x / 2, y: presence.viewport.y / 2),
       portalCenter: center, viewport: presence.viewport)
+    guard projection.parentCamera.isValid else { return false }
     // A local passage changes only coordinates. When both physical owners are
     // already represented, its normalized camera must reach the very first
     // parent frame, rather than wait for a background metadata comparison.
@@ -2815,6 +2816,14 @@ final class NotebookAppModel {
     let ownerBoardID = board?.ownerBoardID(of: itemID)
       ?? workspace.rootBoardID
     let center = board?.focusedCenter(of: itemID, in: ownerBoardID) ?? .zero
+    if !center.isValid {
+      // A fan can extend past the address boundary. Restore an overview at
+      // its stored physical anchor, not a paper centered at another position.
+      let anchor = board?.board(ownerBoardID)?.stack(containing: itemID)?.center ?? .zero
+      return SessionPresence(boardID: ownerBoardID, mode: .board,
+        camera: .init(center: anchor), viewport: viewportPoint)
+        .selecting(itemID: workspace.selectedItemID, pageID: workspace.selectedPageID)
+    }
     let fit = itemGeometry(itemID).fitScale(
       viewport: viewportPoint
     )
@@ -2857,6 +2866,7 @@ final class NotebookAppModel {
     if presence.mode == .page || presence.mode == .document,
       let itemID,
       let itemCenter,
+      itemCenter.isValid,
       modeMatchesFocusedItem
     {
       return SessionPresence(

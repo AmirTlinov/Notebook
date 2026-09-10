@@ -1,11 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { offsetWorld, TILE_SIZE, worldPointSchema } from "../src/spatial.js";
+import { offsetWorld, TILE_SIZE, worldPointSchema, sceneBoundsSchema } from "../src/spatial.js";
+import { visibleBounds } from "../src/store.js";
+import type { SessionPresence } from "../src/domain.js";
 
 test("both exact tile endpoints survive JSON and retain normalized local coordinates", () => {
   for (const tileX of [0, 1, -1, Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER]) {
     const point = {tileX, tileY: tileX === 0 ? 0 : -tileX, localX: 0.25, localY: 100};
     assert.deepEqual(worldPointSchema.parse(JSON.parse(JSON.stringify(point))), point);
+  }
+});
+
+test("a viewport retains an exact anchor and the full frame across both world edges", () => {
+  for (const sign of [-1, 1]) {
+    const anchor = {tileX:sign * Number.MAX_SAFE_INTEGER,tileY:sign * Number.MAX_SAFE_INTEGER,
+      localX:sign < 0 ? 0 : TILE_SIZE - 1,localY:sign < 0 ? 0 : TILE_SIZE - 1};
+    const presence = {camera:{center:anchor,scale:0.0125},viewport:{x:834,y:1194}} as SessionPresence;
+    const bounds = visibleBounds(presence);
+    assert.deepEqual(bounds,{anchor,region:{x:-33360,y:-47760,width:66720,height:95520}});
+    assert.deepEqual(sceneBoundsSchema.parse(JSON.parse(JSON.stringify(bounds))),bounds);
+    assert.equal(sceneBoundsSchema.safeParse({...bounds,region:{...bounds.region,x:10_000_001}}).success,false);
+    assert.equal(sceneBoundsSchema.safeParse({origin:anchor,width:834,height:1194}).success,false,
+      "A retired origin-only read shape is not a second geometry contract");
   }
 });
 

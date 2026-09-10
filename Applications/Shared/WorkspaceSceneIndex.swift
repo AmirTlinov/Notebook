@@ -155,7 +155,14 @@ struct WorkspaceSceneIndex: Sendable {
 
   func focusedCenter(itemID: UUID, boardID: UUID) -> WorldPoint? {
     guard let item = boards[boardID]?.items[itemID] else { return nil }
-    return item.stack.flatMap { WorkspaceItemStackPresentation.focusedCenter(of: itemID, in: $0) } ?? item.center
+    let center: WorldPoint
+    if let stack = item.stack {
+      guard let projected = WorkspaceItemStackPresentation.focusedCenter(of: itemID, in: stack) else { return nil }
+      center = projected
+    } else { center = item.center }
+    // The fan remains indexed and rendered outside the address boundary;
+    // opening it cannot substitute a different, persistable camera center.
+    return center.isValid ? center : nil
   }
 
   func coverElements(itemID: UUID, boardID: UUID) -> [SpatialElement] {

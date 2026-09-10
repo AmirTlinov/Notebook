@@ -40,6 +40,201 @@ struct WorldPointCodingTests {
   }
 }
 
+@Suite("Camera settlements keep tiled addresses inside their exact endpoints")
+struct WorldAddressTransitionTests {
+  @Test func convexInterpolationSurvivesTheEntireAddressRangeAndJSON() throws {
+    let limit = WorldPoint.maximumTileIndex, size = WorldPoint.tileSize
+    let axes: [(Int64, Double)] = [(-limit, 0), (-limit, 0.25), (-limit, size.nextDown),
+      (-limit + 1, 0.5), (-1, size - 1), (0, 0), (1, 0.5),
+      (limit - 1, size - 1), (limit, 0), (limit, 0.25), (limit, size.nextDown)]
+    let amounts: [Double] = [0, .leastNonzeroMagnitude, .leastNormalMagnitude,
+      0.125, 0.25, 0.5.nextDown, 0.5, 0.5.nextUp, 0.75, 1.0.nextDown, 1]
+    func ordered(_ a: (Int64, Double), _ b: (Int64, Double)) -> Bool {
+      a.0 < b.0 || (a.0 == b.0 && a.1 <= b.1)
+    }
+    for a in axes { for b in axes {
+      let start = WorldPoint(tileX: a.0, tileY: b.0, localX: a.1, localY: b.1)
+      let end = WorldPoint(tileX: b.0, tileY: a.0, localX: b.1, localY: a.1)
+      let (lower, upper) = ordered(a, b) ? (a, b) : (b, a)
+      for amount in amounts {
+        let value = try #require(start.interpolatedAddress(to: end, amount: amount))
+        #expect(value.isValid)
+        #expect(ordered(lower, (value.tileX, value.localX)) && ordered((value.tileX, value.localX), upper))
+        #expect(ordered(lower, (value.tileY, value.localY)) && ordered((value.tileY, value.localY), upper))
+        #expect(try JSONValue.encode(value).decode(WorldPoint.self) == value)
+        if amount == 0 { #expect(value == start) }
+        if amount == 1 { #expect(value == end) }
+      }
+    } }
+  }
+
+  @Test func nearbyLocalBitsAndSymmetricLongMidpointsAreNotFlattened() throws {
+    let limit = WorldPoint.maximumTileIndex
+    for tile in [-limit, Int64(0), limit] {
+      let start = WorldPoint(tileX: tile, tileY: tile, localX: 123.125, localY: 200.75)
+      let end = WorldPoint(tileX: tile, tileY: tile, localX: 123.625, localY: 200.25)
+      #expect(start.interpolatedAddress(to: end, amount: 0.25)
+        == .init(tileX: tile, tileY: tile, localX: 123.25, localY: 200.625))
+    }
+    let start = WorldPoint(tileX: -limit, tileY: limit, localX: 2, localY: 4)
+    let end = WorldPoint(tileX: limit, tileY: -limit, localX: 4, localY: 2)
+    #expect(start.interpolatedAddress(to: end, amount: 0.5) == .init(x: 3, y: 3))
+    let beforeEdge = WorldPoint(tileX: limit - 1, tileY: 0, localX: WorldPoint.tileSize - 4, localY: 0)
+    let afterEdge = WorldPoint(tileX: limit, tileY: 0, localX: 4, localY: 0)
+    #expect(beforeEdge.interpolatedAddress(to: afterEdge, amount: 0.5)
+      == .init(tileX: limit, tileY: 0, localX: 0, localY: 0))
+  }
+
+  @Test func unadmittedEndpointsAndFractionsAreRejectedBeforeArithmetic() {
+    for tile in [Int64.min, .max, WorldPoint.maximumTileIndex + 1, -WorldPoint.maximumTileIndex - 1] {
+      let invalid = WorldPoint(tileX: tile, tileY: tile, localX: 0, localY: 0)
+      #expect(invalid.interpolatedAddress(to: .zero, amount: 0.5) == nil)
+      #expect(WorldPoint.zero.interpolatedAddress(to: invalid, amount: 0.5) == nil)
+    }
+    for amount in [-1, 1.1, Double.nan, .infinity, -.infinity] {
+      #expect(WorldPoint.zero.interpolatedAddress(to: .zero, amount: amount) == nil)
+    }
+  }
+
+  @Test func dockingUsesTheSameBoundedAddressAndRejectsUnaddressableTargets() {
+    let limit = WorldPoint.maximumTileIndex
+    let camera = SpatialCamera(center: .init(tileX: -limit, tileY: limit, localX: 2, localY: 4), scale: 1)
+    let target = WorldPoint(tileX: limit, tileY: -limit, localX: 4, localY: 2)
+    let correction = NotebookDockingCorrection(centerWeight: 0.5, scaleWeight: 0.5)
+    let viewport = SpatialPoint(x: 834, y: 1194)
+    let result = NotebookDockingField.attractedCamera(camera, toward: target, viewport: viewport,
+      geometry: .notebook, correction: correction)
+    #expect(result.center == .init(x: 3, y: 3) && result.isValid)
+    let invalid = WorldPoint(tileX: Int64.max, tileY: 0, localX: 0, localY: 0)
+    #expect(NotebookDockingField.attractedCamera(camera, toward: invalid, viewport: viewport,
+      geometry: .notebook, correction: correction) == camera)
+    #expect(NotebookDockingField.attractedCamera(camera, toward: target, viewport: .init(x: 0.001, y: 0.001),
+      geometry: .notebook, correction: correction) == camera)
+  }
+
+  @Test func rejectedBoardPlacementsDoNotPublishMembershipOrCausalClocks() throws {
+    let actor = UUID(), first = UUID(), second = UUID(), fresh = UUID()
+    var board = BoardDocument.initial(itemIDs: [first, second], actor: actor)
+    let original = board
+    let invalid = WorldPoint(tileX: WorldPoint.maximumTileIndex + 1, tileY: 0, localX: 0, localY: 0)
+    let added = board.addItem(fresh, near: invalid, actor: actor)
+    let moved = board.moveItem(first, to: invalid, actor: actor)
+    #expect(!added && !moved)
+    #expect(board == original)
+    let stackID = board.createStack(moving: first, onto: second, actor: actor)
+    _ = try #require(stackID)
+    let stacked = board
+    let unstacked = board.unstackItem(first, at: invalid, actor: actor)
+    #expect(!unstacked)
+    #expect(board == stacked)
+    var hierarchy = BoardHierarchy(rootBoardID: WorkspaceRoot.boardID,
+      boards: [.init(id: WorkspaceRoot.boardID, board: board)], stamp: board.stamp)
+    let hierarchyBefore = hierarchy
+    let created = hierarchy.createBoard(fresh, in: hierarchy.rootBoardID, near: invalid, actor: actor)
+    #expect(!created)
+    #expect(hierarchy == hierarchyBefore)
+  }
+
+  @Test func stackProjectionKeepsItsOutsideFanWithoutAdmittingItAsACameraAddress() throws {
+    let first = UUID(), last = UUID()
+    let stack = WorkspaceItemStack(center: .init(tileX: WorldPoint.maximumTileIndex,
+      tileY: 0, localX: WorldPoint.tileSize - 1, localY: 100), zIndex: 0,
+      itemIDs: [first, last], stamp: .init(counter: 0, actor: UUID()))
+    #expect(WorkspaceItemStackPresentation.focusedCenter(of: first, in: stack)?.isValid == true)
+    let focus = try #require(WorkspaceItemStackPresentation.focusedCenter(of: last, in: stack))
+    #expect(!focus.isValid)
+    #expect(stack.center.interpolatedAddress(to: focus, amount: 0.5) == nil)
+    let projected = try #require(WorkspaceItemStackPresentation.boardCenter(of: last, in: stack,
+      cameraScale: 1, viewport: .init(x: 834, y: 1194)))
+    #expect(!projected.isValid, "Projection geometry can extend beyond the admitted world")
+    #expect(WorkspaceItemStackPresentation.boardCenter(of: last, in: stack,
+      cameraScale: .leastNonzeroMagnitude, viewport: .init(x: 834, y: 1194)) == nil)
+    #expect(WorkspaceItemStackPresentation.boardCenter(of: last, in: stack,
+      cameraScale: 1, viewport: .init(x: .leastNonzeroMagnitude, y: .leastNonzeroMagnitude)) == nil)
+  }
+}
+
+@Suite("Projection bounds retain outside geometry without admitting physical addresses")
+struct WorldProjectionBoundsTests {
+  @Test func projectionEndpointsRoundTripAsExactDecimalTiles() throws {
+    for tile in [Int64.min, -WorldPoint.maximumTileIndex - 2, WorldPoint.maximumTileIndex + 2, Int64.max] {
+      let origin = WorldPoint(tileX: tile, tileY: tile, localX: 1.125, localY: 2.25)
+      let bounds = WorkspaceSpatialBounds(origin: origin, width: 3, height: 4)
+      let encoded = try JSONValue.encode(bounds)
+      #expect(encoded["origin"]?["tileX"] == .string(String(tile)))
+      let decoded = try encoded.decode(WorkspaceSpatialBounds.self)
+      #expect(decoded.origin == bounds.origin && decoded.maximum == bounds.maximum)
+      #expect(throws: (any Error).self) { try JSONValue.encode(origin) }
+      let entry = WorkspaceSpatialEntry(id: .item(UUID()), bounds: bounds, zIndex: 3)
+      let returned = try JSONValue.encode(entry).decode(WorkspaceSpatialEntry.self)
+      #expect(returned.id == entry.id && returned.bounds == entry.bounds)
+    }
+  }
+
+  @Test func malformedOrReversedProjectionEndpointsNeverReachNormalization() throws {
+    let encoded = try JSONValue.encode(WorkspaceSpatialBounds(origin: .zero, width: 10, height: 10))
+    let endpoint = try #require(encoded["origin"])
+    for tile: JSONValue in [.string("9223372036854775808"), .string("-9223372036854775809"),
+      .string("01"), .string("-0"), .string("+1"), .number(0)] {
+      let invalid = encoded.setting("origin", endpoint.setting("tileX", tile))
+      #expect(throws: (any Error).self) { try invalid.decode(WorkspaceSpatialBounds.self) }
+    }
+    for local in [-1.0, WorldPoint.tileSize] {
+      let invalid = encoded.setting("origin", endpoint.setting("localX", .number(local)))
+      #expect(throws: (any Error).self) { try invalid.decode(WorkspaceSpatialBounds.self) }
+    }
+    let reversed = encoded.setting("origin", endpoint.setting("tileX", .string("1")))
+    #expect(throws: (any Error).self) { try reversed.decode(WorkspaceSpatialBounds.self) }
+  }
+
+  @Test func addressedReadFrameKeepsBothOutsideEdgesAndItsWorkBound() throws {
+    for sign: Int64 in [-1, 1] {
+      let anchor = WorldPoint(tileX: sign * WorldPoint.maximumTileIndex, tileY: sign * WorldPoint.maximumTileIndex,
+        localX: sign < 0 ? 0 : WorldPoint.tileSize - 1, localY: sign < 0 ? 0 : WorldPoint.tileSize - 1)
+      let query = NotebookReadBounds(anchor: anchor, region: .init(x: -500, y: -700, width: 1_000, height: 1_400))
+      let frame = try query.validated()
+      #expect(!(sign < 0 ? frame.origin : frame.maximum).isValid)
+      #expect(try JSONValue.encode(query).decode(NotebookReadBounds.self).validated() == frame)
+      let oversized = NotebookReadBounds(anchor: anchor, region: .init(x: 10_000_001, y: 0, width: 1, height: 1))
+      #expect(throws: CollaborationError.self) { try oversized.validated() }
+    }
+  }
+
+  @Test func outsidePaintCursorAndEntryPreserveTheSameSQLProjection() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    var workspace = try store.loadIndex()
+    let firstID = workspace.selectedItemID
+    var hierarchy = try store.loadBoard(items: workspace.items)
+    let created = workspace.createNotebook(title: "Second", actor: actor, pageSize: .init(width: 834, height: 1194))
+    let second = try #require(created)
+    let anchor = WorldPoint(tileX: WorldPoint.maximumTileIndex, tileY: -WorldPoint.maximumTileIndex,
+      localX: WorldPoint.tileSize - 1, localY: 0)
+    let moved = hierarchy.moveItem(firstID, in: header.rootBoardID, to: anchor, actor: actor)
+    let added = hierarchy.addItem(second.item.id, to: header.rootBoardID, near: anchor, actor: actor)
+    #expect(moved && added)
+    try store.saveWorkspaceBundle(index: workspace, page: second.page, board: hierarchy)
+    let bounds = try NotebookReadBounds(anchor: anchor, region: .init(x: -500, y: -700, width: 1000, height: 1400)).validated()
+    let before = try store.currentChangeCursor()
+    let page = try store.readScenePaintOrder(boardID: header.rootBoardID, bounds: bounds, limit: 1)
+    let entry = try #require(page.entries.first)
+    let cursor = try #require(page.next)
+    let following = try store.readScenePaintOrder(boardID: header.rootBoardID, bounds: bounds, after: cursor, limit: 1)
+    #expect(Set((page.entries + following.entries).map(\.id)) == [.item(firstID), .item(second.item.id)])
+    #expect(following.next == nil)
+    let changed = WorkspaceSpatialBounds(origin: bounds.origin.offsetBy(x: 1, y: 0), width: bounds.width, height: bounds.height)
+    #expect(throws: NotebookStorageError.transactionConflict) {
+      try store.readScenePaintOrder(boardID: header.rootBoardID, bounds: changed, after: cursor, limit: 1)
+    }
+    #expect(!entry.bounds.origin.isValid && !entry.bounds.maximum.isValid)
+    let returned = try JSONValue.encode(page).decode(NotebookScenePaintPage.self)
+    #expect(returned.entries.first?.bounds == entry.bounds)
+    #expect(try store.currentChangeCursor() == before)
+  }
+}
+
 @Suite("Camera transitions admit exact centers before publication")
 struct CameraWorldAddressTests {
   @Test(arguments: [Int64(-1), 1])

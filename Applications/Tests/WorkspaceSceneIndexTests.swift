@@ -6,6 +6,67 @@ import XCTest
 @testable import Notebook
 
 final class WorkspaceSceneIndexTests: XCTestCase {
+  func testOutsideStackFanStaysInTheIndexButCannotBecomeACameraDestination() throws {
+    let actor = UUID(), first = WorkspaceItem.notebook(title: "Inside", pageIDs: [UUID()])
+    let last = WorkspaceItem.notebook(title: "Outside", pageIDs: [UUID()])
+    let stamp = VersionStamp(counter: 0, actor: actor)
+    let stack = WorkspaceItemStack(center: .init(tileX: WorldPoint.maximumTileIndex,
+      tileY: 0, localX: WorldPoint.tileSize - 1, localY: 100), zIndex: 0,
+      itemIDs: [first.id, last.id], stamp: stamp)
+    let workspace = WorkspaceIndex(items: [first, last], selectedItemID: first.id,
+      selectedPageID: first.pageIDs[0], stamp: stamp)
+    let boardID = WorkspaceRoot.boardID
+    let hierarchy = BoardHierarchy(rootBoardID: boardID,
+      boards: [.init(id: boardID, board: .init(freeItems: [], stacks: [stack], stamp: stamp))], stamp: stamp)
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
+    XCTAssertNotNil(index.focusedCenter(itemID: first.id, boardID: boardID))
+    XCTAssertNil(index.focusedCenter(itemID: last.id, boardID: boardID))
+    let focus = try XCTUnwrap(WorkspaceItemStackPresentation.focusedCenter(of: last.id, in: stack))
+    XCTAssertFalse(focus.isValid)
+    let size = WorkspaceItemGeometry.notebook
+    let fan = WorkspaceSpatialBounds(origin: focus.offsetBy(x: -size.width / 2, y: -size.height / 2),
+      width: size.width, height: size.height)
+    let page = try XCTUnwrap(index.readPaintOrder(boardID: boardID, bounds: fan))
+    let entry = try XCTUnwrap(page.entries.first { $0.id == .item(last.id) })
+    XCTAssertTrue(entry.bounds.contains(fan), "Address refusal must not shrink the rendered fan's indexed envelope")
+  }
+
+  func testColdSceneRestoresAnOutsideFanAsAnOverviewAtItsStoredAnchor() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID(), viewport = SpatialPoint(x: 834, y: 1194)
+    let pageSize = PageSize(width: viewport.x, height: viewport.y)
+    let header = try store.initializeWorkspace(actor: actor, pageSize: pageSize)
+    var workspace = try store.loadIndex()
+    let firstID = workspace.selectedItemID
+    let second = try XCTUnwrap(workspace.createNotebook(title: "Outer fan", actor: actor, pageSize: pageSize))
+    var hierarchy = try store.loadBoard(items: [workspace.items[0]])
+    let anchor = WorldPoint(tileX: WorldPoint.maximumTileIndex, tileY: 0,
+      localX: WorldPoint.tileSize - 1, localY: 100)
+    XCTAssertTrue(hierarchy.moveItem(firstID, in: header.rootBoardID, to: anchor, actor: actor))
+    XCTAssertTrue(hierarchy.addItem(second.item.id, to: header.rootBoardID, near: anchor, actor: actor))
+    _ = try XCTUnwrap(hierarchy.createStack(moving: second.item.id, onto: firstID, in: header.rootBoardID, actor: actor))
+    try store.saveWorkspaceBundle(index: workspace, page: second.page, board: hierarchy)
+    let before = try store.workspaceHeader()
+    let scene = try NotebookSceneState.read(store: store, presence: nil, viewport: viewport)
+    XCTAssertTrue(scene.presence.isValid)
+    XCTAssertEqual(scene.presence.mode, .board)
+    XCTAssertEqual(scene.presence.camera.center, anchor)
+    XCTAssertNil(scene.presence.focusedItemID)
+    XCTAssertEqual(scene.presence.selectedItemID, second.item.id)
+    XCTAssertEqual(try store.workspaceHeader(), before, "Restoring an overview cannot relocate the stack or rewrite the catalog")
+    let focus = try XCTUnwrap(hierarchy.focusedCenter(of: second.item.id, in: header.rootBoardID))
+    let size = WorkspaceItemGeometry.notebook
+    let fan = WorkspaceSpatialBounds(origin: focus.offsetBy(x: -size.width / 2, y: -size.height / 2),
+      width: size.width, height: size.height)
+    let painted = try store.readScenePaintOrder(boardID: header.rootBoardID, bounds: fan)
+    let entry = try XCTUnwrap(painted.entries.first { $0.id == .item(second.item.id) })
+    XCTAssertTrue(entry.bounds.contains(fan), "SQLite retains the same outside projection, without encoding it as a physical address")
+    let invalid = SessionPresence(mode: .board,
+      camera: .init(center: focus), viewport: viewport)
+    XCTAssertThrowsError(try NotebookSceneState.read(store: store, presence: invalid, viewport: viewport))
+  }
+
   func testOneHundredThousandStoredItemsResolveFourVisibleOwnersWithoutCatalogScan() throws {
     let fixture = itemFixture(count: 100_000)
     let index = WorkspaceSceneIndex(workspace: fixture.workspace, hierarchy: fixture.hierarchy, paperSizes: [:])

@@ -307,4 +307,32 @@ final class SpatialInkProjectionTests: XCTestCase {
     XCTAssertFalse(finished)
   }
 
+  @MainActor
+  func testSpringSamplesRemainAddressesAcrossTheWholeWorld() throws {
+    let limit = WorldPoint.maximumTileIndex
+    let start = SessionPresence(mode: .board,
+      camera: .init(center: .init(tileX: -limit, tileY: limit, localX: 2, localY: 4), scale: SpatialCamera.minimumScale),
+      viewport: .init(x: 834, y: 1194))
+    let target = SessionPresence(mode: .board,
+      camera: .init(center: .init(tileX: limit, tileY: -limit, localX: 4, localY: 2), scale: SpatialCamera.maximumScale),
+      viewport: start.viewport)
+    for fraction in [Double.leastNonzeroMagnitude, 0.25, 0.5, 0.75, 1.0.nextDown] {
+      let sample = try XCTUnwrap(SceneCameraSettlement.sample(from: start, to: target, fraction: fraction))
+      XCTAssertTrue(sample.isValid)
+      XCTAssertEqual(try JSONValue.encode(sample).decode(SessionPresence.self), sample)
+    }
+    XCTAssertEqual(SceneCameraSettlement.sample(from: start, to: target, fraction: 0.5)?.camera.center, .init(x: 3, y: 3))
+    let invalid = SessionPresence(mode: .board,
+      camera: .init(center: .init(tileX: Int64.max, tileY: 0, localX: 0, localY: 0)), viewport: start.viewport)
+    XCTAssertNil(SceneCameraSettlement.sample(from: start, to: invalid, fraction: 0.5))
+    XCTAssertNil(SceneCameraSettlement.sample(from: start, to: target, fraction: .nan))
+    let owner = SceneCameraSettlement()
+    var publications = 0, completions = 0
+    let accepted = owner.start(from: start, to: invalid, duration: 0.3, bounce: 0.08) { _, _ in publications += 1 }
+      completion: { completions += 1 }
+    XCTAssertFalse(accepted)
+    XCTAssertEqual(publications, 0)
+    XCTAssertEqual(completions, 0)
+  }
+
 }

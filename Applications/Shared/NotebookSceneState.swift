@@ -37,6 +37,7 @@ struct NotebookSceneState: Sendable {
   }
 
   static func read(store: NotebookStore, presence requested: SessionPresence?, viewport: SpatialPoint, loadsLiveContent: Bool = true, pinnedElements: [UUID: [String]] = [:], pinnedItems: [UUID: [UUID]] = [:], preparedPages: [UUID] = []) throws -> Self {
+    guard requested?.isValid ?? true else { throw NotebookStorageError.corruptRecord("scene presence") }
     guard preparedPages.count <= 4, Set(preparedPages).count == preparedPages.count else {
       throw NotebookStorageError.limitExceeded("scene_page_pins")
     }
@@ -105,8 +106,11 @@ struct NotebookSceneState: Sendable {
         presence = considered.adapted(to: viewport, geometry: geometry).selecting(itemID: selected.id, pageID: pageID)
       } else {
         let placement = try store.readBoardItem(selected.id)
-        let center = placement?.board.focusedCenter(of: selected.id) ?? .zero
-        let opensInitialPaper = considered == nil && selected.kind != .board
+        let focusedCenter = placement?.board.focusedCenter(of: selected.id) ?? .zero
+        // A valid stored stack can fan outside the addressable world. Its
+        // overview uses the stored anchor; it must not open displaced paper.
+        let center = focusedCenter.isValid ? focusedCenter : placement?.board.stack(containing: selected.id)?.center ?? .zero
+        let opensInitialPaper = considered == nil && selected.kind != .board && focusedCenter.isValid
         presence = .init(boardID: boardID,
           mode: opensInitialPaper ? (selected.kind == .document ? .document : .page) : .board,
           camera: .init(center: center, scale: opensInitialPaper ? geometry.fitScale(viewport: viewport) : 0.22),

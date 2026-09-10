@@ -5,7 +5,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { BridgeError, runBridge } from "../src/bridge.js";
-import { NotebookStore, visibleBounds, workspaceProjection } from "../src/store.js";
+import { NotebookStore, visibleBounds, workspaceProjection, type ScenePaintPage } from "../src/store.js";
+import { TILE_SIZE } from "../src/spatial.js";
 import { revision } from "../src/domain.js";
 import { appActor, itemID, pageID, rootBoardID, writeFixture, fixtureControl, fixtureSocket, stopFixture } from "./fixture.js";
 
@@ -85,6 +86,29 @@ test("read batches refuse more than four physical pages and unbounded scene limi
     await assert.rejects(store.command({command:"read",queries:Array.from({length:5},()=>({kind:"page",id:randomUUID()}))}),error=>error instanceof BridgeError && error.detail.code==="resource_limit");
     const presence=await store.readPresence();
     await assert.rejects(store.readSceneWindow(rootBoardID,visibleBounds(presence),100_000));
+  });
+});
+
+test("real IPC reads outside projection edges without rounding or changing physical owners",async()=>{
+  await withStore(async(store,root)=>{
+    const initial = await store.readPresence();
+    for (const sign of [-1, 1]) {
+      const anchor = {tileX:sign * Number.MAX_SAFE_INTEGER,tileY:sign * Number.MAX_SAFE_INTEGER,
+        localX:sign < 0 ? 0 : TILE_SIZE - 1,localY:sign < 0 ? 0 : TILE_SIZE - 1};
+      await fixtureControl(root,"moveItem",anchor);
+      await fixtureControl(root,"presence",{...initial,camera:{...initial.camera,center:anchor}});
+      const bounds = visibleBounds(await store.readPresence());
+      const window = await store.readSceneWindow(rootBoardID,bounds,1);
+      assert.equal(window.items[0]?.id.toLowerCase(),itemID);
+      const page = await store.read<ScenePaintPage>({kind:"scenePaintOrder",id:rootBoardID,bounds,limit:1});
+      assert.equal(page.entries[0]?.id.toLowerCase(),itemID);
+      const outside = sign < 0 ? page.entries[0]!.bounds.origin : page.entries[0]!.bounds.maximum;
+      assert.equal(BigInt(outside.tileX),BigInt(sign) * (BigInt(Number.MAX_SAFE_INTEGER) + 1n));
+      assert.equal(BigInt(outside.tileY),BigInt(sign) * (BigInt(Number.MAX_SAFE_INTEGER) + 1n));
+      const physical = (await store.readItemBoard(itemID)).freeItems[0]!.center;
+      assert.deepEqual(physical,anchor);
+      await assert.rejects(store.readSceneWindow(rootBoardID,{...bounds,region:{...bounds.region,width:10_000_001}},1));
+    }
   });
 });
 

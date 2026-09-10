@@ -59,6 +59,14 @@ actor TestOwner {
       }
       return try .encode(pages)
     case "page": try store.savePage(value.decode(PageDocument.self))
+    case "moveItem":
+      let workspace = try store.loadIndex()
+      var hierarchy = try store.loadBoard(items: workspace.items)
+      guard hierarchy.moveItem(workspace.selectedItemID, in: workspace.rootBoardID,
+        to: try value.decode(WorldPoint.self), actor: workspace.stamp.actor) else {
+        throw NotebookStorageError.invalidTransaction("fixture placement")
+      }
+      try store.saveBoard(hierarchy, items: workspace.items)
     case "presence": try store.savePresence(value.decode(SessionPresence.self))
     case "ink": try store.saveSpatialInk(value.decode(SpatialInkJournal.self))
     case "input": try store.saveInputActivity(value.decode(NotebookInputActivity.self))

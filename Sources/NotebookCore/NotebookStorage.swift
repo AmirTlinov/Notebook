@@ -136,14 +136,14 @@ public enum NotebookStorageError: Error, LocalizedError, Equatable, Sendable {
 enum NotebookStorageFault: Sendable { case afterRecordWrites, beforeCommit, afterCommit }
 
 extension WorkspaceSpatialEntry: Codable {
-  private enum CodingKeys: String, CodingKey { case kind, id, origin, maximum, zIndex }
+  private enum CodingKeys: String, CodingKey { case kind, id, bounds, zIndex }
   public func encode(to encoder: Encoder) throws {
     var values = encoder.container(keyedBy: CodingKeys.self)
     switch id {
     case .item(let id): try values.encode("item", forKey: .kind); try values.encode(id.uuidString.lowercased(), forKey: .id)
     case .element(let id): try values.encode("element", forKey: .kind); try values.encode(id, forKey: .id)
     }
-    try values.encode(bounds.origin, forKey: .origin); try values.encode(bounds.maximum, forKey: .maximum)
+    try values.encode(bounds, forKey: .bounds)
     try values.encode(zIndex, forKey: .zIndex)
   }
   public init(from decoder: Decoder) throws {
@@ -153,13 +153,8 @@ extension WorkspaceSpatialEntry: Codable {
     if kind == "item", let uuid = UUID(uuidString: id) { identity = .item(uuid) }
     else if kind == "element" { identity = .element(id) }
     else { throw NotebookStorageError.invalidTransaction("spatial identity") }
-    let origin = try values.decode(WorldPoint.self, forKey: .origin), maximum = try values.decode(WorldPoint.self, forKey: .maximum)
-    guard origin.isValid, maximum.isValid,
-      (origin.tileX < maximum.tileX || (origin.tileX == maximum.tileX && origin.localX <= maximum.localX)),
-      (origin.tileY < maximum.tileY || (origin.tileY == maximum.tileY && origin.localY <= maximum.localY)) else {
-      throw NotebookStorageError.invalidTransaction("spatial bounds")
-    }
-    self.init(id: identity, bounds: .init(origin: origin, maximum: maximum), zIndex: try values.decode(Double.self, forKey: .zIndex))
+    self.init(id: identity, bounds: try values.decode(WorkspaceSpatialBounds.self, forKey: .bounds),
+      zIndex: try values.decode(Double.self, forKey: .zIndex))
   }
 }
 

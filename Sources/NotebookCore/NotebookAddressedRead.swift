@@ -254,7 +254,7 @@ extension NotebookStore {
   public func readScenePaintOrder(boardID: UUID, coverID: UUID? = nil, bounds: WorkspaceSpatialBounds, after: NotebookScenePaintCursor? = nil, limit: Int = 32) throws -> NotebookScenePaintPage {
     guard (1...32).contains(limit) else { throw NotebookStorageError.limitExceeded("paint_page") }
     return try readTransaction { _ in
-      let revision = try currentChangeCursor(), hash = try collaborationHash(["bounds": try JSONValue.encode([bounds.origin, bounds.maximum]), "coverID": coverID.map { .string($0.uuidString.lowercased()) } ?? .null])
+      let revision = try currentChangeCursor(), hash = try collaborationHash(["bounds": try JSONValue.encode(bounds), "coverID": coverID.map { .string($0.uuidString.lowercased()) } ?? .null])
       if let after, after.revision != revision || after.boardID != boardID || after.boundsHash != hash { throw NotebookStorageError.transactionConflict }
       let rows = try spatialRows(boardID: boardID, coverID: coverID, bounds: bounds, limit: limit + 1, after: after), included = Array(rows.prefix(limit))
       func number(_ value: NotebookSQLValue) -> Double { if case .real(let number) = value { return number }; return Double(value.integer ?? 0) }

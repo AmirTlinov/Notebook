@@ -1377,10 +1377,11 @@ struct SpatialWorkspaceView: View {
         center = element.worldOrigin ?? .zero
         region = .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
       }
-      center = center.offsetBy(x:region.x + region.width / 2,y:region.y + region.height / 2)
+      guard let addressedCenter = center.addressOffset(x: region.x + region.width / 2, y: region.y + region.height / 2) else { return }
+      center = addressedCenter
       let scale = min(1.5,max(SpatialCamera.minimumScale,min(viewport.x/(region.width+100),viewport.y/(region.height+100))))
       animateSettlement(to:.init(boardID:boardID,mode:.board,camera:.init(center:center,scale:scale),viewport:viewport),duration:0.3)
-    } else if let itemID, let center = board.focusedCenter(of:itemID) {
+    } else if let itemID, let center = board.focusedCenter(of:itemID), center.isValid {
       if target.kind != .page { model.selectItem(itemID) }
       var pageIndex = reference.pageIndex ?? 0
       if target.kind == .document, let id = reference.elementID, let document = model.documents[itemID], let state = model.documentStates[itemID],
@@ -1473,8 +1474,9 @@ struct SpatialWorkspaceView: View {
     completion: @escaping () -> Void = {}
   ) {
     guard let start = model.presence else { return }
+    let wasSettling = settling
     settling = true
-    cameraSettlement.start(from: start, to: target, duration: duration, bounce: bounce) { presence, settled in
+    let accepted = cameraSettlement.start(from: start, to: target, duration: duration, bounce: bounce) { presence, settled in
       var transaction = Transaction()
       transaction.disablesAnimations = true
       withTransaction(transaction) { model.updatePresence(presence, settled: settled) }
@@ -1483,6 +1485,7 @@ struct SpatialWorkspaceView: View {
       settling = false
       completion()
     }
+    if !accepted { settling = wasSettling }
   }
 
   private func performOpeningFeedback() {
@@ -1496,9 +1499,8 @@ struct SpatialWorkspaceView: View {
     presence: SessionPresence,
     viewport: SpatialPoint
   ) {
-    selectedItemID = nil
     let offset = Double(model.workspace?.items.count ?? 0) * 28
-    let center = presence.camera.center.offsetBy(x: offset, y: offset)
+    guard let center = presence.camera.center.addressOffset(x: offset, y: offset) else { return }
     let itemID: UUID?
     switch kind {
     case .notebook:
@@ -1509,6 +1511,7 @@ struct SpatialWorkspaceView: View {
       itemID = model.createBoard(at: center)
     }
     guard let itemID else { return }
+    selectedItemID = nil
     let target = SessionPresence(
       boardID: presence.boardID,
       mode: .cover,

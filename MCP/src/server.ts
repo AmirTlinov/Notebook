@@ -1,4 +1,4 @@
-import { TILE_SIZE, offsetWorld, worldPointSchema } from "./spatial.js";
+import { TILE_SIZE, offsetWorld, sceneBoundsSchema } from "./spatial.js";
 type ContextEntry = {id:string;author:string;requiresReview:boolean;references:Array<{id:string;target:object;elementID?:string;revision:string;label:string}>};
 type ContextSummary = {id:string;firstEntry?:ContextEntry;lastEntry?:ContextEntry};
 type ContextSnapshot = {contexts:ContextSummary[];selectedContext?:ContextSummary;selection?:{contextID?:string};nextContextID?:string;readCursor:string};
@@ -101,8 +101,7 @@ export function createServer(store = new NotebookStore()): McpServer {
       title: "Read the infinite Notebook board",
       description: "Read a bounded physical board region (human viewport by default), its placements and agent elements. coverage reports truncation; an omitted owner is not empty or deleted.",
       inputSchema: z.object({ board_id:z.uuid().optional(), element_id:z.string().max(120).optional(), include_source:z.boolean().default(false),
-        bounds:z.object({origin:worldPointSchema,
-          width:z.number().positive().max(10_000_000),height:z.number().positive().max(10_000_000)}).optional(),limit:z.number().int().min(1).max(128).default(128) }),
+        bounds:sceneBoundsSchema.optional(),limit:z.number().int().min(1).max(128).default(128) }),
     },
     ({ board_id, element_id, include_source, bounds, limit }) => readSafely(async () => {
       const presence = await store.readPresence();

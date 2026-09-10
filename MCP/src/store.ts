@@ -1,11 +1,11 @@
-import { offsetWorld } from "./spatial.js";
+import { sceneBoundsSchema, type SceneBounds, type ProjectionBounds } from "./spatial.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { open } from "node:fs/promises";
 import { constants } from "node:fs";
 import { BridgeError, defaultSocketPath, runBridge } from "./bridge.js";
 import type { BoardDocument, BoardHierarchy, CurrentViewReceipt, DocumentDocument, DocumentStateJournal,
-  PageDocument, PageSize, SessionPresence, SpatialElement, SpatialInkJournal, SurfaceID, VersionStamp, WorldPoint,
+  PageDocument, PageSize, SessionPresence, SpatialElement, SpatialInkJournal, SurfaceID, VersionStamp,
   WorkspaceProjection, NotebookItemHeader } from "./domain.js";
 import { canonicalPageSize, documentSpatialSize } from "./domain.js";
 
@@ -19,13 +19,12 @@ export interface NotebookPagePosition { itemID:string;pageID:string;index:number
 export interface NotebookPageHeader { workspaceID:string;item:NotebookItemHeader;visibleRoot:string;readCursor:string;selectedPageID?:string;selectedPageIndex?:number }
 export interface NotebookPageWindow { header:NotebookPageHeader;pages:Array<{position:NotebookPagePosition;document:PageDocument}> }
 export interface NotebookPageDirectory { header:NotebookPageHeader;pages:Array<{position:NotebookPagePosition;size:PageSize;drawingStamp:VersionStamp;agentStamp:VersionStamp}>;nextIndex?:number }
-export interface SceneBounds { origin: WorldPoint; width: number; height: number }
 export interface SceneWindow {
   header: WorkspaceHeader; boardID: string; items: NotebookItemHeader[]; boards: BoardHierarchy["boards"];
   documentPaper: Record<string, "a4" | "letter">; pageCounts: Record<string, number>; totalMatches: number; truncated: boolean;
 }
 export interface ScenePaintPage {
-  revision: string; entries: Array<{kind:"item"|"element";id:string;zIndex:number}>; nextCursor: string | null;
+  revision: string; entries: Array<{kind:"item"|"element";id:string;bounds:ProjectionBounds;zIndex:number}>; nextCursor: string | null;
 }
 export interface WorkingSet {
   header: WorkspaceHeader; items: NotebookItemHeader[]; boards: BoardHierarchy["boards"];
@@ -137,7 +136,7 @@ export class NotebookStore {
   async readCoverElements(itemID: string, size: PageSize, cursor?: string, limit = 32) {
     const boardID = await this.read<string | null>({kind:"ownerBoard",id:itemID});
     if (!boardID) throw new StoreError("Обложка не принадлежит доске.");
-    const bounds = {origin:{tileX:0,tileY:0,localX:0,localY:0},width:size.width,height:size.height};
+    const bounds = {anchor:{tileX:0,tileY:0,localX:0,localY:0},region:{x:0,y:0,width:size.width,height:size.height}};
     const page = await this.read<ScenePaintPage>({kind:"scenePaintOrder",id:boardID,coverID:itemID,
       bounds,paintCursor:cursor,limit});
     // One physical paint page is one SQL snapshot/IPC request, not 32 competing connections.
@@ -257,5 +256,5 @@ export function workspaceProjection(window: SceneWindow): WorkspaceProjection {
 export function visibleBounds(presence: SessionPresence): SceneBounds {
   const width = presence.viewport.x / presence.camera.scale;
   const height = presence.viewport.y / presence.camera.scale;
-  return {origin:offsetWorld(presence.camera.center, -width / 2, -height / 2),width,height};
+  return sceneBoundsSchema.parse({anchor:presence.camera.center,region:{x:-width / 2,y:-height / 2,width,height}});
 }

@@ -1,8 +1,48 @@
 import NotebookCore
+import UIKit
 import XCTest
 @testable import Notebook
 
 final class SceneCompositionSQLTests: XCTestCase {
+  @MainActor
+  func testSQLRenderKeepsTheSameCoverPixelsAtEveryWorldCorner() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let workspace = try store.loadIndex()
+    let resources = SceneRenderResources(byteLimit: 64 * 1024 * 1024)
+    func render(at center: WorldPoint) async throws -> Data {
+      let before = try store.loadBoard(items: workspace.items)
+      var after = before
+      XCTAssertTrue(after.moveItem(workspace.selectedItemID, in: header.rootBoardID, to: center, actor: actor))
+      _ = try store.saveBoardEdits(before: before, after: after)
+      let current = try store.workspaceHeader()
+      let source = SceneCompositionSource(store: store, revision: current.cursor, workspaceID: current.workspaceID)
+      let presence = SessionPresence(boardID: header.rootBoardID, mode: .board,
+        camera: .init(center: center, scale: 0.3), viewport: .init(x: 320, y: 420))
+      let rendered = try await SceneCompositionRenderer(source: source, resources: resources).render(presence: presence, scale: 1)
+      let image = try XCTUnwrap(UIImage(data: rendered.png)?.cgImage)
+      let context = try XCTUnwrap(CGContext(data: nil, width: image.width, height: image.height,
+        bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+      context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+      let attachment = XCTAttachment(data: rendered.png, uniformTypeIdentifier: "public.png")
+      attachment.name = "world-cover-\(center.tileX)-\(center.tileY)"; attachment.lifetime = .keepAlways
+      add(attachment)
+      return Data(bytes: try XCTUnwrap(context.data), count: context.bytesPerRow * context.height)
+    }
+    for x: Int64 in [-1, 1] { for y: Int64 in [-1, 1] {
+      let localX = x < 0 ? 0 : WorldPoint.tileSize - 1
+      let localY = y < 0 ? 0 : WorldPoint.tileSize - 1
+      let expected = try await render(at: .init(tileX: 0, tileY: 0, localX: localX, localY: localY))
+      let actual = try await render(at: .init(tileX: x * WorldPoint.maximumTileIndex,
+        tileY: y * WorldPoint.maximumTileIndex, localX: localX, localY: localY))
+      XCTAssertGreaterThan(Set(expected).count, 8, "The control must contain actual cover and grid pixels")
+      XCTAssertEqual(actual, expected, "Translating the same physical cover cannot crop or shift its outside projection")
+    } }
+  }
+
   @MainActor
   func testColdCandidateDemotesOnlyOptionalRastersAndNeverDropsThePublishedCut() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

@@ -7,6 +7,31 @@ final class NotebookPersistenceTests: XCTestCase {
   private enum TestFailure: Error { case unavailable }
 
   @MainActor
+  func testUnaddressableCreationCannotChangeOptimisticOrDurableOwners() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let initiallySaved = await model.finishPendingPersistence()
+    XCTAssertTrue(initiallySaved)
+    let workspace = model.workspace, hierarchy = model.boardHierarchy, presence = model.presence
+    let header = try model.store.workspaceHeader(), pageIDs = Set(model.pages.keys)
+    for tile in [WorldPoint.maximumTileIndex + 1, -WorldPoint.maximumTileIndex - 1] {
+      let point = WorldPoint(tileX: tile, tileY: tile, localX: 0, localY: 0)
+      XCTAssertNil(model.createNotebook(at: point))
+      XCTAssertNil(model.createDocument(at: point, paperSize: .a4))
+      XCTAssertNil(model.createBoard(at: point))
+    }
+    let saved = await model.finishPendingPersistence()
+    XCTAssertTrue(saved)
+    XCTAssertEqual(model.workspace, workspace)
+    XCTAssertEqual(model.boardHierarchy, hierarchy)
+    XCTAssertEqual(model.presence, presence)
+    XCTAssertEqual(Set(model.pages.keys), pageIDs)
+    XCTAssertEqual(try model.store.workspaceHeader(), header)
+  }
+
+  @MainActor
   func testNativeCommitAdvancesRenderIdentityWithoutReplacingTheCameraOrLocalOwner() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
