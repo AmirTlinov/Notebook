@@ -4,29 +4,30 @@ import UIKit
 @main
 struct NotebookApp: App {
   @Environment(\.scenePhase) private var scenePhase
-  #if DEBUG && targetEnvironment(simulator)
-    @State private var model: NotebookAppModel?
-  #else
-    @State private var model: NotebookAppModel
-  #endif
+  @State private var launch: NotebookApplicationLaunch
 
   init() {
     #if DEBUG && targetEnvironment(simulator)
       let launch = NotebookSimulatorLaunch(arguments: ProcessInfo.processInfo.arguments,
         environment: ProcessInfo.processInfo.environment)
-      _model = State(initialValue: launch.makeModel())
+      _launch = State(initialValue: launch == .workspace ? NotebookApplicationLaunch() : NotebookApplicationLaunch(fixture: launch.makeModel()))
     #else
-      _model = State(initialValue: NotebookAppModel())
+      _launch = State(initialValue: NotebookApplicationLaunch())
     #endif
   }
 
   var body: some Scene {
     WindowGroup {
-      #if DEBUG && targetEnvironment(simulator)
-        if let model { workspace(model) }
-      #else
-        workspace(model)
-      #endif
+      Group {
+        if let model = launch.model { workspace(model) }
+        else {
+          VStack(spacing: 16) {
+            Text(launch.message).multilineTextAlignment(.center)
+            if launch.failure != nil { Button("Повторить проверку") { Task { await launch.waitForAdmission() } } }
+            else { ProgressView() }
+          }.padding(32)
+        }
+      }.task { await launch.waitForAdmission() }
     }
   }
 

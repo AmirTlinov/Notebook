@@ -574,10 +574,13 @@ final class NotebookAppModel {
     private var previewPublisher: MacPreviewPublisher?
   #endif
 
+  let allowsCodexRegistration: Bool
+
   init(
     store: NotebookStore = NotebookStore(root: NotebookStore.defaultRoot),
     startsNearbySync: Bool = true,
     commandSocketURL: URL? = nil,
+    allowsCodexRegistration: Bool = false,
     preparePageInk: @escaping PageInkPreparation = { page, mutation, stamp in
       try await Task.detached(priority: .userInitiated) {
         try page.prepareInkChange(mutation, stamp: stamp)
@@ -585,6 +588,7 @@ final class NotebookAppModel {
     }
   ) {
     self.store = store
+    self.allowsCodexRegistration = allowsCodexRegistration
     self.preparePageInk = preparePageInk
     persistence = NotebookPersistenceQueue(store: store)
     compositionTiles = SceneCompositionTiles(cacheRoot: store.root.appendingPathComponent("derived/composition", isDirectory: true))

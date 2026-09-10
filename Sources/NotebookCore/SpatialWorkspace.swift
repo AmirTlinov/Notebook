@@ -1,11 +1,12 @@
 import Foundation
 
-/// A point on the unbounded board. The tile keeps nearby calculations small
-/// even after the camera has travelled far away from the origin.
+/// A tiled board address. The continuous tile range is exactly representable
+/// in both Swift JSONValue and JavaScript; nearby arithmetic stays tile-local.
 public struct WorldPoint: Codable, Equatable, Hashable, Sendable {
   /// 256 half-centimetre cells. Every visible board-grid level therefore
   /// lands on the same line at a tile boundary.
   public static let tileSize = PhysicalPaper.gridSpacing * 256
+  public static let maximumTileIndex: Int64 = 9_007_199_254_740_991
 
   public let tileX: Int64
   public let tileY: Int64
@@ -64,9 +65,35 @@ public struct WorldPoint: Codable, Equatable, Hashable, Sendable {
   }
 
   var isValid: Bool {
-    localX.isFinite && localY.isFinite
+    (-Self.maximumTileIndex...Self.maximumTileIndex).contains(tileX)
+      && (-Self.maximumTileIndex...Self.maximumTileIndex).contains(tileY)
+      && localX.isFinite && localY.isFinite
       && localX >= 0 && localX < Self.tileSize
       && localY >= 0 && localY < Self.tileSize
+  }
+
+  private enum CodingKeys: String, CodingKey { case tileX, tileY, localX, localY }
+
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    tileX = try values.decode(Int64.self, forKey: .tileX)
+    tileY = try values.decode(Int64.self, forKey: .tileY)
+    localX = try values.decode(Double.self, forKey: .localX)
+    localY = try values.decode(Double.self, forKey: .localY)
+    guard isValid else {
+      throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+        debugDescription: "WorldPoint requires exact safe-integer tiles and normalized local coordinates"))
+    }
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    guard isValid else {
+      throw EncodingError.invalidValue(self, .init(codingPath: encoder.codingPath,
+        debugDescription: "WorldPoint is outside its exact JSON address range"))
+    }
+    var values = encoder.container(keyedBy: CodingKeys.self)
+    try values.encode(tileX, forKey: .tileX); try values.encode(tileY, forKey: .tileY)
+    try values.encode(localX, forKey: .localX); try values.encode(localY, forKey: .localY)
   }
 
   private static func normalize(x: Double, y: Double) -> (

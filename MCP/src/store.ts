@@ -1,3 +1,4 @@
+import { offsetWorld } from "./spatial.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { open } from "node:fs/promises";
@@ -256,9 +257,6 @@ export function workspaceProjection(window: SceneWindow): WorkspaceProjection {
 export function visibleBounds(presence: SessionPresence): SceneBounds {
   const width = presence.viewport.x / presence.camera.scale;
   const height = presence.viewport.y / presence.camera.scale;
-  const tile = (132 / 2.54 / 2) * 256;
-  const center = presence.camera.center;
-  const x = center.localX - width / 2, y = center.localY - height / 2;
-  const tx = Math.floor(x / tile), ty = Math.floor(y / tile);
-  return {origin:{tileX:center.tileX+tx,tileY:center.tileY+ty,localX:x-tx*tile,localY:y-ty*tile},width,height};
+  return {origin:offsetWorld(presence.camera.center, -width / 2, -height / 2),width,height};
 }
+

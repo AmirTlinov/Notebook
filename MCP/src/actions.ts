@@ -1,3 +1,4 @@
+import { worldPointSchema as point } from "./spatial.js";
 import { notebookResponseSchema } from "./contracts.js";
 import { createHash } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/server";
@@ -15,7 +16,7 @@ export const targetSchema = z.discriminatedUnion("kind", [
 ]);
 export type Target = z.infer<typeof targetSchema>;
 const frame = z.object({ x: z.number().finite(), y: z.number().finite(), width: z.number().positive(), height: z.number().positive() }).strict();
-const point = z.object({ tileX: z.number().int(), tileY: z.number().int(), localX: z.number().finite(), localY: z.number().finite() }).strict();
+
 export const referenceSchema = z.object({ id: z.uuid(), target: targetSchema, elementID: z.string().optional(), region: frame.optional(), worldOrigin: point.optional(), pageIndex: z.number().int().nonnegative().optional(), revision: z.string(), label: z.string().max(1000).default("") }).strict();
 const expectation = z.object({ target: targetSchema, revision: z.string().min(1), stateRevision:z.string().optional(), sourceRevision:z.string().optional(), inkRevision:z.string().optional().describe("For appendInkStroke: drawingRevision of a page or spatialInkRevision of a board/cover.") }).strict();
 const source = z.string().max(1_000_000);

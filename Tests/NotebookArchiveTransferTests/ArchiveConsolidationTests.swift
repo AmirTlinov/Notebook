@@ -5,7 +5,7 @@ import Testing
 
 @Suite("Offline consolidation retains both archives and stopped requests")
 struct ArchiveConsolidationTests {
-  private struct Fixture {
+  struct Fixture {
     let root: URL
     let legacy: LegacyArchiveFixture
     let peer: URL

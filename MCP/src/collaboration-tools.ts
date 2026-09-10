@@ -1,3 +1,4 @@
+import { worldPointSchema as world } from "./spatial.js";
 import { notebookResponseSchema } from "./contracts.js";
 import { createHash, randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/server";
@@ -7,7 +8,7 @@ import { runBridge, BridgeError } from "./bridge.js";
 import { NotebookStore } from "./store.js";
 
 const frame = z.object({ x: z.number().finite(), y: z.number().finite(), width: z.number().positive(), height: z.number().positive() }).strict();
-const world = z.object({ tileX: z.number().int(), tileY: z.number().int(), localX: z.number().finite(), localY: z.number().finite() }).strict();
+
 export function registerCollaborationTools(server: McpServer, store: NotebookStore) {
   server.registerTool("notebook_point", {
     outputSchema: notebookResponseSchema,

@@ -7,11 +7,7 @@ struct ArchiveTransferError: Error, CustomStringConvertible {
   static func invalidSource(_ message: String) -> Self { .init(description: message) }
 }
 
-struct SourceFileProof: Codable, Equatable {
-  let path: String
-  let bytes: UInt64
-  let sha256: String
-}
+typealias SourceFileProof = NotebookArchiveFileProof
 
 struct ArchiveSource {
   let root: URL
@@ -167,27 +163,5 @@ enum ArchiveTransfer {
 func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 
 func inventory(_ root: URL) throws -> [SourceFileProof] {
-  let manager = FileManager.default
-  let root = root.standardizedFileURL.resolvingSymlinksInPath()
-  var enumerationError: Error?
-  guard let enumerator = manager.enumerator(at: root, includingPropertiesForKeys: [.isSymbolicLinkKey, .isRegularFileKey, .isDirectoryKey],
-    errorHandler: { _, error in enumerationError = error; return false }) else { throw ArchiveTransferError.invalidSource("source is not a readable directory") }
-  var result: [SourceFileProof] = []
-  for case let url as URL in enumerator {
-    let properties = try url.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey, .isDirectoryKey])
-    guard properties.isSymbolicLink != true, properties.isRegularFile == true || properties.isDirectory == true else {
-      throw ArchiveTransferError.invalidSource("source contains a link or special file: \(url.path)")
-    }
-    if properties.isDirectory == true { continue }
-    let handle = try FileHandle(forReadingFrom: url)
-    defer { try? handle.close() }
-    var hash = SHA256(), size: UInt64 = 0
-    while let chunk = try handle.read(upToCount: 1_048_576), !chunk.isEmpty { hash.update(data: chunk); size += UInt64(chunk.count) }
-    let path = url.standardizedFileURL.resolvingSymlinksInPath().path
-    guard path.hasPrefix(root.path + "/") else { throw ArchiveTransferError.invalidSource("file escaped the source directory") }
-    result.append(.init(path: String(path.dropFirst(root.path.count + 1)), bytes: size,
-      sha256: hash.finalize().map { String(format: "%02x", $0) }.joined()))
-  }
-  if let enumerationError { throw enumerationError }
-  return result.sorted { $0.path < $1.path }
+  try NotebookArchiveFingerprint.read(root).files
 }

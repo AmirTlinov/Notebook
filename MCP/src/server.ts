@@ -1,3 +1,4 @@
+import { TILE_SIZE, offsetWorld, worldPointSchema } from "./spatial.js";
 type ContextSnapshot = { contexts:Array<{id:string;entries:Array<{id:string;author:string;requiresReview:boolean;references:Array<{id:string;target:object;elementID?:string;revision:string;label:string}>}>}>;selection?:{contextID?:string} };
 import { notebookResponseSchema } from "./contracts.js";
 import { runBridge, BridgeError } from "./bridge.js";
@@ -43,7 +44,6 @@ import {
   registerPageVisionTools,
 } from "./page-vision.js";
 
-const TILE_SIZE = (132 / 2.54 / 2) * 256;
 const { version: packageVersion } = JSON.parse(
   await readFile(new URL("../package.json", import.meta.url), "utf8"),
 ) as { version: string };
@@ -98,7 +98,7 @@ export function createServer(store = new NotebookStore()): McpServer {
       title: "Read the infinite Notebook board",
       description: "Read a bounded physical board region (human viewport by default), its placements and agent elements. coverage reports truncation; an omitted owner is not empty or deleted.",
       inputSchema: z.object({ board_id:z.uuid().optional(), element_id:z.string().max(120).optional(), include_source:z.boolean().default(false),
-        bounds:z.object({origin:z.object({tileX:z.number().int(),tileY:z.number().int(),localX:z.number().finite(),localY:z.number().finite()}),
+        bounds:z.object({origin:worldPointSchema,
           width:z.number().positive().max(10_000_000),height:z.number().positive().max(10_000_000)}).optional(),limit:z.number().int().min(1).max(128).default(128) }),
     },
     ({ board_id, element_id, include_source, bounds, limit }) => readSafely(async () => {
@@ -778,18 +778,6 @@ function worldToScreen(
   };
 }
 
-function offsetWorld(point: WorldPoint, x: number, y: number): WorldPoint {
-  const rawX = point.localX + x;
-  const rawY = point.localY + y;
-  const tileOffsetX = Math.floor(rawX / TILE_SIZE);
-  const tileOffsetY = Math.floor(rawY / TILE_SIZE);
-  return {
-    tileX: point.tileX + tileOffsetX,
-    tileY: point.tileY + tileOffsetY,
-    localX: rawX - tileOffsetX * TILE_SIZE,
-    localY: rawY - tileOffsetY * TILE_SIZE,
-  };
-}
 
 function sameStamp(first: VersionStamp, second: VersionStamp): boolean {
   return first.counter === second.counter && sameID(first.actor, second.actor);

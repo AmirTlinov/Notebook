@@ -108,7 +108,7 @@ extension NotebookStore {
 
   public func sharedContexts() throws -> SharedContextSnapshot {
     try prepare()
-    return try withMutationLock { .init(contexts: try readSharedContexts(), selection: try readContextSelection()) }
+    return try readTransaction { _ in .init(contexts: try readSharedContexts(), selection: try readContextSelection()) }
   }
 
   func contextWrites(_ incoming: [SharedContext], selection: SharedContextSelection?) throws -> [String: JSONValue] {
