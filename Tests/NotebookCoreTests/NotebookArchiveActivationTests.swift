@@ -229,7 +229,7 @@ struct NotebookArchiveActivationTests {
     let before = try NotebookArchiveFingerprint.read(store.root)
     let replicaURL = value.base.appendingPathComponent("replica"), presence = SessionPresence(mode: .board,
       camera: .init(center: .init(x: 100, y: 200)), viewport: .init(x: 500, y: 400))
-    let proof = try store.prepareReplicaSnapshot(at: replicaURL, presence: presence)
+    let proof = try store.prepareDeviceSnapshot(at: replicaURL, presence: presence, preservingLocalState: false)
     #expect(try NotebookArchiveFingerprint.read(store.root) == before)
     let replica = NotebookStore(root: replicaURL)
     #expect(try replica.archiveContentProof().sharedRecordsSHA256 == proof.sharedRecordsSHA256)
@@ -242,7 +242,40 @@ struct NotebookArchiveActivationTests {
     #expect(try replica.chatJob(job.id) == nil)
     #expect(try store.chatJob(job.id) != nil)
     #expect(try replica.sqlRead { try $0.rows("SELECT * FROM peer_cursors").isEmpty })
-    #expect(throws: NotebookStorageError.self) { try store.prepareReplicaSnapshot(at: replicaURL, presence: presence) }
+    #expect(try replica.currentChangeCursor() == 1)
+    let seed = try #require(replica.changeJournal(after: 0).first)
+    #expect(try replica.sqlRead { _ in try replica.validatedManifest(seed).format } == 3)
+    #expect(throws: NotebookStorageError.self) { try store.prepareDeviceSnapshot(at: replicaURL, presence: presence, preservingLocalState: false) }
+  }
+
+  @Test func continuingDeviceKeepsLocalJobsAndRebasesRetiredDeliveryWithoutDecodingIt() throws {
+    let value = try Fixture(); defer { try? FileManager.default.removeItem(at: value.base) }
+    let store = NotebookStore(root: value.candidate), actor = UUID()
+    let job = NotebookChatInput(author: actor, action: .create(title: "Keep this request"))
+    let saved = try store.saveChatInput(job)
+    let panel = NotebookChatPanelState(threadID: UUID().uuidString, draft: "Незавершённый вопрос")
+    try store.saveChatPanel(panel, author: actor)
+    try store.commandTransaction {
+      let database = store.currentSQL!
+      let change = try #require(store.changeJournal(after: 0).first)
+      let old = try JSONDecoder().decode(JSONValue.self, from: database.blob(change.manifestHash)).setting("format", .number(2))
+      let bytes = try NotebookStore.storageEncoder.encode(old), hash = try database.putBlob(bytes)
+      try database.run("UPDATE change_log SET manifest_hash=?,byte_count=? WHERE sequence=?", [.text(hash), .integer(Int64(bytes.count)), .integer(Int64(change.sequence))])
+    }
+    #expect(throws: NotebookStorageError.self) { try store.validateArchiveSnapshot() }
+    let before = try NotebookArchiveFingerprint.read(store.root), proof = try store.archiveContentProof()
+    let output = value.base.appendingPathComponent("continuing-device"), presence = try store.loadPresence()
+    let prepared = try store.prepareDeviceSnapshot(at: output, presence: presence, preservingLocalState: true)
+    let next = NotebookStore(root: output)
+    #expect(try NotebookArchiveFingerprint.read(store.root) == before)
+    #expect(prepared.sharedRecordsSHA256 == proof.sharedRecordsSHA256)
+    #expect(prepared.totalRecordCount == proof.totalRecordCount)
+    #expect(try next.loadPresence() == presence)
+    #expect(try next.chatJob(job.id) == saved)
+    #expect(try next.chatPanel(author: actor) == panel)
+    #expect(try next.storedValue("document-drafts/test.json") == store.storedValue("document-drafts/test.json"))
+    #expect(try next.currentChangeCursor() == 1)
+    #expect(try next.validateArchiveSnapshot() == prepared)
   }
 
   @Test func completedLaunchNeedsNoHistoricalInventoryAndKeepsNewWrites() throws {

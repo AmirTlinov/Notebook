@@ -8,6 +8,16 @@ struct ArchivePairPreparationTests {
   @Test func bothDeviceCopiesActivateTheSameContentAndKeepTheStoppedQuestion() throws {
     let root = try transferTestRoot(); defer { try? FileManager.default.removeItem(at: root) }
     let fixture = try ArchiveConsolidationTests.Fixture(root: root)
+    let author = UUID()
+    var index = try fixture.current.loadIndex(), board = try fixture.current.loadBoard(items: index.items)
+    let created = index.createDocument(title: "Portable program", actor: author)
+    let item = try #require(created)
+    let placed = board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: author)
+    #expect(placed)
+    try fixture.current.saveDocumentWorkspaceBundle(index: index,
+      document: .init(id: item.id, actor: author, blocks: [.interactive(id: "counter", html: "<button>Before</button>",
+        initialState: .object(["records": .array([.object(["id": .string("value"), "count": .number(7)])])]))]),
+      state: .init(id: item.id, actor: author), board: board)
     let request = ArchivePairRequest(transitionID: UUID(), legacyIPad: fixture.legacy.root.path,
       legacyMac: fixture.peer.path, currentIPad: fixture.current.root.path,
       iPad: .init(role: .iPad, bundleID: "com.amirtlinov.notebook.preview", actorID: UUID()),
@@ -40,7 +50,37 @@ struct ArchivePairPreparationTests {
     }
     #expect(try activation.launch(root: ipad, target: request.iPad) == .admitted(ipadReceipt))
     #expect(try activation.launch(root: mac, target: request.mac) == .admitted(macReceipt))
+    let a = NotebookStore(root: ipad), b = NotebookStore(root: mac)
+    let ipadSeed = try #require(a.changeJournal(after: 0).first), macSeed = try #require(b.changeJournal(after: 0).first)
+    #expect(ipadSeed.sequence == 1 && macSeed.sequence == 1)
+    try deliver(ipadSeed, from: a, to: b, peer: request.iPad.actorID)
+    try deliver(macSeed, from: b, to: a, peer: request.mac.actorID)
+    #expect(try a.currentChangeCursor() == 1 && b.currentChangeCursor() == 1,
+      "Identical prepared seeds must not create a delivery echo")
+    var edited = try a.loadDocument(item.id)
+    let changed = edited.replaceBlockSource(id: "counter", source: "<button>After activation</button>", actor: request.iPad.actorID)
+    #expect(changed)
+    try a.saveMergedDocument(edited)
+    let update = try #require(a.changeJournal(after: 1).first)
+    #expect(update.sequence == 2)
+    try deliver(update, from: a, to: b, peer: request.iPad.actorID)
+    #expect(try a.loadDocument(item.id) == b.loadDocument(item.id))
+    #expect(try b.loadDocument(item.id).blocks[0].html == "<button>After activation</button>")
     #expect(try [fixture.legacy.root, fixture.peer, fixture.current.root].map(inventory) == before)
+  }
+
+  private func deliver(_ change: NotebookDurableChange, from source: NotebookStore, to destination: NotebookStore, peer: UUID) throws {
+    while true {
+      let hashes = try destination.missingBlobHashes(for: change)
+      if hashes.isEmpty { break }
+      for hash in hashes {
+        let size = try source.blobSize(hash: hash)
+        var data = Data()
+        while Int64(data.count) < size { data += try source.readBlobChunk(hash: hash, offset: Int64(data.count), maxBytes: 1_048_576) }
+        try destination.stageBlob(data: data, expectedHash: hash)
+      }
+    }
+    _ = try destination.applyRemoteChange(change, peerID: peer)
   }
 
   @Test func originalBundleCannotBeChosenAsTheNewIPadDestination() throws {

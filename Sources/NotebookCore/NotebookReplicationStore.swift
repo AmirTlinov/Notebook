@@ -33,7 +33,7 @@ extension NotebookStore {
     }
   }
 
-  private func validatedManifest(_ change: NotebookDurableChange, partHash: String? = nil) throws -> NotebookChangeManifest {
+  func validatedManifest(_ change: NotebookDurableChange, partHash: String? = nil) throws -> NotebookChangeManifest {
     guard change.sequence > 0, change.sequence <= UInt64(Int64.max),
       (1...67_108_864).contains(change.byteCount) else { throw NotebookStorageError.limitExceeded("change_manifest") }
     let data = try currentSQL!.blob(partHash ?? change.manifestHash)
@@ -41,7 +41,7 @@ extension NotebookStore {
     guard data.count <= 67_108_864 else { throw NotebookStorageError.limitExceeded("change_manifest_part") }
     let manifest = try JSONDecoder().decode(NotebookChangeManifest.self, from: data)
     let workspaceID = try currentSQL!.rows("SELECT value FROM metadata WHERE key='workspace_id'").first?[0].text.flatMap(UUID.init(uuidString:))
-    guard manifest.format == 2, manifest.transactionID == change.transactionID, manifest.workspaceID == workspaceID,
+    guard manifest.format == 3, manifest.transactionID == change.transactionID, manifest.workspaceID == workspaceID,
       manifest.records.count <= 16_384, manifest.parts.count <= 512,
       !manifest.records.isEmpty || !manifest.parts.isEmpty,
       manifest.records.isEmpty || manifest.parts.isEmpty,
@@ -132,6 +132,10 @@ extension NotebookStore {
           try applyReplicatedDocumentState(file: file, manifestHash: change.manifestHash)
           return
         }
+        if file.hasPrefix("documents/") {
+          try applyReplicatedDocumentSource(file: file, manifestHash: change.manifestHash)
+          return
+        }
         // A typed merger still owns this complete logical file. Releasing it
         // before advancing keeps independent owners out of one giant packet
         // dictionary; partial heavy-owner merging remains a separate contract.
@@ -193,14 +197,6 @@ extension NotebookStore {
               _ = try page.joinedComputations(previous.computations ?? []); _ = page.merge(previous)
             }
             guard page.isValid else { throw NotebookStorageError.corruptRecord(file) }; resolved = try .encode(page)
-          } else if file.hasPrefix("documents/") {
-            var document = try value.decode(DocumentDocument.self)
-            if let before {
-              let previous = try before.decode(DocumentDocument.self)
-              guard previous.paperSize == document.paperSize else { throw NotebookStorageError.transactionConflict }
-              _ = document.merge(previous)
-            }
-            guard document.isValid else { throw NotebookStorageError.corruptRecord(file) }; resolved = try .encode(document)
           } else if file.hasPrefix("collaboration/actions/") {
             let receipt = try value.decode(CollaborationReceipt.self)
             guard receipt.id == receipt.action.id else { throw NotebookStorageError.invalidTransaction("receipt identity") }
@@ -229,7 +225,6 @@ extension NotebookStore {
           let id = UUID(uuidString: URL(fileURLWithPath: file).deletingPathExtension().lastPathComponent) {
           let belongs: Bool
           if file.hasPrefix("pages/") { belongs = try ownerItemID(ofPage: id) != nil }
-          else if file.hasPrefix("documents/") { belongs = try readItemHeader(id)?.kind == .document }
           else { belongs = true }
           if !belongs { try publishRecords(writes: [:], removals: [file]); return }
         }

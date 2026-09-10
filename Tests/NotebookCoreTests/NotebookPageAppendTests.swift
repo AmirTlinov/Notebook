@@ -162,7 +162,7 @@ struct NotebookPageAppendTests {
         try source.readBlobChunk(hash: hash, offset: 0, maxBytes: 1_048_576)
       }
       let manifest = try JSONDecoder().decode(NotebookChangeManifest.self, from: data(change.manifestHash))
-      #expect(manifest.format == 2 && manifest.pageOrderRoots.count == 1)
+      #expect(manifest.format == 3 && manifest.pageOrderRoots.count == 1)
       // Record wrapper hashes are not the raw-node dependency hashes.
       try target.stageBlob(data: data(change.manifestHash), expectedHash: change.manifestHash)
       for record in manifest.records { if let hash = record.blobHash { try target.stageBlob(data: data(hash), expectedHash: hash) } }

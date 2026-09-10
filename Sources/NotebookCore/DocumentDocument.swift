@@ -40,6 +40,11 @@ public struct DocumentBlock: Codable, Equatable, Identifiable, Sendable {
   public static let maximumSourceLength = 1_000_000
   public static let minimumInteractiveHeight = 48.0
   public static let maximumInteractiveHeight = 2_048.0
+  static let causalFieldNames = ["exists", "id", "content", "css", "javaScript", "initialState", "height"]
+
+  static func causalFieldKeys(id: String) -> [String] {
+    causalFieldNames.map { fieldKey(["blocks", collaborationIdentity(id), $0]) }
+  }
 
   public let id: String
   public let kind: DocumentBlockKind

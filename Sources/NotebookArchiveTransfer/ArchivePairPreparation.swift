@@ -47,10 +47,13 @@ enum ArchivePairPreparation {
     let consolidation = try ArchiveConsolidation.prepare(legacyIPad: sources[0], legacyMac: sources[1],
       current: sources[2], destination: combined)
     let current = combined.appendingPathComponent("archive"), replica = staging.appendingPathComponent("mac-archive")
+    let ipadArchive = staging.appendingPathComponent("ipad-archive")
+    let combinedStore = NotebookStore(root: current)
+    _ = try combinedStore.prepareDeviceSnapshot(at: ipadArchive, presence: combinedStore.loadPresence(), preservingLocalState: true)
     let macPresence = try ArchiveSource.read(root: sources[1], workspaceID: consolidation.workspaceID).checkpoint.presence
-    _ = try NotebookStore(root: current).prepareReplicaSnapshot(at: replica, presence: macPresence)
+    _ = try combinedStore.prepareDeviceSnapshot(at: replica, presence: macPresence, preservingLocalState: false)
     let activation = NotebookArchiveActivation()
-    let ipad = try activation.prepare(source: sources[2], candidate: current, output: staging.appendingPathComponent("ipad"),
+    let ipad = try activation.prepare(source: sources[2], candidate: ipadArchive, output: staging.appendingPathComponent("ipad"),
       transitionID: request.transitionID, target: request.iPad)
     let mac = try activation.prepare(source: sources[1], candidate: replica, output: staging.appendingPathComponent("mac"),
       transitionID: request.transitionID, target: request.mac)

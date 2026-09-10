@@ -88,6 +88,8 @@ extension NotebookStore {
     try noteContextHistoryChange(file: fragment.file, database: database)
     try updateSearchIndex(fragment, database: database)
     try noteReferenceChange(fragment.address, file: fragment.file, database: database)
+    try noteDocumentSourceDelivery(address: fragment.address, file: fragment.file,
+      collection: fragment.collection, member: fragment.member, database: database)
     if !Self.localRecord(fragment.file) { try database.recordChange(.init(address: fragment.address, blobHash: hash)) }
     return true
   }
@@ -118,6 +120,7 @@ extension NotebookStore {
         }
         try updateBoardContribution(address: address, previous: row[4].text, next: nil, database: database)
         try noteReferenceChange(address, file: file, database: database)
+        try noteDocumentSourceDelivery(address: address, file: file, collection: collection, member: member, database: database)
         try database.run("DELETE FROM records WHERE address=?", [.text(address)])
         try noteContextHistoryChange(file: file, database: database)
         if !Self.localRecord(file) { try database.recordChange(.init(address: address, blobHash: nil)) }
@@ -211,7 +214,7 @@ extension NotebookStore {
         guard let value else { throw NotebookStorageError.invalidTransaction("projection value") }
         let position = (edited.collection.hasSuffix("collaboration/fields") || ["pageOrders", "pageOrderNodes"].contains(edited.collection)) ? 0 : try positions[address] ?? stored?.position ?? Int(database.rows("SELECT COALESCE(MAX(position),-1)+1 FROM records WHERE parent=? AND collection=?", [edited.parent.map(NotebookSQLValue.text) ?? .null, .text(edited.collection)]).first![0].integer!)
         let changed = try writeFragment(edited.replacing(value: value, position: position), database: database)
-        if changed, !edited.member.isEmpty, !edited.collection.hasSuffix("collaboration/fields"), let parent = edited.parent {
+        if changed, !file.hasPrefix("documents/"), !edited.member.isEmpty, !edited.collection.hasSuffix("collaboration/fields"), let parent = edited.parent {
           let prefix = fieldKey([edited.collection.components(separatedBy: "/").last!, edited.member]) + "/"
           let collection = edited.collection.hasPrefix("board/") ? "board/collaboration/fields" : "collaboration/fields"
           for row in try database.rows("SELECT address,hash FROM records WHERE parent=? AND collection=? AND member>=? AND member<?", [.text(parent), .text(collection), .text(prefix), .text(prefix + "\u{10ffff}")]) {

@@ -19,10 +19,11 @@ public struct NotebookArchiveContentProof: Codable, Equatable, Sendable {
 }
 
 extension NotebookStore {
-  /// Seed the second device from all shared records, not a lossy domain
-  /// envelope. Device-local drafts/jobs stay in the original device's archive;
-  /// this private replica gets its own presence and no inherited network ACKs.
-  public func prepareReplicaSnapshot(at output: URL, presence: SessionPresence) throws -> NotebookArchiveContentProof {
+  /// Prepare one device from every shared record, not a lossy domain envelope.
+  /// The continuing iPad keeps its drafts/jobs; Mac receives its own presence.
+  /// Both start a new delivery journal, never reinterpret historic wire deltas.
+  public func prepareDeviceSnapshot(at output: URL, presence: SessionPresence,
+    preservingLocalState: Bool) throws -> NotebookArchiveContentProof {
     let manager = FileManager.default
     let source = root.standardizedFileURL.resolvingSymlinksInPath(), destination = output.standardizedFileURL.resolvingSymlinksInPath()
     guard source != destination, !source.path.hasPrefix(destination.path + "/"),
@@ -36,7 +37,7 @@ extension NotebookStore {
     guard try NotebookArchiveFingerprint.read(staging) == original else { throw NotebookStorageError.transactionConflict }
     let replica = NotebookStore(root: staging)
     try replica.prepareContextOrderIndexForTransfer()
-    let before = try replica.validateArchiveSnapshot()
+    let before = try replica.archiveContentProof()
     try replica.commandTransaction {
       let database = replica.currentSQL!
       var after = ""
@@ -45,12 +46,34 @@ extension NotebookStore {
         if files.isEmpty { break }
         for file in files {
           after = file
-          if Self.localRecord(file) { try replica.removeFragment(file + "#", database: database) }
+          if !preservingLocalState, Self.localRecord(file) { try replica.removeFragment(file + "#", database: database) }
         }
       }
       try replica.savePresence(presence)
-      for table in ["peer_cursors", "received_transactions", "manifest_order_nodes", "manifest_parts", "manifest_records", "manifests", "chat_jobs", "chat_panel"] {
+      for table in ["peer_cursors", "received_transactions", "manifest_order_nodes", "manifest_parts", "manifest_records", "manifests", "change_records", "change_log"] {
         try database.run("DELETE FROM \(table)")
+      }
+      try database.run("DELETE FROM sqlite_sequence WHERE name='change_log'")
+      if !preservingLocalState {
+        for table in ["chat_jobs", "chat_panel"] { try database.run("DELETE FROM \(table)") }
+      }
+      // The seed declares every shared value under the current wire contract.
+      // Existing content/receipt hashes stay identical; only delivery restarts.
+      after = ""
+      while true {
+        let records = try database.rows("SELECT address,file,collection,hash FROM records WHERE address>? ORDER BY address LIMIT 64", [.text(after)])
+        if records.isEmpty { break }
+        for row in records {
+          after = row[0].text!
+          guard !Self.localRecord(row[1].text!) else { continue }
+          try database.recordChange(.init(address: after, blobHash: row[3].text!))
+          if row[1].text == "workspace.json", row[2].text == "pageOrders" {
+            let fragment = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(row[3].text!))
+            let order = try fragment.value.decode(NotebookPageOrderRegister.self)
+            try database.noteOwner(.orderRoot, order.visibleRoot)
+            for head in order.heads { try database.noteOwner(.orderRoot, head.valueRoot) }
+          }
+        }
       }
     }
     let proof = try replica.validateArchiveSnapshot()
@@ -84,6 +107,16 @@ extension NotebookStore {
           contexts: contexts.contexts, selection: contexts.selection, delivery: store.deviceActionReceipts()),
         presence: store.loadPresence())
       try checkpoint.validate()
+      var cursor: UInt64 = 0
+      while true {
+        let changes = try store.changeJournal(after: cursor, limit: 16)
+        if changes.isEmpty { break }
+        for change in changes {
+          let manifest = try store.validatedManifest(change)
+          for part in manifest.parts { _ = try store.validatedManifest(change, partHash: part) }
+          cursor = change.sequence
+        }
+      }
       var lastHash = ""
       while let row = try database.rows("SELECT hash,data FROM blobs WHERE hash>? ORDER BY hash LIMIT 1", [.text(lastHash)]).first {
         let hash = row[0].text!, data = row[1].blob!

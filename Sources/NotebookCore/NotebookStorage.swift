@@ -26,7 +26,7 @@ public struct NotebookChangeManifest: Codable, Equatable, Sendable {
   public let parts: [String]
   public let pageOrderRoots: [String]
   public init(transactionID: UUID, workspaceID: UUID, records: [NotebookRecordMutation], parts: [String] = [], pageOrderRoots: [String] = []) {
-    format = 2; self.transactionID = transactionID; self.workspaceID = workspaceID
+    format = 3; self.transactionID = transactionID; self.workspaceID = workspaceID
     self.records = records; self.parts = parts; self.pageOrderRoots = pageOrderRoots
   }
 }

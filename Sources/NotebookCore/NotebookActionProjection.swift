@@ -161,10 +161,7 @@ extension NotebookStore {
         // Editing an existing program cannot create a new source field or
         // reorder its neighbours. Read exactly its causal owners, including
         // adoption of existence, not every retired field of this document.
-        let fields = ["exists", "id", "content", "css", "javaScript", "initialState", "height"]
-        let keys = ["preamble", "blocks/order"] + ids.sorted().flatMap { id in
-          fields.map { fieldKey(["blocks", id, $0]) }
-        }
+        let keys = ["preamble", "blocks/order"] + ids.sorted().flatMap { DocumentBlock.causalFieldKeys(id: $0) }
         addresses += keys.map { (file + "#/collaboration/fields/@" + fieldKey([$0]), false) }
       }
       return addresses

@@ -141,6 +141,16 @@ func fieldKey(_ parts: [String]) -> String {
   parts.map { $0.replacingOccurrences(of: "~", with: "~0").replacingOccurrences(of: "/", with: "~1") }.joined(separator: "/")
 }
 
+/// The winning author orders its surviving members; concurrent additions
+/// follow in canonical address order. Both full and addressed merges use it.
+func contentMemberOrder(preferred: [String], escapedMembers: [String]) -> [String] {
+  let members = Set(escapedMembers), preferredKeys = Set(preferred.map { fieldKey([$0]) })
+  return preferred.filter { members.contains(fieldKey([$0])) }
+    + members.subtracting(preferredKeys).sorted().map {
+      $0.replacingOccurrences(of: "~1", with: "/").replacingOccurrences(of: "~0", with: "~")
+    }
+}
+
 private func contentFields(_ value: JSONValue) -> [String: JSONValue] {
   var result: [String: JSONValue] = [:]
   for (name, property) in value.object where !["collaboration", "stamp", "agentStamp", "contentStamp", "drawingStamp", "drawingData", "format", "id", "size", "paperSize"].contains(name) {
@@ -169,10 +179,7 @@ private func rebuildContent(base: JSONValue, fields: [String: JSONValue]) -> JSO
       let existing = fields.keys.filter { $0.hasPrefix(prefix) && $0.hasSuffix("/exists") && fields[$0] == .bool(true) }
       let ids = existing.map { String($0.dropFirst(prefix.count).dropLast("/exists".count)) }
       let preferred = fields[fieldKey([name, "order"])]?.array.compactMap(\.string) ?? []
-      let order = preferred.filter { ids.contains(fieldKey([$0])) }
-        + ids.filter { !preferred.map({ fieldKey([$0]) }).contains($0) }.sorted().map {
-          $0.replacingOccurrences(of: "~1", with: "/").replacingOccurrences(of: "~0", with: "~")
-        }
+      let order = contentMemberOrder(preferred: preferred, escapedMembers: ids)
       let old = base[name]?.array ?? []
       let items: [JSONValue] = order.map { id in
         let memberPrefix = fieldKey([name, id]) + "/"

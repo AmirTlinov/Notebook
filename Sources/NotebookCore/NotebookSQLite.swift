@@ -388,6 +388,7 @@ extension NotebookStore {
         try database.run("UPDATE metadata SET value=? WHERE key='read_revision'", [.text(String(revision + 1))])
       }
       try storageFault?(.afterRecordWrites)
+      try completeDocumentSourceDelivery(database: database)
       try publishPendingChanges(database: database)
       try storageFault?(.beforeCommit)
       try database.run("COMMIT"); committed = true
@@ -462,7 +463,7 @@ extension NotebookStore {
           try writeFragment(fragment, data: data, hash: hash, database: database)
         }
         let affected = Set(try fragments.compactMap { member -> String? in
-          guard try database.hasChange(member.address), !member.member.isEmpty,
+          guard !file.hasPrefix("documents/"), try database.hasChange(member.address), !member.member.isEmpty,
             !member.collection.hasSuffix("collaboration/fields"), let parent = member.parent else { return nil }
           return parent + "|" + fieldKey([member.collection.components(separatedBy: "/").last!, member.member])
         })
