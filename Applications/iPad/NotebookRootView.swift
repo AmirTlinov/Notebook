@@ -8,6 +8,7 @@ struct NotebookRootView: View {
   @State private var collaborationHeight: CGFloat = 0
   @State private var penControlsFrame = CGRect.zero
   @State private var pairingFrame = CGRect.zero
+  @State private var chatFrame = CGRect.zero
   @State private var elementControlFrames: [CGRect] = []
 
   var body: some View {
@@ -99,13 +100,22 @@ struct NotebookRootView: View {
       .padding(18)
     if let chat = model.chat {
       GeometryReader { geometry in
-        NotebookChatPanel(chat: chat, maximumHeight: geometry.size.height - 36)
-          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing).padding(18)
+        // The panel occupies the right-side space between existing tools and
+        // navigation. Keyboard layout clips that space, never the paper camera.
+        let origin = geometry.frame(in: .global).origin
+        let top = max(18, penControlsFrame.maxY - origin.y + 12)
+        let bottom = min(geometry.size.height - 18,
+          pairingFrame.isEmpty ? geometry.size.height - 18 : pairingFrame.minY - origin.y - 12)
+        NotebookChatPanel(chat: chat, maximumHeight: max(44, bottom - top))
+          .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { chatFrame = $0 }
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+          .padding(.horizontal, 18).padding(.top, top)
+          .padding(.bottom, max(18, geometry.size.height - bottom))
       }
     }
     if let question = model.agentQuestion, model.chat?.expanded != true {
       NotebookQuestionOverlay(question: question, sceneOrigin: sceneOrigin,
-        footerHeight: collaborationHeight, controls: [penControlsFrame, pairingFrame] + elementControlFrames).id(question.id)
+        footerHeight: collaborationHeight, controls: [penControlsFrame, pairingFrame, chatFrame] + elementControlFrames).id(question.id)
     }
     }
     .preferredColorScheme(.light)

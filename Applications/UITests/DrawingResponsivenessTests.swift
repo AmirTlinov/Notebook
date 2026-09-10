@@ -194,6 +194,42 @@ final class DrawingResponsivenessTests: XCTestCase {
     proof.name = "addressed-context-history"; proof.lifetime = .keepAlways; add(proof)
   }
 
+  func testCodexPanelLeavesNavigationAndToolsReachableInBothOrientations() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    defer { XCUIDevice.shared.orientation = .portrait }
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    launchPortraitFixture(app)
+    let panel = app.descendants(matching: .any).matching(identifier: "notebook-chat-panel").firstMatch
+    let toggle = app.buttons["notebook-chat-toggle"]
+    XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+    for landscape in [false, true] {
+      XCUIDevice.shared.orientation = landscape ? .landscapeLeft : .portrait
+      for expanded in [false, true] {
+        if expanded { toggle.tap() }
+        let controls = ["pairing-settings", "previous-page", "page-overview", "next-page",
+          "pen-controls-toggle", "drawing-tool-eraser", "drawing-tool-pointer", "pen-settings"]
+        let unobstructed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+          let window = app.frame, frame = panel.frame
+          guard (window.width > window.height) == landscape,
+            window.contains(frame), frame.width > (expanded ? 300 : 100),
+            frame.width < (expanded ? 400 : 200) else { return false }
+          return controls.allSatisfy { id in
+            let control = app.buttons[id]
+            return control.exists && control.isHittable && !frame.intersects(control.frame)
+          }
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [unobstructed], timeout: 5), .completed,
+          "Chat must not cover the existing navigation, pairing or Pencil controls")
+        let proof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        proof.name = "chat-controls-\(landscape ? "landscape" : "portrait")-\(expanded ? "expanded" : "collapsed")"
+        proof.lifetime = .keepAlways; add(proof)
+      }
+      toggle.tap()
+    }
+  }
+
   func testCodexPanelKeepsDraftWithoutMovingPaperOnCollapseAndRotation() {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
@@ -828,7 +864,12 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
     let originalPaperFrame = paper.frame
     paper.pinch(withScale: 0.28, velocity: -2)
-    XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
+    let boardShown = app.buttons["create-workspace-item"].waitForExistence(timeout: 5)
+    let hierarchy = XCTAttachment(string: app.debugDescription)
+    hierarchy.name = "after-pinch-hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
+    let pixels = XCTAttachment(screenshot: app.screenshot())
+    pixels.name = "after-pinch-pixels"; pixels.lifetime = .keepAlways; add(pixels)
+    XCTAssertTrue(boardShown)
 
     let notebook = app.descendants(matching: .any)
       .matching(

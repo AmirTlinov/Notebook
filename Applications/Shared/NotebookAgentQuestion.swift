@@ -28,6 +28,7 @@ struct NotebookAgentQuestionCard: View {
         .accessibilityIdentifier("agent-question-dismiss").accessibilityLabel("Снять указание")
     }
     .padding(12).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+    .accessibilityElement(children: .contain)
     .accessibilityIdentifier("agent-question-card")
   }
 }
