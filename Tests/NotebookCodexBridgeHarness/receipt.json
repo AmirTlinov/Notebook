@@ -1,43 +1,53 @@
 {
-  "schemaVersion": 1,
-  "checkedAt": "2026-09-10T10:04:15.096128+00:00",
-  "scope": "existing_desktop_owner_readonly",
-  "threadID": "01a08ab0-85ae-76d1-888a-b6e24567cc9e",
-  "preflight": "blocked",
-  "featureReady": false,
-  "observations": {
-    "owner": {
-      "status": "available",
-      "ownerClientID": "4f970adb-a022-4d5e-9b89-d6e127c0ceea",
-      "supportsUntrustedAppInput": true
-    },
-    "catalogue": {
-      "status": "unavailable",
-      "error": "no-client-found"
-    },
-    "appToolsOnRouter": {
-      "status": "unavailable",
-      "error": "no-client-found"
-    },
-    "appToolsExternalClient": {
-      "status": "unavailable",
-      "error": "peer_closed"
-    }
+  "answeredTurnID": "01a08af6-3213-7d93-a4fb-40688303fca2",
+  "appBuild": "8378",
+  "appVersion": "26.903.61454",
+  "archiveOwner": "Codex desktop set_thread_archived",
+  "catalogueCount": 32,
+  "checkedAt": "2026-09-10T10:56:37Z",
+  "clientMessageID": "e668e0aa-27f0-47fb-8604-166f7c7bce75",
+  "desktopReadback": {
+    "answeredTurnStatus": "completed",
+    "permissionTurnStatus": "completed",
+    "reply": "2 + 2 = 4.",
+    "stoppedTurnStatus": "interrupted",
+    "threadID": "01a08af6-25f0-7892-a46d-667c9f647a9a"
   },
-  "notTested": [
-    "createTask",
-    "openUnloadedTask",
-    "sendMessage",
-    "streamReply",
-    "stopTurn",
-    "userApproval",
-    "deliveryRecovery",
-    "notebookTools",
+  "disposableTaskArchived": true,
+  "featureReady": false,
+  "fullVerifyRun": false,
+  "historyMessageCount": 2,
+  "installedNotebookPairChanged": false,
+  "nativeBridgePassed": true,
+  "notProven": [
+    "unfocusedOpen",
+    "nativeProjectlessMembership",
+    "sidecarOutboxRecovery",
+    "pairedIPadChat",
+    "bundledNotebookTools",
     "physicalIPad"
   ],
-  "desktopVersion": {
-    "CFBundleIdentifier": "com.openai.codex",
-    "CFBundleShortVersionString": "26.903.61454",
-    "CFBundleVersion": "8378"
+  "permissionTurnID": "01a08af6-4b70-70e0-be94-ef2fc3d75b7a",
+  "proofLogs": ".build/codex-desktop-proof/",
+  "schemaVersion": 2,
+  "sourceChangedDuringProof": [],
+  "sourceFiles": {
+    "Package.swift": "d8de3961215bc86a926f538f40b22d257ed61f47410a0fbf4f82ca8fc1a3fafc",
+    "Sources/NotebookCodex/CodexChannel.swift": "346c7ea844f22be9bb63849ab3baa33bb7be1a4d5ae0f883ecd2f8d3d670c0f6",
+    "Sources/NotebookCodex/CodexDesktopBridge.swift": "2719dac7fbd1e4256a3d0849a411b7cb1651b76ecde96f1e86664aab9d03c9ba",
+    "Sources/NotebookCodex/CodexMetadata.swift": "51cbc8bfdc04312278c59cc3886dde16d835e862d8800fc0fb7a255597fe694d",
+    "Sources/NotebookCodex/CodexProtocol.swift": "a11a2104270e7e451c5adc0fa55bd34ac3526363efe0c19535ebd8c4ec61e4d9",
+    "Sources/NotebookCodex/CodexRPC.swift": "879ccaeb08ee67a6c7beac3770c27c1e1068dc6cf0ee340d66feb004f54c961e",
+    "Tests/NotebookCodexBridgeHarness/main.swift": "08a02f10e9ec7a368c66d495c207e77c59dd79b771900007a21af0a9e23853c9",
+    "Tests/NotebookCodexTests/CodexConnectionTests.swift": "ddb64fb721a1f73d062a5a5eb3e8543e8160c257d15d50e6a2b27d5664da18a2",
+    "Tests/NotebookCodexTests/CodexProtocolTests.swift": "086ebeae8c386530cd4fe5dbde3a5cbd3a368f56d27dd0d0fc6397b0032989e9"
+  },
+  "sourceSHA256": "664afed39bc9449b32be7bbe38134cd6d0a30f0ca6d836e65cc1843af8e799c5",
+  "stoppedTurnID": "01a08af6-5ea4-7be3-b884-7a3950cc736e",
+  "threadID": "01a08af6-25f0-7892-a46d-667c9f647a9a",
+  "unitTests": {
+    "command": "swift test --filter 'Codex.*Tests'",
+    "passed": 25,
+    "warnings": 0
   }
 }
