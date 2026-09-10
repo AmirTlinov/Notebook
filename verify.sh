@@ -31,29 +31,12 @@ fi
 printf 'Доказательства проверки: %s\n' "$EVIDENCE"
 
 cd "$ROOT"
-source_fingerprint() {
-  python3 - "$ROOT" "$1" <<'PY'
-import hashlib, json, pathlib, stat, subprocess, sys
-root, output = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
-paths = subprocess.check_output([
-    "git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--",
-    "Package.swift", "Sources", "Tests", "Applications", "MCP", "verify.sh",
-], cwd=root).split(b"\0")
-files = []
-for path in sorted(set(p.decode() for p in paths if p)):
-    file = root / path
-    files.append({"path": path, "sha256": hashlib.sha256(file.read_bytes()).hexdigest(),
-                  "executable": bool(file.stat().st_mode & stat.S_IXUSR)} if file.is_file()
-                 else {"path": path, "deleted": True})
-data = json.dumps(files, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-output.write_text(json.dumps({"sha256": hashlib.sha256(data).hexdigest(), "files": files},
-                            ensure_ascii=False, sort_keys=True, indent=2) + "\n")
-PY
-}
-source_fingerprint "$EVIDENCE/source-before.json"
+python3 "$ROOT/Applications/notebook_release.py" verification-start \
+  --source-root "$ROOT" --evidence-dir "$EVIDENCE"
 swift test 2>&1 | tee "$EVIDENCE/core.log"
 "$ROOT/Applications/test-load-fixture.sh" 2>&1 | tee "$EVIDENCE/load-fixture.log"
 python3 "$ROOT/Tests/PreviewInstaller/run.py" 2>&1 | tee "$EVIDENCE/preview-installer.log"
+python3 "$ROOT/Tests/NotebookRelease/run.py" 2>&1 | tee "$EVIDENCE/release-tools.log"
 
 ICON_PROOF="$DERIVED/AppIcon.appiconset"
 "$ROOT/Applications/render-app-icon.sh" "$ICON_PROOF"
@@ -319,9 +302,6 @@ if rg -n 'BUG IN CLIENT OF libsqlite3|vnode unlinked while in use' "$EVIDENCE"/*
   printf '%s\n' 'Хранилище нельзя удалять до завершения его владельца и читателей.' >&2
   exit 1
 fi
-source_fingerprint "$EVIDENCE/source-after.json"
-if ! cmp -s "$EVIDENCE/source-before.json" "$EVIDENCE/source-after.json"; then
-  printf '%s\n' 'Исходники изменились во время проверки: результат не удостоверяет один срез.' >&2
-  exit 1
-fi
+python3 "$ROOT/Applications/notebook_release.py" verification-finish \
+  --source-root "$ROOT" --evidence-dir "$EVIDENCE"
 printf '\nNotebook проверен: Swift, локальные инструменты, MCP, macOS, iPadOS и отзывчивость Simulator прошли.\n'

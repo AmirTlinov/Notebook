@@ -7,12 +7,15 @@ import json
 from pathlib import Path
 import plistlib
 import subprocess
+import sys
 import tempfile
 import types
 import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(ROOT / "Applications"))
 SCRIPT = ROOT / "Applications/install-preview.sh"
 MODULE = types.ModuleType("notebook_preview_installer")
 CODE = SCRIPT.read_text().split("<<'PY'\n", 1)[1].rsplit("\nPY\n", 1)[0]
@@ -158,8 +161,10 @@ class PreviewInstallerTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="notebook-preview-guards-")
         self.root = Path(self.temp.name).resolve()
         self.source = self.root / "source"
-        for directory in ["Sources/NotebookCore", "Tests/NotebookCoreTests", "Applications/Shared", "Applications/iPad"]:
+        for directory in ["Sources/NotebookCore", "Tests/NotebookCoreTests", "Applications/Shared", "Applications/iPad", "MCP"]:
             (self.source / directory).mkdir(parents=True, exist_ok=True)
+        (self.source / "verify.sh").write_text("#!/bin/bash\n")
+        (self.source / "MCP/package.json").write_text('{}\n')
         (self.source / "Package.swift").write_text("// fixture build input\n")
         (self.source / "Sources/NotebookCore/Test.swift").write_text("let accepted = true\n")
         (self.source / "Tests/NotebookCoreTests/Test.swift").write_text("// test fixture input\n")
@@ -176,7 +181,7 @@ class PreviewInstallerTests(unittest.TestCase):
                                default_source=self.source, runner=self.cli)
 
     def refused(self, expected):
-        with self.assertRaises((MODULE.PreviewError, ValueError)) as caught:
+        with self.assertRaises((MODULE.ReleaseError, ValueError)) as caught:
             self.execute()
         self.assertIn(expected, str(caught.exception))
         self.assertEqual(self.cli.install_calls, [])
@@ -283,6 +288,13 @@ class PreviewInstallerTests(unittest.TestCase):
         self.refused('Notebook Lab уже установлен')
         self.assertFalse(any(call[1:2] == ["xcodebuild"] for call in self.cli.calls))
 
+    def test_existing_preview_still_refuses_build_only_mode(self):
+        self.cli.existing_preview = True
+        with self.assertRaisesRegex(MODULE.ReleaseError, 'Notebook Lab уже установлен'):
+            self.execute(mode="--build")
+        self.assertFalse(any(call[1:2] == ["xcodebuild"] for call in self.cli.calls))
+        self.assertFalse(self.cli.install_calls)
+
     def test_preview_appearing_during_build_is_not_replaced(self):
         self.cli.preview_during_build = True
         self.refused('Preview появился')
@@ -343,35 +355,35 @@ class PreviewInstallerTests(unittest.TestCase):
         self.assertEqual(self.cli.calls, [])
 
     def test_evidence_cannot_be_the_source_root(self):
-        with self.assertRaises(MODULE.PreviewError): self.execute(evidence=self.source)
+        with self.assertRaises(MODULE.ReleaseError): self.execute(evidence=self.source)
         self.assertEqual(self.cli.calls, [])
 
     def test_canonical_mac_path_is_never_a_destination(self):
-        with self.assertRaises(MODULE.PreviewError): self.execute(evidence=MODULE.CANONICAL_MAC / "evidence")
+        with self.assertRaises(MODULE.ReleaseError): self.execute(evidence=MODULE.CANONICAL_MAC / "evidence")
         self.assertEqual(self.cli.calls, [])
 
     def test_install_failure_is_not_retried_or_rolled_back(self):
         self.cli.fail_install = True
-        with self.assertRaises(MODULE.PreviewError): self.execute()
+        with self.assertRaises(MODULE.ReleaseError): self.execute()
         self.assertEqual(len(self.cli.install_calls), 1)
         self.assertEqual(json.loads((self.evidence / "receipt.json").read_text())["status"], "installation-unconfirmed")
 
     def test_unexpected_install_receipt_is_not_a_success_or_retry(self):
         self.cli.bad_install_receipt = True
-        with self.assertRaises(MODULE.PreviewError): self.execute()
+        with self.assertRaises(MODULE.ReleaseError): self.execute()
         self.assertEqual(len(self.cli.install_calls), 1)
         self.assertEqual(json.loads((self.evidence / "receipt.json").read_text())["status"], "installation-unconfirmed")
 
     def test_missing_installation_url_has_no_invented_bundle_url_fallback(self):
         self.cli.missing_installation_url = True
-        with self.assertRaises(MODULE.PreviewError) as caught: self.execute()
+        with self.assertRaises(MODULE.ReleaseError) as caught: self.execute()
         self.assertIn("Адрес установки не совпал", str(caught.exception))
         self.assertEqual(len(self.cli.install_calls), 1)
         self.assertEqual(json.loads((self.evidence / "receipt.json").read_text())["status"], "installation-unconfirmed")
 
     def test_installation_url_must_equal_current_device_metadata(self):
         self.cli.wrong_installation_url = True
-        with self.assertRaises(MODULE.PreviewError) as caught: self.execute()
+        with self.assertRaises(MODULE.ReleaseError) as caught: self.execute()
         self.assertIn("Адрес установки не совпал", str(caught.exception))
         self.assertEqual(len(self.cli.install_calls), 1)
         self.assertEqual(json.loads((self.evidence / "receipt.json").read_text())["status"], "installation-unconfirmed")
@@ -385,7 +397,7 @@ class PreviewInstallerTests(unittest.TestCase):
     def test_existing_preview_remains_refused_on_next_invocation(self):
         self.assertEqual(self.execute(), 0)
         first_count = len(self.cli.install_calls)
-        with self.assertRaises(MODULE.PreviewError) as caught:
+        with self.assertRaises(MODULE.ReleaseError) as caught:
             self.execute(evidence=self.root / "second-evidence")
         self.assertIn("Notebook Lab уже установлен", str(caught.exception))
         self.assertEqual(len(self.cli.install_calls), first_count)
