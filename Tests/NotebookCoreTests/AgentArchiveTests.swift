@@ -13,7 +13,7 @@ struct AgentArchiveTests {
     let target = CollaborationTarget(kind: .page, id: pageID)
     let reference = CollaborationReference(target: target, revision: try store.referenceRevision(target: target))
     let context = try store.appendContext(references: [reference], author: .human, actor: actor, text: "Сохранённый вопрос")
-    try body(store, actor, reference, context)
+    try body(store, actor, reference, SharedContext(id: context.id, entries: [context.entry]))
   }
 
   @Test func archivedRequestStopAndExactResponseRemainAddressReadableWithoutAWriter() throws {

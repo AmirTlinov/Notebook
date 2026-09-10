@@ -55,7 +55,7 @@ public struct NotebookReadQuery: Codable, Sendable {
   public enum Kind: String, Codable, Sendable {
     case workspaceHeader, itemHeaders, itemHeader, workingSet, sceneWindow, scenePaintOrder
     case page, document, documentState, boardItem, boardElement, ownerBoard, notebookPages, notebookDirectory, notebookPosition, spatialInk, presence
-    case attentionEvidence, contexts, actions, currentViewReceipt, pageVisionReceipt, targetRenderReceipt
+    case attentionEvidence, contexts, contextEntries, actions, currentViewReceipt, pageVisionReceipt, targetRenderReceipt
     case renderRequests, delivery, actionSnapshots, runtime
   }
   public var kind: Kind
@@ -146,6 +146,10 @@ public struct NotebookCommandDispatcher: Sendable {
     case .read:
       let queries = request.queries ?? []
       guard queries.count <= 128 else { throw invalid("resource_limit", "Один запрос читает до 128 адресованных владельцев.") }
+      guard queries.filter({ $0.kind == .contexts }).count <= 1,
+        queries.filter({ $0.kind == .contextEntries }).count <= 1 else {
+        throw invalid("resource_limit", "Один срез читает один каталог фрагментов и одну страницу истории.")
+      }
       let pages = Set(queries.flatMap { query in (query.kind == .page ? query.id.map { [$0] } ?? [] : []) + (query.pageIDs ?? []) })
       let heavy = Set(queries.flatMap { query in
         ([.document, .documentState, .boardItem].contains(query.kind) ? query.id.map { [$0] } ?? [] : [])
@@ -226,7 +230,8 @@ public struct NotebookCommandDispatcher: Sendable {
     case .spatialInk: return try .encode(store.readSpatialInk(surfaces: query.surfaces ?? []))
     case .presence: return try .encode(store.loadPresence())
     case .attentionEvidence: return try .encode(store.attentionEvidence(contextID: required(query.id), referenceID: required(query.referenceID)))
-    case .contexts: return try .encode(store.sharedContexts(contextID: query.id, limit: boundedLimit(query.limit)))
+    case .contexts: return try .encode(store.sharedContexts(contextID: query.id, limit: query.limit ?? 32, afterContextID: query.after, expectedCursor: query.revision))
+    case .contextEntries: return try .encode(store.sharedContextPage(contextID: required(query.id), afterEntryID: query.after, expectedCursor: query.revision, limit: query.limit ?? 32))
     case .actions: return try .encode(store.collaborationActions(afterID: query.after, contextID: query.contextID, limit: boundedLimit(query.limit)))
     case .currentViewReceipt: return try .encode(store.loadCurrentViewReceipt())
     case .pageVisionReceipt: return try .encode(store.loadPageVisionReceipt(required(query.id), revision: query.revision))

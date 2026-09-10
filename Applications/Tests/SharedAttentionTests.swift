@@ -127,7 +127,7 @@ final class SharedAttentionTests: XCTestCase {
     model.publishHumanContext(selection)
     await model.finishPendingPersistence()
     let context = try XCTUnwrap(model.activeSharedContext)
-    XCTAssertEqual(context.entries.first?.references, references)
+    XCTAssertEqual(context.previewEntries.first?.references, references)
     model.requestShow(try XCTUnwrap(references.first))
     XCTAssertEqual(model.returnPlaces.last?.presence, presence)
     model.requestReturnToPlace()
@@ -219,7 +219,7 @@ final class SharedAttentionTests: XCTestCase {
     await model.reloadExternalChanges()?.value
     await model.finishPendingPersistence()
     let context = try XCTUnwrap(model.activeSharedContext)
-    let reference = try XCTUnwrap(context.entries.first?.references.first)
+    let reference = try XCTUnwrap(context.previewEntries.first?.references.first)
     XCTAssertEqual(reference.target, .init(kind: .page, id: page.id))
     XCTAssertEqual(reference.revision, try NotebookStore.referenceRevision(target: reference.target,
       files: ["pages/\(page.id.uuidString.lowercased()).json": .encode(page)]))

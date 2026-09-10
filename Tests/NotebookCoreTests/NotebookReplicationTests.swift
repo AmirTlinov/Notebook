@@ -144,7 +144,7 @@ struct NotebookReplicationTests {
     let reference = CollaborationReference(target: target, revision: try NotebookStore.referenceRevision(target: target, files: files))
     let context = try a.appendContext(references: [reference], author: .human, actor: human, text: "Selection")
     let id = UUID(), source = try AgentPinnedSource.capture(requestID: id, reference: reference, files: files)
-    let request = AgentRequest(id: id, contextID: context.id, questionEntryID: context.entries[0].id,
+    let request = AgentRequest(id: id, contextID: context.id, questionEntryID: context.entry.id,
       grant: try .init(mode: .question, references: [reference]), authorDeviceID: human, sourceIDs: [source.id])
     try a.publishRecords(writes: [a.agentRequestFile(id): .encode(request), a.agentSourceFile(id, source.id): .encode(source)])
     try b.prepareEmptyWorkspace(workspaceID: header.workspaceID)

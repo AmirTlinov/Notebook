@@ -552,8 +552,8 @@ func durableContextDoesNotFollowHumanSelection() throws {
   let first = try f.store.appendContext(references: [source], author: .human, actor: f.human, select: true)
   let next = try f.store.appendContext(references: [source], author: .human, actor: f.human, select: true)
   let answer = try f.store.appendContext(references: [source], author: .agent, actor: f.agent,
-    contextID: first.id, replyTo: first.entries[0].id)
-  #expect(answer.entries.count == 2)
+    contextID: first.id, replyTo: first.entry.id)
+  #expect(answer.entry.replyTo == first.entry.id)
   let action = CollaborationAction(contextID: first.id, summary: "Ответ на исходный рисунок",
     references: [source], expected: [try f.expectation(f.page)], operations: [f.insert()])
   let receipt = try f.store.applyCollaborationAction(action, actor: f.agent)
@@ -562,9 +562,9 @@ func durableContextDoesNotFollowHumanSelection() throws {
   #expect(try f.store.sharedContexts().contexts.count == 2)
   #expect(try f.store.applyCollaborationAction(action, actor: f.agent) == receipt)
   let restarted = NotebookStore(root: f.root)
-  #expect(try restarted.sharedContexts().contexts.contains(answer))
+  #expect(try restarted.sharedContextEntry(contextID: first.id, entryID: answer.entry.id) == answer.entry)
   _ = try restarted.undoCollaborationAction(receipt.id, actor: f.human)
-  #expect(try restarted.sharedContexts().contexts.contains(answer))
+  #expect(try restarted.sharedContextEntry(contextID: first.id, entryID: answer.entry.id) == answer.entry)
 }
 
 @Test("Независимые ответы сходятся в одном контексте без перезаписи")
@@ -572,16 +572,16 @@ func contextEntriesMergeWithoutLosingIndependentReplies() throws {
   let f = try CollaborationFixture(); defer { f.clean() }
   let source = CollaborationReference(target: f.page, revision: try f.store.referenceRevision(target: f.page))
   let first = try f.store.appendContext(references: [source], author: .human, actor: f.human, select: true)
-  let replyA = SharedContextEntry(author: .agent, references: [source], replyTo: first.entries[0].id,
+  let replyA = SharedContextEntry(author: .agent, references: [source], replyTo: first.entry.id,
     stamp: .init(counter: 2, actor: f.agent))
-  let replyB = SharedContextEntry(author: .agent, references: [source], replyTo: first.entries[0].id,
+  let replyB = SharedContextEntry(author: .agent, references: [source], replyTo: first.entry.id,
     stamp: .init(counter: 2, actor: UUID()))
-  let a = SharedContext(id: first.id, entries: first.entries + [replyA])
-  let b = SharedContext(id: first.id, entries: first.entries + [replyB])
+  let a = SharedContext(id: first.id, entries: [first.entry] + [replyA])
+  let b = SharedContext(id: first.id, entries: [first.entry] + [replyB])
   _ = try f.store.receiveCollaboration(.init(contexts: [a]))
   _ = try f.store.receiveCollaboration(.init(contexts: [b]))
   let merged = try #require(f.store.sharedContexts().contexts.first)
-  #expect(Set(merged.entries.map(\.id)) == Set([first.entries[0].id, replyA.id, replyB.id]))
+  #expect(Set(merged.entries.map(\.id)) == Set([first.entry.id, replyA.id, replyB.id]))
   _ = try f.store.receiveCollaboration(.init(contexts: [a]))
   #expect(try f.store.sharedContexts().contexts.first == merged)
   let corrupted = SharedContextEntry(id: replyA.id, author: .human, references: [source], stamp: replyA.stamp)
@@ -630,7 +630,7 @@ func autonomousActionCannotReuseContextIdentity() throws {
   let action = CollaborationAction(id: context.id, summary: original.summary, expected: original.expected, operations: original.operations)
   #expect(throws: CollaborationError.self) { try f.store.applyCollaborationAction(action, actor: f.agent) }
   #expect(try f.store.loadPage(f.page.id).elements.isEmpty)
-  #expect(try f.store.sharedContexts().contexts == [context])
+  #expect(try f.store.sharedContexts().contexts == [SharedContext(id: context.id, entries: [context.entry])])
 }
 
 

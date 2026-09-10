@@ -420,16 +420,16 @@ final class NotebookAppModel {
   private(set) var isPeerConnected = false
   private(set) var collaborationActions: [CollaborationReceipt] = [] { didSet { collaborationReadEpoch &+= 1 } }
   private(set) var regionalReferenceStatuses: [UUID: ReferenceStatus] = [:]
-  private(set) var sharedContexts: [SharedContext] = [] { didSet { collaborationReadEpoch &+= 1 } }
+  private(set) var sharedContexts: [SharedContextSummary] = [] { didSet { collaborationReadEpoch &+= 1 } }
   private(set) var contextSelection: SharedContextSelection?
-  var activeSharedContext: SharedContext? {
+  var activeSharedContext: SharedContextSummary? {
     sharedContexts.first { $0.id == contextSelection?.contextID }
   }
-  var presentedSharedContext: SharedContext? {
+  var presentedSharedContext: SharedContextSummary? {
     guard showsCollaborationNotice else { return activeSharedContext }
-    let newest = sharedContexts.max { ($0.entries.last?.createdAt ?? .distantPast) < ($1.entries.last?.createdAt ?? .distantPast) }
+    let newest = sharedContexts.max { ($0.lastEntry?.createdAt ?? .distantPast) < ($1.lastEntry?.createdAt ?? .distantPast) }
     if let action = collaborationActions.first,
-      (action.undo?.completedAt ?? action.createdAt) >= (newest?.entries.last?.createdAt ?? .distantPast) {
+      (action.undo?.completedAt ?? action.createdAt) >= (newest?.lastEntry?.createdAt ?? .distantPast) {
       return sharedContexts.first { $0.id == action.action.resolvedContextID }
     }
     return newest ?? activeSharedContext
@@ -2157,13 +2157,13 @@ final class NotebookAppModel {
     }) { [weak self] result in
       Task { @MainActor [weak self] in
         guard let self else { return }
-        let context: SharedContext, sealed: NotebookAttentionSelection.Sealed
+        let context: SharedContextAppend, sealed: NotebookAttentionSelection.Sealed
         do { (context, sealed) = try result.get() }
         catch {
           if self.attentionGeneration == generation { self.agentRequestError = error.localizedDescription }
           return
         }
-        guard let entry = context.entries.last else { return }
+        let entry = context.entry
         self.pinnedAttentionSelections.append((context.id, sealed.selection))
         if self.pinnedAttentionSelections.count > 2 { self.pinnedAttentionSelections.removeFirst() }
         self.reloadExternalChanges()
@@ -2175,14 +2175,28 @@ final class NotebookAppModel {
   }
 
   func selectSharedContext(_ id: UUID?) {
-    let actor = actorID
-    attentionGeneration = UUID()
+    let actor = actorID, generation = UUID()
+    attentionGeneration = generation
     hasRestoredAgentQuestion = true
     agentQuestion = id.flatMap { id in
-      guard let entry = sharedContexts.first(where: { $0.id == id })?.entries.first(where: { $0.author == .human }) else { return nil }
+      guard let entry = sharedContexts.first(where: { $0.id == id })?.firstEntry, entry.author == .human else { return nil }
       return .init(contextID: id, entryID: entry.id, references: entry.references)
     }
-    enqueueStoreWrite(reload: true) { try $0.selectSharedContext(id, actor: actor) }
+    persistence.enqueueCommand(publishesChanges: true, { store in
+      try store.selectSharedContext(id, actor: actor)
+      return try id.flatMap { try store.sharedContextPage(contextID: $0, limit: 1).entries.first }
+    }) { [weak self] result in
+      Task { @MainActor [weak self] in
+        guard let self else { return }
+        self.reloadExternalChanges()
+        guard self.attentionGeneration == generation else { return }
+        do {
+          if let id, let entry = try result.get(), entry.author == .human {
+            self.agentQuestion = .init(contextID: id, entryID: entry.id, references: entry.references)
+          }
+        } catch { self.agentRequestError = error.localizedDescription }
+      }
+    }
   }
 
   /// Close the local indication immediately and persist deselection in the
@@ -2285,7 +2299,7 @@ final class NotebookAppModel {
     guard !Task.isCancelled, generation == collaborationReadGeneration,
       permitsBackgroundPreparation, let content = collaborationContent else { return }
     let version = collaborationReadEpoch, actions = collaborationActions
-    var references = sharedContexts.flatMap { $0.entries.flatMap(\.references) }
+    var references = sharedContexts.flatMap { $0.previewEntries.flatMap(\.references) }
     if let highlightedReference { references.append(highlightedReference) }
     let considered = references
     let worker = Task.detached(priority: .utility) {
@@ -2312,7 +2326,7 @@ final class NotebookAppModel {
   func refreshReferenceStatuses() async {
     guard permitsBackgroundPreparation, collaborationDetailsAreCurrent, let snapshot = collaborationReadSnapshot else { return }
     let version = collaborationReadEpoch
-    let references = sharedContexts.flatMap { $0.entries.flatMap(\.references) }.filter { $0.region != nil && $0.elementID == nil }
+    let references = sharedContexts.flatMap { $0.previewEntries.flatMap(\.references) }.filter { $0.region != nil && $0.elementID == nil }
     let store = store
     let values = await Task.detached(priority: .utility) {
       references.compactMap { reference -> (UUID, ReferenceStatus)? in
@@ -2582,21 +2596,26 @@ final class NotebookAppModel {
     }
   }
 
-  private func acceptCollaborationMetadata(actions: [CollaborationReceipt], contexts: SharedContextSnapshot,
+  private func acceptCollaborationMetadata(actions: [CollaborationReceipt], contexts: SharedContextDirectory,
     delivery: [DeviceActionReceipt]) {
     if collaborationActions != actions { collaborationActions = actions }
-    if sharedContexts != contexts.contexts { sharedContexts = contexts.contexts }
+    var prepared = contexts.contexts
+    if let selected = contexts.selectedContext, !prepared.contains(where: { $0.id == selected.id }) {
+      if prepared.count == 64 { prepared.removeLast() }
+      prepared.append(selected)
+    }
+    if sharedContexts != prepared { sharedContexts = prepared }
     contextSelection = contexts.selection
     if !hasRestoredAgentQuestion {
       hasRestoredAgentQuestion = true
-      if let context = contexts.contexts.first(where: { $0.id == contexts.selection?.contextID }),
-        let entry = context.entries.first(where: { $0.author == .human }) {
+      if let context = prepared.first(where: { $0.id == contexts.selection?.contextID }),
+        let entry = context.previewEntries.first(where: { $0.author == .human }) {
         agentQuestion = .init(contextID: context.id, entryID: entry.id, references: entry.references)
       }
     }
     deviceActionReceipts = delivery
     let latest = collaborationActions.first
-    let attention = sharedContexts.flatMap(\.entries).filter { $0.author == .agent }.max { $0.createdAt < $1.createdAt }
+    let attention = sharedContexts.flatMap(\.previewEntries).filter { $0.author == .agent }.max { $0.createdAt < $1.createdAt }
     let key = "\(latest?.id.uuidString ?? "")|\(latest?.undo?.completedAt.timeIntervalSince1970 ?? 0)|\(attention?.id.uuidString ?? "")"
     guard key != collaborationNoticeKey else { return }
     let firstLoad = collaborationNoticeKey == nil

@@ -6,14 +6,11 @@ struct NotebookCollaborationView: View {
   @State private var showsHistory = false
   @State private var historyRequestedAt: ContinuousClock.Instant?
   @State private var pendingShow: CollaborationReference?
-  private var contexts: [SharedContext] {
-    model.sharedContexts.sorted { left, right in
-      latestDate(left) > latestDate(right)
-    }
-  }
-  private func latestDate(_ context: SharedContext) -> Date {
-    max(context.entries.map(\.createdAt).max() ?? .distantPast,
-      model.collaborationActions.first { $0.action.resolvedContextID == context.id }?.createdAt ?? .distantPast)
+  @State private var historyDirectory: SharedContextDirectory?
+  @State private var directoryError: String?
+  @State private var loadingDirectory = false
+  private var contexts: [SharedContextSummary] {
+    historyDirectory?.contexts ?? model.sharedContexts
   }
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -27,10 +24,10 @@ struct NotebookCollaborationView: View {
           Button(action: openHistory) {
             VStack(alignment: .leading, spacing: 4) {
               Text(latest?.undo != nil ? "Ход отменён" : "Продолжение мысли").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-              Text(latest?.action.summary ?? context.entries.last?.references.first?.label ?? "Общий фрагмент").font(.callout).lineLimit(3)
+              Text(latest?.action.summary ?? context.previewEntries.last?.references.first?.label ?? "Общий фрагмент").font(.callout).lineLimit(3)
             }.frame(maxWidth: .infinity, alignment: .leading)
           }.accessibilityIdentifier("collaboration-notice-history")
-          if let reference = latest.flatMap({ model.results(for: $0).first }) ?? context.entries.last?.references.first {
+          if let reference = latest.flatMap({ model.results(for: $0).first }) ?? context.previewEntries.last?.references.first {
             Button("Показать") { model.requestShow(reference) }.frame(minHeight: 44).accessibilityIdentifier("collaboration-show")
           }
           if let latest, latest.undo == nil {
@@ -64,7 +61,12 @@ struct NotebookCollaborationView: View {
         List {
           ForEach(contexts) { context in
             Section {
-              ForEach(context.entries) { entry in
+              NavigationLink("Открыть историю фрагмента") {
+                NotebookContextHistoryView(contextID: context.id) { reference in
+                  pendingShow = reference; showsHistory = false
+                }
+              }.accessibilityIdentifier("context-history-" + context.id.uuidString.lowercased())
+              ForEach(context.previewEntries) { entry in
                 if let text = entry.text, !text.isEmpty {
                   VStack(alignment: .leading, spacing: 5) {
                     Text(entry.author == .human ? "Вы" : "Ответ агента")
@@ -94,11 +96,24 @@ struct NotebookCollaborationView: View {
                 Button("Продолжить этот фрагмент") { model.selectSharedContext(context.id) }.frame(minHeight: 44)
               }
             } header: {
-              Text(context.entries.first?.references.first.map { model.locationTitle(for: $0) } ?? "Самостоятельный ход")
+              Text(context.previewEntries.first?.references.first.map { model.locationTitle(for: $0) } ?? "Самостоятельный ход")
             }
           }
         }
         .accessibilityIdentifier("collaboration-history-list")
+        .safeAreaInset(edge: .bottom) {
+          VStack {
+            if let directoryError { Text(directoryError).font(.caption).accessibilityIdentifier("context-directory-error") }
+            HStack {
+              Button { Task { await loadDirectory() } } label: { Text("К новым фрагментам").frame(minHeight: 44) }
+              if directoryError == nil, let directory = historyDirectory, let after = directory.nextContextID {
+                Button { Task { await loadDirectory(after: after, cursor: directory.readCursor) } } label: { Text("Следующие фрагменты").frame(minHeight: 44) }
+                  .accessibilityIdentifier("context-directory-next")
+              }
+            }.disabled(loadingDirectory).padding(8)
+          }.background(.regularMaterial)
+        }
+        .task { await loadDirectory() }
         .buttonStyle(.borderless)
         .navigationTitle("Совместные ходы")
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { showsHistory = false } } }
@@ -110,6 +125,20 @@ struct NotebookCollaborationView: View {
           }
         }
     }
+  }
+
+  private func loadDirectory(after: UUID? = nil, cursor: String? = nil) async {
+    guard !loadingDirectory else { return }
+    loadingDirectory = true
+    defer { loadingDirectory = false }
+    let store = model.store
+    do {
+      let value = try await Task.detached(priority: .userInitiated) {
+        try store.sharedContexts(contextID: nil, limit: 32, afterContextID: after, expectedCursor: cursor)
+      }.value
+      guard !Task.isCancelled, showsHistory else { return }
+      historyDirectory = value; directoryError = nil
+    } catch { directoryError = "История изменилась или недоступна. Откройте новые фрагменты. " + error.localizedDescription }
   }
 
   private func openHistory() {
@@ -151,6 +180,57 @@ struct NotebookCollaborationView: View {
   }
 }
 
+/// Only one addressed history page is retained, including after navigation.
+private struct NotebookContextHistoryView: View {
+  @Environment(NotebookAppModel.self) private var model
+  let contextID: UUID
+  let show: (CollaborationReference) -> Void
+  @State private var page: SharedContextPage?
+  @State private var after: UUID?
+  @State private var cursor: String?
+  @State private var request = UUID()
+  @State private var errorMessage: String?
+  @State private var loading = false
+
+  var body: some View {
+    List {
+      ForEach(page?.entries ?? []) { entry in
+        Section(entry.author == .human ? "Вы" : "Агент") {
+          if let text = entry.text { Text(text).textSelection(.enabled) }
+          ForEach(entry.references) { reference in
+            Button(reference.label.isEmpty ? model.locationTitle(for: reference) : reference.label) { show(reference) }
+          }
+        }
+      }
+      if let errorMessage { Text(errorMessage).accessibilityIdentifier("context-history-error") }
+    }
+    .accessibilityIdentifier("context-entry-list")
+    .safeAreaInset(edge: .bottom) {
+      HStack {
+        Button { after = nil; cursor = nil; request = UUID() } label: { Text("В начало").frame(minHeight: 44) }
+        Spacer()
+        if errorMessage == nil, let page, let next = page.nextEntryID {
+          Button { after = next; cursor = page.readCursor; request = UUID() } label: { Text("Дальше").frame(minHeight: 44) }
+            .accessibilityIdentifier("context-history-next")
+        }
+      }.disabled(loading).padding(12).background(.regularMaterial)
+    }
+    .navigationTitle("История фрагмента")
+    .task(id: request) {
+      loading = true
+      defer { loading = false }
+      let store = model.store, after = after, cursor = cursor
+      do {
+        let value = try await Task.detached(priority: .userInitiated) {
+          try store.sharedContextPage(contextID: contextID, afterEntryID: after, expectedCursor: cursor, limit: 32)
+        }.value
+        guard !Task.isCancelled else { return }
+        page = value; errorMessage = nil
+      } catch { errorMessage = "История изменилась или недоступна. Вернитесь в начало. " + error.localizedDescription }
+    }
+  }
+}
+
 struct NotebookAttentionMarks: View {
   @Environment(NotebookAppModel.self) private var model
   let presence: SessionPresence
@@ -159,7 +239,7 @@ struct NotebookAttentionMarks: View {
       // A retained history entry is not a live indication. The same question
       // owns both its card and its frame, even during delayed SQL publication.
       if let question = model.agentQuestion {
-        let entry = model.sharedContexts.first { $0.id == question.contextID }?.entries.first { $0.id == question.entryID }
+        let entry = model.sharedContexts.first { $0.id == question.contextID }?.previewEntries.first { $0.id == question.entryID }
         ForEach(question.references) { reference in
           if let rect = NotebookAttentionProjection.frame(reference,model:model,presence:presence) {
             mark(rect, human:true, label:"Указано" + (model.referenceStatusLabel(reference).map { " · " + $0 } ?? ""), changed:entry?.requiresReview ?? false)
@@ -167,7 +247,7 @@ struct NotebookAttentionMarks: View {
         }
       }
       if model.showsCollaborationNotice {
-        ForEach(model.presentedSharedContext?.entries.filter { $0.author == .agent } ?? []) { attention in
+        ForEach(model.presentedSharedContext?.previewEntries.filter { $0.author == .agent } ?? []) { attention in
           ForEach(attention.references) { reference in
             if let rect = NotebookAttentionProjection.frame(reference,model:model,presence:presence) {
               mark(rect, human:false, label:"Понимание агента" + (model.referenceStatusLabel(reference).map { " · " + $0 } ?? ""), changed:attention.requiresReview)

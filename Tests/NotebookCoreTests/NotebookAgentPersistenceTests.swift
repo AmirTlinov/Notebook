@@ -4,7 +4,7 @@ import Testing
 
 @Suite("Historical request replication remains immutable")
 struct NotebookAgentPersistenceTests {
-  private func fixture(_ body: (NotebookStore, UUID, CollaborationReference, SharedContext) throws -> Void) throws {
+  private func fixture(_ body: (NotebookStore, UUID, CollaborationReference, SharedContextAppend) throws -> Void) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), actor = UUID()
@@ -17,7 +17,7 @@ struct NotebookAgentPersistenceTests {
 
   @Test func immutableInputsAndExecutionTerminalStatesRejectConflictingReplication() throws {
     try fixture { store, actor, reference, context in
-      let request = AgentRequest(id: UUID(), contextID: context.id, questionEntryID: context.entries[0].id,
+      let request = AgentRequest(id: UUID(), contextID: context.id, questionEntryID: context.entry.id,
         grant: try .init(mode: .question, references: [reference]), authorDeviceID: actor, sourceIDs: [reference.id])
       let file = store.agentRequestFile(request.id), original = try JSONValue.encode(request)
       #expect(try store.mergeAgentRecord(file: file, value: original, previous: original) == original)

@@ -1,5 +1,8 @@
 import { TILE_SIZE, offsetWorld, worldPointSchema } from "./spatial.js";
-type ContextSnapshot = { contexts:Array<{id:string;entries:Array<{id:string;author:string;requiresReview:boolean;references:Array<{id:string;target:object;elementID?:string;revision:string;label:string}>}>}>;selection?:{contextID?:string} };
+type ContextEntry = {id:string;author:string;requiresReview:boolean;references:Array<{id:string;target:object;elementID?:string;revision:string;label:string}>};
+type ContextSummary = {id:string;firstEntry?:ContextEntry;lastEntry?:ContextEntry};
+type ContextSnapshot = {contexts:ContextSummary[];selectedContext?:ContextSummary;selection?:{contextID?:string};nextContextID?:string;readCursor:string};
+type ContextPage = {id:string;entries:ContextEntry[];nextEntryID?:string;readCursor:string};
 import { notebookResponseSchema } from "./contracts.js";
 import { runBridge, BridgeError } from "./bridge.js";
 import { registerCollaborationTools } from "./collaboration-tools.js";
@@ -322,7 +325,8 @@ async function observeContext(store: NotebookStore, contextID?: string) {
     } else if (current.kind === "document") content = observedDocument(current.document, current.state) as Record<string, unknown>;
     else content = { kind: "board", boardID: presence.boardID, itemCount: board.freeItems.length + board.stacks.reduce((n, stack) => n + stack.itemIDs.length, 0) };
     const selectedID = contextID ?? shared.selection?.contextID;
-    const context = shared.contexts.find(value => sameID(value.id, selectedID ?? ""));
+    const selected = shared.contexts.find(value => sameID(value.id, selectedID ?? "")) ?? shared.selectedContext;
+    const context = selectedID && selected ? await store.read<ContextPage>({kind:"contextEntries",id:selectedID,limit:8}) : undefined;
     if (contextID && !context) throw new BridgeError({code:"context_missing",message:"Общий фрагмент не найден."});
     const references = await Promise.all((context?.entries ?? []).flatMap(entry => entry.references.map(async reference => {
       try {
@@ -358,8 +362,9 @@ async function observeContext(store: NotebookStore, contextID?: string) {
       openProgress: presence.openProgress, documentPageIndex: presence.documentPageIndex,
       item: { id: item.id, kind: item.kind, title: item.title || null, identity: itemIdentity(item, board, spatialInk) },
       content, references, context: context ?? null,
-      contexts: shared.contexts.map(c => ({id:c.id,sourceCount:c.entries.reduce((n,e)=>n+e.references.length,0),
-        label:c.entries[0]?.references[0]?.label ?? "Самостоятельный ход"})),
+      contexts: shared.contexts.map(c => ({id:c.id,previewSourceCount:c.firstEntry?.references.length ?? 0,
+        label:c.firstEntry?.references[0]?.label ?? "Самостоятельный ход"})),
+      contextDirectory: {nextContextID:shared.nextContextID,readCursor:shared.readCursor},
       actions: await Promise.all(relatedActions.map(action => publicAction(action,store))),
       visual, surface, changeKeys,
       connection: runtime && Date.now() / 1000 - runtime.updatedAt < 5 ? runtime : { status: "unavailable", lastKnown: runtime },

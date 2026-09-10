@@ -292,26 +292,6 @@ extension NotebookStore {
 }
 
 extension NotebookStore {
-  public func sharedContexts(contextID: UUID?, limit: Int = 64) throws -> SharedContextSnapshot {
-    guard (1...128).contains(limit) else { throw NotebookStorageError.limitExceeded("context_page") }
-    return try readTransaction { _ in
-      let selection = try readContextSelection()
-      let files: [String]
-      if let contextID { files = [contextFile(contextID)] }
-      else {
-        files = try currentSQL!.rows("SELECT address FROM metadata_index WHERE kind='context' ORDER BY created_at DESC,address DESC LIMIT ?", [.integer(Int64(limit))]).compactMap { $0[0].text.map { String($0.dropLast()) } }
-      }
-      var contexts = try files.compactMap { try storedValue($0)?.decode(SharedContext.self) }
-      if contextID == nil, let selected = selection?.contextID, !contexts.contains(where: { $0.id == selected }),
-        let context = try storedValue(contextFile(selected))?.decode(SharedContext.self) {
-        if contexts.count == limit { contexts.removeLast() }
-        contexts.append(context)
-      }
-      for context in contexts { try context.validate() }
-      return .init(contexts: contexts, selection: selection)
-    }
-  }
-
   public func readBoardItem(_ itemID: UUID) throws -> BoardNode? {
     try readTransaction { _ in
       guard let owner = try currentSQL!.rows("SELECT board_id,address FROM item_owners WHERE item_id=?", [.text(itemID.uuidString.lowercased())]).first,

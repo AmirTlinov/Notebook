@@ -85,6 +85,7 @@ extension NotebookStore {
       .text(fragment.collection), .text(fragment.member), .integer(Int64(fragment.position)), .text(hash)])
     try updateBoardContribution(address: fragment.address, previous: previousHash, next: hash, database: database)
     try updateAddressIndexes(fragment, database: database)
+    try noteContextHistoryChange(file: fragment.file, database: database)
     try updateSearchIndex(fragment, database: database)
     try noteReferenceChange(fragment.address, file: fragment.file, database: database)
     if !Self.localRecord(fragment.file) { try database.recordChange(.init(address: fragment.address, blobHash: hash)) }
@@ -118,6 +119,7 @@ extension NotebookStore {
         try updateBoardContribution(address: address, previous: row[4].text, next: nil, database: database)
         try noteReferenceChange(address, file: file, database: database)
         try database.run("DELETE FROM records WHERE address=?", [.text(address)])
+        try noteContextHistoryChange(file: file, database: database)
         if !Self.localRecord(file) { try database.recordChange(.init(address: address, blobHash: nil)) }
       }
       if descendants.isEmpty { return }

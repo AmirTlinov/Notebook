@@ -33,7 +33,7 @@ struct ArchiveConsolidationTests {
       let context = try current.appendContext(references: [reference], author: .human, actor: actor, text: "Фрагмент", select: true)
       let id = UUID()
       let source = try AgentPinnedSource.capture(requestID: id, reference: reference, files: content.sourceFiles())
-      request = AgentRequest(id: id, contextID: context.id, questionEntryID: context.entries[0].id,
+      request = AgentRequest(id: id, contextID: context.id, questionEntryID: context.entry.id,
         grant: try .init(mode: .question, references: [reference]), authorDeviceID: actor, sourceIDs: [reference.id])
       try current.publishRecords(writes: [current.agentRequestFile(id): .encode(request),
         current.agentSourceFile(id, reference.id): .encode(source),

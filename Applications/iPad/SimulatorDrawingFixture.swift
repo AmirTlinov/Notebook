@@ -390,8 +390,14 @@
           let target = CollaborationTarget(kind: .page, id: pageID)
           let revision = try store.referenceRevision(target: target, elementID: "shared-element")
           for index in 0..<120 {
-            _ = try store.appendContext(references: [.init(target: target, elementID: "shared-element",
+            let captured = try store.appendContext(references: [.init(target: target, elementID: "shared-element",
               revision: revision, label: "Фрагмент \(index + 1)")], author: .human, actor: actor, select: index == 119)
+            if index == 119, ProcessInfo.processInfo.arguments.contains("--notebook-history-pages-fixture") {
+              for reply in 1...40 {
+                _ = try store.appendContext(references: [], author: .agent, actor: actor,
+                  contextID: captured.id, replyTo: captured.entry.id, text: "Ответ \(reply)")
+              }
+            }
           }
         }
         let model = NotebookAppModel(store: store, startsNearbySync: false)

@@ -143,7 +143,7 @@ struct NotebookArchiveActivationTests {
     let context = try store.appendContext(references: [reference], author: .human, actor: actor, text: "Existing question", select: false)
     let id = UUID(), source = try AgentPinnedSource.capture(requestID: UUID(), reference: reference, files: content.sourceFiles())
     let pinned = AgentPinnedSource(id: source.id, requestID: id, reference: reference, payload: source.payload, image: nil)
-    let request = AgentRequest(id: id, contextID: context.id, questionEntryID: context.entries[0].id,
+    let request = AgentRequest(id: id, contextID: context.id, questionEntryID: context.entry.id,
       grant: try .init(mode: .question, references: [reference]), authorDeviceID: actor, sourceIDs: [reference.id])
     // Import a historical stopped record, never start a removed executor to seed it.
     try store.publishRecords(writes: [store.agentRequestFile(id): .encode(request),

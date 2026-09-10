@@ -168,6 +168,32 @@ final class DrawingResponsivenessTests: XCTestCase {
     }
   }
 
+  func testHistoryReadsOlderContextsAndContinuesOneAddressedEntryPage() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-collaboration-fixture",
+      "--notebook-history-performance-fixture", "--notebook-history-pages-fixture"]
+    launchPortraitFixture(app)
+    XCTAssertTrue(app.buttons["collaboration-history"].waitForExistence(timeout: 15))
+    app.buttons["collaboration-history"].tap()
+    let nextContexts = app.buttons["context-directory-next"]
+    XCTAssertTrue(nextContexts.waitForExistence(timeout: 5))
+    nextContexts.tap()
+    XCTAssertTrue(app.staticTexts["Фрагмент 88"].waitForExistence(timeout: 5))
+    app.buttons["К новым фрагментам"].tap()
+    let open = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "context-history-")).firstMatch
+    XCTAssertTrue(open.waitForExistence(timeout: 5)); open.tap()
+    XCTAssertTrue(app.staticTexts["Ответ 1"].waitForExistence(timeout: 5))
+    let nextEntries = app.buttons["context-history-next"]
+    XCTAssertTrue(nextEntries.exists); nextEntries.tap()
+    XCTAssertTrue(app.staticTexts["Ответ 32"].waitForExistence(timeout: 5))
+    XCTAssertFalse(nextEntries.exists, "The last bounded page does not invent another continuation")
+    app.buttons["В начало"].tap()
+    XCTAssertTrue(app.staticTexts["Ответ 1"].waitForExistence(timeout: 5))
+    let proof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    proof.name = "addressed-context-history"; proof.lifetime = .keepAlways; add(proof)
+  }
+
   func testCodexPanelKeepsDraftWithoutMovingPaperOnCollapseAndRotation() {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
@@ -211,9 +237,10 @@ final class DrawingResponsivenessTests: XCTestCase {
     if !field.isHittable { panel.swipeUp() }
     XCTAssertTrue(field.isHittable)
     XCTAssertLessThanOrEqual(field.frame.maxY, keyboard.frame.minY + 1)
-    // Refocusing by touch can select a word; explicitly place the insertion
-    // point before testing an append, using the normal system editing command.
-    field.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: .command)
+    // The known one-line draft ends before the field's right edge. A real tap
+    // in that empty first-line area sets the insertion point after its glyphs;
+    // a hardware-key shortcut need not control the software keyboard selection.
+    field.coordinate(withNormalizedOffset: .init(dx: 0.95, dy: 0.25)).tap()
     field.typeText(" after rotation")
     XCTAssertEqual(field.value as? String, "Keep this draft after rotation")
     XCTAssertFalse(app.buttons["notebook-chat-send"].isEnabled, "An offline fixture invents neither a task nor an executor")

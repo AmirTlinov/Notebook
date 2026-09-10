@@ -96,7 +96,7 @@ const transport = new StdioClientTransport({ command: join(mcpRoot, "run.sh"),
   assert.ok(pendingView.content);
   assert.ok(pendingView.changes.changed.length);
   const pointing = await call("notebook_point", {references:[{target:page,element_id:"meaning",label:"Я вижу заголовок мысли"}]});
-  assert.equal(pointing.context.entries[0].references[0].target.id.toLowerCase(),pageID.toLowerCase());
+  assert.equal(pointing.context.entry.references[0].target.id.toLowerCase(),pageID.toLowerCase());
   const search = await call("notebook_search",{query:"Meaning"});
   assert.ok(search.results.some((r:Data) => r.elementID === "meaning" && r.reference.revision));
   const targetRender = await call("notebook_render",{target:page,expected_revision:content.agentRevision});
@@ -113,9 +113,18 @@ const transport = new StdioClientTransport({ command: join(mcpRoot, "run.sh"),
   await fixtureControl(root,"page",humanPage);
   const continued = await call("notebook_action",{action_id:edited.action.id});
   assert.ok(continued.action.continuations.length >= 2);
-  const interpretation = await call("notebook_point",{context_id:pointing.context.id,reply_to:pointing.context.entries[0].id,references:[{target:page,element_id:"meaning",
-    source_revision:pointing.context.entries[0].references[0].revision,label:"Я рассматриваю исходный заголовок"}]});
-  assert.equal(interpretation.context.entries[1].references[0].revision,pointing.context.entries[0].references[0].revision);
+  const interpretation = await call("notebook_point",{context_id:pointing.context.id,reply_to:pointing.context.entry.id,references:[{target:page,element_id:"meaning",
+    source_revision:pointing.context.entry.references[0].revision,label:"Я рассматриваю исходный заголовок"}]});
+  assert.equal(interpretation.context.entry.references[0].revision,pointing.context.entry.references[0].revision);
+  const historyPage = await call("notebook_read_context", {context_id:pointing.context.id,limit:1});
+  assert.equal(historyPage.entries[0].id.toLowerCase(),pointing.context.entry.id.toLowerCase());
+  assert.equal(typeof historyPage.readCursor,"string");
+  const historyNext = await call("notebook_read_context", {context_id:pointing.context.id,after_id:historyPage.nextEntryID,read_cursor:historyPage.readCursor,limit:1});
+  assert.equal(historyNext.entries[0].id.toLowerCase(),interpretation.context.entry.id.toLowerCase());
+  assert.equal(historyNext.nextEntryID,undefined);
+  const directory = await call("notebook_read_context", {limit:1});
+  assert.ok(directory.contexts[0].firstEntry);
+  assert.equal(directory.contexts[0].entries,undefined);
   const reconsider = await call("notebook_observe", {context_id:pointing.context.id});
   assert.equal(reconsider.references.find((r:Data)=>r.author === "agent").status,"changed");
   const undone = await call("notebook_undo", { action_id: edited.action.id });

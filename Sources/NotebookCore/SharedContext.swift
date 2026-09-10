@@ -44,17 +44,7 @@ public struct SharedContext: Codable, Equatable, Sendable, Identifiable {
       }
     }
     for entry in entries {
-      guard (entry.text?.utf8.count ?? 0) <= 1_048_576,
-        !entry.references.isEmpty || !(entry.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true),
-        entry.references.count <= 32, entry.references.allSatisfy({ $0.label.count <= 1000 }),
-        Set(entry.references.map(\.id)).count == entry.references.count else {
-        throw CollaborationError("invalid_reference", "Указание содержит до 32 уникальных фрагментов.")
-      }
-      if let reply = entry.replyTo {
-        guard let sourceCounter = counters[reply], sourceCounter < entry.stamp.counter else {
-          throw CollaborationError("source_missing", "Ответ называет ранее рассмотренное указание этого контекста.")
-        }
-      }
+      try entry.validate(sourceCounter: entry.replyTo.flatMap { counters[$0] })
     }
   }
 }
@@ -75,6 +65,24 @@ public struct SharedContextEntry: Codable, Equatable, Sendable, Identifiable {
     self.id = id; self.author = author; self.references = references
     self.replyTo = replyTo; self.text = text; self.stamp = stamp; self.requiresReview = requiresReview; self.createdAt = createdAt
   }
+
+  func validate(sourceCounter: UInt64?) throws {
+    guard stamp.counter <= VersionStamp.maximumCounter else {
+      throw CollaborationError("invalid_context_clock", "Версия указания выходит за предел точного причинного счётчика.")
+    }
+    guard (text?.utf8.count ?? 0) <= 1_048_576,
+      !references.isEmpty || !(text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true),
+      references.count <= 32, references.allSatisfy({ $0.label.count <= 1000 }),
+      Set(references.map(\.id)).count == references.count else {
+      throw CollaborationError("invalid_reference", "Указание содержит до 32 уникальных фрагментов.")
+    }
+    if replyTo != nil {
+      guard let sourceCounter, sourceCounter < stamp.counter else {
+        throw CollaborationError("source_missing", "Ответ называет ранее рассмотренное указание этого контекста.")
+      }
+    }
+  }
+
 }
 
 /// Selection changes attention, never the address of an already started action.
@@ -135,7 +143,7 @@ extension NotebookStore {
   @discardableResult
   public func appendContext(references: [CollaborationReference], author: SharedContextEntry.Author,
     actor: UUID, contextID: UUID? = nil, replyTo: UUID? = nil, text: String? = nil, select: Bool = false,
-    sourceWorkspaceID: UUID? = nil) throws -> SharedContext {
+    sourceWorkspaceID: UUID? = nil) throws -> SharedContextAppend {
     try prepare()
     return try withMutationLock {
       // A newly captured native context seals its exact sources in this write
@@ -150,27 +158,38 @@ extension NotebookStore {
           }
         }
       }
-      var context: SharedContext
-      if let contextID {
-        guard let existing = try storedValue(contextFile(contextID))?.decode(SharedContext.self) else {
-          throw CollaborationError("context_missing", "Общий фрагмент не найден.")
-        }
-        guard replyTo != nil else { throw CollaborationError("source_required", "Продолжение называет исходное указание.") }
-        context = existing
+      let id = contextID ?? UUID(), file = contextFile(id), root = contextFile(id) + "#"
+      let database = currentSQL!
+      let parent: SharedContextEntry?
+      if contextID != nil {
+        guard try hasStoredValue(file) else { throw CollaborationError("context_missing", "Общий фрагмент не найден.") }
+        guard let replyTo else { throw CollaborationError("source_required", "Продолжение называет исходное указание.") }
+        parent = try sharedContextEntry(contextID: id, entryID: replyTo)
+        guard parent != nil else { throw CollaborationError("source_missing", "Исходное указание отсутствует в этом контексте.") }
       } else {
         guard replyTo == nil else { throw CollaborationError("context_required", "Для ответа нужен контекст.") }
-        context = .init()
+        parent = nil
       }
-      guard !references.isEmpty || !(text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) else { throw CollaborationError("invalid_reference", "Укажите хотя бы один фрагмент.") }
-      let previous = context.entries.map(\.stamp.counter).max() ?? 0
-      guard let stamp = VersionStamp(counter: previous, actor: actor).advanced(by: actor) else {
+      let last = try database.rows("SELECT address,position FROM records WHERE parent=? AND collection='entries' ORDER BY position DESC,member DESC LIMIT 1", [.text(root)]).first
+      let lastEntry = try last.flatMap { try storedEntry(at: $0[0].text!) }
+      let counter = max(parent?.stamp.counter ?? 0, lastEntry?.stamp.counter ?? 0)
+      guard let stamp = VersionStamp(counter: counter, actor: actor).advanced(by: actor),
+        (last?[1].integer ?? -1) < Int64.max else {
         throw CollaborationError("version_exhausted", "Версия указания достигла предела.")
       }
       let entry = SharedContextEntry(author: author, references: references, replyTo: replyTo, text: text, stamp: stamp)
-      try context.merge(.init(id: context.id, entries: [entry]))
-      let selection = select ? try nextContextSelection(context.id, actor: actor) : nil
-      try publishCollaboration(writes: contextWrites([context], selection: selection))
-      return context
+      try entry.validate(sourceCounter: parent?.stamp.counter)
+      if contextID == nil {
+        let header = try NotebookRecordCodec.encode(.encode(SharedContext(id: id)), file: file).first!
+        try writeFragment(header, database: database)
+      }
+      try writeFragment(.init(address: root + "/entries/@" + entry.id.uuidString.lowercased(), file: file,
+        parent: root, collection: "entries", member: entry.id.uuidString.lowercased(),
+        position: Int((last?[1].integer ?? -1) + 1), value: .encode(entry), collections: []), database: database)
+      if select {
+        try publishCollaboration(writes: ["collaboration/selection.json": .encode(nextContextSelection(id, actor: actor))])
+      }
+      return .init(id: id, entry: entry)
     }
   }
 
@@ -183,7 +202,10 @@ extension NotebookStore {
   public func selectSharedContext(_ id: UUID?, actor: UUID) throws {
     try prepare()
     try withMutationLock {
-      try publishCollaboration(writes: contextWrites([], selection: nextContextSelection(id, actor: actor)))
+      guard try id == nil || hasStoredValue(contextFile(id!)) else {
+        throw CollaborationError("context_missing", "Выбранный контекст ещё не получен.")
+      }
+      try publishCollaboration(writes: ["collaboration/selection.json": .encode(nextContextSelection(id, actor: actor))])
     }
   }
 }

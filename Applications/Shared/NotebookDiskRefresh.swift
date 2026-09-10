@@ -6,7 +6,7 @@ import NotebookCore
 struct NotebookDiskRefresh: Sendable {
   let scene: NotebookSceneState
   let actions: [CollaborationReceipt]
-  let contexts: SharedContextSnapshot
+  let contexts: SharedContextDirectory
   let delivery: [DeviceActionReceipt]
 
   static func prepare(store: NotebookStore, presence: SessionPresence,

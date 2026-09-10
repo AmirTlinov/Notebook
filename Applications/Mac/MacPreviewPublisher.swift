@@ -213,8 +213,8 @@ final class MacPreviewPublisher {
 
   private func scheduleReferenceVision(_ model: NotebookAppModel) {
     guard started, model.permitsBackgroundPreparation else { return }
-    let references = Array(model.sharedContexts.sorted(by: { ($0.entries.last?.createdAt ?? .distantPast) > ($1.entries.last?.createdAt ?? .distantPast) })
-      .prefix(8).flatMap({ $0.entries.flatMap(\.references) }).filter { $0.region != nil && $0.elementID == nil }.prefix(32))
+    let references = Array(model.sharedContexts.sorted(by: { ($0.lastEntry?.createdAt ?? .distantPast) > ($1.lastEntry?.createdAt ?? .distantPast) })
+      .prefix(8).flatMap({ $0.previewEntries.flatMap(\.references) }).filter { $0.region != nil && $0.elementID == nil }.prefix(32))
     guard !references.isEmpty else { return }
     let key = String(model.collaborationReadEpoch)
     guard referenceVisionTask == nil, referenceVisionKey != key else { return }

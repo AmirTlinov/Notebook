@@ -37,6 +37,16 @@ export function registerCollaborationTools(server: McpServer, store: NotebookSto
     });
     return png ? {...result, content:[...result.content, {type:"image" as const, mimeType:"image/png", data:png}]} : result;
   });
+  server.registerTool("notebook_read_context", {
+    outputSchema: notebookResponseSchema,
+    title: "Read a bounded page of shared history",
+    description: "With context_id read immutable entries; without it read context summaries. Each page has an exact readCursor and nextEntryID or nextContextID. Continue using after_id and the same read_cursor. A changed snapshot refuses continuation; restart from the first page. Summary previews are not the full history. Maximum 64 entries and 4 MiB per page.",
+    inputSchema: z.object({context_id:z.uuid().optional(),after_id:z.uuid().optional(),
+      read_cursor:z.string().regex(/^(0|[1-9][0-9]*)$/).optional(),limit:z.number().int().min(1).max(64).default(32)})
+      .strict().refine(value => !value.after_id || value.read_cursor !== undefined, "Continuation requires read_cursor"),
+    annotations: {readOnlyHint:true,openWorldHint:false},
+  }, input => actionResult(() => store.read({kind:input.context_id ? "contextEntries" : "contexts",
+    id:input.context_id,after:input.after_id,revision:input.read_cursor,limit:input.limit})));
   server.registerTool("notebook_point", {
     outputSchema: notebookResponseSchema,
     title: "Point to the source and share your interpretation",
