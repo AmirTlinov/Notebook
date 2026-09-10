@@ -128,6 +128,10 @@ extension NotebookStore {
       try database.run("DELETE FROM replication_agent_checks")
       let declaredOrderRoots = Set(manifest.pageOrderRoots)
       func applyFile(_ file: String) throws {
+        if file.hasPrefix("document-states/") {
+          try applyReplicatedDocumentState(file: file, manifestHash: change.manifestHash)
+          return
+        }
         // A typed merger still owns this complete logical file. Releasing it
         // before advancing keeps independent owners out of one giant packet
         // dictionary; partial heavy-owner merging remains a separate contract.
@@ -197,10 +201,6 @@ extension NotebookStore {
               _ = document.merge(previous)
             }
             guard document.isValid else { throw NotebookStorageError.corruptRecord(file) }; resolved = try .encode(document)
-          } else if file.hasPrefix("document-states/") {
-            var state = try value.decode(DocumentStateJournal.self)
-            if let before { _ = try state.merge(before.decode(DocumentStateJournal.self)) }
-            guard state.isValid else { throw NotebookStorageError.corruptRecord(file) }; resolved = try .encode(state)
           } else if file.hasPrefix("collaboration/actions/") {
             let receipt = try value.decode(CollaborationReceipt.self)
             guard receipt.id == receipt.action.id else { throw NotebookStorageError.invalidTransaction("receipt identity") }
@@ -229,7 +229,7 @@ extension NotebookStore {
           let id = UUID(uuidString: URL(fileURLWithPath: file).deletingPathExtension().lastPathComponent) {
           let belongs: Bool
           if file.hasPrefix("pages/") { belongs = try ownerItemID(ofPage: id) != nil }
-          else if file.hasPrefix("documents/") || file.hasPrefix("document-states/") { belongs = try readItemHeader(id)?.kind == .document }
+          else if file.hasPrefix("documents/") { belongs = try readItemHeader(id)?.kind == .document }
           else { belongs = true }
           if !belongs { try publishRecords(writes: [:], removals: [file]); return }
         }

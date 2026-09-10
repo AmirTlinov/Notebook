@@ -336,6 +336,11 @@ public struct DocumentStateRecord: Codable, Equatable, Identifiable, Sendable {
     self.fieldVersion = fieldVersion
   }
 
+  func isValid(in journalStamp: VersionStamp) -> Bool {
+    !id.isEmpty && id.utf16.count <= 120 && value.isValid
+      && stamp.counter <= VersionStamp.maximumCounter && stamp <= journalStamp
+  }
+
   mutating func replace(_ value: JSONValue, version: ContentFieldVersion) -> Bool {
     guard value.isValid else { return false }
     let previous = fieldVersion ?? .init(stamp:self.stamp,human:true)
@@ -364,9 +369,19 @@ public struct DocumentStateJournal: Codable, Equatable, Identifiable, Sendable {
   ) {
     format = Self.formatVersion
     self.id = id
-    self.records = records
+    self.records = records.sorted { $0.id < $1.id }
     stamp = VersionStamp(counter: 0, actor: actor)
     precondition(isValid)
+  }
+
+  private enum CodingKeys: String, CodingKey { case format, id, records, stamp }
+
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    format = try values.decode(Int.self, forKey: .format)
+    id = try values.decode(UUID.self, forKey: .id)
+    records = try values.decode([DocumentStateRecord].self, forKey: .records).sorted { $0.id < $1.id }
+    stamp = try values.decode(VersionStamp.self, forKey: .stamp)
   }
 
   public func value(for blockID: String) -> JSONValue? {
@@ -377,11 +392,7 @@ public struct DocumentStateJournal: Codable, Equatable, Identifiable, Sendable {
     let ids = records.map(\.id)
     return format == Self.formatVersion
       && Set(ids).count == ids.count
-      && records.allSatisfy {
-        !$0.id.isEmpty && $0.id.utf16.count <= 120 && $0.value.isValid
-          && $0.stamp.counter <= VersionStamp.maximumCounter
-          && $0.stamp <= stamp
-      }
+      && records.allSatisfy { $0.isValid(in: stamp) }
       && stamp.counter <= VersionStamp.maximumCounter
   }
 
@@ -402,8 +413,10 @@ public struct DocumentStateJournal: Codable, Equatable, Identifiable, Sendable {
       let previous = records[index].fieldVersion ?? .init(stamp:records[index].stamp,human:true)
       _ = records[index].replace(value, version:.init(stamp:nextStamp,human:human,previous:previous))
     } else {
-      records.append(
-        DocumentStateRecord(id: blockID, value: value, stamp: nextStamp, fieldVersion:.init(stamp:nextStamp,human:human))
+      let position = records.firstIndex { $0.id > blockID } ?? records.count
+      records.insert(
+        DocumentStateRecord(id: blockID, value: value, stamp: nextStamp, fieldVersion:.init(stamp:nextStamp,human:human)),
+        at: position
       )
     }
     stamp = nextStamp

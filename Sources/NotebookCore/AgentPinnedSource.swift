@@ -46,9 +46,9 @@ public struct AgentPinnedSource: Codable, Equatable, Sendable, Identifiable {
     case .document:
       guard let document = files["documents/" + suffix] else { throw missing() }
       if let blockID = reference.elementID {
-        guard let block = document["blocks"]?.array.first(where: { $0["id"]?.string == blockID }) else { throw missing() }
+        guard let block = document["blocks"]?.array.first(where: { $0.memberIdentity == collaborationIdentity(blockID) }) else { throw missing() }
         payload["block"] = block
-        if let state = files["document-states/" + suffix]?["records"]?.array.first(where: { $0["blockID"]?.string == blockID }) {
+        if let state = files["document-states/" + suffix]?["records"]?.array.first(where: { $0.memberIdentity == collaborationIdentity(blockID) }) {
           payload["state"] = state["value"]
         }
       }

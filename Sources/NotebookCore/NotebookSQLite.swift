@@ -166,7 +166,8 @@ struct NotebookRecordCodec {
             for (offset, value) in values.enumerated() {
               let member = ids[offset]
               try make(value, address: address + "/" + collectionKey + "/@" + fieldKey([member]),
-                parent: address, collection: collectionKey, member: member, position: (isComputationCollection || (file.hasPrefix("collaboration/contexts/") && key == "entries")) ? 0 : offset)
+                parent: address, collection: collectionKey, member: member, position: (isComputationCollection || (file.hasPrefix("collaboration/contexts/") && key == "entries")
+                || (file.hasPrefix("document-states/") && address == file + "#" && location == ["records"])) ? 0 : offset)
             }
           } else if key == "drawingData", file.hasPrefix("pages/") {
             let drawing = try PageInkDrawing.decode(value.decode(Data.self))
@@ -224,6 +225,14 @@ struct NotebookRecordCodec {
             left.stamp == right.stamp ? left.row.member < right.row.member : left.stamp < right.stamp
           }
           matching = stamped.map(\.row)
+        } else if row.file.hasPrefix("document-states/"), row.parent == nil, collection.path == ["records"] {
+          // A state belongs to its block ID. Arrival slots never author an
+          // order of program states or renumber another block's history.
+          let records = try members.map { member -> (NotebookStoredFragment, String) in
+            guard let id = member.value["id"]?.string else { throw NotebookStorageError.corruptRecord(member.address) }
+            return (member, id)
+          }
+          matching = records.sorted { $0.1 < $1.1 }.map(\.0)
         } else if row.file.hasPrefix("pages/"), row.parent == nil, collection.path == ["computations"] {
           let records = try members.map { ($0, try $0.value.decode(NotebookComputation.self)) }
           matching = records.sorted { NotebookComputation.ordered($0.1, $1.1) }.map(\.0)
