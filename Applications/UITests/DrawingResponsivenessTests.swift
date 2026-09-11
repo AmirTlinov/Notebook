@@ -11,14 +11,12 @@ final class DrawingResponsivenessTests: XCTestCase {
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-collaboration-fixture", "--notebook-history-performance-fixture"]
     launchPortraitFixture(app)
-    XCTAssertTrue(app.buttons["collaboration-history"].waitForExistence(timeout: 15))
     for _ in 0..<5 {
-      app.buttons["collaboration-history"].tap()
+      openSharedHistory(in: app)
       XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForExistence(timeout: 2))
       XCTAssertTrue(app.buttons["Готово"].isHittable)
       app.buttons["Готово"].tap()
       XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForNonExistence(timeout: 2))
-      XCTAssertTrue(app.buttons["collaboration-history"].waitForExistence(timeout: 2))
     }
     let proof = XCTAttachment(screenshot: app.screenshot())
     proof.name = "history-remains-dismissible-after-five-openings"; proof.lifetime = .keepAlways; add(proof)
@@ -91,10 +89,8 @@ final class DrawingResponsivenessTests: XCTestCase {
     launchPortraitFixture(app)
     let notice = app.buttons["collaboration-dismiss"]
     XCTAssertTrue(notice.waitForExistence(timeout:3))
-    let historyFrame = app.buttons["collaboration-history"].frame
     XCTAssertTrue(notice.waitForNonExistence(timeout:8))
-    XCTAssertEqual(app.buttons["collaboration-history"].frame, historyFrame, "История не уезжает из-под пальца вместе с временной отметкой")
-    app.buttons["collaboration-history"].tap()
+    openSharedHistory(in: app)
     XCTAssertTrue(app.buttons["Отменить этот ход"].firstMatch.waitForExistence(timeout:3))
     XCTAssertTrue(app.buttons["show-action-result"].firstMatch.exists)
   }
@@ -174,8 +170,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-collaboration-fixture",
       "--notebook-history-performance-fixture", "--notebook-history-pages-fixture"]
     launchPortraitFixture(app)
-    XCTAssertTrue(app.buttons["collaboration-history"].waitForExistence(timeout: 15))
-    app.buttons["collaboration-history"].tap()
+    openSharedHistory(in: app)
     let nextContexts = app.buttons["context-directory-next"]
     XCTAssertTrue(nextContexts.waitForExistence(timeout: 5))
     nextContexts.tap()
@@ -208,20 +203,20 @@ final class DrawingResponsivenessTests: XCTestCase {
       XCUIDevice.shared.orientation = landscape ? .landscapeLeft : .portrait
       for expanded in [false, true] {
         if expanded { toggle.tap() }
-        let controls = ["pairing-settings", "previous-page", "page-overview", "next-page",
+        let controls = ["previous-page", "page-overview", "next-page",
           "pen-controls-toggle", "drawing-tool-eraser", "drawing-tool-pointer", "pen-settings"]
         let unobstructed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
           let window = app.frame, frame = panel.frame
           guard (window.width > window.height) == landscape,
-            window.contains(frame), frame.width > (expanded ? 500 : 100),
-            frame.width <= (expanded ? 560 : 112) + 1 else { return false }
+            window.contains(frame), frame.width > (expanded ? 300 : 100),
+            frame.width <= (expanded ? window.width - 36 : 112) + 1 else { return false }
           return controls.allSatisfy { id in
             let control = app.buttons[id]
             return control.exists && control.isHittable && !frame.intersects(control.frame)
           }
         }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [unobstructed], timeout: 5), .completed,
-          "Chat must not cover the existing navigation, pairing or Pencil controls")
+          "Chat must not cover the existing navigation or Pencil controls")
         let proof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         proof.name = "chat-controls-\(landscape ? "landscape" : "portrait")-\(expanded ? "expanded" : "collapsed")"
         proof.lifetime = .keepAlways; add(proof)
@@ -232,6 +227,57 @@ final class DrawingResponsivenessTests: XCTestCase {
 
   func testCodexPanelCanCollapseFromTheWholeButtonAfterCreatingAChat() {
     assertNewChatDoesNotBlockCollapse(transcript: false)
+  }
+
+  func testChatMovesResizesAndOpensSettingsWithoutMovingPaper() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    launchPortraitFixture(app)
+    XCTAssertFalse(app.buttons["pairing-settings"].exists)
+    XCTAssertFalse(app.buttons["collaboration-history"].exists)
+    app.buttons["notebook-chat-toggle"].tap()
+    let panel = app.descendants(matching: .any).matching(identifier: "notebook-chat-panel").firstMatch
+    let paper = app.otherElements["paper-input"], paperFrame = paper.frame, drawing = paper.value as? String
+    let before = panel.frame
+    let title = app.buttons["notebook-chat-tasks"]
+    let titleBefore = app.staticTexts["Новый чат"].exists
+    let translation = CGVector(dx: 30 - before.minX, dy: 100 - before.minY)
+    let grip = title.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
+    grip.press(forDuration: 0.1, thenDragTo: grip.withOffset(translation))
+    XCTAssertEqual(panel.frame.minX, 30, accuracy: 4)
+    XCTAssertEqual(panel.frame.minY, 100, accuracy: 4)
+    XCTAssertEqual(app.staticTexts["Новый чат"].exists, titleBefore, "Dragging the header must not also choose a conversation")
+    let moved = panel.frame
+    let resize = app.descendants(matching: .any).matching(identifier: "notebook-chat-resize").firstMatch
+    let corner = resize.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
+    let sizeChange = CGVector(dx: moved.width > 420 ? -100 : 100, dy: moved.height > 420 ? -120 : 120)
+    corner.press(forDuration: 0.1, thenDragTo: corner.withOffset(sizeChange))
+    XCTAssertEqual(panel.frame.width, moved.width + sizeChange.dx, accuracy: 4)
+    XCTAssertEqual(panel.frame.height, moved.height + sizeChange.dy, accuracy: 4)
+    XCTAssertEqual(panel.frame.minX, moved.minX, accuracy: 1)
+    XCTAssertEqual(panel.frame.minY, moved.minY, accuracy: 1)
+    let resized = panel.frame
+    app.buttons["notebook-chat-toggle"].tap(); app.buttons["notebook-chat-toggle"].tap()
+    XCTAssertEqual(panel.frame, resized)
+    XCTAssertEqual(paper.frame, paperFrame)
+    XCTAssertEqual(paper.value as? String, drawing)
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "floating-chat-moved-and-resized"; proof.lifetime = .keepAlways; add(proof)
+    openSharedHistory(in: app)
+    XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForExistence(timeout: 3))
+    app.buttons["Готово"].tap()
+    app.buttons["notebook-chat-actions"].tap()
+    XCTAssertTrue(app.buttons["pairing-settings"].waitForExistence(timeout: 2))
+    app.buttons["pairing-settings"].tap()
+    XCTAssertTrue(app.navigationBars["Соединение"].waitForExistence(timeout: 3))
+    app.buttons["Готово"].tap()
+    XCTAssertEqual(paper.frame, paperFrame)
+    XCTAssertEqual(paper.value as? String, drawing)
+    app.terminate()
+    launchPortraitFixture(app)
+    app.buttons["notebook-chat-toggle"].tap()
+    XCTAssertEqual(panel.frame, resized, "The scene restores the user's geometry after a cold launch")
   }
 
   func testCodexPanelCanCollapseAfterNewChatWithAMountedTranscript() {
@@ -888,7 +934,16 @@ final class DrawingResponsivenessTests: XCTestCase {
   }
 
   private func workspaceWindow(in app: XCUIApplication) -> XCUIElement {
-    app.windows.containing(.button, identifier: "pairing-settings").firstMatch
+    app.windows.containing(.button, identifier: "pen-controls-toggle").firstMatch
+  }
+
+  private func openSharedHistory(in app: XCUIApplication) {
+    if !app.buttons["collaboration-history"].exists {
+      if !app.buttons["notebook-chat-actions"].exists { app.buttons["notebook-chat-toggle"].tap() }
+      app.buttons["notebook-chat-actions"].tap()
+    }
+    XCTAssertTrue(app.buttons["collaboration-history"].waitForExistence(timeout: 3))
+    app.buttons["collaboration-history"].tap()
   }
 
   private func launchPortraitFixture(_ app: XCUIApplication) {

@@ -8,8 +8,14 @@ struct NotebookChatPanel: View {
   @Environment(\.scenePhase) private var scenePhase
   @Environment(NotebookAppModel.self) private var model
   @Bindable var chat: NotebookChatController
-  let maximumWidth: CGFloat
-  let maximumHeight: CGFloat
+  let size: CGSize
+  let openPairing: () -> Void
+  let openHistory: () -> Void
+  let move: (CGSize, Bool) -> Void
+  let resize: (CGSize, Bool) -> Void
+  let endInteraction: () -> Void
+  @GestureState private var moving = false
+  @GestureState private var resizing = false
   @State private var showsHistory = false
   @State private var showsAllChats = false
   @State private var editingProject: CodexProject?
@@ -32,12 +38,12 @@ struct NotebookChatPanel: View {
         }
         .accessibilityLabel("Открыть чат")
         .accessibilityIdentifier("notebook-chat-toggle")
+        .highPriorityGesture(windowDrag(move, activity: $moving))
       }
     }
     .buttonStyle(.plain)
     .tint(Color.primary)
-    .frame(width: min(chat.expanded ? 560 : 112, max(44, maximumWidth)),
-      height: min(chat.expanded ? 640 : 48, max(44, maximumHeight)))
+    .frame(width: size.width, height: size.height)
     .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: chat.expanded ? 28 : 24))
     .overlay {
       RoundedRectangle(cornerRadius: chat.expanded ? 28 : 24)
@@ -45,6 +51,16 @@ struct NotebookChatPanel: View {
         .allowsHitTesting(false)
     }
     .shadow(color: .black.opacity(0.08), radius: 22, y: 7)
+    .overlay(alignment: .bottomTrailing) {
+      if chat.expanded {
+        Image(systemName: "arrow.up.left.and.arrow.down.right")
+          .font(.system(size: 12, weight: .medium)).foregroundStyle(.tertiary)
+          .frame(width: 44, height: 44).contentShape(Rectangle())
+          .gesture(windowDrag(resize, activity: $resizing))
+          .accessibilityLabel("Изменить размер чата")
+          .accessibilityIdentifier("notebook-chat-resize")
+      }
+    }
     .background(NotebookControlRegion(gate: model.inputGate))
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier("notebook-chat-panel")
@@ -52,10 +68,14 @@ struct NotebookChatPanel: View {
     .sheet(item: $editingProject) { NotebookProjectSettings(project: $0, chat: chat) }
     .onChange(of: scenePhase) { if scenePhase == .background { chat.stopDictation() } }
     .onChange(of: chat.threadID) { showsHistory = false; chat.browsesChats = false }
+    .onChange(of: moving) { if !moving { endInteraction() } }
+    .onChange(of: resizing) { if !resizing { endInteraction() } }
   }
 
   private var header: some View {
     HStack(spacing: 0) {
+      Image(systemName: "line.3.horizontal")
+        .font(.system(size: 11)).frame(width: 24, height: 44).accessibilityHidden(true)
       Button {
         chat.browsesChats.toggle(); showsAllChats = false
         if chat.browsesChats { chat.catalogue() }
@@ -70,7 +90,9 @@ struct NotebookChatPanel: View {
       }
       .accessibilityLabel("Выбрать чат")
       .accessibilityIdentifier("notebook-chat-tasks")
-      Spacer(minLength: 8)
+      Color.clear.frame(minWidth: 24, maxWidth: .infinity, minHeight: 44, maxHeight: 44)
+        .contentShape(Rectangle()).accessibilityLabel("Переместить чат")
+        .accessibilityIdentifier("notebook-chat-move")
       if let conversation = chat.conversation, let turnID = conversation.activeTurnID {
         Button { Task { await chat.stopTurn(threadID: conversation.threadID, turnID: turnID) } } label: {
           Image(systemName: "stop.circle").font(.system(size: 19)).frame(width: 44, height: 44)
@@ -88,6 +110,15 @@ struct NotebookChatPanel: View {
     }
     .font(.system(size: 14, weight: .regular)).foregroundStyle(.secondary)
     .padding(.leading, 22).padding(.trailing, 8).padding(.top, 5)
+    .contentShape(Rectangle())
+    .highPriorityGesture(windowDrag(move, activity: $moving))
+  }
+
+  private func windowDrag(_ action: @escaping (CGSize, Bool) -> Void, activity: GestureState<Bool>) -> some Gesture {
+    DragGesture(minimumDistance: 6, coordinateSpace: .named("notebook-window"))
+      .updating(activity) { _, active, _ in active = true }
+      .onChanged { action($0.translation, false) }
+      .onEnded { action($0.translation, true) }
   }
 
   private var recentChats: some View {
@@ -99,6 +130,11 @@ struct NotebookChatPanel: View {
           if chat.tasks.isEmpty {
             Text(chat.connected ? (chat.taskCursor != nil ? "На этой странице нет других чатов. Перейдите к следующим." : "Здесь пока нет чатов.") : "Чаты появятся, когда Mac будет доступен.")
               .font(.system(size: 14)).foregroundStyle(.secondary).padding(.vertical, 12)
+          }
+          if !chat.connected {
+            Button("Подключить Mac", systemImage: "link", action: openPairing)
+              .font(.system(size: 14)).frame(minHeight: 44)
+              .accessibilityIdentifier("notebook-chat-connect")
           }
           ForEach(showsAllChats ? orderedTasks : Array(orderedTasks.prefix(3))) { task in
             Button { chat.select(task); chat.browsesChats = false } label: {
@@ -235,7 +271,7 @@ struct NotebookChatPanel: View {
           .id(request.id).padding(14)
           .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
           .padding(.horizontal, 14).padding(.bottom, 8)
-          .frame(maxHeight: min(210, maximumHeight * 0.4))
+          .frame(maxHeight: min(210, size.height * 0.4))
       }
       if !chat.pendingMessages.isEmpty { outbox }
     }
@@ -283,6 +319,11 @@ struct NotebookChatPanel: View {
         Menu {
           Button("Новый чат", systemImage: "square.and.pencil", action: createChat)
           Button("Выбрать чат", systemImage: "clock") { chat.browsesChats = true; showsAllChats = true; chat.catalogue() }
+          Divider()
+          Button("Совместные ходы", systemImage: "clock.arrow.circlepath", action: openHistory)
+            .accessibilityIdentifier("collaboration-history")
+          Button("Подключение и устройства", systemImage: "link", action: openPairing)
+            .accessibilityIdentifier("pairing-settings")
         } label: {
           Image(systemName: "plus").font(.system(size: 19, weight: .regular)).frame(width: 44, height: 44)
         }.accessibilityLabel("Действия чата").accessibilityIdentifier("notebook-chat-actions")
@@ -323,7 +364,7 @@ struct NotebookChatPanel: View {
       .accessibilityElement(children: .contain)
       .accessibilityIdentifier("notebook-chat-composer")
     }
-    .padding(.horizontal, 8).padding(.bottom, 8).padding(.top, 8)
+    .padding(.leading, 8).padding(.trailing, 44).padding(.bottom, 8).padding(.top, 8)
   }
 
   private var title: String {

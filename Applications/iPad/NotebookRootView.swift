@@ -4,10 +4,10 @@ import NotebookCore
 struct NotebookRootView: View {
   @Environment(NotebookAppModel.self) private var model
   @State private var showsPairing = false
+  @State private var showsHistory = false
   @State private var sceneOrigin = CGPoint.zero
   @State private var collaborationHeight: CGFloat = 0
   @State private var penControlsFrame = CGRect.zero
-  @State private var pairingFrame = CGRect.zero
   @State private var chatFrame = CGRect.zero
   @State private var elementControlFrames: [CGRect] = []
 
@@ -56,19 +56,6 @@ struct NotebookRootView: View {
           .accessibilityIdentifier("persistence-failure")
         }
 
-          Button { showsPairing = true } label: {
-            Label(model.isPeerConnected ? "Mac подключён" : "Подключить Mac",
-              systemImage: model.isPeerConnected ? "checkmark.shield" : "link")
-              .labelStyle(.iconOnly)
-              .frame(width: 44, height: 44)
-              .background(.regularMaterial, in: Circle())
-          }
-          .background(NotebookControlRegion(gate: model.inputGate))
-          .accessibilityIdentifier("pairing-settings")
-          .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { pairingFrame = $0 }
-          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-          .padding(.trailing, 18).padding(.bottom, 80)
-          .sheet(isPresented: $showsPairing) { NotebookPairingView().environment(model) }
           PenControlsView()
             .background(NotebookControlRegion(gate: model.inputGate))
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { penControlsFrame = $0 }
@@ -94,23 +81,21 @@ struct NotebookRootView: View {
     .onPreferenceChange(ElementEditingControlFrames.self) { elementControlFrames = $0 }
     // Only the composer follows the keyboard safe area. The drawing geometry
     // remains the full physical viewport while system input is open.
-    NotebookCollaborationView()
+    NotebookCollaborationView(showsHistory: $showsHistory)
       .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { collaborationHeight = $0 }
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
       .padding(18)
     if let chat = model.chat {
       GeometryReader { geometry in
-        // The panel occupies the right-side space between existing tools and
-        // navigation. Keyboard layout clips that space, never the paper camera.
         let origin = geometry.frame(in: .global).origin
         let top = max(18, penControlsFrame.maxY - origin.y + 12)
-        let bottom = min(geometry.size.height - 18,
-          pairingFrame.isEmpty ? geometry.size.height - 18 : pairingFrame.minY - origin.y - 12)
-        NotebookChatPanel(chat: chat, maximumWidth: max(44, geometry.size.width - 36), maximumHeight: max(44, bottom - top))
-          .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { chatFrame = $0 }
-          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-          .padding(.horizontal, 18).padding(.top, top)
-          .padding(.bottom, max(18, geometry.size.height - bottom))
+        // Leave the paper navigation reachable. This is window space only;
+        // keyboard avoidance never publishes a SessionPresence or remounts paper.
+        let available = CGRect(x: 18, y: top, width: max(44, geometry.size.width - 36),
+          height: max(44, geometry.size.height - 80 - top))
+        NotebookChatWindow(chat: chat, available: available,
+          openPairing: { chat.stopDictation(); showsPairing = true },
+          openHistory: { chat.stopDictation(); showsHistory = true }, frameChanged: { chatFrame = $0 })
       }
       // The collapsed launcher belongs to the paper's controls, not the
       // disappearing keyboard. Its hit target must not travel during dismissal.
@@ -118,9 +103,11 @@ struct NotebookRootView: View {
     }
     if let question = model.agentQuestion, model.chat?.expanded != true {
       NotebookQuestionOverlay(question: question, sceneOrigin: sceneOrigin,
-        footerHeight: collaborationHeight, controls: [penControlsFrame, pairingFrame, chatFrame] + elementControlFrames).id(question.id)
+        footerHeight: collaborationHeight, controls: [penControlsFrame, chatFrame] + elementControlFrames).id(question.id)
     }
     }
+    .coordinateSpace(name: "notebook-window")
+    .sheet(isPresented: $showsPairing) { NotebookPairingView().environment(model) }
     .preferredColorScheme(.light)
   }
 

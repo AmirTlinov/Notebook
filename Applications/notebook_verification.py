@@ -24,6 +24,9 @@ PROFILES = {
     },
     "chat-touch": {"ipad": [UI + "testCodexPanelCanCollapseFromTheWholeButtonAfterCreatingAChat",
                               UI + "testCodexPanelKeepsDraftWithoutMovingPaperOnCollapseAndRotation"]},
+    "workspace-controls": {"ipad": ["NotebookTests/NotebookChatWindowTests",
+                                      UI + "testChatMovesResizesAndOpensSettingsWithoutMovingPaper",
+                                      UI + "testAgentNoticeExpiresAndHistoryKeepsItsActions"]},
     "documents": {
         "core": ["DocumentRenderRecipeTests", "DocumentDocumentTests", "DocumentEditingSessionTests"],
         "mac": ["NotebookMacTests/DocumentLargeSourceTests", "NotebookMacTests/DocumentRenderSessionTests",
@@ -102,6 +105,8 @@ def owners(path):
         return ["scene-composition"]
     if name == "NotebookChatPanel.swift":
         return ["chat", "chat-touch"]
+    if name in ("NotebookRootView.swift", "NotebookCollaborationView.swift", "NotebookChatWindow.swift"):
+        return ["chat", "chat-touch", "workspace-controls"]
     if "Chat" in name or name in ("NotebookCodexSidecar.swift", "CodexWireProjection.swift", "CodexDesktopFrames.swift"):
         return ["chat"]
     if name in ("IPadPageTurnController.swift", "PageTurnSurface.swift"):

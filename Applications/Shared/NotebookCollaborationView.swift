@@ -3,7 +3,7 @@ import SwiftUI
 
 struct NotebookCollaborationView: View {
   @Environment(NotebookAppModel.self) private var model
-  @State private var showsHistory = false
+  @Binding var showsHistory: Bool
   @State private var historyRequestedAt: ContinuousClock.Instant?
   @State private var pendingShow: CollaborationReference?
   @State private var historyDirectory: SharedContextDirectory?
@@ -37,16 +37,15 @@ struct NotebookCollaborationView: View {
             .accessibilityLabel("Скрыть уведомление").accessibilityIdentifier("collaboration-dismiss")
         }.buttonStyle(.plain).padding(12).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
       }
-      // Keep the history target in the same place when the six-second notice
-      // expires; removing a button under a finger can silently discard its tap.
-      if !model.sharedContexts.isEmpty {
+      if model.activeSharedContext != nil {
         Button(action: openHistory) {
-          Label(model.activeSharedContext == nil ? "Совместные ходы" : "Общий фрагмент", systemImage: model.activeSharedContext == nil ? "clock.arrow.circlepath" : "scope")
+          Label("Общий фрагмент", systemImage: "scope")
             .font(.callout).padding(.horizontal, 14).frame(minHeight: 44)
         }.buttonStyle(.plain).background(.regularMaterial, in: Capsule()).accessibilityIdentifier("collaboration-history")
       }
     }
     .frame(maxWidth: 520, alignment: .leading)
+    .onChange(of: showsHistory) { if showsHistory { historyRequestedAt = .now } }
     .task(id: model.collaborationPreparationKey) { await model.refreshCollaborationDetails() }
     .task {
       while !Task.isCancelled {

@@ -100,6 +100,16 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(plan["profiles"], ["documents"])
         self.assertFalse(any(s.startswith("NotebookUITests") for s in plan["checks"]["ipad"]))
 
+    def test_window_and_context_controls_name_their_live_gestures(self):
+        for path in ("Applications/iPad/NotebookRootView.swift", "Applications/iPad/NotebookChatWindow.swift",
+                     "Applications/Shared/NotebookCollaborationView.swift"):
+            self.change(path)
+        plan = verify.make_plan(self.root)
+        self.assertFalse(plan["unclassified"])
+        self.assertEqual(plan["profiles"], ["chat", "chat-touch", "workspace-controls"])
+        self.assertIn(verify.UI + "testChatMovesResizesAndOpensSettingsWithoutMovingPaper", plan["checks"]["ipad"])
+        self.assertIn(verify.UI + "testAgentNoticeExpiresAndHistoryKeepsItsActions", plan["checks"]["ipad"])
+
     def test_page_turn_owner_adds_only_two_page_turn_gestures(self):
         self.change("Applications/iPad/IPadPageTurnController.swift")
         plan = verify.make_plan(self.root)

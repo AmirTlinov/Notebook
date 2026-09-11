@@ -50,7 +50,8 @@ final class NotebookChatPanelTests: XCTestCase {
     XCTAssertEqual(chat.projects.count, 1)
     await chat.stop()
 
-    let host = UIHostingController(rootView: NotebookChatPanel(chat: chat, maximumWidth: width, maximumHeight: height)
+    let host = UIHostingController(rootView: NotebookChatPanel(chat: chat, size: .init(width: width, height: height),
+      openPairing: {}, openHistory: {}, move: { _, _ in }, resize: { _, _ in }, endInteraction: {})
       .environment(model).padding(20).background(Color(.systemGroupedBackground)).preferredColorScheme(.light))
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     window.frame = .init(x: 0, y: 0, width: width + 40, height: height + 40)
