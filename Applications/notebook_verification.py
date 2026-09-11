@@ -55,6 +55,18 @@ PROFILES = {
             "testStopReleasesEveryRasterAfterTheLastShownCohortReferenceEnds",
             "testStopDrainsSupersededPreparationAndRejectsNewWork")],
     },
+    "paper-resources": {
+        "mac": ["NotebookMacTests/DocumentLargeSourceTests/testLargeIllustratedMathBookColdMountsAndTurnsToDistantPhysicalPagesWithinTheExistingDeadline",
+                "NotebookMacTests/DocumentRenderSessionTests",
+                "NotebookMacTests/DocumentRuntimeTests/testNativeReaderRejectsChangedLayoutAndPagePacketLengthsWithoutPublishingOrLeaking"],
+        "ipad": ["NotebookTests/DocumentLargeSourceTests/testLargeBookOpensBesideDrawnPaperInTheSameSceneBudget",
+                 "NotebookTests/DocumentLargeSourceTests/testLargeIllustratedMathBookColdMountsAndTurnsToDistantPhysicalPagesWithinTheExistingDeadline",
+                 "NotebookTests/SceneCompositionTests/testMixedPaperCoversPublishInLandscapeWithoutDroppingTheirInputOwners",
+                 "NotebookTests/SceneRenderResourcesTests/testInputCanBorrowUnusedPassiveSpaceButPassiveCannotBorrowTheProtectedHalf",
+                 "NotebookTests/SceneRenderResourcesTests/testPhysicalHandoffChangesRolesAtomicallyAndSubmittedBytesOutliveTheOwnerLease",
+                 "NotebookTests/SpatialInkHandoffTests/testMountedInputReaffirmationDoesNotInvalidateItsOwnObservedResourceGraph",
+                 "NotebookTests/SpatialInkHandoffTests/testFullPortraitRetinaBudgetReadiesNonemptyParentAndChildWithoutLoweringInkDensity"],
+    },
     "mcp": {"commands": ["mcp"]},
     "verification": {"commands": ["verification", "release"]},
 }
@@ -80,6 +92,8 @@ def owners(path):
     if path.startswith("MCP/"):
         return ["mcp"]
     name = Path(path).name
+    if name in ("DocumentPagePreparation.swift", "SpatialInkSurfaceView.swift", "SpatialBoardInkHandoff.swift") or path == "Applications/TestSupport/DocumentLargeSourceTests.swift":
+        return ["paper-resources"]
     if name in ("SceneCompositionTiles.swift", "SceneCompositionSource.swift", "SceneCompositionTests.swift"):
         return ["scene-composition"]
     if name == "NotebookChatPanel.swift":

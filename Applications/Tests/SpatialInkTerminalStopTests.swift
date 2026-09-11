@@ -41,6 +41,7 @@ final class SpatialInkTerminalStopTests: XCTestCase {
       size: .init(x: canvas.bounds.width, y: canvas.bounds.height), displayScale: 2)
     let owner = try XCTUnwrap(lease.owners[surface])
     let pending = SpatialInkSceneLease(registry: lease.registry, rootBoardID: fixture.boardID,
+      focusedCoverID: lease.focusedCoverID,
       owners: lease.owners, updates: [.init(owner: owner, generation: canvas.spatialSourceGeneration,
         frame: nativeFrame, journal: durable)])
     nativeFrame = nil

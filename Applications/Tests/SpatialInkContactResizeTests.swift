@@ -49,6 +49,7 @@ final class SpatialInkContactResizeTests: XCTestCase {
     let frame = try await native.prepareSpatialFrame(SpatialInkMesh.prepare(surface: surface, journal: journal),
       size: .init(x: 768, y: 768), displayScale: 1)
     let candidate = SpatialInkSceneLease(registry: fixture.registry, rootBoardID: fixture.boardID,
+      focusedCoverID: nil,
       owners: [surface: owner], updates: [.init(owner: owner, generation: native.spatialSourceGeneration,
         frame: frame, journal: journal)])
     XCTAssertTrue(frame.isValid)

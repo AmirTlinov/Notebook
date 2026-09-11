@@ -15,19 +15,21 @@ final class SpatialInkSceneLease {
   }
   let registry: SpatialInkSurfaceRegistry
   let rootBoardID: UUID
+  let focusedCoverID: UUID?
   let owners: [SurfaceID: SpatialInkPhysicalOwner]
   private var updates: [Update]
   private(set) var isInstalled = false
-  init(registry: SpatialInkSurfaceRegistry, rootBoardID: UUID, owners: [SurfaceID: SpatialInkPhysicalOwner],
+  init(registry: SpatialInkSurfaceRegistry, rootBoardID: UUID, focusedCoverID: UUID?, owners: [SurfaceID: SpatialInkPhysicalOwner],
     updates: [Update]) {
     self.registry = registry; self.rootBoardID = rootBoardID; self.owners = owners; self.updates = updates
+    self.focusedCoverID = focusedCoverID
   }
   func install() throws {
     guard !registry.sceneInkIsStopped,
       updates.allSatisfy({ $0.owner.canvas.spatialSourceGeneration == $0.generation
         && !registry.hasActiveAction(on: $0.owner.surface) && !registry.hasContact(on: $0.owner.surface)
         && ($0.frame?.isValid ?? true) }) else { throw CancellationError() }
-    try registry.installSceneAllocationPriorities(rootBoardID: rootBoardID)
+    try registry.installSceneAllocationPriorities(rootBoardID: rootBoardID, focusedCoverID: focusedCoverID)
     for update in updates {
       if let frame = update.frame {
         update.owner.canvas.installSpatialFrame(frame, journal: update.journal, surface: update.owner.surface)

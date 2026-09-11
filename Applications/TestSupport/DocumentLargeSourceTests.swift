@@ -133,6 +133,67 @@ final class DocumentLargeSourceTests: XCTestCase {
     XCTAssertEqual(resources.activeWebSurfaceCount, 0)
   }
 
+  #if os(iOS)
+  func testLargeBookOpensBesideDrawnPaperInTheSameSceneBudget() async throws {
+    let document = illustratedBook(), state = DocumentStateJournal(id: document.id, actor: UUID())
+    let actor = UUID(), stamp = VersionStamp(counter: 0, actor: actor)
+    let notebook = WorkspaceItem.notebook(title: "Neighbor", pageIDs: [UUID()])
+    let item = WorkspaceItem.document(id: document.id, title: "Illustrated book")
+    let workspace = WorkspaceIndex(items: [notebook, item], selectedItemID: item.id, selectedPageID: nil, stamp: stamp)
+    let board = BoardDocument(freeItems: [
+      .init(itemID: notebook.id, center: .zero, zIndex: 0, stamp: stamp),
+      .init(itemID: item.id, center: .init(x: 1016, y: 792), zIndex: 1, stamp: stamp)
+    ], stamp: stamp)
+    let hierarchy = BoardHierarchy(rootBoardID: workspace.rootBoardID,
+      boards: [.init(id: workspace.rootBoardID, board: board)], stamp: stamp)
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [item.id: .a4])
+    let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .document,
+      camera: .init(center: .init(x: 640, y: -1890), scale: 0.1425), viewport: .init(x: 1194, y: 834),
+      focusedItemID: item.id, openProgress: 1)
+    var journal = SpatialInkJournal(stamp: stamp)
+    for surface in [SurfaceID.board(workspace.rootBoardID), .cover(notebook.id), .cover(item.id)] {
+      XCTAssertNotNil(journal.append(tool: .pen, spans: [.init(surface: surface, samples: [100.0, 200].enumerated().map { n, x in
+        .init(point: .init(x: x, y: 100), worldPoint: surface.kind == .board ? .init(x: x, y: 100) : nil,
+          timeOffset: Double(n) / 10, width: 4, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+      })], actor: actor))
+    }
+    let resources = SceneRenderResources(), tiles = SceneCompositionTiles(resources: resources)
+    addTeardownBlock { @MainActor in await tiles.stop() }
+    let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: journal)
+    let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil })
+    tiles.prepare(source: source, presence: presence, frame: frame, pinned: [], displayScale: 2)
+    let deadline = ContinuousClock.now + .seconds(5)
+    while tiles.published == nil, tiles.failure == nil, .now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+    let cohort = try XCTUnwrap(tiles.published, tiles.failure ?? "The drawn scene must publish before opening its book")
+    XCTAssertEqual(cohort.nativeInk.owners.count, 3)
+    XCTAssertGreaterThan(resources.reservedBytes, 170 * 1024 * 1024)
+    let surface = try surface(document, state, resources: resources)
+    defer { surface.close() }
+    do { try await ready(surface.coordinator) }
+    catch {
+      XCTFail("Preparation: \(error); refusal=\(String(describing: resources.lastRasterRefusal))")
+      throw error
+    }
+    let snapshot = try XCTUnwrap(surface.coordinator.payload?.source), layout = try XCTUnwrap(snapshot.layout)
+    for page in [layout.pageCount - 1, layout.pageCount / 2, 0] {
+      update(surface.coordinator, document, state, page: page)
+      try await ready(surface.coordinator)
+      let web = try XCTUnwrap(surface.coordinator.webView)
+      _ = try await evaluate("""
+        const receipt=notebookRenderer.pageReceipt(), root=document.getElementById('document');
+        if(receipt.pageIndex!==index || receipt.layoutScope!=='page' || !root.textContent.trim())throw Error('Missing physical page');
+        if(document.querySelector('.document-layout-preparation'))throw Error('Full source DOM retained');
+        return 'shown';
+        """, arguments: ["index": page], web: web)
+    }
+    XCTAssertEqual(snapshot.encodingCount, 1); XCTAssertEqual(snapshot.preparationCount, 1)
+    XCTAssertLessThanOrEqual(resources.peakAccountedBytes, 256 * 1024 * 1024)
+    let measurement = XCTAttachment(string: "peakAccountedBytes=\(resources.peakAccountedBytes), passiveReservedBytes=\(resources.passiveReservedBytes), pages=\(layout.pageCount)")
+    measurement.name = "Large book beside drawn paper"; measurement.lifetime = .keepAlways; add(measurement)
+    withExtendedLifetime(cohort) { XCTAssertEqual(cohort.nativeInk.owners.count, 3) }
+  }
+  #endif
+
   func testEachPhysicalFormulaOwnsItsGlyphDefinitionsBeforeAttachment() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "math", source:
       #"Local $x^2+\frac{a}{b}+x^2$ and $\int_0^1 t^2\,dt$."#)])

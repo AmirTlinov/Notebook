@@ -84,8 +84,8 @@ final class DocumentPreparedPage {
   /// The snapshot keeps one DOM fragment, not one full source encoding per
   /// historical page. Only the physical host's current bridge message is encoded.
   func encodedMessage(resources: SceneRenderResources) async throws -> DocumentPageMessage {
-    // The source was encoded once already. Its complete byte count bounds any
-    // visible subset; twice the browser JSON bounds Swift's slash escaping.
+    // The bound belongs to this page, not every source block in the book.
+    // Twice the browser JSON bounds Swift's slash escaping.
     // Both encoder output and the submitted script stay charged until callback.
     guard encodingBudget <= 40 * 1024 * 1024,
       let reservation = resources.reserveDerivedBytes(encodingBudget * 2, priority: .passive) else { throw SceneRenderError.resourceLimit }
@@ -202,6 +202,16 @@ final class DocumentPagePreparation {
         maximumBytes: 16 * 1024 * 1024, inputBytes: sourceBytes, in: web, resources: resources)
       guard let receipt = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? NSDictionary else { throw DocumentSessionError.invalidLayout }
       let blocks = Dictionary(uniqueKeysWithValues: message.blocks.map { ($0.id, $0) }), blockIDs = Set(blocks.keys)
+      // Unreferenced string bodies contribute at least their UTF-8 byte count
+      // to the original JSON. Subtract only that proven lower bound: escaping,
+      // metadata, state and future encoded fields remain conservatively charged.
+      // No second full encoding or JSON object tree is created to measure it.
+      let bodyBytes = Dictionary(uniqueKeysWithValues: message.blocks.map { block in
+        (block.id, block.source.utf8.count + block.html.utf8.count
+          + block.css.utf8.count + block.javaScript.utf8.count)
+      })
+      let allBodyBytes = bodyBytes.values.reduce(0, +)
+      guard allBodyBytes <= sourceBytes else { throw DocumentSessionError.invalidLayout }
       let layout = try DocumentLayoutRecord(receipt: receipt, sourceKey: message.key, blockIDs: blockIDs,
         geometry: geometry, reservation: layoutPacket)
       let measured = try JSONDecoder().decode(DocumentPreparedLayout.self, from: JSONSerialization.data(withJSONObject: receipt))
@@ -239,7 +249,8 @@ final class DocumentPagePreparation {
         let retainedBytes = max(1, json.utf8.count)
         staging.release()
         guard let retained = resources.reserveDerivedBytes(retainedBytes, priority: .passive) else { throw SceneRenderError.resourceLimit }
-        pages.append(DocumentPreparedPage(envelope: envelope, encodingBudget: sourceBytes + json.utf8.count * 2 + diagnosticsBytes + mathStyleBytes * 6 + 256,
+        let pageSourceBytes = sourceBytes - allBodyBytes + fragment.blockIDs.reduce(0) { $0 + (bodyBytes[$1] ?? 0) }
+        pages.append(DocumentPreparedPage(envelope: envelope, encodingBudget: pageSourceBytes + json.utf8.count * 2 + diagnosticsBytes + mathStyleBytes * 6 + 256,
           reservation: retained, mathStyleReservation: mathStyleReservation))
       }
       _ = try await evaluate("window.notebookRenderer.finishSourcePreparation(key); return 'finished';", arguments: ["key": message.key], in: web)
