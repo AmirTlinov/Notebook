@@ -16,6 +16,20 @@ struct TransferCommand {
         print("Applications are unchanged. Activation and two real device receipts are still required.")
         return
       }
+      if args.count == 5, args[0] == "--prepare-installation-pairing", args[3] == "--output",
+        [1, 2, 4].allSatisfy({ args[$0].hasPrefix("/") }) {
+        let receipts = try [args[1], args[2]].map { path -> NotebookArchiveActivationReceipt in
+          let data = try Data(contentsOf: URL(fileURLWithPath: path))
+          guard data.count <= 16_384 else { throw ArchiveTransferError.invalidSource("activation receipt is too large") }
+          return try JSONDecoder().decode(NotebookArchiveActivationReceipt.self, from: data)
+        }
+        let grant = try NotebookInstallationPairingGrant(admission: .init(receipts: receipts))
+        let destination = URL(fileURLWithPath: args[4])
+        guard !FileManager.default.fileExists(atPath: destination.path) else { throw ArchiveTransferError.invalidSource("pairing grant already exists") }
+        try grant.publish(at: destination)
+        print("Installation pairing prepared for the two activated devices. Deliver privately over authenticated USB; never publish the credential.")
+        return
+      }
       if args.count == 5, args[0] == "--admit-pair", args[3] == "--output",
         [1, 2, 4].allSatisfy({ args[$0].hasPrefix("/") }) {
         let destination = URL(fileURLWithPath: args[4])
@@ -44,7 +58,7 @@ struct TransferCommand {
       }
       guard args.count == 6, args[0] == "--source", args[2] == "--output", args[4] == "--workspace-id",
         let id = UUID(uuidString: args[5]), args[1].hasPrefix("/"), args[3].hasPrefix("/") else {
-        throw ArchiveTransferError.invalidSource("Usage: notebook-archive-transfer --source ABSOLUTE_BACKUP --output NEW_ABSOLUTE_DIRECTORY --workspace-id UUID\nOr: --legacy-ipad ABSOLUTE_BACKUP --legacy-mac ABSOLUTE_BACKUP --current ABSOLUTE_BACKUP --output NEW_ABSOLUTE_DIRECTORY\nOr: --prepare-pair ABSOLUTE_REQUEST_JSON --output NEW_ABSOLUTE_DIRECTORY\nOr: --admit-pair ABSOLUTE_IPAD_RECEIPT ABSOLUTE_MAC_RECEIPT --output NEW_ABSOLUTE_JSON\nPrepares offline data only. Does not stop, replace, pair, or install applications.")
+        throw ArchiveTransferError.invalidSource("Usage: notebook-archive-transfer --source ABSOLUTE_BACKUP --output NEW_ABSOLUTE_DIRECTORY --workspace-id UUID\nOr: --legacy-ipad ABSOLUTE_BACKUP --legacy-mac ABSOLUTE_BACKUP --current ABSOLUTE_BACKUP --output NEW_ABSOLUTE_DIRECTORY\nOr: --prepare-pair ABSOLUTE_REQUEST_JSON --output NEW_ABSOLUTE_DIRECTORY\nOr: --admit-pair ABSOLUTE_IPAD_RECEIPT ABSOLUTE_MAC_RECEIPT --output NEW_ABSOLUTE_JSON\nOr: --prepare-installation-pairing ABSOLUTE_IPAD_RECEIPT ABSOLUTE_MAC_RECEIPT --output NEW_ABSOLUTE_JSON\nPrepares offline data only. Does not stop, replace, pair, or install applications.")
       }
       let report = try ArchiveTransfer.prepare(source: URL(fileURLWithPath: args[1]),
         destination: URL(fileURLWithPath: args[3]), workspaceID: id)

@@ -39,6 +39,7 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.productivity
+        NSMicrophoneUsageDescription: Голосовой ввод заполняет черновик сообщения. Аудио распознаётся на iPad и не отправляется в Codex.
         NSLocalNetworkUsageDescription: Notebook связывает iPad с помощником на вашем Mac без облачного сервера.
         NSBonjourServices:
           - _notebook._tcp
@@ -53,8 +54,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook
         PRODUCT_NAME: Notebook
         NOTEBOOK_DISPLAY_NAME: Notebook
-        MARKETING_VERSION: 0.3.14
-        CURRENT_PROJECT_VERSION: 17
+        MARKETING_VERSION: 0.3.19
+        CURRENT_PROJECT_VERSION: 22
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: VUNH73AYPY
         TARGETED_DEVICE_FAMILY: 2
@@ -142,8 +143,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook.mac
         PRODUCT_NAME: Notebook
-        MARKETING_VERSION: 0.3.14
-        CURRENT_PROJECT_VERSION: 17
+        MARKETING_VERSION: 0.3.19
+        CURRENT_PROJECT_VERSION: 22
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: VUNH73AYPY
         GENERATE_INFOPLIST_FILE: false

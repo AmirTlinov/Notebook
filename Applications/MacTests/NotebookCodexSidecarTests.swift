@@ -6,6 +6,8 @@ import NotebookCodex
 private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogueOwner {
   let thread = UUID().uuidString, turn = UUID().uuidString
   var busy = false, unknown = false
+  var projectEdits = 0
+  var project: CodexProject?
   var sent: [UUID] = [], interrupted: [String] = [], decisions: [CodexUserDecision] = []
   var accepted: [CodexMessage] = []
   var stopIsStale = false
@@ -32,7 +34,17 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
     interrupted.append(turnID)
   }
   func respond(threadID: String, request: CodexUserRequest, decision: CodexUserDecision) { decisions.append(decision) }
-  func tasks(cursor: String?) -> CodexTaskPage { .init(tasks: [.init(id: thread, title: "Математика", cwd: "/tmp")], nextCursor: nil, defaultProviderNeedsSignIn: needsSignIn) }
+  func activities(threadIDs: [String]) -> [CodexTaskActivity] { threadIDs.map { .init(id: $0, status: .idle) } }
+  func readProject(id: String) -> CodexProject { project ?? .init(id: id, name: "Notebook", roots: ["/tmp"]) }
+  func updateProject(_ edit: CodexProjectEdit) throws -> CodexProject {
+    projectEdits += 1
+    let value = CodexProject(id: edit.id, name: edit.name ?? "Notebook", roots: edit.roots ?? ["/tmp"])
+    project = value
+    if unknown { throw CodexBridgeError.acceptanceUnknown }
+    return value
+  }
+  func projects(cursor: String?) -> CodexProjectPage { .init(projects: [], nextCursor: nil) }
+  func tasks(cursor: String?, project: CodexProject?) -> CodexTaskPage { .init(tasks: [.init(id: thread, title: "Математика", cwd: "/tmp")], nextCursor: nil, defaultProviderNeedsSignIn: needsSignIn) }
   func history(threadID: String, cursor: String?) -> CodexHistoryPage { .init(messages: accepted, nextCursor: nil) }
   func create(directory: URL, title: String, workspaceID: UUID) throws -> CodexTask {
     if needsSignIn { throw CodexBridgeError.signInRequired }
@@ -59,6 +71,23 @@ final class NotebookCodexSidecarTests: XCTestCase {
     let deadline = ContinuousClock.now + .seconds(8)
     while !(try await predicate()), .now < deadline { try await Task.sleep(for: .milliseconds(50)) }
     let ready = try await predicate(); XCTAssertTrue(ready)
+  }
+
+  func testNativeProjectEditReconcilesLostReplyWithoutEditingOrStartingTwice() async throws {
+    try await fixture { store, queue, native, peer in
+      await native.configure(unknown: true)
+      let service = try sidecar(store, queue, native)
+      let edit = CodexProjectEdit(id: "native-project", name: "Исследование", roots: nil)
+      let input = NotebookChatInput(author: peer, action: .updateProject(edit))
+      let request = NotebookChatEnvelope(body: .request(.job(input)))
+      _ = await service.receive(request, peerID: peer); service.start()
+      try await wait { try await queue.submit { try $0.chatJob(input.id)?.state == .accepted } }
+      _ = await service.receive(request, peerID: peer)
+      let edits = await native.projectEdits, turns = await native.counts()
+      XCTAssertEqual(edits, 1); XCTAssertEqual(turns.0, 0)
+      XCTAssertEqual(try store.chatJob(input.id)?.result, .project(.init(id: edit.id, name: "Исследование", roots: ["/tmp"])))
+      await service.stop()
+    }
   }
 
   func testRepeatedTransportRequestExecutesOneNativeMessageAndKeepsSameThread() async throws {

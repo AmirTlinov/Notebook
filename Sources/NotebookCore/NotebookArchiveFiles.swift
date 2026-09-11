@@ -81,7 +81,7 @@ enum NotebookArchiveFiles {
 
   /// The rename publishes only bytes already forced to disk. A caller does not
   /// admit a model until the containing directory has also been synchronized.
-  static func publish<T: Encodable>(_ value: T, at url: URL) throws {
+  static func publish<T: Encodable>(_ value: T, at url: URL, withoutOverwriting: Bool = false) throws {
     let data = try NotebookStore.storageEncoder.encode(value)
     guard data.count <= maximumControlBytes else { throw NotebookStorageError.limitExceeded("archive_control") }
     let temporary = url.deletingLastPathComponent().appendingPathComponent(".publish-" + UUID().uuidString)
@@ -91,7 +91,8 @@ enum NotebookArchiveFiles {
     defer { try? handle.close(); try? FileManager.default.removeItem(at: temporary) }
     try handle.write(contentsOf: data)
     guard fsync(descriptor) == 0, fcntl(descriptor, F_FULLFSYNC) == 0 else { throw failure("flush archive control file") }
-    guard rename(temporary.path, url.path) == 0 else { throw failure("publish archive control file") }
+    let published = withoutOverwriting ? renamex_np(temporary.path, url.path, UInt32(RENAME_EXCL)) : rename(temporary.path, url.path)
+    guard published == 0 else { throw failure("publish archive control file") }
     try syncDirectory(url.deletingLastPathComponent())
   }
 

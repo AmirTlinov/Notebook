@@ -27,9 +27,44 @@ final class NotebookChatRenderingTests: XCTestCase {
     XCTAssertEqual(unsafe, false)
     let errors = try await web.evaluateJavaScript("document.querySelectorAll('[data-mml-node=merror]').length") as? Int
     XCTAssertEqual(errors, 0)
-    let update = #"[{"role":"assistant","text":"Готово: $2+2=4$"}]"#
+    let update = #"[{"role":"user","text":"Покажи формулу"},{"role":"assistant","text":"Готово: $2+2=4$"}]"#
     _ = try await web.callAsyncJavaScript("await window.showMessages(json)", arguments: ["json":update], in:nil, contentWorld:.page)
     let articles = try await web.evaluateJavaScript("document.querySelectorAll('article').length") as? Int
-    XCTAssertEqual(articles, 1, "Updates replace the bounded display, not the canonical conversation")
+    XCTAssertEqual(articles, 2, "Updates replace the bounded display, not the canonical conversation")
+    let style = try await web.evaluateJavaScript("""
+      (() => {
+        const user=document.querySelector('article[data-role=user] .content');
+        const assistant=document.querySelector('article[data-role=assistant] .content');
+        return {font:getComputedStyle(document.body).fontSize,
+          userBackground:getComputedStyle(user).backgroundColor,
+          userRadius:getComputedStyle(user).borderRadius,
+          assistantBackground:getComputedStyle(assistant).backgroundColor,
+          labels:[...document.querySelectorAll('.role')].map(x=>x.textContent),
+          overflow:document.documentElement.scrollWidth>innerWidth};
+      })()
+      """) as? [String: Any]
+    XCTAssertEqual(style?["font"] as? String, "15px")
+    XCTAssertEqual(style?["userBackground"] as? String, "rgb(243, 243, 243)")
+    XCTAssertEqual(style?["userRadius"] as? String, "20px")
+    XCTAssertEqual(style?["assistantBackground"] as? String, "rgba(0, 0, 0, 0)")
+    XCTAssertEqual(style?["labels"] as? [String], ["Вы", "Codex"], "Quiet styling retains accessible speaker names")
+    XCTAssertEqual(style?["overflow"] as? Bool, false)
+
+    let activity = #"[{"id":"native-command","role":"assistant","text":"Выполняется команда · swift test","activity":{"kind":"command","status":"inProgress","detail":"<script>window.executed = true</script>"}},{"id":"native-compaction","role":"assistant","text":"Контекст сжат","activity":{"kind":"compaction"}}]"#
+    _ = try await web.callAsyncJavaScript("await window.showMessages(json)", arguments: ["json": activity], in: nil, contentWorld: .page)
+    _ = try await web.evaluateJavaScript("document.querySelector('details').open = true")
+    _ = try await web.callAsyncJavaScript("await window.showMessages(json)", arguments: ["json": activity], in: nil, contentWorld: .page)
+    let actions = try await web.evaluateJavaScript("""
+      ({rows:document.querySelectorAll('[data-kind=activity]').length,
+        expanded:document.querySelector('details').open,
+        nativeID:document.querySelector('article').dataset.itemId,
+        unsafe:!!window.executed || !!document.querySelector('article script'),
+        inactiveButtons:document.querySelectorAll('[data-kind=activity] details').length})
+      """) as? [String: Any]
+    XCTAssertEqual(actions?["rows"] as? Int, 2)
+    XCTAssertEqual(actions?["expanded"] as? Bool, true, "A streamed update preserves the human's expanded native item")
+    XCTAssertEqual(actions?["nativeID"] as? String, "native-command")
+    XCTAssertEqual(actions?["unsafe"] as? Bool, false, "A command's text is not HTML or a new instruction")
+    XCTAssertEqual(actions?["inactiveButtons"] as? Int, 1, "Events without details do not pretend to expand")
   }
 }

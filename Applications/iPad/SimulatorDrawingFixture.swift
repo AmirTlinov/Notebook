@@ -401,6 +401,9 @@
           }
         }
         let model = NotebookAppModel(store: store, startsNearbySync: false)
+        if ProcessInfo.processInfo.arguments.contains("--notebook-chat-conversation-fixture") {
+          try store.saveChatPanel(.init(threadID: "7E7A1000-0000-4000-8000-000000000004"), author: model.actorID)
+        }
         if startsWithCoverEraser {
           model.selectDrawingTool(.eraser)
         }

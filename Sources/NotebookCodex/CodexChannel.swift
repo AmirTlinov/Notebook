@@ -5,7 +5,6 @@ import NotebookCore
 /// A partial frame has an absolute deadline; an idle subscription can wait indefinitely.
 struct CodexFrames {
   enum Framing: Sendable { case length, lines }
-  let framing: Framing
   var buffer = Data()
   var partialSince: ContinuousClock.Instant?
 
@@ -14,23 +13,13 @@ struct CodexFrames {
     buffer.append(data)
     var messages: [JSONValue] = []
     while !buffer.isEmpty {
-      let body: Data, consumed: Int
-      switch framing {
-      case .length:
-        guard buffer.count >= 4 else { return messages }
-        let count = buffer.prefix(4).enumerated().reduce(0) { $0 | (Int($1.element) << (8 * $1.offset)) }
-        guard count > 0, count <= CodexDesktopProtocol.frameLimit else { throw CodexBridgeError.invalidFrame }
-        guard buffer.count >= count + 4 else { return messages }
-        body = buffer.subdata(in: 4..<(count + 4)); consumed = count + 4
-      case .lines:
-        guard let end = buffer.firstIndex(of: 10) else {
-          guard buffer.count <= CodexDesktopProtocol.frameLimit else { throw CodexBridgeError.invalidFrame }
-          return messages
-        }
-        let length = buffer.distance(from: buffer.startIndex, to: end)
-        guard length > 0, length <= CodexDesktopProtocol.frameLimit else { throw CodexBridgeError.invalidFrame }
-        body = Data(buffer.prefix(length)); consumed = length + 1
+      guard let end = buffer.firstIndex(of: 10) else {
+        guard buffer.count <= CodexDesktopProtocol.frameLimit else { throw CodexBridgeError.invalidFrame }
+        return messages
       }
+      let length = buffer.distance(from: buffer.startIndex, to: end)
+      guard length > 0, length <= CodexDesktopProtocol.frameLimit else { throw CodexBridgeError.invalidFrame }
+      let body = Data(buffer.prefix(length)), consumed = length + 1
       guard let value = try? JSONDecoder().decode(JSONValue.self, from: body), value.object != nil else {
         throw CodexBridgeError.invalidFrame
       }
@@ -128,10 +117,11 @@ final class CodexChannel: @unchecked Sendable {
     ended: @escaping @Sendable (CodexBridgeError) async -> Void) {
     DispatchQueue(label: "Notebook.Codex.read").async { [self] in
       defer { Darwin.close(readFD) }
-      var decoder = CodexFrames(framing: framing), bytes = [UInt8](repeating: 0, count: 16_384)
+      var decoder = CodexFrames(), bytes = [UInt8](repeating: 0, count: 16_384)
+      let desktop = framing == .length ? CodexDesktopFrames() : nil
       do {
         while !isStopped {
-          try decoder.checkDeadline()
+          if let desktop { try desktop.checkDeadline() } else { try decoder.checkDeadline() }
           var descriptor = pollfd(fd: readFD, events: Int16(POLLIN), revents: 0)
           let ready = poll(&descriptor, 1, 100)
           if ready < 0 && errno == EINTR { continue }
@@ -140,7 +130,9 @@ final class CodexChannel: @unchecked Sendable {
           let count = Darwin.read(readFD, &bytes, bytes.count)
           if count < 0 && (errno == EINTR || errno == EAGAIN) { continue }
           guard count > 0 else { throw CodexBridgeError.disconnected }
-          for message in try decoder.append(Data(bytes.prefix(count))) {
+          let input = Data(bytes.prefix(count))
+          let messages = try desktop?.append(input) ?? decoder.append(input)
+          for message in messages {
             let result = DeliveryResult()
             Task {
               do { try await receive(message) } catch { result.error = error as? CodexBridgeError ?? .invalidResponse }

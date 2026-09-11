@@ -3,6 +3,7 @@ import NotebookCore
 import NotebookCodex
 
 protocol NotebookCodexConversationOwner: Sendable {
+  func activities(threadIDs: [String]) async throws -> [CodexTaskActivity]
   func attach(threadID: String) async throws
   func detach(threadID: String) async
   func snapshot(threadID: String) async -> CodexConversation?
@@ -12,7 +13,10 @@ protocol NotebookCodexConversationOwner: Sendable {
   func close() async
 }
 protocol NotebookCodexCatalogueOwner: Sendable {
-  func tasks(cursor: String?) async throws -> CodexTaskPage
+  func tasks(cursor: String?, project: CodexProject?) async throws -> CodexTaskPage
+  func readProject(id: String) async throws -> CodexProject
+  func updateProject(_ edit: CodexProjectEdit) async throws -> CodexProject
+  func projects(cursor: String?) async throws -> CodexProjectPage
   func history(threadID: String, cursor: String?) async throws -> CodexHistoryPage
   func create(directory: URL, title: String, workspaceID: UUID) async throws -> CodexTask
 }
@@ -98,25 +102,30 @@ final class NotebookCodexSidecar {
       switch query {
       case .job(let input):
         reply = .job(try await persistence.submit { try $0.saveChatInput(input) })
-      case .catalogue(let cursor): reply = .catalogue(try await metadata.tasks(cursor: cursor))
-      case .history(let thread, let cursor): reply = .history(try await metadata.history(threadID: thread, cursor: cursor))
+      case .catalogue(let cursor, let project): reply = .catalogue(try await metadata.tasks(cursor: cursor, project: project))
+      case .projects(let cursor): reply = .projects(try await metadata.projects(cursor: cursor))
+      case .activity(let ids): reply = .activity(try await bridge.activities(threadIDs: ids))
+      case .history(let thread, let cursor):
+        let page = try await metadata.history(threadID: thread, cursor: cursor)
+        reply = .history(.init(messages: CodexMessage.transportPage(page.messages), nextCursor: page.nextCursor))
       case .conversation(let thread):
         // Queue execution and a view change may not detach one another mid-send.
         guard !working else { throw CodexBridgeError.busy }
         working = true; defer { working = false }
         try await observe(thread)
         guard let state = await bridge.snapshot(threadID: thread) else { throw CodexBridgeError.unavailable }
-        let messages = state.messages.suffix(6).map { message in
-          CodexMessage(id: message.id, turnID: message.turnID, clientID: message.clientID, role: message.role,
-            text: String(message.text.prefix(4000)), isTruncated: message.isTruncated || message.text.count > 4000)
-        }
+        let messages = CodexMessage.transportPage(Array(state.messages.suffix(32)))
         let ids = Set(messages.compactMap(\.clientID)), turns = Set(messages.map(\.turnID))
         reply = .conversation(.init(threadID: state.threadID, revision: state.revision, title: state.title,
           ready: state.ready, busy: state.busy, activeTurnID: state.activeTurnID, messages: messages,
           requests: state.requests, acceptedMessages: state.acceptedMessages.filter { ids.contains($0.key) },
           turnStatuses: state.turnStatuses.filter { turns.contains($0.key) || $0.key == state.activeTurnID }))
       }
-    } catch { reply = .failure(Self.message(error)) }
+    } catch {
+      if error as? CodexBridgeError == .externalOwnerUnavailable, case .conversation(let thread) = query {
+        reply = .conversationUnavailable(threadID: thread, reason: Self.message(error))
+      } else { reply = .failure(Self.message(error)) }
+    }
     let response = NotebookChatEnvelope(id: envelope.id, body: .reply(reply))
     guard response.isValid(from: peerID) else {
       return .init(id: envelope.id, body: .reply(.failure("Ответ превышает размер кадра. Откройте историю порциями в Codex.")))
@@ -152,6 +161,7 @@ final class NotebookCodexSidecar {
     let result: NotebookChatResult
     do {
       switch job.input.action {
+      case .updateProject(let edit): result = .project(try await metadata.updateProject(edit))
       case .create(let title):
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         result = .created(try await metadata.create(directory: directory, title: title, workspaceID: workspaceID))
@@ -184,6 +194,16 @@ final class NotebookCodexSidecar {
   }
 
   private func reconcile(_ job: NotebookChatJob) async throws {
+    if case .updateProject(let edit) = job.input.action {
+      guard reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
+      reconciliationAfter[job.id] = Date().addingTimeInterval(15)
+      let project = try await metadata.readProject(id: edit.id)
+      if edit.matches(project) {
+        _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .project(project)) }
+        reconciliationAfter.removeValue(forKey: job.id)
+      }
+      return // Observation can confirm the requested state; it never repeats an edit over newer work.
+    }
     guard case .send(let thread, _, _) = job.input.action,
       reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
     reconciliationAfter[job.id] = Date().addingTimeInterval(15)
@@ -209,6 +229,7 @@ final class NotebookCodexSidecar {
     case .acceptanceUnknown: return "Принятие сообщения проверяется. Повторно оно не отправляется."
     case .staleTurn: return "Этот ход уже завершён или сменился на Mac. Другой ход не остановлен."
     case .staleRequest: return "Этот запрос уже обработан или сменился в Codex. Решение не отправлено."
+    case .externalOwnerUnavailable: return "Последний ход ещё не завершён, но его владелец недоступен. Историю можно читать; второй исполнитель не запущен."
     case .unsupportedRequest: return "Этот запрос нужно обработать в Codex на Mac."
     default: return "Codex: \(bridge.rawValue)"
     }

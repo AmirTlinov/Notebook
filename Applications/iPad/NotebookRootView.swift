@@ -106,12 +106,15 @@ struct NotebookRootView: View {
         let top = max(18, penControlsFrame.maxY - origin.y + 12)
         let bottom = min(geometry.size.height - 18,
           pairingFrame.isEmpty ? geometry.size.height - 18 : pairingFrame.minY - origin.y - 12)
-        NotebookChatPanel(chat: chat, maximumHeight: max(44, bottom - top))
+        NotebookChatPanel(chat: chat, maximumWidth: max(44, geometry.size.width - 36), maximumHeight: max(44, bottom - top))
           .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { chatFrame = $0 }
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
           .padding(.horizontal, 18).padding(.top, top)
           .padding(.bottom, max(18, geometry.size.height - bottom))
       }
+      // The collapsed launcher belongs to the paper's controls, not the
+      // disappearing keyboard. Its hit target must not travel during dismissal.
+      .ignoresSafeArea(.keyboard, edges: chat.expanded ? [] : .bottom)
     }
     if let question = model.agentQuestion, model.chat?.expanded != true {
       NotebookQuestionOverlay(question: question, sceneOrigin: sceneOrigin,

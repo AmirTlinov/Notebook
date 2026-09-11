@@ -4,7 +4,7 @@ import NotebookCore
 public enum CodexBridgeError: String, Error, Sendable {
   case notInstalled, incompatibleVersion, unsupportedHome, unsafeEndpoint, unavailable, disconnected, timeout
   case invalidFrame, invalidResponse, wrongOwner, revisionGap, historyLimit, busy, staleTurn
-  case staleRequest, unsupportedRequest, invalidInput, acceptanceUnknown, signInRequired
+  case staleRequest, unsupportedRequest, invalidInput, acceptanceUnknown, signInRequired, externalOwnerUnavailable
 }
 
 /// Only this reviewed desktop protocol is admitted. This is not an App Server version promise.
@@ -66,7 +66,11 @@ struct CodexStreamState: Sendable {
       for patch in patches {
         guard let path = patch["path"]?.array, path.count <= 64, let operation = patch["op"]?.string,
           ["add", "replace", "remove"].contains(operation) else { throw CodexBridgeError.invalidResponse }
-        changed = try Self.apply(operation, path: path[...], replacement: patch["value"], to: changed)
+        if message[CodexWireProjection.marker] == .bool(true), CodexWireProjection.omits(path, in: changed) { continue }
+        let replacement = message[CodexWireProjection.marker] == .bool(true)
+          ? CodexWireProjection.replacement(patch["value"], operation: operation, path: path, in: changed) : patch["value"]
+        changed = try Self.apply(operation, path: path[...], replacement: replacement, to: changed)
+        if message[CodexWireProjection.marker] == .bool(true) { changed = CodexWireProjection.pruneAfterPatch(changed) }
       }
       candidate = changed
     default: throw CodexBridgeError.invalidResponse
@@ -134,18 +138,17 @@ struct CodexStreamState: Sendable {
       let turnID = turn["turnId"]?.string ?? turn["id"]?.string ?? ""
       guard !turnID.isEmpty else { continue }
       for item in turn["items"]?.array ?? [] {
-        guard let message = displayMessage(item, turnID: turnID) else { continue }
-        if message.role == .user, let clientID = message.clientID {
+        if item["type"] == .string("userMessage"), let clientID = item["clientId"]?.string {
           if let previous = accepted[clientID], previous != turnID { throw CodexBridgeError.invalidResponse }
           accepted[clientID] = turnID
         }
-        messages.append(message)
+        if let message = displayMessage(item, turnID: turnID) { messages.append(message) }
       }
     }
     return CodexConversation(threadID: threadID, revision: revision, title: state["title"]?.string ?? "Codex",
       ready: state["resumeState"] == .string("resumed"),
       busy: !active.isEmpty || state["threadRuntimeStatus"]?["type"] == .string("active"),
-      activeTurnID: active.first?["turnId"]?.string, messages: Array(messages.suffix(64)), requests: requests,
+      activeTurnID: active.first?["turnId"]?.string ?? active.first?["id"]?.string, messages: Array(messages.suffix(64)), requests: requests,
       acceptedMessages: accepted, turnStatuses: Dictionary(turns.suffix(64).compactMap { turn in
         guard let id = turn["turnId"]?.string ?? turn["id"]?.string, let status = turn["status"]?.string else { return nil }
         return (id, status)
@@ -153,16 +156,52 @@ struct CodexStreamState: Sendable {
   }
 
   static func displayMessage(_ item: JSONValue, turnID: String) -> CodexMessage? {
-    guard let id = item["id"]?.string else { return nil }
+    guard let id = item["id"]?.string, let type = item["type"]?.string else { return nil }
     let role: CodexMessage.Role, text: String
-    switch item["type"] {
-    case .string("userMessage"):
+    var activity: CodexMessage.Activity?
+    var detailTruncated = false
+    let status = item["status"]?.string
+    func action(_ kind: CodexMessage.Activity.Kind, _ detail: String? = nil) -> CodexMessage.Activity {
+      detailTruncated = detailTruncated || (detail?.count ?? 0) > 8192
+      return .init(kind: kind, status: status, detail: detail.map { String($0.prefix(8192)) })
+    }
+    switch type {
+    case "userMessage":
+      guard item["content"] != nil else { return nil }
       role = .user; text = (item["content"]?.array ?? []).compactMap { $0["text"]?.string }.joined(separator: "\n")
-    case .string("agentMessage"):
+    case "agentMessage":
       role = .assistant; text = item["text"]?.string ?? ""
+    case "commandExecution":
+      role = .assistant
+      let command = item["command"]?.string ?? ""
+      text = (status == "inProgress" ? "Выполняется команда" : status == "failed" ? "Команда завершилась ошибкой" : "Выполнена команда") + (command.isEmpty ? "" : " · " + String(command.prefix(160)))
+      let output = item["aggregatedOutput"]?.string
+      activity = action(.command, command + (output.map { "\n\n" + $0 } ?? ""))
+    case "fileChange":
+      role = .assistant
+      let changes = item["changes"]?.array ?? []
+      text = (status == "inProgress" ? "Изменяются файлы" : "Изменены файлы") + " · \(changes.count)"
+      activity = action(.files, changes.compactMap { $0["path"]?.string }.joined(separator: "\n"))
+    case "mcpToolCall", "dynamicToolCall", "functionCallOutput":
+      role = .assistant
+      let name = [item["server"]?.string ?? item["namespace"]?.string, item["tool"]?.string ?? item["name"]?.string].compactMap { $0 }.joined(separator: ".")
+      text = (status == "inProgress" ? "Вызывается инструмент" : "Вызван инструмент") + (name.isEmpty ? "" : " · " + name)
+      activity = action(.tool)
+    case "webSearch":
+      role = .assistant; text = "Поиск · " + (item["query"]?.string ?? ""); activity = action(.search)
+    case "imageView":
+      role = .assistant; text = "Просмотрено изображение"; activity = action(.image, item["path"]?.string)
+    case "plan", "planImplementation":
+      role = .assistant; text = "План работы"; activity = action(.plan, item["text"]?.string)
+    case "contextCompaction":
+      role = .assistant; text = item["completed"] == .bool(false) ? "Контекст сжимается" : "Контекст сжат"; activity = action(.compaction)
+    case "error":
+      role = .assistant; text = "Ошибка Codex"; activity = action(.error, item["message"]?.string)
+    // Reasoning content, hidden context and optimistic/steering input are not a
+    // second transcript. Canonical user items and public commentary own those rows.
     default: return nil
     }
     return CodexMessage(id: id, turnID: turnID, clientID: item["clientId"]?.string, role: role,
-      text: String(text.prefix(16_384)), isTruncated: text.count > 16_384)
+      text: String(text.prefix(16_384)), isTruncated: text.count > 16_384 || detailTruncated, activity: activity)
   }
 }

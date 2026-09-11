@@ -89,7 +89,7 @@ protocol NotebookPairingTrustStore {
 /// the two confirmations neither grants access nor strands an approved pair.
 @MainActor
 final class NotebookKeychainPairingStore: NotebookPairingTrustStore {
-  private let activationID: UUID?
+  let activationID: UUID?
   init(activationID: UUID? = nil) { self.activationID = activationID }
 
   private func query(_ identity: NotebookTransportIdentity) -> [String: Any] {
@@ -101,27 +101,37 @@ final class NotebookKeychainPairingStore: NotebookPairingTrustStore {
       kSecAttrAccount as String: "\(identity.deviceID):\(identity.workspaceID)\(activation)"]
   }
   func load(for identity: NotebookTransportIdentity) throws -> [NotebookTrustedPeer] {
+    try loadState(for: identity).records
+  }
+
+  func save(_ records: [NotebookTrustedPeer], for identity: NotebookTransportIdentity) throws {
+    var state = try loadState(for: identity)
+    state.records = records
+    try saveState(state, for: identity)
+  }
+
+  func loadState(for identity: NotebookTransportIdentity) throws -> NotebookPairingTrustState {
     var query = query(identity); query[kSecReturnData as String] = true; query[kSecMatchLimit as String] = kSecMatchLimitOne
     var result: CFTypeRef?
     let status = SecItemCopyMatching(query as CFDictionary, &result)
-    if status == errSecItemNotFound { return [] }
+    if status == errSecItemNotFound { return .init() }
     guard status == errSecSuccess, let data = result as? Data, data.count <= 32_768 else { throw NotebookTransportError.storageUnavailable }
-    let records = try JSONDecoder().decode([NotebookTrustedPeer].self, from: data)
-    guard records.count <= 8, Set(records.map { $0.identity.deviceID }).count == records.count,
-      records.allSatisfy({ $0.identity.isValid && $0.identity.workspaceID == identity.workspaceID
-        && $0.identity.deviceID != identity.deviceID && $0.secret.count == 32 })
-    else { throw NotebookTransportError.identityMismatch }
-    return records
+    let state = try JSONDecoder().decode(NotebookPairingTrustState.self, from: data)
+    try state.validate(for: identity)
+    return state
   }
-  func save(_ records: [NotebookTrustedPeer], for identity: NotebookTransportIdentity) throws {
-    guard records.count <= 8 else { throw NotebookTransportError.resourceLimit }
+
+  func saveState(_ state: NotebookPairingTrustState, for identity: NotebookTransportIdentity) throws {
+    try state.validate(for: identity)
     let query = query(identity)
-    if records.isEmpty {
+    // Revocation removes credentials, not the consumed installation grant.
+    // Otherwise a restored installer file could silently re-authorize a peer.
+    if state.records.isEmpty && state.installedGrantSHA256 == nil {
       let status = SecItemDelete(query as CFDictionary)
       guard status == errSecSuccess || status == errSecItemNotFound else { throw NotebookTransportError.storageUnavailable }
       return
     }
-    let data = try JSONEncoder().encode(records)
+    let data = try JSONEncoder().encode(state)
     guard data.count <= 32_768 else { throw NotebookTransportError.resourceLimit }
     let values: [String: Any] = [kSecValueData as String: data, kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
     let status = SecItemUpdate(query as CFDictionary, values as CFDictionary)
@@ -130,6 +140,7 @@ final class NotebookKeychainPairingStore: NotebookPairingTrustStore {
       guard SecItemAdd(added as CFDictionary, nil) == errSecSuccess else { throw NotebookTransportError.storageUnavailable }
     } else if status != errSecSuccess { throw NotebookTransportError.storageUnavailable }
   }
+
 }
 
 struct NotebookPeerCredential {
