@@ -151,6 +151,7 @@ final class NotebookChatControllerTests: XCTestCase {
       guard case .request(let query) = envelope.body else { return XCTFail("Expected a query") }
       let reply: NotebookChatReply
       switch query {
+      case .file: return XCTFail("The file panel is closed")
       case .projects: reply = .projects(.init(projects: [project], nextCursor: nil))
       case .catalogue(_, let selected):
         if selected == project { filtered = true }

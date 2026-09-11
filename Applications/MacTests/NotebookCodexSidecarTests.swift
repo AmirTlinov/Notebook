@@ -180,6 +180,37 @@ final class NotebookCodexSidecarTests: XCTestCase {
       await service.stop()
     }
   }
+  func testFileQueriesUseCurrentProjectAndExistingDurableQueueWithoutAModel() async throws {
+    try await fixture { store, queue, native, peer in
+      let root = store.root.appendingPathComponent("code"), computer = UUID()
+      try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+      let project = try await native.updateProject(.init(id: "code", name: "Code", roots: [root.path]))
+      let address = NotebookFileAddress(computer: computer, project: project.id, root: root.path, path: "run.py")
+      let file = root.appendingPathComponent("run.py"); try Data("print(2)\n".utf8).write(to: file)
+      let service = NotebookCodexSidecar(persistence: queue, bridge: native, metadata: native,
+        workspaceID: try store.workspaceHeader().workspaceID, computerID: computer, directory: root)
+      let read = await service.receive(.init(body: .request(.file(.read(address, version: nil, offset: 0)))), peerID: peer)
+      guard case .reply(.file(.part(let part))) = read?.body else { return XCTFail("Expected file bytes") }
+      XCTAssertEqual(String(decoding: part.data, as: UTF8.self), "print(2)\n")
+      let payload = try JSONEncoder().encode(NotebookFileEdit(address: address, base: "print(2)\n", text: "print(4)\n")), id = UUID()
+      let chunk = NotebookFileUpload(id: id, digest: NotebookFileVersion.hash(payload), total: payload.count, offset: 0, data: payload)
+      _ = await service.receive(.init(body: .request(.file(.upload(chunk)))), peerID: peer)
+      let input = NotebookChatInput(id: id, author: peer, action: .saveFile(address))
+      _ = await service.receive(.init(body: .request(.job(input))), peerID: peer)
+      service.start()
+      try await wait { try await queue.submit { try $0.chatJob(id)?.state == .accepted } }
+      XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "print(4)\n")
+      try Data("newer\n".utf8).write(to: file)
+      _ = await service.receive(.init(body: .request(.job(input))), peerID: peer)
+      XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "newer\n")
+      let counts = await native.counts(); XCTAssertEqual(counts.0, 0)
+      _ = try await native.updateProject(.init(id: project.id, name: nil, roots: []))
+      let revoked = await service.receive(.init(body: .request(.file(.read(address, version: part.version, offset: 0)))), peerID: peer)
+      guard case .reply(.failure) = revoked?.body else { await service.stop(); return XCTFail("Revocation must also deny cached versions") }
+      await service.stop()
+    }
+  }
+
   func testMissingDefaultAccountRejectsCreationBeforeDispatchAndKeepsCodexAsLoginOwner() async throws {
     try await fixture { store, queue, native, peer in
       await native.requireSignIn(true)

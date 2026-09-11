@@ -403,6 +403,13 @@ extension NotebookStore {
         try database.run("COMMIT")
       } catch { try? database.run("ROLLBACK"); throw error }
     }
+    // File drafts and transfers are device-local, not a second shared archive.
+    try database.run("CREATE TABLE IF NOT EXISTS file_drafts(id TEXT PRIMARY KEY,value BLOB NOT NULL)")
+    try database.run("CREATE TABLE IF NOT EXISTS file_window(id TEXT PRIMARY KEY,value BLOB NOT NULL)")
+    try database.run("CREATE TABLE IF NOT EXISTS file_versions(hash TEXT PRIMARY KEY,value BLOB NOT NULL,touched REAL NOT NULL)")
+    try database.run("CREATE TABLE IF NOT EXISTS file_version_files(address TEXT NOT NULL,hash TEXT NOT NULL REFERENCES file_versions(hash) ON DELETE CASCADE,PRIMARY KEY(address,hash))")
+    try database.run("CREATE TABLE IF NOT EXISTS file_uploads(id TEXT PRIMARY KEY,author TEXT NOT NULL,digest TEXT NOT NULL,total INTEGER NOT NULL,value BLOB NOT NULL,touched REAL NOT NULL)")
+    try database.run("CREATE TABLE IF NOT EXISTS file_commits(id TEXT PRIMARY KEY,address BLOB NOT NULL,before_hash TEXT NOT NULL,after_hash TEXT NOT NULL,result BLOB)")
     // Device-local chat delivery is deliberately absent from the shared content manifest.
     try database.run("CREATE TABLE IF NOT EXISTS chat_jobs(ordinal INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,author TEXT NOT NULL,state TEXT NOT NULL,value BLOB NOT NULL)")
     try database.run("CREATE INDEX IF NOT EXISTS chat_pending ON chat_jobs(state,ordinal)")

@@ -31,6 +31,7 @@ final class NotebookCodexSidecar {
   private let persistence: NotebookPersistenceQueue
   private let bridge: any NotebookCodexConversationOwner
   private let metadata: any NotebookCodexCatalogueOwner
+  private let computerID: UUID
   private let workspaceID: UUID
   private let directory: URL
   private var worker: Task<Void, Never>?
@@ -47,17 +48,17 @@ final class NotebookCodexSidecar {
   private var historyCursors: [UUID: String] = [:]
   private var reconciliationAfter: [UUID: Date] = [:]
 
-  init(persistence: NotebookPersistenceQueue, installation: CodexDesktopInstallation, workspaceID: UUID, directory: URL, publish: @escaping (NotebookChatEnvelope, UUID) -> Void) {
+  init(persistence: NotebookPersistenceQueue, installation: CodexDesktopInstallation, workspaceID: UUID, computerID: UUID, directory: URL, publish: @escaping (NotebookChatEnvelope, UUID) -> Void) {
     self.publish = publish
-    self.persistence = persistence; self.workspaceID = workspaceID; self.directory = directory
+    self.persistence = persistence; self.workspaceID = workspaceID; self.computerID = computerID; self.directory = directory
     let server = CodexAppServer(installation: installation)
     bridge = server; metadata = server; bridgeEvents = server.events
   }
 
   init(persistence: NotebookPersistenceQueue, bridge: any NotebookCodexConversationOwner,
-    metadata: any NotebookCodexCatalogueOwner, workspaceID: UUID, directory: URL) {
+    metadata: any NotebookCodexCatalogueOwner, workspaceID: UUID, computerID: UUID = UUID(), directory: URL) {
     self.persistence = persistence; self.bridge = bridge; self.metadata = metadata
-    self.workspaceID = workspaceID; self.directory = directory
+    self.workspaceID = workspaceID; self.computerID = computerID; self.directory = directory
   }
 
   func start() {
@@ -132,6 +133,26 @@ final class NotebookCodexSidecar {
     let reply: NotebookChatReply
     do {
       switch query {
+      case .file(let query):
+        if let address = query.address {
+          guard address.computer == computerID else { throw CodexBridgeError.invalidInput }
+          let project = try await metadata.readProject(id: address.project)
+          reply = .file(try await persistence.submit { store in
+            switch query {
+            case .directory(let address, let after): return .directory(try MacNotebookProjectFiles.list(address, project: project, after: after))
+            case .read(let address, let version, let offset):
+              guard project.roots.contains(address.root) else { throw CodexBridgeError.invalidInput }
+              let selected: NotebookFileVersion
+              if let version { selected = version }
+              else { selected = try store.cacheFileVersion(MacNotebookProjectFiles.read(address, project: project), address: address) }
+              return .part(try store.filePart(selected, address: address, offset: offset))
+            case .upload: throw CodexBridgeError.invalidInput
+            }
+          })
+        } else if case .upload(let chunk) = query {
+          reply = .file(.uploaded(try await persistence.submit { try $0.stageFileUpload(chunk, author: peerID) }))
+        } else { throw CodexBridgeError.invalidInput }
+
       case .job(let input):
         reply = .job(try await persistence.submit { try $0.saveChatInput(input) })
       case .catalogue(let cursor, let project): reply = .catalogue(try await metadata.tasks(cursor: cursor, project: project))
@@ -191,6 +212,12 @@ final class NotebookCodexSidecar {
     let result: NotebookChatResult
     do {
       switch job.input.action {
+      case .saveFile(let address):
+        guard address.computer == computerID else { throw CodexBridgeError.invalidInput }
+        let project = try await metadata.readProject(id: address.project)
+        result = .file(try await persistence.submit { store in
+          try MacNotebookProjectFiles.commit(job.id, author: job.input.author, address: address, project: project, store: store)
+        })
       case .updateProject(let edit): result = .project(try await metadata.updateProject(edit))
       case .create(let title, let selectedProject):
         let project: CodexProject?
@@ -211,7 +238,10 @@ final class NotebookCodexSidecar {
       // These local checks fail before native dispatch. A turn that finished on
       // the Mac is a definite stale Stop, not an indefinitely unknown acceptance.
       let code = error as? CodexBridgeError
-      let rejected = code == .staleTurn || code == .staleRequest || code == .unsupportedRequest || code == .invalidInput || code == .signInRequired
+      let fileRejected: Bool
+      if case .saveFile = job.input.action { fileRejected = try await persistence.submit { try $0.fileCommit(job.id) == nil } }
+      else { fileRejected = false }
+      let rejected = fileRejected || code == .staleTurn || code == .staleRequest || code == .unsupportedRequest || code == .invalidInput || code == .signInRequired
       // busy/unavailable are guaranteed pre-dispatch by send(). Other failures
       // remain uncertain, including success whose native reply was lost.
       let retryable: Bool
@@ -229,6 +259,15 @@ final class NotebookCodexSidecar {
   }
 
   private func reconcile(_ job: NotebookChatJob) async throws {
+    if case .saveFile(let address) = job.input.action {
+      guard address.computer == computerID, reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
+      reconciliationAfter[job.id] = Date().addingTimeInterval(5)
+      let project = try await metadata.readProject(id: address.project)
+      if let result = try await persistence.submit({ try MacNotebookProjectFiles.reconcile(job.id, project: project, store: $0) }) {
+        _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .file(result)) }
+      }
+      return
+    }
     if case .updateProject(let edit) = job.input.action {
       guard reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
       reconciliationAfter[job.id] = Date().addingTimeInterval(15)

@@ -229,6 +229,34 @@ final class DrawingResponsivenessTests: XCTestCase {
     assertNewChatDoesNotBlockCollapse(transcript: false)
   }
 
+  func testCodeDocumentScrollsEditsAndClosesWithoutMovingPaper() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-code-document-fixture"]
+    launchPortraitFixture(app)
+    let paper = app.otherElements["paper-input"], frame = paper.frame, ink = paper.value as? String
+    app.buttons["notebook-chat-toggle"].tap()
+    app.buttons["notebook-file-reopen"].tap()
+    XCTAssertTrue(app.otherElements["notebook-code-document"].waitForExistence(timeout: 3))
+    app.buttons["notebook-chat-toggle"].tap()
+    let text = app.descendants(matching: .any).matching(identifier: "notebook-code-text").firstMatch
+    XCTAssertTrue(text.waitForExistence(timeout: 3))
+    let from = text.coordinate(withNormalizedOffset: .init(dx: 0.3, dy: 0.7))
+    from.press(forDuration: 0.05, thenDragTo: text.coordinate(withNormalizedOffset: .init(dx: 0.3, dy: 0.3)))
+    XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, ink)
+    app.buttons["code-keyboard"].tap()
+    XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4))
+    text.typeText("# written on iPad\n")
+    app.buttons["code-keyboard.chevron.compact.down"].tap()
+    let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "code-scroll-and-native-keyboard"; shot.lifetime = .keepAlways; add(shot)
+    app.buttons["code-xmark"].tap()
+    XCTAssertFalse(text.exists)
+    XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, ink)
+    app.buttons["notebook-chat-toggle"].tap(); app.buttons["notebook-file-reopen"].tap()
+    XCTAssertTrue(text.waitForExistence(timeout: 3))
+    XCTAssertTrue((text.value as? String)?.contains("# written on iPad") == true)
+  }
+
   func testChatMovesResizesAndOpensSettingsWithoutMovingPaper() {
     continueAfterFailure = false
     let app = XCUIApplication()

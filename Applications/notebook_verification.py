@@ -17,6 +17,11 @@ import notebook_release as release
 ROOT = Path(__file__).resolve().parents[1]
 UI = "NotebookUITests/DrawingResponsivenessTests/"
 PROFILES = {
+    "project-files": {
+        "core": ["NotebookProjectFileTests", "NotebookChatStoreTests"],
+        "mac": ["NotebookMacTests/NotebookProjectFilesTests", "NotebookMacTests/NotebookCodexSidecarTests"],
+        "ipad": ["NotebookTests/NotebookFileControllerTests", "NotebookTests/NotebookChatControllerTests"],
+    },
     "chat-transport": {"core": ["NotebookChatStoreTests"], "ipad": ["NotebookTests/NotebookTransportSessionTests/testCodexEnvelopeUsesTheSameAuthenticatedPeerAndReceiptID"]},
     "codex": {"core": ["NotebookCodexTests"]},
     "chat": {
@@ -101,6 +106,10 @@ def owners(path):
     name = Path(path).name
     if path.startswith(("Sources/NotebookCodex/", "Tests/NotebookCodexTests/", "Tests/NotebookCodexBridgeHarness/")):
         return ["codex"]
+    if name in ("NotebookProjectFile.swift", "NotebookFileStore.swift", "MacNotebookProjectFiles.swift",
+                "NotebookFileController.swift", "NotebookCodeDocumentView.swift", "NotebookProjectFilesView.swift",
+                "NotebookProjectFileTests.swift", "NotebookProjectFilesTests.swift", "NotebookFileControllerTests.swift"):
+        return ["project-files"]
     if name in ("DocumentPagePreparation.swift", "SpatialInkSurfaceView.swift", "SpatialBoardInkHandoff.swift") or path == "Applications/TestSupport/DocumentLargeSourceTests.swift":
         return ["paper-resources"]
     if path == "Applications/iPad/SpatialWorkspaceView.swift":

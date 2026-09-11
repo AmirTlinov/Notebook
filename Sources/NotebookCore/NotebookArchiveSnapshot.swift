@@ -55,7 +55,7 @@ extension NotebookStore {
       }
       try database.run("DELETE FROM sqlite_sequence WHERE name='change_log'")
       if !preservingLocalState {
-        for table in ["chat_jobs", "chat_panel"] { try database.run("DELETE FROM \(table)") }
+        for table in ["chat_jobs", "chat_panel", "file_drafts", "file_window", "file_version_files", "file_versions", "file_uploads", "file_commits"] { try database.run("DELETE FROM \(table)") }
       }
       // The seed declares every shared value under the current wire contract.
       // Existing content/receipt hashes stay identical; only delivery restarts.

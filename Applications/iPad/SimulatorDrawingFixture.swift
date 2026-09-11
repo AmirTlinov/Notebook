@@ -412,6 +412,16 @@
         if ProcessInfo.processInfo.arguments.contains("--notebook-chat-conversation-fixture") {
           try store.saveChatPanel(.init(threadID: "7E7A1000-0000-4000-8000-000000000004"), author: model.actorID)
         }
+        if ProcessInfo.processInfo.arguments.contains("--notebook-code-document-fixture") {
+          let peer = UUID(uuidString: "7E7A1000-0000-4000-8000-000000000099")!
+          let address = NotebookFileAddress(computer: peer, project: "fixture", root: "/fixture", path: "example.py")
+          let text = (0..<500).map { "value_\($0) = \($0) * 2" }.joined(separator: "\n")
+          try store.saveFileDraft(.init(address: address, text: text))
+          var window = NotebookFileWindowState(); window.selected = address; window.sidebar = true
+          window.project = .init(id: "fixture", name: "Code", roots: ["/fixture"])
+          try store.saveFileWindow(window, author: model.actorID)
+          try store.saveChatPanel(.init(sidecarID: peer), author: model.actorID)
+        }
         if startsWithCoverEraser {
           model.selectDrawingTool(.eraser)
         }

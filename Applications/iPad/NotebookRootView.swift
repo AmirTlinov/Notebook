@@ -85,6 +85,13 @@ struct NotebookRootView: View {
       .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { collaborationHeight = $0 }
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
       .padding(18)
+    if let chat = model.chat, chat.files.window.isOpen, chat.files.document != nil {
+      GeometryReader { geometry in
+        let top = max(18, penControlsFrame.maxY - geometry.frame(in: .global).minY + 12)
+        NotebookCodeDocumentView(files: chat.files)
+          .padding(.top, top).padding(.horizontal, 18).padding(.bottom, 18)
+      }
+    }
     if let chat = model.chat {
       GeometryReader { geometry in
         let origin = geometry.frame(in: .global).origin

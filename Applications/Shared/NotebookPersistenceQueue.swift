@@ -6,6 +6,7 @@ import NotebookCore
 @MainActor
 final class NotebookPersistenceQueue {
   enum Owner: Hashable {
+    case fileDraft(String), fileWindow
     case page(UUID), document(UUID), documentState(UUID), documentDraft(UUID)
     case board, spatialInk(UUID), presence, inputActivity(UUID)
     case nativeText(UUID, String), elementState(UUID, String)
@@ -45,9 +46,9 @@ final class NotebookPersistenceQueue {
 
   /// A nil owner is an ordering fence (creation, deletion, or publication).
   /// Coalescing never crosses it or replaces a write already executing.
-  func enqueue(owner: Owner? = nil,
+  func enqueue(owner: Owner? = nil, publishesChanges: Bool = true,
     _ operation: @escaping @Sendable (NotebookStore) throws -> Bool) {
-    let write = Write(owner: owner, operation: { .init(merged: try operation($0), succeeded: true) })
+    let write = Write(owner: owner, operation: { .init(merged: try operation($0), succeeded: true) }, notifiesCommit: publishesChanges)
     if let owner, let index = coalescingIndex(for: owner) {
       pending[index] = write
       startIfNeeded()

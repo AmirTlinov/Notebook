@@ -26,8 +26,15 @@ struct NotebookChatPanel: View {
         VStack(spacing: 0) {
           header
           projectTabs
-          if chat.threadID == nil || chat.browsesChats { recentChats }
-          else { conversation }
+          HStack(spacing: 0) {
+            if chat.files.window.sidebar {
+              NotebookProjectFilesView(files: chat.files, computer: chat.computerID)
+                .frame(width: min(220, max(130, size.width * 0.34)))
+              Divider()
+            }
+            if chat.threadID == nil || chat.browsesChats { recentChats }
+            else { conversation }
+          }
           composer
         }
       } else {
@@ -98,6 +105,9 @@ struct NotebookChatPanel: View {
           Image(systemName: "stop.circle").font(.system(size: 19)).frame(width: 44, height: 44)
         }.accessibilityLabel("Остановить ответ").accessibilityIdentifier("notebook-chat-stop")
       }
+      Button { chat.files.toggleSidebar() } label: {
+        Image(systemName: "sidebar.left").frame(width: 44, height: 44)
+      }.accessibilityLabel("Файлы проекта").accessibilityIdentifier("notebook-files-toggle")
       Button(action: createChat) {
         Image(systemName: "square.and.pencil").frame(width: 44, height: 44).contentShape(Rectangle())
       }

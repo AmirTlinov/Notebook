@@ -7,11 +7,13 @@ import NotebookCore
 /// can be replaced in the transient lane; mutations survive in SQLite by ID.
 @MainActor @Observable
 final class NotebookChatController {
+  let files: NotebookFileController
+  var computerID: UUID? { peer }
   var expanded = false { didSet { if !expanded { stopDictation(); activities = [:]; conversationSubscription = nil; enqueue(.activity(threadIDs: [])) } else { nextConversation = .now } } }
   var browsesChats = false
   private(set) var projects: [CodexProject] = []
   private(set) var projectCursor: String?
-  private(set) var selectedProject: CodexProject?
+  var selectedProject: CodexProject? { files.window.project }
   private(set) var activities: [String: CodexTaskActivity] = [:]
   var draft: String = "" { didSet {
     if !writesDictation && dictationStatus != nil { stopDictation() }
@@ -49,6 +51,9 @@ final class NotebookChatController {
   @ObservationIgnored private var loop: Task<Void, Never>?
   @ObservationIgnored private var pending: (NotebookChatEnvelope, CheckedContinuation<NotebookChatReply, Error>)?
   @ObservationIgnored private var retry: Task<Void, Never>?
+  @ObservationIgnored private var fileQueries: [(NotebookFileQuery, CheckedContinuation<NotebookFileReply, Error>)] = []
+  @ObservationIgnored private let wake = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+  @ObservationIgnored private var ticker: Task<Void, Never>?
   @ObservationIgnored private var queries: [NotebookChatQuery] = []
   @ObservationIgnored private var deliveryIndex = 0
   @ObservationIgnored private var displayedCatalogueCursor: String?
@@ -60,6 +65,7 @@ final class NotebookChatController {
 
   init(persistence: NotebookPersistenceQueue, author: UUID, dictationInput: any NotebookDictationInput = NotebookMicrophoneDictation(), send: @escaping (NotebookChatEnvelope, UUID) -> Void) {
     self.persistence = persistence; self.author = author; self.send = send; self.dictationInput = dictationInput
+    files = NotebookFileController(persistence: persistence, author: author); files.chat = self
   }
 
   func start() async {
@@ -69,13 +75,29 @@ final class NotebookChatController {
       let state = try await persistence.submit { try $0.chatPanel(author: author) }
       threadID = state.threadID; draft = state.draft; peer = state.sidecarID
       try await refreshJobs()
+      try await files.start()
       loaded = true
+      ticker = Task { [wake] in
+        while !Task.isCancelled { wake.continuation.yield(()); do { try await Task.sleep(for: .milliseconds(600)) } catch { break } }
+      }
       loop = Task { [weak self] in
         guard let self else { return }
+        var iterator = wake.stream.makeAsyncIterator()
         var deliverJobs = true
         var nextActivity = ContinuousClock.now, nextCatalogue = ContinuousClock.now
-        while !Task.isCancelled {
+        while !Task.isCancelled, await iterator.next() != nil {
           if connected {
+            if !fileQueries.isEmpty, deliverJobs {
+              let (file, completion) = fileQueries.removeFirst()
+              do {
+                switch try await request(.file(file)) {
+                case .file(let reply): completion.resume(returning: reply)
+                case .failure(let message): throw NotebookPersistenceQueue.Failure(message: message)
+                default: throw NotebookTransportError.invalidAcknowledgement
+                }
+              } catch { completion.resume(throwing: error) }
+              deliverJobs = false; wake.continuation.yield(()); continue
+            }
             let query: NotebookChatQuery?
             let outgoing = jobs.reversed().filter { !$0.isTerminal }
             offeredJobs.formIntersection(outgoing.map(\.id))
@@ -100,14 +122,16 @@ final class NotebookChatController {
             }
           }
           deliverJobs.toggle()
-          do { try await Task.sleep(for: .milliseconds(600)) } catch { break }
+          if !fileQueries.isEmpty { wake.continuation.yield(()) }
         }
       }
     } catch { self.error = error.localizedDescription }
   }
 
   func stop() async {
-    stopped = true
+    stopped = true; files.stop(); ticker?.cancel(); wake.continuation.finish()
+    for (_, continuation) in fileQueries { continuation.resume(throwing: NotebookTransportError.disconnected) }
+    fileQueries.removeAll()
     stopDictation(); await dictationTask?.value
     loop?.cancel(); retry?.cancel()
     pending?.1.resume(throwing: NotebookTransportError.disconnected); pending = nil
@@ -119,9 +143,12 @@ final class NotebookChatController {
     if !connected { offeredJobs.removeAll(); conversationSubscription = nil; nextConversation = .now }
     peer = id; connected = true; persistPanel()
     if tasks.isEmpty { catalogue(); catalogueProjects() }
+    if files.window.sidebar { Task { await files.roots() } }
   }
   func disconnect(_ id: UUID) {
     guard peer == id else { return }
+    for (_, continuation) in fileQueries { continuation.resume(throwing: NotebookTransportError.disconnected) }
+    fileQueries.removeAll()
     connected = false; activities = [:]; retry?.cancel(); conversationSubscription = nil
     pending?.1.resume(throwing: NotebookTransportError.disconnected); pending = nil
   }
@@ -140,7 +167,7 @@ final class NotebookChatController {
   func catalogueProjects(next: Bool = false) { enqueue(.projects(cursor: next ? projectCursor : nil)) }
   func selectProject(_ project: CodexProject?) {
     stopDictation()
-    selectedProject = project; tasks = []; activities = [:]; taskCursor = nil; displayedCatalogueCursor = nil
+    files.chooseProject(project); tasks = []; activities = [:]; taskCursor = nil; displayedCatalogueCursor = nil
     browsesChats = true; catalogue()
   }
   func latestHistory() { guard let threadID else { return }; enqueue(.history(threadID: threadID, cursor: nil)) }
@@ -278,8 +305,15 @@ final class NotebookChatController {
       if case .failure(let failure) = result { Task { @MainActor [weak self] in self?.error = failure.localizedDescription } }
     }
   }
+  func refreshFileJobs() async { try? await refreshJobs(); wake.continuation.yield(()) }
+  func fileQuery(_ query: NotebookFileQuery) async throws -> NotebookFileReply {
+    guard connected, !stopped, fileQueries.count < 8, query.isValid else { throw NotebookTransportError.disconnected }
+    return try await withCheckedThrowingContinuation { continuation in
+      fileQueries.append((query, continuation)); wake.continuation.yield(())
+    }
+  }
   private func enqueue(_ query: NotebookChatQuery) {
-    if !queries.contains(query), queries.count < 8 { queries.append(query) }
+    if !queries.contains(query), queries.count < 8 { queries.append(query); wake.continuation.yield(()) }
   }
   private func request(_ query: NotebookChatQuery) async throws -> NotebookChatReply {
     guard pending == nil, connected, let peer else { throw NotebookTransportError.disconnected }
@@ -309,6 +343,7 @@ final class NotebookChatController {
       guard input == job.input else { throw NotebookTransportError.invalidAcknowledgement }
       let received = try await persistence.submit { try $0.receiveChatReceipt(job) }
       offeredJobs.insert(input.id)
+      files.receive(received)
       if case .created(let task) = received.result {
         // Bind once; later receipts cannot steal a deliberate task switch.
         if jobs.first(where: { $0.id == job.id })?.state != .accepted { select(task); catalogue() }
@@ -316,7 +351,7 @@ final class NotebookChatController {
       if case .project(let project) = received.result {
         if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = project }
         if selectedProject?.id == project.id {
-          selectedProject = project; taskCursor = nil; displayedCatalogueCursor = nil; catalogue()
+          files.chooseProject(project); taskCursor = nil; displayedCatalogueCursor = nil; catalogue()
         }
       }
       try await refreshJobs(); error = job.error

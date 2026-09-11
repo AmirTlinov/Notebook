@@ -622,7 +622,7 @@ final class NotebookAppModel {
       switch owner {
       case .page, .document, .documentState, .board, .spatialInk, .nativeText, .elementState:
         self?.refreshCommittedHeader()
-      case nil, .presence, .inputActivity, .documentDraft: break
+      case nil, .presence, .inputActivity, .documentDraft, .fileDraft, .fileWindow: break
       }
 
     }
@@ -2046,7 +2046,7 @@ final class NotebookAppModel {
         let directory = FileManager.default.homeDirectoryForCurrentUser
           .appendingPathComponent("Library/Application Support/Notebook/Codex", isDirectory: true)
         let sidecar = NotebookCodexSidecar(persistence: persistence, installation: installation,
-          workspaceID: workspaceID, directory: directory) { [weak self] envelope, peer in
+          workspaceID: workspaceID, computerID: actorID, directory: directory) { [weak self] envelope, peer in
             self?.sync?.sendTransient(.codex(envelope), to: peer)
           }
         codexSidecar = sidecar; sidecar.start(); agentStartupError = nil
