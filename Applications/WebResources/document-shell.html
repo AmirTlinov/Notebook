@@ -114,6 +114,10 @@
       background: transparent;
       color-scheme: light;
     }
+    .interactive-fragment {
+      position: absolute;
+      overflow: hidden;
+    }
     .source-editor {
       position: absolute;
       display: block;
@@ -341,13 +345,19 @@
         if (!pageLayout) return [];
         const {stride,side,top,pageWidth,pageHeight,requestedPage} = pageLayout;
         const viewportRect = viewport.getBoundingClientRect();
-        return [...root.children].flatMap(node => [...node.getClientRects()].map(rect => {
-          const x = rect.x - viewportRect.x + requestedPage * stride - side;
-          const pageIndex = Math.max(0,Math.floor(x / stride));
-          const left = Math.max(0,x - pageIndex * stride);
-          const y = Math.max(0,rect.y - viewportRect.y - top);
-          return {id:node.dataset.blockId,pageIndex,x:left,y,width:Math.min(rect.width,pageWidth-left),height:Math.min(rect.height,pageHeight-y)};
-        }).filter(rect => rect.width > 0 && rect.height > 0));
+        return [...root.children].flatMap(node => {
+          let sourceOffset = 0;
+          return [...node.getClientRects()].map(rect => {
+            const x = rect.x - viewportRect.x + requestedPage * stride - side;
+            const pageIndex = Math.max(0,Math.floor(x / stride));
+            const left = Math.max(0,x - pageIndex * stride);
+            const y = Math.max(0,rect.y - viewportRect.y - top);
+            const region = {id:node.dataset.blockId,pageIndex,x:left,y,
+              width:Math.min(rect.width,pageWidth-left),height:Math.min(rect.height,pageHeight-y),sourceOffset};
+            sourceOffset += rect.height;
+            return region;
+          }).filter(rect => rect.width > 0 && rect.height > 0);
+        });
       };
 
       const blockRegions = () => measuredRegions;
@@ -428,13 +438,16 @@
       };
 
       const positionInteractiveFrames = () => {
-        const trackRect = track.getBoundingClientRect();
         for (const [blockID, runtime] of interactiveFrames) {
-          const section = [...root.children].find(node => node.dataset.blockId === blockID);
-          if (!section) continue;
-          const rect = section.getBoundingClientRect();
-          Object.assign(runtime.frame.style, {position:'absolute',left:`${rect.left-trackRect.left}px`,
-            top:`${rect.top-trackRect.top}px`,width:`${rect.width}px`,height:`${section.dataset.height}px`});
+          const fragment = measuredRegions.find(region => region.id === blockID && region.pageIndex === currentPageIndex());
+          runtime.container.hidden = !fragment;
+          if (!fragment) continue;
+          // A multi-column union is neither one page nor the program viewport.
+          // Move the same full-height iframe behind its measured physical cut.
+          Object.assign(runtime.container.style, {left:`${fragment.x + fragment.pageIndex * pageLayout.stride}px`,
+            top:`${fragment.y}px`,width:`${fragment.width}px`,height:`${fragment.height}px`});
+          Object.assign(runtime.frame.style, {position:'absolute',left:'0',top:`${-fragment.sourceOffset}px`,
+            width:`${fragment.width}px`,height:`${runtime.height}px`});
         }
       };
 
@@ -446,26 +459,30 @@
         const blocks = new Map((payload.blocks || []).filter(block => block.kind === 'interactive').map(block => [block.id,block]));
         for (const [blockID, runtime] of interactiveFrames) {
           if (!visible.has(blockID) || !blocks.has(blockID) || runtime.token !== payload.blockTokens?.[blockID]) {
-            runtime.frame.remove(); runtime.cancel(); interactiveFrames.delete(blockID);
+            runtime.container.remove(); runtime.cancel(); interactiveFrames.delete(blockID);
           }
         }
         for (const [blockID, block] of blocks) {
           if (!visible.has(blockID)) continue;
           let runtime = interactiveFrames.get(blockID);
           if (!runtime) {
+            const container = document.createElement('div');
+            container.className = 'interactive-fragment';
             const frame = document.createElement('iframe');
             frame.className = 'interactive-frame'; frame.title = blockID;
             frame.setAttribute('sandbox','allow-scripts'); frame.setAttribute('scrolling','no');
             frame.dataset.blockId = blockID;
             let resolve, reject;
             const started = new Promise((yes,no) => {resolve=yes;reject=no});
-            runtime = {frame,token:payload.blockTokens?.[blockID],started,resolve,reject,readiness:'unknown',
+            runtime = {container,frame,token:payload.blockTokens?.[blockID],started,resolve,reject,readiness:'unknown',
               appliedState:stable(stateFor(block)),
               cancel:()=>reject(new Error('Interactive surface was superseded'))};
             interactiveFrames.set(blockID,runtime);
             frame.srcdoc = interactiveDocument(block,stateFor(block),runtime.token);
-            interactiveLayer.append(frame);
+            container.append(frame);
+            interactiveLayer.append(container);
           }
+          runtime.height = block.height || 320;
         }
         positionInteractiveFrames();
         await Promise.all([...interactiveFrames.values()].map(runtime=>runtime.started));

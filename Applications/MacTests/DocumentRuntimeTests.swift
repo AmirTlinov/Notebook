@@ -147,6 +147,118 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertEqual(actual7, String(expected.count))
   }
 
+  func testTallProgramContinuesWithExactPixelsAndOneBrowsingContext() async throws {
+    let html = "<div style='height:700px;background:#ff0000'>Beginning</div>"
+      + "<div style='height:700px;background:#00ff00'>Middle</div>"
+      + "<div style='height:648px;background:#0000ff'>End</div>"
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "tall", html: html,
+      javaScript: "notebook.commit({boot:crypto.randomUUID()})", initialState: .null, height: 2048)])
+    let state = DocumentStateJournal(id: document.id, actor: UUID())
+    var boots = 0
+    let surface = surface(document: document, state: state, commit: { _,_ in boots += 1 })
+    defer { surface.close() }
+    await waitUntil { surface.coordinator.renderIsReady }
+    let web = try XCTUnwrap(surface.coordinator.webView)
+    let receipt = try await js("JSON.stringify(window.notebookRenderer.pageReceipt())", web)
+    let evidence = XCTAttachment(string: receipt); evidence.name = "Tall program browser geometry"; evidence.lifetime = .keepAlways; add(evidence)
+    let count = try await js("String(window.notebookRenderer.pageReceipt().pageCount)", web)
+    let paper = WorkspaceItemGeometry.document(document.paperSize)
+    let contentHeight = paper.height - 2 * document.paperSize.marginPoints * paper.width / document.paperSize.widthPoints
+    let pageCount = Int(ceil(2048 / contentHeight))
+    XCTAssertGreaterThan(pageCount, 1)
+    XCTAssertEqual(count, String(pageCount), "Program height uses the document's physical content region")
+    _ = try await js("window.tallFrame=document.querySelector('iframe');'retained'", web)
+    for page in 0..<pageCount {
+      if page > 0 {
+        surface.coordinator.update(document: document, state: state, selectedPageIndex: page, capturesSnapshot: false,
+          onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed },
+          onStateChange: { _,_ in boots += 1 })
+        await waitUntil { surface.coordinator.renderIsReady || surface.coordinator.acquisitionError != nil }
+        XCTAssertNil(surface.coordinator.acquisitionError)
+      }
+      let raster = try await surface.coordinator.retainPreparedSnapshot(pixelWidth: 640)
+      defer { raster.release() }
+      let picture = XCTAttachment(image: raster.image); picture.name = "Tall program page \(page + 1)"; picture.lifetime = .keepAlways; add(picture)
+      let cg = try XCTUnwrap(raster.image.cgImage(forProposedRect: nil, context: nil, hints: nil))
+      let color = try centerPixel(cg)
+      let expectedChannel = min(2, Int((Double(page) + 0.5) * contentHeight / 700))
+      for channel in 0..<3 {
+        if channel == expectedChannel { XCTAssertGreaterThan(color[channel], 230, "Page \(page + 1) must show its own part of the program") }
+        else { XCTAssertLessThan(color[channel], 25, "A clipped overflow or repeated first frame is not the next page") }
+      }
+      let identity = try await js("String(document.querySelector('iframe')===window.tallFrame)", web)
+      XCTAssertEqual(identity, "true")
+    }
+    XCTAssertEqual(boots, 1, "Turning through one program cannot recreate its browsing context")
+  }
+
+  private func centerPixel(_ image: CGImage) throws -> [UInt8] {
+    let context = try XCTUnwrap(CGContext(data: nil, width: image.width, height: image.height,
+      bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    context.draw(image, in: .init(x: 0, y: 0, width: image.width, height: image.height))
+    let bytes = try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self)
+    let index = ((image.height / 2) * image.width + image.width / 2) * 4
+    return (0..<3).map { bytes[index + $0] }
+  }
+
+  func testTallProgramUsesMeasuredContinuationAfterTextWithoutResizingItsViewport() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [
+      .markdown(id: "before", source: "# Перед программой\n\nЕё начало не совпадает с началом физического листа."),
+      .interactive(id: "tall", html: "<input aria-label='Retained input'><div style='height:1900px'>Continuation</div>",
+        javaScript: "notebook.commit({boot:crypto.randomUUID(),width:innerWidth,height:innerHeight})", height: 2048)])
+    let state = DocumentStateJournal(id: document.id, actor: UUID())
+    var boots: [JSONValue] = []
+    let surface = surface(document: document, state: state, commit: { _, value in boots.append(value) })
+    defer { surface.close() }
+    await waitUntil { surface.coordinator.renderIsReady && !boots.isEmpty }
+    let web = try XCTUnwrap(surface.coordinator.webView)
+    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    let margin = document.paperSize.marginPoints * geometry.width / document.paperSize.widthPoints
+    let boot = try XCTUnwrap(boots.first)
+    XCTAssertEqual(try XCTUnwrap(boot["width"]).decode(Double.self), geometry.width - 2 * margin, accuracy: 1)
+    XCTAssertEqual(boot["height"], .number(2048))
+    let raw = try await js("JSON.stringify(window.notebookRenderer.pageReceipt().regions.filter(region=>region.id==='tall'))", web)
+    let regions = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [[String: Any]])
+    XCTAssertGreaterThan(regions.count, 1)
+    XCTAssertGreaterThan(try XCTUnwrap(regions.first?["y"] as? Double), margin)
+    var offset = 0.0
+    for region in regions {
+      XCTAssertEqual(try XCTUnwrap(region["sourceOffset"] as? Double), offset, accuracy: 1.0 / 32)
+      offset += try XCTUnwrap(region["height"] as? Double)
+    }
+    XCTAssertEqual(offset, 2048, accuracy: 1.0 / 32, "The measured fragments partition the full program, including a partial first page")
+    _ = try await js("window.retainedTall=document.querySelector('iframe'); 'retained'", web)
+    let before = try await js("JSON.stringify(window.notebookRenderer.pageReceipt().work)", web)
+    for region in regions + Array(regions.reversed()) {
+      let page = try XCTUnwrap(region["pageIndex"] as? Int)
+      surface.coordinator.update(document: document, state: state, selectedPageIndex: page, capturesSnapshot: false,
+        onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed },
+        onStateChange: { _, value in boots.append(value) })
+      await waitUntil { surface.coordinator.renderIsReady || surface.coordinator.acquisitionError != nil }
+      XCTAssertNil(surface.coordinator.acquisitionError)
+      let rawFrame = try await js("""
+        JSON.stringify({same:retainedTall===document.querySelector('iframe'),
+          offset:-parseFloat(retainedTall.style.top),height:parseFloat(retainedTall.style.height),
+          cutHeight:parseFloat(retainedTall.parentElement.style.height),
+          cutWidth:parseFloat(retainedTall.parentElement.style.width)})
+        """, web)
+      let frame = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(rawFrame.utf8)) as? [String: Any])
+      XCTAssertEqual(frame["same"] as? Bool, true)
+      XCTAssertEqual(frame["height"] as? Double, 2048)
+      XCTAssertEqual(frame["offset"] as? Double, region["sourceOffset"] as? Double)
+      XCTAssertEqual(frame["cutHeight"] as? Double, region["height"] as? Double)
+      XCTAssertEqual(frame["cutWidth"] as? Double, region["width"] as? Double)
+    }
+    let after = try await js("JSON.stringify(window.notebookRenderer.pageReceipt().work)", web)
+    let firstWork = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(before.utf8)) as? [String: Int])
+    let lastWork = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(after.utf8)) as? [String: Int])
+    for key in ["sourceInstalls", "layoutPasses", "regionMeasurements", "typesetPasses"] {
+      XCTAssertEqual(firstWork[key], lastWork[key], "Turning a continuation does not repeat \(key)")
+    }
+    XCTAssertEqual(boots.count, 1)
+  }
+
   func testRestoredDraftSurvivesWebProcessRecoveryAndRecoveryIsBounded() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "Исходник")])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
