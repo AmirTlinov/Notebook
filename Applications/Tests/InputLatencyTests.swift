@@ -52,7 +52,7 @@ final class InputLatencyTests: XCTestCase {
     var disk = page
     let change = try disk.prepareInkChange(.append(remote), stamp: .init(counter: 5, actor: UUID()))
     XCTAssertTrue(disk.publishInkChange(change))
-    _ = try store.saveMergedPage(disk)
+    _ = try store.savePage(disk)
     let descriptor = try NotebookSQLWriteBlocker(store: store)
     defer { try? descriptor.release() }
     let clock = ContinuousClock(), began = clock.now

@@ -421,26 +421,6 @@ public struct NotebookStore: Sendable {
     }
   }
 
-  /// Receives catalog and tree through the same causal transaction as native
-  /// creation. Dependencies must already exist; missing items are not deletions.
-  public func publishRemoteWorkspace(
-    index: WorkspaceIndex,
-    board: BoardHierarchy,
-    actor: UUID
-  ) throws {
-    let incomingItemIDs = Set(index.items.map(\.id))
-    guard index.isValid,
-      Set(board.itemIDs) == incomingItemIDs,
-      board.isValid(items: index.items)
-    else {
-      throw corruptFile(at: indexURL)
-    }
-    try prepare()
-    try withMutationLock {
-      _ = try publishWorkspace(index: index, board: board)
-    }
-  }
-
   /// The existing collaboration publisher owns every multi-file catalog cut.
   /// This method runs under its mutation lock, rereads the durable owners and
   /// prepares all dependencies before the one recoverable publication decision.
@@ -462,7 +442,7 @@ public struct NotebookStore: Sendable {
       if (try hasStoredValue(at: pageURL(page.id))) {
         let old = try loadPage(page.id)
         guard old.size == page.size else { throw corruptFile(at: pageURL(page.id)) }
-        _ = page.merge(old)
+        page = try page.merging(old)
         if page == old { continue }
       }
       writes["pages/\(page.id.uuidString.lowercased()).json"] = try .encode(page)
@@ -543,18 +523,10 @@ public struct NotebookStore: Sendable {
     }
   }
 
-  public func savePage(_ page: PageDocument) throws {
-    guard page.isValid else { throw corruptFile(at: pageURL(page.id)) }
-    try prepare()
-    try withMutationLock {
-      try writePage(page)
-    }
-  }
-
   /// Saves both independent streams without allowing a stale writer to erase
   /// a newer Pencil drawing or a newer agent layer.
   @discardableResult
-  public func saveMergedPage(_ page: PageDocument) throws -> PageDocument {
+  public func savePage(_ page: PageDocument) throws -> PageDocument {
     guard page.isValid else { throw corruptFile(at: pageURL(page.id)) }
     try prepare()
     return try withMutationLock {
@@ -574,21 +546,12 @@ public struct NotebookStore: Sendable {
         else {
           throw corruptFile(at: url)
         }
-        _ = try resolved.joinedComputations(disk.computations ?? [])
-        _ = resolved.merge(disk)
+        resolved = try resolved.merging(disk)
         if resolved == disk { return resolved }
       }
-      try writePage(resolved)
+      try publishCollaboration(writes: [pageFile(resolved.id): try .encode(resolved)])
       return resolved
     }
-  }
-
-  private func writePage(_ page: PageDocument) throws {
-    var resolved = page
-    if try ownerItemID(ofPage: page.id) != nil {
-      resolved.computations = try resolved.joinedComputations(computationRecords(pageID: page.id))
-    }
-    try publishCollaboration(writes: [pageFile(page.id): try .encode(resolved)])
   }
 
   private func corruptFile(at url: URL) -> CocoaError {

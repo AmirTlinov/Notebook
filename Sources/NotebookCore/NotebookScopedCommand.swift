@@ -19,6 +19,17 @@ extension NotebookStore {
     if suppliedHash != nil { _ = try database.putBlob(data) }
     let previousHash = try database.rows("SELECT hash FROM records WHERE address=?", [.text(fragment.address)]).first?[0].text
     if previousHash == hash { return false }
+    if let previousHash, fragment.file.hasPrefix("pages/"), fragment.collection == "actions",
+      fragment.parent == fragment.file + "#/drawingData" {
+      let accepted = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(previousHash))
+      guard accepted.replacing(value: accepted.value.setting("isActive", nil), position: fragment.position)
+        == fragment.replacing(value: fragment.value.setting("isActive", nil)) else {
+        throw NotebookStorageError.invalidTransaction("stroke action header is immutable")
+      }
+      guard accepted.value["isActive"] != .bool(false) || fragment.value["isActive"] == .bool(false) else {
+        throw NotebookStorageError.invalidTransaction("stroke tombstone is irreversible")
+      }
+    }
     if fragment.file.hasPrefix("pages/"), fragment.collection == "computations" {
       let record = try fragment.value.decode(NotebookComputation.self)
       let file = pageFile(record.source.pageID)
@@ -262,10 +273,12 @@ extension NotebookStore {
       Set(pages.map(\.id)).count == pages.count, Set(documents.map(\.id)).count == documents.count,
       Set(states.map(\.id)).count == states.count else { throw NotebookStorageError.invalidTransaction("workspace projection") }
     try commandTransaction {
+      // Membership and content are still one transaction. Admit the new page
+      // address before the sole page writer checks its physical owner.
+      try publishProjectionEdits(file: "workspace.json", before: .encode(before), after: .encode(after))
       for page in pages { try savePage(page) }
       for document in documents { try saveDocument(document) }
       for state in states { try saveDocumentState(state) }
-      try publishProjectionEdits(file: "workspace.json", before: .encode(before), after: .encode(after))
       _ = try saveBoardEdits(before: boardBefore, after: boardAfter)
       for item in after.items {
         for id in item.pageIDs where try !hasStoredValue(pageFile(id)) { throw NotebookStorageError.corruptRecord(pageFile(id)) }

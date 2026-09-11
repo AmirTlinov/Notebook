@@ -60,7 +60,7 @@ private struct CreationUndoFixture {
       source: "<button>Ответ</button>", html: "<button>Ответ</button>", state: .object(["stamp": .string("Точный ответ человека")]))
     let changed = page.replaceElements(page.elements + [element], actor: human)
     #expect(changed)
-    return try store.saveMergedPage(page)
+    return try store.savePage(page)
   }
 
   func addHumanElement(on surface: SurfaceID, boardID: UUID) throws -> SpatialElement {
@@ -106,7 +106,7 @@ func creationUndoMixedNotebooksPreservesOnlyAdoptedOwner() throws {
   let exact = JSONValue.object(["nested": .array([.object(["collaboration": .string("Ответ человека — сохранить целиком")])])])
   let changed = page.replaceElements([page.elements[0].updating(state: exact)], actor: f.human)
   #expect(changed)
-  page = try f.store.saveMergedPage(page)
+  page = try f.store.savePage(page)
   let undone = try f.store.undoCollaborationAction(action.id, actor: f.human)
   #expect(try f.store.loadPage(firstPage) == page)
   #expect(try f.store.readNotebookPageDirectory(itemID: first, limit: 4).pages.map(\.position.pageID) == [firstPage])

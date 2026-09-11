@@ -109,7 +109,7 @@ final class StableInkRasterTests: XCTestCase {
       view.displayActiveStroke(active)
       view.commitActiveStroke()
       let rgb = color.components
-      drawing = drawing.appending(
+      drawing = try drawing.appending(
         PageInkAction(
           tool: .pen,
           color: .init(red: rgb.red, green: rgb.green, blue: rgb.blue), points: points))
@@ -119,7 +119,7 @@ final class StableInkRasterTests: XCTestCase {
     eraser.replaceMeasuredTail(from: 0, with: eraserPoints)
     view.displayActiveEraser(eraser)
     view.commitActiveEraser()
-    drawing = drawing.appending(PageInkAction(tool: .eraser, points: eraserPoints))
+    drawing = try drawing.appending(PageInkAction(tool: .eraser, points: eraserPoints))
     try await Task.sleep(for: .milliseconds(100))
     func pixels() throws -> Data {
       let format = UIGraphicsImageRendererFormat()

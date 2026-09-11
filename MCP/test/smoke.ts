@@ -109,8 +109,7 @@ const transport = new StdioClientTransport({ command: join(mcpRoot, "run.sh"),
   const humanPage = await store.readPage(pageID);
   const meaning = humanPage.elements.find((e: Data) => e.id === "meaning")!;
   meaning.source = "Human understanding"; meaning.html = "Human understanding";
-  humanPage.agentStamp = { counter: humanPage.agentStamp.counter + 1, actor: appActor };
-  await fixtureControl(root,"page",humanPage);
+  await fixtureControl(root,"humanPageElements",{pageID,actorID:appActor,elements:humanPage.elements});
   const continued = await call("notebook_action",{action_id:edited.action.id});
   assert.ok(continued.action.continuations.length >= 2);
   const interpretation = await call("notebook_point",{context_id:pointing.context.id,reply_to:pointing.context.entry.id,references:[{target:page,element_id:"meaning",

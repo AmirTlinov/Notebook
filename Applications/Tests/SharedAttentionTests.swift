@@ -215,7 +215,7 @@ final class SharedAttentionTests: XCTestCase {
     XCTAssertTrue(later.replaceElements([.init(id: "later-text", kind: .markdown,
       frame: .init(x: 120, y: 120, width: 100, height: 40), source: "New meaning", html: "<p>New meaning</p>")], actor: UUID()))
     let laterPage = later
-    _ = try await model.performStoreCommand { try $0.saveMergedPage(laterPage) }
+    _ = try await model.performStoreCommand { try $0.savePage(laterPage) }
     await model.reloadExternalChanges()?.value
     await model.finishPendingPersistence()
     let context = try XCTUnwrap(model.activeSharedContext)

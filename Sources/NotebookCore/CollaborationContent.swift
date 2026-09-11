@@ -102,15 +102,9 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
     hierarchy = try hierarchy.merging(incoming.hierarchy, items: workspace.items)
     if ink != incoming.ink { _ = ink.merge(incoming.ink) }
     var pages = Dictionary(uniqueKeysWithValues: self.pages.map { ($0.id, $0) })
-    for other in incoming.pages {
-      if let current = pages[other.id] {
-        guard current.size == other.size else {
-          throw CollaborationError("invalid_content", "UUID листа сохраняет физический размер.")
-        }
-        _ = try current.joinedComputations(other.computations ?? [])
-      }
+    for other in incoming.pages where pages[other.id] != other {
+      pages[other.id] = try pages[other.id].map { try $0.merging(other) } ?? other
     }
-    for other in incoming.pages where pages[other.id] != other { if pages[other.id] != nil { _ = pages[other.id]!.merge(other) } else { pages[other.id] = other } }
     var documents = Dictionary(uniqueKeysWithValues: self.documents.map { ($0.id, $0) })
     for other in incoming.documents {
       if let current = documents[other.id], current.paperSize != other.paperSize {

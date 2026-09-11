@@ -29,7 +29,7 @@ struct NotebookComputationTests {
     var page = try store.loadPage(pageID)
     let change = try page.prepareInkChange(.append(action), stamp: .init(counter: page.drawingStamp.counter + 1, actor: actor))
     let published = page.publishInkChange(change); #expect(published)
-    return try store.saveMergedPage(page)
+    return try store.savePage(page)
   }
 
   private func activate(_ store: NotebookStore, _ actor: UUID, _ notebook: UUID, _ page: UUID, id: UUID = UUID()) throws -> NotebookComputationRead {
@@ -70,7 +70,7 @@ struct NotebookComputationTests {
       for action in [eraser, crossing, outside, undone] { try append(action, store: store, pageID: page, actor: actor) }
       var document = try store.loadPage(page)
       let removed = try document.prepareInkChange(.remove([undone.id]), stamp: .init(counter: 10, actor: actor))
-      let published = document.publishInkChange(removed); #expect(published); try store.saveMergedPage(document)
+      let published = document.publishInkChange(removed); #expect(published); try store.savePage(document)
       let capture = try store.readComputationInk(notebookID: notebook, pageID: page, region: region)
       #expect(capture.drawing.actions.map(\.tool) == [.pen, .eraser, .pen])
       #expect(capture.drawing.actions[1].id == eraser.id)
@@ -128,7 +128,7 @@ struct NotebookComputationTests {
       var document = try store.loadPage(page)
       let prepared = try document.prepareInkChange(.remove([second.id]), stamp: .init(counter: 10, actor: actor))
       let published = document.publishInkChange(prepared); #expect(published)
-      try store.saveMergedPage(document)
+      try store.savePage(document)
       try append(stroke(x: 80), store: store, pageID: page, actor: actor)
       #expect(try store.readComputationInk(notebookID: notebook, pageID: page, region: region).drawing.actions.count == input.ink.drawing.actions.count)
       #expect(throws: CollaborationError.self) { try store.publishComputationRecognition(input.preparing(output()), actor: actor) }
@@ -161,7 +161,7 @@ struct NotebookComputationTests {
       let second = try activate(store, actor, notebook, page).computation
       let input = try begin(first, store: store, actor: actor)
       let recognized = try store.publishComputationRecognition(input.preparing(output()), actor: actor).computation
-      let merged = try store.saveMergedPage(old)
+      let merged = try store.savePage(old)
       #expect(merged.computations == [recognized, second])
       try store.savePage(old)
       #expect(try store.loadPage(page).computations == [recognized, second])
@@ -248,7 +248,7 @@ struct NotebookComputationTests {
       incoming.computations = [collision]
       #expect(incoming.isValid)
       let cursor = try store.currentChangeCursor()
-      #expect(throws: NotebookStorageError.transactionConflict) { try store.saveMergedPage(incoming) }
+      #expect(throws: NotebookStorageError.transactionConflict) { try store.savePage(incoming) }
       #expect(try store.currentChangeCursor() == cursor)
       #expect(try store.readComputation(pageID: page, id: original.id).computation == original)
     }
@@ -378,7 +378,7 @@ struct NotebookComputationTests {
       let state: JSONValue = .object(["computations": .array([.object(["id": .string("simulation"), "value": .number(3)])])])
       var document = try store.loadPage(page)
       let replaced = document.replaceElements([.init(id: "program", kind: .web, frame: .init(x: 200, y: 200, width: 100, height: 100), source: "Model", html: "<div>Model</div>", state: state)], actor: actor)
-      #expect(replaced); try store.saveMergedPage(document)
+      #expect(replaced); try store.savePage(document)
       #expect(try store.loadPage(page).elements.first?.state == state)
       #expect(try store.readComputation(pageID: page, id: record.id).sourceIsCurrent)
       #expect(try store.loadPage(page).computations == [record])
@@ -414,10 +414,17 @@ struct NotebookComputationTests {
     try fixture { store, _, notebook, page in
       let ink = try store.readComputationInk(notebookID: notebook, pageID: page, region: region)
       let address = pageFile(page) + "#/drawingData/actions/@" + ink.drawing.actions[0].id.uuidString.lowercased()
-      try store.commandTransaction {
-        let row = try #require(try store.storedFragments(address: address, descendants: false).first)
-        try store.writeFragment(row.replacing(value: row.value.setting("sequence", .number(0))), database: store.currentSQL!)
-      }
+      // External damage bypasses the command publisher, which now refuses
+      // changes to an accepted action header. Keep the read-side rejection.
+      let database = try NotebookSQLConnection(url: store.databaseURL, writable: true)
+      try database.run("BEGIN IMMEDIATE")
+      defer { try? database.run("ROLLBACK") }
+      let oldHash = try #require(try database.rows("SELECT hash FROM records WHERE address=?", [.text(address)]).first?[0].text)
+      let row = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(oldHash))
+      let damaged = row.replacing(value: row.value.setting("sequence", .number(0)))
+      let hash = try database.putBlob(NotebookStore.storageEncoder.encode(damaged))
+      try database.run("UPDATE records SET hash=? WHERE address=?", [.text(hash), .text(address)])
+      try database.run("COMMIT")
       #expect(throws: PageInkDrawing.InkError.self) { try store.readComputationInk(notebookID: notebook, pageID: page, region: region) }
     }
   }

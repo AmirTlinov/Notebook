@@ -17,16 +17,20 @@ final class PageVisionDemandTests: XCTestCase {
       html: "<h1>Not ink</h1>", javaScript: "throw Error('must not execute for ink map')")], actor: actor))
     try store.savePage(first)
     pages[first.id] = first
+    let before = workspace, beforeBoard = try store.loadBoard(items: workspace.items)
+    var hierarchy = beforeBoard, createdPages: [PageDocument] = []
     for number in 1..<64 {
       let created = try XCTUnwrap(workspace.createNotebook(title: "Source \(number)", actor: actor, pageSize: size))
-      try store.savePage(created.page)
+      createdPages.append(created.page)
+      XCTAssertTrue(hierarchy.addItem(created.item.id, to: workspace.rootBoardID, near: .zero, actor: actor))
     }
     let selectedID = try XCTUnwrap(workspace.selectedPageID)
     XCTAssertNotEqual(selectedID, firstID)
+    // Fixture pages have the same atomic membership admission as native
+    // creation, not a direct writer that can publish an orphaned page first.
+    _ = try store.saveWorkspaceEdits(before: before, after: workspace,
+      boardBefore: beforeBoard, boardAfter: hierarchy, pages: createdPages)
     let selectedPage = try store.loadPage(selectedID)
-    let hierarchy = BoardHierarchy.initial(rootBoardID: workspace.rootBoardID,
-      itemIDs: workspace.items.map(\.id), actor: actor)
-    try store.saveWorkspaceBundle(index: workspace, page: selectedPage, board: hierarchy)
     let selectedItemID = workspace.selectedItemID
     let selectedCenter = try XCTUnwrap(hierarchy.board(workspace.rootBoardID)?.focusedCenter(of: selectedItemID))
     try store.savePresence(.init(boardID: workspace.rootBoardID, mode: .page,

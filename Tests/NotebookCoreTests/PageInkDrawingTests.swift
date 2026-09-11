@@ -9,10 +9,10 @@ import Testing
     azimuth: 0.3, altitude: 1)
   let pen = PageInkAction(tool: .pen, samples: [point])
   let eraser = PageInkAction(tool: .eraser, samples: [point])
-  let drawing = PageInkDrawing().appending(pen).appending(eraser)
+  let drawing = try PageInkDrawing().appending(pen).appending(eraser)
   #expect(try PageInkDrawing.decode(drawing.dataRepresentation()) == drawing)
   #expect(drawing.actions.map(\.tool) == [.pen, .eraser])
-  #expect(drawing.appending(pen) == drawing)
+  #expect(try drawing.appending(pen) == drawing)
   #expect(try drawing.dataRepresentation().starts(with: Data("NotebookInk/2\n".utf8)))
 }
 

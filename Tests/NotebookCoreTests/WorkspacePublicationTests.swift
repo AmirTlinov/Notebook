@@ -280,7 +280,7 @@ func lateHeavyOwnerSaveDoesNotResurrectDeletion(kind: WorkspaceItemKind) throws 
     _ = try store.deleteWorkspaceBundle(expectedIndex: beforeDeletion, index: index, board: board,
       pageIDs: capturedPage.map { [$0.id] } ?? [], documentIDs: kind == .document ? [id] : [])
     if let capturedPage {
-      #expect(throws: CocoaError.self) { _ = try store.saveMergedPage(capturedPage) }
+      #expect(throws: CocoaError.self) { _ = try store.savePage(capturedPage) }
       #expect(!FileManager.default.fileExists(atPath: store.pageURL(capturedPage.id).path))
     } else {
       #expect(throws: CocoaError.self) { _ = try store.saveMergedDocument(capturedDocument) }

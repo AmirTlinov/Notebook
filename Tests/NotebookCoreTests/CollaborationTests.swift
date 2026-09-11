@@ -758,7 +758,7 @@ func inputHoldsPublicationAndRechecks() throws {
   #expect(try f.store.loadPage(f.pageID).elements.isEmpty)
   var humanPage = try f.store.loadPage(f.pageID)
   _ = humanPage.replaceElements([.init(id: "human", kind: .markdown, frame: .init(x: 20, y: 400, width: 200, height: 80), source: "Human", html: "Human")], actor: f.human)
-  try f.store.saveMergedPage(humanPage)
+  try f.store.savePage(humanPage)
   try f.store.saveInputActivity(.init(deviceID: f.human, sessionID: session, sequence: 2, targets: []))
   do { _ = try f.store.applyCollaborationAction(action, actor: f.agent); Issue.record("Поздняя правка требует нового рассмотрения") }
   catch let error as CollaborationError { #expect(error.code == "revision_conflict") }

@@ -38,7 +38,7 @@ final class CollaborationReadTests: XCTestCase {
     var changed = try model.store.loadPage(page.id)
     _ = changed.replaceElements([.init(id: "idea", kind: .markdown,
       frame: .init(x: 130, y: 30, width: 200, height: 80), source: "Human", html: "Human")], actor: model.actorID)
-    _ = try model.store.saveMergedPage(changed)
+    _ = try model.store.savePage(changed)
     await model.reloadExternalChanges()?.value
     await model.finishPendingPersistence()
     XCTAssertFalse(model.collaborationDetailsAreCurrent)

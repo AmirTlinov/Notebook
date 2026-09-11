@@ -85,7 +85,7 @@ func pencilUndoRecordsOneCompletedAction() throws {
   history.recordAction(pageID: pageID, actionID: stroke.id)
   let ids = try #require(history.lastContribution(for: pageID))
   #expect(ids == [stroke.id])
-  let drawing = PageInkDrawing().appending(stroke).removing(ids)
+  let drawing = try PageInkDrawing().appending(stroke).removing(ids)
   #expect(drawing.isEmpty)
   #expect(drawing.actions.first?.isActive == false)
   history.didRemoveContribution(ids, for: pageID)
@@ -332,7 +332,7 @@ func storeDeletesOneCompleteNotebookBundle() throws {
   #expect(try !store.hasStoredValue(at: pageURL))
 
   #expect(throws: CocoaError.self) {
-    try store.saveMergedPage(created.page)
+    try store.savePage(created.page)
   }
   #expect(try !store.hasStoredValue(at: pageURL))
 }
@@ -539,7 +539,7 @@ func storeMergesConcurrentStreams() throws {
   )
 
   try store.savePage(agent)
-  let resolved = try store.saveMergedPage(pencil)
+  let resolved = try store.savePage(pencil)
 
   #expect(resolved.drawingData == pageDrawingFixture(Data("new ink".utf8)))
   #expect(resolved.elements.map(\.id) == ["new-agent-layer"])
@@ -570,7 +570,7 @@ func storeRejectsConflictingPageSize() throws {
   )
 
   #expect(throws: CocoaError.self) {
-    try store.saveMergedPage(conflicting)
+    try store.savePage(conflicting)
   }
 }
 

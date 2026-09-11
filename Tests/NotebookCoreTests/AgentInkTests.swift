@@ -169,7 +169,7 @@ func pencilUndoKeepsAgentStroke() throws {
   let sample = SpatialInkSample(point: .init(x: 10, y: 20), timeOffset: 0, width: 2, opacity: 1, force: 1, azimuth: 0, altitude: 1)
   let human = PageInkAction(tool: .pen, samples: [sample]), agent = PageInkAction(tool: .pen, samples: [sample])
   let pageID = UUID()
-  let drawing = PageInkDrawing().appending(human).appending(agent)
+  let drawing = try PageInkDrawing().appending(human).appending(agent)
   var history = PencilUndoHistory()
   history.recordAction(pageID: pageID, actionID: human.id)
   let ids = try #require(history.lastContribution(for: pageID))

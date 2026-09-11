@@ -329,8 +329,8 @@ func storePublishesAndDeletesDocumentBundle() throws {
   ))
 }
 
-@Test("Сетевой снимок одновременно добавляет и удаляет без осиротевших файлов")
-func remoteMixedCatalogPublicationCleansReplacedContent() throws {
+@Test("Одна публикация одновременно добавляет и удаляет без осиротевших файлов")
+func mixedCatalogPublicationCleansReplacedContent() throws {
   let root = FileManager.default.temporaryDirectory
     .appendingPathComponent(UUID().uuidString, isDirectory: true)
   defer { try? FileManager.default.removeItem(at: root) }
@@ -392,16 +392,15 @@ func remoteMixedCatalogPublicationCleansReplacedContent() throws {
     actor: legacyActor
   )
   #expect(addedNotebook)
-  try store.savePage(newNotebook.page)
-
-  try store.publishRemoteWorkspace(
+  try store.saveWorkspaceBundle(
     index: incoming,
-    board: incomingBoard,
-    actor: legacyActor
+    page: newNotebook.page,
+    board: incomingBoard
   )
 
   #expect(removed.id == documentItem.id)
   #expect(try store.loadIndex().items == incoming.items)
+  #expect(try store.loadPage(newNotebook.page.id) == newNotebook.page)
   #expect(Set(try store.loadBoard(
     items: incoming.items
   ).itemIDs) == Set(incoming.items.map(\.id)))

@@ -193,8 +193,7 @@ extension NotebookStore {
             var page = try value.decode(PageDocument.self)
             if let before {
               let previous = try before.decode(PageDocument.self)
-              guard previous.size == page.size else { throw NotebookStorageError.transactionConflict }
-              _ = try page.joinedComputations(previous.computations ?? []); _ = page.merge(previous)
+              page = try page.merging(previous)
             }
             guard page.isValid else { throw NotebookStorageError.corruptRecord(file) }; resolved = try .encode(page)
           } else if file.hasPrefix("collaboration/actions/") {

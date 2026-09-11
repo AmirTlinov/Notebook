@@ -57,9 +57,9 @@ struct PageWindowFixture {
         let database = store.currentSQL!
         for position in 1..<count {
           let page = PageDocument(size: size, actor: actor), id = page.id.uuidString.lowercased()
-          try store.savePage(page); identities.append(page.id)
           try store.writeFragment(.init(address: parent + "/pageIDs/@" + id, file: "workspace.json", parent: parent,
             collection: "pageIDs", member: id, position: position, value: .string(page.id.uuidString), collections: []), database: database)
+          try store.savePage(page); identities.append(page.id)
           let key = fieldKey(["items", itemID.uuidString.lowercased(), "pageIDs", id])
           try store.writeFragment(.init(address: "workspace.json#/collaboration/fields/@" + fieldKey([key]), file: "workspace.json",
             parent: "workspace.json#", collection: "collaboration/fields", member: key, position: 0,
@@ -345,7 +345,7 @@ struct NotebookPageWindowTests {
       DispatchQueue.global(qos: .userInitiated).async {
         completion.complete(Result {
           try writer.commandTransaction {
-            _ = try writer.saveMergedPage(changedPage)
+            _ = try writer.savePage(changedPage)
             try writer.savePresence(presence)
           }
         })

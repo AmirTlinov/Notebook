@@ -141,7 +141,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     let current = try PageInkDrawing.decode(drawingData)
     let drawing: PageInkDrawing
     switch mutation {
-    case .append(let action): drawing = current.appending(action)
+    case .append(let action): drawing = try current.appending(action)
     case .remove(let ids): drawing = current.removing(ids)
     }
     guard drawing != current else {
@@ -224,28 +224,32 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     _ data: Data,
     stamp: VersionStamp
   ) -> Bool {
-    guard stamp.counter <= VersionStamp.maximumCounter,
-      (try? PageInkDrawing.decode(data)) != nil else { return false }
+    (try? mergeDrawing(data, stamp: stamp)) ?? false
+  }
+
+  /// Persistent publishers must distinguish a rejected stroke from an
+  /// unchanged drawing before they can acknowledge any part of the page.
+  private mutating func mergeDrawing(_ data: Data, stamp: VersionStamp) throws -> Bool {
+    guard stamp.counter <= VersionStamp.maximumCounter else { throw PageInkDrawing.InkError.invalidDrawing }
+    let incoming = try PageInkDrawing.decode(data)
     if data == drawingData {
       guard drawingStamp < stamp else { return false }
       drawingStamp = stamp
       return true
     }
-    if let current = try? PageInkDrawing.decode(drawingData),
-      let incoming = try? PageInkDrawing.decode(data) {
-      do {
-        let merged = try current.merging(incoming)
-        let frontier = max(drawingStamp, stamp)
-        let winner = drawingStamp > stamp ? current : incoming
-        let resolvedStamp = merged == winner ? frontier : (frontier.advanced(by: frontier.actor) ?? frontier)
-        guard merged != current || drawingStamp != resolvedStamp else { return false }
-        drawingData = merged == current ? drawingData : merged == incoming ? data : try merged.dataRepresentation()
-        drawingStamp = resolvedStamp
-        return true
-      } catch PageInkDrawing.InkError.incompatibleBaseline {
-        // Importing/replacing the archived PencilKit raster remains an explicit
-        // whole-baseline revision. Native contacts on that baseline merge above.
-      } catch { return false }
+    let current = try PageInkDrawing.decode(drawingData)
+    do {
+      let merged = try current.merging(incoming)
+      let frontier = max(drawingStamp, stamp)
+      let winner = drawingStamp > stamp ? current : incoming
+      let resolvedStamp = merged == winner ? frontier : (frontier.advanced(by: frontier.actor) ?? frontier)
+      guard merged != current || drawingStamp != resolvedStamp else { return false }
+      drawingData = merged == current ? drawingData : merged == incoming ? data : try merged.dataRepresentation()
+      drawingStamp = resolvedStamp
+      return true
+    } catch PageInkDrawing.InkError.incompatibleBaseline {
+      // An explicit raster import is a whole-baseline revision; it is not an
+      // instruction to ignore an action identity conflict on the same base.
     }
     guard drawingStamp < stamp else { return false }
     drawingData = data
@@ -287,31 +291,37 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   }
 
   public mutating func merge(_ other: Self) -> Bool {
-    guard id == other.id, size == other.size, other.isValid else { return false }
-    let joined: [NotebookComputation]?
-    do { joined = try joinedComputations(other.computations ?? []) } catch { return false }
-    var changed = computations != joined
-    computations = joined
-    if replaceDrawing(other.drawingData, stamp: other.drawingStamp) { changed = true }
+    guard let resolved = try? merging(other), resolved != self else { return false }
+    self = resolved
+    return true
+  }
+
+  /// Resolve the complete page before publishing any field. A conflicting
+  /// stroke also rejects computations and elements carried by that candidate.
+  func merging(_ other: Self) throws -> Self {
+    guard id == other.id, size == other.size, isValid, other.isValid else {
+      throw NotebookStorageError.transactionConflict
+    }
+    var candidate = self
+    candidate.computations = try joinedComputations(other.computations ?? [])
+    _ = try candidate.mergeDrawing(other.drawingData, stamp: other.drawingStamp)
     if elements == other.elements && collaboration == other.collaboration && agentStamp == other.agentStamp {
-      return changed
+      return candidate
     }
     // The typed computation owner joins above. Agent field clocks never own
     // this collection, including while merging an unrelated element edit.
-    if let local = try? JSONValue.encode(self).setting("computations", nil),
-      let incoming = try? JSONValue.encode(other).setting("computations", nil) {
-      let merged = CollaborativeContent.merge(local: local, incoming: incoming,
-        localState: collaboration, incomingState: other.collaboration,
-        localStamp: agentStamp, incomingStamp: other.agentStamp)
-      if let resolved = try? merged.value.decode(PageDocument.self), resolved.isValid {
-        if elements != resolved.elements || collaboration != merged.state { changed = true }
-        elements = resolved.elements
-        collaboration = merged.state
-        agentStamp = mergedContentStamp(local: local, incoming: incoming, result: merged.value,
-          localStamp: agentStamp, incomingStamp: other.agentStamp)
-      }
-    }
-    return changed
+    let local = try JSONValue.encode(candidate).setting("computations", nil)
+    let incoming = try JSONValue.encode(other).setting("computations", nil)
+    let merged = CollaborativeContent.merge(local: local, incoming: incoming,
+      localState: collaboration, incomingState: other.collaboration,
+      localStamp: agentStamp, incomingStamp: other.agentStamp)
+    let resolved = try merged.value.decode(PageDocument.self)
+    guard resolved.isValid else { throw NotebookStorageError.transactionConflict }
+    candidate.elements = resolved.elements
+    candidate.collaboration = merged.state
+    candidate.agentStamp = mergedContentStamp(local: local, incoming: incoming, result: merged.value,
+      localStamp: agentStamp, incomingStamp: other.agentStamp)
+    return candidate
   }
 
   private var computationsAreValid: Bool {
@@ -322,8 +332,8 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
       && computations == computations.sorted(by: NotebookComputation.ordered)
   }
 
-  /// Persistent merge owners call this throwing validation before their ordinary
-  /// page merge, so an identity collision cannot be interpreted as "no change".
+  /// Computation identity belongs to its typed journal, not agent field clocks.
+  /// Both page resolution and addressed publication reject a conflicting record.
   func joinedComputations(_ incoming: [NotebookComputation]) throws -> [NotebookComputation]? {
     var result = Dictionary(uniqueKeysWithValues: (computations ?? []).map { ($0.id, $0) })
     for record in incoming {

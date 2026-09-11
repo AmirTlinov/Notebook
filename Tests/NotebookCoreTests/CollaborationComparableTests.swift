@@ -76,7 +76,7 @@ func collaborationComparableProtectsHumanAdoptedNotebook(stateKey: String) throw
   let state = programState(stateKey, "confirmed by the person")
   let changed = page.replaceElements([page.elements[0].updating(state: state)], actor: f.human)
   #expect(changed)
-  _ = try f.store.saveMergedPage(page)
+  _ = try f.store.savePage(page)
   #expect(try f.store.loadPage(pageID).elements[0].state == state)
   #expect(try f.store.collaborationContinuations(action.id).contains { $0.file == pageFile(pageID) && $0.author == .human })
 
@@ -99,7 +99,7 @@ func collaborationComparablePageStateReceiptAndUndo(stateKey: String) throws {
   let inserted = page.replaceElements([.init(id: "confirmation", kind: .web,
     frame: .init(x: 20, y: 20, width: 200, height: 80), source: "<button/>", html: "<button/>", state: initial)], actor: f.human)
   #expect(inserted)
-  page = try f.store.saveMergedPage(page)
+  page = try f.store.savePage(page)
   let action = try f.action([.init(kind: .setElementState, target: f.page, id: "confirmation", values: ["state": edited])], targets: [f.page])
   let receipt = try f.store.applyCollaborationAction(action, actor: f.agent)
   let change = try #require(receipt.changes.count == 1 ? receipt.changes.first : nil)
@@ -123,7 +123,7 @@ func collaborationComparablePageStateReceiptAndUndo(stateKey: String) throws {
   #expect(restored.elements[0].state == initial)
   #expect(restored.agentStamp > delivered.agentStamp)
   #expect(restored.drawingStamp == delivered.drawingStamp)
-  let afterEcho = try f.store.saveMergedPage(delivered)
+  let afterEcho = try f.store.savePage(delivered)
   #expect(afterEcho.elements[0].state == initial)
 }
 

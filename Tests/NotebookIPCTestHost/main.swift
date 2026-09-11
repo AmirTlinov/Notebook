@@ -68,6 +68,19 @@ actor TestOwner {
       }
       return try .encode(pages)
     case "page": try store.savePage(value.decode(PageDocument.self))
+    case "humanPageElements":
+      guard let pageID = try value["pageID"]?.decode(UUID.self),
+        let actor = try value["actorID"]?.decode(UUID.self),
+        let elements = try value["elements"]?.decode([AgentElement].self) else {
+        throw NotebookStorageError.invalidTransaction("fixture human page elements")
+      }
+      var page = try store.loadPage(pageID)
+      if page.elements != elements {
+        guard page.replaceElements(elements, actor: actor) else {
+          throw NotebookStorageError.invalidTransaction("fixture human page element edit")
+        }
+      }
+      try store.savePage(page)
     case "moveItem":
       let workspace = try store.loadIndex()
       var hierarchy = try store.loadBoard(items: workspace.items)

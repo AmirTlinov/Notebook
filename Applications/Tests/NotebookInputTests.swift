@@ -707,7 +707,7 @@ final class NotebookInputTests: XCTestCase {
     model.inputGate.beginContact(source: source)
     let peer = NotebookStore(root: root.appendingPathComponent("peer")), peerID = UUID()
     try NotebookPeerFixture.copy(from: model.store, to: peer, peerID: model.actorID)
-    _ = try peer.saveMergedPage(incoming.pages[0])
+    _ = try peer.savePage(incoming.pages[0])
     let delivery = Task { try await NotebookPeerFixture.deliver(from: peer, to: model, peerID: peerID) }
     await Task.yield()
     XCTAssertTrue(try XCTUnwrap(model.activePage).elements.isEmpty)
@@ -715,7 +715,7 @@ final class NotebookInputTests: XCTestCase {
     XCTAssertFalse(model.permitsBackgroundPreparation)
     var human = try model.store.loadPage(incoming.pages[0].id)
     XCTAssertTrue(human.replaceElements([.init(id: "human", kind: .markdown, frame: .init(x: 30, y: 400, width: 120, height: 90), source: "Human", html: "Human")], actor: model.actorID))
-    _ = try model.store.saveMergedPage(human)
+    _ = try model.store.savePage(human)
     model.inputGate.endContact(source: source)
     for _ in 0..<100 where model.inputGate.isActive { await Task.yield() }
     XCTAssertFalse(model.inputGate.isActive)

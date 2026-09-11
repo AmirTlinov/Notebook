@@ -361,7 +361,7 @@ final class DrawingOwnershipTests: XCTestCase {
     var remote = try XCTUnwrap(model.activePage)
     let remoteActor = UUID()
     let firstRemote = stroke(y: 60), secondRemote = stroke(y: 80)
-    let remoteDrawing = PageInkDrawing().appending(firstRemote)
+    let remoteDrawing = try PageInkDrawing().appending(firstRemote)
     remote.replaceDrawing(try remoteDrawing.dataRepresentation(), actor: remoteActor)
     let remoteData = try remoteDrawing.appending(secondRemote).dataRepresentation()
     remote.replaceDrawing(remoteData, actor: remoteActor)

@@ -56,7 +56,7 @@ extension NotebookStore {
         try writeFragment(.init(address: pageAddress, file: "workspace.json", parent: itemAddress,
           collection: "pageIDs", member: pageID, position: Int(maximum + 1), value: .string(page.id.uuidString), collections: []), database: database)
       }
-      _ = try saveMergedPage(page)
+      _ = try savePage(page)
       var frontier = max(currentStamp, index.stamp)
       for version in previous.compactMap({ $0 }) { frontier = max(frontier, version.stamp) }
       // Append is executed at the current tail. If another accepted catalog

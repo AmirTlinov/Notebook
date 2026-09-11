@@ -27,7 +27,7 @@ struct ComputationQueueProof {
       var document = try store.loadPage(page)
       let change = try document.prepareInkChange(.append(stroke), stamp: .init(counter: document.drawingStamp.counter + 1, actor: actor))
       guard document.publishInkChange(change) else { throw Failure.contract("publish accepted contact") }
-      try store.saveMergedPage(document)
+      try store.savePage(document)
     }
 
     let first = action(x: 30)

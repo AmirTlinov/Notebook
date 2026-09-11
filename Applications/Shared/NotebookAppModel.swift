@@ -2641,7 +2641,7 @@ final class NotebookAppModel {
   }
 
   private func scheduleSave(_ page: PageDocument) {
-    persistence.enqueue(owner: .page(page.id)) { try $0.saveMergedPage(page) != page }
+    persistence.enqueue(owner: .page(page.id)) { try $0.savePage(page) != page }
   }
 
   private func scheduleSpatialInkSave(_ command: NotebookSpatialInkCommand) {

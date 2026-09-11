@@ -45,10 +45,15 @@ public struct PageInkDrawing: Codable, Equatable, Sendable {
     return Self.signature + (try encoder.encode(self))
   }
 
-  public func appending(_ action: PageInkAction) -> Self {
-    guard !actions.contains(where: { $0.id == action.id }) else { return self }
+  public func appending(_ action: PageInkAction) throws -> Self {
+    if let accepted = actions.first(where: { $0.id == action.id }) {
+      guard accepted.hasSameMeasurement(as: action) else { throw InkError.actionIDConflict }
+      // Repeating a measured contact does not renumber it or reactivate the
+      // tombstone left by its later undo.
+      return self
+    }
     let last = actions.map(\.sequence).max() ?? 0
-    guard last < VersionStamp.maximumCounter else { return self }
+    guard last < VersionStamp.maximumCounter else { throw InkError.sequenceExhausted }
     return Self(
       baselinePNG: baselinePNG, baselineActionCount: baselineActionCount,
       actions: actions + [action.ordered(last + 1)])
@@ -67,8 +72,7 @@ public struct PageInkDrawing: Codable, Equatable, Sendable {
     var byID = Dictionary(uniqueKeysWithValues: actions.map { ($0.id, $0) })
     for incoming in other.actions {
       if let current = byID[incoming.id] {
-        guard current.sequence == incoming.sequence, current.tool == incoming.tool,
-          current.color == incoming.color, current.samples == incoming.samples else { throw InkError.actionIDConflict }
+        guard current.sequence == incoming.sequence, current.hasSameMeasurement(as: incoming) else { throw InkError.actionIDConflict }
         byID[incoming.id] = current.isActive ? incoming : current
       } else { byID[incoming.id] = incoming }
     }
@@ -78,7 +82,17 @@ public struct PageInkDrawing: Codable, Equatable, Sendable {
       })
   }
 
-  public enum InkError: Error { case invalidDrawing, incompatibleBaseline, actionIDConflict }
+  public enum InkError: Error, LocalizedError {
+    case invalidDrawing, incompatibleBaseline, actionIDConflict, sequenceExhausted
+    public var errorDescription: String? {
+      switch self {
+      case .invalidDrawing: "Чернила не соответствуют формату и границам листа."
+      case .incompatibleBaseline: "Нельзя объединить штрихи с разной растровой основой."
+      case .actionIDConflict: "UUID штриха уже относится к другому измерению."
+      case .sequenceExhausted: "Достигнут предел порядка штрихов этого листа."
+      }
+    }
+  }
 }
 
 public struct PageInkAction: Codable, Equatable, Identifiable, Sendable {
@@ -122,6 +136,10 @@ public struct PageInkAction: Codable, Equatable, Identifiable, Sendable {
 
   fileprivate func ordered(_ sequence: UInt64) -> Self {
     Self(id: id, tool: tool, color: color, samples: samples, sequence: sequence, isActive: isActive)
+  }
+
+  fileprivate func hasSameMeasurement(as other: Self) -> Bool {
+    tool == other.tool && color == other.color && samples == other.samples
   }
 
   fileprivate func deactivated() -> Self {

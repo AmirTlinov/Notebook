@@ -467,7 +467,7 @@ struct CollaborationWorkspace {
       guard stroke.region.isContained(in: page.size) else { throw invalid("Штрих целиком помещается в физический лист.") }
       let drawing = try PageInkDrawing.decode(page.drawingData)
       guard !drawing.actions.contains(where: { $0.id == stroke.id }) else { throw invalid("UUID штриха уже занят.") }
-      let next = drawing.appending(stroke.pageAction)
+      let next = try drawing.appending(stroke.pageAction)
       guard next != drawing, page.replaceDrawing(try next.dataRepresentation(), actor: actor) else { throw invalid("Не удалось добавить штрих.") }
       files[pageFile(target.id)] = try .encode(page)
     } else {

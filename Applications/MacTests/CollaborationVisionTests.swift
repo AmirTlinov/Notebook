@@ -67,7 +67,7 @@ final class CollaborationVisionTests: XCTestCase {
     let total = elements.reduce(0) { $0 + Int($1.frame.width * $1.frame.height * 4 * 4 * 2) }
     XCTAssertGreaterThan(total, SceneRenderResources.shared.byteLimit)
     XCTAssertTrue(page.replaceElements(elements, actor: UUID()))
-    _ = try model.store.saveMergedPage(page)
+    _ = try model.store.savePage(page)
     await model.reloadExternalChanges()?.value
     let original = model.presence
     let target = CollaborationTarget(kind: .page, id: page.id)
@@ -105,7 +105,7 @@ final class CollaborationVisionTests: XCTestCase {
     var actions: [PageInkAction] = []
     func save() async throws {
       _ = page.replaceDrawing(try PageInkDrawing(actions: actions).dataRepresentation(), actor: actor)
-      _ = try model.store.saveMergedPage(page); await model.reloadExternalChanges()?.value
+      _ = try model.store.savePage(page); await model.reloadExternalChanges()?.value
     }
     try await save()
     let reference = CollaborationReference(target: target, region: .init(x: 20, y: 20, width: 140, height: 100),

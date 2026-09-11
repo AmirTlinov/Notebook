@@ -38,10 +38,10 @@ private func fillNotebookPages(store: NotebookStore, index: WorkspaceIndex, coun
     var pages = index.selectedItem.pageIDs
     for position in 1..<count {
       let page = PageDocument(size: .init(width: 834, height: 1194), actor: actor), id = page.id.uuidString.lowercased()
-      try store.savePage(page)
-      pages.append(page.id)
       try store.writeFragment(.init(address: parent + "/pageIDs/@" + id, file: "workspace.json", parent: parent,
         collection: "pageIDs", member: id, position: position, value: .string(page.id.uuidString), collections: []), database: database)
+      try store.savePage(page)
+      pages.append(page.id)
       let key = fieldKey(["items", itemID, "pageIDs", id])
       try store.writeFragment(.init(address: "workspace.json#/collaboration/fields/@" + fieldKey([key]), file: "workspace.json", parent: "workspace.json#",
         collection: "collaboration/fields", member: key, position: 0, value: try .encode(ContentFieldVersion(stamp: stamp, human: true)), collections: []), database: database)
@@ -292,9 +292,9 @@ struct NotebookPageAppendTests {
       #expect(try !store.hasStoredValue(pageFile(page.id)))
       var drawn = page
       _ = drawn.replaceDrawing(pageDrawingFixture(Data("first accepted stroke".utf8)), actor: actor)
-      #expect(throws: (any Error).self) { _ = try store.saveMergedPage(drawn) }
+      #expect(throws: (any Error).self) { _ = try store.savePage(drawn) }
       _ = try store.saveWorkspaceSelection(index: intent, createdPage: page)
-      _ = try store.saveMergedPage(drawn)
+      _ = try store.savePage(drawn)
       #expect(try store.loadPage(page.id) == drawn)
       #expect(try store.loadPresence().notebookPageID == page.id)
     }
@@ -307,7 +307,7 @@ struct NotebookPageAppendTests {
       #expect(throws: PageAppendFault.self) { _ = try failing.saveWorkspaceSelection(index: intent, createdPage: page) }
       var drawn = page
       _ = drawn.replaceDrawing(pageDrawingFixture(Data("already durable stroke".utf8)), actor: actor)
-      _ = try store.saveMergedPage(drawn)
+      _ = try store.savePage(drawn)
       let cursor = try store.currentChangeCursor(), before = try store.loadIndex()
       _ = try store.saveWorkspaceSelection(index: intent, createdPage: page)
       #expect(try store.currentChangeCursor() == cursor)
