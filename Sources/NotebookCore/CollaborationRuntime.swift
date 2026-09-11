@@ -191,7 +191,10 @@ extension NotebookStore {
     switch target.kind {
     case .codeFragment:
       guard elementID == nil, let fragment = files[codeFragmentFile(target.id)] else { throw CollaborationError("target_missing", "Фрагмент кода отсутствует.", target: target) }
-      content = fragment
+      let actions = try (files["spatial-ink.json"]?["actions"]?.array ?? []).filter { action in
+        try action["spans"]?.array.contains { try $0["surface"]?.decode(SurfaceID.self) == .codeFragment(target.id) } == true
+      }.sorted { ($0["id"]?.string ?? "") < ($1["id"]?.string ?? "") }
+      content = .object(["code": fragment, "ink": .array(actions)])
     case .page:
       guard let page = files["pages/" + suffix] else { throw CollaborationError("target_missing", "Лист отсутствует.", target: target) }
       if let elementID {

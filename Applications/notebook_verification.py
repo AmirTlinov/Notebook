@@ -17,6 +17,11 @@ import notebook_release as release
 ROOT = Path(__file__).resolve().parents[1]
 UI = "NotebookUITests/DrawingResponsivenessTests/"
 PROFILES = {
+    "code-discussion": {
+        "core": ["NotebookCodeDiscussionTests", "NotebookCodeStoreTests", "AgentInkTests"],
+        "ipad": ["NotebookTests/NotebookCodeDiscussionTests", "NotebookTests/NotebookCodeAnnotationsTests", "NotebookTests/NotebookFileControllerTests"],
+        "commands": ["mcp"],
+    },
     "code-notes": {
         "core": ["NotebookCodeFragmentTests", "NotebookCodeStoreTests", "AgentInkTests"],
         "mac": ["NotebookMacTests/NotebookProjectFilesTests"],
@@ -110,6 +115,8 @@ def owners(path):
     if path.startswith("MCP/"):
         return ["mcp"]
     name = Path(path).name
+    if name in ("NotebookCodeLink.swift", "NotebookCodeImageRenderer.swift", "NotebookCodeDiscussionTests.swift"):
+        return ["code-discussion"]
     if name in ("NotebookCodeFragment.swift", "NotebookCodeStore.swift", "NotebookCodeAnnotations.swift",
                 "NotebookCodeInkView.swift", "NotebookCodeFragmentTests.swift", "NotebookCodeStoreTests.swift",
                 "NotebookCodeAnnotationsTests.swift"):

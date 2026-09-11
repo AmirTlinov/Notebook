@@ -26,6 +26,7 @@ public struct NotebookCodeFragment: Codable, Equatable, Sendable, Identifiable {
       && width.isFinite && (1...4096).contains(width) && height.isFinite && (1...8192).contains(height)
       && fontSize.isFinite && (8...72).contains(fontSize) && stamp.counter <= VersionStamp.maximumCounter
   }
+  public var region: PageRect { .init(x: 0, y: 0, width: width, height: height) }
   /// Exact version preserves even repeated code. After edits, only a unique
   /// unchanged excerpt is a reliable destination; ambiguity retains old material.
   public func range(in source: String, sourceHash currentHash: String? = nil) -> NSRange? {

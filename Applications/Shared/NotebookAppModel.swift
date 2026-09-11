@@ -442,6 +442,90 @@ final class NotebookAppModel {
   @ObservationIgnored private var hasRestoredAgentQuestion = false
 
   #if os(iOS)
+    @discardableResult func discussCode(_ fragment: NotebookCodeFragment) -> Task<Void, Never>? {
+      guard !isClosing, !inputGate.hasActivePencil, !isSavingAgentQuestion, let chat else { return nil }
+      let generation = UUID(); attentionGeneration = generation; isSavingAgentQuestion = true
+      let source = chat.files.document?.address == fragment.file ? chat.files.document?.text : nil
+      let selection = source.flatMap { fragment.range(in: $0) }
+      let related = chat.files.notes.fragments.filter { note in
+        guard note.id != fragment.id, note.file == fragment.file, let source, let selection,
+          let range = note.range(in: source) else { return false }
+        return NSIntersectionRange(selection, range).length > 0
+      }.prefix(31).map(\.id)
+      let actor = actorID
+      let task = Task { [self] in
+        defer { isSavingAgentQuestion = false; chatSubmissionTask = nil }
+        do {
+          let annotations = try await persistence.submit { store in
+            try store.readTransaction { store in
+              let first = try store.codeAnnotation(fragment.id) ?? .init(fragment: fragment, ink: .init(stamp: fragment.stamp))
+              return [first] + (try related.compactMap { try store.codeAnnotation($0) })
+            }
+          }
+          let references = try annotations.map { try $0.reference() }
+          var images: [UUID: AgentPinnedImage] = [:], unavailable: [UUID: String] = [:], bytes = 0
+          for (annotation, reference) in zip(annotations, references) {
+            do {
+              let image = try await NotebookCodeImageRenderer.render(annotation, reference: reference)
+              guard bytes + image.png.count <= NotebookPinnedImageRenderer.maximumTotalBytes else { throw SceneRenderError.resourceLimit }
+              images[reference.id] = image; bytes += image.png.count
+            } catch { unavailable[reference.id] = error.localizedDescription }
+          }
+          try Task.checkCancellation()
+          let capturedImages = images, missing = unavailable
+          let context = try await persistence.submit(publishesChanges: true) {
+            try $0.discussCode(annotations, references: references, images: capturedImages, unavailable: missing, actor: actor)
+          }
+          reloadExternalChanges()
+          guard attentionGeneration == generation, !isClosing else { return }
+          agentQuestion = .init(contextID: context.id, entryID: context.entry.id, references: references)
+          agentRequestError = nil; chat.expanded = true; chat.browsesChats = false
+          await chat.files.notes.refresh()
+        } catch { agentRequestError = error.localizedDescription }
+      }
+      chatSubmissionTask = task
+      return task
+    }
+
+    func openNotebookLink(_ url: URL) {
+      guard let link = NotebookCodeLink(url: url) else { return }
+      inputGate.performAfterPageContact { [weak self] in
+        guard let self, let chat else { return }
+        switch link {
+        case .file(let file, let line): Task { await chat.files.navigate(to: file, line: line) }
+        case .fragment(let id):
+          Task { [weak self] in
+            guard let self else { return }
+            do {
+              guard let fragment = try await persistence.submit({ try $0.codeFragment(id) }) else {
+                throw CollaborationError("source_missing", "Рассмотренный код ещё не доставлен.")
+              }
+              inputGate.performAfterPageContact { Task { await chat.files.navigate(to: fragment) } }
+            } catch { agentRequestError = error.localizedDescription }
+          }
+        case .conversation(let computer, let thread):
+          guard computer == chat.computerID else { agentRequestError = "Разговор находится на другом Mac."; return }
+          chat.select(.init(id: thread.uuidString.lowercased(), title: "Сохранённый разговор", cwd: "")); chat.expanded = true
+        }
+      }
+    }
+
+    func saveChatExplanation(_ message: CodexMessage, thread: String, computer: UUID) {
+      guard message.role == .assistant, message.activity == nil, let threadID = UUID(uuidString: thread), let chat else { return }
+      let contextID = chat.jobs.first { $0.input.action.threadID == thread && $0.result == .turn(message.turnID) }?.input.attentionContextID
+      let actor = actorID, link = NotebookCodeLink.conversation(computer: computer, thread: threadID).url.absoluteString
+      let text = "[Ответ Codex в исходном разговоре](\(link))\n\n" + (message.isTruncated ? "Сохранён показанный фрагмент ответа.\n\n" : "") + message.text
+      persistence.enqueueCommand(publishesChanges: true, { store in
+        let references = try contextID.map { try store.sharedContextPage(contextID: $0, limit: 1).entries.first?.references ?? [] } ?? []
+        return try store.appendContext(references: references, author: .human, actor: actor, text: text)
+      }) { [weak self] result in
+        Task { @MainActor [weak self] in
+          do { _ = try result.get(); self?.reloadExternalChanges(); self?.showCue("Ответ сохранён в заметках") }
+          catch { self?.agentRequestError = error.localizedDescription }
+        }
+      }
+    }
+
     private(set) var chat: NotebookChatController?
     @ObservationIgnored private var chatSubmissionTask: Task<Void, Never>?
   #endif
@@ -2235,6 +2319,7 @@ final class NotebookAppModel {
       let question = agentQuestion
       let retained = question.flatMap { q in pinnedAttentionSelections.first { $0.0 == q.contextID }?.1 }
       let capturedPresence = presence, capturedWorkspace = workspaceHeader?.workspaceID
+      let capturedFile = chat.files.window.isOpen ? chat.files.document : nil
       let task = Task { [self] in
         defer { isSavingAgentQuestion = false; chatSubmissionTask = nil }
         do {
@@ -2254,11 +2339,14 @@ final class NotebookAppModel {
           let context: JSONValue = .object([
             "workspaceID": capturedWorkspace.map { .string($0.uuidString) } ?? .null,
             "presence": try capturedPresence.map(JSONValue.encode) ?? .null,
+            "file": try capturedFile.map { try .encode($0.address) } ?? .null,
+            "fileLink": capturedFile.map { .string(NotebookCodeLink.file($0.address, line: 1).url.absoluteString) } ?? .null,
+            "fileHasLocalDraft": capturedFile.map { .bool($0.text != $0.base) } ?? .null,
             "attention": try question.map { question in
               .object(["contextID": .string(question.contextID.uuidString),
                 "entryID": .string(question.entryID.uuidString), "references": try .encode(question.references)])
             } ?? .null,
-            "meaning": .string("Read frozen attention via notebook_read_attention(context_id, reference_id). Shared Notebook workspace. Selection directs attention, not permissions. Use Notebook tools for source/version checks, undoable edits and delivery receipts. Do not move the camera.")
+            "meaning": .string("Read frozen attention via notebook_read_attention(context_id, reference_id). Shared Notebook workspace. Selection directs attention, not permissions. Use Notebook tools for source/version checks, undoable edits and delivery receipts. For code notes use notebook_read_code_notes and appendInkStroke on codeFragment. Use the returned notebook://code/UUID link, or fileLink with the required 1-based line query, in Markdown references. These links scroll only the document. A local draft is not yet the working file on Mac. Do not move the board camera.")
           ])
           let text = String(decoding: try JSONEncoder().encode(context), as: UTF8.self)
           _ = await chat.sendMessage(threadID: submittedThread, text: submittedText, context: text, attentionContextID: question?.contextID, steeringTurnID: submittedTurn)
@@ -2388,8 +2476,7 @@ final class NotebookAppModel {
           guard let self, let fragment = try? await persistence.submit({ try $0.codeFragment(id) }) else { return }
           inputGate.performAfterPageContact { [weak self] in
             Task { [weak self] in
-              await self?.chat?.files.open(fragment.file)
-              self?.inputGate.performAfterPageContact { [weak self] in self?.chat?.files.notes.reviewed = fragment }
+              await self?.chat?.files.navigate(to: fragment)
             }
           }
         }

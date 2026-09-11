@@ -16,6 +16,8 @@ final class NotebookFileController {
   private(set) var loading = false
   private(set) var saving = false
   let notes: NotebookCodeAnnotations
+  private(set) var navigation: (id: UUID, file: NotebookFileAddress, range: NSRange)?
+  @ObservationIgnored var captureSelection: (@MainActor () -> NotebookCodeFragment?)?
   @ObservationIgnored weak var chat: NotebookChatController?
   @ObservationIgnored private let persistence: NotebookPersistenceQueue
   @ObservationIgnored private let author: UUID
@@ -79,6 +81,25 @@ final class NotebookFileController {
     } catch { if opening == token { self.error = error.localizedDescription } }
   }
   func close() { guard !notes.contactActive else { return }; window.isOpen = false; opening = nil; loading = false; persistWindow() }
+  func navigate(to fragment: NotebookCodeFragment) async {
+    await open(fragment.file)
+    guard !notes.contactActive else { return }
+    if let document, document.address == fragment.file, let range = fragment.range(in: document.text) {
+      navigation = (UUID(), fragment.file, range)
+      notes.reviewed = nil
+    } else { await notes.review(fragment) }
+  }
+  func navigate(to file: NotebookFileAddress, line: Int) async {
+    await open(file)
+    guard !notes.contactActive, let document, document.address == file else { return }
+    let text = document.text as NSString
+    var offset = 0
+    for _ in 1..<line {
+      guard offset < text.length else { break }
+      offset = NSMaxRange(text.lineRange(for: NSRange(location: offset, length: 0)))
+    }
+    navigation = (UUID(), file, NSRange(location: offset, length: 0))
+  }
   func edit(_ text: String, address: NotebookFileAddress, selection: Int, scroll: Double) {
     guard !notes.contactActive, var value = document, value.address == address else { return }
     guard text.utf8.count <= NotebookFileVersion.maximumBytes else { error = "Черновик превышает 2 МиБ. Последний принятый текст сохранён."; return }

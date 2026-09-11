@@ -273,7 +273,10 @@ struct NotebookChatPanel: View {
         }
       }
       .font(.system(size: 12)).foregroundStyle(.secondary).frame(height: 32).padding(.horizontal, 22)
-      NotebookChatTranscript(messages: showsHistory ? chat.history : (chat.conversation?.messages ?? chat.history))
+      NotebookChatTranscript(messages: showsHistory ? chat.history : (chat.conversation?.messages ?? chat.history),
+        openLink: model.openNotebookLink, saveExplanation: { [thread = chat.threadID, computer = chat.computerID] message in
+          if let thread, let computer { model.saveChatExplanation(message, thread: thread, computer: computer) }
+        })
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("notebook-chat-transcript")
       if let conversation = chat.conversation, let request = conversation.requests.first {
@@ -516,20 +519,28 @@ private struct NotebookCodexRequestView: View {
 /// one browser per message, reload the document, or touch the canvas hierarchy.
 struct NotebookChatTranscript: UIViewRepresentable {
   let messages: [CodexMessage]
+  var openLink: (URL) -> Void = { _ in }
+  var saveExplanation: (CodexMessage) -> Void = { _ in }
   func makeCoordinator() -> Coordinator { Coordinator() }
   func makeUIView(context: Context) -> UIView {
     let container = UIView()
     context.coordinator.mount(container)
     return container
   }
-  func updateUIView(_ container: UIView, context: Context) { context.coordinator.update(messages: messages) }
+  func updateUIView(_ container: UIView, context: Context) {
+    context.coordinator.openLink = openLink; context.coordinator.saveExplanation = saveExplanation
+    context.coordinator.update(messages: messages)
+  }
   static func dismantleUIView(_ container: UIView, coordinator: Coordinator) { coordinator.close() }
-  @MainActor final class Coordinator: NSObject, WKNavigationDelegate {
+  @MainActor final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     var ready = false, closed = false
     var json = "[]", sent: String?
     var web: WKWebView?
     var lease: WebSurfaceLease?
     var preparation: Task<Void, Never>?
+    var messages: [CodexMessage] = []
+    var openLink: (URL) -> Void = { _ in }
+    var saveExplanation: (CodexMessage) -> Void = { _ in }
     func mount(_ container: UIView) {
       preparation = Task { [weak self, weak container] in
         do {
@@ -537,6 +548,7 @@ struct NotebookChatTranscript: UIViewRepresentable {
           guard let self, let container, !closed, !Task.isCancelled else { lease.release(); return }
           self.lease = lease
           let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = .nonPersistent()
+          configuration.userContentController.add(self, name: "notebookChat")
           let web = WKWebView(frame: container.bounds, configuration: configuration)
           web.autoresizingMask = [.flexibleWidth, .flexibleHeight]
           web.isOpaque = false; web.backgroundColor = .clear; web.scrollView.backgroundColor = .clear
@@ -549,10 +561,12 @@ struct NotebookChatTranscript: UIViewRepresentable {
     }
     func close() {
       closed = true; preparation?.cancel(); preparation = nil
+      web?.configuration.userContentController.removeScriptMessageHandler(forName: "notebookChat")
       web?.stopLoading(); web?.navigationDelegate = nil; web?.removeFromSuperview(); web = nil
       lease?.release(); lease = nil
     }
     func update(messages: [CodexMessage]) {
+      self.messages = messages
       json = (try? String(decoding: JSONEncoder().encode(messages), as: UTF8.self)) ?? "[]"
       if let web { publish(web) }
     }
@@ -564,7 +578,16 @@ struct NotebookChatTranscript: UIViewRepresentable {
       Task { _ = try? await web.callAsyncJavaScript("await window.showMessages(json)", arguments: ["json": value], in: nil, contentWorld: .page) }
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
-      action.navigationType == .other && action.request.url?.isFileURL == true ? .allow : .cancel
+      if action.navigationType == .linkActivated, let url = action.request.url, NotebookCodeLink(url: url) != nil {
+        openLink(url); return .cancel
+      }
+      return action.navigationType == .other && action.request.url?.isFileURL == true ? .allow : .cancel
+    }
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+      guard !closed, message.webView === web, message.frameInfo.isMainFrame,
+        let body = message.body as? [String: String], body["action"] == "save",
+        let value = messages.first(where: { $0.id == body["id"] }), value.role == .assistant, value.activity == nil else { return }
+      saveExplanation(value)
     }
   }
 }

@@ -115,6 +115,13 @@ struct NotebookRootView: View {
     }
     .coordinateSpace(name: "notebook-window")
     .sheet(isPresented: $showsPairing) { NotebookPairingView().environment(model) }
+    .sheet(item: Binding(get: { model.chat?.files.notes.reviewed }, set: { model.chat?.files.notes.reviewed = $0 })) { fragment in
+      if let notes = model.chat?.files.notes { NotebookCodeReviewView(notes: notes, fragment: fragment).environment(model) }
+    }
+    .environment(\.openURL, OpenURLAction { url in
+      guard NotebookCodeLink(url: url) != nil else { return .systemAction }
+      model.openNotebookLink(url); return .handled
+    })
     .preferredColorScheme(.light)
   }
 

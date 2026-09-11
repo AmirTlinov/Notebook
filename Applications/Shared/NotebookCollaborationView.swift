@@ -70,7 +70,7 @@ struct NotebookCollaborationView: View {
                   VStack(alignment: .leading, spacing: 5) {
                     Text(entry.author == .human ? "Вы" : "Ответ агента")
                       .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    Text(text).textSelection(.enabled)
+                    Text((try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)).textSelection(.enabled)
                   }
                 }
                 ForEach(entry.references) { reference in
@@ -195,7 +195,7 @@ private struct NotebookContextHistoryView: View {
     List {
       ForEach(page?.entries ?? []) { entry in
         Section(entry.author == .human ? "Вы" : "Агент") {
-          if let text = entry.text { Text(text).textSelection(.enabled) }
+          if let text = entry.text { Text((try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)).textSelection(.enabled) }
           ForEach(entry.references) { reference in
             Button(reference.label.isEmpty ? model.locationTitle(for: reference) : reference.label) { show(reference) }
           }

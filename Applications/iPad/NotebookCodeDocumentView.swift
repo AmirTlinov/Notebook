@@ -20,6 +20,9 @@ struct NotebookCodeDocumentView: View {
           }.padding(.leading, 16).frame(maxWidth: .infinity, alignment: .leading)
           control("arrow.clockwise", "Обновить файл") { Task { await files.refresh() } }
           control("magnifyingglass", "Найти в коде") { findRequest += 1 }
+          control("text.bubble", "Обсудить выбранный код") {
+            if let fragment = files.captureSelection?() { model.discussCode(fragment) }
+          }
           control("arrow.uturn.backward", editing ? "Отменить изменение текста" : "Отменить свой штрих") { if editing { undoRequest += 1 } else { files.notes.undo() } }
           control(editing ? "keyboard.chevron.compact.down" : "keyboard", editing ? "Скрыть клавиатуру" : "Редактировать код") { editing.toggle() }
           Menu {
@@ -54,9 +57,6 @@ struct NotebookCodeDocumentView: View {
       .background(NotebookControlRegion(gate: model.inputGate))
       .accessibilityElement(children: .contain)
       .accessibilityIdentifier("notebook-code-document")
-      .sheet(item: Binding(get: { files.notes.reviewed }, set: { files.notes.reviewed = $0 })) { fragment in
-        NotebookCodeReviewView(notes: files.notes, fragment: fragment)
-      }
       .sheet(isPresented: $showsComparison) {
         NavigationStack {
           ScrollView {
@@ -111,6 +111,11 @@ struct NotebookCodeEditor: UIViewRepresentable {
     view.accessibilityIdentifier = "notebook-code-text"
     view.initialScroll = document.scroll
     if let inputGate { view.ink = .init(text: view, notes: files.notes, file: document.address, gate: inputGate) }
+    let file = document.address
+    files.captureSelection = { [weak view, weak files] in
+      guard let view, let files, files.document?.address == file else { return nil }
+      return view.selectedMaterial(notes: files.notes, file: file)
+    }
     return view
   }
   func updateUIView(_ view: NotebookCodeTextView, context: Context) {
@@ -147,6 +152,12 @@ struct NotebookCodeEditor: UIViewRepresentable {
     view.ink?.configure(pen: pen, eraser: eraser, tool: tool)
     if owner.findRequest != findRequest { owner.findRequest = findRequest; view.findInteraction?.presentFindNavigator(showingReplace: false) }
     if owner.undoRequest != undoRequest { owner.undoRequest = undoRequest; view.undoManager?.undo(); owner.applying = false; owner.textViewDidChange(view) }
+    if let navigation = files.navigation, navigation.file == document.address, owner.navigationID != navigation.id {
+      owner.navigationID = navigation.id
+      view.initialScroll = nil; view.selectedRange = navigation.range
+      view.scrollRangeToVisible(navigation.range)
+      owner.applying = false; owner.textViewDidChangeSelection(view); owner.applying = true
+    }
     view.ink?.layout()
 
   }
@@ -157,6 +168,7 @@ struct NotebookCodeEditor: UIViewRepresentable {
     let files: NotebookFileController
     let address: NotebookFileAddress
     var applying = false, findRequest = 0, undoRequest = 0
+    var navigationID: UUID?
     init(files: NotebookFileController, address: NotebookFileAddress) { self.files = files; self.address = address }
     func textViewDidChange(_ view: UITextView) {
       guard !applying else { return }
@@ -180,6 +192,25 @@ struct NotebookCodeEditor: UIViewRepresentable {
 final class NotebookCodeTextView: UITextView {
   var initialScroll: Double?
   var ink: NotebookCodeInkPresenter?
+  func selectedMaterial(notes: NotebookCodeAnnotations, file: NotebookFileAddress) -> NotebookCodeFragment? {
+    guard !text.isEmpty, bounds.width > 0 else { return nil }
+    layoutManager.ensureLayout(for: textContainer)
+    let characters: NSRange
+    if selectedRange.length > 0 { characters = selectedRange }
+    else {
+      let visible = CGRect(x: 0, y: max(0, contentOffset.y - textContainerInset.top), width: bounds.width, height: bounds.height)
+      let glyphs = layoutManager.glyphRange(forBoundingRect: visible, in: textContainer)
+      characters = layoutManager.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
+    }
+    let source = text! as NSString
+    guard characters.location < source.length else { return nil }
+    let range = source.paragraphRange(for: characters)
+    let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+    let rect = layoutManager.boundingRect(forGlyphRange: glyphs, in: textContainer)
+    let height = selectedRange.length > 0 ? rect.height : max(rect.height, contentOffset.y + bounds.height - rect.minY - textContainerInset.top)
+    return notes.material(file: file, source: text, offset: range.location, text: source.substring(with: range),
+      width: bounds.width, height: max(1, height), fontSize: Double(font?.pointSize ?? 15))
+  }
   override init(frame: CGRect, textContainer: NSTextContainer?) {
     // One native TextKit layout supplies editing, selection and the exact glyph
     // range captured under Pencil; there is no independently laid-out code copy.

@@ -252,7 +252,10 @@ struct NotebookCodeReviewView: View {
         }
       }
       .navigationTitle("Рассмотренный код")
-      .toolbar { Button("Готово") { notes.reviewed = nil } }
+      .toolbar {
+        Button("Обсудить") { model.discussCode(fragment); notes.reviewed = nil }
+        Button("Готово") { notes.reviewed = nil }
+      }
     }
   }
 }

@@ -38,8 +38,15 @@ public struct AgentPinnedSource: Codable, Equatable, Sendable, Identifiable {
     var payload: [String: JSONValue] = ["reference": try .encode(reference)]
     switch target.kind {
     case .codeFragment:
-      guard let fragment = files[codeFragmentFile(target.id)], reference.region == nil else { throw missing() }
-      payload["code"] = fragment; elements = []
+      guard let fragment = files[codeFragmentFile(target.id)] else { throw missing() }
+      let material = try fragment.decode(NotebookCodeFragment.self)
+      guard reference.region == nil || reference.region == material.region else { throw missing() }
+      payload["code"] = fragment
+      payload["ink"] = .array(try (files["spatial-ink.json"]?["actions"]?.array ?? []).filter {
+        try $0["spans"]?.array.allSatisfy { try $0["surface"]?.decode(SurfaceID.self) == .codeFragment(target.id) } == true
+      })
+      payload["link"] = .string(NotebookCodeLink.fragment(target.id).url.absoluteString)
+      elements = []
     case .page:
       guard let page = files["pages/" + suffix] else { throw missing() }
       elements = page["elements"]?.array ?? []

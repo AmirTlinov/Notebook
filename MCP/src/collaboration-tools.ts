@@ -24,7 +24,7 @@ export function registerCollaborationTools(server: McpServer, store: NotebookSto
     if (input.read === "file") return {fragments:await store.read({kind:"codeFragments",file:input.file,after:input.after_id,limit:64})};
     const value = await store.read<{fragment:{stamp:VersionStamp};ink:{stamp:VersionStamp}} | null>({kind:"codeFragment",id:input.fragment_id});
     if (!value) throw new BridgeError({code:"target_missing",message:"The preserved code fragment does not exist."});
-    return {...value,revision:revision(value.fragment.stamp),inkRevision:revision(value.ink.stamp)};
+    return {...value,revision:revision(value.fragment.stamp),inkRevision:revision(value.ink.stamp),link:"notebook://code/"+input.fragment_id.toLowerCase()};
   }));
   server.registerTool("notebook_read_attention", {
     outputSchema: notebookResponseSchema,

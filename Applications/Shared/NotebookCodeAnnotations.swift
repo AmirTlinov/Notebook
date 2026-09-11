@@ -84,14 +84,27 @@ final class NotebookCodeAnnotations {
     Task { await refresh() }
   }
   func reserve(file: NotebookFileAddress, source: String, offset: Int, text: String, width: Double, height: Double, fontSize: Double) -> NotebookCodeFragment? {
+    guard let fragment = material(file: file, source: source, offset: offset, text: text, width: width, height: height, fontSize: fontSize),
+      let next = clock.advanced(by: author) else { return nil }
+    clock = next; contactActive = true; return fragment
+  }
+  func material(file: NotebookFileAddress, source: String, offset: Int, text: String, width: Double, height: Double, fontSize: Double) -> NotebookCodeFragment? {
     guard ready, !contactActive, self.file == file, let next = clock.advanced(by: author) else { return nil }
     let hash = NotebookFileVersion.hash(Data(source.utf8))
     let fragment = fragments.first { $0.sourceHash == hash && $0.utf16Offset == offset && $0.text == text && $0.width == width && $0.height == height && $0.fontSize == fontSize }
       ?? .init(file: file, sourceHash: hash, utf16Offset: offset, text: text, width: width, height: height, fontSize: fontSize, stamp: next)
     guard fragment.isValid else { error = "Рассмотренный фрагмент слишком велик для одной пометки."; return nil }
-    clock = next; contactActive = true; return fragment
+    return fragment
   }
   func cancelContact() { contactActive = false }
+  func review(_ fragment: NotebookCodeFragment) async {
+    do {
+      let value = try await persistence.submit { try $0.codeAnnotation(fragment.id) }
+      guard !contactActive else { return }
+      if let value { annotations[fragment.id] = value }
+      reviewed = fragment
+    } catch { self.error = error.localizedDescription }
+  }
   func accept(_ measured: PageInkAction, fragment: NotebookCodeFragment, originY: Double) {
     guard contactActive else { return }
     let stamp = clock.advanced(by: author) ?? clock

@@ -6,6 +6,14 @@ public struct NotebookCodeAnnotation: Codable, Equatable, Sendable {
   public let fragment: NotebookCodeFragment
   public let ink: SpatialInkJournal
   public init(fragment: NotebookCodeFragment, ink: SpatialInkJournal) { self.fragment = fragment; self.ink = ink }
+  public func reference() throws -> CollaborationReference {
+    let target = CollaborationTarget(kind: .codeFragment, id: fragment.id)
+    return try .init(target: target, region: fragment.region,
+      revision: NotebookStore.referenceRevision(target: target, files: sourceFiles()), label: fragment.file.path)
+  }
+  func sourceFiles() throws -> [String: JSONValue] {
+    [codeFragmentFile(fragment.id): try .encode(fragment), "spatial-ink.json": try .encode(ink)]
+  }
 }
 
 extension NotebookStore {
@@ -61,6 +69,27 @@ extension NotebookStore {
     try readTransaction { _ in
       guard let fragment = try codeFragment(id) else { return nil }
       return try .init(fragment: fragment, ink: readSpatialInk(surfaces: [.codeFragment(id)]))
+    }
+  }
+
+  /// The exact material shown for discussion is sealed before the chat job.
+  /// Later file or ink changes cannot rewrite this SharedContext's evidence.
+  public func discussCode(_ annotations: [NotebookCodeAnnotation], references: [CollaborationReference],
+    images: [UUID: AgentPinnedImage], unavailable: [UUID: String] = [:], actor: UUID) throws -> SharedContextAppend {
+    try commandTransaction {
+      guard (1...32).contains(annotations.count), references.count == annotations.count else { throw NotebookStorageError.invalidTransaction("code attention count") }
+      for (annotation, reference) in zip(annotations, references) {
+        guard annotation.fragment.isValid, reference.target == CollaborationTarget(kind: .codeFragment, id: annotation.fragment.id),
+          reference.region == annotation.fragment.region else { throw NotebookStorageError.invalidTransaction("code attention") }
+        try publishCodeFragment(annotation.fragment)
+      }
+      let context = try appendContext(references: references, author: .human, actor: actor, select: true)
+      let sources = try zip(annotations, references).map { annotation, reference in
+        try AgentPinnedSource.capture(requestID: context.id, reference: reference, files: annotation.sourceFiles())
+          .withVisual(images[reference.id], unavailable: unavailable[reference.id])
+      }
+      try saveAttentionEvidence(sources, contextID: context.id)
+      return context
     }
   }
 }
