@@ -79,6 +79,25 @@ final class DocumentRenderSessionTests: XCTestCase {
     XCTAssertEqual(current.payload?.blockTokens, first.blockTokens)
   }
 
+  func testAPageReceiptCannotCreateAFullLayoutOrNameAnAbsentPage() throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "Body")])
+    let source = DocumentRenderSession(documentID: document.id).source(document)
+    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    var receipt: [String: Any] = ["sourceKey": source.message.key, "layoutScope": "page", "layoutCanonical": true,
+      "pageIndex": 0, "pageCount": 1, "width": geometry.width, "height": geometry.height, "regions": []]
+    XCTAssertThrowsError(try source.acceptLayout(receipt as NSDictionary, geometry: geometry))
+    XCTAssertNil(source.layout)
+    receipt["layoutScope"] = "source"
+    let full = try source.acceptLayout(receipt as NSDictionary, geometry: geometry)
+    receipt["layoutScope"] = "page"; receipt["pageIndex"] = 1
+    XCTAssertThrowsError(try source.acceptLayout(receipt as NSDictionary, geometry: geometry))
+    XCTAssertTrue(source.layout === full)
+    receipt["pageIndex"] = 0
+    XCTAssertTrue(try source.acceptLayout(receipt as NSDictionary, geometry: geometry) === full)
+    receipt["layoutScope"] = "partial-but-pretending"
+    XCTAssertThrowsError(try source.acceptLayout(receipt as NSDictionary, geometry: geometry))
+  }
+
   func testLayoutAcceptanceRejectsAnInconsistentNeighborWithoutReplacingTheFirstRecord() throws {
     let registry = DocumentRenderRegistry(), resources = SceneRenderResources()
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "Body")])
@@ -86,7 +105,7 @@ final class DocumentRenderSessionTests: XCTestCase {
     let session = registry.session(documentID: document.id, resources: resources), source = session.source(document)
     let geometry = WorkspaceItemGeometry.document(document.paperSize)
     func receipt(height: Double) -> NSDictionary {
-      ["sourceKey": source.message.key, "layoutCanonical": true, "pageIndex": 0, "pageCount": 1,
+      ["sourceKey": source.message.key, "layoutScope": "source", "layoutCanonical": true, "pageIndex": 0, "pageCount": 1,
         "width": geometry.width, "height": geometry.height,
         "regions": [["id": "body", "pageIndex": 0, "x": 70.0, "y": 70.0, "width": 200.0, "height": height]]]
     }

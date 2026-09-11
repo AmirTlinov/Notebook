@@ -502,24 +502,56 @@ final class DrawingResponsivenessTests: XCTestCase {
       firstPage.waitForExistence(timeout: 8),
       "WebKit должен разбить содержание на конечные листы"
     )
-    let secondPage = app.otherElements.matching(
+    let surface = app.otherElements["page-turn-surface"]
+    let firstFrame = firstPage.frame
+    let firstCount = firstPage.label.components(separatedBy: " из ").last
+    await fulfillment(of: [XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value BEGINSWITH 'Страница 1 из ' AND value != 'Страница 1 из 1'"), object: surface
+    )], timeout: 8)
+    XCTAssertEqual(
+      firstFrame.height / firstFrame.width,
+      841.88976378 / 595.275590551,
+      accuracy: 0.03,
+      "Экранный лист должен сохранять физическую пропорцию A4"
+    )
+    // Each UIKit sheet now receives one prepared physical DOM fragment, not
+    // the entire offscreen document. The next sheet must be checked after a
+    // real page curl, rather than requiring deleted offscreen paper nodes.
+    surface.swipeLeft()
+    await fulfillment(of: [XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value BEGINSWITH 'Страница 2 из '"), object: surface
+    )], timeout: 3)
+    let secondSheet = app.otherElements["page-turn-page-1"]
+    let secondPage = secondSheet.otherElements.matching(
       NSPredicate(format: "label BEGINSWITH 'Страница 2 из '")
     ).firstMatch
     XCTAssertTrue(
       secondPage.waitForExistence(timeout: 3),
       "Длинный текст должен перейти на второй лист"
     )
-    XCTAssertGreaterThan(
-      secondPage.frame.minX,
-      firstPage.frame.maxX,
-      "Страницы должны быть отдельными листами, а не одной вертикальной лентой"
-    )
+    let centered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      secondPage.exists && abs(secondPage.frame.midX - firstFrame.midX) <= 4
+    }, object: nil)
+    await fulfillment(of: [centered], timeout: 3)
+    XCTAssertEqual(secondPage.label.components(separatedBy: " из ").last, firstCount)
+    XCTAssertEqual(secondPage.frame.width, firstFrame.width, accuracy: 1)
+    XCTAssertEqual(secondPage.frame.height, firstFrame.height, accuracy: 1)
     XCTAssertEqual(
-      firstPage.frame.height / firstPage.frame.width,
+      secondPage.frame.height / secondPage.frame.width,
       841.88976378 / 595.275590551,
       accuracy: 0.03,
-      "Экранный лист должен сохранять физическую пропорцию A4"
+      "Продолжение остаётся отдельным листом A4, не вертикальной лентой"
     )
+    // Accessibility appends its localized role (for example ", область") to
+    // the paper label; the page address remains its prefix, not the whole label.
+    let pageLabels = secondSheet.otherElements.matching(NSPredicate(format: "label BEGINSWITH 'Страница '"))
+      .allElementsBoundByIndex.map(\.label)
+    let addresses = XCTAttachment(string: pageLabels.joined(separator: "\n"))
+    addresses.name = "finite-A4-native-accessibility-page-addresses"; addresses.lifetime = .keepAlways; add(addresses)
+    XCTAssertEqual(Set(pageLabels), [secondPage.label],
+      "Физическая оболочка не содержит копий чужих листов")
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "finite-A4-page-after-native-curl"; proof.lifetime = .keepAlways; add(proof)
   }
 
   func testStoredDocumentPageBecomesTheVisiblePhysicalSheet() async throws {
@@ -555,12 +587,42 @@ final class DrawingResponsivenessTests: XCTestCase {
       "SessionPresence должен поставить выбранный физический лист в центр"
     )
 
-    let thirdPageMarker = selectedSheet.staticTexts["Раздел 12"].firstMatch
-    XCTAssertTrue(thirdPageMarker.waitForExistence(timeout: 3))
-    XCTAssertTrue(
-      app.frame.intersects(thirdPageMarker.frame),
-      "На выбранном листе должен быть виден его собственный раздел"
-    )
+    let storedText = try visibleDocumentText(app: app, surface: app.otherElements["page-turn-surface"], name: "stored-document-page-3")
+    // A marker in the old complete accessibility DOM could exist on an
+    // unshown column. Compare actual visible text with an independent landing
+    // through two native turns, without baking a typesetting boundary into IDs.
+    app.terminate()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-document-runtime-fixture"]
+    launchPortraitFixture(app)
+    let surface = app.otherElements["page-turn-surface"]
+    await fulfillment(of: [XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value BEGINSWITH 'Страница 1 из ' AND value != 'Страница 1 из 1'"), object: surface
+    )], timeout: 8)
+    for page in 2...3 {
+      // Unlike an early swipe into an unprepared neighbour, the page control
+      // retains an explicit destination until UIKit can install that sheet.
+      app.buttons["next-page"].tap()
+      await fulfillment(of: [XCTNSPredicateExpectation(
+        predicate: NSPredicate(format: "value BEGINSWITH %@", "Страница \(page) из "), object: surface
+      )], timeout: 3)
+      let paper = app.otherElements["page-turn-page-\(page - 1)"].otherElements.matching(
+        NSPredicate(format: "label BEGINSWITH %@", "Страница \(page) из ")
+      ).firstMatch
+      XCTAssertTrue(paper.waitForExistence(timeout: 3))
+      await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        paper.exists && abs(paper.frame.midX - app.frame.midX) <= 4
+      }, object: nil)], timeout: 3)
+    }
+    let turnedText = try visibleDocumentText(app: app, surface: surface, name: "turned-document-page-3-reference")
+    let sections = try NSRegularExpression(pattern: #"Раздел\s+(\d+)"#)
+    func sectionIDs(_ text: String) -> [String] {
+      sections.matches(in: text, range: NSRange(text.startIndex..., in: text)).map {
+        String(text[Range($0.range(at: 1), in: text)!])
+      }
+    }
+    XCTAssertGreaterThanOrEqual(sectionIDs(storedText).count, 4)
+    XCTAssertEqual(sectionIDs(storedText), sectionIDs(turnedText),
+      "Сохранённый выбор должен показывать тот же физический лист, что и два настоящих перелистывания")
   }
 
   func testNotebookPageTurnCommitsBothDirections() {

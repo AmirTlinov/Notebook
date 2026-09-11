@@ -52,6 +52,8 @@ final class DocumentEditorPresentationTests: XCTestCase {
     await wait { live.coordinator.hasCanonicalPixels && boots == 1 }
     let web = try XCTUnwrap(live.coordinator.webView)
     _ = try await js("window.originalFrame=document.querySelector('iframe'); 'stored'", web)
+    let sourceBytes = resources.reservedBytes
+    XCTAssertGreaterThan(sourceBytes, 0, "The shared DOM fragments are charged to the existing resource pool")
     try await openEditor(web, composing: true)
     await wait { !live.coordinator.hasCanonicalPixels }
     XCTAssertTrue(live.coordinator.renderIsReady); XCTAssertTrue(live.coordinator.ownsEditing)
@@ -60,7 +62,7 @@ final class DocumentEditorPresentationTests: XCTestCase {
       _ = try await live.coordinator.retainPreparedSnapshot(pixelWidth: 256)
       XCTFail("An editor is not a canonical-source raster")
     } catch { XCTAssertEqual(error as? DocumentSnapshotWait, .editorActive) }
-    XCTAssertEqual(resources.rasterCount, 0); XCTAssertEqual(resources.reservedBytes, 0)
+    XCTAssertEqual(resources.rasterCount, 0); XCTAssertEqual(resources.reservedBytes, sourceBytes)
     let identity = try await js("String(savedEditor===document.querySelector('textarea') && originalFrame===document.querySelector('iframe'))", web)
     XCTAssertEqual(identity, "true")
     let value = try await js("savedEditor.value", web)
@@ -78,6 +80,7 @@ final class DocumentEditorPresentationTests: XCTestCase {
     defer { live.close() }
     await wait { live.coordinator.hasCanonicalPixels }
     let web = try XCTUnwrap(live.coordinator.webView)
+    let sourceBytes = resources.reservedBytes
     _ = try await js("""
       window.pixelReads=0;window.originalPresentation=notebookRenderer.presentationReceipt;
       notebookRenderer.presentationReceipt=()=>{
@@ -96,7 +99,7 @@ final class DocumentEditorPresentationTests: XCTestCase {
     } catch { XCTAssertTrue(error is DocumentSnapshotWait, String(describing: error)) }
     let reads = try await js("String(pixelReads)", web)
     XCTAssertEqual(reads, "2", "The second real JS query runs after WebKit has returned its actual snapshot")
-    XCTAssertEqual(resources.rasterCount, 0); XCTAssertEqual(resources.reservedBytes, 0)
+    XCTAssertEqual(resources.rasterCount, 0); XCTAssertEqual(resources.reservedBytes, sourceBytes)
     _ = try await js("notebookRenderer.presentationReceipt=originalPresentation; 'restored'", web)
     await wait { live.coordinator.hasCanonicalPixels }
     let raster = try await live.coordinator.retainPreparedSnapshot(pixelWidth: 256)

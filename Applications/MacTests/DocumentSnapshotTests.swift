@@ -4,6 +4,14 @@ import NotebookCore
 import XCTest
 
 final class DocumentSnapshotTests: XCTestCase {
+  @MainActor
+  private func measuredLayout(_ document: DocumentDocument) throws -> DocumentLayoutRecord {
+    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    return try DocumentLayoutRecord(receipt: ["sourceKey": "cache-fixture", "layoutCanonical": true,
+      "pageCount": 3, "width": geometry.width, "height": geometry.height, "regions": []] as NSDictionary,
+      sourceKey: "cache-fixture", blockIDs: Set(document.blocks.map(\.id)), geometry: geometry)
+  }
+
   private func bitmap(width: Int, height: Int) -> NSImage {
     let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
       bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
@@ -53,7 +61,7 @@ final class DocumentSnapshotTests: XCTestCase {
     DocumentSnapshotCache.shared.store(
       image: image,
       documentID: document.id,
-      token: firstToken
+      token: firstToken, layout: try measuredLayout(document)
     )
     XCTAssertNotNil(
       DocumentSnapshotCache.shared.image(
@@ -85,7 +93,7 @@ final class DocumentSnapshotTests: XCTestCase {
     DocumentSnapshotCache.shared.store(
       image: image,
       documentID: document.id,
-      token: secondToken
+      token: secondToken, layout: try measuredLayout(document)
     )
     XCTAssertTrue(state.commit(
       blockID: "counter",
@@ -103,7 +111,7 @@ final class DocumentSnapshotTests: XCTestCase {
   }
 
   @MainActor
-  func testSnapshotBelongsToTheSelectedPhysicalPage() {
+  func testSnapshotBelongsToTheSelectedPhysicalPage() throws {
     let actor = UUID()
     let document = DocumentDocument(id: UUID(), actor: actor)
     let state = DocumentStateJournal(id: document.id, actor: actor)
@@ -117,7 +125,7 @@ final class DocumentSnapshotTests: XCTestCase {
     DocumentSnapshotCache.shared.store(
       image: image,
       documentID: document.id,
-      token: token
+      token: token, layout: try measuredLayout(document)
     )
 
     XCTAssertNotNil(

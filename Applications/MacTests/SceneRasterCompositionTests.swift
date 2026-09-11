@@ -4,9 +4,82 @@ import ImageIO
 import NotebookCore
 import UniformTypeIdentifiers
 import XCTest
+import SwiftUI
 @testable import Notebook
 
 final class SceneRasterCompositionTests: XCTestCase {
+  @MainActor
+  func testPageCompositionKeepsItsPNGIdentityAcrossOtherSizesAndScales() async throws {
+    let page = PageDocument(size: .init(width: 834, height: 1194), actor: UUID())
+    let reference = try await PageCompositionRenderer.render(page) { _ in throw CocoaError(.featureUnsupported) }
+    for index in 0..<20 {
+      let other = PageDocument(size: .init(width: 211.25 + Double(index), height: 307.75), actor: UUID())
+      _ = try await PageCompositionRenderer.render(other, scale: [0.5, 1, 1.25, 3][index % 4]) { _ in
+        throw CocoaError(.featureUnsupported)
+      }
+      let rendered = try await PageCompositionRenderer.render(page) { _ in throw CocoaError(.featureUnsupported) }
+      if rendered.png != reference.png {
+        for (name, data) in [("Reference page bytes", reference.png), ("Changed page bytes \(index)", rendered.png)] {
+          let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.png")
+          attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+        }
+        XCTFail("A repeated page composition changed its certified PNG after another physical size or scale")
+        return
+      }
+    }
+  }
+
+  @MainActor
+  func testPageCompositionRetainsItsPNGIdentityDuringParallelVisionEncoding() async throws {
+    let page = PageDocument(size: .init(width: 834, height: 1194), actor: UUID())
+    let reference = try await PageCompositionRenderer.render(page) { _ in throw CocoaError(.featureUnsupported) }
+    let proof = XCTAttachment(data: reference.png, uniformTypeIdentifier: "public.png")
+    proof.name = "Physical page before parallel ink-map preparation"; proof.lifetime = .keepAlways; add(proof)
+    for index in 0..<64 {
+      let vision = Task.detached(priority: .utility) { try PageVisionRenderer.render(page) }
+      let rendered = try await PageCompositionRenderer.render(page) { _ in throw CocoaError(.featureUnsupported) }
+      _ = try await vision.value
+      if rendered.png != reference.png {
+        for (name, data) in [("Reference before parallel encoding", reference.png), ("Parallel page bytes \(index)", rendered.png)] {
+          let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.png")
+          attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+        }
+        XCTFail("Independent ink-map encoding changed the certified physical page PNG")
+        return
+      }
+    }
+  }
+
+  @MainActor
+  func testArtworkContextPreservesFractionalPlacementAxesAndTransparency() async throws {
+    let resources = SceneRenderResources(byteLimit: 4 * 1024 * 1024)
+    let compositor = try await SceneRasterCompositor.create(size: .init(width: 100, height: 80), scale: 2, resources: resources)
+    let artwork = VStack(spacing: 0) {
+      HStack(spacing: 0) { Color(.sRGB, red: 1, green: 0, blue: 0); Color(.sRGB, red: 0, green: 1, blue: 0) }
+      HStack(spacing: 0) { Color(.sRGB, red: 0, green: 0, blue: 1); Color(.sRGB, red: 1, green: 1, blue: 0, opacity: 0.5) }
+    }
+    try await compositor.drawView(artwork, size: .init(width: 80, height: 40),
+      in: .init(x: 11.25, y: 13.75, width: 40, height: 20))
+    let png = try await compositor.finishPNG()
+    let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+    attachment.name = "Fractional artwork axes and alpha"; attachment.lifetime = .keepAlways; add(attachment)
+    let bitmap = try pixels(png)
+    let upperLeft = try XCTUnwrap(bitmap.colorAt(x: 30, y: 34))
+    let upperRight = try XCTUnwrap(bitmap.colorAt(x: 86, y: 34))
+    let lowerLeft = try XCTUnwrap(bitmap.colorAt(x: 30, y: 58))
+    let lowerRight = try XCTUnwrap(bitmap.colorAt(x: 86, y: 58))
+    XCTAssertGreaterThan(upperLeft.redComponent, 0.9)
+    XCTAssertLessThan(upperLeft.blueComponent, 0.1)
+    XCTAssertGreaterThan(upperRight.greenComponent, 0.4)
+    XCTAssertLessThan(upperRight.blueComponent, 0.2)
+    XCTAssertGreaterThan(lowerLeft.blueComponent, 0.9)
+    XCTAssertLessThan(lowerLeft.redComponent, 0.1)
+    XCTAssertEqual(lowerRight.alphaComponent, 0.5, accuracy: 1.0 / 255)
+    XCTAssertEqual(bitmap.colorAt(x: 4, y: 4)?.alphaComponent, 0)
+    XCTAssertEqual(bitmap.colorAt(x: 120, y: 34)?.alphaComponent, 0)
+    XCTAssertEqual(resources.reservedBytes, 0)
+  }
+
   @MainActor
   func testManyUniqueSourcesExceedTheBudgetInTotalButNotWhileComposing() async throws {
     let resources = SceneRenderResources(byteLimit: 6 * 1024 * 1024, maximumRasterCount: 4)

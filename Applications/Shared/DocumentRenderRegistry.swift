@@ -13,14 +13,25 @@ struct DocumentBlockRegion: Equatable {
 @Observable
 final class DocumentRenderRegistry {
   static let shared = DocumentRenderRegistry()
-  struct Entry {
+  @MainActor struct Entry {
     let token: String
     let pageIndex: Int
     let layout: DocumentLayoutRecord
     var regions: [DocumentBlockRegion] { layout.regions }
     let diagnostics: [RenderDiagnostic]
   }
-  private var entries: [UUID: [Entry]] = [:]
+  @MainActor private struct PublishedEntry {
+    let token: String
+    let pageIndex: Int
+    weak var layout: DocumentLayoutRecord?
+    let diagnostics: [RenderDiagnostic]
+    var retained: Entry? {
+      layout.map { Entry(token: token, pageIndex: pageIndex, layout: $0, diagnostics: diagnostics) }
+    }
+  }
+  // The registry locates a measured source; it is not another cache owner.
+  // A live source, raster entry or an actual reader retains the shared layout.
+  private var entries: [UUID: [PublishedEntry]] = [:]
   private struct SessionKey: Hashable {
     let documentID: UUID
     let resources: ObjectIdentifier
@@ -184,13 +195,15 @@ final class DocumentRenderRegistry {
 
   func entry(document: DocumentDocument, state: DocumentStateJournal, pageIndex: Int) -> Entry? {
     let token = "\(document.contentStamp.revision)|\(state.stamp.revision)"
-    return entries[document.id]?.last { $0.token.hasPrefix(token) && $0.pageIndex == pageIndex }
+    return entries[document.id]?.last { $0.layout != nil && $0.token.hasPrefix(token) && $0.pageIndex == pageIndex }?.retained
   }
 
   func regions(document: DocumentDocument, state: DocumentStateJournal) -> [DocumentBlockRegion] {
     let token = "\(document.contentStamp.revision)|\(state.stamp.revision)"
-    return entries[document.id]?.last(where: { $0.token.hasPrefix(token) })?.regions ?? []
+    return entries[document.id]?.last(where: { $0.layout != nil && $0.token.hasPrefix(token) })?.layout?.regions ?? []
   }
+
+  func layoutReferenceCount(documentID: UUID) -> Int { entries[documentID]?.count ?? 0 }
 
   func publish(documentID: UUID, token: String, receipt: NSDictionary, geometry: WorkspaceItemGeometry) throws {
     guard let pageIndex = receipt["pageIndex"] as? Int, let key = receipt["sourceKey"] as? String,
@@ -200,10 +213,15 @@ final class DocumentRenderRegistry {
     }
     let layout = try source.acceptLayout(receipt, geometry: geometry)
     guard (0..<layout.pageCount).contains(pageIndex) else { throw DocumentSessionError.invalidLayout }
+    layout.whenReleased(by: self) { [weak self] in
+      guard let self else { return }
+      let live = entries[documentID]?.filter { $0.layout != nil } ?? []
+      entries[documentID] = live.isEmpty ? nil : live
+    }
     let diagnostics = (receipt["diagnostics"] as? [[String: String]] ?? []).map {
       RenderDiagnostic(kind: $0["kind"] ?? "render_error", elementID: $0["blockID"], message: $0["message"] ?? "")
     }
-    var values = entries[documentID] ?? []
+    var values = entries[documentID]?.filter { $0.layout != nil } ?? []
     if let previous = values.last(where: { $0.token == token && $0.pageIndex == pageIndex }),
       previous.layout === layout, previous.diagnostics == diagnostics { return }
     values.removeAll { $0.token == token && $0.pageIndex == pageIndex }

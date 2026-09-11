@@ -234,6 +234,13 @@ final class MacModelLifecycleTests: XCTestCase {
     let composed = try await PageCompositionRenderer.render(page) { _ in
       throw CocoaError(.featureUnsupported)
     }
+    let published = try Data(contentsOf: store.currentViewPreviewURL)
+    for (name, bytes) in [("Published current page", published), ("Independent page composition", composed.png)] {
+      let attachment = XCTAttachment(data: bytes, uniformTypeIdentifier: "public.png")
+      attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+    }
+    let proof = XCTAttachment(data: try JSONEncoder().encode(receipt), uniformTypeIdentifier: "public.json")
+    proof.name = "Settled page source receipt"; proof.lifetime = .keepAlways; add(proof)
     XCTAssertEqual(snapshotHash, PageVisionRenderer.sha256(composed.png),
       "The current surface certifies the common physical composition, not the separately encoded ink-map preview")
     XCTAssertEqual(pageVision.pageID, page.id)

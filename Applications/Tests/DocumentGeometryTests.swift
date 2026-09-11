@@ -117,7 +117,7 @@ final class DocumentGeometryTests: XCTestCase {
   @MainActor
   func testOneOfflineRenderCompletesMathAndInteractiveStateThenSerializesUpdates() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
-    let document = DocumentDocument(id: UUID(), actor: UUID(), paperSize: .letter, blocks: [
+    var document = DocumentDocument(id: UUID(), actor: UUID(), paperSize: .letter, blocks: [
       .latex(id: "formula", source: #"\mathfrak{A} + \sum_{k=1}^{n} k^2"#),
       .interactive(id: "interactive", html: "<p>Готово</p>", css: "",
         javaScript: "notebook.commit({ready:true})", initialState: .null, height: 100),
@@ -132,20 +132,29 @@ final class DocumentGeometryTests: XCTestCase {
     var committed = false
     let window = UIWindow(windowScene: scene)
     defer { window.isHidden = true }
-    let host = UIHostingController(rootView: DocumentWebView(
-      document: document, state: state, isInteractive: true, selectedPageIndex: 0,
-      capturesSnapshot: false, onRenderReady: PageTurnReadiness { value in
-        if value && !completed { completed = true; ready.fulfill() }
-      }, onPageLayout: { _ in }, onSourceChange: { _ in .committed },
-      onStateChange: { id, value in
-        if id == "interactive", value == .object(["ready": .bool(true)]), !committed {
-          committed = true; interactive.fulfill()
-        }
-      }).ignoresSafeArea())
-    window.rootViewController = host
+    let coordinator = DocumentWebCoordinator(onRenderReady: .init { _ in }, onPageLayout: { _ in },
+      onSourceChange: { _ in .committed }, onStateChange: { _,_ in })
+    defer { coordinator.invalidate() }
+    let host = DocumentWebHost(), controller = UIViewController()
+    controller.view = host; window.rootViewController = controller
+    let onReady = PageTurnReadiness { value in
+      if value && !completed { completed = true; ready.fulfill() }
+    }
+    let onState: (String, JSONValue) -> Void = { id, value in
+      if id == "interactive", value == .object(["ready": .bool(true)]), !committed {
+        committed = true; interactive.fulfill()
+      }
+    }
+    func update(page: Int = 0) {
+      coordinator.update(document: document, state: state, selectedPageIndex: page, capturesSnapshot: false,
+        onRenderReady: onReady, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: onState)
+    }
+    update()
+    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    coordinator.mount(in: host, physicalSize: .init(width: geometry.width, height: geometry.height), isInteractive: true, priority: .currentPage)
     window.makeKeyAndVisible()
     await fulfillment(of: [ready, interactive], timeout: 8)
-    let web = try XCTUnwrap(webView(in: host.view))
+    let web = try XCTUnwrap(coordinator.webView)
     let result = try await web.evaluateJavaScript("""
       (() => ({
         math: document.querySelectorAll('mjx-container svg').length,
@@ -160,65 +169,51 @@ final class DocumentGeometryTests: XCTestCase {
     XCTAssertEqual(proof["remoteScripts"], 0)
     XCTAssertEqual(proof["diagnostics"], 0)
 
-    let updated: String = try await withCheckedThrowingContinuation { continuation in
-      web.callAsyncJavaScript("""
-      const renderer = window.notebookRenderer;
-      const originalTypeset = MathJax.typesetPromise;
-      let release, entered, count = 0;
-      const started = new Promise(resolve => { entered = resolve; });
-      const gate = new Promise(resolve => { release = resolve; });
-      MathJax.typesetPromise = async nodes => {
-        count++;
-        if (count === 1) { entered(); await gate; }
-        else { renderer.setPageIndex(1); }
-        return originalTypeset(nodes);
-      };
-      const stateKey = 'test-state';
-      renderer.applyState({key:stateKey, documentID, states:{}});
-      const present = (token, pageIndex) => {
-        const sourceKey = 'test-source-' + token;
-        renderer.installSource({
-          key:sourceKey, documentID, sourceVersions:{},
-          paper: {kind:'letter',widthPoints:612,heightPoints:792,marginPoints:72,cornerRadiusRatio:0.004},
-          blocks: [{id:'body',kind:'markdown',source:Array.from({length:40},(_,i)=>
-            '# ' + token + ' ' + i + '\\n\\nСодержание конечного листа.').join('\\n\\n')}]
-        });
-        // A physical host submits its selected page separately from the shared
-        // source and state. The last queued frame owns the landing index.
-        return renderer.presentPage({documentID, sourceKey, stateKey, renderToken:token,
-          generation:token, runtimeID:'test-runtime', editable:true, pageIndex,
-          blockTokens:{}, programMode:'live', drafts:[]});
-      };
-      try {
-        const finished = present('first', 0);
-        await started;
-        present('superseded', 0);
-        present('latest', 1);
-        release();
-        await finished;
-        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-        return JSON.stringify({count, ...renderer.pageReceipt(),
-          childIDs:[...document.getElementById('document').children].map(node=>node.dataset.blockId),
-          heading:document.querySelector('h1').textContent,
-          offset:new DOMMatrix(getComputedStyle(document.querySelector('#page-track')).transform).m41});
-      } finally { MathJax.typesetPromise = originalTypeset; }
-      """, arguments: ["documentID": document.id.uuidString], in: nil, in: .page) { result in
-        switch result {
-        case .success(let value): continuation.resume(returning: value as? String ?? "{}")
-        case .failure(let error): continuation.resume(throwing: error)
-        }
-      }
+    _ = try await web.evaluateJavaScript("""
+      window.typesetEntered=false;window.typesetCount=0;
+      window.typesetGate=new Promise(resolve=>window.releaseTypeset=resolve);
+      window.originalTypeset=MathJax.typesetPromise.bind(MathJax);
+      MathJax.typesetPromise=async nodes=>{typesetCount++;typesetEntered=true;await typesetGate;return originalTypeset(nodes)};
+      true;
+      """)
+    func content(_ name: String) -> [DocumentBlock] {
+      [.markdown(id: "body", source: (0..<40).map { "# \(name) \($0)\n\nСодержание конечного листа." }.joined(separator: "\n\n"))]
     }
-    let receipt = try XCTUnwrap(
-      JSONSerialization.jsonObject(with: Data(updated.utf8)) as? [String: Any])
-    XCTAssertEqual(receipt["count"] as? Int, 2, "Ожидающие правки объединяются до последней")
-    XCTAssertEqual(receipt["renderToken"] as? String, "latest")
-    XCTAssertEqual(receipt["sourceKey"] as? String, "test-source-latest")
-    XCTAssertEqual(receipt["stateKey"] as? String, "test-state")
+    XCTAssertTrue(document.replaceContent(blocks: content("first"), actor: UUID())); update()
+    var entered = false
+    for _ in 0..<200 {
+      entered = try await web.evaluateJavaScript("window.typesetEntered") as? Bool == true
+      if entered { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertTrue(entered, "The following inputs arrive during an actual pending MathJax pass")
+    XCTAssertTrue(document.replaceContent(blocks: content("superseded"), actor: UUID())); update()
+    XCTAssertTrue(document.replaceContent(blocks: content("latest"), actor: UUID())); update(page: 1)
+    let expected = try XCTUnwrap(coordinator.payload)
+    _ = try await web.evaluateJavaScript("window.releaseTypeset(); true")
+    let deadline = ContinuousClock.now + .seconds(8)
+    while !coordinator.renderIsReady && coordinator.acquisitionError == nil && ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertNil(coordinator.acquisitionError); XCTAssertTrue(coordinator.renderIsReady)
+    let raw = try await web.evaluateJavaScript("""
+      (()=>({count:typesetCount,...notebookRenderer.pageReceipt(),
+        childIDs:[...document.getElementById('document').children].map(node=>node.dataset.blockId),
+        text:document.getElementById('document').textContent,
+        offset:new DOMMatrix(getComputedStyle(document.querySelector('#page-track')).transform).m41}))()
+      """)
+    let receipt = try XCTUnwrap(raw as? [String: Any])
+    XCTAssertEqual(receipt["count"] as? Int, 2, "Waiting native inputs coalesce to the latest source")
+    XCTAssertEqual(receipt["renderToken"] as? String, expected.renderToken)
+    XCTAssertEqual(receipt["sourceKey"] as? String, expected.source.message.key)
+    XCTAssertEqual(receipt["stateKey"] as? String, expected.state.message.key)
     XCTAssertEqual(receipt["layoutCanonical"] as? Bool, true)
-    XCTAssertEqual(receipt["childIDs"] as? [String], ["body"], "Прежний DOM не переживает замену исходника")
-    XCTAssertEqual(receipt["heading"] as? String, "latest 0")
-    XCTAssertEqual(receipt["pageIndex"] as? Int, 1, "Завершение набора сохраняет выбранный лист")
+    XCTAssertEqual(receipt["layoutScope"] as? String, "page")
+    XCTAssertEqual(receipt["childIDs"] as? [String], ["body"])
+    let text = try XCTUnwrap(receipt["text"] as? String)
+    XCTAssertTrue(text.contains("latest")); XCTAssertFalse(text.contains("first")); XCTAssertFalse(text.contains("superseded"))
+    XCTAssertFalse(text.contains("latest 0"), "The second physical DOM cannot retain the first page's heading")
+    XCTAssertEqual(receipt["pageIndex"] as? Int, 1)
     XCTAssertLessThan(try XCTUnwrap(receipt["offset"] as? Double), -100)
   }
 

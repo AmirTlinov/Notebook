@@ -65,7 +65,8 @@
       border-radius: var(--page-radius);
       background: var(--paper);
     }
-    #document {
+    #document { position:absolute; z-index:1; margin:0; padding:0; }
+    .document-flow {
       position: absolute;
       z-index: 1;
       top: var(--page-margin);
@@ -94,7 +95,7 @@
     h1 { font-size: 1.44em; line-height: 1.2731481481; }
     h2 { font-size: 1.2em; line-height: 1.25; }
     h3, h4, h5, h6 { font-size: 1em; line-height: 1.2083333333; }
-    #document > .block:first-child > :first-child { margin-top: 0; }
+    .document-content > .block:first-child > :first-child { margin-top: 0; }
     p, ul, ol, blockquote, pre, table { margin: 0 0 .5em; }
     ul, ol { padding-left: 1.45em; }
     blockquote { margin-left: 0; padding-left: 1em; color: var(--muted); border-left: 2px solid rgba(23,23,19,.14); }
@@ -151,6 +152,7 @@
     ::selection { background: var(--selection); }
     ::-webkit-scrollbar { width: 0; height: 0; }
   </style>
+  <style id="document-math-styles"></style>
   <script>
     window.MathJax = {
       startup: { typeset: false },
@@ -175,6 +177,7 @@
   </script>
   <script src="marked.umd.js"></script>
   <script src="purify.min.js"></script>
+  <script src="document-fragments.js"></script>
   <script src="tex-svg-nofont.js"></script>
 </head>
 <body>
@@ -182,7 +185,7 @@
     <div id="page-stage">
       <div id="page-track">
         <div id="page-backgrounds"></div>
-        <main id="document" aria-label="Содержимое документа"></main>
+        <main id="document" class="document-content" aria-label="Содержимое документа"></main>
         <div id="interactive-layer"></div>
         <div id="editor-layer"></div>
       </div>
@@ -207,7 +210,9 @@
       let pageLayout = null;
       let measuredRegions = [];
       let layoutCanonical = false;
-      const work = {sourceInstalls:0,stateApplications:0,layoutPasses:0,regionMeasurements:0,typesetPasses:0};
+      const work = {sourceInstalls:0,pageInstalls:0,stateApplications:0,layoutPasses:0,regionMeasurements:0,typesetPasses:0};
+      let installedFragment = null;
+      let sourcePreparation = null;
       let editingBlockID = null;
       let presentationEpoch = 0n;
       let presentationIsRendering = true;
@@ -244,14 +249,6 @@
         && Object.prototype.hasOwnProperty.call(payload.states, block.id)
         ? payload.states[block.id]
         : (block.initialState ?? {});
-      const signatureFor = (block) => stable({
-        kind: block.kind,
-        source: block.source,
-        html: block.html,
-        css: block.css,
-        javaScript: block.javaScript
-      });
-
       const currentPageIndex = () => pageLayout?.requestedPage ?? 0;
 
       const configurePaper = (nextPayload, requestedPage = currentPageIndex()) => {
@@ -301,75 +298,19 @@
         stage.style.height = `${viewportHeight}px`;
       };
 
-      const paginate = (requestedPage = pageLayout?.requestedPage ?? 0) => {
-        if (!pageLayout) return 1;
-        work.layoutPasses += 1;
-        const { contentWidth, columnGap, pageWidth, pageHeight, gap, side, stride } = pageLayout;
-        const extent = Math.max(contentWidth, root.scrollWidth);
-        const pageCount = Math.max(
-          1,
-          Math.round((extent + columnGap) / (contentWidth + columnGap))
-        );
-        const trackWidth = pageCount * pageWidth + (pageCount - 1) * gap;
-        track.style.width = `${trackWidth}px`;
-        backgrounds.style.width = `${trackWidth}px`;
-        backgrounds.style.height = `${pageHeight}px`;
-        stage.style.width = `${trackWidth + 2 * side}px`;
-        for (let index = 0; index < pageCount; index += 1) {
-          const sheet = backgrounds.children[index]
-            || backgrounds.appendChild(document.createElement('section'));
-          sheet.className = 'paper-sheet';
-          sheet.style.left = `${index * stride}px`;
-          sheet.setAttribute('role', 'region');
-          sheet.setAttribute('aria-label', `Страница ${index + 1} из ${pageCount}`);
-          sheet.dataset.page = String(index + 1);
-          sheet.dataset.paper = pageLayout.kind;
-        }
-        while (backgrounds.children.length > pageCount) {
-          backgrounds.lastElementChild.remove();
-        }
-        const page = Math.max(0, Math.min(pageCount - 1, requestedPage));
-        pageLayout.pageCount = pageCount;
-        pageLayout.requestedPage = page;
-        track.style.transform = `translate3d(${-page * stride}px, 0, 0)`;
-        return pageCount;
-      };
-
       let runtimeDiagnostics = [];
       const diagnostic = (kind, message, blockID) => {
         runtimeDiagnostics.push({kind, message:String(message), ...(blockID ? {blockID} : {})});
         runtimeDiagnostics = runtimeDiagnostics.slice(-64);
       };
-      const measureBlockRegions = () => {
-        work.regionMeasurements += 1;
-        if (!pageLayout) return [];
-        const {stride,side,top,pageWidth,pageHeight,requestedPage} = pageLayout;
-        const viewportRect = viewport.getBoundingClientRect();
-        return [...root.children].flatMap(node => {
-          let sourceOffset = 0;
-          return [...node.getClientRects()].map(rect => {
-            const x = rect.x - viewportRect.x + requestedPage * stride - side;
-            const pageIndex = Math.max(0,Math.floor(x / stride));
-            const left = Math.max(0,x - pageIndex * stride);
-            const y = Math.max(0,rect.y - viewportRect.y - top);
-            const region = {id:node.dataset.blockId,pageIndex,x:left,y,
-              width:Math.min(rect.width,pageWidth-left),height:Math.min(rect.height,pageHeight-y),sourceOffset};
-            sourceOffset += rect.height;
-            return region;
-          }).filter(rect => rect.width > 0 && rect.height > 0);
-        });
-      };
-
       const blockRegions = () => measuredRegions;
 
       const setPageIndex = (requestedIndex) => {
         if (!pageLayout || !payload || !Number.isInteger(requestedIndex)) {
           return null;
         }
-        const maximum = Math.max(0, (pageLayout.pageCount || 1) - 1);
-        const index = Math.max(0, Math.min(maximum, requestedIndex));
-        if (index === pageLayout.requestedPage) return;
-        track.style.transform = `translate3d(${-index * pageLayout.stride}px, 0, 0)`;
+        const index = Math.max(0, Math.min(pageLayout.pageCount - 1, requestedIndex));
+        if (index !== installedFragment?.pageIndex) throw new Error('document_fragment_page_mismatch');
         pageLayout.requestedPage = index;
       };
 
@@ -377,7 +318,7 @@
         if (!pageLayout || !payload) return null;
         return {
           ...presentationReceipt(),
-          layoutCanonical,
+          layoutCanonical, layoutScope:'page',
           work: {...work},
           renderToken: payload.renderToken,
           pageIndex: currentPageIndex(),
@@ -387,14 +328,6 @@
           programs: [...interactiveFrames].map(([blockID, value]) => ({blockID, token:value.token,
             readiness:value.readiness || 'unknown'}))
         };
-      };
-
-      const schedulePagination = () => {
-        if (!payload) return;
-        paginate(currentPageIndex());
-        measuredRegions = measureBlockRegions();
-        positionInteractiveFrames();
-        activeEditorLayout?.();
       };
 
       const interactiveDocument = (block, state, token) => {
@@ -512,7 +445,6 @@
         section.className = `block ${block.kind === 'interactive' ? 'interactive' : 'editable'}`;
         section.dataset.blockId = block.id;
         section.dataset.kind = block.kind;
-        section.dataset.signature = signatureFor(block);
 
         if (block.kind === 'interactive') {
           section.dataset.height = String(block.height || 320);
@@ -535,7 +467,7 @@
         return section;
       };
 
-      const typeset = async (nodes) => {
+      const typeset = async (nodes, report = diagnostic) => {
         if (nodes.length === 0) return;
         work.typesetPasses += 1;
         try {
@@ -554,54 +486,150 @@
           }
         } catch (error) {
           for (const node of nodes) node.dataset.mathState = 'error';
-          for (const node of nodes) diagnostic('latex_error', error, node.dataset.blockId);
+          for (const node of nodes) report('latex_error', error, node.dataset.blockId);
         }
       };
 
-      const renderSource = async () => {
-        work.sourceInstalls += 1;
-        configurePaper(payload, payload.pageIndex);
-        const oldByID = new Map([...root.children].map(node => [node.dataset.blockId, node]));
-        const nextNodes = [];
-        const typesetNodes = [];
-
-        for (const block of payload.blocks || []) {
-          const old = oldByID.get(block.id);
-          const signature = signatureFor(block);
-          if (old && (old.dataset.signature === signature || editingBlockID === block.id)) {
-            if (block.kind === 'interactive') {
-              old.dataset.height = String(block.height || 320); old.style.height = `${block.height || 320}px`;
+      // A source is measured once in an already admitted WebKit. This passive
+      // root cannot start programs or replace the physical DOM/editor beside it.
+      const beginSourcePreparation = async source => {
+        const dimensions=viewport.getBoundingClientRect();
+        if (sourcePreparation) throw new Error('document_source_preparation_busy');
+        if (!source?.key || !Array.isArray(source.blocks) || !dimensions
+          || ![dimensions.width,dimensions.height].every(value=>Number.isFinite(value)&&value>0)) {
+          throw new Error('document_source_preparation_invalid');
+        }
+        // The first source must see the same physical typography as the page,
+        // including browser/MathJax measurements that inherit the document root.
+        // Later source work never reconfigures an already shown editor plane.
+        if(!payload)configurePaper(source,0);
+        const host=document.createElement('div'), flow=document.createElement('main');
+        const preparation={key:source.key,host,flow,cancelled:false,diagnostics:[]};
+        sourcePreparation=preparation;
+        const paper=source.paper, scale=Math.min(dimensions.width/paper.widthPoints,dimensions.height/paper.heightPoints);
+        const width=paper.widthPoints*scale,height=paper.heightPoints*scale,margin=paper.marginPoints*scale;
+        const gap=Math.max(18,Math.min(30,22*scale)), stride=width+gap;
+        host.className='document-layout-preparation'; host.setAttribute('aria-hidden','true');host.inert=true;
+        Object.assign(host.style,{position:'absolute',left:`${(dimensions.width-width)/2}px`,top:`${(dimensions.height-height)/2}px`,visibility:'hidden',width:`${width}px`,height:`${height}px`,
+          pointerEvents:'none',fontSize:`${12*scale}px`});
+        for(const [name,value] of Object.entries({'page-margin':margin,'content-width':width-2*margin,
+          'content-height':height-2*margin,'column-gap':2*margin+gap}))host.style.setProperty('--'+name,`${value}px`);
+        flow.className='document-content document-flow';host.append(flow);
+        try {
+          // MathJax startup changes browser metrics. Admitting a column table
+          // before it completes leaves WebKit's initial rowspan fragmentation
+          // different from the same source measured after startup.
+          await window.MathJax?.startup?.promise;
+          if(preparation.cancelled)throw new Error('document_source_preparation_cancelled');
+          document.body.append(host);
+          work.sourceInstalls+=1;
+          for(const block of source.blocks)flow.append(createBlock(block));
+          await typeset([...flow.children].filter(node=>node.dataset.kind!=='interactive'),
+            (kind,message,blockID)=>preparation.diagnostics.push({kind,message:String(message),blockID}));
+          await document.fonts.ready;
+          await Promise.all([...flow.querySelectorAll('img')].map(image=>image.decode().catch(()=>{})));
+          if(preparation.cancelled)throw new Error('document_source_preparation_cancelled');
+          const contentWidth=width-2*margin,columnGap=2*margin+gap;
+          const pageCount=Math.max(1,Math.round((Math.max(contentWidth,flow.scrollWidth)+columnGap)/(contentWidth+columnGap)));
+          if(pageCount>4096)throw new Error('document_layout_page_budget');
+          work.layoutPasses+=1;work.regionMeasurements+=1;
+          const origin=host.getBoundingClientRect();
+          const regions=[];
+          for(const node of flow.children) {
+            let sourceOffset=0;
+            for(const rect of node.getClientRects()) {
+              const localX=rect.x-origin.x,pageIndex=Math.max(0,Math.floor(localX/stride));
+              const x=Math.max(0,localX-pageIndex*stride),y=Math.max(0,rect.y-origin.y);
+              const result={id:node.dataset.blockId,pageIndex,x,y,width:Math.min(rect.width,width-x),
+                height:Math.min(rect.height,height-y),sourceOffset};sourceOffset+=rect.height;
+              if(result.width>0&&result.height>0) {
+                if(regions.length>=65536)throw new Error('document_layout_region_budget');
+                regions.push(result);
+              }
             }
-            nextNodes.push(old);
-            oldByID.delete(block.id);
-            continue;
           }
-          if (old) {
-            if (window.MathJax?.typesetClear) MathJax.typesetClear([old]);
-            old.remove();
-          }
-          const node = createBlock(block);
-          nextNodes.push(node);
-          if (block.kind !== 'interactive') typesetNodes.push(node);
-          oldByID.delete(block.id);
-        }
+          // A program-only source has no SVG output or output stylesheet.
+          // It must not force a second typeset just to manufacture that sheet.
+          const mathStyles=flow.querySelector('mjx-container')
+            ? MathJax.startup.adaptor.cssText(MathJax.svgStylesheet()) : '';
+          if(new TextEncoder().encode(mathStyles).length>128*1024)throw new Error('document_math_style_budget');
+          const receipt={sourceKey:source.key,layoutScope:'source',layoutCanonical:true,width,height,pageCount,regions,
+            diagnostics:preparation.diagnostics,mathStyles};
+          const layoutJSON=JSON.stringify(receipt),layoutBytes=new TextEncoder().encode(layoutJSON).length;
+          if(layoutBytes>16*1024*1024)throw new Error('document_layout_packet_budget');
+          const flowRect=flow.getBoundingClientRect();
+          const compiler=await notebookDocumentFragments.create(flow,{sourceKey:source.key,pageCount,width,height,stride,
+            contentTop:flowRect.y-origin.y,contentBottom:flowRect.bottom-origin.y,
+            originX:origin.x,originY:origin.y,regions},()=>preparation.cancelled);
+          Object.assign(preparation,{receipt,compiler,layoutJSON,pendingPage:null});
+          return {sourceKey:source.key,pageIndex:null,utf8Bytes:layoutBytes};
+        } catch(error) { finishSourcePreparation(source.key); throw error; }
+      };
 
-        for (const node of oldByID.values()) {
-          if (window.MathJax?.typesetClear) MathJax.typesetClear([node]);
+      const preparePagePacket = (key,pageIndex) => {
+        const preparation=sourcePreparation;
+        if(!preparation || preparation.key!==key || !preparation.receipt || preparation.cancelled
+          || !Number.isInteger(pageIndex) || pageIndex<0 || pageIndex>=preparation.receipt.pageCount) {
+          throw new Error('document_source_preparation_not_ready');
         }
-        for (const node of oldByID.values()) node.remove();
-        nextNodes.forEach((node,index) => { if(root.children[index]!==node)root.insertBefore(node,root.children[index]||null) });
-        await typeset(typesetNodes);
-        await document.fonts.ready;
-        await Promise.all([...root.querySelectorAll('img')].map(image=>image.decode().catch(()=>{})));
-        paginate(payload.pageIndex);
-        measuredRegions = measureBlockRegions();
-        // A peer may edit the same source while this textarea owns a draft.
-        // Keep that editor and its old flow node, but do not certify that mixed
-        // presentation as the new canonical layout.
-        layoutCanonical = (payload.blocks || []).every((block,index) =>
-          root.children[index]?.dataset.signature === signatureFor(block));
-        installedSourceKey = payload.sourceKey;
+        // Announcing a packet pins those exact bytes until the native reader
+        // admits them. A second request cannot silently replace unread content.
+        if(preparation.pendingPage)throw new Error('document_fragment_packet_unread');
+        const json=JSON.stringify(preparation.compiler.compile(pageIndex));
+        const utf8Bytes=new TextEncoder().encode(json).length;
+        if(utf8Bytes>8*1024*1024)throw new Error('document_fragment_packet_budget');
+        preparation.pendingPage={pageIndex,json};
+        return {sourceKey:key,pageIndex,utf8Bytes};
+      };
+      const readPreparedPacket = (key,pageIndex) => {
+        const preparation=sourcePreparation;
+        if(!preparation || preparation.key!==key || preparation.cancelled)throw new Error('document_source_preparation_not_ready');
+        if(pageIndex===null && preparation.layoutJSON)return preparation.layoutJSON;
+        if(!Number.isInteger(pageIndex) || preparation.pendingPage?.pageIndex!==pageIndex)throw new Error('document_fragment_packet_not_ready');
+        const json=preparation.pendingPage.json;preparation.pendingPage=null;
+        return json;
+      };
+      const finishSourcePreparation = key => {
+        const preparation=sourcePreparation;
+        if(!preparation || preparation.key!==key)return;
+        preparation.cancelled=true;
+        if(window.MathJax?.typesetClear)MathJax.typesetClear([preparation.flow]);
+        preparation.host.remove();sourcePreparation=null;
+      };
+
+      const installPhysicalFragment = job => {
+        const fragment=job.fragment;
+        configurePaper(payload,fragment.pageIndex);
+        if(Math.abs(pageLayout.pageWidth-fragment.width)>1/32 || Math.abs(pageLayout.pageHeight-fragment.height)>1/32) {
+          throw new Error(`document_fragment_geometry_mismatch expected=${fragment.width}x${fragment.height} actual=${pageLayout.pageWidth}x${pageLayout.pageHeight}`);
+        }
+        work.pageInstalls+=1;
+        pageLayout.pageCount=job.pageCount;
+        installedFragment=fragment;
+        const origin=fragment.pageIndex*pageLayout.stride;
+        Object.assign(root.style,{left:`${origin}px`,top:`${fragment.contentTop}px`,width:`${fragment.width}px`,
+          height:`${fragment.contentBottom-fragment.contentTop}px`,overflow:'hidden'});
+        const template=document.createElement('template');template.innerHTML=fragment.html;
+        const oldEditor=editingBlockID && [...root.children].find(node=>node.dataset.blockId===editingBlockID);
+        let keptEditor=false;
+        for(const node of [...template.content.children]) {
+          node.style.top=`${parseFloat(node.style.top)-fragment.contentTop}px`;
+          if(oldEditor && node.dataset.blockId===editingBlockID) {
+            node.replaceWith(oldEditor);keptEditor=true;
+          }
+        }
+        if(oldEditor&&!keptEditor)template.content.append(oldEditor);
+        root.replaceChildren(template.content);
+        let sheet=backgrounds.firstElementChild;
+        if(!sheet){sheet=document.createElement('section');backgrounds.append(sheet)}
+        sheet.className='paper-sheet';sheet.style.left=`${origin}px`;
+        sheet.setAttribute('role','region');sheet.setAttribute('aria-label',`Страница ${fragment.pageIndex+1} из ${job.pageCount}`);
+        sheet.dataset.page=String(fragment.pageIndex+1);sheet.dataset.paper=pageLayout.kind;
+        track.style.width=`${fragment.width+origin}px`;backgrounds.style.height=`${fragment.height}px`;
+        stage.style.width=`${fragment.width}px`;
+        measuredRegions=fragment.regions;
+        layoutCanonical=!oldEditor;
+        installedSourceKey=payload.sourceKey;
       };
 
       const renderFrame = async (job) => {
@@ -609,6 +637,7 @@
         const localStates = job.refreshSource && payload?.stateKey === job.state.key ? payload.states : job.state.states;
         const previousPage = currentPageIndex();
         const sourceChanged = installedSourceKey !== job.source.key || job.refreshSource;
+        const fragmentChanged = installedFragment !== job.fragment || sourceChanged;
         const stateChanged = appliedStateKey !== job.state.key;
         const modeChanged = payload?.programMode !== job.frame.programMode;
         payload = {...job.source,...job.frame,states:{...localStates}};
@@ -616,9 +645,17 @@
         presentationChanged();
         bridge({kind:'renderStarted',documentID:payload.documentID,renderToken:payload.renderToken,
           sourceKey:payload.sourceKey,stateKey:payload.stateKey,generation:payload.generation});
-        if(sourceChanged){runtimeDiagnostics=[];await renderSource()}
+        if(fragmentChanged){
+          // The physical page owns its immutable mathematical styles. They
+          // cannot affect the next passive source measurement, nor mutate the
+          // MathJax stylesheet/cache that produced that source.
+          const style=document.getElementById('document-math-styles');
+          const css=`@scope (#document) {${job.mathStyles}}`;
+          if(style.textContent!==css)style.textContent=css;
+          runtimeDiagnostics=job.diagnostics.slice();installPhysicalFragment(job);
+        }
         else setPageIndex(payload.pageIndex);
-        if(sourceChanged || previousPage !== currentPageIndex() || modeChanged){
+        if(fragmentChanged || previousPage !== currentPageIndex() || modeChanged){
           await prepareInteractiveFrames();
           activeEditorLayout?.();
           restoreEditor();
@@ -639,7 +676,16 @@
       let pendingFrame = null;
       let currentFrame = null;
       let renderTask = null;
-      const installSource = source => { sourceSnapshot = source; };
+      const installPageSource = async page => {
+        if(page?.fragment?.sourceKey!==page?.source?.key || page.fragment.format!==1
+          || !Number.isInteger(page.pageCount) || page.pageCount<=page.fragment.pageIndex
+          || typeof page.mathStyles!=='string'
+          || page.source.blocks.some(block=>!page.fragment.blockIDs.includes(block.id))) {
+          throw new Error('document_page_source_invalid');
+        }
+        await MathJax.startup.promise;
+        sourceSnapshot=page;
+      };
       const applyState = state => { stateSnapshot = state; };
       const enqueueFrame = job => {
         pendingFrame = job;
@@ -660,12 +706,12 @@
         return renderTask;
       };
       const presentPage = frame => {
-        if(!sourceSnapshot || !stateSnapshot || frame.sourceKey !== sourceSnapshot.key
-          || frame.stateKey !== stateSnapshot.key || frame.documentID !== sourceSnapshot.documentID
+        if(!sourceSnapshot || !stateSnapshot || frame.sourceKey !== sourceSnapshot.source.key
+          || frame.stateKey !== stateSnapshot.key || frame.documentID !== sourceSnapshot.source.documentID
           || frame.documentID !== stateSnapshot.documentID){
           throw new Error('Document frame does not match its immutable source and state');
         }
-        return enqueueFrame({source:sourceSnapshot,state:stateSnapshot,frame,refreshSource:false});
+        return enqueueFrame({...sourceSnapshot,state:stateSnapshot,frame,refreshSource:false});
       };
       const refreshSourcePresentation = () => {
         const latest = pendingFrame || currentFrame;
@@ -678,7 +724,6 @@
         if (!block || block.kind === 'interactive') return;
         const section = [...root.children].find(node => node.dataset.blockId === blockID);
         if (!section) return;
-        if (window.MathJax?.typesetClear) MathJax.typesetClear([section]);
         editingBlockID = blockID;
         presentationChanged();
         const minimumHeight = 144;
@@ -882,11 +927,13 @@
         lastViewportWidth=bounds.width;lastViewportHeight=bounds.height;
         const requestedPage = currentPageIndex();
         configurePaper(payload, requestedPage);
-        schedulePagination();
+        positionInteractiveFrames();
+        activeEditorLayout?.();
       }).observe(viewport);
 
       window.notebookRenderer = {
-        installSource,
+        beginSourcePreparation, preparePagePacket, readPreparedPacket, finishSourcePreparation,
+        installPageSource,
         applyState,
         presentPage,
         setPageIndex,

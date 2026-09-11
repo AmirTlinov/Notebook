@@ -8,7 +8,7 @@
       let launch = NotebookSimulatorLaunch(arguments: [],
         environment: ["XCTestConfigurationFilePath": "/isolated/NotebookTests.xctestconfiguration"])
       XCTAssertEqual(launch, .unitTestHost)
-      XCTAssertNil(launch.makeModel())
+      XCTAssertNil(launch.makeLaunch().model)
     }
 
     func testExplicitDrawingFixtureStillLaunchesTheApplicationWithXCTestInjection() {
@@ -17,8 +17,12 @@
       XCTAssertEqual(launch, .drawingFixture)
     }
 
-    func testOrdinarySimulatorLaunchKeepsTheWorkspaceRuntime() {
-      XCTAssertEqual(NotebookSimulatorLaunch(arguments: [], environment: [:]), .workspace)
+    func testOrdinarySimulatorLaunchCannotConstructAModelBeforeArchiveAdmission() {
+      let mode = NotebookSimulatorLaunch(arguments: [], environment: [:])
+      XCTAssertEqual(mode, .workspace)
+      let launch = mode.makeLaunch()
+      XCTAssertNil(launch.model)
+      XCTAssertNil(launch.pairingActivationID)
     }
 
     func testExplicitDrawingFixtureDoesNotRequireXCTestInjection() {

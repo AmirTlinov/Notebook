@@ -8,6 +8,31 @@ import XCTest
 
 @MainActor
 final class DocumentResourceLeaseTests: XCTestCase {
+  func testDocumentAdmitsActualPacketsBesideSixtyMiBOfRetainedSceneWithoutBorrowingPencilReserve() async throws {
+    let resources = SceneRenderResources(profile: .interactive)
+    let sceneBytes = 60 * 1024 * 1024
+    let scene = try XCTUnwrap(resources.reserveDerivedBytes(sceneBytes, priority: .passive))
+    defer { scene.release() }
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
+      (0..<50).map { "Абзац \($0). " + String(repeating: "Содержание остаётся на своём физическом листе. ", count: 12) }.joined(separator: "\n\n"))])
+    var pageCount = 0
+    let fixture = fixture(resources: resources, interactive: true, document: document, layout: { pageCount = $0.pageCount })
+    let window = try show(fixture.host)
+    defer { fixture.coordinator.invalidate(); window.isHidden = true }
+    await waitUntil(timeout: .seconds(8), message: {
+      "ready=\(fixture.coordinator.renderIsReady) error=\(String(describing: fixture.coordinator.acquisitionError)) peak=\(resources.peakAccountedBytes)"
+    }) { fixture.coordinator.renderIsReady || fixture.coordinator.acquisitionError != nil }
+    XCTAssertNil(fixture.coordinator.acquisitionError)
+    XCTAssertTrue(fixture.coordinator.renderIsReady)
+    XCTAssertGreaterThan(pageCount, 1)
+    XCTAssertEqual(fixture.coordinator.payload?.source.preparationCount, 1)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
+    XCTAssertLessThan(resources.peakAccountedBytes, sceneBytes + 16 * 1024 * 1024,
+      "A small source must not reserve maximum-sized 48/24 MiB packets")
+    XCTAssertEqual(scene.byteCount, sceneBytes)
+    XCTAssertFalse(scene.isReleased, "Preparation cannot evict the shown scene")
+  }
+
   func testASeventhDocumentWaitsWithoutCreatingWebKitAndCancellationReleasesItsRequest() async throws {
     let resources = SceneRenderResources(maximumWebSurfaces: 6)
     var held: [WebSurfaceLease] = []
@@ -263,6 +288,8 @@ final class DocumentResourceLeaseTests: XCTestCase {
     defer { window.isHidden = true; window.rootViewController = nil }
     await waitUntil(timeout: .seconds(10)) { liveReady.count == 3 }
     XCTAssertEqual(resources.activeWebSurfaceCount, 3)
+    let sourceBytes = resources.reservedBytes
+    XCTAssertGreaterThan(sourceBytes, 0)
     controller.rootView = content(previews: true)
     var peakWeb = 0, peakPreparation = 0
     await waitUntil(timeout: .seconds(20), message: {
@@ -287,7 +314,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
     }
     controller.rootView = content(previews: false)
     await waitUntil { resources.activeWebSurfaceCount == 3 && resources.pendingWebRequestCount == 0 }
-    XCTAssertEqual(resources.reservedBytes, 0)
+    XCTAssertEqual(resources.reservedBytes, sourceBytes, "Previews release their captures while the live source retains its shared fragments")
   }
 
   func testInitialInteractiveCommitBelongsToTheActiveRuntimeBeforeItsFirstFrame() async throws {
@@ -359,15 +386,16 @@ final class DocumentResourceLeaseTests: XCTestCase {
   }
 
   private func fixture(resources: SceneRenderResources, interactive: Bool, document suppliedDocument: DocumentDocument? = nil,
+    layout: @escaping (DocumentPageLayout) -> Void = { _ in },
     ready: @escaping @MainActor @Sendable (Bool) -> Void = { _ in }, source: @escaping (DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status = { _ in .committed },
     state stateChange: @escaping (String, JSONValue) -> Void = { _,_ in })
       -> (document: DocumentDocument, state: DocumentStateJournal, coordinator: DocumentWebCoordinator, host: DocumentWebHost) {
     let document = suppliedDocument ?? DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "# A real document page\n\nA bounded WebKit owner.")])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
     let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: .init(ready),
-      onPageLayout: { _ in }, onSourceChange: source, onStateChange: stateChange)
+      onPageLayout: layout, onSourceChange: source, onStateChange: stateChange)
     coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-      onRenderReady: .init(ready), onPageLayout: { _ in }, onSourceChange: source, onStateChange: stateChange)
+      onRenderReady: .init(ready), onPageLayout: layout, onSourceChange: source, onStateChange: stateChange)
     let host = DocumentWebHost(), paper = WorkspaceItemGeometry.document(document.paperSize)
     coordinator.mount(in: host, physicalSize: .init(width: paper.width, height: paper.height),
       isInteractive: interactive, priority: interactive ? .currentPage : .neighbor)

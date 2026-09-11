@@ -5,6 +5,66 @@ import XCTest
 
 final class SceneRenderResourcesTests: XCTestCase {
   @MainActor
+  func testRasterEvictionReleasesItsSharedLayoutBeforeReadmittingDerivedBytes() throws {
+    let resources = SceneRenderResources(byteLimit: 64 * 1024, profile: .headless)
+    let geometry = WorkspaceItemGeometry.document(.a4)
+    var layout: DocumentLayoutRecord? = try DocumentLayoutRecord(receipt: [
+      "sourceKey": "source", "layoutCanonical": true, "pageCount": 1,
+      "width": geometry.width, "height": geometry.height, "regions": []
+    ] as NSDictionary, sourceKey: "source", blockIDs: [], geometry: geometry,
+      reservation: try XCTUnwrap(resources.reserveDerivedBytes(48 * 1024, priority: .passive)))
+    weak let measured = layout
+    let source = SceneRasterSource.document(id: UUID(), token: "measured")
+    XCTAssertTrue(resources.store(image(), for: source, documentLayout: layout))
+    let reader = try XCTUnwrap(resources.retainRaster(for: source))
+    layout = nil
+    XCTAssertNotNil(measured)
+    XCTAssertNil(resources.reserveDerivedBytes(32 * 1024, priority: .passive),
+      "A displayed raster protects its measured layout, not just the image")
+    XCTAssertNotNil(resources.image(for: source))
+    reader.release()
+    let replacement = try XCTUnwrap(resources.reserveDerivedBytes(32 * 1024, priority: .passive))
+    XCTAssertNil(measured, "The cache cannot leave a detached layout reservation behind")
+    XCTAssertNil(resources.image(for: source))
+    XCTAssertEqual(resources.reservedBytes, replacement.byteCount)
+    replacement.release()
+    XCTAssertEqual(resources.reservedBytes, 0)
+  }
+
+  @MainActor
+  func testSubmittedWebBorrowDefersAdmissionAfterTheMountReleases() async throws {
+    let resources = SceneRenderResources(maximumWebSurfaces: 1)
+    let lease = try await resources.acquireWebSurface(priority: .currentPage)
+    let borrow = try lease.borrow()
+    lease.release(); lease.release()
+    XCTAssertTrue(lease.isReleased)
+    XCTAssertThrowsError(try lease.borrow())
+    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
+    let waiting = Task { try await resources.acquireWebSurface(priority: .currentPage) }
+    for _ in 0..<100 where resources.pendingWebRequestCount == 0 { await Task.yield() }
+    XCTAssertEqual(resources.pendingWebRequestCount, 1)
+    borrow.release(); borrow.release()
+    let next = try await waiting.value
+    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
+    next.release()
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+  }
+
+  @MainActor
+  func testAbandonedBorrowReturnsTheWebSlotExactlyOnce() async throws {
+    let resources = SceneRenderResources(maximumWebSurfaces: 1)
+    let lease = try await resources.acquireWebSurface(priority: .currentPage)
+    var borrow: WebSurfaceBorrow? = try lease.borrow()
+    XCTAssertNotNil(borrow)
+    lease.release()
+    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
+    borrow = nil
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+    lease.release()
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+  }
+
+  @MainActor
   func testInteractiveHalfCountsPinnedRastersAndTemporaryPassiveWorkWithoutReservingTwice() throws {
     let raster = image(), cost = try byteCost(raster)
     let resources = SceneRenderResources(byteLimit: cost * 4, profile: .interactive)

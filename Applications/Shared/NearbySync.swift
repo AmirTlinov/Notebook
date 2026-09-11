@@ -85,14 +85,20 @@ protocol NotebookPairingTrustStore {
 }
 
 /// One bounded, device-only Keychain item owns the pair credentials for a local
-/// device/workspace. Pending approval is durable too, so a disconnect between
+/// device/workspace and admitted archive activation. Pending approval is durable too, so a disconnect between
 /// the two confirmations neither grants access nor strands an approved pair.
 @MainActor
 final class NotebookKeychainPairingStore: NotebookPairingTrustStore {
+  private let activationID: UUID?
+  init(activationID: UUID? = nil) { self.activationID = activationID }
+
   private func query(_ identity: NotebookTransportIdentity) -> [String: Any] {
-    [kSecClass as String: kSecClassGenericPassword,
+    let activation = activationID.map { ":activation:\($0.uuidString.lowercased())" } ?? ""
+    // Never fall back to another activation's credentials. Both devices retain
+    // their own actor IDs while the newly admitted pair awaits confirmation.
+    return [kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: "com.amirtlinov.notebook.nearby.pair-v1",
-      kSecAttrAccount as String: "\(identity.deviceID):\(identity.workspaceID)"]
+      kSecAttrAccount as String: "\(identity.deviceID):\(identity.workspaceID)\(activation)"]
   }
   func load(for identity: NotebookTransportIdentity) throws -> [NotebookTrustedPeer] {
     var query = query(identity); query[kSecReturnData as String] = true; query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -109,9 +115,14 @@ final class NotebookKeychainPairingStore: NotebookPairingTrustStore {
   }
   func save(_ records: [NotebookTrustedPeer], for identity: NotebookTransportIdentity) throws {
     guard records.count <= 8 else { throw NotebookTransportError.resourceLimit }
+    let query = query(identity)
+    if records.isEmpty {
+      let status = SecItemDelete(query as CFDictionary)
+      guard status == errSecSuccess || status == errSecItemNotFound else { throw NotebookTransportError.storageUnavailable }
+      return
+    }
     let data = try JSONEncoder().encode(records)
     guard data.count <= 32_768 else { throw NotebookTransportError.resourceLimit }
-    let query = query(identity)
     let values: [String: Any] = [kSecValueData as String: data, kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
     let status = SecItemUpdate(query as CFDictionary, values as CFDictionary)
     if status == errSecItemNotFound {

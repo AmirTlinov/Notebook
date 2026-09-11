@@ -132,21 +132,50 @@ final class WebSurfaceLease {
   let id: UUID
   private(set) var priority: WebPriority
   private var resources: SceneRenderResources?
-  var isReleased: Bool { resources == nil }
+  private var releaseRequested = false
+  private var borrowers = 0
+  var isReleased: Bool { releaseRequested }
   fileprivate init(id: UUID, priority: WebPriority, resources: SceneRenderResources) {
     self.id = id; self.priority = priority; self.resources = resources
   }
   func release() {
-    guard let owner = resources else { return }
+    releaseRequested = true
+    releaseIfUnborrowed()
+  }
+  private func releaseIfUnborrowed() {
+    guard releaseRequested, borrowers == 0, let owner = resources else { return }
     resources = nil
     owner.releaseWebSurface(id)
+  }
+  /// Submitted source preparation may outlive its physical mount. Its callback
+  /// returns this borrow before another WebKit may consume the same slot.
+  func borrow() throws -> WebSurfaceBorrow {
+    guard !releaseRequested, resources != nil else { throw CancellationError() }
+    borrowers += 1
+    return WebSurfaceBorrow(self)
+  }
+  fileprivate func returnBorrow() {
+    precondition(borrowers > 0)
+    borrowers -= 1
+    releaseIfUnborrowed()
   }
   /// A page curl transfers the already mounted owner between current and
   /// neighbor roles. Reclassification never replaces or revokes its WebKit.
   func updatePriority(_ priority: WebPriority) {
-    guard let resources, self.priority != priority else { return }
+    guard !releaseRequested, let resources, self.priority != priority else { return }
     self.priority = priority
     resources.updateWebPriority(id, priority: priority)
+  }
+  isolated deinit { release() }
+}
+
+@MainActor
+final class WebSurfaceBorrow {
+  private var lease: WebSurfaceLease?
+  fileprivate init(_ lease: WebSurfaceLease) { self.lease = lease }
+  func release() {
+    let owner = lease; lease = nil
+    owner?.returnBorrow()
   }
   isolated deinit { release() }
 }
@@ -294,6 +323,7 @@ final class SceneRenderResources {
     let image: AgentSnapshotImage
     let pixelScale: Double
     let cost: Int
+    let documentLayout: DocumentLayoutRecord?
     var access: UInt64
     var retains: Int
   }
@@ -422,7 +452,7 @@ final class SceneRenderResources {
   }
   @discardableResult
   func store(_ image: AgentSnapshotImage, for source: SceneRasterSource,
-    reservation: RasterReservation? = nil) -> Bool {
+    reservation: RasterReservation? = nil, documentLayout: DocumentLayoutRecord? = nil) -> Bool {
     if let reservation {
       guard !reservation.isReleased, reservation.resources === self else { return false }
       reservation.release()
@@ -443,7 +473,7 @@ final class SceneRenderResources {
     accessClock &+= 1
     let id = UUID()
     entries[id] = RasterEntry(source: source, image: image, pixelScale: raster.scale,
-      cost: raster.cost, access: accessClock, retains: 0)
+      cost: raster.cost, documentLayout: documentLayout, access: accessClock, retains: 0)
     rasterOwners[source.owner, default: []].append(id)
     residentBytes += raster.cost; rasterCount = entries.count
     peakAccountedBytes = max(peakAccountedBytes, residentBytes + reservedBytes)
@@ -603,23 +633,30 @@ final class SceneRenderResources {
   }
   private func makeRoom(for cost: Int, additionalEntry: Bool, priority: SceneAllocationPriority,
     passiveReserved: Int? = nil) -> Bool {
-    let passive = passiveReserved ?? passiveReservedBytes
+    let passiveAdjustment = (passiveReserved ?? passiveReservedBytes) - passiveReservedBytes
     let passiveCost = priority == .passive ? cost : 0
-    guard cost >= 0, cost <= byteLimit - reservedBytes,
-      passive >= 0, passiveCost <= passiveByteLimit - passive,
+    guard cost >= 0, cost <= byteLimit, passiveCost <= passiveByteLimit,
+      passiveReservedBytes + passiveAdjustment >= 0,
       !additionalEntry || maximumRasterCount > 0 else { return refuseRaster(cost: cost, additionalEntry: additionalEntry) }
     let neededCount = additionalEntry ? 1 : 0
-    let candidates = entries.filter { $0.value.retains == 0 }.sorted { $0.value.access < $1.value.access }
-    let recoverable = candidates.reduce(0) { $0 + $1.value.cost }
-    let residentLimit = min(byteLimit - reservedBytes - cost, passiveByteLimit - passive - passiveCost)
-    guard residentBytes - recoverable <= residentLimit,
-      entries.count - candidates.count + reservedRasterCount + neededCount <= maximumRasterCount else {
+    // Keep only IDs here. Copying entries would retain the very layout leases
+    // that eviction must release before the next admission calculation.
+    let candidates = entries.keys.filter { entries[$0]!.retains == 0 }.sorted { entries[$0]!.access < entries[$1]!.access }
+    let recoverable = candidates.reduce(0) { $0 + entries[$1]!.cost }
+    func residentLimit() -> Int {
+      min(byteLimit - reservedBytes - cost,
+        passiveByteLimit - passiveReservedBytes - passiveAdjustment - passiveCost)
+    }
+    let canFitWithoutLayoutRelease = residentBytes - recoverable <= residentLimit()
+      && entries.count - candidates.count + reservedRasterCount + neededCount <= maximumRasterCount
+    guard canFitWithoutLayoutRelease || candidates.contains(where: { entries[$0]?.documentLayout != nil }) else {
       return refuseRaster(cost: cost, additionalEntry: additionalEntry)
     }
     var position = 0
-    while residentBytes > residentLimit
+    while residentBytes > residentLimit()
       || entries.count + reservedRasterCount + neededCount > maximumRasterCount {
-      removeRaster(candidates[position].key); position += 1
+      guard position < candidates.count else { return refuseRaster(cost: cost, additionalEntry: additionalEntry) }
+      removeRaster(candidates[position]); position += 1
     }
     return true
   }

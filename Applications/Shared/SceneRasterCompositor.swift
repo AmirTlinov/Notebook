@@ -108,7 +108,21 @@ final class SceneRasterCompositor {
       .position(x: frame.midX - capture.minX, y: frame.midY - capture.minY)
       .frame(width: capture.width, height: capture.height).clipped())
     renderer.scale = scale
-    guard let image = renderer.cgImage else { throw SceneRenderError.snapshotPending("physical_artwork") }
+    // This owner supplies the admitted pixel grid and color format. The
+    // convenience cgImage renderer can change Canvas antialias quantization
+    // after another AppKit raster runs, changing an otherwise identical receipt.
+    guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+      let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+        bytesPerRow: ((width * 4 + 63) / 64) * 64, space: space,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw SceneRenderError.resourceLimit }
+    context.clear(CGRect(x: 0, y: 0, width: width, height: height))
+    context.scaleBy(x: scale, y: scale)
+    var rendered = false
+    renderer.render(rasterizationScale: scale) { renderedSize, render in
+      guard renderedSize == capture.size else { return }
+      render(context); rendered = true
+    }
+    guard rendered, let image = context.makeImage() else { throw SceneRenderError.snapshotPending("physical_artwork") }
     try await buffer.draw(image, in: capture)
     try checkPreparation()
   }

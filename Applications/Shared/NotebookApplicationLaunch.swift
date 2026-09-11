@@ -12,11 +12,11 @@ final class NotebookApplicationLaunch {
   private(set) var isChecking = false
   private let root: URL
   private let target: NotebookArchiveTarget?
-  private let makeModel: ((NotebookStore) -> NotebookAppModel)?
+  private let makeModel: ((NotebookStore, UUID?) -> NotebookAppModel)?
   private let isFixture: Bool
 
   init(root: URL = NotebookStore.defaultRoot, target: NotebookArchiveTarget? = nil,
-    makeModel: ((NotebookStore) -> NotebookAppModel)? = nil) {
+    makeModel: ((NotebookStore, UUID?) -> NotebookAppModel)? = nil) {
     self.root = root; self.target = target; self.makeModel = makeModel; isFixture = false
   }
 
@@ -52,13 +52,20 @@ final class NotebookApplicationLaunch {
       switch activation {
       case .unchanged, .admitted:
         let store = NotebookStore(root: root)
-        model = makeModel?(store) ?? NotebookAppModel(store: store, allowsCodexRegistration: allowsCodexRegistration)
+        model = makeModel?(store, pairingActivationID) ?? NotebookAppModel(store: store,
+          allowsCodexRegistration: allowsCodexRegistration, pairingActivationID: pairingActivationID)
       case .waitingForPair: break
       }
     } catch is CancellationError {
       // A committed activation remains on disk; cancellation cannot restore old
       // bytes or publish a model after the calling scene has disappeared.
     } catch { failure = error.localizedDescription }
+  }
+
+  /// Replacing a pair's delivery journals requires fresh trust, not a new
+  /// device identity. The durable receipt keeps that trust stable on restart.
+  var pairingActivationID: UUID? {
+    if case .admitted(let receipt) = activation { receipt.transitionID } else { nil }
   }
 
   var allowsCodexRegistration: Bool {

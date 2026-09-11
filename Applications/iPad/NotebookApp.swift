@@ -10,7 +10,7 @@ struct NotebookApp: App {
     #if DEBUG && targetEnvironment(simulator)
       let launch = NotebookSimulatorLaunch(arguments: ProcessInfo.processInfo.arguments,
         environment: ProcessInfo.processInfo.environment)
-      _launch = State(initialValue: launch == .workspace ? NotebookApplicationLaunch() : NotebookApplicationLaunch(fixture: launch.makeModel()))
+      _launch = State(initialValue: launch.makeLaunch())
     #else
       _launch = State(initialValue: NotebookApplicationLaunch())
     #endif
@@ -62,14 +62,14 @@ struct NotebookApp: App {
       }
     }
 
-    func makeModel() -> NotebookAppModel? {
+    func makeLaunch() -> NotebookApplicationLaunch {
       switch self {
-      case .workspace: NotebookAppModel()
-      case .drawingFixture: SimulatorDrawingFixture.makeModel()
+      case .workspace: NotebookApplicationLaunch()
+      case .drawingFixture: NotebookApplicationLaunch(fixture: SimulatorDrawingFixture.makeModel())
       // Hosted unit tests own their stores, models and windows. Constructing the
       // default model here would read another archive and compete for the same
       // raster/ink budget before the first isolated fixture publishes.
-      case .unitTestHost: nil
+      case .unitTestHost: NotebookApplicationLaunch(fixture: nil)
       }
     }
   }

@@ -580,12 +580,14 @@ final class NotebookAppModel {
   #endif
 
   let allowsCodexRegistration: Bool
+  let pairingActivationID: UUID?
 
   init(
     store: NotebookStore = NotebookStore(root: NotebookStore.defaultRoot),
     startsNearbySync: Bool = true,
     commandSocketURL: URL? = nil,
     allowsCodexRegistration: Bool = false,
+    pairingActivationID: UUID? = nil,
     preparePageInk: @escaping PageInkPreparation = { page, mutation, stamp in
       try await Task.detached(priority: .userInitiated) {
         try page.prepareInkChange(mutation, stamp: stamp)
@@ -594,6 +596,7 @@ final class NotebookAppModel {
   ) {
     self.store = store
     self.allowsCodexRegistration = allowsCodexRegistration
+    self.pairingActivationID = pairingActivationID
     self.preparePageInk = preparePageInk
     persistence = NotebookPersistenceQueue(store: store)
     compositionTiles = SceneCompositionTiles(cacheRoot: store.root.appendingPathComponent("derived/composition", isDirectory: true))
@@ -716,7 +719,8 @@ final class NotebookAppModel {
     #endif
     let connection = NearbySync(role: role,
       identity: .init(deviceID: actorID, workspaceID: header.workspaceID, displayName: name),
-      storage: storage, stagingRoot: store.root.appendingPathComponent("transfer-staging", isDirectory: true))
+      storage: storage, stagingRoot: store.root.appendingPathComponent("transfer-staging", isDirectory: true),
+      trustStore: NotebookKeychainPairingStore(activationID: pairingActivationID))
     connection.onPairingChange = { [weak self] state in
       self?.pairingState = state
       self?.pairedPeers = self?.sync?.pairedPeers ?? []

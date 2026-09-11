@@ -12,9 +12,9 @@ final class DocumentSnapshotCache {
     }
 
     @discardableResult
-    func store(image: AgentSnapshotImage, documentID: UUID, token: String, reservation: RasterReservation? = nil,
+    func store(image: AgentSnapshotImage, documentID: UUID, token: String, layout: DocumentLayoutRecord, reservation: RasterReservation? = nil,
       resources: SceneRenderResources = .shared) -> Bool {
-      if resources.store(image, for: .document(id: documentID, token: token), reservation: reservation) {
+      if resources.store(image, for: .document(id: documentID, token: token), reservation: reservation, documentLayout: layout) {
         NotificationCenter.default.post(name: Self.didChange, object: documentID)
         return true
       }
@@ -232,6 +232,7 @@ final class DocumentWebCoordinator: NSObject,
   private var frameTaskID: UUID?
   private var frameEvaluationID: UUID?
   private var frameContinuation: CheckedContinuation<Void, Error>?
+  private var sentSourcePage: Int?
   private var sentSourceKey: String?
   private var sentStateKey: String?
   private var sentGeneration: UInt64?
@@ -428,6 +429,7 @@ final class DocumentWebCoordinator: NSObject,
   private func retryPreparation() {
     guard !isInvalidated, let host, let priority = requestedPriority else { return }
     acquisitionError = nil; recoveryAttempts = 0
+    payload?.source.retryPagePreparation()
     host.removeFailure()
     runtimeID = UUID(); payload?.runtimeID = runtimeID; payload?.drafts = Array(draftsByID.values)
     mount(in: host, physicalSize: physicalSize, isInteractive: acceptsInput, priority: priority)
@@ -557,7 +559,7 @@ final class DocumentWebCoordinator: NSObject,
     isReady = false
     frameTaskID = nil; frameTask?.cancel(); frameTask = nil
     finishFrameEvaluation(throwing: CancellationError())
-    sentSourceKey = nil; sentStateKey = nil; sentGeneration = nil; layoutAccepted = false
+    sentSourceKey = nil; sentSourcePage = nil; sentStateKey = nil; sentGeneration = nil; layoutAccepted = false
     pixelPresentation = nil; canonicalPixelEpoch = nil
     renderedToken = nil
     appliedPageIndex = nil
@@ -888,7 +890,11 @@ final class DocumentWebCoordinator: NSObject,
         let web = webView, let next = payload, sentGeneration != generation {
         let expected = generation
         do {
-          let source = sentSourceKey == next.source.message.key ? nil : try await next.source.encodedJSON()
+          guard let lease = surfaceLease else { throw CancellationError() }
+          let prepared = try await next.source.preparedPage(next.pageIndex, in: web, lease: lease, resources: resources)
+          let source = sentSourceKey == next.source.message.key && sentSourcePage == prepared.fragment.pageIndex
+            ? nil : try await prepared.encodedMessage(resources: resources)
+          defer { withExtendedLifetime(source) {} }
           let state = sentStateKey == next.state.message.key ? nil : try await next.state.encodedJSON()
           guard !Task.isCancelled, !isInvalidated, frameTaskID == taskID, webView === web else { return }
           guard generation == expected else { continue }
@@ -896,12 +902,12 @@ final class DocumentWebCoordinator: NSObject,
           guard let current = payload else { return }
           let frame = String(decoding: try encoder.encode(current.frame(generation: expected)), as: UTF8.self)
           var script = ""
-          if let source { script += "window.notebookRenderer.installSource(\(source));" }
+          if let source { script += "await window.notebookRenderer.installPageSource(\(source.json));" }
           if let state { script += "window.notebookRenderer.applyState(\(state));" }
           script += "void window.notebookRenderer.presentPage(\(frame));"
-          try await evaluateFrame(script, in: web)
+          try await evaluateFrame(script, message: source, lease: lease, in: web)
           guard !Task.isCancelled, !isInvalidated, frameTaskID == taskID, webView === web else { return }
-          sentSourceKey = next.source.message.key; sentStateKey = next.state.message.key; sentGeneration = expected
+          sentSourceKey = next.source.message.key; sentSourcePage = prepared.fragment.pageIndex; sentStateKey = next.state.message.key; sentGeneration = expected
         } catch {
           guard !Task.isCancelled, !isInvalidated, frameTaskID == taskID, generation == expected else { continue }
           failPreparation(error); return
@@ -910,11 +916,14 @@ final class DocumentWebCoordinator: NSObject,
     }
   }
 
-  private func evaluateFrame(_ script: String, in web: WKWebView) async throws {
+  private func evaluateFrame(_ script: String, message: DocumentPageMessage?, lease: WebSurfaceLease, in web: WKWebView) async throws {
+    let borrow = try lease.borrow()
     try await withCheckedThrowingContinuation { continuation in
       let id = UUID(); frameEvaluationID = id; frameContinuation = continuation
-      web.evaluateJavaScript(script) { [weak self] _, error in
-        self?.finishFrameEvaluation(id: id, throwing: error)
+      web.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { [weak self, message, borrow] result in
+        defer { borrow.release(); withExtendedLifetime(message) {} }
+        if case .failure(let error) = result { self?.finishFrameEvaluation(id: id, throwing: error) }
+        else { self?.finishFrameEvaluation(id: id) }
       }
     }
   }
@@ -1115,8 +1124,9 @@ final class DocumentWebCoordinator: NSObject,
                 let normalized = NSImage(cgImage: cg, size: outputSize)
               #endif
               let source = SceneRasterSource.document(id: payload.documentID, token: payload.renderToken)
-              guard DocumentSnapshotCache.shared.store(image: normalized, documentID: payload.documentID,
-                token: payload.renderToken, reservation: reservation, resources: resources),
+              guard let layout = payload.source.layout,
+                DocumentSnapshotCache.shared.store(image: normalized, documentID: payload.documentID,
+                token: payload.renderToken, layout: layout, reservation: reservation, resources: resources),
                 let retained = resources.retainRaster(for: source,
                   minimumScale: nativeScale ?? Self.snapshotMinimumScale(pixelWidth: pixelWidth, size: size)) else { throw SceneRenderError.resourceLimit }
               readerPreparedLease?.release(); readerPreparedLease = retained
