@@ -143,14 +143,22 @@ public enum CodexUserDecision: Codable, Equatable, Sendable {
 /// Local delivery records are not a second editable conversation history.
 public enum NotebookChatAction: Codable, Equatable, Sendable {
   case send(threadID: String, text: String, context: String)
-  case create(title: String)
+  case steer(threadID: String, turnID: String, text: String, context: String)
+  case create(title: String, project: CodexProject? = nil)
   case updateProject(CodexProjectEdit)
   case stop(threadID: String, turnID: String)
   case respond(threadID: String, request: CodexUserRequest, decision: CodexUserDecision)
   public var threadID: String? {
     switch self {
-    case .send(let id, _, _), .stop(let id, _), .respond(let id, _, _): id
+    case .send(let id, _, _), .steer(let id, _, _, _), .stop(let id, _), .respond(let id, _, _): id
     case .create, .updateProject: nil
+    }
+  }
+
+  public var message: (threadID: String, text: String, context: String)? {
+    switch self {
+    case .send(let thread, let text, let context), .steer(let thread, _, let text, let context): (thread, text, context)
+    default: nil
     }
   }
 
@@ -163,7 +171,7 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
     case .stop(let thread, let turn): address = ["stop", thread.lowercased(), turn.lowercased()]
     case .respond(let thread, let request, _):
       address = ["respond", thread.lowercased(), request.turnID.lowercased(), request.method, request.id]
-    case .send, .create, .updateProject: return nil
+    case .send, .steer, .create, .updateProject: return nil
     }
     var data = Data()
     for part in ["NotebookChatControl/1", author.uuidString.lowercased()] + address {
@@ -193,7 +201,9 @@ public struct NotebookChatInput: Codable, Equatable, Sendable, Identifiable {
     switch action {
     case .send(_, let text, let context):
       return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.utf8.count <= 32768 && context.utf8.count <= 32768
-    case .create(let title): return !title.isEmpty && title.utf8.count <= 256
+    case .steer(_, let turn, let text, let context):
+      return UUID(uuidString: turn) != nil && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.utf8.count <= 32768 && context.utf8.count <= 32768
+    case .create(let title, let project): return !title.isEmpty && title.utf8.count <= 256 && (project == nil || (project!.id.utf8.count <= 256 && !project!.id.isEmpty && project!.roots.count <= 32 && project!.roots.allSatisfy { $0.hasPrefix("/") && $0.utf8.count <= 4096 }))
     case .updateProject(let edit): return edit.isValid
     case .stop(_, let turn): return UUID(uuidString: turn) != nil
     case .respond(_, let request, _): return !request.id.isEmpty && !request.turnID.isEmpty
@@ -225,7 +235,7 @@ public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
     switch (input.action, result) {
     case (.updateProject(let edit), .project(let project)): return edit.matches(project)
     case (.create, .created(let task)): return UUID(uuidString: task.id) != nil && task.title.utf8.count <= 1024
-    case (.send, .turn(let id)): return UUID(uuidString: id) != nil
+    case (.send, .turn(let id)), (.steer, .turn(let id)): return UUID(uuidString: id) != nil
     case (.stop, .acknowledged), (.respond, .acknowledged): return true
     default: return false
     }
@@ -251,7 +261,7 @@ public enum NotebookChatReply: Codable, Equatable, Sendable {
 /// Only one outstanding request per iPad uses the coalesced low-priority lane.
 /// Retransmission reuses the request ID and the durable mutation's original ID.
 public struct NotebookChatEnvelope: Codable, Equatable, Sendable {
-  public enum Body: Codable, Equatable, Sendable { case request(NotebookChatQuery), reply(NotebookChatReply) }
+  public enum Body: Codable, Equatable, Sendable { case request(NotebookChatQuery), reply(NotebookChatReply), event(subscriptionID: UUID, conversation: CodexConversation) }
   public let id: UUID
   public let body: Body
 

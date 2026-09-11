@@ -4,7 +4,7 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  public static let protocolVersion = 2
+  public static let protocolVersion = 3
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 180 * 1_024
   public static let maximumUnacknowledgedFrames = 16
@@ -94,7 +94,8 @@ public enum NotebookTransportTransient: Codable, Equatable, Sendable {
     case .inputActivity: 0
     case .presence: 1
     case .documentPageSelection: 2
-    case .codex: 3
+    case .codex(let envelope):
+      if case .event = envelope.body { 4 } else { 3 }
     }
   }
 }

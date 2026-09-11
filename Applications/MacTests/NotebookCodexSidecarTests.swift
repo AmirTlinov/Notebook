@@ -29,6 +29,10 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
     if unknown { throw CodexBridgeError.acceptanceUnknown }
     return turn
   }
+  func steer(threadID: String, turnID: String, clientMessageID: UUID, text: String, context: String?) throws -> String {
+    guard turnID == turn else { throw CodexBridgeError.staleTurn }
+    return try send(threadID: threadID, clientMessageID: clientMessageID, text: text, context: context)
+  }
   func interrupt(threadID: String, turnID: String) throws {
     if stopIsStale { throw CodexBridgeError.staleTurn }
     interrupted.append(turnID)
@@ -46,7 +50,7 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   func projects(cursor: String?) -> CodexProjectPage { .init(projects: [], nextCursor: nil) }
   func tasks(cursor: String?, project: CodexProject?) -> CodexTaskPage { .init(tasks: [.init(id: thread, title: "Математика", cwd: "/tmp")], nextCursor: nil, defaultProviderNeedsSignIn: needsSignIn) }
   func history(threadID: String, cursor: String?) -> CodexHistoryPage { .init(messages: accepted, nextCursor: nil) }
-  func create(directory: URL, title: String, workspaceID: UUID) throws -> CodexTask {
+  func create(directory: URL, title: String, workspaceID: UUID, project: CodexProject?) throws -> CodexTask {
     if needsSignIn { throw CodexBridgeError.signInRequired }
     return .init(id: thread, title: title, cwd: directory.path)
   }
@@ -71,6 +75,26 @@ final class NotebookCodexSidecarTests: XCTestCase {
     let deadline = ContinuousClock.now + .seconds(8)
     while !(try await predicate()), .now < deadline { try await Task.sleep(for: .milliseconds(50)) }
     let ready = try await predicate(); XCTAssertTrue(ready)
+  }
+
+  func testExplicitSteeringBypassesQueuedMessageButKeepsTheExpectedTurn() async throws {
+    try await fixture { store, queue, native, peer in
+      await native.configure(busy: true)
+      let service = try sidecar(store, queue, native)
+      let queued = NotebookChatInput(author: peer, action: .send(threadID: native.thread, text: "next", context: ""))
+      let steering = NotebookChatInput(author: peer, action: .steer(threadID: native.thread, turnID: native.turn, text: "clarify", context: "fragment"))
+      _ = await service.receive(.init(body: .request(.job(queued))), peerID: peer)
+      _ = await service.receive(.init(body: .request(.job(steering))), peerID: peer)
+      service.start()
+      try await wait { try await queue.submit { try $0.chatJob(steering.id)?.state == .accepted } }
+      XCTAssertEqual(try store.chatJob(queued.id)?.state, .saved)
+      let count = await native.counts(); XCTAssertEqual(count.0, 1)
+      let stale = NotebookChatInput(author: peer, action: .steer(threadID: native.thread, turnID: UUID().uuidString, text: "late", context: ""))
+      _ = await service.receive(.init(body: .request(.job(stale))), peerID: peer)
+      try await wait { try await queue.submit { try $0.chatJob(stale.id)?.state == .rejected } }
+      let final = await native.counts(); XCTAssertEqual(final.0, 1)
+      await service.stop()
+    }
   }
 
   func testNativeProjectEditReconcilesLostReplyWithoutEditingOrStartingTwice() async throws {

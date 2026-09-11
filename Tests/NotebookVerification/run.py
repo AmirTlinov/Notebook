@@ -222,13 +222,26 @@ class SelectionTests(unittest.TestCase):
         (evidence / "completed.json").write_text("{}")
         with self.assertRaises(release.ReleaseError): release.checked_verification(self.root, evidence)
 
+    def test_manual_scope_admits_unknown_owner_without_claiming_full_acceptance(self):
+        evidence, receipt = self.receipt()
+        plan = release.read_json(evidence / "selection.json")
+        plan["unclassified"] = ["Applications/Shared/NotebookAppModel.swift"]
+        plan["manualSelection"] = True
+        release.write_json(evidence / "selection.json", plan)
+        receipt["artifacts"] = release.verification_artifacts(evidence, full=False)
+        self.assertEqual(verify.validate_selected(self.root, evidence, receipt), receipt)
+        plan["unclassified"] = ["Applications/iPad/SimulatorDrawingFixture.swift"]
+        release.write_json(evidence / "selection.json", plan)
+        receipt["artifacts"] = release.verification_artifacts(evidence, full=False)
+        with self.assertRaises(release.ReleaseError): verify.validate_selected(self.root, evidence, receipt)
+
     def test_failed_command_or_unclassified_change_refuses_release(self):
         evidence, receipt = self.receipt()
         (evidence / "commands.json").write_text(json.dumps([{"label": "verification", "exitCode": 1}]))
         receipt["artifacts"] = release.verification_artifacts(evidence, full=False)
         with self.assertRaises(release.ReleaseError): verify.validate_selected(self.root, evidence, receipt)
         (evidence / "commands.json").write_text(json.dumps([{"label": "verification", "exitCode": 0}]))
-        plan = release.read_json(evidence / "selection.json"); plan["unclassified"] = ["Sources/Unknown.swift"]
+        plan = release.read_json(evidence / "selection.json"); plan["unclassified"] = ["Sources/Unknown.swift"]; plan["manualSelection"] = False
         release.write_json(evidence / "selection.json", plan)
         receipt["artifacts"] = release.verification_artifacts(evidence, full=False)
         with self.assertRaises(release.ReleaseError): verify.validate_selected(self.root, evidence, receipt)

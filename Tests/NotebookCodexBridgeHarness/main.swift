@@ -1,6 +1,7 @@
 import NotebookCore
 
 import Foundation
+import AppKit
 import NotebookCodex
 
 @main struct Proof {
@@ -11,7 +12,7 @@ import NotebookCodex
     else { print(String(decoding: data, as: UTF8.self)) }
   }
 
-  static func wait(_ bridge: CodexDesktopBridge, threadID: String,
+  static func wait(_ bridge: CodexAppServer, threadID: String,
     until predicate: @Sendable (CodexConversation) -> Bool) async throws -> CodexConversation {
     let deadline = ContinuousClock.now.advanced(by: .seconds(90))
     while .now < deadline {
@@ -27,8 +28,9 @@ import NotebookCodex
   }
 
   static func run() async throws {
+    let foreground = await MainActor.run { NSWorkspace.shared.frontmostApplication?.bundleIdentifier }
     let installation = try await CodexDesktopInstallation.discover()
-    let metadata = CodexMetadata(installation: installation)
+    let metadata = CodexAppServer(installation: installation)
     let args = CommandLine.arguments
     if args.count == 4, args[1] == "project-update" {
       try write(await metadata.updateProject(.init(id: args[2], name: args[3], roots: nil))); return
@@ -41,9 +43,9 @@ import NotebookCodex
       return
     }
     if args.count == 3, args[1] == "observe" {
-      let bridge = CodexDesktopBridge(installation: installation)
+      let bridge = metadata
       do {
-        _ = try await bridge.activities(threadIDs: [args[2]])
+        try await bridge.attach(threadID: args[2])
         let state = try await wait(bridge, threadID: args[2]) { $0.ready }
         try write(state); await bridge.close(); return
       } catch { await bridge.close(); throw error }
@@ -62,7 +64,7 @@ import NotebookCodex
     print("Creating native metadata task")
     let task = try await metadata.create(directory: directory, title: "Notebook — проверка нативного моста", workspaceID: UUID())
     print("Created disposable task \(task.id)")
-    let bridge = CodexDesktopBridge(installation: installation)
+    let bridge = metadata
     do {
       try await bridge.attach(threadID: task.id)
       _ = try await wait(bridge, threadID: task.id) { $0.ready && !$0.busy }
@@ -74,6 +76,13 @@ import NotebookCodex
       guard answered.messages.contains(where: { $0.turnID == firstTurn && $0.role == .assistant && $0.text.contains("2 + 2 = 4") }),
         answered.acceptedMessages[clientID.uuidString.lowercased()] == firstTurn else { throw CodexBridgeError.invalidResponse }
       print("Same-task reply and stable message ID passed")
+      let foreign = CodexAppServer(installation: installation)
+      do {
+        try await foreign.attach(threadID: task.id)
+        await foreign.close(); throw CodexBridgeError.invalidResponse
+      } catch CodexBridgeError.externalOwnerUnavailable { await foreign.close() }
+      guard await bridge.snapshot(threadID: task.id)?.ready == true else { throw CodexBridgeError.invalidResponse }
+      print("Second executor rejected without disturbing the first")
       // Repeating a known accepted ID returns its turn without making a second turn.
       let duplicate = try await bridge.send(threadID: task.id, clientMessageID: clientID, text: "Ответь только: 2 + 2 = 4. Это проверка прямого моста Notebook. Не вызывай инструменты.")
       guard duplicate == firstTurn else { throw CodexBridgeError.invalidResponse }
@@ -95,16 +104,21 @@ import NotebookCodex
       print("Native permission request and explicit denial passed")
       let stopTurn = try await bridge.send(threadID: task.id, clientMessageID: UUID(), text: "Запусти команду sleep 60. Это изолированная проверка остановки текущего хода. Больше ничего не делай.")
       _ = try await wait(bridge, threadID: task.id) { $0.activeTurnID == stopTurn }
+      let steeringTurn = try await bridge.steer(threadID: task.id, turnID: stopTurn, clientMessageID: UUID(),
+        text: "Уточнение проверки: не изменяй файлы и не запускай ничего кроме запрошенного sleep.")
+      guard steeringTurn == stopTurn else { throw CodexBridgeError.invalidResponse }
+      print("Explicit clarification kept the same active turn")
       try await bridge.interrupt(threadID: task.id, turnID: stopTurn)
       _ = try await wait(bridge, threadID: task.id) { $0.turnStatuses[stopTurn] == "interrupted" }
       print("Expected-turn interruption passed")
       await bridge.close()
-      let receipt = Receipt(checkedAt: Date(), appVersion: CodexDesktopProtocol.appVersion,
-        appBuild: CodexDesktopProtocol.appBuild, threadID: task.id, clientMessageID: clientID.uuidString.lowercased(),
+      let foregroundAfter = await MainActor.run { NSWorkspace.shared.frontmostApplication?.bundleIdentifier }
+      let receipt = Receipt(checkedAt: Date(), appVersion: Bundle(url: installation.application)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
+        appBuild: Bundle(url: installation.application)?.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown", threadID: task.id, clientMessageID: clientID.uuidString.lowercased(),
         answeredTurnID: firstTurn, permissionTurnID: permissionTurn, stoppedTurnID: stopTurn,
         catalogueCount: catalogue.tasks.count, historyMessageCount: history.messages.count,
-        nativeBridgePassed: true, featureReady: false, disposableTaskArchived: false,
-        notProven: ["unfocusedOpen", "nativeProjectlessMembership", "sidecarOutboxRecovery", "pairedIPadChat", "bundledNotebookTools", "physicalIPad"])
+        nativeBridgePassed: true, foregroundUnchanged: foreground == foregroundAfter, steeringPassed: true, secondWriterRejected: true, featureReady: false, disposableTaskArchived: false,
+        notProven: ["nativeProjectlessMembership", "sidecarOutboxRecovery", "pairedIPadChat", "bundledNotebookTools", "physicalIPad"])
       try write(receipt, to: args[2]); try write(receipt)
     } catch {
       await bridge.close()
@@ -117,7 +131,7 @@ import NotebookCodex
     let checkedAt: Date
     let appVersion, appBuild, threadID, clientMessageID, answeredTurnID, permissionTurnID, stoppedTurnID: String
     let catalogueCount, historyMessageCount: Int
-    let nativeBridgePassed, featureReady, disposableTaskArchived: Bool
+    let nativeBridgePassed, foregroundUnchanged, steeringPassed, secondWriterRejected, featureReady, disposableTaskArchived: Bool
     let notProven: [String]
   }
 }

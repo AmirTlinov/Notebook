@@ -282,7 +282,7 @@ struct NotebookChatPanel: View {
       VStack(alignment: .trailing, spacing: 8) {
         Text("Исходящие · \(chat.pendingMessages.count)").font(.caption2).foregroundStyle(.secondary)
         ForEach(chat.pendingMessages.suffix(4)) { job in
-          if case .send(_, let text, _) = job.input.action {
+          if let (_, text, _) = job.input.action.message {
             VStack(alignment: .trailing, spacing: 4) {
               Text(text).font(.system(size: 15)).lineLimit(3).textSelection(.enabled)
               Text(job.state == .saved ? "Сохранено на iPad · ожидает Codex" : job.state == .uncertain ? "Принятие проверяется · без повторной отправки" : "Передано Mac · ожидается подтверждение")
@@ -319,6 +319,10 @@ struct NotebookChatPanel: View {
         Menu {
           Button("Новый чат", systemImage: "square.and.pencil", action: createChat)
           Button("Выбрать чат", systemImage: "clock") { chat.browsesChats = true; showsAllChats = true; chat.catalogue() }
+          if chat.conversation?.activeTurnID != nil {
+            Button("Уточнить текущий ход", systemImage: "arrow.turn.down.right") { model.sendChatMessage(steering: true) }
+              .disabled(!canSend).accessibilityIdentifier("notebook-chat-steer")
+          }
           Divider()
           Button("Совместные ходы", systemImage: "clock.arrow.circlepath", action: openHistory)
             .accessibilityIdentifier("collaboration-history")

@@ -7,7 +7,7 @@ import NotebookCore
 /// can be replaced in the transient lane; mutations survive in SQLite by ID.
 @MainActor @Observable
 final class NotebookChatController {
-  var expanded = false { didSet { if !expanded { stopDictation(); activities = [:]; enqueue(.activity(threadIDs: [])) } } }
+  var expanded = false { didSet { if !expanded { stopDictation(); activities = [:]; conversationSubscription = nil; enqueue(.activity(threadIDs: [])) } else { nextConversation = .now } } }
   var browsesChats = false
   private(set) var projects: [CodexProject] = []
   private(set) var projectCursor: String?
@@ -52,6 +52,9 @@ final class NotebookChatController {
   @ObservationIgnored private var queries: [NotebookChatQuery] = []
   @ObservationIgnored private var deliveryIndex = 0
   @ObservationIgnored private var displayedCatalogueCursor: String?
+  @ObservationIgnored private var conversationSubscription: UUID?
+  @ObservationIgnored private var subscriptionRevision: Int?
+  @ObservationIgnored private var nextConversation = ContinuousClock.now
   @ObservationIgnored private var offeredJobs = Set<UUID>()
   @ObservationIgnored private var savingInput: NotebookChatInput?
 
@@ -69,7 +72,7 @@ final class NotebookChatController {
       loaded = true
       loop = Task { [weak self] in
         guard let self else { return }
-        var pollConversation = true
+        var deliverJobs = true
         var nextActivity = ContinuousClock.now, nextCatalogue = ContinuousClock.now
         while !Task.isCancelled {
           if connected {
@@ -77,23 +80,26 @@ final class NotebookChatController {
             let outgoing = jobs.reversed().filter { !$0.isTerminal }
             offeredJobs.formIntersection(outgoing.map(\.id))
             if !queries.isEmpty { query = queries.removeFirst() }
-            else if !outgoing.isEmpty, !pollConversation || !expanded {
+            else if !outgoing.isEmpty, deliverJobs || !expanded {
               // First admission follows the saved order even when earlier jobs
               // complete and disappear during delivery. Receipt polling is fair
               // only after every pending input has reached the Mac at least once.
               let next = outgoing.first { !offeredJobs.contains($0.id) } ?? outgoing[deliveryIndex % outgoing.count]
-              query = .job(next.input); deliveryIndex &+= 1; pollConversation = true
+              query = .job(next.input); deliveryIndex &+= 1
             } else if expanded, .now >= nextActivity, !tasks.isEmpty {
               query = .activity(threadIDs: tasks.map(\.id)); nextActivity = .now + .seconds(2)
             } else if expanded, (threadID == nil || browsesChats), .now >= nextCatalogue {
               query = .catalogue(cursor: displayedCatalogueCursor, project: selectedProject); nextCatalogue = .now + .seconds(10)
-            } else if expanded, !browsesChats, let threadID { query = .conversation(threadID: threadID); pollConversation = false }
+            } else if expanded, !browsesChats, let threadID, .now >= nextConversation {
+              query = .conversation(threadID: threadID); nextConversation = .now + .seconds(10)
+            }
             else { query = outgoing.first.map { .job($0.input) } }
             if let query {
               do { try await accept(try await request(query), for: query) }
               catch { if !Task.isCancelled { self.error = error.localizedDescription } }
             }
           }
+          deliverJobs.toggle()
           do { try await Task.sleep(for: .milliseconds(600)) } catch { break }
         }
       }
@@ -110,17 +116,22 @@ final class NotebookChatController {
 
   func connect(_ id: UUID) {
     guard peer == nil || peer == id else { return }
-    if !connected { offeredJobs.removeAll() }
+    if !connected { offeredJobs.removeAll(); conversationSubscription = nil; nextConversation = .now }
     peer = id; connected = true; persistPanel()
     if tasks.isEmpty { catalogue(); catalogueProjects() }
   }
   func disconnect(_ id: UUID) {
     guard peer == id else { return }
-    connected = false; activities = [:]; retry?.cancel()
+    connected = false; activities = [:]; retry?.cancel(); conversationSubscription = nil
     pending?.1.resume(throwing: NotebookTransportError.disconnected); pending = nil
   }
   func receive(_ envelope: NotebookChatEnvelope, peerID: UUID) {
-    guard connected, peer == peerID, pending?.0.id == envelope.id, case .reply(let reply) = envelope.body else { return }
+    guard connected, peer == peerID, envelope.isValid(from: peerID) else { return }
+    if case .event(let subscription, let value) = envelope.body {
+      guard subscription == conversationSubscription, value.threadID == threadID else { return }
+      acceptConversation(value); return
+    }
+    guard pending?.0.id == envelope.id, case .reply(let reply) = envelope.body else { return }
     let completion = pending?.1; pending = nil; retry?.cancel(); retry = nil
     completion?.resume(returning: reply)
   }
@@ -136,6 +147,7 @@ final class NotebookChatController {
   func older() { guard let threadID else { return }; enqueue(.history(threadID: threadID, cursor: historyCursor)) }
   func select(_ task: CodexTask) {
     stopDictation()
+    nextConversation = .now; conversationSubscription = nil
     threadID = task.id; continuationUnavailable = false; browsesChats = false; conversation = nil; history = []; historyCursor = nil
     persistPanel(); enqueue(.history(threadID: task.id, cursor: nil))
   }
@@ -155,7 +167,7 @@ final class NotebookChatController {
     guard edit.isValid else { return false }
     return await submit(.updateProject(edit))
   }
-  func create() async { stopDictation(); _ = await submit(.create(title: "Занятие в Notebook")) }
+  func create() async { stopDictation(); _ = await submit(.create(title: "Занятие в Notebook", project: selectedProject)) }
 
   func startDictation() {
     guard loaded, !stopped, dictationTask == nil, !saving else { return }
@@ -191,9 +203,10 @@ final class NotebookChatController {
       writesDictation = true; draft = next; writesDictation = false; dictationWritten = next
     }
   }
-  func sendMessage(threadID submittedThread: String, text: String, context: String, attentionContextID: UUID? = nil) async -> Bool {
+  func sendMessage(threadID submittedThread: String, text: String, context: String, attentionContextID: UUID? = nil, steeringTurnID: String? = nil) async -> Bool {
     guard submittedThread != threadID || (!continuationUnavailable && !browsesChats && dictationStatus == nil) else { return false }
-    if await submit(.send(threadID: submittedThread, text: text, context: context), attentionContextID: attentionContextID) {
+    let action: NotebookChatAction = steeringTurnID.map { .steer(threadID: submittedThread, turnID: $0, text: text, context: context) } ?? .send(threadID: submittedThread, text: text, context: context)
+    if await submit(action, attentionContextID: attentionContextID) {
       if draft == text, threadID == submittedThread { draft = "" }; return true
     }
     return false
@@ -213,7 +226,7 @@ final class NotebookChatController {
   /// durable outbox, not a second conversation: a native client ID replaces it.
   var pendingMessages: [NotebookChatJob] {
     jobs.reversed().filter { job in
-      guard !job.isTerminal, case .send(let thread, _, _) = job.input.action, thread == threadID else { return false }
+      guard !job.isTerminal, let (thread, _, _) = job.input.action.message, thread == threadID else { return false }
       return conversation?.acceptedMessages[job.id.uuidString.lowercased()] == nil
     }
   }
@@ -271,6 +284,7 @@ final class NotebookChatController {
   private func request(_ query: NotebookChatQuery) async throws -> NotebookChatReply {
     guard pending == nil, connected, let peer else { throw NotebookTransportError.disconnected }
     let envelope = NotebookChatEnvelope(body: .request(query))
+    if case .conversation = query { conversationSubscription = envelope.id; subscriptionRevision = nil }
     return try await withCheckedThrowingContinuation { continuation in
       pending = (envelope, continuation)
       retry = Task { [weak self] in
@@ -284,6 +298,11 @@ final class NotebookChatController {
       }
     }
   }
+  private func acceptConversation(_ value: CodexConversation) {
+    guard subscriptionRevision == nil || value.revision >= subscriptionRevision! else { return }
+    subscriptionRevision = value.revision; conversation = value; continuationUnavailable = false; error = nil
+  }
+
   private func accept(_ reply: NotebookChatReply, for query: NotebookChatQuery) async throws {
     switch (query, reply) {
     case (.job(let input), .job(let job)):
@@ -315,7 +334,7 @@ final class NotebookChatController {
       tasks = page.tasks; taskCursor = page.nextCursor; defaultProviderNeedsSignIn = page.defaultProviderNeedsSignIn; error = nil
     case (.conversation(let id), .conversation(let value)):
       guard value.threadID == id else { throw NotebookTransportError.invalidAcknowledgement }
-      if threadID == id { conversation = value; continuationUnavailable = false; error = nil }
+      if threadID == id { acceptConversation(value) }
     case (.conversation(let id), .conversationUnavailable(let thread, let reason)):
       guard id == thread else { throw NotebookTransportError.invalidAcknowledgement }
       if threadID == id { continuationUnavailable = true; error = reason }

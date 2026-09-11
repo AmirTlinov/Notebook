@@ -17,6 +17,8 @@ import notebook_release as release
 ROOT = Path(__file__).resolve().parents[1]
 UI = "NotebookUITests/DrawingResponsivenessTests/"
 PROFILES = {
+    "chat-transport": {"core": ["NotebookChatStoreTests"], "ipad": ["NotebookTests/NotebookTransportSessionTests/testCodexEnvelopeUsesTheSameAuthenticatedPeerAndReceiptID"]},
+    "codex": {"core": ["NotebookCodexTests"]},
     "chat": {
         "core": ["NotebookChatStoreTests"],
         "mac": ["NotebookMacTests/NotebookChatRenderingTests", "NotebookMacTests/NotebookCodexSidecarTests"],
@@ -97,6 +99,8 @@ def owners(path):
     if path.startswith("MCP/"):
         return ["mcp"]
     name = Path(path).name
+    if path.startswith(("Sources/NotebookCodex/", "Tests/NotebookCodexTests/", "Tests/NotebookCodexBridgeHarness/")):
+        return ["codex"]
     if name in ("DocumentPagePreparation.swift", "SpatialInkSurfaceView.swift", "SpatialBoardInkHandoff.swift") or path == "Applications/TestSupport/DocumentLargeSourceTests.swift":
         return ["paper-resources"]
     if path == "Applications/iPad/SpatialWorkspaceView.swift":
@@ -107,7 +111,7 @@ def owners(path):
         return ["chat", "chat-touch"]
     if name in ("NotebookRootView.swift", "NotebookCollaborationView.swift", "NotebookChatWindow.swift"):
         return ["chat", "chat-touch", "workspace-controls"]
-    if "Chat" in name or name in ("NotebookCodexSidecar.swift", "CodexWireProjection.swift", "CodexDesktopFrames.swift"):
+    if "Chat" in name or name in ("NotebookCodexSidecar.swift",):
         return ["chat"]
     if name in ("IPadPageTurnController.swift", "PageTurnSurface.swift"):
         return ["documents", "page-turn"]
@@ -235,7 +239,10 @@ def validate_executed_tests(tree, selectors):
 def validate_selected(source, evidence, receipt):
     release.require(receipt.get("format") == 1 and receipt.get("status") == "passed", "Выбранный маршрут не завершён.")
     plan = release.read_json(evidence / "selection.json")
-    release.require(not plan["unclassified"], "Для этих исходников область проверки выпуска не определена.")
+    release.require(not plan["unclassified"] or plan["manualSelection"],
+                    "Для этих исходников явно выберите достаточные --profile/--test.")
+    release.require(not set(plan["unclassified"]) & {"Applications/iPad/SimulatorDrawingFixture.swift", "Applications/UITests/DrawingResponsivenessTests.swift"},
+                    "Изменённая UI-фикстура требует названного жестового сценария.")
     release.require(receipt["source"] == release.source_inputs(source)
                     == release.read_json(evidence / "source-before.json") == release.read_json(evidence / "source-after.json"),
                     "Выбранные проверки выполнялись на других исходниках.")

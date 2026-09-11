@@ -16,6 +16,39 @@ struct NotebookChatStoreTests {
     .init(id: id, author: author, action: .send(threadID: "00000000-0000-0000-0000-000000000001", text: text, context: ""), createdAt: Date(timeIntervalSince1970: 100))
   }
 
+  @Test func currentStoredCreationWithoutProjectStillDecodesAndOlderWireVersionRefuses() throws {
+    let action = try JSONDecoder().decode(NotebookChatAction.self, from: Data(#"{"create":{"title":"Task"}}"#.utf8))
+    #expect(action == .create(title: "Task", project: nil))
+    let packet = NotebookTransportPacket(sequence: 1, message: .transient(.codex(.init(body: .reply(.failure("notice"))))))
+    let bytes = try JSONEncoder().encode(packet)
+    var object = try JSONSerialization.jsonObject(with: bytes) as! [String: Any]
+    object["version"] = 2
+    #expect(throws: NotebookTransportError.unsupportedVersion) {
+      try NotebookTransportFraming.decode(JSONSerialization.data(withJSONObject: object))
+    }
+  }
+
+  @Test func steeringClearsOnlyItsOwnDraftAndKeepsItsIdentityAndTurn() throws {
+    try fixture { store, author in
+      let thread = UUID().uuidString, turn = UUID().uuidString
+      try store.saveChatPanel(.init(threadID: thread, draft: "clarify", sidecarID: nil), author: author)
+      let input = NotebookChatInput(author: author, action: .steer(threadID: thread, turnID: turn, text: "clarify", context: "source"))
+      let saved = try store.saveChatSubmission(input)
+      #expect(try store.chatPanel(author: author).draft.isEmpty)
+      #expect(try store.saveChatInput(input) == saved)
+      #expect(try JSONDecoder().decode(NotebookChatInput.self, from: JSONEncoder().encode(input)) == input)
+      _ = try store.advanceChatJob(input.id, from: .saved, to: .attempting)
+      #expect(try store.advanceChatJob(input.id, from: .attempting, to: .accepted, result: .turn(turn)).isValid)
+    }
+  }
+  @Test func conversationEventsCannotCoalesceAwayADeliveryReply() throws {
+    let state = CodexConversation(threadID: UUID().uuidString, revision: 1, title: "Task", ready: true, busy: false, activeTurnID: nil,
+      messages: [], requests: [], acceptedMessages: [:], turnStatuses: [:])
+    let event = NotebookTransportTransient.codex(.init(body: .event(subscriptionID: UUID(), conversation: state)))
+    let response = NotebookTransportTransient.codex(.init(body: .reply(.conversation(state))))
+    #expect(response.priority < event.priority)
+  }
+
   @Test func projectEditIsNativeScopedAndReplaysTheSameDurableReceipt() throws {
     try fixture { store, author in
       let edit = CodexProjectEdit(id: "native-project", name: "New name", roots: nil)

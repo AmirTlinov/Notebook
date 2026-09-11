@@ -2046,7 +2046,9 @@ final class NotebookAppModel {
         let directory = FileManager.default.homeDirectoryForCurrentUser
           .appendingPathComponent("Library/Application Support/Notebook/Codex", isDirectory: true)
         let sidecar = NotebookCodexSidecar(persistence: persistence, installation: installation,
-          workspaceID: workspaceID, directory: directory)
+          workspaceID: workspaceID, directory: directory) { [weak self] envelope, peer in
+            self?.sync?.sendTransient(.codex(envelope), to: peer)
+          }
         codexSidecar = sidecar; sidecar.start(); agentStartupError = nil
       } catch { agentStartupError = NotebookCodexSidecar.message(error) }
     }
@@ -2216,10 +2218,12 @@ final class NotebookAppModel {
   #if os(iOS)
     /// Selection narrows attention, not the agent's tool authority. This value
     /// captures the physical owner and camera before any save/network suspension.
-    @discardableResult func sendChatMessage() -> Task<Void, Never>? {
+    @discardableResult func sendChatMessage(steering: Bool = false) -> Task<Void, Never>? {
       guard !isClosing, let chat, let submittedThread = chat.threadID, !isSavingAgentQuestion,
         !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
       let submittedText = chat.draft
+      let submittedTurn = steering ? chat.conversation?.activeTurnID : nil
+      if steering && submittedTurn == nil { return nil }
       isSavingAgentQuestion = true
       let question = agentQuestion
       let retained = question.flatMap { q in pinnedAttentionSelections.first { $0.0 == q.contextID }?.1 }
@@ -2250,7 +2254,7 @@ final class NotebookAppModel {
             "meaning": .string("Read frozen attention via notebook_read_attention(context_id, reference_id). Shared Notebook workspace. Selection directs attention, not permissions. Use Notebook tools for source/version checks, undoable edits and delivery receipts. Do not move the camera.")
           ])
           let text = String(decoding: try JSONEncoder().encode(context), as: UTF8.self)
-          _ = await chat.sendMessage(threadID: submittedThread, text: submittedText, context: text, attentionContextID: question?.contextID)
+          _ = await chat.sendMessage(threadID: submittedThread, text: submittedText, context: text, attentionContextID: question?.contextID, steeringTurnID: submittedTurn)
         } catch { agentRequestError = error.localizedDescription }
       }
       chatSubmissionTask = task

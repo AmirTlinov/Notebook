@@ -33,7 +33,7 @@ extension NotebookStore {
   public func saveChatSubmission(_ input: NotebookChatInput) throws -> NotebookChatJob {
     try commandTransaction(advancesReadRevision: false) {
       let job = try saveChatInput(input)
-      if case .send(let thread, let text, _) = input.action {
+      if let (thread, text, _) = input.action.message {
         var panel = try chatPanel(author: input.author)
         if panel.threadID == thread, panel.draft == text {
           panel.draft = ""; try saveChatPanel(panel, author: input.author)

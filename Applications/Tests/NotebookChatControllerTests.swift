@@ -4,6 +4,51 @@ import XCTest
 
 @MainActor
 final class NotebookChatControllerTests: XCTestCase {
+  func testEventsBelongToCurrentPeerSubscriptionAndCannotOverwriteNewerText() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-chat-events-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), author = UUID(), peer = UUID(), thread = UUID().uuidString
+    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let queue = NotebookPersistenceQueue(store: store)
+    var controller: NotebookChatController!
+    var subscription: UUID?
+    let subscribed = expectation(description: "Native conversation subscription")
+    func snapshot(_ revision: Int) -> CodexConversation {
+      .init(threadID: thread, revision: revision, title: "Task", ready: true, busy: false, activeTurnID: nil,
+        messages: [.init(id: "native", turnID: "turn", clientID: nil, role: .assistant, text: "revision \(revision)")],
+        requests: [], acceptedMessages: [:], turnStatuses: [:])
+    }
+    controller = .init(persistence: queue, author: author) { envelope, _ in
+      guard case .request(let query) = envelope.body else { return XCTFail("Expected request") }
+      let reply: NotebookChatReply
+      switch query {
+      case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil, defaultProviderNeedsSignIn: false))
+      case .projects: reply = .projects(.init(projects: [], nextCursor: nil))
+      case .history: reply = .history(.init(messages: [], nextCursor: nil))
+      case .activity: reply = .activity([])
+      case .conversation:
+        subscription = envelope.id
+        controller.receive(.init(body: .event(subscriptionID: envelope.id, conversation: snapshot(3))), peerID: peer)
+        reply = .conversation(snapshot(2)); subscribed.fulfill()
+      default: return XCTFail("No work was submitted")
+      }
+      controller.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
+    }
+    await controller.start(); controller.select(.init(id: thread, title: "Task", cwd: "/tmp"))
+    controller.expanded = true; controller.draft = "retained"; controller.connect(peer)
+    await fulfillment(of: [subscribed], timeout: 6)
+    try await Task.sleep(for: .milliseconds(50))
+    let id = try XCTUnwrap(subscription)
+    XCTAssertEqual(controller.conversation?.revision, 3, "Older query reply cannot replace a newer event")
+    controller.receive(.init(body: .event(subscriptionID: id, conversation: snapshot(4))), peerID: UUID())
+    controller.receive(.init(body: .event(subscriptionID: UUID(), conversation: snapshot(4))), peerID: peer)
+    XCTAssertEqual(controller.conversation?.revision, 3)
+    controller.disconnect(peer); controller.connect(peer)
+    controller.receive(.init(body: .event(subscriptionID: id, conversation: snapshot(5))), peerID: peer)
+    XCTAssertEqual(controller.conversation?.revision, 3); XCTAssertEqual(controller.draft, "retained")
+    await controller.stop(); let saved = await queue.flush(); XCTAssertTrue(saved)
+  }
+
   func testOfflineQueueAdmitsInOrderWhileEarlierReceiptsDisappearAndNeverChangesIDs() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-chat-delivery-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
