@@ -64,7 +64,10 @@ struct SceneCompositionPlan: Sendable {
   var primitiveCount: Int { tiles.count + liveOwners.count + inkBoardIDs.count }
   /// Every resource retry removes an optional owner or a static tile. Keeping
   /// this integer strictly decreasing bounds preparation without a timer retry.
-  var reductionPotential: Int { liveOwners.count - protectedOwners.count + tiles.count }
+  private var coverageTileCount: Int {
+    bands.reduce(0) { $0 + (coverage[$1.plane]?.tiles.count ?? 0) }
+  }
+  var reductionPotential: Int { liveOwners.count - protectedOwners.count + coverageTileCount }
   var nativeOwnerCount: Int {
     inkBoardIDs.count + liveOwners.filter { if case .item = $0.id { return true }; return false }.count
   }
@@ -75,6 +78,18 @@ struct SceneCompositionPlan: Sendable {
     return peers.firstIndex(of: owner).map { Double($0 * 2 + 1) }
   }
   func allowsLive(_ id: WorkspaceSpatialID, in plane: SceneCompositionPlane) -> Bool { rank(id: id, in: plane) != nil }
+
+  /// Coverage and painter boundaries remain intact even where this exact
+  /// source revision proves transparent pixels need no backing allocation.
+  func removingEmptyTiles(source: SceneCompositionSource) async throws -> Self {
+    guard source.revision == revision, source.workspaceID == workspaceID else {
+      throw NotebookStorageError.transactionConflict
+    }
+    let populated = try await source.tilesRequiringPaint(tiles)
+    return .init(revision: revision, workspaceID: workspaceID, rootBoardID: rootBoardID,
+      inkBoardIDs: inkBoardIDs, liveOwners: liveOwners, protectedOwners: protectedOwners,
+      bands: bands, coverage: coverage, presentations: presentations, tiles: populated)
+  }
 
   static func prepare(source: SceneCompositionSource, presence: SessionPresence, frame: WorkspaceSceneFrame,
     pinned: Set<WorkspaceSpatialID>, displayScale: Double, previous: Self?) async throws -> Self {
@@ -155,14 +170,14 @@ struct SceneCompositionPlan: Sendable {
   /// pinned source rasters keep their own density; exact export is independent.
   func coarseningCoverage(presence: SessionPresence, frame: WorkspaceSceneFrame,
     displayScale: Double) throws -> Self? {
-    guard tiles.count > 1 else { return nil }
+    guard coverageTileCount > 1 else { return nil }
     do {
       let result = try Self.assemble(revision: revision, workspaceID: workspaceID,
         owners: liveOwners, presence: presence, frame: frame,
         pinned: Set(protectedOwners.map(\.id)), protected: protectedOwners,
         displayScale: displayScale, previous: self, preservesCoverageDensity: true,
-        tileAllowance: tiles.count - 1)
-      guard result.tiles.count < tiles.count, result.liveOwners == liveOwners,
+        tileAllowance: coverageTileCount - 1)
+      guard result.coverageTileCount < coverageTileCount, result.liveOwners == liveOwners,
         result.protectedOwners == protectedOwners else { return nil }
       return result
     } catch SceneRenderError.resourceLimit { return nil }
@@ -397,6 +412,9 @@ final class SceneCompositionTiles {
         let previous = self?.published
         let maximumAttempts = plan.reductionPotential + 1
         for attempt in 0..<maximumAttempts {
+          try Task.checkCancellation()
+          guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
+          plan = try await plan.removingEmptyTiles(source: source)
           try Task.checkCancellation()
           guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
           self?.preparingPlan = plan

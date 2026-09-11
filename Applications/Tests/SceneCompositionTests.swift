@@ -6,6 +6,92 @@ import XCTest
 
 final class SceneCompositionTests: XCTestCase {
   @MainActor
+  func testMixedPaperCoversPublishInLandscapeWithoutDroppingTheirInputOwners() async throws {
+    let actor = UUID(), stamp = VersionStamp(counter: 0, actor: actor)
+    let notebook = WorkspaceItem.notebook(title: "Notebook", pageIDs: [UUID()])
+    let document = WorkspaceItem.document(title: "A4 document")
+    let workspace = WorkspaceIndex(items: [notebook, document], selectedItemID: document.id,
+      selectedPageID: nil, stamp: stamp)
+    let board = BoardDocument(freeItems: [
+      .init(itemID: notebook.id, center: .zero, zIndex: 0, stamp: stamp),
+      .init(itemID: document.id, center: .init(x: 1016, y: 792), zIndex: 1, stamp: stamp)
+    ], stamp: stamp)
+    let hierarchy = BoardHierarchy(rootBoardID: workspace.rootBoardID,
+      boards: [.init(id: workspace.rootBoardID, board: board)], stamp: stamp)
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [document.id: .a4])
+    let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
+      camera: .init(center: .init(x: 640, y: -1890), scale: 0.1425), viewport: .init(x: 1194, y: 834))
+    let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil })
+    var journal = SpatialInkJournal(stamp: stamp)
+    for surface in [SurfaceID.board(workspace.rootBoardID), .cover(notebook.id), .cover(document.id)] {
+      XCTAssertNotNil(journal.append(tool: .pen, spans: [.init(surface: surface, samples: [100.0, 200].enumerated().map { index, x in
+        .init(point: .init(x: x, y: 100), worldPoint: surface.kind == .board ? .init(x: x, y: 100) : nil, timeOffset: Double(index) / 10,
+          width: 4, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+      })], actor: actor))
+    }
+    let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: journal)
+    let resources = SceneRenderResources(), registry = SpatialInkSurfaceRegistry()
+    let tiles = SceneCompositionTiles(resources: resources, surfaceRegistry: registry)
+    addTeardownBlock { @MainActor in await tiles.stop(); await registry.stopSceneInk() }
+    tiles.prepare(source: source, presence: presence, frame: frame, pinned: [], displayScale: 2)
+    let deadline = ContinuousClock.now + .seconds(10)
+    while tiles.published == nil, tiles.failure == nil, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    let cohort = try XCTUnwrap(tiles.published, tiles.failure ?? "The mixed paper scene must publish: \(tiles.budgetFailures)")
+    XCTAssertTrue(cohort.rasters.isEmpty, "Empty painter ranges must not consume the space needed by real paper ink")
+    for item in [notebook, document] {
+      XCTAssertTrue(cohort.plan.allowsLive(.item(item.id), in: .board(presence.boardID)))
+      let owner = try XCTUnwrap(cohort.nativeInk.owners[.cover(item.id)])
+      XCTAssertEqual(owner.canvas.contentScaleFactor, 2)
+      XCTAssertGreaterThan(owner.canvas.spatialDrawableAccountedBytes, 0, "Already drawn ink must own real backing")
+      XCTAssertTrue(owner.canvas.isStableFramePresented)
+    }
+    XCTAssertLessThanOrEqual(resources.peakAccountedBytes, 256 * 1024 * 1024)
+  }
+
+  @MainActor
+  func testEmptyTileProofKeepsCoverageAndUnknownPagesKeepTheirPainter() async throws {
+    let empty = Fixture(count: 0)
+    let original = try await SceneCompositionPlan.prepare(source: empty.source(), presence: empty.presence,
+      frame: empty.frame(), pinned: [], displayScale: 2, previous: nil)
+    XCTAssertFalse(original.tiles.isEmpty)
+    let sparse = try await original.removingEmptyTiles(source: empty.source())
+    XCTAssertTrue(sparse.tiles.isEmpty)
+    XCTAssertEqual(sparse.coverage, original.coverage)
+    XCTAssertEqual(sparse.bands.map(\.id), original.bands.map(\.id))
+    XCTAssertEqual(sparse.reductionPotential, original.reductionPotential,
+      "Empty pixels cannot spend or reset the geometric retry bound")
+    do {
+      _ = try await original.removingEmptyTiles(source: empty.source(revision: 1))
+      XCTFail("A different source revision cannot prove these tiles empty")
+    } catch NotebookStorageError.transactionConflict { }
+
+    let dense = Fixture(count: 100)
+    let last = ScenePaintPosition(layer: .elements, zIndex: 0, key: dense.elements[98].id)
+    let tile = try XCTUnwrap(CompositionTile(containing: .zero, level: 0))
+    let key = dense.key(tile: tile, range: .init(layer: .elements, lower: last, upper: nil))
+    let retained = try await dense.source().tilesRequiringPaint([key])
+    XCTAssertEqual(retained, [key], "Two pages without a match do not prove the remaining source absent")
+  }
+
+  @MainActor
+  func testEmptyTileProofRetainsACoverWhoseShadowCrossesTheBoundary() async throws {
+    let fixture = Fixture(count: 0), item = fixture.workspace.items[0]
+    let tile = try XCTUnwrap(CompositionTile(containing: .zero, level: 0))
+    let board = BoardDocument(freeItems: [.init(itemID: item.id,
+      center: tile.bounds.maximum.offsetBy(x: WorkspaceItemGeometry.notebook.width / 2 + 50, y: -256),
+      zIndex: 0, stamp: fixture.workspace.stamp)], stamp: fixture.workspace.stamp)
+    let hierarchy = BoardHierarchy(rootBoardID: fixture.workspace.rootBoardID,
+      boards: [.init(id: fixture.workspace.rootBoardID, board: board)], stamp: board.stamp)
+    let index = WorkspaceSceneIndex(workspace: fixture.workspace, hierarchy: hierarchy, paperSizes: [:])
+    let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: fixture.journal)
+    let key = fixture.key(tile: tile, range: .whole(.covers))
+    let retained = try await source.tilesRequiringPaint([key])
+    XCTAssertEqual(retained, [key], "Paper outside the tile can still cast visible pixels inside it")
+  }
+
+  @MainActor
   func testSmallStackKeepsBothPhysicalCoversUnderTheSharedBudget() async throws {
     let actor = UUID(), stamp = VersionStamp(counter: 0, actor: actor)
     let lower = WorkspaceItem.notebook(id: UUID(), title: "Lower", pageIDs: [UUID()])
@@ -131,7 +217,7 @@ final class SceneCompositionTests: XCTestCase {
     let workspace = WorkspaceIndex(items: [portal], selectedItemID: childID, selectedPageID: nil, stamp: stamp)
     let elements: [SpatialElement] = (0..<10).map { offset in
       .init(id: "portal-marker-\(offset)", surface: .board(childID), kind: .web,
-        frame: .init(x: 0, y: 0, width: 400, height: 300),
+        frame: .init(x: 0, y: 0, width: 800, height: 600),
         worldOrigin: .init(x: Double(offset % 3) * 500, y: Double(offset / 3) * 400),
         source: "Visible portal marker", html: "<svg width='100%' height='100%' viewBox='0 0 400 300'><circle cx='200' cy='150' r='65' fill='#ed2020'/></svg>",
         stamp: stamp)
@@ -192,15 +278,17 @@ final class SceneCompositionTests: XCTestCase {
   }
 
   @MainActor
-  func testColdCacheMissDoesNotRequireDecodeScratchBeforeRenderingAnEmptyTile() async throws {
+  func testColdCacheMissDoesNotRequireDecodeScratchBeforeRenderingAStaticTile() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
-    let fixture = Fixture(count: 0, side: 256)
+    let fixture = Fixture(count: 8, side: 32, kind: .nativeText)
     let presence = SessionPresence(mode: .board, camera: .init(), viewport: .init(x: 256, y: 256))
     let frame = WorkspaceSceneFrame(index: fixture.index, presence: presence, portalCamera: { _ in nil })
     let source = fixture.source()
-    let plan = try await SceneCompositionPlan.prepare(source: source, presence: presence, frame: frame,
+    let fullPlan = try await SceneCompositionPlan.prepare(source: source, presence: presence, frame: frame,
       pinned: [], displayScale: 2, previous: nil)
+    let plan = try await fullPlan.removingEmptyTiles(source: source)
+    XCTAssertFalse(plan.tiles.isEmpty, "The eighth source remains in the static painter")
     let tileBytes = try XCTUnwrap(SceneRenderResources.estimatedRasterBytes(pixelWidth: 512, pixelHeight: 512))
     let finalBytes = tileBytes * plan.tiles.count
     // The whole result and a clipped artwork fit. An unconditional last-tile
@@ -617,7 +705,7 @@ final class SceneCompositionTests: XCTestCase {
 
   @MainActor
   func testCancellationAfterTheFirstCandidateTileKeepsTheWholePreviousCohortAndLeases() async throws {
-    let fixture = Fixture(count: 0)
+    let fixture = Fixture(count: 8, side: 32, kind: .nativeText)
     // Old complete coverage and the first unpublished candidate coexist. This
     // test exercises cancellation, not intentional resource admission failure.
     let resources = SceneRenderResources(byteLimit: 128 * 1024 * 1024)
@@ -642,7 +730,7 @@ final class SceneCompositionTests: XCTestCase {
 
   @MainActor
   func testStopDrainsSupersededPreparationAndRejectsNewWork() async throws {
-    let fixture = Fixture(count: 0)
+    let fixture = Fixture(count: 8, side: 32, kind: .nativeText)
     let resources = SceneRenderResources(byteLimit: 128 * 1024 * 1024)
     let coordinator = SceneCompositionTiles(resources: resources)
     coordinator.prepare(source: fixture.source(), presence: fixture.presence, frame: fixture.frame(), pinned: [])
@@ -674,7 +762,7 @@ final class SceneCompositionTests: XCTestCase {
 
   @MainActor
   func testStopReleasesEveryRasterAfterTheLastShownCohortReferenceEnds() async throws {
-    let fixture = Fixture(count: 0)
+    let fixture = Fixture(count: 8, side: 32, kind: .nativeText)
     let resources = SceneRenderResources(byteLimit: 128 * 1024 * 1024)
     let coordinator = SceneCompositionTiles(resources: resources)
     coordinator.prepare(source: fixture.source(), presence: fixture.presence, frame: fixture.frame(), pinned: [])
@@ -769,12 +857,13 @@ final class SceneCompositionTests: XCTestCase {
     let index: WorkspaceSceneIndex
     let elements: [SpatialElement]
     let presence: SessionPresence
-    init(count: Int, side: Double = 512, html: String = "<div/>", origin: WorldPoint = .zero) {
+    init(count: Int, side: Double = 512, html: String = "<div/>", origin: WorldPoint = .zero,
+      kind: SpatialElementKind = .web) {
       let actor = UUID(), stamp = VersionStamp(counter: 0, actor: UUID())
       let item = WorkspaceItem.notebook(title: "Offscreen fixture owner", pageIDs: [UUID()])
       workspace = .init(items: [item], selectedItemID: item.id, selectedPageID: item.pageIDs[0], stamp: stamp)
       elements = (0..<count).map { offset in
-        SpatialElement(id: String(format: "element-%06d", offset), surface: .board, kind: .web,
+        SpatialElement(id: String(format: "element-%06d", offset), surface: .board, kind: kind,
           frame: .init(x: 0, y: 0, width: side, height: side), worldOrigin: origin,
           source: "source \(offset)", html: html, stamp: .init(counter: 0, actor: actor))
       }

@@ -350,6 +350,35 @@ actor SceneCompositionSource {
     }
   }
 
+  /// A complete, same-revision addressed read can prove a painter range empty.
+  /// An unfinished cursor is unknown, never absence. At most two 32-entry
+  /// pages per tile are inspected; dense sources keep the ordinary painter.
+  func tilesRequiringPaint(_ tiles: [SceneCompositionTileKey]) throws -> [SceneCompositionTileKey] {
+    var retained: [SceneCompositionTileKey] = []
+    for tile in tiles {
+      try Task.checkCancellation()
+      if tile.range.layer == .ink { retained.append(tile); continue }
+      // Board painting also reaches covers whose shadows cross the tile edge.
+      // One output pixel conservatively includes projection rounding at edges.
+      let padding = (tile.plane.coverID == nil ? WorkspaceCoverRaster.shadowPadding : 0)
+        + tile.tile.worldSize / Double(CompositionTile.pixelSize)
+      let bounds = WorkspaceSpatialBounds(origin: tile.tile.origin.offsetBy(x: -padding, y: -padding),
+        width: tile.tile.worldSize + 2 * padding, height: tile.tile.worldSize + 2 * padding)
+      var cursor: SceneCompositionReadCursor?
+      var mayPaint = true
+      for _ in 0..<2 {
+        let page = try readPaintOrder(boardID: tile.plane.boardID, coverID: tile.plane.coverID,
+          bounds: bounds, after: cursor)
+        if page.entries.contains(where: tile.range.contains) { break }
+        cursor = page.next
+        if cursor == nil { mayPaint = false; break }
+      }
+      if mayPaint { retained.append(tile) }
+    }
+    try validate()
+    return retained
+  }
+
   func position(id: WorkspaceSpatialID, boardID: UUID, coverID: UUID? = nil) throws -> ScenePaintPosition? {
     switch origin {
     case .sql(let store):
