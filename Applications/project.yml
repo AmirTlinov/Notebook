@@ -53,8 +53,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook
         PRODUCT_NAME: Notebook
         NOTEBOOK_DISPLAY_NAME: Notebook
-        MARKETING_VERSION: 0.3.15
-        CURRENT_PROJECT_VERSION: 18
+        MARKETING_VERSION: 0.3.16
+        CURRENT_PROJECT_VERSION: 19
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: VUNH73AYPY
         TARGETED_DEVICE_FAMILY: 2
@@ -142,8 +142,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook.mac
         PRODUCT_NAME: Notebook
-        MARKETING_VERSION: 0.3.15
-        CURRENT_PROJECT_VERSION: 18
+        MARKETING_VERSION: 0.3.16
+        CURRENT_PROJECT_VERSION: 19
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: VUNH73AYPY
         GENERATE_INFOPLIST_FILE: false

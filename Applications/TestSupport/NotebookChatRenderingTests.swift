@@ -27,9 +27,27 @@ final class NotebookChatRenderingTests: XCTestCase {
     XCTAssertEqual(unsafe, false)
     let errors = try await web.evaluateJavaScript("document.querySelectorAll('[data-mml-node=merror]').length") as? Int
     XCTAssertEqual(errors, 0)
-    let update = #"[{"role":"assistant","text":"Готово: $2+2=4$"}]"#
+    let update = #"[{"role":"user","text":"Покажи формулу"},{"role":"assistant","text":"Готово: $2+2=4$"}]"#
     _ = try await web.callAsyncJavaScript("await window.showMessages(json)", arguments: ["json":update], in:nil, contentWorld:.page)
     let articles = try await web.evaluateJavaScript("document.querySelectorAll('article').length") as? Int
-    XCTAssertEqual(articles, 1, "Updates replace the bounded display, not the canonical conversation")
+    XCTAssertEqual(articles, 2, "Updates replace the bounded display, not the canonical conversation")
+    let style = try await web.evaluateJavaScript("""
+      (() => {
+        const user=document.querySelector('article[data-role=user] .content');
+        const assistant=document.querySelector('article[data-role=assistant] .content');
+        return {font:getComputedStyle(document.body).fontSize,
+          userBackground:getComputedStyle(user).backgroundColor,
+          userRadius:getComputedStyle(user).borderRadius,
+          assistantBackground:getComputedStyle(assistant).backgroundColor,
+          labels:[...document.querySelectorAll('.role')].map(x=>x.textContent),
+          overflow:document.documentElement.scrollWidth>innerWidth};
+      })()
+      """) as? [String: Any]
+    XCTAssertEqual(style?["font"] as? String, "15px")
+    XCTAssertEqual(style?["userBackground"] as? String, "rgb(243, 243, 243)")
+    XCTAssertEqual(style?["userRadius"] as? String, "20px")
+    XCTAssertEqual(style?["assistantBackground"] as? String, "rgba(0, 0, 0, 0)")
+    XCTAssertEqual(style?["labels"] as? [String], ["Вы", "Codex"], "Quiet styling retains accessible speaker names")
+    XCTAssertEqual(style?["overflow"] as? Bool, false)
   }
 }

@@ -1,6 +1,25 @@
 <!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; font-src 'self'; img-src 'none'; connect-src 'none'">
-<style>body{font:16px -apple-system,system-ui;margin:14px;color:#252723;background:transparent;overflow-wrap:anywhere}article{margin:0 0 20px}b.role{font-size:12px;color:#67705d}p{line-height:1.45}pre{white-space:pre-wrap}mjx-container{max-width:100%;overflow:auto}a{color:inherit}code{font-size:14px}hr{border:0;border-top:1px solid #ddd}</style>
+<style>
+:root{color-scheme:light}
+*{box-sizing:border-box}
+body{font:15px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;margin:0;padding:16px 22px 24px;color:#242424;background:transparent;overflow-wrap:anywhere;-webkit-text-size-adjust:100%}
+article{position:relative;margin:0 0 28px;line-height:1.6}
+.role{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+article[data-role="user"]{display:flex;justify-content:flex-end}
+article[data-role="user"] .content{max-width:88%;padding:10px 16px;border-radius:20px;background:#f3f3f3}
+p{margin:0 0 12px}p:last-child{margin-bottom:0}
+h1,h2,h3{font-size:1.15em;line-height:1.4;margin:20px 0 10px}
+ul,ol{padding-left:22px}li+li{margin-top:5px}
+pre{white-space:pre-wrap;padding:14px;border-radius:14px;background:#f5f5f5;line-height:1.5}
+code{font:13px ui-monospace,SFMono-Regular,monospace}
+p code,li code{padding:2px 4px;border-radius:4px;background:#f3f3f3}
+blockquote{margin:12px 0;padding-left:14px;border-left:2px solid #d8d8d8;color:#666}
+mjx-container{max-width:100%;overflow:auto}a{color:inherit;text-underline-offset:3px}
+hr{border:0;border-top:1px solid #e9e9e9;margin:20px 0}
+small{display:block;font-size:12px;color:#888;margin-top:8px}
+table{border-collapse:collapse;display:block;max-width:100%;overflow-x:auto}td,th{text-align:left;padding:8px;border-bottom:1px solid #e9e9e9}
+</style>
 <script>window.MathJax={startup:{typeset:false},loader:{load:['a11y/assistive-mml']},output:{fontPath:new URL('fonts/mathjax-newcm-font',location.href).href},options:{enableMenu:false,menuOptions:{settings:{enrich:false,speech:false,braille:false,assistiveMml:true}}},tex:{inlineMath:[['$','$'],['\\(','\\)']],displayMath:[['$$','$$'],['\\[','\\]']],processEscapes:true},svg:{fontCache:'local'}};</script>
 <script src="marked.umd.js"></script><script src="purify.min.js"></script><script src="tex-svg-nofont.js"></script>
 </head><body><main id="messages"></main><script>
@@ -16,8 +35,8 @@ window.showMessages=async function(json){
  try{await MathJax.startup.promise;while(next){const messages=next;next=null;
  const follows=scrollY+innerHeight>=document.documentElement.scrollHeight-60;
  const root=document.getElementById('messages');MathJax.typesetClear([root]);root.replaceChildren();
- for(const m of messages){const article=document.createElement('article');const role=document.createElement('b');role.className='role';role.textContent=m.role==='user'?'Вы':'Codex';article.append(role);
- const content=document.createElement('div');content.innerHTML=DOMPurify.sanitize(marked.parse(m.text),{FORBID_TAGS:['img','iframe','form','input','button','style'],FORBID_ATTR:['style']});article.append(content);if(m.isTruncated){const note=document.createElement('small');note.textContent='Показан фрагмент сообщения. Полный текст — в Codex.';article.append(note);}root.append(article);}
+ for(const m of messages){const article=document.createElement('article');article.dataset.role=m.role==='user'?'user':'assistant';const role=document.createElement('b');role.className='role';role.textContent=m.role==='user'?'Вы':'Codex';article.append(role);
+ const content=document.createElement('div');content.className='content';content.innerHTML=DOMPurify.sanitize(marked.parse(m.text),{FORBID_TAGS:['img','iframe','form','input','button','style'],FORBID_ATTR:['style']});article.append(content);if(m.isTruncated){const note=document.createElement('small');note.textContent='Показан фрагмент сообщения. Полный текст — в Codex.';article.append(note);}root.append(article);}
  await MathJax.typesetPromise([root]);if(follows)scrollTo(0,document.documentElement.scrollHeight);
  }}finally{running=false;}
 };

@@ -123,8 +123,6 @@ final class NotebookChatController {
     return jobs.first { $0.id == id }
   }
 
-  var selectedJob: NotebookChatJob? { jobs.first { $0.input.action.threadID == threadID } }
-
   /// Outgoing text remains visible after its editor is cleared. This is the
   /// durable outbox, not a second conversation: a native client ID replaces it.
   var pendingMessages: [NotebookChatJob] {

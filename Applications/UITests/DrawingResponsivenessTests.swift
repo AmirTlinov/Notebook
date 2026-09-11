@@ -213,8 +213,8 @@ final class DrawingResponsivenessTests: XCTestCase {
         let unobstructed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
           let window = app.frame, frame = panel.frame
           guard (window.width > window.height) == landscape,
-            window.contains(frame), frame.width > (expanded ? 300 : 100),
-            frame.width < (expanded ? 400 : 200) else { return false }
+            window.contains(frame), frame.width > (expanded ? 500 : 100),
+            frame.width <= (expanded ? 560 : 112) + 1 else { return false }
           return controls.allSatisfy { id in
             let control = app.buttons[id]
             return control.exists && control.isHittable && !frame.intersects(control.frame)
@@ -270,8 +270,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     geometry.name = "codex-keyboard-rotation-geometry"; geometry.lifetime = .keepAlways; add(geometry)
     XCTAssertEqual(rotation, .completed)
     XCTAssertEqual(field.value as? String, "Keep this draft")
-    if !field.isHittable { panel.swipeUp() }
-    XCTAssertTrue(field.isHittable)
+    XCTAssertTrue(field.isHittable, "The fixed composer stays reachable without scrolling the panel")
     XCTAssertLessThanOrEqual(field.frame.maxY, keyboard.frame.minY + 1)
     // The known one-line draft ends before the field's right edge. A real tap
     // in that empty first-line area sets the insertion point after its glyphs;
