@@ -533,7 +533,7 @@ public struct NotebookStore: Sendable {
       if try hasStoredValue("workspace.json"), try ownerItemID(ofPage: page.id) == nil {
         throw CocoaError(.fileNoSuchFile)
       }
-      var resolved = page
+      var resolved = try page.materializingCausalVersions()
       let url = pageURL(page.id)
       if (try hasStoredValue(at: url)) {
         let disk = try decoder.decode(

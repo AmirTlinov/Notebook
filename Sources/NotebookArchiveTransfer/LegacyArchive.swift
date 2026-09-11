@@ -97,13 +97,14 @@ func convertLegacyInk(_ data: Data) throws -> Data {
 
 func convertLegacyPage(_ data: Data) throws -> PageDocument {
   // Re-encode only the drawing field; stamps, UUIDs, element content and causal
-  // metadata remain the original values. This is format conversion, not an edit.
+  // metadata retain their original clocks. Missing element clocks become explicit
+  // at their existing frontier, exactly as whole-page publication requires.
   let original = try JSONDecoder().decode(PageDocument.self, from: data)
   guard var fields = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
     throw ArchiveTransferError.invalidSource("page must be an object")
   }
   fields["drawingData"] = try convertLegacyInk(original.drawingData).base64EncodedString()
-  return try JSONDecoder().decode(PageDocument.self, from: JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]))
+  return try JSONDecoder().decode(PageDocument.self, from: JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])).materializingCausalVersions()
 }
 
 /// The retired app created an empty agent entry for an action without supplied

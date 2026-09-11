@@ -1,5 +1,29 @@
 import Foundation
 
+/// A command envelope, not a page or a render source. Ink and computations are
+/// deliberately absent; only the named elements may be validated and edited.
+struct NotebookPageElementProjection: Codable {
+  let format: Int
+  let id: UUID
+  let size: PageSize
+  let drawingStamp: VersionStamp
+  let agentStamp: VersionStamp
+  let elements: [AgentElement]
+  let collaboration: CollaborativeContent
+
+  var isValid: Bool {
+    format == PageDocument.formatVersion && size.isValid
+      && drawingStamp.counter <= VersionStamp.maximumCounter
+      && agentStamp.counter <= VersionStamp.maximumCounter
+      && collaboration.isValid && collaboration.fields["computations"] == nil
+      && collaboration.fields["elements/order"] != nil
+      && elements.allSatisfy { element in
+        AgentElement.causalFieldKeys(id: element.id).allSatisfy { collaboration.fields[$0] != nil }
+      }
+      && PageDocument.elementsAreValid(elements, in: size)
+  }
+}
+
 extension NotebookStore {
   public func ownerItemID(ofPage pageID: UUID) throws -> UUID? {
     try sqlRead { database in
@@ -13,7 +37,7 @@ extension NotebookStore {
   /// archive. The resulting dictionaries are projections, so they must only
   /// be published through a baseline delta, never through whole-file replace.
   func actionSourceProjection(_ action: CollaborationAction, receipt: CollaborationReceipt? = nil,
-    references: [CollaborationReference] = []) throws -> [String: JSONValue] {
+    references: [CollaborationReference] = []) throws -> CollaborationWorkspace {
     let header = try workspaceHeader()
     var itemIDs = Set<UUID>(), boardIDs: Set<UUID> = [header.rootBoardID]
     var pageIDs = Set<UUID>(), documentIDs = Set<UUID>()
@@ -21,6 +45,7 @@ extension NotebookStore {
     var spatialActionIDs = Set<UUID>()
     var stateBlockIDs: [UUID: Set<String>] = [:], sourceBlockIDs: [UUID: Set<String>] = [:]
     var sourceDocumentIDs = Set<UUID>(), fullDocumentIDs = Set<UUID>()
+    var pageElementIDs: [UUID: Set<String>] = [:], fullPageIDs = Set<UUID>()
     func include(_ target: CollaborationTarget) throws {
       switch target.kind {
       case .workspace: break
@@ -37,6 +62,15 @@ extension NotebookStore {
     for target in action.operations.map(\.target) + action.expected.map(\.target)
       + action.references.map(\.target) + references.map(\.target) + (action.additionalOwners ?? []) { try include(target) }
     for operation in action.operations {
+      if operation.target.kind == .page {
+        if [.updateElement, .setElementState].contains(operation.kind) {
+          guard let id = operation.id, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            id.utf16.count <= 120 else {
+            throw CollaborationError("invalid_operation", "Изменение элемента называет допустимый ID длиной до 120 знаков UTF-16.")
+          }
+          pageElementIDs[operation.target.id, default: []].insert(collaborationIdentity(id))
+        } else { fullPageIDs.insert(operation.target.id) }
+      }
       if operation.target.kind == .document {
         if [.setBlockState, .updateBlock].contains(operation.kind) {
           guard let id = operation.id, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -56,7 +90,9 @@ extension NotebookStore {
       }
       if [.createNotebook, .createDocument, .createBoard, .renameItem, .moveItem].contains(operation.kind),
         let id = operation.id.flatMap(UUID.init(uuidString:)) { itemIDs.insert(id) }
-      if operation.kind == .createNotebook, let page = operation.values["pageID"]?.string.flatMap(UUID.init(uuidString:)) { pageIDs.insert(page) }
+      if operation.kind == .createNotebook, let page = operation.values["pageID"]?.string.flatMap(UUID.init(uuidString:)) {
+        pageIDs.insert(page); fullPageIDs.insert(page)
+      }
       if operation.kind == .createDocument, let id = operation.id.flatMap(UUID.init(uuidString:)) { documentIDs.insert(id) }
       if operation.kind == .createBoard, let id = operation.id.flatMap(UUID.init(uuidString:)) { boardIDs.insert(id) }
       if operation.kind == .stackItems { itemIDs.formUnion(try operation.values["itemIDs"]?.decode([UUID].self) ?? []) }
@@ -152,7 +188,41 @@ extension NotebookStore {
     for id in boardIDs { try appendBoardCausalFragments(to: &rows, address: "board.json#/boards/@" + id.uuidString.lowercased()) }
     rows += try storedFragments(address: "board.json#", descendants: false)
     var files = ["workspace.json": try JSONValue.encode(workspace), "board.json": try NotebookRecordCodec.decode(rows, root: "board.json#")]
-    for id in pageIDs where try hasStoredValue(pageFile(id)) { files[pageFile(id)] = try storedValue(pageFile(id)) }
+    let projectedPageIDs = pageIDs.subtracting(fullPageIDs)
+    let pageAddresses = projectedPageIDs.sorted().flatMap { id -> [(String, Bool)] in
+      let root = pageFile(id) + "#", ids = (pageElementIDs[id] ?? []).sorted()
+      return [(root, false)]
+        + ids.map { (root + "/elements/@" + fieldKey([$0]), true) }
+        + (["elements/order"] + ids.flatMap(AgentElement.causalFieldKeys)).map {
+          (root + "/collaboration/fields/@" + fieldKey([$0]), false)
+        }
+    }
+    let pageRows = Dictionary(grouping: try boundedStoredFragments(pageAddresses,
+      maximumCount: 4_096, maximumBytes: 4 * 1_024 * 1_024, budget: "page_element_command"), by: \.file)
+    for id in pageIDs {
+      let file = pageFile(id)
+      if fullPageIDs.contains(id) {
+        files[file] = try storedValue(file)
+      } else if let stored = pageRows[file], !stored.isEmpty {
+        let rows = stored.map { row in
+          row.parent == nil ? row.replacing(value: row.value,
+            collections: row.collections.filter { ![["drawingData"], ["computations"]].contains($0.path) }) : row
+        }
+        let value = try NotebookRecordCodec.decode(rows, root: file + "#")
+        let projection = try value.decode(NotebookPageElementProjection.self)
+        guard projection.id == id, projection.isValid,
+          value["drawingData"] == nil, value["computations"] == nil else {
+          throw NotebookStorageError.corruptRecord(file)
+        }
+        let addressed = Dictionary(uniqueKeysWithValues: rows.map { ($0.address, $0) })
+        let canonical = try NotebookRecordCodec.encode(.encode(projection), file: file)
+        guard canonical.count == addressed.count, canonical.allSatisfy({ row in
+          guard let prior = addressed[row.address] else { return false }
+          return row.replacing(value: row.value, position: prior.position) == prior
+        }) else { throw NotebookStorageError.corruptRecord(file) }
+        files[file] = value
+      }
+    }
     let sourceAddresses = items.filter { $0.kind == .document && !fullDocumentIDs.contains($0.id) }.flatMap { item -> [(String, Bool)] in
       let file = documentFile(item.id)
       let ids = (stateBlockIDs[item.id] ?? []).union(sourceBlockIDs[item.id] ?? [])
@@ -218,6 +288,6 @@ extension NotebookStore {
       }
     }
     files["spatial-ink.json"] = try NotebookRecordCodec.decode(inkRows, root: "spatial-ink.json#")
-    return files
+    return CollaborationWorkspace(files: files, projectedPageIDs: projectedPageIDs)
   }
 }

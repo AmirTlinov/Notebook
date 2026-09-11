@@ -138,7 +138,7 @@ extension NotebookStore {
           throw CollaborationError("invalid_draft", "Не удалось применить исходник черновика.")
         }
         let file = documentFile(edit.documentID), old = try JSONValue.encode(before), next = try JSONValue.encode(document!)
-        try admitDocumentCausalFields(file: file, before: old, after: next)
+        try admitContentCausalFields(file: file, before: old, after: next)
         try publishProjectionEdits(file: file, before: old, after: next)
       }
       let phase: DocumentEditingSession.Phase = status == .committed ? .committed : status == .conflict ? .conflict : .targetMissing

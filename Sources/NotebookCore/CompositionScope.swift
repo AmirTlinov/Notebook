@@ -74,8 +74,8 @@ extension NotebookStore {
   private static func subjectGeometry(_ subject: CollaborationSubject, files: [String: JSONValue]) throws -> CompositionSubjectGeometry? {
     guard let id = subject.elementID else { return nil }
     if subject.target.kind == .page {
-      let page = try files["pages/\(subject.target.id.uuidString.lowercased()).json"]?.decode(PageDocument.self)
-      return page?.elements.first(where: { collaborationIdentity($0.id) == collaborationIdentity(id) }).map { .init(frame: $0.frame, origin: nil) }
+      let elements = try files["pages/\(subject.target.id.uuidString.lowercased()).json"]?["elements"]?.decode([AgentElement].self)
+      return elements?.first(where: { collaborationIdentity($0.id) == collaborationIdentity(id) }).map { .init(frame: $0.frame, origin: nil) }
     }
     let tree = try files["board.json"]?.decode(BoardHierarchy.self)
     let surface: SurfaceID = subject.target.kind == .cover ? .cover(subject.target.id) : .board(subject.target.id)

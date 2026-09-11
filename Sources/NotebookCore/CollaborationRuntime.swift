@@ -145,7 +145,7 @@ extension NotebookStore {
   public func targetReceiptURL(_ id: UUID) -> URL { targetPreviewsURL.appendingPathComponent(id.uuidString.lowercased() + ".json") }
 
   public func referenceRevision(target: CollaborationTarget, elementID: String? = nil) throws -> String {
-    if elementID == nil, target.kind == .board || target.kind == .cover {
+    if elementID == nil, [.board, .cover, .page].contains(target.kind) {
       return try referenceIdentities(targets: [target])[0].revision
     }
     let files = try referenceSourceFiles(target: target, elementID: elementID)
@@ -162,7 +162,10 @@ extension NotebookStore {
       if let elementID {
         guard let element = page["elements"]?.array.first(where: { $0.memberIdentity == collaborationIdentity(elementID) }) else { throw CollaborationError("target_missing", "Элемент листа отсутствует.", target: target) }
         content = element.setting("frame", nil)
-      } else { content = page.setting("collaboration", nil) }
+      } else {
+        return try boundReferenceRevision(target: target, files: files)
+          ?? completePageReferenceRevision(target: target, value: page)
+      }
     case .document:
       guard let document = files["documents/" + suffix] else { throw CollaborationError("target_missing", "Документ отсутствует.", target: target) }
       if let elementID {

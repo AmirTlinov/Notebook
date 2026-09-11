@@ -447,6 +447,9 @@ extension NotebookStore {
       for file in writes.keys.sorted(by: { rank($0) < rank($1) }) {
         guard !file.hasPrefix("/"), !file.contains(".."), file.hasSuffix(".json") else { throw NotebookStorageError.invalidTransaction("logical address") }
         var value = writes[file]!
+        if file.hasPrefix("pages/") {
+          value = try .encode(value.decode(PageDocument.self).materializingCausalVersions())
+        }
         if file.hasPrefix("documents/"), value["collaboration"] == nil {
           let document = try value.decode(DocumentDocument.self)
           guard document.isValid else { throw NotebookStorageError.corruptRecord(file) }

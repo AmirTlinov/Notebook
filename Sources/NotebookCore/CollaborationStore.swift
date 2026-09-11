@@ -32,7 +32,7 @@ extension NotebookStore {
     try prepare()
     return try readTransaction { _ in
       let receipt = try loadAction(id)
-      return receipt.continuations(in: try actionSourceProjection(receipt.action, receipt: receipt))
+      return receipt.continuations(in: try actionSourceProjection(receipt.action, receipt: receipt).files)
     }
   }
 
@@ -69,11 +69,12 @@ extension NotebookStore {
       }
       guard !action.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
         action.summary.count <= 1000, (1...512).contains(action.operations.count),
-        action.references.count <= 32, (action.additionalOwners?.count ?? 0) <= 32 else {
+        action.references.count <= 32, action.expected.count <= 1024,
+        (action.additionalOwners?.count ?? 0) <= 32 else {
         throw CollaborationError("invalid_action", "Ход содержит описание и от 1 до 512 операций.")
       }
       let contextReferences = try action.contextID.map { try self.contextReferences($0) }
-      let before = try CollaborationWorkspace(files: actionSourceProjection(action, references: contextReferences ?? []))
+      let before = try actionSourceProjection(action, references: contextReferences ?? [])
       try requireIdleInput(for: action.operations.map(\.target))
       let scopeReferences = contextReferences ?? action.references
       for expectation in action.expected {
@@ -157,7 +158,7 @@ extension NotebookStore {
     return try withMutationLock {
       var receipt = try loadAction(id)
       if receipt.undo != nil { return receipt }
-      let before = try CollaborationWorkspace(files: actionSourceProjection(receipt.action, receipt: receipt))
+      let before = try actionSourceProjection(receipt.action, receipt: receipt)
       try requireIdleInput(for: receipt.action.operations.map(\.target))
       var after = before
       var preserved: [CollaborationFieldChange] = []
@@ -231,13 +232,13 @@ extension NotebookStore {
     // fields changed from its baseline; unseen SQL members retain their owners.
     let projected = writes.filter { before[$0.key] != nil
       && (["workspace.json", "board.json", "spatial-ink.json"].contains($0.key)
-        || $0.key.hasPrefix("documents/") || $0.key.hasPrefix("document-states/")) }
+        || $0.key.hasPrefix("pages/") || $0.key.hasPrefix("documents/") || $0.key.hasPrefix("document-states/")) }
     for file in projected.keys { writes[file] = nil }
     try publishCollaboration(writes: writes, removals: before.keys.filter { after[$0] == nil })
     for file in projected.keys.sorted() {
       if let old = before[file], let next = projected[file] {
-        if file.hasPrefix("documents/") {
-          try admitDocumentCausalFields(file: file, before: old, after: next)
+        if file.hasPrefix("documents/") || file.hasPrefix("pages/") {
+          try admitContentCausalFields(file: file, before: old, after: next)
         }
         try publishProjectionEdits(file: file, before: old, after: next)
       }
@@ -339,10 +340,14 @@ private struct CollaborationCreationProtection {
 
 struct CollaborationWorkspace {
   var files: [String: JSONValue]
-  init(files: [String: JSONValue]) { self.files = files }
+  let projectedPageIDs: Set<UUID>
+  init(files: [String: JSONValue], projectedPageIDs: Set<UUID> = []) {
+    self.files = files; self.projectedPageIDs = projectedPageIDs
+  }
   var ink: SpatialInkJournal { get throws { try files["spatial-ink.json"]!.decode(SpatialInkJournal.self) } }
 
   init(store: NotebookStore) throws {
+    projectedPageIDs = []
     let workspace = try store.loadIndex()
     files = ["workspace.json": try .encode(workspace), "board.json": try .encode(store.loadBoard(items: workspace.items))]
     for item in workspace.items {
@@ -377,7 +382,8 @@ struct CollaborationWorkspace {
       return board.stamp.revision
     case .page:
       guard let value = files[pageFile(target.id)] else { throw missing(target) }
-      return try value.decode(PageDocument.self).agentStamp.revision
+      guard let stamp = value["agentStamp"] else { throw missing(target) }
+      return try stamp.decode(VersionStamp.self).revision
     case .document:
       guard let value = files[documentFile(target.id)] else { throw missing(target) }
       return try value.decode(DocumentDocument.self).contentStamp.revision
@@ -391,7 +397,7 @@ struct CollaborationWorkspace {
 
   func inkRevision(of target: CollaborationTarget) throws -> String? {
     switch target.kind {
-    case .page: return try files[pageFile(target.id)]?.decode(PageDocument.self).drawingStamp.revision
+    case .page: return try files[pageFile(target.id)]?["drawingStamp"]?.decode(VersionStamp.self).revision
     case .board, .cover: return try files["spatial-ink.json"]?["stamp"]?.decode(VersionStamp.self).revision
     default: return nil
     }
@@ -544,7 +550,9 @@ struct CollaborationWorkspace {
         guard let surface = elements[index]["surface"],
           try surface.decode(SurfaceID.self) == (op.target.kind == .cover ? .cover(op.target.id) : .board(op.target.id)) else { throw missing(op.target) }
       }
-      let allowed = op.kind == .setElementState ? Set(["state"]) : Set(["frame", "source", "html", "css", "javaScript", "worldOrigin", "textStyle"])
+      let allowed = op.kind == .setElementState ? Set(["state"])
+        : Set(["frame", "source", "html", "css", "javaScript"]
+          + (op.target.kind == .page ? [] : ["worldOrigin", "textStyle"]))
       guard !op.values.isEmpty, Set(op.values.keys).isSubset(of: allowed) else { throw invalid("Поля изменения принадлежат выбранной операции.") }
       for (key, value) in op.values { elements[index] = elements[index].setting(key, value) }
     case .removeElement:
@@ -673,8 +681,17 @@ struct CollaborationWorkspace {
           if let scope, try scope.hasStoredValue(pageFile(pageID)) { continue }
           throw invalid("Тетрадь содержит существующие листы.")
         }
-        let page = try value.decode(PageDocument.self)
-        guard page.id == pageID, page.isValid else { throw invalid("Элементы помещаются в физический лист.") }
+        if projectedPageIDs.contains(pageID) {
+          let page = try value.decode(NotebookPageElementProjection.self)
+          guard scope != nil, page.id == pageID, page.isValid,
+            value["drawingData"] == nil, value["computations"] == nil,
+            try JSONValue.encode(page) == value else {
+            throw invalid("Адресное изменение содержит только элементы существующего листа.")
+          }
+        } else {
+          let page = try value.decode(PageDocument.self)
+          guard page.id == pageID, page.isValid else { throw invalid("Элементы помещаются в физический лист.") }
+        }
       }
       if item.kind == .document {
         guard let document = files[documentFile(item.id)], try document.decode(DocumentDocument.self).isValid else { throw invalid("Документ содержит согласованные блоки.") }

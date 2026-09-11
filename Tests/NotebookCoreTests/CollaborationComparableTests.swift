@@ -296,7 +296,7 @@ func collaborationEscapedSpatialCausalOwnerSurvivesAValueRoundTrip(id: String) t
   let full = try #require(try f.store.loadBoard(items: f.store.loadIndex().items).board(f.boardID))
   let expected = try #require(full.collaboration?.fields[key])
   let files = try f.store.readTransaction { _ in try f.store.actionSourceProjection(action) }
-  let projected = try #require(files["board.json"]).decode(BoardHierarchy.self)
+  let projected = try #require(files.files["board.json"]).decode(BoardHierarchy.self)
   #expect(projected.board(f.boardID)?.collaboration?.fields[key] == expected,
     "The partial owner must not substitute the aggregate board stamp for this field")
   let receipt = try f.store.applyCollaborationAction(action, actor: f.agent)

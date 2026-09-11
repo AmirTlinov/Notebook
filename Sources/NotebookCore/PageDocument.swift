@@ -63,6 +63,12 @@ public enum AgentElementKind: String, Codable, Sendable {
 }
 
 public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
+  static func causalFieldKeys(id: String) -> [String] {
+    ["exists", "id", "frame", "content", "css", "javaScript", "state"].map {
+      fieldKey(["elements", collaborationIdentity(id), $0])
+    }
+  }
+
   public let id: String
   public let kind: AgentElementKind
   public let frame: PageRect
@@ -177,8 +183,10 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     self.drawingData = drawingData
     drawingStamp = VersionStamp(counter: 0, actor: actor)
     self.elements = elements
-    collaboration = nil
     agentStamp = VersionStamp(counter: 0, actor: actor)
+    let keys = ["elements/order"] + elements.flatMap { AgentElement.causalFieldKeys(id: $0.id) }
+    collaboration = .init(fields: Dictionary(keys.map { ($0, ContentFieldVersion(stamp: agentStamp, human: true)) },
+      uniquingKeysWith: { first, _ in first }))
     precondition(isValid)
   }
 
@@ -192,6 +200,10 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
       agentStamp.counter <= VersionStamp.maximumCounter
     else { return false }
 
+    return Self.elementsAreValid(elements, in: size)
+  }
+
+  static func elementsAreValid(_ elements: [AgentElement], in size: PageSize) -> Bool {
     let ids = elements.map(\.id)
     return Set(ids).count == ids.count
       && elements.allSatisfy {
@@ -199,6 +211,21 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
           && $0.frame.isContained(in: size)
           && $0.state.isValid
       }
+  }
+
+  /// An addressed edit must not advance the implicit clocks of unseen peers.
+  /// Whole-page publication and offline preparation seal those clocks once,
+  /// using their existing frontier, without authoring a content change.
+  public func materializingCausalVersions() throws -> Self {
+    var result = self, metadata = collaboration ?? CollaborativeContent()
+    try metadata.materializeVersions(in: Self.elementContent(elements), fallback: agentStamp)
+    result.collaboration = metadata
+    guard result.isValid else { throw NotebookStorageError.invalidTransaction("page causal fields") }
+    return result
+  }
+
+  private static func elementContent(_ elements: [AgentElement]) throws -> JSONValue {
+    .object(["elements": try .encode(elements)])
   }
 
   @discardableResult
@@ -280,11 +307,11 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     candidate.elements = elements
     candidate.agentStamp = stamp
     var metadata = collaboration ?? CollaborativeContent()
-    if let before = try? JSONValue.encode(self), let after = try? JSONValue.encode(candidate) {
-      metadata.record(before: before.setting("computations", nil), after: after.setting("computations", nil),
-        beforeStamp: agentStamp, stamp: stamp, human: true)
-      candidate.collaboration = metadata
-    }
+    guard let before = try? Self.elementContent(self.elements),
+      let after = try? Self.elementContent(elements) else { return false }
+    metadata.record(before: before, after: after,
+      beforeStamp: agentStamp, stamp: stamp, human: true)
+    candidate.collaboration = metadata
     guard candidate.isValid else { return false }
     self = candidate
     return true
@@ -310,17 +337,17 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     }
     // The typed computation owner joins above. Agent field clocks never own
     // this collection, including while merging an unrelated element edit.
-    let local = try JSONValue.encode(candidate).setting("computations", nil)
-    let incoming = try JSONValue.encode(other).setting("computations", nil)
+    let local = try Self.elementContent(candidate.elements)
+    let incoming = try Self.elementContent(other.elements)
     let merged = CollaborativeContent.merge(local: local, incoming: incoming,
       localState: collaboration, incomingState: other.collaboration,
       localStamp: agentStamp, incomingStamp: other.agentStamp)
-    let resolved = try merged.value.decode(PageDocument.self)
-    guard resolved.isValid else { throw NotebookStorageError.transactionConflict }
-    candidate.elements = resolved.elements
+    guard let elements = merged.value["elements"] else { throw NotebookStorageError.transactionConflict }
+    candidate.elements = try elements.decode([AgentElement].self)
     candidate.collaboration = merged.state
     candidate.agentStamp = mergedContentStamp(local: local, incoming: incoming, result: merged.value,
       localStamp: agentStamp, incomingStamp: other.agentStamp)
+    guard candidate.isValid else { throw NotebookStorageError.transactionConflict }
     return candidate
   }
 

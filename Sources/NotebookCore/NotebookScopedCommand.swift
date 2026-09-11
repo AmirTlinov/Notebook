@@ -223,8 +223,19 @@ extension NotebookStore {
         if stored == nil, previous != nil { throw NotebookStorageError.transactionConflict }
         let value = try projectionDelta(before: previous?.value, after: edited.value, current: stored?.value)
         guard let value else { throw NotebookStorageError.invalidTransaction("projection value") }
+        let oldCollections = Dictionary(uniqueKeysWithValues: (previous?.collections ?? []).map { (fieldKey($0.path), $0) })
+        let nextCollections = Dictionary(uniqueKeysWithValues: edited.collections.map { (fieldKey($0.path), $0) })
+        var collections = Dictionary(uniqueKeysWithValues: (stored?.collections ?? []).map { (fieldKey($0.path), $0) })
+        for key in Set(oldCollections.keys).union(nextCollections.keys) where oldCollections[key] != nextCollections[key] {
+          guard collections[key] == oldCollections[key] || collections[key] == nextCollections[key] else {
+            throw NotebookStorageError.transactionConflict
+          }
+          collections[key] = nextCollections[key]
+        }
         let position = (edited.collection.hasSuffix("collaboration/fields") || ["pageOrders", "pageOrderNodes"].contains(edited.collection)) ? 0 : try positions[address] ?? stored?.position ?? Int(database.rows("SELECT COALESCE(MAX(position),-1)+1 FROM records WHERE parent=? AND collection=?", [edited.parent.map(NotebookSQLValue.text) ?? .null, .text(edited.collection)]).first![0].integer!)
-        let changed = try writeFragment(edited.replacing(value: value, position: position), database: database)
+        let changed = try writeFragment(edited.replacing(value: value,
+          collections: collections.values.sorted { $0.path.lexicographicallyPrecedes($1.path) },
+          position: position), database: database)
         if changed, !file.hasPrefix("documents/"), !edited.member.isEmpty, !edited.collection.hasSuffix("collaboration/fields"), let parent = edited.parent {
           let prefix = fieldKey([edited.collection.components(separatedBy: "/").last!, edited.member]) + "/"
           let collection = edited.collection.hasPrefix("board/") ? "board/collaboration/fields" : "collaboration/fields"
@@ -239,9 +250,9 @@ extension NotebookStore {
     }
   }
 
-  /// New implicit clocks consume the actual document owner's allowance.
+  /// New implicit clocks consume the actual content owner's allowance.
   /// Replacing existing clocks is point-addressed and never counts history.
-  func admitDocumentCausalFields(file: String, before: JSONValue, after: JSONValue) throws {
+  func admitContentCausalFields(file: String, before: JSONValue, after: JSONValue) throws {
     let old = before["collaboration"]?["fields"]?.object ?? [:]
     let next = after["collaboration"]?["fields"]?.object ?? [:]
     let added = Set(next.keys).subtracting(old.keys)
@@ -249,7 +260,7 @@ extension NotebookStore {
     let count = try currentSQL!.rows("SELECT count(*) FROM records WHERE parent=? AND collection='collaboration/fields'",
       [.text(file + "#")]).first![0].integer!
     guard count + Int64(added.count) <= Int64(CollaborativeContent.maximumFieldCount) else {
-      throw NotebookStorageError.limitExceeded("document_causal_fields")
+      throw NotebookStorageError.limitExceeded(file.hasPrefix("pages/") ? "page_causal_fields" : "document_causal_fields")
     }
   }
 

@@ -191,7 +191,7 @@ func creationUndoLaterBoardChildOutsideProjectionIsAdoption() throws {
   let receipt = try f.store.applyCollaborationAction(action, actor: f.agent)
   let human = try f.addHumanElement(on: .board(id), boardID: id)
   let projection = try f.store.readTransaction { try $0.actionSourceProjection(action, receipt: receipt) }
-  let projected = try #require(projection["board.json"]).decode(BoardHierarchy.self)
+  let projected = try #require(projection.files["board.json"]).decode(BoardHierarchy.self)
   #expect(projected.board(id)?.elements.map(\.id) == ["choice"], "The independent child is deliberately outside the bounded command projection")
   let undone = try f.store.undoCollaborationAction(action.id, actor: f.human)
   #expect(try f.store.readItemHeader(id) != nil)
