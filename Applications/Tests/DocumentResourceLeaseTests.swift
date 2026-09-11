@@ -220,9 +220,15 @@ final class DocumentResourceLeaseTests: XCTestCase {
     defer { window.isHidden = true; window.rootViewController = nil }
     let source = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
     var destination: UIViewController?
-    await waitUntil(timeout: .seconds(10)) {
+    await waitUntil(timeout: .seconds(10), message: {
+      "Initial full window: web \(resources.activeWebSurfaceCount), peak \(peak.maximum), contents \(controller.cachedPageIdentities.keys.sorted()), landing \(destination != nil)"
+    }) {
+      // The data-source call transfers a ready child out of its prewarm window.
+      // Establish full admission before that handoff, not after its detach has
+      // already parked a WebKit. A fast first frame may precede the fourth mount.
+      guard resources.activeWebSurfaceCount == 4 else { return false }
       destination = controller.pageViewController(controller.pageViewController, viewControllerAfter: source)
-      return destination != nil && resources.activeWebSurfaceCount == 4
+      return destination != nil
     }
     let landing = try XCTUnwrap(destination)
     let preparedWeb = try XCTUnwrap(descendants(landing.view).first)

@@ -26,50 +26,62 @@
     const rootEntry={node:root,childrenByPage:new Map()}, stack=[];
     for(let index=root.childNodes.length-1;index>=0;index--)stack.push({node:root.childNodes[index],parent:rootEntry});
     let indexedNodes=0,indexedEdges=0;
-    while(stack.length) {
-      if(isCancelled())throw new Error('document_source_preparation_cancelled');
-      const job=stack.pop();
-      if(job.entry) {
-        const {entry,parent}=job;
-        // A row group or display-contents ancestor need not expose a rect for
-        // every child page. The children's physical addresses still belong to it.
-        for(const page of new Set([...entry.pages.keys(),...entry.childrenByPage.keys()])) {
-          if(++indexedEdges>524288)throw new Error('document_fragment_index_budget');
-          if(!parent.childrenByPage.has(page))parent.childrenByPage.set(page,[]);
-          parent.childrenByPage.get(page).push(entry);
+    // This bounded DOM walk yields an actual browser task, not a chained timer.
+    // Hidden WebKit timer throttling must not become part of source layout time.
+    // The source owns exactly one channel and closes it on completion or refusal.
+    const channel=new MessageChannel();
+    let resumeYield=null;
+    channel.port1.onmessage=()=>{const resume=resumeYield;resumeYield=null;resume?.()};
+    const yieldToBrowser=()=>new Promise(resolve=>{resumeYield=resolve;channel.port2.postMessage(null)});
+    try {
+      while(stack.length) {
+        if(isCancelled())throw new Error('document_source_preparation_cancelled');
+        const job=stack.pop();
+        if(job.entry) {
+          const {entry,parent}=job;
+          // A row group or display-contents ancestor need not expose a rect for
+          // every child page. The children's physical addresses still belong to it.
+          for(const page of new Set([...entry.pages.keys(),...entry.childrenByPage.keys()])) {
+            if(++indexedEdges>524288)throw new Error('document_fragment_index_budget');
+            if(!parent.childrenByPage.has(page))parent.childrenByPage.set(page,[]);
+            parent.childrenByPage.get(page).push(entry);
+          }
+          continue;
         }
-        continue;
-      }
-      const {node,parent}=job;
-      if(++indexedNodes>262144)throw new Error('document_fragment_index_budget');
-      let rects;
-      if(node.nodeType===Node.TEXT_NODE){range.selectNodeContents(node);rects=[...range.getClientRects()]}
-      else if(node.nodeType===Node.ELEMENT_NODE)rects=[...node.getClientRects()];
-      else continue;
-      const pages=new Map();
-      for(const rect of rects) {
-        const page=Math.max(0,Math.floor((rect.x-originX)/stride));
-        if(page>=pageCount || rect.width<=0 || rect.height<=0)continue;
-        if(!pages.has(page))pages.set(page,[]);
-        pages.get(page).push(rect);
-      }
-      const entry={node,pages,childrenByPage:new Map()};
-      entries.set(node,entry);
-      if(node.nodeType===Node.ELEMENT_NODE&&cellTags.has(node.localName)) {
-        const table=node.closest('table'), tableEntry=entries.get(table);
-        const first=pages.entries().next().value;
-        const tableRect=first&&tableEntry?.pages.get(first[0])?.[0], cellRect=first?.[1][0];
-        if(tableRect&&cellRect) {
-          if(!tableColumns.has(table))tableColumns.set(table,new Set());
-          const edges=tableColumns.get(table);
-          edges.add(cellRect.x-tableRect.x);edges.add(cellRect.right-tableRect.x);
+        const {node,parent}=job;
+        if(++indexedNodes>262144)throw new Error('document_fragment_index_budget');
+        let rects;
+        if(node.nodeType===Node.TEXT_NODE){range.selectNodeContents(node);rects=[...range.getClientRects()]}
+        else if(node.nodeType===Node.ELEMENT_NODE)rects=[...node.getClientRects()];
+        else continue;
+        const pages=new Map();
+        for(const rect of rects) {
+          const page=Math.max(0,Math.floor((rect.x-originX)/stride));
+          if(page>=pageCount || rect.width<=0 || rect.height<=0)continue;
+          if(!pages.has(page))pages.set(page,[]);
+          pages.get(page).push(rect);
         }
+        const entry={node,pages,childrenByPage:new Map()};
+        entries.set(node,entry);
+        if(node.nodeType===Node.ELEMENT_NODE&&cellTags.has(node.localName)) {
+          const table=node.closest('table'), tableEntry=entries.get(table);
+          const first=pages.entries().next().value;
+          const tableRect=first&&tableEntry?.pages.get(first[0])?.[0], cellRect=first?.[1][0];
+          if(tableRect&&cellRect) {
+            if(!tableColumns.has(table))tableColumns.set(table,new Set());
+            const edges=tableColumns.get(table);
+            edges.add(cellRect.x-tableRect.x);edges.add(cellRect.right-tableRect.x);
+          }
+        }
+        stack.push({entry,parent});
+        if(node.nodeType===Node.ELEMENT_NODE&&!atomicTags.has(node.localName)) {
+          for(let index=node.childNodes.length-1;index>=0;index--)stack.push({node:node.childNodes[index],parent:entry});
+        }
+        if(indexedNodes%256===0)await yieldToBrowser();
       }
-      stack.push({entry,parent});
-      if(node.nodeType===Node.ELEMENT_NODE&&!atomicTags.has(node.localName)) {
-        for(let index=node.childNodes.length-1;index>=0;index--)stack.push({node:node.childNodes[index],parent:entry});
-      }
-      if(indexedNodes%256===0)await new Promise(resolve=>setTimeout(resolve,0));
+    } finally {
+      channel.port1.onmessage=null;
+      channel.port1.close();channel.port2.close();
     }
 
     // HTML counters belong to their original list, including explicit resets
@@ -136,7 +148,24 @@
           if (count + nodeCount > maximumNodes) throw new Error('document_fragment_node_budget');
         }
         admit(count);
-        return node.cloneNode(true);
+        const clone=node.cloneNode(true);
+        if(node.localName==='mjx-container') {
+          // MathJax's local font cache belongs to this physical copy. Reusing
+          // the source's IDs binds <use> to another SVG and invalidates glyphs
+          // throughout the still-measured book every time a page is mounted.
+          const names=new Map();
+          for(const glyph of clone.querySelectorAll('[id]')) {
+            const previous=glyph.id;
+            if(names.has(previous))throw new Error('document_fragment_duplicate_glyph');
+            const next=`nb-${sourceKey}-${pageIndex}-${nodeCount}-${names.size}`;
+            names.set(previous,next);glyph.id=next;
+          }
+          for(const glyph of clone.querySelectorAll('*'))for(const attribute of [...glyph.attributes]) {
+            const next=attribute.value.startsWith('#')&&names.get(attribute.value.slice(1));
+            if(next)glyph.setAttributeNS(attribute.namespaceURI,attribute.name,'#'+next);
+          }
+        }
+        return clone;
       }
       const children = [];
       for (const child of entry.childrenByPage.get(pageIndex)||[]) { const part = extract(child); if (part) children.push(part); }

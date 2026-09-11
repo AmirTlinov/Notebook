@@ -431,6 +431,31 @@ final class DocumentRuntimeTests: XCTestCase {
         const box=physical.getBoundingClientRect(), range=document.createRange(), segmenter=new Intl.Segmenter('und',{granularity:'grapheme'});
         const visible=r=>r.width>0&&r.height>0&&r.right>0&&r.x<innerWidth&&r.bottom>box.top&&r.y<box.bottom;
         const coordinates=r=>[r.x,r.y,r.width,r.height];
+        // Compare the complete local definition/reference graph, not incidental
+        // allocation IDs. Glyph paths and every reference remain in the oracle.
+        const vectorNames=new WeakMap();
+        const vectorSource=node=>{
+          // MathJax may split one formula into several SVGs. A nested SVG's
+          // <use> still belongs to the definitions of the whole formula.
+          const owner=node.closest('mjx-container')||node;
+          if(!vectorNames.has(owner)) {
+            const names=new Map();
+            for(const value of [owner,...owner.querySelectorAll('[id]')])if(value.id) {
+              if(names.has(value.id))throw Error('Duplicate vector definition');
+              names.set(value.id,`local-${names.size}`);
+            }
+            vectorNames.set(owner,names);
+          }
+          const clone=node.cloneNode(true),names=vectorNames.get(owner);
+          for(const value of [clone,...clone.querySelectorAll('*')]) {
+            if(names.has(value.id))value.id=names.get(value.id);
+            for(const attribute of [...value.attributes]) {
+              const next=attribute.value.startsWith('#')&&names.get(attribute.value.slice(1));
+              if(next)value.setAttributeNS(attribute.namespaceURI,attribute.name,'#'+next);
+            }
+          }
+          return clone.outerHTML;
+        };
         return JSON.stringify([physical,flow].map(root=>{
           const glyphs=[],vectors=[],walk=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);
           while(walk.nextNode()) {
@@ -448,7 +473,7 @@ final class DocumentRuntimeTests: XCTestCase {
           for(const node of root.querySelectorAll('svg,img')) {
             const rectangle=node.getBoundingClientRect();if(!visible(rectangle))continue;
             vectors.push({block:node.closest('section[data-block-id]').dataset.blockId,
-              source:node.outerHTML.replace(/MJX-\\d+-/g,'MJX-N-'),rectangle:coordinates(rectangle)});
+              source:vectorSource(node),rectangle:coordinates(rectangle)});
           }
           return {glyphs,vectors};
         }));
