@@ -76,10 +76,14 @@ struct NotebookChatPanel: View {
           Image(systemName: "stop.circle").font(.system(size: 19)).frame(width: 44, height: 44)
         }.accessibilityLabel("Остановить ответ").accessibilityIdentifier("notebook-chat-stop")
       }
-      Button(action: createChat) { Image(systemName: "square.and.pencil").frame(width: 44, height: 44) }
+      Button(action: createChat) {
+        Image(systemName: "square.and.pencil").frame(width: 44, height: 44).contentShape(Rectangle())
+      }
         .accessibilityLabel("Новый чат").accessibilityIdentifier("notebook-chat-new")
         .disabled(chat.saving)
-      Button { chat.expanded = false } label: { Image(systemName: "minus").frame(width: 44, height: 44) }
+      Button { chat.expanded = false } label: {
+        Image(systemName: "minus").frame(width: 44, height: 44).contentShape(Rectangle())
+      }
         .accessibilityLabel("Свернуть чат").accessibilityIdentifier("notebook-chat-toggle")
     }
     .font(.system(size: 14, weight: .regular)).foregroundStyle(.secondary)

@@ -230,6 +230,60 @@ final class DrawingResponsivenessTests: XCTestCase {
     }
   }
 
+  func testCodexPanelCanCollapseFromTheWholeButtonAfterCreatingAChat() {
+    assertNewChatDoesNotBlockCollapse(transcript: false)
+  }
+
+  func testCodexPanelCanCollapseAfterNewChatWithAMountedTranscript() {
+    assertNewChatDoesNotBlockCollapse(transcript: true)
+  }
+
+  func testCodexPanelCanCollapseAfterNewChatWithTheKeyboard() {
+    assertNewChatDoesNotBlockCollapse(transcript: true, keyboard: true)
+  }
+
+  private func assertNewChatDoesNotBlockCollapse(transcript: Bool, keyboard: Bool = false) {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    defer { XCUIDevice.shared.orientation = .portrait }
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    if transcript { app.launchArguments.append("--notebook-chat-conversation-fixture") }
+    launchPortraitFixture(app)
+    let toggle = app.buttons["notebook-chat-toggle"]
+    let panel = app.descendants(matching: .any).matching(identifier: "notebook-chat-panel").firstMatch
+    XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+    let offsets = [CGVector(dx: 0.5, dy: 0.5), .init(dx: 0.1, dy: 0.1), .init(dx: 0.9, dy: 0.9),
+      .init(dx: 0.1, dy: 0.9), .init(dx: 0.9, dy: 0.1)]
+    for (index, offset) in offsets.enumerated() {
+      toggle.tap()
+      if transcript && index == 0 {
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "notebook-chat-transcript")
+          .firstMatch.waitForExistence(timeout: 3))
+      }
+      if keyboard {
+        let field = app.descendants(matching: .any).matching(identifier: "notebook-chat-text").firstMatch
+        field.tap(); field.typeText("Keep this draft")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4))
+      }
+      let create = app.buttons["notebook-chat-new"]
+      XCTAssertTrue(create.waitForExistence(timeout: 3)); create.tap()
+      XCTAssertTrue(toggle.isEnabled)
+      XCTAssertEqual(toggle.frame.width, 44, accuracy: 1)
+      XCTAssertEqual(toggle.frame.height, 44, accuracy: 1)
+      // A person taps the 44-point control, not a one-pixel SF Symbol stroke.
+      toggle.coordinate(withNormalizedOffset: offset).tap()
+      let collapsed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        panel.frame.width <= 113 && panel.frame.height <= 49 && !create.exists
+      }, object: nil)
+      let result = XCTWaiter.wait(for: [collapsed], timeout: 3)
+      let proof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+      proof.name = "chat-collapse-after-new-\(offset.dx)-\(offset.dy)"; proof.lifetime = .keepAlways; add(proof)
+      XCTAssertEqual(result, .completed, "The whole 44-point control must collapse the panel after New Chat")
+    }
+  }
+
   func testCodexPanelKeepsDraftWithoutMovingPaperOnCollapseAndRotation() {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
