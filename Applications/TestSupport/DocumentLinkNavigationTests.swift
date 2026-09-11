@@ -65,6 +65,18 @@ final class DocumentLinkNavigationTests: XCTestCase {
     XCTAssertEqual(source.preparationCount, 1)
   }
 
+  func testRepeatedHeadingsAllocateTheirAddressesWithLinearWork() async throws {
+    let surface = try surface(DocumentDocument(actor: UUID(), blocks: [.markdown(id: "headings", source:
+      String(repeating: "## Repeated heading\n\nA short paragraph.\n\n", count: 80))]))
+    defer { surface.close() }
+    try await ready(surface.coordinator)
+    let anchors = try XCTUnwrap(surface.coordinator.payload?.source.layout?.anchorPages)
+    XCTAssertEqual(anchors.count, 80)
+    for index in 0..<80 { XCTAssertNotNil(anchors[index == 0 ? "repeated-heading" : "repeated-heading-\(index)"]) }
+    let probes = try await evaluate("return String(notebookRenderer.pageReceipt().work.headingAddressProbes);", try XCTUnwrap(surface.coordinator.webView))
+    XCTAssertEqual(probes, "80", "Repeated headings must not scan every earlier suffix again")
+  }
+
   func testOnlyTheCurrentCanonicalFragmentCanRequestNavigation() async throws {
     let surface = try surface(book())
     defer { surface.close() }

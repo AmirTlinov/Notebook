@@ -210,7 +210,7 @@
       let pageLayout = null;
       let measuredRegions = [];
       let layoutCanonical = false;
-      const work = {sourceInstalls:0,pageInstalls:0,stateApplications:0,layoutPasses:0,regionMeasurements:0,typesetPasses:0};
+      const work = {sourceInstalls:0,pageInstalls:0,stateApplications:0,layoutPasses:0,regionMeasurements:0,typesetPasses:0,headingAddressProbes:0};
       let installedFragment = null;
       let sourcePreparation = null;
       let editingBlockID = null;
@@ -527,10 +527,13 @@
           // Markdown headings without an explicit HTML ID receive one stable
           // document-wide address before layout. Author IDs always take priority.
           const headingIDs=new Set([...flow.querySelectorAll('[id],a[name]')].flatMap(node=>[node.id,node.getAttribute('name')]).filter(Boolean));
+          const nextHeadingSuffix=new Map();
           for(const heading of flow.querySelectorAll('h1,h2,h3,h4,h5,h6'))if(!heading.id) {
             const stem=heading.textContent.trim().toLowerCase().replace(/[^\p{L}\p{N}\p{M}_\s-]/gu,'').replace(/\s/g,'-')||'section';
-            let id=stem,suffix=0;while(headingIDs.has(id))id=stem+'-'+(++suffix);
-            heading.id=id;headingIDs.add(id);
+            let suffix=nextHeadingSuffix.get(stem)||0,id=suffix ? stem+'-'+suffix : stem;
+            work.headingAddressProbes+=1;
+            while(headingIDs.has(id)){id=stem+'-'+(++suffix);work.headingAddressProbes+=1;}
+            heading.id=id;headingIDs.add(id);nextHeadingSuffix.set(stem,suffix+1);
           }
           await typeset([...flow.children].filter(node=>node.dataset.kind!=='interactive'),
             (kind,message,blockID)=>preparation.diagnostics.push({kind,message:String(message),blockID}));
