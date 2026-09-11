@@ -51,6 +51,10 @@ final class NotebookApplicationLaunch {
       try Task.checkCancellation()
       switch activation {
       case .unchanged, .admitted:
+        if case .admitted(let receipt) = activation {
+          try NotebookKeychainPairingStore(activationID: receipt.transitionID)
+            .consumeInstallationGrant(root: root, receipt: receipt)
+        }
         let store = NotebookStore(root: root)
         model = makeModel?(store, pairingActivationID) ?? NotebookAppModel(store: store,
           allowsCodexRegistration: allowsCodexRegistration, pairingActivationID: pairingActivationID)
