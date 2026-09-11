@@ -18,6 +18,8 @@ public actor CodexDesktopBridge {
   private var conversations: [String: CodexConversation] = [:]
   private var resynchronizing: Set<String> = []
   private var starting: Set<String> = []
+  private var dashboard: Set<String> = []
+  private var selections: Set<String> = []
 
   public init(installation: CodexDesktopInstallation) {
     self.installation = installation
@@ -34,14 +36,43 @@ public actor CodexDesktopBridge {
   public func snapshot(threadID: String) -> CodexConversation? { conversations[threadID] }
 
   public func attach(threadID: String) async throws {
+    try await attach(threadID: threadID, opensStoredTask: true)
+    selections.insert(threadID)
+  }
+
+  /// Discovery never opens a dormant task or resumes somebody else's CLI turn.
+  public func activities(threadIDs: [String]) async throws -> [CodexTaskActivity] {
+    guard threadIDs.count <= 8, Set(threadIDs).count == threadIDs.count,
+      threadIDs.allSatisfy({ UUID(uuidString: $0) != nil }) else { throw CodexBridgeError.invalidInput }
+    let next = Set(threadIDs), previous = dashboard
+    dashboard = next
+    for id in previous.subtracting(next) where !selections.contains(id) { await removeSubscription(threadID: id) }
+    for id in threadIDs where states[id] == nil {
+      do { try await attach(threadID: id, opensStoredTask: false) }
+      catch { continue }
+    }
+    return threadIDs.map { id in
+      guard let state = conversations[id], !resynchronizing.contains(id) else { return .init(id: id, status: .unavailable) }
+      let status: CodexTaskActivity.Status = !state.requests.isEmpty ? .waitingForInput : state.busy ? .running : state.ready ? .idle : .unavailable
+      return .init(id: id, status: status, summary: state.messages.last.map { String($0.text.prefix(240)) })
+    }
+  }
+
+  private func attach(threadID: String, opensStoredTask: Bool) async throws {
     guard UUID(uuidString: threadID) != nil else { throw CodexBridgeError.invalidInput }
     let rpc = try await connect()
     let epoch = generation
     if states[threadID] != nil { return }
-    guard states.count < 8 else { throw CodexBridgeError.historyLimit }
+    guard states.count < 9 else { throw CodexBridgeError.historyLimit }
     let owner: String
     do { owner = try await rpc.discover(threadID: threadID) }
     catch CodexBridgeError.unavailable {
+      guard opensStoredTask else { throw CodexBridgeError.unavailable }
+      // No desktop owner is not proof that a terminal stopped. A persisted
+      // unfinished turn may not be resumed by a second executor.
+      guard try await !CodexMetadata(installation: installation).latestTurnIsActive(threadID: threadID) else {
+        throw CodexBridgeError.externalOwnerUnavailable
+      }
       try await installation.open(threadID: threadID)
       let deadline = ContinuousClock.now.advanced(by: .seconds(15))
       var found: String?
@@ -55,7 +86,7 @@ public actor CodexDesktopBridge {
     }
     guard epoch == generation else { throw CodexBridgeError.disconnected }
     if states[threadID] != nil { return }
-    guard states.count < 8 else { throw CodexBridgeError.historyLimit }
+    guard states.count < 9 else { throw CodexBridgeError.historyLimit }
     states[threadID] = CodexStreamState(threadID: threadID, owner: owner)
     do { try await rpc.follow(threadID: threadID, owner: owner, enabled: true) }
     catch {
@@ -66,6 +97,10 @@ public actor CodexDesktopBridge {
 
   /// Stop observing only. Collapsing the panel or switching tasks never interrupts an agent.
   public func detach(threadID: String) async {
+    selections.remove(threadID)
+    if !dashboard.contains(threadID) { await removeSubscription(threadID: threadID) }
+  }
+  private func removeSubscription(threadID: String) async {
     guard let state = states.removeValue(forKey: threadID) else { return }
     conversations.removeValue(forKey: threadID); resynchronizing.remove(threadID)
     try? await rpc?.follow(threadID: threadID, owner: state.owner, enabled: false)
@@ -152,7 +187,7 @@ public actor CodexDesktopBridge {
     generation = UUID()
     let rpc = self.rpc; self.rpc = nil
     connection?.cancel(); connection = nil
-    states.removeAll(); conversations.removeAll(); resynchronizing.removeAll()
+    states.removeAll(); conversations.removeAll(); resynchronizing.removeAll(); dashboard.removeAll(); selections.removeAll()
     await rpc?.stop()
   }
 

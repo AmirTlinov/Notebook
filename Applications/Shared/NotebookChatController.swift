@@ -7,8 +7,27 @@ import NotebookCore
 /// can be replaced in the transient lane; mutations survive in SQLite by ID.
 @MainActor @Observable
 final class NotebookChatController {
-  var expanded = false
-  var draft: String = "" { didSet { persistPanel() } }
+  var expanded = false { didSet { if !expanded { stopDictation(); activities = [:]; enqueue(.activity(threadIDs: [])) } } }
+  var browsesChats = false
+  private(set) var projects: [CodexProject] = []
+  private(set) var projectCursor: String?
+  private(set) var selectedProject: CodexProject?
+  private(set) var activities: [String: CodexTaskActivity] = [:]
+  var draft: String = "" { didSet {
+    if !writesDictation && dictationStatus != nil { stopDictation() }
+    persistPanel()
+  } }
+  enum DictationStatus { case preparing, listening, finishing }
+  private(set) var dictationStatus: DictationStatus?
+  private(set) var dictationError: String?
+  var dictationLocale = "ru-RU"
+  @ObservationIgnored private let dictationInput: any NotebookDictationInput
+  @ObservationIgnored private var dictationTask: Task<Void, Never>?
+  @ObservationIgnored private var dictationID: UUID?
+  @ObservationIgnored private var dictationBase = ""
+  @ObservationIgnored private var dictationWritten = ""
+  @ObservationIgnored private var dictationThread: String?
+  @ObservationIgnored private var writesDictation = false
   private(set) var threadID: String?
   private(set) var tasks: [CodexTask] = []
   private(set) var taskCursor: String?
@@ -20,6 +39,7 @@ final class NotebookChatController {
   private(set) var connected = false
   private(set) var error: String?
   private(set) var saving = false
+  private(set) var continuationUnavailable = false
   @ObservationIgnored private let persistence: NotebookPersistenceQueue
   @ObservationIgnored private let author: UUID
   @ObservationIgnored private let send: (NotebookChatEnvelope, UUID) -> Void
@@ -31,11 +51,12 @@ final class NotebookChatController {
   @ObservationIgnored private var retry: Task<Void, Never>?
   @ObservationIgnored private var queries: [NotebookChatQuery] = []
   @ObservationIgnored private var deliveryIndex = 0
+  @ObservationIgnored private var displayedCatalogueCursor: String?
   @ObservationIgnored private var offeredJobs = Set<UUID>()
   @ObservationIgnored private var savingInput: NotebookChatInput?
 
-  init(persistence: NotebookPersistenceQueue, author: UUID, send: @escaping (NotebookChatEnvelope, UUID) -> Void) {
-    self.persistence = persistence; self.author = author; self.send = send
+  init(persistence: NotebookPersistenceQueue, author: UUID, dictationInput: any NotebookDictationInput = NotebookMicrophoneDictation(), send: @escaping (NotebookChatEnvelope, UUID) -> Void) {
+    self.persistence = persistence; self.author = author; self.send = send; self.dictationInput = dictationInput
   }
 
   func start() async {
@@ -49,6 +70,7 @@ final class NotebookChatController {
       loop = Task { [weak self] in
         guard let self else { return }
         var pollConversation = true
+        var nextActivity = ContinuousClock.now, nextCatalogue = ContinuousClock.now
         while !Task.isCancelled {
           if connected {
             let query: NotebookChatQuery?
@@ -61,7 +83,11 @@ final class NotebookChatController {
               // only after every pending input has reached the Mac at least once.
               let next = outgoing.first { !offeredJobs.contains($0.id) } ?? outgoing[deliveryIndex % outgoing.count]
               query = .job(next.input); deliveryIndex &+= 1; pollConversation = true
-            } else if expanded, let threadID { query = .conversation(threadID: threadID); pollConversation = false }
+            } else if expanded, .now >= nextActivity, !tasks.isEmpty {
+              query = .activity(threadIDs: tasks.map(\.id)); nextActivity = .now + .seconds(2)
+            } else if expanded, (threadID == nil || browsesChats), .now >= nextCatalogue {
+              query = .catalogue(cursor: displayedCatalogueCursor, project: selectedProject); nextCatalogue = .now + .seconds(10)
+            } else if expanded, !browsesChats, let threadID { query = .conversation(threadID: threadID); pollConversation = false }
             else { query = outgoing.first.map { .job($0.input) } }
             if let query {
               do { try await accept(try await request(query), for: query) }
@@ -76,6 +102,7 @@ final class NotebookChatController {
 
   func stop() async {
     stopped = true
+    stopDictation(); await dictationTask?.value
     loop?.cancel(); retry?.cancel()
     pending?.1.resume(throwing: NotebookTransportError.disconnected); pending = nil
     await loop?.value; loop = nil
@@ -85,11 +112,11 @@ final class NotebookChatController {
     guard peer == nil || peer == id else { return }
     if !connected { offeredJobs.removeAll() }
     peer = id; connected = true; persistPanel()
-    if tasks.isEmpty { catalogue() }
+    if tasks.isEmpty { catalogue(); catalogueProjects() }
   }
   func disconnect(_ id: UUID) {
     guard peer == id else { return }
-    connected = false; retry?.cancel()
+    connected = false; activities = [:]; retry?.cancel()
     pending?.1.resume(throwing: NotebookTransportError.disconnected); pending = nil
   }
   func receive(_ envelope: NotebookChatEnvelope, peerID: UUID) {
@@ -98,15 +125,74 @@ final class NotebookChatController {
     completion?.resume(returning: reply)
   }
 
-  func catalogue(next: Bool = false) { enqueue(.catalogue(cursor: next ? taskCursor : nil)) }
+  func catalogue(next: Bool = false) { enqueue(.catalogue(cursor: next ? taskCursor : nil, project: selectedProject)) }
+  func catalogueProjects(next: Bool = false) { enqueue(.projects(cursor: next ? projectCursor : nil)) }
+  func selectProject(_ project: CodexProject?) {
+    stopDictation()
+    selectedProject = project; tasks = []; activities = [:]; taskCursor = nil; displayedCatalogueCursor = nil
+    browsesChats = true; catalogue()
+  }
   func latestHistory() { guard let threadID else { return }; enqueue(.history(threadID: threadID, cursor: nil)) }
   func older() { guard let threadID else { return }; enqueue(.history(threadID: threadID, cursor: historyCursor)) }
   func select(_ task: CodexTask) {
-    threadID = task.id; conversation = nil; history = []; historyCursor = nil
+    stopDictation()
+    threadID = task.id; continuationUnavailable = false; browsesChats = false; conversation = nil; history = []; historyCursor = nil
     persistPanel(); enqueue(.history(threadID: task.id, cursor: nil))
   }
-  func create() async { _ = await submit(.create(title: "Занятие в Notebook")) }
+  func projectUpdatePending(_ id: String) -> Bool {
+    jobs.contains { job in
+      if case .updateProject(let edit) = job.input.action { return edit.id == id && !job.isTerminal }
+      return false
+    }
+  }
+  var projectUpdateNotice: String? {
+    guard let job = jobs.first(where: { job in if case .updateProject = job.input.action { return !job.isTerminal }; return false }) else { return nil }
+    return job.state == .uncertain ? "Проверяю подтверждение настроек проекта в Codex…" : "Настройки проекта сохранены на iPad · ожидается Codex"
+  }
+  func updateProject(_ original: CodexProject, name: String, roots: [String]) async -> Bool {
+    guard !projectUpdatePending(original.id) else { return false }
+    let edit = CodexProjectEdit(id: original.id, name: name == original.name ? nil : name, roots: roots == original.roots ? nil : roots)
+    guard edit.isValid else { return false }
+    return await submit(.updateProject(edit))
+  }
+  func create() async { stopDictation(); _ = await submit(.create(title: "Занятие в Notebook")) }
+
+  func startDictation() {
+    guard loaded, !stopped, dictationTask == nil, !saving else { return }
+    let id = UUID(); dictationID = id; dictationError = nil; dictationStatus = .preparing
+    dictationBase = draft; dictationWritten = draft; dictationThread = threadID
+    dictationTask = Task { [weak self, dictationInput, dictationLocale] in
+      do {
+        try await dictationInput.run(locale: dictationLocale) { [weak self] update in
+          await self?.receiveDictation(update, id: id)
+        }
+      } catch is CancellationError { }
+      catch { if let self, self.dictationID == id { self.dictationError = error.localizedDescription } }
+      guard let self, self.dictationID == id else { return }
+      self.dictationStatus = nil; self.dictationTask = nil; self.dictationID = nil
+    }
+  }
+  func stopDictation() {
+    guard dictationTask != nil else { return }
+    if dictationStatus == .preparing { dictationTask?.cancel() }
+    dictationStatus = .finishing
+    Task { await dictationInput.finish() }
+  }
+  private func receiveDictation(_ update: NotebookDictationUpdate, id: UUID) {
+    guard dictationID == id else { return }
+    switch update {
+    case .preparing: if dictationStatus != .finishing { dictationStatus = .preparing }
+    case .listening: if dictationStatus != .finishing { dictationStatus = .listening }
+    case .text(let text):
+      guard threadID == dictationThread, draft == dictationWritten else { return }
+      let separator = dictationBase.isEmpty || dictationBase.last?.isWhitespace == true || text.isEmpty ? "" : " "
+      let next = dictationBase + separator + text
+      guard next.utf8.count <= 32_768 else { dictationError = "Черновик достиг предела сообщения. Диктовка остановлена."; stopDictation(); return }
+      writesDictation = true; draft = next; writesDictation = false; dictationWritten = next
+    }
+  }
   func sendMessage(threadID submittedThread: String, text: String, context: String, attentionContextID: UUID? = nil) async -> Bool {
+    guard submittedThread != threadID || (!continuationUnavailable && !browsesChats && dictationStatus == nil) else { return false }
     if await submit(.send(threadID: submittedThread, text: text, context: context), attentionContextID: attentionContextID) {
       if draft == text, threadID == submittedThread { draft = "" }; return true
     }
@@ -208,12 +294,31 @@ final class NotebookChatController {
         // Bind once; later receipts cannot steal a deliberate task switch.
         if jobs.first(where: { $0.id == job.id })?.state != .accepted { select(task); catalogue() }
       }
+      if case .project(let project) = received.result {
+        if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = project }
+        if selectedProject?.id == project.id {
+          selectedProject = project; taskCursor = nil; displayedCatalogueCursor = nil; catalogue()
+        }
+      }
       try await refreshJobs(); error = job.error
-    case (.catalogue, .catalogue(let page)):
+    case (.projects(let cursor), .projects(let page)):
+      if cursor == nil { projects = page.projects }
+      else { projects += page.projects.filter { candidate in !projects.contains { $0.id == candidate.id } } }
+      projectCursor = page.nextCursor; error = nil
+    case (.activity(let ids), .activity(let values)):
+      guard values.count == ids.count, Set(values.map(\.id)) == Set(ids) else { throw NotebookTransportError.invalidAcknowledgement }
+      if expanded, tasks.map(\.id) == ids { activities = Dictionary(uniqueKeysWithValues: values.map { ($0.id, $0) }) }
+    case (.catalogue(let cursor, let project), .catalogue(let page)):
+      guard project == selectedProject else { return }
+      displayedCatalogueCursor = cursor
+      activities = activities.filter { entry in page.tasks.contains { $0.id == entry.key } }
       tasks = page.tasks; taskCursor = page.nextCursor; defaultProviderNeedsSignIn = page.defaultProviderNeedsSignIn; error = nil
     case (.conversation(let id), .conversation(let value)):
       guard value.threadID == id else { throw NotebookTransportError.invalidAcknowledgement }
-      if threadID == id { conversation = value; error = nil }
+      if threadID == id { conversation = value; continuationUnavailable = false; error = nil }
+    case (.conversation(let id), .conversationUnavailable(let thread, let reason)):
+      guard id == thread else { throw NotebookTransportError.invalidAcknowledgement }
+      if threadID == id { continuationUnavailable = true; error = reason }
     case (.history(let id, _), .history(let page)):
       if threadID == id { history = page.messages; historyCursor = page.nextCursor; error = nil }
     case (_, .failure(let message)): error = message

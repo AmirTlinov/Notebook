@@ -34,42 +34,45 @@ struct CodexProtocolTests {
     for framing in [CodexFrames.Framing.length, .lines] {
       let encoded = try CodexFrames.encode(value, framing: framing)
       for split in 0...encoded.count {
-        var decoder = CodexFrames(framing: framing)
-        let values = try decoder.append(Data(encoded.prefix(split))) + decoder.append(Data(encoded.dropFirst(split)))
-        #expect(values == [value]); #expect(decoder.buffer.isEmpty); #expect(decoder.partialSince == nil)
+        var lines = CodexFrames()
+        let desktop = CodexDesktopFrames()
+        let first = Data(encoded.prefix(split)), second = Data(encoded.dropFirst(split))
+        let values = try framing == .length ? desktop.append(first) + desktop.append(second) : lines.append(first) + lines.append(second)
+        #expect(values == [value]); #expect(lines.buffer.isEmpty)
+        #expect(desktop.partialSince == nil); #expect(lines.partialSince == nil)
       }
     }
   }
 
   @Test func multipleFrames() throws {
-    var decoder = CodexFrames(framing: .length)
+    let decoder = CodexDesktopFrames()
     let a: JSONValue = .object(["n": .number(1)]), b: JSONValue = .object(["n": .number(2)])
     #expect(try decoder.append(CodexFrames.encode(a, framing: .length) + CodexFrames.encode(b, framing: .length)) == [a, b])
   }
 
-  @Test(arguments: [Data([0, 0, 0, 0]), Data([255, 255, 255, 255]), Data([1, 0, 0, 1])])
+  @Test(arguments: [Data([0, 0, 0, 0]), Data([255, 255, 255, 255]), Data([1, 0, 0, 16])])
   func rejectsBadLengths(_ bytes: Data) {
-    var decoder = CodexFrames(framing: .length)
+    let decoder = CodexDesktopFrames()
     #expect(throws: CodexBridgeError.invalidFrame) { try decoder.append(bytes) }
   }
 
   @Test(arguments: ["[]\n", "NaN\n", "{\"a\":Infinity}\n", "\n", "{bad}\n"])
   func rejectsMalformedJSON(_ input: String) {
-    var decoder = CodexFrames(framing: .lines)
+    var decoder = CodexFrames()
     #expect(throws: CodexBridgeError.invalidFrame) { try decoder.append(Data(input.utf8)) }
   }
 
   @Test func partialDeadlineDoesNotSlideWithMoreBytes() throws {
-    var decoder = CodexFrames(framing: .length)
+    let decoder = CodexDesktopFrames()
     _ = try decoder.append(Data([100, 0, 0, 0]))
-    let start = ContinuousClock.now.advanced(by: .seconds(-11)); decoder.partialSince = start
+    let start = try #require(decoder.partialSince)
     _ = try decoder.append(Data([123]))
     #expect(decoder.partialSince == start)
-    #expect(throws: CodexBridgeError.timeout) { try decoder.checkDeadline() }
+    #expect(throws: CodexBridgeError.timeout) { try decoder.checkDeadline(now: start.advanced(by: .seconds(11))) }
   }
 
   @Test func idleHasNoDeadline() throws {
-    let decoder = CodexFrames(framing: .length)
+    let decoder = CodexDesktopFrames()
     try decoder.checkDeadline()
   }
 

@@ -5,20 +5,22 @@ import NotebookCore
 /// The panel has one fixed composer and one scrolling reading surface. Keyboard
 /// insets change this panel's available height, never the paper's geometry.
 struct NotebookChatPanel: View {
+  @Environment(\.scenePhase) private var scenePhase
   @Environment(NotebookAppModel.self) private var model
   @Bindable var chat: NotebookChatController
   let maximumWidth: CGFloat
   let maximumHeight: CGFloat
   @State private var showsHistory = false
-  @State private var browsesChats = false
   @State private var showsAllChats = false
+  @State private var editingProject: CodexProject?
 
   var body: some View {
     Group {
       if chat.expanded {
         VStack(spacing: 0) {
           header
-          if chat.threadID == nil || browsesChats { recentChats }
+          projectTabs
+          if chat.threadID == nil || chat.browsesChats { recentChats }
           else { conversation }
           composer
         }
@@ -46,17 +48,21 @@ struct NotebookChatPanel: View {
     .background(NotebookControlRegion(gate: model.inputGate))
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier("notebook-chat-panel")
-    .onChange(of: chat.threadID) { showsHistory = false; browsesChats = false }
+    .onChange(of: editingProject) { if editingProject != nil { chat.stopDictation() } }
+    .sheet(item: $editingProject) { NotebookProjectSettings(project: $0, chat: chat) }
+    .onChange(of: scenePhase) { if scenePhase == .background { chat.stopDictation() } }
+    .onChange(of: chat.threadID) { showsHistory = false; chat.browsesChats = false }
   }
 
   private var header: some View {
     HStack(spacing: 0) {
       Button {
-        browsesChats.toggle(); showsAllChats = false
-        if browsesChats { chat.catalogue() }
+        chat.browsesChats.toggle(); showsAllChats = false
+        if chat.browsesChats { chat.catalogue() }
       } label: {
         HStack(spacing: 6) {
-          Text(browsesChats ? "Чаты" : title).lineLimit(1)
+          Text(chat.browsesChats ? (chat.selectedProject?.name ?? "Чаты") : title).lineLimit(1)
+          if !chat.browsesChats, chat.conversation?.busy == true { ProgressView().controlSize(.mini) }
           if chat.threadID != nil { Image(systemName: "chevron.down").font(.system(size: 9, weight: .medium)) }
         }
         .font(.system(size: 14)).foregroundStyle(.secondary)
@@ -84,17 +90,25 @@ struct NotebookChatPanel: View {
     GeometryReader { geometry in
       ScrollView {
         VStack(alignment: .leading, spacing: 0) {
-          Text(showsAllChats ? "Чаты Codex" : "Недавние чаты")
+          Text(showsAllChats ? (chat.selectedProject?.name ?? "Чаты Codex") : "Недавние чаты")
             .font(.system(size: 14)).foregroundStyle(.secondary).padding(.bottom, 12)
           if chat.tasks.isEmpty {
-            Text(chat.connected ? "Создайте новый чат кнопкой вверху." : "Чаты появятся, когда Mac будет доступен.")
+            Text(chat.connected ? (chat.taskCursor != nil ? "На этой странице нет других чатов. Перейдите к следующим." : "Здесь пока нет чатов.") : "Чаты появятся, когда Mac будет доступен.")
               .font(.system(size: 14)).foregroundStyle(.secondary).padding(.vertical, 12)
           }
-          ForEach(showsAllChats ? chat.tasks : Array(chat.tasks.prefix(3))) { task in
-            Button { chat.select(task); browsesChats = false } label: {
-              Text(task.title).font(.system(size: 15)).foregroundStyle(.primary.opacity(0.65))
-                .lineLimit(1).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                .contentShape(Rectangle())
+          ForEach(showsAllChats ? orderedTasks : Array(orderedTasks.prefix(3))) { task in
+            Button { chat.select(task); chat.browsesChats = false } label: {
+              HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                  Text(task.title).font(.system(size: 15)).foregroundStyle(.primary.opacity(0.75)).lineLimit(1)
+                  Text(taskContext(task)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                  if let activity = chat.activities[task.id], activity.status == .running || activity.status == .waitingForInput,
+                    let summary = activity.summary, !summary.isEmpty {
+                    Text(summary).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
+                  }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                taskStatus(task)
+              }.frame(minHeight: 44).padding(.vertical, 7).contentShape(Rectangle())
             }
             .accessibilityIdentifier("notebook-chat-task-" + task.id)
           }
@@ -117,6 +131,83 @@ struct NotebookChatPanel: View {
     }
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier("notebook-chat-recents")
+  }
+
+  private var projectTabs: some View {
+    HStack(spacing: 2) {
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: 7) {
+          projectTab("Все проекты", selected: chat.selectedProject == nil) {
+            chat.selectProject(nil); showsAllChats = false
+          }.accessibilityIdentifier("notebook-chat-project-all")
+          ForEach(chat.projects) { project in
+            projectTab(project.name, selected: chat.selectedProject?.id == project.id, active: projectIsWorking(project)) {
+              chat.selectProject(project); showsAllChats = true
+            }
+            .contextMenu { Button("Настроить проект", systemImage: "slider.horizontal.3") { editingProject = project } }
+            .accessibilityIdentifier("notebook-chat-project-" + project.id)
+          }
+          if chat.projectCursor != nil {
+            Button { chat.catalogueProjects(next: true) } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
+              .accessibilityLabel("Ещё проекты")
+          }
+        }.padding(.horizontal, 18)
+      }
+      Menu {
+        ForEach(chat.projects) { project in Button("Настроить «" + project.name + "»") { editingProject = project } }
+        Button("Обновить проекты") { chat.catalogueProjects() }
+      } label: { Image(systemName: "slider.horizontal.3").font(.system(size: 14)).frame(width: 44, height: 44) }
+        .accessibilityLabel("Настроить проекты").accessibilityIdentifier("notebook-chat-projects")
+    }.padding(.trailing, 7).padding(.bottom, 7)
+  }
+  private func projectTab(_ name: String, selected: Bool, active: Bool = false, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      HStack(spacing: 6) {
+        if active { ProgressView().controlSize(.mini) }
+        Text(name).font(.system(size: 13, weight: selected ? .medium : .regular)).lineLimit(1)
+      }
+      .foregroundStyle(selected ? Color.primary : Color.secondary)
+      .padding(.horizontal, 15).frame(height: 34)
+      .background(selected ? Color(.secondarySystemBackground) : Color.clear, in: Capsule())
+      .overlay { Capsule().strokeBorder(Color(.separator).opacity(selected ? 0 : 0.25), lineWidth: 0.75) }
+      .frame(minHeight: 44)
+    }.accessibilityAddTraits(selected ? .isSelected : [])
+  }
+  private func projectIsWorking(_ project: CodexProject) -> Bool {
+    chat.tasks.contains { task in
+      (task.projectID == project.id || (task.projectID == nil && project.roots.contains(task.cwd)))
+        && chat.activities[task.id]?.status == .running
+    }
+  }
+  private func project(for task: CodexTask) -> CodexProject? {
+    chat.projects.first { $0.id == task.projectID } ?? chat.projects.first { $0.roots.contains(task.cwd) }
+  }
+  private var orderedTasks: [CodexTask] {
+    let activities = chat.activities
+    return chat.tasks.enumerated().sorted { left, right in
+      func rank(_ task: CodexTask) -> Int {
+        switch activities[task.id]?.status { case .waitingForInput: 0; case .running: 1; default: 2 }
+      }
+      return rank(left.element) == rank(right.element) ? left.offset < right.offset : rank(left.element) < rank(right.element)
+    }.map(\.element)
+  }
+  private func taskContext(_ task: CodexTask) -> String {
+    let location = project(for: task)?.name ?? URL(fileURLWithPath: task.cwd).lastPathComponent
+    let status: String
+    switch chat.activities[task.id]?.status {
+    case .running: status = "В работе"
+    case .waitingForInput: status = "Нужен ваш ответ"
+    case .idle: status = "Можно продолжить"
+    default: status = "История · статус недоступен"
+    }
+    return location + " · " + status
+  }
+  @ViewBuilder private func taskStatus(_ task: CodexTask) -> some View {
+    switch chat.activities[task.id]?.status {
+    case .running: ProgressView().controlSize(.small).accessibilityLabel("В работе")
+    case .waitingForInput: Image(systemName: "bubble.left.and.exclamationmark.bubble.right").foregroundStyle(.secondary)
+    default: EmptyView()
+    }
   }
 
   private var conversation: some View {
@@ -187,7 +278,7 @@ struct NotebookChatPanel: View {
       HStack(alignment: .bottom, spacing: 0) {
         Menu {
           Button("Новый чат", systemImage: "square.and.pencil", action: createChat)
-          Button("Выбрать чат", systemImage: "clock") { browsesChats = true; showsAllChats = true; chat.catalogue() }
+          Button("Выбрать чат", systemImage: "clock") { chat.browsesChats = true; showsAllChats = true; chat.catalogue() }
         } label: {
           Image(systemName: "plus").font(.system(size: 19, weight: .regular)).frame(width: 44, height: 44)
         }.accessibilityLabel("Действия чата").accessibilityIdentifier("notebook-chat-actions")
@@ -195,8 +286,23 @@ struct NotebookChatPanel: View {
           .font(.system(size: 15)).lineLimit(1...5).textFieldStyle(.plain)
           .padding(.vertical, 12).padding(.trailing, 8)
           .accessibilityIdentifier("notebook-chat-text")
+          .disabled(chat.dictationStatus != nil)
         if chat.saving || model.isSavingAgentQuestion {
           ProgressView().controlSize(.small).frame(width: 44, height: 44)
+        }
+        Button {
+          if chat.dictationStatus == nil { chat.startDictation() } else { chat.stopDictation() }
+        } label: {
+          Image(systemName: chat.dictationStatus == nil ? "mic" : "stop.fill")
+            .font(.system(size: 16)).foregroundStyle(chat.dictationStatus == nil ? Color.primary : Color.red)
+            .frame(width: 44, height: 44)
+        }
+        .accessibilityLabel(chat.dictationStatus == nil ? "Голосовой ввод" : "Остановить диктовку")
+        .accessibilityIdentifier("notebook-chat-microphone")
+        .disabled(chat.dictationStatus == .finishing || chat.saving)
+        .contextMenu {
+          Button("Диктовка: русский") { chat.dictationLocale = "ru-RU" }
+          Button("Dictation: English") { chat.dictationLocale = "en-US" }
         }
         Button { model.sendChatMessage() } label: {
           Image(systemName: "arrow.up").font(.system(size: 15, weight: .medium))
@@ -217,21 +323,74 @@ struct NotebookChatPanel: View {
   }
 
   private var title: String {
-    chat.conversation?.title ?? chat.tasks.first(where: { $0.id == chat.threadID })?.title ?? "Новый чат"
+    chat.conversation?.title ?? chat.tasks.first(where: { $0.id == chat.threadID })?.title ?? (chat.threadID == nil ? "Новый чат" : "Чат Codex")
   }
   private var canSend: Bool {
     !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && chat.threadID != nil
-      && !chat.saving && !model.isSavingAgentQuestion
+      && chat.dictationStatus == nil && !chat.saving && !model.isSavingAgentQuestion && !chat.continuationUnavailable && !chat.browsesChats
   }
   private var notice: String? {
+    if let status = chat.dictationStatus {
+      return status == .preparing ? "Подготавливаю диктовку на iPad…" : status == .finishing ? "Завершаю диктовку…" : "Слушаю · текст появится в черновике"
+    }
+    if let error = chat.dictationError { return error }
     if let error = chat.error ?? model.agentRequestError { return error }
+    if let notice = chat.projectUpdateNotice { return notice }
     if chat.defaultProviderNeedsSignIn { return "Для нового чата войдите в Codex на Mac." }
-    if !chat.connected, chat.threadID != nil, !browsesChats { return "Mac недоступен · сообщения сохраняются на iPad" }
+    if !chat.connected, chat.threadID != nil, !chat.browsesChats { return "Mac недоступен · сообщения сохраняются на iPad" }
     return nil
   }
   private func createChat() {
-    showsHistory = false; browsesChats = false
+    showsHistory = false; chat.browsesChats = false
     Task { await chat.create() }
+  }
+}
+
+private struct NotebookProjectSettings: View {
+  @Environment(\.dismiss) private var dismiss
+  let project: CodexProject
+  let chat: NotebookChatController
+  @State private var name: String
+  @State private var roots: String
+  @State private var error: String?
+  init(project: CodexProject, chat: NotebookChatController) {
+    self.project = project; self.chat = chat
+    _name = State(initialValue: project.name); _roots = State(initialValue: project.roots.joined(separator: "\n"))
+  }
+  private var paths: [String] {
+    roots.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+      .map { $0.hasPrefix("/") ? URL(fileURLWithPath: $0).standardizedFileURL.path : $0 }
+  }
+  private var submittedRoots: [String] {
+    roots == project.roots.joined(separator: "\n") ? project.roots : paths
+  }
+  var body: some View {
+    NavigationStack {
+      Form {
+        Section("Проект Codex") { TextField("Название", text: $name).accessibilityIdentifier("notebook-project-name") }
+        Section {
+          TextField("/Users/…", text: $roots, axis: .vertical).lineLimit(2...6).autocorrectionDisabled().textInputAutocapitalization(.never)
+            .accessibilityIdentifier("notebook-project-roots")
+        } header: { Text("Папки проекта на Mac") } footer: {
+          Text("Один полный путь на строку. Изменяются настройки настоящего проекта Codex, не копия в Notebook. Файлы не перемещаются.")
+        }
+        if let error { Text(error).foregroundStyle(.red) }
+      }
+      .navigationTitle("Настройки проекта").navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() } }
+        ToolbarItem(placement: .confirmationAction) {
+          Button("Сохранить") {
+            Task {
+              if await chat.updateProject(project, name: name.trimmingCharacters(in: .whitespacesAndNewlines), roots: submittedRoots) { dismiss() }
+              else { error = "Проверьте название и полные пути. Изменения не сохранены." }
+            }
+          }.disabled(chat.saving || chat.projectUpdatePending(project.id) || (name == project.name && submittedRoots == project.roots))
+            .accessibilityIdentifier("notebook-project-save")
+        }
+      }
+    }
+    .presentationDetents([.medium, .large])
   }
 }
 

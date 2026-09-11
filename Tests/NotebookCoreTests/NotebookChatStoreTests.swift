@@ -16,6 +16,22 @@ struct NotebookChatStoreTests {
     .init(id: id, author: author, action: .send(threadID: "00000000-0000-0000-0000-000000000001", text: text, context: ""), createdAt: Date(timeIntervalSince1970: 100))
   }
 
+  @Test func projectEditIsNativeScopedAndReplaysTheSameDurableReceipt() throws {
+    try fixture { store, author in
+      let edit = CodexProjectEdit(id: "native-project", name: "New name", roots: nil)
+      let input = NotebookChatInput(author: author, action: .updateProject(edit))
+      #expect(input.isValid); #expect(input.action.threadID == nil)
+      let saved = try store.saveChatInput(input)
+      #expect(try store.saveChatInput(input) == saved)
+      _ = try store.advanceChatJob(input.id, from: .saved, to: .attempting)
+      let result = CodexProject(id: edit.id, name: "New name", roots: ["/newer-native-root"])
+      let receipt = try store.advanceChatJob(input.id, from: .attempting, to: .accepted, result: .project(result))
+      #expect(try store.saveChatInput(input) == receipt)
+      #expect(!CodexProjectEdit(id: edit.id, name: nil, roots: ["relative/path"]).isValid)
+      #expect(!CodexProjectEdit(id: edit.id, name: nil, roots: ["/same", "/same"]).isValid)
+      #expect(!edit.matches(.init(id: "other", name: "New name", roots: [])))
+    }
+  }
   @Test func exactReplayIsNotAnotherMessageAndCollisionCannotEditIt() throws {
     try fixture { store, author in
       let input = input(author), saved = try store.saveChatInput(input)

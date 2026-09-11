@@ -30,6 +30,24 @@ import NotebookCodex
     let installation = try await CodexDesktopInstallation.discover()
     let metadata = CodexMetadata(installation: installation)
     let args = CommandLine.arguments
+    if args.count == 4, args[1] == "project-update" {
+      try write(await metadata.updateProject(.init(id: args[2], name: args[3], roots: nil))); return
+    }
+    if args.count >= 2, args[1] == "projects" {
+      let projects = try await metadata.projects()
+      if args.count == 3, let project = projects.projects.first(where: { $0.id == args[2] }) {
+        try write(await metadata.tasks(project: project))
+      } else { try write(projects) }
+      return
+    }
+    if args.count == 3, args[1] == "observe" {
+      let bridge = CodexDesktopBridge(installation: installation)
+      do {
+        _ = try await bridge.activities(threadIDs: [args[2]])
+        let state = try await wait(bridge, threadID: args[2]) { $0.ready }
+        try write(state); await bridge.close(); return
+      } catch { await bridge.close(); throw error }
+    }
     if args.count == 3, args[1] == "history" {
       try write(await metadata.history(threadID: args[2])); return
     }

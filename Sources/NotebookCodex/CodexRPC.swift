@@ -17,7 +17,7 @@ actor CodexRPC {
     let continuation: CheckedContinuation<JSONValue, Error>
     let timer: Task<Void, Never>
   }
-  private static let metadataMethods: Set<String> = ["initialize", "account/read", "thread/list", "thread/turns/list",
+  private static let metadataMethods: Set<String> = ["initialize", "account/read", "thread/list", "thread/turns/list", "thread/items/list", "project/list", "project/read", "project/update",
     "thread/start", "thread/inject_items", "thread/name/set", "thread/unsubscribe"]
 
   init(channel: CodexChannel, surface: Surface) { self.channel = channel; self.surface = surface }

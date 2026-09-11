@@ -1,14 +1,51 @@
 import Foundation
 import CryptoKit
 
+/// A project is read from Codex; Notebook never creates a second project catalogue.
+public struct CodexProject: Codable, Equatable, Sendable, Identifiable {
+  public let id: String
+  public let name: String
+  public let roots: [String]
+  public init(id: String, name: String, roots: [String]) { self.id = id; self.name = name; self.roots = roots }
+}
+/// An explicit native project patch. Omitted fields remain owned by Codex.
+public struct CodexProjectEdit: Codable, Equatable, Sendable {
+  public let id: String
+  public let name: String?
+  public let roots: [String]?
+  public init(id: String, name: String?, roots: [String]?) { self.id = id; self.name = name; self.roots = roots }
+  public var isValid: Bool {
+    !id.isEmpty && id.utf8.count <= 256 && (name != nil || roots != nil)
+      && (name.map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.utf8.count <= 256 } ?? true)
+      && (roots.map { $0.count <= 32 && Set($0).count == $0.count && $0.allSatisfy { $0.hasPrefix("/") && !$0.contains("\0") && $0.utf8.count <= 4096 && URL(fileURLWithPath: $0).standardizedFileURL.path == $0 } } ?? true)
+  }
+  public func matches(_ project: CodexProject) -> Bool {
+    id == project.id && (name == nil || name == project.name) && (roots == nil || roots == project.roots)
+  }
+}
+public struct CodexProjectPage: Codable, Equatable, Sendable {
+  public let projects: [CodexProject]
+  public let nextCursor: String?
+  public init(projects: [CodexProject], nextCursor: String?) { self.projects = projects; self.nextCursor = nextCursor }
+}
 public struct CodexTask: Codable, Equatable, Sendable, Identifiable {
   public let id: String
   public let title: String
   public let cwd: String
-  public init(id: String, title: String, cwd: String) { self.id = id; self.title = title; self.cwd = cwd }
-
+  public let projectID: String?
+  public let source: String?
+  public let updatedAt: Double?
+  public init(id: String, title: String, cwd: String, projectID: String? = nil, source: String? = nil, updatedAt: Double? = nil) {
+    self.id = id; self.title = title; self.cwd = cwd; self.projectID = projectID; self.source = source; self.updatedAt = updatedAt
+  }
 }
-
+public struct CodexTaskActivity: Codable, Equatable, Sendable, Identifiable {
+  public enum Status: String, Codable, Sendable { case running, waitingForInput, idle, unavailable }
+  public let id: String
+  public let status: Status
+  public let summary: String?
+  public init(id: String, status: Status, summary: String? = nil) { self.id = id; self.status = status; self.summary = summary }
+}
 public struct CodexTaskPage: Codable, Equatable, Sendable {
   public let tasks: [CodexTask]
   public let nextCursor: String?
@@ -17,19 +54,50 @@ public struct CodexTaskPage: Codable, Equatable, Sendable {
   public init(tasks: [CodexTask], nextCursor: String?, defaultProviderNeedsSignIn: Bool = false) {
     self.tasks = tasks; self.nextCursor = nextCursor; self.defaultProviderNeedsSignIn = defaultProviderNeedsSignIn
   }
-
 }
 
 public struct CodexMessage: Codable, Equatable, Sendable, Identifiable {
   public enum Role: String, Codable, Sendable { case user, assistant }
+  public struct Activity: Codable, Equatable, Sendable {
+    public enum Kind: String, Codable, Sendable { case command, files, tool, search, image, plan, compaction, error }
+    public let kind: Kind
+    public let status: String?
+    public let detail: String?
+    public init(kind: Kind, status: String? = nil, detail: String? = nil) { self.kind = kind; self.status = status; self.detail = detail }
+  }
+  public let activity: Activity?
   public let id: String
   public let turnID: String
   public let clientID: String?
   public let role: Role
   public let text: String
   public let isTruncated: Bool
-  public init(id: String, turnID: String, clientID: String?, role: Role, text: String, isTruncated: Bool = false) { self.isTruncated = isTruncated; self.id = id; self.turnID = turnID; self.clientID = clientID; self.role = role; self.text = text }
+  public init(id: String, turnID: String, clientID: String?, role: Role, text: String, isTruncated: Bool = false, activity: Activity? = nil) { self.activity = activity; self.isTruncated = isTruncated; self.id = id; self.turnID = turnID; self.clientID = clientID; self.role = role; self.text = text }
 
+}
+
+extension CodexMessage {
+  /// Keep every item in this page. Only display text is shortened; native IDs and
+  /// the continuation cursor remain authoritative, and the UI names the excerpt.
+  public static func transportPage(_ messages: [CodexMessage]) -> [CodexMessage] {
+    let budget = max(256, 72 * 1024 / max(1, messages.count))
+    func prefix(_ text: String, bytes: Int) -> String {
+      if text.utf8.count <= bytes { return text }
+      let data = Data(text.utf8.prefix(bytes))
+      for removed in 0...min(3, data.count) {
+        if let value = String(data: data.dropLast(removed), encoding: .utf8) { return value }
+      }
+      return ""
+    }
+    return messages.map { item in
+      let textBudget = item.activity?.detail == nil ? budget : budget / 2
+      let text = prefix(item.text, bytes: textBudget)
+      let detail = item.activity?.detail.map { prefix($0, bytes: budget - text.utf8.count) }
+      let activity = item.activity.map { Activity(kind: $0.kind, status: $0.status, detail: detail) }
+      return CodexMessage(id: item.id, turnID: item.turnID, clientID: item.clientID, role: item.role,
+        text: text, isTruncated: item.isTruncated || text != item.text || detail != item.activity?.detail, activity: activity)
+    }
+  }
 }
 
 public struct CodexUserRequest: Codable, Equatable, Sendable, Identifiable {
@@ -76,12 +144,13 @@ public enum CodexUserDecision: Codable, Equatable, Sendable {
 public enum NotebookChatAction: Codable, Equatable, Sendable {
   case send(threadID: String, text: String, context: String)
   case create(title: String)
+  case updateProject(CodexProjectEdit)
   case stop(threadID: String, turnID: String)
   case respond(threadID: String, request: CodexUserRequest, decision: CodexUserDecision)
   public var threadID: String? {
     switch self {
     case .send(let id, _, _), .stop(let id, _), .respond(let id, _, _): id
-    case .create: nil
+    case .create, .updateProject: nil
     }
   }
 
@@ -94,7 +163,7 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
     case .stop(let thread, let turn): address = ["stop", thread.lowercased(), turn.lowercased()]
     case .respond(let thread, let request, _):
       address = ["respond", thread.lowercased(), request.turnID.lowercased(), request.method, request.id]
-    case .send, .create: return nil
+    case .send, .create, .updateProject: return nil
     }
     var data = Data()
     for part in ["NotebookChatControl/1", author.uuidString.lowercased()] + address {
@@ -125,6 +194,7 @@ public struct NotebookChatInput: Codable, Equatable, Sendable, Identifiable {
     case .send(_, let text, let context):
       return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.utf8.count <= 32768 && context.utf8.count <= 32768
     case .create(let title): return !title.isEmpty && title.utf8.count <= 256
+    case .updateProject(let edit): return edit.isValid
     case .stop(_, let turn): return UUID(uuidString: turn) != nil
     case .respond(_, let request, _): return !request.id.isEmpty && !request.turnID.isEmpty
     }
@@ -132,7 +202,7 @@ public struct NotebookChatInput: Codable, Equatable, Sendable, Identifiable {
 }
 
 public enum NotebookChatResult: Codable, Equatable, Sendable {
-  case created(CodexTask), turn(String), acknowledged
+  case created(CodexTask), project(CodexProject), turn(String), acknowledged
 }
 
 public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
@@ -153,6 +223,7 @@ public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
       (state == .accepted) == (result != nil) else { return false }
     guard let result else { return true }
     switch (input.action, result) {
+    case (.updateProject(let edit), .project(let project)): return edit.matches(project)
     case (.create, .created(let task)): return UUID(uuidString: task.id) != nil && task.title.utf8.count <= 1024
     case (.send, .turn(let id)): return UUID(uuidString: id) != nil
     case (.stop, .acknowledged), (.respond, .acknowledged): return true
@@ -163,13 +234,17 @@ public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
 
 public enum NotebookChatQuery: Codable, Equatable, Sendable {
   case job(NotebookChatInput)
-  case catalogue(cursor: String?)
+  case catalogue(cursor: String?, project: CodexProject? = nil)
+  case projects(cursor: String?)
+  case activity(threadIDs: [String])
   case conversation(threadID: String)
   case history(threadID: String, cursor: String?)
 }
 
 public enum NotebookChatReply: Codable, Equatable, Sendable {
+  case projects(CodexProjectPage), activity([CodexTaskActivity])
   case job(NotebookChatJob), catalogue(CodexTaskPage), conversation(CodexConversation), history(CodexHistoryPage)
+  case conversationUnavailable(threadID: String, reason: String)
   case failure(String)
 }
 

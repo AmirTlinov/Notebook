@@ -14,7 +14,11 @@ final class NotebookChatPanelTests: XCTestCase {
     try await panel(width: 320, height: 210, name: "chat-reference-compact")
   }
 
-  private func panel(width: CGFloat, height: CGFloat, name: String) async throws {
+  func testActiveProjectsShowNativeWorkWithoutCreatingAConversation() async throws {
+    try await panel(width: 560, height: 640, name: "chat-active-projects", active: true)
+  }
+
+  private func panel(width: CGFloat, height: CGFloat, name: String, active: Bool = false) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("chat-panel-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
@@ -24,17 +28,26 @@ final class NotebookChatPanelTests: XCTestCase {
     weak var receiver: NotebookChatController?
     let chat = NotebookChatController(persistence: queue, author: author) { envelope, destination in
       XCTAssertEqual(destination, peer)
-      guard case .request(.catalogue) = envelope.body else { return XCTFail("This view only requests the catalogue") }
+      guard case .request(let query) = envelope.body else { return XCTFail("Expected a catalogue query") }
+      if case .projects = query {
+        receiver?.receive(.init(id: envelope.id, body: .reply(.projects(.init(projects: [.init(id: "project", name: "Notebook", roots: ["/fixture"])], nextCursor: nil)))), peerID: peer); return
+      }
+      if case .activity(let ids) = query {
+        receiver?.receive(.init(id: envelope.id, body: .reply(.activity(ids.map { .init(id: $0, status: active ? .running : .idle, summary: active ? "Проверяю сохранение и работу чата на iPad" : nil) }))), peerID: peer); return
+      }
+      guard case .catalogue = query else { return XCTFail("This view never starts or selects a task") }
       let tasks = ["Изучение высшей математики", "Сделай цветным", "Сделай цветным"].enumerated().map {
-        CodexTask(id: "reference-chat-\($0.offset)", title: $0.element, cwd: "/fixture")
+        CodexTask(id: "reference-chat-\($0.offset)", title: $0.element, cwd: "/fixture", projectID: "project")
       }
       receiver?.receive(.init(id: envelope.id, body: .reply(.catalogue(.init(tasks: tasks, nextCursor: nil)))), peerID: peer)
     }
     receiver = chat
     await chat.start(); chat.connect(peer); chat.expanded = true
     let deadline = ContinuousClock.now + .seconds(3)
-    while chat.tasks.count != 3, .now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    while (chat.tasks.count != 3 || chat.activities.count != 3 || chat.projects.count != 1), .now < deadline { try await Task.sleep(for: .milliseconds(20)) }
     XCTAssertEqual(chat.tasks.count, 3)
+    XCTAssertEqual(chat.activities.count, 3)
+    XCTAssertEqual(chat.projects.count, 1)
     await chat.stop()
 
     let host = UIHostingController(rootView: NotebookChatPanel(chat: chat, maximumWidth: width, maximumHeight: height)

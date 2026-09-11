@@ -49,5 +49,22 @@ final class NotebookChatRenderingTests: XCTestCase {
     XCTAssertEqual(style?["assistantBackground"] as? String, "rgba(0, 0, 0, 0)")
     XCTAssertEqual(style?["labels"] as? [String], ["Вы", "Codex"], "Quiet styling retains accessible speaker names")
     XCTAssertEqual(style?["overflow"] as? Bool, false)
+
+    let activity = #"[{"id":"native-command","role":"assistant","text":"Выполняется команда · swift test","activity":{"kind":"command","status":"inProgress","detail":"<script>window.executed = true</script>"}},{"id":"native-compaction","role":"assistant","text":"Контекст сжат","activity":{"kind":"compaction"}}]"#
+    _ = try await web.callAsyncJavaScript("await window.showMessages(json)", arguments: ["json": activity], in: nil, contentWorld: .page)
+    _ = try await web.evaluateJavaScript("document.querySelector('details').open = true")
+    _ = try await web.callAsyncJavaScript("await window.showMessages(json)", arguments: ["json": activity], in: nil, contentWorld: .page)
+    let actions = try await web.evaluateJavaScript("""
+      ({rows:document.querySelectorAll('[data-kind=activity]').length,
+        expanded:document.querySelector('details').open,
+        nativeID:document.querySelector('article').dataset.itemId,
+        unsafe:!!window.executed || !!document.querySelector('article script'),
+        inactiveButtons:document.querySelectorAll('[data-kind=activity] details').length})
+      """) as? [String: Any]
+    XCTAssertEqual(actions?["rows"] as? Int, 2)
+    XCTAssertEqual(actions?["expanded"] as? Bool, true, "A streamed update preserves the human's expanded native item")
+    XCTAssertEqual(actions?["nativeID"] as? String, "native-command")
+    XCTAssertEqual(actions?["unsafe"] as? Bool, false, "A command's text is not HTML or a new instruction")
+    XCTAssertEqual(actions?["inactiveButtons"] as? Int, 1, "Events without details do not pretend to expand")
   }
 }

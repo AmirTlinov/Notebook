@@ -30,6 +30,8 @@ final class NotebookChatControllerTests: XCTestCase {
         reply = .job(job)
         if offers.count == 3 { admitted.fulfill() }
       case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil, defaultProviderNeedsSignIn: true))
+      case .projects: reply = .projects(.init(projects: [], nextCursor: nil))
+      case .activity(let ids): reply = .activity(ids.map { .init(id: $0, status: .idle) })
       case .history: reply = .history(.init(messages: [], nextCursor: nil))
       default: return XCTFail("Collapsed panel must not poll a conversation")
       }
@@ -89,4 +91,61 @@ final class NotebookChatControllerTests: XCTestCase {
     await second.stop()
     let flushed = await queue.flush(); XCTAssertTrue(flushed)
   }
+  func testProjectsAndActivitySelectTheNativeThreadWithoutStartingWork() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-projects-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), author = UUID(), peer = UUID()
+    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let queue = NotebookPersistenceQueue(store: store)
+    let project = CodexProject(id: UUID().uuidString, name: "Notebook", roots: ["/fixture/Notebook"])
+    let task = CodexTask(id: UUID().uuidString, title: "Продолжить настоящую работу", cwd: "/fixture/Notebook", projectID: project.id, source: "cli")
+    let turn = UUID().uuidString
+    weak var receiver: NotebookChatController?
+    var submitted: [NotebookChatInput] = [], filtered = false
+    let chat = NotebookChatController(persistence: queue, author: author) { envelope, _ in
+      guard case .request(let query) = envelope.body else { return XCTFail("Expected a query") }
+      let reply: NotebookChatReply
+      switch query {
+      case .projects: reply = .projects(.init(projects: [project], nextCursor: nil))
+      case .catalogue(_, let selected):
+        if selected == project { filtered = true }
+        reply = .catalogue(.init(tasks: [task], nextCursor: nil))
+      case .activity(let ids): reply = .activity(ids.map { .init(id: $0, status: .running, summary: "Выполняется swift test") })
+      case .history(let id, _):
+        XCTAssertEqual(id, task.id); reply = .history(.init(messages: [], nextCursor: nil))
+      case .conversation(let id):
+        XCTAssertEqual(id, task.id)
+        reply = .conversation(.init(threadID: id, revision: 1, title: task.title, ready: true, busy: false, activeTurnID: nil,
+          messages: [], requests: [], acceptedMessages: [:], turnStatuses: [:]))
+      case .job(let input):
+        submitted.append(input)
+        reply = .job(.init(input: input, state: .accepted, result: .turn(turn), revision: 2))
+      }
+      receiver?.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
+    }
+    receiver = chat
+    func wait(_ test: () -> Bool) async throws {
+      let deadline = ContinuousClock.now + .seconds(8)
+      while !test(), .now < deadline { try await Task.sleep(for: .milliseconds(30)) }
+      XCTAssertTrue(test())
+    }
+    await chat.start(); chat.expanded = true; chat.connect(peer)
+    try await wait { chat.projects == [project] && chat.activities[task.id]?.status == .running }
+    chat.selectProject(project)
+    try await wait { filtered && chat.tasks == [task] }
+    XCTAssertTrue(submitted.isEmpty); XCTAssertTrue(chat.jobs.isEmpty)
+    chat.select(task)
+    try await wait { chat.conversation?.threadID == task.id }
+    XCTAssertTrue(submitted.isEmpty, "Opening the real transcript cannot create a task or start a turn")
+    chat.draft = "Продолжай эту работу"
+    let saved = await chat.sendMessage(threadID: task.id, text: chat.draft, context: "")
+    XCTAssertTrue(saved)
+    try await wait { !submitted.isEmpty }
+    XCTAssertEqual(submitted.count, 1); XCTAssertEqual(submitted.first?.action.threadID, task.id)
+    chat.browsesChats = true
+    let hidden = await chat.sendMessage(threadID: task.id, text: "Not to a hidden chat", context: "")
+    XCTAssertFalse(hidden)
+    await chat.stop(); let flushed = await queue.flush(); XCTAssertTrue(flushed)
+  }
+
 }

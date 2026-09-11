@@ -243,8 +243,8 @@ struct NotebookIPCTests {
       try await gate.waitUntilEntered()
       server.stop()
       let first = IPCCompletion<Void>("the first IPC drain"), second = IPCCompletion<Void>("the second IPC drain")
-      Task { await server.stopAndDrain(); acknowledgements.increment(); first.resolve(.success(())) }
-      Task { await server.stopAndDrain(); acknowledgements.increment(); second.resolve(.success(())) }
+      Task(executorPreference: IPCQueueIdentity()) { await server.stopAndDrain(); acknowledgements.increment(); first.resolve(.success(())) }
+      Task(executorPreference: IPCQueueIdentity()) { await server.stopAndDrain(); acknowledgements.increment(); second.resolve(.success(())) }
       // The client loses its socket immediately; that is not the writer's ACK.
       let disconnected = try await client.value()
       if case .success = disconnected { Issue.record("Closing the server must close the accepted client socket") }
@@ -317,7 +317,13 @@ struct NotebookIPCTests {
     }
     #expect(await waitForIPC { server.activeConnectionCount == NotebookIPC.maximumConnections })
     let drained = IPCCompletion<Duration>("closed queued IPC sockets")
-    Task { drained.resolve(.success(await server.stopAndDrain())) }
+    let probe = IPCQueueIdentity()
+    Task(executorPreference: probe) {
+      #expect(probe.isCurrent, "The timed probe starts independently of unrelated synchronous Core tests")
+      let duration = await server.stopAndDrain()
+      #expect(probe.isCurrent, "The protocol completion returns to the same probe executor")
+      drained.resolve(.success(duration))
+    }
     let duration = try await drained.value()
     #expect(duration < .seconds(1))
     #expect(server.activeConnectionCount == 0)
@@ -383,11 +389,18 @@ private final class IPCHandlerGate: @unchecked Sendable {
   }
 }
 
-private final class IPCQueueIdentity: @unchecked Sendable {
-  let queue = DispatchQueue(label: "Notebook.IPCTests.handler-owner", qos: .userInitiated)
+/// A timed protocol probe must be runnable before its independent watchdog fires.
+/// Long synchronous tests may occupy the cooperative pool; they are not part of
+/// either the server's drain latency or the test's deliberately suspended workers.
+private final class IPCQueueIdentity: TaskExecutor, @unchecked Sendable {
+  let queue = DispatchQueue(label: "Notebook.IPCTests.protocol-event", qos: .userInitiated)
   private let key = DispatchSpecificKey<Bool>()
   init() { queue.setSpecific(key: key, value: true) }
   var isCurrent: Bool { DispatchQueue.getSpecific(key: key) == true }
+  func enqueue(_ job: consuming ExecutorJob) {
+    let job = UnownedJob(job)
+    queue.async { [self] in job.runSynchronously(on: asUnownedTaskExecutor()) }
+  }
 }
 
 private struct IPCWaitFailure: Error, CustomStringConvertible {
@@ -436,7 +449,7 @@ private final class IPCCompletion<Value: Sendable>: @unchecked Sendable {
 
 private func drainIPC(_ server: NotebookIPCServer) async throws {
   let drained = IPCCompletion<Void>("IPC cleanup")
-  Task { await server.stopAndDrain(); drained.resolve(.success(())) }
+  Task(executorPreference: IPCQueueIdentity()) { await server.stopAndDrain(); drained.resolve(.success(())) }
   try await drained.value()
 }
 
