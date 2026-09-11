@@ -25,12 +25,16 @@ extension NotebookStore {
 
   public func collaborationAction(_ id: UUID) throws -> CollaborationReceipt {
     try prepare()
-    return try readTransaction { _ in try loadAction(id) }
+    return try readTransaction { _ in
+      try currentSQL!.limitReads(.agentCommand)
+      return try loadAction(id)
+    }
   }
 
   public func collaborationContinuations(_ id: UUID) throws -> [CollaborationContinuation] {
     try prepare()
     return try readTransaction { _ in
+      try currentSQL!.limitReads(.agentCommand)
       let receipt = try loadAction(id)
       return receipt.continuations(in: try actionSourceProjection(receipt.action, receipt: receipt).files)
     }
@@ -54,7 +58,7 @@ extension NotebookStore {
 
   private func applyCollaborationActionImmediately(_ action: CollaborationAction, actor: UUID) throws -> CollaborationReceipt {
     try prepare()
-    return try withMutationLock {
+    return try commandTransaction(readAllowance: .agentCommand) {
       if try hasStoredValue(actionFile(action.id)) {
         let previous = try loadAction(action.id)
         guard previous.action == action else {
@@ -155,7 +159,7 @@ extension NotebookStore {
 
   private func undoCollaborationActionImmediately(_ id: UUID, actor: UUID) throws -> CollaborationReceipt {
     try prepare()
-    return try withMutationLock {
+    return try commandTransaction(readAllowance: .agentCommand) {
       var receipt = try loadAction(id)
       if receipt.undo != nil { return receipt }
       let before = try actionSourceProjection(receipt.action, receipt: receipt)

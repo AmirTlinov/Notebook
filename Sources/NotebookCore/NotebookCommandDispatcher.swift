@@ -32,7 +32,7 @@ public struct NotebookCommand: Codable, Sendable {
   /// These commands can commit or enqueue work; the Mac owner orders them with native intents.
   public var changesStore: Bool {
     switch command {
-    case .apply, .undo, .point, .render, .pageVision, .publishExport: true
+    case .apply, .undo, .point, .placement, .render, .pageVision, .publishExport: true
     default: false
     }
   }
@@ -91,7 +91,15 @@ public struct NotebookCommandDispatcher: Sendable {
   public init(store: NotebookStore) { self.store = store }
 
   public func handle(_ request: NotebookCommand) throws -> JSONValue {
-    do { return try execute(request) }
+    do {
+      if request.changesStore {
+        return try store.commandTransaction(readAllowance: .agentCommand) { try execute(request) }
+      }
+      return try store.readTransaction { snapshot in
+        try snapshot.currentSQL!.limitReads(.agentCommand)
+        return try NotebookCommandDispatcher(store: snapshot).execute(request)
+      }
+    }
     catch let error as NotebookStorageError {
       switch error {
       case .limitExceeded: throw CollaborationError("resource_limit", "Запрос превышает конечное окно чтения Notebook.")

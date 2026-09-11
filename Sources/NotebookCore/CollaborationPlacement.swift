@@ -56,8 +56,9 @@ public struct CollaborationPlacement: Codable, Sendable {
 }
 
 extension NotebookStore {
-  /// Calculation only. Every proposal names the final ink and geometry inspected,
-  /// so applying it later must pass the normal transaction's revision checks again.
+  /// Does not place content, but may enqueue the exact ink render it requires.
+  /// The native command queue owns that request. Every proposal names the final
+  /// ink and geometry; applying it must pass the usual revision checks again.
   public func suggestCollaborationPlacement(_ request: CollaborationPlacementRequest) throws -> CollaborationPlacement {
     guard (1...32).contains(request.items.count), request.movable.count <= 32, request.additionalOwners.count <= 32,
       Set(request.items.map { collaborationIdentity($0.id) }).count == request.items.count,

@@ -11,6 +11,18 @@ enum NotebookSQLValue {
   var blob: Data? { if case .blob(let value) = self { value } else { nil } }
 }
 
+/// An agent command borrows the ordinary WAL connection, including nested
+/// reads and the final ownership checks. No helper may renew its allowance.
+struct NotebookSQLReadAllowance {
+  let rows: Int
+  let bytes: Int
+  let valueBytes: Int
+  let reason: String
+
+  static let agentCommand = Self(rows: 65_536, bytes: 32 * 1_024 * 1_024,
+    valueBytes: 8 * 1_024 * 1_024, reason: "agent_command_read")
+}
+
 /// A connection is owned by one synchronous reader/command segment. Nested
 /// typed APIs borrow it; no connection or SQLite statement crosses an await.
 final class NotebookSQLConnection {
@@ -19,6 +31,52 @@ final class NotebookSQLConnection {
   var pendingChangeCount = 0
   var pendingOwnersPrepared = false
   private var statements: [String: OpaquePointer] = [:]
+  private var readAllowance: NotebookSQLReadAllowance?
+  private var remainingReadRows = 0
+  private var remainingReadBytes = 0
+  private var readRefusal: String?
+
+  func limitReads(_ allowance: NotebookSQLReadAllowance) throws {
+    precondition(allowance.rows >= 0 && allowance.bytes >= 0 && allowance.valueBytes >= 0)
+    try checkReadAllowance()
+    if let current = readAllowance {
+      remainingReadRows = min(remainingReadRows, allowance.rows)
+      remainingReadBytes = min(remainingReadBytes, allowance.bytes)
+      readAllowance = .init(rows: min(current.rows, allowance.rows), bytes: min(current.bytes, allowance.bytes),
+        valueBytes: min(current.valueBytes, allowance.valueBytes), reason: current.reason)
+    } else {
+      readAllowance = allowance
+      remainingReadRows = allowance.rows; remainingReadBytes = allowance.bytes
+    }
+  }
+
+  func checkReadAllowance() throws {
+    if let readRefusal { throw NotebookStorageError.limitExceeded(readRefusal) }
+  }
+
+  /// SQLite supplies lengths before Swift copies a string or blob. Charge all
+  /// result rows, not just named source helpers, so a receipt or a fallback
+  /// cannot conceal a complete-owner read. A caught refusal still vetoes commit.
+  private func admitReadRow(_ statement: OpaquePointer) throws {
+    try checkReadAllowance()
+    guard let allowance = readAllowance else { return }
+    guard remainingReadRows > 0 else {
+      readRefusal = allowance.reason; throw NotebookStorageError.limitExceeded(allowance.reason)
+    }
+    remainingReadRows -= 1
+    for index in 0..<sqlite3_column_count(statement) {
+      let bytes: Int
+      switch sqlite3_column_type(statement, index) {
+      case SQLITE_TEXT, SQLITE_BLOB: bytes = Int(sqlite3_column_bytes(statement, index))
+      case SQLITE_INTEGER, SQLITE_FLOAT: bytes = 8
+      default: bytes = 0
+      }
+      guard bytes <= allowance.valueBytes, bytes <= remainingReadBytes else {
+        readRefusal = allowance.reason; throw NotebookStorageError.limitExceeded(allowance.reason)
+      }
+      remainingReadBytes -= bytes
+    }
+  }
 
   init(url: URL, writable: Bool, create: Bool = false) throws {
     var pointer: OpaquePointer?
@@ -72,6 +130,7 @@ final class NotebookSQLConnection {
   }
 
   func rows(_ sql: String, _ values: [NotebookSQLValue] = []) throws -> [[NotebookSQLValue]] {
+    try checkReadAllowance()
     let statement = try statement(sql, values)
     defer { sqlite3_reset(statement) }
     var result: [[NotebookSQLValue]] = []
@@ -79,6 +138,7 @@ final class NotebookSQLConnection {
       let status = sqlite3_step(statement)
       if status == SQLITE_DONE { return result }
       guard status == SQLITE_ROW else { throw failure(sql) }
+      try admitReadRow(statement)
       var row: [NotebookSQLValue] = []
       for index in 0..<sqlite3_column_count(statement) {
         switch sqlite3_column_type(statement, index) {
@@ -360,17 +420,20 @@ extension NotebookStore {
     try database.run("BEGIN DEFERRED")
     Thread.current.threadDictionary[connectionKey] = database
     defer { Thread.current.threadDictionary.removeObject(forKey: connectionKey) }
-    do { let result = try read(self); try database.run("COMMIT"); return result }
+    do { let result = try read(self); try database.checkReadAllowance(); try database.run("COMMIT"); return result }
     catch { try? database.run("ROLLBACK"); throw error }
   }
 
-  func commandTransaction<T>(advancesReadRevision: Bool = true, _ operation: () throws -> T) throws -> T {
+  func commandTransaction<T>(advancesReadRevision: Bool = true,
+    readAllowance: NotebookSQLReadAllowance? = nil, _ operation: () throws -> T) throws -> T {
     if let currentSQL {
       guard currentSQL.writable else { throw NotebookStorageError.readOnlyTransaction }
+      if let readAllowance { try currentSQL.limitReads(readAllowance) }
       return try operation()
     }
     try prepareDatabase()
     let database = try NotebookSQLConnection(url: databaseURL, writable: true)
+    if let readAllowance { try database.limitReads(readAllowance) }
     try database.run("BEGIN IMMEDIATE")
     Thread.current.threadDictionary[connectionKey] = database
     defer { Thread.current.threadDictionary.removeObject(forKey: connectionKey) }
@@ -391,6 +454,7 @@ extension NotebookStore {
       try completeDocumentSourceDelivery(database: database)
       try publishPendingChanges(database: database)
       try storageFault?(.beforeCommit)
+      try database.checkReadAllowance()
       try database.run("COMMIT"); committed = true
       try storageFault?(.afterCommit)
       return result
