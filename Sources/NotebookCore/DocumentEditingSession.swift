@@ -56,7 +56,7 @@ public struct DocumentEditingSession: Codable, Equatable, Sendable, Identifiable
 public struct DocumentSourceCommitResult: Equatable, Sendable {
   public enum Status: String, Codable, Sendable { case committed, conflict, targetMissing }
   public let status: Status
-  public let document: DocumentDocument?
+  public let publication: DocumentBlockSourcePublication?
 }
 
 extension DocumentDocument {
@@ -110,44 +110,72 @@ extension NotebookStore {
   /// block's update is retained; a changed/deleted source leaves the draft.
   public func commitDocumentSource(edit: DocumentSourceEdit, actor: UUID) throws -> DocumentSourceCommitResult {
     let candidate = DocumentEditingSession(edit: edit)
-    try candidate.validate(); try prepare()
-    return try withMutationLock {
+    try candidate.validate()
+    return try commandTransaction {
       let previous = try readDocumentEditingSession(edit.sessionID)
       if let previous {
         try validateDocumentSessionIdentity(edit, previous.edit)
         if previous.phase == .committed {
           guard previous.edit == edit else { throw CollaborationError("stale_draft", "Завершённый сеанс нельзя использовать для другого текста.") }
-          return .init(status: .committed, document: (try hasStoredValue(at: documentURL(edit.documentID)))
-            ? try loadDocument(edit.documentID) : nil)
+          return .init(status: .committed, publication: try documentSourceForEdit(edit).flatMap {
+            DocumentBlockSourcePublication(document: $0, blockID: edit.blockID)
+          })
         }
         guard previous.phase != .discarded, edit.sequence >= previous.edit.sequence else {
           throw CollaborationError("stale_draft", "Этот вариант черновика уже завершён или продолжен.")
         }
       }
-      let exists = try readItemHeader(edit.documentID)?.kind == .document
-        && (try hasStoredValue(at: documentURL(edit.documentID)))
-      var document = exists ? try loadDocument(edit.documentID) : nil
-      let block = document?.blocks.first { $0.id == edit.blockID }
+      let before = try documentSourceForEdit(edit)
+      var document = before
+      let block = document?.blocks.first
       let status: DocumentSourceCommitResult.Status
       if block == nil { status = .targetMissing }
       else if block?.source != edit.baseSource || document?.sourceVersion(blockID: edit.blockID) != edit.baseVersion {
         status = .conflict
       } else { status = .committed }
-      var writes: [String: JSONValue] = [:]
-      if status == .committed, document?.blocks.first(where: { $0.id == edit.blockID })?.source != edit.source {
-        guard document?.replaceBlockSource(id: edit.blockID, source: edit.source, actor: actor) == true else {
+      if status == .committed, block?.source != edit.source, let before {
+        guard document?.replaceBlockSource(id: block!.id, source: edit.source, actor: actor) == true else {
           throw CollaborationError("invalid_draft", "Не удалось применить исходник черновика.")
         }
-        writes["documents/\(edit.documentID.uuidString.lowercased()).json"] = try .encode(document!)
+        let file = documentFile(edit.documentID), old = try JSONValue.encode(before), next = try JSONValue.encode(document!)
+        try admitDocumentCausalFields(file: file, before: old, after: next)
+        try publishProjectionEdits(file: file, before: old, after: next)
       }
       let phase: DocumentEditingSession.Phase = status == .committed ? .committed : status == .conflict ? .conflict : .targetMissing
       let draft = DocumentEditingSession(edit: edit,
         selectionStart: min(previous?.selectionStart ?? 0, edit.source.utf16.count),
         selectionEnd: min(previous?.selectionEnd ?? 0, edit.source.utf16.count), phase: phase)
-      writes[documentDraftPath(edit.sessionID)] = try .encode(draft)
-      try publishCollaboration(writes: writes)
-      return .init(status: status, document: document)
+      try publishCollaboration(writes: [documentDraftPath(edit.sessionID): try .encode(draft)])
+      return .init(status: status, publication: document.flatMap {
+        DocumentBlockSourcePublication(document: $0, blockID: edit.blockID)
+      })
     }
+  }
+
+  /// Only this editor's source and causal owners are admitted before decoding.
+  /// A partial document remains private to the command; callers receive one
+  /// named publication, never an archive with silently missing neighbours.
+  private func documentSourceForEdit(_ edit: DocumentSourceEdit) throws -> DocumentDocument? {
+    guard try readItemHeader(edit.documentID)?.kind == .document else { return nil }
+    let file = documentFile(edit.documentID), root = file + "#"
+    let id = collaborationIdentity(edit.blockID), address = root + "/blocks/@" + fieldKey([id])
+    let fields = ["preamble", "blocks/order"] + DocumentBlock.causalFieldKeys(id: id)
+    let addresses = [(root, false), (address, true)] + fields.map {
+      (root + "/collaboration/fields/@" + fieldKey([$0]), false)
+    }
+    let rows = try boundedStoredFragments(addresses, maximumCount: 4_096,
+      maximumBytes: 4 * 1_024 * 1_024, budget: "document_source_edit")
+    guard !rows.isEmpty else { return nil }
+    let value = try NotebookRecordCodec.decode(rows, root: root), document = try value.decode(DocumentDocument.self)
+    let canonical = try NotebookRecordCodec.encode(.encode(document), file: file)
+    let actual = Dictionary(uniqueKeysWithValues: rows.map { ($0.address, $0) })
+    guard document.id == edit.documentID, document.blocks.count <= 1,
+      document.blocks.first.map({ collaborationIdentity($0.id) == id }) ?? true,
+      canonical.count == actual.count, canonical.allSatisfy({ row in
+        guard let stored = actual[row.address] else { return false }
+        return row.replacing(value: row.value, position: stored.position) == stored
+      }) else { throw NotebookStorageError.corruptRecord(root) }
+    return document
   }
 
   private func validateDocumentSessionIdentity(_ next: DocumentSourceEdit, _ previous: DocumentSourceEdit) throws {

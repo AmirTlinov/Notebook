@@ -87,19 +87,24 @@ public final class NotebookIPCServer: @unchecked Sendable {
   private var listener: Int32 = -1
   private var stopped = false
   private var jobs: [UUID: IPCJob] = [:]
-  private let acceptQueue = DispatchQueue(label: "Notebook.IPC.accept", qos: .utility)
+  private let acceptQueue = DispatchQueue(label: "Notebook.IPC.accept", qos: .userInitiated)
   private let workerQueue: DispatchQueue
+  private let requestExecutor: IPCRequestExecutor
 
   public convenience init(socketURL: URL = NotebookIPC.defaultSocketURL, handler: @escaping Handler) {
     self.init(socketURL: socketURL,
-      workerQueue: DispatchQueue(label: "Notebook.IPC.requests", qos: .utility, attributes: .concurrent), handler: handler)
+      workerQueue: DispatchQueue(label: "Notebook.IPC.requests", qos: .userInitiated, attributes: .concurrent), handler: handler)
   }
 
-  init(socketURL: URL, workerQueue: DispatchQueue, handler: @escaping Handler) {
+  init(socketURL: URL, workerQueue: DispatchQueue,
+    requestQueue: DispatchQueue = .init(label: "Notebook.IPC.handler", qos: .userInitiated),
+    handler: @escaping Handler) {
     self.socketURL = socketURL; self.handler = handler; self.workerQueue = workerQueue
+    requestExecutor = IPCRequestExecutor(queue: requestQueue)
   }
 
   var activeConnectionCount: Int { lock.withLock { jobs.count } }
+  var acceptedHandlerCount: Int { lock.withLock { jobs.values.filter(\.hasPendingHandler).count } }
 
   public func start() throws {
     try lock.withLock {
@@ -192,7 +197,10 @@ public final class NotebookIPCServer: @unchecked Sendable {
         return true
       }
       guard admitted else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
-      Task { [self] in
+      // The accepted request does not wait for a spare cooperative-pool
+      // thread occupied by synchronous Core work. Actor isolation still owns
+      // the actual writer; this executor supplies only its runnable threads.
+      Task(executorPreference: requestExecutor, priority: .userInitiated) { [self] in
         let response: Result<JSONValue, CollaborationError>
         do { response = .success(try await handler(command)) }
         catch { response = .failure((error as? CollaborationError) ?? .init("operation_failed", error.localizedDescription)) }
@@ -249,6 +257,17 @@ public final class NotebookIPCServer: @unchecked Sendable {
   }
 }
 
+/// Part of the server lifetime, distinct from blocking socket workers. A task
+/// retains its executor through suspension; shutdown drains that same handler.
+private final class IPCRequestExecutor: TaskExecutor {
+  let queue: DispatchQueue
+  init(queue: DispatchQueue) { self.queue = queue }
+  func enqueue(_ job: consuming ExecutorJob) {
+    let job = UnownedJob(job)
+    queue.async { [self] in job.runSynchronously(on: asUnownedTaskExecutor()) }
+  }
+}
+
 private final class IPCJob: @unchecked Sendable {
   private enum WorkerPhase { case pending, running, finished }
   let fd: Int32
@@ -259,6 +278,7 @@ private final class IPCJob: @unchecked Sendable {
   private var response: Result<JSONValue, CollaborationError>?
   init(fd: Int32) { self.fd = fd }
   var finished: Bool { lock.withLock { workerPhase == .finished && handlerFinished } }
+  var hasPendingHandler: Bool { lock.withLock { !handlerFinished } }
   var result: Result<JSONValue, CollaborationError>? { lock.withLock { response } }
   func beginWorker() -> Bool {
     lock.withLock {

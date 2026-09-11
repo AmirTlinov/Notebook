@@ -1928,6 +1928,9 @@ final class NotebookAppModel {
   }
 
   func commitDocumentSource(edit: DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status {
+    guard shutdownPhase == .running else {
+      throw NotebookPersistenceQueue.Failure(message: "Notebook завершает работу; новый исходник не принят.")
+    }
     guard !isItemBeingDeleted(edit.documentID) else {
       throw NotebookPersistenceQueue.Failure(message: "Документ удаляется; новые изменения временно недоступны.")
     }
@@ -1936,11 +1939,10 @@ final class NotebookAppModel {
     documentDraftEpoch &+= 1
     if result.status == .committed {
       documentEditingSessions.removeAll { $0.id == edit.sessionID }
-      if let incoming = result.document {
-        var document = documents[incoming.id] ?? incoming
-        _ = document.merge(incoming)
+      if !isStopped, !isItemBeingDeleted(edit.documentID),
+        let publication = result.publication, var document = documents[edit.documentID] {
+        _ = document.mergeSource(publication)
         documents[document.id] = document
-
       }
     } else {
       let phase: DocumentEditingSession.Phase = result.status == .conflict ? .conflict : .targetMissing

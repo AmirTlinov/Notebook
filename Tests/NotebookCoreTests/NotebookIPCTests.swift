@@ -42,6 +42,67 @@ struct NotebookIPCTests {
     #expect(result == .string("first"))
   }
 
+  @Test func acceptedHandlerKeepsItsServerExecutorAcrossSuspensionAndActorHops() async throws {
+    let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
+    let execution = IPCQueueIdentity()
+    let server = NotebookIPCServer(socketURL: endpoint.socket,
+      workerQueue: .init(label: "Notebook.IPCTests.transport", attributes: .concurrent),
+      requestQueue: execution.queue) { _ in
+        let entered = execution.isCurrent
+        try await Task.sleep(for: .milliseconds(2))
+        let resumed = execution.isCurrent
+        let actorIsHonored = await MainActor.run { Thread.isMainThread }
+        return .array([.bool(entered), .bool(resumed), .bool(actorIsHonored), .bool(execution.isCurrent)])
+      }
+    try server.start(); defer { server.stop() }
+    let response = try await blockingIPC { try NotebookIPCClient(socketURL: endpoint.socket).send(.init(command: .read)) }
+    #expect(response == .array([.bool(true), .bool(true), .bool(true), .bool(true)]))
+    try await drainIPC(server)
+  }
+
+  @Test func malformedFrameDoesNotWaitForThePausedAsyncOwner() async throws {
+    let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
+    let queue = DispatchQueue(label: "Notebook.IPCTests.paused-handler")
+    queue.suspend(); defer { queue.resume() }
+    let calls = IPCCount()
+    let server = NotebookIPCServer(socketURL: endpoint.socket,
+      workerQueue: .init(label: "Notebook.IPCTests.transport", attributes: .concurrent), requestQueue: queue) { _ in
+        calls.increment(); return .bool(true)
+      }
+    try server.start(); defer { server.stop() }
+    let response = try await blockingIPC { try oversizedFrameResponse(endpoint.socket) }
+    #expect(response["error"]?["code"] == .string("resource_limit"))
+    #expect(calls.value == 0)
+    try await drainIPC(server)
+  }
+
+  @Test func shutdownRetainsAQueuedAcceptedHandlerUntilItsOwnExecutorCompletes() async throws {
+    let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
+    let queue = DispatchQueue(label: "Notebook.IPCTests.queued-handler")
+    queue.suspend()
+    var suspended = true
+    defer { if suspended { queue.resume() } }
+    let calls = IPCCount()
+    let server = NotebookIPCServer(socketURL: endpoint.socket,
+      workerQueue: .init(label: "Notebook.IPCTests.queued-handler-transport", attributes: .concurrent), requestQueue: queue) { _ in
+        calls.increment(); return .bool(true)
+      }
+    try server.start(); defer { server.stop() }
+    let client = IPCCompletion<Result<JSONValue, any Error>>("the queued handler's disconnected client")
+    DispatchQueue(label: "Notebook.IPCTests.queued-handler-client").async {
+      client.resolve(.success(Result { try NotebookIPCClient(socketURL: endpoint.socket).send(.init(command: .read)) }))
+    }
+    let accepted = await waitForIPC { server.acceptedHandlerCount == 1 }
+    #expect(accepted)
+    server.stop()
+    let disconnected = try await client.value()
+    if case .success = disconnected { Issue.record("Shutdown must close the transport without undoing its accepted command") }
+    #expect(calls.value == 0 && server.acceptedHandlerCount == 1 && server.activeConnectionCount == 1)
+    queue.resume(); suspended = false
+    try await drainIPC(server)
+    #expect(calls.value == 1 && server.acceptedHandlerCount == 0 && server.activeConnectionCount == 0)
+  }
+
   @Test func clientRefusesInsecureSocketBeforeSendingACommand() throws {
     let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
     let server = NotebookIPCServer(socketURL: endpoint.socket) { _ in .bool(true) }
@@ -322,6 +383,13 @@ private final class IPCHandlerGate: @unchecked Sendable {
   }
 }
 
+private final class IPCQueueIdentity: @unchecked Sendable {
+  let queue = DispatchQueue(label: "Notebook.IPCTests.handler-owner", qos: .userInitiated)
+  private let key = DispatchSpecificKey<Bool>()
+  init() { queue.setSpecific(key: key, value: true) }
+  var isCurrent: Bool { DispatchQueue.getSpecific(key: key) == true }
+}
+
 private struct IPCWaitFailure: Error, CustomStringConvertible {
   let description: String
   init(_ description: String) { self.description = description }
@@ -329,8 +397,8 @@ private struct IPCWaitFailure: Error, CustomStringConvertible {
 
 /// A single protocol event, not a polled observation of another executor.
 /// Ten seconds is an external broken-test watchdog, not an IPC latency SLA:
-/// the full suite schedules long synchronous Core tests on the same pool as
-/// the handler. Only the handler's signal establishes acceptance before stop.
+/// the full suite also schedules long synchronous Core tests. The server's
+/// executor must still reach the handler; only its signal establishes acceptance.
 private final class IPCCompletion<Value: Sendable>: @unchecked Sendable {
   private let lock = NSLock()
   private let event: String

@@ -237,18 +237,7 @@ extension NotebookStore {
     for file in projected.keys.sorted() {
       if let old = before[file], let next = projected[file] {
         if file.hasPrefix("documents/") {
-          let oldFields = old["collaboration"]?["fields"]?.object ?? [:]
-          let nextFields = next["collaboration"]?["fields"]?.object ?? [:]
-          let added = Set(nextFields.keys).subtracting(oldFields.keys)
-          if !added.isEmpty {
-            // Existing-source edits normally replace already materialized
-            // clocks. An implicit field still needs the whole owner's count,
-            // not this projection's count, before it can allocate a new clock.
-            let count = try currentSQL!.rows("SELECT count(*) FROM records WHERE parent=? AND collection='collaboration/fields'", [.text(file + "#")]).first![0].integer!
-            guard count + Int64(added.count) <= Int64(CollaborativeContent.maximumFieldCount) else {
-              throw NotebookStorageError.limitExceeded("document_causal_fields")
-            }
-          }
+          try admitDocumentCausalFields(file: file, before: old, after: next)
         }
         try publishProjectionEdits(file: file, before: old, after: next)
       }

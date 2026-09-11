@@ -228,6 +228,20 @@ extension NotebookStore {
     }
   }
 
+  /// New implicit clocks consume the actual document owner's allowance.
+  /// Replacing existing clocks is point-addressed and never counts history.
+  func admitDocumentCausalFields(file: String, before: JSONValue, after: JSONValue) throws {
+    let old = before["collaboration"]?["fields"]?.object ?? [:]
+    let next = after["collaboration"]?["fields"]?.object ?? [:]
+    let added = Set(next.keys).subtracting(old.keys)
+    guard !added.isEmpty else { return }
+    let count = try currentSQL!.rows("SELECT count(*) FROM records WHERE parent=? AND collection='collaboration/fields'",
+      [.text(file + "#")]).first![0].integer!
+    guard count + Int64(added.count) <= Int64(CollaborativeContent.maximumFieldCount) else {
+      throw NotebookStorageError.limitExceeded("document_causal_fields")
+    }
+  }
+
   @discardableResult
   public func saveBoardEdits(before: BoardHierarchy, after: BoardHierarchy) throws -> BoardHierarchy {
     guard before.rootBoardID == after.rootBoardID,

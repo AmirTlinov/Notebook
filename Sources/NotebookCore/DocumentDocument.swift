@@ -265,6 +265,40 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
     return true
   }
 
+  /// Reconcile only the editor's named source after its durable command.
+  /// The existing causal merger still chooses fields. This return value does
+  /// not own neighbouring programs, their order, preamble, or a removed block.
+  @discardableResult
+  public mutating func mergeSource(_ publication: DocumentBlockSourcePublication) -> Bool {
+    guard id == publication.documentID,
+      let index = blocks.firstIndex(where: { collaborationIdentity($0.id) == collaborationIdentity(publication.block.id) }) else { return false }
+    let keys = Set(DocumentBlock.causalFieldKeys(id: publication.block.id))
+    var local = self
+    local.blocks = [blocks[index]]
+    local.collaboration = .init(fields: Dictionary(uniqueKeysWithValues: keys.compactMap { key in
+      collaboration?.fields[key].map { (key, $0) }
+    }))
+    var incoming = local
+    incoming.blocks = [publication.block]
+    incoming.contentStamp = publication.contentStamp
+    incoming.collaboration = .init(fields: publication.fields)
+    _ = local.merge(incoming)
+    guard let resolved = local.blocks.first, local.blocks.count == 1 else { return false }
+    let changedFields = (local.collaboration?.fields ?? [:]).filter {
+      keys.contains($0.key) && collaboration?.fields[$0.key] != $0.value
+    }
+    let stamp = max(contentStamp, local.contentStamp)
+    guard blocks[index] != resolved || stamp != contentStamp || !changedFields.isEmpty else { return false }
+    var metadata = collaboration ?? CollaborativeContent()
+    for (key, version) in changedFields { metadata.joinField(key, version: version) }
+    guard metadata.fields.count <= CollaborativeContent.maximumFieldCount,
+      changedFields.values.allSatisfy(\.isValid), resolved.isValid else { return false }
+    blocks[index] = resolved
+    collaboration = metadata
+    contentStamp = stamp
+    return true
+  }
+
   /// Publication makes implicit field clocks explicit without editing source
   /// or advancing its frontier. Offline preparation uses the same owner so a
   /// checked checkpoint already equals the archive that SQLite will publish.
@@ -324,6 +358,22 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
     try container.encode(blocks, forKey: .blocks)
     try container.encode(contentStamp, forKey: .contentStamp)
     try container.encodeIfPresent(collaboration, forKey: .collaboration)
+  }
+}
+
+/// A command publishes one complete program and its own causal fields, not a
+/// partial DocumentDocument that a caller might mistake for the whole source.
+public struct DocumentBlockSourcePublication: Equatable, Sendable {
+  public let documentID: UUID
+  public let contentStamp: VersionStamp
+  public let block: DocumentBlock
+  let fields: [String: ContentFieldVersion]
+
+  init?(document: DocumentDocument, blockID: String) {
+    guard let block = document.blocks.first(where: { collaborationIdentity($0.id) == collaborationIdentity(blockID) }) else { return nil }
+    documentID = document.id; contentStamp = document.contentStamp; self.block = block
+    let keys = Set(DocumentBlock.causalFieldKeys(id: block.id))
+    fields = Dictionary(uniqueKeysWithValues: keys.compactMap { key in document.collaboration?.fields[key].map { (key, $0) } })
   }
 }
 
