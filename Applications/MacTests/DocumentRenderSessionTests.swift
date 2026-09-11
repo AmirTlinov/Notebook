@@ -107,7 +107,7 @@ final class DocumentRenderSessionTests: XCTestCase {
     func receipt(height: Double) -> NSDictionary {
       ["sourceKey": source.message.key, "layoutScope": "source", "layoutCanonical": true, "pageIndex": 0, "pageCount": 1,
         "width": geometry.width, "height": geometry.height,
-        "regions": [["id": "body", "pageIndex": 0, "x": 70.0, "y": 70.0, "width": 200.0, "height": height]]]
+        "regions": [["id": "body", "pageIndex": 0, "x": 70.0, "y": 70.0, "width": 200.0, "height": height, "sourceOffset": 0.0]]]
     }
     let token = DocumentSnapshotCache.token(document: document, state: state, pageIndex: 0)
     try registry.publish(documentID: document.id, token: token, receipt: receipt(height: 100), geometry: geometry)

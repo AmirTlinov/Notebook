@@ -1,3 +1,4 @@
+import CoreFoundation
 import Foundation
 import NotebookCore
 import WebKit
@@ -224,11 +225,16 @@ final class DocumentLayoutRecord {
         let y = value["y"] as? Double, y.isFinite, y >= 0,
         let w = value["width"] as? Double, w.isFinite, w > 0,
         let h = value["height"] as? Double, h.isFinite, h > 0,
+        let origin = value["sourceOffset"] as? NSNumber, CFGetTypeID(origin) != CFBooleanGetTypeID(),
+        let sourceOffset = value["sourceOffset"] as? Double, sourceOffset.isFinite, sourceOffset >= 0,
+        (sourceOffset + h).isFinite,
         x + w <= width + 0.03125, y + h <= height + 0.03125 else { throw DocumentSessionError.invalidLayout }
-      guard regions.last.map({ $0.pageIndex <= page }) ?? true else { throw DocumentSessionError.invalidLayout }
+      let physicalOffset = sourceOffset * (geometry.height / height)
+      guard physicalOffset.isFinite, regions.last.map({ $0.pageIndex <= page }) ?? true else { throw DocumentSessionError.invalidLayout }
       pageRanges[page] = (pageRanges[page]?.lowerBound ?? regions.count)..<(regions.count + 1)
       regions.append(.init(id: id, pageIndex: page, frame: .init(x: x * geometry.width / width,
-        y: y * geometry.height / height, width: w * geometry.width / width, height: h * geometry.height / height)))
+        y: y * geometry.height / height, width: w * geometry.width / width, height: h * geometry.height / height),
+        sourceOffset: physicalOffset))
     }
     self.pageCount = count; self.regions = regions; self.pageRanges = pageRanges
     self.width = geometry.width; self.height = geometry.height
@@ -246,6 +252,7 @@ final class DocumentLayoutRecord {
       left.id == right.id && left.pageIndex == right.pageIndex
         && abs(left.frame.x - right.frame.x) <= tolerance && abs(left.frame.y - right.frame.y) <= tolerance
         && abs(left.frame.width - right.frame.width) <= tolerance && abs(left.frame.height - right.frame.height) <= tolerance
+        && abs(left.sourceOffset - right.sourceOffset) <= tolerance
     }
   }
 

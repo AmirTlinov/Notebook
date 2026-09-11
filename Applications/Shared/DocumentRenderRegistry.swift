@@ -6,6 +6,7 @@ struct DocumentBlockRegion: Equatable {
   let id: String
   let pageIndex: Int
   let frame: PageRect
+  let sourceOffset: Double
 }
 
 /// The actual WebKit layout names the block fragments on each physical sheet.
