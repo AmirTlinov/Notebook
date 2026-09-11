@@ -154,6 +154,30 @@ final class AddressedTargetRenderTests: XCTestCase {
     XCTAssertNil(model.presence)
   }
 
+  @MainActor
+  func testAnotherRenderingRecipeIsRefusedBeforeReadingOrPublishingTheTarget() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = NotebookStore(root: root), actor = UUID()
+    _ = try store.loadOrCreate(actor: actor, pageSize: .init(width: 100, height: 140))
+    let document = DocumentDocument(actor: actor, blocks: [.markdown(id: "formula", source: "$x^2$")])
+    try store.saveDocument(document); try store.saveDocumentState(.init(id: document.id, actor: actor))
+    let current = try store.requestTargetRender(target: .init(kind: .document, id: document.id), expectedRevision: document.contentStamp.revision)
+    var encoded = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(current)) as? [String: Any])
+    encoded["id"] = UUID().uuidString
+    let other = try JSONDecoder().decode(TargetRenderRequest.self, from: JSONSerialization.data(withJSONObject: encoded))
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    do {
+      try await CurrentViewPreviewWriter.writeTarget(other, model: model)
+      XCTFail("Today's pixels cannot certify another recipe's request")
+    } catch let error as CollaborationError {
+      XCTAssertEqual(error.code, "render_recipe_unavailable")
+    }
+    XCTAssertFalse(FileManager.default.fileExists(atPath: store.targetPNGURL(other.id).path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: store.targetReceiptURL(other.id).path))
+    XCTAssertTrue(model.documents.isEmpty); XCTAssertNil(model.workspace)
+  }
+
   private func rgba(_ png: Data) throws -> [UInt8] {
     let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
     let context = try XCTUnwrap(CGContext(data: nil, width: image.width, height: image.height,

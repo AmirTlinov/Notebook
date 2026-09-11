@@ -36,7 +36,7 @@ final class CollaborationVisionTests: XCTestCase {
     await model.reloadExternalChanges()?.value
     let original = model.presence
     let request = try model.store.requestTargetRender(target:target,expectedRevision:try XCTUnwrap(model.activePage).agentStamp.revision)
-    try await CurrentViewPreviewWriter.writeTarget(request,model:model)
+    try await awaitPublishedTarget(request, model: model)
     let receipt = try JSONDecoder().decode(TargetRenderReceipt.self,from:Data(contentsOf:model.store.targetReceiptURL(request.id)))
     XCTAssertEqual(receipt.status,"ready")
     XCTAssertTrue(receipt.diagnostics.contains { $0.kind == "javascript_error" })
@@ -45,7 +45,7 @@ final class CollaborationVisionTests: XCTestCase {
     XCTAssertNotNil(NSImage(contentsOf:model.store.targetPNGURL(request.id)))
     let crop = try model.store.requestTargetRender(target:target,expectedRevision:try XCTUnwrap(model.activePage).agentStamp.revision,
       region:.init(x:60,y:80,width:300,height:160))
-    try await CurrentViewPreviewWriter.writeTarget(crop,model:model)
+    try await awaitPublishedTarget(crop, model: model)
     let cropped = try JSONDecoder().decode(TargetRenderReceipt.self,from:Data(contentsOf:model.store.targetReceiptURL(crop.id)))
     XCTAssertEqual(cropped.pixelSize?.x,600)
     XCTAssertEqual(cropped.pixelSize?.y,320)
@@ -72,7 +72,7 @@ final class CollaborationVisionTests: XCTestCase {
     let original = model.presence
     let target = CollaborationTarget(kind: .page, id: page.id)
     let request = try model.store.requestTargetRender(target: target, expectedRevision: page.agentStamp.revision)
-    try await CurrentViewPreviewWriter.writeTarget(request, model: model)
+    try await awaitPublishedTarget(request, model: model)
     let receipt = try JSONDecoder().decode(TargetRenderReceipt.self,
       from: Data(contentsOf: model.store.targetReceiptURL(request.id)))
     XCTAssertEqual(receipt.status, "ready")
@@ -113,7 +113,7 @@ final class CollaborationVisionTests: XCTestCase {
     XCTAssertEqual(try model.store.referenceStatus(reference).status, .checking)
     func render() async throws {
       let request = try model.store.requestTargetRender(target: target, expectedRevision: page.agentStamp.revision, region: reference.region)
-      try await CurrentViewPreviewWriter.writeTarget(request, model: model)
+      try await awaitPublishedTarget(request, model: model)
     }
     try await render()
     XCTAssertEqual(try model.store.referenceStatus(reference).status, .current)
@@ -132,4 +132,27 @@ final class CollaborationVisionTests: XCTestCase {
     XCTAssertEqual(try reopened.referenceStatus(reference).status, .current, "Окончательное стирание возвращает тот же фрагмент")
   }
 
+  /// A started model already owns the target executor. Calling the writer here
+  /// would render the same pending request twice and compete with its real
+  /// publication for the raster budget. Wait for that one durable result.
+  @MainActor
+  private func awaitPublishedTarget(_ request: TargetRenderRequest, model: NotebookAppModel) async throws {
+    let deadline = ContinuousClock.now + .seconds(8)
+    while ContinuousClock.now < deadline {
+      if let bytes = try? Data(contentsOf: model.store.targetReceiptURL(request.id)) {
+        let receipt = try JSONDecoder().decode(TargetRenderReceipt.self, from: bytes)
+        XCTAssertEqual(receipt.request, request)
+        guard receipt.status == "ready" else {
+          let evidence = XCTAttachment(string: "\(receipt.diagnostics)\n\(String(describing: SceneRenderResources.shared.lastRasterRefusal))")
+          evidence.name = "Refused target publication"; evidence.lifetime = .keepAlways; add(evidence)
+          throw NSError(domain: "NotebookTargetPublication", code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "The sole publisher refused the request: \(receipt.diagnostics)"])
+        }
+        return
+      }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    throw NSError(domain: "NotebookTargetPublication", code: 2,
+      userInfo: [NSLocalizedDescriptionKey: "The accepted request did not produce a durable receipt"])
+  }
 }

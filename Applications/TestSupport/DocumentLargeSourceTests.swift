@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import NotebookCore
 import WebKit
 import XCTest
@@ -174,6 +175,60 @@ final class DocumentLargeSourceTests: XCTestCase {
     let evidence = XCTAttachment(string: report); evidence.name = "Physical MathJax ownership"; evidence.lifetime = .keepAlways; add(evidence)
   }
 
+  #if os(macOS)
+  func testAddressedLargeBookPublishesReadablePhysicalPagesAndStableReceiptsWithoutOpeningTheWorkspace() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = NotebookStore(root: root), actor = UUID(), source = illustratedBook()
+    _ = try store.loadOrCreate(actor: actor, pageSize: .init(width: 100, height: 140))
+    try store.saveDocument(source)
+    try store.saveDocumentState(.init(id: source.id, actor: actor))
+    let document = try store.loadDocument(source.id), state = try store.loadDocumentState(source.id)
+    let target = CollaborationTarget(kind: .document, id: document.id)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    let started = ContinuousClock.now
+    let first = try store.requestTargetRender(target: target, expectedRevision: document.contentStamp.revision)
+    try await CurrentViewPreviewWriter.writeTarget(first, model: model)
+    let coldDuration = started.duration(to: .now)
+    let layout = try XCTUnwrap(DocumentRenderRegistry.shared.entry(document: document, state: state, pageIndex: 0)?.layout)
+    XCTAssertGreaterThan(layout.pageCount, 30)
+    var firstPixels: Data?
+    for index in [0, layout.pageCount - 1, layout.pageCount / 2, 0] {
+      let request = try store.requestTargetRender(target: target,
+        expectedRevision: document.contentStamp.revision, pageIndex: index)
+      if index != 0 { try await CurrentViewPreviewWriter.writeTarget(request, model: model) }
+      let receiptBytes = try Data(contentsOf: store.targetReceiptURL(request.id))
+      let receipt = try JSONDecoder().decode(TargetRenderReceipt.self, from: receiptBytes)
+      let png = try Data(contentsOf: store.targetPNGURL(request.id))
+      XCTAssertEqual(receipt.request, request); XCTAssertEqual(receipt.status, "ready")
+      XCTAssertTrue(receipt.diagnostics.isEmpty, "\(receipt.diagnostics)")
+      XCTAssertEqual(receipt.pngSHA256, SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined())
+      let bitmap = try XCTUnwrap(NSBitmapImageRep(data: png)), cg = try XCTUnwrap(bitmap.cgImage)
+      let pixels = try rgba(cg)
+      XCTAssertEqual(receipt.pixelSize?.x, Double(cg.width)); XCTAssertEqual(receipt.pixelSize?.y, Double(cg.height))
+      XCTAssertGreaterThan(stride(from: 0, to: pixels.count, by: 4).filter {
+        pixels[$0] < 150 && pixels[$0 + 1] < 150 && pixels[$0 + 2] < 150 && pixels[$0 + 3] > 200
+      }.count, 100, "The saved PNG must contain actual ink, not only a successful layout")
+      let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+      attachment.name = "Addressed large book page \(index)"; attachment.lifetime = .keepAlways; add(attachment)
+      let reopened = NotebookStore(root: root)
+      XCTAssertEqual(try reopened.requestTargetRender(target: target,
+        expectedRevision: document.contentStamp.revision, pageIndex: index), request)
+      XCTAssertEqual(try Data(contentsOf: reopened.targetReceiptURL(request.id)), receiptBytes)
+      if index == 0 {
+        if let firstPixels { XCTAssertTrue(pixels == firstPixels, "Repeated addressing preserves the saved first-page pixels") }
+        else { firstPixels = pixels }
+      }
+    }
+    XCTAssertEqual(try store.loadDocument(document.id), document)
+    XCTAssertEqual(try store.loadDocumentState(document.id), state)
+    XCTAssertTrue(model.documents.isEmpty); XCTAssertTrue(model.pages.isEmpty)
+    XCTAssertNil(model.workspace); XCTAssertNil(model.presence)
+    let measurement = XCTAttachment(string: "coldAddressedReady=\(coldDuration), pages=\(layout.pageCount)")
+    measurement.name = "Large book addressed preparation"; measurement.lifetime = .keepAlways; add(measurement)
+  }
+  #endif
+
   func testFragmentIndexOwnsAndClosesOneTaskChannelOnCompletionAndCancellation() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "seed", source: "Ready")])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
@@ -249,6 +304,10 @@ final class DocumentLargeSourceTests: XCTestCase {
     #else
     let cg = try XCTUnwrap(image.cgImage(forProposedRect: nil, context: nil, hints: nil))
     #endif
+    return try rgba(cg)
+  }
+
+  private func rgba(_ cg: CGImage) throws -> Data {
     let context = try XCTUnwrap(CGContext(data: nil, width: cg.width, height: cg.height, bitsPerComponent: 8,
       bytesPerRow: cg.width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
     context.draw(cg, in: .init(x: 0, y: 0, width: cg.width, height: cg.height))

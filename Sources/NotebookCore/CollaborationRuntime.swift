@@ -12,6 +12,38 @@ public struct TargetRenderRequest: Codable, Equatable, Sendable, Identifiable {
   /// Without this constraint the request is a composite content snapshot.
   public let pageVisionRevision: String?
   public let createdAt: Date
+
+  /// A durable picture depends on both its content and the rendering recipe.
+  /// Source revisions do not change when the physical MathJax compiler changes;
+  /// its earlier successful or failed receipts therefore keep another address.
+  static func compositeFingerprint(target: CollaborationTarget, source: String,
+    region: PageRect?, worldOrigin: WorldPoint?, pageIndex: Int) throws -> String {
+    var key: JSONValue = .object(["target": try .encode(target), "source": .string(source),
+      "region": try region.map(JSONValue.encode) ?? .null,
+      "origin": try worldOrigin.map(JSONValue.encode) ?? .null, "page": .number(Double(pageIndex))])
+    if target.kind == .document { key = key.setting("renderer", .string("NotebookDocumentFragments/2")) }
+    return try collaborationHash(key)
+  }
+
+  static func compositeID(target: CollaborationTarget, source: String,
+    region: PageRect?, worldOrigin: WorldPoint?, pageIndex: Int) throws -> UUID {
+    let hex = Array(try compositeFingerprint(target: target, source: source,
+      region: region, worldOrigin: worldOrigin, pageIndex: pageIndex))
+    let uuid = String(hex[0..<8]) + "-" + String(hex[8..<12]) + "-4" + String(hex[13..<16])
+      + "-8" + String(hex[17..<20]) + "-" + String(hex[20..<32])
+    return UUID(uuidString: uuid)!
+  }
+
+  /// An executor cannot publish today's pixels under a different recipe's ID.
+  /// Page vision has its own ink-only recipe and is validated by that executor.
+  public func requireCurrentRenderingRecipe() throws {
+    if pageVisionRevision != nil { return }
+    let current = try Self.compositeID(target: target, source: sourceRevision,
+      region: region, worldOrigin: worldOrigin, pageIndex: pageIndex)
+    guard id == current else {
+      throw CollaborationError("render_recipe_unavailable", "Запрос относится к другому способу отрисовки; запросите снимок текущего владельца снова.", target: target)
+    }
+  }
 }
 
 public struct RenderDiagnostic: Codable, Equatable, Sendable {
@@ -216,12 +248,9 @@ extension NotebookStore {
     guard actual == expectedRevision.lowercased() else {
       throw CollaborationError("revision_conflict", "Перед снимком содержимое изменилось.", target: target, expected: expectedRevision, actual: actual)
     }
-    let key: JSONValue = .object(["target": try .encode(target), "source": .string(source),
-      "region": try region.map(JSONValue.encode) ?? .null, "origin": try worldOrigin.map(JSONValue.encode) ?? .null, "page": .number(Double(pageIndex))])
-    let hash = try collaborationHash(key)
-    let hex = Array(hash)
-    let uuid = String(hex[0..<8]) + "-" + String(hex[8..<12]) + "-4" + String(hex[13..<16]) + "-8" + String(hex[17..<20]) + "-" + String(hex[20..<32])
-    let request = TargetRenderRequest(id: UUID(uuidString: uuid)!, target: target, sourceRevision: source,
+    let id = try TargetRenderRequest.compositeID(target: target, source: source,
+      region: region, worldOrigin: worldOrigin, pageIndex: pageIndex)
+    let request = TargetRenderRequest(id: id, target: target, sourceRevision: source,
       region: region, worldOrigin: worldOrigin, pageIndex: pageIndex, pageVisionRevision: nil, createdAt: Date())
     return try enqueueRenderRequest(request)
   }

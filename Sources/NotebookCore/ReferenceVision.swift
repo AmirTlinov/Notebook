@@ -40,9 +40,8 @@ extension NotebookStore {
     guard reference.region != nil, reference.elementID == nil, reference.target.kind != .workspace else {
       return .init(revision == reference.revision ? .current : .changed, currentRevision: revision)
     }
-    let identity: JSONValue = .object(["target": try .encode(reference.target), "region": try .encode(reference.region),
-      "origin": try .encode(reference.worldOrigin), "page": .number(Double(reference.pageIndex ?? 0)), "source": .string(reference.revision)])
-    let key = try collaborationHash(identity)
+    let key = try TargetRenderRequest.compositeFingerprint(target: reference.target, source: reference.revision,
+      region: reference.region, worldOrigin: reference.worldOrigin, pageIndex: reference.pageIndex ?? 0)
     let path = root.appendingPathComponent("previews/reference-baselines/\(key).json")
     var baseline = (try? Data(contentsOf: path)).flatMap { try? JSONDecoder().decode(ReferenceBaseline.self, from: $0) }
     if let stored = baseline?.reference,
@@ -52,7 +51,9 @@ extension NotebookStore {
       $0.target == reference.target && $0.region == reference.region && $0.worldOrigin == reference.worldOrigin && $0.pageIndex == (reference.pageIndex ?? 0)
     }
     func proof(_ revision: String) -> String? {
-      guard let request = requests.first(where: { $0.sourceRevision == revision }),
+      guard let id = try? TargetRenderRequest.compositeID(target: reference.target, source: revision,
+        region: reference.region, worldOrigin: reference.worldOrigin, pageIndex: reference.pageIndex ?? 0),
+        let request = requests.first(where: { $0.id == id && $0.sourceRevision == revision && $0.pageVisionRevision == nil }),
         let bytes = try? Data(contentsOf: targetReceiptURL(request.id)),
         let receipt = try? JSONDecoder().decode(TargetRenderReceipt.self, from: bytes),
         receipt.request == request, receipt.status == "ready", receipt.diagnostics.isEmpty else { return nil }
