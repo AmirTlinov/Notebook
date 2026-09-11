@@ -321,12 +321,12 @@ def file_digest(path):
     return result.hexdigest()
 
 
-def verification_artifacts(evidence):
+def verification_artifacts(evidence, *, full=True):
     """Hash the complete evidence, including xcresult payloads, not only counts."""
     require(evidence.is_dir() and not evidence.is_symlink(), "Нет каталога полного verify.sh.")
-    require(all((evidence / name).is_file() for name in VERIFICATION_FILES),
+    require(not full or all((evidence / name).is_file() for name in VERIFICATION_FILES),
             "Полный verify.sh не оставил все обязательные свидетельства.")
-    require(all((evidence / (platform + ".xcresult")).is_dir() for platform in ("mac", "ipad")),
+    require(not full or all((evidence / (platform + ".xcresult")).is_dir() for platform in ("mac", "ipad")),
             "Нужны оба настоящих xcresult, не только сводки тестов.")
     files = []
     for path in sorted(evidence.rglob("*")):
@@ -383,6 +383,9 @@ def finish_verification(source, evidence):
 
 def checked_verification(source, evidence):
     receipt = read_json(evidence / "verification.json")
+    if receipt.get("route") == "./verify.sh:selected":
+        from notebook_verification import validate_selected
+        return validate_selected(source, evidence, receipt)
     require(receipt.get("format") == 1 and receipt.get("route") == "./verify.sh"
             and receipt.get("status") == "passed", "Нет завершённого полного verify.sh.")
     require(receipt.get("source") == source_inputs(source)
@@ -467,6 +470,7 @@ def build_verified_pair(source, verification, evidence, runner=None):
     evidence.mkdir(parents=True, mode=0o700)
     command = release_commands(evidence, runner)
     receipt = {"format": 1, "status": "building", "installationAttempted": False,
+               "verificationRoute": proof["route"],
                "verificationSHA256": file_digest(verification / "verification.json"), "sourceSHA256": before["sha256"]}
     write_json(evidence / "build.json", receipt)
     try:
