@@ -37,6 +37,9 @@ public struct AgentPinnedSource: Codable, Equatable, Sendable, Identifiable {
     let elements: [JSONValue]
     var payload: [String: JSONValue] = ["reference": try .encode(reference)]
     switch target.kind {
+    case .codeFragment:
+      guard let fragment = files[codeFragmentFile(target.id)], reference.region == nil else { throw missing() }
+      payload["code"] = fragment; elements = []
     case .page:
       guard let page = files["pages/" + suffix] else { throw missing() }
       elements = page["elements"]?.array ?? []

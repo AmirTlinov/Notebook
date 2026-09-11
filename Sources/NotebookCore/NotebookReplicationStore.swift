@@ -167,7 +167,7 @@ extension NotebookStore {
               }
               rows[address] = row
             } else {
-              guard !file.hasPrefix("agent/"), !file.hasPrefix("collaboration/attention/"),
+              guard !file.hasPrefix("agent/"), !file.hasPrefix("collaboration/attention/"), !file.hasPrefix("code-fragments/"),
                 !address.hasPrefix("workspace.json#/pageOrderNodes/@") else { throw NotebookStorageError.invalidTransaction("agent history is immutable") }
               rows[address] = nil
             }
@@ -196,6 +196,12 @@ extension NotebookStore {
               page = try page.merging(previous)
             }
             guard page.isValid else { throw NotebookStorageError.corruptRecord(file) }; resolved = try .encode(page)
+          } else if file.hasPrefix("code-fragments/") {
+            let fragment = try value.decode(NotebookCodeFragment.self)
+            guard fragment.isValid, file == codeFragmentFile(fragment.id), before == nil || before == value else {
+              throw NotebookStorageError.transactionConflict
+            }
+            resolved = value
           } else if file.hasPrefix("collaboration/actions/") {
             let receipt = try value.decode(CollaborationReceipt.self)
             guard receipt.id == receipt.action.id else { throw NotebookStorageError.invalidTransaction("receipt identity") }

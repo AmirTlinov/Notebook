@@ -28,6 +28,7 @@ private struct CollaborationFixture {
   func expectation(_ target: CollaborationTarget) throws -> CollaborationExpectation {
     let stamp: VersionStamp
     switch target.kind {
+    case .codeFragment: stamp = try #require(try store.codeFragment(target.id)).stamp
     case .workspace: stamp = try store.loadIndex().stamp
     case .board, .cover: stamp = try store.loadBoard(items: store.loadIndex().items).board(target.boardID ?? target.id)!.stamp
     case .page: stamp = try store.loadPage(target.id).agentStamp

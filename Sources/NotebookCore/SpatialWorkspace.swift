@@ -791,6 +791,7 @@ public enum SurfaceKind: String, Codable, Sendable {
   case board
   case cover
   case page
+  case codeFragment
 }
 
 public struct SurfaceID: Codable, Equatable, Hashable, Sendable {
@@ -813,6 +814,8 @@ public struct SurfaceID: Codable, Equatable, Hashable, Sendable {
   public static func cover(_ itemID: UUID) -> Self {
     Self(kind: .cover, ownerID: itemID)
   }
+  public static func codeFragment(_ id: UUID) -> SurfaceID { .init(kind: .codeFragment, ownerID: id) }
+
   public static func page(_ pageID: UUID) -> Self {
     Self(kind: .page, ownerID: pageID)
   }

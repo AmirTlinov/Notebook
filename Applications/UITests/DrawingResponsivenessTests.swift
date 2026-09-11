@@ -229,6 +229,34 @@ final class DrawingResponsivenessTests: XCTestCase {
     assertNewChatDoesNotBlockCollapse(transcript: false)
   }
 
+  func testCodePencilPersistsBesideNativeTextAndOwnUndoDoesNotTouchPaper() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-code-document-fixture", "--notebook-code-pencil-fixture"]
+    launchPortraitFixture(app)
+    let paper = app.otherElements["paper-input"], frame = paper.frame, previousInk = paper.value as? String
+    app.buttons["notebook-chat-toggle"].tap(); app.buttons["notebook-file-reopen"].tap()
+    XCTAssertTrue(app.otherElements["notebook-code-document"].waitForExistence(timeout: 3))
+    app.buttons["notebook-chat-toggle"].tap()
+    let ink = app.otherElements["notebook-code-ink"]
+    XCTAssertTrue(ink.waitForExistence(timeout: 3))
+    ink.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.2)).press(forDuration: 0.1,
+      thenDragTo: ink.coordinate(withNormalizedOffset: .init(dx: 0.8, dy: 0.3)))
+    let accepted = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1 действий пера"), object: ink)
+    XCTAssertEqual(XCTWaiter.wait(for: [accepted], timeout: 4), .completed)
+    XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, previousInk)
+    let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "code-native-pencil-contact"; shot.lifetime = .keepAlways; add(shot)
+    app.buttons["code-xmark"].tap()
+    app.buttons["notebook-chat-toggle"].tap(); app.buttons["notebook-file-reopen"].tap()
+    XCTAssertTrue(ink.waitForExistence(timeout: 3))
+    let restored = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1 действий пера"), object: ink)
+    XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 4), .completed)
+    app.buttons["code-arrow.uturn.backward"].tap()
+    let undone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "0 действий пера"), object: ink)
+    XCTAssertEqual(XCTWaiter.wait(for: [undone], timeout: 4), .completed)
+    XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, previousInk)
+  }
+
   func testCodeDocumentScrollsEditsAndClosesWithoutMovingPaper() {
     continueAfterFailure = false
     let app = XCUIApplication()

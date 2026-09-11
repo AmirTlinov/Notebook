@@ -20,10 +20,17 @@ struct NotebookCodeDocumentView: View {
           }.padding(.leading, 16).frame(maxWidth: .infinity, alignment: .leading)
           control("arrow.clockwise", "Обновить файл") { Task { await files.refresh() } }
           control("magnifyingglass", "Найти в коде") { findRequest += 1 }
-          control("arrow.uturn.backward", "Отменить изменение текста") { undoRequest += 1 }
+          control("arrow.uturn.backward", editing ? "Отменить изменение текста" : "Отменить свой штрих") { if editing { undoRequest += 1 } else { files.notes.undo() } }
           control(editing ? "keyboard.chevron.compact.down" : "keyboard", editing ? "Скрыть клавиатуру" : "Редактировать код") { editing.toggle() }
           Menu {
-            Button("Сравнить с файлом на Mac") { showsComparison = true }
+            ForEach(files.notes.fragments) { fragment in
+              Button(String(fragment.text.prefix(60))) { model.inputGate.performAfterPageContact { files.notes.reviewed = fragment } }
+            }
+            if files.notes.hasMore { Button("Ещё пометки") { Task { await files.notes.refresh(more: true) } } }
+          } label: { Image(systemName: "pencil.tip.crop.circle").frame(width: 44, height: 44) }
+            .accessibilityLabel("Сохранённые пометки")
+          Menu {
+            Button("Сравнить с файлом на Mac") { model.inputGate.performAfterPageContact { showsComparison = true } }
             if document.other != nil {
               Button("Использовать версию Mac") { files.resolveUsingMac() }
               Button("Использовать мой исправленный черновик") { files.resolveUsingDraft() }
@@ -34,11 +41,11 @@ struct NotebookCodeDocumentView: View {
           control("xmark", "Закрыть файл") { editing = false; files.close() }
         }
         .background(Color(.secondarySystemBackground).opacity(0.65))
-        if let message = files.error ?? (document.other == nil ? nil : "Конфликт: черновик и версия Mac сохранены. Сравните их в меню файла.") {
+        if let message = files.notes.error ?? files.error ?? (document.other == nil ? nil : "Конфликт: черновик и версия Mac сохранены. Сравните их в меню файла.") {
           Text(message).font(.system(size: 12)).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading).padding(10)
         }
         Divider()
-        NotebookCodeEditor(files: files, document: document, editing: editing, findRequest: findRequest, undoRequest: undoRequest)
+        NotebookCodeEditor(files: files, document: document, editing: editing, findRequest: findRequest, undoRequest: undoRequest, inputGate: model.inputGate, pen: model.penStyle, eraser: model.eraserStyle, tool: model.drawingTool)
           .id(document.address.id)
       }
       .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 14))
@@ -47,6 +54,9 @@ struct NotebookCodeDocumentView: View {
       .background(NotebookControlRegion(gate: model.inputGate))
       .accessibilityElement(children: .contain)
       .accessibilityIdentifier("notebook-code-document")
+      .sheet(item: Binding(get: { files.notes.reviewed }, set: { files.notes.reviewed = $0 })) { fragment in
+        NotebookCodeReviewView(notes: files.notes, fragment: fragment)
+      }
       .sheet(isPresented: $showsComparison) {
         NavigationStack {
           ScrollView {
@@ -68,8 +78,8 @@ struct NotebookCodeDocumentView: View {
     if document.text != document.base { return "Черновик на iPad" }
     return files.notice ?? document.address.path
   }
-  private func control(_ image: String, _ label: String, action: @escaping () -> Void) -> some View {
-    Button(action: action) { Image(systemName: image).font(.system(size: 16)).frame(width: 44, height: 44) }
+  private func control(_ image: String, _ label: String, action: @escaping NotebookInputCompletion) -> some View {
+    Button(action: { model.inputGate.performAfterPageContact(action) }) { Image(systemName: image).font(.system(size: 16)).frame(width: 44, height: 44) }
       .accessibilityLabel(label).accessibilityIdentifier("code-" + image)
   }
 }
@@ -80,6 +90,10 @@ struct NotebookCodeEditor: UIViewRepresentable {
   let editing: Bool
   let findRequest: Int
   let undoRequest: Int
+  var inputGate: NotebookInputGate? = nil
+  var pen: PenStyle = .standard
+  var eraser: EraserStyle = .standard
+  var tool: DrawingTool = .pen
   func makeCoordinator() -> Coordinator { Coordinator(files: files, address: document.address) }
   func makeUIView(context: Context) -> NotebookCodeTextView {
     let view = NotebookCodeTextView()
@@ -96,12 +110,16 @@ struct NotebookCodeEditor: UIViewRepresentable {
     view.selectedRange = NSRange(location: document.selection, length: 0)
     view.accessibilityIdentifier = "notebook-code-text"
     view.initialScroll = document.scroll
+    if let inputGate { view.ink = .init(text: view, notes: files.notes, file: document.address, gate: inputGate) }
     return view
   }
   func updateUIView(_ view: NotebookCodeTextView, context: Context) {
+    _ = files.notes.fragments; _ = files.notes.annotations
+    guard view.ink?.isActive != true else { return }
     let owner = context.coordinator
     owner.applying = true; defer { owner.applying = false }
     if view.text != document.text, view.markedTextRange == nil {
+      view.ink?.invalidateText()
       let selection = view.selectedRange, position = view.contentOffset
       let old = view.text! as NSString, new = document.text as NSString
       var start = 0, oldEnd = old.length, newEnd = new.length
@@ -126,12 +144,14 @@ struct NotebookCodeEditor: UIViewRepresentable {
       view.isEditable = editing
       if editing { view.becomeFirstResponder() } else { view.resignFirstResponder() }
     }
+    view.ink?.configure(pen: pen, eraser: eraser, tool: tool)
     if owner.findRequest != findRequest { owner.findRequest = findRequest; view.findInteraction?.presentFindNavigator(showingReplace: false) }
     if owner.undoRequest != undoRequest { owner.undoRequest = undoRequest; view.undoManager?.undo(); owner.applying = false; owner.textViewDidChange(view) }
+    view.ink?.layout()
 
   }
   static func dismantleUIView(_ view: NotebookCodeTextView, coordinator: Coordinator) {
-    coordinator.textViewDidChange(view); view.delegate = nil; view.resignFirstResponder()
+    view.ink?.stop(); view.ink = nil; coordinator.textViewDidChange(view); view.delegate = nil; view.resignFirstResponder()
   }
   @MainActor final class Coordinator: NSObject, UITextViewDelegate {
     let files: NotebookFileController
@@ -140,6 +160,7 @@ struct NotebookCodeEditor: UIViewRepresentable {
     init(files: NotebookFileController, address: NotebookFileAddress) { self.files = files; self.address = address }
     func textViewDidChange(_ view: UITextView) {
       guard !applying else { return }
+      (view as? NotebookCodeTextView)?.ink?.invalidateText()
       files.edit(view.text, address: address, selection: view.selectedRange.location, scroll: max(0, view.contentOffset.y))
     }
     func textViewDidChangeSelection(_ view: UITextView) { position(view) }
@@ -149,7 +170,7 @@ struct NotebookCodeEditor: UIViewRepresentable {
       files.readPosition(address: address, selection: view.selectedRange.location, scroll: max(0, view.contentOffset.y))
     }
     func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
-      (textView.text as NSString).replacingCharacters(in: range, with: text).utf8.count <= NotebookFileVersion.maximumBytes
+      !files.notes.contactActive && (textView.text as NSString).replacingCharacters(in: range, with: text).utf8.count <= NotebookFileVersion.maximumBytes
     }
   }
 }
@@ -158,10 +179,28 @@ struct NotebookCodeEditor: UIViewRepresentable {
 /// and SwiftUI updates may precede layout; neither owns a usable scroll range.
 final class NotebookCodeTextView: UITextView {
   var initialScroll: Double?
+  var ink: NotebookCodeInkPresenter?
+  override init(frame: CGRect, textContainer: NSTextContainer?) {
+    // One native TextKit layout supplies editing, selection and the exact glyph
+    // range captured under Pencil; there is no independently laid-out code copy.
+    let container = textContainer ?? NSTextContainer(size: .init(width: 0, height: CGFloat.greatestFiniteMagnitude))
+    let storage: NSTextStorage?
+    if container.layoutManager == nil {
+      let manager = NSLayoutManager(), value = NSTextStorage()
+      manager.addTextContainer(container); value.addLayoutManager(manager); storage = value
+    } else { storage = container.layoutManager?.textStorage }
+    super.init(frame: frame, textContainer: container)
+    // Text containers hold their manager weakly. The storage must survive
+    // until UITextView adopts this exact native editing graph.
+    withExtendedLifetime(storage) {}
+  }
+  @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
   override func layoutSubviews() {
     super.layoutSubviews()
-    guard let initialScroll, bounds.height > 0 else { return }
-    self.initialScroll = nil
-    setContentOffset(.init(x: 0, y: min(initialScroll, max(0, contentSize.height - bounds.height))), animated: false)
+    if let initialScroll, bounds.height > 0 {
+      self.initialScroll = nil
+      setContentOffset(.init(x: 0, y: min(initialScroll, max(0, contentSize.height - bounds.height))), animated: false)
+    }
+    ink?.layout()
   }
 }

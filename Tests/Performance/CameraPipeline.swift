@@ -36,7 +36,7 @@ for count in [10, 100, 500] {
     var page = page
     _ = page.publishInkChange(prepared)
     var undo = PencilUndoHistory()
-    undo.recordAction(pageID: page.id, actionID: stroke.id)
+    undo.recordAction(ownerID: page.id, actionID: stroke.id)
     return prepared.drawing.actionCount
   }
   let journal = SpatialInkJournal(actions: (0..<count).map { row in

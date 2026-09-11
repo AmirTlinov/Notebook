@@ -216,7 +216,7 @@ enum CurrentViewPreviewWriter {
         inkRegions = ink.regions
         inkRaster = RasterSnapshot(image: image, png: ink.png)
       }
-    case .workspace: throw PreviewError.invalidSurface
+    case .workspace, .codeFragment: throw PreviewError.invalidSurface
     }
     try await source.validate()
     try Task.checkCancellation()

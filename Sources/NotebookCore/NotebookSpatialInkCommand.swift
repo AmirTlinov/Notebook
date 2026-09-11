@@ -120,6 +120,7 @@ extension NotebookStore {
           throw NotebookStorageError.invalidTransaction("spatial ink action is missing")
         }
         if origin == .contact { try requireSpatialInkOwners(action.spans.map(\.surface), database: database) }
+        else { try requireSpatialInkOwners(action.spans.map(\.surface).filter { $0.kind == .codeFragment }, database: database) }
         header = .init(action)
         let last = try database.rows("SELECT position FROM records WHERE parent=? AND collection='actions' ORDER BY position DESC,member DESC LIMIT 1", [.text(rootAddress)]).first?[0].integer ?? -1
         guard last < Int64.max else { throw NotebookStorageError.limitExceeded("spatial ink sequence") }
@@ -149,9 +150,13 @@ extension NotebookStore {
       guard let id = surface.ownerID, surface.isValid, surface.kind != .page else {
         throw NotebookStorageError.invalidTransaction("spatial ink owner")
       }
-      let address = surface.kind == .board
-        ? "board.json#/boards/@" + id.uuidString.lowercased()
-        : "workspace.json#/items/@" + id.uuidString.lowercased()
+      let address: String
+      switch surface.kind {
+      case .board: address = "board.json#/boards/@" + id.uuidString.lowercased()
+      case .cover: address = "workspace.json#/items/@" + id.uuidString.lowercased()
+      case .codeFragment: address = codeFragmentFile(id) + "#"
+      case .page: throw NotebookStorageError.invalidTransaction("page ink owner")
+      }
       guard try !database.rows("SELECT 1 FROM records WHERE address=?", [.text(address)]).isEmpty else {
         throw CollaborationError("target_missing", "Физический владелец новых чернил уже удалён.")
       }

@@ -1,6 +1,6 @@
 import Foundation
 
-/// A completed contact owns only the UUIDs it added, never the whole page.
+/// A completed contact owns only the UUIDs it added, never the whole surface.
 public struct PencilUndoHistory: Sendable {
   private let capacity: Int
   private var contributions: [UUID: [Set<UUID>]] = [:]
@@ -10,21 +10,21 @@ public struct PencilUndoHistory: Sendable {
     self.capacity = capacity
   }
 
-  public mutating func recordAction(pageID: UUID, actionID: UUID) {
-    var history = contributions[pageID, default: []]
+  public mutating func recordAction(ownerID: UUID, actionID: UUID) {
+    var history = contributions[ownerID, default: []]
     history.append([actionID])
-    contributions[pageID] = Array(history.suffix(capacity))
+    contributions[ownerID] = Array(history.suffix(capacity))
   }
 
-  public func lastContribution(for pageID: UUID) -> Set<UUID>? { contributions[pageID]?.last }
+  public func lastContribution(for ownerID: UUID) -> Set<UUID>? { contributions[ownerID]?.last }
 
-  public mutating func didRemoveContribution(_ ids: Set<UUID>, for pageID: UUID) {
-    guard var history = contributions[pageID], let index = history.lastIndex(of: ids) else { return }
+  public mutating func didRemoveContribution(_ ids: Set<UUID>, for ownerID: UUID) {
+    guard var history = contributions[ownerID], let index = history.lastIndex(of: ids) else { return }
     history.remove(at: index)
-    contributions[pageID] = history.isEmpty ? nil : history
+    contributions[ownerID] = history.isEmpty ? nil : history
   }
 
-  public mutating func discardChanges(for pageID: UUID) {
-    contributions[pageID] = nil
+  public mutating func discardChanges(for ownerID: UUID) {
+    contributions[ownerID] = nil
   }
 }

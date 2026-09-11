@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -9,11 +9,59 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
 import { NotebookStore } from "../src/store.js";
 import { actionSchema } from "../src/actions.js";
-import { itemID, pageID, rootBoardID, writeFixture, fixtureSocket, stopFixture } from "./fixture.js";
+import { itemID, pageID, rootBoardID, appActor, writeFixture, fixtureSocket, fixtureControl, stopFixture } from "./fixture.js";
 
 const target = { kind: "page" as const, id: pageID };
 const values = { width: 4, opacity: 0.65, color: { red: 0.1, green: 0.4, blue: 0.8 },
   points: [{ x: 40, y: 50 }, { x: 150, y: 70, width: 2, opacity: 0.35 }] };
+
+test("stdio code notes share the native journal, exact material and causal undo without moving paper", {timeout:60_000}, async () => {
+  const root = await mkdtemp(join(tmpdir(), "notebook-code-pen-"));
+  const client = new Client({name:"code-pen-proof",version:"1.0.0"});
+  const call = async (name:string, args:Record<string,unknown>) => {
+    const result = await client.callTool({name,arguments:args});
+    assert.notEqual(result.isError,true,JSON.stringify(result));
+    return result.structuredContent as Record<string,any>;
+  };
+  try {
+    await writeFixture(root);
+    const file = {computer:randomUUID(),project:"fixture",root:"/project",path:"example.py"};
+    const text = "print(4)\n", id = randomUUID();
+    const fragment = {id,file,sourceHash:createHash("sha256").update(text).digest("hex"),utf16Offset:0,
+      text,width:600,height:400,fontSize:15,stamp:{counter:1,actor:appActor}};
+    await fixtureControl(root,"codeFragment",fragment);
+    await client.connect(new StdioClientTransport({command:join(dirname(fileURLToPath(import.meta.url)),"../run.sh"),
+      env:{...getDefaultEnvironment(),NOTEBOOK_SOCKET:fixtureSocket(root)},stderr:"pipe"}));
+    const store = new NotebookStore(fixtureSocket(root)), presence = await store.readPresence();
+    const list = await call("notebook_read_code_notes",{read:"file",file});
+    assert.equal(list.fragments.length,1);
+    assert.equal(list.fragments[0].id.toLowerCase(),id);
+    assert.deepEqual((await call("notebook_read_code_notes",{read:"file",file:{...file,computer:randomUUID()}})).fragments,[]);
+    const before = await call("notebook_read_code_notes",{read:"fragment",fragment_id:id});
+    const target = {kind:"codeFragment",id};
+    const action = {action_id:randomUUID(),summary:"Подчеркнуть рассмотренный код",expected:[{target,revision:before.revision,inkRevision:before.inkRevision}],
+      operations:[{kind:"appendInkStroke",target,values}]};
+    const saved = await call("notebook_apply",action);
+    assert.deepEqual(await call("notebook_apply",action),saved);
+    assert.equal(saved.action.results.length,1);
+    assert.equal(saved.action.results[0].target.kind,"codeFragment");
+    const after = await call("notebook_read_code_notes",{read:"fragment",fragment_id:id});
+    assert.equal(after.fragment.text,text);
+    assert.equal(after.revision,before.revision);
+    assert.notEqual(after.inkRevision,before.inkRevision);
+    assert.equal(after.ink.actions.length,1);
+    assert.equal(after.ink.actions[0].spans[0].surface.kind,"codeFragment");
+    assert.equal(after.ink.actions[0].spans[0].samples.length,2);
+    await call("notebook_undo",{action_id:action.action_id});
+    const undone = await call("notebook_read_code_notes",{read:"fragment",fragment_id:id});
+    assert.equal(undone.ink.actions[0].isActive,false);
+    assert.equal(undone.ink.actions[0].id,after.ink.actions[0].id);
+    assert.deepEqual(await store.readPresence(),presence);
+    const missing = await client.callTool({name:"notebook_read_code_notes",arguments:{read:"fragment",fragment_id:randomUUID()}});
+    assert.equal(missing.isError,true);
+    assert.equal((missing.structuredContent as any).code,"target_missing");
+  } finally { await client.close(); await stopFixture(root); await rm(root,{recursive:true,force:true}); }
+});
 
 test("native pen schema bounds points, width, opacity and immutable stroke IDs", () => {
   const operation = { kind: "appendInkStroke", target, values };

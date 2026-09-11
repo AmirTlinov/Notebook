@@ -119,7 +119,7 @@ export interface SpatialCamera {
 }
 
 export interface SurfaceID {
-  kind: "board" | "cover" | "page";
+  kind: "board" | "cover" | "page" | "codeFragment";
   ownerID: string;
 }
 

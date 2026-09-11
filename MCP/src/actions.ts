@@ -8,6 +8,7 @@ import { runBridge, BridgeError } from "./bridge.js";
 import { NotebookStore } from "./store.js";
 
 export const targetSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("codeFragment"), id: z.uuid() }).strict(),
   z.object({ kind: z.literal("page"), id: z.uuid() }).strict(),
   z.object({ kind: z.literal("document"), id: z.uuid() }).strict(),
   z.object({ kind: z.literal("board"), id: z.uuid() }).strict(),
@@ -18,7 +19,7 @@ export type Target = z.infer<typeof targetSchema>;
 const frame = z.object({ x: z.number().finite(), y: z.number().finite(), width: z.number().positive(), height: z.number().positive() }).strict();
 
 export const referenceSchema = z.object({ id: z.uuid(), target: targetSchema, elementID: z.string().optional(), region: frame.optional(), worldOrigin: point.optional(), pageIndex: z.number().int().nonnegative().optional(), revision: z.string(), label: z.string().max(1000).default("") }).strict();
-const expectation = z.object({ target: targetSchema, revision: z.string().min(1), stateRevision:z.string().optional(), sourceRevision:z.string().optional(), inkRevision:z.string().optional().describe("For appendInkStroke: drawingRevision of a page or spatialInkRevision of a board/cover.") }).strict();
+const expectation = z.object({ target: targetSchema, revision: z.string().min(1), stateRevision:z.string().optional(), sourceRevision:z.string().optional(), inkRevision:z.string().optional().describe("For appendInkStroke: drawingRevision of a page, spatialInkRevision of a board/cover, or inkRevision returned by notebook_read_code_notes.") }).strict();
 const source = z.string().max(1_000_000);
 const block = z.discriminatedUnion("kind", [
   z.object({ id: z.string().min(1).max(120), kind: z.enum(["markdown", "latex"]), source }).strict(),
@@ -77,7 +78,7 @@ export function registerActionTools(server: McpServer, store: NotebookStore): vo
   const outputSchema = notebookResponseSchema;
   server.registerTool("notebook_apply", {
     title: "Continue one shared thought",
-    description: "Apply one named, atomic, undoable action to explicit owners. Read their revisions first. appendInkStroke draws with the native pen on page, board or cover (not SVG); it also requires expected.inkRevision (drawingRevision for pages, spatialInkRevision for boards/covers), preserves other strokes and undoes only its own UUIDs. At most 100000 ink points per action. Omitted update fields retain their values; interactive state has a separate operation. Creation keeps the human's camera and selection. Reuse action_id only for the same action. Workspace expectations use rootBoardID and workspaceRevision; page expectations use agentRevision; documents contentRevision; boards boardRevision.",
+    description: "Apply one named, atomic, undoable action to explicit owners. Read their revisions first. appendInkStroke draws with the native pen on page, board, cover or preserved codeFragment (not SVG); it also requires expected.inkRevision (drawingRevision for pages, spatialInkRevision for boards/covers), preserves other strokes and undoes only its own UUIDs. At most 100000 ink points per action. Omitted update fields retain their values; interactive state has a separate operation. Creation keeps the human's camera and selection. Reuse action_id only for the same action. Workspace expectations use rootBoardID and workspaceRevision; page expectations use agentRevision; documents contentRevision; boards boardRevision.",
     inputSchema: actionSchema, outputSchema,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   }, (input) => actionResult(async () => {

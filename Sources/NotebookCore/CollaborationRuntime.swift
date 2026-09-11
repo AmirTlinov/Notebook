@@ -189,6 +189,9 @@ extension NotebookStore {
     let suffix = target.id.uuidString.lowercased() + ".json"
     let content: JSONValue
     switch target.kind {
+    case .codeFragment:
+      guard elementID == nil, let fragment = files[codeFragmentFile(target.id)] else { throw CollaborationError("target_missing", "Фрагмент кода отсутствует.", target: target) }
+      content = fragment
     case .page:
       guard let page = files["pages/" + suffix] else { throw CollaborationError("target_missing", "Лист отсутствует.", target: target) }
       if let elementID {
@@ -235,7 +238,7 @@ extension NotebookStore {
 
   private func enqueueTargetRender(target: CollaborationTarget, expectedRevision: String,
     region: PageRect?, worldOrigin: WorldPoint?, pageIndex: Int) throws -> TargetRenderRequest {
-    guard target.kind != .workspace else { throw CollaborationError("invalid_reference", "Снимок принадлежит доске, обложке, листу или странице документа.") }
+    guard target.kind != .workspace && target.kind != .codeFragment else { throw CollaborationError("invalid_reference", "Снимок принадлежит доске, обложке, листу или странице документа.") }
     if let region {
       guard [region.x,region.y,region.width,region.height].allSatisfy(\.isFinite),
         region.width > 0, region.height > 0, region.width <= 4096, region.height <= 4096 else {
@@ -318,6 +321,7 @@ extension NotebookStore {
   public static func targetContentRevision(target: CollaborationTarget, files: [String: JSONValue]) throws -> String {
     let stamp: JSONValue?
     switch target.kind {
+    case .codeFragment: stamp = files[codeFragmentFile(target.id)]?["stamp"]
     case .page: stamp = files["pages/\(target.id.uuidString.lowercased()).json"]?["agentStamp"]
     case .document: stamp = files["documents/\(target.id.uuidString.lowercased()).json"]?["contentStamp"]
     case .workspace: stamp = files["workspace.json"]?["stamp"]

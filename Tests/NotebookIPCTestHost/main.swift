@@ -68,6 +68,7 @@ actor TestOwner {
       }
       return try .encode(pages)
     case "page": try store.savePage(value.decode(PageDocument.self))
+    case "codeFragment": try store.captureCodeFragment(value.decode(NotebookCodeFragment.self))
     case "humanPageElements":
       guard let pageID = try value["pageID"]?.decode(UUID.self),
         let actor = try value["actorID"]?.decode(UUID.self),

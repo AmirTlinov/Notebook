@@ -52,6 +52,10 @@ final class MacCommandFixture {
     let revision: String
     var inkRevision: String?
     switch target.kind {
+    case .codeFragment:
+      let annotation = try await read(.init(kind: .codeFragment, id: target.id)).decode(NotebookCodeAnnotation.self)
+      revision = annotation.fragment.stamp.revision
+      if ink { inkRevision = annotation.ink.stamp.revision }
     case .workspace:
       revision = try await read(.init(kind: .workspaceHeader)).decode(NotebookWorkspaceHeader.self).stamp.revision
     case .page:

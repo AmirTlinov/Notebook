@@ -16,7 +16,7 @@ struct CollaborationInkStroke {
     }
     let values = operation.values
     guard operation.kind == .appendInkStroke,
-      [.page, .board, .cover].contains(operation.target.kind),
+      [.page, .board, .cover, .codeFragment].contains(operation.target.kind),
       let id = operation.id.flatMap(UUID.init(uuidString:)),
       Set(values.keys).isSubset(of: ["points", "width", "opacity", "color", "worldOrigin"]),
       let points = values["points"], case .array(let raw) = points,
@@ -60,7 +60,7 @@ struct CollaborationInkStroke {
 
   var pageAction: PageInkAction { .init(id: id, tool: .pen, color: color, samples: samples) }
   func span(on target: CollaborationTarget) -> SpatialInkSpan {
-    .init(surface: target.kind == .board ? .board(target.id) : .cover(target.id), samples: samples)
+    .init(surface: target.kind == .board ? .board(target.id) : target.kind == .codeFragment ? .codeFragment(target.id) : .cover(target.id), samples: samples)
   }
 }
 

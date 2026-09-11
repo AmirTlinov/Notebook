@@ -263,7 +263,8 @@ extension NotebookStore {
     return try CollaborationContent(workspace: workspace, hierarchy: loadBoard(items: workspace.items), ink: loadSpatialInk(),
       pages: workspace.items.flatMap(\.pageIDs).map(loadPage),
       documents: workspace.items.filter { $0.kind == .document }.map { try loadDocument($0.id) },
-      states: workspace.items.filter { $0.kind == .document }.map { try loadDocumentState($0.id) })
+      states: workspace.items.filter { $0.kind == .document }.map { try loadDocumentState($0.id) },
+      codeFragments: try storedValues(prefix: "code-fragments/").map { try $0.decode(NotebookCodeFragment.self) })
   }
 
   /// Disk, memory and the received cut meet under the same recoverable commit.
@@ -388,6 +389,9 @@ struct CollaborationWorkspace {
       guard let value = files[pageFile(target.id)] else { throw missing(target) }
       guard let stamp = value["agentStamp"] else { throw missing(target) }
       return try stamp.decode(VersionStamp.self).revision
+    case .codeFragment:
+      guard let value = files[codeFragmentFile(target.id)] else { throw missing(target) }
+      return try value.decode(NotebookCodeFragment.self).stamp.revision
     case .document:
       guard let value = files[documentFile(target.id)] else { throw missing(target) }
       return try value.decode(DocumentDocument.self).contentStamp.revision
@@ -402,7 +406,7 @@ struct CollaborationWorkspace {
   func inkRevision(of target: CollaborationTarget) throws -> String? {
     switch target.kind {
     case .page: return try files[pageFile(target.id)]?["drawingStamp"]?.decode(VersionStamp.self).revision
-    case .board, .cover: return try files["spatial-ink.json"]?["stamp"]?.decode(VersionStamp.self).revision
+    case .board, .cover, .codeFragment: return try files["spatial-ink.json"]?["stamp"]?.decode(VersionStamp.self).revision
     default: return nil
     }
   }
@@ -481,7 +485,15 @@ struct CollaborationWorkspace {
       guard next != drawing, page.replaceDrawing(try next.dataRepresentation(), actor: actor) else { throw invalid("Не удалось добавить штрих.") }
       files[pageFile(target.id)] = try .encode(page)
     } else {
-      guard try hierarchy.board(boardID(for: target)) != nil else { throw missing(target) }
+      if target.kind == .codeFragment {
+        guard let raw = files[codeFragmentFile(target.id)] else { throw missing(target) }
+        let fragment = try raw.decode(NotebookCodeFragment.self)
+        guard fragment.isValid, stroke.region.isContained(in: .init(width: fragment.width, height: fragment.height)) else {
+          throw invalid("Пометка остаётся в рассмотренном фрагменте кода.")
+        }
+      } else {
+        guard try hierarchy.board(boardID(for: target)) != nil else { throw missing(target) }
+      }
       if target.kind == .cover {
         guard let item = try workspace.items.first(where: { $0.id == target.id }) else { throw missing(target) }
         let geometry = item.kind == .document
@@ -706,6 +718,10 @@ struct CollaborationWorkspace {
         } else { throw invalid("Документ содержит существующее состояние.") }
       }
     }
+    for (file, value) in files where file.hasPrefix("code-fragments/") {
+      let fragment = try value.decode(NotebookCodeFragment.self)
+      guard fragment.isValid, file == codeFragmentFile(fragment.id) else { throw invalid("Рассмотренный код сохраняет свой адрес и геометрию.") }
+    }
     for node in try hierarchy.boards {
       for element in node.board.elements where element.surface.kind == .cover {
         guard let id = element.surface.ownerID, let item = index.items.first(where: { $0.id == id }) else { throw invalid("Обложка принадлежит существующему предмету.") }
@@ -735,6 +751,11 @@ struct CollaborationWorkspace {
       for action in try ink.actions where oldInk[action.id] != action {
         for span in action.spans {
           guard let id = span.surface.ownerID else { continue }
+          if span.surface.kind == .codeFragment {
+            let target = CollaborationTarget(kind: .codeFragment, id: id)
+            if files[codeFragmentFile(id)] != nil, !targets.contains(target) { targets.append(target) }
+            continue
+          }
           let board = tree.ownerBoardID(of: id)
           guard span.surface.kind == .board ? tree.board(id) != nil : board != nil else { continue }
           let target = CollaborationTarget(kind: span.surface.kind == .board ? .board : .cover,
@@ -788,7 +809,7 @@ struct CollaborationWorkspace {
           let next = try advancing(board, key: "stamp", actor: actor)
           files["board.json"] = tree.setting(at: path[...], to: next)
         }
-      case .cover: break
+      case .cover, .codeFragment: break
       }
     }
     if files["board.json"] != previous.files["board.json"] { files["board.json"] = try advancing(files["board.json"]!, key: "stamp", actor: actor) }

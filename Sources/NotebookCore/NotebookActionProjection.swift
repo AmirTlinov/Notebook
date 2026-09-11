@@ -40,7 +40,7 @@ extension NotebookStore {
     references: [CollaborationReference] = []) throws -> CollaborationWorkspace {
     let header = try workspaceHeader()
     var itemIDs = Set<UUID>(), boardIDs: Set<UUID> = [header.rootBoardID]
-    var pageIDs = Set<UUID>(), documentIDs = Set<UUID>()
+    var pageIDs = Set<UUID>(), documentIDs = Set<UUID>(), codeIDs = Set<UUID>()
     var elementIDs: [UUID: Set<String>] = [:], creationInkSurfaces = Set<SurfaceID>()
     var spatialActionIDs = Set<UUID>()
     var stateBlockIDs: [UUID: Set<String>] = [:], sourceBlockIDs: [UUID: Set<String>] = [:]
@@ -49,6 +49,7 @@ extension NotebookStore {
     func include(_ target: CollaborationTarget) throws {
       switch target.kind {
       case .workspace: break
+      case .codeFragment: codeIDs.insert(target.id)
       case .page:
         pageIDs.insert(target.id)
         if let owner = try ownerItemID(ofPage: target.id) { itemIDs.insert(owner) }
@@ -188,6 +189,7 @@ extension NotebookStore {
     for id in boardIDs { try appendBoardCausalFragments(to: &rows, address: "board.json#/boards/@" + id.uuidString.lowercased()) }
     rows += try storedFragments(address: "board.json#", descendants: false)
     var files = ["workspace.json": try JSONValue.encode(workspace), "board.json": try NotebookRecordCodec.decode(rows, root: "board.json#")]
+    for id in codeIDs { files[codeFragmentFile(id)] = try storedValue(codeFragmentFile(id)) }
     let projectedPageIDs = pageIDs.subtracting(fullPageIDs)
     let pageAddresses = projectedPageIDs.sorted().flatMap { id -> [(String, Bool)] in
       let root = pageFile(id) + "#", ids = (pageElementIDs[id] ?? []).sorted()

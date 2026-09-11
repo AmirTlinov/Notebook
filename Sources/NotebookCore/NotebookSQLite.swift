@@ -403,6 +403,8 @@ extension NotebookStore {
         try database.run("COMMIT")
       } catch { try? database.run("ROLLBACK"); throw error }
     }
+    try database.run("CREATE TABLE IF NOT EXISTS code_fragment_files(address TEXT PRIMARY KEY REFERENCES records(address) ON DELETE CASCADE,file_id TEXT NOT NULL,fragment_id TEXT NOT NULL)")
+    try database.run("CREATE INDEX IF NOT EXISTS code_fragment_file ON code_fragment_files(file_id,fragment_id)")
     // File drafts and transfers are device-local, not a second shared archive.
     try database.run("CREATE TABLE IF NOT EXISTS file_drafts(id TEXT PRIMARY KEY,value BLOB NOT NULL)")
     try database.run("CREATE TABLE IF NOT EXISTS file_window(id TEXT PRIMARY KEY,value BLOB NOT NULL)")

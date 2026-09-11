@@ -227,6 +227,7 @@ extension NotebookStore {
   func placementSourceRevision(_ target: CollaborationTarget) throws -> String {
     let files: [String]
     switch target.kind {
+    case .codeFragment: throw CollaborationError("invalid_reference", "Код не размещается на доске.", target: target)
     case .page: files = [pageFile(target.id)]
     case .document: files = [documentFile(target.id), stateFile(target.id)]
     case .workspace: files = ["workspace.json"]

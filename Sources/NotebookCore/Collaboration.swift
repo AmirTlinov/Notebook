@@ -2,7 +2,7 @@ import Foundation
 
 /// A physical address stays attached to its owner while the camera moves.
 public struct CollaborationTarget: Codable, Hashable, Sendable {
-  public enum Kind: String, Codable, Sendable { case workspace, board, cover, page, document }
+  public enum Kind: String, Codable, Sendable { case workspace, board, cover, page, document, codeFragment }
   public let kind: Kind
   public let id: UUID
   public let boardID: UUID?

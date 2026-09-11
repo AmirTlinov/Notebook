@@ -273,7 +273,7 @@ extension NotebookStore {
     } else if fragment.file == "spatial-ink.json" {
       let action = try read().decode(SpatialInkAction.self)
       return try Set(action.spans.map(\.surface)).compactMap { surface in
-        guard let id = surface.ownerID else { return nil }
+        guard surface.kind != .codeFragment, let id = surface.ownerID else { return nil }
         let full = try JSONValue.encode(action)
         let content = full.setting("spans", try .encode(action.spans.filter { $0.surface == surface }))
         return (Self.referenceOwnerKey(surface.kind.rawValue, id), try collaborationHash(content))

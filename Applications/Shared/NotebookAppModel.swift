@@ -491,6 +491,7 @@ final class NotebookAppModel {
   private func surfaceAcceptsChanges(_ surface: SurfaceID) -> Bool {
     guard let id = surface.ownerID else { return false }
     switch surface.kind {
+    case .codeFragment: return false
     case .board, .cover: return !isItemBeingDeleted(id)
     case .page: return !isPageBeingDeleted(id)
     }
@@ -1388,6 +1389,12 @@ final class NotebookAppModel {
   }
 
   func undoLastSurfaceAction() {
+    #if os(iOS)
+      if let files = chat?.files, files.window.isOpen {
+        guard inputGate.permitsNewContact, !inputGate.hasActivePencil else { return }
+        files.notes.undo(); return
+      }
+    #endif
     guard inputGate.permitsNewContact, !inputGate.hasActivePencil,
       presence?.mode != .document else { return }
     if isPageOpen {
@@ -1565,7 +1572,7 @@ final class NotebookAppModel {
           case .append(let action):
             // An exact repeated UUID is a no-op, not another human contribution.
             if change.stamp != change.baseStamp {
-              pencilUndoHistory.recordAction(pageID: accepted.pageID, actionID: action.id)
+              pencilUndoHistory.recordAction(ownerID: accepted.pageID, actionID: action.id)
             }
           case .remove(let ids):
             pencilUndoHistory.didRemoveContribution(ids, for: accepted.pageID)
@@ -2364,6 +2371,7 @@ final class NotebookAppModel {
 
   func referenceTitle(_ reference: CollaborationReference) -> String {
     switch reference.target.kind {
+    case .codeFragment: return "Код с пометками"
     case .page: return "Лист"
     case .document: return "Документ"
     case .cover: return "Обложка"
@@ -2373,6 +2381,21 @@ final class NotebookAppModel {
   }
 
   func requestShow(_ reference: CollaborationReference) {
+    if reference.target.kind == .codeFragment {
+      #if os(iOS)
+        let id = reference.target.id
+        Task { [weak self] in
+          guard let self, let fragment = try? await persistence.submit({ try $0.codeFragment(id) }) else { return }
+          inputGate.performAfterPageContact { [weak self] in
+            Task { [weak self] in
+              await self?.chat?.files.open(fragment.file)
+              self?.inputGate.performAfterPageContact { [weak self] in self?.chat?.files.notes.reviewed = fragment }
+            }
+          }
+        }
+      #endif
+      return
+    }
     if requestedReference == nil, let presence {
       returnPlaces.append(.init(presence: presence, pageID: workspace?.selectedPageID))
       returnPlaces = Array(returnPlaces.suffix(32))
@@ -2451,6 +2474,7 @@ final class NotebookAppModel {
 
   private func collaborationRevision(_ target: CollaborationTarget) -> String? {
     switch target.kind {
+    case .codeFragment: return nil // Visibility is acknowledged by the code viewport, never by the board.
     case .page: return pages[target.id]?.agentStamp.revision
     case .document: return documents[target.id]?.contentStamp.revision
     case .board,.cover: return boardHierarchy?.board(target.boardID ?? target.id)?.stamp.revision
@@ -2488,7 +2512,7 @@ final class NotebookAppModel {
             } else { ready = false }
           case .board, .cover:
             ready = scene.map { sceneRepresents(reference, in: $0, presence: visible) } ?? false
-          case .workspace: ready = false
+          case .workspace, .codeFragment: ready = false
           }
           guard ready else { continue }
           if !receipt.shown.contains(expected) { receipt.shown.append(expected) }

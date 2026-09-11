@@ -120,12 +120,15 @@ final class NotebookInputGate {
   }
 
   private func finishPage(waitsForPublication: Bool, _ action: @escaping NotebookInputCompletion) {
-    if let currentPageSource,
-      let pageFinisher = pageFinishers[currentPageSource]
-    {
-      pageFinisher(waitsForPublication, action)
-    } else {
-      action()
+    // A code document may accept Pencil above a still-mounted notebook. Finish
+    // the actual active owner as well as the current page, without replacing
+    // that page's registration or making code navigation a paper transition.
+    let sources = activePencilSources.union(currentPageSource.map { [$0] } ?? [])
+    let finishers = sources.compactMap { pageFinishers[$0] }
+    guard !finishers.isEmpty else { action(); return }
+    var remaining = finishers.count
+    for finisher in finishers {
+      finisher(waitsForPublication) { remaining -= 1; if remaining == 0 { action() } }
     }
   }
 

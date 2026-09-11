@@ -30,6 +30,13 @@ extension NotebookStore {
         throw NotebookStorageError.invalidTransaction("stroke tombstone is irreversible")
       }
     }
+    if fragment.file.hasPrefix("code-fragments/") {
+      let code = try fragment.value.decode(NotebookCodeFragment.self)
+      guard code.isValid, fragment.file == codeFragmentFile(code.id), fragment.parent == nil,
+        fragment.address == fragment.file + "#", fragment.collections.isEmpty, previousHash == nil else {
+        throw NotebookStorageError.invalidTransaction("reviewed code is immutable")
+      }
+    }
     if fragment.file.hasPrefix("pages/"), fragment.collection == "computations" {
       let record = try fragment.value.decode(NotebookComputation.self)
       let file = pageFile(record.source.pageID)

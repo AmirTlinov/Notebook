@@ -141,6 +141,10 @@ extension NotebookStore {
   }
 
   func updateAddressIndexes(_ fragment: NotebookStoredFragment, database: NotebookSQLConnection) throws {
+    if fragment.parent == nil, fragment.file.hasPrefix("code-fragments/") {
+      let code = try fragment.value.decode(NotebookCodeFragment.self)
+      try database.run("INSERT INTO code_fragment_files(address,file_id,fragment_id) VALUES(?,?,?)", [.text(fragment.address), .text(code.file.id), .text(code.id.uuidString.lowercased())])
+    }
     if fragment.parent == nil, fragment.file.hasPrefix("collaboration/render-requests/") {
       let request = try fragment.value.decode(TargetRenderRequest.self)
       try database.run("INSERT INTO metadata_index(address,kind,context_id,created_at,status) VALUES(?,'renderRequest',?,?,'pending') ON CONFLICT(address) DO UPDATE SET context_id=excluded.context_id,created_at=excluded.created_at", [.text(fragment.address), .text(Self.renderTargetKey(request.target)), .real(request.createdAt.timeIntervalSince1970)])

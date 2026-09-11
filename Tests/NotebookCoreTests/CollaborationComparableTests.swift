@@ -33,6 +33,7 @@ private struct ComparableFixture {
   func action(_ operations: [CollaborationOperation], targets: [CollaborationTarget]) throws -> CollaborationAction {
     .init(summary: "Изменение значения программы", expected: try targets.map { target in
       switch target.kind {
+      case .codeFragment: return .init(target: target, revision: try #require(try store.codeFragment(target.id)).stamp.revision)
       case .workspace: return .init(target: target, revision: try store.loadIndex().stamp.revision)
       case .board, .cover: return .init(target: target, revision: try store.loadBoard(items: store.loadIndex().items).board(target.boardID ?? target.id)!.stamp.revision)
       case .page: return .init(target: target, revision: try store.loadPage(target.id).agentStamp.revision)

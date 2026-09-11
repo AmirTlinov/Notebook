@@ -82,7 +82,7 @@ private func undoTestStroke() -> PageInkAction {
 func pencilUndoRecordsOneCompletedAction() throws {
   let pageID = UUID(), stroke = undoTestStroke()
   var history = PencilUndoHistory()
-  history.recordAction(pageID: pageID, actionID: stroke.id)
+  history.recordAction(ownerID: pageID, actionID: stroke.id)
   let ids = try #require(history.lastContribution(for: pageID))
   #expect(ids == [stroke.id])
   let drawing = try PageInkDrawing().appending(stroke).removing(ids)
@@ -97,9 +97,9 @@ func pencilUndoIsPageLocalAndBounded() throws {
   let firstPage = UUID(), secondPage = UUID()
   var history = PencilUndoHistory(capacity: 2)
   let strokes = (0..<3).map { _ in undoTestStroke() }
-  for stroke in strokes { history.recordAction(pageID: firstPage, actionID: stroke.id) }
+  for stroke in strokes { history.recordAction(ownerID: firstPage, actionID: stroke.id) }
   let other = UUID()
-  history.recordAction(pageID: secondPage, actionID: other)
+  history.recordAction(ownerID: secondPage, actionID: other)
   #expect(history.lastContribution(for: secondPage) == [other])
   history.didRemoveContribution([other], for: secondPage)
   #expect(history.lastContribution(for: secondPage) == nil)
@@ -114,7 +114,7 @@ func pencilUndoIsPageLocalAndBounded() throws {
 func pencilUndoCanDiscardAStalePageHistory() {
   let pageID = UUID()
   var history = PencilUndoHistory()
-  history.recordAction(pageID: pageID, actionID: UUID())
+  history.recordAction(ownerID: pageID, actionID: UUID())
   history.discardChanges(for: pageID)
   #expect(history.lastContribution(for: pageID) == nil)
 }

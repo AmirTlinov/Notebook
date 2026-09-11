@@ -15,6 +15,10 @@ extension NotebookStore {
     try Task.checkCancellation()
     let suffix = target.id.uuidString.lowercased() + ".json"
     switch target.kind {
+    case .codeFragment:
+      let file = codeFragmentFile(target.id)
+      guard elementID == nil, let value = try storedValue(file) else { throw referenceMissing(target) }
+      return [file: value, "spatial-ink.json": try .encode(readSpatialInk(surfaces: [.codeFragment(target.id)]))]
     case .page:
       let file = "pages/" + suffix
       if let elementID {
@@ -81,6 +85,7 @@ extension NotebookStore {
       let value: JSONValue?
       switch target.kind {
       case .workspace: value = try storedFragments(address: "workspace.json#", descendants: false).first?.value["stamp"]
+      case .codeFragment: value = try storedFragments(address: codeFragmentFile(target.id) + "#", descendants: false).first?.value["stamp"]
       case .page: value = try storedFragments(address: pageFile(target.id) + "#", descendants: false).first?.value["agentStamp"]
       case .document: value = try storedFragments(address: documentFile(target.id) + "#", descendants: false).first?.value["contentStamp"]
       case .board, .cover:

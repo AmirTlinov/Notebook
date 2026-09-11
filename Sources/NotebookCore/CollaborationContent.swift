@@ -9,13 +9,25 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
   public var pages: [PageDocument]
   public var documents: [DocumentDocument]
   public var states: [DocumentStateJournal]
+  public var codeFragments: [NotebookCodeFragment]
 
   public init(workspace: WorkspaceIndex, hierarchy: BoardHierarchy, ink: SpatialInkJournal,
-    pages: [PageDocument], documents: [DocumentDocument], states: [DocumentStateJournal]) {
+    pages: [PageDocument], documents: [DocumentDocument], states: [DocumentStateJournal], codeFragments: [NotebookCodeFragment] = []) {
     self.workspace = workspace; self.hierarchy = hierarchy; self.ink = ink
     self.pages = pages.sorted { $0.id.uuidString < $1.id.uuidString }
     self.documents = documents.sorted { $0.id.uuidString < $1.id.uuidString }
     self.states = states.sorted { $0.id.uuidString < $1.id.uuidString }
+    self.codeFragments = codeFragments.sorted { $0.id.uuidString < $1.id.uuidString }
+  }
+
+  private enum CodingKeys: String, CodingKey { case workspace, hierarchy, ink, pages, documents, states, codeFragments }
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    try self.init(workspace: values.decode(WorkspaceIndex.self, forKey: .workspace),
+      hierarchy: values.decode(BoardHierarchy.self, forKey: .hierarchy), ink: values.decode(SpatialInkJournal.self, forKey: .ink),
+      pages: values.decode([PageDocument].self, forKey: .pages), documents: values.decode([DocumentDocument].self, forKey: .documents),
+      states: values.decode([DocumentStateJournal].self, forKey: .states),
+      codeFragments: values.decodeIfPresent([NotebookCodeFragment].self, forKey: .codeFragments) ?? [])
   }
 
   init(files: [String: JSONValue]) throws {
@@ -25,7 +37,8 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
     try self.init(workspace: index.decode(WorkspaceIndex.self), hierarchy: board.decode(BoardHierarchy.self), ink: ink.decode(SpatialInkJournal.self),
       pages: files.filter { $0.key.hasPrefix("pages/") }.map { try $0.value.decode(PageDocument.self) },
       documents: files.filter { $0.key.hasPrefix("documents/") }.map { try $0.value.decode(DocumentDocument.self) },
-      states: files.filter { $0.key.hasPrefix("document-states/") }.map { try $0.value.decode(DocumentStateJournal.self) })
+      states: files.filter { $0.key.hasPrefix("document-states/") }.map { try $0.value.decode(DocumentStateJournal.self) },
+      codeFragments: files.filter { $0.key.hasPrefix("code-fragments/") }.map { try $0.value.decode(NotebookCodeFragment.self) })
   }
 
   public func validate() throws {
@@ -46,7 +59,9 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
     try validate(); try workspace.validatePageOrderWitness()
     let pageIDs = Set(workspace.items.flatMap(\.pageIDs))
     let documentIDs = Set(workspace.items.filter { $0.kind == .document }.map(\.id))
-    guard pageIDs == Set(pages.map(\.id)), documentIDs == Set(documents.map(\.id)),
+    let reviewedIDs = Set(codeFragments.map(\.id))
+    guard ink.actions.flatMap(\.spans).filter({ $0.surface.kind == .codeFragment }).allSatisfy({ $0.surface.ownerID.map(reviewedIDs.contains) == true }),
+      pageIDs == Set(pages.map(\.id)), documentIDs == Set(documents.map(\.id)),
       documentIDs == Set(states.map(\.id)) else {
       throw NotebookStorageError.invalidTransaction("complete archive dependencies")
     }
@@ -57,6 +72,7 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
       Set(pages.map(\.id)).count == pages.count,
       Set(documents.map(\.id)).count == documents.count,
       Set(states.map(\.id)).count == states.count,
+      Set(codeFragments.map(\.id)).count == codeFragments.count, codeFragments.allSatisfy(\.isValid),
       pages.allSatisfy(\.isValid), documents.allSatisfy(\.isValid), states.allSatisfy(\.isValid) else {
       throw CollaborationError("invalid_content", "Срез содержит проверенных владельцев с уникальными ID.")
     }
@@ -92,12 +108,18 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
         boards: [combinedRoot] + hierarchy.boards.filter { $0.id != root.id } + other.hierarchy.boards.filter { $0.id != root.id },
         stamp: next),
       ink: .init(actions: ink.actions + other.ink.actions, stamp: max(ink.stamp, other.ink.stamp)),
-      pages: pages + other.pages, documents: documents + other.documents, states: states + other.states)
+      pages: pages + other.pages, documents: documents + other.documents, states: states + other.states, codeFragments: codeFragments + other.codeFragments)
     try result.validate()
     return result
   }
 
   private mutating func mergeValidated(_ incoming: Self) throws {
+    var fragments = Dictionary(uniqueKeysWithValues: codeFragments.map { ($0.id, $0) })
+    for fragment in incoming.codeFragments {
+      guard fragments[fragment.id] == nil || fragments[fragment.id] == fragment else { throw NotebookStorageError.transactionConflict }
+      fragments[fragment.id] = fragment
+    }
+    codeFragments = fragments.values.sorted { $0.id.uuidString < $1.id.uuidString }
     workspace = try workspace.merging(incoming.workspace)
     hierarchy = try hierarchy.merging(incoming.hierarchy, items: workspace.items)
     if ink != incoming.ink { _ = ink.merge(incoming.ink) }
@@ -133,7 +155,8 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
     return .init(workspace:workspace,hierarchy:hierarchy,
       ink:ink == previous.ink ? SpatialInkJournal(stamp:.init(counter:0,actor:ink.stamp.actor)) : ink,
       pages:pages.filter { oldPages[$0.id] != $0 },documents:documents.filter { oldDocuments[$0.id] != $0 },
-      states:states.filter { oldStates[$0.id] != $0 })
+      states:states.filter { oldStates[$0.id] != $0 },
+      codeFragments:codeFragments.filter { !previous.codeFragments.contains($0) })
   }
 
   public func sourceFiles(including paths: Set<String>? = nil) throws -> [String: JSONValue] {
@@ -146,6 +169,7 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
     try include("workspace.json", workspace)
     try include("board.json", hierarchy)
     try include("spatial-ink.json", ink)
+    for fragment in codeFragments { try include(codeFragmentFile(fragment.id), fragment) }
     for page in pages { try include("pages/\(page.id.uuidString.lowercased()).json", page) }
     for document in documents { try include("documents/\(document.id.uuidString.lowercased()).json", document) }
     for state in states { try include("document-states/\(state.id.uuidString.lowercased()).json", state) }
@@ -159,6 +183,7 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
       let suffix = target.id.uuidString.lowercased() + ".json"
       switch target.kind {
       case .workspace: paths.insert("workspace.json")
+      case .codeFragment: paths.formUnion([codeFragmentFile(target.id), "spatial-ink.json"])
       case .page: paths.insert("pages/" + suffix)
       case .document:
         paths.formUnion(["documents/" + suffix, "document-states/" + suffix])

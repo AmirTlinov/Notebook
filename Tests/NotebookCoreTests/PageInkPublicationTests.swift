@@ -60,8 +60,8 @@ func preparedInkCannotCrossPageOwner() throws {
 func undoCompletionKeepsNewerContact() throws {
   let pageID = UUID(), first = UUID(), next = UUID()
   var history = PencilUndoHistory()
-  history.recordAction(pageID: pageID, actionID: first)
-  history.recordAction(pageID: pageID, actionID: next)
+  history.recordAction(ownerID: pageID, actionID: first)
+  history.recordAction(ownerID: pageID, actionID: next)
   history.didRemoveContribution([first], for: pageID)
   #expect(history.lastContribution(for: pageID) == [next])
   history.didRemoveContribution([next], for: pageID)

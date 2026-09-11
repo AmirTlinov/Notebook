@@ -1,6 +1,6 @@
 import * as z from "zod/v4";
 
-const target = z.object({kind:z.enum(["workspace","board","cover","page","document"]),id:z.uuid(),boardID:z.uuid().optional()});
+const target = z.object({kind:z.enum(["workspace","board","cover","page","document","codeFragment"]),id:z.uuid(),boardID:z.uuid().optional()});
 const expected = z.object({target,revision:z.string(),stateRevision:z.string().optional(),sourceRevision:z.string().optional(),inkRevision:z.string().optional()});
 const fieldPath = z.array(z.union([
   z.object({field:z.object({_0:z.string()})}),

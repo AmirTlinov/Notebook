@@ -57,9 +57,10 @@ public struct NotebookReadQuery: Codable, Sendable {
     case workspaceHeader, itemHeaders, itemHeader, workingSet, sceneWindow, scenePaintOrder
     case page, document, documentState, documentBlock, boardItem, boardElement, ownerBoard, notebookPages, notebookDirectory, notebookPosition, spatialInk, presence
     case attentionEvidence, contexts, contextEntries, actions, currentViewReceipt, pageVisionReceipt, targetRenderReceipt
-    case renderRequests, delivery, actionSnapshots, runtime
+    case renderRequests, delivery, actionSnapshots, runtime, codeFragment, codeFragments
   }
   public var kind: Kind
+  public var file: NotebookFileAddress?
   public var id: UUID?
   public var after: UUID?
   public var referenceID: UUID?
@@ -221,6 +222,10 @@ public struct NotebookCommandDispatcher: Sendable {
       // The opaque cursor preserves UInt64 exactly; JavaScript never rounds it.
       return .object(["revision": .string(String(page.revision)), "entries": try .encode(page.entries),
         "nextCursor": try page.next.map { .string(try JSONEncoder().encode($0).base64EncodedString()) } ?? .null])
+    case .codeFragment: return try .encode(store.codeAnnotation(required(query.id)))
+    case .codeFragments:
+      guard let file = query.file else { throw invalid("invalid_reference", "Нужен адрес файла на компьютере.") }
+      return try .encode(store.codeFragments(file: file, after: query.after, limit: query.limit ?? 64))
     case .page: return try .encode(store.loadPage(required(query.id)))
     case .document: return try .encode(store.loadDocument(required(query.id)))
     case .documentState: return try .encode(store.loadDocumentState(required(query.id)))

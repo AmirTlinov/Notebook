@@ -44,7 +44,7 @@ final class NotebookFrozenVisualSources {
           let element = hierarchy.board(boardID)?.elements.first(where: { $0.id == id }),
           element.kind != .nativeText else { continue }
         retain(.agent(agentElementSnapshotSource(element)), fragmentID: fragment.id, key: id)
-      case .workspace: break
+      case .workspace, .codeFragment: break
       }
     }
     return .init(rasters: rasters)
@@ -125,7 +125,7 @@ enum NotebookPinnedImageRenderer {
         try await canvas.draw(raster, in: frame)
       }
       png = try await canvas.finishPNG()
-    case .workspace: throw SceneRenderError.snapshotPending("unbounded_reference")
+    case .workspace, .codeFragment: throw SceneRenderError.snapshotPending("unbounded_reference")
     }
     try Task.checkCancellation()
     guard png.count <= maximumImageBytes else { throw SceneRenderError.resourceLimit }

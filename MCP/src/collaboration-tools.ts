@@ -5,11 +5,27 @@ import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { targetSchema, referenceSchema, actionResult } from "./actions.js";
 import { runBridge, BridgeError } from "./bridge.js";
+import { revision, type VersionStamp } from "./domain.js";
 import { NotebookStore } from "./store.js";
 
 const frame = z.object({ x: z.number().finite(), y: z.number().finite(), width: z.number().positive(), height: z.number().positive() }).strict();
 
 export function registerCollaborationTools(server: McpServer, store: NotebookStore) {
+  server.registerTool("notebook_read_code_notes", {
+    outputSchema: notebookResponseSchema,
+    title: "Read preserved code and shared handwriting",
+    description: "Read an immutable code fragment and its actual native ink, or list up to 64 review fragments belonging to an exact computer/project/file. Files with identical paths on different computers remain distinct. To appendInkStroke use target {kind:codeFragment,id:fragment.id}, expected.revision=revision and expected.inkRevision=inkRevision from the returned value. Coordinates belong to the preserved fragment, not to a screen or board camera.",
+    inputSchema: z.discriminatedUnion("read", [
+      z.object({read:z.literal("fragment"),fragment_id:z.uuid()}).strict(),
+      z.object({read:z.literal("file"),file:z.object({computer:z.uuid(),project:z.string().min(1),root:z.string().min(1),path:z.string().min(1)}).strict(),after_id:z.uuid().optional()}).strict(),
+    ]),
+    annotations: {readOnlyHint:true,openWorldHint:false},
+  }, input => actionResult(async () => {
+    if (input.read === "file") return {fragments:await store.read({kind:"codeFragments",file:input.file,after:input.after_id,limit:64})};
+    const value = await store.read<{fragment:{stamp:VersionStamp};ink:{stamp:VersionStamp}} | null>({kind:"codeFragment",id:input.fragment_id});
+    if (!value) throw new BridgeError({code:"target_missing",message:"The preserved code fragment does not exist."});
+    return {...value,revision:revision(value.fragment.stamp),inkRevision:revision(value.ink.stamp)};
+  }));
   server.registerTool("notebook_read_attention", {
     outputSchema: notebookResponseSchema,
     title: "Read the frozen source the person pointed at",
