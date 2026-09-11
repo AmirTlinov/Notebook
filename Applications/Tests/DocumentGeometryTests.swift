@@ -39,7 +39,7 @@ final class DocumentGeometryTests: XCTestCase {
               completed = true
               ready.fulfill()
             }
-          }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in }
+          }, onPageLayout: { _ in }, onPageNavigation: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in }
         ).ignoresSafeArea())
       container.addChild(host)
       container.view.addSubview(host.view)

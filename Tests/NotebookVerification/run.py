@@ -105,6 +105,18 @@ class SelectionTests(unittest.TestCase):
         plan = verify.make_plan(self.root)
         self.assertEqual(sum(s.startswith(verify.UI) for s in plan["checks"]["ipad"]), 2)
 
+    def test_shared_ui_fixture_requires_a_named_gesture_not_a_broad_profile(self):
+        paths = ["Applications/iPad/SimulatorDrawingFixture.swift", "Applications/UITests/DrawingResponsivenessTests.swift"]
+        for path in paths:
+            self.change(path)
+        self.assertEqual(verify.make_plan(self.root, profiles=["documents"])["unclassified"], sorted(paths))
+        scenario = verify.UI + "testDocumentLinksOpenTheMeasuredDistantPageAndReturnToContents"
+        plan = verify.make_plan(self.root, tests=[scenario])
+        self.assertFalse(plan["unclassified"])
+        self.assertEqual(plan["checks"]["ipad"], [scenario])
+        self.change("Sources/Unknown.swift")
+        self.assertEqual(verify.make_plan(self.root, tests=[scenario])["unclassified"], ["Sources/Unknown.swift"])
+
     def test_unknown_storage_requires_an_explicit_decision_not_automatic_full(self):
         self.change("Sources/NotebookCore/NotebookSQLite.swift")
         plan = verify.make_plan(self.root)

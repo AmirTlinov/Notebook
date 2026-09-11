@@ -1840,6 +1840,10 @@ private struct WorkspaceSceneItem: View, Equatable {
         capturesSnapshot: isCurrent,
         onRenderReady: onRenderReady,
         onPageLayout: onDocumentPageLayout,
+        onPageNavigation: { page in
+          guard isCurrent, contentIsInteractive, model.documents[document.id] == document else { return }
+          commitDocumentPage(page, "\(document.contentStamp.actor):\(document.contentStamp.counter)")
+        },
         onSourceChange: { edit in try await model.commitDocumentSource(edit: edit) },
         onStateChange: { blockID, value in
           model.commitDocumentState(

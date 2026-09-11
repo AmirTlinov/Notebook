@@ -153,7 +153,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
         page: { index, current, readiness in
           AnyView(DocumentWebView(document: document, state: state, isInteractive: current,
             selectedPageIndex: index, capturesSnapshot: false, onRenderReady: readiness,
-            onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in }, resources: resources))
+            onPageLayout: { _ in }, onPageNavigation: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in }, resources: resources))
         }, onCommit: { index, _ in committed = index }, onTransitioningChange: { _ in })
     }
     configure(); window.makeKeyAndVisible()
@@ -213,7 +213,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
           XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
           return AnyView(DocumentWebView(document: document, state: state, isInteractive: current,
             selectedPageIndex: index, capturesSnapshot: false, onRenderReady: readiness,
-            onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in }, resources: resources))
+            onPageLayout: { _ in }, onPageNavigation: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in }, resources: resources))
         }, onCommit: { index, _ in commits.append(index) }, onTransitioningChange: { _ in })
     }
     configure(0); window.rootViewController = controller; window.makeKeyAndVisible()
@@ -275,7 +275,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
           DocumentWebView(document: document, state: state, isInteractive: index == 0,
             selectedPageIndex: index, capturesSnapshot: false,
             onRenderReady: .init { if $0 { liveReady.insert(index) } else { liveReady.remove(index) } },
-            onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in }, resources: resources)
+            onPageLayout: { _ in }, onPageNavigation: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in }, resources: resources)
             .frame(width: geometry.width, height: geometry.height)
         }
         if previews {

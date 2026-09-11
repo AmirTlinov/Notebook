@@ -193,6 +193,12 @@ enum DocumentSessionError: Error, LocalizedError {
   }
 }
 
+enum DocumentLinkDestination: Equatable {
+  case page(Int)
+  case external(URL)
+  case unavailable(String)
+}
+
 /// A measured source layout is immutable after acceptance. Several page frames
 /// may reference it, but a disagreeing neighbor cannot replace its geometry.
 @MainActor
@@ -201,6 +207,7 @@ final class DocumentLayoutRecord {
   let regions: [DocumentBlockRegion]
   let width: Double
   let height: Double
+  let anchorPages: [String: Int]
   private let pageRanges: [Int: Range<Int>]
   // A raster or an address reader can outlive the source preparation. The
   // shared layout, not a temporary task or registry cache, owns this allocation.
@@ -210,6 +217,7 @@ final class DocumentLayoutRecord {
   init(receipt: NSDictionary, sourceKey: String, blockIDs: Set<String>, geometry: WorkspaceItemGeometry,
     reservation: RasterReservation? = nil) throws {
     guard receipt["sourceKey"] as? String == sourceKey,
+      let scope = receipt["layoutScope"] as? String, scope == "source" || scope == "page",
       receipt["layoutCanonical"] as? Bool == true,
       let count = receipt["pageCount"] as? Int, count > 0,
       let width = receipt["width"] as? Double, width.isFinite, width > 0,
@@ -236,6 +244,24 @@ final class DocumentLayoutRecord {
         y: y * geometry.height / height, width: w * geometry.width / width, height: h * geometry.height / height),
         sourceOffset: physicalOffset))
     }
+    // Page receipts describe pixels, never a replacement for the complete
+    // source's link index. The source packet and its existing lease own both.
+    var anchors: [String: Int] = [:]
+    if scope == "source" {
+      guard let values = receipt["anchors"] as? [[String: Any]], values.count <= 16_384
+      else { throw DocumentSessionError.invalidLayout }
+      var bytes = 0
+      for value in values {
+        guard let name = value["name"] as? String, !name.isEmpty, name.utf8.count <= 4096,
+          let number = value["pageIndex"] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+          let page = value["pageIndex"] as? Int, (0..<count).contains(page), anchors[name] == nil
+        else { throw DocumentSessionError.invalidLayout }
+        bytes += name.utf8.count
+        guard bytes <= 1024 * 1024 else { throw DocumentSessionError.invalidLayout }
+        anchors[name] = page
+      }
+    }
+    self.anchorPages = anchors
     self.pageCount = count; self.regions = regions; self.pageRanges = pageRanges
     self.width = geometry.width; self.height = geometry.height
     self.reservation = reservation
@@ -243,7 +269,8 @@ final class DocumentLayoutRecord {
 
   func matches(_ other: DocumentLayoutRecord, pageIndex: Int? = nil) -> Bool {
     let expectedRegions = regions[pageIndex.map { pageRanges[$0] ?? 0..<0 } ?? regions.startIndex..<regions.endIndex]
-    guard pageCount == other.pageCount, width == other.width, height == other.height,
+    guard (pageIndex != nil || anchorPages == other.anchorPages),
+      pageCount == other.pageCount, width == other.width, height == other.height,
       expectedRegions.count == other.regions.count else { return false }
     // Transform round trips may differ by two WebKit layout subpixels. This
     // tolerance never changes the accepted record or grows with page count.
@@ -254,6 +281,23 @@ final class DocumentLayoutRecord {
         && abs(left.frame.width - right.frame.width) <= tolerance && abs(left.frame.height - right.frame.height) <= tolerance
         && abs(left.sourceOffset - right.sourceOffset) <= tolerance
     }
+  }
+
+  func destination(for href: String) -> DocumentLinkDestination {
+    guard href.utf8.count <= 8192 else { return .unavailable("Слишком длинный адрес ссылки.") }
+    if href.hasPrefix("#") {
+      guard let name = String(href.dropFirst()).removingPercentEncoding
+      else { return .unavailable("Повреждённый адрес раздела.") }
+      if name.isEmpty { return .page(0) }
+      if let page = anchorPages[name] { return .page(page) }
+      if name.lowercased() == "top" { return .page(0) }
+      return .unavailable("В документе нет раздела «\(name)».")
+    }
+    guard let url = URL(string: href), let scheme = url.scheme?.lowercased(),
+      ((scheme == "https" || scheme == "http") && url.host?.isEmpty == false)
+        || (scheme == "mailto" && !url.path.isEmpty)
+    else { return .unavailable("Этот адрес нельзя открыть как раздел документа или внешнюю ссылку.") }
+    return .external(url)
   }
 
   func whenReleased(by owner: AnyObject, _ action: @escaping @MainActor () -> Void) {

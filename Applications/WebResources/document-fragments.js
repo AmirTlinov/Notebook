@@ -25,7 +25,8 @@
     // row before and after it. Atomic SVG/MathJax trees keep one physical address.
     const rootEntry={node:root,childrenByPage:new Map()}, stack=[];
     for(let index=root.childNodes.length-1;index>=0;index--)stack.push({node:root.childNodes[index],parent:rootEntry});
-    let indexedNodes=0,indexedEdges=0;
+    let indexedNodes=0,indexedEdges=0,anchorBytes=0;
+    const anchors=new Map();
     // This bounded DOM walk yields an actual browser task, not a chained timer.
     // Hidden WebKit timer throttling must not become part of source layout time.
     // The source owns exactly one channel and closes it on completion or refusal.
@@ -63,6 +64,20 @@
         }
         const entry={node,pages,childrenByPage:new Map()};
         entries.set(node,entry);
+        // A link names the original DOM, not whichever page fragment happens
+        // to be mounted. Include zero-width named anchors and keep the first
+        // occurrence of duplicate HTML IDs, just as the source document does.
+        if(node.nodeType===Node.ELEMENT_NODE && !node.closest('svg,mjx-container')) {
+          const rect=rects[0];
+          const page=rect && Math.max(0,Math.floor((rect.x-originX)/stride));
+          if(Number.isInteger(page)&&page<pageCount)for(const name of [node.id,node.localName==='a'&&node.getAttribute('name')]) {
+            if(!name || anchors.has(name))continue;
+            const bytes=new TextEncoder().encode(name).length;
+            anchorBytes+=bytes;
+            if(bytes>4096||anchors.size>=16384||anchorBytes>1024*1024)throw Error('document_link_index_budget');
+            anchors.set(name,page);
+          }
+        }
         if(node.nodeType===Node.ELEMENT_NODE&&cellTags.has(node.localName)) {
           const table=node.closest('table'), tableEntry=entries.get(table);
           const first=pages.entries().next().value;
@@ -297,7 +312,7 @@
       return {format:1, sourceKey, pageIndex, width, height, contentTop, contentBottom, blockIDs, regions:pageRegions, html, nodeCount, utf8Bytes, visitedNodes};
     } finally { measurement.remove(); }
     };
-    return Object.freeze({compile});
+    return Object.freeze({compile,anchors:[...anchors].map(([name,pageIndex])=>({name,pageIndex}))});
   };
 
   window.notebookDocumentFragments = Object.freeze({create});

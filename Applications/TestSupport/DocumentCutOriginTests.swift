@@ -14,7 +14,7 @@ final class DocumentCutOriginTests: XCTestCase {
 
   private func receipt(_ regions: [[String: Any]], key: String = "source", scale: Double = 1,
     page: Int? = nil) -> NSDictionary {
-    var value: [String: Any] = ["sourceKey": key, "layoutCanonical": true, "pageCount": 2,
+    var value: [String: Any] = ["sourceKey": key, "layoutCanonical": true, "anchors": [], "pageCount": 2,
       "layoutScope": page == nil ? "source" : "page",
       "width": geometry.width / scale, "height": geometry.height / scale, "regions": regions]
     if let page { value["pageIndex"] = page }

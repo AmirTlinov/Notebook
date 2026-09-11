@@ -9,7 +9,7 @@ final class SceneRenderResourcesTests: XCTestCase {
     let resources = SceneRenderResources(byteLimit: 64 * 1024, profile: .headless)
     let geometry = WorkspaceItemGeometry.document(.a4)
     var layout: DocumentLayoutRecord? = try DocumentLayoutRecord(receipt: [
-      "sourceKey": "source", "layoutCanonical": true, "pageCount": 1,
+      "sourceKey": "source", "layoutScope": "source", "layoutCanonical": true, "anchors": [], "pageCount": 1,
       "width": geometry.width, "height": geometry.height, "regions": []
     ] as NSDictionary, sourceKey: "source", blockIDs: [], geometry: geometry,
       reservation: try XCTUnwrap(resources.reserveDerivedBytes(48 * 1024, priority: .passive)))

@@ -809,6 +809,34 @@ final class DrawingResponsivenessTests: XCTestCase {
     await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Страница 3 из '"), object: surface)], timeout: 5)
   }
 
+  func testDocumentLinksOpenTheMeasuredDistantPageAndReturnToContents() async throws {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture",
+      "--notebook-document-runtime-fixture", "--notebook-document-links-fixture"]
+    launchPortraitFixture(app)
+    let surface = app.otherElements["page-turn-surface"]
+    let outward = app.links["К дальней главе"].firstMatch
+    XCTAssertTrue(outward.waitForExistence(timeout: 8))
+    XCTAssertTrue(outward.isHittable)
+    outward.tap()
+    let returning = app.links["К оглавлению"].firstMatch
+    XCTAssertTrue(returning.waitForExistence(timeout: 5), "A link must mount its off-page destination, not scroll the current fragment")
+    XCTAssertTrue(returning.isHittable)
+    XCTAssertFalse((surface.value as? String ?? "").hasPrefix("Страница 1 из "))
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "document-link-distant-page"; proof.lifetime = .keepAlways; add(proof)
+    returning.tap()
+    await fulfillment(of: [XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value BEGINSWITH 'Страница 1 из '"), object: surface)], timeout: 5)
+    XCTAssertTrue(outward.waitForExistence(timeout: 3)); XCTAssertTrue(outward.isHittable)
+    XCTAssertFalse(app.textViews["Исходный Markdown или LaTeX"].exists, "Following links must not start source editing")
+    app.links["Отсутствующий раздел"].firstMatch.tap()
+    XCTAssertTrue(app.alerts["Ссылка недоступна"].waitForExistence(timeout: 2))
+    app.alerts.buttons["Понятно"].tap()
+    XCTAssertTrue((surface.value as? String ?? "").hasPrefix("Страница 1 из "))
+  }
+
   func testProseDocumentTurnsToDifferentTextAndBack() async throws {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait

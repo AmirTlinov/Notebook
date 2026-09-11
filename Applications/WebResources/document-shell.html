@@ -524,6 +524,14 @@
           document.body.append(host);
           work.sourceInstalls+=1;
           for(const block of source.blocks)flow.append(createBlock(block));
+          // Markdown headings without an explicit HTML ID receive one stable
+          // document-wide address before layout. Author IDs always take priority.
+          const headingIDs=new Set([...flow.querySelectorAll('[id],a[name]')].flatMap(node=>[node.id,node.getAttribute('name')]).filter(Boolean));
+          for(const heading of flow.querySelectorAll('h1,h2,h3,h4,h5,h6'))if(!heading.id) {
+            const stem=heading.textContent.trim().toLowerCase().replace(/[^\p{L}\p{N}\p{M}_\s-]/gu,'').replace(/\s/g,'-')||'section';
+            let id=stem,suffix=0;while(headingIDs.has(id))id=stem+'-'+(++suffix);
+            heading.id=id;headingIDs.add(id);
+          }
           await typeset([...flow.children].filter(node=>node.dataset.kind!=='interactive'),
             (kind,message,blockID)=>preparation.diagnostics.push({kind,message:String(message),blockID}));
           await document.fonts.ready;
@@ -553,14 +561,14 @@
           const mathStyles=flow.querySelector('mjx-container')
             ? MathJax.startup.adaptor.cssText(MathJax.svgStylesheet()) : '';
           if(new TextEncoder().encode(mathStyles).length>128*1024)throw new Error('document_math_style_budget');
-          const receipt={sourceKey:source.key,layoutScope:'source',layoutCanonical:true,width,height,pageCount,regions,
-            diagnostics:preparation.diagnostics,mathStyles};
-          const layoutJSON=JSON.stringify(receipt),layoutBytes=new TextEncoder().encode(layoutJSON).length;
-          if(layoutBytes>16*1024*1024)throw new Error('document_layout_packet_budget');
           const flowRect=flow.getBoundingClientRect();
           const compiler=await notebookDocumentFragments.create(flow,{sourceKey:source.key,pageCount,width,height,stride,
             contentTop:flowRect.y-origin.y,contentBottom:flowRect.bottom-origin.y,
             originX:origin.x,originY:origin.y,regions},()=>preparation.cancelled);
+          const receipt={sourceKey:source.key,layoutScope:'source',layoutCanonical:true,width,height,pageCount,regions,
+            anchors:compiler.anchors,diagnostics:preparation.diagnostics,mathStyles};
+          const layoutJSON=JSON.stringify(receipt),layoutBytes=new TextEncoder().encode(layoutJSON).length;
+          if(layoutBytes>16*1024*1024)throw new Error('document_layout_packet_budget');
           Object.assign(preparation,{receipt,compiler,layoutJSON,pendingPage:null});
           return {sourceKey:source.key,pageIndex:null,utf8Bytes:layoutBytes};
         } catch(error) { finishSourcePreparation(source.key); throw error; }
@@ -869,7 +877,17 @@
         payload.editable=true;payload.drafts=drafts;restoreEditor();return null;
       };
 
+      root.addEventListener('click', event => {
+        const link=event.target.closest('a[href]');
+        if(!link || !root.contains(link))return;
+        // Never scroll or navigate the leased WebKit: it owns exactly one
+        // physical cut. The native presence owner opens the measured target.
+        event.preventDefault();lastTouchTap=null;
+        if(!payload || !layoutCanonical || editingBlockID || presentationIsRendering)return;
+        bridge({kind:'link',...presentationReceipt(),href:link.getAttribute('href'),userActivated:event.isTrusted});
+      });
       root.addEventListener('dblclick', event => {
+        if(event.target.closest('a[href]'))return;
         event.preventDefault();
         const section = event.target.closest('.block.editable');
         if (section) beginEditing(section.dataset.blockId);
@@ -879,6 +897,7 @@
       });
       root.addEventListener('pointerup', event => {
         if (event.pointerType !== 'touch') return;
+        if(event.target.closest('a[href]')){lastTouchTap=null;return;}
         const section = event.target.closest('.block.editable');
         if (!section) { lastTouchTap = null; return; }
         const now = performance.now();

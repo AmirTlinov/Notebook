@@ -238,6 +238,7 @@ final class DocumentPagePreparation {
           fragment.blockIDs.allSatisfy({ blocks[$0] != nil }),
           Set(fragment.regions.map(\.id)) == Set(fragment.blockIDs) else { throw DocumentSessionError.invalidLayout }
         var fragmentReceipt = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] ?? [:]
+        fragmentReceipt["layoutScope"] = "page"
         fragmentReceipt["layoutCanonical"] = true; fragmentReceipt["pageCount"] = layout.pageCount
         let physical = try DocumentLayoutRecord(receipt: fragmentReceipt as NSDictionary, sourceKey: message.key, blockIDs: blockIDs, geometry: geometry)
         guard layout.matches(physical, pageIndex: pageIndex) else { throw DocumentSessionError.inconsistentLayout }

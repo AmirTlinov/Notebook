@@ -25,7 +25,7 @@ final class DocumentPacketAdmissionTests: XCTestCase {
     var reservation = try XCTUnwrap(resources.reserveDerivedBytes(4096, priority: .passive)) as RasterReservation?
     let geometry = WorkspaceItemGeometry.document(.a4)
     var layout: DocumentLayoutRecord? = try DocumentLayoutRecord(receipt: [
-      "sourceKey": "source", "layoutCanonical": true, "pageCount": 1,
+      "sourceKey": "source", "layoutScope": "source", "layoutCanonical": true, "anchors": [], "pageCount": 1,
       "width": geometry.width, "height": geometry.height, "regions": []
     ] as NSDictionary, sourceKey: "source", blockIDs: [], geometry: geometry, reservation: reservation)
     weak let allocation = reservation

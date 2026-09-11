@@ -17,6 +17,7 @@
     static let documentArgument = "--notebook-document-runtime-fixture"
     static let documentPageArgument = "--notebook-document-page-three-fixture"
     static let documentProseArgument = "--notebook-document-prose-fixture"
+    static let documentLinksArgument = "--notebook-document-links-fixture"
     static let documentLetterArgument = "--notebook-document-letter-fixture"
     static let agentElementArgument = "--notebook-agent-element-fixture"
     static let collaborationArgument = "--notebook-collaboration-fixture"
@@ -66,7 +67,8 @@
       } else if ProcessInfo.processInfo.arguments.contains(pointerArgument) {
         fixtureName = "SharedPointer"
       } else if startsInDocument {
-        fixtureName = ProcessInfo.processInfo.arguments.contains(documentProseArgument) ? "DocumentProse" : "DocumentRuntime"
+        fixtureName = ProcessInfo.processInfo.arguments.contains(documentLinksArgument) ? "DocumentLinks"
+          : ProcessInfo.processInfo.arguments.contains(documentProseArgument) ? "DocumentProse" : "DocumentRuntime"
       } else if startsInStack {
         fixtureName = startsOnStackBoard
           ? "StackedBoard"
@@ -150,7 +152,13 @@
             id: documentID,
             actor: actor,
             paperSize: ProcessInfo.processInfo.arguments.contains(documentLetterArgument) ? .letter : .a4,
-            blocks: ProcessInfo.processInfo.arguments.contains(documentProseArgument)
+            blocks: ProcessInfo.processInfo.arguments.contains(documentLinksArgument)
+              ? [
+                .markdown(id: "contents", source: "<h1 id='contents'>Оглавление проверки</h1><p><a href='#глава:предел'>К дальней главе</a></p><p><a href='#missing'>Отсутствующий раздел</a></p>"),
+                .markdown(id: "body", source: String(repeating: "Промежуточный текст занимает настоящие листы и не является целью ссылки.\n\n", count: 120)),
+                .markdown(id: "destination", source: "<h1 id='глава:предел'>Дальняя глава</h1><p><a href='#contents'>К оглавлению</a></p>Содержание найдено по адресу, а не по номеру листа.")
+              ]
+              : ProcessInfo.processInfo.arguments.contains(documentProseArgument)
               ? (1...3).map { chapter in
                 .markdown(id: "chapter-\(chapter)", source:
                   "# Глава \(chapter)\n\n*Текст самостоятельной главы*\n\n" +

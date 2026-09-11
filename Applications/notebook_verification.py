@@ -27,8 +27,10 @@ PROFILES = {
     "documents": {
         "core": ["DocumentRenderRecipeTests", "DocumentDocumentTests", "DocumentEditingSessionTests"],
         "mac": ["NotebookMacTests/DocumentLargeSourceTests", "NotebookMacTests/DocumentRenderSessionTests",
+                "NotebookMacTests/DocumentLinkNavigationTests",
                 "NotebookMacTests/DocumentSnapshotTests", "NotebookMacTests/AddressedTargetRenderTests"],
         "ipad": ["NotebookTests/DocumentLargeSourceTests", "NotebookTests/DocumentResourceLeaseTests",
+                 "NotebookTests/DocumentLinkNavigationTests",
                  "NotebookTests/DocumentPageSelectionTests", "NotebookTests/DocumentCutOriginTests"],
     },
     "page-turn": {"ipad": [UI + "testProseDocumentTurnsToDifferentTextAndBack",
@@ -94,6 +96,8 @@ def owners(path):
     name = Path(path).name
     if name in ("DocumentPagePreparation.swift", "SpatialInkSurfaceView.swift", "SpatialBoardInkHandoff.swift") or path == "Applications/TestSupport/DocumentLargeSourceTests.swift":
         return ["paper-resources"]
+    if path == "Applications/iPad/SpatialWorkspaceView.swift":
+        return ["scene-composition", "documents"]
     if name in ("SceneCompositionTiles.swift", "SceneCompositionSource.swift", "SceneCompositionTests.swift"):
         return ["scene-composition"]
     if name == "NotebookChatPanel.swift":
@@ -146,6 +150,13 @@ def make_plan(root, base="HEAD", profiles=(), tests=()):
     direct = []
     for path in paths:
         if version_only(root, commit, path):
+            continue
+        # Shared UI fixtures have no production behavior to certify. Their
+        # caller must name the real gesture(s); a broad profile cannot silently
+        # select all UI cases or pretend that native tests exercised a tap.
+        if path in ("Applications/iPad/SimulatorDrawingFixture.swift", "Applications/UITests/DrawingResponsivenessTests.swift"):
+            if not any(t.startswith(UI) and t.count("/") == 2 for t in tests):
+                unknown.append(path)
             continue
         test = test_selector(path)
         found = owners(path)

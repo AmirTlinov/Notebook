@@ -73,6 +73,8 @@ struct DocumentPageLayout: Equatable, Sendable {
 }
 
 struct DocumentWebView: View {
+  @Environment(\.openURL) private var openURL
+  @State private var linkFailure: String?
   let document: DocumentDocument
   let state: DocumentStateJournal
   let isInteractive: Bool
@@ -80,6 +82,7 @@ struct DocumentWebView: View {
   let capturesSnapshot: Bool
   let onRenderReady: PageTurnReadiness
   let onPageLayout: (DocumentPageLayout) -> Void
+  let onPageNavigation: (Int) -> Void
   let onSourceChange: (DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status
   let onStateChange: (String, JSONValue) -> Void
   var drafts: [DocumentEditingSession] = []
@@ -98,9 +101,21 @@ struct DocumentWebView: View {
       onPageLayout: onPageLayout,
       onSourceChange: onSourceChange,
       onStateChange: onStateChange,
-      resources: resources, drafts: drafts, onDraftChange: onDraftChange, onDraftDiscard: onDraftDiscard
+      resources: resources, drafts: drafts, onDraftChange: onDraftChange, onDraftDiscard: onDraftDiscard,
+      onLinkNavigation: { destination in
+        switch destination {
+        case .page(let index): onPageNavigation(index)
+        case .external(let url): openURL(url) { accepted in
+          if !accepted { linkFailure = "Система не смогла открыть эту ссылку." }
+        }
+        case .unavailable(let message): linkFailure = message
+        }
+      }
     )
     .accessibilityIdentifier("document-runtime")
+    .alert("Ссылка недоступна", isPresented: Binding(get: { linkFailure != nil }, set: { if !$0 { linkFailure = nil } })) {
+      Button("Понятно", role: .cancel) { linkFailure = nil }
+    } message: { Text(linkFailure ?? "") }
   }
 }
 
@@ -407,7 +422,7 @@ final class DocumentWebCoordinator: NSObject,
     onRenderReady(false)
     onRenderReady = .init { _ in }
     onPageLayout = { _ in }; onSourceChange = { _ in .targetMissing }; onStateChange = { _,_ in }
-    onPreparationFailure = { _ in }
+    onPreparationFailure = { _ in }; onLinkNavigation = { _ in }
     onDraftChange = { _ in }; onDraftDiscard = { _ in }
     releaseWebSurface()
     payload = nil; renderSession = nil
@@ -605,6 +620,7 @@ final class DocumentWebCoordinator: NSObject,
   var renderIsReady = false
   var onRenderReady: PageTurnReadiness
   var onPageLayout: (DocumentPageLayout) -> Void
+  var onLinkNavigation: (DocumentLinkDestination) -> Void = { _ in }
   var onSourceChange: (DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status
   var onStateChange: (String, JSONValue) -> Void
   var pendingSnapshotPayload: DocumentRuntimePayload?
@@ -637,11 +653,13 @@ final class DocumentWebCoordinator: NSObject,
     drafts: [DocumentEditingSession] = [],
     onDraftChange: @escaping (DocumentEditingSession) -> Void = { _ in },
     onDraftDiscard: @escaping (UUID) -> Void = { _ in },
-    onPreparationFailure: @escaping (Error) -> Void = { _ in }
+    onPreparationFailure: @escaping (Error) -> Void = { _ in },
+    onLinkNavigation: @escaping (DocumentLinkDestination) -> Void = { _ in }
   ) {
     guard !isInvalidated else { return }
     self.onRenderReady = onRenderReady
     self.onPageLayout = onPageLayout
+    self.onLinkNavigation = onLinkNavigation
     self.onSourceChange = onSourceChange
     self.onStateChange = onStateChange
     self.onDraftChange = onDraftChange; self.onDraftDiscard = onDraftDiscard
@@ -736,6 +754,7 @@ final class DocumentWebCoordinator: NSObject,
       decisionHandler(.cancel)
       return
     }
+    if navigationAction.navigationType == .linkActivated { decisionHandler(.cancel); return }
     decisionHandler(
       url.isFileURL || url.scheme == "about" ? .allow : .cancel
     )
@@ -766,6 +785,17 @@ final class DocumentWebCoordinator: NSObject,
       guard let presentation = try? presentation(in: body as NSDictionary, for: payload,
         generation: generation, requiresPage: false) else { return }
       observePresentation(presentation)
+      return
+    }
+    if kind == "link" {
+      guard acceptsInput, renderIsReady, let href = body["href"] as? String,
+        let receipt = try? presentation(in: body as NSDictionary, for: payload, generation: generation),
+        receipt.kind == .canonical, receipt == pixelPresentation, let layout = payload.source.layout
+      else { return }
+      let destination = layout.destination(for: href)
+      // A passive fragment or a programmatic external click cannot launch an app.
+      if case .external = destination, body["userActivated"] as? Bool != true { return }
+      onLinkNavigation(destination)
       return
     }
     if kind == "renderStarted" {
@@ -1341,6 +1371,7 @@ private enum DocumentWebViewFactory {
     var onDraftDiscard: (UUID) -> Void = { _ in }
     var snapshotPixelWidth: Int? = nil
     var onPreparationFailure: (Error) -> Void = { _ in }
+    var onLinkNavigation: (DocumentLinkDestination) -> Void = { _ in }
     func makeCoordinator() -> DocumentWebCoordinator {
       DocumentWebCoordinator(resources: resources, onRenderReady: onRenderReady, onPageLayout: onPageLayout,
         onSourceChange: onSourceChange, onStateChange: onStateChange)
@@ -1351,7 +1382,7 @@ private enum DocumentWebViewFactory {
         capturesSnapshot: capturesSnapshot, onRenderReady: onRenderReady, onPageLayout: onPageLayout,
         onSourceChange: onSourceChange, onStateChange: onStateChange, snapshotPixelWidth: snapshotPixelWidth,
         drafts: drafts, onDraftChange: onDraftChange, onDraftDiscard: onDraftDiscard,
-        onPreparationFailure: onPreparationFailure)
+        onPreparationFailure: onPreparationFailure, onLinkNavigation: onLinkNavigation)
       let geometry = WorkspaceItemGeometry.document(document.paperSize)
       context.coordinator.mount(in: view, physicalSize: .init(width: geometry.width, height: geometry.height),
         isInteractive: isInteractive, priority: snapshotPixelWidth != nil ? .visible : (isInteractive ? .currentPage : .neighbor))
@@ -1428,6 +1459,7 @@ private enum DocumentWebViewFactory {
     var onDraftDiscard: (UUID) -> Void = { _ in }
     var snapshotPixelWidth: Int? = nil
     var onPreparationFailure: (Error) -> Void = { _ in }
+    var onLinkNavigation: (DocumentLinkDestination) -> Void = { _ in }
     func makeCoordinator() -> DocumentWebCoordinator {
       DocumentWebCoordinator(resources: resources, onRenderReady: onRenderReady, onPageLayout: onPageLayout,
         onSourceChange: onSourceChange, onStateChange: onStateChange)
@@ -1438,7 +1470,7 @@ private enum DocumentWebViewFactory {
         capturesSnapshot: capturesSnapshot, onRenderReady: onRenderReady, onPageLayout: onPageLayout,
         onSourceChange: onSourceChange, onStateChange: onStateChange, snapshotPixelWidth: snapshotPixelWidth,
         drafts: drafts, onDraftChange: onDraftChange, onDraftDiscard: onDraftDiscard,
-        onPreparationFailure: onPreparationFailure)
+        onPreparationFailure: onPreparationFailure, onLinkNavigation: onLinkNavigation)
       let geometry = WorkspaceItemGeometry.document(document.paperSize)
       context.coordinator.mount(in: view, physicalSize: .init(width: geometry.width, height: geometry.height),
         isInteractive: isInteractive, priority: snapshotPixelWidth != nil ? .visible : (isInteractive ? .currentPage : .neighbor))

@@ -7,7 +7,7 @@ final class DocumentSnapshotTests: XCTestCase {
   @MainActor
   private func measuredLayout(_ document: DocumentDocument) throws -> DocumentLayoutRecord {
     let geometry = WorkspaceItemGeometry.document(document.paperSize)
-    return try DocumentLayoutRecord(receipt: ["sourceKey": "cache-fixture", "layoutCanonical": true,
+    return try DocumentLayoutRecord(receipt: ["sourceKey": "cache-fixture", "layoutScope": "source", "layoutCanonical": true, "anchors": [],
       "pageCount": 3, "width": geometry.width, "height": geometry.height, "regions": []] as NSDictionary,
       sourceKey: "cache-fixture", blockIDs: Set(document.blocks.map(\.id)), geometry: geometry)
   }
