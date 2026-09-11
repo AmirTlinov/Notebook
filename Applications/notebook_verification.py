@@ -143,7 +143,8 @@ def version_only(root, commit, path):
     return before != after and re.sub(pattern, r"\1<version>", before) == re.sub(pattern, r"\1<version>", after)
 
 
-def make_plan(root, base="HEAD", profiles=(), tests=()):
+def make_plan(root, base="HEAD", profiles=(), tests=(), only=False):
+    release.require(not only or profiles or tests, "--only требует явный --profile или --test.")
     commit, paths = changed_files(root, base)
     selected = set(profiles)
     unknown = []
@@ -161,10 +162,11 @@ def make_plan(root, base="HEAD", profiles=(), tests=()):
         test = test_selector(path)
         found = owners(path)
         if test:
-            direct.append(test)
+            if not only:
+                direct.append(test)
         elif found is None:
             unknown.append(path)
-        else:
+        elif not only:
             selected.update(found)
     checks = {key: set() for key in ("core", "mac", "ipad", "commands")}
     for profile in sorted(selected):
@@ -181,6 +183,7 @@ def make_plan(root, base="HEAD", profiles=(), tests=()):
         checks["mac" if target == "NotebookMacTests" else "ipad"].add(test)
     return {"format": 1, "baseCommit": commit, "changedFiles": paths, "profiles": sorted(selected),
             "unclassified": unknown, "manualSelection": bool(profiles or tests),
+            "selectionMode": "explicit-only" if only else "changed-owners",
             "checks": {key: sorted(values) for key, values in checks.items()}}
 
 
@@ -326,6 +329,7 @@ def run_selected(root, plan, evidence):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Проверки по изменениям; --full отдельно запускает всю приёмку.")
     parser.add_argument("--full", action="store_true")
+    parser.add_argument("--only", action="store_true", help="только явные --profile/--test, без автоматического добавления наборов")
     parser.add_argument("--plan", action="store_true", help="показать выбор, ничего не запускать")
     parser.add_argument("--base", default="HEAD", help="Git ref начала правки; по умолчанию незакоммиченные изменения")
     parser.add_argument("--profile", action="append", choices=sorted(PROFILES), default=[])
@@ -333,10 +337,11 @@ def main(argv=None):
     parser.add_argument("--evidence-dir", type=Path)
     parser.add_argument("--timings", type=Path, help="прочитать времена из существующего xcresult без запуска тестов")
     args = parser.parse_args(argv)
+    release.require(not (args.full and args.only), "--full и --only задают разные области проверки.")
     if args.timings:
         tree = json.loads(subprocess.check_output(["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(args.timings), "--compact"]))
         print(json.dumps(timing_report(tree), ensure_ascii=False, indent=2)); return
-    plan = {"route": "full", "notice": "Все нагрузки, native и UI; не обычная итерация."} if args.full else make_plan(ROOT, args.base, args.profile, args.test)
+    plan = {"route": "full", "notice": "Все нагрузки, native и UI; не обычная итерация."} if args.full else make_plan(ROOT, args.base, args.profile, args.test, only=args.only)
     print(json.dumps(plan, ensure_ascii=False, indent=2), flush=True)
     if args.plan:
         return

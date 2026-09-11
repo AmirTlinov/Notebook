@@ -105,6 +105,19 @@ class SelectionTests(unittest.TestCase):
         plan = verify.make_plan(self.root)
         self.assertEqual(sum(s.startswith(verify.UI) for s in plan["checks"]["ipad"]), 2)
 
+    def test_explicit_only_does_not_append_suites_and_still_refuses_unknown_owners(self):
+        self.change("Applications/WebResources/document-shell.html")
+        self.change("Applications/MacTests/DocumentSnapshotTests.swift")
+        scenario = "NotebookMacTests/DocumentLinkNavigationTests"
+        plan = verify.make_plan(self.root, tests=[scenario], only=True)
+        self.assertEqual(plan["selectionMode"], "explicit-only")
+        self.assertEqual(plan["checks"], {"core": [], "mac": [scenario], "ipad": [], "commands": []})
+        self.assertFalse(plan["unclassified"])
+        with self.assertRaises(release.ReleaseError):
+            verify.make_plan(self.root, only=True)
+        self.change("Sources/Unknown.swift")
+        self.assertEqual(verify.make_plan(self.root, tests=[scenario], only=True)["unclassified"], ["Sources/Unknown.swift"])
+
     def test_shared_ui_fixture_requires_a_named_gesture_not_a_broad_profile(self):
         paths = ["Applications/iPad/SimulatorDrawingFixture.swift", "Applications/UITests/DrawingResponsivenessTests.swift"]
         for path in paths:
