@@ -9,28 +9,15 @@ import NotebookCore
 final class NotebookChatController {
   let files: NotebookFileController
   let runs: NotebookRunController
+  let voice: NotebookVoiceController
   var computerID: UUID? { peer }
-  var expanded = false { didSet { if !expanded { stopDictation(); activities = [:]; conversationSubscription = nil; enqueue(.activity(threadIDs: [])) } else { nextConversation = .now } } }
+  var expanded = false { didSet { if !expanded { activities = [:]; conversationSubscription = nil; enqueue(.activity(threadIDs: [])) } else { nextConversation = .now } } }
   var browsesChats = false
   private(set) var projects: [CodexProject] = []
   private(set) var projectCursor: String?
   var selectedProject: CodexProject? { files.window.project }
   private(set) var activities: [String: CodexTaskActivity] = [:]
-  var draft: String = "" { didSet {
-    if !writesDictation && dictationStatus != nil { stopDictation() }
-    persistPanel()
-  } }
-  enum DictationStatus { case preparing, listening, finishing }
-  private(set) var dictationStatus: DictationStatus?
-  private(set) var dictationError: String?
-  var dictationLocale = "ru-RU"
-  @ObservationIgnored private let dictationInput: any NotebookDictationInput
-  @ObservationIgnored private var dictationTask: Task<Void, Never>?
-  @ObservationIgnored private var dictationID: UUID?
-  @ObservationIgnored private var dictationBase = ""
-  @ObservationIgnored private var dictationWritten = ""
-  @ObservationIgnored private var dictationThread: String?
-  @ObservationIgnored private var writesDictation = false
+  var draft: String = "" { didSet { persistPanel() } }
   private(set) var threadID: String?
   private(set) var tasks: [CodexTask] = []
   private(set) var taskCursor: String?
@@ -64,11 +51,12 @@ final class NotebookChatController {
   @ObservationIgnored private var offeredJobs = Set<UUID>()
   @ObservationIgnored private var savingInput: NotebookChatInput?
 
-  init(persistence: NotebookPersistenceQueue, author: UUID, dictationInput: any NotebookDictationInput = NotebookMicrophoneDictation(), send: @escaping (NotebookChatEnvelope, UUID) -> Void) {
-    self.persistence = persistence; self.author = author; self.send = send; self.dictationInput = dictationInput
+  init(persistence: NotebookPersistenceQueue, author: UUID, send: @escaping (NotebookChatEnvelope, UUID) -> Void) {
+    self.persistence = persistence; self.author = author; self.send = send
     files = NotebookFileController(persistence: persistence, author: author)
     runs = NotebookRunController(persistence: persistence)
-    files.chat = self; runs.chat = self
+    voice = NotebookVoiceController()
+    files.chat = self; runs.chat = self; voice.chat = self
   }
 
   func start() async {
@@ -130,11 +118,11 @@ final class NotebookChatController {
   }
 
   func stop() async {
+    await voice.end()
     await runs.stop()
     stopped = true; files.stop(); ticker?.cancel(); wake.continuation.finish()
     for (_, continuation) in directQueries { continuation.resume(throwing: NotebookTransportError.disconnected) }
     directQueries.removeAll()
-    stopDictation(); await dictationTask?.value
     loop?.cancel(); retry?.cancel()
     pending?.1.resume(throwing: NotebookTransportError.disconnected); pending = nil
     await loop?.value; loop = nil
@@ -151,7 +139,7 @@ final class NotebookChatController {
     guard peer == id else { return }
     for (_, continuation) in directQueries { continuation.resume(throwing: NotebookTransportError.disconnected) }
     directQueries.removeAll()
-    connected = false; activities = [:]; retry?.cancel(); conversationSubscription = nil
+    connected = false; voice.connectionLost(); activities = [:]; retry?.cancel(); conversationSubscription = nil
     pending?.1.resume(throwing: NotebookTransportError.disconnected); pending = nil
   }
   func receive(_ envelope: NotebookChatEnvelope, peerID: UUID) {
@@ -168,14 +156,12 @@ final class NotebookChatController {
   func catalogue(next: Bool = false) { enqueue(.catalogue(cursor: next ? taskCursor : nil, project: selectedProject)) }
   func catalogueProjects(next: Bool = false) { enqueue(.projects(cursor: next ? projectCursor : nil)) }
   func selectProject(_ project: CodexProject?) {
-    stopDictation()
     files.chooseProject(project); tasks = []; activities = [:]; taskCursor = nil; displayedCatalogueCursor = nil
     browsesChats = true; catalogue()
   }
   func latestHistory() { guard let threadID else { return }; enqueue(.history(threadID: threadID, cursor: nil)) }
   func older() { guard let threadID else { return }; enqueue(.history(threadID: threadID, cursor: historyCursor)) }
   func select(_ task: CodexTask) {
-    stopDictation()
     nextConversation = .now; conversationSubscription = nil
     threadID = task.id; continuationUnavailable = false; browsesChats = false; conversation = nil; history = []; historyCursor = nil
     persistPanel(); enqueue(.history(threadID: task.id, cursor: nil))
@@ -196,44 +182,10 @@ final class NotebookChatController {
     guard edit.isValid else { return false }
     return await submit(.updateProject(edit))
   }
-  func create() async { stopDictation(); _ = await submit(.create(title: "Занятие в Notebook", project: selectedProject)) }
+  func create() async { _ = await submit(.create(title: "Занятие в Notebook", project: selectedProject)) }
 
-  func startDictation() {
-    guard loaded, !stopped, dictationTask == nil, !saving else { return }
-    let id = UUID(); dictationID = id; dictationError = nil; dictationStatus = .preparing
-    dictationBase = draft; dictationWritten = draft; dictationThread = threadID
-    dictationTask = Task { [weak self, dictationInput, dictationLocale] in
-      do {
-        try await dictationInput.run(locale: dictationLocale) { [weak self] update in
-          await self?.receiveDictation(update, id: id)
-        }
-      } catch is CancellationError { }
-      catch { if let self, self.dictationID == id { self.dictationError = error.localizedDescription } }
-      guard let self, self.dictationID == id else { return }
-      self.dictationStatus = nil; self.dictationTask = nil; self.dictationID = nil
-    }
-  }
-  func stopDictation() {
-    guard dictationTask != nil else { return }
-    if dictationStatus == .preparing { dictationTask?.cancel() }
-    dictationStatus = .finishing
-    Task { await dictationInput.finish() }
-  }
-  private func receiveDictation(_ update: NotebookDictationUpdate, id: UUID) {
-    guard dictationID == id else { return }
-    switch update {
-    case .preparing: if dictationStatus != .finishing { dictationStatus = .preparing }
-    case .listening: if dictationStatus != .finishing { dictationStatus = .listening }
-    case .text(let text):
-      guard threadID == dictationThread, draft == dictationWritten else { return }
-      let separator = dictationBase.isEmpty || dictationBase.last?.isWhitespace == true || text.isEmpty ? "" : " "
-      let next = dictationBase + separator + text
-      guard next.utf8.count <= 32_768 else { dictationError = "Черновик достиг предела сообщения. Диктовка остановлена."; stopDictation(); return }
-      writesDictation = true; draft = next; writesDictation = false; dictationWritten = next
-    }
-  }
   func sendMessage(threadID submittedThread: String, text: String, context: String, attentionContextID: UUID? = nil, steeringTurnID: String? = nil) async -> Bool {
-    guard submittedThread != threadID || (!continuationUnavailable && !browsesChats && dictationStatus == nil) else { return false }
+    guard submittedThread != threadID || (!continuationUnavailable && !browsesChats) else { return false }
     let action: NotebookChatAction = steeringTurnID.map { .steer(threadID: submittedThread, turnID: $0, text: text, context: context) } ?? .send(threadID: submittedThread, text: text, context: context)
     if await submit(action, attentionContextID: attentionContextID) {
       if draft == text, threadID == submittedThread { draft = "" }; return true
@@ -318,9 +270,9 @@ final class NotebookChatController {
       directQueries.append((query, continuation)); wake.continuation.yield(())
     }
   }
-  func runCommand(_ action: NotebookChatAction) async throws -> NotebookChatJob {
-    guard loaded, !stopped, connected, action.isRunCommand else { throw NotebookTransportError.disconnected }
-    let id = action.controlID(author: author) ?? UUID()
+  func sessionCommand(_ action: NotebookChatAction, id suppliedID: UUID? = nil) async throws -> NotebookChatJob {
+    guard loaded, !stopped, action.isRunCommand || action.isVoiceCommand else { throw NotebookTransportError.disconnected }
+    let id = action.controlID(author: author) ?? suppliedID ?? UUID()
     let existing = try await persistence.submit { try $0.chatJob(id) }
     if let existing, existing.input.action != action { throw NotebookTransportError.invalidAcknowledgement }
     let input = existing?.input ?? NotebookChatInput(id: id, author: author, action: action)
@@ -329,6 +281,7 @@ final class NotebookChatController {
       guard try await persistence.submit({ try $0.chatJob(input.id)?.input == input }) else { throw error }
     }
     try await refreshJobs()
+    if !connected { return try await persistence.submit { try $0.chatJob(input.id)! } }
     let query = NotebookChatQuery.job(input), reply = try await directQuery(query)
     try await accept(reply, for: query)
     guard case .job(let job) = reply else { throw NotebookTransportError.invalidAcknowledgement }

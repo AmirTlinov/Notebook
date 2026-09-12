@@ -76,13 +76,13 @@ import NotebookCore
     let request = NotebookRunRequest(root: root, command: command, replacing: restart ? record?.id : nil, columns: columns, rows: rows)
     guard request.isValid else { error = "Введите команду длиной до 8 КиБ."; return }
     busy = true; defer { busy = false }
-    do { try check(try await chat.runCommand(.startRun(request))); error = nil }
+    do { try check(try await chat.sessionCommand(.startRun(request))); error = nil }
     catch { self.error = error.localizedDescription }
   }
   func stopRun() async {
     guard !busy, let id = record?.id, let chat else { return }
     busy = true; defer { busy = false }
-    do { try check(try await chat.runCommand(.stopRun(id))); error = nil }
+    do { try check(try await chat.sessionCommand(.stopRun(id))); error = nil }
     catch { self.error = error.localizedDescription }
   }
   func input(_ bytes: Data) {
@@ -103,7 +103,7 @@ import NotebookCore
         let (id, bytes) = pendingInput.removeFirst()
         do {
           guard let chat else { throw NotebookTransportError.disconnected }
-          try check(try await chat.runCommand(.writeRun(id, bytes)))
+          try check(try await chat.sessionCommand(.writeRun(id, bytes)))
         } catch {
           self.error = "Ввод не подтверждён; автоматически не повторяется. \(error.localizedDescription)"
           inputBlocked = true; break

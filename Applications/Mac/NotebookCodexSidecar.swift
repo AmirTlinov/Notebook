@@ -34,6 +34,7 @@ final class NotebookCodexSidecar {
   private let computerID: UUID
   private let workspaceID: UUID
   private let directory: URL
+  private let voice: MacNotebookVoice?
   private let runs: MacNotebookProjectRuns?
   private var worker: Task<Void, Never>?
   private var observing: String?
@@ -54,6 +55,7 @@ final class NotebookCodexSidecar {
     self.persistence = persistence; self.workspaceID = workspaceID; self.computerID = computerID; self.directory = directory
     let server = CodexAppServer(installation: installation)
     bridge = server; metadata = server; bridgeEvents = server.events
+    voice = .init(persistence: persistence, executor: server)
     runs = .init(persistence: persistence, executor: server, metadata: server, computer: computerID)
   }
 
@@ -61,6 +63,7 @@ final class NotebookCodexSidecar {
     metadata: any NotebookCodexCatalogueOwner, workspaceID: UUID, computerID: UUID = UUID(), directory: URL) {
     self.persistence = persistence; self.bridge = bridge; self.metadata = metadata
     self.workspaceID = workspaceID; self.computerID = computerID; self.directory = directory
+    voice = (bridge as? any NotebookCodexVoiceOwner).map { .init(persistence: persistence, executor: $0) }
     runs = (bridge as? any NotebookCodexProcessOwner).map { .init(persistence: persistence, executor: $0, metadata: metadata, computer: computerID) }
   }
 
@@ -105,7 +108,7 @@ final class NotebookCodexSidecar {
               let jobs = try await persistence.submit { try $0.pendingChatJobs() }
               var waitingThreads = Set<String>()
               for job in jobs where !Task.isCancelled {
-                if job.input.action.isRunCommand { continue }
+                if job.input.action.isRunCommand || job.input.action.isVoiceCommand { continue }
                 if case .send(let thread, _, _) = job.input.action, waitingThreads.contains(thread) { continue }
                 try await execute(job)
                 if case .send(let thread, _, _) = job.input.action,
@@ -137,6 +140,8 @@ final class NotebookCodexSidecar {
     let reply: NotebookChatReply
     do {
       switch query {
+      case .voice(let id):
+        guard let voice else { throw CodexBridgeError.unavailable }; reply = .voice(try await voice.state(id, peer: peerID))
       case .run(let query):
         guard let runs else { throw CodexBridgeError.unavailable }; reply = .run(try await runs.read(query))
       case .resizeRun(let id, let columns, let rows):
@@ -162,7 +167,10 @@ final class NotebookCodexSidecar {
         } else { throw CodexBridgeError.invalidInput }
 
       case .job(let input):
-        if input.action.isRunCommand {
+        if input.action.isVoiceCommand {
+          guard let voice else { throw CodexBridgeError.unavailable }
+          reply = .job(try await voice.receive(input))
+        } else if input.action.isRunCommand {
           guard let runs else { throw CodexBridgeError.unavailable }
           reply = .job(try await runs.receive(input))
         } else { reply = .job(try await persistence.submit { try $0.saveChatInput(input) }) }
@@ -223,7 +231,7 @@ final class NotebookCodexSidecar {
     let result: NotebookChatResult
     do {
       switch job.input.action {
-      case .startRun, .writeRun, .stopRun: throw CodexBridgeError.invalidInput
+      case .startRun, .writeRun, .stopRun, .startVoice, .stopVoice: throw CodexBridgeError.invalidInput
       case .saveFile(let address):
         guard address.computer == computerID else { throw CodexBridgeError.invalidInput }
         let project = try await metadata.readProject(id: address.project)

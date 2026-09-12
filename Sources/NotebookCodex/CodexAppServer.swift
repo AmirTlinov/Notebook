@@ -23,6 +23,7 @@ public actor CodexAppServer {
     var probe: Task<Void, Never>?
     var running = false
   }
+  private var voice: NotebookVoiceState?
   private var processes: [UUID: RunningProcess] = [:]
   private var selections: Set<String> = []
 
@@ -62,7 +63,7 @@ public actor CodexAppServer {
   private func load(threadID: String, epoch: UUID) async throws {
     let rpc = try await connect()
     if states.count >= 9 {
-      guard let idle = states.keys.sorted().first(where: { !selections.contains($0) && states[$0]?.view.busy == false && states[$0]?.requests.isEmpty == true }) else { throw CodexBridgeError.busy }
+      guard let idle = states.keys.sorted().first(where: { !selections.contains($0) && !(voice?.threadID == $0 && voice?.phase != .ended) && states[$0]?.view.busy == false && states[$0]?.requests.isEmpty == true }) else { throw CodexBridgeError.busy }
       _ = try await rpc.request("thread/unsubscribe", params: .object(["threadId": .string(idle)]))
       states.removeValue(forKey: idle)
     }
@@ -170,13 +171,68 @@ public actor CodexAppServer {
   private static func isAllow(_ decision: CodexUserDecision) -> Bool { if case .allowOnce = decision { true } else { false } }
 
   public func close() async {
+    if let current = voice, current.phase != .ended { try? await stopVoice(id: current.id) }
     generation = UUID()
+    if voice?.isActive == true { voice?.phase = .failed; voice?.sdp = nil; voice?.error = "Mac отключён. Голос не возобновляется автоматически." }
     let rpc = self.rpc; self.rpc = nil
     connection?.cancel(); connection = nil
     for task in attaching.values { task.cancel() }; attaching.removeAll()
     states.removeAll(); selections.removeAll()
     await rpc?.stop()
     await interruptProcesses()
+  }
+
+  public func voiceState(id: UUID) -> NotebookVoiceState? { voice?.id == id ? voice : nil }
+
+  public func startVoice(id: UUID, request: NotebookVoiceStart) async throws {
+    guard request.isValid, voice == nil || voice?.phase == .ended else { throw CodexBridgeError.busy }
+    voice = .init(id: id, threadID: request.threadID)
+    var dispatched = false
+    do {
+      try await attach(threadID: request.threadID)
+      guard let rpc else { throw CodexBridgeError.disconnected }
+      let account = try await rpc.request("account/read", params: .object(["refreshToken": .bool(false)]))
+      guard account["account"]?["type"] == .string("chatgpt") else { throw CodexBridgeError.signInRequired }
+      guard voice?.id == id, voice?.phase == .starting else { throw CodexBridgeError.disconnected }
+      dispatched = true
+      _ = try await rpc.request("thread/realtime/start", params: .object([
+        "threadId": .string(request.threadID), "realtimeSessionId": .string(id.uuidString.lowercased()),
+        "transport": .object(["type": .string("webrtc"), "sdp": .string(request.sdp)]),
+        "outputModality": .string("audio"), "version": .string("v3"),
+        "clientManagedHandoffs": .bool(false), "flushTranscriptTailOnSessionEnd": .bool(true)]))
+    } catch {
+      if voice?.id == id { voice?.phase = dispatched ? .failed : .ended; voice?.error = "Начало разговора не подтверждено. Повторного вызова нет." }
+      throw dispatched ? CodexBridgeError.acceptanceUnknown : error
+    }
+  }
+  public func stopVoice(id: UUID) async throws {
+    guard let current = voice, current.id == id, current.phase != .ended else { return }
+    guard let rpc else { throw CodexBridgeError.disconnected }
+    voice?.phase = .ending
+    _ = try await rpc.request("thread/realtime/stop", params: .object(["threadId": .string(current.threadID)]))
+    let deadline = ContinuousClock.now + .seconds(5)
+    while voice?.id == id, voice?.phase == .ending, .now < deadline { try await Task.sleep(for: .milliseconds(25)) }
+    guard voice?.id == id, voice?.isActive == false else { throw CodexBridgeError.acceptanceUnknown }
+  }
+  private func receiveVoice(_ frame: JSONValue) throws -> Bool {
+    guard let method = frame["method"]?.string, method.hasPrefix("thread/realtime/") else { return false }
+    guard let params = frame["params"], params["threadId"] == voice.map({ .string($0.threadID) }), voice?.phase != .ended else { return true }
+    switch method {
+    case "thread/realtime/started":
+      guard params["realtimeSessionId"] == voice.map({ .string($0.id.uuidString.lowercased()) }) else { throw CodexBridgeError.invalidResponse }
+    case "thread/realtime/sdp":
+      guard let sdp = params["sdp"]?.string, sdp.hasPrefix("v=0"), sdp.utf8.count <= 65_536 else { throw CodexBridgeError.invalidResponse }
+      voice?.sdp = sdp; voice?.phase = .active
+    case "thread/realtime/transcript/done":
+      guard let text = params["text"]?.string else { throw CodexBridgeError.invalidResponse }
+      if params["role"] == .string("user") { voice?.userText = String(text.prefix(4096)) }
+      else if params["role"] == .string("assistant") { voice?.assistantText = String(text.prefix(4096)) }
+    case "thread/realtime/closed": voice?.phase = .ended; voice?.sdp = nil
+    case "thread/realtime/error":
+      voice?.phase = .failed; voice?.sdp = nil; voice?.error = String((params["message"]?.string ?? "Голосовое соединение прервано").prefix(2048))
+    default: break // Audio stays on WebRTC; only typed complete transcripts enter the panel.
+    }
+    return true
   }
 
   /// The durable Mac run record is admitted before this adapter is called.
@@ -266,6 +322,7 @@ public actor CodexAppServer {
 
   private func receive(_ frame: JSONValue, epoch: UUID) async throws {
     guard epoch == generation else { return }
+    if try receiveVoice(frame) { return }
     if frame["method"]?.string == "command/exec/outputDelta" {
       guard let id = frame["params"]?["processId"]?.string.flatMap(UUID.init(uuidString:)),
         let encoded = frame["params"]?["deltaBase64"]?.string, let bytes = Data(base64Encoded: encoded), bytes.count <= 131_072 else { throw CodexBridgeError.invalidFrame }
@@ -285,6 +342,7 @@ public actor CodexAppServer {
   }
   private func disconnected(_ error: CodexBridgeError, epoch: UUID) async {
     guard generation == epoch else { return }
+    if voice?.isActive == true { voice?.phase = .failed; voice?.sdp = nil; voice?.error = "Соединение с Codex прервано. Голос не возобновляется автоматически." }
     generation = UUID(); rpc = nil; states.removeAll(); selections.removeAll()
     output.yield(.unavailable(error))
     await interruptProcesses()

@@ -101,8 +101,8 @@ struct NotebookRootView: View {
         let available = CGRect(x: 18, y: top, width: max(44, geometry.size.width - 36),
           height: max(44, geometry.size.height - 80 - top))
         NotebookChatWindow(chat: chat, available: available,
-          openPairing: { chat.stopDictation(); showsPairing = true },
-          openHistory: { chat.stopDictation(); showsHistory = true }, frameChanged: { chatFrame = $0 })
+          openPairing: { showsPairing = true },
+          openHistory: { showsHistory = true }, frameChanged: { chatFrame = $0 })
       }
       // The collapsed launcher belongs to the paper's controls, not the
       // disappearing keyboard. Its hit target must not travel during dismissal.
@@ -112,6 +112,9 @@ struct NotebookRootView: View {
       NotebookQuestionOverlay(question: question, sceneOrigin: sceneOrigin,
         footerHeight: collaborationHeight, controls: [penControlsFrame, chatFrame] + elementControlFrames).id(question.id)
     }
+    }
+    .overlay(alignment: .bottomTrailing) {
+      if let voice = model.chat?.voice { NotebookVoiceSurface(voice: voice).frame(width: 1, height: 1).allowsHitTesting(false).accessibilityHidden(true) }
     }
     .coordinateSpace(name: "notebook-window")
     .sheet(isPresented: $showsPairing) { NotebookPairingView().environment(model) }

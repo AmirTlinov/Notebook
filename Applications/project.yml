@@ -39,7 +39,7 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.productivity
-        NSMicrophoneUsageDescription: Голосовой ввод заполняет черновик сообщения. Аудио распознаётся на iPad и не отправляется в Codex.
+        NSMicrophoneUsageDescription: Голосовой разговор передаёт речь в Codex через вашу существующую учётную запись. Микрофон включается только по вашему действию.
         NSLocalNetworkUsageDescription: Notebook связывает iPad с помощником на вашем Mac без облачного сервера.
         NSBonjourServices:
           - _notebook._tcp

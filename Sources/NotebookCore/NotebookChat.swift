@@ -147,6 +147,8 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
   case create(title: String, project: CodexProject? = nil)
   case updateProject(CodexProjectEdit)
   case saveFile(NotebookFileAddress)
+  case startVoice(NotebookVoiceStart)
+  case stopVoice(UUID)
   case startRun(NotebookRunRequest)
   case writeRun(UUID, Data)
   case stopRun(UUID)
@@ -155,9 +157,11 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
   public var threadID: String? {
     switch self {
     case .send(let id, _, _), .steer(let id, _, _, _), .stop(let id, _), .respond(let id, _, _): id
-    case .create, .updateProject, .saveFile, .startRun, .writeRun, .stopRun: nil
+    case .create, .updateProject, .saveFile, .startRun, .writeRun, .stopRun, .startVoice, .stopVoice: nil
     }
   }
+
+  public var isVoiceCommand: Bool { switch self { case .startVoice, .stopVoice: true; default: false } }
 
   public var isRunCommand: Bool {
     switch self { case .startRun, .writeRun, .stopRun: true; default: false }
@@ -179,8 +183,9 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
     case .stop(let thread, let turn): address = ["stop", thread.lowercased(), turn.lowercased()]
     case .respond(let thread, let request, _):
       address = ["respond", thread.lowercased(), request.turnID.lowercased(), request.method, request.id]
+    case .stopVoice(let id): address = ["stopVoice", id.uuidString.lowercased()]
     case .stopRun(let id): address = ["stopRun", id.uuidString.lowercased()]
-    case .send, .steer, .create, .updateProject, .saveFile, .startRun, .writeRun: return nil
+    case .send, .steer, .create, .updateProject, .saveFile, .startRun, .writeRun, .startVoice: return nil
     }
     var data = Data()
     for part in ["NotebookChatControl/1", author.uuidString.lowercased()] + address {
@@ -215,6 +220,8 @@ public struct NotebookChatInput: Codable, Equatable, Sendable, Identifiable {
     case .create(let title, let project): return !title.isEmpty && title.utf8.count <= 256 && (project == nil || (project!.id.utf8.count <= 256 && !project!.id.isEmpty && project!.roots.count <= 32 && project!.roots.allSatisfy { $0.hasPrefix("/") && $0.utf8.count <= 4096 }))
     case .updateProject(let edit): return edit.isValid
     case .saveFile(let address): return address.isValid && !address.path.isEmpty
+    case .startVoice(let request): return request.isValid
+    case .stopVoice: return true
     case .startRun(let request): return request.isValid
     case .writeRun(_, let bytes): return !bytes.isEmpty && bytes.count <= 8192
     case .stopRun: return true
@@ -227,6 +234,7 @@ public struct NotebookChatInput: Codable, Equatable, Sendable, Identifiable {
 public enum NotebookChatResult: Codable, Equatable, Sendable {
   case created(CodexTask), project(CodexProject), turn(String), acknowledged
   case file(NotebookFileResult)
+  case voice(UUID)
   case run(UUID)
 }
 
@@ -249,6 +257,8 @@ public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
     guard let result else { return true }
     switch (input.action, result) {
     case (.saveFile(let address), .file(let result)): return address == result.address && result.version.isValid
+    case (.startVoice, .voice(let id)): return id == input.id
+    case (.stopVoice, .acknowledged): return true
     case (.startRun, .run(let id)): return id == input.id
     case (.writeRun, .acknowledged), (.stopRun, .acknowledged): return true
     case (.updateProject(let edit), .project(let project)): return edit.matches(project)
@@ -263,6 +273,7 @@ public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
 public enum NotebookChatQuery: Codable, Equatable, Sendable {
   case job(NotebookChatInput)
   case file(NotebookFileQuery)
+  case voice(UUID)
   case run(NotebookRunRead)
   case resizeRun(UUID, columns: Int, rows: Int)
   case catalogue(cursor: String?, project: CodexProject? = nil)
@@ -278,6 +289,7 @@ public enum NotebookChatReply: Codable, Equatable, Sendable {
   case conversationUnavailable(threadID: String, reason: String)
   case failure(String)
   case file(NotebookFileReply)
+  case voice(NotebookVoiceState)
   case run(NotebookRunOutput)
   case acknowledged
 }

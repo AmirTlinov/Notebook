@@ -17,6 +17,11 @@ import notebook_release as release
 ROOT = Path(__file__).resolve().parents[1]
 UI = "NotebookUITests/DrawingResponsivenessTests/"
 PROFILES = {
+    "voice": {
+        "core": ["NotebookChatStoreTests", "NotebookCodexTests"],
+        "mac": ["NotebookMacTests/NotebookVoiceTests", "NotebookMacTests/NotebookCodexSidecarTests"],
+        "ipad": ["NotebookTests/NotebookVoiceControllerTests", "NotebookTests/NotebookChatPanelTests", "NotebookTests/NotebookChatControllerTests"],
+    },
     "project-runs": {
         "core": ["NotebookRunStoreTests", "NotebookChatStoreTests"],
         "mac": ["NotebookMacTests/NotebookProjectRunsTests", "NotebookMacTests/NotebookCodexSidecarTests"],
@@ -43,7 +48,7 @@ PROFILES = {
     "chat": {
         "core": ["NotebookChatStoreTests"],
         "mac": ["NotebookMacTests/NotebookChatRenderingTests", "NotebookMacTests/NotebookCodexSidecarTests"],
-        "ipad": ["NotebookTests/NotebookChatPanelTests", "NotebookTests/NotebookChatControllerTests", "NotebookTests/NotebookChatDictationTests"],
+        "ipad": ["NotebookTests/NotebookChatPanelTests", "NotebookTests/NotebookChatControllerTests", "NotebookTests/NotebookVoiceControllerTests"],
     },
     "chat-touch": {"ipad": [UI + "testCodexPanelCanCollapseFromTheWholeButtonAfterCreatingAChat",
                               UI + "testCodexPanelKeepsDraftWithoutMovingPaperOnCollapseAndRotation"]},
@@ -120,6 +125,8 @@ def owners(path):
     if path.startswith("MCP/"):
         return ["mcp"]
     name = Path(path).name
+    if "Voice" in name or name.startswith("voice-"):
+        return ["voice"]
     if name in ("NotebookProjectRun.swift", "NotebookRunStore.swift", "MacNotebookProjectRuns.swift", "NotebookRunController.swift", "NotebookTerminalView.swift", "NotebookRunStoreTests.swift", "NotebookProjectRunsTests.swift", "NotebookRunControllerTests.swift") or name.startswith(("terminal-", "xterm")):
         return ["project-runs"]
     if name in ("NotebookCodeLink.swift", "NotebookCodeImageRenderer.swift", "NotebookCodeDiscussionTests.swift"):

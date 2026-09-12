@@ -72,9 +72,8 @@ struct NotebookChatPanel: View {
     .background(NotebookControlRegion(gate: model.inputGate))
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier("notebook-chat-panel")
-    .onChange(of: editingProject) { if editingProject != nil { chat.stopDictation() } }
     .sheet(item: $editingProject) { NotebookProjectSettings(project: $0, chat: chat) }
-    .onChange(of: scenePhase) { if scenePhase == .background { chat.stopDictation() } }
+    .onChange(of: scenePhase) { if scenePhase == .background { chat.voice.connectionLost() } }
     .onChange(of: chat.threadID) { showsHistory = false; chat.browsesChats = false }
     .onChange(of: moving) { if !moving { endInteraction() } }
     .onChange(of: resizing) { if !resizing { endInteraction() } }
@@ -318,6 +317,7 @@ struct NotebookChatPanel: View {
 
   private var composer: some View {
     VStack(alignment: .leading, spacing: 8) {
+      NotebookVoiceControls(voice: chat.voice)
       if let question = model.agentQuestion {
         HStack(spacing: 6) {
           Label(question.references.first?.label ?? "Закреплённый фрагмент", systemImage: "scope")
@@ -341,6 +341,7 @@ struct NotebookChatPanel: View {
             Button("Уточнить текущий ход", systemImage: "arrow.turn.down.right") { model.sendChatMessage(steering: true) }
               .disabled(!canSend).accessibilityIdentifier("notebook-chat-steer")
           }
+          Button("Диктовка в черновик") { chat.voice.explainDictation() }
           Divider()
           Button("Совместные ходы", systemImage: "clock.arrow.circlepath", action: openHistory)
             .accessibilityIdentifier("collaboration-history")
@@ -353,24 +354,13 @@ struct NotebookChatPanel: View {
           .font(.system(size: 15)).lineLimit(1...5).textFieldStyle(.plain)
           .padding(.vertical, 12).padding(.trailing, 8)
           .accessibilityIdentifier("notebook-chat-text")
-          .disabled(chat.dictationStatus != nil)
         if chat.saving || model.isSavingAgentQuestion {
           ProgressView().controlSize(.small).frame(width: 44, height: 44)
         }
-        Button {
-          if chat.dictationStatus == nil { chat.startDictation() } else { chat.stopDictation() }
-        } label: {
-          Image(systemName: chat.dictationStatus == nil ? "mic" : "stop.fill")
-            .font(.system(size: 16)).foregroundStyle(chat.dictationStatus == nil ? Color.primary : Color.red)
-            .frame(width: 44, height: 44)
-        }
-        .accessibilityLabel(chat.dictationStatus == nil ? "Голосовой ввод" : "Остановить диктовку")
-        .accessibilityIdentifier("notebook-chat-microphone")
-        .disabled(chat.dictationStatus == .finishing || chat.saving)
-        .contextMenu {
-          Button("Диктовка: русский") { chat.dictationLocale = "ru-RU" }
-          Button("Dictation: English") { chat.dictationLocale = "en-US" }
-        }
+        Button { Task { await chat.voice.begin() } } label: {
+          Image(systemName: "waveform").font(.system(size: 16)).frame(width: 44, height: 44)
+        }.accessibilityLabel("Голосовой разговор с Codex").accessibilityIdentifier("notebook-chat-voice")
+          .disabled(chat.voice.activeID != nil || !chat.connected || chat.threadID == nil || chat.browsesChats)
         Button { model.sendChatMessage() } label: {
           Image(systemName: "arrow.up").font(.system(size: 15, weight: .medium))
             .foregroundStyle(.white).frame(width: 30, height: 30)
@@ -394,13 +384,10 @@ struct NotebookChatPanel: View {
   }
   private var canSend: Bool {
     !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && chat.threadID != nil
-      && chat.dictationStatus == nil && !chat.saving && !model.isSavingAgentQuestion && !chat.continuationUnavailable && !chat.browsesChats
+      && !chat.saving && !model.isSavingAgentQuestion && !chat.continuationUnavailable && !chat.browsesChats
   }
   private var notice: String? {
-    if let status = chat.dictationStatus {
-      return status == .preparing ? "Подготавливаю диктовку на iPad…" : status == .finishing ? "Завершаю диктовку…" : "Слушаю · текст появится в черновике"
-    }
-    if let error = chat.dictationError { return error }
+    if let error = chat.voice.error { return error }
     if let error = chat.error ?? model.agentRequestError { return error }
     if let notice = chat.projectUpdateNotice { return notice }
     if chat.defaultProviderNeedsSignIn { return "Для нового чата войдите в Codex на Mac." }
