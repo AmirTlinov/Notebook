@@ -381,7 +381,8 @@ final class SceneCompositionTiles {
 
   func prepare(source: SceneCompositionSource, presence: SessionPresence, frame: WorkspaceSceneFrame,
     pinned: Set<WorkspaceSpatialID>, displayScale: Double = 2,
-    permitsPreparation: @escaping @MainActor () -> Bool = { true }) {
+    permitsPreparation: @escaping @MainActor () -> Bool = { true },
+    onSourceInvalidated: @escaping @MainActor () -> Void = {}) {
     guard !stopped else { return }
     let sources = frame.sourceIdentity
     if let plan = published?.plan, published?.requestedSources == sources,
@@ -521,7 +522,12 @@ final class SceneCompositionTiles {
         try? await renderer.finishPreparationAndDrain()
         guard self?.requestID == id else { return }
         self?.isPreparing = false; self?.preparingPlan = nil; self?.preparingSources = nil; self?.task = nil
-        if !(error is CancellationError) { self?.failure = String(describing: error) }
+        if case NotebookStorageError.transactionConflict = error {
+          // The writer advanced while this candidate was being prepared.
+          // Ask the model for the new read cut; waiting for camera movement
+          // would strand an already saved edit behind the previous picture.
+          onSourceInvalidated()
+        } else if !(error is CancellationError) { self?.failure = String(describing: error) }
       }
     }
     inFlight[id] = task

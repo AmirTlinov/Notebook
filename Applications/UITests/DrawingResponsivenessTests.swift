@@ -1226,6 +1226,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       )
       .firstMatch
     XCTAssertTrue(notebook.waitForExistence(timeout: 3))
+    let openedAt = Date()
     notebook.doubleTap()
 
     XCTAssertTrue(paper.waitForExistence(timeout: 3))
@@ -1233,6 +1234,10 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(paper.frame.midY, originalPaperFrame.midY, accuracy: 2)
     XCTAssertEqual(paper.frame.width, originalPaperFrame.width, accuracy: 2)
     XCTAssertEqual(paper.frame.height, originalPaperFrame.height, accuracy: 2)
+    let opened = XCTAttachment(screenshot: app.screenshot())
+    opened.name = "notebook-opened-within-3-seconds"; opened.lifetime = .keepAlways; add(opened)
+    let duration = XCTAttachment(string: "Double tap and whole paper readiness: \(Date().timeIntervalSince(openedAt)) seconds")
+    duration.name = "notebook-opening-duration"; duration.lifetime = .keepAlways; add(duration)
   }
 
   func testCreatesAndEntersBoardsAtTwoNestedLevels() {

@@ -9,6 +9,32 @@ import SwiftUI
 
 final class SceneRasterCompositionTests: XCTestCase {
   @MainActor
+  func testLargeNativeInkRegionUsesOneOutputAndKeepsEraserAcrossTileEdges() async throws {
+    let resources = SceneRenderResources(byteLimit: 160 * 1024 * 1024, profile: .headless)
+    let surface = SurfaceID.board(UUID()), actor = UUID()
+    var journal = SpatialInkJournal(stamp: .init(counter: 0, actor: actor))
+    for (tool, width, y) in [(SpatialInkTool.pen, 40.0, 1024.0), (.eraser, 12.0, 1024.0)] {
+      _ = journal.append(tool: tool, spans: [.init(surface: surface, samples: [100.0, 1948.0].enumerated().map { i, x in
+        .init(point: .zero, worldPoint: .init(x: x, y: y), timeOffset: Double(i),
+          width: width, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+      })], actor: actor)
+    }
+    let result = try await SpatialInkRasterSnapshot.prepare(surface: surface,
+      camera: .init(center: .init(x: 1024, y: 1024), scale: 1), size: .init(width: 2048, height: 2048),
+      journal: journal, resources: resources, permitsPreparation: { true })
+    let png = try XCTUnwrap(result).png, image = try pixels(png)
+    XCTAssertEqual(image.pixelsWide, 4096); XCTAssertEqual(image.pixelsHigh, 4096)
+    for x in [512, 1024, 2048, 3072] {
+      XCTAssertLessThan(try XCTUnwrap(image.colorAt(x: x, y: 2048)).alphaComponent, 0.01)
+      XCTAssertGreaterThan(try XCTUnwrap(image.colorAt(x: x, y: 2020)).alphaComponent, 0.99)
+      XCTAssertGreaterThan(try XCTUnwrap(image.colorAt(x: x, y: 2076)).alphaComponent, 0.99)
+    }
+    XCTAssertFalse(try XCTUnwrap(result).regions.isEmpty)
+    XCTAssertEqual(resources.reservedBytes, 0)
+    XCTAssertLessThanOrEqual(resources.peakAccountedBytes, resources.byteLimit)
+  }
+
+  @MainActor
   func testPageCompositionKeepsItsPNGIdentityAcrossOtherSizesAndScales() async throws {
     let page = PageDocument(size: .init(width: 834, height: 1194), actor: UUID())
     let reference = try await PageCompositionRenderer.render(page) { _ in throw CocoaError(.featureUnsupported) }

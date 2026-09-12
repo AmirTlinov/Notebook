@@ -1,6 +1,7 @@
 import { worldPointSchema as point } from "./spatial.js";
 import { notebookResponseSchema } from "./contracts.js";
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { McpServer } from "@modelcontextprotocol/server";
 import { marked } from "marked";
 import * as z from "zod/v4";
@@ -106,8 +107,7 @@ export async function publicAction(receipt: ActionReceipt, store: NotebookStore)
   const continuations = await runBridge(store.socketPath,{command:"continuations",actionID:receipt.id});
   const delivery = await runBridge<Array<{id:string;revisions:unknown[];shown:Array<{target:Target;revision:string}>;displayComplete:boolean;visibleRegions:unknown[]}>>(store.socketPath,{command:"delivery",actionID:receipt.id});
   const device = delivery.find(value => value.id.toLowerCase() === receipt.id.toLowerCase());
-  const same = (a:unknown,b:unknown) => JSON.stringify(a) === JSON.stringify(b);
-  const received = device && same(device.revisions,receipt.revisions);
+  const received = device && isDeepStrictEqual(device.revisions,receipt.revisions);
   const shown = received && device.displayComplete;
   const snapshots = (await store.readActionSnapshots<Array<Record<string, any>>>(receipt.id))
     .map(value => ({target:value.request.target,sourceRevision:value.request.sourceRevision,region:value.request.region ?? null,

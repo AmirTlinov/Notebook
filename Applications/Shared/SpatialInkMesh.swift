@@ -10,6 +10,10 @@ struct SpatialInkInstalledSource: Sendable {
 
   init(surface: SurfaceID, journal: SpatialInkJournal) { self.surface = surface; baseline = journal }
 
+  var journalRevision: String {
+    finished.reduce(baseline.stamp) { max($0, max($1.stamp, $1.stateStamp)) }.revision
+  }
+
   func appending(_ action: SpatialInkAction) -> Self {
     var value = self
     value.finished.append(action)

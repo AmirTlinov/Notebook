@@ -311,7 +311,8 @@ final class NotebookAppModel {
     guard let header = workspaceHeader, let frame else { return }
     let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID)
     compositionTiles.prepare(source: source, presence: presence, frame: frame, pinned: pinned,
-      displayScale: displayScale, permitsPreparation: { [weak self] in self?.permitsBackgroundPreparation == true })
+      displayScale: displayScale, permitsPreparation: { [weak self] in self?.permitsBackgroundPreparation == true },
+      onSourceInvalidated: { [weak self] in self?.reloadExternalChanges() })
   }
 
   private func clearRemovedElementPins(_ ids: Set<String>) {
@@ -2625,7 +2626,7 @@ final class NotebookAppModel {
               ready = DocumentRenderRegistry.shared.hasLiveSurface(document:document,state:state,pageIndex:visible.documentPageIndex)
             } else { ready = false }
           case .board, .cover:
-            ready = scene.map { sceneRepresents(reference, in: $0, presence: visible) } ?? false
+            ready = scene.map { sceneRepresents(reference, in: $0, presence: visible, inkRevision: expected.inkRevision) } ?? false
           case .workspace, .codeFragment: ready = false
           }
           guard ready else { continue }
@@ -2652,8 +2653,16 @@ final class NotebookAppModel {
   /// callback supplies the actual admitted generation; an overview region
   /// cannot acknowledge that its detailed sources were shown.
   private func sceneRepresents(_ reference: CollaborationReference,
-    in scene: WorkspaceSceneWorkset, presence: SessionPresence) -> Bool {
+    in scene: WorkspaceSceneWorkset, presence: SessionPresence, inkRevision: String? = nil) -> Bool {
     guard let sceneIndex, scene.generationID == sceneIndex.generationID else { return false }
+    #if os(iOS)
+      if let inkRevision {
+        let surface: SurfaceID = reference.target.kind == .cover ? .cover(reference.target.id) : .board(reference.target.id)
+        guard let canvas = compositionTiles.surfaceRegistry.canvas(for: surface),
+          canvas.window?.isKeyWindow == true, canvas.isStableFramePresented,
+          canvas.installedSpatialSource?.journalRevision == inkRevision else { return false }
+      }
+    #endif
     let elements: [SpatialElement]
     switch reference.target.kind {
     case .board:
