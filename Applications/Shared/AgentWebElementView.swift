@@ -51,9 +51,8 @@ import WebKit
     }
   }
 
-  /// The portal uses the same area-preserving minification as the live surface.
-  /// Rasterization is needed even for layer.contents: filtering that image alone
-  /// loses subpixel strokes at fractional scales. Its exact source stays cached.
+  /// Project the admitted pixels directly. A second Core Animation raster
+  /// both duplicates the backing and can retain a minified image across zoom.
   struct AgentElementSnapshotView: UIViewRepresentable {
     @Environment(NotebookAppModel.self) private var model: NotebookAppModel?
     weak var raster: RasterLease?
@@ -82,11 +81,11 @@ import WebKit
     private var displayScale: CGFloat = 1
     private var retainedRaster: RasterLease?
 
-    init(rasterizesContent: Bool = true) {
+    init() {
       super.init(frame: .zero)
       isOpaque = false
       isUserInteractionEnabled = false
-      layer.shouldRasterize = rasterizesContent
+      layer.shouldRasterize = false
       layer.minificationFilter = .trilinear
     }
 
@@ -209,11 +208,11 @@ import WebKit
     private var pixelSize: CGSize = .zero
     private var displayScale: CGFloat = 1
 
-    init(rasterizesContent: Bool = true) {
+    init() {
       super.init(frame: .zero)
       imageScaling = .scaleAxesIndependently
       wantsLayer = true
-      layer?.shouldRasterize = rasterizesContent
+      layer?.shouldRasterize = false
       layer?.minificationFilter = .trilinear
     }
 

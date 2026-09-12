@@ -406,9 +406,8 @@ final class NotebookAppModel {
   private(set) var requestedReturn: ReturnPlace?
   private(set) var requestedReference: CollaborationReference?
   private(set) var highlightedReference: CollaborationReference? { didSet { collaborationReadEpoch &+= 1 } }
-  private(set) var showsCollaborationNotice = false
-  private var collaborationNoticeKey: String?
-  private var collaborationNoticeTask: Task<Void, Never>?
+  private(set) var pendingAgentHighlights = Set<UUID>()
+  private var hasReadCollaborationActions = false
   private var referenceHighlightTask: Task<Void, Never>?
   private var collaborationUndoTask: Task<Void, Never>?
   private var collaborationReadSnapshot: CollaborationReadSnapshot?
@@ -425,15 +424,6 @@ final class NotebookAppModel {
   private(set) var contextSelection: SharedContextSelection?
   var activeSharedContext: SharedContextSummary? {
     sharedContexts.first { $0.id == contextSelection?.contextID }
-  }
-  var presentedSharedContext: SharedContextSummary? {
-    guard showsCollaborationNotice else { return activeSharedContext }
-    let newest = sharedContexts.max { ($0.lastEntry?.createdAt ?? .distantPast) < ($1.lastEntry?.createdAt ?? .distantPast) }
-    if let action = collaborationActions.first,
-      (action.undo?.completedAt ?? action.createdAt) >= (newest?.lastEntry?.createdAt ?? .distantPast) {
-      return sharedContexts.first { $0.id == action.action.resolvedContextID }
-    }
-    return newest ?? activeSharedContext
   }
   private(set) var agentQuestion: NotebookAgentQuestion?
   private(set) var agentRequestError: String?
@@ -2557,10 +2547,7 @@ final class NotebookAppModel {
     }
   }
 
-  func dismissCollaborationNotice() {
-    collaborationNoticeTask?.cancel()
-    showsCollaborationNotice = false
-  }
+  func finishAgentHighlight(_ actionID: UUID) { pendingAgentHighlights.remove(actionID) }
 
   func undoCollaboration(_ id: UUID) {
     guard collaborationUndoTask == nil else { return }
@@ -2761,6 +2748,12 @@ final class NotebookAppModel {
 
   private func acceptCollaborationMetadata(actions: [CollaborationReceipt], contexts: SharedContextDirectory,
     delivery: [DeviceActionReceipt]) {
+    if hasReadCollaborationActions {
+      let known = Set(collaborationActions.map(\.id))
+      pendingAgentHighlights.formUnion(actions.filter { !known.contains($0.id) && $0.undo == nil }.map(\.id))
+      pendingAgentHighlights.formIntersection(actions.filter { $0.undo == nil }.map(\.id))
+    }
+    hasReadCollaborationActions = true
     if collaborationActions != actions { collaborationActions = actions }
     var prepared = contexts.contexts
     if let selected = contexts.selectedContext, !prepared.contains(where: { $0.id == selected.id }) {
@@ -2777,21 +2770,6 @@ final class NotebookAppModel {
       }
     }
     deviceActionReceipts = delivery
-    let latest = collaborationActions.first
-    let attention = sharedContexts.flatMap(\.previewEntries).filter { $0.author == .agent }.max { $0.createdAt < $1.createdAt }
-    let key = "\(latest?.id.uuidString ?? "")|\(latest?.undo?.completedAt.timeIntervalSince1970 ?? 0)|\(attention?.id.uuidString ?? "")"
-    guard key != collaborationNoticeKey else { return }
-    let firstLoad = collaborationNoticeKey == nil
-    collaborationNoticeKey = key
-    let recentlyCreated = latest.map { Date().timeIntervalSince($0.undo?.completedAt ?? $0.createdAt) < 6 } ?? false
-    guard !firstLoad || recentlyCreated else { return }
-    showsCollaborationNotice = latest != nil || attention != nil
-    collaborationNoticeTask?.cancel()
-    collaborationNoticeTask = Task { [weak self] in
-      try? await Task.sleep(for: .seconds(6))
-      guard !Task.isCancelled else { return }
-      self?.showsCollaborationNotice = false
-    }
   }
 
   private func scheduleSave(_ page: PageDocument) {
@@ -2919,7 +2897,7 @@ final class NotebookAppModel {
       collaborationReadTask?.cancel()
       if let task = collaborationReadTask { _ = await task.result }
       collaborationReadTask = nil
-      collaborationNoticeTask?.cancel(); referenceHighlightTask?.cancel(); cueTask?.cancel()
+      pendingAgentHighlights.removeAll(); referenceHighlightTask?.cancel(); cueTask?.cancel()
       if let task = collaborationUndoTask { await task.value }
       await compositionTiles.stop()
       let saved = await persistence.flush()

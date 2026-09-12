@@ -1,4 +1,5 @@
 import NotebookCore
+import SwiftUI
 import UIKit
 import WebKit
 import XCTest
@@ -6,6 +7,49 @@ import XCTest
 @testable import Notebook
 
 final class AgentWebLeaseTests: XCTestCase {
+  @MainActor
+  func testProjectedRasterPreservesReadableEdgesWithoutASecondBitmap() async throws {
+    let source = element(source: "edge chart", width: 1280, height: 1120)
+    let format = UIGraphicsImageRendererFormat(); format.scale = 1.6
+    let image = UIGraphicsImageRenderer(size: CGSize(width: 1280, height: 1120), format: format).image { context in
+      UIColor.white.setFill(); context.fill(CGRect(x: 0, y: 0, width: 1280, height: 1120))
+      UIColor.black.setFill()
+      for x in stride(from: 0, to: 1280, by: 32) { context.fill(CGRect(x: x, y: 0, width: 16, height: 1120)) }
+    }
+    let resources = SceneRenderResources()
+    XCTAssertTrue(resources.store(image, for: source))
+    let raster = try XCTUnwrap(resources.retainRaster(for: source))
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let host = UIHostingController(rootView: AnyView(EmptyView()))
+    defer { host.rootView = AnyView(EmptyView()); window.isHidden = true; window.rootViewController = nil; raster.release() }
+    window.frame = CGRect(x: 0, y: 0, width: 834, height: 1194)
+    window.rootViewController = host; window.makeKeyAndVisible()
+    for zoom in [0.125, 0.5, 0.25, 0.5] {
+      host.rootView = AnyView(AgentElementSnapshotView(raster: raster)
+        .frame(width: 1280, height: 1120).scaleEffect(zoom)
+        .frame(width: 1280 * zoom, height: 1120 * zoom).environment(\.displayScale, 2))
+      host.view.layoutIfNeeded()
+      try await Task.sleep(for: .milliseconds(100))
+      let output = UIGraphicsImageRenderer(size: host.view.bounds.size).image { _ in
+        host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+      }
+      let attachment = XCTAttachment(image: output); attachment.name = "projected-edges-\(zoom)"; attachment.lifetime = .keepAlways; add(attachment)
+      let cg = try XCTUnwrap(output.cgImage)
+      let bitmap = try XCTUnwrap(CGContext(data: nil, width: cg.width, height: cg.height, bitsPerComponent: 8,
+        bytesPerRow: cg.width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+      bitmap.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+      let bytes = try XCTUnwrap(bitmap.data).assumingMemoryBound(to: UInt8.self)
+      let y = cg.height / 2
+      let width = Int(1280 * zoom * output.scale)
+      let left = (cg.width - width) / 2
+      let line = (left + width / 4..<left + width * 3 / 4).map { Int(bytes[y * bitmap.bytesPerRow + $0 * 4]) }
+      XCTAssertLessThan(try XCTUnwrap(line.min()), 30, "Black strokes remain black after projection at \(zoom)")
+      XCTAssertGreaterThan(try XCTUnwrap(line.max()), 225, "White gaps remain white after projection at \(zoom)")
+      XCTAssertGreaterThan(line.filter { $0 < 30 || $0 > 225 }.count, line.count / 2,
+        "Minification must not turn most of a readable chart into gray blur")
+    }
+  }
+
   @MainActor
   func testPreviousSourceCannotCommitStateOrDiagnosticsIntoTheCurrentSource() async throws {
     let resources = SceneRenderResources()
@@ -191,7 +235,7 @@ final class AgentWebLeaseTests: XCTestCase {
     view.updateRaster(raster, displayScale: 3)
     view.layoutIfNeeded()
     let rasterScale = view.layer.rasterizationScale
-    XCTAssertTrue(view.layer.shouldRasterize)
+    XCTAssertFalse(view.layer.shouldRasterize, "The admitted bitmap is projected directly, without a second cached raster")
     XCTAssertEqual(view.layer.minificationFilter, .trilinear)
     XCTAssertLessThanOrEqual(view.bounds.width * rasterScale, 2048)
     XCTAssertLessThanOrEqual(view.bounds.height * rasterScale, 2048)

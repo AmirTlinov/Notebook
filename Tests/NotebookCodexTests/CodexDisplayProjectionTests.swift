@@ -5,6 +5,25 @@ import NotebookCore
 
 @Suite("Bounded native items and project cursors")
 struct CodexDisplayProjectionTests {
+  @Test func realtimeHandoffShowsOnlyTheRequestAndNeverReplaysItsTranscript() throws {
+    let raw = "<realtime_delegation>\n<input>Начерти таблицу & объясни её</input>\n<transcript_delta>user: Начерти\nassistant: Сейчас\nuser: Начерти таблицу</transcript_delta>\n</realtime_delegation>"
+    let item: JSONValue = .object(["id": .string("voice-request"), "type": .string("userMessage"), "content": .array([.textInput(raw)])])
+    let message = try #require(CodexAppServerState.displayMessage(item, turnID: "turn"))
+    #expect(message.text == "Начерти таблицу & объясни её"); #expect(message.id == "voice-request")
+    let tail = raw.replacingOccurrences(of: "<input>", with: "<source>transcript_tail_flush</source><input>")
+    #expect(CodexAppServerState.displayMessage(.object(["id": .string("tail"), "type": .string("userMessage"), "content": .array([.textInput(tail)])]), turnID: "tail-turn") == nil)
+    for ordinary in ["Цитата: " + raw, "```xml\n" + raw + "\n```", raw.replacingOccurrences(of: "</realtime_delegation>", with: "")] {
+      #expect(CodexUserMessageDisplay(ordinary).text == ordinary)
+    }
+    var state = CodexAppServerState(threadID: "thread")
+    for _ in 0..<3 {
+      try state.hydrate(thread: .object(["id": .string("thread")]), history: [message], turns: [])
+      try state.accept(.object(["method": .string("item/completed"), "params": .object([
+        "threadId": .string("thread"), "turnId": .string("turn"), "item": item])]))
+    }
+    #expect(state.view.messages == [message], "Remount and hydration cannot create another delivery or row")
+  }
+
   @Test func fileEnvelopeShowsTheRequestAndAttachmentsWithoutChangingNativeIDs() throws {
     let request = "рядом с голосовым разговором нужна диктовка\n\n## My request:\nЭто уже часть самого запроса."
     let raw = """

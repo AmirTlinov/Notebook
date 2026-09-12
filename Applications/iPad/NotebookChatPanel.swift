@@ -19,6 +19,7 @@ struct NotebookChatPanel: View {
   @State private var editingProject: CodexProject?
   @State private var terminalDrag: NotebookTerminalSplit?
   @State private var terminalFraction: Double?
+  @State private var showsChatActions = false
   @GestureState private var draggingTerminal = false
 
   var body: some View {
@@ -127,8 +128,17 @@ struct NotebookChatPanel: View {
 
   private var header: some View {
     HStack(spacing: 0) {
-      Image(systemName: "line.3.horizontal")
-        .font(.system(size: 11)).frame(width: 24, height: 44).accessibilityHidden(true)
+      Button { showsChatActions = true } label: {
+        Image(systemName: "line.3.horizontal").font(.system(size: 11)).frame(width: 36, height: 44)
+      }.accessibilityLabel("Действия чата").accessibilityIdentifier("notebook-chat-menu")
+        .popover(isPresented: $showsChatActions) {
+          VStack(alignment: .leading, spacing: 0) {
+            Button("Совместные ходы", systemImage: "clock.arrow.circlepath") { showsChatActions = false; openHistory() }
+              .frame(minHeight: 44).accessibilityIdentifier("collaboration-history")
+            Button("Подключение и устройства", systemImage: "link") { showsChatActions = false; openPairing() }
+              .frame(minHeight: 44).accessibilityIdentifier("pairing-settings")
+          }.padding(14).presentationCompactAdaptation(.popover)
+        }
       Button {
         chat.browsesChats.toggle()
       } label: {
@@ -142,10 +152,6 @@ struct NotebookChatPanel: View {
       }
       .accessibilityLabel("Выбрать чат")
       .accessibilityIdentifier("notebook-chat-tasks")
-      .contextMenu {
-        Button("Совместные ходы", systemImage: "clock.arrow.circlepath", action: openHistory).accessibilityIdentifier("collaboration-history")
-        Button("Подключение и устройства", systemImage: "link", action: openPairing).accessibilityIdentifier("pairing-settings")
-      }
       Color.clear.frame(minWidth: 24, maxWidth: .infinity, minHeight: 44, maxHeight: 44)
         .contentShape(Rectangle()).accessibilityLabel("Переместить чат")
         .accessibilityIdentifier("notebook-chat-move")

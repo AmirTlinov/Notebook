@@ -48,6 +48,7 @@ extension CodexAppServerState {
       role = .user
       let raw = (item["content"]?.array ?? []).compactMap { $0["text"]?.string }.joined(separator: "\n")
       let display = CodexUserMessageDisplay(raw)
+      if display.isTranscriptTail { return nil }
       text = display.text; attachments = display.attachments.isEmpty ? nil : display.attachments
     case "agentMessage":
       role = .assistant; text = item["text"]?.string ?? ""

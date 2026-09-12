@@ -40,6 +40,18 @@ struct PreparedAgentElementView: View {
     allowsInteraction && !element.javaScript.isEmpty && model.interactiveElementFocus == focus
   }
 
+  private var requiredScale: Double {
+    AgentSnapshotPolicy.display(scale: displayScale).rasterizationScale(for: element, displayScale: displayScale)
+  }
+
+  private func adoptPreparedRaster() {
+    guard model.shutdownPhase != .stopped,
+      let next = SceneRenderResources.shared.retainRaster(for: element, minimumScale: requiredScale) else { return }
+    if raster?.entryID != next.entryID { raster = next }
+    preparedSource = element; failure = nil; failedSource = nil
+    onRenderReady(true)
+  }
+
   private struct Demand: Equatable {
     let source: AgentElement
     let active: Bool
@@ -60,7 +72,7 @@ struct PreparedAgentElementView: View {
           snapshotPolicy: .display(scale: displayScale),
           onRenderReady: { ready in
             guard model.shutdownPhase != .stopped, self.web?.id == web.id, !web.isReleased else { return }
-            if ready, let next = SceneRenderResources.shared.retainRaster(for: element) {
+            if ready, let next = SceneRenderResources.shared.retainRaster(for: element, minimumScale: requiredScale) {
               liveProgram = AgentProgramSource(element)
               raster = next
               preparedSource = element
@@ -126,10 +138,10 @@ struct PreparedAgentElementView: View {
       // Mounting, not constructing a cached SwiftUI value, acquires the lease.
       // This synchronous callback supplies cached pixels before the first frame;
       // asynchronous WebKit preparation remains the existing task's job.
-      if let cached = SceneRenderResources.shared.retainRaster(for: element) {
-        raster = cached
-        preparedSource = element
-      }
+      adoptPreparedRaster()
+    }
+    .onReceive(NotificationCenter.default.publisher(for: SceneRenderResources.didChange)) { note in
+      if note.object as? String == element.id { adoptPreparedRaster() }
     }
     .task(id: demand) { await prepare(demand) }
     .onChange(of: SceneRenderResources.shared.webAdmissionGeneration) { _, _ in
@@ -155,7 +167,7 @@ struct PreparedAgentElementView: View {
     failure = nil
     if preparedSource != demand.source {
       if !demand.active { web = nil }
-      let current = SceneRenderResources.shared.retainRaster(for: demand.source)
+      let current = SceneRenderResources.shared.retainRaster(for: demand.source, minimumScale: requiredScale)
       if let current { raster = current }
       preparedSource = current == nil ? nil : demand.source
     }

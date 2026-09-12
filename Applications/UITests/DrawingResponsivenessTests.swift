@@ -332,7 +332,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.coordinate(withNormalizedOffset:.init(dx:0.22,dy:0.18)).press(forDuration:0.05,
       thenDragTo:app.coordinate(withNormalizedOffset:.init(dx:0.45,dy:0.25)))
     XCTAssertFalse(app.staticTexts["Укажите фрагмент · протяните для области"].exists)
-    app.buttons["collaboration-history"].tap()
+    openSharedHistory(in: app)
     XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForExistence(timeout: 3))
     let history = app.collectionViews["collaboration-history-list"]
     let result = app.buttons["show-action-result"].firstMatch
@@ -361,14 +361,14 @@ final class DrawingResponsivenessTests: XCTestCase {
       thenDragTo:app.descendants(matching: .any)["move-agent-element"].coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).withOffset(.init(dx:100,dy:60)),withVelocity:.slow,thenHoldForDuration:0)
     XCTAssertGreaterThan(element.frame.midX,initial.midX + 20)
     let moved = element.frame
-    app.buttons["collaboration-history"].tap()
+    openSharedHistory(in: app)
     XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForExistence(timeout: 3))
     let continuation = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Ваша доработка'")).firstMatch
     for _ in 0..<3 where !continuation.isHittable { history.swipeUp() }
     XCTAssertTrue(continuation.isHittable)
     app.buttons["Отменить этот ход"].firstMatch.tap()
     app.buttons["Готово"].tap()
-    XCTAssertTrue(app.staticTexts["Ход отменён"].waitForExistence(timeout:5))
+    XCTAssertFalse(app.staticTexts["Ход отменён"].exists, "Undo does not add a board notification")
     XCTAssertTrue(element.exists)
     XCTAssertEqual(element.frame.midX,moved.midX,accuracy:2)
     app.buttons["drawing-tool-eraser"].tap()
@@ -376,14 +376,13 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(paper.value as? String,drawing,"Рукопись принадлежит человеку при указании, показе и отмене")
   }
 
-  func testAgentNoticeExpiresAndHistoryKeepsItsActions() {
+  func testAgentChangesStayQuietAndHistoryKeepsItsActions() {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-collaboration-fixture"]
     launchPortraitFixture(app)
     let notice = app.buttons["collaboration-dismiss"]
-    XCTAssertTrue(notice.waitForExistence(timeout:3))
-    XCTAssertTrue(notice.waitForNonExistence(timeout:8))
+    XCTAssertFalse(notice.exists, "Agent work is highlighted on the object, not announced in a banner")
     openSharedHistory(in: app)
     XCTAssertTrue(app.buttons["Отменить этот ход"].firstMatch.waitForExistence(timeout:3))
     XCTAssertTrue(app.buttons["show-action-result"].firstMatch.exists)
@@ -447,7 +446,7 @@ final class DrawingResponsivenessTests: XCTestCase {
         "Closing removes the actual selection pixels, not just the question card")
       XCTAssertEqual(paper.value as? String, drawing, "Removing indication never erases handwriting")
       if attempt == 0 {
-        app.buttons["collaboration-history"].tap()
+        openSharedHistory(in: app)
         XCTAssertTrue(app.staticTexts["Амир указал область"].firstMatch.waitForExistence(timeout: 3))
         let resume = app.buttons["Продолжить этот фрагмент"]
         XCTAssertTrue(resume.waitForExistence(timeout: 2))
@@ -1328,8 +1327,8 @@ final class DrawingResponsivenessTests: XCTestCase {
 
   private func openSharedHistory(in app: XCUIApplication) {
     if !app.buttons["collaboration-history"].exists {
-      if !app.buttons["notebook-chat-actions"].exists { app.buttons["notebook-chat-toggle"].tap() }
-      app.buttons["notebook-chat-actions"].tap()
+      if !app.buttons["notebook-chat-tasks"].exists { app.buttons["notebook-chat-toggle"].tap() }
+      app.buttons["notebook-chat-menu"].tap()
     }
     XCTAssertTrue(app.buttons["collaboration-history"].waitForExistence(timeout: 3))
     app.buttons["collaboration-history"].tap()

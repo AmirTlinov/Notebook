@@ -6,8 +6,21 @@ import Foundation
 struct CodexUserMessageDisplay {
   let text: String
   let attachments: [String]
+  let isTranscriptTail: Bool
 
   init(_ raw: String) {
+    // Native realtime handoffs carry the request and a cumulative transcript.
+    // Only the request is a user message. Do not split arbitrary prose on
+    // speaker names, or expose the generated end-of-call instruction.
+    let envelope = #"\A\s*<realtime_delegation>\s*(?:<source>([^<]*)</source>\s*)?<input>([\s\S]*?)</input>\s*<transcript_delta>[\s\S]*</transcript_delta>\s*</realtime_delegation>\s*\z"#
+    if let expression = try? NSRegularExpression(pattern: envelope),
+      let match = expression.firstMatch(in: raw, range: NSRange(raw.startIndex..., in: raw)),
+      let request = Range(match.range(at: 2), in: raw) {
+      let source = Range(match.range(at: 1), in: raw).map { String(raw[$0]) }
+      isTranscriptTail = source == "transcript_tail_flush"
+      text = isTranscriptTail ? "" : String(raw[request]); attachments = []; return
+    }
+    isTranscriptTail = false
     let lines = raw.components(separatedBy: "\n")
     var offset = 0
     while offset < lines.count, lines[offset].trimmingCharacters(in: .whitespaces).isEmpty { offset += 1 }

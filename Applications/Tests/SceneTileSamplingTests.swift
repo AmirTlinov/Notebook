@@ -216,7 +216,7 @@ private struct SamplingRow: View {
 
 private struct SamplingNativeRaster: UIViewRepresentable {
   let raster: RasterLease
-  func makeUIView(context: Context) -> AgentSnapshotRasterView { .init(rasterizesContent: false) }
+  func makeUIView(context: Context) -> AgentSnapshotRasterView { .init() }
   func updateUIView(_ view: AgentSnapshotRasterView, context: Context) {
     view.updateRaster(raster, displayScale: context.environment.displayScale)
   }

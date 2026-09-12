@@ -6,6 +6,59 @@ import XCTest
 
 @MainActor
 final class BoardPublicationTests: XCTestCase {
+  func testMountedSVGUsesPreparedPixelsAtRestAndAfterZoom() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let host = UIHostingController(rootView: AnyView(EmptyView()))
+    addTeardownBlock { @MainActor in
+      host.rootView = AnyView(EmptyView()); window.isHidden = true; window.rootViewController = nil
+      let saved = await model.shutdown(); XCTAssertTrue(saved)
+      if saved { try FileManager.default.removeItem(at: root) }
+    }
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    model.moveItem(try XCTUnwrap(model.workspace?.selectedItemID), to: .init(x: 100_000, y: 100_000))
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    let boardID = try XCTUnwrap(model.workspace?.rootBoardID)
+    let before = try model.store.loadBoard(items: try XCTUnwrap(model.workspace).items)
+    var after = before
+    let bars = stride(from: 0, to: 960, by: 24).map { "<rect x='\($0)' y='0' width='12' height='840'/>" }.joined()
+    let element = SpatialElement(id: "sharp-svg", surface: .board(boardID), kind: .web,
+      frame: .init(x: 0, y: 0, width: 1280, height: 1120), worldOrigin: .zero,
+      source: "SVG edge chart", html: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 960 840'><rect width='960' height='840' fill='white'/>\(bars)</svg>",
+      css: "html,body,svg{margin:0;width:100%;height:100%;display:block}", stamp: .init(counter: 0, actor: model.actorID))
+    XCTAssertTrue(after.upsertElement(element, in: boardID, expected: nil, actor: model.actorID))
+    _ = try model.store.saveBoardEdits(before: before, after: after)
+    await model.reloadExternalChanges()?.value
+    window.frame = .init(x: 0, y: 0, width: 834, height: 1194)
+    host.rootView = AnyView(SpatialWorkspaceView().environment(model).environment(\.displayScale, 2).ignoresSafeArea())
+    window.rootViewController = host; window.makeKeyAndVisible()
+    for zoom in [0.125, 0.5, 0.25] {
+      let presence = SessionPresence(boardID: boardID, mode: .board,
+        camera: .init(center: .init(x: 640, y: 560), scale: zoom), viewport: .init(x: 834, y: 1194))
+      model.updatePresence(presence, settled: true)
+      try await waitUntil { model.compositionTiles.published?.plan.revision == model.workspaceHeader?.cursor && !model.scenePreparationPending }
+      try await Task.sleep(for: .milliseconds(150))
+      let output = UIGraphicsImageRenderer(size: host.view.bounds.size).image { _ in
+        host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+      }
+      let attachment = XCTAttachment(image: output); attachment.name = "mounted-SVG-\(zoom)"; attachment.lifetime = .keepAlways; add(attachment)
+      let raster = try XCTUnwrap(SceneRenderResources.shared.retainRaster(for: agentElementSnapshotSource(element)))
+      XCTAssertGreaterThanOrEqual(raster.pixelScale, 1.59); raster.release()
+      let cg = try XCTUnwrap(output.cgImage)
+      let bitmap = try XCTUnwrap(CGContext(data: nil, width: cg.width, height: cg.height, bitsPerComponent: 8,
+        bytesPerRow: cg.width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+      bitmap.draw(cg, in: .init(x: 0, y: 0, width: cg.width, height: cg.height))
+      let bytes = try XCTUnwrap(bitmap.data).assumingMemoryBound(to: UInt8.self)
+      let width = Int(1280 * zoom * output.scale), left = (cg.width - Int(1280 * zoom * output.scale)) / 2
+      let line = (left + width / 4..<left + width * 3 / 4).map { Int(bytes[cg.height / 2 * bitmap.bytesPerRow + $0 * 4]) }
+      XCTAssertLessThan(try XCTUnwrap(line.min()), 30)
+      XCTAssertGreaterThan(try XCTUnwrap(line.max()), 225)
+      XCTAssertGreaterThan(line.filter { $0 < 30 || $0 > 225 }.count, line.count / 2)
+      XCTAssertEqual(model.presence?.camera, presence.camera)
+    }
+  }
+
   func testReadInkRevisionCannotAcknowledgeAnUnpresentedNativeCanvas() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)

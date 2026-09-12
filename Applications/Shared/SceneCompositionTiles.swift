@@ -779,7 +779,7 @@ struct SceneCompositionTileBandView: View, Identifiable {
 private struct SceneCompositionTileRasterView: UIViewRepresentable {
   @Environment(NotebookAppModel.self) private var model: NotebookAppModel?
   weak var raster: RasterLease?
-  func makeUIView(context: Context) -> AgentSnapshotRasterView { .init(rasterizesContent: false) }
+  func makeUIView(context: Context) -> AgentSnapshotRasterView { .init() }
   func updateUIView(_ view: AgentSnapshotRasterView, context: Context) {
     view.bindSceneLifecycle(to: model)
     guard let raster, !raster.isReleased else { return }
@@ -791,7 +791,7 @@ private struct SceneCompositionTileRasterView: UIViewRepresentable {
 private struct SceneCompositionTileRasterView: NSViewRepresentable {
   @Environment(NotebookAppModel.self) private var model: NotebookAppModel?
   weak var raster: RasterLease?
-  func makeNSView(context: Context) -> AgentSnapshotRasterView { .init(rasterizesContent: false) }
+  func makeNSView(context: Context) -> AgentSnapshotRasterView { .init() }
   func updateNSView(_ view: AgentSnapshotRasterView, context: Context) {
     view.bindSceneLifecycle(to: model)
     guard let raster, !raster.isReleased else { return }

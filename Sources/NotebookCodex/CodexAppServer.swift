@@ -254,7 +254,7 @@ public actor CodexAppServer {
         "threadId": .string(request.threadID), "realtimeSessionId": .string(id.uuidString.lowercased()),
         "transport": .object(["type": .string("webrtc"), "sdp": .string(request.sdp)]),
         "outputModality": .string("audio"), "version": .string("v3"),
-        "clientManagedHandoffs": .bool(false), "flushTranscriptTailOnSessionEnd": .bool(true)]))
+        "clientManagedHandoffs": .bool(false), "flushTranscriptTailOnSessionEnd": .bool(false)]))
     } catch {
       if voice?.id == id { voice?.phase = dispatched ? .failed : .ended; voice?.error = "Начало разговора не подтверждено. Повторного вызова нет." }
       throw dispatched ? CodexBridgeError.acceptanceUnknown : error

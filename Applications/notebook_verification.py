@@ -63,7 +63,7 @@ PROFILES = {
                               UI + "testCodexPanelKeepsDraftWithoutMovingPaperOnCollapseAndRotation"]},
     "workspace-controls": {"ipad": ["NotebookTests/NotebookChatWindowTests",
                                       UI + "testChatMovesResizesAndOpensSettingsWithoutMovingPaper",
-                                      UI + "testAgentNoticeExpiresAndHistoryKeepsItsActions"]},
+                                      UI + "testAgentChangesStayQuietAndHistoryKeepsItsActions"]},
     "documents": {
         "core": ["DocumentRenderRecipeTests", "DocumentDocumentTests", "DocumentEditingSessionTests"],
         "mac": ["NotebookMacTests/DocumentLargeSourceTests", "NotebookMacTests/DocumentRenderSessionTests",

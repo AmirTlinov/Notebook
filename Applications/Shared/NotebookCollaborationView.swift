@@ -13,38 +13,7 @@ struct NotebookCollaborationView: View {
     historyDirectory?.contexts ?? model.sharedContexts
   }
   var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      if model.isPointing {
-        Label("Укажите фрагмент · протяните для области", systemImage: "hand.point.up.left")
-          .font(.callout).padding(12).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-      }
-      if model.showsCollaborationNotice, let context = model.presentedSharedContext {
-        let latest = model.collaborationActions.first { $0.action.resolvedContextID == context.id }
-        HStack(alignment: .top, spacing: 8) {
-          Button(action: openHistory) {
-            VStack(alignment: .leading, spacing: 4) {
-              Text(latest?.undo != nil ? "Ход отменён" : "Продолжение мысли").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-              Text(latest?.action.summary ?? context.previewEntries.last?.references.first?.label ?? "Общий фрагмент").font(.callout).lineLimit(3)
-            }.frame(maxWidth: .infinity, alignment: .leading)
-          }.accessibilityIdentifier("collaboration-notice-history")
-          if let reference = latest.flatMap({ model.results(for: $0).first }) ?? context.previewEntries.last?.references.first {
-            Button("Показать") { model.requestShow(reference) }.frame(minHeight: 44).accessibilityIdentifier("collaboration-show")
-          }
-          if let latest, latest.undo == nil {
-            Button("Отменить") { model.undoCollaboration(latest.id) }.frame(minHeight: 44).accessibilityIdentifier("collaboration-undo")
-          }
-          Button { model.dismissCollaborationNotice() } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }
-            .accessibilityLabel("Скрыть уведомление").accessibilityIdentifier("collaboration-dismiss")
-        }.buttonStyle(.plain).padding(12).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-      }
-      if model.activeSharedContext != nil {
-        Button(action: openHistory) {
-          Label("Общий фрагмент", systemImage: "scope")
-            .font(.callout).padding(.horizontal, 14).frame(minHeight: 44)
-        }.buttonStyle(.plain).background(.regularMaterial, in: Capsule()).accessibilityIdentifier("collaboration-history")
-      }
-    }
-    .frame(maxWidth: 520, alignment: .leading)
+    Color.clear.frame(width: 0, height: 0)
     .onChange(of: showsHistory) { if showsHistory { historyRequestedAt = .now } }
     .task(id: model.collaborationPreparationKey) { await model.refreshCollaborationDetails() }
     .task {
@@ -138,11 +107,6 @@ struct NotebookCollaborationView: View {
       guard !Task.isCancelled, showsHistory else { return }
       historyDirectory = value; directoryError = nil
     } catch { directoryError = "История изменилась или недоступна. Откройте новые фрагменты. " + error.localizedDescription }
-  }
-
-  private func openHistory() {
-    historyRequestedAt = .now
-    showsHistory = true
   }
 
   private func actionCard(_ action: CollaborationReceipt) -> some View {
@@ -245,22 +209,12 @@ struct NotebookAttentionMarks: View {
           }
         }
       }
-      if model.showsCollaborationNotice {
-        ForEach(model.presentedSharedContext?.previewEntries.filter { $0.author == .agent } ?? []) { attention in
-          ForEach(attention.references) { reference in
-            if let rect = NotebookAttentionProjection.frame(reference,model:model,presence:presence) {
-              mark(rect, human:false, label:"Понимание агента" + (model.referenceStatusLabel(reference).map { " · " + $0 } ?? ""), changed:attention.requiresReview)
-            }
-          }
-        }
-      }
-      if model.showsCollaborationNotice, let action = model.collaborationActions.first, action.undo == nil {
-        TimelineView(.periodic(from:.now,by:1)) { context in
-          if context.date.timeIntervalSince(action.createdAt) < 6 {
-            ForEach(model.results(for:action)) { reference in
-              if let rect = NotebookAttentionProjection.frame(reference,model:model,presence:presence) {
-                mark(rect,human:false,label:"Добавлено",changed:false)
-              }
+      if !model.scenePreparationPending, model.collaborationDetailsAreCurrent {
+        ForEach(model.collaborationActions.filter { model.pendingAgentHighlights.contains($0.id) && $0.undo == nil }) { action in
+          ForEach(model.results(for: action)) { reference in
+            if let rect = NotebookAttentionProjection.frame(reference, model: model, presence: presence),
+              rect.intersects(CGRect(x: 0, y: 0, width: presence.viewport.x, height: presence.viewport.y)) {
+              NotebookAgentPearl(rect: rect) { model.finishAgentHighlight(action.id) }.id(reference.id)
             }
           }
         }
@@ -280,5 +234,29 @@ struct NotebookAttentionMarks: View {
       Text(changed ? "\(label) · изменилось" : label).font(.caption2.weight(.semibold))
         .padding(.horizontal,5).padding(.vertical,2).background(.regularMaterial,in:Capsule()).offset(y:-20)
     }.frame(width:max(12,rect.width),height:max(12,rect.height)).position(x:rect.midX,y:rect.midY)
+  }
+}
+
+/// A short light on the changed material, never a modal surface or a gesture owner.
+private struct NotebookAgentPearl: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  let rect: CGRect
+  let finished: () -> Void
+  @State private var visible = false
+  var body: some View {
+    RoundedRectangle(cornerRadius: 10)
+      .strokeBorder(LinearGradient(colors: [.white, Color(red: 0.72, green: 0.85, blue: 0.93),
+        Color(red: 0.90, green: 0.78, blue: 0.89), .white], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 2.5)
+      .shadow(color: Color(red: 0.78, green: 0.82, blue: 0.94).opacity(0.65), radius: 7)
+      .opacity(visible ? 0.95 : 0)
+      .frame(width: max(12, rect.width + 8), height: max(12, rect.height + 8))
+      .position(x: rect.midX, y: rect.midY)
+      .task {
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { visible = true }
+        do { try await Task.sleep(for: .seconds(1.6)) } catch { return }
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.8)) { visible = false }
+        do { try await Task.sleep(for: .seconds(0.8)) } catch { return }
+        finished()
+      }
   }
 }

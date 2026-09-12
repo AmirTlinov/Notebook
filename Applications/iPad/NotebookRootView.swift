@@ -6,7 +6,6 @@ struct NotebookRootView: View {
   @State private var showsPairing = false
   @State private var showsHistory = false
   @State private var sceneOrigin = CGPoint.zero
-  @State private var collaborationHeight: CGFloat = 0
   @State private var penControlsFrame = CGRect.zero
   @State private var chatFrame = CGRect.zero
   @State private var elementControlFrames: [CGRect] = []
@@ -82,7 +81,6 @@ struct NotebookRootView: View {
     // Only the composer follows the keyboard safe area. The drawing geometry
     // remains the full physical viewport while system input is open.
     NotebookCollaborationView(showsHistory: $showsHistory)
-      .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { collaborationHeight = $0 }
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
       .padding(18)
     if let chat = model.chat, chat.files.window.isOpen, chat.files.document != nil {
@@ -110,7 +108,7 @@ struct NotebookRootView: View {
     }
     if let question = model.agentQuestion, model.chat?.expanded != true {
       NotebookQuestionOverlay(question: question, sceneOrigin: sceneOrigin,
-        footerHeight: collaborationHeight, controls: [penControlsFrame, chatFrame] + elementControlFrames).id(question.id)
+        footerHeight: 0, controls: [penControlsFrame, chatFrame] + elementControlFrames).id(question.id)
     }
     }
     .overlay(alignment: .bottomTrailing) {
