@@ -257,6 +257,39 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, previousInk)
   }
 
+  func testCodeNoteCanBeReboundThroughTheActualControlsWithoutChangingItsOriginalText() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-code-document-fixture", "--notebook-code-pencil-fixture"]
+    launchPortraitFixture(app)
+    let paper = app.otherElements["paper-input"], frame = paper.frame, previousInk = paper.value as? String
+    app.buttons["notebook-chat-toggle"].tap(); app.buttons["notebook-file-reopen"].tap()
+    XCTAssertTrue(app.otherElements["notebook-code-document"].waitForExistence(timeout: 3))
+    app.buttons["notebook-chat-toggle"].tap()
+    let ink = app.otherElements["notebook-code-ink"]
+    ink.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.2)).press(forDuration: 0.1,
+      thenDragTo: ink.coordinate(withNormalizedOffset: .init(dx: 0.8, dy: 0.3)))
+    let marker = app.buttons["Открыть исходный код с пометкой"].firstMatch
+    XCTAssertTrue(marker.waitForExistence(timeout: 4)); marker.tap()
+    let original = app.textViews["notebook-reviewed-code-text"]
+    XCTAssertTrue(original.waitForExistence(timeout: 3))
+    let material = original.value as? String
+    app.buttons["Перепривязать"].tap()
+    XCTAssertTrue(app.buttons["code-rebind-selection"].waitForExistence(timeout: 3))
+    app.buttons["code-keyboard"].tap()
+    XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4))
+    app.textViews["notebook-code-text"].typeText("# new destination\n")
+    app.buttons["code-keyboard.chevron.compact.down"].tap()
+    app.buttons["code-rebind-selection"].tap()
+    XCTAssertTrue(app.buttons["code-rebind-selection"].waitForNonExistence(timeout: 4))
+    XCTAssertTrue(marker.waitForExistence(timeout: 4)); marker.tap()
+    XCTAssertTrue(original.waitForExistence(timeout: 3))
+    XCTAssertEqual(original.value as? String, material)
+    let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "rebound-note-keeps-original-text-and-ink"; proof.lifetime = .keepAlways; add(proof)
+    app.buttons["Готово"].tap(); app.buttons["code-xmark"].tap()
+    XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, previousInk)
+  }
+
   func testCodeDocumentScrollsEditsAndClosesWithoutMovingPaper() {
     continueAfterFailure = false
     let app = XCUIApplication()

@@ -270,6 +270,7 @@ private struct NotebookReviewedCode: UIViewRepresentable {
   let gate: NotebookInputGate
   func makeUIView(context: Context) -> NotebookCodeTextView {
     let view = NotebookCodeTextView()
+    view.accessibilityIdentifier = "notebook-reviewed-code-text"
     view.text = fragment.text; view.font = .monospacedSystemFont(ofSize: fragment.fontSize, weight: .regular)
     view.textColor = .label; view.backgroundColor = .systemBackground; view.isEditable = false
     view.textContainerInset = .init(top: 18, left: 16, bottom: max(100, fragment.height), right: 24)
