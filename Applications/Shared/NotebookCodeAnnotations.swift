@@ -33,6 +33,7 @@ final class NotebookCodeAnnotations {
     self.persistence = persistence; self.author = author; clock = .init(counter: 0, actor: author)
   }
   var acceptsNewContacts = true
+  var changingFile: NotebookFileAddress?
   func stop() { stopped = true; acceptsNewContacts = false; revision &+= 1 }
   func select(_ file: NotebookFileAddress?) async {
     guard !stopped else { return }
@@ -100,7 +101,7 @@ final class NotebookCodeAnnotations {
     clock = next; contactActive = true; return fragment
   }
   func material(file: NotebookFileAddress, source: String, offset: Int, text: String, width: Double, height: Double, fontSize: Double) -> NotebookCodeFragment? {
-    guard !stopped, acceptsNewContacts, ready, !contactActive, self.file == file, let next = clock.advanced(by: author) else { return nil }
+    guard !stopped, changingFile != file, acceptsNewContacts, ready, !contactActive, self.file == file, let next = clock.advanced(by: author) else { return nil }
     let hash = NotebookFileVersion.hash(Data(source.utf8))
     let fragment = fragments.first { $0.file == file && $0.canOverlayCurrentText && $0.sourceHash == hash && $0.utf16Offset == offset && $0.text == text && $0.width == width && $0.height == height && $0.fontSize == fontSize }
       ?? .init(file: file, sourceHash: hash, utf16Offset: offset, text: text, width: width, height: height, fontSize: fontSize, stamp: next)

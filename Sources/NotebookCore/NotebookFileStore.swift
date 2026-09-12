@@ -100,4 +100,54 @@ extension NotebookStore {
       try currentSQL!.run("UPDATE file_commits SET result=? WHERE id=?", [.blob(try Self.storageEncoder.encode(result)), .text(id.uuidString)])
     }
   }
+  public func prepareFileRename(_ id: UUID, request: NotebookFileRename, identity: Data) throws {
+    guard request.isValid, !identity.isEmpty, identity.count <= 1024 else { throw NotebookStorageError.invalidTransaction("rename intent") }
+    try commandTransaction(advancesReadRevision: false) {
+      guard try fileRename(id) == nil else { throw NotebookStorageError.transactionConflict }
+      try currentSQL!.run("INSERT INTO file_renames(id,request,identity) VALUES(?,?,?)",
+        [.text(id.uuidString), .blob(try Self.storageEncoder.encode(request)), .blob(identity)])
+    }
+  }
+  public func fileRename(_ id: UUID) throws -> (request: NotebookFileRename, identity: Data, completed: Bool)? {
+    try sqlRead { db in try db.rows("SELECT request,identity,completed FROM file_renames WHERE id=?", [.text(id.uuidString)]).first.map {
+      (try JSONDecoder().decode(NotebookFileRename.self, from: $0[0].blob!), $0[1].blob!, $0[2].integer == 1)
+    } }
+  }
+  public func finishFileRename(_ id: UUID) throws {
+    try commandTransaction {
+      guard let intent = try fileRename(id) else { throw NotebookStorageError.invalidTransaction("missing rename intent") }
+      guard !intent.completed else { return }
+      try relocateCodeFragments(intent.request)
+      try currentSQL!.run("UPDATE file_renames SET completed=1 WHERE id=?", [.text(id.uuidString)])
+    }
+  }
+  public func saveFileRenameSubmission(_ input: NotebookChatInput, draft: NotebookFileDraft) throws {
+    guard case .renameFile(let request) = input.action, request.address == draft.address, draft.rename == input.id,
+      draft.pending == nil else { throw NotebookStorageError.invalidTransaction("rename draft identity") }
+    try commandTransaction(advancesReadRevision: false) {
+      if let existing = try fileDraft(draft.address)?.rename, existing != input.id { throw NotebookStorageError.transactionConflict }
+      _ = try saveChatInput(input, to: request.address.computer); try saveFileDraft(draft)
+    }
+  }
+  /// Moves one local draft after the Mac's durable receipt. A pre-existing draft
+  /// at the new path is a real collision; neither independent copy is deleted.
+  public func acceptFileRename(_ job: NotebookChatJob) throws -> NotebookFileDraft? {
+    guard job.isValid, case .renameFile(let request) = job.input.action, job.isTerminal else { throw NotebookStorageError.invalidTransaction("rename receipt") }
+    return try commandTransaction {
+      guard var draft = try fileDraft(request.address), draft.rename == job.id else { return nil }
+      draft.rename = nil
+      guard case .renamed = job.result else { try saveFileDraft(draft); return draft }
+      guard try fileDraft(request.destination) == nil else {
+        throw CollaborationError("draft_collision", "По новому пути есть другой локальный черновик. Обе копии сохранены; откройте новый файл отдельно.")
+      }
+      let moved = draft.relocated(to: request.destination)
+      try saveFileDraft(moved)
+      try currentSQL!.run("DELETE FROM file_drafts WHERE id=?", [.text(request.address.id)])
+      try relocateCodeFragments(request)
+      var window = try fileWindow(author: job.input.author, computer: request.address.computer)
+      if window.selected == request.address { window.selected = request.destination; try saveFileWindow(window, author: job.input.author, computer: request.address.computer) }
+      return moved
+    }
+  }
+
 }

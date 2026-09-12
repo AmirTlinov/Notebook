@@ -134,6 +134,72 @@ enum MacNotebookProjectFiles {
     let outcome = NotebookFileResult(address: address, status: .saved, version: .init(proposed))
     try store.finishFileCommit(id, result: outcome); return outcome
   }
+  struct RenameRejected: LocalizedError { let errorDescription: String? }
+  private struct FileIdentity: Codable, Equatable {
+    let device: Int32
+    let inode: UInt64
+    let seconds: Int64
+    let nanos: Int64
+    init(_ info: stat) {
+      device = info.st_dev; inode = info.st_ino
+      seconds = Int64(info.st_birthtimespec.tv_sec); nanos = Int64(info.st_birthtimespec.tv_nsec)
+    }
+  }
+  static func rename(_ id: UUID, request: NotebookFileRename, project: CodexProject, store: NotebookStore, afterMove: (() throws -> Void)? = nil) throws -> NotebookFileRename {
+    guard request.isValid, try store.fileRename(id) == nil else { throw failure("Переименование уже начиналось; проверяется прежний исход.") }
+    let from = URL(fileURLWithPath: request.address.root).appendingPathComponent(request.address.path)
+    let to = URL(fileURLWithPath: request.destination.root).appendingPathComponent(request.path)
+    var result: Result<NotebookFileRename, Error>?, coordinationError: NSError?
+    let coordinator = NSFileCoordinator()
+    coordinator.coordinate(writingItemAt: from, options: .forMoving, writingItemAt: to, options: [], error: &coordinationError) { _, _ in
+      result = Result {
+        let parent = try directory(request.address, project: project, parent: true)
+        defer { close(parent) }
+        let destination = try directory(request.destination, project: project, parent: true)
+        defer { close(destination) }
+        let name = (request.address.path as NSString).lastPathComponent, newName = (request.path as NSString).lastPathComponent
+        let fd = openat(parent, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else { throw systemFailure() }; defer { close(fd) }
+        var original = stat(), current = stat()
+        guard fstat(fd, &original) == 0, original.st_nlink == 1, NotebookFileVersion(try data(fd)) == request.version else {
+          throw failure("Файл изменился. Обновите его перед переименованием; черновик сохранён.")
+        }
+        try store.prepareFileRename(id, request: request, identity: JSONEncoder().encode(FileIdentity(original)))
+        guard fstatat(parent, name, &current, AT_SYMLINK_NOFOLLOW) == 0, same(original, current) else {
+          throw RenameRejected(errorDescription: "Исходный файл изменился до переименования.")
+        }
+        coordinator.item(at: from, willMoveTo: to)
+        guard renameatx_np(parent, name, destination, newName, UInt32(RENAME_EXCL)) == 0 else {
+          throw RenameRejected(errorDescription: "Переименование не выполнено: " + String(cString: strerror(errno)))
+        }
+        coordinator.item(at: from, didMoveTo: to)
+        try afterMove?()
+        guard fsync(parent) == 0, fsync(destination) == 0 else { throw systemFailure() }
+        guard try reconcileRename(id, project: project, store: store) != nil else { throw failure("Проверяется исход переименования; повторной команды не будет.") }
+        return request
+      }
+    }
+    if let coordinationError { throw coordinationError }
+    guard let result else { throw failure("Файл недоступен для переименования.") }
+    return try result.get()
+  }
+  static func reconcileRename(_ id: UUID, project: CodexProject, store: NotebookStore) throws -> NotebookFileRename? {
+    guard let intent = try store.fileRename(id) else { return nil }
+    if intent.completed { return intent.request }
+    let request = intent.request, expected = try JSONDecoder().decode(FileIdentity.self, from: intent.identity)
+    let parent = try directory(request.destination, project: project, parent: true); defer { close(parent) }
+    let fd = openat(parent, (request.path as NSString).lastPathComponent, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+    guard fd >= 0 else { return nil }; defer { close(fd) }
+    var actual = stat()
+    guard fstat(fd, &actual) == 0, actual.st_mode & S_IFMT == S_IFREG, actual.st_nlink == 1, FileIdentity(actual) == expected else { return nil }
+    // The observed identity proves the move even if its contents changed later.
+    // A prior crash may precede directory durability; finish it before receipt.
+    let sourceParent = try directory(request.address, project: project, parent: true); defer { close(sourceParent) }
+    guard fsync(parent) == 0, fsync(sourceParent) == 0 else { throw systemFailure() }
+    try store.finishFileRename(id)
+    return request
+  }
+
   static func reconcile(_ id: UUID, project: CodexProject, store: NotebookStore) throws -> NotebookFileResult? {
     guard let commit = try store.fileCommit(id) else { return nil }
     if let result = commit.result { return result }

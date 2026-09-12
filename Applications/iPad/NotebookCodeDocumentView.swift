@@ -10,6 +10,8 @@ struct NotebookCodeDocumentView: View {
   @State private var findRequest = 0
   @State private var undoRequest = 0
   @State private var showsComparison = false
+  @State private var showsRename = false
+  @State private var renamedPath = ""
   var body: some View {
     if let document = files.document {
       VStack(spacing: 0) {
@@ -33,6 +35,8 @@ struct NotebookCodeDocumentView: View {
           } label: { Image(systemName: "pencil.tip.crop.circle").frame(width: 44, height: 44) }
             .accessibilityLabel("Сохранённые пометки")
           Menu {
+            Button("Переименовать файл на Mac") { renamedPath = document.address.path; showsRename = true }
+              .disabled(!files.remoteAvailable || files.saving || document.pending != nil || document.rename != nil)
             Button("Сравнить с файлом на Mac") { model.inputGate.performAfterPageContact { showsComparison = true } }
             if document.other != nil {
               Button("Использовать версию Mac") { files.resolveUsingMac() }
@@ -60,7 +64,7 @@ struct NotebookCodeDocumentView: View {
           }.padding(10).background(Color(.secondarySystemBackground))
         }
         Divider()
-        NotebookCodeEditor(files: files, document: document, editing: editing, findRequest: findRequest, undoRequest: undoRequest, inputGate: model.inputGate, pen: model.penStyle, eraser: model.eraserStyle, tool: model.drawingTool)
+        NotebookCodeEditor(files: files, document: document, editing: editing && document.rename == nil && files.notes.changingFile == nil, findRequest: findRequest, undoRequest: undoRequest, inputGate: model.inputGate, pen: model.penStyle, eraser: model.eraserStyle, tool: model.drawingTool)
           .id(document.address.id)
       }
       .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 14))
@@ -69,6 +73,11 @@ struct NotebookCodeDocumentView: View {
       .background(NotebookControlRegion(gate: model.inputGate))
       .accessibilityElement(children: .contain)
       .accessibilityIdentifier("notebook-code-document")
+      .alert("Переименовать файл", isPresented: $showsRename) {
+        TextField("Путь внутри проекта", text: $renamedPath).textInputAutocapitalization(.never).autocorrectionDisabled()
+        Button("Переименовать") { model.inputGate.performAfterPageContact { Task { await files.rename(to: renamedPath) } } }
+        Button("Отмена", role: .cancel) { }
+      } message: { Text("Существующий файл по новому пути не будет заменён.") }
       .sheet(isPresented: $showsComparison) {
         NavigationStack {
           ScrollView {
@@ -86,6 +95,7 @@ struct NotebookCodeDocumentView: View {
   }
   private func status(_ document: NotebookFileDraft) -> String {
     if !files.remoteAvailable { return document.text == document.base ? "Mac недоступен · сохранённая копия" : "Mac недоступен · черновик сохранён на iPad" }
+    if document.rename != nil { return "Ожидается подтверждение переименования · повтор не отправляется" }
     if document.pending != nil { return "Черновик на iPad · ожидается подтверждение Mac" }
     if document.other != nil { return "Конфликт · обе версии сохранены" }
     if document.text != document.base { return "Черновик на iPad" }

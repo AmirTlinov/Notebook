@@ -110,6 +110,23 @@ public struct NotebookFileResult: Codable, Equatable, Sendable {
   public init(address: NotebookFileAddress, status: Status, version: NotebookFileVersion) { self.address = address; self.status = status; self.version = version }
 }
 
+/// A rename is a Mac filesystem action, not a guessed similarity between files.
+/// The Mac first receives all Notebook notes accepted before this request.
+public struct NotebookFileRename: Codable, Equatable, Sendable {
+  public let address: NotebookFileAddress
+  public let path: String
+  public let version: NotebookFileVersion
+  public let after: String
+  public init(address: NotebookFileAddress, path: String, version: NotebookFileVersion, after: UInt64) {
+    self.address = address; self.path = path; self.version = version; self.after = String(after)
+  }
+  public var destination: NotebookFileAddress { .init(computer: address.computer, project: address.project, root: address.root, path: path) }
+  public var isValid: Bool {
+    address.isValid && !address.path.isEmpty && destination.isValid && !path.isEmpty && path != address.path && version.isValid
+      && UInt64(after).map { $0 <= VersionStamp.maximumCounter && String($0) == after } == true
+  }
+}
+
 /// This device's reading position and unsent work are independent of SessionPresence.
 public struct NotebookFileDraft: Codable, Equatable, Sendable {
   public let address: NotebookFileAddress
@@ -118,6 +135,7 @@ public struct NotebookFileDraft: Codable, Equatable, Sendable {
   public var other: String?
   public var selection: Int = 0
   public var scroll: Double = 0
+  public var rename: UUID?
   public var pending: UUID?
   public var submitted: String?
   public init(address: NotebookFileAddress, text: String) { self.address = address; base = text; self.text = text }
@@ -125,6 +143,12 @@ public struct NotebookFileDraft: Codable, Equatable, Sendable {
     address.isValid && [base, text, other ?? "", submitted ?? ""].allSatisfy { $0.utf8.count <= NotebookFileVersion.maximumBytes }
       && selection >= 0 && selection <= text.utf16.count && scroll.isFinite && scroll >= 0
       && ((pending == nil) == (submitted == nil))
+  }
+  public func relocated(to destination: NotebookFileAddress) -> Self {
+    var result = Self(address: destination, text: text)
+    result.base = base; result.other = other; result.selection = selection; result.scroll = scroll
+    result.pending = pending; result.submitted = submitted
+    return result
   }
   public mutating func receive(_ remote: String, submitted sent: String? = nil) {
     let ancestor = sent ?? base

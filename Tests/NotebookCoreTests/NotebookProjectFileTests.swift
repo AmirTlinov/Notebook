@@ -82,4 +82,37 @@ struct NotebookProjectFileTests {
     draft.receive("A\nB\nc", submitted: "A\nb\nc")
     #expect(draft.text == "A\nB\nC" && draft.base == "A\nB\nc" && draft.other == nil)
   }
+  @Test func renameReceiptMovesDraftAndWindowTogetherWithoutTouchingCameraOrLosingACollision() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), author = UUID(), computer = UUID()
+    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    try store.savePresence(.init(mode: .board, camera: .init(center: .init(x: 90, y: 300), scale: 0.5), viewport: .init(x: 834, y: 1194)))
+    let address = NotebookFileAddress(computer: computer, project: "demo", root: "/project", path: "old.py")
+    let request = NotebookFileRename(address: address, path: "new.py", version: .init(Data("base".utf8)), after: 1)
+    let input = NotebookChatInput(author: author, action: .renameFile(request))
+    var draft = NotebookFileDraft(address: address, text: "base")
+    draft.text = "unsent draft"; draft.scroll = 99; draft.selection = 4; draft.rename = input.id
+    var window = NotebookFileWindowState(); window.selected = address; window.isOpen = true
+    try store.saveFileWindow(window, author: author, computer: computer)
+    let before = try store.loadPresence()
+    try store.saveFileRenameSubmission(input, draft: draft)
+    let receipt = NotebookChatJob(input: input, state: .accepted, result: .renamed(request))
+    let moved = try #require(try store.acceptFileRename(receipt))
+    #expect(moved.text == "unsent draft" && moved.scroll == 99 && moved.selection == 4)
+    #expect(moved.rename == nil && moved.address == request.destination)
+    #expect(try store.fileDraft(address) == nil)
+    #expect(try store.fileWindow(author: author, computer: computer).selected == request.destination)
+    #expect(try store.acceptFileRename(receipt) == nil)
+    #expect(try store.loadPresence() == before)
+    // A new unrelated file at the vacated path is not an alias.
+    let next = NotebookChatInput(author: author, action: .renameFile(request)); draft.rename = next.id
+    try store.saveFileRenameSubmission(next, draft: draft)
+    let collision = NotebookChatJob(input: next, state: .accepted, result: .renamed(request))
+    #expect(throws: CollaborationError.self) { try store.acceptFileRename(collision) }
+    #expect(try store.fileDraft(address) == draft)
+    #expect(try store.fileDraft(request.destination) == moved)
+    var duplicate = draft; duplicate.rename = UUID()
+    #expect(throws: NotebookStorageError.self) { try store.saveFileRenameSubmission(.init(id: duplicate.rename!, author: author, action: .renameFile(request)), draft: duplicate) }
+  }
 }

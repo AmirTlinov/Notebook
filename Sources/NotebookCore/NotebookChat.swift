@@ -147,6 +147,7 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
   case create(title: String, project: CodexProject? = nil)
   case updateProject(CodexProjectEdit)
   case saveFile(NotebookFileAddress)
+  case renameFile(NotebookFileRename)
   case startVoice(NotebookVoiceStart)
   case stopVoice(UUID)
   case startRun(NotebookRunRequest)
@@ -157,7 +158,7 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
   public var threadID: String? {
     switch self {
     case .send(let id, _, _), .steer(let id, _, _, _), .stop(let id, _), .respond(let id, _, _): id
-    case .create, .updateProject, .saveFile, .startRun, .writeRun, .stopRun, .startVoice, .stopVoice: nil
+    case .create, .updateProject, .saveFile, .renameFile, .startRun, .writeRun, .stopRun, .startVoice, .stopVoice: nil
     }
   }
 
@@ -185,7 +186,7 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
       address = ["respond", thread.lowercased(), request.turnID.lowercased(), request.method, request.id]
     case .stopVoice(let id): address = ["stopVoice", id.uuidString.lowercased()]
     case .stopRun(let id): address = ["stopRun", id.uuidString.lowercased()]
-    case .send, .steer, .create, .updateProject, .saveFile, .startRun, .writeRun, .startVoice: return nil
+    case .send, .steer, .create, .updateProject, .saveFile, .renameFile, .startRun, .writeRun, .startVoice: return nil
     }
     var data = Data()
     for part in ["NotebookChatControl/1", author.uuidString.lowercased()] + address {
@@ -220,6 +221,7 @@ public struct NotebookChatInput: Codable, Equatable, Sendable, Identifiable {
     case .create(let title, let project): return !title.isEmpty && title.utf8.count <= 256 && (project == nil || (project!.id.utf8.count <= 256 && !project!.id.isEmpty && project!.roots.count <= 32 && project!.roots.allSatisfy { $0.hasPrefix("/") && $0.utf8.count <= 4096 }))
     case .updateProject(let edit): return edit.isValid
     case .saveFile(let address): return address.isValid && !address.path.isEmpty
+    case .renameFile(let rename): return rename.isValid
     case .startVoice(let request): return request.isValid
     case .stopVoice: return true
     case .startRun(let request): return request.isValid
@@ -234,6 +236,7 @@ public struct NotebookChatInput: Codable, Equatable, Sendable, Identifiable {
 public enum NotebookChatResult: Codable, Equatable, Sendable {
   case created(CodexTask), project(CodexProject), turn(String), acknowledged
   case file(NotebookFileResult)
+  case renamed(NotebookFileRename)
   case voice(UUID)
   case run(UUID)
 }
@@ -256,6 +259,7 @@ public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
       (state == .accepted) == (result != nil) else { return false }
     guard let result else { return true }
     switch (input.action, result) {
+    case (.renameFile(let request), .renamed(let result)): return request == result && result.isValid
     case (.saveFile(let address), .file(let result)): return address == result.address && result.version.isValid
     case (.startVoice, .voice(let id)): return id == input.id
     case (.stopVoice, .acknowledged): return true

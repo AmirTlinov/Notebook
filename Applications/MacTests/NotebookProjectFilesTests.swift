@@ -72,4 +72,63 @@ final class NotebookProjectFilesTests: XCTestCase {
       XCTAssertEqual(try MacNotebookProjectFiles.reconcile(id, project: project, store: store)?.status, .saved)
     }
   }
+  func testRealRenameKeepsNotesAndNeverReplacesAnotherFileOrRepeatsTheMove() throws {
+    try fixture { store, project, address, author in
+      let root = URL(fileURLWithPath: address.root), file = root.appendingPathComponent(address.path)
+      let bytes = Data("print(4)\n".utf8); try bytes.write(to: file)
+      let fragment = NotebookCodeFragment(file: address, sourceHash: NotebookFileVersion.hash(bytes), utf16Offset: 0,
+        text: "print(4)\n", width: 600, height: 100, fontSize: 15, stamp: .init(counter: 1, actor: author))
+      let stroke = SpatialInkAction(tool: .pen, spans: [.init(surface: .codeFragment(fragment.id), samples: [
+        .init(point: .init(x: 30, y: 20), timeOffset: 0, width: 3, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+      ])], stamp: .init(counter: 2, actor: author))
+      _ = try store.commitCodeInk(fragment: fragment, command: .append(stroke, journalStamp: stroke.stamp))
+      let occupied = root.appendingPathComponent("occupied.py"); try Data("other owner".utf8).write(to: occupied)
+      let rejected = NotebookFileRename(address: address, path: "occupied.py", version: .init(bytes), after: 0)
+      XCTAssertThrowsError(try MacNotebookProjectFiles.rename(UUID(), request: rejected, project: project, store: store))
+      XCTAssertEqual(try Data(contentsOf: file), bytes)
+      XCTAssertEqual(try String(contentsOf: occupied, encoding: .utf8), "other owner")
+      let request = NotebookFileRename(address: address, path: "renamed.py", version: .init(bytes), after: 0), id = UUID()
+      XCTAssertEqual(try MacNotebookProjectFiles.rename(id, request: request, project: project, store: store), request)
+      XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+      XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent(request.path)), bytes)
+      let note = try XCTUnwrap(store.codeAnnotation(fragment.id))
+      XCTAssertEqual(note.fragment.file, address); XCTAssertEqual(note.fragment.currentFile, request.destination)
+      XCTAssertEqual(note.fragment.text, fragment.text); XCTAssertEqual(note.ink.actions, [stroke])
+      // Recreating the old path never makes it an alias for the renamed file.
+      try Data("new unrelated file".utf8).write(to: file)
+      XCTAssertEqual(try MacNotebookProjectFiles.reconcileRename(id, project: project, store: store), request)
+      XCTAssertThrowsError(try MacNotebookProjectFiles.rename(id, request: request, project: project, store: store))
+      XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "new unrelated file")
+      XCTAssertTrue(try store.codeFragments(file: address).isEmpty)
+    }
+  }
+  func testRenameRejectsChangedContentEscapesAndRevokedRoot() throws {
+    try fixture { store, project, address, _ in
+      let file = URL(fileURLWithPath: address.root).appendingPathComponent(address.path)
+      let bytes = Data("old".utf8); try Data("new".utf8).write(to: file)
+      let request = NotebookFileRename(address: address, path: "moved.py", version: .init(bytes), after: 0)
+      XCTAssertThrowsError(try MacNotebookProjectFiles.rename(UUID(), request: request, project: project, store: store))
+      XCTAssertThrowsError(try MacNotebookProjectFiles.rename(UUID(), request: request, project: .init(id: project.id, name: "revoked", roots: []), store: store))
+      XCTAssertFalse(NotebookFileRename(address: address, path: "../escape.py", version: .init(bytes), after: 0).isValid)
+      XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "new")
+    }
+  }
+
+  func testInterruptedRenameIsReconciledByIdentityNotBySimilarTextOrAnotherMove() throws {
+    try fixture { store, project, address, _ in
+      let root = URL(fileURLWithPath: address.root), file = root.appendingPathComponent(address.path)
+      let bytes = Data("original".utf8); try bytes.write(to: file)
+      let request = NotebookFileRename(address: address, path: "renamed.py", version: .init(bytes), after: 0), id = UUID()
+      XCTAssertThrowsError(try MacNotebookProjectFiles.rename(id, request: request, project: project, store: store,
+        afterMove: { throw CocoaError(.fileWriteUnknown) }))
+      XCTAssertEqual(try store.fileRename(id)?.completed, false)
+      let moved = root.appendingPathComponent(request.path)
+      // A subsequent ordinary write does not turn a proven rename into retry.
+      let handle = try FileHandle(forWritingTo: moved); try handle.write(contentsOf: Data("changed!".utf8)); try handle.close()
+      XCTAssertEqual(try MacNotebookProjectFiles.reconcileRename(id, project: project, store: NotebookStore(root: store.root)), request)
+      XCTAssertEqual(try store.fileRename(id)?.completed, true)
+      XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+  }
+
 }

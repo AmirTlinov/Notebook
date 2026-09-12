@@ -215,6 +215,11 @@ final class NotebookCodexSidecar {
       try await reconcile(job); return
     }
     guard job.state == .saved else { return }
+    if case .renameFile(let request) = job.input.action {
+      guard request.address.computer == computerID else { throw CodexBridgeError.invalidInput }
+      let author = job.input.author
+      guard try await persistence.submit({ try $0.peerCursor(peerID: author, direction: .incoming) >= UInt64(request.after)! }) else { return }
+    }
     if let contextID = job.input.attentionContextID {
       guard try await persistence.submit({ try $0.hasAttentionEvidence(contextID: contextID) }) else { return }
     }
@@ -232,6 +237,10 @@ final class NotebookCodexSidecar {
     do {
       switch job.input.action {
       case .startRun, .writeRun, .stopRun, .startVoice, .stopVoice: throw CodexBridgeError.invalidInput
+      case .renameFile(let request):
+        guard request.address.computer == computerID else { throw CodexBridgeError.invalidInput }
+        let project = try await metadata.readProject(id: request.address.project)
+        result = .renamed(try await persistence.submit { try MacNotebookProjectFiles.rename(job.id, request: request, project: project, store: $0) })
       case .saveFile(let address):
         guard address.computer == computerID else { throw CodexBridgeError.invalidInput }
         let project = try await metadata.readProject(id: address.project)
@@ -260,7 +269,10 @@ final class NotebookCodexSidecar {
       let code = error as? CodexBridgeError
       let fileRejected: Bool
       if case .saveFile = job.input.action { fileRejected = try await persistence.submit { try $0.fileCommit(job.id) == nil } }
-      else { fileRejected = false }
+      else if case .renameFile = job.input.action {
+        let unprepared = try await persistence.submit { try $0.fileRename(job.id) == nil }
+        fileRejected = error is MacNotebookProjectFiles.RenameRejected || unprepared
+      } else { fileRejected = false }
       let rejected = fileRejected || code == .staleTurn || code == .staleRequest || code == .unsupportedRequest || code == .invalidInput || code == .signInRequired
       // busy/unavailable are guaranteed pre-dispatch by send(). Other failures
       // remain uncertain, including success whose native reply was lost.
@@ -279,6 +291,15 @@ final class NotebookCodexSidecar {
   }
 
   private func reconcile(_ job: NotebookChatJob) async throws {
+    if case .renameFile(let request) = job.input.action {
+      guard request.address.computer == computerID, reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
+      reconciliationAfter[job.id] = Date().addingTimeInterval(5)
+      let project = try await metadata.readProject(id: request.address.project)
+      if let result = try await persistence.submit({ try MacNotebookProjectFiles.reconcileRename(job.id, project: project, store: $0) }) {
+        _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .renamed(result)) }
+      }
+      return
+    }
     if case .saveFile(let address) = job.input.action {
       guard address.computer == computerID, reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
       reconciliationAfter[job.id] = Date().addingTimeInterval(5)

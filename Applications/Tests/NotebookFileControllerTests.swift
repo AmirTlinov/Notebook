@@ -94,5 +94,38 @@ final class NotebookFileControllerTests: XCTestCase {
     view.layoutIfNeeded()
     XCTAssertNil(view.initialScroll); XCTAssertEqual(view.contentOffset.y, 300, accuracy: 1)
   }
+  func testConfirmedRenameRestoresTheSameDraftAndNotesAtTheNewPath() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), author = UUID(), computer = UUID()
+    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let queue = NotebookPersistenceQueue(store: store)
+    let chat = NotebookChatController(persistence: queue, author: author) { _, _ in }
+    await chat.start(); await chat.connect(computer)
+    let file = NotebookFileAddress(computer: computer, project: "demo", root: "/project", path: "old.py")
+    var draft = NotebookFileDraft(address: file, text: "print(4)"); draft.text = "print(8)"; draft.scroll = 120
+    try store.saveFileDraft(draft)
+    await chat.files.open(file)
+    let fragment = NotebookCodeFragment(file: file, sourceHash: NotebookFileVersion.hash(Data(draft.text.utf8)), utf16Offset: 0,
+      text: draft.text, width: 600, height: 100, fontSize: 15, stamp: .init(counter: 1, actor: author))
+    try store.captureCodeFragment(fragment)
+    await chat.files.rename(to: "new.py")
+    let id = try XCTUnwrap(chat.files.document?.rename), job = try XCTUnwrap(store.chatJob(id))
+    guard case .renameFile(let request) = job.input.action else { return XCTFail("Expected typed rename") }
+    XCTAssertGreaterThan(UInt64(request.after)!, 0)
+    chat.files.edit("late", address: file, selection: 0, scroll: 0)
+    XCTAssertEqual(chat.files.document?.text, draft.text)
+    await chat.files.rename(to: "second.py")
+    XCTAssertEqual(chat.files.document?.rename, id)
+    chat.files.receive(.init(input: job.input, state: .accepted, result: .renamed(request)))
+    let deadline = ContinuousClock.now + .seconds(2)
+    while chat.files.document?.address != request.destination, .now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertEqual(chat.files.document?.address, request.destination)
+    XCTAssertEqual(chat.files.document?.text, draft.text); XCTAssertEqual(chat.files.document?.scroll, 120)
+    XCTAssertEqual(chat.files.notes.fragments.first?.currentFile, request.destination)
+    XCTAssertEqual(chat.files.notes.fragments.first?.text, fragment.text)
+    XCTAssertNil(try store.fileDraft(file))
+    await chat.stop(); let saved = await queue.flush(); XCTAssertTrue(saved)
+  }
   private func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
 }

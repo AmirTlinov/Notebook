@@ -72,6 +72,24 @@ extension NotebookStore {
     }
   }
 
+  /// An observed filesystem rename relocates current references, not material.
+  /// No permanent old-path alias can attach notes to a later unrelated file.
+  public func relocateCodeFragments(_ rename: NotebookFileRename) throws {
+    guard rename.isValid else { throw NotebookStorageError.invalidTransaction("file rename") }
+    try commandTransaction {
+      while true {
+        let page = try codeFragments(file: rename.address)
+        if page.isEmpty { break }
+        for fragment in page {
+          let old = fragment.location
+          guard let stamp = old.stamp.advanced(by: rename.address.computer) else { throw NotebookStorageError.transactionConflict }
+          try publishCodeFragment(fragment.rebinding(to: .init(file: rename.destination, sourceHash: old.sourceHash,
+            utf16Offset: old.utf16Offset, text: old.text, stamp: stamp)))
+        }
+      }
+    }
+  }
+
   /// An indexed file owns its review fragments even if its Mac is unavailable.
   /// The caller pages the list; loading a file never loads other files' ink.
   public func codeFragments(file: NotebookFileAddress, after: UUID? = nil, limit: Int = 64) throws -> [NotebookCodeFragment] {

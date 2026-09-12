@@ -403,6 +403,7 @@ extension NotebookStore {
         try database.run("COMMIT")
       } catch { try? database.run("ROLLBACK"); throw error }
     }
+    try database.run("CREATE TABLE IF NOT EXISTS file_renames(id TEXT PRIMARY KEY,request BLOB NOT NULL,identity BLOB NOT NULL,completed INTEGER NOT NULL DEFAULT 0)")
     try database.run("CREATE TABLE IF NOT EXISTS code_fragment_files(address TEXT PRIMARY KEY REFERENCES records(address) ON DELETE CASCADE,file_id TEXT NOT NULL,fragment_id TEXT NOT NULL)")
     try database.run("CREATE INDEX IF NOT EXISTS code_fragment_file ON code_fragment_files(file_id,fragment_id)")
     try database.run("CREATE TABLE IF NOT EXISTS project_runs(ordinal INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,root TEXT NOT NULL,active INTEGER NOT NULL,value BLOB NOT NULL,last_sequence INTEGER NOT NULL DEFAULT 0,output_bytes INTEGER NOT NULL DEFAULT 0)")

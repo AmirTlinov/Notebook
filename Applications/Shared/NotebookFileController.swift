@@ -8,7 +8,9 @@ import NotebookCore
 @MainActor @Observable
 final class NotebookFileController {
   private(set) var window = NotebookFileWindowState()
-  private(set) var document: NotebookFileDraft?
+  private(set) var document: NotebookFileDraft? {
+    didSet { notes.changingFile = document?.rename == nil ? nil : document?.address }
+  }
   private(set) var directories: [NotebookFileAddress: NotebookFileDirectory] = [:]
   private(set) var expandedFolders = Set<NotebookFileAddress>()
   private(set) var error: String?
@@ -37,7 +39,7 @@ final class NotebookFileController {
       while !Task.isCancelled {
         do { try await Task.sleep(for: .seconds(3)) } catch { break }
         guard let self else { return }
-        if let pending = document?.pending, let job = chat?.jobs.first(where: { $0.id == pending }), chat?.connected == true { receive(job) }
+        if let pending = document?.pending ?? document?.rename, let job = chat?.jobs.first(where: { $0.id == pending }), chat?.connected == true { receive(job) }
         else if window.isOpen, !loading, !saving, !notes.contactActive, chat?.connected == true { await refresh() }
         if window.isOpen { await notes.refresh() }
       }
@@ -106,7 +108,7 @@ final class NotebookFileController {
       guard !stopped, !notes.contactActive, opening == token, let value else { return }
       document = value; window.selected = address; window.isOpen = true; error = nil
       persistDocument(); persistWindow(); await notes.select(address)
-      if let id = value.pending, let job = chat?.jobs.first(where: { $0.id == id }) { receive(job) }
+      if let id = value.pending ?? value.rename, let job = chat?.jobs.first(where: { $0.id == id }) { receive(job) }
     } catch { if opening == token { self.error = error.localizedDescription } }
   }
   func close() { guard !notes.contactActive else { return }; window.isOpen = false; opening = nil; loading = false; persistWindow() }
@@ -130,18 +132,18 @@ final class NotebookFileController {
     navigation = (UUID(), file, NSRange(location: offset, length: 0))
   }
   func edit(_ text: String, address: NotebookFileAddress, selection: Int, scroll: Double) {
-    guard !stopped, !notes.contactActive, var value = document, value.address == address else { return }
+    guard !stopped, notes.changingFile != address, !notes.contactActive, var value = document, value.address == address else { return }
     guard text.utf8.count <= NotebookFileVersion.maximumBytes else { error = "Черновик превышает 2 МиБ. Последний принятый текст сохранён."; return }
     value.text = text; value.selection = min(max(0, selection), text.utf16.count); value.scroll = max(0, scroll)
     document = value; persistDocument()
   }
   func readPosition(address: NotebookFileAddress, selection: Int, scroll: Double) {
-    guard !stopped, var value = document, value.address == address, scroll.isFinite else { return }
+    guard !stopped, notes.changingFile != address, var value = document, value.address == address, scroll.isFinite else { return }
     value.selection = min(max(0, selection), value.text.utf16.count); value.scroll = max(0, scroll)
     if value != document { document = value; persistDocument() }
   }
   func refresh() async {
-    guard !stopped, !notes.contactActive, let value = document, value.pending == nil else { return }
+    guard !stopped, !notes.contactActive, let value = document, value.pending == nil, value.rename == nil else { return }
     do {
       let text = try await read(value.address, unchanged: value.other ?? value.base)
       guard !stopped, !notes.contactActive, document?.address == value.address, document?.pending == nil else { return }
@@ -158,7 +160,7 @@ final class NotebookFileController {
   func resolveUsingDraft() { guard !notes.contactActive, let other = document?.other else { return }; document?.base = other; document?.other = nil; notice = nil; persistDocument() }
 
   func save() {
-    guard !stopped, !notes.contactActive, !saving, let value = document, value.pending == nil, value.other == nil, value.text != value.base else { return }
+    guard !stopped, !notes.contactActive, !saving, let value = document, value.pending == nil, value.rename == nil, value.other == nil, value.text != value.base else { return }
     saving = true; error = nil
     upload = Task { [weak self] in
       guard let self else { return }; defer { saving = false; upload = nil }
@@ -187,7 +189,44 @@ final class NotebookFileController {
       } catch { self.error = error.localizedDescription }
     }
   }
+  func rename(to path: String) async {
+    guard !stopped, !notes.contactActive, !saving, let value = document, value.pending == nil, value.rename == nil, remoteAvailable else { return }
+    saving = true; notes.changingFile = value.address
+    defer { saving = false; notes.changingFile = document?.rename == nil ? nil : document?.address }
+    let author = author, id = UUID()
+    do {
+      try await persistence.submit { store in
+        let request = NotebookFileRename(address: value.address, path: path, version: .init(Data(value.base.utf8)), after: try store.currentChangeCursor())
+        guard request.isValid else { throw CollaborationError("file_name", "Укажите другой относительный путь внутри проекта.") }
+        var draft = value; draft.rename = id
+        try store.saveFileRenameSubmission(.init(id: id, author: author, action: .renameFile(request)), draft: draft)
+      }
+      if document?.address == value.address { document?.rename = id; error = nil; notice = "Ожидается подтверждение переименования на Mac" }
+      await chat?.refreshFileJobs()
+    } catch {
+      // Lost database acknowledgement is observed, not minted as a second job.
+      if let saved = try? await persistence.submit({ try $0.fileDraft(value.address) }), saved.rename == id {
+        if document?.address == value.address { document = saved }
+        await chat?.refreshFileJobs()
+      } else { self.error = error.localizedDescription }
+    }
+  }
+  private func receiveRename(_ job: NotebookChatJob) {
+    guard !stopped, !notes.contactActive, case .renameFile(let request) = job.input.action, job.isTerminal, integrating.insert(job.id).inserted else { return }
+    Task { [weak self] in
+      guard let self else { return }; defer { integrating.remove(job.id) }
+      do {
+        let selected = document?.address == request.address
+        let moved = try await persistence.submit(publishesChanges: true) { try $0.acceptFileRename(job) }
+        guard !stopped, selected, document?.address == request.address, let moved else { return }
+        document = moved; window.selected = moved.address; navigation = nil; directories = [:]
+        error = job.error; notice = job.error ?? "Файл переименован на Mac; черновик и пометки сохранены"
+        await notes.select(moved.address)
+      } catch { self.error = error.localizedDescription }
+    }
+  }
   func receive(_ job: NotebookChatJob) {
+    if case .renameFile = job.input.action { receiveRename(job); return }
     guard !stopped, !notes.contactActive, case .saveFile(let address) = job.input.action, job.isTerminal, integrating.insert(job.id).inserted else { return }
     Task { [weak self] in
       guard let self else { return }; defer { integrating.remove(job.id) }
