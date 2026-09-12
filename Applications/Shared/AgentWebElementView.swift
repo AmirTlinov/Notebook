@@ -64,7 +64,7 @@ import WebKit
     func updateUIView(_ view: AgentSnapshotRasterView, context: Context) {
       view.bindSceneLifecycle(to: model)
       guard let raster, !raster.isReleased else { return }
-      view.updateRaster(raster, displayScale: context.environment.displayScale)
+      view.updateRaster(raster)
     }
 
     static func dismantleUIView(_ view: AgentSnapshotRasterView, coordinator: ()) {
@@ -77,8 +77,6 @@ import WebKit
   final class AgentSnapshotRasterView: UIView, NotebookScenePresentationOwner {
     private weak var sceneModel: NotebookAppModel?
     private var isRetired = false
-    private var pixelSize: CGSize = .zero
-    private var displayScale: CGFloat = 1
     private var retainedRaster: RasterLease?
 
     init() {
@@ -101,25 +99,22 @@ import WebKit
 
     /// A tile's cohort may end while this native view is still shown. Its
     /// independent lease retains the same cache entry, without another bitmap.
-    func updateRaster(_ source: RasterLease, displayScale: CGFloat) {
+    func updateRaster(_ source: RasterLease) {
       guard !isRetired else { return }
       if let current = retainedRaster,
         !current.isReleased, current.entryID == source.entryID {
-        installRaster(current, displayScale: displayScale)
+        installRaster(current)
       } else if let copy = source.retainedCopy() {
-        installRaster(copy, displayScale: displayScale)
+        installRaster(copy)
       }
     }
 
-    private func installRaster(_ raster: RasterLease, displayScale: CGFloat) {
+    private func installRaster(_ raster: RasterLease) {
       guard !isRetired else { return }
       let image = raster.image
       if (layer.contents as AnyObject?) !== image.cgImage { layer.contents = image.cgImage }
       retainedRaster = raster
       layer.contentsScale = image.scale
-      pixelSize = image.cgImage.map { CGSize(width: $0.width, height: $0.height) } ?? .zero
-      self.displayScale = displayScale
-      updateRasterizationScale()
     }
 
     /// Window transfer preserves this presenter's pixels. Actual dismantle or
@@ -132,19 +127,9 @@ import WebKit
       sceneModel = nil
       layer.contents = nil
       retainedRaster = nil
-      pixelSize = .zero
     }
 
-    override func layoutSubviews() {
-      super.layoutSubviews()
-      updateRasterizationScale()
-    }
 
-    private func updateRasterizationScale() {
-      guard bounds.width > 0, bounds.height > 0, pixelSize.width > 0, pixelSize.height > 0 else { return }
-      layer.rasterizationScale = min(max(1, displayScale),
-        pixelSize.width / bounds.width, pixelSize.height / bounds.height)
-    }
   }
 
 #else
@@ -193,7 +178,7 @@ import WebKit
     func updateNSView(_ view: AgentSnapshotRasterView, context: Context) {
       view.bindSceneLifecycle(to: model)
       guard let raster, !raster.isReleased else { return }
-      view.updateRaster(raster, displayScale: context.environment.displayScale)
+      view.updateRaster(raster)
     }
 
     static func dismantleNSView(_ view: AgentSnapshotRasterView, coordinator: ()) {
@@ -205,8 +190,6 @@ import WebKit
     private weak var sceneModel: NotebookAppModel?
     private var isRetired = false
     private var retainedRaster: RasterLease?
-    private var pixelSize: CGSize = .zero
-    private var displayScale: CGFloat = 1
 
     init() {
       super.init(frame: .zero)
@@ -226,25 +209,21 @@ import WebKit
       model?.registerScenePresentation(self)
     }
 
-    func updateRaster(_ source: RasterLease, displayScale: CGFloat) {
+    func updateRaster(_ source: RasterLease) {
       guard !isRetired else { return }
       if let current = retainedRaster,
         !current.isReleased, current.entryID == source.entryID {
-        installRaster(current, displayScale: displayScale)
+        installRaster(current)
       } else if let copy = source.retainedCopy() {
-        installRaster(copy, displayScale: displayScale)
+        installRaster(copy)
       }
     }
 
-    private func installRaster(_ raster: RasterLease, displayScale: CGFloat) {
+    private func installRaster(_ raster: RasterLease) {
       guard !isRetired else { return }
       let image = raster.image
       if self.image !== image { self.image = image }
       retainedRaster = raster
-      pixelSize = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
-        .map { CGSize(width: $0.width, height: $0.height) } ?? .zero
-      self.displayScale = displayScale
-      updateRasterizationScale()
     }
 
     func uninstall() {
@@ -255,19 +234,9 @@ import WebKit
       image = nil
       layer?.contents = nil
       retainedRaster = nil
-      pixelSize = .zero
     }
 
-    override func layout() {
-      super.layout()
-      updateRasterizationScale()
-    }
 
-    private func updateRasterizationScale() {
-      guard bounds.width > 0, bounds.height > 0, pixelSize.width > 0, pixelSize.height > 0 else { return }
-      layer?.rasterizationScale = min(max(1, displayScale),
-        pixelSize.width / bounds.width, pixelSize.height / bounds.height)
-    }
   }
 
 #endif
@@ -300,7 +269,7 @@ enum AgentSnapshotPolicy: Equatable {
     let density: Double
     switch self {
     case .display(let scale):
-      density = min(max(1, scale), 2048 / max(width, height), sqrt(4_194_304 / (width * height)))
+      density = min(scale, 2048 / max(width, height), sqrt(4_194_304 / (width * height)))
     case .exact(let scale): density = scale
     }
     guard density.isFinite, density > 0 else { return nil }

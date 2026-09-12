@@ -37,14 +37,19 @@ final class BoardPublicationTests: XCTestCase {
       let presence = SessionPresence(boardID: boardID, mode: .board,
         camera: .init(center: .init(x: 640, y: 560), scale: zoom), viewport: .init(x: 834, y: 1194))
       model.updatePresence(presence, settled: true)
-      try await waitUntil { model.compositionTiles.published?.plan.revision == model.workspaceHeader?.cursor && !model.scenePreparationPending }
+      try await waitUntil {
+        model.compositionTiles.published?.plan.revision == model.workspaceHeader?.cursor && !model.scenePreparationPending
+          && SceneRenderResources.shared.image(for: agentElementSnapshotSource(element), minimumScale: zoom * 2 - 0.001) != nil
+      }
       try await Task.sleep(for: .milliseconds(150))
       let output = UIGraphicsImageRenderer(size: host.view.bounds.size).image { _ in
         host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
       }
       let attachment = XCTAttachment(image: output); attachment.name = "mounted-SVG-\(zoom)"; attachment.lifetime = .keepAlways; add(attachment)
       let raster = try XCTUnwrap(SceneRenderResources.shared.retainRaster(for: agentElementSnapshotSource(element)))
-      XCTAssertGreaterThanOrEqual(raster.pixelScale, 1.59); raster.release()
+      XCTAssertGreaterThanOrEqual(raster.pixelScale, zoom * 2 - 0.001,
+        "The mounted source must cover the actual screen density, not allocate invisible canonical pixels")
+      raster.release()
       let cg = try XCTUnwrap(output.cgImage)
       let bitmap = try XCTUnwrap(CGContext(data: nil, width: cg.width, height: cg.height, bitsPerComponent: 8,
         bytesPerRow: cg.width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))

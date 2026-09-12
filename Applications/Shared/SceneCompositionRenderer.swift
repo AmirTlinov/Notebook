@@ -274,7 +274,7 @@ final class SceneCompositionRenderer {
     }
   }
 
-  func liveRasterRequests(plan: SceneCompositionPlan, displayScale: Double) async throws -> [LiveRasterRequest] {
+  func liveRasterRequests(plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, displayScale: Double) async throws -> [LiveRasterRequest] {
     var requests: [LiveRasterRequest] = []
     for owner in plan.liveOwners {
       try checkPreparation()
@@ -283,7 +283,12 @@ final class SceneCompositionRenderer {
         element.surface == (owner.plane.coverID.map(SurfaceID.cover) ?? .board(owner.plane.boardID)) else {
         throw SceneRenderError.snapshotPending("live_element_source")
       }
-      if element.kind != .nativeText { requests.append(try .init(owner: owner, element: element, displayScale: displayScale)) }
+      if element.kind != .nativeText {
+        guard let projection = frame.pixelScales[owner.plane.boardID] else {
+          throw SceneRenderError.snapshotPending("live_element_projection")
+        }
+        requests.append(try .init(owner: owner, element: element, displayScale: projection * displayScale))
+      }
     }
     return requests
   }

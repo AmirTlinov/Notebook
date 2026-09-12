@@ -232,17 +232,18 @@ final class AgentWebLeaseTests: XCTestCase {
     let view = AgentSnapshotRasterView()
     defer { view.uninstall(); raster.release() }
     view.bounds = CGRect(x: 0, y: 0, width: source.frame.width, height: source.frame.height)
-    view.updateRaster(raster, displayScale: 3)
+    view.updateRaster(raster)
     view.layoutIfNeeded()
-    let rasterScale = view.layer.rasterizationScale
+    let projectedImage = try XCTUnwrap(image.cgImage)
+    XCTAssertTrue((view.layer.contents as AnyObject?) === projectedImage)
     XCTAssertFalse(view.layer.shouldRasterize, "The admitted bitmap is projected directly, without a second cached raster")
     XCTAssertEqual(view.layer.minificationFilter, .trilinear)
-    XCTAssertLessThanOrEqual(view.bounds.width * rasterScale, 2048)
-    XCTAssertLessThanOrEqual(view.bounds.height * rasterScale, 2048)
+    XCTAssertEqual(projectedImage.width, Int(pixels.width))
+    XCTAssertEqual(projectedImage.height, Int(pixels.height))
     for zoom in [0.01, 0.1, 0.8, 2, 4] {
       view.transform = CGAffineTransform(scaleX: zoom, y: zoom)
       view.setNeedsLayout(); view.layoutIfNeeded()
-      XCTAssertEqual(view.layer.rasterizationScale, rasterScale,
+      XCTAssertTrue((view.layer.contents as AnyObject?) === projectedImage,
         "The camera changes projection, not the physical surface's raster density.")
     }
   }
@@ -257,7 +258,7 @@ final class AgentWebLeaseTests: XCTestCase {
     let shownBytes = try XCTUnwrap(lease).accountedByteCount
     let view = AgentSnapshotRasterView()
     view.bounds = CGRect(x: 0, y: 0, width: 32, height: 32)
-    view.updateRaster(try XCTUnwrap(lease), displayScale: 2)
+    view.updateRaster(try XCTUnwrap(lease))
     lease = nil
     XCTAssertNil(configurationLease, "The configuration is not the native presenter’s independent lease.")
     XCTAssertNotNil(view.layer.contents)

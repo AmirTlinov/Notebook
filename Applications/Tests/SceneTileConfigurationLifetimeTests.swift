@@ -53,13 +53,13 @@ final class SceneTileConfigurationLifetimeTests: XCTestCase {
     XCTAssertTrue(mounted.allSatisfy { $0.layer.contents == nil })
     for native in mounted {
       native.bindSceneLifecycle(to: model)
-      native.updateRaster(borrowed, displayScale: 1)
+      native.updateRaster(borrowed)
     }
     XCTAssertTrue(mounted.allSatisfy { $0.layer.contents == nil },
       "A late update cannot revive a terminal native presentation")
     let late = AgentSnapshotRasterView()
     late.bindSceneLifecycle(to: model)
-    late.updateRaster(borrowed, displayScale: 1)
+    late.updateRaster(borrowed)
     XCTAssertNil(late.layer.contents, "A stopped model cannot admit a new native presentation")
     XCTAssertFalse(borrowed.isReleased)
     XCTAssertEqual(resources.rasterAdmission.pinnedBytes, borrowed.accountedByteCount)

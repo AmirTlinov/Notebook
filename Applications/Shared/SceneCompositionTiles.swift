@@ -170,7 +170,7 @@ struct SceneCompositionPlan: Sendable {
   /// pinned source rasters keep their own density; exact export is independent.
   func coarseningCoverage(presence: SessionPresence, frame: WorkspaceSceneFrame,
     displayScale: Double) throws -> Self? {
-    guard coverageTileCount > 1 else { return nil }
+    guard !tiles.isEmpty, coverageTileCount > 1 else { return nil }
     do {
       let result = try Self.assemble(revision: revision, workspaceID: workspaceID,
         owners: liveOwners, presence: presence, frame: frame,
@@ -409,7 +409,7 @@ final class SceneCompositionTiles {
         guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
         var plan = try await SceneCompositionPlan.prepare(source: source, presence: presence, frame: frame,
           pinned: pinned, displayScale: displayScale, previous: self?.published?.plan)
-        let requests = try await renderer.liveRasterRequests(plan: plan, displayScale: displayScale)
+        let requests = try await renderer.liveRasterRequests(plan: plan, frame: frame, displayScale: displayScale)
         let previous = self?.published
         let maximumAttempts = plan.reductionPotential + 1
         for attempt in 0..<maximumAttempts {
@@ -783,7 +783,7 @@ private struct SceneCompositionTileRasterView: UIViewRepresentable {
   func updateUIView(_ view: AgentSnapshotRasterView, context: Context) {
     view.bindSceneLifecycle(to: model)
     guard let raster, !raster.isReleased else { return }
-    view.updateRaster(raster, displayScale: context.environment.displayScale)
+    view.updateRaster(raster)
   }
   static func dismantleUIView(_ view: AgentSnapshotRasterView, coordinator: ()) { view.uninstall() }
 }
@@ -795,7 +795,7 @@ private struct SceneCompositionTileRasterView: NSViewRepresentable {
   func updateNSView(_ view: AgentSnapshotRasterView, context: Context) {
     view.bindSceneLifecycle(to: model)
     guard let raster, !raster.isReleased else { return }
-    view.updateRaster(raster, displayScale: context.environment.displayScale)
+    view.updateRaster(raster)
   }
   static func dismantleNSView(_ view: AgentSnapshotRasterView, coordinator: ()) { view.uninstall() }
 }

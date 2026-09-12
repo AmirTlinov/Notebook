@@ -63,10 +63,14 @@ final class SceneCompositionSQLTests: XCTestCase {
     var hierarchy = originalBoard
     XCTAssertTrue(hierarchy.moveItem(workspace.selectedItemID, in: initial.rootBoardID,
       to: .init(x: 1_000_000, y: 1_000_000), actor: actor))
+    XCTAssertTrue(hierarchy.upsertElement(.init(id: "baseline", surface: .board(initial.rootBoardID), kind: .web,
+      frame: .init(x: 0, y: 0, width: 64, height: 64), worldOrigin: .zero, source: "Old visible source",
+      html: "<div style='position:absolute;inset:0;background:navy'></div>", stamp: .init(counter: 0, actor: actor)),
+      in: initial.rootBoardID, expected: nil, actor: actor))
     _ = try store.saveBoardEdits(before: originalBoard, after: hierarchy)
     hierarchy = try store.loadBoard(items: workspace.items)
     let presence = SessionPresence(boardID: initial.rootBoardID, mode: .board,
-      camera: .init(), viewport: .init(x: 256, y: 256))
+      camera: .init(scale: 1), viewport: .init(x: 256, y: 256))
     func source() throws -> SceneCompositionSource {
       let header = try store.workspaceHeader()
       return .init(store: store, revision: header.cursor, workspaceID: header.workspaceID)
@@ -98,10 +102,10 @@ final class SceneCompositionSQLTests: XCTestCase {
     let unboundedBytesPlan = try await SceneCompositionPlan.prepare(source: fresh, presence: presence,
       frame: frame, pinned: [], displayScale: 2, previous: old.plan)
     let tileBytes = try XCTUnwrap(SceneRenderResources.estimatedRasterBytes(pixelWidth: 512, pixelHeight: 512))
-    XCTAssertEqual(unboundedBytesPlan.liveOwners.count, 6)
+    XCTAssertEqual(unboundedBytesPlan.liveOwners.count, 7)
     let renderer = SceneCompositionRenderer(source: fresh, resources: resources)
-    let requests = try await renderer.liveRasterRequests(plan: unboundedBytesPlan, displayScale: 2)
-    XCTAssertEqual(requests.count, 6)
+    let requests = try await renderer.liveRasterRequests(plan: unboundedBytesPlan, frame: frame, displayScale: 2)
+    XCTAssertEqual(requests.count, 7)
     let liveCost = requests.reduce(0) { $0 + $1.residentBytes }
     XCTAssertGreaterThan(oldCost + unboundedBytesPlan.tiles.count * tileBytes + liveCost, resources.passiveByteLimit,
       "The actual whole old cut and all cold live sources cannot coexist under this byte limit")
@@ -111,6 +115,7 @@ final class SceneCompositionSQLTests: XCTestCase {
       MainActor.assumeIsolated {
         sawPrivateTile = true
         oldWasRetained = oldWasRetained && old.rasters.values.allSatisfy { !$0.isReleased }
+          && old.liveRasters.values.allSatisfy { !$0.isReleased }
       }
     }
     defer { NotificationCenter.default.removeObserver(observer) }
@@ -136,7 +141,7 @@ final class SceneCompositionSQLTests: XCTestCase {
     XCTAssertLessThanOrEqual(resources.peakAccountedBytes, resources.byteLimit)
     XCTAssertEqual(resources.activeWebSurfaceCount, 0)
 
-    let pins = Set(elements.map { WorkspaceSpatialID.element($0.id) })
+    let pins = Set(elements.map { WorkspaceSpatialID.element($0.id) } + [.element("baseline")])
     let pinnedFrame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil }, pinned: pins)
     coordinator.prepare(source: fresh, presence: presence, frame: pinnedFrame, pinned: pins)
     let refusalDeadline = ContinuousClock.now + .seconds(5)

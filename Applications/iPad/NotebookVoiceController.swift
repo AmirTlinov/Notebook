@@ -195,6 +195,7 @@ import NotebookCore
   }
   private func finishEnd(_ id: UUID) {
     guard captureID == id else { return }
+    error = nil
     state?.phase = .ended; state?.sdp = nil
     activeID = nil; captureID = nil; phase = .off; ending = false; muted = false; submitted = false
     endConfirmation?.cancel(); endConfirmation = nil

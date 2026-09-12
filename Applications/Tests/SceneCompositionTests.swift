@@ -6,6 +6,53 @@ import XCTest
 
 final class SceneCompositionTests: XCTestCase {
   @MainActor
+  func testTableKeepsScreenDensityBesideTwoNativePaperCovers() async throws {
+    let stamp = VersionStamp(counter: 0, actor: UUID())
+    let notebook = WorkspaceItem.notebook(title: "Notebook", pageIDs: [UUID()])
+    let document = WorkspaceItem.document(title: "Document")
+    let workspace = WorkspaceIndex(items: [notebook, document], selectedItemID: notebook.id,
+      selectedPageID: notebook.pageIDs[0], stamp: stamp)
+    let table = SpatialElement(id: "table", surface: .board(workspace.rootBoardID), kind: .web,
+      frame: .init(x: 0, y: 0, width: 1280, height: 1120), worldOrigin: .init(x: 700, y: 0),
+      source: "Table", html: "<svg viewBox='0 0 1280 1120'><rect width='1280' height='1120' fill='white'/><text x='30' y='100' font-size='40'>A clear table</text></svg>",
+      css: "html,body,svg{margin:0;width:100%;height:100%}", stamp: stamp)
+    let board = BoardDocument(freeItems: [
+      .init(itemID: notebook.id, center: .init(x: -1300, y: 0), zIndex: 0, stamp: stamp),
+      .init(itemID: document.id, center: .zero, zIndex: 1, stamp: stamp)
+    ], elements: [table], stamp: stamp)
+    let hierarchy = BoardHierarchy(rootBoardID: workspace.rootBoardID,
+      boards: [.init(id: workspace.rootBoardID, board: board)], stamp: stamp)
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [document.id: .a4])
+    let resources = SceneRenderResources(), registry = SpatialInkSurfaceRegistry()
+    let tiles = SceneCompositionTiles(resources: resources, surfaceRegistry: registry)
+    addTeardownBlock { @MainActor in await tiles.stop(); await registry.stopSceneInk() }
+    let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: .init(stamp: stamp))
+    for zoom in [0.1254612818717936, 0.3009028410296117] {
+      let old = tiles.published
+      let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
+        camera: .init(center: .init(x: 600, y: 200), scale: zoom), viewport: .init(x: 834, y: 1194))
+      let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil })
+      tiles.prepare(source: source, presence: presence, frame: frame, pinned: [], displayScale: 2)
+      let deadline = ContinuousClock.now + .seconds(10)
+      while tiles.published === old, tiles.failure == nil, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      let next = try XCTUnwrap(tiles.published, tiles.failure ?? "No prepared scene")
+      XCTAssertFalse(next === old)
+      for item in [notebook, document] {
+        XCTAssertTrue(next.plan.allowsLive(.item(item.id), in: .board(workspace.rootBoardID)))
+        XCTAssertNotNil(next.nativeInk.owners[.cover(item.id)], "Paper keeps its native input owner")
+      }
+      let raster = try XCTUnwrap(next.liveRasters.first { $0.key.id == .element(table.id) }?.value,
+        "A small on-screen table must not collapse to a 26-pixel overview tile: \(tiles.budgetFailures)")
+      let expectedWidth = floor(table.frame.width * zoom * 2)
+      XCTAssertGreaterThanOrEqual(Double(try XCTUnwrap(raster.image.cgImage).width), expectedWidth)
+      XCTAssertLessThan(raster.pixelScale, 1, "Off-screen canonical density cannot evict visible material")
+      XCTAssertLessThanOrEqual(resources.peakAccountedBytes, resources.byteLimit)
+    }
+  }
+
+  @MainActor
   func testMixedPaperCoversPublishInLandscapeWithoutDroppingTheirInputOwners() async throws {
     let actor = UUID(), stamp = VersionStamp(counter: 0, actor: actor)
     let notebook = WorkspaceItem.notebook(title: "Notebook", pageIDs: [UUID()])

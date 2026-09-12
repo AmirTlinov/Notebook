@@ -12,6 +12,7 @@ enum InteractiveElementReference: Equatable, Sendable {
 struct PreparedAgentElementView: View {
   @Environment(NotebookAppModel.self) private var model
   @Environment(\.displayScale) private var displayScale
+  @Environment(\.sceneComposition) private var composition
   let element: AgentElement
   let allowsInteraction: Bool
   let focus: InteractiveElementReference
@@ -40,8 +41,16 @@ struct PreparedAgentElementView: View {
     allowsInteraction && !element.javaScript.isEmpty && model.interactiveElementFocus == focus
   }
 
+  private var snapshotScale: Double {
+    if case .board(let boardID, _) = focus,
+      let projection = composition.cohort?.frame.pixelScales[boardID] {
+      return projection * displayScale
+    }
+    return displayScale
+  }
+
   private var requiredScale: Double {
-    AgentSnapshotPolicy.display(scale: displayScale).rasterizationScale(for: element, displayScale: displayScale)
+    AgentSnapshotPolicy.display(scale: snapshotScale).rasterizationScale(for: element, displayScale: displayScale)
   }
 
   private func adoptPreparedRaster() {
@@ -62,14 +71,14 @@ struct PreparedAgentElementView: View {
 
   var body: some View {
     let demand = Demand(source: element, active: isActive,
-      permitsPreparation: model.permitsBackgroundPreparation, displayScale: displayScale, retry: retry)
+      permitsPreparation: model.permitsBackgroundPreparation, displayScale: snapshotScale, retry: retry)
     ZStack {
       if let raster {
         AgentElementSnapshotView(raster: raster)
       }
       if let web {
         AgentWebElementView(element: element, lease: web,
-          snapshotPolicy: .display(scale: displayScale),
+          snapshotPolicy: .display(scale: snapshotScale),
           onRenderReady: { ready in
             guard model.shutdownPhase != .stopped, self.web?.id == web.id, !web.isReleased else { return }
             if ready, let next = SceneRenderResources.shared.retainRaster(for: element, minimumScale: requiredScale) {
@@ -165,7 +174,7 @@ struct PreparedAgentElementView: View {
     waitingForAdmission = false
     if failedSource == demand.source { return }
     failure = nil
-    if preparedSource != demand.source {
+    if preparedSource != demand.source || (raster?.pixelScale ?? 0) + 0.000_001 < requiredScale {
       if !demand.active { web = nil }
       let current = SceneRenderResources.shared.retainRaster(for: demand.source, minimumScale: requiredScale)
       if let current { raster = current }
