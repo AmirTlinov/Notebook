@@ -5,6 +5,59 @@ import NotebookCore
 
 @MainActor
 final class NotebookFileControllerTests: XCTestCase {
+  func testVisibleTreeRecoversAfterAccessReturnsAndRejectsLateErrorsFromAnotherProject() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("file-tree-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), author = UUID(), peer = UUID()
+    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let queue = NotebookPersistenceQueue(store: store)
+    let project = CodexProject(id: "first", name: "First", roots: ["/fixture"])
+    let address = NotebookFileAddress(computer: peer, project: project.id, root: "/fixture", path: "")
+    var chat: NotebookChatController!, reads = 0, held: NotebookChatEnvelope?
+    chat = .init(persistence: queue, author: author) { envelope, _ in
+      guard case .request(let query) = envelope.body else { return }
+      let reply: NotebookChatReply
+      switch query {
+      case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil))
+      case .projects: reply = .projects(.init(projects: [project], nextCursor: nil))
+      case .file(.directory(let file, _)):
+        if !file.path.isEmpty { held = envelope; return }
+        reads += 1
+        reply = reads == 1 ? .failure("Mac ожидает доступ к папке") : .file(.directory(.init(entries: [.init(name: "source.swift", kind: .file)], next: nil)))
+      default: reply = .failure("Unexpected mutation")
+      }
+      chat.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
+    }
+    await chat.start(); await chat.connect(peer)
+    var state = NotebookFileWindowState(); state.project = project; state.sidebar = true
+    await chat.files.installWindow(state, document: nil)
+    chat.expanded = true
+    await chat.files.expand(address)
+    XCTAssertEqual(reads, 1); XCTAssertNotNil(chat.files.directoryErrors[address]); XCTAssertNil(chat.files.error)
+    await chat.files.refreshVisibleDirectories()
+    XCTAssertEqual(reads, 1, "A denied read does not busy-loop")
+    chat.expanded = false
+    await chat.files.refreshVisibleDirectories(now: .now + .seconds(16))
+    XCTAssertEqual(reads, 1, "A hidden tree does not poll the Mac")
+    chat.expanded = true
+    await chat.files.refreshVisibleDirectories(now: .now + .seconds(16))
+    XCTAssertEqual(reads, 2); XCTAssertNil(chat.files.directoryErrors[address])
+    XCTAssertEqual(chat.files.directories[address]?.entries.first?.name, "source.swift")
+    let oldFolder = address.child("Sources")
+    let oldRead = Task { await chat.files.expand(oldFolder) }
+    let deadline = ContinuousClock.now + .seconds(3)
+    while held == nil, .now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    let pending = try XCTUnwrap(held)
+    await chat.files.expand(oldFolder)
+    XCTAssertEqual(chat.files.loadingDirectories, [oldFolder], "Only one read can own this folder")
+    chat.selectProject(.init(id: "second", name: "Second", roots: ["/second"]))
+    chat.receive(.init(id: pending.id, body: .reply(.failure("Late failure from the first project"))), peerID: peer)
+    await oldRead.value
+    XCTAssertNil(chat.files.directoryErrors[oldFolder]); XCTAssertNil(chat.files.directories[address])
+    XCTAssertNil(chat.files.error)
+    await chat.stop(); let flushed = await queue.flush(); XCTAssertTrue(flushed)
+  }
+
   func testLargeVersionedReadDraftAndFileSwitchNeverRedirectLateEditorCallbacks() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("file-controller-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

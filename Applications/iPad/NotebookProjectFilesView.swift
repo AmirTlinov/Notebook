@@ -10,7 +10,8 @@ struct NotebookProjectFilesView: View {
         HStack {
           Text("Файлы").font(.system(size: 13, weight: .medium))
           Spacer()
-          Button { Task { await files.roots() } } label: { Image(systemName: "arrow.clockwise").frame(width: 36, height: 44) }.accessibilityLabel("Обновить дерево файлов")
+          Button { Task { await files.roots() } } label: { Image(systemName: "arrow.clockwise").frame(width: 36, height: 44) }
+            .accessibilityLabel("Обновить дерево файлов").accessibilityIdentifier("notebook-files-refresh")
         }
         if let selected = files.window.selected {
           Button { Task { await files.open(selected) } } label: {
@@ -32,7 +33,7 @@ struct NotebookProjectFilesView: View {
         if let error = files.error { Text(error).font(.system(size: 12)).foregroundStyle(.red).textSelection(.enabled).padding(.vertical, 8) }
       }.padding(.horizontal, 10).padding(.bottom, 12)
     }
-    .background(Color(.secondarySystemBackground).opacity(0.6))
+    .accessibilityElement(children: .contain)
     .accessibilityIdentifier("notebook-project-files")
   }
   private func folder(_ address: NotebookFileAddress, depth: Int) -> AnyView {
@@ -60,6 +61,12 @@ struct NotebookProjectFilesView: View {
           if isFolder, files.expandedFolders.contains(child) { folder(child, depth: depth + 1) }
         }
         if directory.next != nil { Button("Ещё файлы…") { Task { await files.expand(address, more: true) } }.font(.system(size: 12)).frame(minHeight: 44) }
+        if directory.entries.isEmpty { Text("Папка пуста").font(.system(size: 12)).foregroundStyle(.secondary).padding(.vertical, 8) }
+      }
+      if files.loadingDirectories.contains(address) { ProgressView().controlSize(.small).padding(.vertical, 8) }
+      if let error = files.directoryErrors[address] {
+        Text(error).font(.system(size: 12)).foregroundStyle(.secondary).textSelection(.enabled).padding(.vertical, 8)
+        Button("Повторить чтение") { Task { await files.expand(address) } }.font(.system(size: 12)).frame(minHeight: 44)
       }
     })
   }

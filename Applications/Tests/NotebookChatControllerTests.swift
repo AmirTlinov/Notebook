@@ -4,6 +4,41 @@ import XCTest
 
 @MainActor
 final class NotebookChatControllerTests: XCTestCase {
+  func testUncertainCreationKeepsItsIDWithoutPoisoningTheCurrentConversation() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("chat-creation-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), author = UUID(), peer = UUID(), thread = UUID().uuidString
+    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let input = NotebookChatInput(author: author, action: .create(title: "New", project: nil))
+    _ = try store.saveChatSubmission(input, to: peer)
+    _ = try store.advanceChatJob(input.id, from: .saved, to: .attempting)
+    let receipt = try store.advanceChatJob(input.id, from: .attempting, to: .uncertain, error: "Codex: timeout")
+    let queue = NotebookPersistenceQueue(store: store)
+    var chat: NotebookChatController!, offers = 0
+    chat = .init(persistence: queue, author: author) { envelope, _ in
+      guard case .request(let query) = envelope.body else { return }
+      let reply: NotebookChatReply
+      switch query {
+      case .job(let offered): XCTAssertEqual(offered.id, input.id); offers += 1; reply = .job(receipt)
+      case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil))
+      case .projects: reply = .projects(.init(projects: [], nextCursor: nil))
+      case .history: reply = .history(.init(messages: [], nextCursor: nil))
+      case .conversation: reply = .conversation(.init(threadID: thread, revision: 1, title: "Existing", ready: true, busy: false,
+        activeTurnID: nil, messages: [], requests: [], acceptedMessages: [:], turnStatuses: [:]))
+      default: reply = .failure("No new creation is allowed")
+      }
+      chat.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
+    }
+    await chat.start(); await chat.connect(peer); chat.select(.init(id: thread, title: "Existing", cwd: "/tmp")); chat.expanded = true
+    let deadline = ContinuousClock.now + .seconds(5)
+    while (offers < 2 || chat.conversation == nil), .now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    XCTAssertGreaterThanOrEqual(offers, 2); XCTAssertNotNil(chat.conversation)
+    XCTAssertNil(chat.error, "An old creation timeout cannot become a current connection failure")
+    XCTAssertEqual(chat.pendingCreations.map(\.id), [input.id], "The unresolved request remains visible in the chat list")
+    XCTAssertEqual(chat.threadID, thread); XCTAssertEqual(chat.jobs.count, 1)
+    await chat.stop(); let flushed = await queue.flush(); XCTAssertTrue(flushed)
+  }
+
   func testEventsBelongToCurrentPeerSubscriptionAndCannotOverwriteNewerText() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-chat-events-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

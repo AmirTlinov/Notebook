@@ -297,6 +297,10 @@ final class DrawingResponsivenessTests: XCTestCase {
     launchPortraitFixture(app)
     let paper = app.otherElements["paper-input"], frame = paper.frame, ink = paper.value as? String
     app.buttons["notebook-chat-toggle"].tap()
+    let files = app.scrollViews["notebook-project-files"], composer = app.otherElements["notebook-chat-composer"]
+    XCTAssertTrue(files.waitForExistence(timeout: 3))
+    XCTAssertGreaterThanOrEqual(files.frame.minX, composer.frame.maxX, "The one divider separates conversation/composer on the left from files on the right")
+    let panelShot = XCTAttachment(screenshot: app.screenshot()); panelShot.name = "files-right-of-conversation"; panelShot.lifetime = .keepAlways; add(panelShot)
     app.buttons["notebook-file-reopen"].tap()
     XCTAssertTrue(app.otherElements["notebook-code-document"].waitForExistence(timeout: 3))
     app.buttons["notebook-chat-toggle"].tap()

@@ -27,16 +27,19 @@ struct NotebookChatPanel: View {
           header
           projectTabs
           HStack(spacing: 0) {
-            if chat.files.window.sidebar {
-              NotebookProjectFilesView(files: chat.files, computer: chat.computerID)
-                .frame(width: min(220, max(130, size.width * 0.34)))
-              Divider()
+            VStack(spacing: 0) {
+              if chat.files.window.terminal == true { NotebookRunPanel(runs: chat.runs, files: chat.files, connected: chat.connected) }
+              else if chat.threadID == nil || chat.browsesChats { recentChats }
+              else { conversation }
+              composer
             }
-            if chat.files.window.terminal == true { NotebookRunPanel(runs: chat.runs, files: chat.files, connected: chat.connected) }
-            else if chat.threadID == nil || chat.browsesChats { recentChats }
-            else { conversation }
+            .frame(maxWidth: .infinity)
+            if chat.files.window.sidebar {
+              Divider()
+              NotebookProjectFilesView(files: chat.files, computer: chat.computerID)
+                .frame(width: filesWidth)
+            }
           }
-          composer
         }
       } else {
         Button { chat.expanded = true } label: {
@@ -107,7 +110,7 @@ struct NotebookChatPanel: View {
         }.accessibilityLabel("Остановить ответ").accessibilityIdentifier("notebook-chat-stop")
       }
       Button { chat.files.toggleSidebar() } label: {
-        Image(systemName: "sidebar.left").frame(width: 44, height: 44)
+        Image(systemName: "sidebar.right").frame(width: 44, height: 44)
       }.accessibilityLabel("Файлы проекта").accessibilityIdentifier("notebook-files-toggle")
       Button(action: createChat) {
         Image(systemName: "square.and.pencil").frame(width: 44, height: 44).contentShape(Rectangle())
@@ -138,6 +141,15 @@ struct NotebookChatPanel: View {
         VStack(alignment: .leading, spacing: 0) {
           Text(showsAllChats ? (chat.selectedProject?.name ?? "Чаты Codex") : "Недавние чаты")
             .font(.system(size: 14)).foregroundStyle(.secondary).padding(.bottom, 12)
+          ForEach(chat.pendingCreations) { job in
+            VStack(alignment: .leading, spacing: 4) {
+              Text("Новый чат").font(.system(size: 14, weight: .medium))
+              Text(job.state == .uncertain
+                ? "Codex не подтвердил создание. Проверьте список чатов; запрос не отправлялся повторно."
+                : "Создаётся на Mac…")
+                .font(.system(size: 12)).foregroundStyle(.secondary)
+            }.padding(.vertical, 10).accessibilityIdentifier("notebook-chat-creation-" + job.id.uuidString)
+          }
           if chat.tasks.isEmpty {
             Text(chat.connected ? (chat.taskCursor != nil ? "На этой странице нет других чатов. Перейдите к следующим." : "Здесь пока нет чатов.") : "Чаты появятся, когда Mac будет доступен.")
               .font(.system(size: 14)).foregroundStyle(.secondary).padding(.vertical, 12)
@@ -361,6 +373,10 @@ struct NotebookChatPanel: View {
               .disabled(!canSend).accessibilityIdentifier("notebook-chat-steer")
           }
           Button("Диктовка в черновик") { chat.voice.explainDictation() }
+          if compactComposer {
+            Button("Голосовой разговор", systemImage: "waveform") { Task { await chat.voice.begin() } }
+              .disabled(chat.voice.activeID != nil || !chat.connected || chat.threadID == nil || chat.browsesChats)
+          }
           Divider()
           Button("Совместные ходы", systemImage: "clock.arrow.circlepath", action: openHistory)
             .accessibilityIdentifier("collaboration-history")
@@ -376,10 +392,12 @@ struct NotebookChatPanel: View {
         if chat.saving || model.isSavingAgentQuestion {
           ProgressView().controlSize(.small).frame(width: 44, height: 44)
         }
-        Button { Task { await chat.voice.begin() } } label: {
-          Image(systemName: "waveform").font(.system(size: 16)).frame(width: 44, height: 44)
-        }.accessibilityLabel("Голосовой разговор с Codex").accessibilityIdentifier("notebook-chat-voice")
-          .disabled(chat.voice.activeID != nil || !chat.connected || chat.threadID == nil || chat.browsesChats)
+        if !compactComposer {
+          Button { Task { await chat.voice.begin() } } label: {
+            Image(systemName: "waveform").font(.system(size: 16)).frame(width: 44, height: 44)
+          }.accessibilityLabel("Голосовой разговор с Codex").accessibilityIdentifier("notebook-chat-voice")
+            .disabled(chat.voice.activeID != nil || !chat.connected || chat.threadID == nil || chat.browsesChats)
+        }
         Button { model.sendChatMessage() } label: {
           Image(systemName: "arrow.up").font(.system(size: 15, weight: .medium))
             .foregroundStyle(.white).frame(width: 30, height: 30)
@@ -395,9 +413,11 @@ struct NotebookChatPanel: View {
       .accessibilityElement(children: .contain)
       .accessibilityIdentifier("notebook-chat-composer")
     }
-    .padding(.leading, 8).padding(.trailing, 44).padding(.bottom, 8).padding(.top, 8)
+    .padding(.leading, 8).padding(.trailing, chat.files.window.sidebar ? 8 : 44).padding(.bottom, 8).padding(.top, 8)
   }
 
+  private var filesWidth: CGFloat { min(220, max(120, size.width * 0.32)) }
+  private var compactComposer: Bool { size.width - (chat.files.window.sidebar ? filesWidth : 0) < 300 }
   private var title: String {
     chat.conversation?.title ?? chat.tasks.first(where: { $0.id == chat.threadID })?.title ?? (chat.threadID == nil ? "Новый чат" : "Чат Codex")
   }

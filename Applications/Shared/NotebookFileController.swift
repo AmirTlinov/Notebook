@@ -13,6 +13,8 @@ final class NotebookFileController {
   }
   private(set) var directories: [NotebookFileAddress: NotebookFileDirectory] = [:]
   private(set) var expandedFolders = Set<NotebookFileAddress>()
+  private(set) var loadingDirectories = Set<NotebookFileAddress>()
+  private(set) var directoryErrors: [NotebookFileAddress: String] = [:]
   private(set) var error: String?
   private(set) var notice: String?
   private(set) var loading = false
@@ -30,6 +32,8 @@ final class NotebookFileController {
   @ObservationIgnored private var integrating = Set<UUID>()
   @ObservationIgnored private var loaded = false
   @ObservationIgnored private var stopped = false
+  @ObservationIgnored private var treeGeneration = UUID()
+  @ObservationIgnored private var directoryRetries: [NotebookFileAddress: (after: ContinuousClock.Instant, more: Bool)] = [:]
 
   init(persistence: NotebookPersistenceQueue, author: UUID) { self.persistence = persistence; self.author = author; notes = .init(persistence: persistence, author: author) }
   func start() async throws {
@@ -42,11 +46,12 @@ final class NotebookFileController {
         if let pending = document?.pending ?? document?.rename, let job = chat?.jobs.first(where: { $0.id == pending }), chat?.connected == true { receive(job) }
         else if window.isOpen, !loading, !saving, !notes.contactActive, chat?.connected == true { await refresh() }
         if window.isOpen { await notes.refresh() }
+        await refreshVisibleDirectories()
       }
     }
   }
   func suspendForComputerSwitch() async {
-    opening = nil; loading = false; upload?.cancel(); await upload?.value
+    opening = nil; loading = false; resetTree(); upload?.cancel(); await upload?.value
   }
   func restoreWindow() async throws {
     let author = author, computer = chat?.computerID
@@ -60,36 +65,74 @@ final class NotebookFileController {
     await installWindow(saved.0, document: saved.1)
   }
   func installWindow(_ state: NotebookFileWindowState, document: NotebookFileDraft?) async {
-    window = state; self.document = document; directories = [:]; expandedFolders = []; navigation = nil; error = nil; notice = nil
+    window = state; self.document = document; resetTree(); navigation = nil; error = nil; notice = nil
     await notes.select(document?.address)
   }
   func stop() async {
-    stopped = true; notes.stop(); opening = nil
+    stopped = true; notes.stop(); opening = nil; treeGeneration = UUID(); loadingDirectories = []
     poll?.cancel(); upload?.cancel()
     await poll?.value; await upload?.value
     poll = nil; upload = nil
   }
   func chooseProject(_ project: CodexProject?) {
-    window.project = project; directories = [:]; expandedFolders = []; persistWindow()
+    guard window.project != project else { return }
+    window.project = project; resetTree(); persistWindow()
     if window.sidebar { Task { await roots() } }
   }
   func toggleTerminal() { window.terminal = !(window.terminal ?? false); persistWindow() }
   func chooseRunRoot(_ root: String) { window.runRoot = root; persistWindow() }
   func toggleSidebar() { window.sidebar.toggle(); persistWindow(); if window.sidebar { Task { await roots() } } }
   func roots() async {
-    guard let computer = chat?.computerID, let project = window.project else { return }
-    for root in project.roots { await expand(.init(computer: computer, project: project.id, root: root, path: "")) }
+    guard !stopped, chat?.connected == true, let computer = chat?.computerID, let project = window.project else { return }
+    for root in project.roots {
+      guard window.project == project, chat?.computerID == computer else { return }
+      await expand(.init(computer: computer, project: project.id, root: root, path: ""))
+    }
+  }
+  /// Only visible reads recover automatically. Saved file mutations still use
+  /// their durable job and never enter this retry path.
+  func refreshVisibleDirectories(now: ContinuousClock.Instant = .now) async {
+    guard !stopped, window.sidebar, chat?.expanded == true, chat?.connected == true,
+      let computer = chat?.computerID, let project = window.project else { return }
+    let roots = project.roots.map { NotebookFileAddress(computer: computer, project: project.id, root: $0, path: "") }
+    let visible = expandedFolders.filter { address in
+      guard !address.path.isEmpty else { return false }
+      var parent = NotebookFileAddress(computer: address.computer, project: address.project, root: address.root, path: "")
+      for component in address.path.split(separator: "/").dropLast() {
+        parent = parent.child(String(component))
+        if !expandedFolders.contains(parent) { return false }
+      }
+      return true
+    }
+    for address in roots + visible.sorted(by: { $0.path < $1.path }) {
+      guard !loadingDirectories.contains(address) else { continue }
+      if let retry = directoryRetries[address] {
+        if retry.after <= now { await expand(address, more: retry.more); return }
+      } else if directories[address] == nil { await expand(address); return }
+    }
+  }
+  private func resetTree() {
+    treeGeneration = UUID(); directories = [:]; expandedFolders = []
+    loadingDirectories = []; directoryErrors = [:]; directoryRetries = [:]
   }
   func expand(_ address: NotebookFileAddress, more: Bool = false) async {
+    guard !stopped, address.computer == chat?.computerID, address.project == window.project?.id,
+      window.project?.roots.contains(address.root) == true, loadingDirectories.insert(address).inserted else { return }
+    let generation = treeGeneration
+    defer { if generation == treeGeneration { loadingDirectories.remove(address) } }
     expandedFolders.insert(address)
+    directoryErrors[address] = nil; directoryRetries[address] = nil
     do {
       guard case .directory(let page) = try await query(.directory(address, after: more ? directories[address]?.next : nil)) else { throw NotebookTransportError.invalidAcknowledgement }
-      guard address.computer == chat?.computerID, address.project == window.project?.id else { return }
+      guard !stopped, generation == treeGeneration else { return }
       if more, let previous = directories[address] {
         directories[address] = .init(entries: previous.entries + page.entries.filter { entry in !previous.entries.contains { $0.name == entry.name } }, next: page.next)
       } else { directories[address] = page }
-      error = nil
-    } catch { self.error = error.localizedDescription }
+    } catch {
+      guard !stopped, generation == treeGeneration else { return }
+      directoryErrors[address] = error.localizedDescription
+      directoryRetries[address] = (.now + .seconds(15), more)
+    }
   }
   func collapse(_ address: NotebookFileAddress) { expandedFolders.remove(address) }
   func open(_ address: NotebookFileAddress) async {
@@ -219,7 +262,7 @@ final class NotebookFileController {
         let selected = document?.address == request.address
         let moved = try await persistence.submit(publishesChanges: true) { try $0.acceptFileRename(job) }
         guard !stopped, selected, document?.address == request.address, let moved else { return }
-        document = moved; window.selected = moved.address; navigation = nil; directories = [:]
+        document = moved; window.selected = moved.address; navigation = nil; resetTree()
         error = job.error; notice = job.error ?? "Файл переименован на Mac; черновик и пометки сохранены"
         await notes.select(moved.address)
       } catch { self.error = error.localizedDescription }

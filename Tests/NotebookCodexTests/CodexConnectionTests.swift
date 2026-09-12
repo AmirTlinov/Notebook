@@ -68,6 +68,37 @@ struct CodexConnectionTests {
     await #expect(throws: CodexBridgeError.disconnected) { try await rpc.request("turn/start", params: .object([:])) }
     await rpc.stop()
   }
+  @Test func slowStartupRetainsItsReplyBeyondTheReadDeadlineWhileOtherRequestsContinue() async throws {
+    let fixture = try RPCFixture("""
+      import time,os
+      start=read(); assert start['method']=='thread/start'
+      open(os.path.join(os.path.dirname(__file__),'started'),'w').close()
+      q=read(); assert q['method']=='account/read'; reply(q,{'available':True})
+      time.sleep(13)
+      reply(start,{'thread':{'id':'a2635f14-064e-4dc1-87ea-2a47ac04e4df'}})
+      assert sys.stdin.read()==''
+      """)
+    defer { fixture.remove() }
+    let rpc = CodexRPC(channel: fixture.channel); try await rpc.start()
+    let start = Task { try await rpc.request("thread/start", params: .object([:]), timeout: nil) }
+    let deadline = ContinuousClock.now + .seconds(3)
+    while !FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("started").path), .now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(try await rpc.request("account/read", params: .object([:]))["available"] == .bool(true))
+    #expect(try await start.value["thread"]?["id"]?.string == "a2635f14-064e-4dc1-87ea-2a47ac04e4df")
+    await rpc.stop()
+  }
+  @Test func cancellingUntimedStartupReleasesTheCallerWithoutRepeatingTheMutation() async throws {
+    let fixture = try RPCFixture("q=read(); assert q['method']=='thread/start'\nassert sys.stdin.read()==''\n")
+    defer { fixture.remove() }
+    let rpc = CodexRPC(channel: fixture.channel); try await rpc.start()
+    let start = Task { try await rpc.request("thread/start", params: .object([:]), timeout: nil) }
+    try await Task.sleep(for: .milliseconds(100))
+    start.cancel()
+    await #expect(throws: CodexBridgeError.disconnected) { try await start.value }
+    await rpc.stop()
+  }
   @Test func fragmentedFramesRetainUnicodeAndBoundTheirSize() throws {
     let value: JSONValue = .object(["text": .string("∫ x² dx 👨‍👩‍👧‍👦")])
     let bytes = try CodexFrames.encode(value)

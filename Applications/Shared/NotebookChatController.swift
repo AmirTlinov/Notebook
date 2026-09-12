@@ -228,7 +228,16 @@ final class NotebookChatController {
     guard edit.isValid else { return false }
     return await submit(.updateProject(edit))
   }
-  func create() async { _ = await submit(.create(title: "Занятие в Notebook", project: selectedProject)) }
+  func create() async {
+    if await submit(.create(title: "Занятие в Notebook", project: selectedProject)) { browsesChats = true; catalogue() }
+  }
+
+  var pendingCreations: [NotebookChatJob] {
+    jobs.filter { job in
+      guard !job.isTerminal, case .create(_, let project) = job.input.action else { return false }
+      return selectedProject == nil || project?.id == selectedProject?.id
+    }
+  }
 
   func sendMessage(threadID submittedThread: String, text: String, context: String, attentionContextID: UUID? = nil, steeringTurnID: String? = nil) async -> Bool {
     guard submittedThread != threadID || (!continuationUnavailable && !browsesChats) else { return false }
@@ -364,6 +373,7 @@ final class NotebookChatController {
     switch (query, reply) {
     case (.job(let input), .job(let job)):
       guard input == job.input else { throw NotebookTransportError.invalidAcknowledgement }
+      let previousRevision = jobs.first(where: { $0.id == input.id })?.revision ?? -1
       let received = try await persistence.submit { try $0.receiveChatReceipt(job) }
       let destination = try await persistence.submit { try $0.chatDestination(input.id) }
       guard destination == peer else { return }
@@ -379,7 +389,11 @@ final class NotebookChatController {
           files.chooseProject(project); taskCursor = nil; displayedCatalogueCursor = nil; catalogue()
         }
       }
-      try await refreshJobs(); error = job.error
+      try await refreshJobs()
+      // Receipt polling is not a failure of the selected conversation. In
+      // particular, an uncertain creation must not poison every later read.
+      if received.revision > previousRevision, let message = received.error, received.input.action.threadID == threadID,
+        received.input.action.threadID != nil { error = message }
     case (.projects(let cursor), .projects(let page)):
       if cursor == nil { projects = page.projects }
       else { projects += page.projects.filter { candidate in !projects.contains { $0.id == candidate.id } } }

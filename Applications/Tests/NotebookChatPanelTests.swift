@@ -18,7 +18,12 @@ final class NotebookChatPanelTests: XCTestCase {
     try await panel(width: 560, height: 640, name: "chat-active-projects", active: true)
   }
 
-  private func panel(width: CGFloat, height: CGFloat, name: String, active: Bool = false) async throws {
+  func testFilesShareThePanelOnTheRightWithAReadableComposer() async throws {
+    try await panel(width: 560, height: 640, name: "chat-files-right", files: true)
+    try await panel(width: 420, height: 360, name: "chat-files-right-compact", files: true)
+  }
+
+  private func panel(width: CGFloat, height: CGFloat, name: String, active: Bool = false, files: Bool = false) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("chat-panel-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
@@ -35,6 +40,11 @@ final class NotebookChatPanelTests: XCTestCase {
       if case .activity(let ids) = query {
         receiver?.receive(.init(id: envelope.id, body: .reply(.activity(ids.map { .init(id: $0, status: active ? .running : .idle, summary: active ? "Проверяю сохранение и работу чата на iPad" : nil) }))), peerID: peer); return
       }
+      if case .file(.directory) = query {
+        receiver?.receive(.init(id: envelope.id, body: .reply(.file(.directory(.init(entries: [
+          .init(name: "Sources", kind: .directory), .init(name: "Package.swift", kind: .file),
+          .init(name: "README.md", kind: .file)], next: nil))))), peerID: peer); return
+      }
       guard case .catalogue = query else { return XCTFail("This view never starts or selects a task") }
       let tasks = ["Изучение высшей математики", "Сделай цветным", "Сделай цветным"].enumerated().map {
         CodexTask(id: "reference-chat-\($0.offset)", title: $0.element, cwd: "/fixture", projectID: "project")
@@ -48,6 +58,13 @@ final class NotebookChatPanelTests: XCTestCase {
     XCTAssertEqual(chat.tasks.count, 3)
     XCTAssertEqual(chat.activities.count, 3)
     XCTAssertEqual(chat.projects.count, 1)
+    if files {
+      chat.selectProject(chat.projects.first)
+      var state = chat.files.window; state.sidebar = true
+      await chat.files.installWindow(state, document: nil)
+      await chat.files.roots()
+      XCTAssertEqual(chat.files.directories.count, 1)
+    }
     await chat.stop()
 
     let host = UIHostingController(rootView: NotebookChatPanel(chat: chat, size: .init(width: width, height: height),
