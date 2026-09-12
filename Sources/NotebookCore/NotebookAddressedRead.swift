@@ -169,55 +169,127 @@ extension NotebookStore {
       return
     }
     guard fragment.file == "board.json", let parent = fragment.parent,
-      let boardString = parent.components(separatedBy: "@").last, let boardID = UUID(uuidString: boardString),
-      ["board/freeItems", "board/stacks", "board/elements"].contains(fragment.collection) else { return }
-    let previousOwners = try database.rows("SELECT item_id FROM item_owners WHERE address=?", [.text(fragment.address)]).compactMap { $0[0].text.flatMap(UUID.init(uuidString:)) }
-    for id in previousOwners { try database.noteOwner(.item, id.uuidString.lowercased()) }
-    try database.run("DELETE FROM spatial_entries WHERE address=?", [.text(fragment.address)])
-    try database.run("DELETE FROM item_owners WHERE address=?", [.text(fragment.address)])
-    func geometry(_ id: UUID) throws -> WorkspaceItemGeometry {
-      let header = try readItemHeader(id)
-      if header?.kind == .document {
-        guard let paper = try storedFragments(address: documentFile(id) + "#", descendants: false).first?.value["paperSize"]?.decode(DocumentPaperSize.self) else {
-          throw NotebookStorageError.corruptRecord(documentFile(id))
-        }
-        return .document(paper)
-      }
-      return .notebook
-    }
-    func insert(id: String, kind: String, key: String, origin: WorldPoint, width: Double, height: Double, z: Double, owner: UUID? = nil) throws {
-      let maximum = origin.offsetBy(x: width, y: height), layer = kind == "item" ? 1 : 0
-      try database.run("INSERT INTO spatial_entries(entry_id,address,board_id,owner_id,kind,layer,z_index,paint_key,min_tx,min_ty,min_x,min_y,max_tx,max_ty,max_x,max_y) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [
-        .text(fragment.address + ":" + id), .text(fragment.address), .text(boardID.uuidString.lowercased()), .text(id), .text(kind), .integer(Int64(layer)), .real(z), .text(key),
-        .integer(origin.tileX), .integer(origin.tileY), .real(origin.localX), .real(origin.localY), .integer(maximum.tileX), .integer(maximum.tileY), .real(maximum.localX), .real(maximum.localY)])
-      if kind == "coverElement" { try database.noteOwner(.cover, fragment.address) }
-      if let owner {
-        try database.noteOwner(.item, owner.uuidString.lowercased())
-        try database.run("INSERT INTO item_owners(item_id,board_id,address) VALUES(?,?,?) ON CONFLICT(item_id) DO UPDATE SET board_id=excluded.board_id,address=excluded.address", [.text(owner.uuidString.lowercased()), .text(boardID.uuidString.lowercased()), .text(fragment.address)])
-      }
-    }
-    switch fragment.collection {
-    case "board/freeItems":
-      let item = try fragment.value.decode(FreeItemPlacement.self), size = try geometry(item.itemID)
-      try insert(id: item.itemID.uuidString.lowercased(), kind: "item", key: item.itemID.uuidString, origin: item.center.offsetBy(x: -size.width / 2, y: -size.height / 2), width: size.width, height: size.height, z: Double(item.zIndex), owner: item.itemID)
-    case "board/stacks":
-      let stack = try fragment.value.decode(WorkspaceItemStack.self)
-      for (position, id) in stack.itemIDs.enumerated() {
-        let size = try geometry(id)
-        let collapsed = WorkspaceItemStackPresentation.boardCenter(of: id, in: stack, cameraScale: SpatialCamera.minimumScale, viewport: .init(x: 834, y: 1194)) ?? stack.center
-        let fanned = WorkspaceItemStackPresentation.focusedCenter(of: id, in: stack) ?? stack.center
-        let a = stack.center.delta(to: collapsed), b = stack.center.delta(to: fanned)
-        let left = min(0, a.x, b.x) - size.width / 2, top = min(0, a.y, b.y) - size.height / 2
-        try insert(id: id.uuidString.lowercased(), kind: "item", key: id.uuidString, origin: stack.center.offsetBy(x: left, y: top), width: max(0, a.x, b.x) + size.width / 2 - left,
-          height: max(0, a.y, b.y) + size.height / 2 - top, z: Double(stack.zIndex) + Double(position) / 100, owner: id)
-      }
-    case "board/elements":
+      let boardString = parent.components(separatedBy: "@").last,
+      let boardID = UUID(uuidString: boardString) else { return }
+    if fragment.collection == "board/placements" {
+      try updatePlacementAddressIndexes(fragment, boardID: boardID, database: database)
+    } else if fragment.collection == "board/elements" {
+      try database.run("DELETE FROM spatial_entries WHERE address=?", [.text(fragment.address)])
       let element = try fragment.value.decode(SpatialElement.self)
       let id = element.surface.kind == .cover ? (element.surface.ownerID?.uuidString.lowercased() ?? "") : element.id
-      try insert(id: id, kind: element.surface.kind == .cover ? "coverElement" : "element", key: element.id,
-        origin: (element.worldOrigin ?? .zero).offsetBy(x: element.frame.x, y: element.frame.y), width: element.frame.width, height: element.frame.height, z: Double(fragment.position))
-    default: break
+      try insertSpatialEntry(address: fragment.address, boardID: boardID, id: id,
+        kind: element.surface.kind == .cover ? "coverElement" : "element", key: element.id,
+        origin: (element.worldOrigin ?? .zero).offsetBy(x: element.frame.x, y: element.frame.y),
+        width: element.frame.width, height: element.frame.height, z: Double(fragment.position), database: database)
+      if element.surface.kind == .cover { try database.noteOwner(.cover, fragment.address) }
     }
+  }
+
+  private func insertSpatialEntry(address: String, boardID: UUID, id: String, kind: String,
+    key: String, origin: WorldPoint, width: Double, height: Double, z: Double,
+    database: NotebookSQLConnection) throws {
+    let maximum = origin.offsetBy(x: width, y: height)
+    try database.run("INSERT INTO spatial_entries(entry_id,address,board_id,owner_id,kind,layer,z_index,paint_key,min_tx,min_ty,min_x,min_y,max_tx,max_ty,max_x,max_y) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [
+      .text(address + ":" + id), .text(address), .text(boardID.uuidString.lowercased()), .text(id),
+      .text(kind), .integer(kind == "item" ? 1 : 0), .real(z), .text(key),
+      .integer(origin.tileX), .integer(origin.tileY), .real(origin.localX), .real(origin.localY),
+      .integer(maximum.tileX), .integer(maximum.tileY), .real(maximum.localX), .real(maximum.localY)])
+  }
+
+  private func placementGroupIDs(boardID: String, stackID: String, database: NotebookSQLConnection) throws -> [String] {
+    try database.rows("SELECT item_id FROM item_owners INDEXED BY item_stack WHERE board_id=? AND stack_id=? ORDER BY stack_order,placement_counter DESC,placement_actor DESC,item_id LIMIT 5",
+      [.text(boardID), .text(stackID)]).compactMap { $0[0].text }
+  }
+
+  /// The item and at most five visible siblings are one bounded presentation
+  /// query. A capacity overflow keeps its own row even outside that first five.
+  func placementFragments(itemID: UUID) throws -> [NotebookStoredFragment] {
+    guard let owner = try currentSQL!.rows("SELECT board_id,stack_id,address FROM item_owners WHERE item_id=?",
+      [.text(itemID.uuidString.lowercased())]).first else { return [] }
+    var ids = [itemID.uuidString.lowercased()]
+    if let stack = owner[1].text {
+      ids += try placementGroupIDs(boardID: owner[0].text!, stackID: stack, database: currentSQL!)
+    }
+    return try Set(ids).sorted().compactMap { id in
+      let address = "board.json#/boards/@" + owner[0].text! + "/board/placements/@" + id
+      return try storedFragments(address: address, descendants: false).first
+    }
+  }
+
+  private func updatePlacementAddressIndexes(_ fragment: NotebookStoredFragment, boardID: UUID,
+    database: NotebookSQLConnection) throws {
+    let value = try fragment.value.decode(WorkspacePlacement.self), id = value.id.uuidString.lowercased()
+    guard fragment.member == id, fragment.address == fragment.parent! + "/board/placements/@" + id,
+      fragment.collections.isEmpty else { throw NotebookStorageError.invalidTransaction("placement address") }
+    let old = try database.rows("SELECT board_id,stack_id FROM item_owners WHERE item_id=?", [.text(id)]).first
+    var affected = Set([id])
+    if let old, let group = old[1].text {
+      affected.formUnion(try placementGroupIDs(boardID: old[0].text!, stackID: group, database: database))
+    }
+    // A board retains its tombstone after transfer. It can retire only that
+    // exact placement address, never a live claim installed by another board
+    // earlier in the same transaction or during later index reconstruction.
+    if value.pose == nil {
+      try database.run("DELETE FROM item_owners WHERE item_id=? AND address=?", [.text(id), .text(fragment.address)])
+    }
+    try database.run("DELETE FROM spatial_entries WHERE address=?", [.text(fragment.address)])
+    if let pose = value.pose {
+      if let group = pose.stackID,
+        let existing = try database.rows("SELECT address FROM item_owners WHERE board_id=? AND stack_id=? AND item_id<>? LIMIT 1",
+          [.text(boardID.uuidString.lowercased()), .text(group.uuidString.lowercased()), .text(id)]).first?[0].text,
+        let anchor = try storedFragments(address: existing, descendants: false).first?.value.decode(WorkspacePlacement.self).pose {
+        guard anchor.center == pose.center, anchor.zIndex == pose.zIndex else {
+          throw NotebookStorageError.invalidTransaction("stack UUID has one fixed anchor")
+        }
+      }
+      try database.run("INSERT INTO item_owners(item_id,board_id,address,stack_id,stack_order,placement_counter,placement_actor) VALUES(?,?,?,?,?,?,?) ON CONFLICT(item_id) DO UPDATE SET board_id=excluded.board_id,address=excluded.address,stack_id=excluded.stack_id,stack_order=excluded.stack_order,placement_counter=excluded.placement_counter,placement_actor=excluded.placement_actor", [
+        .text(id), .text(boardID.uuidString.lowercased()), .text(fragment.address),
+        pose.stackID.map { .text($0.uuidString.lowercased()) } ?? .null, .integer(Int64(pose.stackOrder)),
+        .integer(Int64(value.stamp.counter)), .text(value.stamp.actor.uuidString.lowercased())])
+      if let group = pose.stackID {
+        affected.formUnion(try placementGroupIDs(boardID: boardID.uuidString.lowercased(), stackID: group.uuidString.lowercased(), database: database))
+      }
+    }
+    if let old, let group = old[1].text {
+      affected.formUnion(try placementGroupIDs(boardID: old[0].text!, stackID: group, database: database))
+    }
+    for item in affected {
+      try database.noteOwner(.item, item)
+      try refreshPlacementSpatialEntry(UUID(uuidString: item)!, database: database)
+    }
+  }
+
+  private func refreshPlacementSpatialEntry(_ itemID: UUID, database: NotebookSQLConnection) throws {
+    guard let owner = try database.rows("SELECT board_id,address FROM item_owners WHERE item_id=?",
+      [.text(itemID.uuidString.lowercased())]).first,
+      let boardID = owner[0].text.flatMap(UUID.init(uuidString:)), let address = owner[1].text else { return }
+    let placements = try placementFragments(itemID: itemID).map { try $0.value.decode(WorkspacePlacement.self) }
+    let layout = WorkspacePlacementLayout(placements)
+    let header = try readItemHeader(itemID)
+    let size: WorkspaceItemGeometry
+    if header?.kind == .document {
+      guard let paper = try readDocumentPaperSize(itemID) else { throw NotebookStorageError.corruptRecord(documentFile(itemID)) }
+      size = .document(paper)
+    } else { size = .notebook }
+    let origin: WorldPoint, width: Double, height: Double, z: Double
+    if let stack = layout.stacks.first(where: { $0.itemIDs.contains(itemID) }),
+      let position = stack.itemIDs.firstIndex(of: itemID) {
+      let collapsed = WorkspaceItemStackPresentation.boardCenter(of: itemID, in: stack,
+        cameraScale: SpatialCamera.minimumScale, viewport: .init(x: 834, y: 1194)) ?? stack.center
+      let fanned = WorkspaceItemStackPresentation.focusedCenter(of: itemID, in: stack) ?? stack.center
+      let a = stack.center.delta(to: collapsed), b = stack.center.delta(to: fanned)
+      let left = min(0, a.x, b.x) - size.width / 2, top = min(0, a.y, b.y) - size.height / 2
+      origin = stack.center.offsetBy(x: left, y: top)
+      width = max(0, a.x, b.x) + size.width / 2 - left
+      height = max(0, a.y, b.y) + size.height / 2 - top
+      z = Double(stack.zIndex) + Double(position) / 100
+    } else if let item = layout.freeItems.first(where: { $0.id == itemID }) {
+      origin = item.center.offsetBy(x: -size.width / 2, y: -size.height / 2)
+      width = size.width; height = size.height; z = Double(item.zIndex)
+    } else { throw NotebookStorageError.corruptRecord("placement projection") }
+    try database.run("DELETE FROM spatial_entries WHERE address=?", [.text(address)])
+    try insertSpatialEntry(address: address, boardID: boardID, id: itemID.uuidString.lowercased(), kind: "item",
+      key: itemID.uuidString, origin: origin, width: width, height: height, z: z, database: database)
   }
 
   func spatialRows(boardID: UUID, coverID: UUID? = nil, bounds: WorkspaceSpatialBounds, limit: Int, after: NotebookScenePaintCursor? = nil, elementsOnly: Bool = false) throws -> [[NotebookSQLValue]] {
@@ -262,13 +334,17 @@ extension NotebookStore {
       var cost = 0, truncated = matches.count > limit
       func include(_ candidate: String, required: Bool) throws {
         guard !selected.contains(candidate) else { return }
-        let content = try storedFragments(address: candidate)
-        let primitiveCount = content.first(where: { $0.address == candidate })?.value["itemIDs"]?.array.count ?? 1
+        let own = try storedFragments(address: candidate)
+        let content: [NotebookStoredFragment]
+        if let row = own.first, row.collection == "board/placements", let id = UUID(uuidString: row.member) {
+          content = try placementFragments(itemID: id).filter { !selected.contains($0.address) }
+        } else { content = own }
+        let primitiveCount = content.count
         guard cost + primitiveCount <= limit else {
           if required { throw NotebookStorageError.limitExceeded("scene_pins") }
           truncated = true; return
         }
-        selected.insert(candidate); cost += primitiveCount; rows += content
+        selected.formUnion(content.map(\.address)); cost += primitiveCount; rows += content
       }
       for candidate in mandatory { try include(candidate, required: true) }
       for candidate in matches.compactMap({ $0[1].text }) { try include(candidate, required: false) }
@@ -287,7 +363,8 @@ extension NotebookStore {
         if header.kind == .document { paper[id] = try storedFragments(address: documentFile(id) + "#", descendants: false).first?.value["paperSize"]?.decode(DocumentPaperSize.self) }
       }
       let targets = [CollaborationTarget(kind: .board, id: boardID)] + items.map { CollaborationTarget(kind: .cover, id: $0.id, boardID: boardID) }
-      return .init(header: try workspaceHeader(), boardID: boardID, items: items, boards: [board], documentPaper: paper, pageCounts: counts,
+      guard let contentRevision = try boardContentRevision(boardID) else { throw CocoaError(.fileNoSuchFile) }
+      return .init(header: try workspaceHeader(), boardID: boardID, items: items, boards: [board], boardContentRevisions: [boardID: contentRevision], documentPaper: paper, pageCounts: counts,
         referenceIdentities: try referenceIdentities(targets: targets), totalMatches: cost, truncated: truncated)
     }
   }
@@ -337,10 +414,10 @@ extension NotebookStore {
   public func readBoardItem(_ itemID: UUID) throws -> BoardNode? {
     try readTransaction { _ in
       guard let owner = try currentSQL!.rows("SELECT board_id,address FROM item_owners WHERE item_id=?", [.text(itemID.uuidString.lowercased())]).first,
-        let boardID = owner[0].text, let placement = owner[1].text else { return nil }
+        let boardID = owner[0].text, let _ = owner[1].text else { return nil }
       let address = "board.json#/boards/@" + boardID
       var rows = try storedFragments(address: address, descendants: false)
-      rows += try storedFragments(address: placement)
+      rows += try placementFragments(itemID: itemID)
       try appendBoardCausalFragments(to: &rows, address: address)
       return try NotebookRecordCodec.decode(rows, root: address).decode(BoardNode.self)
     }
@@ -431,10 +508,10 @@ extension NotebookStore {
   }
 
   func appendBoardCausalFragments(to rows: inout [NotebookStoredFragment], address: String) throws {
-    let members = rows.filter { $0.parent == address && ["board/freeItems", "board/stacks", "board/elements"].contains($0.collection) }
+    let members = rows.filter { $0.parent == address && ["board/elements"].contains($0.collection) }
     rows += try causalFragments(parent: address, collection: "board/collaboration/fields",
       memberPrefixes: members.map { fieldKey([$0.collection.replacingOccurrences(of: "board/", with: ""), $0.member]) + "/" },
-      includeKeys: ["freeItems/order", "stacks/order", "elements/order"])
+      includeKeys: ["elements/order"])
   }
 }
 

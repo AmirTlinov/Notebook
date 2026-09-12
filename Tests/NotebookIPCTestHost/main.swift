@@ -21,6 +21,7 @@ struct Seed: Decodable {
 actor TestOwner {
   let store: NotebookStore
   private var readQueries: [String] = []
+  private var concurrentBoardMove: BoardHierarchy?
   init(root: URL) { store = NotebookStore(root: root) }
   func handle(_ command: NotebookCommand) throws -> JSONValue {
     if command.command == .read {
@@ -90,6 +91,32 @@ actor TestOwner {
         throw NotebookStorageError.invalidTransaction("fixture placement")
       }
       try store.saveBoard(hierarchy, items: workspace.items)
+    case "prepareLowerClockBoardMove":
+      guard concurrentBoardMove == nil else { throw NotebookStorageError.invalidTransaction("fixture pending move") }
+      let workspace = try store.loadIndex()
+      let initial = try store.loadBoard(items: workspace.items)
+      var concurrent = initial, high = initial
+      guard concurrent.moveItem(workspace.selectedItemID, in: workspace.rootBoardID,
+        to: try value.decode(WorldPoint.self), actor: UUID()) else {
+        throw NotebookStorageError.invalidTransaction("fixture concurrent placement")
+      }
+      for index in 0..<3 {
+        let element = SpatialElement(id: "outside-window-\(index)", surface: .board(workspace.rootBoardID), kind: .nativeText,
+          frame: .init(x: 0, y: 0, width: 100, height: 40), worldOrigin: .init(x: 100_000, y: 100_000),
+          source: "Unrelated edit \(index)", stamp: .init(counter: 0, actor: workspace.stamp.actor))
+        guard high.upsertElement(element, in: workspace.rootBoardID, expected: nil, actor: workspace.stamp.actor) else {
+          throw NotebookStorageError.invalidTransaction("fixture unrelated edit")
+        }
+      }
+      _ = try store.saveBoardEdits(before: initial, after: high)
+      concurrentBoardMove = concurrent
+      return try .encode(high.board(workspace.rootBoardID)?.stamp)
+    case "commitLowerClockBoardMove":
+      guard let concurrent = concurrentBoardMove else { throw NotebookStorageError.invalidTransaction("fixture missing move") }
+      let workspace = try store.loadIndex()
+      let merged = try store.saveMergedBoard(concurrent, items: workspace.items)
+      concurrentBoardMove = nil
+      return try .encode(merged.board(workspace.rootBoardID)?.stamp)
     case "presence": try store.savePresence(value.decode(SessionPresence.self))
     case "ink": try store.saveSpatialInk(value.decode(SpatialInkJournal.self))
     case "input": try store.saveInputActivity(value.decode(NotebookInputActivity.self))

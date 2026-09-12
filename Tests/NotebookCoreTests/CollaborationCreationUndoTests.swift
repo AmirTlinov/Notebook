@@ -16,7 +16,6 @@ private struct CreationUndoFixture {
     boardID = header.rootBoardID
     initialItemID = try #require(try store.readItemHeaders(limit: 1).first?.id)
     _ = try store.loadOrCreateSpatialInk(actor: human)
-    FileHandle.standardError.write(Data("CREATION_UNDO_FIXTURE \(root.path)\n".utf8))
   }
 
   func clean() { try? FileManager.default.removeItem(at: root) }
@@ -24,7 +23,7 @@ private struct CreationUndoFixture {
 
   func action(_ operations: [CollaborationOperation]) throws -> CollaborationAction {
     .init(summary: "Создать связанные материалы одним ходом", expected: [
-      .init(target: board, revision: try store.readBoardNode(boardID)!.board.stamp.revision),
+      .init(target: board, revision: try store.targetContentRevision(target: board)),
       .init(target: .init(kind: .workspace, id: boardID), revision: try store.workspaceHeader().stamp.revision)
     ], operations: operations)
   }
@@ -231,7 +230,9 @@ func creationUndoNestedAdoptionKeepsOnlyConnectedDependencies() throws {
   _ = try f.store.undoCollaborationAction(action.id, actor: f.human)
   #expect(try f.store.loadPage(pages[0]) == human)
   #expect(try f.store.readItemHeader(boardID) != nil)
-  #expect(try f.store.readBoardNode(boardID)?.board.itemIDs == children)
+  let retainedChildren = try #require(try f.store.readBoardNode(boardID)?.board.itemIDs)
+  #expect(Set(retainedChildren) == Set(children))
+  #expect(retainedChildren.count == children.count)
   for (index, id) in children.enumerated() {
     #expect(try f.store.readNotebookPageDirectory(itemID: id, limit: 4).pages.map(\.position.pageID) == [pages[index]])
     #expect(try f.store.ownerBoardID(of: id) == boardID)
@@ -243,8 +244,8 @@ func creationUndoNestedAdoptionKeepsOnlyConnectedDependencies() throws {
   try f.expectValidOwners()
 }
 
-@Test("Целая созданная стопка сохраняет принятых участников, не защищая независимую тетрадь")
-func creationUndoStackAdoptionKeepsOnlyConnectedDependencies() throws {
+@Test("Принятие одной созданной карточки не удерживает чужую строку расположения стопки")
+func creationUndoStackAdoptionKeepsOnlyAdoptedItem() throws {
   let f = try CreationUndoFixture(); defer { f.clean() }
   let items = [UUID(), UUID(), UUID()], pages = [UUID(), UUID(), UUID()]
   var operations = try items.enumerated().map { try f.notebook($0.element, pageID: pages[$0.offset]) }
@@ -252,17 +253,23 @@ func creationUndoStackAdoptionKeepsOnlyConnectedDependencies() throws {
   let action = try f.action(operations)
   _ = try f.store.applyCollaborationAction(action, actor: f.agent)
   let human = try f.adoptPage(pages[0])
-  let stack = try #require(try f.store.readBoardItem(items[0])?.board.stacks.first)
+  let before = try #require(try f.store.readBoardItem(items[0])?.board)
+  let retained = try #require(before.placements.first { $0.id == items[0] })
+  #expect(before.stack(containing: items[0]) != nil)
   _ = try f.store.undoCollaborationAction(action.id, actor: f.human)
   #expect(try f.store.loadPage(pages[0]) == human)
-  #expect(try f.store.readBoardItem(items[0])?.board.stacks.first == stack)
-  for index in 0..<2 {
-    #expect(try f.store.readNotebookPageDirectory(itemID: items[index], limit: 4).pages.map(\.position.pageID) == [pages[index]])
-    #expect(try f.store.hasStoredValue(pageFile(pages[index])))
+  let after = try #require(try f.store.readBoardItem(items[0])?.board)
+  #expect(after.placements.first { $0.id == items[0] } == retained)
+  #expect(after.stack(containing: items[0]) == nil)
+  #expect(after.placement(of: items[0])?.center == retained.pose?.center)
+  #expect(try f.store.readNotebookPageDirectory(itemID: items[0], limit: 4).pages.map(\.position.pageID) == [pages[0]])
+  for index in 1..<3 {
+    #expect(try f.store.readItemHeader(items[index]) == nil)
+    #expect(try !f.store.hasStoredValue(pageFile(pages[index])))
+    #expect(try f.store.ownerBoardID(of: items[index]) == nil)
+    let tombstone = try #require(try f.store.readBoardNode(f.boardID)?.board.placements.first { $0.id == items[index] })
+    #expect(tombstone.pose == nil)
   }
-  #expect(try f.store.readItemHeader(items[2]) == nil)
-  #expect(try !f.store.hasStoredValue(pageFile(pages[2])))
-  #expect(try f.store.ownerBoardID(of: items[2]) == nil)
   try f.expectValidOwners()
 }
 

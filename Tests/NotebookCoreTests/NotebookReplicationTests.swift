@@ -87,10 +87,9 @@ struct NotebookReplicationTests {
     let originalB = try b.changeJournal(after: 0)[0]
     #expect(try transfer(originalB, from: b, to: a, peer: peerB) == 1)
     let index = try a.loadIndex(), item = index.items[0]
-    let aBoard = try a.loadBoard(items: index.items)
     let rename = CollaborationAction(summary: "Rename one owner", expected: [
       .init(target: .init(kind: .workspace, id: header.rootBoardID), revision: index.stamp.revision),
-      .init(target: .init(kind: .board, id: header.rootBoardID), revision: aBoard.board(header.rootBoardID)!.stamp.revision)],
+      .init(target: .init(kind: .board, id: header.rootBoardID), revision: try a.targetContentRevision(target: .init(kind: .board, id: header.rootBoardID)))],
       operations: [.init(kind: .renameItem, target: .init(kind: .board, id: header.rootBoardID), id: item.id.uuidString, values: ["title": .string("Independent title")])])
     _ = try a.applyCollaborationAction(rename, actor: actorA)
     let renamed = try a.loadIndex()

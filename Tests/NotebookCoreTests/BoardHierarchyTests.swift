@@ -310,8 +310,8 @@ func boardHierarchyMergesDisjointBoards() throws {
   )
   #expect(rightMoved)
   let leftBeforeMerge = left
-  let leftMerged = left.merge(right, items: workspace.items)
-  let rightMerged = right.merge(leftBeforeMerge, items: workspace.items)
+  let leftMerged = try left.merge(right, items: workspace.items)
+  let rightMerged = try right.merge(leftBeforeMerge, items: workspace.items)
   #expect(leftMerged)
   #expect(rightMerged)
 
@@ -383,7 +383,7 @@ func portalCameraMergesIndependentlyFromBoardContent() throws {
   )
   #expect(contentWasMoved)
 
-  let merged = portalSide.merge(contentSide, items: workspace.items)
+  let merged = try portalSide.merge(contentSide, items: workspace.items)
   #expect(merged)
   #expect(portalSide.portalCamera(boardItem.id) == portalCamera)
   #expect(
@@ -463,7 +463,7 @@ func catalogGrowthPreservesAnIndependentBoardEdit() throws {
   )
   #expect(added)
 
-  let merged = local.merge(incoming, items: workspace.items)
+  let merged = try local.merge(incoming, items: workspace.items)
   #expect(merged)
   #expect(local.isValid(items: workspace.items))
   #expect(

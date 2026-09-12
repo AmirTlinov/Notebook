@@ -17,6 +17,21 @@ import notebook_release as release
 ROOT = Path(__file__).resolve().parents[1]
 UI = "NotebookUITests/DrawingResponsivenessTests/"
 PROFILES = {
+    "live-placement": {
+        "core": ["BoardMergeOwnershipTests", "BoardPlacementMigrationTests", "NotebookBoardContentRevisionTests", "BoardHierarchyTests", "CollaborationTests", "PlacementActionOwnershipTests", "CollaborationCreationUndoTests",
+                 "PortalIntegrityTests", "WorkspacePublicationTests", "NotebookReplicationTests",
+                 "NotebookReferenceLiveSceneTests", "NotebookReferenceIndexTests", "NotebookReferenceInkTests",
+                 "CollaborationComparableTests", "AgentInkTests",
+                 "ArchiveConsolidationTests/latentAndConcurrentPlacementHeadsRemainIndependentOwners", "NotebookArchiveUnionTests",
+                 "NotebookPageAppendTests/missingOrHashCorruptOrderDependenciesCannotPublishOrAcknowledgeThePage",
+                 "NotebookArchiveActivationTests/replicaRetainsStoppedRequestAndDropsOnlyForeignLocalExecution"],
+        "ipad": ["NotebookTests/NotebookLiveGesturePresentationTests",
+                 "NotebookTests/NotebookLiveScenePublicationTests", "NotebookTests/NotebookGestureAdmissionTests", "NotebookTests/NotebookBoardRevisionTests",
+                 "NotebookTests/NearbySyncTests", "NotebookTests/NotebookTransportSessionTests"],
+    },
+    "placement-scale": {
+        "core": ["NotebookSQLScaleTests/oneHundredThousandOwnersKeepAnEditAndItsJournalAddressed"],
+    },
     "computer-enrollment": {
         "core": ["ArchiveComputerPreparationTests", "NotebookArchiveActivationTests", "NotebookInstallationPairingGrantTests"],
         "mac": ["NotebookMacTests/NotebookArchiveLaunchTests", "NotebookMacTests/NotebookInstallationPairingTests"],

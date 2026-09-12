@@ -29,7 +29,7 @@ struct NotebookAttentionSelection: Sendable {
   private var referenceIdentities: [NotebookReferenceIdentity]
   private var installedInk: [SurfaceID: SpatialInkInstalledSource]
   private var requiredInk: Set<SurfaceID>
-  private var inkBasis: NotebookReferenceInkBasis?
+  private var referenceBasis: NotebookReferenceBasis?
   private let workspaceID: UUID?
 
   init(fragments: [Fragment], workspace: WorkspaceIndex, hierarchy: BoardHierarchy,
@@ -37,7 +37,7 @@ struct NotebookAttentionSelection: Sendable {
     states: [UUID: DocumentStateJournal], visuals: NotebookFrozenVisualSources? = nil,
     referenceIdentities: [NotebookReferenceIdentity] = [],
     installedInk: [SurfaceID: SpatialInkInstalledSource] = [:], requiredInk: Set<SurfaceID> = [],
-    inkBasis: NotebookReferenceInkBasis? = nil) {
+    referenceBasis: NotebookReferenceBasis? = nil) {
     self.fragments = fragments
     self.workspace = workspace; self.hierarchy = hierarchy; self.ink = ink
     let pageIDs = Set(fragments.filter { $0.target.kind == .page }.map { $0.target.id })
@@ -49,12 +49,12 @@ struct NotebookAttentionSelection: Sendable {
     self.visuals = visuals
     let targets = Set(fragments.map(\.target))
     self.referenceIdentities = referenceIdentities.filter { targets.contains($0.target) }
-    self.installedInk = installedInk; self.requiredInk = requiredInk; self.inkBasis = inkBasis
-    workspaceID = inkBasis?.workspaceID
+    self.installedInk = installedInk; self.requiredInk = requiredInk; self.referenceBasis = referenceBasis
+    workspaceID = referenceBasis?.workspaceID
   }
 
   func sourceFiles() throws -> [String: JSONValue] {
-    try resolvingInstalledInk().encodedSourceFiles()
+    try resolvingPresentedSources().encodedSourceFiles()
   }
 
   private func encodedSourceFiles() throws -> [String: JSONValue] {
@@ -92,7 +92,7 @@ struct NotebookAttentionSelection: Sendable {
   /// Runs in the existing command queue, after preceding ink writes and before
   /// the next contact's write. A newer global cursor is not itself a conflict.
   func seal(in store: NotebookStore) throws -> Sealed {
-    let normalized = try resolvingInstalledInk()
+    let normalized = try resolvingPresentedSources()
     let references = try normalized.resolvedReferences()
     return try store.readTransaction { store in
       let header = try store.workspaceHeader()
@@ -118,13 +118,15 @@ struct NotebookAttentionSelection: Sendable {
     }
   }
 
-  private func resolvingInstalledInk() throws -> Self {
-    guard !requiredInk.isEmpty else { return self }
-    guard requiredInk.count <= 8, requiredInk.allSatisfy({ installedInk[$0]?.surface == $0 }), let inkBasis else {
+  private func resolvingPresentedSources() throws -> Self {
+    let wholeScene = fragments.contains { $0.elementID == nil && [.board, .cover].contains($0.target.kind) }
+    guard !requiredInk.isEmpty || (wholeScene && referenceBasis != nil) else { return self }
+    guard requiredInk.count <= 8, requiredInk.allSatisfy({ installedInk[$0]?.surface == $0 }), let referenceBasis else {
       throw CollaborationError("capture_source_pending", "Чернила указанной поверхности ещё не установлены. Укажите область после их готовности.")
     }
     let sources = try requiredInk.map { try installedInk[$0]!.referenceInk() }
-    let identities = try inkBasis.replacingInk(sources)
+    let identities = try referenceBasis.replacing(ink: sources,
+      workspace: wholeScene ? workspace : nil, hierarchy: wholeScene ? hierarchy : nil)
     let directSurfaces = Set(fragments.compactMap { fragment -> SurfaceID? in
       switch fragment.target.kind {
       case .board: return .board(fragment.target.id)
@@ -155,7 +157,7 @@ struct NotebookAttentionSelection: Sendable {
     }, stamp: ink.stamp)
     let targets = Set(fragments.map(\.target))
     value.referenceIdentities = identities.filter { targets.contains($0.target) }
-    value.installedInk = [:]; value.requiredInk = []; value.inkBasis = nil
+    value.installedInk = [:]; value.requiredInk = []; value.referenceBasis = nil
     return value
   }
 

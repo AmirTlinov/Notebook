@@ -6,6 +6,32 @@ import XCTest
 @testable import Notebook
 
 final class NearbySyncTests: XCTestCase {
+  func testDiscoveryExcludesTheOldWriterButKeepsItsIdentityForUpgrade() throws {
+    let id = UUID()
+    let name = NotebookPeerDiscovery.serviceName(deviceID: id, generation: UUID())
+    XCTAssertLessThanOrEqual(name.utf8.count, 63)
+    let current = try XCTUnwrap(NotebookPeerDiscovery(serviceName: name))
+    XCTAssertEqual(current.deviceID, id)
+    XCTAssertTrue(current.isCompatible)
+    let restarted = try XCTUnwrap(NotebookPeerDiscovery(serviceName: NotebookPeerDiscovery.serviceName(deviceID: id, generation: UUID())))
+    XCTAssertEqual(restarted.deviceID, id); XCTAssertTrue(restarted.isCompatible)
+    XCTAssertNotEqual(restarted.generation, current.generation)
+    let old = try XCTUnwrap(NotebookPeerDiscovery(serviceName: "notebook-v1-\(id)"))
+    XCTAssertEqual(old.deviceID, id)
+    XCTAssertFalse(old.isCompatible)
+    XCTAssertNil(NotebookPeerDiscovery(serviceName: "notebook-v10-not-an-identity"))
+    XCTAssertNil(NotebookPeerDiscovery(serviceName: "unrelated-\(id)"))
+  }
+
+  func testUpgradeAndCheckpointFailuresAreNotReportedAsNetworkErrors() {
+    for code in ["placement_migration_pending_peer", "placement_peer_upgrade_required", "placement_checkpoint_required"] {
+      let error = CollaborationError(code, "Изменения сохранены; требуется обновление пары.")
+      XCTAssertEqual(NotebookPeerDiscovery.upgradeMessage(for: error), error.localizedDescription)
+    }
+    XCTAssertNotNil(NotebookPeerDiscovery.upgradeMessage(for: NotebookTransportError.unsupportedVersion))
+    XCTAssertNil(NotebookPeerDiscovery.upgradeMessage(for: NotebookTransportError.disconnected))
+  }
+
   func testFrameLengthIsRejectedBeforeBodyAllocation() throws {
     XCTAssertThrowsError(try NotebookTransportFraming.payloadLength(Data([0, 4, 0, 0])))
     XCTAssertThrowsError(try NotebookTransportFraming.payloadLength(Data([0, 0, 0, 0])))

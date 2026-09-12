@@ -7,29 +7,20 @@ import UIKit
 struct WorkspaceItemPoseDestination: Equatable {
   let center: WorldPoint
   let stack: WorkspaceItemStack?
-  let versions: [String: ContentFieldVersion]
+  let accepted: WorkspacePlacement
 
   init?(itemID: UUID, before: BoardDocument, after: BoardDocument) {
     let free = after.placement(of: itemID), stack = after.stack(containing: itemID)
-    guard free != nil || stack != nil else { return nil }
-    var prefixes = ["freeItems/\(itemID.uuidString.lowercased())/"]
-    for id in Set([before.stack(containing: itemID)?.id, stack?.id].compactMap { $0 }) {
-      prefixes.append("stacks/\(id.uuidString.lowercased())/")
-    }
-    let previous = before.collaboration?.fields ?? [:], current = after.collaboration?.fields ?? [:]
-    let keys = prefixes.flatMap { prefix in ["center", "zIndex", "stamp", "exists", "itemIDs"].map { prefix + $0 } }
-    versions = Dictionary(uniqueKeysWithValues: keys.compactMap { key in
-      guard let value = current[key], previous[key] != value else { return nil }
-      return (key, value)
-    })
-    guard !versions.isEmpty else { return nil }
+    guard free != nil || stack != nil,
+      let accepted = after.placements.first(where: { $0.itemID == itemID }),
+      accepted != before.placements.first(where: { $0.itemID == itemID }) else { return nil }
+    self.accepted = accepted
     center = stack?.center ?? free!.center
     self.stack = stack
   }
 
   func isObserved(in board: BoardDocument?) -> Bool {
-    guard let fields = board?.collaboration?.fields else { return false }
-    return versions.allSatisfy { key, value in fields[key]?.includes(value) == true }
+    board?.placements.first(where: { $0.itemID == accepted.itemID })?.hasObserved(accepted) == true
   }
 
   func center(itemID: UUID, presence: SessionPresence) -> WorldPoint {
@@ -81,7 +72,7 @@ struct WorkspaceItemPose<Content: View>: UIViewControllerRepresentable {
     let cohort = composition.cohort
     controller.bindSceneLifecycle(to: model)
     controller.update(rendered: rendered, camera: camera, viewport: viewport, boardID: boardID,
-      cohortID: cohort?.id, cohortRevision: cohort?.plan.revision, sourceBoard: frame?.index.board(id: boardID), publishedLiftRank: liftRank, projection: projection,
+      cohortID: cohort?.id, cohortRevision: cohort?.plan.revision, sourceBoard: model.boardHierarchy?.board(boardID), publishedLiftRank: liftRank, projection: projection,
       registry: registry, inputGate: model.inputGate, onLiftChanged: onLiftChanged, onDrop: onDrop,
       content: AnyView(content().environment(model)
         .environment(\.scenePlaneProjection, projection)

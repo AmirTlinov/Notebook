@@ -7,7 +7,7 @@ import SwiftUI
   import AppKit
 #endif
 
-struct RenderedWorkspaceItem: Identifiable, Sendable {
+struct RenderedWorkspaceItem: Identifiable, Equatable, Sendable {
   let item: WorkspaceItem
   let geometry: WorkspaceItemGeometry
   let center: WorldPoint
@@ -196,8 +196,7 @@ struct WorkspaceItemCoverView: View {
             onTextEditingEnded: { onTextEditingEnded(element.id) }
           )
         }
-        .disabled(model.scenePreparationPending && !retainsTextInput)
-        .allowsHitTesting(!model.scenePreparationPending || retainsTextInput)
+        .allowsHitTesting(ownerIsAvailable)
         .frame(width: element.frame.width, height: element.frame.height)
         .offset(x: element.frame.x, y: element.frame.y)
         .opacity(portalOverlayOpacity)
@@ -208,31 +207,17 @@ struct WorkspaceItemCoverView: View {
         if !isPortalProjection {
           NotebookInteractionView(
             inputGate: model.inputGate,
-            permitsManipulation: !model.scenePreparationPending && !model.isItemBeingDeleted(item.id),
-            canBeginContact: { !model.isItemBeingDeleted(item.id) && !spatialInkSurfaces.isRetired(.cover(item.id)) },
+            ownerIsAvailable: { ownerIsAvailable },
             passthroughFrames: model.isItemBeingDeleted(item.id) ? [] : interactionPassthroughFrames,
-            onTap: { location, count in
-              guard !model.isItemBeingDeleted(item.id) else { return }
-              // Finishing a text session does not need the next geometry index.
-              // Keep this input owner mounted while the saved text is prepared.
-              if model.scenePreparationPending {
-                if let editingTextID { onTextEditingEnded(editingTextID) }
-                return
-              }
-              onTap(location, count)
-            },
+            onTap: onTap,
             onLiftChanged: { lifted in
-              guard !lifted || (!model.scenePreparationPending && !model.isItemBeingDeleted(item.id)) else { return }
               if lifted { pose?.owner?.beginLift() }
             },
             onTranslationChanged: { translation in
-              guard !model.scenePreparationPending, !model.isItemBeingDeleted(item.id) else { return }
               pose?.owner?.changeTranslation(translation)
             },
             onTranslationEnded: { translation in
-              guard !model.isItemBeingDeleted(item.id) else { return }
-              if model.scenePreparationPending { pose?.owner?.cancelManipulation() }
-              else { pose?.owner?.endTranslation(translation) }
+              pose?.owner?.endTranslation(translation)
             },
             onCancelled: { pose?.owner?.cancelManipulation() }
           )
@@ -324,30 +309,23 @@ struct WorkspaceItemCoverView: View {
     }
   }
 
-  private var interactionPassthroughFrames: [CGRect] {
-    Self.interactionPassthroughFrames(
-      elements: elements,
-      editingTextID: isPortalProjection ? nil : editingTextID,
-      scenePreparationPending: model.scenePreparationPending
-    )
+  private var ownerIsAvailable: Bool {
+    guard !isPortalProjection, !model.isItemBeingDeleted(item.id) else { return false }
+    #if os(iOS)
+      return !spatialInkSurfaces.isRetired(.cover(item.id))
+    #else
+      return true
+    #endif
   }
 
-  static func interactionPassthroughFrames(
-    elements: [SpatialElement],
-    editingTextID: String?,
-    scenePreparationPending: Bool
-  ) -> [CGRect] {
-    elements.compactMap { element in
-      let isLiveEditor = element.kind == .nativeText && editingTextID == element.id
-      guard isLiveEditor || !scenePreparationPending else {
-        return nil
-      }
-      return CGRect(
-        x: element.frame.x,
-        y: element.frame.y,
-        width: element.frame.width,
-        height: element.frame.height
-      )
+  private var interactionPassthroughFrames: [CGRect] {
+    Self.interactionPassthroughFrames(elements: elements)
+  }
+
+  static func interactionPassthroughFrames(elements: [SpatialElement]) -> [CGRect] {
+    elements.map { element in
+      CGRect(x: element.frame.x, y: element.frame.y,
+        width: element.frame.width, height: element.frame.height)
     }
   }
 }

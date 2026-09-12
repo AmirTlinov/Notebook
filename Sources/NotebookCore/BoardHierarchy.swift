@@ -1,5 +1,4 @@
 import Foundation
-import CryptoKit
 
 public struct BoardNode: Codable, Equatable, Identifiable, Sendable {
   public let id: UUID
@@ -138,22 +137,6 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
     boards.flatMap { $0.board.itemIDs }
   }
 
-  /// Identity of the complete converged tree. The Lamport clock orders local
-  /// mutations; this frontier names every independently merged content and
-  /// portal owner, including insertion and removal of a board.
-  public var revision: String {
-    let nodes = boards.sorted { $0.id.uuidString < $1.id.uuidString }
-    let rows = nodes.map { node in
-      "\(node.id.uuidString.lowercased()):"
-        + "\(node.board.stamp.counter)@\(node.board.stamp.actor.uuidString.lowercased()):"
-        + "\(node.portalStamp.counter)@\(node.portalStamp.actor.uuidString.lowercased())"
-    }
-    let source = (["board-v1", rootBoardID.uuidString.lowercased()] + rows)
-      .joined(separator: "\n") + "\n"
-    return SHA256.hash(data: Data(source.utf8))
-      .map { String(format: "%02x", $0) }.joined()
-  }
-
   public func parentBoardID(of boardID: UUID) -> UUID? {
     guard boardID != rootBoardID else { return nil }
     return boards.first(where: { $0.board.itemIDs.contains(boardID) })?.id
@@ -237,6 +220,12 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
     mutateBoard(boardID, actor: actor) {
       $0.moveItem(itemID, to: center, actor: actor)
     }
+  }
+
+  @discardableResult
+  mutating func restorePlacement(itemID: UUID, on boardID: UUID,
+    pose: WorkspacePlacementPose?, actor: UUID) -> Bool {
+    mutateBoard(boardID, actor: actor) { $0.restorePlacement(itemID, pose: pose, actor: actor) }
   }
 
   /// Remembers the exact child view shown by its parent portal. The camera is
@@ -357,8 +346,9 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
   public mutating func merge(
     _ other: Self,
     items: [WorkspaceItem]
-  ) -> Bool {
-    guard let resolved = try? merging(other, items: items), resolved != self else { return false }
+  ) throws -> Bool {
+    let resolved = try merging(other, items: items)
+    guard resolved != self else { return false }
     self = resolved
     return true
   }
@@ -383,13 +373,14 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
           ?? (nested.contains(id) ? .board(id: id, title: "") : .document(id: id, title: ""))
       }
     }
-    guard isValid(items: sourceItems(self)), other.isValid(items: sourceItems(other)) else {
+    let local = self, incoming = other
+    guard local.isValid(items: sourceItems(local)), incoming.isValid(items: sourceItems(incoming)) else {
       throw CollaborationError("invalid_content", "Каждый исходный предмет должен иметь одного физического владельца.")
     }
-    let localNodes = Dictionary(uniqueKeysWithValues: boards.map { ($0.id, $0) })
-    let incomingNodes = Dictionary(uniqueKeysWithValues: other.boards.map { ($0.id, $0) })
-    var candidate = self
-    candidate.stamp = max(stamp, other.stamp)
+    let localNodes = Dictionary(uniqueKeysWithValues: local.boards.map { ($0.id, $0) })
+    let incomingNodes = Dictionary(uniqueKeysWithValues: incoming.boards.map { ($0.id, $0) })
+    var candidate = local
+    candidate.stamp = max(local.stamp, incoming.stamp)
     candidate.boards = []
     for id in liveBoards.sorted(by: { $0.uuidString < $1.uuidString }) {
       guard var resolved = localNodes[id] ?? incomingNodes[id] else {
@@ -397,7 +388,7 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
       }
       if let current = localNodes[id], let incoming = incomingNodes[id] {
         var content = current.board
-        if content != incoming.board { _ = content.merge(incoming.board, itemIDs: []) }
+        if content != incoming.board { _ = try content.merge(incoming.board, itemIDs: []) }
         resolved.replace(with: content)
         if current.portalStamp < incoming.portalStamp {
           resolved.replacePortal(camera: incoming.portalCamera, stamp: incoming.portalStamp)
@@ -409,6 +400,7 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
         _ = content.reconcileItems(retained, actor: candidate.stamp.actor)
         resolved.replace(with: content)
       }
+      candidate.stamp = max(candidate.stamp, resolved.board.stamp)
       candidate.boards.append(resolved)
     }
     // A missing or multiply placed item is a conflict, never an instruction

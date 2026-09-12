@@ -99,6 +99,7 @@
           initialPageID: pageID
         )
         var index = try store.loadIndex()
+        var hierarchy = try store.loadBoard(items: index.items)
         guard index.createDocument(
           title: "Mac WebKit launch proof",
           actor: actor,
@@ -121,11 +122,12 @@
           ]
         )
         let state = DocumentStateJournal(id: documentID, actor: actor)
-        let board = BoardDocument.initial(
-          itemIDs: [notebookID, documentID],
-          actor: actor
-        )
-        guard let center = board.focusedCenter(of: documentID) else {
+        let halfSpacing = WorkspaceItemGeometry.notebook.width * 1.28 / 2
+        guard hierarchy.moveItem(notebookID, in: index.rootBoardID,
+          to: .init(x: -halfSpacing, y: 0), actor: actor),
+          hierarchy.addItem(documentID, to: index.rootBoardID,
+            near: .init(x: halfSpacing, y: 0), actor: actor),
+          let center = hierarchy.board(index.rootBoardID)?.focusedCenter(of: documentID) else {
           fatalError("Не удалось разместить документ проверки запуска Mac")
         }
         let viewport = SpatialPoint(x: size.width, y: size.height)
@@ -133,11 +135,7 @@
           index: index,
           document: document,
           state: state,
-          board: BoardHierarchy(
-            rootBoardID: index.rootBoardID,
-            boards: [BoardNode(id: index.rootBoardID, board: board)],
-            stamp: board.stamp
-          )
+          board: hierarchy
         )
         try store.savePresence(
           SessionPresence(

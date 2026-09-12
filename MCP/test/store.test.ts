@@ -93,10 +93,10 @@ test("read batches refuse more than four physical pages and unbounded scene limi
 
 test("one document block uses an explicit bounded query instead of whole source and state reads",async()=>{
   await withStore(async(store,root)=>{
-    const header=await store.readHeader(),board=await store.readItemBoard(itemID),id=randomUUID(),blockID=randomUUID().toUpperCase();
+    const header=await store.readHeader(),id=randomUUID(),blockID=randomUUID().toUpperCase();
     const target={kind:"board",id:rootBoardID};
     await store.command({command:"apply",action:{id:randomUUID(),summary:"One selected program",references:[],
-      expected:[{target,revision:revision(board.stamp)},{target:{kind:"workspace",id:rootBoardID},revision:revision(header.stamp)}],
+      expected:[{target,revision:await store.readBoardContentRevision(rootBoardID)},{target:{kind:"workspace",id:rootBoardID},revision:revision(header.stamp)}],
       operations:[{kind:"createDocument",target,id,values:{center:{tileX:0,tileY:0,localX:20,localY:20},paperSize:"a4",
         blocks:[{id:blockID,kind:"interactive",html:"<button>+</button>",initialState:{count:3}}]}}]}});
     await fixtureControl(root,"readQueries");
@@ -189,10 +189,9 @@ for(const [name,mutate] of [
 test("scene identity belongs to Core metadata and changes after an addressed scene commit",async()=>{
   await withStore(async(store)=>{
     const before=(await store.readHeader()).boardRevision;
-    const board=await store.readItemBoard(itemID);
     const target={kind:"cover",id:itemID,boardID:rootBoardID};
     await store.command({command:"apply",action:{id:randomUUID(),summary:"A new meaning on the cover",additionalOwners:[target],
-      references:[],expected:[{target,revision:revision(board.stamp)}],operations:[{kind:"insertElement",target,id:"identity-proof",
+      references:[],expected:[{target,revision:await store.readBoardContentRevision(rootBoardID)}],operations:[{kind:"insertElement",target,id:"identity-proof",
         values:{kind:"nativeText",source:"Changed scene",frame:{x:10,y:10,width:150,height:30}}}]}});
     assert.notEqual((await store.readHeader()).boardRevision,before);
   });
@@ -200,12 +199,11 @@ test("scene identity belongs to Core metadata and changes after an addressed sce
 
 test("a rich cover is read in bounded physical paint pages and stale cursors fail closed",async()=>{
   await withStore(async(store)=>{
-    const board=await store.readItemBoard(itemID);
     const target={kind:"cover",id:itemID,boardID:rootBoardID};
     const operations=Array.from({length:40},(_,index)=>({kind:"insertElement",target,id:`cover-${index}`,
       values:{kind:"nativeText",source:`Meaning ${index}`,frame:{x:20,y:20+index*24,width:300,height:20}}}));
     await store.command({command:"apply",action:{id:randomUUID(),summary:"Forty independent cover meanings",additionalOwners:[target],
-      references:[],expected:[{target,revision:revision(board.stamp)}],operations}});
+      references:[],expected:[{target,revision:await store.readBoardContentRevision(rootBoardID)}],operations}});
     assert.deepEqual((await store.readItemBoard(itemID)).elements,[],"A placement read must not load a rich cover");
     const size={width:834,height:1194};
     const first=await store.readCoverElements(itemID,size,undefined,16);
@@ -214,9 +212,8 @@ test("a rich cover is read in bounded physical paint pages and stale cursors fai
     const last=await store.readCoverElements(itemID,size,second.coverage.nextCursor!,16);
     assert.equal(last.elements.length,8);assert.equal(last.coverage.nextCursor,null);
     assert.equal(new Set([...first.elements,...second.elements,...last.elements].map(element=>element.id)).size,40);
-    const current=await store.readItemBoard(itemID);
     await store.command({command:"apply",action:{id:randomUUID(),summary:"One later correction",additionalOwners:[target],
-      references:[],expected:[{target,revision:revision(current.stamp)}],operations:[{kind:"updateElement",target,id:"cover-0",values:{source:"Later"}}]}});
+      references:[],expected:[{target,revision:await store.readBoardContentRevision(rootBoardID)}],operations:[{kind:"updateElement",target,id:"cover-0",values:{source:"Later"}}]}});
     await assert.rejects(store.readCoverElements(itemID,size,first.coverage.nextCursor!,16),
       error=>error instanceof BridgeError && error.detail.code==="read_conflict");
   });

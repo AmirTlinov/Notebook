@@ -55,7 +55,7 @@ public struct NotebookReadBounds: Codable, Sendable {
 public struct NotebookReadQuery: Codable, Sendable {
   public enum Kind: String, Codable, Sendable {
     case workspaceHeader, itemHeaders, itemHeader, workingSet, sceneWindow, scenePaintOrder
-    case page, document, documentState, documentBlock, boardItem, boardElement, ownerBoard, notebookPages, notebookDirectory, notebookPosition, spatialInk, presence
+    case page, document, documentState, documentBlock, boardItem, boardElement, boardContentRevision, ownerBoard, notebookPages, notebookDirectory, notebookPosition, spatialInk, presence
     case attentionEvidence, contexts, contextEntries, actions, currentViewReceipt, pageVisionReceipt, targetRenderReceipt
     case renderRequests, delivery, actionSnapshots, runtime, codeFragment, codeFragments
   }
@@ -195,14 +195,15 @@ public struct NotebookCommandDispatcher: Sendable {
     case .workingSet:
       let set = try store.readWorkingSet(itemIDs: query.itemIDs ?? [], pageIDs: query.pageIDs ?? [],
         boardIDs: query.boardIDs ?? [], surfaces: query.surfaces ?? [])
-      return .object(["header": try .encode(set.header), "items": try .encode(set.items), "boards": try .encode(set.boards),
+      return .object(["header": try .encode(set.header), "items": try .encode(set.items), "boards": .array(try set.boards.map(boardReadProjection)),
         "pages": try keyed(set.pages), "documents": try keyed(set.documents), "states": try keyed(set.states), "ink": try .encode(set.ink)])
     case .sceneWindow:
       guard let bounds = query.bounds else { throw invalid("invalid_region", "Нужна физическая область сцены.") }
       let window = try store.readSceneWindow(boardID: required(query.id), bounds: bounds.validated(),
         limit: query.limit ?? 128, pinnedIDs: query.pinnedIDs ?? [])
       return .object(["header": try .encode(window.header), "boardID": try .encode(window.boardID),
-        "items": try .encode(window.items.compactMap { try store.readItemHeader($0.id) }), "boards": try .encode(window.boards), "documentPaper": try keyed(window.documentPaper),
+        "items": try .encode(window.items.compactMap { try store.readItemHeader($0.id) }), "boards": .array(try window.boards.map(boardReadProjection)),
+        "boardContentRevisions": try keyed(window.boardContentRevisions), "documentPaper": try keyed(window.documentPaper),
         "pageCounts": try keyed(window.pageCounts), "totalMatches": .number(Double(window.totalMatches)), "truncated": .bool(window.truncated)])
     case .scenePaintOrder:
       guard let bounds = query.bounds else { throw invalid("invalid_region", "Нужна конечная область чтения.") }
@@ -232,7 +233,10 @@ public struct NotebookCommandDispatcher: Sendable {
     case .documentBlock:
       guard let blockID = query.elementID else { throw invalid("invalid_reference", "Нужен ID блока документа.") }
       return try .encode(store.readDocumentBlock(documentID: required(query.id), blockID: blockID))
-    case .boardItem: return try .encode(store.readBoardItem(required(query.id)))
+    case .boardItem:
+      guard let node = try store.readBoardItem(required(query.id)) else { return .null }
+      return try boardReadProjection(node)
+    case .boardContentRevision: return try .encode(store.boardContentRevision(required(query.id)))
     case .boardElement:
       guard let elementID = query.elementID, elementID.utf8.count <= 120 else { throw invalid("invalid_reference", "Нужен ID элемента.") }
       return try .encode(store.readSpatialElement(boardID: required(query.id), elementID: elementID))
@@ -261,6 +265,21 @@ public struct NotebookCommandDispatcher: Sendable {
     case .actionSnapshots: return try .encode(store.loadActionSnapshots(required(query.id)))
     case .runtime: return try .encode(store.loadRuntimeStatus())
     }
+  }
+
+  /// Thin readers consume Core's physical layout, not a second placement
+  /// resolver. These computed fields exist only in read responses; canonical
+  /// placement intents remain intact for native decoding and are the sole
+  /// durable owner of an item's position.
+  private func boardReadProjection(_ node: BoardNode) throws -> JSONValue {
+    guard case .object(var value) = try JSONValue.encode(node),
+      case .object(var board) = value["board"] else {
+      throw NotebookStorageError.corruptRecord("board read projection")
+    }
+    board["freeItems"] = try .encode(node.board.freeItems)
+    board["stacks"] = try .encode(node.board.stacks)
+    value["board"] = .object(board)
+    return .object(value)
   }
 
   private func delivery(_ id: UUID) throws -> JSONValue {

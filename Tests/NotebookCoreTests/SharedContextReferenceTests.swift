@@ -51,9 +51,9 @@ struct SharedContextReferenceTests {
         #expect(try store.hasAttentionEvidence(contextID: first.id))
         #expect(try store.attentionEvidence(contextID: first.id, referenceID: reference.id) == source)
       }
-      let itemID = try #require(try store.ownerItemID(ofPage: pageID)), board = try #require(try store.readBoardNodeHeader(boardID))
+      let itemID = try #require(try store.ownerItemID(ofPage: pageID))
       let action = try CollaborationAction(contextID: first.id, summary: "Move only the indicated notebook",
-        expected: [.init(target: .init(kind: .board, id: boardID), revision: board.board.stamp.revision)],
+        expected: [.init(target: .init(kind: .board, id: boardID), revision: try store.targetContentRevision(target: .init(kind: .board, id: boardID)))],
         operations: [.init(kind: .moveItem, target: .init(kind: .board, id: boardID), id: itemID.uuidString,
           values: ["center": .encode(WorldPoint(x: 42, y: 73))])])
       let cursor = try store.sharedContextPage(contextID: first.id, limit: 1).readCursor
@@ -78,7 +78,7 @@ struct SharedContextReferenceTests {
       let cursor = try store.currentChangeCursor(), board = try #require(try store.readBoardNodeHeader(boardID))
       let itemID = try #require(try store.ownerItemID(ofPage: pageID))
       let action = try CollaborationAction(contextID: first.id, summary: "Must fail atomically",
-        expected: [.init(target: .init(kind: .board, id: boardID), revision: board.board.stamp.revision)],
+        expected: [.init(target: .init(kind: .board, id: boardID), revision: try store.targetContentRevision(target: .init(kind: .board, id: boardID)))],
         operations: [.init(kind: .moveItem, target: .init(kind: .board, id: boardID), id: itemID.uuidString,
           values: ["center": .encode(WorldPoint(x: 10, y: 10))])])
       do { _ = try store.applyCollaborationAction(action, actor: actor); Issue.record("Oversized context was accepted") }

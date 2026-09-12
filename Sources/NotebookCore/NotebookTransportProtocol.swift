@@ -4,7 +4,7 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  public static let protocolVersion = 9
+  public static let protocolVersion = 10
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 180 * 1_024
   public static let maximumUnacknowledgedFrames = 16
@@ -121,6 +121,27 @@ public struct NotebookTransportBlobChunk: Codable, Equatable, Sendable {
   }
 }
 
+public enum NotebookTransportContentRequirement: String, Codable, Equatable, Sendable {
+  case peerUpgrade, checkpoint
+
+  public init?(error: Error) {
+    guard let error = error as? CollaborationError else { return nil }
+    switch error.code {
+    case "placement_peer_upgrade_required": self = .peerUpgrade
+    case "placement_checkpoint_required": self = .checkpoint
+    default: return nil
+    }
+  }
+  public var error: CollaborationError {
+    switch self {
+    case .peerUpgrade:
+      CollaborationError("placement_peer_upgrade_required", "Обновите Notebook на обоих устройствах. Прежние изменения не подтверждены и не будут пропущены.")
+    case .checkpoint:
+      CollaborationError("placement_checkpoint_required", "Для продолжения обмена отстающему устройству нужна текущая исходная копия пространства. Существующее содержание и сопряжение сохранены.")
+    }
+  }
+}
+
 public enum NotebookTransportMessage: Codable, Equatable, Sendable {
   case hello(NotebookTransportHello)
   case proof(Data)
@@ -131,11 +152,12 @@ public enum NotebookTransportMessage: Codable, Equatable, Sendable {
   case requestBlob(hash: String, offset: Int64)
   case blob(NotebookTransportBlobChunk)
   case committed(transactionID: UUID, cursor: UInt64)
+  case contentUnavailable(NotebookTransportContentRequirement)
   case transient(NotebookTransportTransient)
 
   public var isControl: Bool {
     switch self {
-    case .hello, .proof, .confirm, .ready, .credit, .committed: true
+    case .hello, .proof, .confirm, .ready, .credit, .committed, .contentUnavailable: true
     default: false
     }
   }

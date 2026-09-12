@@ -89,8 +89,8 @@ struct NotebookSQLScaleTests {
         case 2: center = .init(x: distance, y: 0)
         default: center = .init(x: -distance, y: 0)
         }
-        let placement = FreeItemPlacement(itemID: id, center: center, zIndex: offset, stamp: stamp)
-        try store.writeFragment(.init(address: boardAddress + "/board/freeItems/@" + id.uuidString.lowercased(), file: "board.json", parent: boardAddress, collection: "board/freeItems", member: id.uuidString.lowercased(), position: offset, value: try .encode(placement), collections: []), database: database)
+        let placement = try WorkspacePlacement.authored(itemID: id, pose: .init(center: center, zIndex: offset), stamp: stamp, human: true, previous: nil)
+        try store.writeFragment(.init(address: boardAddress + "/board/placements/@" + id.uuidString.lowercased(), file: "board.json", parent: boardAddress, collection: "board/placements", member: id.uuidString.lowercased(), position: 0, value: try .encode(placement), collections: []), database: database)
       }
       print("CATALOG_SCALE_PHASE phase=rows_completed elapsed=\(started.duration(to: .now))")
     }

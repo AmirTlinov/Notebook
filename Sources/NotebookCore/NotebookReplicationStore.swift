@@ -33,7 +33,7 @@ extension NotebookStore {
     }
   }
 
-  func validatedManifest(_ change: NotebookDurableChange, partHash: String? = nil) throws -> NotebookChangeManifest {
+  func validatedManifest(_ change: NotebookDurableChange, partHash: String? = nil, historical: Bool = false) throws -> NotebookChangeManifest {
     guard change.sequence > 0, change.sequence <= UInt64(Int64.max),
       (1...67_108_864).contains(change.byteCount) else { throw NotebookStorageError.limitExceeded("change_manifest") }
     let data = try currentSQL!.blob(partHash ?? change.manifestHash)
@@ -41,7 +41,10 @@ extension NotebookStore {
     guard data.count <= 67_108_864 else { throw NotebookStorageError.limitExceeded("change_manifest_part") }
     let manifest = try JSONDecoder().decode(NotebookChangeManifest.self, from: data)
     let workspaceID = try currentSQL!.rows("SELECT value FROM metadata WHERE key='workspace_id'").first?[0].text.flatMap(UUID.init(uuidString:))
-    guard manifest.format == 3, manifest.transactionID == change.transactionID, manifest.workspaceID == workspaceID,
+    guard manifest.format == 4 || (historical && manifest.format == 3) else {
+      throw CollaborationError("placement_peer_upgrade_required", "Сопряжённое устройство передаёт прежний формат изменений. Завершите его обновление; пакет не подтверждён и содержание сохранено.")
+    }
+    guard manifest.transactionID == change.transactionID, manifest.workspaceID == workspaceID,
       manifest.records.count <= 16_384, manifest.parts.count <= 512,
       !manifest.records.isEmpty || !manifest.parts.isEmpty,
       manifest.records.isEmpty || manifest.parts.isEmpty,
@@ -185,6 +188,21 @@ extension NotebookStore {
               // Retained local nodes cannot be assigned an older aggregate
               // clock while the incoming delta's typed tree is reconstructed.
               value = value.setting("stamp", try .encode(max(previous, incoming)))
+            }
+            let previousNodes = Dictionary(uniqueKeysWithValues: (before?["boards"]?.array ?? []).compactMap { node -> (String, JSONValue)? in
+              node.memberIdentity.map { ($0, node) }
+            })
+            let nodes = try (value["boards"]?.array ?? []).map { node -> JSONValue in
+              guard let id = node.memberIdentity, let old = previousNodes[id], let board = node["board"],
+                let prior = try old["board"]?["stamp"]?.decode(VersionStamp.self),
+                let received = try board["stamp"]?.decode(VersionStamp.self) else { return node }
+              // Addressed reconstruction retains local heads beside incoming
+              // rows. Its header admits both frontiers; it authors neither.
+              return node.setting("board", board.setting("stamp", try .encode(max(prior, received))))
+            }
+            value = value.setting("boards", .array(nodes))
+            guard value["boards"]?.array.allSatisfy({ $0["board"]?["format"] == .number(Double(BoardDocument.formatVersion)) }) == true else {
+              throw CollaborationError("placement_peer_upgrade_required", "Сопряжённое устройство ещё передаёт прежний формат доски. Завершите его обновление; пакет не подтверждён и содержание сохранено.")
             }
             let hierarchy = try value.decode(BoardHierarchy.self)
             guard let index = try storedValue("workspace.json")?.decode(WorkspaceIndex.self) else { throw NotebookStorageError.corruptRecord("workspace") }

@@ -634,14 +634,6 @@ public struct FreeItemPlacement: Codable, Equatable, Identifiable, Sendable {
     self.stamp = stamp
   }
 
-  mutating func move(to center: WorldPoint, zIndex: Int, actor: UUID) -> Bool {
-    guard center.isValid, zIndex >= 0, let next = stamp.advanced(by: actor) else { return false }
-    self.center = center
-    self.zIndex = zIndex
-    stamp = next
-    return true
-  }
-
   var isValid: Bool {
     center.isValid && zIndex >= 0
       && stamp.counter <= VersionStamp.maximumCounter
@@ -673,33 +665,6 @@ public struct WorkspaceItemStack: Codable, Equatable, Identifiable, Sendable {
     self.zIndex = zIndex
     self.itemIDs = itemIDs
     self.stamp = stamp
-  }
-
-  mutating func append(_ itemID: UUID, actor: UUID) -> Bool {
-    guard itemIDs.count < Self.maximumItemCount,
-      !itemIDs.contains(itemID),
-      let next = stamp.advanced(by: actor)
-    else { return false }
-    itemIDs.append(itemID)
-    stamp = next
-    return true
-  }
-
-  mutating func remove(_ itemID: UUID, actor: UUID) -> Bool {
-    guard let index = itemIDs.firstIndex(of: itemID),
-      let next = stamp.advanced(by: actor)
-    else { return false }
-    itemIDs.remove(at: index)
-    stamp = next
-    return true
-  }
-
-  mutating func move(to center: WorldPoint, zIndex: Int, actor: UUID) -> Bool {
-    guard center.isValid, zIndex >= 0, let next = stamp.advanced(by: actor) else { return false }
-    self.center = center
-    self.zIndex = zIndex
-    stamp = next
-    return true
   }
 
   var isValid: Bool {
@@ -969,64 +934,86 @@ public struct SpatialElement: Codable, Equatable, Identifiable, Sendable {
 }
 
 public struct BoardDocument: Codable, Equatable, Sendable {
-  public static let formatVersion = 2
+  public static let formatVersion = 3
 
   public let format: Int
-  public private(set) var freeItems: [FreeItemPlacement]
-  public private(set) var stacks: [WorkspaceItemStack]
+  public private(set) var placements: [WorkspacePlacement]
   public private(set) var elements: [SpatialElement]
   public private(set) var stamp: VersionStamp
   public private(set) var collaboration: CollaborativeContent?
+  private var layout: WorkspacePlacementLayout
+  public var freeItems: [FreeItemPlacement] { layout.freeItems }
+  public var stacks: [WorkspaceItemStack] { layout.stacks }
 
-  public init(
-    freeItems: [FreeItemPlacement],
-    stacks: [WorkspaceItemStack] = [],
-    elements: [SpatialElement] = [],
-    stamp: VersionStamp
-  ) {
+  public init(freeItems: [FreeItemPlacement], stacks: [WorkspaceItemStack] = [],
+    elements: [SpatialElement] = [], stamp: VersionStamp) {
+    var placements = freeItems.map { item in
+      WorkspacePlacement(itemID: item.id, heads: [.init(
+        pose: .init(center: item.center, zIndex: item.zIndex),
+        version: .init(stamp: item.stamp, human: true))])
+    }
+    placements += stacks.flatMap { stack in
+      stack.itemIDs.enumerated().map { offset, id in
+        WorkspacePlacement(itemID: id, heads: [.init(
+          pose: .init(center: stack.center, zIndex: stack.zIndex, stackID: stack.id, stackOrder: offset),
+          version: .init(stamp: stack.stamp, human: true))])
+      }
+    }
+    self.init(placements: placements, elements: elements, stamp: stamp, collaboration: nil)
+  }
+
+  init(placements: [WorkspacePlacement], elements: [SpatialElement], stamp: VersionStamp,
+    collaboration: CollaborativeContent?) {
     format = Self.formatVersion
-    self.freeItems = freeItems
-    self.stacks = stacks
-    self.elements = elements
-    self.stamp = stamp
-    collaboration = nil
+    self.placements = placements.sorted { $0.id.uuidString < $1.id.uuidString }
+    self.elements = elements; self.stamp = stamp; self.collaboration = collaboration
+    layout = .init(self.placements)
+    materializeElementVersions()
+  }
+
+  private mutating func materializeElementVersions() {
+    guard let content = try? JSONValue.encode(elements) else { return }
+    var versions = collaboration ?? .init()
+    versions.materializeVersions(in: .object(["elements": content]), fallback: stamp)
+    collaboration = versions
   }
 
   public static func initial(itemIDs: [UUID], actor: UUID) -> Self {
     let columns = max(1, min(3, itemIDs.count))
     let horizontalStep = WorkspaceItemGeometry.notebook.width * 1.28
     let verticalStep = WorkspaceItemGeometry.notebook.height * 1.18
-    let placements = itemIDs.enumerated().map { index, id in
-      let column = index % columns
-      let row = index / columns
-      return FreeItemPlacement(
-        itemID: id,
-        center: WorldPoint(
-          x: (Double(column) - Double(columns - 1) / 2) * horizontalStep,
-          y: Double(row) * verticalStep
-        ),
-        zIndex: index,
-        stamp: VersionStamp(counter: 0, actor: actor)
-      )
-    }
-    return Self(
-      freeItems: placements,
-      stamp: VersionStamp(counter: 0, actor: actor)
-    )
+    return Self(freeItems: itemIDs.enumerated().map { offset, id in
+      .init(itemID: id, center: .init(
+        x: (Double(offset % columns) - Double(columns - 1) / 2) * horizontalStep,
+        y: Double(offset / columns) * verticalStep), zIndex: offset,
+        stamp: .init(counter: 0, actor: actor))
+    }, stamp: .init(counter: 0, actor: actor))
   }
 
-  public var itemIDs: [UUID] {
-    freeItems.map(\.itemID) + stacks.flatMap(\.itemIDs)
+  public var itemIDs: [UUID] { placements.compactMap { $0.pose == nil ? nil : $0.id } }
+
+  /// A latent singleton or a losing concurrent head still names its stack.
+  /// Independent imports must not assign that UUID to a second group.
+  public var claimedStackIDs: Set<UUID> {
+    Set(placements.flatMap(\.heads).compactMap { $0.pose?.stackID })
   }
 
-  /// Import is an explicit adoption of independent members, not replication
-  /// between two cuts of the same board. Existing values and field versions
-  /// stay owned by their authors; only new membership and combined ordering
-  /// receive the importing human's causal version.
+  public func hasRemovedElement(id: String) -> Bool {
+    let identity = collaborationIdentity(id)
+    return !elements.contains { collaborationIdentity($0.id) == identity }
+      && collaboration?.fields[fieldKey(["elements", identity, "exists"])] != nil
+  }
+
+  /// A frozen projection retains the exact admitted intent rows, including a
+  /// singleton's latent stack membership. It never manufactures authored heads.
+  public func projecting(placements: [WorkspacePlacement], elements: [SpatialElement]) -> Self {
+    Self(placements: placements, elements: elements, stamp: stamp, collaboration: collaboration)
+  }
+
   public func importingIndependent(_ other: Self, actor: UUID) throws -> Self {
     guard isValid(itemIDs: []), other.isValid(itemIDs: []),
-      Set(itemIDs).isDisjoint(with: other.itemIDs),
-      Set(stacks.map(\.id)).isDisjoint(with: other.stacks.map(\.id)),
+      Set(placements.map(\.id)).isDisjoint(with: other.placements.map(\.id)),
+      claimedStackIDs.isDisjoint(with: other.claimedStackIDs),
       Set(elements.map(\.id)).isDisjoint(with: other.elements.map(\.id)),
       let next = max(stamp, other.stamp).advanced(by: actor) else {
       throw CollaborationError("import_collision", "Импорт добавляет независимых владельцев, не заменяя существующих.")
@@ -1034,311 +1021,148 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     var local = collaboration ?? .init(), incoming = other.collaboration ?? .init()
     try local.materializeVersions(in: .encode(self), fallback: stamp)
     try incoming.materializeVersions(in: .encode(other), fallback: other.stamp)
-    let orders = Set(["freeItems", "stacks", "elements"].map { fieldKey([$0, "order"]) })
     var fields = local.fields
     for (key, version) in incoming.fields {
-      if orders.contains(key) { fields[key] = fields[key].map { $0.joining(version) } ?? version }
+      if key == "elements/order" { fields[key] = fields[key].map { $0.joining(version) } ?? version }
       else {
-        guard fields[key] == nil else {
-          throw CollaborationError("import_collision", "Исторический владелец поля уже присутствует на доске.")
-        }
+        guard fields[key] == nil else { throw CollaborationError("import_collision", "Владелец поля уже присутствует на доске.") }
         fields[key] = version
       }
     }
     var metadata = CollaborativeContent(fields: fields)
-    for key in orders { metadata.recordField(key, stamp: next, human: true) }
-    let members = other.freeItems.map { fieldKey(["freeItems", $0.itemID.uuidString.lowercased(), "exists"]) }
-      + other.stacks.map { fieldKey(["stacks", $0.id.uuidString.lowercased(), "exists"]) }
-      + other.elements.map { fieldKey(["elements", collaborationIdentity($0.id), "exists"]) }
-    for key in members { metadata.recordField(key, stamp: next, human: true) }
-    var result = self
-    result.freeItems += other.freeItems; result.stacks += other.stacks; result.elements += other.elements
-    result.collaboration = metadata; result.stamp = next
-    guard result.isValid(itemIDs: Set(itemIDs + other.itemIDs)) else {
-      throw CollaborationError("invalid_content", "Импорт должен сохранить полный состав доски.")
+    metadata.recordField("elements/order", stamp: next, human: true)
+    for element in other.elements {
+      metadata.recordField(fieldKey(["elements", collaborationIdentity(element.id), "exists"]), stamp: next, human: true)
     }
-    return result
+    return Self(placements: placements + other.placements, elements: elements + other.elements,
+      stamp: next, collaboration: metadata)
   }
 
-  /// Reserve the pending mutation's clock, keeping the actual field versions
-  /// at their previous frontier even when they were still implicit.
   @discardableResult
   mutating func observeCausalFrontier(_ frontier: VersionStamp) -> Bool {
     guard frontier.counter <= VersionStamp.maximumCounter, stamp < frontier,
       let content = try? JSONValue.encode(self) else { return false }
     var versions = collaboration ?? CollaborativeContent()
     versions.materializeVersions(in: content, fallback: stamp)
-    collaboration = versions
-    stamp = frontier
+    collaboration = versions; stamp = frontier
     return true
   }
 
   public var highestZIndex: Int {
-    max(
-      freeItems.map(\.zIndex).max() ?? 0,
-      stacks.map(\.zIndex).max() ?? 0
-    )
+    placements.compactMap { $0.pose?.zIndex }.max() ?? 0
   }
 
-  public func placement(of itemID: UUID) -> FreeItemPlacement? {
-    freeItems.first { $0.itemID == itemID }
-  }
-
-  public func stack(containing itemID: UUID) -> WorkspaceItemStack? {
-    stacks.first { $0.itemIDs.contains(itemID) }
-  }
-
+  public func placement(of itemID: UUID) -> FreeItemPlacement? { freeItems.first { $0.id == itemID } }
+  public func stack(containing itemID: UUID) -> WorkspaceItemStack? { stacks.first { $0.itemIDs.contains(itemID) } }
   public func focusedCenter(of itemID: UUID) -> WorldPoint? {
-    if let placement = placement(of: itemID) { return placement.center }
+    if let value = placement(of: itemID) { return value.center }
     guard let stack = stack(containing: itemID) else { return nil }
-    return WorkspaceItemStackPresentation.focusedCenter(
-      of: itemID,
-      in: stack
-    )
+    return WorkspaceItemStackPresentation.focusedCenter(of: itemID, in: stack)
   }
 
-  /// Restores board ownership for catalog items written by releases that only
-  /// placed the first notebook. Existing positions remain untouched; each
-  /// missing item receives the first free slot in the board's native grid.
   @discardableResult
-  public mutating func placeMissingItems(
-    _ expectedItemIDs: [UUID],
-    actor: UUID
-  ) -> Bool {
-    let contentBefore = self
-    defer { recordCollaboration(from: contentBefore) }
+  public mutating func placeMissingItems(_ expectedItemIDs: [UUID], actor: UUID) -> Bool {
     let missing = expectedItemIDs.filter { !itemIDs.contains($0) }
     guard !missing.isEmpty else { return false }
-
-    let horizontalStep = WorkspaceItemGeometry.notebook.width * 1.28
-    let verticalStep = WorkspaceItemGeometry.notebook.height * 1.18
-    var occupied = freeItems.map(\.center) + stacks.map(\.center)
-    var slot = 0
-
-    for itemID in missing {
+    let dx = WorkspaceItemGeometry.notebook.width * 1.28
+    let dy = WorkspaceItemGeometry.notebook.height * 1.18
+    var occupied = freeItems.map(\.center) + stacks.map(\.center), slot = 0
+    for id in missing {
       var center: WorldPoint
       repeat {
-        let column = slot % 3
-        let row = slot / 3
-        center = WorldPoint(
-          x: (Double(column) - 1) * horizontalStep,
-          y: Double(row) * verticalStep
-        )
+        center = .init(x: (Double(slot % 3) - 1) * dx, y: Double(slot / 3) * dy)
         slot += 1
-      } while occupied.contains { existing in
-        let delta = existing.delta(to: center)
-        return abs(delta.x) < horizontalStep * 0.5
-          && abs(delta.y) < verticalStep * 0.5
+      } while occupied.contains { point in
+        let delta = point.delta(to: center)
+        return abs(delta.x) < dx * 0.5 && abs(delta.y) < dy * 0.5
       }
-
-      guard addItem(itemID, near: center, actor: actor) else {
-        return false
-      }
+      guard addItem(id, near: center, actor: actor) else { return false }
       occupied.append(center)
     }
     return true
   }
 
-  /// Turns a recoverable publication boundary into one stable board: orphaned
-  /// owners leave first, then every missing catalog item receives a place.
   @discardableResult
-  public mutating func reconcileItems(
-    _ expectedItemIDs: [UUID],
-    actor: UUID
-  ) -> Bool {
-    let contentBefore = self
-    defer { recordCollaboration(from: contentBefore) }
+  public mutating func reconcileItems(_ expectedItemIDs: [UUID], actor: UUID) -> Bool {
     let expected = Set(expectedItemIDs)
-    let obsolete = itemIDs.filter { !expected.contains($0) }
     var changed = false
-    for itemID in obsolete {
-      changed = deleteItem(itemID, actor: actor) || changed
-    }
+    for id in itemIDs where !expected.contains(id) { changed = deleteItem(id, actor: actor) || changed }
     return placeMissingItems(expectedItemIDs, actor: actor) || changed
   }
 
-  @discardableResult
-  public mutating func addItem(
-    _ itemID: UUID,
-    near center: WorldPoint,
-    actor: UUID
-  ) -> Bool {
-    let contentBefore = self
-    defer { recordCollaboration(from: contentBefore) }
-    guard center.isValid, !itemIDs.contains(itemID),
-      let next = stamp.advanced(by: actor)
-    else { return false }
-    freeItems.append(
-      FreeItemPlacement(
-        itemID: itemID,
-        center: center,
-        zIndex: highestZIndex + 1,
-        stamp: next
-      )
-    )
-    stamp = next
+  private mutating func author(_ poses: [UUID: WorkspacePlacementPose?], actor: UUID) -> Bool {
+    guard !poses.isEmpty, let next = stamp.advanced(by: actor) else { return false }
+    var values = Dictionary(uniqueKeysWithValues: placements.map { ($0.id, $0) })
+    do {
+      for (id, pose) in poses {
+        values[id] = try .authored(itemID: id, pose: pose, stamp: next, human: true, previous: values[id])
+      }
+    } catch { return false }
+    placements = values.values.sorted { $0.id.uuidString < $1.id.uuidString }
+    layout = .init(placements); stamp = next
     return true
   }
 
+  /// Causal undo is a new intent observing the retained frontier, never a
+  /// replacement of the register with an older saved JSON value.
   @discardableResult
-  public mutating func moveItem(
-    _ itemID: UUID,
-    to center: WorldPoint,
-    actor: UUID
-  ) -> Bool {
-    let contentBefore = self
-    defer { recordCollaboration(from: contentBefore) }
-    guard let index = freeItems.firstIndex(where: {
-      $0.itemID == itemID
-    }), let next = stamp.advanced(by: actor)
-    else { return false }
-    guard freeItems[index].move(
-      to: center,
-      zIndex: highestZIndex + 1,
-      actor: actor
-    ) else { return false }
-    stamp = next
-    return true
+  mutating func restorePlacement(_ itemID: UUID, pose: WorkspacePlacementPose?, actor: UUID) -> Bool {
+    author([itemID: pose], actor: actor)
   }
 
   @discardableResult
-  public mutating func createStack(
-    moving movingID: UUID,
-    onto targetID: UUID,
-    actor: UUID,
-    stackID: UUID = UUID()
-  ) -> UUID? {
-    let contentBefore = self
-    defer { recordCollaboration(from: contentBefore) }
-    guard movingID != targetID,
-      let movingIndex = freeItems.firstIndex(where: {
-        $0.itemID == movingID
-      }), let next = stamp.advanced(by: actor)
-    else { return nil }
+  public mutating func addItem(_ itemID: UUID, near center: WorldPoint, actor: UUID) -> Bool {
+    guard center.isValid, !itemIDs.contains(itemID) else { return false }
+    return author([itemID: .init(center: center, zIndex: highestZIndex + 1)], actor: actor)
+  }
 
-    if let stackIndex = stacks.firstIndex(where: {
-      $0.itemIDs.contains(targetID)
-    }) {
-      guard stacks[stackIndex].append(movingID, actor: actor) else { return nil }
-      freeItems.remove(at: movingIndex)
-      stamp = next
-      return stacks[stackIndex].id
+  @discardableResult
+  public mutating func moveItem(_ itemID: UUID, to center: WorldPoint, actor: UUID) -> Bool {
+    guard center.isValid, placement(of: itemID) != nil else { return false }
+    return author([itemID: .init(center: center, zIndex: highestZIndex + 1)], actor: actor)
+  }
+
+  @discardableResult
+  public mutating func createStack(moving movingID: UUID, onto targetID: UUID,
+    actor: UUID, stackID: UUID = UUID()) -> UUID? {
+    guard movingID != targetID, let moving = placement(of: movingID) else { return nil }
+    if let stack = stack(containing: targetID) {
+      guard stack.itemIDs.count < WorkspaceItemStack.maximumItemCount else { return nil }
+      let order = placements.filter { $0.pose?.stackID == stack.id }.compactMap { $0.pose?.stackOrder }.max() ?? 0
+      guard order < Int.max, author([movingID: .init(center: stack.center, zIndex: stack.zIndex,
+        stackID: stack.id, stackOrder: order + 1)], actor: actor) else { return nil }
+      return stack.id
     }
-
-    guard let targetIndex = freeItems.firstIndex(where: {
-      $0.itemID == targetID
-    }) else { return nil }
-    let moving = freeItems[movingIndex]
-    let target = freeItems[targetIndex]
-    let indexes = [movingIndex, targetIndex].sorted(by: >)
-    for index in indexes { freeItems.remove(at: index) }
-    stacks.append(
-      WorkspaceItemStack(
-        id: stackID,
-        center: target.center,
-        zIndex: max(moving.zIndex, target.zIndex) + 1,
-        itemIDs: [targetID, movingID],
-        stamp: next
-      )
-    )
-    stamp = next
+    guard let target = placement(of: targetID),
+      !placements.contains(where: { $0.pose?.stackID == stackID }) else { return nil }
+    let z = max(moving.zIndex, target.zIndex) + 1
+    guard author([
+      targetID: .init(center: target.center, zIndex: z, stackID: stackID, stackOrder: 0),
+      movingID: .init(center: target.center, zIndex: z, stackID: stackID, stackOrder: 1)
+    ], actor: actor) else { return nil }
     return stackID
   }
 
   @discardableResult
-  public mutating func unstackItem(
-    _ itemID: UUID,
-    at center: WorldPoint,
-    actor: UUID
-  ) -> Bool {
-    let contentBefore = self
-    defer { recordCollaboration(from: contentBefore) }
-    guard center.isValid, let stackIndex = stacks.firstIndex(where: {
-      $0.itemIDs.contains(itemID)
-    }), let next = stamp.advanced(by: actor)
-    else { return false }
-    var stack = stacks[stackIndex]
-    guard stack.remove(itemID, actor: actor) else { return false }
-    freeItems.append(
-      FreeItemPlacement(
-        itemID: itemID,
-        center: center,
-        zIndex: highestZIndex + 1,
-        stamp: next
-      )
-    )
-    if stack.itemIDs.count == 1, let remaining = stack.itemIDs.first {
-      freeItems.append(
-        FreeItemPlacement(
-          itemID: remaining,
-          center: stack.center,
-          zIndex: stack.zIndex,
-          stamp: next
-        )
-      )
-      stacks.remove(at: stackIndex)
-    } else {
-      stacks[stackIndex] = stack
-    }
-    stamp = next
-    return true
+  public mutating func unstackItem(_ itemID: UUID, at center: WorldPoint, actor: UUID) -> Bool {
+    guard center.isValid, placements.contains(where: { $0.id == itemID && $0.pose?.stackID != nil }) else { return false }
+    return author([itemID: .init(center: center, zIndex: highestZIndex + 1)], actor: actor)
   }
 
-  /// Removes a notebook from its single board owner. A two-member stack turns
-  /// into one free notebook, and cover elements leave with their cover.
   @discardableResult
-  public mutating func deleteItem(
-    _ itemID: UUID,
-    actor: UUID
-  ) -> Bool {
-    let contentBefore = self
-    defer { recordCollaboration(from: contentBefore) }
-    guard itemIDs.contains(itemID),
-      let next = stamp.advanced(by: actor)
-    else { return false }
-
-    if let index = freeItems.firstIndex(where: {
-      $0.itemID == itemID
-    }) {
-      freeItems.remove(at: index)
-    } else if let stackIndex = stacks.firstIndex(where: {
-      $0.itemIDs.contains(itemID)
-    }) {
-      var stack = stacks[stackIndex]
-      guard stack.remove(itemID, actor: actor) else { return false }
-      if stack.itemIDs.count == 1, let remaining = stack.itemIDs.first {
-        freeItems.append(
-          FreeItemPlacement(
-            itemID: remaining,
-            center: stack.center,
-            zIndex: stack.zIndex,
-            stamp: next
-          )
-        )
-        stacks.remove(at: stackIndex)
-      } else {
-        stacks[stackIndex] = stack
-      }
-    } else {
-      return false
-    }
-
+  public mutating func deleteItem(_ itemID: UUID, actor: UUID) -> Bool {
+    guard itemIDs.contains(itemID) else { return false }
+    let before = self
+    guard author([itemID: nil], actor: actor) else { return false }
     elements.removeAll { $0.surface == .cover(itemID) }
-    stamp = next
+    recordCollaboration(from: before)
     return true
   }
 
   @discardableResult
-  public mutating func upsertElement(
-    _ element: SpatialElement,
-    expected: VersionStamp?,
-    actor: UUID
-  ) -> Bool {
-    let contentBefore = self
-    defer { recordCollaboration(from: contentBefore) }
-    guard element.surface.kind != .page,
-      let next = stamp.advanced(by: actor)
-    else { return false }
+  public mutating func upsertElement(_ element: SpatialElement, expected: VersionStamp?, actor: UUID) -> Bool {
+    let before = self
+    guard element.surface.kind != .page, let next = stamp.advanced(by: actor) else { return false }
     if let index = elements.firstIndex(where: { $0.id == element.id }) {
       if let expected, elements[index].stamp != expected { return false }
       elements[index] = element
@@ -1346,104 +1170,95 @@ public struct BoardDocument: Codable, Equatable, Sendable {
       guard expected == nil else { return false }
       elements.append(element)
     }
-    stamp = next
+    stamp = next; recordCollaboration(from: before)
     return true
   }
 
   @discardableResult
-  public mutating func removeElements(
-    ids: Set<String>,
-    actor: UUID
-  ) -> Int {
-    let contentBefore = self
-    defer { recordCollaboration(from: contentBefore) }
+  public mutating func removeElements(ids: Set<String>, actor: UUID) -> Int {
+    let before = self
     guard !ids.isEmpty, let next = stamp.advanced(by: actor) else { return 0 }
-    let before = elements.count
     elements.removeAll { ids.contains($0.id) }
-    let removed = before - elements.count
+    let removed = before.elements.count - elements.count
     guard removed > 0 else { return 0 }
-    stamp = next
+    stamp = next; recordCollaboration(from: before)
     return removed
   }
 
   private mutating func recordCollaboration(from before: Self) {
-    guard stamp != before.stamp,
-      let old = try? JSONValue.encode(before), let next = try? JSONValue.encode(self) else { return }
-    var metadata = before.collaboration ?? CollaborativeContent()
+    guard stamp != before.stamp, let old = try? JSONValue.encode(before), let next = try? JSONValue.encode(self) else { return }
+    var metadata = before.collaboration ?? .init()
     metadata.record(before: old, after: next, beforeStamp: before.stamp, stamp: stamp, human: true)
     collaboration = metadata
   }
 
-  public mutating func merge(_ other: Self, itemIDs: Set<UUID>) -> Bool {
-    guard other.isValid(itemIDs: itemIDs),
-      let local = try? JSONValue.encode(self), let incoming = try? JSONValue.encode(other) else { return false }
-    let merged = CollaborativeContent.merge(local: local, incoming: incoming,
-      localState: collaboration, incomingState: other.collaboration,
-      localStamp: stamp, incomingStamp: other.stamp)
-    guard var candidate = try? merged.value.decode(Self.self), candidate.isValid(itemIDs: itemIDs) else {
-      guard stamp < other.stamp else { return false }
-      self = other
-      return true
+  mutating func recordPlacementPreference(from before: Self, human: Bool) {
+    let previous = Dictionary(uniqueKeysWithValues: before.placements.map { ($0.id, $0) })
+    placements = placements.map { $0.authoredPreference(human: human, since: previous[$0.id]) }
+    layout = .init(placements)
+  }
+
+  public mutating func merge(_ other: Self, itemIDs expectedIDs: Set<UUID>) throws -> Bool {
+    guard isValid(itemIDs: []), other.isValid(itemIDs: []) else {
+      throw CollaborationError("invalid_content", "Доска требует одного причинного владельца каждого предмета.")
     }
-    candidate.collaboration = merged.state
-    candidate.stamp = mergedContentStamp(local: local, incoming: incoming, result: merged.value,
-      localStamp: stamp, incomingStamp: other.stamp)
-    guard candidate != self else { return false }
-    self = candidate
+    var values = Dictionary(uniqueKeysWithValues: placements.map { ($0.id, $0) })
+    for incoming in other.placements { values[incoming.id] = try values[incoming.id]?.merging(incoming) ?? incoming }
+    let a = try JSONValue.encode(self), b = try JSONValue.encode(other)
+    let fields = CollaborativeContent.merge(local: a, incoming: b, localState: collaboration,
+      incomingState: other.collaboration, localStamp: stamp, incomingStamp: other.stamp)
+    var result = try fields.value.decode(Self.self)
+    result.placements = values.values.sorted { $0.id.uuidString < $1.id.uuidString }
+    result.layout = .init(result.placements); result.collaboration = fields.state
+    // Receiving a join is not another authored action. The next local write
+    // advances this admitted frontier; equal heads yield equal headers now.
+    result.stamp = max(stamp, other.stamp)
+    guard result.isValid(itemIDs: expectedIDs) else {
+      throw CollaborationError("ownership_conflict", "Объединённая доска должна сохранить каждого живого владельца.")
+    }
+    guard result != self else { return false }
+    self = result
     return true
   }
 
   public func isValid(itemIDs expectedIDs: Set<UUID>) -> Bool {
-    guard format == Self.formatVersion,
-      collaboration?.isValid ?? true,
-      stamp.counter <= VersionStamp.maximumCounter,
-      freeItems.allSatisfy(\.isValid),
-      stacks.allSatisfy(\.isValid),
-      elements.allSatisfy(\.isValid)
-    else { return false }
-    let ids = itemIDs
-    let ownedIDs = Set(ids)
-    guard ownedIDs.count == ids.count,
-      expectedIDs.isSubset(of: ownedIDs)
-    else { return false }
-    let stackIDs = stacks.map(\.id)
-    guard Set(stackIDs).count == stackIDs.count else { return false }
-    let elementIDs = elements.map(\.id)
-    guard Set(elementIDs).count == elementIDs.count else { return false }
-    return elements.allSatisfy { element in
-      element.surface.kind == .board
-        || element.surface.ownerID.map(ownedIDs.contains) == true
+    guard format == Self.formatVersion, stamp.counter <= VersionStamp.maximumCounter,
+      collaboration?.isValid ?? true, Set(placements.map(\.id)).count == placements.count,
+      placements.allSatisfy({ (try? $0.validate()) != nil && $0.heads.allSatisfy { $0.version.stamp.counter <= stamp.counter } }),
+      elements.allSatisfy(\.isValid), Set(elements.map(\.id)).count == elements.count,
+      expectedIDs.isSubset(of: Set(itemIDs)) else { return false }
+    // A stack UUID names a fixed anchor, not a mutable group-pose owner.
+    var anchors: [UUID: WorkspacePlacementPose] = [:]
+    for placement in placements {
+      guard let pose = placement.pose, let id = pose.stackID else { continue }
+      if let anchor = anchors[id], anchor.center != pose.center || anchor.zIndex != pose.zIndex { return false }
+      anchors[id] = pose
     }
+    let owned = Set(itemIDs)
+    return elements.allSatisfy { $0.surface.kind == .board || $0.surface.ownerID.map(owned.contains) == true }
   }
 
-  private enum CodingKeys: String, CodingKey {
-    case format
-    case freeItems
-    case stacks
-    case elements
-    case stamp
-    case collaboration
-  }
+  private enum CodingKeys: String, CodingKey { case format, placements, elements, stamp, collaboration }
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     format = try container.decode(Int.self, forKey: .format)
     guard format == Self.formatVersion else {
       throw DecodingError.dataCorruptedError(forKey: .format, in: container,
-        debugDescription: "Unsupported board format: \(format)")
+        debugDescription: "Board placement intents require an explicit version-two migration")
     }
-    freeItems = try container.decode([FreeItemPlacement].self, forKey: .freeItems)
-    stacks = try container.decode([WorkspaceItemStack].self, forKey: .stacks)
+    placements = try container.decode([WorkspacePlacement].self, forKey: .placements)
     elements = try container.decode([SpatialElement].self, forKey: .elements)
     stamp = try container.decode(VersionStamp.self, forKey: .stamp)
     collaboration = try container.decodeIfPresent(CollaborativeContent.self, forKey: .collaboration)
+    layout = .init(placements)
+    materializeElementVersions()
   }
 
   public func encode(to encoder: Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
-    try container.encode(Self.formatVersion, forKey: .format)
-    try container.encode(freeItems, forKey: .freeItems)
-    try container.encode(stacks, forKey: .stacks)
+    try container.encode(format, forKey: .format)
+    try container.encode(placements, forKey: .placements)
     try container.encode(elements, forKey: .elements)
     try container.encode(stamp, forKey: .stamp)
     try container.encodeIfPresent(collaboration, forKey: .collaboration)

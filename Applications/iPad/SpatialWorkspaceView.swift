@@ -124,7 +124,7 @@ struct SpatialWorkspaceView: View {
         revision: model.workspaceHeader?.cursor, pinned: scenePins(presence: presence),
         itemOwners: sceneItemOwners(presence: presence, cohort: cohort),
         permitsPreparation: model.permitsBackgroundPreparation)
-      let workset = frame?.workset(boardID: presence.boardID) ?? .empty
+      let workset = cohort.map { model.presentedWorkset(cohort: $0, boardID: presence.boardID, presence: presence) } ?? .empty
       let rendered = workset.items
 
       ZStack {
@@ -243,7 +243,7 @@ struct SpatialWorkspaceView: View {
         }
         NotebookSelectionGesture(inputGate: model.inputGate, onPreview: model.updateSelectionPreview,
           onPoint: { start, end, held, tapCount in
-          guard cameraGesture == nil, !settling, !model.scenePreparationPending, let cohort else { return }
+          guard cameraGesture == nil, !settling, let cohort else { return }
           guard let capture = NotebookAttentionProjection.capture(start: start, end: end, model: model, presence: presence,
             cohort: cohort, installedInk: spatialInkSurfaces.installedSources()) else { return }
           if !held, capture.fragments.allSatisfy({ $0.elementID == nil && $0.target.kind != .cover }) {
@@ -260,7 +260,7 @@ struct SpatialWorkspaceView: View {
               if model.interactiveElementFocus == focus { return }
               if tapCount > 1 {
                 if case .spatial(let boardID, let id) = reference,
-                  model.sceneIndex?.element(id: id, boardID: boardID)?.kind == .nativeText {
+                  model.presentedElement(.spatial(boardID: boardID, elementID: id), cohort: cohort)?.kind == .nativeText {
                   model.interactiveElementFocus = .board(boardID: boardID, elementID: id)
                 } else { model.interactiveElementFocus = focus }
                 return
@@ -409,7 +409,7 @@ struct SpatialWorkspaceView: View {
   private func selectItemMaterial(_ itemID: UUID, presence: SessionPresence, cohort: SceneCompositionCohort?) {
     let target = NotebookSelectionSession.Target.item(boardID: presence.boardID, itemID: itemID)
     guard model.selectionSession.target != target else { return }
-    if let cohort, let item = cohort.frame.index.renderedItem(id: itemID, presence: presence) {
+    if let cohort, let item = model.presentedItem(id: itemID, cohort: cohort, presence: presence) {
       let box = item.geometry.screenFrame(center: item.center, camera: presence.camera, viewport: presence.viewport)
       if let capture = NotebookAttentionProjection.capture(start: .init(x: box.x, y: box.y),
         end: .init(x: box.x + box.width, y: box.y + box.height), model: model, presence: presence,
@@ -439,7 +439,8 @@ struct SpatialWorkspaceView: View {
       presence.mode == .board || presence.mode == .cover,
       !liftedItemIDs.contains(where: { spatialInkSurfaces.pose(for: .cover($0))?.isManipulating == true }),
       let selectedItemID,
-      let rendered = model.sceneIndex?.renderedItem(id: selectedItemID, presence: presence)
+      let cohort = model.compositionTiles.published,
+      let rendered = model.presentedItem(id: selectedItemID, cohort: cohort, presence: presence)
     {
       let center = presence.camera.worldToScreen(
         rendered.center,
@@ -559,8 +560,8 @@ struct SpatialWorkspaceView: View {
     let cohortID: UUID?
     let generation: UUID?
     let contents: UInt64
-    let ids: [UUID]
-    let coverIDs: [UUID: [String]]
+    let items: [RenderedWorkspaceItem]
+    let covers: [UUID: [SpatialElement]]
     let mode: WorkspaceSemanticMode
     let focused: UUID?
     let open: Double
@@ -581,9 +582,11 @@ struct SpatialWorkspaceView: View {
 
   private func sceneItems(_ rendered: [RenderedWorkspaceItem], presence: SessionPresence,
     viewport: SpatialPoint, frame: WorkspaceSceneFrame?, cohort: SceneCompositionCohort?) -> some View {
+    let covers = Dictionary(uniqueKeysWithValues: rendered.map { item in
+      (item.id, cohort.map { model.presentedCoverElements(cohort: $0, boardID: presence.boardID, itemID: item.id) } ?? [])
+    })
     let revision = ItemPlaneRevision(cohortID: cohort?.id, generation: model.sceneIndex?.generationID,
-      contents: model.collaborationReadEpoch, ids: rendered.map(\.id),
-      coverIDs: frame?.covers.mapValues { $0.elements.map { "element:" + $0.id } + $0.aggregates.map { "aggregate:" + String($0.id) } } ?? [:], mode: presence.mode,
+      contents: model.collaborationReadEpoch, items: rendered, covers: covers, mode: presence.mode,
       focused: presence.focusedItemID, open: presence.openProgress,
       selected: selectedItemID, lifted: liftedItemIDs, candidate: cameraGesture?.candidateItemID,
       editingText: editingSpatialText, contentGesture: contentGestureActive,
@@ -601,14 +604,14 @@ struct SpatialWorkspaceView: View {
           }
         }
         sceneItemContents(rendered, presence: presence, viewport: viewport, anchorCamera: anchor.camera,
-          frame: frame, cohort: cohort)
+          covers: covers, frame: frame, cohort: cohort)
       }
         .environment(model).environment(\.workspaceSceneFrame, frame).environment(\.sceneComposition, .init(cohort))
     }
   }
 
   private func sceneItemContents(_ rendered: [RenderedWorkspaceItem], presence: SessionPresence,
-    viewport: SpatialPoint, anchorCamera: SpatialCamera, frame: WorkspaceSceneFrame?, cohort: SceneCompositionCohort?) -> some View {
+    viewport: SpatialPoint, anchorCamera: SpatialCamera, covers: [UUID: [SpatialElement]], frame: WorkspaceSceneFrame?, cohort: SceneCompositionCohort?) -> some View {
     ForEach(rendered.filter {
           cohort?.plan.allowsLive(.item($0.id), in: .board(presence.boardID)) == true && (
           WorkspaceSceneProjection.mountsContent(of: $0, in: presence)
@@ -627,7 +630,7 @@ struct SpatialWorkspaceView: View {
             projectedScale: presence.camera.scale,
             boardID: presence.boardID,
             contentRevision: model.collaborationReadEpoch,
-            coverElements: frame?.covers[rendered.id]?.elements ?? [],
+            coverElements: covers[rendered.id] ?? [],
             viewport: viewport,
             isFocused: presence.focusedItemID == rendered.id,
             preparesCoverMotion: presence.focusedItemID == rendered.id
@@ -660,8 +663,7 @@ struct SpatialWorkspaceView: View {
             editingTextID: editingTextID(on: presence.boardID),
             spatialInkSurfaces: spatialInkSurfaces,
             onDrop: { itemID, center in
-              guard !model.scenePreparationPending else { return nil }
-              return dropItem(itemID, at: center, presence: model.presence ?? presence)
+              dropItem(itemID, at: center, presence: presence)
             },
             onSelect: { itemID in
               guard !model.isItemBeingDeleted(itemID) else { return }
@@ -675,13 +677,13 @@ struct SpatialWorkspaceView: View {
               if lifted { liftedItemIDs.append(itemID); selectItemMaterial(itemID, presence: presence, cohort: cohort) }
             },
             onOpen: { itemID in
-              guard !model.scenePreparationPending else { return }
+              guard !model.isItemBeingDeleted(itemID), model.presence?.boardID == presence.boardID else { return }
               model.interactiveElementFocus = nil
               model.endSurfaceEditing()
               openItem(itemID, viewport: viewport)
             },
             onEditText: { itemID, point in
-              guard !model.scenePreparationPending else { return }
+              guard !model.isItemBeingDeleted(itemID), model.presence?.boardID == presence.boardID else { return }
               beginTextEditing(on: itemID, at: point)
             },
             onTextEditingEnded: { [selectionID = model.selectionSession.id] elementID in
@@ -707,20 +709,18 @@ struct SpatialWorkspaceView: View {
     let cohortID: UUID?
     let generation: UUID?
     let focus: InteractiveElementReference?
-    let elements: [String]
+    let elements: [SpatialElement]
     let selection: EditableElementReference?
     let selectionID: UUID
     let manipulation: NotebookElementManipulation?
-    let pending: Bool
   }
 
   private func boardElements(_ elements: [SpatialElement], presence: SessionPresence,
     viewport: SpatialPoint, cohort: SceneCompositionCohort?) -> some View {
     let selection = model.selectionSession.editingElement
     let revision = ElementPlaneRevision(cohortID: cohort?.id, generation: model.sceneIndex?.generationID,
-      focus: model.interactiveElementFocus, elements: elements.map(\.id),
-      selection: selection, selectionID: model.selectionSession.id, manipulation: model.selectionSession.manipulation,
-      pending: model.scenePreparationPending)
+      focus: model.interactiveElementFocus, elements: elements,
+      selection: selection, selectionID: model.selectionSession.id, manipulation: model.selectionSession.manipulation)
     return SceneCameraPlane(presence: presence, revision: revision,
       isCameraActive: model.presencePhase == .active || cameraGesture != nil || panStart != nil || settling) { anchor in
       ZStack {
@@ -766,8 +766,6 @@ struct SpatialWorkspaceView: View {
                 height: element.frame.height * presence.camera.scale
               )
           }
-            .disabled(model.scenePreparationPending)
-            .allowsHitTesting(!model.scenePreparationPending)
             .frame(
               width: element.frame.width * presence.camera.scale,
               height: element.frame.height * presence.camera.scale
@@ -844,14 +842,32 @@ struct SpatialWorkspaceView: View {
     if let id = editingTextID(on: presence.boardID) { pins.insert(.element(id)) }
     if case .board(let boardID, let elementID) = model.interactiveElementFocus {
       pins.insert(.element(elementID))
-      if let element = model.sceneIndex?.element(id: elementID, boardID: boardID),
+      if let cohort = model.compositionTiles.published,
+        let element = model.presentedElement(.spatial(boardID: boardID, elementID: elementID), cohort: cohort),
         element.surface.kind == .cover, let carrier = element.surface.ownerID { pins.insert(.item(carrier)) }
     }
     return pins
   }
 
   private func sceneWorkset(presence: SessionPresence) -> WorkspaceSceneWorkset {
-    model.sceneWorkset(presence: presence, pinned: scenePins(presence: presence))
+    if let cohort = model.compositionTiles.published,
+      cohort.plan.presentations[.board(presence.boardID)] != nil {
+      return model.presentedWorkset(cohort: cohort, boardID: presence.boardID, presence: presence)
+    }
+    return model.sceneWorkset(presence: presence, pinned: scenePins(presence: presence))
+  }
+
+  /// Opening and docking use the same accepted physical placement as the live
+  /// paper. A retained, out-of-window owner still belongs to its admitted cohort.
+  private func focusedCenter(itemID: UUID, boardID: UUID) -> WorldPoint? {
+    if let board = model.boardHierarchy?.board(boardID),
+      board.placement(of: itemID) != nil || board.stack(containing: itemID) != nil {
+      return board.focusedCenter(of: itemID)
+    }
+    guard let cohort = model.compositionTiles.published,
+      let presence = cohort.frame.presences[boardID],
+      model.presentedItem(id: itemID, cohort: cohort, presence: presence) != nil else { return nil }
+    return cohort.frame.index.focusedCenter(itemID: itemID, boardID: boardID)
   }
 
   private func acceptDocumentPageLayout(
@@ -1113,7 +1129,7 @@ struct SpatialWorkspaceView: View {
       geometry: model.itemGeometry(attractionTarget)
     )
     if let attractionTarget,
-      let center = model.sceneIndex?.focusedCenter(itemID: attractionTarget, boardID: snapshot.presence.boardID)
+      let center = focusedCenter(itemID: attractionTarget, boardID: snapshot.presence.boardID)
     {
       let correction: NotebookDockingCorrection
       if let engagement = snapshot.paperEngagement,
@@ -1216,7 +1232,7 @@ struct SpatialWorkspaceView: View {
         isApproaching: snapshot.isApproaching,
         releaseVelocity: Double(velocity)
       ),
-      let center = model.sceneIndex?.focusedCenter(itemID: itemID, boardID: presence.boardID)
+      let center = focusedCenter(itemID: itemID, boardID: presence.boardID)
     {
       model.selectItem(itemID)
       let target = SessionPresence(
@@ -1263,9 +1279,10 @@ struct SpatialWorkspaceView: View {
     let viewport = start.viewport
     if snapshot.paperEngagement == nil,
       start.mode == .board || (start.mode == .cover && start.focusedItemID.flatMap(itemKind) == .board),
-      let parentID = model.sceneIndex?.ownerBoard(itemID: start.boardID),
+      let parentID = model.boardHierarchy?.ownerBoardID(of: start.boardID)
+        ?? model.compositionTiles.published?.frame.index.ownerBoard(itemID: start.boardID),
       let portal = model.scenePortalCamera(boardID: start.boardID),
-      let center = model.sceneIndex?.focusedCenter(itemID: start.boardID, boardID: parentID) {
+      let center = focusedCenter(itemID: start.boardID, boardID: parentID) {
       let entryScale = BoardPortalProjection.entryCamera(portalCamera: portal, viewport: viewport).scale
       let boundaryScale = min(entryScale, snapshot.trajectory.startingCamera.scale)
       let rawScale = snapshot.trajectory.startingCamera.scale * Double(magnification / snapshot.trajectory.startingMagnification)
@@ -1284,7 +1301,7 @@ struct SpatialWorkspaceView: View {
     }
     guard snapshot.paperEngagement == nil,
       let candidate = snapshot.candidateItemID, itemKind(candidate) == .board,
-      let center = model.sceneIndex?.focusedCenter(itemID: candidate, boardID: start.boardID) else { return false }
+      let center = focusedCenter(itemID: candidate, boardID: start.boardID) else { return false }
     if model.enterBoard(candidate, through: camera, settled: false), let presence = model.presence {
       continuePortalGesture(presence: presence, magnification: magnification, centroid: centroid,
         candidate: nil, isApproaching: snapshot.isApproaching)
@@ -1378,7 +1395,8 @@ struct SpatialWorkspaceView: View {
     halo: Double = NotebookOpeningIntent.selectionHalo
   ) -> Double {
     guard
-      let rendered = model.sceneIndex?.renderedItem(id: itemID, presence: presence)
+      let cohort = model.compositionTiles.published,
+      let rendered = model.presentedItem(id: itemID, cohort: cohort, presence: presence)
     else { return 0 }
     return selectionStrength(rendered: rendered, at: centroid, presence: presence, halo: halo)
   }
@@ -1456,9 +1474,9 @@ struct SpatialWorkspaceView: View {
     guard !settling, !model.isItemBeingDeleted(itemID),
       cameraGesture == nil,
       let presence = model.presence,
-      let center = model.sceneIndex?.focusedCenter(itemID: itemID, boardID: presence.boardID)
+      let center = focusedCenter(itemID: itemID, boardID: presence.boardID)
     else { return }
-    if model.sceneIndex?.item(id: itemID)?.kind == .board {
+    if itemKind(itemID) == .board {
       enterBoard(itemID, center: center, viewport: viewport)
       return
     }
@@ -1504,7 +1522,7 @@ struct SpatialWorkspaceView: View {
   }
 
   private func itemKind(_ itemID: UUID) -> WorkspaceItemKind? {
-    model.sceneIndex?.item(id: itemID)?.kind
+    model.workspace?.item(id: itemID)?.kind ?? model.compositionTiles.published?.frame.index.item(id: itemID)?.kind
   }
 
   private func animateSettlement(
@@ -1567,7 +1585,7 @@ struct SpatialWorkspaceView: View {
   }
 
   private func openMode(for itemID: UUID) -> WorkspaceSemanticMode {
-    switch model.sceneIndex?.item(id: itemID)?.kind {
+    switch itemKind(itemID) {
     case .document: return .document
     case .notebook: return .page
     case .board, nil: return .board
@@ -1579,7 +1597,7 @@ struct SpatialWorkspaceView: View {
     from presence: SessionPresence?
   ) -> Int {
     guard let itemID,
-      model.sceneIndex?.item(id: itemID)?.kind == .document,
+      itemKind(itemID) == .document,
       presence?.focusedItemID == itemID
     else { return 0 }
     return presence?.documentPageIndex ?? 0
@@ -1594,17 +1612,12 @@ struct SpatialWorkspaceView: View {
     at center: WorldPoint,
     presence: SessionPresence
   ) -> WorkspaceItemPoseDestination? {
-    guard let before = model.board else { return nil }
-    if model.board?.stack(containing: itemID) != nil {
-      model.unstackItem(itemID, at: center)
-    } else {
-      model.moveItem(itemID, to: center)
-    }
-
-    guard
-      let moving = model.sceneIndex?.renderedItem(id: itemID, presence: presence)
+    guard model.presence?.boardID == presence.boardID,
+      !model.isItemBeingDeleted(itemID), let before = model.boardHierarchy?.board(presence.boardID),
+      let cohort = model.compositionTiles.published,
+      let moving = model.presentedItem(id: itemID, cohort: cohort, presence: presence)
     else { return nil }
-    let target = sceneWorkset(presence: presence).items
+    let target = model.presentedWorkset(cohort: cohort, boardID: presence.boardID, presence: presence).items
       .reversed()
       .first { candidate in
         guard candidate.id != itemID else { return false }
@@ -1612,6 +1625,12 @@ struct SpatialWorkspaceView: View {
         return abs(delta.x) <= (moving.geometry.width + candidate.geometry.width) * 0.3
           && abs(delta.y) <= (moving.geometry.height + candidate.geometry.height) * 0.3
       }
+    if model.board?.stack(containing: itemID) != nil {
+      model.unstackItem(itemID, at: center)
+    } else {
+      model.moveItem(itemID, to: center)
+    }
+
     if let target {
       _ = model.stackItem(moving.id, onto: target.id)
     }
@@ -1655,9 +1674,8 @@ private struct WorkspaceSceneItem: View, Equatable {
   let onDocumentPageLayout: (DocumentPageLayout) -> Void
 
   nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-    lhs.rendered.id == rhs.rendered.id && lhs.rendered.center == rhs.rendered.center
-      && lhs.rendered.zIndex == rhs.rendered.zIndex && lhs.contentRevision == rhs.contentRevision
-      && lhs.coverElements.map(\.id) == rhs.coverElements.map(\.id)
+    lhs.rendered == rhs.rendered && lhs.contentRevision == rhs.contentRevision
+      && lhs.coverElements == rhs.coverElements
       && lhs.boardID == rhs.boardID && lhs.camera == rhs.camera && lhs.viewport == rhs.viewport
       && lhs.isFocused == rhs.isFocused && lhs.preparesCoverMotion == rhs.preparesCoverMotion
       && lhs.preparesContent == rhs.preparesContent && lhs.openProgress == rhs.openProgress

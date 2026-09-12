@@ -110,7 +110,7 @@ struct PreparedAgentElementView: View {
           })
           .id(web.id)
           .opacity(isActive && liveProgram == AgentProgramSource(element) ? 1 : 0)
-          .allowsHitTesting(isActive && liveProgram == AgentProgramSource(element) && !model.scenePreparationPending)
+          .allowsHitTesting(isActive && liveProgram == AgentProgramSource(element))
       }
       #if os(macOS)
       if allowsInteraction && !element.javaScript.isEmpty && !isActive {

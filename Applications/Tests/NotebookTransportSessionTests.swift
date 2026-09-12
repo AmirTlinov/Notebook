@@ -7,6 +7,42 @@ import XCTest
 
 @MainActor
 final class NotebookTransportSessionTests: XCTestCase {
+  func testImmediateJournalBoundaryStopsBothEndsWithTheSameReason() async throws {
+    let rejected = expectation(description: "Both peers know why exchange stopped"); rejected.expectedFulfillmentCount = 2
+    let source = NotebookTransportMemoryStore(journalRequirement: .checkpoint)
+    let pair = try NotebookTransportTestPair(serverStorage: source)
+    defer { pair.stop() }
+    var stopped: Set<UUID> = []
+    pair.onStopped = { identity, error in
+      XCTAssertTrue(stopped.insert(identity.deviceID).inserted)
+      XCTAssertEqual((error as? CollaborationError)?.code, "placement_checkpoint_required")
+      rejected.fulfill()
+    }
+    try pair.start()
+    await fulfillment(of: [rejected], timeout: 10)
+    XCTAssertFalse(pair.server?.isReady == true); XCTAssertFalse(pair.client?.isReady == true)
+    let cursor = await source.acknowledgedCursor, applied = await pair.clientStorage.appliedCount
+    XCTAssertEqual(cursor, 0); XCTAssertEqual(applied, 0)
+  }
+
+  func testFormatRefusalReachesThePairedDeviceBeforeClosingWithoutAcknowledgement() async throws {
+    let ready = expectation(description: "Pair ready"); ready.expectedFulfillmentCount = 2
+    let rejected = expectation(description: "Peer receives the actual checkpoint requirement")
+    let pair = try NotebookTransportTestPair()
+    defer { pair.stop() }
+    pair.onReady = { _, _ in ready.fulfill() }
+    try pair.start(); await fulfillment(of: [ready], timeout: 10)
+    let server = try XCTUnwrap(pair.server), client = try XCTUnwrap(pair.client)
+    client.onStop = { peer, error in
+      XCTAssertEqual(peer?.deviceID, pair.serverIdentity.deviceID)
+      XCTAssertEqual((error as? CollaborationError)?.code, "placement_checkpoint_required")
+      rejected.fulfill()
+    }
+    server.stop(NotebookTransportContentRequirement.checkpoint.error)
+    await fulfillment(of: [rejected], timeout: 5)
+    XCTAssertFalse(server.isReady); XCTAssertFalse(client.isReady)
+  }
+
   func testFixedTLSProfileAuthenticatesAndNegotiatesTheExactPFSSuite() async throws {
     let ready = expectation(description: "Both authenticated TLS sessions ready"); ready.expectedFulfillmentCount = 2
     let peer = try NotebookTransportTestPair()
@@ -83,6 +119,7 @@ final class NotebookTransportSessionTests: XCTestCase {
     XCTAssertEqual(cursorReads, 0)
     XCTAssertThrowsError(try server.receive(.init(sequence: 1, message: .offer(pair.sampleChange))))
     XCTAssertThrowsError(try client.receive(.init(sequence: 0, message: .ready(cursor: 0))))
+    XCTAssertThrowsError(try client.receive(.init(sequence: 0, message: .contentUnavailable(.checkpoint))))
     try client.confirmPairing()
     XCTAssertFalse(server.isReady); XCTAssertFalse(client.isReady)
     try server.confirmPairing()
@@ -167,6 +204,7 @@ private final class NotebookTransportTestPair {
   var onTransient: ((NotebookTransportTransient, NotebookTransportIdentity) -> Void)?
   var onDurable: ((NotebookDurableChange, NotebookTransportIdentity) -> Void)?
   var onFailure: ((Error) -> Void)?
+  var onStopped: ((NotebookTransportIdentity, Error?) -> Void)?
   private let autoConfirm: Bool
   private let wrongSecret: Bool
   private let pairingID = UUID()
@@ -250,7 +288,10 @@ private final class NotebookTransportTestPair {
     session.onReady = { [weak self] identity in self?.onReady?(identity, generation) }
     session.onTransient = { [weak self] value, peer in self?.onTransient?(value, peer) }
     session.onDurableChange = { [weak self] change, peer in self?.onDurable?(change, peer) }
-    session.onStop = { [weak self] _, error in if let error { self?.failed(error) } }
+    session.onStop = { [weak self] peer, error in
+      if let peer { self?.onStopped?(peer, error) }
+      if let error { self?.failed(error) }
+    }
   }
   private func failed(_ error: Error) {
     guard !isStopped, !reportedFailure else { return }
@@ -265,6 +306,7 @@ private actor NotebookTransportMemoryStore {
   private var incomingCursor: UInt64 = 0
   private var transactions: [UUID: String] = [:]
   private var holdCommit: Bool
+  private let journalRequirement: NotebookTransportContentRequirement?
   private var commitContinuation: CheckedContinuation<Void, Never>?
   private var commitObserver: (@Sendable () -> Void)?
   private var committedObserver: (@Sendable () -> Void)?
@@ -275,8 +317,9 @@ private actor NotebookTransportMemoryStore {
   private(set) var largestStagedBlob = 0
   private(set) var requestedJournalCursors: [UInt64] = []
 
-  init(changes: [NotebookDurableChange] = [], blobs: [String: Data] = [:], holdCommit: Bool = false) {
-    journal = changes; self.blobs = blobs; self.holdCommit = holdCommit
+  init(changes: [NotebookDurableChange] = [], blobs: [String: Data] = [:], holdCommit: Bool = false,
+    journalRequirement: NotebookTransportContentRequirement? = nil) {
+    journal = changes; self.blobs = blobs; self.holdCommit = holdCommit; self.journalRequirement = journalRequirement
   }
   func setCommitObserver(_ value: @escaping @Sendable () -> Void) { commitObserver = value }
   func setCommittedObserver(_ value: @escaping @Sendable () -> Void) { committedObserver = value }
@@ -289,7 +332,9 @@ private actor NotebookTransportMemoryStore {
       missingBlobHashes: { try await self.missing($0, limit: $1, after: $2) }, applyRemoteChange: { change, _ in try await self.apply(change) })
   }
   private func changes(after cursor: UInt64, limit: Int) throws -> [NotebookDurableChange] {
-    requestedJournalCursors.append(cursor); return Array(journal.filter { $0.sequence > cursor }.prefix(limit))
+    requestedJournalCursors.append(cursor)
+    if let journalRequirement { throw journalRequirement.error }
+    return Array(journal.filter { $0.sequence > cursor }.prefix(limit))
   }
   private func cursor() -> UInt64 { cursorReads += 1; return incomingCursor }
   private func acknowledge(_ cursor: UInt64) { acknowledgedCursor = cursor; acknowledgementObserver?() }

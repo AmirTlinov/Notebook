@@ -53,13 +53,13 @@ struct SceneCompositionLiveData: Sendable {
   let pages: [UUID: PageDocument]
   let ink: SpatialInkJournal
   let referenceIdentities: [NotebookReferenceIdentity]
-  let referenceInkBasis: NotebookReferenceInkBasis?
+  let referenceBasis: NotebookReferenceBasis?
   init(documents: [UUID: DocumentDocument], states: [UUID: DocumentStateJournal], pages: [UUID: PageDocument],
     ink: SpatialInkJournal, referenceIdentities: [NotebookReferenceIdentity] = [],
-    referenceInkBasis: NotebookReferenceInkBasis? = nil) {
+    referenceBasis: NotebookReferenceBasis? = nil) {
     self.documents = documents; self.states = states; self.pages = pages; self.ink = ink
     self.referenceIdentities = referenceIdentities
-    self.referenceInkBasis = referenceInkBasis
+    self.referenceBasis = referenceBasis
   }
 }
 
@@ -220,10 +220,16 @@ actor SceneCompositionSource {
         // ink path must terminate at their common retained ancestor, not at the
         // active child (which the parent's ancestry can never reach).
         let referenceRoot = frame.returnBoardID ?? plan.rootBoardID
-        let basis = try store.referenceInkBasis(rootBoardID: referenceRoot,
-          targets: targets.sorted { $0.key < $1.key }, surfaces: replaceable)
+        let basis = try store.referenceBasis(rootBoardID: referenceRoot,
+          targets: targets.sorted { $0.key < $1.key }, surfaces: replaceable,
+          liveOwners: plan.liveOwners.map { owner in
+            switch owner.id {
+            case .item(let id): return .item(boardID: owner.plane.boardID, id: id)
+            case .element(let id): return .element(boardID: owner.plane.boardID, id: id)
+            }
+          })
         return .init(documents: data.documents, states: data.states, pages: data.pages, ink: data.ink,
-          referenceIdentities: basis.identities, referenceInkBasis: basis)
+          referenceIdentities: basis.identities, referenceBasis: basis)
       }
     case .values(_, _, let journal):
       let wanted = Set(surfaces)

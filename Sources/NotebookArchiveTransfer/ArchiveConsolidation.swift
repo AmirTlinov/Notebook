@@ -135,7 +135,7 @@ enum ArchiveConsolidation {
     }
     guard let a = current.hierarchy.board(current.workspace.rootBoardID), let b = incoming.hierarchy.board(incoming.workspace.rootBoardID),
       Set(a.elements.map(\.id)).isDisjoint(with: b.elements.map(\.id)),
-      Set(a.stacks.map(\.id)).isDisjoint(with: b.stacks.map(\.id)) else {
+      a.claimedStackIDs.isDisjoint(with: b.claimedStackIDs) else {
       throw ArchiveTransferError.invalidSource("independent root boards have colliding members")
     }
   }
@@ -158,7 +158,7 @@ enum ArchiveConsolidation {
     let nodes = Dictionary(result.hierarchy.boards.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     for node in source.hierarchy.boards {
       guard let target = nodes[node.id],
-        preserves(node.board.freeItems, target.board.freeItems, by: \.id), preserves(node.board.stacks, target.board.stacks, by: \.id),
+        preserves(node.board.placements, target.board.placements, by: \.id),
         preserves(node.board.elements, target.board.elements, by: \.id),
         node.id == source.hierarchy.rootBoardID || target == node else {
         throw ArchiveTransferError.invalidSource("merge would move, overwrite or discard an original placement")

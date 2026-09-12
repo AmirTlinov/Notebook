@@ -421,11 +421,6 @@ func currentViewReceiptOwnsDocumentRevisions() {
     selectedPageID: nil,
     stamp: VersionStamp(counter: 0, actor: legacyActor)
   )
-  let board = BoardHierarchy.initial(
-    rootBoardID: workspace.rootBoardID,
-    itemIDs: [documentID],
-    actor: legacyActor
-  )
   let ink = SpatialInkJournal(
     stamp: VersionStamp(counter: 0, actor: legacyActor)
   )
@@ -439,9 +434,9 @@ func currentViewReceiptOwnsDocumentRevisions() {
     openProgress: 1
   )
   let receipt = CurrentViewReceipt(
-    workspace: workspace,
-    board: board,
-    spatialInk: ink,
+    workspaceStamp: workspace.stamp,
+    boardRevision: String(repeating: "c", count: 64),
+    spatialInkStamp: ink.stamp,
     presence: presence,
     renderViewport: presence.viewport,
     surface: .document(

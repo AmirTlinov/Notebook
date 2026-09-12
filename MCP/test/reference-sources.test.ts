@@ -15,10 +15,10 @@ test("native reference/render address one page despite unrelated catalog growth"
     await writeFixture(root);const socket=fixtureSocket(root),store=new NotebookStore(socket);
     const target={kind:"page",id:pageID};
     const before=await runBridge<{revision:string}>(socket,{command:"reference",target});
-    const board=await store.readBoard(),header=await store.readHeader();
+    const header=await store.readHeader();
     const owner={kind:"board",id:rootBoardID};
     await store.command({command:"apply",action:{id:randomUUID(),summary:"Независимая тетрадь",references:[],
-      expected:[{target:owner,revision:revision(board.stamp)},{target:{kind:"workspace",id:rootBoardID},revision:revision(header.stamp)}],
+      expected:[{target:owner,revision:await store.readBoardContentRevision(rootBoardID)},{target:{kind:"workspace",id:rootBoardID},revision:revision(header.stamp)}],
       operations:[{kind:"createNotebook",target:owner,id:randomUUID(),values:{title:"Независимая",center:{tileX:10,tileY:20,localX:0,localY:0},pageID:randomUUID()}}]}});
     const input={command:"render",target,expectedRevision:`0@${appActor}`};
     const request=await runBridge<{id:string;sourceRevision:string}>(socket,input);

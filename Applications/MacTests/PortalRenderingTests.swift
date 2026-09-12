@@ -209,7 +209,7 @@ final class PortalRenderingTests: XCTestCase {
     await model.finishPendingPersistence()
     let merged = try store.loadBoard(items: workspace.items)
     XCTAssertEqual(merged.stamp, left.stamp)
-    XCTAssertNotEqual(merged.revision, left.revision)
+    XCTAssertNotEqual(merged, left)
     let afterRevision = try XCTUnwrap(store.workspaceHeader().boardRevision)
     XCTAssertNotEqual(afterRevision, beforeRevision, "The SQL owner identity includes the independent child edit, not just the maximum hierarchy clock")
     let after = try await receipt(store: store, revision: afterRevision)

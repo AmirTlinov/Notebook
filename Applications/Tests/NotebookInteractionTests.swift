@@ -5,32 +5,32 @@ import XCTest
 
 @MainActor
 final class NotebookInteractionTests: XCTestCase {
-  func testPendingContactStillDeliversTheTapThatEndsTextEditing() async throws {
+  func testRemovedOwnerRejectsTheWholeContact() async throws {
     let view = NotebookInteractionTouchView(inputGate: NotebookInputGate())
     let touch = CoverInteractionTouch()
     var lifts: [Bool] = []
     var taps: [Int] = []
     view.onLiftChanged = { lifts.append($0) }
     view.onTap = { _, count in taps.append(count) }
-    view.setPermitsManipulation(false)
+    view.updateOwnerAvailability { false }
     view.touchesBegan([touch], with: nil)
     try await Task.sleep(for: .milliseconds(250))
     view.touchesEnded([touch], with: nil)
     XCTAssertEqual(lifts, [])
-    XCTAssertEqual(taps, [1])
+    XCTAssertEqual(taps, [])
   }
 
-  func testPreparationClosingAndReopeningDoesNotLiftTheSameContact() async throws {
+  func testOwnerRestorationDoesNotReviveAnAbandonedContact() async throws {
     let view = NotebookInteractionTouchView(inputGate: NotebookInputGate())
     let touch = CoverInteractionTouch()
     var lifts: [Bool] = []
     view.onLiftChanged = { lifts.append($0) }
     view.touchesBegan([touch], with: nil)
-    view.setPermitsManipulation(false)
-    view.setPermitsManipulation(true)
+    view.updateOwnerAvailability { false }
+    view.updateOwnerAvailability { true }
     try await Task.sleep(for: .milliseconds(250))
     XCTAssertEqual(lifts, [])
-    XCTAssertTrue(view.yieldToCameraPan(), "The interrupted hold still belongs to camera movement")
+    XCTAssertFalse(view.yieldToCameraPan(), "Removing the physical owner retired its original contact")
 
     view.touchesBegan([touch], with: nil)
     try await Task.sleep(for: .milliseconds(250))
@@ -39,7 +39,7 @@ final class NotebookInteractionTests: XCTestCase {
     XCTAssertEqual(lifts, [true, false])
   }
 
-  func testPendingReleasesAnExistingLiftAfterTheRepresentableUpdate() async throws {
+  func testOwnerRemovalReleasesAnExistingLiftAfterTheRepresentableUpdate() async throws {
     let view = NotebookInteractionTouchView(inputGate: NotebookInputGate())
     let touch = CoverInteractionTouch()
     var events: [CoverInteractionEvent] = []
@@ -52,11 +52,11 @@ final class NotebookInteractionTests: XCTestCase {
     view.touchesMoved([touch], with: nil)
     XCTAssertEqual(events, [.lift(true)])
 
-    view.setPermitsManipulation(false)
+    view.updateOwnerAvailability { false }
     XCTAssertEqual(events, [.lift(true)], "updateUIView must not mutate SwiftUI state synchronously")
     try await Task.sleep(for: .milliseconds(10))
     XCTAssertEqual(events, [.lift(true), .cancel, .lift(false)])
-    XCTAssertTrue(view.yieldToCameraPan(), "Cancellation immediately releases native camera arbitration")
+    XCTAssertFalse(view.yieldToCameraPan(), "Cancellation already released its native contact")
     XCTAssertEqual(events.count, 3)
   }
 
@@ -73,7 +73,7 @@ final class NotebookInteractionTests: XCTestCase {
     try await Task.sleep(for: .milliseconds(250))
     touch.point.x += 70
     view.touchesMoved([touch], with: nil)
-    view.setPermitsManipulation(false)
+    view.updateOwnerAvailability { false }
     view.touchesEnded([touch], with: nil)
     XCTAssertEqual(events, [.lift(true), .cancel, .lift(false)])
     try await Task.sleep(for: .milliseconds(10))
@@ -135,7 +135,7 @@ final class NotebookInteractionTests: XCTestCase {
     XCTAssertEqual(newEvents, [])
   }
 
-  func testReadyCoverPassesEveryArtifactToItsOwnSelectionContact() {
+  func testCoverPassesEveryArtifactToItsOwnSelectionContact() {
     let id = UUID()
     let elements = [SpatialElementKind.nativeText, .markdown, .web].enumerated().map { index, kind in
       SpatialElement(id: "material-\(index)", surface: .cover(id), kind: kind,
@@ -144,31 +144,9 @@ final class NotebookInteractionTests: XCTestCase {
     }
     let cover = NotebookInteractionTouchView(inputGate: NotebookInputGate())
     cover.frame = .init(x: 0, y: 0, width: 400, height: 400)
-    cover.passthroughFrames = WorkspaceItemCoverView.interactionPassthroughFrames(
-      elements: elements, editingTextID: nil, scenePreparationPending: false)
+    cover.passthroughFrames = WorkspaceItemCoverView.interactionPassthroughFrames(elements: elements)
     for x in [20.0, 120, 220] { XCTAssertFalse(cover.point(inside: .init(x: x, y: 20), with: nil)) }
     XCTAssertTrue(cover.point(inside: .init(x: 320, y: 20), with: nil))
-  }
-
-  func testPendingHitTestingPassesThroughOnlyToTheLiveTextEditor() {
-    let coverID = UUID()
-    let elements = [SpatialElementKind.nativeText, .nativeText, .web].enumerated().map { index, kind in
-      SpatialElement(id: "element-\(index)", surface: .cover(coverID), kind: kind,
-        frame: .init(x: Double(index * 100), y: 0, width: 80, height: 80), source: "Content",
-        stamp: .init(counter: 0, actor: UUID()))
-    }
-    let view = NotebookInteractionTouchView(inputGate: NotebookInputGate())
-    view.frame = .init(x: 0, y: 0, width: 400, height: 400)
-    view.passthroughFrames = WorkspaceItemCoverView.interactionPassthroughFrames(
-      elements: elements, editingTextID: "element-0", scenePreparationPending: true)
-    XCTAssertFalse(view.point(inside: .init(x: 20, y: 20), with: nil))
-    XCTAssertTrue(view.point(inside: .init(x: 120, y: 20), with: nil))
-    XCTAssertTrue(view.point(inside: .init(x: 220, y: 20), with: nil),
-      "A disabled diagram cannot swallow the outside tap or camera contact")
-    XCTAssertTrue(view.point(inside: .init(x: 320, y: 20), with: nil))
-    view.passthroughFrames = WorkspaceItemCoverView.interactionPassthroughFrames(
-      elements: elements, editingTextID: nil, scenePreparationPending: true)
-    XCTAssertTrue(view.point(inside: .init(x: 20, y: 20), with: nil))
   }
 }
 

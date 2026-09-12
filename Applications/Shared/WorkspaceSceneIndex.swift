@@ -142,15 +142,8 @@ struct WorkspaceSceneIndex: Sendable {
 
   func renderedItem(id: UUID, presence: SessionPresence) -> RenderedWorkspaceItem? {
     guard let item = boards[presence.boardID]?.items[id] else { return nil }
-    var center = item.center
-    if let stack = item.stack {
-      if presence.mode != .board, let focused = presence.focusedItemID,
-        stack.itemIDs.contains(focused), focused != id { return nil }
-      center = WorkspaceItemStackPresentation.boardCenter(of: id, in: stack,
-        cameraScale: presence.camera.scale, viewport: presence.viewport) ?? center
-    }
-    return .init(item: item.value, geometry: item.geometry, center: center,
-      zIndex: item.zIndex, stackID: item.stack?.id)
+    return WorkspaceSceneProjection.renderedItem(item.value, geometry: item.geometry,
+      center: item.center, zIndex: item.zIndex, stack: item.stack, presence: presence)
   }
 
   func focusedCenter(itemID: UUID, boardID: UUID) -> WorldPoint? {

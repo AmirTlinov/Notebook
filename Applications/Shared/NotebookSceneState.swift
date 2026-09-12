@@ -12,12 +12,14 @@ struct NotebookSceneState: Sendable {
   let states: [UUID: DocumentStateJournal]
   let drafts: [DocumentEditingSession]
   let hierarchy: BoardHierarchy
+  let boardContentRevisions: [UUID: String]
   let ink: SpatialInkJournal
   let inkSurfaces: Set<SurfaceID>
   let presence: SessionPresence
   let paperSizes: [UUID: DocumentPaperSize]
   let coverage: [UUID: WorkspaceSpatialBounds]
   let truncatedBoards: Set<UUID>
+  let completeCoverElementOwners: Set<UUID>
   let missingPinnedElements: [UUID: Set<String>]
   let missingPinnedItems: Set<UUID>
   let transferredPinnedItems: [UUID: UUID]
@@ -120,8 +122,10 @@ struct NotebookSceneState: Sendable {
       }
       var items: [UUID: WorkspaceItem] = [selected.id: selected]
       var nodes: [UUID: BoardNode] = [:]
+      var boardContentRevisions: [UUID: String] = [:]
       var paper: [UUID: DocumentPaperSize] = [:]
       var coverage: [UUID: WorkspaceSpatialBounds] = [:], truncated = Set<UUID>()
+      var completeCoverElementOwners = Set<UUID>()
       var pending: [SessionPresence] = [presence]
       var remainingEntries = 96
       var missingPinnedElements: [UUID: Set<String>] = [:]
@@ -142,9 +146,11 @@ struct NotebookSceneState: Sendable {
           limit: remainingEntries, pinnedIDs: pins, pinnedElementIDs: elementPins)
         for item in window.items where item.id != selected.id { items[item.id] = item }
         for node in window.boards { nodes[node.id] = node }
+        boardContentRevisions.merge(window.boardContentRevisions) { _, current in current }
         paper.merge(window.documentPaper) { _, next in next }
         coverage[view.boardID] = bounds
         if window.truncated { truncated.insert(view.boardID) }
+        else { completeCoverElementOwners.formUnion(pins) }
         remainingEntries -= min(remainingEntries, window.totalMatches)
         for item in window.items where item.kind == .board && coverage[item.id] == nil {
           guard pending.count + coverage.count < 4,
@@ -181,11 +187,17 @@ struct NotebookSceneState: Sendable {
       let hierarchy = BoardHierarchy(rootBoardID: header.rootBoardID,
         boards: nodes.values.sorted { $0.id.uuidString < $1.id.uuidString },
         stamp: header.boardStamp ?? nodes.values.map { max($0.board.stamp, $0.portalStamp) }.max() ?? header.stamp)
+      for id in nodes.keys where boardContentRevisions[id] == nil {
+        guard let revision = try store.boardContentRevision(id) else {
+          throw NotebookStorageError.corruptRecord("scene board content revision")
+        }
+        boardContentRevisions[id] = revision
+      }
       return try Self(header: header, workspace: workspace, pages: pages, pagePositions: pagePositions,
         documents: live.documents, states: live.states,
         drafts: loadsLiveContent && selected.kind == .document ? store.documentEditingSessions(documentID: selected.id) : [],
-        hierarchy: hierarchy, ink: live.ink, inkSurfaces: Set(surfaces), presence: presence, paperSizes: paper,
-        coverage: coverage, truncatedBoards: truncated, missingPinnedElements: missingPinnedElements,
+        hierarchy: hierarchy, boardContentRevisions: boardContentRevisions, ink: live.ink, inkSurfaces: Set(surfaces), presence: presence, paperSizes: paper,
+        coverage: coverage, truncatedBoards: truncated, completeCoverElementOwners: completeCoverElementOwners, missingPinnedElements: missingPinnedElements,
         missingPinnedItems: missingPinnedItems, transferredPinnedItems: transferredPinnedItems)
     }
   }

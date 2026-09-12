@@ -128,6 +128,15 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     precondition(isValid)
   }
 
+  /// A frozen scene replaces only already presented catalog members. Selection,
+  /// causal clocks and page-address branches stay owned by the original cut.
+  public func projecting(items: [WorkspaceItem]) -> Self {
+    var value = self
+    value.items = items
+    value.itemPositions = Self.makeItemPositions(items)
+    return value
+  }
+
   public static func initial(
     actor: UUID,
     pageSize: PageSize,

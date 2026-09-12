@@ -70,6 +70,25 @@ class SelectionTests(unittest.TestCase):
         with self.assertRaises(release.ReleaseError):
             verify.validate_executed_tests(tree, ["NotebookTests/Suite/testCase", "NotebookTests/Suite/missing"])
 
+    def test_live_placement_profile_covers_delivery_and_held_scene_without_full_acceptance(self):
+        plan = verify.make_plan(self.root, profiles=["live-placement"], only=True)
+        self.assertIn("BoardMergeOwnershipTests", plan["checks"]["core"])
+        self.assertIn("NotebookReferenceLiveSceneTests", plan["checks"]["core"])
+        self.assertIn("NotebookBoardContentRevisionTests", plan["checks"]["core"])
+        self.assertIn("NotebookTests/NotebookBoardRevisionTests", plan["checks"]["ipad"])
+        self.assertIn("NotebookTests/NotebookLiveGesturePresentationTests", plan["checks"]["ipad"])
+        self.assertEqual(plan["selectionMode"], "explicit-only")
+        self.assertFalse(plan["checks"]["commands"])
+        self.assertFalse(any("UITests" in value for value in plan["checks"]["ipad"]))
+
+    def test_placement_scale_is_an_explicit_separate_risk_check(self):
+        regular = verify.make_plan(self.root, profiles=["live-placement"], only=True)
+        scale = verify.make_plan(self.root, profiles=["placement-scale"], only=True)
+        selector = "NotebookSQLScaleTests/oneHundredThousandOwnersKeepAnEditAndItsJournalAddressed"
+        self.assertNotIn(selector, regular["checks"]["core"])
+        self.assertEqual(scale["checks"]["core"], [selector])
+        self.assertFalse(scale["checks"]["ipad"])
+
     def test_renamed_simulator_is_selected_by_type_and_id_not_display_name(self):
         device = {"name": "Notebook InputUI RC", "udid": "ipad", "state": "Booted", "isAvailable": True,
                   "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Air-11-inch-M4"}
@@ -108,7 +127,7 @@ class SelectionTests(unittest.TestCase):
         self.assertFalse(plan["unclassified"])
         self.assertEqual(plan["profiles"], ["chat", "chat-touch", "workspace-controls"])
         self.assertIn(verify.UI + "testChatMovesResizesAndOpensSettingsWithoutMovingPaper", plan["checks"]["ipad"])
-        self.assertIn(verify.UI + "testAgentNoticeExpiresAndHistoryKeepsItsActions", plan["checks"]["ipad"])
+        self.assertIn(verify.UI + "testAgentChangesStayQuietAndHistoryKeepsItsActions", plan["checks"]["ipad"])
 
     def test_page_turn_owner_adds_only_two_page_turn_gestures(self):
         self.change("Applications/iPad/IPadPageTurnController.swift")

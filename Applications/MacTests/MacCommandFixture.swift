@@ -67,11 +67,7 @@ final class MacCommandFixture {
     case .board, .cover:
       let boardID: UUID
       if target.kind == .board { boardID = target.id } else { boardID = try XCTUnwrap(target.boardID) }
-      var query = NotebookReadQuery(kind: .workingSet)
-      query.boardIDs = [boardID]
-      let value = try await read(query)
-      let nodes = try XCTUnwrap(value["boards"]).decode([BoardNode].self)
-      revision = try XCTUnwrap(nodes.first(where: { $0.id == boardID })).board.stamp.revision
+      revision = try await read(.init(kind: .boardContentRevision, id: boardID)).decode(String.self)
       if ink {
         let header = try await read(.init(kind: .workspaceHeader)).decode(NotebookWorkspaceHeader.self)
         inkRevision = try XCTUnwrap(header.spatialInkStamp).revision

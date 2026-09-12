@@ -30,34 +30,70 @@ public struct NotebookReferenceInk: Equatable, Sendable {
   }
 }
 
-private struct NotebookReferenceInkNode: Sendable {
+/// Only a host already excluded from the retained passive pixels can replace
+/// its physical contribution. This grant is transient, not agent authority.
+public enum NotebookReferenceLiveOwner: Hashable, Sendable {
+  case element(boardID: UUID, id: String)
+  case item(boardID: UUID, id: UUID)
+
+  fileprivate var boardID: UUID {
+    switch self { case .element(let board, _), .item(let board, _): return board }
+  }
+}
+
+private struct NotebookReferenceNode: Sendable {
   var digest: Data
   var hash: String
-  let parent: String?
+  var parent: String?
   let inkDigest: Data?
+}
+
+private struct NotebookReferenceContribution: Sendable {
+  let owner: String
+  let hash: String
+}
+
+private struct NotebookReferenceElementOrder: Sendable {
+  let owner: String
+  let member: String
+  let previous: String?
+  let next: String?
 }
 
 /// A transient replacement proof from the same SQL cut as a tile cohort. It
 /// cannot be decoded from an agent request and is not another durable index.
-public struct NotebookReferenceInkBasis: Sendable {
+public struct NotebookReferenceBasis: Sendable {
   public let workspaceID: UUID
   public let cursor: UInt64
   public var identities: [NotebookReferenceIdentity] { targets }
   private let targets: [NotebookReferenceIdentity]
-  private let nodes: [String: NotebookReferenceInkNode]
+  private let nodes: [String: NotebookReferenceNode]
+  private let liveOwners: Set<NotebookReferenceLiveOwner>
+  private let contributions: [String: NotebookReferenceContribution]
+  private let elementOrder: [String: NotebookReferenceElementOrder]
 
   fileprivate init(workspaceID: UUID, cursor: UInt64, targets: [NotebookReferenceIdentity],
-    nodes: [String: NotebookReferenceInkNode]) {
+    nodes: [String: NotebookReferenceNode], liveOwners: Set<NotebookReferenceLiveOwner>,
+    contributions: [String: NotebookReferenceContribution],
+    elementOrder: [String: NotebookReferenceElementOrder]) {
     self.workspaceID = workspaceID; self.cursor = cursor; self.targets = targets
-    self.nodes = nodes
+    self.nodes = nodes; self.liveOwners = liveOwners; self.contributions = contributions
+    self.elementOrder = elementOrder
   }
 
-  public func replacingInk(_ ink: [NotebookReferenceInk]) throws -> [NotebookReferenceIdentity] {
-    try NotebookStore.replacingReferenceInk(ink, basis: self)
+  /// Replaces only retained physical contributions, then propagates their
+  /// hashes through the retained parent graph. Unseen passive sources remain
+  /// the exact old cut; a later SQL change cannot silently become visible here.
+  public func replacing(ink: [NotebookReferenceInk], workspace: WorkspaceIndex? = nil,
+    hierarchy: BoardHierarchy? = nil) throws -> [NotebookReferenceIdentity] {
+    try NotebookStore.replacingReferences(ink: ink, workspace: workspace, hierarchy: hierarchy, basis: self)
   }
 
   fileprivate var retainedTargets: [NotebookReferenceIdentity] { targets }
-  fileprivate var retainedNodes: [String: NotebookReferenceInkNode] { nodes }
+  fileprivate var retainedNodes: [String: NotebookReferenceNode] { nodes }
+  fileprivate var retainedLiveOwners: Set<NotebookReferenceLiveOwner> { liveOwners }
+  fileprivate var retainedContributions: [String: NotebookReferenceContribution] { contributions }
+  fileprivate var retainedElementOrder: [String: NotebookReferenceElementOrder] { elementOrder }
 }
 
 private struct NotebookBoundReferenceIdentities: Codable {
@@ -110,16 +146,17 @@ extension NotebookStore {
 
   /// Reads only hash contributions, in bounded pages. The preparation is linear
   /// in the addressed owners' ink; it never decodes samples or scans an archive.
-  public func referenceInkBasis(rootBoardID: UUID, targets: [CollaborationTarget],
-    surfaces: [SurfaceID]) throws -> NotebookReferenceInkBasis {
-    guard surfaces.count <= 15, Set(surfaces).count == surfaces.count,
+  public func referenceBasis(rootBoardID: UUID, targets: [CollaborationTarget],
+    surfaces: [SurfaceID], liveOwners: [NotebookReferenceLiveOwner] = []) throws -> NotebookReferenceBasis {
+    guard liveOwners.count <= 15, Set(liveOwners).count == liveOwners.count,
+      surfaces.count <= 15, Set(surfaces).count == surfaces.count,
       surfaces.allSatisfy({ $0.isValid && $0.kind != .page }) else {
-      throw NotebookStorageError.limitExceeded("reference_ink_surfaces")
+      throw NotebookStorageError.limitExceeded("reference_live_owners")
     }
     return try readTransaction { store in
       let header = try store.workspaceHeader(), identities = try store.referenceIdentities(targets: targets)
       let root = Self.referenceOwnerKey("board", rootBoardID)
-      var nodes: [String: NotebookReferenceInkNode] = [:]
+      var nodes: [String: NotebookReferenceNode] = [:]
       func readNode(_ key: String, includesInk: Bool) throws {
         if let existing = nodes[key], !includesInk || existing.inkDigest != nil { return }
         guard let row = try currentSQL!.rows("SELECT digest,hash,parent FROM reference_owners WHERE owner_key=?", [.text(key)]).first,
@@ -146,10 +183,8 @@ extension NotebookStore {
         }
         nodes[key] = .init(digest: digest, hash: hash, parent: key == root ? nil : row[2].text, inkDigest: inkDigest)
       }
-      for identity in identities { try readNode(Self.referenceOwnerKey(identity.target.kind.rawValue, identity.target.id), includesInk: false) }
-      for surface in surfaces {
-        let key = Self.referenceOwnerKey(surface.kind.rawValue, surface.ownerID!)
-        try readNode(key, includesInk: true)
+      func retainPath(_ key: String) throws {
+        try readNode(key, includesInk: false)
         var current = key, visited = Set<String>()
         while current != root {
           guard visited.insert(current).inserted, visited.count <= 16,
@@ -160,13 +195,63 @@ extension NotebookStore {
           current = parent
         }
       }
-      return .init(workspaceID: header.workspaceID, cursor: header.cursor, targets: identities, nodes: nodes)
+      for identity in identities { try readNode(Self.referenceOwnerKey(identity.target.kind.rawValue, identity.target.id), includesInk: false) }
+      for surface in surfaces {
+        let key = Self.referenceOwnerKey(surface.kind.rawValue, surface.ownerID!)
+        try readNode(key, includesInk: true); try retainPath(key)
+      }
+      var contributions: [String: NotebookReferenceContribution] = [:]
+      var order: [String: NotebookReferenceElementOrder] = [:]
+      func retainContribution(_ address: String, owner: String? = nil) throws {
+        if contributions[address] != nil { return }
+        let rows = try currentSQL!.rows("SELECT owner_key,hash FROM reference_contributions WHERE address=?", [.text(address)])
+        guard rows.count == 1, let key = rows[0][0].text, let hash = rows[0][1].text, owner == nil || key == owner else {
+          throw CollaborationError("capture_source_pending", "Живой предмет не принадлежит подготовленному источнику.")
+        }
+        contributions[address] = .init(owner: key, hash: hash)
+        try retainPath(key)
+      }
+      for live in liveOwners {
+        let board = Self.referenceOwnerKey("board", live.boardID), node = Self.referenceBoardAddress(live.boardID)
+        try retainContribution(node, owner: board)
+        switch live {
+        case .element(_, let id):
+          let address = node + "/board/elements/@" + fieldKey([collaborationIdentity(id)])
+          try retainContribution(address)
+          guard let row = try currentSQL!.rows("SELECT owner_key,position,member FROM reference_element_order WHERE address=?", [.text(address)]).first,
+            let owner = row[0].text, let position = row[1].integer, let member = row[2].text,
+            owner == contributions[address]?.owner else { throw NotebookStorageError.corruptRecord(address) }
+          let (previous, next) = try referenceNeighbors(owner: owner, position: position, member: member, database: currentSQL!)
+          order[address] = .init(owner: owner, member: member, previous: previous, next: next)
+          for from in [previous, Optional(member)] {
+            let edge = Self.referenceOrderAddress(owner: owner, from: from)
+            try retainContribution(edge, owner: owner)
+          }
+        case .item(let boardID, let id):
+          let cover = Self.referenceOwnerKey("cover", id)
+          try retainContribution("workspace.json#/items/@" + id.uuidString.lowercased(), owner: cover)
+          guard let row = try currentSQL!.rows("SELECT board_id,address FROM item_owners WHERE item_id=?", [.text(id.uuidString.lowercased())]).first,
+            row[0].text == boardID.uuidString.lowercased(), let placement = row[1].text else {
+            throw CollaborationError("capture_source_pending", "Положение живого предмета ещё не вошло в источник.")
+          }
+          try retainContribution(placement, owner: board)
+        }
+      }
+      return .init(workspaceID: header.workspaceID, cursor: header.cursor, targets: identities, nodes: nodes,
+        liveOwners: Set(liveOwners), contributions: contributions, elementOrder: order)
     }
   }
 
-  fileprivate static func replacingReferenceInk(_ ink: [NotebookReferenceInk], basis: NotebookReferenceInkBasis) throws -> [NotebookReferenceIdentity] {
+  fileprivate static func replacingReferences(ink: [NotebookReferenceInk], workspace: WorkspaceIndex?,
+    hierarchy: BoardHierarchy?, basis: NotebookReferenceBasis) throws -> [NotebookReferenceIdentity] {
     guard ink.count <= 8, Set(ink.map(\.surface)).count == ink.count else { throw NotebookStorageError.limitExceeded("captured_ink_owners") }
     var nodes = basis.retainedNodes, pending = Set<String>()
+    func replace(_ address: String, owner: String, previous: String?, next: String?) throws {
+      guard previous != next else { return }
+      guard var node = nodes[owner] else { throw CollaborationError("capture_source_pending", "Владелец не входил в сохранённую композицию.") }
+      for hash in [previous, next].compactMap({ $0 }) { xorReferenceDigest(&node.digest, referenceContribution(address, hash)) }
+      nodes[owner] = node; pending.insert(owner)
+    }
     for source in ink {
       guard let id = source.surface.ownerID else { throw NotebookStorageError.invalidTransaction("surface owner") }
       let key = referenceOwnerKey(source.surface.kind.rawValue, id)
@@ -182,8 +267,90 @@ extension NotebookStore {
       xorReferenceDigest(&node.digest, previous); xorReferenceDigest(&node.digest, next)
       nodes[key] = node; pending.insert(key)
     }
+    if let hierarchy {
+      // A frozen projection has bounded material. Its non-live rows are never
+      // used to replace complete-owner hashes or unseen SQL contributions.
+      let rows = try NotebookRecordCodec.encode(JSONValue.encode(hierarchy), file: "board.json")
+      let byAddress = Dictionary(uniqueKeysWithValues: rows.map { ($0.address, $0) })
+      let liveItems = Set(basis.retainedLiveOwners.compactMap { owner -> UUID? in
+        if case .item(_, let id) = owner { return id }; return nil
+      })
+      func replaceRoot(_ address: String, row: NotebookStoredFragment?, owner: String) throws {
+        let previous = basis.retainedContributions[address]
+        guard previous == nil || previous?.owner == owner else { throw NotebookStorageError.corruptRecord(address) }
+        let next: String?
+        if let row {
+          let contributions = try referenceContributions(fragment: row) {
+            // Elements have scalar source/state; retain the codec's physical
+            // decoding for future addressed children, never guess their hash.
+            try NotebookRecordCodec.decode(rows.filter { $0.address == address || $0.address.hasPrefix(address + "/") }, root: address)
+          }
+          guard contributions.count == 1, contributions[0].0 == owner else {
+            throw CollaborationError("capture_source_pending", "Живой элемент сменил физическую поверхность.")
+          }
+          next = contributions[0].1
+        } else { next = nil }
+        try replace(address, owner: owner, previous: previous?.hash, next: next)
+      }
+      var removed = [String: NotebookReferenceElementOrder]()
+      for (address, order) in basis.retainedElementOrder {
+        try replaceRoot(address, row: byAddress[address], owner: order.owner)
+        if byAddress[address] == nil { removed[address] = order }
+      }
+      let removedMembers = Dictionary(grouping: removed.values, by: \.owner).mapValues { Dictionary(uniqueKeysWithValues: $0.map { ($0.member, $0) }) }
+      for order in removed.values {
+        let peers = removedMembers[order.owner] ?? [:]
+        let ownEdge = referenceOrderAddress(owner: order.owner, from: order.member)
+        try replace(ownEdge, owner: order.owner, previous: basis.retainedContributions[ownEdge]?.hash, next: nil)
+        // One surviving predecessor authors the entire removed run. Adjacent
+        // live deletions do not each XOR a different guess of that edge.
+        guard order.previous.map({ peers[$0] == nil }) ?? true else { continue }
+        var next = order.next, visited = Set<String>()
+        while let id = next, let removed = peers[id] {
+          guard visited.insert(id).inserted else { throw NotebookStorageError.corruptRecord(ownEdge) }
+          next = removed.next
+        }
+        let edge = referenceOrderAddress(owner: order.owner, from: order.previous)
+        let hash = order.previous == nil && next == nil ? nil : try collaborationHash(next.map(JSONValue.string) ?? .null)
+        try replace(edge, owner: order.owner, previous: basis.retainedContributions[edge]?.hash, next: hash)
+      }
+      for live in basis.retainedLiveOwners {
+        guard case .item(let boardID, let id) = live else { continue }
+        let address = referenceBoardAddress(boardID) + "/board/placements/@" + id.uuidString.lowercased()
+        // Preserve the exact immutable authored heads. A singleton or capacity
+        // overflow is only layout; capture never authors a new free placement.
+        try replaceRoot(address, row: byAddress[address], owner: referenceOwnerKey("board", boardID))
+      }
+      // Headers and the replaced live roots come from the same captured model
+      // value. Changed passives keep their old hashes, so sealing rejects a
+      // mixed scene instead of blessing a fresh global header as current pixels.
+      for boardID in Set(basis.retainedLiveOwners.map(\.boardID)) {
+        let address = referenceBoardAddress(boardID)
+        guard let row = byAddress[address] else { throw CollaborationError("capture_source_pending", "Доска больше не представлена.") }
+        try replaceRoot(address, row: row, owner: referenceOwnerKey("board", boardID))
+      }
+      if let workspace {
+        let items = Dictionary(uniqueKeysWithValues: workspace.items.map { ($0.id, $0) })
+        for id in liveItems {
+          let address = "workspace.json#/items/@" + id.uuidString.lowercased(), owner = referenceOwnerKey("cover", id)
+          guard let item = items[id], let previous = basis.retainedContributions[address] else { continue }
+          let value = JSONValue.object(["id": .string(id.uuidString.lowercased()), "kind": .string(item.kind.rawValue), "title": .string(item.title)])
+          try replace(address, owner: owner, previous: previous.hash, next: collaborationHash(value))
+        }
+      }
+      // A vanished admitted item no longer contributes its cover to the shown
+      // board. The old cover hash itself remains available for other targets.
+      for live in basis.retainedLiveOwners {
+        guard case .item(let boardID, let id) = live,
+          hierarchy.board(boardID)?.itemIDs.contains(id) != true else { continue }
+        let key = referenceOwnerKey("cover", id), parent = referenceOwnerKey("board", boardID)
+        if var child = nodes[key], child.parent == parent {
+          try replace("child:" + key, owner: parent, previous: child.hash, next: nil)
+          child.parent = nil; nodes[key] = child
+        }
+      }
+    }
     // Every edge comes from the retained SQL graph, including portal covers.
-    // Repeating an ancestor update is harmless; cycles were rejected on read.
     while let key = pending.first {
       pending.remove(key)
       guard var node = nodes[key] else { throw NotebookStorageError.corruptRecord(key) }
@@ -206,6 +373,8 @@ extension NotebookStore {
       return .init(target: identity.target, revision: node.hash)
     }
   }
+
+  private static func referenceBoardAddress(_ id: UUID) -> String { "board.json#/boards/@" + id.uuidString.lowercased() }
 
   private static func xorReferenceDigest(_ digest: inout Data, _ contribution: Data) {
     for (offset, byte) in contribution.enumerated() { digest[offset] ^= byte }
@@ -233,13 +402,47 @@ extension NotebookStore {
       guard parts.count >= 3, parts[1] == "boards", parts[2].hasPrefix("@") else { return }
       let node = parts.prefix(3).joined(separator: "/")
       if address == node { try database.noteOwner(.referenceRoot, node); return }
-      prefixes = [node + "/board/freeItems/@", node + "/board/stacks/@", node + "/board/elements/@"]
+      prefixes = [node + "/board/placements/@", node + "/board/elements/@"]
     } else if file == "spatial-ink.json" { prefixes = [file + "#/actions/@"] }
     else if file.hasPrefix("documents/"), address == file + "#" { try database.noteOwner(.referenceRoot, address); return }
     else { return }
     for prefix in prefixes where address.hasPrefix(prefix) {
       let member = address.dropFirst(prefix.count).split(separator: "/", maxSplits: 1).first.map(String.init) ?? ""
       if !member.isEmpty { try database.noteOwner(.referenceRoot, prefix + member) }
+    }
+  }
+
+  /// The explicit format-two migration removes its old physical roots before
+  /// this call. Retire only those indexed contributions; ordinary publication
+  /// then adds canonical placements and updates the same retained parent graph.
+  /// Immutable references, pinned payloads, ink and page owners are untouched.
+  func retireVersionTwoPlacementReferences(database: NotebookSQLConnection) throws {
+    guard database.writable, currentSQL === database else { throw NotebookStorageError.readOnlyTransaction }
+    let prefix = "board.json#/boards/@"
+    var after = prefix
+    while true {
+      try Task.checkCancellation()
+      let rows = try database.rows("SELECT address,owner_key,hash FROM reference_contributions WHERE address>? AND address<? AND (address LIKE ? OR address LIKE ?) ORDER BY address,owner_key LIMIT 256",
+        [.text(after), .text(prefix + "\u{10ffff}"),
+          .text(prefix + "%/board/freeItems/@%"), .text(prefix + "%/board/stacks/@%")])
+      guard let last = rows.last?[0].text else { return }
+      for row in rows {
+        guard let address = row[0].text, let owner = row[1].text, let hash = row[2].text else {
+          throw NotebookStorageError.corruptRecord("placement reference contribution")
+        }
+        let parts = address.components(separatedBy: "/")
+        guard parts.count == 6, let boardID = UUID(uuidString: String(parts[2].dropFirst())),
+          owner == Self.referenceOwnerKey("board", boardID),
+          try database.rows("SELECT 1 FROM records WHERE address=?", [.text(address)]).isEmpty,
+          try !database.rows("SELECT 1 FROM reference_owners WHERE owner_key=?", [.text(owner)]).isEmpty else {
+          throw NotebookStorageError.corruptRecord(address)
+        }
+        try adjustReferenceOwner(owner, contribution: Self.referenceContribution(address, hash), database: database)
+        try database.run("DELETE FROM reference_contributions WHERE address=? AND owner_key=?", [.text(address), .text(owner)])
+        try database.noteOwner(.referenceRoot, Self.referenceBoardAddress(boardID))
+        try markReferenceOwner(owner, database: database)
+      }
+      after = last
     }
   }
 
@@ -436,7 +639,7 @@ extension NotebookStore {
     for (file, value) in files where file == "workspace.json" || file == "board.json" || file == "spatial-ink.json" || file.hasPrefix("documents/") {
       for row in try NotebookRecordCodec.encode(value, file: file) {
         fragments[row.address] = row
-        if (file == "workspace.json" && row.collection == "items") || (file == "board.json" && ["boards", "board/freeItems", "board/stacks", "board/elements"].contains(row.collection))
+        if (file == "workspace.json" && row.collection == "items") || (file == "board.json" && ["boards", "board/placements", "board/elements"].contains(row.collection))
           || (file == "spatial-ink.json" && row.collection == "actions") || (file.hasPrefix("documents/") && row.parent == nil) { roots.insert(row.address) }
       }
     }

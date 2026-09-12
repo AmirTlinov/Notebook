@@ -162,7 +162,7 @@ struct NotebookPageAppendTests {
         try source.readBlobChunk(hash: hash, offset: 0, maxBytes: 1_048_576)
       }
       let manifest = try JSONDecoder().decode(NotebookChangeManifest.self, from: data(change.manifestHash))
-      #expect(manifest.format == 3 && manifest.pageOrderRoots.count == 1)
+      #expect(manifest.format == 4 && manifest.pageOrderRoots.count == 1)
       // Record wrapper hashes are not the raw-node dependency hashes.
       try target.stageBlob(data: data(change.manifestHash), expectedHash: change.manifestHash)
       for record in manifest.records { if let hash = record.blobHash { try target.stageBlob(data: data(hash), expectedHash: hash) } }
@@ -399,10 +399,10 @@ struct NotebookPageAppendTests {
   @Test func staleAppendsKeepEveryPageAndCannotAuthorizeATitleOrPlacementChange() throws {
     try fixture { store, actor, base in
       let other = UUID(), (first, pageA) = try landing(base, actor: actor), (second, pageB) = try landing(base, actor: other)
-      let board = try store.loadBoard(items: base.items), boardTarget = CollaborationTarget(kind: .board, id: base.rootBoardID)
+      let boardTarget = CollaborationTarget(kind: .board, id: base.rootBoardID)
       let renamed = CollaborationAction(summary: "Independent title", expected: [
         .init(target: .init(kind: .workspace, id: base.rootBoardID), revision: base.stamp.revision),
-        .init(target: boardTarget, revision: board.board(base.rootBoardID)!.stamp.revision)], operations: [
+        .init(target: boardTarget, revision: try store.targetContentRevision(target: boardTarget))], operations: [
           .init(kind: .renameItem, target: boardTarget, id: base.selectedItemID.uuidString, values: ["title": .string("Durable title")])])
       _ = try store.applyCollaborationAction(renamed, actor: other)
       #expect(try store.moveWorkspaceItem(itemID: base.selectedItemID, in: base.rootBoardID, to: .init(x: 911, y: -713), actor: other))

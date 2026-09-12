@@ -188,8 +188,8 @@ func concurrentCreationsKeepTheirPhysicalBoardOwners() throws {
   _ = treeB.addItem(createdB.item.id, to: parentB, near: .init(x: 900, y: 550), actor: publicationActorB)
   _ = a.merge(b)
   let oldA = treeA
-  _ = treeA.merge(treeB, items: a.items)
-  _ = treeB.merge(oldA, items: a.items)
+  _ = try treeA.merge(treeB, items: a.items)
+  _ = try treeB.merge(oldA, items: a.items)
   #expect(treeA == treeB)
   #expect(treeA.ownerBoardID(of: createdA.item.id) == parentA)
   #expect(treeA.ownerBoardID(of: createdB.item.id) == parentB)
@@ -401,8 +401,7 @@ func pendingBoardDeletionReservesSharedOwnerClocks() throws {
   #expect(current.stamp == pending.stamp)
   #expect(current.boards.first { $0.id == childID } == child)
   #expect(current.portalCamera(base.rootBoardID) == base.portalCamera(base.rootBoardID))
-  let oldExistence = ContentFieldVersion(stamp: stamp, human: true)
-  #expect(reserved.collaboration?.fields[fieldKey(["freeItems", removedID.uuidString.lowercased(), "exists"])] == oldExistence)
+  #expect(reserved.placements == root.placements)
 
   let center = WorldPoint(x: 1200, y: 3200)
   _ = current.moveItem(movedID, in: base.rootBoardID, to: center, actor: publicationActorA)

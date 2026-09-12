@@ -153,8 +153,8 @@ func contentMemberOrder(preferred: [String], escapedMembers: [String]) -> [Strin
 
 private func contentFields(_ value: JSONValue) -> [String: JSONValue] {
   var result: [String: JSONValue] = [:]
-  for (name, property) in value.object where !["collaboration", "stamp", "agentStamp", "contentStamp", "drawingStamp", "drawingData", "format", "id", "size", "paperSize"].contains(name) {
-    if ["elements", "blocks", "freeItems", "stacks"].contains(name) {
+  for (name, property) in value.object where !["collaboration", "stamp", "agentStamp", "contentStamp", "drawingStamp", "drawingData", "format", "id", "size", "paperSize", "placements"].contains(name) {
+    if ["elements", "blocks"].contains(name) {
       result[fieldKey([name, "order"])] = .array(property.array.compactMap(\.memberIdentity).map(JSONValue.string))
       for item in property.array {
         guard let id = item.memberIdentity else { continue }
@@ -173,8 +173,8 @@ private func contentFields(_ value: JSONValue) -> [String: JSONValue] {
 
 private func rebuildContent(base: JSONValue, fields: [String: JSONValue]) -> JSONValue {
   var result = base
-  for name in base.object.keys where !["collaboration", "stamp", "agentStamp", "contentStamp", "drawingStamp", "drawingData", "format", "id", "size", "paperSize"].contains(name) {
-    if ["elements", "blocks", "freeItems", "stacks"].contains(name) {
+  for name in base.object.keys where !["collaboration", "stamp", "agentStamp", "contentStamp", "drawingStamp", "drawingData", "format", "id", "size", "paperSize", "placements"].contains(name) {
+    if ["elements", "blocks"].contains(name) {
       let prefix = fieldKey([name]) + "/"
       let existing = fields.keys.filter { $0.hasPrefix(prefix) && $0.hasSuffix("/exists") && fields[$0] == .bool(true) }
       let ids = existing.map { String($0.dropFirst(prefix.count).dropLast("/exists".count)) }

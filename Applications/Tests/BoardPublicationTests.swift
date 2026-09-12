@@ -75,7 +75,7 @@ final class BoardPublicationTests: XCTestCase {
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
     let target = CollaborationTarget(kind: .board, id: boardID)
     let action = try model.store.applyCollaborationAction(.init(summary: "Показать линию",
-      expected: [.init(target: target, revision: try XCTUnwrap(model.board).stamp.revision,
+      expected: [.init(target: target, revision: try XCTUnwrap(model.store.boardContentRevision(target.id)),
         inkRevision: try XCTUnwrap(model.spatialInk).stamp.revision)], operations: [
         .init(kind: .appendInkStroke, target: target, id: UUID().uuidString, values: [
           "worldOrigin": try .encode(WorldPoint.zero), "points": .array([
@@ -116,7 +116,7 @@ final class BoardPublicationTests: XCTestCase {
     let oldPresence = try XCTUnwrap(model.presence)
     let target = CollaborationTarget(kind: .board, id: boardID), strokeID = UUID()
     let action = try model.store.applyCollaborationAction(.init(summary: "Линия агента",
-      expected: [.init(target: target, revision: try XCTUnwrap(model.board).stamp.revision,
+      expected: [.init(target: target, revision: try XCTUnwrap(model.store.boardContentRevision(target.id)),
         inkRevision: try XCTUnwrap(model.spatialInk).stamp.revision)], operations: [
         .init(kind: .appendInkStroke, target: target, id: strokeID.uuidString, values: [
           "worldOrigin": try .encode(WorldPoint.zero), "width": .number(16),

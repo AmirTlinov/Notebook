@@ -27,6 +27,7 @@ func convertLegacyDocument(_ data: Data) throws -> DocumentDocument {
 /// fields: element/program state with similar names remains original content.
 func convertLegacyBoard(_ data: Data) throws -> BoardDocument {
   let format = try JSONDecoder().decode(ArchiveFormat.self, from: data).format
+  if format == 2 { return try BoardDocument.migratingStoredVersionTwo(JSONDecoder().decode(JSONValue.self, from: data)) }
   guard format == 1 else { return try JSONDecoder().decode(BoardDocument.self, from: data) }
   var object = try archiveObject(data)
   guard let free = object.removeValue(forKey: "freeNotebooks") as? [[String: Any]],
@@ -49,8 +50,8 @@ func convertLegacyBoard(_ data: Data) throws -> BoardDocument {
     stack["itemIDs"] = ids
     return stack
   }
-  object["format"] = BoardDocument.formatVersion
-  return try JSONDecoder().decode(BoardDocument.self, from: archiveData(object))
+  object["format"] = 2
+  return try BoardDocument.migratingStoredVersionTwo(JSONDecoder().decode(JSONValue.self, from: archiveData(object)))
 }
 
 func convertLegacyHierarchy(_ data: Data) throws -> BoardHierarchy {

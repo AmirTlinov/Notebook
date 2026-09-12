@@ -26,7 +26,11 @@ extension NotebookStore {
       guard let itemID = UUID(uuidString: id) else { throw NotebookStorageError.corruptRecord("item identity") }
       let address = "workspace.json#/items/@" + id
       let item = try storedFragments(address: address, descendants: false).first
-      let owners = try database.rows("SELECT board_id,address FROM spatial_entries WHERE owner_id=? AND kind='item' LIMIT 2", [.text(id)])
+      let owners = try database.rows("""
+        SELECT s.board_id,s.address,o.board_id,o.address FROM spatial_entries s
+        LEFT JOIN item_owners o ON o.item_id=s.owner_id
+        WHERE s.owner_id=? AND s.kind='item' LIMIT 2
+        """, [.text(id)])
       if item == nil {
         guard owners.isEmpty else { throw NotebookStorageError.corruptRecord("deleted item remains placed: " + id) }
         return
@@ -34,6 +38,9 @@ extension NotebookStore {
       guard owners.count == 1, let boardID = owners[0][0].text,
         try !database.rows("SELECT 1 FROM records WHERE address=?", [.text("board.json#/boards/@" + boardID)]).isEmpty else {
         throw NotebookStorageError.corruptRecord("item requires exactly one live board: " + id)
+      }
+      guard owners[0][2].text == boardID, owners[0][3].text == owners[0][1].text else {
+        throw NotebookStorageError.corruptRecord("item address index: " + id)
       }
       let kind = item?.value["kind"]?.string
       if kind == WorkspaceItemKind.notebook.rawValue {

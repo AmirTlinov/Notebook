@@ -192,7 +192,19 @@ final class NotebookAppModel {
   private(set) var documentEditingSessions: [DocumentEditingSession] = []
   @ObservationIgnored private var documentDraftEpoch: UInt64 = 0
   private(set) var documentStates: [UUID: DocumentStateJournal] = [:] { didSet { collaborationReadEpoch &+= 1 } }
-  private(set) var boardHierarchy: BoardHierarchy? { didSet { collaborationReadEpoch &+= 1; scheduleScenePreparation() } }
+  private(set) var boardContentRevisions: [UUID: String] = [:] {
+    didSet { if oldValue != boardContentRevisions { collaborationReadEpoch &+= 1 } }
+  }
+  private(set) var boardHierarchy: BoardHierarchy? {
+    didSet {
+      // An optimistic body is not proof of the complete stored board. Only an
+      // accepted SQL scene cut can supply its new content revision.
+      for id in Array(boardContentRevisions.keys) where oldValue?.board(id) != boardHierarchy?.board(id) {
+        boardContentRevisions[id] = nil
+      }
+      collaborationReadEpoch &+= 1; scheduleScenePreparation()
+    }
+  }
   private(set) var spatialInk: SpatialInkJournal? { didSet { collaborationReadEpoch &+= 1 } }
   private(set) var loadedInkSurfaces: Set<SurfaceID> = []
   func renderingInk(on surface: SurfaceID, fallback: SpatialInkJournal?) -> SpatialInkJournal? {
@@ -204,6 +216,8 @@ final class NotebookAppModel {
   private(set) var documentPaperSizes: [UUID: DocumentPaperSize] = [:]
   private(set) var sceneCoverage: [UUID: WorkspaceSpatialBounds] = [:]
   private(set) var truncatedSceneBoards: Set<UUID> = []
+  private(set) var completeSceneCoverOwners: Set<UUID> = []
+  private(set) var missingSceneElements: [UUID: Set<String>] = [:]
   private(set) var scenePreparationPending = false
   private(set) var sceneIndexGeneration: UInt64 = 0
   private(set) var scenePublicationGeneration: UInt64 = 0
@@ -367,9 +381,12 @@ final class NotebookAppModel {
             (PageAddress(itemID: $0.itemID, index: $0.index, root: $0.visibleRoot), $0.pageID)
           })
           boardHierarchy = state.hierarchy
+          boardContentRevisions = state.boardContentRevisions
           documentPaperSizes = state.paperSizes.merging(documents.mapValues(\.paperSize)) { _, live in live }
           sceneCoverage = state.coverage
           truncatedSceneBoards = state.truncatedBoards
+          completeSceneCoverOwners = state.completeCoverElementOwners
+          missingSceneElements = state.missingPinnedElements
           clearRemovedElementPins(state.missingPinnedElements)
           spatialInk = state.ink
           loadedInkSurfaces = state.inkSurfaces
@@ -2113,15 +2130,12 @@ final class NotebookAppModel {
           }
           publicationFailure = nil
           if persistence.failure == nil { persistenceFailure = acceptedPageInkFailure }
-          guard !inputGate.isActive, presencePhase != .active else { externalReloadPending = true; return }
-          // Settled camera/selection can change without changing content. The
-          // old read must not bring the person back after its SQL await.
-          guard epoch == collaborationReadEpoch, self.presence == presence, itemPins == scenePinnedItems else {
+          let liveDrafts = documentEditingSessions
+          guard acceptExternalScene(prepared.scene, observedEpoch: epoch,
+            observedPresence: presence, itemPins: itemPins) else {
+            if inputGate.isActive || presencePhase == .active { externalReloadPending = true; return }
             diskRefreshRequested = true; continue
           }
-          let liveDrafts = documentEditingSessions
-          acceptItemOwnerInvalidations(prepared.scene, requested: itemPins)
-          acceptSceneState(prepared.scene)
           if draftEpoch != documentDraftEpoch { documentEditingSessions = liveDrafts }
           acceptCollaborationMetadata(actions: prepared.actions, contexts: prepared.contexts, delivery: prepared.delivery)
         } catch {
@@ -2590,7 +2604,8 @@ final class NotebookAppModel {
     case .codeFragment: return nil // Visibility is acknowledged by the code viewport, never by the board.
     case .page: return pages[target.id]?.agentStamp.revision
     case .document: return documents[target.id]?.contentStamp.revision
-    case .board,.cover: return boardHierarchy?.board(target.boardID ?? target.id)?.stamp.revision
+    case .board: return boardContentRevisions[target.id]
+    case .cover: return target.boardID.flatMap { boardContentRevisions[$0] }
     case .workspace: return workspace?.stamp.revision
     }
   }
@@ -2704,6 +2719,20 @@ final class NotebookAppModel {
     scenePinnedItems = scenePinnedItems.mapValues { $0.filter { !unavailable.contains($0) } }
   }
 
+  /// A completed SQL read observes the local content frontier from its request,
+  /// not from its eventual callback. A later accepted move, stroke or selection
+  /// invalidates that read even while the old pixels are still displayed.
+  @discardableResult
+  func acceptExternalScene(_ state: NotebookSceneState, observedEpoch: UInt64,
+    observedPresence: SessionPresence, itemPins: [UUID: [UUID]]) -> Bool {
+    guard !inputGate.isActive, presencePhase != .active,
+      observedEpoch == collaborationReadEpoch, presence == observedPresence,
+      itemPins == scenePinnedItems else { return false }
+    acceptItemOwnerInvalidations(state, requested: itemPins)
+    acceptSceneState(state)
+    return true
+  }
+
   private func acceptSceneState(_ state: NotebookSceneState) {
     workspaceHeader = state.header
     for (id, cursor) in completedDeletions where state.header.cursor >= cursor {
@@ -2713,8 +2742,11 @@ final class NotebookAppModel {
     documentPaperSizes = state.paperSizes
     sceneCoverage = state.coverage
     truncatedSceneBoards = state.truncatedBoards
+    completeSceneCoverOwners = state.completeCoverElementOwners
+    missingSceneElements = state.missingPinnedElements
     workspace = state.workspace
     boardHierarchy = state.hierarchy
+    boardContentRevisions = state.boardContentRevisions
     spatialInk = state.ink
     loadedInkSurfaces = state.inkSurfaces
     pages = state.pages

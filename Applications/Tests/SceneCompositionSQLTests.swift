@@ -247,7 +247,7 @@ final class SceneCompositionSQLTests: XCTestCase {
     do { try await oldSource.validate(); XCTFail("Old parent pixels cannot acquire a new source receipt") }
     catch NotebookStorageError.transactionConflict { }
 
-    let basis = try XCTUnwrap(current.liveData.referenceInkBasis)
+    let basis = try XCTUnwrap(current.liveData.referenceBasis)
     let surfaces = current.plan.presentations.keys.map { plane -> SurfaceID in
       switch plane {
       case .board(let id): .board(id)
@@ -255,7 +255,7 @@ final class SceneCompositionSQLTests: XCTestCase {
       }
     }
     let unchanged = try surfaces.map { try NotebookReferenceInk(surface: $0, actions: journal.actions) }
-    XCTAssertEqual(try basis.replacingInk(unchanged), current.liveData.referenceIdentities)
+    XCTAssertEqual(try basis.replacing(ink: unchanged), current.liveData.referenceIdentities)
     let tail = SpatialInkSample(point: .zero, worldPoint: .init(x: 20, y: 30), timeOffset: 0,
       width: 7, opacity: 1, force: 1, azimuth: 0, altitude: 1)
     XCTAssertNotNil(journal.append(tool: .pen, spans: [
@@ -263,7 +263,7 @@ final class SceneCompositionSQLTests: XCTestCase {
       .init(surface: .board(portal.id), samples: [tail])
     ], actor: actor))
     let replacement = try surfaces.map { try NotebookReferenceInk(surface: $0, actions: journal.actions) }
-    let predicted = try basis.replacingInk(replacement)
+    let predicted = try basis.replacing(ink: replacement)
     try store.saveSpatialInk(journal)
     let canonical = try store.referenceIdentities(targets: current.liveData.referenceIdentities.map(\.target))
     XCTAssertEqual(predicted, canonical,

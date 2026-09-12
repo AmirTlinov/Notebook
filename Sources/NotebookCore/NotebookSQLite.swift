@@ -218,7 +218,7 @@ struct NotebookRecordCodec {
                 parent: address, collection: collectionKey, member: member, position: 0)
             }
           } else if case .array(let values) = value,
-            (["items", "boards", "freeItems", "stacks", "elements", "blocks", "records", "actions", "entries", "pageIDs"].contains(key) || isComputationCollection),
+            (["items", "boards", "placements", "elements", "blocks", "records", "actions", "entries", "pageIDs"].contains(key) || isComputationCollection),
             values.allSatisfy({ $0.memberIdentity != nil || (key == "pageIDs" && $0.string != nil) }) {
             let ids = values.compactMap { $0.memberIdentity ?? $0.string?.lowercased() }
             guard Set(ids).count == ids.count else { throw NotebookStorageError.invalidTransaction("duplicate IDs in \(file)/\(collectionKey)") }
@@ -226,7 +226,7 @@ struct NotebookRecordCodec {
             for (offset, value) in values.enumerated() {
               let member = ids[offset]
               try make(value, address: address + "/" + collectionKey + "/@" + fieldKey([member]),
-                parent: address, collection: collectionKey, member: member, position: (isComputationCollection || (file.hasPrefix("collaboration/contexts/") && key == "entries")
+                parent: address, collection: collectionKey, member: member, position: ((file == "board.json" && key == "placements") || isComputationCollection || (file.hasPrefix("collaboration/contexts/") && key == "entries")
                 || (file.hasPrefix("document-states/") && address == file + "#" && location == ["records"])) ? 0 : offset)
             }
           } else if key == "drawingData", file.hasPrefix("pages/") {
@@ -432,9 +432,19 @@ extension NotebookStore {
         try database.run("COMMIT")
       } catch { try? database.run("ROLLBACK"); throw error }
     }
+    let placementColumns = Set(try database.rows("PRAGMA table_info(item_owners)").compactMap { $0[1].text })
+    for (column, type) in [("stack_id", "TEXT"), ("stack_order", "INTEGER"), ("placement_counter", "INTEGER"), ("placement_actor", "TEXT")] where !placementColumns.contains(column) {
+      try database.run("ALTER TABLE item_owners ADD COLUMN " + column + " " + type)
+    }
+    try database.run("CREATE INDEX IF NOT EXISTS item_stack ON item_owners(board_id,stack_id,stack_order,placement_counter DESC,placement_actor DESC,item_id)")
+
     try database.run("CREATE INDEX IF NOT EXISTS chat_computer_recent ON chat_jobs(author,computer,ordinal)")
     try database.run("CREATE INDEX IF NOT EXISTS chat_computer_pending ON chat_jobs(author,computer,state,ordinal)")
     try database.run("CREATE TABLE IF NOT EXISTS chat_panel(id TEXT PRIMARY KEY,value BLOB NOT NULL)")
+    if try needsBoardPlacementMigration(database: database) {
+      try commandTransaction(preparedDatabase: database) { try migrateStoredBoardPlacements(database: database) }
+    }
+
 
   }
 
@@ -452,14 +462,19 @@ extension NotebookStore {
   }
 
   func commandTransaction<T>(advancesReadRevision: Bool = true,
-    readAllowance: NotebookSQLReadAllowance? = nil, _ operation: () throws -> T) throws -> T {
+    readAllowance: NotebookSQLReadAllowance? = nil, preparedDatabase: NotebookSQLConnection? = nil,
+    _ operation: () throws -> T) throws -> T {
     if let currentSQL {
       guard currentSQL.writable else { throw NotebookStorageError.readOnlyTransaction }
       if let readAllowance { try currentSQL.limitReads(readAllowance) }
       return try operation()
     }
-    try prepareDatabase()
-    let database = try NotebookSQLConnection(url: databaseURL, writable: true)
+    let database: NotebookSQLConnection
+    if let preparedDatabase { database = preparedDatabase }
+    else {
+      try prepareDatabase()
+      database = try NotebookSQLConnection(url: databaseURL, writable: true)
+    }
     if let readAllowance { try database.limitReads(readAllowance) }
     try database.run("BEGIN IMMEDIATE")
     Thread.current.threadDictionary[connectionKey] = database
@@ -592,10 +607,20 @@ extension NotebookStore {
   public func changeJournal(after cursor: UInt64, limit: Int = 16) throws -> [NotebookDurableChange] {
     guard cursor <= UInt64(Int64.max), (1...16).contains(limit) else { throw NotebookStorageError.limitExceeded("journal_page") }
     return try sqlRead { database in
+      let floor = UInt64(try database.rows("SELECT value FROM metadata WHERE key='placement_outgoing_floor'").first?[0].text ?? "0") ?? 0
+      guard cursor >= floor else {
+        throw CollaborationError("placement_checkpoint_required", "Это устройство ещё не получило изменения до обновления формата. Новому устройству нужен снимок текущего пространства; существующее содержание не будет сброшено.")
+      }
+      return try storedJournalPage(after: cursor, limit: limit, database: database)
+    }
+  }
+
+  // Immutable historic manifests remain inspectable without admitting them as
+  // current wire input or relabelling their authoring contract.
+  func storedJournalPage(after cursor: UInt64, limit: Int, database: NotebookSQLConnection) throws -> [NotebookDurableChange] {
       try database.rows("SELECT sequence,transaction_id,manifest_hash,byte_count FROM change_log WHERE sequence>? ORDER BY sequence LIMIT ?", [.integer(Int64(cursor)), .integer(Int64(limit))]).map {
         .init(sequence: UInt64($0[0].integer!), transactionID: UUID(uuidString: $0[1].text!)!, manifestHash: $0[2].text!, byteCount: Int($0[3].integer!))
       }
-    }
   }
 
   public func readBlobChunk(hash: String, offset: Int64, maxBytes: Int) throws -> Data {

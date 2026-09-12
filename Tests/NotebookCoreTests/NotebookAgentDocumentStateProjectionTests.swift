@@ -12,9 +12,8 @@ struct NotebookAgentDocumentStateProjectionTests {
     let store = NotebookStore(root: root), actor = UUID()
     let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
     let target = CollaborationTarget(kind: .board, id: header.rootBoardID), id = UUID()
-    let board = try #require(try store.readBoardNodeHeader(header.rootBoardID))
     let create = CollaborationAction(summary: "State fixture", expected: [
-      .init(target: target, revision: board.board.stamp.revision),
+      .init(target: target, revision: try store.targetContentRevision(target: target)),
       .init(target: .init(kind: .workspace, id: header.rootBoardID), revision: header.stamp.revision)], operations: [
         .init(kind: .createDocument, target: target, id: id.uuidString, values: [
           "center": try .encode(WorldPoint.zero), "paperSize": .string("a4"), "blocks": try .encode([

@@ -26,15 +26,7 @@ private struct CollaborationFixture {
   var board: CollaborationTarget { .init(kind: .board, id: boardID) }
   var index: CollaborationTarget { .init(kind: .workspace, id: boardID) }
   func expectation(_ target: CollaborationTarget) throws -> CollaborationExpectation {
-    let stamp: VersionStamp
-    switch target.kind {
-    case .codeFragment: stamp = try #require(try store.codeFragment(target.id)).stamp
-    case .workspace: stamp = try store.loadIndex().stamp
-    case .board, .cover: stamp = try store.loadBoard(items: store.loadIndex().items).board(target.boardID ?? target.id)!.stamp
-    case .page: stamp = try store.loadPage(target.id).agentStamp
-    case .document: stamp = try store.loadDocument(target.id).contentStamp
-    }
-    return .init(target: target, revision: stamp.revision)
+    .init(target: target, revision: try store.targetContentRevision(target: target))
   }
   func action(_ operations: [CollaborationOperation], targets: [CollaborationTarget]? = nil) throws -> CollaborationAction {
     .init(summary: "Пояснение рядом с мыслью", expected: try (targets ?? [page]).map(expectation), operations: operations)
@@ -258,7 +250,7 @@ func collaborationAtomicValidation() throws {
   #expect(try f.store.collaborationActions().isEmpty)
 }
 
-@Test("ID доски связывает запись с прочитанным владельцем при совпавших версиях")
+@Test("Равные часы разных досок не создают общее предусловие записи")
 func collaborationBoardAddress() throws {
   let f = try CollaborationFixture(); defer { f.clean() }
   let a = UUID(), b = UUID()
@@ -270,7 +262,8 @@ func collaborationBoardAddress() throws {
   let target = CollaborationTarget(kind: .board, id: a)
   let expectation = try f.expectation(target)
   let otherExpectation = try f.expectation(.init(kind: .board, id: b))
-  #expect(expectation.revision == otherExpectation.revision)
+  #expect(try f.store.readBoardNode(a)?.board.stamp == f.store.readBoardNode(b)?.board.stamp)
+  #expect(expectation.revision != otherExpectation.revision)
   try f.store.savePresence(.init(boardID: b, mode: .board, camera: .init(), viewport: .init(x: 834, y: 1194)))
   let operation = CollaborationOperation(kind: .insertElement, target: target, id: "on-a", values: [
     "kind": .string("web"), "source": .string("A"), "frame": try .encode(PageRect(x: 0, y: 0, width: 100, height: 80)),
@@ -372,8 +365,8 @@ func collaborationConcurrentBoardElements() throws {
     else { _ = right.upsertElement(element, expected: nil, actor: actor) }
   }
   let oldLeft = left
-  _ = left.merge(right, itemIDs: Set(board.itemIDs))
-  _ = right.merge(oldLeft, itemIDs: Set(board.itemIDs))
+  _ = try left.merge(right, itemIDs: Set(board.itemIDs))
+  _ = try right.merge(oldLeft, itemIDs: Set(board.itemIDs))
   #expect(Set(left.elements.map(\.id)) == ["a", "b"])
   #expect(left.elements == right.elements)
 }
@@ -816,4 +809,17 @@ func inputFrameWindowIsBounded() {
   #expect(frames.summary.estimatedUnservicedIntervals == 11)
   frames.record(timestamp: .nan, expectedInterval: 0)
   #expect(frames.summary.totalIntervals == 10_001)
+}
+
+@Test("Версия изменения относится к названному физическому владельцу")
+func collaborationContentPreconditionNamesItsActualOwner() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let board = try f.store.targetContentRevision(target: f.board)
+  #expect(try f.store.targetContentRevision(target: .init(kind: .board, id: f.boardID, boardID: UUID())) == board)
+  #expect(try f.store.targetContentRevision(target: .init(kind: .cover, id: f.itemID, boardID: f.boardID)) == board)
+  for target in [CollaborationTarget(kind: .workspace, id: UUID()),
+    .init(kind: .cover, id: f.itemID), .init(kind: .cover, id: f.itemID, boardID: UUID())] {
+    do { _ = try f.store.targetContentRevision(target: target); Issue.record("Владелец был подменён") }
+    catch let error as CollaborationError { #expect(error.code == "target_missing") }
+  }
 }

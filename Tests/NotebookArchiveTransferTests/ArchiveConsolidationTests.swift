@@ -141,6 +141,48 @@ struct ArchiveConsolidationTests {
     #expect(throws: ArchiveTransferError.self) { try ArchiveConsolidation.requirePreserved(content, in: lost) }
   }
 
+  @Test(arguments: [false, true])
+  func latentAndConcurrentPlacementHeadsRemainIndependentOwners(losingHead: Bool) throws {
+    let stackID = UUID(), importer = UUID()
+    func content() throws -> CollaborationContent {
+      let actor = UUID(), initial = WorkspaceIndex.initial(actor: actor, pageSize: .init(width: 834, height: 1194))
+      let itemID = initial.index.selectedItemID
+      let register = try WorkspacePlacement.authored(itemID: itemID,
+        pose: .init(center: .zero, zIndex: 0, stackID: stackID),
+        stamp: .init(counter: 1, actor: actor), human: false, previous: nil)
+      let retained: WorkspacePlacement
+      if losingHead {
+        let free = try WorkspacePlacement.authored(itemID: itemID,
+          pose: .init(center: .init(x: 500, y: 500), zIndex: 1),
+          stamp: .init(counter: 2, actor: UUID()), human: true, previous: nil)
+        retained = try register.merging(free)
+      } else { retained = register }
+      let board = BoardDocument(placements: [retained], elements: [],
+        stamp: retained.heads.map { $0.version.stamp }.max()!, collaboration: nil)
+      return .init(workspace: initial.index,
+        hierarchy: .init(rootBoardID: initial.index.rootBoardID,
+          boards: [.init(id: initial.index.rootBoardID, board: board)], stamp: board.stamp),
+        ink: .init(stamp: .init(counter: 0, actor: actor)), pages: [initial.page], documents: [], states: [])
+    }
+    let local = try content(), incoming = try content(), rootID = local.workspace.rootBoardID
+    let board = try #require(local.hierarchy.board(rootID)), other = try #require(incoming.hierarchy.board(rootID))
+    #expect(board.stacks.isEmpty && other.stacks.isEmpty)
+    #expect(board.freeItems.count == 1 && other.freeItems.count == 1)
+    #expect(board.claimedStackIDs == [stackID] && other.claimedStackIDs == [stackID])
+    #expect(throws: CollaborationError.self) { try board.importingIndependent(other, actor: importer) }
+    #expect(throws: ArchiveTransferError.self) { try ArchiveConsolidation.requireIndependentOwners(current: local, incoming: incoming) }
+
+    // Identical visible cards cannot prove that losing heads or latent group
+    // membership survived. No archive is opened or published by this check.
+    let picture = BoardDocument(freeItems: board.freeItems, stamp: board.stamp)
+    #expect(picture.freeItems == board.freeItems && picture.stacks == board.stacks)
+    var dropped = local
+    dropped.hierarchy = .init(rootBoardID: rootID,
+      boards: [.init(id: rootID, board: picture)], stamp: local.hierarchy.stamp)
+    #expect(throws: ArchiveTransferError.self) { try ArchiveConsolidation.requirePreserved(local, in: dropped) }
+    try ArchiveConsolidation.requirePreserved(local, in: local)
+  }
+
   @Test func activeRootNestedSourcesAndMissingDatabaseAreRejectedWithoutCreation() throws {
     let root = try transferTestRoot(); defer { try? FileManager.default.removeItem(at: root) }
     let f = try Fixture(root: root)

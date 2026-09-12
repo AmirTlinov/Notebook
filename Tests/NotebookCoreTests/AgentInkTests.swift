@@ -24,8 +24,8 @@ private struct AgentInkFixture {
       let page = try store.loadPage(target.id)
       return .init(target: target, revision: page.agentStamp.revision, inkRevision: page.drawingStamp.revision)
     }
-    let board = try store.loadBoard(items: store.loadIndex().items).board(target.boardID ?? target.id)!
-    return .init(target: target, revision: board.stamp.revision, inkRevision: try store.loadSpatialInk().stamp.revision)
+    return .init(target: target, revision: try store.targetContentRevision(target: target),
+      inkRevision: try store.loadSpatialInk().stamp.revision)
   }
   func stroke(_ target: CollaborationTarget, id: UUID = UUID()) throws -> CollaborationOperation {
     var values: [String: JSONValue] = ["width": .number(4), "opacity": .number(0.7),

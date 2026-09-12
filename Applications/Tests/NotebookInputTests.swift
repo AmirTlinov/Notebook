@@ -321,11 +321,11 @@ final class NotebookInputTests: XCTestCase {
     finger.inputType = .direct
     var taps = 0
     coverInput.onTap = { _, _ in taps += 1 }
-    coverInput.canBeginContact = { !blocked.contains(deleting) }
+    coverInput.updateOwnerAvailability { !blocked.contains(deleting) }
     coverInput.touchesBegan([finger], with: event)
     coverInput.touchesEnded([finger], with: event)
     XCTAssertEqual(taps, 0)
-    coverInput.canBeginContact = { !blocked.contains(other) }
+    coverInput.updateOwnerAvailability { !blocked.contains(other) }
     coverInput.touchesBegan([finger], with: event)
     coverInput.touchesEnded([finger], with: event)
     XCTAssertEqual(taps, 1, "Отказ одного владельца не выключает соседнюю обложку")

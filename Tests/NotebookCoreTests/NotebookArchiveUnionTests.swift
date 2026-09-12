@@ -50,12 +50,7 @@ struct NotebookArchiveUnionTests {
     for (key, version) in try #require(other.collaboration).fields where !key.hasSuffix("/order") && !key.hasSuffix("/exists") {
       #expect(metadata.fields[key] == version)
     }
-    for item in other.freeItems {
-      let version = try #require(metadata.fields[fieldKey(["freeItems", item.itemID.uuidString.lowercased(), "exists"])])
-      #expect(version.stamp.actor == importer && version.human)
-      #expect(version.stamp.counter > other.stamp.counter)
-    }
-    #expect(imported.freeItems == local.freeItems + other.freeItems)
+    #expect(imported.placements == (local.placements + other.placements).sorted { $0.id.uuidString < $1.id.uuidString })
   }
 
   @Test func collisionIncompleteArchiveAndClockExhaustionFailBeforePublication() throws {

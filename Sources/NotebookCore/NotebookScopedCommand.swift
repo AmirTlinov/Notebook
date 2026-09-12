@@ -53,6 +53,17 @@ extension NotebookStore {
         throw NotebookStorageError.invalidTransaction("computation address")
       }
     }
+    if fragment.file == "board.json", fragment.collection == "board/placements" {
+      let placement = try fragment.value.decode(WorkspacePlacement.self)
+      guard fragment.member == placement.id.uuidString.lowercased(), fragment.position == 0,
+        fragment.collections.isEmpty else { throw NotebookStorageError.invalidTransaction("placement register address") }
+      if let previousHash {
+        let old = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(previousHash))
+        guard try old.value.decode(WorkspacePlacement.self).merging(placement) == placement else {
+          throw NotebookStorageError.transactionConflict
+        }
+      }
+    }
     if fragment.file == "workspace.json", fragment.collection == "pageOrderNodes" {
       guard previousHash == nil, fragment.parent == "workspace.json#", fragment.position == 0,
         fragment.address == "workspace.json#/pageOrderNodes/@" + fragment.member, fragment.collections.isEmpty else {
@@ -180,7 +191,7 @@ extension NotebookStore {
     // actual sequence edit permutes their durable slots; unseen rows retain
     // theirs, and simultaneously inserted members retain authored order.
     func sequenceGroups(_ fragments: [String: NotebookStoredFragment]) -> [String: [NotebookStoredFragment]] {
-      Dictionary(grouping: fragments.values.filter { $0.parent != nil && !$0.collection.hasSuffix("collaboration/fields") && !["pageOrders", "pageOrderNodes"].contains($0.collection) },
+      Dictionary(grouping: fragments.values.filter { $0.parent != nil && !$0.collection.hasSuffix("collaboration/fields") && !["pageOrders", "pageOrderNodes", "board/placements"].contains($0.collection) },
         by: { $0.parent! + "|" + $0.collection })
     }
     let oldGroups = sequenceGroups(old), nextGroups = sequenceGroups(next)
@@ -234,7 +245,10 @@ extension NotebookStore {
       let stored = try storedFragments(address: address, descendants: false).first
       if let edited {
         if stored == nil, previous != nil { throw NotebookStorageError.transactionConflict }
-        let value = try projectionDelta(before: previous?.value, after: edited.value, current: stored?.value)
+        let value: JSONValue?
+        if edited.collection == "board/placements", let stored {
+          value = try .encode(stored.value.decode(WorkspacePlacement.self).merging(edited.value.decode(WorkspacePlacement.self)))
+        } else { value = try projectionDelta(before: previous?.value, after: edited.value, current: stored?.value) }
         guard let value else { throw NotebookStorageError.invalidTransaction("projection value") }
         let oldCollections = Dictionary(uniqueKeysWithValues: (previous?.collections ?? []).map { (fieldKey($0.path), $0) })
         let nextCollections = Dictionary(uniqueKeysWithValues: edited.collections.map { (fieldKey($0.path), $0) })
@@ -245,7 +259,7 @@ extension NotebookStore {
           }
           collections[key] = nextCollections[key]
         }
-        let position = (edited.collection.hasSuffix("collaboration/fields") || ["pageOrders", "pageOrderNodes"].contains(edited.collection)) ? 0 : try positions[address] ?? stored?.position ?? Int(database.rows("SELECT COALESCE(MAX(position),-1)+1 FROM records WHERE parent=? AND collection=?", [edited.parent.map(NotebookSQLValue.text) ?? .null, .text(edited.collection)]).first![0].integer!)
+        let position = (edited.collection.hasSuffix("collaboration/fields") || ["pageOrders", "pageOrderNodes", "board/placements"].contains(edited.collection)) ? 0 : try positions[address] ?? stored?.position ?? Int(database.rows("SELECT COALESCE(MAX(position),-1)+1 FROM records WHERE parent=? AND collection=?", [edited.parent.map(NotebookSQLValue.text) ?? .null, .text(edited.collection)]).first![0].integer!)
         let changed = try writeFragment(edited.replacing(value: value,
           collections: collections.values.sorted { $0.path.lexicographicallyPrecedes($1.path) },
           position: position), database: database)
@@ -324,7 +338,7 @@ extension NotebookStore {
       if let expected, parent.board.stamp != expected { throw NotebookStorageError.transactionConflict }
       if item.kind == .board {
         let address = "board.json#/boards/@" + itemID.uuidString.lowercased()
-        let members = try currentSQL!.rows("SELECT 1 FROM records WHERE parent=? AND collection IN ('board/freeItems','board/stacks','board/elements') LIMIT 1", [.text(address)])
+        let members = try currentSQL!.rows("SELECT 1 FROM item_owners WHERE board_id=? UNION ALL SELECT 1 FROM records WHERE parent=? AND collection='board/elements' LIMIT 1", [.text(itemID.uuidString.lowercased()), .text(address)])
         let ink = try readSpatialInk(surfaces: [.board(itemID)])
         guard members.isEmpty, !ink.containsEditableInk(on: .board(itemID)) else { throw NotebookStoreError.boardContainsContent(itemID) }
         try removeFragment(address, database: currentSQL!)

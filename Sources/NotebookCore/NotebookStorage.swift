@@ -26,7 +26,7 @@ public struct NotebookChangeManifest: Codable, Equatable, Sendable {
   public let parts: [String]
   public let pageOrderRoots: [String]
   public init(transactionID: UUID, workspaceID: UUID, records: [NotebookRecordMutation], parts: [String] = [], pageOrderRoots: [String] = []) {
-    format = 3; self.transactionID = transactionID; self.workspaceID = workspaceID
+    format = 4; self.transactionID = transactionID; self.workspaceID = workspaceID
     self.records = records; self.parts = parts; self.pageOrderRoots = pageOrderRoots
   }
 }
@@ -63,6 +63,9 @@ public struct NotebookSceneWindow: Codable, Sendable {
   public let boardID: UUID
   public let items: [WorkspaceItem]
   public let boards: [BoardNode]
+  /// Complete physical board content versions from this window's SQL cut;
+  /// hashing the deliberately bounded board bodies would omit unseen edits.
+  public let boardContentRevisions: [UUID: String]
   public let documentPaper: [UUID: DocumentPaperSize]
   public let pageCounts: [UUID: Int]
   public let referenceIdentities: [NotebookReferenceIdentity]

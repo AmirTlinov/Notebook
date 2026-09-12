@@ -23,7 +23,7 @@ struct NotebookReferenceInkTests {
       let targets = [CollaborationTarget(kind: .board, id: header.rootBoardID),
         .init(kind: .cover, id: item.id, boardID: header.rootBoardID)]
       let surfaces = [SurfaceID.board(header.rootBoardID), .cover(item.id)]
-      let basis = try store.referenceInkBasis(rootBoardID: header.rootBoardID, targets: targets, surfaces: surfaces)
+      let basis = try store.referenceBasis(rootBoardID: header.rootBoardID, targets: targets, surfaces: surfaces)
       var journal = try store.readSpatialInk(surfaces: surfaces)
       let acceptedPen = journal.append(tool: .pen, spans: surfaces.map { span($0) }, actor: actor)
       let pen = try #require(acceptedPen)
@@ -33,7 +33,7 @@ struct NotebookReferenceInkTests {
         if let actionID { let changed = journal.deactivate(actionID, actor: actor); #expect(changed) }
         try store.saveSpatialInk(journal)
         let retained = try surfaces.map { try NotebookReferenceInk(surface: $0, actions: journal.actions) }
-        #expect(try basis.replacingInk(retained) == store.referenceIdentities(targets: targets))
+        #expect(try basis.replacing(ink: retained) == store.referenceIdentities(targets: targets))
       }
       #expect(try store.workspaceHeader().cursor > basis.cursor)
     }
@@ -56,15 +56,15 @@ struct NotebookReferenceInkTests {
       let accepted = journal.append(tool: .pen, spans: [span(surface)], actor: actor)
       let first = try #require(accepted)
       try store.saveSpatialInk(journal)
-      let basis = try store.referenceInkBasis(rootBoardID: header.rootBoardID, targets: targets, surfaces: [surface])
+      let basis = try store.referenceBasis(rootBoardID: header.rootBoardID, targets: targets, surfaces: [surface])
       let deactivated = journal.deactivate(first.id, actor: actor)
       #expect(deactivated)
       try store.saveSpatialInk(journal)
       let replacement = try NotebookReferenceInk(surface: surface, actions: journal.actions)
-      #expect(try basis.replacingInk([replacement]) == store.referenceIdentities(targets: targets),
+      #expect(try basis.replacing(ink: [replacement]) == store.referenceIdentities(targets: targets),
         "The portal-cover intermediate must carry the changed child's identity to its parent")
       #expect(throws: CollaborationError.self) {
-        try basis.replacingInk([NotebookReferenceInk(surface: .cover(child), actions: [])])
+        try basis.replacing(ink: [NotebookReferenceInk(surface: .cover(child), actions: [])])
       }
     }
   }
@@ -74,13 +74,13 @@ struct NotebookReferenceInkTests {
       let target = CollaborationTarget(kind: .board, id: header.rootBoardID), surface = SurfaceID.board(header.rootBoardID)
       var journal = SpatialInkJournal(stamp: .init(counter: 100, actor: actor))
       try store.saveSpatialInk(journal)
-      let basis = try store.referenceInkBasis(rootBoardID: header.rootBoardID, targets: [target], surfaces: [surface])
+      let basis = try store.referenceBasis(rootBoardID: header.rootBoardID, targets: [target], surfaces: [surface])
       let lower = SpatialInkAction(tool: .pen, spans: [span(surface)], stamp: .init(counter: 1, actor: UUID()))
       let merged = journal.merge(.init(actions: [lower], stamp: lower.stamp))
       #expect(merged)
       #expect(journal.stamp.counter == 100)
       try store.saveSpatialInk(journal)
-      let identity = try #require(basis.replacingInk([NotebookReferenceInk(surface: surface, actions: journal.actions)]).first)
+      let identity = try #require(basis.replacing(ink: [NotebookReferenceInk(surface: surface, actions: journal.actions)]).first)
       #expect(try identity.revision == store.referenceRevision(target: target))
       let reference = CollaborationReference(target: target, region: .init(x: 0, y: 0, width: 10, height: 10),
         worldOrigin: .zero, revision: identity.revision, label: "Captured")

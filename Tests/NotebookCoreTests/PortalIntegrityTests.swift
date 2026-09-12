@@ -36,8 +36,8 @@ func portalCameraRoundTrip(viewport: SpatialPoint, scale: Double) throws {
   #expect((abs(boundary.y - active.y) < 1e-8))
 }
 
-@Test("Слияние независимых досок меняет идентичность при прежнем максимуме часов")
-func mergedBoardFrontierNamesEveryOwner() throws {
+@Test("Слияние независимых досок сохраняет содержание без выдуманного авторства")
+func mergedBoardContentRetainsEveryOwnerWithoutAuthoredClock() throws {
   let (workspace, base, childID) = try portalFixture()
   var left = base
   var right = base
@@ -48,19 +48,18 @@ func mergedBoardFrontierNamesEveryOwner() throws {
   #expect(result1)
   let result2 = right.updatePortalCamera(BoardPortalCamera(scale: 0.8), for: childID, actor: lowActor)
   #expect(result2)
-  let oldRevision = left.revision
   let oldStamp = left.stamp
   let unmergedLeft = left
-  let result3 = left.merge(right, items: workspace.items)
+  let result3 = try left.merge(right, items: workspace.items)
   #expect(result3)
   #expect((left.stamp == oldStamp))
-  #expect((left.revision != oldRevision))
-  let result4 = right.merge(unmergedLeft, items: workspace.items)
+  #expect(left != unmergedLeft)
+  let result4 = try right.merge(unmergedLeft, items: workspace.items)
   #expect(result4)
-  #expect((right.revision == left.revision))
+  #expect(right == left)
   let reordered = BoardHierarchy(rootBoardID: left.rootBoardID,
     boards: left.boards.reversed(), stamp: left.stamp)
-  #expect((reordered.revision == left.revision))
+  #expect(reordered.boards.sorted { $0.id.uuidString < $1.id.uuidString } == left.boards.sorted { $0.id.uuidString < $1.id.uuidString })
 }
 
 @Test("Доска с элементом или редактируемыми чернилами сохраняет владельца")
@@ -143,13 +142,6 @@ private func portalFixture() throws -> (WorkspaceIndex, BoardHierarchy, UUID) {
   return (workspace, hierarchy, child.id)
 }
 
-
-@Test("Swift и MCP называют одинаковый полный фронт дерева")
-func boardRevisionCrossLanguageVector() {
-  let id = UUID(uuidString: "7e7a0000-0000-4000-8000-000000000003")!
-  let hierarchy = BoardHierarchy.initial(rootBoardID: id, itemIDs: [], actor: id)
-  #expect(hierarchy.revision == "480b5648900dd575275f5bb02828bc85d5d49a3ced16ad2f16d3ef6158103eb5")
-}
 
 @Test("Удаление сохраняет пришедшие чернила и новый предмет каталога", arguments: [false, true])
 func boardDeletionProtectsRacingOwners(catalogChanged: Bool) throws {

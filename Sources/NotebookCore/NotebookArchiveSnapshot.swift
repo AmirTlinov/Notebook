@@ -55,6 +55,7 @@ extension NotebookStore {
         try database.run("DELETE FROM \(table)")
       }
       try database.run("DELETE FROM sqlite_sequence WHERE name='change_log'")
+      try database.run("DELETE FROM metadata WHERE key='placement_outgoing_floor'")
       if let sourcePeer {
         try database.run("INSERT INTO peer_cursors(peer_id,direction,sequence) VALUES(?,'incoming',?)",
           [.text(sourcePeer.uuidString.lowercased()), .integer(Int64(sourceCursor))])
@@ -114,11 +115,11 @@ extension NotebookStore {
       try checkpoint.validate()
       var cursor: UInt64 = 0
       while true {
-        let changes = try store.changeJournal(after: cursor, limit: 16)
+        let changes = try store.storedJournalPage(after: cursor, limit: 16, database: database)
         if changes.isEmpty { break }
         for change in changes {
-          let manifest = try store.validatedManifest(change)
-          for part in manifest.parts { _ = try store.validatedManifest(change, partHash: part) }
+          let manifest = try store.validatedManifest(change, historical: true)
+          for part in manifest.parts { _ = try store.validatedManifest(change, partHash: part, historical: true) }
           cursor = change.sequence
         }
       }

@@ -177,8 +177,9 @@ export function documentSpatialSize(paper: DocumentPaperSize): PageSize {
   return { width: postScript.width * 132 / 72, height: postScript.height * 132 / 72 };
 }
 
+/** Native read projection; Core derives layout from its canonical placement intents. */
 export interface BoardDocument {
-  format: 2;
+  format: 3;
   freeItems: FreeItemPlacement[];
   stacks: WorkspaceItemStack[];
   elements: SpatialElement[];

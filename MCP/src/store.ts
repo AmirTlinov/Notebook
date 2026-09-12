@@ -22,6 +22,7 @@ export interface NotebookPageDirectory { header:NotebookPageHeader;pages:Array<{
 export interface DocumentBlockRead { documentID:string;contentStamp:VersionStamp;stateStamp:VersionStamp;block:DocumentBlock;state?:JSONValue }
 export interface SceneWindow {
   header: WorkspaceHeader; boardID: string; items: NotebookItemHeader[]; boards: BoardHierarchy["boards"];
+  boardContentRevisions: Record<string, string>;
   documentPaper: Record<string, "a4" | "letter">; pageCounts: Record<string, number>; totalMatches: number; truncated: boolean;
 }
 export interface ScenePaintPage {
@@ -129,14 +130,23 @@ export class NotebookStore {
     if (!node) throw new StoreError("Доска не найдена.");
     return node.board;
   }
+  async readBoardContentRevision(boardID: string): Promise<string> {
+    const revision = await this.read<string | null>({kind:"boardContentRevision",id:boardID});
+    if (!revision) throw new StoreError("Полная версия доски недоступна.");
+    return revision;
+  }
+  async readOwnerBoardID(itemID: string): Promise<string> {
+    const boardID = await this.read<string | null>({kind:"ownerBoard",id:itemID});
+    if (!boardID) throw new StoreError("Предмет не принадлежит живой доске.");
+    return boardID;
+  }
   async readItemBoard(itemID: string): Promise<BoardDocument> {
     const node = await this.read<BoardHierarchy["boards"][number] | null>({kind:"boardItem",id:itemID});
     if (!node) throw new StoreError("Предмет не принадлежит живой доске.");
     return node.board;
   }
   async readCoverElements(itemID: string, size: PageSize, cursor?: string, limit = 32) {
-    const boardID = await this.read<string | null>({kind:"ownerBoard",id:itemID});
-    if (!boardID) throw new StoreError("Обложка не принадлежит доске.");
+    const boardID = await this.readOwnerBoardID(itemID);
     const bounds = {anchor:{tileX:0,tileY:0,localX:0,localY:0},region:{x:0,y:0,width:size.width,height:size.height}};
     const page = await this.read<ScenePaintPage>({kind:"scenePaintOrder",id:boardID,coverID:itemID,
       bounds,paintCursor:cursor,limit});
@@ -261,4 +271,11 @@ export function visibleBounds(presence: SessionPresence): SceneBounds {
   const width = presence.viewport.x / presence.camera.scale;
   const height = presence.viewport.y / presence.camera.scale;
   return sceneBoundsSchema.parse({anchor:presence.camera.center,region:{x:-width / 2,y:-height / 2,width,height}});
+}
+
+/** The complete owner token travels with the bounded scene, never from its subset or Lamport clock. */
+export function sceneBoardContentRevision(window: SceneWindow, boardID: string): string {
+  const revision = window.boardContentRevisions?.[boardID.toLowerCase()];
+  if (!revision) throw new StoreError("Рассмотренный срез не содержит полной версии доски.");
+  return revision;
 }

@@ -952,18 +952,17 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(count.value as? String, "1")
     XCTAssertLessThan(count.frame.width, 45)
 
-    sharedElement.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-      .press(
-        forDuration: 0.3,
-        thenDragTo: sharedElement.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).withOffset(.init(dx: 100, dy: 60)),
-        withVelocity: .slow,
-        thenHoldForDuration: 0
-      )
-    XCTAssertGreaterThan(
-      sharedElement.frame.midX,
-      initialFrame.midX + 20,
-      "Палец должен перемещать элемент в том же листе"
-    )
+    var expectedFrame = initialFrame
+    for delta in [CGVector(dx: 100, dy: 60), CGVector(dx: -60, dy: 40)] {
+      let start = sharedElement.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
+      start.press(forDuration: 0.3, thenDragTo: start.withOffset(delta),
+        withVelocity: .slow, thenHoldForDuration: 0)
+      expectedFrame = expectedFrame.offsetBy(dx: delta.dx, dy: delta.dy)
+      XCTAssertEqual(sharedElement.frame.minX, expectedFrame.minX, accuracy: 3,
+        "Следующий жест начинается с принятого положения, без возврата к прежнему")
+      XCTAssertEqual(sharedElement.frame.minY, expectedFrame.minY, accuracy: 3)
+      XCTAssertEqual(paper.frame, paperFrame); XCTAssertEqual(paper.value as? String, drawing)
+    }
 
     XCTAssertEqual(paper.frame, paperFrame)
     XCTAssertEqual(paper.value as? String, drawing)

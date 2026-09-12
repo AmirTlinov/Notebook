@@ -26,8 +26,7 @@ struct NotebookAgentSpatialProjectionTests {
   private func action(_ operations: [CollaborationOperation], store: NotebookStore) throws -> CollaborationAction {
     let header = try store.workspaceHeader(), ink = try #require(header.spatialInkStamp)
     return try .init(summary: "Addressed stroke", expected: Set(operations.map(\.target)).map { target in
-      let board = try #require(try store.readBoardNodeHeader(target.boardID ?? target.id))
-      return .init(target: target, revision: board.board.stamp.revision, inkRevision: ink.revision)
+      return .init(target: target, revision: try store.targetContentRevision(target: target), inkRevision: ink.revision)
     }, operations: operations)
   }
 

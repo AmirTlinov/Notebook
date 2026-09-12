@@ -275,15 +275,9 @@ extension NotebookStore {
   }
 
   private func placementCarrier(_ id: UUID, boardID: UUID) throws -> (center: WorldPoint, size: WorkspaceItemGeometry, stacked: Bool)? {
-    guard let address = try currentSQL!.rows("SELECT address FROM item_owners WHERE item_id=? AND board_id=?", [.text(id.uuidString.lowercased()), .text(boardID.uuidString.lowercased())]).first?[0].text,
-      let record = try storedFragments(address: address, descendants: false).first else { return nil }
-    let center: WorldPoint, stacked = record.collection == "board/stacks"
-    if stacked {
-      let stack = try record.value.decode(WorkspaceItemStack.self)
-      guard let value = WorkspaceItemStackPresentation.focusedCenter(of: id, in: stack) else { throw NotebookStorageError.corruptRecord(address) }
-      center = value
-    } else { center = try record.value.decode(FreeItemPlacement.self).center }
-    return (center, try placementItemGeometry(id), stacked)
+    guard let node = try readBoardItem(id), node.id == boardID,
+      let center = node.board.focusedCenter(of: id) else { return nil }
+    return (center, try placementItemGeometry(id), node.board.stack(containing: id) != nil)
   }
 
   private func placementObstacle(_ subject: CollaborationSubject, on target: CollaborationTarget, origin: WorldPoint?,

@@ -146,7 +146,7 @@ final class SharedAttentionTests: XCTestCase {
     let boardID = try XCTUnwrap(model.presence?.boardID)
     let target = CollaborationTarget(kind: .board, id: boardID)
     let action = CollaborationAction(summary: "Два связанных пояснения",
-      expected: [.init(target: target, revision: try XCTUnwrap(model.board).stamp.revision)],
+      expected: [.init(target: target, revision: try XCTUnwrap(model.store.boardContentRevision(target.id)))],
       operations: (0..<2).map { index in
         .init(kind: .insertElement, target: target, id: "overview-caption-\(index)", values: [
           "kind": .string("nativeText"), "source": .string("Пояснение \(index)"),

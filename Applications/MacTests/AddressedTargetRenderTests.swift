@@ -9,14 +9,15 @@ final class AddressedTargetRenderTests: XCTestCase {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let store = NotebookStore(root: root), actor = UUID()
     var (workspace, pages) = try store.loadOrCreate(actor: actor, pageSize: .init(width: 100, height: 140))
+    var hierarchy = try store.loadBoard(items: workspace.items)
     var page = try XCTUnwrap(pages.values.first)
     XCTAssertTrue(page.replaceElements([.init(id: "explicit-red-source", kind: .web,
       frame: .init(x: 20, y: 20, width: 70, height: 90), source: "The requested page",
       html: "<svg width='70' height='90'><rect width='70' height='90' fill='red'/></svg>")], actor: actor))
     try store.savePage(page)
     let other = try XCTUnwrap(workspace.createNotebook(title: "Not requested", actor: actor, pageSize: page.size))
-    try store.saveWorkspaceBundle(index: workspace, page: other.page,
-      board: .initial(rootBoardID: workspace.rootBoardID, itemIDs: workspace.items.map(\.id), actor: actor))
+    XCTAssertTrue(hierarchy.addItem(other.item.id, to: workspace.rootBoardID, near: .zero, actor: actor))
+    try store.saveWorkspaceBundle(index: workspace, page: other.page, board: hierarchy)
     _ = try store.loadOrCreateSpatialInk(actor: actor)
     var unrelated = other.page
     XCTAssertTrue(unrelated.replaceElements([.init(id: "unrequested-program", kind: .web,
@@ -47,17 +48,18 @@ final class AddressedTargetRenderTests: XCTestCase {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let store = NotebookStore(root: root), actor = UUID()
     var (workspace, _) = try store.loadOrCreate(actor: actor, pageSize: .init(width: 100, height: 140))
+    var hierarchy = try store.loadBoard(items: workspace.items)
     let item = try XCTUnwrap(workspace.createDocument(title: "Letter", actor: actor))
     let document = DocumentDocument(id: item.id, actor: actor, paperSize: .letter,
       blocks: [.interactive(id: "body", html: "<h1>Not this cover</h1>", javaScript: "throw Error('the document program is not its cover')")])
-    var hierarchy = BoardHierarchy.initial(rootBoardID: workspace.rootBoardID, itemIDs: workspace.items.map(\.id), actor: actor)
+    XCTAssertTrue(hierarchy.addItem(item.id, to: workspace.rootBoardID, near: .zero, actor: actor))
     try store.saveDocumentWorkspaceBundle(index: workspace, document: document,
       state: .init(id: document.id, actor: actor), board: hierarchy)
     _ = try store.loadOrCreateSpatialInk(actor: actor)
     // The saved document and state stay outside this cover-only render projection.
     let target = CollaborationTarget(kind: .cover, id: item.id, boardID: workspace.rootBoardID)
     let request = try store.requestTargetRender(target: target,
-      expectedRevision: try XCTUnwrap(hierarchy.board(workspace.rootBoardID)).stamp.revision)
+      expectedRevision: try XCTUnwrap(store.boardContentRevision(workspace.rootBoardID)))
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     try await CurrentViewPreviewWriter.writeTarget(request, model: model)
@@ -77,7 +79,7 @@ final class AddressedTargetRenderTests: XCTestCase {
     XCTAssertTrue(hierarchy.upsertElement(neighbor, in: workspace.rootBoardID, expected: nil, actor: actor))
     try store.saveBoard(hierarchy, items: workspace.items)
     let repeated = try store.requestTargetRender(target: target,
-      expectedRevision: try XCTUnwrap(hierarchy.board(workspace.rootBoardID)).stamp.revision)
+      expectedRevision: try XCTUnwrap(store.boardContentRevision(workspace.rootBoardID)))
     XCTAssertEqual(repeated.id, request.id)
     try await CurrentViewPreviewWriter.writeTarget(repeated, model: model)
     let finalPNG = try Data(contentsOf: store.targetPNGURL(request.id))
@@ -132,7 +134,7 @@ final class AddressedTargetRenderTests: XCTestCase {
       XCTAssertTrue(hierarchy.upsertElement(element, in: portal, expected: nil, actor: actor))
       try store.saveBoard(hierarchy, items: workspace.items)
       let request = try store.requestTargetRender(target: target,
-        expectedRevision: try XCTUnwrap(hierarchy.board(workspace.rootBoardID)).stamp.revision)
+        expectedRevision: try XCTUnwrap(store.boardContentRevision(workspace.rootBoardID)))
       if let previous {
         XCTAssertNotEqual(request.sourceRevision, previous.sourceRevision)
         XCTAssertNotEqual(request.id, previous.id)

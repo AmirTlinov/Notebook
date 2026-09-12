@@ -84,13 +84,20 @@ extension NotebookStore {
     try readTransaction { _ in
       let value: JSONValue?
       switch target.kind {
-      case .workspace: value = try storedFragments(address: "workspace.json#", descendants: false).first?.value["stamp"]
+      case .workspace:
+        guard let workspace = try storedFragments(address: "workspace.json#", descendants: false).first?.value,
+          workspace["rootBoardID"]?.string.flatMap(UUID.init(uuidString:)) == target.id else { throw referenceMissing(target) }
+        value = workspace["stamp"]
       case .codeFragment: value = try storedFragments(address: codeFragmentFile(target.id) + "#", descendants: false).first?.value["stamp"]
       case .page: value = try storedFragments(address: pageFile(target.id) + "#", descendants: false).first?.value["agentStamp"]
       case .document: value = try storedFragments(address: documentFile(target.id) + "#", descendants: false).first?.value["contentStamp"]
-      case .board, .cover:
-        if target.kind == .cover, try ownerBoardID(of: target.id) != target.boardID { throw referenceMissing(target) }
-        value = try readBoardNodeHeader(target.boardID ?? target.id).map { try .encode($0.board.stamp) }
+      case .board:
+        guard let revision = try boardContentRevision(target.id) else { throw referenceMissing(target) }
+        return revision
+      case .cover:
+        guard let boardID = target.boardID, try ownerBoardID(of: target.id) == boardID,
+          let revision = try boardContentRevision(boardID) else { throw referenceMissing(target) }
+        return revision
       }
       guard let value else { throw referenceMissing(target) }
       return try value.decode(VersionStamp.self).revision

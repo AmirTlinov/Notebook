@@ -6,6 +6,35 @@ import XCTest
 
 @MainActor
 final class WorkspaceItemPoseTests: XCTestCase {
+  func testDropAcknowledgementUsesOnlyTheMovedItemsCanonicalHeads() throws {
+    let item = UUID(), neighbor = UUID(), actor = UUID()
+    var before = BoardDocument(freeItems: [], stamp: .init(counter: 0, actor: actor))
+    XCTAssertTrue(before.addItem(item, near: .zero, actor: actor))
+    XCTAssertTrue(before.addItem(neighbor, near: .init(x: 1_000, y: 0), actor: actor))
+    var after = before
+    XCTAssertTrue(after.moveItem(item, to: .init(x: 420, y: 160), actor: actor))
+    let destination = try XCTUnwrap(WorkspaceItemPoseDestination(itemID: item, before: before, after: after))
+    XCTAssertEqual(destination.center, WorldPoint(x: 420, y: 160))
+    XCTAssertFalse(destination.isObserved(in: before))
+    XCTAssertTrue(destination.isObserved(in: after))
+    var unrelated = before
+    XCTAssertTrue(unrelated.moveItem(neighbor, to: .init(x: 2_000, y: 0), actor: actor))
+    XCTAssertFalse(destination.isObserved(in: unrelated), "A larger board clock is not acknowledgement of this drop")
+    var subsequent = after
+    XCTAssertTrue(subsequent.moveItem(item, to: .init(x: 540, y: 200), actor: UUID()))
+    XCTAssertTrue(destination.isObserved(in: subsequent), "The next accepted move retires the old animation destination")
+
+    var stacked = after
+    XCTAssertNotNil(stacked.createStack(moving: item, onto: neighbor, actor: actor))
+    let stackDestination = try XCTUnwrap(WorkspaceItemPoseDestination(itemID: item, before: after, after: stacked))
+    XCTAssertNotNil(stackDestination.stack)
+    XCTAssertFalse(stackDestination.isObserved(in: after))
+    XCTAssertTrue(stackDestination.isObserved(in: stacked))
+    XCTAssertTrue(stacked.unstackItem(item, at: .init(x: -200, y: 300), actor: actor))
+    XCTAssertTrue(stackDestination.isObserved(in: stacked), "Unstacking observes the same item, not a retired stack field")
+    XCTAssertNil(WorkspaceItemPoseDestination(itemID: item, before: stacked, after: stacked))
+  }
+
   func testPencilFirstSampleUsesThePartlyLiftedNativeBodyAndCommitsBeforeReturn() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-pose-" + UUID().uuidString)
     let store = NotebookStore(root: root), actor = UUID()
@@ -333,7 +362,7 @@ final class WorkspaceItemPoseTests: XCTestCase {
       guard let scale = pose.screenSurface(in: driver.canvas)?.screenScale else { return false }
       return scale > 0.300_01 && scale < 0.310_49
     }
-    finger.setPermitsManipulation(false) // UIKit configuration defers its callback.
+    finger.updateOwnerAvailability { false } // Removal defers its SwiftUI callback.
     XCTAssertEqual(cancellations, 0)
     driver.registry.retirePhysicalOwner(id, on: driver.boardID, through: driver.physical.cohort.plan.revision + 1)
     let frozen = try XCTUnwrap(pose.screenSurface(in: driver.canvas))

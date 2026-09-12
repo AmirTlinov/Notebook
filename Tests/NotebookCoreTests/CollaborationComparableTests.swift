@@ -35,7 +35,7 @@ private struct ComparableFixture {
       switch target.kind {
       case .codeFragment: return .init(target: target, revision: try #require(try store.codeFragment(target.id)).stamp.revision)
       case .workspace: return .init(target: target, revision: try store.loadIndex().stamp.revision)
-      case .board, .cover: return .init(target: target, revision: try store.loadBoard(items: store.loadIndex().items).board(target.boardID ?? target.id)!.stamp.revision)
+      case .board, .cover: return .init(target: target, revision: try store.targetContentRevision(target: target))
       case .page: return .init(target: target, revision: try store.loadPage(target.id).agentStamp.revision)
       case .document: return .init(target: target, revision: try store.loadDocument(target.id).contentStamp.revision,
         stateRevision: try store.loadDocumentState(target.id).stamp.revision)
@@ -268,8 +268,6 @@ func collaborationComparableQualifiedDomainMetadata() throws {
   let laterTree = try expectQualifiedMetadata(tree, file: "board.json", changes: [
     ([.field("stamp")], stamp), (nodePath + [.field("portalStamp")], stamp),
     (boardPath + [.field("stamp")], stamp), (boardPath + [.field("collaboration")], metadataValue),
-    (boardPath + [.field("freeItems"), .member(itemIDs[0].uuidString), .field("stamp")], stamp),
-    (boardPath + [.field("stacks"), .member(stackID.uuidString), .field("stamp")], stamp),
     (boardPath + [.field("elements"), .member("confirmation"), .field("stamp")], stamp)])
   #expect(laterTree.isValid(items: itemIDs.map { .notebook(id: $0, title: "", pageIDs: [UUID()]) }))
 

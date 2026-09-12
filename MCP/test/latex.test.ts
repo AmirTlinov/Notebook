@@ -106,10 +106,10 @@ test("compiles Cyrillic, Markdown math, and raw LaTeX to a PDF with Tectonic", {
       markdown("intro", "# Документ\n\nРусский текст и формула $x_1$."),
       latex("equation", "\\[E=mc^2\\]"),
     ]);
-    const board=await store.readBoard(),header=await store.readHeader();
+    const header=await store.readHeader();
     const target={kind:"board",id:rootBoardID};
     await store.command({command:"apply",action:{id:randomUUID(),summary:"Печать проверочного документа",references:[],
-      expected:[{target,revision:revision(board.stamp)},{target:{kind:"workspace",id:rootBoardID},revision:revision(header.stamp)}],
+      expected:[{target,revision:await store.readBoardContentRevision(rootBoardID)},{target:{kind:"workspace",id:rootBoardID},revision:revision(header.stamp)}],
       operations:[{kind:"createDocument",target,id:source.id,values:{title:"Печать",center:{tileX:0,tileY:0,localX:1000,localY:0},paperSize:source.paperSize,preamble:source.preamble,blocks:source.blocks}}]}});
     const saved=await store.readDocument(source.id);
     const receipt=await exportDocument(saved,store);

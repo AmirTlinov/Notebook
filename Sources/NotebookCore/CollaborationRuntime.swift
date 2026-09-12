@@ -227,7 +227,11 @@ extension NotebookStore {
         guard let element = elements.first(where: { $0.memberIdentity == collaborationIdentity(elementID) }) else { throw CollaborationError("target_missing", "Пространственный элемент отсутствует.", target: target) }
         content = element.setting("frame", nil).setting("worldOrigin", nil).setting("stamp", nil)
       } else {
-        return try boundReferenceRevision(target: target, files: files) ?? completeReferenceRevision(target: target, files: files)
+        if let bound = try boundReferenceRevision(target: target, files: files) { return bound }
+        guard node["board"]?["format"] == .number(Double(BoardDocument.formatVersion)) else {
+          throw CollaborationError("placement_migration_boundary", "Этот полный снимок доски относится к формату до обновления. Сохранённое указание остаётся неизменным; для новой работы выберите текущий материал.", target: target)
+        }
+        return try completeReferenceRevision(target: target, files: files)
       }
     case .workspace: content = files["workspace.json"] ?? .null
     }
@@ -323,21 +327,6 @@ extension NotebookStore {
     if let previous = try storedValue(logicalAddress(url)) { return try previous.decode(TargetRenderRequest.self) }
     try publishRecords(writes: [logicalAddress(url): try .encode(request)])
     return request
-  }
-
-  public static func targetContentRevision(target: CollaborationTarget, files: [String: JSONValue]) throws -> String {
-    let stamp: JSONValue?
-    switch target.kind {
-    case .codeFragment: stamp = files[codeFragmentFile(target.id)]?["stamp"]
-    case .page: stamp = files["pages/\(target.id.uuidString.lowercased()).json"]?["agentStamp"]
-    case .document: stamp = files["documents/\(target.id.uuidString.lowercased()).json"]?["contentStamp"]
-    case .workspace: stamp = files["workspace.json"]?["stamp"]
-    case .board, .cover:
-      let id = target.boardID ?? target.id
-      stamp = files["board.json"]?["boards"]?.array.first { $0.memberIdentity == id.uuidString.lowercased() }?["board"]?["stamp"]
-    }
-    guard let stamp else { throw CollaborationError("target_missing", "Владелец отсутствует.", target: target) }
-    return try stamp.decode(VersionStamp.self).revision
   }
 
   public func targetRenderRequests(target: CollaborationTarget? = nil, afterID: UUID? = nil, limit: Int = 80) throws -> [TargetRenderRequest] {

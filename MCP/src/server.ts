@@ -38,7 +38,7 @@ import {
 } from "./domain.js";
 import {
   StoreError,
-  NotebookStore, workspaceProjection, visibleBounds,
+  NotebookStore, workspaceProjection, visibleBounds, sceneBoardContentRevision,
 } from "./store.js";
 import { exportDocument } from "./latex.js";
 import {
@@ -115,7 +115,7 @@ export function createServer(store = new NotebookStore()): McpServer {
         store.readSpatialInk([{kind:"board",ownerID:boardID}]),store.readItemSizes(workspace,window.documentPaper),
       ]);
       const explicitElement = element_id ? await store.read<SpatialElement | null>({kind:"boardElement",id:boardID,elementID:element_id}) : undefined;
-      return {boardID,rootBoardID:workspace.rootBoardID,workspaceRevision:revision(workspace.stamp),boardRevision:revision(board.stamp),
+      return {boardID,rootBoardID:workspace.rootBoardID,workspaceRevision:revision(workspace.stamp),boardRevision:sceneBoardContentRevision(window, boardID),
         spatialInkRevision:revision(spatialInk.stamp),coverage:{bounds:region,limit,truncated:window.truncated,matchesAtLeast:window.totalMatches},
         nodes:joinedBoardNodes(workspace,board,spatialInk,itemSizes),
         elements:(element_id ? explicitElement ? [explicitElement] : [] : board.elements).map(element=>publicSpatialElement(element,include_source || !!element_id)),
@@ -178,7 +178,7 @@ export function createServer(store = new NotebookStore()): McpServer {
           ),
         ).length,
         workspaceRevision: revision(workspace.stamp),
-        boardRevision: revision(board.stamp),
+        boardRevision: await store.readBoardContentRevision(await store.readOwnerBoardID(notebook.id)),
       };
     }),
   );
@@ -346,7 +346,7 @@ async function observeContext(store: NotebookStore, contextID?: string) {
       visual = { status: "ready", pngSHA256: receipt.pngSHA256, surface, viewport: receipt.renderViewport };
     } catch (error) { visual = { status: "pending", code: "snapshot_pending", message: String(error) }; }
     const changeKeys: Record<string, string> = { workspace: revision(workspace.stamp),
-      [`board:${presence.boardID}`]: revision(board.stamp), spatialInk: revision(spatialInk.stamp),
+      [`board:${presence.boardID}`]: sceneBoardContentRevision(window, presence.boardID), spatialInk: revision(spatialInk.stamp),
       view: JSON.stringify(presence), contexts: JSON.stringify(shared) };
     if (current.kind === "notebook") {
       changeKeys[`page:${current.page.id}:drawing`] = revision(current.page.drawingStamp);
@@ -366,7 +366,7 @@ async function observeContext(store: NotebookStore, contextID?: string) {
       actions: await Promise.all(relatedActions.map(action => publicAction(action,store))),
       visual, surface, changeKeys,
       connection: runtime && Date.now() / 1000 - runtime.updatedAt < 5 ? runtime : { status: "unavailable", lastKnown: runtime },
-      revisions: { workspace: revision(workspace.stamp), board: revision(board.stamp), spatialInk: revision(spatialInk.stamp) },
+      revisions: { workspace: revision(workspace.stamp), board: sceneBoardContentRevision(window, presence.boardID), spatialInk: revision(spatialInk.stamp) },
       coverage:{bounds:visibleBounds(presence),truncated:window.truncated,matchesAtLeast:window.totalMatches},
       nodes: joinedBoardNodes(workspace, board, spatialInk, sizes), visibleItems: visibleItems(workspace, board, spatialInk, presence, sizes),
     }, ...(image ? { image } : {}) };
