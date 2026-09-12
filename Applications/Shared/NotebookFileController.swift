@@ -49,6 +49,8 @@ final class NotebookFileController {
     window.project = project; directories = [:]; expandedFolders = []; persistWindow()
     if window.sidebar { Task { await roots() } }
   }
+  func toggleTerminal() { window.terminal = !(window.terminal ?? false); persistWindow() }
+  func chooseRunRoot(_ root: String) { window.runRoot = root; persistWindow() }
   func toggleSidebar() { window.sidebar.toggle(); persistWindow(); if window.sidebar { Task { await roots() } } }
   func roots() async {
     guard let computer = chat?.computerID, let project = window.project else { return }

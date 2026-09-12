@@ -147,13 +147,20 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
   case create(title: String, project: CodexProject? = nil)
   case updateProject(CodexProjectEdit)
   case saveFile(NotebookFileAddress)
+  case startRun(NotebookRunRequest)
+  case writeRun(UUID, Data)
+  case stopRun(UUID)
   case stop(threadID: String, turnID: String)
   case respond(threadID: String, request: CodexUserRequest, decision: CodexUserDecision)
   public var threadID: String? {
     switch self {
     case .send(let id, _, _), .steer(let id, _, _, _), .stop(let id, _), .respond(let id, _, _): id
-    case .create, .updateProject, .saveFile: nil
+    case .create, .updateProject, .saveFile, .startRun, .writeRun, .stopRun: nil
     }
+  }
+
+  public var isRunCommand: Bool {
+    switch self { case .startRun, .writeRun, .stopRun: true; default: false }
   }
 
   public var message: (threadID: String, text: String, context: String)? {
@@ -172,7 +179,8 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
     case .stop(let thread, let turn): address = ["stop", thread.lowercased(), turn.lowercased()]
     case .respond(let thread, let request, _):
       address = ["respond", thread.lowercased(), request.turnID.lowercased(), request.method, request.id]
-    case .send, .steer, .create, .updateProject, .saveFile: return nil
+    case .stopRun(let id): address = ["stopRun", id.uuidString.lowercased()]
+    case .send, .steer, .create, .updateProject, .saveFile, .startRun, .writeRun: return nil
     }
     var data = Data()
     for part in ["NotebookChatControl/1", author.uuidString.lowercased()] + address {
@@ -207,6 +215,9 @@ public struct NotebookChatInput: Codable, Equatable, Sendable, Identifiable {
     case .create(let title, let project): return !title.isEmpty && title.utf8.count <= 256 && (project == nil || (project!.id.utf8.count <= 256 && !project!.id.isEmpty && project!.roots.count <= 32 && project!.roots.allSatisfy { $0.hasPrefix("/") && $0.utf8.count <= 4096 }))
     case .updateProject(let edit): return edit.isValid
     case .saveFile(let address): return address.isValid && !address.path.isEmpty
+    case .startRun(let request): return request.isValid
+    case .writeRun(_, let bytes): return !bytes.isEmpty && bytes.count <= 8192
+    case .stopRun: return true
     case .stop(_, let turn): return UUID(uuidString: turn) != nil
     case .respond(_, let request, _): return !request.id.isEmpty && !request.turnID.isEmpty
     }
@@ -216,6 +227,7 @@ public struct NotebookChatInput: Codable, Equatable, Sendable, Identifiable {
 public enum NotebookChatResult: Codable, Equatable, Sendable {
   case created(CodexTask), project(CodexProject), turn(String), acknowledged
   case file(NotebookFileResult)
+  case run(UUID)
 }
 
 public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
@@ -237,6 +249,8 @@ public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
     guard let result else { return true }
     switch (input.action, result) {
     case (.saveFile(let address), .file(let result)): return address == result.address && result.version.isValid
+    case (.startRun, .run(let id)): return id == input.id
+    case (.writeRun, .acknowledged), (.stopRun, .acknowledged): return true
     case (.updateProject(let edit), .project(let project)): return edit.matches(project)
     case (.create, .created(let task)): return UUID(uuidString: task.id) != nil && task.title.utf8.count <= 1024
     case (.send, .turn(let id)), (.steer, .turn(let id)): return UUID(uuidString: id) != nil
@@ -249,6 +263,8 @@ public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
 public enum NotebookChatQuery: Codable, Equatable, Sendable {
   case job(NotebookChatInput)
   case file(NotebookFileQuery)
+  case run(NotebookRunRead)
+  case resizeRun(UUID, columns: Int, rows: Int)
   case catalogue(cursor: String?, project: CodexProject? = nil)
   case projects(cursor: String?)
   case activity(threadIDs: [String])
@@ -262,6 +278,8 @@ public enum NotebookChatReply: Codable, Equatable, Sendable {
   case conversationUnavailable(threadID: String, reason: String)
   case failure(String)
   case file(NotebookFileReply)
+  case run(NotebookRunOutput)
+  case acknowledged
 }
 
 /// Only one outstanding request per iPad uses the coalesced low-priority lane.
@@ -275,6 +293,8 @@ public struct NotebookChatEnvelope: Codable, Equatable, Sendable {
   public func isValid(from deviceID: UUID) -> Bool {
     guard let data = try? JSONEncoder().encode(self), data.count <= 192 * 1024 else { return false }
     if case .request(.file(let query)) = body { return query.isValid }
+    if case .request(.run(let query)) = body { return query.isValid }
+    if case .request(.resizeRun(_, let columns, let rows)) = body { return (20...500).contains(columns) && (4...200).contains(rows) }
     if case .request(.job(let input)) = body { return input.author == deviceID && input.isValid }
     return true
   }

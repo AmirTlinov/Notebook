@@ -17,6 +17,13 @@ public actor CodexAppServer {
   private var states: [String: CodexAppServerState] = [:]
   private var attaching: [String: Task<Void, Error>] = [:]
   private var starting: Set<String> = []
+  private struct RunningProcess {
+    let publish: @Sendable (NotebookProcessEvent) async throws -> Void
+    var task: Task<Void, Never>?
+    var probe: Task<Void, Never>?
+    var running = false
+  }
+  private var processes: [UUID: RunningProcess] = [:]
   private var selections: Set<String> = []
 
   public init(installation: CodexDesktopInstallation) {
@@ -169,6 +176,70 @@ public actor CodexAppServer {
     for task in attaching.values { task.cancel() }; attaching.removeAll()
     states.removeAll(); selections.removeAll()
     await rpc?.stop()
+    await interruptProcesses()
+  }
+
+  /// The durable Mac run record is admitted before this adapter is called.
+  /// A request remains pending until the actual PTY exits, not for 12 seconds.
+  public func startProcess(id: UUID, request: NotebookRunRequest,
+    publish: @escaping @Sendable (NotebookProcessEvent) async throws -> Void) async throws {
+    guard request.isValid, processes[id] == nil, processes.count < 4 else { throw CodexBridgeError.invalidInput }
+    let rpc = try await connect()
+    processes[id] = .init(publish: publish)
+    processes[id]?.task = Task { [weak self] in
+      do {
+        let result = try await rpc.request("command/exec", params: .object([
+          "processId": .string(id.uuidString.lowercased()), "command": .array([.string("/bin/zsh"), .string("-lc"), .string(request.command)]),
+          "cwd": .string(request.root.root), "tty": .bool(true), "disableTimeout": .bool(true), "disableOutputCap": .bool(true),
+          "size": .object(["cols": .number(Double(request.columns)), "rows": .number(Double(request.rows))])]), timeout: nil)
+        guard case .number(let code)? = result["exitCode"], code.isFinite, code.rounded() == code,
+          code >= Double(Int32.min), code <= Double(Int32.max) else { throw CodexBridgeError.invalidResponse }
+        await self?.finishProcess(id, event: .exited(Int(code)))
+      } catch { await self?.finishProcess(id, event: .interrupted("Исполнитель прервал запуск: \(error.localizedDescription)")) }
+    }
+    processes[id]?.probe = Task { [weak self] in
+      while !Task.isCancelled, await self?.processNeedsProbe(id) == true {
+        do {
+          try await Task.sleep(for: .milliseconds(100))
+          try await self?.resizeProcess(id: id, columns: request.columns, rows: request.rows)
+          await self?.markProcessRunning(id)
+        } catch { if Task.isCancelled { return } }
+      }
+    }
+  }
+  private func processNeedsProbe(_ id: UUID) -> Bool { processes[id]?.running == false }
+  private func markProcessRunning(_ id: UUID) async {
+    guard processes[id]?.running == false, let publish = processes[id]?.publish else { return }
+    processes[id]?.running = true
+    do { try await publish(.running) } catch { Task { await self.stopFailedProcess(id) } }
+  }
+  private func finishProcess(_ id: UUID, event: NotebookProcessEvent) async {
+    guard let process = processes.removeValue(forKey: id) else { return }
+    process.probe?.cancel()
+    try? await process.publish(event)
+  }
+  private func stopFailedProcess(_ id: UUID) async { try? await stopProcess(id: id) }
+  public func writeProcess(id: UUID, data: Data) async throws {
+    guard !data.isEmpty, data.count <= 8192, processes[id] != nil, let rpc else { throw CodexBridgeError.invalidInput }
+    _ = try await rpc.request("command/exec/write", params: .object(["processId": .string(id.uuidString.lowercased()), "deltaBase64": .string(data.base64EncodedString())]))
+  }
+  public func resizeProcess(id: UUID, columns: Int, rows: Int) async throws {
+    guard (20...500).contains(columns), (4...200).contains(rows), processes[id] != nil, let rpc else { throw CodexBridgeError.invalidInput }
+    _ = try await rpc.request("command/exec/resize", params: .object(["processId": .string(id.uuidString.lowercased()), "size": .object(["cols": .number(Double(columns)), "rows": .number(Double(rows))])]))
+    await markProcessRunning(id)
+  }
+  public func stopProcess(id: UUID) async throws {
+    guard let task = processes[id]?.task else { return }
+    guard let rpc else { throw CodexBridgeError.disconnected }
+    _ = try await rpc.request("command/exec/terminate", params: .object(["processId": .string(id.uuidString.lowercased())]))
+    await task.value
+  }
+  private func interruptProcesses() async {
+    let previous = processes; processes.removeAll()
+    for process in previous.values {
+      process.probe?.cancel(); process.task?.cancel()
+      try? await process.publish(.interrupted("Соединение с исполнителем прервано. Запуск не повторён."))
+    }
   }
 
   private func connect() async throws -> CodexRPC {
@@ -193,16 +264,29 @@ public actor CodexAppServer {
     } catch { connection = nil; throw error }
   }
 
-  private func receive(_ frame: JSONValue, epoch: UUID) throws {
+  private func receive(_ frame: JSONValue, epoch: UUID) async throws {
     guard epoch == generation else { return }
+    if frame["method"]?.string == "command/exec/outputDelta" {
+      guard let id = frame["params"]?["processId"]?.string.flatMap(UUID.init(uuidString:)),
+        let encoded = frame["params"]?["deltaBase64"]?.string, let bytes = Data(base64Encoded: encoded), bytes.count <= 131_072 else { throw CodexBridgeError.invalidFrame }
+      if let publish = processes[id]?.publish {
+        processes[id]?.running = true
+        // Await durable consumption: a noisy child backpressures its own pipe,
+        // never an unbounded stream of Swift output values or the iPad camera.
+        do { try await publish(.output(bytes)) }
+        catch { Task { await self.stopFailedProcess(id) } }
+      }
+      return
+    }
     guard let id = frame["params"]?["threadId"]?.string, var state = states[id] else {
       if frame["id"] != nil { throw CodexBridgeError.unsupportedRequest }; return
     }
     if try state.accept(frame) { states[id] = state; output.yield(.conversation(state.view)) }
   }
-  private func disconnected(_ error: CodexBridgeError, epoch: UUID) {
+  private func disconnected(_ error: CodexBridgeError, epoch: UUID) async {
     guard generation == epoch else { return }
     generation = UUID(); rpc = nil; states.removeAll(); selections.removeAll()
     output.yield(.unavailable(error))
+    await interruptProcesses()
   }
 }

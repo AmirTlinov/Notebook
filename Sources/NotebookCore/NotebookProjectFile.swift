@@ -138,6 +138,8 @@ public struct NotebookFileWindowState: Codable, Equatable, Sendable {
   public var selected: NotebookFileAddress?
   public var isOpen = false
   public var sidebar = false
+  public var terminal: Bool?
+  public var runRoot: String?
   public var project: CodexProject?
   public init() { }
 }

@@ -106,6 +106,11 @@ plutil -insert CFBundlePackageType \
 cd "$ROOT/MCP"
 npm ci --ignore-scripts
 for pair in \
+  "node_modules/@xterm/xterm/lib/xterm.js:$ROOT/Applications/WebResources/xterm.js" \
+  "node_modules/@xterm/xterm/css/xterm.css:$ROOT/Applications/WebResources/xterm.css" \
+  "node_modules/@xterm/xterm/LICENSE:$ROOT/Applications/WebResources/Licenses/xterm-LICENSE" \
+  "node_modules/@xterm/addon-fit/lib/addon-fit.js:$ROOT/Applications/WebResources/xterm-fit.js" \
+  "node_modules/@xterm/addon-fit/LICENSE:$ROOT/Applications/WebResources/Licenses/xterm-fit-LICENSE" \
   "node_modules/marked/lib/marked.umd.js:$ROOT/Applications/WebResources/marked.umd.js" \
   "node_modules/dompurify/dist/purify.min.js:$ROOT/Applications/WebResources/purify.min.js" \
   "node_modules/mathjax/a11y/assistive-mml.js:$ROOT/Applications/WebResources/a11y/assistive-mml.js" \

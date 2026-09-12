@@ -6,7 +6,7 @@ import NotebookCore
 @MainActor
 final class NotebookPersistenceQueue {
   enum Owner: Hashable {
-    case fileDraft(String), fileWindow
+    case fileDraft(String), fileWindow, runCommand(String)
     case page(UUID), document(UUID), documentState(UUID), documentDraft(UUID)
     case board, spatialInk(UUID), presence, inputActivity(UUID)
     case nativeText(UUID, String), elementState(UUID, String)

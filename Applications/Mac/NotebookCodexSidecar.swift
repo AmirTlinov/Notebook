@@ -34,6 +34,7 @@ final class NotebookCodexSidecar {
   private let computerID: UUID
   private let workspaceID: UUID
   private let directory: URL
+  private let runs: MacNotebookProjectRuns?
   private var worker: Task<Void, Never>?
   private var observing: String?
   private var stopped = false
@@ -53,12 +54,14 @@ final class NotebookCodexSidecar {
     self.persistence = persistence; self.workspaceID = workspaceID; self.computerID = computerID; self.directory = directory
     let server = CodexAppServer(installation: installation)
     bridge = server; metadata = server; bridgeEvents = server.events
+    runs = .init(persistence: persistence, executor: server, metadata: server, computer: computerID)
   }
 
   init(persistence: NotebookPersistenceQueue, bridge: any NotebookCodexConversationOwner,
     metadata: any NotebookCodexCatalogueOwner, workspaceID: UUID, computerID: UUID = UUID(), directory: URL) {
     self.persistence = persistence; self.bridge = bridge; self.metadata = metadata
     self.workspaceID = workspaceID; self.computerID = computerID; self.directory = directory
+    runs = (bridge as? any NotebookCodexProcessOwner).map { .init(persistence: persistence, executor: $0, metadata: metadata, computer: computerID) }
   }
 
   func start() {
@@ -102,6 +105,7 @@ final class NotebookCodexSidecar {
               let jobs = try await persistence.submit { try $0.pendingChatJobs() }
               var waitingThreads = Set<String>()
               for job in jobs where !Task.isCancelled {
+                if job.input.action.isRunCommand { continue }
                 if case .send(let thread, _, _) = job.input.action, waitingThreads.contains(thread) { continue }
                 try await execute(job)
                 if case .send(let thread, _, _) = job.input.action,
@@ -133,6 +137,10 @@ final class NotebookCodexSidecar {
     let reply: NotebookChatReply
     do {
       switch query {
+      case .run(let query):
+        guard let runs else { throw CodexBridgeError.unavailable }; reply = .run(try await runs.read(query))
+      case .resizeRun(let id, let columns, let rows):
+        guard let runs else { throw CodexBridgeError.unavailable }; try await runs.resize(id, columns: columns, rows: rows); reply = .acknowledged
       case .file(let query):
         if let address = query.address {
           guard address.computer == computerID else { throw CodexBridgeError.invalidInput }
@@ -154,7 +162,10 @@ final class NotebookCodexSidecar {
         } else { throw CodexBridgeError.invalidInput }
 
       case .job(let input):
-        reply = .job(try await persistence.submit { try $0.saveChatInput(input) })
+        if input.action.isRunCommand {
+          guard let runs else { throw CodexBridgeError.unavailable }
+          reply = .job(try await runs.receive(input))
+        } else { reply = .job(try await persistence.submit { try $0.saveChatInput(input) }) }
       case .catalogue(let cursor, let project): reply = .catalogue(try await metadata.tasks(cursor: cursor, project: project))
       case .projects(let cursor): reply = .projects(try await metadata.projects(cursor: cursor))
       case .activity(let ids):
@@ -212,6 +223,7 @@ final class NotebookCodexSidecar {
     let result: NotebookChatResult
     do {
       switch job.input.action {
+      case .startRun, .writeRun, .stopRun: throw CodexBridgeError.invalidInput
       case .saveFile(let address):
         guard address.computer == computerID else { throw CodexBridgeError.invalidInput }
         let project = try await metadata.readProject(id: address.project)

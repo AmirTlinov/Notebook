@@ -8,6 +8,7 @@ import NotebookCore
 @MainActor @Observable
 final class NotebookChatController {
   let files: NotebookFileController
+  let runs: NotebookRunController
   var computerID: UUID? { peer }
   var expanded = false { didSet { if !expanded { stopDictation(); activities = [:]; conversationSubscription = nil; enqueue(.activity(threadIDs: [])) } else { nextConversation = .now } } }
   var browsesChats = false
@@ -51,7 +52,7 @@ final class NotebookChatController {
   @ObservationIgnored private var loop: Task<Void, Never>?
   @ObservationIgnored private var pending: (NotebookChatEnvelope, CheckedContinuation<NotebookChatReply, Error>)?
   @ObservationIgnored private var retry: Task<Void, Never>?
-  @ObservationIgnored private var fileQueries: [(NotebookFileQuery, CheckedContinuation<NotebookFileReply, Error>)] = []
+  @ObservationIgnored private var directQueries: [(NotebookChatQuery, CheckedContinuation<NotebookChatReply, Error>)] = []
   @ObservationIgnored private let wake = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
   @ObservationIgnored private var ticker: Task<Void, Never>?
   @ObservationIgnored private var queries: [NotebookChatQuery] = []
@@ -65,7 +66,9 @@ final class NotebookChatController {
 
   init(persistence: NotebookPersistenceQueue, author: UUID, dictationInput: any NotebookDictationInput = NotebookMicrophoneDictation(), send: @escaping (NotebookChatEnvelope, UUID) -> Void) {
     self.persistence = persistence; self.author = author; self.send = send; self.dictationInput = dictationInput
-    files = NotebookFileController(persistence: persistence, author: author); files.chat = self
+    files = NotebookFileController(persistence: persistence, author: author)
+    runs = NotebookRunController(persistence: persistence)
+    files.chat = self; runs.chat = self
   }
 
   func start() async {
@@ -87,14 +90,12 @@ final class NotebookChatController {
         var nextActivity = ContinuousClock.now, nextCatalogue = ContinuousClock.now
         while !Task.isCancelled, await iterator.next() != nil {
           if connected {
-            if !fileQueries.isEmpty, deliverJobs {
-              let (file, completion) = fileQueries.removeFirst()
+            if !directQueries.isEmpty, deliverJobs {
+              let (query, completion) = directQueries.removeFirst()
               do {
-                switch try await request(.file(file)) {
-                case .file(let reply): completion.resume(returning: reply)
-                case .failure(let message): throw NotebookPersistenceQueue.Failure(message: message)
-                default: throw NotebookTransportError.invalidAcknowledgement
-                }
+                let reply = try await request(query)
+                if case .failure(let message) = reply { throw NotebookPersistenceQueue.Failure(message: message) }
+                completion.resume(returning: reply)
               } catch { completion.resume(throwing: error) }
               deliverJobs = false; wake.continuation.yield(()); continue
             }
@@ -122,16 +123,17 @@ final class NotebookChatController {
             }
           }
           deliverJobs.toggle()
-          if !fileQueries.isEmpty { wake.continuation.yield(()) }
+          if !directQueries.isEmpty { wake.continuation.yield(()) }
         }
       }
     } catch { self.error = error.localizedDescription }
   }
 
   func stop() async {
+    await runs.stop()
     stopped = true; files.stop(); ticker?.cancel(); wake.continuation.finish()
-    for (_, continuation) in fileQueries { continuation.resume(throwing: NotebookTransportError.disconnected) }
-    fileQueries.removeAll()
+    for (_, continuation) in directQueries { continuation.resume(throwing: NotebookTransportError.disconnected) }
+    directQueries.removeAll()
     stopDictation(); await dictationTask?.value
     loop?.cancel(); retry?.cancel()
     pending?.1.resume(throwing: NotebookTransportError.disconnected); pending = nil
@@ -147,8 +149,8 @@ final class NotebookChatController {
   }
   func disconnect(_ id: UUID) {
     guard peer == id else { return }
-    for (_, continuation) in fileQueries { continuation.resume(throwing: NotebookTransportError.disconnected) }
-    fileQueries.removeAll()
+    for (_, continuation) in directQueries { continuation.resume(throwing: NotebookTransportError.disconnected) }
+    directQueries.removeAll()
     connected = false; activities = [:]; retry?.cancel(); conversationSubscription = nil
     pending?.1.resume(throwing: NotebookTransportError.disconnected); pending = nil
   }
@@ -307,10 +309,30 @@ final class NotebookChatController {
   }
   func refreshFileJobs() async { try? await refreshJobs(); wake.continuation.yield(()) }
   func fileQuery(_ query: NotebookFileQuery) async throws -> NotebookFileReply {
-    guard connected, !stopped, fileQueries.count < 8, query.isValid else { throw NotebookTransportError.disconnected }
+    guard query.isValid, case .file(let reply) = try await directQuery(.file(query)) else { throw NotebookTransportError.invalidAcknowledgement }
+    return reply
+  }
+  func directQuery(_ query: NotebookChatQuery) async throws -> NotebookChatReply {
+    guard connected, !stopped, directQueries.count < 8 else { throw NotebookTransportError.disconnected }
     return try await withCheckedThrowingContinuation { continuation in
-      fileQueries.append((query, continuation)); wake.continuation.yield(())
+      directQueries.append((query, continuation)); wake.continuation.yield(())
     }
+  }
+  func runCommand(_ action: NotebookChatAction) async throws -> NotebookChatJob {
+    guard loaded, !stopped, connected, action.isRunCommand else { throw NotebookTransportError.disconnected }
+    let id = action.controlID(author: author) ?? UUID()
+    let existing = try await persistence.submit { try $0.chatJob(id) }
+    if let existing, existing.input.action != action { throw NotebookTransportError.invalidAcknowledgement }
+    let input = existing?.input ?? NotebookChatInput(id: id, author: author, action: action)
+    do { _ = try await persistence.submit { try $0.saveChatInput(input) } }
+    catch {
+      guard try await persistence.submit({ try $0.chatJob(input.id)?.input == input }) else { throw error }
+    }
+    try await refreshJobs()
+    let query = NotebookChatQuery.job(input), reply = try await directQuery(query)
+    try await accept(reply, for: query)
+    guard case .job(let job) = reply else { throw NotebookTransportError.invalidAcknowledgement }
+    return job
   }
   private func enqueue(_ query: NotebookChatQuery) {
     if !queries.contains(query), queries.count < 8 { queries.append(query); wake.continuation.yield(()) }

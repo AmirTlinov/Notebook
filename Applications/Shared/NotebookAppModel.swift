@@ -707,7 +707,7 @@ final class NotebookAppModel {
       switch owner {
       case .page, .document, .documentState, .board, .spatialInk, .nativeText, .elementState:
         self?.refreshCommittedHeader()
-      case nil, .presence, .inputActivity, .documentDraft, .fileDraft, .fileWindow: break
+      case nil, .presence, .inputActivity, .documentDraft, .fileDraft, .fileWindow, .runCommand: break
       }
 
     }

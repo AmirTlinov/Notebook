@@ -10,7 +10,7 @@ actor CodexRPC {
   private var onDisconnect: (@Sendable (CodexBridgeError) async -> Void)?
   private struct Pending {
     let continuation: CheckedContinuation<JSONValue, Error>
-    let timer: Task<Void, Never>
+    let timer: Task<Void, Never>?
   }
   init(channel: CodexChannel) { self.channel = channel }
 
@@ -24,17 +24,17 @@ actor CodexRPC {
     try await channel.send(.object(["method": .string("initialized")]))
   }
 
-  func request(_ method: String, params: JSONValue) async throws -> JSONValue {
+  func request(_ method: String, params: JSONValue, timeout: Duration? = .seconds(12)) async throws -> JSONValue {
     if let failure { throw failure }
     guard pending.count < 16 else { throw CodexBridgeError.busy }
     let id = UUID().uuidString
     let packet = JSONValue.object(["id": .string(id), "method": .string(method), "params": params])
     return try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation { continuation in
-        let timer = Task { [weak self] in
-          try? await Task.sleep(for: .seconds(12))
+        let timer = timeout.map { duration in Task { [weak self] in
+          try? await Task.sleep(for: duration)
           if !Task.isCancelled { await self?.fail(id, .timeout) }
-        }
+        } }
         pending[id] = Pending(continuation: continuation, timer: timer)
         Task { [weak self, channel] in
           do { try await channel.send(packet) }
@@ -63,11 +63,11 @@ actor CodexRPC {
     }
     guard let result = frame["result"] else { throw CodexBridgeError.invalidResponse }
     guard let waiting = pending.removeValue(forKey: id) else { return }
-    waiting.timer.cancel(); waiting.continuation.resume(returning: result)
+    waiting.timer?.cancel(); waiting.continuation.resume(returning: result)
   }
   private func fail(_ id: String, _ error: CodexBridgeError) {
     guard let request = pending.removeValue(forKey: id) else { return }
-    request.timer.cancel(); request.continuation.resume(throwing: error)
+    request.timer?.cancel(); request.continuation.resume(throwing: error)
   }
   private func ended(_ error: CodexBridgeError) async {
     guard failure == nil else { return }

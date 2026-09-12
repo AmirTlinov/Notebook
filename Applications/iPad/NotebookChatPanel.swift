@@ -32,7 +32,8 @@ struct NotebookChatPanel: View {
                 .frame(width: min(220, max(130, size.width * 0.34)))
               Divider()
             }
-            if chat.threadID == nil || chat.browsesChats { recentChats }
+            if chat.files.window.terminal == true { NotebookRunPanel(runs: chat.runs, files: chat.files, connected: chat.connected) }
+            else if chat.threadID == nil || chat.browsesChats { recentChats }
             else { conversation }
           }
           composer
@@ -203,6 +204,10 @@ struct NotebookChatPanel: View {
           }
         }.padding(.horizontal, 18)
       }
+      Button { chat.files.toggleTerminal() } label: {
+        Image(systemName: chat.files.window.terminal == true ? "bubble.left" : "terminal").frame(width: 44, height: 44)
+      }.accessibilityLabel(chat.files.window.terminal == true ? "Показать разговор" : "Терминал проекта")
+        .accessibilityIdentifier("notebook-terminal-toggle")
       Menu {
         ForEach(chat.projects) { project in Button("Настроить «" + project.name + "»") { editingProject = project } }
         Button("Обновить проекты") { chat.catalogueProjects() }

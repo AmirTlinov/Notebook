@@ -1,0 +1,3 @@
+html,body,#terminal{box-sizing:border-box;margin:0;width:100%;height:100%;overflow:hidden;background:#181a1f}
+#terminal{padding:8px}
+.xterm{height:100%}.xterm-viewport{-webkit-overflow-scrolling:touch}

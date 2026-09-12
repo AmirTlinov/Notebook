@@ -405,6 +405,11 @@ extension NotebookStore {
     }
     try database.run("CREATE TABLE IF NOT EXISTS code_fragment_files(address TEXT PRIMARY KEY REFERENCES records(address) ON DELETE CASCADE,file_id TEXT NOT NULL,fragment_id TEXT NOT NULL)")
     try database.run("CREATE INDEX IF NOT EXISTS code_fragment_file ON code_fragment_files(file_id,fragment_id)")
+    try database.run("CREATE TABLE IF NOT EXISTS project_runs(ordinal INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,root TEXT NOT NULL,active INTEGER NOT NULL,value BLOB NOT NULL,last_sequence INTEGER NOT NULL DEFAULT 0,output_bytes INTEGER NOT NULL DEFAULT 0)")
+    try database.run("CREATE INDEX IF NOT EXISTS project_run_root ON project_runs(root,ordinal)")
+    try database.run("CREATE INDEX IF NOT EXISTS project_run_active ON project_runs(active,ordinal)")
+    try database.run("CREATE TABLE IF NOT EXISTS run_output(run TEXT NOT NULL REFERENCES project_runs(id) ON DELETE CASCADE,sequence INTEGER NOT NULL,value BLOB NOT NULL,PRIMARY KEY(run,sequence))")
+    try database.run("CREATE TABLE IF NOT EXISTS run_commands(root TEXT PRIMARY KEY,command TEXT NOT NULL)")
     // File drafts and transfers are device-local, not a second shared archive.
     try database.run("CREATE TABLE IF NOT EXISTS file_drafts(id TEXT PRIMARY KEY,value BLOB NOT NULL)")
     try database.run("CREATE TABLE IF NOT EXISTS file_window(id TEXT PRIMARY KEY,value BLOB NOT NULL)")
