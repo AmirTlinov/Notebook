@@ -100,7 +100,7 @@ final class MacModelLifecycleTests: XCTestCase {
       from: .init(center: .init(x: 90, y: 120), scale: 0.7), viewport: .init(x: 834, y: 1_194)))
   }
   @MainActor
-  func testElementEditingSessionIsTheSingleTransientOwner() async throws {
+  func testSelectionSessionReplacesElementAndRejectsPreviousDrag() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
 
@@ -116,7 +116,7 @@ final class MacModelLifecycleTests: XCTestCase {
       elementID: "page-element"
     )
     let boardReference = EditableElementReference.spatial(
-      elementID: "board-element"
+      boardID: try XCTUnwrap(model.presence?.boardID), elementID: "board-element"
     )
 
     model.selectElement(pageReference)
@@ -124,32 +124,32 @@ final class MacModelLifecycleTests: XCTestCase {
       pageReference,
       translation: SpatialPoint(x: 32, y: 48)
     )
-    XCTAssertEqual(model.elementEditingSession.selection, pageReference)
+    XCTAssertEqual(model.selectionSession.element, pageReference)
     XCTAssertEqual(
-      model.elementEditingSession.translation,
+      model.selectionSession.translation,
       SpatialPoint(x: 32, y: 48)
     )
 
     model.selectElement(boardReference)
-    XCTAssertEqual(model.elementEditingSession.selection, boardReference)
-    XCTAssertEqual(model.elementEditingSession.translation, .zero)
+    XCTAssertEqual(model.selectionSession.element, boardReference)
+    XCTAssertEqual(model.selectionSession.translation, .zero)
 
     model.updateElementDrag(
       pageReference,
       translation: SpatialPoint(x: 500, y: 500)
     )
-    XCTAssertEqual(model.elementEditingSession.selection, boardReference)
-    XCTAssertEqual(model.elementEditingSession.translation, .zero)
+    XCTAssertEqual(model.selectionSession.element, boardReference)
+    XCTAssertEqual(model.selectionSession.translation, .zero)
 
     model.finishElementDrag(
       pageReference,
       translation: SpatialPoint(x: 500, y: 500)
     )
-    XCTAssertEqual(model.elementEditingSession.selection, boardReference)
+    XCTAssertEqual(model.selectionSession.element, boardReference)
 
     model.selectDrawingTool(.eraser)
-    XCTAssertNil(model.elementEditingSession.selection)
-    XCTAssertEqual(model.elementEditingSession, ElementEditingSession())
+    XCTAssertNil(model.selectionSession.element)
+    XCTAssertNil(model.selectionSession.target)
   }
 
   @MainActor
@@ -185,12 +185,12 @@ final class MacModelLifecycleTests: XCTestCase {
       "kind": .string("web"), "source": .string(""), "html": .string("<svg></svg>"),
       "frame": try .encode(SpatialRect(x: 90, y: 110, width: 260, height: 190))])])
     try await fixture.waitUntil { model.board?.elements.contains(where: { $0.id == "shared-cover-shape" }) == true }
-    XCTAssertTrue(model.transformSpatialElement(elementID: "shared-cover-shape", by: .init(x: -10_000, y: 10_000)))
+    XCTAssertTrue(model.transformSpatialElement(boardID: boardID, elementID: "shared-cover-shape", by: .init(x: -10_000, y: 10_000)))
     let movedCover = try XCTUnwrap(model.board?.elements.first(where: { $0.id == "shared-cover-shape" }))
     XCTAssertEqual(movedCover.frame.x, 0)
     XCTAssertEqual(movedCover.frame.y, WorkspaceItemGeometry.notebook.height - 190)
     XCTAssertTrue(model.removePageElement(pageID: page.id, elementID: moved.id))
-    XCTAssertTrue(model.removeSpatialElement(elementID: movedCover.id))
+    XCTAssertTrue(model.removeSpatialElement(boardID: boardID, elementID: movedCover.id))
     let removed = await model.finishPendingPersistence()
     XCTAssertTrue(removed)
     XCTAssertTrue(model.pages[page.id]?.elements.isEmpty == true)

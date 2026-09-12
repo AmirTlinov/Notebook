@@ -64,7 +64,7 @@ enum NotebookAttentionProjection {
   }
 
   static func capture(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence,
-    cohort: SceneCompositionCohort, installedInk: [SurfaceID: SpatialInkInstalledSource]) -> NotebookAttentionSelection? {
+    cohort: SceneCompositionCohort, installedInk: [SurfaceID: SpatialInkInstalledSource], itemID: UUID? = nil) -> NotebookAttentionSelection? {
     guard !model.scenePreparationPending, cohort.plan.presentations[.board(presence.boardID)] != nil else { return nil }
     let index = cohort.frame.index
     var sources = CaptureSources(index: index, workset: cohort.frame.workset(boardID: presence.boardID),
@@ -79,7 +79,9 @@ enum NotebookAttentionProjection {
         sources.documents[focused] = document; sources.states[focused] = state
       }
     }
-    let fragments = fragments(start: start, end: end, sources: sources, presence: presence)
+    let fragments = itemID.map { id in
+      fragment(start: start, end: end, sources: sources, presence: presence, ownerID: id, dragged: true).map { [$0] } ?? []
+    } ?? fragments(start: start, end: end, sources: sources, presence: presence)
     guard !fragments.isEmpty else { return nil }
     let visuals = NotebookFrozenVisualSources.capture(fragments: fragments, hierarchy: sources.hierarchy,
       pages: sources.pages, documents: sources.documents, states: sources.states)

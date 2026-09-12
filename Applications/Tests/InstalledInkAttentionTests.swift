@@ -216,10 +216,10 @@ final class InstalledInkAttentionTests: XCTestCase {
     let driver = try Driver(model: fixture.model, presence: fixture.presence, cohort: fixture.cohort)
     defer { driver.close() }
     let item = try XCTUnwrap(fixture.cohort.frame.workset(boardID: fixture.presence.boardID).items.first { $0.id == child })
-    let portal = WorkspaceItemCoverView(item: item.item, geometry: item.geometry, spatialInkSurfaces: driver.registry,
+    let portal = WorkspaceItemCoverView(item: item.item, boardID: fixture.presence.boardID, geometry: item.geometry, spatialInkSurfaces: driver.registry,
       elements: [], editingTextID: nil, portalOpenProgress: 0,
       portalViewport: fixture.presence.viewport, onTap: { _, _ in },
-        onTextEditingEnded: { _ in }, onElementSelected: {})
+        onTextEditingEnded: { _ in })
     let host = UIHostingController(rootView: AnyView(portal
       .frame(width: item.geometry.width, height: item.geometry.height).scaleEffect(0.3)
       .environment(\.sceneComposition, .init(fixture.cohort)).environment(fixture.model)))

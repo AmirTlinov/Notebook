@@ -848,6 +848,46 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(pen.isSelected, "Настройки не создают скрытого инструмента редактирования")
   }
 
+  func testSuccessiveArtifactChoicesLeaveOneFrameAndClearTogether() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-agent-element-fixture",
+      "--notebook-selection-transition-fixture", "--notebook-simulator-finger-gestures"]
+    launchPortraitFixture(app)
+    let first = app.otherElements["agent-element-shared-element"]
+    let second = app.otherElements["agent-element-second-element"]
+    XCTAssertTrue(first.waitForExistence(timeout: 8)); XCTAssertTrue(second.waitForExistence(timeout: 8))
+    let paper = app.otherElements["paper-input"], paperFrame = paper.frame, ink = paper.value as? String
+    let baseline = app.screenshot()
+    let frame = first.frame, screen = app.frame
+    let edge = CGRect(x: (frame.minX + frame.width * 0.2) / screen.width,
+      y: (frame.minY - 2) / screen.height, width: frame.width * 0.5 / screen.width, height: 4 / screen.height)
+    first.tap()
+    XCTAssertEqual(app.buttons.matching(identifier: "delete-agent-element").count, 1)
+    let selected = app.screenshot()
+    XCTAssertGreaterThan(changedPixelShare(from: baseline, to: selected, normalizedRect: edge), 0.03)
+    second.tap()
+    XCTAssertEqual(app.buttons.matching(identifier: "delete-agent-element").count, 1)
+    XCTAssertGreaterThan(app.buttons["delete-agent-element"].frame.midY, second.frame.minY - 65)
+    let replaced = app.screenshot()
+    XCTAssertLessThan(changedPixelShare(from: baseline, to: replaced, normalizedRect: edge), 0.02,
+      "The previous artifact cannot retain a context outline after the next choice")
+    let count = app.buttons["notebook-context-count"]
+    XCTAssertTrue(count.waitForExistence(timeout: 3)); XCTAssertEqual(count.value as? String, "1")
+    count.tap(); app.buttons["notebook-context-clear"].tap()
+    XCTAssertTrue(count.waitForNonExistence(timeout: 3))
+    XCTAssertEqual(app.buttons.matching(identifier: "delete-agent-element").count, 0,
+      "Clearing context also clears editing, not just the counter")
+    first.tap()
+    XCTAssertTrue(count.waitForExistence(timeout: 3))
+    paper.coordinate(withNormalizedOffset: .init(dx: 0.86, dy: 0.16)).tap()
+    XCTAssertTrue(count.waitForNonExistence(timeout: 3))
+    XCTAssertEqual(app.buttons.matching(identifier: "delete-agent-element").count, 0)
+    XCTAssertEqual(paper.frame, paperFrame); XCTAssertEqual(paper.value as? String, ink)
+    let proof = XCTAttachment(screenshot: replaced)
+    proof.name = "only-second-artifact-selected"; proof.lifetime = .keepAlways; add(proof)
+  }
+
   func testPersonMovesAndDeletesAnAgentElement() {
     continueAfterFailure = false
     let app = XCUIApplication()

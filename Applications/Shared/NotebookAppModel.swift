@@ -318,10 +318,7 @@ final class NotebookAppModel {
   private func clearRemovedElementPins(_ ids: Set<String>) {
     guard !ids.isEmpty else { return }
     scenePinnedElements = scenePinnedElements.mapValues { $0.filter { !ids.contains($0) } }
-    if case .spatial(let id) = elementEditingSession.selection, ids.contains(id) {
-      elementEditingSession = .init()
-    }
-    if case .board(_, let id) = interactiveElementFocus, ids.contains(id) { interactiveElementFocus = nil }
+    if case .spatial(_, let id) = selectionSession.element, ids.contains(id) { clearSelection() }
   }
 
   /// Derived publication also uses the process's one ordered writer. Reads can
@@ -395,7 +392,26 @@ final class NotebookAppModel {
 
   private(set) var presence: SessionPresence?
   private(set) var presencePhase = PresencePhase.settled
-  var interactiveElementFocus: InteractiveElementReference?
+  var interactiveElementFocus: InteractiveElementReference? {
+    get {
+      guard selectionSession.isInteractive else { return nil }
+      switch selectionSession.element {
+      case .page(let pageID, let id): return .page(pageID: pageID, elementID: id)
+      case .spatial(let boardID, let id): return .board(boardID: boardID, elementID: id)
+      case nil: return nil
+      }
+    }
+    set {
+      guard let newValue else { selectionSession.isInteractive = false; return }
+      let reference: EditableElementReference
+      switch newValue {
+      case .page(let pageID, let id): reference = .page(pageID: pageID, elementID: id)
+      case .board(let boardID, let id): reference = .spatial(boardID: boardID, elementID: id)
+      }
+      selectElement(reference)
+      selectionSession.isInteractive = true
+    }
+  }
   var isPointing = false
   struct ReturnPlace: Identifiable {
     let id = UUID()
@@ -405,7 +421,7 @@ final class NotebookAppModel {
   private(set) var returnPlaces: [ReturnPlace] = []
   private(set) var requestedReturn: ReturnPlace?
   private(set) var requestedReference: CollaborationReference?
-  private(set) var highlightedReference: CollaborationReference? { didSet { collaborationReadEpoch &+= 1 } }
+  var highlightedReference: CollaborationReference? { selectionSession.highlightedReference }
   private(set) var pendingAgentHighlights = Set<UUID>()
   private var hasReadCollaborationActions = false
   private var referenceHighlightTask: Task<Void, Never>?
@@ -421,21 +437,19 @@ final class NotebookAppModel {
   private(set) var collaborationActions: [CollaborationReceipt] = [] { didSet { collaborationReadEpoch &+= 1 } }
   private(set) var regionalReferenceStatuses: [UUID: ReferenceStatus] = [:]
   private(set) var sharedContexts: [SharedContextSummary] = [] { didSet { collaborationReadEpoch &+= 1 } }
-  private(set) var contextSelection: SharedContextSelection?
   var activeSharedContext: SharedContextSummary? {
-    sharedContexts.first { $0.id == contextSelection?.contextID }
+    sharedContexts.first { $0.id == agentQuestion?.contextID }
   }
-  private(set) var agentQuestion: NotebookAgentQuestion?
+  var agentQuestion: NotebookAgentQuestion? { selectionSession.context }
   private(set) var agentRequestError: String?
   private(set) var isSavingAgentQuestion = false
   @ObservationIgnored private var pinnedAttentionSelections: [(UUID, NotebookAttentionSelection)] = []
-  @ObservationIgnored private var attentionGeneration = UUID()
   @ObservationIgnored private var hasRestoredAgentQuestion = false
 
   #if os(iOS)
     @discardableResult func discussCode(_ fragment: NotebookCodeFragment) -> Task<Void, Never>? {
       guard !isClosing, !inputGate.hasActivePencil, !isSavingAgentQuestion, let chat else { return nil }
-      let generation = UUID(); attentionGeneration = generation; isSavingAgentQuestion = true
+      let generation = replaceSelection(.context); selectionSession.isResolvingContext = true; isSavingAgentQuestion = true
       let source = chat.files.document?.address == fragment.currentFile ? chat.files.document?.text : nil
       let selection = source.flatMap { fragment.range(in: $0) }
       let related = chat.files.notes.fragments.filter { note in
@@ -463,16 +477,20 @@ final class NotebookAppModel {
             } catch { unavailable[reference.id] = error.localizedDescription }
           }
           try Task.checkCancellation()
+          guard selectionSession.id == generation else { return }
           let capturedImages = images, missing = unavailable
           let context = try await persistence.submit(publishesChanges: true) {
             try $0.discussCode(annotations, references: references, images: capturedImages, unavailable: missing, actor: actor)
           }
           reloadExternalChanges()
-          guard attentionGeneration == generation, !isClosing else { return }
-          agentQuestion = .init(contextID: context.id, entryID: context.entry.id, references: references)
+          guard selectionSession.id == generation, !isClosing else { return }
+          selectionSession.isResolvingContext = false
+          selectionSession.context = .init(contextID: context.id, entryID: context.entry.id, references: references)
           agentRequestError = nil; chat.expanded = true; chat.browsesChats = false
           await chat.files.notes.refresh()
-        } catch { agentRequestError = error.localizedDescription }
+        } catch {
+          if selectionSession.id == generation { selectionSession.isResolvingContext = false; agentRequestError = error.localizedDescription }
+        }
       }
       chatSubmissionTask = task
       return task
@@ -528,7 +546,7 @@ final class NotebookAppModel {
   private(set) var penStyle: PenStyle
   private(set) var eraserStyle: EraserStyle
   private(set) var drawingTool: DrawingTool = .pen
-  private(set) var elementEditingSession = ElementEditingSession()
+  private(set) var selectionSession = NotebookSelectionSession()
 
   /// The document bundle supplies its physical size. A notebook or an
   /// unselected board uses the canonical notebook/portal rectangle.
@@ -1402,7 +1420,7 @@ final class NotebookAppModel {
     let inputOwnerChanged = self.presence?.boardID != resolved.boardID
       || self.presence?.mode != resolved.mode
       || self.presence?.focusedItemID != resolved.focusedItemID
-    if inputOwnerChanged { interactiveElementFocus = nil }
+    if inputOwnerChanged { endSurfaceEditing() }
     self.presence = resolved
     alignWorkspaceSelection()
     // A continuous contact can cross a portal without ending. Transfer its
@@ -1746,7 +1764,7 @@ final class NotebookAppModel {
   }
 
   func selectPenColor(_ color: PenColor) {
-    endElementEditing()
+    clearSelection()
     drawingTool = .pen
     guard color != penStyle.color else { return }
     penStyle = PenStyle(
@@ -1758,7 +1776,7 @@ final class NotebookAppModel {
   }
 
   func selectPenWidth(_ width: Double) {
-    endElementEditing()
+    clearSelection()
     drawingTool = .pen
     let next = PenStyle(
       color: penStyle.color,
@@ -1771,7 +1789,7 @@ final class NotebookAppModel {
   }
 
   func selectPenMinimumOpacity(_ minimumOpacity: Double) {
-    endElementEditing()
+    clearSelection()
     drawingTool = .pen
     let next = PenStyle(
       color: penStyle.color,
@@ -1784,7 +1802,7 @@ final class NotebookAppModel {
   }
 
   func selectEraserWidth(_ maximumWidth: Double) {
-    endElementEditing()
+    clearSelection()
     drawingTool = .eraser
     let next = EraserStyle(maximumWidth: maximumWidth)
     guard next != eraserStyle else { return }
@@ -1794,83 +1812,109 @@ final class NotebookAppModel {
 
   func selectDrawingTool(_ tool: DrawingTool) {
     isPointing = false
-    endElementEditing()
+    clearSelection()
     drawingTool = tool
+  }
+
+  /// All local admissions invalidate previous asynchronous selection work.
+  /// History is retained, but its selected pointer follows this same ordered writer.
+  @discardableResult
+  private func replaceSelection(_ target: NotebookSelectionSession.Target?,
+    persistsDeselection: Bool = true) -> UUID {
+    let removesContext = !hasRestoredAgentQuestion || selectionSession.context != nil || selectionSession.isResolvingContext
+    hasRestoredAgentQuestion = true
+    referenceHighlightTask?.cancel(); referenceHighlightTask = nil
+    selectionSession = .init(target: target)
+    collaborationReadEpoch &+= 1
+    agentRequestError = nil
+    if persistsDeselection && removesContext {
+      let actor = actorID, generation = selectionSession.id
+      persistence.enqueueCommand(publishesChanges: true, { try $0.selectSharedContext(nil, actor: actor) }) { [weak self] result in
+        Task { @MainActor [weak self] in
+          guard let self, selectionSession.id == generation, case .failure(let error) = result else { return }
+          agentRequestError = error.localizedDescription
+        }
+      }
+    }
+    return selectionSession.id
+  }
+
+  func selectWorkspaceItem(_ itemID: UUID, boardID: UUID) {
+    let target = NotebookSelectionSession.Target.item(boardID: boardID, itemID: itemID)
+    if selectionSession.target != target { replaceSelection(target) }
   }
 
   func selectElement(_ reference: EditableElementReference) {
     isPointing = false
-    guard elementEditingSession.selection != reference else { return }
-    elementEditingSession = ElementEditingSession(selection: reference)
+    if selectionSession.element != reference { replaceSelection(.element(reference)) }
   }
 
-  func updateElementDrag(
-    _ reference: EditableElementReference,
-    translation: SpatialPoint
-  ) {
-    guard elementEditingSession.selection == reference
-    else { return }
-    elementEditingSession = ElementEditingSession(
-      selection: reference,
-      translation: translation
-    )
+  func updateSelectionPreview(_ rect: CGRect?) {
+    if let rect {
+      if selectionSession.preview == nil { replaceSelection(.context) }
+      selectionSession.preview = rect
+    } else { selectionSession.preview = nil }
+    isPointing = rect != nil
   }
 
-  func finishElementDrag(
-    _ reference: EditableElementReference,
-    translation: SpatialPoint
-  ) {
-    guard elementEditingSession.selection == reference
-    else { return }
-    elementEditingSession = ElementEditingSession(selection: reference)
+  func clearSelection() {
+    isPointing = false
+    replaceSelection(nil)
+  }
+
+  /// Navigation ends manipulation, but retains explicitly pinned material for
+  /// the conversation. Only the resulting context target can show its outline.
+  func endSurfaceEditing() {
+    guard selectionSession.element != nil || selectionSession.target.map({
+      if case .item = $0 { return true }; return false
+    }) == true else { return }
+    selectionSession.target = .context
+    selectionSession.translation = .zero; selectionSession.resizeDelta = .zero
+    selectionSession.isInteractive = false
+  }
+
+  func updateElementDrag(_ reference: EditableElementReference, translation: SpatialPoint) {
+    guard selectionSession.element == reference else { return }
+    selectionSession.translation = translation
+    selectionSession.resizeDelta = .zero
+  }
+
+  func finishElementDrag(_ reference: EditableElementReference, translation: SpatialPoint) {
+    guard selectionSession.element == reference else { return }
+    selectionSession.translation = .zero
     switch reference {
     case .page(let pageID, let elementID):
-      _ = transformPageElement(
-        pageID: pageID,
-        elementID: elementID,
-        by: translation
-      )
-    case .spatial(let elementID):
-      _ = transformSpatialElement(elementID: elementID, by: translation)
+      _ = transformPageElement(pageID: pageID, elementID: elementID, by: translation)
+    case .spatial(let boardID, let elementID):
+      _ = transformSpatialElement(boardID: boardID, elementID: elementID, by: translation)
     }
   }
 
   func updateElementResize(_ reference: EditableElementReference, delta: SpatialPoint) {
-    guard elementEditingSession.selection == reference else { return }
-    elementEditingSession = .init(selection: reference, resizeDelta: delta)
+    guard selectionSession.element == reference else { return }
+    selectionSession.resizeDelta = delta; selectionSession.translation = .zero
   }
 
   func finishElementResize(_ reference: EditableElementReference, delta: SpatialPoint) {
-    guard elementEditingSession.selection == reference else { return }
-    elementEditingSession = .init(selection: reference)
+    guard selectionSession.element == reference else { return }
+    selectionSession.resizeDelta = .zero
     switch reference {
     case .page(let pageID, let elementID): _ = transformPageElement(pageID: pageID, elementID: elementID, by: .zero, resizeBy: delta)
-    case .spatial(let elementID): _ = transformSpatialElement(elementID: elementID, by: .zero, resizeBy: delta)
+    case .spatial(let boardID, let elementID): _ = transformSpatialElement(boardID: boardID, elementID: elementID, by: .zero, resizeBy: delta)
     }
   }
 
   func elementResizeDelta(_ reference: EditableElementReference) -> SpatialPoint {
-    elementEditingSession.selection == reference ? elementEditingSession.resizeDelta : .zero
+    selectionSession.element == reference ? selectionSession.resizeDelta : .zero
   }
 
   func deleteElement(_ reference: EditableElementReference) {
-    guard elementEditingSession.selection == reference
-    else { return }
-    endElementEditing()
+    guard selectionSession.element == reference else { return }
+    clearSelection()
     switch reference {
-    case .page(let pageID, let elementID):
-      _ = removePageElement(pageID: pageID, elementID: elementID)
-    case .spatial(let elementID):
-      _ = removeSpatialElement(elementID: elementID)
+    case .page(let pageID, let elementID): _ = removePageElement(pageID: pageID, elementID: elementID)
+    case .spatial(let boardID, let elementID): _ = removeSpatialElement(boardID: boardID, elementID: elementID)
     }
-  }
-
-  func clearElementSelection() {
-    endElementEditing()
-  }
-
-  private func endElementEditing() {
-    elementEditingSession = ElementEditingSession()
   }
 
   func commitElementState(pageID: UUID, elementID: String, state: JSONValue) {
@@ -1933,14 +1977,15 @@ final class NotebookAppModel {
 
   @discardableResult
   func transformSpatialElement(
+    boardID: UUID,
     elementID: String,
     by translation: SpatialPoint,
     resizeBy delta: SpatialPoint = .zero
   ) -> Bool {
-    guard var hierarchy = boardHierarchy, workspace != nil, let presence else {
+    guard var hierarchy = boardHierarchy, workspace != nil else {
       return false
     }
-    guard let board = hierarchy.board(presence.boardID) else { return false }
+    guard let board = hierarchy.board(boardID) else { return false }
     guard let index = board.elements.firstIndex(where: { $0.id == elementID }) else {
       return false
     }
@@ -1971,7 +2016,7 @@ final class NotebookAppModel {
       element.update(frame: frame, actor: actorID),
       hierarchy.upsertElement(
         element,
-        in: presence.boardID,
+        in: boardID,
         expected: expected,
         actor: actorID
       )
@@ -1981,15 +2026,15 @@ final class NotebookAppModel {
   }
 
   @discardableResult
-  func removeSpatialElement(elementID: String) -> Bool {
-    guard var hierarchy = boardHierarchy, workspace != nil, let presence else {
+  func removeSpatialElement(boardID: UUID, elementID: String) -> Bool {
+    guard var hierarchy = boardHierarchy, workspace != nil else {
       return false
     }
-    guard let element = hierarchy.board(presence.boardID)?.elements.first(where: { $0.id == elementID }),
+    guard let element = hierarchy.board(boardID)?.elements.first(where: { $0.id == elementID }),
       surfaceAcceptsChanges(element.surface) else { return false }
     guard hierarchy.removeElements(
       ids: [elementID],
-      from: presence.boardID,
+      from: boardID,
       actor: actorID
     ) == 1 else {
       return false
@@ -2252,40 +2297,48 @@ final class NotebookAppModel {
     }
   }
 
-  func publishHumanContext(_ selection: NotebookAttentionSelection) {
-    let actor = actorID, generation = UUID()
-    attentionGeneration = generation
+  func publishHumanContext(_ selection: NotebookAttentionSelection, target: NotebookSelectionSession.Target = .context) {
+    let actor = actorID
+    let generation = replaceSelection(target, persistsDeselection: false)
+    selectionSession.isResolvingContext = true
     isPointing = false
     persistence.enqueueCommand(publishesChanges: true, { store in
-      let sealed = try selection.seal(in: store)
-      let context = try store.appendContext(references: sealed.references, author: .human, actor: actor,
-        select: true, sourceWorkspaceID: sealed.workspaceID)
-      return (context, sealed)
+      do {
+        let sealed = try selection.seal(in: store)
+        let context = try store.appendContext(references: sealed.references, author: .human, actor: actor,
+          select: true, sourceWorkspaceID: sealed.workspaceID)
+        return (context, sealed)
+      } catch {
+        // A rejected new source must not reopen the previous choice on restart.
+        try store.selectSharedContext(nil, actor: actor)
+        throw error
+      }
     }) { [weak self] result in
       Task { @MainActor [weak self] in
         guard let self else { return }
         let context: SharedContextAppend, sealed: NotebookAttentionSelection.Sealed
         do { (context, sealed) = try result.get() }
         catch {
-          if self.attentionGeneration == generation { self.agentRequestError = error.localizedDescription }
+          if self.selectionSession.id == generation { self.selectionSession.isResolvingContext = false; self.agentRequestError = error.localizedDescription }
           return
         }
         let entry = context.entry
         self.pinnedAttentionSelections.append((context.id, sealed.selection))
         if self.pinnedAttentionSelections.count > 2 { self.pinnedAttentionSelections.removeFirst() }
         self.reloadExternalChanges()
-        guard self.attentionGeneration == generation else { return }
-        self.agentQuestion = .init(contextID: context.id, entryID: entry.id, references: sealed.references)
+        guard self.selectionSession.id == generation else { return }
+        self.selectionSession.isResolvingContext = false
+        self.selectionSession.context = .init(contextID: context.id, entryID: entry.id, references: sealed.references)
         self.agentRequestError = nil
       }
     }
   }
 
   func selectSharedContext(_ id: UUID?) {
-    let actor = actorID, generation = UUID()
-    attentionGeneration = generation
-    hasRestoredAgentQuestion = true
-    agentQuestion = id.flatMap { id in
+    let actor = actorID
+    let generation = replaceSelection(id == nil ? nil : .context, persistsDeselection: false)
+    selectionSession.isResolvingContext = id != nil
+    selectionSession.context = id.flatMap { id in
       guard let entry = sharedContexts.first(where: { $0.id == id })?.firstEntry, entry.author == .human else { return nil }
       return .init(contextID: id, entryID: entry.id, references: entry.references)
     }
@@ -2296,10 +2349,11 @@ final class NotebookAppModel {
       Task { @MainActor [weak self] in
         guard let self else { return }
         self.reloadExternalChanges()
-        guard self.attentionGeneration == generation else { return }
+        guard self.selectionSession.id == generation else { return }
+        self.selectionSession.isResolvingContext = false
         do {
           if let id, let entry = try result.get(), entry.author == .human {
-            self.agentQuestion = .init(contextID: id, entryID: entry.id, references: entry.references)
+            self.selectionSession.context = .init(contextID: id, entryID: entry.id, references: entry.references)
           }
         } catch { self.agentRequestError = error.localizedDescription }
       }
@@ -2309,13 +2363,13 @@ final class NotebookAppModel {
   /// Close the local indication immediately and persist deselection in the
   /// same order as accepted pointing. History and running grants stay intact;
   /// neither a late pointer completion nor restart may reopen the fragment.
-  func dismissAgentQuestion() { selectSharedContext(nil) }
+  func dismissAgentQuestion() { clearSelection() }
 
   #if os(iOS)
     /// Selection narrows attention, not the agent's tool authority. This value
     /// captures the physical owner and camera before any save/network suspension.
     @discardableResult func sendChatMessage(steering: Bool = false) -> Task<Void, Never>? {
-      guard !isClosing, let chat, let submittedThread = chat.threadID, !isSavingAgentQuestion,
+      guard !isClosing, let chat, let submittedThread = chat.threadID, !isSavingAgentQuestion, !selectionSession.isResolvingContext,
         !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
       let submittedText = chat.draft, submittedAttachments = chat.attachments, submittedComputer = chat.computerID
       let submittedTurn = steering ? chat.conversation?.activeTurnID : nil
@@ -2503,7 +2557,7 @@ final class NotebookAppModel {
     requestedReturn = place
   }
 
-  func completeReturnToPlace() { requestedReturn = nil; highlightedReference = nil }
+  func completeReturnToPlace() { requestedReturn = nil; if highlightedReference != nil { clearSelection() } }
 
   func locationTitle(for reference: CollaborationReference) -> String {
     let itemID = reference.target.kind == .page
@@ -2523,12 +2577,12 @@ final class NotebookAppModel {
 
   func completeShow(_ reference: CollaborationReference) {
     if requestedReference?.id == reference.id { requestedReference = nil }
-    highlightedReference = reference
-    referenceHighlightTask?.cancel()
+    let generation = replaceSelection(.reference(reference))
     referenceHighlightTask = Task { [weak self] in
       try? await Task.sleep(for: .seconds(3))
       guard !Task.isCancelled else { return }
-      self?.highlightedReference = nil
+      guard let self, selectionSession.id == generation else { return }
+      clearSelection()
     }
   }
 
@@ -2746,12 +2800,11 @@ final class NotebookAppModel {
       prepared.append(selected)
     }
     if sharedContexts != prepared { sharedContexts = prepared }
-    contextSelection = contexts.selection
     if !hasRestoredAgentQuestion {
       hasRestoredAgentQuestion = true
       if let context = prepared.first(where: { $0.id == contexts.selection?.contextID }),
         let entry = context.previewEntries.first(where: { $0.author == .human }) {
-        agentQuestion = .init(contextID: context.id, entryID: entry.id, references: entry.references)
+        selectionSession = .init(target: .context, context: .init(contextID: context.id, entryID: entry.id, references: entry.references))
       }
     }
     deviceActionReceipts = delivery

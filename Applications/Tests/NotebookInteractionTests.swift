@@ -135,6 +135,21 @@ final class NotebookInteractionTests: XCTestCase {
     XCTAssertEqual(newEvents, [])
   }
 
+  func testReadyCoverPassesEveryArtifactToItsOwnSelectionContact() {
+    let id = UUID()
+    let elements = [SpatialElementKind.nativeText, .markdown, .web].enumerated().map { index, kind in
+      SpatialElement(id: "material-\(index)", surface: .cover(id), kind: kind,
+        frame: .init(x: Double(index * 100), y: 0, width: 80, height: 80), source: "Material",
+        stamp: .init(counter: 0, actor: UUID()))
+    }
+    let cover = NotebookInteractionTouchView(inputGate: NotebookInputGate())
+    cover.frame = .init(x: 0, y: 0, width: 400, height: 400)
+    cover.passthroughFrames = WorkspaceItemCoverView.interactionPassthroughFrames(
+      elements: elements, editingTextID: nil, scenePreparationPending: false)
+    for x in [20.0, 120, 220] { XCTAssertFalse(cover.point(inside: .init(x: x, y: 20), with: nil)) }
+    XCTAssertTrue(cover.point(inside: .init(x: 320, y: 20), with: nil))
+  }
+
   func testPendingHitTestingPassesThroughOnlyToTheLiveTextEditor() {
     let coverID = UUID()
     let elements = [SpatialElementKind.nativeText, .nativeText, .web].enumerated().map { index, kind in

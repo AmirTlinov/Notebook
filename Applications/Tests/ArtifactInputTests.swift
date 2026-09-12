@@ -94,10 +94,10 @@ import XCTest
     let event = ArtifactEvent(finger)
     recognizer.touchesBegan([finger], with: event)
     try await Task.sleep(for: .milliseconds(250))
-    XCTAssertEqual(model.elementEditingSession.selection, .spatial(elementID: element.id))
+    XCTAssertEqual(model.selectionSession.element, .spatial(boardID: boardID, elementID: element.id))
     finger.point.x += 80; finger.point.y += 40
     recognizer.touchesMoved([finger], with: event)
-    XCTAssertEqual(model.elementEditingSession.translation, .init(x: 160, y: 80))
+    XCTAssertEqual(model.selectionSession.translation, .init(x: 160, y: 80))
     recognizer.touchesEnded([finger], with: event)
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
     await model.reloadExternalChanges()?.value
@@ -106,8 +106,9 @@ import XCTest
     XCTAssertEqual(moved.frame.x, 160); XCTAssertEqual(moved.frame.y, 80)
     XCTAssertEqual(moved.html, element.html)
     XCTAssertEqual(model.presence?.camera, presence.camera)
-    XCTAssertNil(model.agentQuestion, "A drop does not create a hidden indication or an agent message")
-    XCTAssertEqual(model.elementEditingSession.translation, .zero)
+    XCTAssertEqual(model.agentQuestion?.references.first?.elementID, element.id)
+    XCTAssertTrue(model.chat?.jobs.isEmpty == true, "Selection never sends a hidden agent message")
+    XCTAssertEqual(model.selectionSession.translation, .zero)
   }
 
   private func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }

@@ -193,7 +193,7 @@ final class BoardElementProjectionTests: XCTestCase {
     })
     proof.name = "rigid-board-elements-after-reversible-zoom"; proof.lifetime = .keepAlways; add(proof)
 
-    let reference = EditableElementReference.spatial(elementID: elements[0].id)
+    let reference = EditableElementReference.spatial(boardID: boardID, elementID: elements[0].id)
     let web = try await activate(elements[0])
     model.selectElement(reference)
     model.updateElementResize(reference, delta: .init(x: 90, y: 80))

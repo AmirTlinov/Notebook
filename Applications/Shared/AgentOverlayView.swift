@@ -21,7 +21,7 @@ struct AgentOverlayView: View {
         )
         let interactiveReference = InteractiveElementReference.page(pageID: pageID, elementID: element.id)
         EditableElementContainer(
-          isSelected: model.elementEditingSession.selection == reference,
+          isSelected: model.selectionSession.editingElement == reference,
           coordinateScale: 1,
           translation: translation(for: reference),
           onSelect: { model.selectElement(reference) },
@@ -64,11 +64,11 @@ struct AgentOverlayView: View {
       let liveIDs = Set(updatedElements.map(\.id))
       readiness.retain(updatedElements)
       if case .page(let selectedPageID, let selectedElementID) =
-        model.elementEditingSession.selection,
+        model.selectionSession.element,
         selectedPageID == pageID,
         !liveIDs.contains(selectedElementID)
       {
-        model.clearElementSelection()
+        model.clearSelection()
       }
       publishReadiness()
     }
@@ -77,10 +77,10 @@ struct AgentOverlayView: View {
   private func translation(
     for reference: EditableElementReference
   ) -> SpatialPoint {
-    guard model.elementEditingSession.selection == reference else {
+    guard model.selectionSession.element == reference else {
       return .zero
     }
-    return model.elementEditingSession.translation
+    return model.selectionSession.translation
   }
 
   private func setElement(_ element: AgentElement, ready: Bool) {

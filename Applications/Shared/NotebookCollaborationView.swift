@@ -199,13 +199,12 @@ struct NotebookAttentionMarks: View {
   let presence: SessionPresence
   var body: some View {
     ZStack(alignment:.topLeading) {
-      // Only the current pinned selection is marked, without captions over paper.
-      if let question = model.agentQuestion {
-        ForEach(question.references) { reference in
-          if let rect = NotebookAttentionProjection.frame(reference,model:model,presence:presence) {
-            mark(rect, human: true)
-          }
-        }
+      // Only a context target draws a context outline. An item or element
+      // already presents the same session through its physical editing owner.
+      if model.selectionSession.target == .context, let question = model.agentQuestion,
+        let rect = question.references.compactMap({ NotebookAttentionProjection.frame($0, model: model, presence: presence) })
+          .reduce(nil as CGRect?, { $0?.union($1) ?? $1 }) {
+        mark(rect, human: true)
       }
       if !model.scenePreparationPending, model.collaborationDetailsAreCurrent {
         ForEach(model.collaborationActions.filter { model.pendingAgentHighlights.contains($0.id) && $0.undo == nil }) { action in

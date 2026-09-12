@@ -278,7 +278,7 @@ struct NotebookChatPanel: View {
   }
   private var canSend: Bool {
     !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && chat.threadID != nil
-      && !chat.saving && !chat.switchingComputer && !model.isSavingAgentQuestion && !chat.continuationUnavailable && !chat.browsesChats
+      && !chat.saving && !chat.switchingComputer && !model.isSavingAgentQuestion && !model.selectionSession.isResolvingContext && !chat.continuationUnavailable && !chat.browsesChats
   }
   private var notice: String? {
     if let error = chat.voice.error { return error }

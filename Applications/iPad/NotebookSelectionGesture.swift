@@ -49,11 +49,10 @@ struct NotebookSelectionGesture: UIViewRepresentable {
         gate?.permitsSceneContact(at: touch.location(in: anchor.window)) == true,
         sceneReceives(touch, inside: anchor) else { return false }
       var view = touch.view
-      recognizer.permitsHold = true
       while let current = view {
         if current is UIControl || current is UITextView { return false }
-        // A closed notebook already owns its lift-and-move gesture.
-        if let cover = current as? NotebookInteractionTouchView, cover.permitsManipulation { recognizer.permitsHold = false }
+        // A closed notebook owns this whole contact, including tap and lift.
+        if current is NotebookInteractionTouchView { return false }
         view = current.superview
       }
       return true
@@ -63,7 +62,7 @@ struct NotebookSelectionGesture: UIViewRepresentable {
 }
 
 /// Frozen callbacks bind one finger to its original owner and coordinate scale.
-/// ElementEditingSession still owns selection and the unsaved translation.
+/// NotebookSelectionSession owns the current target and unsaved translation.
 struct SceneSelectionLift {
   let begin: () -> Void
   let change: (CGPoint) -> Void
@@ -78,7 +77,6 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
   private var lift: SceneSelectionLift?
   weak var coordinateView: UIView?
   var gate: NotebookInputGate?
-  var permitsHold = true
   private var touch: UITouch?
   private var start = CGPoint.zero
   private var held = false
@@ -104,16 +102,14 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
       event.allTouches?.filter({ $0.phase != .ended && $0.phase != .cancelled }).count ?? 1 == 1,
       let first = touches.first, first.type == .direct, let revision = gate?.beginFingerSequence() else { cancelSelection(); return }
     touch = first; start = first.location(in: coordinateView); self.revision = revision
-    if permitsHold {
-      lift = onLift?(start)
-      let delay = lift == nil ? 0.35 : NotebookInteractionTouchView.liftDelay
-      hold = Task { [weak self] in
-        do { try await Task.sleep(for: .seconds(delay)) } catch { return }
-        guard let self, state == .possible, gate?.acceptsFingerSequence(revision) == true else { return }
-        held = true; state = .began
-        if let lift { lift.begin() }
-        else { onPreview?(CGRect(origin: start, size: .init(width: 1, height: 1))) }
-      }
+    lift = onLift?(start)
+    let delay = lift == nil ? 0.35 : NotebookInteractionTouchView.liftDelay
+    hold = Task { [weak self] in
+      do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+      guard let self, state == .possible, gate?.acceptsFingerSequence(revision) == true else { return }
+      held = true; state = .began
+      if let lift { lift.begin() }
+      else { onPreview?(CGRect(origin: start, size: .init(width: 1, height: 1))) }
     }
   }
   override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {

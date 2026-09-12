@@ -100,12 +100,12 @@ struct BoardPortalPreview: View {
           ForEach(workset.items.filter { cohort.plan.allowsLive(.item($0.id), in: plane) }) { item in
             let screen = camera.worldToScreen(item.center, viewport: viewport)
             WorkspaceItemCoverView(
-              item: item.item, geometry: item.geometry, spatialInkSurfaces: spatialInkSurfaces,
+              item: item.item, boardID: boardID, geometry: item.geometry, spatialInkSurfaces: spatialInkSurfaces,
               elements: cohort.frame.covers[item.id]?.elements ?? [],
               editingTextID: nil,
               portalOpenProgress: 0, portalViewport: transitionViewport,
               onTap: { _, _ in },
-              onTextEditingEnded: { _ in }, onElementSelected: {},
+              onTextEditingEnded: { _ in },
               isPortalProjection: true, portalPixelScale: pixelScale * camera.scale / fill,
               remainingPortalPasses: remainingPortalPasses - 1)
               .frame(width: item.geometry.width, height: item.geometry.height)
@@ -155,6 +155,7 @@ struct WorkspaceItemCoverView: View {
   #endif
 
   let item: WorkspaceItem
+  let boardID: UUID
   let geometry: WorkspaceItemGeometry
   let spatialInkSurfaces: SpatialInkSurfaceRegistry
   let elements: [SpatialElement]
@@ -163,7 +164,6 @@ struct WorkspaceItemCoverView: View {
   let portalViewport: SpatialPoint
   let onTap: (CGPoint, Int) -> Void
   let onTextEditingEnded: (String) -> Void
-  let onElementSelected: () -> Void
   var showsDepth = true
   var isPortalProjection = false
   var portalPixelScale: Double = 1
@@ -185,17 +185,16 @@ struct WorkspaceItemCoverView: View {
         guard let cohort, let plane else { return true }
         return cohort.plan.allowsLive(.element(element.id), in: plane)
       }) { element in
-        let reference = EditableElementReference.spatial(elementID: element.id)
+        let reference = EditableElementReference.spatial(boardID: boardID, elementID: element.id)
         let retainsTextInput = !isPortalProjection
           && element.kind == .nativeText && editingTextID == element.id
         EditableElementContainer(
-          isSelected: !model.scenePreparationPending && model.elementEditingSession.selection == reference,
+          isSelected: !model.scenePreparationPending && model.selectionSession.editingElement == reference,
           coordinateScale: 1,
           translation: model.scenePreparationPending ? .zero : elementTranslation(for: reference),
           onSelect: {
             guard !model.scenePreparationPending else { return }
             model.selectElement(reference)
-            onElementSelected()
           },
           onDragChanged: { translation in
             guard !model.scenePreparationPending else { return }
@@ -221,7 +220,7 @@ struct WorkspaceItemCoverView: View {
         ) {
           SpatialElementContent(
             element: element, commitsState: !isPortalProjection,
-            boardID: model.sceneIndex?.ownerBoard(itemID: item.id),
+            boardID: boardID,
             isTextEditing: retainsTextInput,
             onTextEditingEnded: { onTextEditingEnded(element.id) }
           )
@@ -312,16 +311,6 @@ struct WorkspaceItemCoverView: View {
         style: .continuous
       )
     )
-    .onChange(of: model.scenePreparationPending) { _, pending in
-      guard pending, !isPortalProjection,
-        let selection = model.elementEditingSession.selection,
-        case .spatial(let selectedID) = selection,
-        elements.contains(where: { $0.id == selectedID })
-      else { return }
-      // A removed frame handle must not revive its unfinished translation when
-      // the next scene arrives. The native text session has a separate owner.
-      model.updateElementDrag(.spatial(elementID: selectedID), translation: .zero)
-    }
   }
 
   private var portalOverlayOpacity: Double {
@@ -337,10 +326,10 @@ struct WorkspaceItemCoverView: View {
   private func elementTranslation(
     for reference: EditableElementReference
   ) -> SpatialPoint {
-    guard model.elementEditingSession.selection == reference else {
+    guard model.selectionSession.element == reference else {
       return .zero
     }
-    return model.elementEditingSession.translation
+    return model.selectionSession.translation
   }
 
   @ViewBuilder
@@ -387,7 +376,7 @@ struct WorkspaceItemCoverView: View {
   ) -> [CGRect] {
     elements.compactMap { element in
       let isLiveEditor = element.kind == .nativeText && editingTextID == element.id
-      guard isLiveEditor || (!scenePreparationPending && element.kind != .nativeText) else {
+      guard isLiveEditor || !scenePreparationPending else {
         return nil
       }
       return CGRect(

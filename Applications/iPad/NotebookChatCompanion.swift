@@ -29,7 +29,7 @@ struct NotebookCompanion: View {
   }
   private var canSend: Bool {
     !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !chat.saving
-      && !model.isSavingAgentQuestion && !chat.continuationUnavailable && chat.threadID != nil && !chat.browsesChats
+      && !model.isSavingAgentQuestion && !model.selectionSession.isResolvingContext && !chat.continuationUnavailable && chat.threadID != nil && !chat.browsesChats
   }
   var body: some View {
     VStack(alignment: .trailing, spacing: 8) {

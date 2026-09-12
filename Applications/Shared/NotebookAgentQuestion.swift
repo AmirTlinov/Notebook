@@ -1,8 +1,8 @@
 import Foundation
 import NotebookCore
 
-/// A composer keeps the physical address of its own question. Receiving an
-/// answer changes neither first responder nor the current camera/selection.
+/// Immutable evidence attached to NotebookSelectionSession. The composer reads
+/// this value from that session; it does not keep another current selection.
 struct NotebookAgentQuestion: Equatable, Sendable, Identifiable {
   let contextID: UUID
   let entryID: UUID

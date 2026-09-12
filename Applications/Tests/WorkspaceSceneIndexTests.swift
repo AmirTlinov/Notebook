@@ -412,7 +412,7 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     XCTAssertEqual(model.sceneIndexGeneration, generation)
     XCTAssertTrue(model.compositionTiles.published === cohort)
     model.updatePresence(try XCTUnwrap(model.presence), settled: true)
-    model.selectElement(.spatial(elementID: elements[4].id))
+    model.selectElement(.spatial(boardID: boardID, elementID: elements[4].id))
     let pinDeadline = ContinuousClock.now + .seconds(5)
     while SceneRenderResources.shared.image(for: agentElementSnapshotSource(elements[4])) == nil,
       ContinuousClock.now < pinDeadline {
@@ -422,7 +422,7 @@ final class WorkspaceSceneIndexTests: XCTestCase {
       "The pinned offscreen owner gets a completed image through the same limited renderer")
     XCTAssertEqual(model.sceneWorkset(presence: try XCTUnwrap(model.presence),
       pinned: [.element(elements[4].id)]).elements.count, 5)
-    model.clearElementSelection()
+    model.endSurfaceEditing()
     let releaseDeadline = ContinuousClock.now + .seconds(5)
     while !webViews(in: host.view).isEmpty, ContinuousClock.now < releaseDeadline {
       try await Task.sleep(for: .milliseconds(20))

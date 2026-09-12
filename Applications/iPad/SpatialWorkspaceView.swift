@@ -73,13 +73,17 @@ struct SpatialWorkspaceView: View {
   @Environment(\.displayScale) private var displayScale
   @Environment(NotebookAppModel.self) private var model
 
-  @State private var pointerPreview: CGRect?
   @State private var cameraGesture: CameraGestureSnapshot?
   @State private var panStart: SessionPresence?
-  @State private var selectedItemID: UUID?
+  private var selectedItemID: UUID? { model.presence.flatMap { model.selectionSession.itemID(on: $0.boardID) } }
   @State private var liftedItemIDs: [UUID] = []
   @State private var deletionObserverID = UUID()
-  @State private var editingSpatialTextID: String?
+  private var editingSpatialTextID: String? {
+    guard model.selectionSession.isInteractive,
+      case .spatial(let boardID, let id) = model.selectionSession.element,
+      model.boardHierarchy?.board(boardID)?.elements.first(where: { $0.id == id })?.kind == .nativeText else { return nil }
+    return id
+  }
   @State private var contentGestureActive = false
   @State private var pageTurnIsActive = false
   @State private var pageInputGestureID: UUID?
@@ -155,16 +159,14 @@ struct SpatialWorkspaceView: View {
             inputGate: model.inputGate,
             onTap: {
               withAnimation(.easeOut(duration: 0.12)) {
-                selectedItemID = nil
+                model.clearSelection()
               }
-              model.clearElementSelection()
-              editingSpatialTextID = nil
+              model.interactiveElementFocus = nil
             },
             onBegan: {
               referencePageResolution.cancel()
-              selectedItemID = nil
-              model.clearElementSelection()
-              editingSpatialTextID = nil
+              model.endSurfaceEditing()
+              model.interactiveElementFocus = nil
               panStart = presenceForNewContact(presence)
             },
             onChanged: { translation in
@@ -208,7 +210,6 @@ struct SpatialWorkspaceView: View {
             onCommit: model.appendSpatialInk,
             isEnabled: (presence.mode == .board || presence.mode == .cover)
               && !contentGestureActive
-              && editingSpatialTextID == nil
 
           )
           .allowsHitTesting(false)
@@ -230,53 +231,67 @@ struct SpatialWorkspaceView: View {
           itemSelectionControl(presence: presence, viewport: viewport)
 
         NotebookAttentionMarks(presence:presence)
-        NotebookSelectionGesture(inputGate: model.inputGate, onPreview: { rect in
-          if pointerPreview != rect { pointerPreview = rect }
-          if model.isPointing != (rect != nil) { model.isPointing = rect != nil }
-        }, onPoint: { start, end, held, tapCount in
+        NotebookSelectionGesture(inputGate: model.inputGate, onPreview: model.updateSelectionPreview,
+          onPoint: { start, end, held, tapCount in
           guard cameraGesture == nil, !settling, !model.scenePreparationPending, let cohort else { return }
-          let selection = NotebookAttentionProjection.capture(start: start, end: end, model: model, presence: presence,
-            cohort: cohort, installedInk: spatialInkSurfaces.installedSources())
-          guard let selection else { return }
-          if !held, selection.fragments.allSatisfy({ $0.target.kind == .board && $0.elementID == nil }) { return }
-          if let fragment = selection.fragments.first, let id = fragment.elementID {
-            if !held {
-              let focus: InteractiveElementReference = fragment.target.kind == .page
-                ? .page(pageID: fragment.target.id, elementID: id) : .board(boardID: presence.boardID, elementID: id)
-              if model.interactiveElementFocus == focus { return }
-              if tapCount > 1 { model.interactiveElementFocus = focus; return }
-            }
-            if fragment.target.kind == .page { model.selectElement(.page(pageID: fragment.target.id, elementID: id)) }
-            else if fragment.target.kind == .board || fragment.target.kind == .cover { model.selectElement(.spatial(elementID: id)) }
+          guard let capture = NotebookAttentionProjection.capture(start: start, end: end, model: model, presence: presence,
+            cohort: cohort, installedInk: spatialInkSurfaces.installedSources()) else { return }
+          if !held, capture.fragments.allSatisfy({ $0.elementID == nil && $0.target.kind != .cover }) {
+            model.clearSelection(); return
           }
-          model.publishHumanContext(selection)
+          var target = NotebookSelectionSession.Target.context
+          if !held, let fragment = capture.fragments.first {
+            if let reference = editableReference(fragment, boardID: presence.boardID) {
+              let focus: InteractiveElementReference
+              switch reference {
+              case .page(let pageID, let id): focus = .page(pageID: pageID, elementID: id)
+              case .spatial(let boardID, let id): focus = .board(boardID: boardID, elementID: id)
+              }
+              if model.interactiveElementFocus == focus { return }
+              if tapCount > 1 {
+                if case .spatial(let boardID, let id) = reference,
+                  model.sceneIndex?.element(id: id, boardID: boardID)?.kind == .nativeText {
+                  model.interactiveElementFocus = .board(boardID: boardID, elementID: id)
+                } else { model.interactiveElementFocus = focus }
+                return
+              }
+              target = .element(reference)
+            } else if fragment.target.kind == .cover {
+              target = .item(boardID: presence.boardID, itemID: fragment.target.id)
+            }
+          }
+          model.publishHumanContext(capture, target: target)
         }, onLift: { point in
           guard cameraGesture == nil, !settling, let cohort,
-            let selection = NotebookAttentionProjection.capture(start: point, end: point, model: model, presence: presence,
+            let capture = NotebookAttentionProjection.capture(start: point, end: point, model: model, presence: presence,
               cohort: cohort, installedInk: spatialInkSurfaces.installedSources()),
-            let fragment = selection.fragments.first, let id = fragment.elementID else { return nil }
-          let reference: EditableElementReference
-          switch fragment.target.kind {
-          case .page: reference = .page(pageID: fragment.target.id, elementID: id)
-          case .board, .cover: reference = .spatial(elementID: id)
-          default: return nil
-          }
+            let fragment = capture.fragments.first,
+            let reference = editableReference(fragment, boardID: presence.boardID) else { return nil }
           let scale = max(presence.camera.scale, 0.001)
+          var selectionID: UUID?
           func translation(_ delta: CGPoint) -> SpatialPoint { .init(x: delta.x / scale, y: delta.y / scale) }
           return SceneSelectionLift(begin: {
+            if model.selectionSession.element != reference || model.agentQuestion == nil {
+              model.publishHumanContext(capture, target: .element(reference))
+            }
             model.interactiveElementFocus = nil
-            model.selectElement(reference); selectedItemID = nil; model.isPointing = true
+            selectionID = model.selectionSession.id; model.isPointing = true
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-          }, change: { model.updateElementDrag(reference, translation: translation($0)) }, end: { delta in
+          }, change: {
+            guard model.selectionSession.id == selectionID else { return }
+            model.updateElementDrag(reference, translation: translation($0))
+          }, end: { delta in
+            guard model.selectionSession.id == selectionID else { return }
             model.isPointing = false
             if hypot(delta.x, delta.y) >= 1 { model.finishElementDrag(reference, translation: translation(delta)) }
             else { model.updateElementDrag(reference, translation: .zero) }
           }, cancel: {
+            guard model.selectionSession.id == selectionID else { return }
             model.isPointing = false
             model.updateElementDrag(reference, translation: .zero)
           })
         }).allowsHitTesting(false)
-        if let rect = pointerPreview {
+        if let rect = model.selectionSession.preview {
           RoundedRectangle(cornerRadius: 4).stroke(.indigo, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
             .frame(width: rect.width, height: rect.height).position(x: rect.midX, y: rect.midY).allowsHitTesting(false)
         }
@@ -294,12 +309,12 @@ struct SpatialWorkspaceView: View {
           pinned: compositionRequest.pinned, displayScale: displayScale, installedItemOwners: compositionRequest.itemOwners)
       }
       .onAppear {
-        let registry = spatialInkSurfaces, selection = $selectedItemID, owner = model
+        let registry = spatialInkSurfaces, owner = model
         model.bindItemOwnerObserver(owner: deletionObserverID) { [weak registry, weak owner] id, boardID, revision in
           guard let shown = owner?.compositionTiles.published, shown.plan.revision <= revision,
             shown.frame.index.ownerBoard(itemID: id) == boardID else { return }
           registry?.retirePhysicalOwner(id, on: boardID, through: revision)
-          if selection.wrappedValue == id { selection.wrappedValue = nil }
+          if owner?.selectionSession.itemID(on: boardID) == id { owner?.clearSelection() }
         }
         publishViewportIfNeeded(viewport)
       }
@@ -350,16 +365,16 @@ struct SpatialWorkspaceView: View {
         publishViewportIfNeeded(viewport)
       }
       .onChange(of: presence.mode) { _, mode in
-        model.clearElementSelection()
-        if mode != .cover { editingSpatialTextID = nil }
+        model.endSurfaceEditing()
+        if mode != .cover { model.interactiveElementFocus = nil }
         if mode != .page && mode != .document {
           pageTurnIsActive = false
         }
       }
       .onChange(of: presence.focusedItemID) { _, itemID in
         if referencePageResolution.documentID != itemID { referencePageResolution.cancel() }
-        model.clearElementSelection()
-        if itemID == nil { editingSpatialTextID = nil }
+        model.endSurfaceEditing()
+        if itemID == nil { model.interactiveElementFocus = nil }
         pageTurnIsActive = false
       }
       .onDisappear {
@@ -373,10 +388,33 @@ struct SpatialWorkspaceView: View {
         pageInputGestureID = nil
         bufferedCameraPhases = []
         settling = false
-        editingSpatialTextID = nil
-        model.clearElementSelection()
+        model.interactiveElementFocus = nil
+        model.endSurfaceEditing()
       }
     }
+  }
+
+  private func editableReference(_ fragment: NotebookAttentionSelection.Fragment, boardID: UUID) -> EditableElementReference? {
+    guard let id = fragment.elementID else { return nil }
+    switch fragment.target.kind {
+    case .page: return .page(pageID: fragment.target.id, elementID: id)
+    case .board, .cover: return .spatial(boardID: boardID, elementID: id)
+    default: return nil
+    }
+  }
+
+  private func selectItemMaterial(_ itemID: UUID, presence: SessionPresence, cohort: SceneCompositionCohort?) {
+    let target = NotebookSelectionSession.Target.item(boardID: presence.boardID, itemID: itemID)
+    guard model.selectionSession.target != target else { return }
+    if let cohort, let item = cohort.frame.index.renderedItem(id: itemID, presence: presence) {
+      let box = item.geometry.screenFrame(center: item.center, camera: presence.camera, viewport: presence.viewport)
+      if let capture = NotebookAttentionProjection.capture(start: .init(x: box.x, y: box.y),
+        end: .init(x: box.x + box.width, y: box.y + box.height), model: model, presence: presence,
+        cohort: cohort, installedInk: spatialInkSurfaces.installedSources(), itemID: itemID) {
+        model.publishHumanContext(capture, target: target); return
+      }
+    }
+    model.selectWorkspaceItem(itemID, boardID: presence.boardID)
   }
 
   private struct CompositionRequest: Equatable {
@@ -394,7 +432,7 @@ struct SpatialWorkspaceView: View {
     presence: SessionPresence,
     viewport: SpatialPoint
   ) -> some View {
-    if model.elementEditingSession.selection == nil,
+    if model.selectionSession.element == nil,
       presence.mode == .board || presence.mode == .cover,
       !liftedItemIDs.contains(where: { spatialInkSurfaces.pose(for: .cover($0))?.isManipulating == true }),
       let selectedItemID,
@@ -409,7 +447,7 @@ struct SpatialWorkspaceView: View {
       Button(role: .destructive) {
         Task {
           guard await model.deleteItem(selectedItemID) else { return }
-          if self.selectedItemID == selectedItemID { self.selectedItemID = nil }
+          if self.selectedItemID == selectedItemID { model.clearSelection() }
         }
       } label: {
         Image(systemName: "trash")
@@ -625,18 +663,18 @@ struct SpatialWorkspaceView: View {
             onSelect: { itemID in
               guard !model.isItemBeingDeleted(itemID) else { return }
               withAnimation(.easeOut(duration: 0.12)) {
-                selectedItemID = itemID
+                selectItemMaterial(itemID, presence: presence, cohort: cohort)
               }
             },
             onLiftChanged: { itemID, lifted in
-              if lifted { editingSpatialTextID = nil }
+              if lifted { model.interactiveElementFocus = nil }
               liftedItemIDs.removeAll { $0 == itemID }
-              if lifted { liftedItemIDs.append(itemID); selectedItemID = itemID }
+              if lifted { liftedItemIDs.append(itemID); selectItemMaterial(itemID, presence: presence, cohort: cohort) }
             },
             onOpen: { itemID in
               guard !model.scenePreparationPending else { return }
-              editingSpatialTextID = nil
-              selectedItemID = nil
+              model.interactiveElementFocus = nil
+              model.endSurfaceEditing()
               openItem(itemID, viewport: viewport)
             },
             onEditText: { itemID, point in
@@ -645,11 +683,8 @@ struct SpatialWorkspaceView: View {
             },
             onTextEditingEnded: { elementID in
               if editingSpatialTextID == elementID {
-                editingSpatialTextID = nil
+                model.interactiveElementFocus = nil
               }
-            },
-            onElementSelected: {
-              selectedItemID = nil
             },
             onPageTurnStateChange: { active in
               pageTurnIsActive = active
@@ -683,10 +718,10 @@ struct SpatialWorkspaceView: View {
 
   private func boardElements(_ elements: [SpatialElement], presence: SessionPresence,
     viewport: SpatialPoint, cohort: SceneCompositionCohort?) -> some View {
-    let selection = model.elementEditingSession.selection
+    let selection = model.selectionSession.editingElement
     let revision = ElementPlaneRevision(cohortID: cohort?.id, generation: model.sceneIndex?.generationID,
       focus: model.interactiveElementFocus, elements: elements.map(\.id),
-      selection: selection, translation: model.elementEditingSession.translation,
+      selection: selection, translation: model.selectionSession.translation,
       resize: selection.map { model.elementResizeDelta($0) } ?? .zero,
       pending: model.scenePreparationPending, editingCamera: selection == nil ? nil : presence.camera)
     return SceneCameraPlane(presence: presence, revision: revision,
@@ -712,7 +747,7 @@ struct SpatialWorkspaceView: View {
   ) -> some View {
     ForEach(elements.filter { cohort?.plan.allowsLive(.element($0.id), in: .board(presence.boardID)) == true }) { element in
         if let worldOrigin = element.worldOrigin {
-          let reference = EditableElementReference.spatial(elementID: element.id)
+          let reference = EditableElementReference.spatial(boardID: presence.boardID, elementID: element.id)
           let base = presence.camera.worldToScreen(
             worldOrigin,
             viewport: viewport
@@ -722,12 +757,11 @@ struct SpatialWorkspaceView: View {
             y: base.y + element.frame.y * presence.camera.scale
           )
           EditableElementContainer(
-            isSelected: model.elementEditingSession.selection == reference,
+            isSelected: model.selectionSession.editingElement == reference,
             coordinateScale: presence.camera.scale,
             translation: elementTranslation(for: reference),
             onSelect: {
               model.selectElement(reference)
-              selectedItemID = nil
             },
             onDragChanged: { translation in
               model.updateElementDrag(reference, translation: translation)
@@ -742,7 +776,9 @@ struct SpatialWorkspaceView: View {
           ) {
             // The physical viewport belongs to the element. The camera transforms
             // its whole layer; WebKit layout must not trail the moving frame.
-            SpatialElementContent(element: element, boardID: presence.boardID)
+            SpatialElementContent(element: element, boardID: presence.boardID,
+              isTextEditing: editingSpatialTextID == element.id,
+              onTextEditingEnded: { if editingSpatialTextID == element.id { model.interactiveElementFocus = nil } })
               .frame(width: element.frame.width, height: element.frame.height)
               .scaleEffect(presence.camera.scale)
               .frame(
@@ -768,10 +804,10 @@ struct SpatialWorkspaceView: View {
   private func elementTranslation(
     for reference: EditableElementReference
   ) -> SpatialPoint {
-    guard model.elementEditingSession.selection == reference else {
+    guard model.selectionSession.element == reference else {
       return .zero
     }
-    return model.elementEditingSession.translation
+    return model.selectionSession.translation
   }
 
   private func beginTextEditing(
@@ -789,13 +825,13 @@ struct SpatialWorkspaceView: View {
     if let text = elements.reversed().first(where: {
       $0.kind == .nativeText && $0.frame.contains(point)
     }) {
-      editingSpatialTextID = text.id
+      model.interactiveElementFocus = .board(boardID: boardID, elementID: text.id)
       return
     }
     guard !elements.contains(where: { $0.frame.contains(point) }),
       let elementID = model.addNativeText(boardID: boardID, on: itemID, at: point)
     else { return }
-    editingSpatialTextID = elementID
+    model.interactiveElementFocus = .board(boardID: boardID, elementID: elementID)
   }
 
   private func normalizedPresence(for viewport: SpatialPoint) -> SessionPresence {
@@ -832,7 +868,7 @@ struct SpatialWorkspaceView: View {
     for id in [presence.focusedItemID, selectedItemID, cameraGesture?.candidateItemID] + liftedItemIDs.map(Optional.some) {
       if let id, !spatialInkSurfaces.isRetired(.cover(id)) { pins.insert(.item(id)) }
     }
-    if case .spatial(let id) = model.elementEditingSession.selection { pins.insert(.element(id)) }
+    if case .spatial(let boardID, let id) = model.selectionSession.element, boardID == presence.boardID { pins.insert(.element(id)) }
     if let editingSpatialTextID { pins.insert(.element(editingSpatialTextID)) }
     if case .board(let boardID, let elementID) = model.interactiveElementFocus {
       pins.insert(.element(elementID))
@@ -886,8 +922,8 @@ struct SpatialWorkspaceView: View {
     case .began(let centroid, let isOpeningApproach):
       interruptSettlementForInput()
         openingFeedback.prepare()
-      selectedItemID = nil
-      editingSpatialTextID = nil
+      model.endSurfaceEditing()
+      model.interactiveElementFocus = nil
       guard let currentPresence = model.presence else { return }
       let presence = presenceForNewContact(currentPresence)
       let focusedItemID =
@@ -1543,7 +1579,7 @@ struct SpatialWorkspaceView: View {
       itemID = model.createBoard(at: center)
     }
     guard let itemID else { return }
-    selectedItemID = nil
+    model.endSurfaceEditing()
     let target = SessionPresence(
       boardID: presence.boardID,
       mode: .cover,
@@ -1643,7 +1679,6 @@ private struct WorkspaceSceneItem: View, Equatable {
   let onOpen: (UUID) -> Void
   let onEditText: (UUID, SpatialPoint) -> Void
   let onTextEditingEnded: (String) -> Void
-  let onElementSelected: () -> Void
   let onPageTurnStateChange: @MainActor @Sendable (Bool) -> Void
   let onDocumentPageLayout: (DocumentPageLayout) -> Void
 
@@ -1917,6 +1952,7 @@ private struct WorkspaceSceneItem: View, Equatable {
   private var itemCover: some View {
     WorkspaceItemCoverView(
       item: rendered.item,
+      boardID: boardID,
       geometry: rendered.geometry,
       spatialInkSurfaces: spatialInkSurfaces,
       elements: coverElements,
@@ -1925,7 +1961,6 @@ private struct WorkspaceSceneItem: View, Equatable {
       portalViewport: viewport,
       onTap: handleTap,
       onTextEditingEnded: onTextEditingEnded,
-      onElementSelected: onElementSelected,
       showsDepth: false,
       portalPixelScale: projectedScale
     )

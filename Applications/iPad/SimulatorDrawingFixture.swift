@@ -19,6 +19,7 @@
     static let documentProseArgument = "--notebook-document-prose-fixture"
     static let documentLinksArgument = "--notebook-document-links-fixture"
     static let documentLetterArgument = "--notebook-document-letter-fixture"
+    static let selectionTransitionArgument = "--notebook-selection-transition-fixture"
     static let agentElementArgument = "--notebook-agent-element-fixture"
     static let collaborationArgument = "--notebook-collaboration-fixture"
     static let historyArgument = "--notebook-history-performance-fixture"
@@ -123,7 +124,7 @@
           size: size,
           actor: actor,
           drawingData: try denseDrawing(size: size).dataRepresentation(),
-          elements: startsWithAgentElement
+          elements: (startsWithAgentElement
             ? [
               AgentElement(
                 id: "shared-element",
@@ -134,7 +135,12 @@
                 css: "body{display:grid;place-items:center;font:700 32px -apple-system;color:#263746;background:#f6c85f;border:5px solid #263746;border-radius:28px}"
               )
             ]
-            : []
+            : []) + (ProcessInfo.processInfo.arguments.contains(selectionTransitionArgument) ? [
+              AgentElement(id: "second-element", kind: .web,
+                frame: PageRect(x: 480, y: 650, width: 260, height: 220), source: "",
+                html: "<div>Второй элемент</div>",
+                css: "body{background:#cdeaf8;display:grid;place-items:center;font:24px -apple-system}")
+            ] : [])
         )
         try store.savePage(page)
         if startsInDocument {

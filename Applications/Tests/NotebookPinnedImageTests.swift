@@ -173,7 +173,7 @@ final class NotebookPinnedImageTests: XCTestCase {
       ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     let shown = try XCTUnwrap(model.compositionTiles.published, model.compositionTiles.failure ?? "")
     defer { model.compositionTiles.removePublishedCoverage() }
-    XCTAssertTrue(model.transformSpatialElement(elementID: old.id, by: .init(x: 500, y: 400)))
+    XCTAssertTrue(model.transformSpatialElement(boardID: boardID, elementID: old.id, by: .init(x: 500, y: 400)))
     await model.finishPendingPersistence()
     deadline = ContinuousClock.now + .seconds(5)
     while model.scenePreparationPending, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }

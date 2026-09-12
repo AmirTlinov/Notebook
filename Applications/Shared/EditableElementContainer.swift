@@ -62,6 +62,7 @@ struct EditableElementContainer<Content: View>: View {
       }
     }
     .offset(x: translation.x * coordinateScale, y: translation.y * coordinateScale)
+    .accessibilityAddTraits(isSelected ? .isSelected : [])
     .zIndex(isSelected ? 1_000 : 0)
   }
 
