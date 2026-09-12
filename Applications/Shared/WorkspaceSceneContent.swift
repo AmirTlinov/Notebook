@@ -188,36 +188,7 @@ struct WorkspaceItemCoverView: View {
         let reference = EditableElementReference.spatial(boardID: boardID, elementID: element.id)
         let retainsTextInput = !isPortalProjection
           && element.kind == .nativeText && editingTextID == element.id
-        EditableElementContainer(
-          isSelected: !model.scenePreparationPending && model.selectionSession.editingElement == reference,
-          coordinateScale: 1,
-          translation: model.scenePreparationPending ? .zero : elementTranslation(for: reference),
-          onSelect: {
-            guard !model.scenePreparationPending else { return }
-            model.selectElement(reference)
-          },
-          onDragChanged: { translation in
-            guard !model.scenePreparationPending else { return }
-            model.updateElementDrag(reference, translation: translation)
-          },
-          onDragEnded: { translation in
-            guard !model.scenePreparationPending else { return }
-            model.finishElementDrag(reference, translation: translation)
-          },
-          onResizeChanged: {
-            guard !model.scenePreparationPending else { return }
-            model.updateElementResize(reference, delta: $0)
-          },
-          onResizeEnded: {
-            guard !model.scenePreparationPending else { return }
-            model.finishElementResize(reference, delta: $0)
-          },
-          resizeDelta: model.scenePreparationPending ? .zero : model.elementResizeDelta(reference),
-          onDelete: {
-            guard !model.scenePreparationPending else { return }
-            model.deleteElement(reference)
-          }
-        ) {
+        EditableElementContainer(reference: reference, coordinateScale: 1) {
           SpatialElementContent(
             element: element, commitsState: !isPortalProjection,
             boardID: boardID,
@@ -323,14 +294,6 @@ struct WorkspaceItemCoverView: View {
       : geometry.cornerRadius
   }
 
-  private func elementTranslation(
-    for reference: EditableElementReference
-  ) -> SpatialPoint {
-    guard model.selectionSession.element == reference else {
-      return .zero
-    }
-    return model.selectionSession.translation
-  }
 
   @ViewBuilder
   private var coverBackground: some View {

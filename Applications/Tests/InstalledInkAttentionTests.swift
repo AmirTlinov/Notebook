@@ -137,7 +137,7 @@ final class InstalledInkAttentionTests: XCTestCase {
     let fixture = try await fixture(), driver = try Driver(model: fixture.model, presence: fixture.presence, cohort: fixture.cohort)
     defer { driver.close() }
     driver.begin(.pen)
-    fixture.model.afterPageInput { fixture.model.isPointing = true }
+    fixture.model.afterPageInput { fixture.model.updateSelectionPreview(.init(x: 100, y: 100, width: 120, height: 100)) }
     XCTAssertFalse(fixture.model.isPointing)
     XCTAssertNil(driver.registry.installedSource(on: .board(fixture.presence.boardID)))
     driver.moveAndEnd()
@@ -169,7 +169,7 @@ final class InstalledInkAttentionTests: XCTestCase {
     let ink = try XCTUnwrap(driver.canvas.inkView)
     let previousVertices = ink.committedVertexCount
 
-    XCTAssertFalse(fixture.model.inputGate.permitsSceneContact(at: .init(x: 120, y: 120)))
+    XCTAssertFalse(fixture.model.inputGate.permitsSceneContact(at: .init(x: 120, y: 120), kind: .finger))
     driver.begin(.pen)
     // UIKit may reset a rejected attached recognizer to .possible immediately.
     // The contract is that no began event reaches the physical ink owner.
@@ -190,7 +190,7 @@ final class InstalledInkAttentionTests: XCTestCase {
     XCTAssertNil(driver.registry.installedSource(on: .board(fixture.presence.boardID)))
     card.frame.origin = .init(x: 100, y: 100)
     driver.update(.pen)
-    XCTAssertFalse(fixture.model.inputGate.permitsSceneContact(at: .init(x: 160, y: 120)))
+    XCTAssertFalse(fixture.model.inputGate.permitsSceneContact(at: .init(x: 160, y: 120), kind: .finger))
     XCTAssertTrue(fixture.model.inputGate.hasActivePencil)
     XCTAssertEqual(fixture.model.inputGate.pencilGeneration, acceptedGeneration)
     driver.moveAndEnd()

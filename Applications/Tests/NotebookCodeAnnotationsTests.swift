@@ -5,6 +5,31 @@ import NotebookCore
 
 @MainActor
 final class NotebookCodeAnnotationsTests: XCTestCase {
+  func testLateReviewCannotReappearAfterLeavingAndReturningToTheFile() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID(), queue = NotebookPersistenceQueue(store: store)
+    _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let notes = NotebookCodeAnnotations(persistence: queue, author: actor)
+    let file = NotebookFileAddress(computer: UUID(), project: "demo", root: "/code", path: "a.py")
+    await notes.select(file)
+    let fragment = NotebookCodeFragment(file: file, sourceHash: NotebookFileVersion.hash(Data("code".utf8)),
+      utf16Offset: 0, text: "code", width: 600, height: 500, fontSize: 15, stamp: .init(counter: 1, actor: actor))
+    let hold = DispatchSemaphore(value: 0)
+    defer { hold.signal() }
+    queue.enqueue(publishesChanges: false) { _ in hold.wait(); return false }
+    let review = Task { await notes.review(fragment) }
+    while queue.pendingCount < 2 { await Task.yield() }
+    let other = Task { await notes.select(file.child("b.py")) }
+    while queue.pendingCount < 3 { await Task.yield() }
+    await notes.select(file)
+    hold.signal()
+    await review.value; await other.value
+    notes.stop()
+    let flushed = await queue.flush(); XCTAssertTrue(flushed)
+    XCTAssertNil(notes.reviewed)
+  }
+
   func testDirectoryContinuationDoesNotSkipNotesAfterAnOptimisticContact() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

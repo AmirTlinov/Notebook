@@ -6,38 +6,55 @@ import SwiftUI
 @MainActor
 enum NotebookAttentionProjection {
   static func frame(_ reference: CollaborationReference, model: NotebookAppModel, presence: SessionPresence) -> CGRect? {
+    frame(target: reference.target, elementID: reference.elementID, region: reference.region,
+      worldOrigin: reference.worldOrigin, pageIndex: reference.pageIndex, model: model, presence: presence)
+  }
+
+  static func editingFrame(_ reference: EditableElementReference, model: NotebookAppModel, presence: SessionPresence) -> CGRect? {
+    let target: CollaborationTarget, id: String
+    switch reference {
+    case .page(let pageID, let elementID): target = .init(kind: .page, id: pageID); id = elementID
+    case .spatial(let boardID, let elementID):
+      guard boardID == presence.boardID,
+        let element = model.sceneIndex?.element(id: elementID, boardID: boardID), let owner = element.surface.ownerID else { return nil }
+      target = .init(kind: element.surface.kind == .cover ? .cover : .board, id: owner, boardID: boardID); id = elementID
+    }
+    return frame(target: target, elementID: id, region: nil, worldOrigin: nil, pageIndex: nil, model: model, presence: presence, minimumSide: 0)
+  }
+
+  private static func frame(target: CollaborationTarget, elementID: String?, region: PageRect?,
+    worldOrigin: WorldPoint?, pageIndex: Int?, model: NotebookAppModel, presence: SessionPresence, minimumSide: Double = 8) -> CGRect? {
     guard let workspace = model.workspace, let index = model.sceneIndex else { return nil }
-    var local = reference.region ?? PageRect(x:0,y:0,width:1,height:1)
-    let target = reference.target
+    var local = region ?? PageRect(x:0,y:0,width:1,height:1)
     if target.kind == .board {
       guard target.id == presence.boardID else { return nil }
-      var origin = reference.worldOrigin ?? .zero
-      if let id = reference.elementID {
+      var origin = worldOrigin ?? .zero
+      if let id = elementID {
         guard let element = index.element(id: id, boardID: presence.boardID),
           element.surface == .board(target.id) else { return nil }
         local = .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
         origin = element.worldOrigin ?? .zero
       }
       let top = presence.camera.worldToScreen(origin.offsetBy(x:local.x,y:local.y),viewport:presence.viewport)
-      return .init(x:top.x,y:top.y,width:max(8,local.width * presence.camera.scale),height:max(8,local.height * presence.camera.scale))
+      return .init(x:top.x,y:top.y,width:max(minimumSide,local.width * presence.camera.scale),height:max(minimumSide,local.height * presence.camera.scale))
     }
     let itemID: UUID
     if target.kind == .page {
       guard let ownerID = index.pageOwner(pageID: target.id),
         workspace.selectedPageID == target.id, presence.mode == .page else { return nil }
       itemID = ownerID
-      if let id = reference.elementID, let element = model.pages[target.id]?.elements.first(where: { $0.id == id }) { local = element.frame }
+      if let id = elementID, let element = model.pages[target.id]?.elements.first(where: { $0.id == id }) { local = element.frame }
     } else {
       itemID = target.id
       if target.kind == .document {
         guard presence.mode == .document, presence.focusedItemID == itemID else { return nil }
-        if let id = reference.elementID, let document = model.documents[itemID], let state = model.documentStates[itemID] {
+        if let id = elementID, let document = model.documents[itemID], let state = model.documentStates[itemID] {
           guard let region = DocumentRenderRegistry.shared.regions(document:document,state:state).first(where: { $0.id == id && $0.pageIndex == presence.documentPageIndex }) else { return nil }
           local = region.frame
-        } else if let page = reference.pageIndex, page != presence.documentPageIndex { return nil }
+        } else if let page = pageIndex, page != presence.documentPageIndex { return nil }
       } else if target.kind == .cover {
         guard presence.mode == .board || presence.mode == .cover else { return nil }
-        if let id = reference.elementID {
+        if let id = elementID {
           guard let element = index.element(id: id, boardID: presence.boardID),
             element.surface == .cover(itemID) else { return nil }
           local = .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
@@ -46,9 +63,9 @@ enum NotebookAttentionProjection {
     }
     guard let rendered = index.renderedItem(id: itemID, presence: presence) else { return nil }
     let box = rendered.geometry.screenFrame(center:rendered.center,camera:presence.camera,viewport:presence.viewport)
-    if reference.region == nil && reference.elementID == nil { local = .init(x:0,y:0,width:rendered.geometry.width,height:rendered.geometry.height) }
+    if region == nil && elementID == nil { local = .init(x:0,y:0,width:rendered.geometry.width,height:rendered.geometry.height) }
     return .init(x:box.x + local.x * presence.camera.scale,y:box.y + local.y * presence.camera.scale,
-      width:max(8,local.width * presence.camera.scale),height:max(8,local.height * presence.camera.scale))
+      width:max(minimumSide,local.width * presence.camera.scale),height:max(minimumSide,local.height * presence.camera.scale))
   }
 
   private struct CaptureSources {

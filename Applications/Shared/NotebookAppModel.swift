@@ -315,10 +315,11 @@ final class NotebookAppModel {
       onSourceInvalidated: { [weak self] in self?.reloadExternalChanges() })
   }
 
-  private func clearRemovedElementPins(_ ids: Set<String>) {
-    guard !ids.isEmpty else { return }
-    scenePinnedElements = scenePinnedElements.mapValues { $0.filter { !ids.contains($0) } }
-    if case .spatial(_, let id) = selectionSession.element, ids.contains(id) { clearSelection() }
+  private func clearRemovedElementPins(_ missing: [UUID: Set<String>]) {
+    for (boardID, ids) in missing {
+      scenePinnedElements[boardID] = scenePinnedElements[boardID]?.filter { !ids.contains($0) }
+      if case .spatial(let selectedBoard, let id) = selectionSession.element, selectedBoard == boardID, ids.contains(id) { clearSelection() }
+    }
   }
 
   /// Derived publication also uses the process's one ordered writer. Reads can
@@ -412,7 +413,12 @@ final class NotebookAppModel {
       selectionSession.isInteractive = true
     }
   }
-  var isPointing = false
+  /// A disappearing editor can release only the selection that admitted it.
+  func finishInteractiveElementInput(_ reference: EditableElementReference, selectionID: UUID) {
+    guard selectionSession.id == selectionID, selectionSession.element == reference else { return }
+    selectionSession.isInteractive = false
+  }
+  var isPointing: Bool { selectionSession.preview != nil || selectionSession.manipulation != nil }
   struct ReturnPlace: Identifiable {
     let id = UUID()
     let presence: SessionPresence
@@ -1421,6 +1427,7 @@ final class NotebookAppModel {
       || self.presence?.mode != resolved.mode
       || self.presence?.focusedItemID != resolved.focusedItemID
     if inputOwnerChanged { endSurfaceEditing() }
+    else if self.presence?.camera != resolved.camera || self.presence?.viewport != resolved.viewport { cancelElementManipulation() }
     self.presence = resolved
     alignWorkspaceSelection()
     // A continuous contact can cross a portal without ending. Transfer its
@@ -1811,7 +1818,6 @@ final class NotebookAppModel {
   }
 
   func selectDrawingTool(_ tool: DrawingTool) {
-    isPointing = false
     clearSelection()
     drawingTool = tool
   }
@@ -1824,6 +1830,7 @@ final class NotebookAppModel {
     let removesContext = !hasRestoredAgentQuestion || selectionSession.context != nil || selectionSession.isResolvingContext
     hasRestoredAgentQuestion = true
     referenceHighlightTask?.cancel(); referenceHighlightTask = nil
+    cancelElementManipulation()
     selectionSession = .init(target: target)
     collaborationReadEpoch &+= 1
     agentRequestError = nil
@@ -1845,7 +1852,6 @@ final class NotebookAppModel {
   }
 
   func selectElement(_ reference: EditableElementReference) {
-    isPointing = false
     if selectionSession.element != reference { replaceSelection(.element(reference)) }
   }
 
@@ -1854,11 +1860,9 @@ final class NotebookAppModel {
       if selectionSession.preview == nil { replaceSelection(.context) }
       selectionSession.preview = rect
     } else { selectionSession.preview = nil }
-    isPointing = rect != nil
   }
 
   func clearSelection() {
-    isPointing = false
     replaceSelection(nil)
   }
 
@@ -1868,44 +1872,95 @@ final class NotebookAppModel {
     guard selectionSession.element != nil || selectionSession.target.map({
       if case .item = $0 { return true }; return false
     }) == true else { return }
+    cancelElementManipulation()
     selectionSession.target = .context
-    selectionSession.translation = .zero; selectionSession.resizeDelta = .zero
     selectionSession.isInteractive = false
   }
 
-  func updateElementDrag(_ reference: EditableElementReference, translation: SpatialPoint) {
-    guard selectionSession.element == reference else { return }
-    selectionSession.translation = translation
-    selectionSession.resizeDelta = .zero
+  /// A contact belongs to the current selection and exact source frame, not a
+  /// reusable element ID. No late lift can commit a superseded contact.
+  func beginElementManipulation(_ reference: EditableElementReference,
+    kind: NotebookElementManipulation.Kind) -> UUID? {
+    guard selectionSession.element == reference, inputGate.beginFingerSequence() != nil,
+      let geometry = elementGeometry(reference) else { return nil }
+    cancelElementManipulation()
+    let contact = NotebookElementManipulation(reference: reference, kind: kind,
+      frame: geometry.frame, bounds: geometry.bounds)
+    selectionSession.manipulation = contact
+    inputGate.beginContact(source: contact.id)
+    inputGate.registerFingerCancellation(source: contact.id) { [weak self] in self?.cancelElementManipulation(contact.id) }
+    return contact.id
   }
 
-  func finishElementDrag(_ reference: EditableElementReference, translation: SpatialPoint) {
-    guard selectionSession.element == reference else { return }
-    selectionSession.translation = .zero
+  func updateElementManipulation(_ id: UUID, translation: SpatialPoint) {
+    guard selectionSession.manipulation?.id == id else { return }
+    selectionSession.manipulation?.update(translation: .init(x: translation.x, y: translation.y))
+  }
+
+  @discardableResult
+  func finishElementManipulation(_ id: UUID, translation: SpatialPoint) -> Bool {
+    guard selectionSession.manipulation?.id == id else { return false }
+    updateElementManipulation(id, translation: translation)
+    guard let contact = selectionSession.manipulation else { return false }
+    cancelElementManipulation(id)
+    guard contact.frame != contact.original,
+      elementGeometry(contact.reference)?.frame == contact.original else { return false }
+    return commitElementFrame(contact.reference, frame: contact.frame)
+  }
+
+  /// Preview and commit use the same completed rectangle. Storage changes the
+  /// addressed material; it does not run a second resize calculation.
+  private func commitElementFrame(_ reference: EditableElementReference, frame: CGRect) -> Bool {
     switch reference {
     case .page(let pageID, let elementID):
-      _ = transformPageElement(pageID: pageID, elementID: elementID, by: translation)
+      return mutatePageElements(pageID: pageID) { _, elements in
+        guard let index = elements.firstIndex(where: { $0.id == elementID }) else { return false }
+        elements[index] = elements[index].updating(frame: .init(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height))
+        return true
+      }
     case .spatial(let boardID, let elementID):
-      _ = transformSpatialElement(boardID: boardID, elementID: elementID, by: translation)
+      guard var hierarchy = boardHierarchy, workspace != nil,
+        var element = hierarchy.board(boardID)?.elements.first(where: { $0.id == elementID }),
+        surfaceAcceptsChanges(element.surface) else { return false }
+      let expected = element.stamp
+      guard element.update(frame: .init(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height), actor: actorID),
+        hierarchy.upsertElement(element, in: boardID, expected: expected, actor: actorID) else { return false }
+      persistBoard(hierarchy); return true
     }
   }
 
-  func updateElementResize(_ reference: EditableElementReference, delta: SpatialPoint) {
-    guard selectionSession.element == reference else { return }
-    selectionSession.resizeDelta = delta; selectionSession.translation = .zero
+  func cancelElementManipulation(_ id: UUID? = nil) {
+    guard let contact = selectionSession.manipulation, id == nil || contact.id == id else { return }
+    selectionSession.manipulation = nil
+    inputGate.unregisterFingerCancellation(source: contact.id)
+    inputGate.endContact(source: contact.id)
   }
 
-  func finishElementResize(_ reference: EditableElementReference, delta: SpatialPoint) {
-    guard selectionSession.element == reference else { return }
-    selectionSession.resizeDelta = .zero
+  func elementMovement(_ reference: EditableElementReference) -> SpatialPoint {
+    guard let contact = selectionSession.manipulation, contact.reference == reference else { return .zero }
+    return .init(x: contact.movement.x, y: contact.movement.y)
+  }
+
+  private func elementGeometry(_ reference: EditableElementReference) -> (frame: CGRect, bounds: CGRect?)? {
     switch reference {
-    case .page(let pageID, let elementID): _ = transformPageElement(pageID: pageID, elementID: elementID, by: .zero, resizeBy: delta)
-    case .spatial(let boardID, let elementID): _ = transformSpatialElement(boardID: boardID, elementID: elementID, by: .zero, resizeBy: delta)
+    case .page(let pageID, let id):
+      guard !isPageBeingDeleted(pageID), let page = pages[pageID],
+        let element = page.elements.first(where: { $0.id == id }) else { return nil }
+      return (.init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height),
+        .init(x: 0, y: 0, width: page.size.width, height: page.size.height))
+    case .spatial(let boardID, let id):
+      guard let element = boardHierarchy?.board(boardID)?.elements.first(where: { $0.id == id }),
+        surfaceAcceptsChanges(element.surface) else { return nil }
+      let size = itemGeometry(element.surface.ownerID)
+      let bounds: CGRect? = element.surface.kind == .cover ? .init(x: 0, y: 0, width: size.width, height: size.height) : nil
+      return (.init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height), bounds)
     }
   }
 
-  func elementResizeDelta(_ reference: EditableElementReference) -> SpatialPoint {
-    selectionSession.element == reference ? selectionSession.resizeDelta : .zero
+  func moveElementAccessibly(_ reference: EditableElementReference, by translation: SpatialPoint) {
+    selectElement(reference)
+    guard let id = beginElementManipulation(reference, kind: .move) else { return }
+    finishElementManipulation(id, translation: translation)
   }
 
   func deleteElement(_ reference: EditableElementReference) {
@@ -1931,41 +1986,6 @@ final class NotebookAppModel {
   }
 
   @discardableResult
-  func transformPageElement(
-    pageID: UUID,
-    elementID: String,
-    by translation: SpatialPoint,
-    resizeBy delta: SpatialPoint = .zero
-  ) -> Bool {
-    let moved = mutatePageElements(pageID: pageID) { page, elements in
-      guard let index = elements.firstIndex(where: { $0.id == elementID }) else {
-        return false
-      }
-      let element = elements[index]
-      let width = delta == .zero ? element.frame.width : min(max(44, element.frame.width + delta.x), page.size.width - element.frame.x)
-      let height = delta == .zero ? element.frame.height : min(max(44, element.frame.height + delta.y), page.size.height - element.frame.y)
-      let x = min(
-        max(element.frame.x + translation.x, 0),
-        page.size.width - width
-      )
-      let y = min(
-        max(element.frame.y + translation.y, 0),
-        page.size.height - height
-      )
-      let frame = PageRect(
-        x: x,
-        y: y,
-        width: width,
-        height: height
-      )
-      guard frame != element.frame else { return false }
-      elements[index] = element.updating(frame: frame)
-      return true
-    }
-    return moved
-  }
-
-  @discardableResult
   func removePageElement(pageID: UUID, elementID: String) -> Bool {
     let removed = mutatePageElements(pageID: pageID) { _, elements in
       let count = elements.count
@@ -1973,56 +1993,6 @@ final class NotebookAppModel {
       return elements.count != count
     }
     return removed
-  }
-
-  @discardableResult
-  func transformSpatialElement(
-    boardID: UUID,
-    elementID: String,
-    by translation: SpatialPoint,
-    resizeBy delta: SpatialPoint = .zero
-  ) -> Bool {
-    guard var hierarchy = boardHierarchy, workspace != nil else {
-      return false
-    }
-    guard let board = hierarchy.board(boardID) else { return false }
-    guard let index = board.elements.firstIndex(where: { $0.id == elementID }) else {
-      return false
-    }
-    var element = board.elements[index]
-    guard surfaceAcceptsChanges(element.surface) else { return false }
-    let expected = element.stamp
-    let geometry = itemGeometry(element.surface.ownerID)
-    let width = delta == .zero ? element.frame.width : min(max(44, element.frame.width + delta.x), element.surface.kind == .cover ? geometry.width - element.frame.x : 2048)
-    let height = delta == .zero ? element.frame.height : min(max(44, element.frame.height + delta.y), element.surface.kind == .cover ? geometry.height - element.frame.y : 2048)
-    let proposedX = element.frame.x + translation.x
-    let proposedY = element.frame.y + translation.y
-    let x: Double
-    let y: Double
-    if element.surface.kind == .cover {
-      x = min(max(proposedX, 0), geometry.width - width)
-      y = min(max(proposedY, 0), geometry.height - height)
-    } else {
-      x = proposedX
-      y = proposedY
-    }
-    let frame = SpatialRect(
-      x: x,
-      y: y,
-      width: width,
-      height: height
-    )
-    guard frame != element.frame,
-      element.update(frame: frame, actor: actorID),
-      hierarchy.upsertElement(
-        element,
-        in: boardID,
-        expected: expected,
-        actor: actorID
-      )
-    else { return false }
-    persistBoard(hierarchy)
-    return true
   }
 
   @discardableResult
@@ -2301,7 +2271,6 @@ final class NotebookAppModel {
     let actor = actorID
     let generation = replaceSelection(target, persistsDeselection: false)
     selectionSession.isResolvingContext = true
-    isPointing = false
     persistence.enqueueCommand(publishesChanges: true, { store in
       do {
         let sealed = try selection.seal(in: store)

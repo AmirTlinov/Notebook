@@ -22,8 +22,7 @@ struct NotebookSelectionSession: Equatable, Sendable {
   var target: Target?
   var context: NotebookAgentQuestion?
   var preview: CGRect?
-  var translation: SpatialPoint = .zero
-  var resizeDelta: SpatialPoint = .zero
+  var manipulation: NotebookElementManipulation?
   var isInteractive = false
   var isResolvingContext = false
 

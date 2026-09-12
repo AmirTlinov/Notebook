@@ -20,22 +20,7 @@ struct AgentOverlayView: View {
           elementID: element.id
         )
         let interactiveReference = InteractiveElementReference.page(pageID: pageID, elementID: element.id)
-        EditableElementContainer(
-          isSelected: model.selectionSession.editingElement == reference,
-          coordinateScale: 1,
-          translation: translation(for: reference),
-          onSelect: { model.selectElement(reference) },
-          onDragChanged: { translation in
-            model.updateElementDrag(reference, translation: translation)
-          },
-          onDragEnded: { translation in
-            model.finishElementDrag(reference, translation: translation)
-          },
-          onResizeChanged: { model.updateElementResize(reference, delta: $0) },
-          onResizeEnded: { model.finishElementResize(reference, delta: $0) },
-          resizeDelta: model.elementResizeDelta(reference),
-          onDelete: { model.deleteElement(reference) }
-        ) {
+        EditableElementContainer(reference: reference, coordinateScale: 1) {
           PreparedAgentElementView(
             element: element,
             allowsInteraction: allowsInteraction,
@@ -74,14 +59,6 @@ struct AgentOverlayView: View {
     }
   }
 
-  private func translation(
-    for reference: EditableElementReference
-  ) -> SpatialPoint {
-    guard model.selectionSession.element == reference else {
-      return .zero
-    }
-    return model.selectionSession.translation
-  }
 
   private func setElement(_ element: AgentElement, ready: Bool) {
     readiness.record(element, ready: ready)

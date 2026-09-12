@@ -249,7 +249,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       recognizer.isEnabled = isEnabled
       recognizer.canBeginContact = { [weak self] touch in
         guard let self, isEnabled, admitsNewContact(),
-          inputGate.permitsSceneContact(at: touch.preciseLocation(in: self.window)),
+          inputGate.permitsSceneContact(at: touch.preciseLocation(in: self.window), kind: .pencil),
           let surfaces = admissionSurfaces() else { return false }
         let surface = SpatialSurfaceRouter.surface(at: touch.preciseLocation(in: self.view ?? self.window),
           covers: surfaces, board: boardSurface)

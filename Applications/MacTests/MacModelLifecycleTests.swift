@@ -119,33 +119,21 @@ final class MacModelLifecycleTests: XCTestCase {
       boardID: try XCTUnwrap(model.presence?.boardID), elementID: "board-element"
     )
 
+    var source = page
+    source.replaceElements([.init(id: "page-element", kind: .web, frame: .init(x: 20, y: 20, width: 160, height: 100), source: "", html: "<p>Material</p>")], actor: model.actorID)
+    try model.store.savePage(source); await model.reloadExternalChanges()?.value
     model.selectElement(pageReference)
-    model.updateElementDrag(
-      pageReference,
-      translation: SpatialPoint(x: 32, y: 48)
-    )
+    let contact = try XCTUnwrap(model.beginElementManipulation(pageReference, kind: .move))
+    model.updateElementManipulation(contact, translation: .init(x: 32, y: 48))
     XCTAssertEqual(model.selectionSession.element, pageReference)
-    XCTAssertEqual(
-      model.selectionSession.translation,
-      SpatialPoint(x: 32, y: 48)
-    )
-
+    XCTAssertEqual(model.selectionSession.manipulation?.movement, .init(x: 32, y: 48))
     model.selectElement(boardReference)
     XCTAssertEqual(model.selectionSession.element, boardReference)
-    XCTAssertEqual(model.selectionSession.translation, .zero)
-
-    model.updateElementDrag(
-      pageReference,
-      translation: SpatialPoint(x: 500, y: 500)
-    )
+    XCTAssertNil(model.selectionSession.manipulation)
+    model.updateElementManipulation(contact, translation: .init(x: 500, y: 500))
+    XCTAssertFalse(model.finishElementManipulation(contact, translation: .init(x: 500, y: 500)))
     XCTAssertEqual(model.selectionSession.element, boardReference)
-    XCTAssertEqual(model.selectionSession.translation, .zero)
-
-    model.finishElementDrag(
-      pageReference,
-      translation: SpatialPoint(x: 500, y: 500)
-    )
-    XCTAssertEqual(model.selectionSession.element, boardReference)
+    XCTAssertNil(model.selectionSession.manipulation)
 
     model.selectDrawingTool(.eraser)
     XCTAssertNil(model.selectionSession.element)
@@ -165,11 +153,15 @@ final class MacModelLifecycleTests: XCTestCase {
       "kind": .string("web"), "source": .string(""), "html": .string("<svg></svg>"),
       "frame": try .encode(PageRect(x: 100, y: 120, width: 240, height: 180))])])
     try await fixture.waitUntil { model.pages[page.id]?.elements.first?.id == "shared-shape" }
-    XCTAssertTrue(model.transformPageElement(pageID: page.id, elementID: "shared-shape", by: .init(x: 10_000, y: -10_000)))
+    let pageElement = EditableElementReference.page(pageID: page.id, elementID: "shared-shape")
+    model.selectElement(pageElement)
+    let move = try XCTUnwrap(model.beginElementManipulation(pageElement, kind: .move))
+    XCTAssertTrue(model.finishElementManipulation(move, translation: .init(x: 10_000, y: -10_000)))
     let moved = try XCTUnwrap(model.pages[page.id]?.elements.first)
     XCTAssertEqual(moved.frame.x, page.size.width - 240)
     XCTAssertEqual(moved.frame.y, 0)
-    XCTAssertTrue(model.transformPageElement(pageID: page.id, elementID: moved.id, by: .zero, resizeBy: .init(x: -40, y: 80)))
+    let resize = try XCTUnwrap(model.beginElementManipulation(pageElement, kind: .resize(.bottomTrailing)))
+    XCTAssertTrue(model.finishElementManipulation(resize, translation: .init(x: -40, y: 80)))
     let resized = try XCTUnwrap(model.pages[page.id]?.elements.first)
     XCTAssertEqual(resized.frame.width, 200)
     XCTAssertEqual(resized.frame.height, 260)
@@ -185,7 +177,10 @@ final class MacModelLifecycleTests: XCTestCase {
       "kind": .string("web"), "source": .string(""), "html": .string("<svg></svg>"),
       "frame": try .encode(SpatialRect(x: 90, y: 110, width: 260, height: 190))])])
     try await fixture.waitUntil { model.board?.elements.contains(where: { $0.id == "shared-cover-shape" }) == true }
-    XCTAssertTrue(model.transformSpatialElement(boardID: boardID, elementID: "shared-cover-shape", by: .init(x: -10_000, y: 10_000)))
+    let coverElement = EditableElementReference.spatial(boardID: boardID, elementID: "shared-cover-shape")
+    model.selectElement(coverElement)
+    let coverMove = try XCTUnwrap(model.beginElementManipulation(coverElement, kind: .move))
+    XCTAssertTrue(model.finishElementManipulation(coverMove, translation: .init(x: -10_000, y: 10_000)))
     let movedCover = try XCTUnwrap(model.board?.elements.first(where: { $0.id == "shared-cover-shape" }))
     XCTAssertEqual(movedCover.frame.x, 0)
     XCTAssertEqual(movedCover.frame.y, WorkspaceItemGeometry.notebook.height - 190)

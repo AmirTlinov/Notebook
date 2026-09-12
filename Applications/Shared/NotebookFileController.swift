@@ -67,6 +67,7 @@ final class NotebookFileController {
     await installWindow(saved.0, document: saved.1)
   }
   func installWindow(_ state: NotebookFileWindowState, document: NotebookFileDraft?) async {
+    opening = nil; loading = false
     window = state; self.document = document; resetTree(); navigation = nil; error = nil; notice = nil
     await notes.select(document?.address)
   }
@@ -157,37 +158,42 @@ final class NotebookFileController {
     }
   }
   func collapse(_ address: NotebookFileAddress) { expandedFolders.remove(address) }
-  func open(_ address: NotebookFileAddress) async {
-    guard !stopped else { return }
+  /// The newest navigation owns the result, including reselecting the file
+  /// already shown while a different file is still being read.
+  @discardableResult
+  func open(_ address: NotebookFileAddress) async -> UUID? {
+    guard !stopped, !notes.contactActive, chat?.switchingComputer != true else { return nil }
     if let chat, chat.computerID != address.computer, chat.computers.contains(where: { $0.deviceID == address.computer }) {
       await chat.chooseComputer(address.computer)
-      guard chat.computerID == address.computer else { return }
+      guard !stopped, chat.computerID == address.computer else { return nil }
     }
-    if document?.address == address { window.isOpen = true; persistWindow(); return }
-    guard !notes.contactActive else { return }
-    let token = UUID(); opening = token; loading = true
+    let token = UUID(); opening = token; loading = false
+    if document?.address == address { window.isOpen = true; persistWindow(); return token }
+    loading = true
     defer { if opening == token { loading = false } }
     do {
       var value = try await persistence.submit { try $0.fileDraft(address) }
+      guard !stopped, !notes.contactActive, opening == token else { return nil }
       if value == nil { value = NotebookFileDraft(address: address, text: try await read(address)) }
-      guard !stopped, !notes.contactActive, opening == token, let value else { return }
-      document = value; window.selected = address; window.isOpen = true; error = nil
+      guard !stopped, !notes.contactActive, opening == token, let value else { return nil }
+      document = value; window.selected = address; window.isOpen = true; error = nil; navigation = nil
       persistDocument(); persistWindow(); await notes.select(address)
+      guard opening == token else { return nil }
       if let id = value.pending ?? value.rename, let job = chat?.jobs.first(where: { $0.id == id }) { receive(job) }
-    } catch { if opening == token { self.error = error.localizedDescription } }
+      return token
+    } catch { if !stopped, opening == token { self.error = error.localizedDescription }; return nil }
   }
-  func close() { guard !notes.contactActive else { return }; window.isOpen = false; opening = nil; loading = false; persistWindow() }
+  func close() { guard !notes.contactActive, chat?.switchingComputer != true else { return }; window.isOpen = false; opening = nil; loading = false; persistWindow() }
   func navigate(to fragment: NotebookCodeFragment) async {
-    await open(fragment.currentFile)
-    guard !notes.contactActive else { return }
+    guard let token = await open(fragment.currentFile), opening == token, !notes.contactActive else { return }
     if let document, document.address == fragment.currentFile, let range = fragment.range(in: document.text) {
       navigation = (UUID(), fragment.currentFile, range)
       notes.reviewed = nil
     } else { await notes.review(fragment) }
   }
   func navigate(to file: NotebookFileAddress, line: Int) async {
-    await open(file)
-    guard !notes.contactActive, let document, document.address == file else { return }
+    guard let token = await open(file), opening == token, !notes.contactActive,
+      let document, document.address == file else { return }
     let text = document.text as NSString
     var offset = 0
     for _ in 1..<line {
@@ -209,15 +215,23 @@ final class NotebookFileController {
   }
   func refresh() async {
     guard !stopped, !notes.contactActive, let value = document, value.pending == nil, value.rename == nil else { return }
+    let token = opening
+    // Native typing may continue during a read. A different base, conflict,
+    // submission or navigation supersedes it; the latest draft text does not.
+    let isCurrent = { [self] in
+      !stopped && !notes.contactActive && opening == token && document?.address == value.address
+        && document?.pending == nil && document?.rename == nil
+        && document?.base == value.base && document?.other == value.other
+    }
     do {
       let text = try await read(value.address, unchanged: value.other ?? value.base)
-      guard !stopped, !notes.contactActive, document?.address == value.address, document?.pending == nil else { return }
+      guard isCurrent() else { return }
       error = nil
       if text != document?.base, text != document?.other {
         document?.receive(text); notice = document?.other == nil ? "Файл обновлён на Mac" : "Есть несовместимые правки. Обе версии сохранены."
         persistDocument()
       }
-    } catch { self.error = error.localizedDescription }
+    } catch { if isCurrent() { self.error = error.localizedDescription } }
   }
   func resolveUsingMac() { guard !notes.contactActive, let other = document?.other else { return }; document?.text = other; document?.base = other; document?.other = nil; document?.selection = 0; notice = nil; persistDocument() }
   /// The person deliberately keeps their edited resolution against this exact
@@ -250,8 +264,8 @@ final class NotebookFileController {
           // Text typed during the database wait is newer than savedDraft.
           document?.pending = id; document?.submitted = value.text; persistDocument()
         }
-        await chat?.refreshFileJobs(); notice = "Черновик отправлен · ожидается запись на Mac"
-      } catch { self.error = error.localizedDescription }
+        await chat?.refreshFileJobs(); if document?.address == value.address { notice = "Черновик отправлен · ожидается запись на Mac" }
+      } catch { if document?.address == value.address { self.error = error.localizedDescription } }
     }
   }
   func rename(to path: String) async {
@@ -273,7 +287,7 @@ final class NotebookFileController {
       if let saved = try? await persistence.submit({ try $0.fileDraft(value.address) }), saved.rename == id {
         if document?.address == value.address { document = saved }
         await chat?.refreshFileJobs()
-      } else { self.error = error.localizedDescription }
+      } else if document?.address == value.address { self.error = error.localizedDescription }
     }
   }
   private func receiveRename(_ job: NotebookChatJob) {
@@ -287,7 +301,7 @@ final class NotebookFileController {
         document = moved; window.selected = moved.address; navigation = nil; resetTree()
         error = job.error; notice = job.error ?? "Файл переименован на Mac; черновик и пометки сохранены"
         await notes.select(moved.address)
-      } catch { self.error = error.localizedDescription }
+      } catch { if document?.address == request.address { self.error = error.localizedDescription } }
     }
   }
   func receive(_ job: NotebookChatJob) {
@@ -312,7 +326,7 @@ final class NotebookFileController {
         // by a stale receipt callback returning from persistence.
         if document?.address == address { document = current; persistDocument(); error = job.error; notice = job.error ?? (current.other == nil ? "Сохранено на Mac" : "Конфликт · обе версии сохранены") }
         else { try await persistence.submit { try $0.saveFileDraft(accepted) } }
-      } catch { self.error = error.localizedDescription }
+      } catch { if document?.address == address { self.error = error.localizedDescription } }
     }
   }
   private func read(_ address: NotebookFileAddress, version: NotebookFileVersion? = nil, unchanged: String? = nil) async throws -> String {

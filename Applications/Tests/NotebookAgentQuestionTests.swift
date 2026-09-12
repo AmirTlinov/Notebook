@@ -94,9 +94,9 @@ final class NotebookAgentQuestionTests: XCTestCase {
     try await fixture { model in
       let first = EditableElementReference.spatial(boardID: UUID(), elementID: "chart")
       let second = EditableElementReference.spatial(boardID: UUID(), elementID: "chart")
-      model.selectElement(first); model.updateElementDrag(first, translation: .init(x: 80, y: 40))
-      model.selectElement(second); model.finishElementDrag(first, translation: .init(x: 900, y: 900))
-      XCTAssertEqual(model.selectionSession.element, second); XCTAssertEqual(model.selectionSession.translation, .zero)
+      model.selectElement(first)
+      model.selectElement(second)
+      XCTAssertEqual(model.selectionSession.element, second); XCTAssertNil(model.selectionSession.manipulation)
       let question = try await point(model)
       model.completeShow(try XCTUnwrap(question.references.first))
       XCTAssertNil(model.agentQuestion); XCTAssertNil(model.selectionSession.element)

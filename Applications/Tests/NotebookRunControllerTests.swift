@@ -9,6 +9,44 @@ import NotebookCore
     while !predicate(), .now < deadline { try await Task.sleep(for: .milliseconds(25)) }
     XCTAssertTrue(predicate())
   }
+  func testLateCommandFailureDoesNotReplaceAnotherProjectsTerminalState() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = NotebookStore(root: directory), author = UUID(), computer = UUID(), queue = NotebookPersistenceQueue(store: store)
+    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let first = CodexProject(id: "first", name: "First", roots: ["/first"])
+    let second = CodexProject(id: "second", name: "Second", roots: ["/second"])
+    let root = NotebookFileAddress(computer: computer, project: first.id, root: "/first", path: "")
+    var held: NotebookChatEnvelope?, chat: NotebookChatController!
+    chat = .init(persistence: queue, author: author) { envelope, peer in
+      guard case .request(let query) = envelope.body else { return }
+      let reply: NotebookChatReply
+      switch query {
+      case .projects: reply = .projects(.init(projects: [first, second], nextCursor: nil))
+      case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil))
+      case .run(let read): reply = .run(try! store.readRun(read))
+      case .job: held = envelope; return
+      default: reply = .failure("Outside command scenario")
+      }
+      chat.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
+    }
+    let owned = chat!
+    addTeardownBlock { @MainActor in await owned.stop(); _ = await queue.flush(); try? FileManager.default.removeItem(at: directory) }
+    await chat.start(); await chat.connect(computer); chat.selectProject(first)
+    let view = chat.runs.attach(root) { _, _ in }
+    try await wait { !chat.runs.loadingCommand }
+    chat.runs.command = "echo first"
+    let command = Task { await chat.runs.start() }
+    try await wait { held != nil }
+    let request = try XCTUnwrap(held)
+    chat.selectProject(second)
+    chat.runs.detach(view)
+    chat.receive(.init(id: request.id, body: .reply(.failure("Late first-project failure"))), peerID: computer)
+    await command.value
+    XCTAssertEqual(chat.runs.selectedRoot?.project, second.id)
+    XCTAssertNil(chat.runs.error)
+    XCTAssertFalse(chat.runs.busy)
+  }
+
   func testClosedRestoredTerminalDiscoversItsExistingRunWithoutStartingAnything() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }

@@ -173,7 +173,10 @@ final class NotebookPinnedImageTests: XCTestCase {
       ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     let shown = try XCTUnwrap(model.compositionTiles.published, model.compositionTiles.failure ?? "")
     defer { model.compositionTiles.removePublishedCoverage() }
-    XCTAssertTrue(model.transformSpatialElement(boardID: boardID, elementID: old.id, by: .init(x: 500, y: 400)))
+    let referenceToMove = EditableElementReference.spatial(boardID: boardID, elementID: old.id)
+    model.selectElement(referenceToMove)
+    let move = try XCTUnwrap(model.beginElementManipulation(referenceToMove, kind: .move))
+    XCTAssertTrue(model.finishElementManipulation(move, translation: .init(x: 500, y: 400)))
     await model.finishPendingPersistence()
     deadline = ContinuousClock.now + .seconds(5)
     while model.scenePreparationPending, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }

@@ -358,7 +358,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(app.buttons["delete-agent-element"].waitForExistence(timeout:3))
     let card = app.descendants(matching: .any).matching(identifier: "notebook-context-count").firstMatch
     XCTAssertTrue(card.waitForExistence(timeout: 3), "Finger selection pins the object while the chat stays collapsed")
-    for id in ["delete-agent-element", "resize-agent-element"] {
+    for id in ["delete-agent-element", "resize-agent-element-bottomTrailing"] {
       let handle = app.descendants(matching: .any).matching(identifier: id).firstMatch
       let reachable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in handle.isHittable }, object: nil)
       XCTAssertEqual(XCTWaiter.wait(for: [reachable], timeout: 3), .completed, "\(id): \(handle.debugDescription)")
@@ -846,6 +846,41 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.buttons["Закрыть настройки"].tap()
     XCTAssertTrue(settings.waitForNonExistence(timeout: 2))
     XCTAssertTrue(pen.isSelected, "Настройки не создают скрытого инструмента редактирования")
+  }
+
+  func testEveryArtifactCornerResizesWithoutMovingTheOppositeCornerOrPaper() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-collaboration-fixture", "--notebook-simulator-finger-gestures"]
+    launchPortraitFixture(app)
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 8))
+    let drawing = paper.value as? String, paperFrame = paper.frame
+    let element = app.descendants(matching: .any).matching(identifier: "agent-element-shared-element").firstMatch
+    XCTAssertTrue(element.waitForExistence(timeout: 8))
+    let toggle = app.buttons["notebook-chat-toggle"]
+    if toggle.label == "Свернуть чат" { toggle.tap() }
+    element.tap()
+    XCTAssertTrue(app.buttons["delete-agent-element"].waitForExistence(timeout: 4))
+    XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "resize-agent-element").firstMatch.exists)
+    for (name, leading, top) in [("topLeading", true, true), ("topTrailing", false, true), ("bottomLeading", true, false), ("bottomTrailing", false, false)] {
+      let corner = app.descendants(matching: .any).matching(identifier: "resize-agent-element-" + name).firstMatch
+      XCTAssertTrue(corner.waitForExistence(timeout: 4)); XCTAssertTrue(corner.isHittable)
+      let before = element.frame
+      let start = corner.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
+      start.press(forDuration: 0.05, thenDragTo: start.withOffset(.init(dx: leading ? -22 : 22, dy: top ? -18 : 18)), withVelocity: .slow, thenHoldForDuration: 0)
+      let resized = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in element.frame.width > before.width + 10 && element.frame.height > before.height + 8 }, object: nil)
+      let outcome = XCTWaiter.wait(for: [resized], timeout: 4)
+      if outcome != .completed {
+        let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "corner-resize-failure"; proof.lifetime = .keepAlways; add(proof)
+      }
+      XCTAssertEqual(outcome, .completed, "Corner \(name): \(before) -> \(element.frame), target \(corner.frame)")
+      XCTAssertEqual(leading ? element.frame.maxX : element.frame.minX, leading ? before.maxX : before.minX, accuracy: 2)
+      XCTAssertEqual(top ? element.frame.maxY : element.frame.minY, top ? before.maxY : before.minY, accuracy: 2)
+      XCTAssertEqual(paper.frame, paperFrame); XCTAssertEqual(paper.value as? String, drawing)
+      XCTAssertEqual(app.buttons.matching(identifier: "delete-agent-element").count, 1)
+    }
+    let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "four-corners-one-frame"; proof.lifetime = .keepAlways; add(proof)
   }
 
   func testSuccessiveArtifactChoicesLeaveOneFrameAndClearTogether() {

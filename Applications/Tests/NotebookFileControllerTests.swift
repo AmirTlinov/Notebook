@@ -5,6 +5,72 @@ import NotebookCore
 
 @MainActor
 final class NotebookFileControllerTests: XCTestCase {
+  func testReselectCloseAndFileSwitchInvalidateLateReadsAndErrors() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = NotebookStore(root: root), author = UUID(), peer = UUID()
+    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let queue = NotebookPersistenceQueue(store: store)
+    let project = CodexProject(id: "p", name: "Files", roots: ["/fixture"])
+    let a = NotebookFileAddress(computer: peer, project: "p", root: "/fixture", path: "a.py")
+    let b = a.child("b.py"), c = a.child("c.py")
+    try store.saveFileDraft(.init(address: a, text: "a = 1"))
+    try store.saveFileDraft(.init(address: c, text: "c = 1"))
+    var chat: NotebookChatController!, held: NotebookChatEnvelope?
+    chat = .init(persistence: queue, author: author) { envelope, _ in
+      guard case .request(let query) = envelope.body else { return }
+      let reply: NotebookChatReply
+      switch query {
+      case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil))
+      case .projects: reply = .projects(.init(projects: [project], nextCursor: nil))
+      case .activity: reply = .activity([])
+      case .file(.read): held = envelope; return
+      default: reply = .failure("Unexpected query")
+      }
+      chat.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
+    }
+    let ownedChat = chat!
+    addTeardownBlock { @MainActor in await ownedChat.stop(); _ = await queue.flush(); try? FileManager.default.removeItem(at: root) }
+    await chat.start(); await chat.connect(peer)
+    try store.savePresence(.init(mode: .board, camera: .init(center: .init(x: 321, y: -456), scale: 0.43), viewport: .init(x: 834, y: 1194)))
+    let camera = try store.loadPresence()
+    func pending() async throws -> NotebookChatEnvelope {
+      let deadline = ContinuousClock.now + .seconds(2)
+      while held == nil, .now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+      return try XCTUnwrap(held)
+    }
+    func reply(_ request: NotebookChatEnvelope, text: String) {
+      let data = Data(text.utf8)
+      chat.receive(.init(id: request.id, body: .reply(.file(.part(.init(version: .init(data), offset: 0, data: data))))), peerID: peer)
+      held = nil
+    }
+    await chat.files.open(a)
+    chat.files.edit("a = 2", address: a, selection: 3, scroll: 120)
+    let slow = Task { await chat.files.open(b) }; let request = try await pending()
+    await chat.files.open(a)
+    XCTAssertFalse(chat.files.loading)
+    reply(request, text: "late B"); let superseded = await slow.value; XCTAssertNil(superseded)
+    XCTAssertEqual(chat.files.document?.address, a); XCTAssertEqual(chat.files.document?.text, "a = 2")
+    XCTAssertEqual(chat.files.document?.scroll, 120)
+
+    let refresh = Task { await chat.files.refresh() }; let old = try await pending()
+    await chat.files.open(c)
+    chat.receive(.init(id: old.id, body: .reply(.failure("Old file timeout"))), peerID: peer); held = nil
+    await refresh.value
+    XCTAssertNil(chat.files.error); XCTAssertEqual(chat.files.document?.text, "c = 1")
+
+    await chat.files.open(a)
+    let previous = Task { await chat.files.refresh() }; let oldA = try await pending()
+    await chat.files.open(c); await chat.files.open(a)
+    reply(oldA, text: "stale remote A"); await previous.value
+    XCTAssertEqual(chat.files.document?.base, "a = 1"); XCTAssertNil(chat.files.document?.other)
+
+    let opening = Task { await chat.files.open(b) }; let closing = try await pending()
+    chat.files.close(); reply(closing, text: "B after close"); _ = await opening.value
+    XCTAssertFalse(chat.files.window.isOpen); XCTAssertEqual(chat.files.document?.address, a)
+    await chat.stop(); let saved = await queue.flush(); XCTAssertTrue(saved)
+    XCTAssertEqual(try store.fileDraft(a)?.text, "a = 2"); XCTAssertEqual(try store.loadPresence(), camera)
+  }
+
   func testVisibleDirectoryUpdatesAfterCreationAndDeletionWithoutDroppingItsLoadedPages() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("tree-sync-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -20,10 +86,11 @@ final class NotebookFileControllerTests: XCTestCase {
       case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil))
       case .projects: reply = .projects(.init(projects: [project], nextCursor: nil))
       case .activity: reply = .activity([])
+      case .run(let query): reply = .run(try! store.readRun(query))
       case .file(.directory(let folder, let after)):
         paths.append(folder.path)
         reply = .file(.directory(.init(entries: [.init(name: after == nil ? (generation == 0 ? "deleted.py" : "new.py") : "retained.py", kind: .file)], next: after == nil ? "next" : nil)))
-      default: return XCTFail("No file mutation belongs to directory sync")
+      default: return XCTFail("No file mutation belongs to directory sync: \(query)")
       }
       chat.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
     }

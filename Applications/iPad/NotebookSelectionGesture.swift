@@ -46,7 +46,7 @@ struct NotebookSelectionGesture: UIViewRepresentable {
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
       guard touch.type == .direct, let anchor,
-        gate?.permitsSceneContact(at: touch.location(in: anchor.window)) == true,
+        gate?.permitsSceneContact(at: touch.location(in: anchor.window), kind: .finger) == true,
         sceneReceives(touch, inside: anchor) else { return false }
       var view = touch.view
       while let current = view {

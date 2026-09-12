@@ -223,7 +223,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       shouldReceive touch: UITouch
     ) -> Bool {
       guard let sceneView else { return false }
-      return inputGate.permitsSceneContact(at: touch.location(in: sceneView.window))
+      return inputGate.permitsSceneContact(at: touch.location(in: sceneView.window), kind: .finger)
         && sceneReceives(touch, inside: sceneView)
     }
 
@@ -550,7 +550,7 @@ struct BoardPanView: UIViewRepresentable {
       // completion, even if disable and re-enable preceded the next run loop.
       flushPanCancellation()
       guard let revision = inputGate.beginFingerSequence(), !Self.ownsInteractiveInput(touch.view) else { return false }
-      guard inputGate.permitsSceneContact(at: touch.location(in: sceneView.window)),
+      guard inputGate.permitsSceneContact(at: touch.location(in: sceneView.window), kind: .finger),
         sceneReceives(touch, inside: sceneView) else { return false }
       let point = touch.location(in: sceneView)
       let isFreeBoard = !itemFrames.contains(where: { $0.contains(point) })

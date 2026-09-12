@@ -47,7 +47,7 @@ import NotebookCore
         let saved = try await persistence.submit { try $0.runCommand(root: root) }
         guard readerID == id else { return }
         loadingCommand = true; command = saved; loadingCommand = false
-      } catch { self.error = error.localizedDescription; loadingCommand = false }
+      } catch { guard readerID == id else { return }; self.error = error.localizedDescription; loadingCommand = false }
       var runID: UUID?, cursor = "0", initial = true
       while readerID == id, !Task.isCancelled {
         var more = false
@@ -113,7 +113,8 @@ import NotebookCore
         return false
       }) else { throw NotebookPersistenceQueue.Failure(message: "Mac ещё не подтвердил прежнее открытие терминала. Новый сеанс не создан.") }
       let request = NotebookRunRequest(root: target, replacing: output.record?.id, columns: columns, rows: rows)
-      try check(try await chat.sessionCommand(.startRun(request), computer: target.computer)); nextStatusRead = .now; error = nil
+      try check(try await chat.sessionCommand(.startRun(request), computer: target.computer))
+      if selectedRoot == target { nextStatusRead = .now; error = nil }
     } catch { if selectedRoot == target { self.error = error.localizedDescription } }
   }
   func start(restart: Bool = false) async {
@@ -121,14 +122,14 @@ import NotebookCore
     let request = NotebookRunRequest(root: root, command: command, replacing: restart ? record?.id : nil, columns: columns, rows: rows)
     guard request.isValid else { error = "Введите команду длиной до 8 КиБ."; return }
     busy = true; defer { busy = false }
-    do { try check(try await chat.sessionCommand(.startRun(request), computer: root.computer)); error = nil }
-    catch { self.error = error.localizedDescription }
+    do { try check(try await chat.sessionCommand(.startRun(request), computer: root.computer)); if selectedRoot == root { error = nil } }
+    catch { if selectedRoot == root { self.error = error.localizedDescription } }
   }
   func stopRun() async {
     guard !busy, let id = record?.id, let root, let chat else { return }
     busy = true; defer { busy = false }
-    do { try check(try await chat.sessionCommand(.stopRun(id), computer: root.computer)); error = nil }
-    catch { self.error = error.localizedDescription }
+    do { try check(try await chat.sessionCommand(.stopRun(id), computer: root.computer)); if selectedRoot == root, record?.id == id { error = nil } }
+    catch { if selectedRoot == root, record?.id == id { self.error = error.localizedDescription } }
   }
   func input(_ bytes: Data) {
     guard canInput, let computer = root?.computer, let record, !bytes.isEmpty else { return }
@@ -150,7 +151,9 @@ import NotebookCore
           guard let chat else { throw NotebookTransportError.disconnected }
           try check(try await chat.sessionCommand(.writeRun(id, bytes), computer: computer))
         } catch {
-          self.error = "Ввод не подтверждён; автоматически не повторяется. \(error.localizedDescription)"
+          if root?.computer == computer, record?.id == id {
+            self.error = "Ввод не подтверждён; автоматически не повторяется. \(error.localizedDescription)"
+          }
           blockedRuns.insert(id)
         }
       }

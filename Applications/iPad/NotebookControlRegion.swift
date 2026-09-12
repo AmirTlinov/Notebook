@@ -26,7 +26,7 @@ final class NotebookControlRegionView: UIView {
   override func didMoveToWindow() { super.didMoveToWindow(); unregister(); register() }
   private func register() {
     guard window != nil else { return }
-    gate.registerControlRegion(source: source) { [weak self] point in
+    gate.registerControlRegion(source: source) { [weak self] point, _ in
       guard let self, let window, !isHidden, alpha > 0 else { return false }
       return bounds.contains(convert(point, from: window))
     }

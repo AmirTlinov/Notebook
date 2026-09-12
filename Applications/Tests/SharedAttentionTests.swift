@@ -57,7 +57,7 @@ final class SharedAttentionTests: XCTestCase {
     let reference = try XCTUnwrap(prepared.first)
     XCTAssertEqual(reference.target,.init(kind:.page,id:page.id))
     XCTAssertEqual(model.locationTitle(for: reference), "Тетрадь · лист 1")
-    model.isPointing = true
+    model.updateSelectionPreview(.init(x: 100, y: 100, width: 120, height: 100))
     model.publishHumanContext(selection)
     XCTAssertFalse(model.isPointing)
     XCTAssertFalse(model.referenceChanged(reference))
@@ -206,7 +206,7 @@ final class SharedAttentionTests: XCTestCase {
     let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start: .init(x: 100, y: 100),
       end: .init(x: 240, y: 180), model: model, presence: presence,
       cohort: XCTUnwrap(model.compositionTiles.published), installedInk: [:]))
-    model.isPointing = true
+    model.updateSelectionPreview(.init(x: 100, y: 100, width: 120, height: 100))
     model.publishHumanContext(selection)
     XCTAssertFalse(model.isPointing, "A control action must not wait for JSON, hashing or the file lock")
     XCTAssertEqual(model.presence, presence)

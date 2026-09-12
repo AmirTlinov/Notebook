@@ -37,13 +37,13 @@ final class NotebookControlRegionTests: XCTestCase {
     gate.beginPencilAction(source: pencil)
     let generation = gate.pencilGeneration
     card.frame.origin.y = 500
-    XCTAssertTrue(gate.permitsSceneContact(at: .init(x: 200, y: 200)), "Keyboard movement uses current native bounds")
-    XCTAssertFalse(gate.permitsSceneContact(at: .init(x: 200, y: 550)))
+    XCTAssertTrue(gate.permitsSceneContact(at: .init(x: 200, y: 200), kind: .finger), "Keyboard movement uses current native bounds")
+    XCTAssertFalse(gate.permitsSceneContact(at: .init(x: 200, y: 550), kind: .finger))
     XCTAssertTrue(gate.hasActivePencil)
     XCTAssertEqual(gate.pencilGeneration, generation, "Moving or updating the card does not end outside Pencil")
     gate.endPencilAction(source: pencil)
     card.removeFromSuperview()
-    XCTAssertTrue(gate.permitsSceneContact(at: .init(x: 200, y: 550)))
+    XCTAssertTrue(gate.permitsSceneContact(at: .init(x: 200, y: 550), kind: .finger))
   }
 
   @MainActor
@@ -56,12 +56,12 @@ final class NotebookControlRegionTests: XCTestCase {
     card.frame = .init(x: 100, y: 150, width: 300, height: 320); host.view.addSubview(card)
     defer { card.unregister(); window.isHidden = true }
     let point = CGPoint(x: 200, y: 200)
-    XCTAssertFalse(first.permitsSceneContact(at: point))
+    XCTAssertFalse(first.permitsSceneContact(at: point, kind: .finger))
     card.use(second)
-    XCTAssertTrue(first.permitsSceneContact(at: point))
-    XCTAssertFalse(second.permitsSceneContact(at: point))
+    XCTAssertTrue(first.permitsSceneContact(at: point, kind: .finger))
+    XCTAssertFalse(second.permitsSceneContact(at: point, kind: .finger))
     card.isHidden = true
-    XCTAssertTrue(second.permitsSceneContact(at: point))
+    XCTAssertTrue(second.permitsSceneContact(at: point, kind: .finger))
   }
 }
 

@@ -87,7 +87,7 @@ final class NotebookCodeAnnotations {
         next[fragment.id] = .init(fragment: fragment, ink: journal)
       }
       annotations = next; ready = true; fragments.sort { $0.id.uuidString < $1.id.uuidString }; error = nil
-    } catch { self.error = error.localizedDescription }
+    } catch { if !stopped, self.file == file, self.revision == revision { self.error = error.localizedDescription } }
   }
   func show(_ ids: [UUID]) {
     guard !stopped else { return }
@@ -110,13 +110,15 @@ final class NotebookCodeAnnotations {
   }
   func cancelContact() { contactActive = false }
   func review(_ fragment: NotebookCodeFragment) async {
-    guard !stopped else { return }
+    guard !stopped, file == fragment.currentFile else { return }
+    revision &+= 1
+    let revision = revision
     do {
       let value = try await persistence.submit { try $0.codeAnnotation(fragment.id) }
-      guard !stopped, !contactActive else { return }
+      guard !stopped, !contactActive, file == fragment.currentFile, self.revision == revision else { return }
       if let value { annotations[fragment.id] = value }
       reviewed = fragment
-    } catch { self.error = error.localizedDescription }
+    } catch { if !stopped, file == fragment.currentFile, self.revision == revision { self.error = error.localizedDescription } }
   }
   func rebind(to material: NotebookCodeFragment) async {
     guard !stopped, !contactActive, !bindingInFlight, let reviewed = rebinding else { return }

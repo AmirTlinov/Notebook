@@ -97,7 +97,7 @@ import XCTest
     XCTAssertEqual(model.selectionSession.element, .spatial(boardID: boardID, elementID: element.id))
     finger.point.x += 80; finger.point.y += 40
     recognizer.touchesMoved([finger], with: event)
-    XCTAssertEqual(model.selectionSession.translation, .init(x: 160, y: 80))
+    XCTAssertEqual(model.selectionSession.manipulation?.movement, .init(x: 160, y: 80))
     recognizer.touchesEnded([finger], with: event)
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
     await model.reloadExternalChanges()?.value
@@ -108,7 +108,7 @@ import XCTest
     XCTAssertEqual(model.presence?.camera, presence.camera)
     XCTAssertEqual(model.agentQuestion?.references.first?.elementID, element.id)
     XCTAssertTrue(model.chat?.jobs.isEmpty == true, "Selection never sends a hidden agent message")
-    XCTAssertEqual(model.selectionSession.translation, .zero)
+    XCTAssertNil(model.selectionSession.manipulation)
   }
 
   private func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }

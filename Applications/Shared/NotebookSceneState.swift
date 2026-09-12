@@ -18,7 +18,7 @@ struct NotebookSceneState: Sendable {
   let paperSizes: [UUID: DocumentPaperSize]
   let coverage: [UUID: WorkspaceSpatialBounds]
   let truncatedBoards: Set<UUID>
-  let missingPinnedElements: Set<String>
+  let missingPinnedElements: [UUID: Set<String>]
   let missingPinnedItems: Set<UUID>
   let transferredPinnedItems: [UUID: UUID]
 
@@ -124,7 +124,7 @@ struct NotebookSceneState: Sendable {
       var coverage: [UUID: WorkspaceSpatialBounds] = [:], truncated = Set<UUID>()
       var pending: [SessionPresence] = [presence]
       var remainingEntries = 96
-      var missingPinnedElements = Set<String>()
+      var missingPinnedElements: [UUID: Set<String>] = [:]
       while !pending.isEmpty, coverage.count < 4, remainingEntries > 0 {
         let view = pending.removeFirst()
         guard coverage[view.boardID] == nil else { continue }
@@ -136,7 +136,7 @@ struct NotebookSceneState: Sendable {
         if view.boardID == owner, !pins.contains(selected.id) { pins.append(selected.id) }
         let elementPins = try (pinnedElements[view.boardID] ?? []).filter { id in
           if try store.readSpatialElement(boardID: view.boardID, elementID: id) != nil { return true }
-          missingPinnedElements.insert(id); return false
+          missingPinnedElements[view.boardID, default: []].insert(id); return false
         }
         let window = try store.readSceneWindow(boardID: view.boardID, bounds: bounds,
           limit: remainingEntries, pinnedIDs: pins, pinnedElementIDs: elementPins)
