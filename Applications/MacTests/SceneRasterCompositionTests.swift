@@ -43,6 +43,21 @@ final class SceneRasterCompositionTests: XCTestCase {
     XCTAssertLessThanOrEqual(resources.peakAccountedBytes, resources.byteLimit)
     let persisted = await model.finishPendingPersistence()
     XCTAssertTrue(persisted)
+    let acceptedJournal = journal
+    try await model.performStoreCommand { try $0.saveSpatialInk(acceptedJournal) }
+    await model.reloadExternalChanges()?.value
+    let before = model.presence
+    let target = CollaborationTarget(kind: .board, id: workspace.rootBoardID)
+    let request = try model.store.requestTargetRender(target: target,
+      expectedRevision: model.store.targetContentRevision(target: target),
+      region: .init(x: 0, y: 0, width: 2048, height: 2048), worldOrigin: origin)
+    try await CurrentViewPreviewWriter.writeTarget(request, model: model)
+    let receipt = try XCTUnwrap(model.store.loadTargetRenderReceipt(request.id))
+    XCTAssertEqual(receipt.status, "ready")
+    XCTAssertTrue(receipt.diagnostics.isEmpty)
+    XCTAssertFalse(receipt.inkRegions.isEmpty)
+    XCTAssertEqual(receipt.pixelSize, .init(x: 4096, y: 4096))
+    XCTAssertEqual(model.presence, before)
   }
 
   @MainActor

@@ -4,6 +4,41 @@ import Testing
 
 @Suite("Addressed reference identities")
 struct NotebookReferenceIndexTests {
+  @Test(arguments: ["error", "ready"], [false, true])
+  func newSpatialRecipeKeepsOldReceiptAndContent(status: String, cover: Bool) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let item = try #require(try store.readItemHeaders(limit: 1).first)
+    let target = cover ? CollaborationTarget(kind: .cover, id: item.id, boardID: header.rootBoardID)
+      : CollaborationTarget(kind: .board, id: header.rootBoardID)
+    let revision = try store.referenceRevision(target: target), version = try store.targetContentRevision(target: target)
+    let region = PageRect(x: 0, y: 0, width: 2048, height: 2048)
+    let key: JSONValue = .object(["target": try .encode(target), "source": .string(revision),
+      "region": try .encode(region), "origin": .null, "page": .number(0)])
+    let hash = Array(try collaborationHash(key))
+    let id = UUID(uuidString: String(hash[0..<8]) + "-" + String(hash[8..<12]) + "-4" + String(hash[13..<16])
+      + "-8" + String(hash[17..<20]) + "-" + String(hash[20..<32]))!
+    let previous = TargetRenderRequest(id: id, target: target, sourceRevision: revision,
+      region: region, worldOrigin: nil, pageIndex: 0, pageVisionRevision: nil, createdAt: Date())
+    try store.publishRecords(writes: ["collaboration/render-requests/" + id.uuidString.lowercased() + ".json": try .encode(previous)])
+    try store.saveTargetRender(.init(request: previous, status: status,
+      diagnostics: status == "error" ? [.init(kind: "render_error", message: "resource_limit")] : []))
+    let oldBytes = try Data(contentsOf: store.targetReceiptURL(id))
+    let current = try store.requestTargetRender(target: target, expectedRevision: version, region: region)
+    #expect(current.id != previous.id)
+    #expect(current.sourceRevision == previous.sourceRevision)
+    #expect(throws: CollaborationError.self) { try previous.requireCurrentRenderingRecipe() }
+    try current.requireCurrentRenderingRecipe()
+    #expect(try store.loadTargetRenderReceipt(current.id) == nil)
+    let reopened = NotebookStore(root: root)
+    #expect(try reopened.requestTargetRender(target: target, expectedRevision: version, region: region) == current)
+    #expect(try reopened.referenceRevision(target: target) == revision)
+    #expect(try Data(contentsOf: reopened.targetReceiptURL(id)) == oldBytes)
+    #expect(try Set(reopened.targetRenderRequests().map(\.id)) == [previous.id, current.id])
+  }
+
   @Test func physicalOwnerTokensMatchCompleteSnapshotsAndBindPartialSources() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

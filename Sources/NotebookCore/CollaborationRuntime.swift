@@ -14,14 +14,17 @@ public struct TargetRenderRequest: Codable, Equatable, Sendable, Identifiable {
   public let createdAt: Date
 
   /// A durable picture depends on both its content and the rendering recipe.
-  /// Source revisions do not change when the physical MathJax compiler changes;
-  /// its earlier successful or failed receipts therefore keep another address.
+  /// Source revisions do not change with MathJax or spatial raster preparation;
+  /// earlier successful or failed recipes therefore keep another address.
   static func compositeFingerprint(target: CollaborationTarget, source: String,
     region: PageRect?, worldOrigin: WorldPoint?, pageIndex: Int) throws -> String {
     var key: JSONValue = .object(["target": try .encode(target), "source": .string(source),
       "region": try region.map(JSONValue.encode) ?? .null,
       "origin": try worldOrigin.map(JSONValue.encode) ?? .null, "page": .number(Double(pageIndex))])
     if target.kind == .document { key = key.setting("renderer", .string("NotebookDocumentFragments/2")) }
+    if target.kind == .board || target.kind == .cover {
+      key = key.setting("renderer", .string("NotebookSpatialComposition/2"))
+    }
     return try collaborationHash(key)
   }
 
