@@ -59,22 +59,18 @@ struct NotebookChatPanel: View {
             }
           }
         }
+        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 28))
+        .clipShape(RoundedRectangle(cornerRadius: 28))
+        .overlay { RoundedRectangle(cornerRadius: 28).strokeBorder(Color(.separator).opacity(0.18), lineWidth: 0.5).allowsHitTesting(false) }
+        .shadow(color: .black.opacity(0.08), radius: 22, y: 7)
       } else {
-        NotebookCollapsedChat(chat: chat, size: size, move: move, endInteraction: endInteraction)
+        NotebookCompanion(chat: chat, size: size, move: move, endInteraction: endInteraction)
       }
     }
     .disabled(chat.switchingComputer)
     .buttonStyle(.plain)
     .tint(Color.primary)
     .frame(width: size.width, height: size.height)
-    .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: chat.expanded ? 28 : 24))
-    .clipShape(RoundedRectangle(cornerRadius: chat.expanded ? 28 : 24))
-    .overlay {
-      RoundedRectangle(cornerRadius: chat.expanded ? 28 : 24)
-        .strokeBorder(Color(.separator).opacity(0.18), lineWidth: 0.5)
-        .allowsHitTesting(false)
-    }
-    .shadow(color: .black.opacity(0.08), radius: 22, y: 7)
     .overlay {
       if chat.expanded {
         ForEach(NotebookChatResizeCorner.allCases, id: \.rawValue) { corner in
@@ -144,7 +140,6 @@ struct NotebookChatPanel: View {
       } label: {
         HStack(spacing: 6) {
           Text(chat.browsesChats || chat.threadID == nil ? "Codex" : title).lineLimit(1)
-          if !chat.browsesChats, chat.conversation?.busy == true { ProgressView().controlSize(.mini) }
           if chat.threadID != nil { Image(systemName: "chevron.down").font(.system(size: 9, weight: .medium)) }
         }
         .font(.system(size: 14)).foregroundStyle(.secondary)
@@ -227,7 +222,7 @@ struct NotebookChatPanel: View {
 
   private func conversation(height: CGFloat) -> some View {
     VStack(spacing: 0) {
-      NotebookChatTranscript(messages: chat.messages, conversationID: chat.threadID, revealMessageID: chat.revealedMessageID,
+      NotebookChatTranscript(messages: chat.messages, work: chat.workStatus, conversationID: chat.threadID, revealMessageID: chat.revealedMessageID,
         canLoadEarlier: chat.canLoadEarlier && !chat.loadingHistory, loadEarlier: chat.loadEarlier,
         openLink: model.openNotebookLink, saveExplanation: { [thread = chat.threadID, computer = chat.computerID] message in
           if let thread, let computer { model.saveChatExplanation(message, thread: thread, computer: computer) }
@@ -362,6 +357,7 @@ private struct NotebookProjectSettings: View {
 /// one browser per message, reload the document, or touch the canvas hierarchy.
 struct NotebookChatTranscript: UIViewRepresentable {
   let messages: [CodexMessage]
+  var work: NotebookChatWorkStatus? = nil
   var conversationID: String? = nil
   var revealMessageID: String? = nil
   var canLoadEarlier = false
@@ -377,12 +373,13 @@ struct NotebookChatTranscript: UIViewRepresentable {
   func updateUIView(_ container: UIView, context: Context) {
     context.coordinator.openLink = openLink; context.coordinator.saveExplanation = saveExplanation
     context.coordinator.loadEarlier = loadEarlier; context.coordinator.canLoadEarlier = canLoadEarlier
-    context.coordinator.update(messages: messages, conversationID: conversationID, revealMessageID: revealMessageID)
+    context.coordinator.update(messages: messages, work: work, conversationID: conversationID, revealMessageID: revealMessageID)
   }
   static func dismantleUIView(_ container: UIView, coordinator: Coordinator) { coordinator.close() }
   @MainActor final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler, UIScrollViewDelegate {
     var ready = false, closed = false
     var json = "[]", sent: String?
+    var workJSON = "null", sentWork: String?
     var web: WKWebView?
     var lease: WebSurfaceLease?
     var preparation: Task<Void, Never>?
@@ -417,22 +414,23 @@ struct NotebookChatTranscript: UIViewRepresentable {
       web?.stopLoading(); web?.navigationDelegate = nil; web?.scrollView.delegate = nil; web?.removeFromSuperview(); web = nil
       lease?.release(); lease = nil
     }
-    func update(messages: [CodexMessage], conversationID: String? = nil, revealMessageID: String? = nil) {
+    func update(messages: [CodexMessage], work: NotebookChatWorkStatus? = nil, conversationID: String? = nil, revealMessageID: String? = nil) {
       if self.conversationID != conversationID { self.conversationID = conversationID; sent = nil; revealed = nil }
       self.revealMessageID = revealMessageID
       self.messages = messages
       json = (try? String(decoding: JSONEncoder().encode(messages), as: UTF8.self)) ?? "[]"
+      workJSON = (try? String(decoding: JSONEncoder().encode(work), as: UTF8.self)) ?? "null"
       if let web { publish(web) }
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { ready = true; publish(webView) }
     func publish(_ web: WKWebView) {
-      guard ready, !closed, sent != json || revealed != revealMessageID else { return }
-      sent = json
-      let value = json
+      guard ready, !closed, sent != json || sentWork != workJSON || revealed != revealMessageID else { return }
+      sent = json; sentWork = workJSON
+      let value = json, work = workJSON
       let conversation = conversationID ?? ""
       let focus = revealMessageID != revealed ? revealMessageID : nil
       if let focus, messages.contains(where: { $0.id == focus }) { revealed = focus }
-      Task { _ = try? await web.callAsyncJavaScript("await window.showMessages(json, conversation, focus)", arguments: ["json": value, "conversation": conversation, "focus": focus ?? ""], in: nil, contentWorld: .page) }
+      Task { _ = try? await web.callAsyncJavaScript("await window.showMessages(json, conversation, focus, JSON.parse(work))", arguments: ["json": value, "conversation": conversation, "focus": focus ?? "", "work": work], in: nil, contentWorld: .page) }
     }
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
       guard !closed, canLoadEarlier, scrollView.isDragging || scrollView.isDecelerating,

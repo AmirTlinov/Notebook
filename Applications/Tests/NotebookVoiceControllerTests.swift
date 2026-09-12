@@ -51,6 +51,12 @@ import NotebookCore
     let offer = try await web.callAsyncJavaScript("return await window.voiceOffer(0)", arguments: [:], in: nil, contentWorld: .page) as? String
     XCTAssertTrue(offer?.contains("m=audio") == true)
     _ = try await web.evaluateJavaScript("window.originalPeer=peer;window.originalTrack=microphone.getAudioTracks()[0]")
+    _ = try await web.evaluateJavaScript("window.voiceSpeakerMute(true)")
+    let outputOff = try await web.evaluateJavaScript("document.getElementById('speaker').muted && originalTrack.readyState==='live' && captures===1 && peer===originalPeer") as? Bool
+    XCTAssertEqual(outputOff, true, "Output mute must not stop the microphone or replace the existing call")
+    _ = try await web.evaluateJavaScript("window.voiceSpeakerMute(false)")
+    let outputOn = try await web.evaluateJavaScript("!document.getElementById('speaker').muted && captures===1 && peer===originalPeer") as? Bool
+    XCTAssertEqual(outputOn, true)
     _ = try await web.callAsyncJavaScript("await window.voiceMute(true)", arguments: [:], in: nil, contentWorld: .page)
     let off = try await web.evaluateJavaScript("microphone===null && originalTrack.readyState==='ended' && peer===originalPeer") as? Bool
     XCTAssertEqual(off, true, "Mute stops capture, not just track transmission")

@@ -64,6 +64,8 @@ window.voiceMute=async muted=>{
   gate.port.postMessage({type:'off'});stopCapture();
   if(!muted){gate.port.postMessage({type:'live'});await capture();await context.resume();}
 };
+// Output mute never changes capture, wake recognition, or the Codex session.
+window.voiceSpeakerMute=muted=>{if(closed)throw new Error('Voice closed');document.getElementById('speaker').muted=muted;};
 window.voiceEnd=async()=>{
   closed=true;prepared?.reject(new Error('Микрофон выключен'));prepared=null;activating?.reject(new Error('Микрофон выключен'));activating=null;
   gate?.port.postMessage({type:'off'});stopCapture();clearInterval(levels);levels=null;

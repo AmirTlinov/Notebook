@@ -104,7 +104,7 @@ struct NotebookRootView: View {
       }
       // The launcher stays still during keyboard dismissal. A compact editor
       // or native question follows the keyboard just like the expanded composer.
-      .ignoresSafeArea(.keyboard, edges: chat.expanded || chat.compactDraftExpanded || chat.conversation?.requests.isEmpty == false ? [] : .bottom)
+      .ignoresSafeArea(.keyboard, edges: chat.expanded || chat.companionExpanded || chat.conversation?.requests.isEmpty == false ? [] : .bottom)
     }
     if let question = model.agentQuestion, model.chat?.expanded != true {
       NotebookQuestionOverlay(question: question, sceneOrigin: sceneOrigin,

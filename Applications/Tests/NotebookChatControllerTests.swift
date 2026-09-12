@@ -4,7 +4,25 @@ import XCTest
 
 @MainActor
 final class NotebookChatControllerTests: XCTestCase {
-  func testCollapsedSubscriptionShowsOnlyFinalRepliesAndKeepsDraftAndReadReceipts() async throws {
+  func testWorkStatusUsesOnlyCurrentPublicProgressAndStopsForDecisionsOrDisconnect() {
+    let messages: [CodexMessage] = [
+      .init(id: "old", turnID: "old", clientID: nil, role: .assistant, text: "Old status", phase: "commentary"),
+      .init(id: "tool", turnID: "turn", clientID: nil, role: .assistant, text: "Читаю файл", activity: .init(kind: .files, status: "inProgress")),
+      .init(id: "progress", turnID: "turn", clientID: nil, role: .assistant, text: "Проверяю\nизменение", phase: "commentary")]
+    func value(active: Bool = true, requests: [CodexUserRequest] = []) -> CodexConversation {
+      .init(threadID: "task", revision: 1, title: "Task", ready: true, busy: active, activeTurnID: active ? "turn" : nil,
+        messages: messages, requests: requests, acceptedMessages: [:], turnStatuses: [:])
+    }
+    let status = NotebookChatWorkStatus(conversation: value(), connected: true)
+    XCTAssertEqual(status?.title, "Проверяю изменение"); XCTAssertEqual(status?.turnID, "turn"); XCTAssertEqual(status?.running, true)
+    let offline = NotebookChatWorkStatus(conversation: value(), connected: false)
+    XCTAssertEqual(offline?.running, false); XCTAssertEqual(offline?.title, "Mac не в сети · задача сохранена")
+    let request = CodexUserRequest(nativeID: .number(7), method: "item/tool/requestUserInput", turnID: "turn", parameters: .object([:]))
+    let question = NotebookChatWorkStatus(conversation: value(requests: [request]), connected: true)
+    XCTAssertEqual(question?.title, "Нужно ваше решение"); XCTAssertEqual(question?.running, false)
+    XCTAssertNil(NotebookChatWorkStatus(conversation: value(active: false), connected: true))
+  }
+  func testCompanionKeepsOneSubscriptionDraftAndUnreadReceipts() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("compact-chat-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), author = UUID(), peer = UUID(), thread = UUID().uuidString
@@ -21,6 +39,7 @@ final class NotebookChatControllerTests: XCTestCase {
       guard case .request(let query) = envelope.body else { return }
       let reply: NotebookChatReply
       switch query {
+      case .run: reply = .run(.init(record: nil))
       case .conversation: subscription = envelope.id; reply = .conversation(snapshot(1))
       case .history: reply = .history(.init(messages: [], nextCursor: nil))
       case .projects: reply = .projects(.init(projects: [], nextCursor: nil))
@@ -40,10 +59,10 @@ final class NotebookChatControllerTests: XCTestCase {
     try await Task.sleep(for: .milliseconds(30))
     collapsed = true; chat.expanded = false
     chat.receive(.init(body: .event(subscriptionID: id, conversation: snapshot(2))), peerID: peer)
-    XCTAssertFalse(chat.expanded); XCTAssertEqual(chat.replyCloud?.id, "reply-2"); XCTAssertEqual(chat.unreadReplies.count, 1)
-    chat.hideReplyCloud(); XCTAssertNil(chat.replyCloud); XCTAssertEqual(chat.unreadReplies.count, 1)
+    XCTAssertFalse(chat.expanded); XCTAssertEqual(chat.unreadReplies.map(\.id), ["reply-2"])
+    chat.companionExpanded = true; chat.companionExpanded = false
     chat.receive(.init(body: .event(subscriptionID: id, conversation: snapshot(3))), peerID: peer)
-    XCTAssertEqual(chat.replyCloud?.id, "reply-3"); XCTAssertEqual(chat.unreadReplies.count, 2)
+    XCTAssertEqual(chat.unreadReplies.map(\.id), ["reply-2", "reply-3"])
     XCTAssertEqual(chat.messages.count, 4); XCTAssertEqual(chat.draft, "Retained draft"); XCTAssertTrue(chat.jobs.isEmpty)
     chat.revealReply("reply-2")
     XCTAssertTrue(chat.expanded); XCTAssertEqual(chat.revealedMessageID, "reply-2"); XCTAssertTrue(chat.unreadReplies.isEmpty)
@@ -66,6 +85,7 @@ final class NotebookChatControllerTests: XCTestCase {
       guard case .request(let query) = envelope.body else { return }
       let reply: NotebookChatReply
       switch query {
+      case .run: reply = .run(.init(record: nil))
       case .projects: reply = .projects(.init(projects: [.init(id: "p", name: "Version \(generation)", roots: ["/fixture"])], nextCursor: nil))
       case .catalogue(let cursor, _):
         catalogueReads += 1
@@ -87,7 +107,7 @@ final class NotebookChatControllerTests: XCTestCase {
         }
         reply = .conversation(.init(threadID: thread, revision: 1, title: "Task", ready: true, busy: true, activeTurnID: "turn",
           messages: [message(3), message(4), message(5, text: "Live text"), message(6)], requests: [], acceptedMessages: [:], turnStatuses: [:]))
-      default: return XCTFail("Silent synchronization cannot submit work")
+      default: return XCTFail("Silent synchronization cannot submit work: \(query)")
       }
       chat.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
     }
@@ -168,6 +188,7 @@ final class NotebookChatControllerTests: XCTestCase {
       guard case .request(let query) = envelope.body else { return }
       let reply: NotebookChatReply
       switch query {
+      case .run: reply = .run(.init(record: nil))
       case .job(let offered): XCTAssertEqual(offered.id, input.id); offers += 1; reply = .job(receipt)
       case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil))
       case .projects: reply = .projects(.init(projects: [], nextCursor: nil))
@@ -206,6 +227,7 @@ final class NotebookChatControllerTests: XCTestCase {
       guard case .request(let query) = envelope.body else { return XCTFail("Expected request") }
       let reply: NotebookChatReply
       switch query {
+      case .run: reply = .run(.init(record: nil))
       case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil, defaultProviderNeedsSignIn: false))
       case .projects: reply = .projects(.init(projects: [], nextCursor: nil))
       case .history: reply = .history(.init(messages: [], nextCursor: nil))
@@ -247,6 +269,7 @@ final class NotebookChatControllerTests: XCTestCase {
       guard case .request(let query) = envelope.body else { return XCTFail("Expected a query") }
       let reply: NotebookChatReply
       switch query {
+      case .run: reply = .run(.init(record: nil))
       case .job(let input):
         if let previous = envelopeIDs[input.id] {
           XCTAssertEqual(previous, envelope.id, "An unacknowledged transport retry retains its request ID")
@@ -337,7 +360,8 @@ final class NotebookChatControllerTests: XCTestCase {
       guard case .request(let query) = envelope.body else { return XCTFail("Expected a query") }
       let reply: NotebookChatReply
       switch query {
-      case .models, .resources, .file, .run, .resizeRun, .voice: return XCTFail("File and terminal panels are closed")
+      case .run: reply = .run(.init(record: nil))
+      case .models, .resources, .file, .resizeRun, .voice: return XCTFail("File and terminal panels are closed")
       case .projects: reply = .projects(.init(projects: [project], nextCursor: nil))
       case .catalogue(_, let selected):
         if selected == project { filtered = true }
@@ -398,6 +422,7 @@ final class NotebookChatControllerTests: XCTestCase {
       guard case .request(let query) = envelope.body else { return }
       let reply: NotebookChatReply
       switch query {
+      case .run: reply = .run(.init(record: nil))
       case .projects:
         reply = .projects(.init(projects: [first, renamed ? .init(id: second.id, name: "Renamed", roots: second.roots) : second, empty], nextCursor: nil))
       case .catalogue(let cursor, let project):
@@ -412,7 +437,7 @@ final class NotebookChatControllerTests: XCTestCase {
         XCTAssertLessThanOrEqual(ids.count, 8); reply = .activity(ids.map { .init(id: $0, status: .idle) })
       case .conversation(let id): reply = .conversation(.init(threadID: id, revision: 1, title: "Native", ready: true, busy: false, activeTurnID: nil,
         messages: [], requests: [], acceptedMessages: [:], turnStatuses: [:]))
-      default: return XCTFail("Browsing is read-only, not a task or process launch")
+      default: return XCTFail("Browsing is read-only, not a task or process launch: \(query)")
       }
       chat.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
     }

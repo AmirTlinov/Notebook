@@ -95,6 +95,7 @@ struct NotebookChatWindow: View {
   let openPairing: () -> Void
   let openHistory: () -> Void
   let frameChanged: (CGRect) -> Void
+  @AppStorage("notebook.companion.show-task") private var showsCompanionTask = true
   @AppStorage("notebook.chat-window") private var savedLayout = ""
   @State private var interaction: (frame: CGRect, available: CGRect, layout: NotebookChatWindowLayout)?
   @State private var liveLayout: NotebookChatWindowLayout?
@@ -104,7 +105,7 @@ struct NotebookChatWindow: View {
 
   var body: some View {
     let frame = layout.frame(in: available, expanded: chat.expanded,
-      compactSize: NotebookCollapsedChat.preferredSize(chat: chat, available: available.size))
+      compactSize: NotebookCompanion.preferredSize(chat: chat, available: available.size, showsTask: showsCompanionTask))
     NotebookChatPanel(chat: chat, size: frame.size, openPairing: openPairing, openHistory: openHistory,
       move: { update($0, ended: $1, corner: nil, frame: frame) },
       resize: { update($0, ended: $1, corner: $2, frame: frame) },
@@ -112,6 +113,9 @@ struct NotebookChatWindow: View {
       .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frameChanged($0) }
       .position(x: frame.midX, y: frame.midY)
       .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.3, extraBounce: 0), value: chat.expanded)
+      .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: chat.companionExpanded)
+      .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: showsCompanionTask)
+      .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: chat.voice.capturing)
       .onChange(of: available) {
         if interaction != nil { interruptedDrag = true }
         finishInteraction()

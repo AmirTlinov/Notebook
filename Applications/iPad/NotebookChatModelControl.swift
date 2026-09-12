@@ -3,6 +3,7 @@ import NotebookCore
 
 struct NotebookChatModelControl: View {
   let chat: NotebookChatController
+  var compact = false
   @State private var settings = false
   @State private var context = false
   private var selected: CodexModelOption? { chat.models.first { $0.id == chat.conversation?.model?.model } }
@@ -25,13 +26,15 @@ struct NotebookChatModelControl: View {
         }
       Button { settings = true } label: {
         HStack(spacing: 4) {
-          VStack(alignment: .leading, spacing: 1) {
-            Text(selected?.name ?? chat.conversation?.model?.model ?? "Модель").lineLimit(1)
-            Text(effortTitle(chat.conversation?.model?.effort)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+          if compact {
+            Image(systemName: "cpu").font(.system(size: 15))
+          } else {
+            Text((selected?.name ?? chat.conversation?.model?.model ?? "Модель") + " · " + effortTitle(chat.conversation?.model?.effort))
+              .lineLimit(1)
           }
           if chat.modelChangePending { ProgressView().controlSize(.mini) }
           else { Image(systemName: "chevron.down").font(.system(size: 8)) }
-        }.font(.system(size: 12)).frame(minWidth: 60, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+        }.font(.system(size: 12)).frame(minWidth: compact ? 36 : 60, minHeight: 44, alignment: .trailing).contentShape(Rectangle())
       }.accessibilityLabel("Модель и мышление").accessibilityValue((selected?.name ?? chat.conversation?.model?.model ?? "Неизвестна") + " · " + effortTitle(chat.conversation?.model?.effort)).accessibilityIdentifier("notebook-chat-model")
         .popover(isPresented: $settings) {
           VStack(alignment: .leading, spacing: 12) {
@@ -66,7 +69,7 @@ struct NotebookChatModelControl: View {
             .disabled(!chat.connected || (chat.modelChangePending && !chat.modelChangeUncertain) || chat.continuationUnavailable)
             .task { await chat.readModels() }
         }
-    }
+    }.fixedSize(horizontal: true, vertical: false)
     .task(id: "\(chat.computerID?.uuidString ?? "")/\(chat.connected)") { if chat.connected { await chat.readModels() } }
   }
   private var usageText: String {

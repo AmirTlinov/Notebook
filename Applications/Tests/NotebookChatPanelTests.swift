@@ -7,6 +7,46 @@ import XCTest
 
 @MainActor
 final class NotebookChatPanelTests: XCTestCase {
+  func testNativeWorkShimmersOnceAndDisclosureSurvivesResizeWithoutReplayingItems() async throws {
+    let coordinator = NotebookChatTranscript.Coordinator()
+    let container = UIView(frame: .init(x: 0, y: 0, width: 540, height: 560))
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    window.rootViewController = UIViewController(); window.rootViewController?.view.addSubview(container); window.isHidden = false
+    coordinator.mount(container)
+    defer { coordinator.close(); window.isHidden = true; window.rootViewController = nil }
+    let messages: [CodexMessage] = [
+      .init(id: "human", turnID: "turn", clientID: nil, role: .user, text: "Проверь рисунок"),
+      .init(id: "progress", turnID: "turn", clientID: nil, role: .assistant, text: "Проверяю рисунок на доске", phase: "commentary"),
+      .init(id: "tool", turnID: "turn", clientID: nil, role: .assistant, text: "Читаю доску", activity: .init(kind: .tool, status: "inProgress", detail: "notebook_read_board"))]
+    func conversation(busy: Bool) -> CodexConversation {
+      .init(threadID: "task", revision: 1, title: "Рисунок", ready: true, busy: busy, activeTurnID: busy ? "turn" : nil,
+        messages: messages, requests: [], acceptedMessages: [:], turnStatuses: [:])
+    }
+    let work = NotebookChatWorkStatus(conversation: conversation(busy: true), connected: true)
+    coordinator.update(messages: messages, work: work, conversationID: "task")
+    let deadline = ContinuousClock.now + .seconds(8)
+    var rendered = false
+    while !rendered, .now < deadline {
+      if let web = coordinator.web { rendered = (try? await web.evaluateJavaScript("document.querySelectorAll('article').length===3")) as? Bool == true }
+      if !rendered { try await Task.sleep(for: .milliseconds(30)) }
+    }
+    XCTAssertTrue(rendered, "The native transcript did not render")
+    let web = try XCTUnwrap(coordinator.web)
+    let status = try await web.evaluateJavaScript("document.querySelectorAll('.work').length===1 && document.querySelector('.work-label').textContent==='Проверяю рисунок на доске' && document.querySelectorAll('[data-running=true]').length===1") as? Bool
+    XCTAssertEqual(status, true)
+    _ = try await web.evaluateJavaScript("document.querySelector('.work').open=true;window.kept=document.querySelector('[data-item-id=tool]');true")
+    container.frame.size.width = 340; container.layoutIfNeeded()
+    coordinator.update(messages: messages, work: work, conversationID: "task")
+    let retained = try await web.evaluateJavaScript("kept===document.querySelector('[data-item-id=tool]') && document.querySelectorAll('[data-item-id=tool]').length===1 && document.querySelector('.work').open") as? Bool
+    XCTAssertEqual(retained, true, "Geometry must not republish, collapse details or duplicate a native item")
+    let proof = XCTAttachment(image: UIGraphicsImageRenderer(bounds: container.bounds).image { _ in container.drawHierarchy(in: container.bounds, afterScreenUpdates: true) })
+    proof.name = "companion-chat-pearlescent-work"; proof.lifetime = .keepAlways; add(proof)
+    coordinator.update(messages: messages, work: .init(conversation: conversation(busy: false), connected: true), conversationID: "task")
+    try await Task.sleep(for: .milliseconds(100))
+    let finished = try await web.evaluateJavaScript("document.querySelectorAll('[data-running=true]').length===0 && document.querySelectorAll('article').length===3 && document.querySelector('.work').open") as? Bool
+    XCTAssertEqual(finished, true, "Completion retires the shimmer without rewriting the conversation")
+  }
+
   func testRecentChatsAndFixedComposerMatchReferenceWithoutTakingFocus() async throws {
     try await panel(width: 560, height: 640, name: "chat-reference-recents")
   }
@@ -46,6 +86,9 @@ final class NotebookChatPanelTests: XCTestCase {
     let chat = NotebookChatController(persistence: queue, author: author) { envelope, destination in
       XCTAssertEqual(destination, peer)
       guard case .request(let query) = envelope.body else { return XCTFail("Expected a catalogue query") }
+      if case .run = query {
+        receiver?.receive(.init(id: envelope.id, body: .reply(.run(.init(record: nil)))), peerID: peer); return
+      }
       if case .models = query {
         receiver?.receive(.init(id: envelope.id, body: .reply(.models([.init(id: "fixture", name: "Fixture", efforts: ["low", "high"], defaultEffort: "low")]))), peerID: peer); return
       }
@@ -72,7 +115,7 @@ final class NotebookChatPanelTests: XCTestCase {
           access: .init(profileID: CodexAccessMode.workspace.rawValue, approvalPolicy: .string("on-request"), available: CodexAccessMode.allCases), model: .init(model: "fixture", effort: "high"), contextUsage: .init(used: 193000, window: 258000))
         receiver?.receive(.init(id: envelope.id, body: .reply(.conversation(value))), peerID: peer); return
       }
-      guard case .catalogue = query else { return XCTFail("This view never starts or selects a task") }
+      guard case .catalogue = query else { return XCTFail("This view never starts or selects a task: \(query)") }
       let tasks = ["Изучение высшей математики", "Сделай цветным", "Сделай цветным"].enumerated().map {
         CodexTask(id: taskIDs[$0.offset], title: $0.element, cwd: "/fixture", projectID: "project")
       }

@@ -27,11 +27,15 @@ summary{list-style:none}summary::-webkit-details-marker{display:none}summary::ma
 article[data-kind="activity"] summary{display:flex;gap:8px;align-items:baseline;cursor:pointer;overflow-wrap:anywhere}
 article[data-kind="activity"] pre{color:#666;font-size:12px;max-height:260px;overflow:auto}
 article[data-status="inProgress"] summary{color:#555}
-.work{margin:0 0 20px;color:#737373;font-size:12px;border-bottom:1px solid #ededed;padding-bottom:8px}
+.work{margin:0 0 20px;color:#737373;font-size:13px}
 .work>summary{display:flex;gap:8px;align-items:baseline;cursor:pointer;min-height:30px;line-height:1.5;padding:6px 0}
 .work>summary .work-label{display:inline-block;max-width:92%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
 .work[open]>summary{margin-bottom:10px}
-.work article{padding-left:10px;border-left:1px solid #ececec}
+.work article{padding-left:0}.work .work-commentary{font-size:12px;line-height:1.5;color:#737373;margin:0 0 10px}
+.work-disclosure{width:10px;height:10px;flex:none;transition:transform .2s}.work[open]>.work-heading .work-disclosure{transform:rotate(180deg)}
+.work-label[data-running="true"]{background:linear-gradient(110deg,#83838b 30%,#c1bed7 43%,#ededf5 50%,#aeb8ce 57%,#83838b 70%);background-size:240% 100%;background-clip:text;-webkit-background-clip:text;color:transparent;animation:pearl 2.8s linear infinite}
+@keyframes pearl{from{background-position:150% 0}to{background-position:-50% 0}}
+@media(prefers-reduced-motion:reduce){.work-label[data-running="true"]{animation:none;background:none;color:#737373}}
 article[data-status="inProgress"]{color:#444}article[data-status="failed"],article[data-status="declined"]{color:#ac3934}
 .activity-label{display:flex;gap:8px;align-items:baseline}
 .activity-icon{display:inline-block;width:15px;height:15px;flex:none;align-self:flex-start;margin-top:2px;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
@@ -61,26 +65,33 @@ marked.use({extensions:[
  {name:'mathBlock',level:'block',start:src=>src.search(/\$\$|\\\[/),tokenizer(src){const m=/^(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\])(?:\n|$)/.exec(src);if(m)return{type:'mathBlock',raw:m[0]};},renderer:token=>`<div>${escapeMath(token.raw)}</div>`},
  {name:'mathInline',level:'inline',start:src=>src.search(/\$|\\\(/),tokenizer(src){const m=/^(\\\([\s\S]*?\\\)|\$(?!\$)[^\n$]+?\$)/.exec(src);if(m)return{type:'mathInline',raw:m[0]};},renderer:token=>`<span>${escapeMath(token.raw)}</span>`}
 ]});
+const isWorkMessage=m=>m.activity||(m.role==='assistant'&&m.phase==='commentary');
+function workHeading(labelText,active,disclosure=true){
+ const summary=document.createElement(disclosure?'summary':'div');summary.className='work-heading';
+ const label=document.createElement('span');label.className='work-label';label.textContent=labelText;label.dataset.running=String(active);summary.append(label);
+ if(disclosure){const arrow=document.createElementNS('http://www.w3.org/2000/svg','svg');arrow.setAttribute('viewBox','0 0 12 12');arrow.setAttribute('aria-hidden','true');arrow.classList.add('work-disclosure');arrow.innerHTML='<path d="m2 4 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.2"/>';summary.append(arrow);}
+ return summary;
+}
 let next=null,running=false,shownConversation=null;
 window.revealMessage=id=>{const item=[...document.querySelectorAll('article')].find(x=>x.dataset.itemId===id);if(item){item.querySelectorAll('details').forEach(x=>x.open=true);item.scrollIntoView({block:'start'});}};
-window.showMessages=async function(json,conversation='',focus=''){
- next={messages:JSON.parse(json),conversation,focus:focus||(next?.conversation===conversation?next.focus:'')};if(running)return;running=true;
- try{await MathJax.startup.promise;while(next){const {messages,conversation,focus}=next;next=null;
+window.showMessages=async function(json,conversation='',focus='',work=null){
+ next={messages:JSON.parse(json),conversation,work,focus:focus||(next?.conversation===conversation?next.focus:'')};if(running)return;running=true;
+ try{await MathJax.startup.promise;while(next){const {messages,conversation,focus,work}=next;next=null;
  const root=document.getElementById('messages'),changed=conversation!==shownConversation;shownConversation=conversation;
  const follows=changed||!root.childElementCount||scrollY+innerHeight>=document.documentElement.scrollHeight-60;
  const anchor=!changed&&[...root.querySelectorAll('article')].find(x=>{const r=x.getBoundingClientRect();return r.height>0&&r.bottom>0});
  const position=anchor?{id:anchor.dataset.itemId,top:anchor.getBoundingClientRect().top}:null;
  const expanded=new Set(changed?[]:[...root.querySelectorAll('details[open]')].map(x=>x.dataset.key));MathJax.typesetClear([root]);root.replaceChildren();
- let group=null,groupEnd=-1;
+ let group=null,groupEnd=-1,activeWorkShown=false;
  for(let index=0;index<messages.length;index++){const m=messages[index];const article=document.createElement('article');article.dataset.itemId=m.id;
  if(index>groupEnd)group=null;
- if(m.activity&&!group){let end=index;while(end+1<messages.length&&messages[end+1].activity&&messages[end+1].turnID===m.turnID)end++;
-   if(end>index){group=document.createElement('details');group.className='work';group.dataset.key='work:'+m.id;group.open=expanded.has(group.dataset.key);groupEnd=end;
-     const items=messages.slice(index,end+1),current=items.find(x=>x.activity.status==='inProgress'),failed=items.some(x=>['failed','declined'].includes(x.activity.status));
-     const summary=document.createElement('summary'),label=document.createElement('span');label.className='work-label';
-     const count=items.length,word=count%10===1&&count%100!==11?'действие':count%10>=2&&count%10<=4&&(count%100<12||count%100>14)?'действия':'действий';
-     label.textContent=current?current.text:(failed?'Есть ошибка · ':'Выполнено · ')+count+' '+word;summary.append(activityIcon(current?.activity.kind||(failed?'error':'work')),label);group.append(summary);root.append(group);
-   }
+ if(isWorkMessage(m)&&!group){let end=index;while(end+1<messages.length&&isWorkMessage(messages[end+1])&&messages[end+1].turnID===m.turnID)end++;
+   group=document.createElement('details');group.className='work';group.dataset.key='work:'+m.id;group.open=expanded.has(group.dataset.key);groupEnd=end;
+   const items=messages.slice(index,end+1),comment=items.findLast(x=>x.phase==='commentary'&&!x.activity),failed=items.some(x=>['failed','declined'].includes(x.activity?.status));
+   const active=work&&work.turnID===m.turnID&&end===messages.findLastIndex(x=>isWorkMessage(x)&&x.turnID===m.turnID);
+   const count=items.filter(x=>x.activity).length,word=count%10===1&&count%100!==11?'действие':count%10>=2&&count%10<=4&&(count%100<12||count%100>14)?'действия':'действий';
+   const title=active?work.title:comment?.text||(failed?'Есть ошибка · ':'Выполнено · ')+count+' '+word;
+   group.append(workHeading(title,!!(active&&work.running)));root.append(group);if(active)activeWorkShown=true;
  }
  const destination=group||root;
  if(m.activity){
@@ -95,8 +106,12 @@ window.showMessages=async function(json,conversation='',focus=''){
    if(m.isTruncated){const note=document.createElement('small');note.textContent='Показан фрагмент. Полное содержание — в Codex.';article.append(note);}
    destination.append(article);continue;
  }
+ if(m.phase==='commentary'&&m.role==='assistant'){
+   article.className='work-commentary';article.textContent=m.text;destination.append(article);continue;
+ }
  article.dataset.role=m.role==='user'?'user':'assistant';const role=document.createElement('b');role.className='role';role.textContent=m.role==='user'?'Вы':'Codex';article.append(role);
  const content=document.createElement('div');content.className='content';content.innerHTML=DOMPurify.sanitize(marked.parse(m.text),{ALLOWED_URI_REGEXP:/^(?:(?:https?|mailto|notebook):|[#/]|[^a-zA-Z])/,FORBID_TAGS:['img','iframe','form','input','button','style'],FORBID_ATTR:['style']});if(m.role==='user'&&m.text.length>900){const full=document.createElement('details');full.className='long-message';full.dataset.key='message:'+m.id;full.open=expanded.has(full.dataset.key);const preview=document.createElement('summary');const previewText=document.createElement('span');previewText.textContent=m.text.slice(0,180)+'…';preview.append(activityIcon('files'),previewText);full.append(preview);while(content.firstChild)full.append(content.firstChild);content.append(full);}if(m.role==='user'&&m.attachments?.length){const list=document.createElement('div');list.className='attachments';list.setAttribute('aria-label','Прикреплённые файлы');for(const name of m.attachments){const file=document.createElement('span'),label=document.createElement('span');file.className='attachment';label.textContent=name;file.append(activityIcon(/\.(png|jpe?g|gif|webp|heic)$/i.test(name)?'image':'files'),label);list.append(file);}content.prepend(list);}article.append(content);if(m.isTruncated){const note=document.createElement('small');note.textContent='Показан фрагмент сообщения. Полный текст — в Codex.';article.append(note);}if(m.role==='assistant'){const save=document.createElement('button');save.type='button';save.className='save-answer';save.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v6M7 8h8M7 12h4M18 14v8M14 18h8"/></svg>';save.setAttribute('aria-label','Сохранить ответ в заметках');save.title='Сохранить ответ в заметках';save.addEventListener('click',()=>window.webkit?.messageHandlers?.notebookChat?.postMessage({action:'save',id:m.id}));article.append(save);}root.append(article);}
+ if(work&&!activeWorkShown){const status=document.createElement('div');status.className='work';status.append(workHeading(work.title,work.running,false));root.append(status);}
  await MathJax.typesetPromise([root]);
  if(focus)window.revealMessage(focus);
  else if(follows)scrollTo(0,document.documentElement.scrollHeight);

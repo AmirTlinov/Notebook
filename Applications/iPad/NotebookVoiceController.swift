@@ -47,6 +47,8 @@ import NotebookCore
   private(set) var state: NotebookVoiceState?
   private(set) var changingMute = false
   private(set) var muted = false
+  private(set) var changingSpeaker = false
+  private(set) var speakerMuted = false
   private(set) var mediaReady = false
   private(set) var ending = false
   private(set) var error: String?
@@ -163,6 +165,19 @@ import NotebookCore
     error = "Голосовое соединение прервано. Задача сохранена, микрофон выключается; автоматического звонка нет."
     Task { await end() }
   }
+  func toggleSpeaker() async {
+    guard let id = captureID, activeID != nil, !ending, !changingSpeaker, let web else { return }
+    changingSpeaker = true; defer { changingSpeaker = false }
+    let muted = !speakerMuted
+    do {
+      _ = try await web.callAsyncJavaScript("window.voiceSpeakerMute(value)", arguments: ["value": muted], in: nil, contentWorld: .page)
+      guard captureID == id, !ending else { return }
+      speakerMuted = muted
+    } catch {
+      guard captureID == id, !ending else { return }
+      self.error = "Не удалось изменить звук GPT. Разговор остаётся в этой задаче."
+    }
+  }
   func end() async {
     guard let id = captureID, !ending else { return }
     ending = true; wake?.stop(); wake = nil; waiting = false; poll?.cancel(); poll = nil; deadline?.cancel(); deadline = nil
@@ -197,7 +212,7 @@ import NotebookCore
     guard captureID == id else { return }
     error = nil
     state?.phase = .ended; state?.sdp = nil
-    activeID = nil; captureID = nil; phase = .off; ending = false; muted = false; submitted = false
+    activeID = nil; captureID = nil; phase = .off; ending = false; muted = false; speakerMuted = false; submitted = false
     endConfirmation?.cancel(); endConfirmation = nil
   }
   func shutdown() async { await end(); endConfirmation?.cancel(); endConfirmation = nil }
@@ -255,12 +270,14 @@ struct NotebookVoiceControls: View {
   var body: some View {
     if voice.capturing {
       HStack(spacing: 8) {
-        Image(systemName: voice.muted ? "mic.slash.fill" : "waveform").foregroundStyle(voice.mediaReady ? .green : .secondary)
+        NotebookVoiceOrb(phase: voice.phase).frame(width: 20, height: 20)
         Text(voice.status).font(.caption).lineLimit(2)
         Spacer(minLength: 0)
         Button { Task { await voice.mute() } } label: { Image(systemName: voice.muted ? "mic.fill" : "mic.slash").frame(width: 44,height: 44).contentShape(Rectangle()) }
           .accessibilityLabel(voice.muted ? "Включить микрофон" : "Выключить микрофон").disabled(voice.ending || voice.changingMute)
         if voice.activeID != nil {
+        Button { Task { await voice.toggleSpeaker() } } label: { Image(systemName: voice.speakerMuted ? "speaker.slash" : "speaker.wave.2").frame(width: 40, height: 44).contentShape(Rectangle()) }
+          .accessibilityLabel(voice.speakerMuted ? "Включить звук GPT" : "Выключить звук GPT").disabled(voice.ending || voice.changingSpeaker)
         Button { showingText = true } label: { Image(systemName: "text.bubble").frame(width: 36, height: 44).contentShape(Rectangle()) }
           .accessibilityLabel("Текст голосового разговора")
         Button { Task { await voice.end() } } label: { Image(systemName: "phone.down.fill").foregroundStyle(.red).frame(width: 44,height: 44).contentShape(Rectangle()) }

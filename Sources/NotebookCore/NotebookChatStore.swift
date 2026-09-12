@@ -116,7 +116,7 @@ extension NotebookStore {
       throw NotebookStorageError.invalidTransaction("invalid chat panel")
     }
     if let read = state.readPosition {
-      guard read.threadID == state.threadID, [read.readThrough, read.hiddenThrough].compactMap({ $0 }).allSatisfy({ !$0.isEmpty && $0.utf8.count <= 512 }) else {
+      guard read.threadID == state.threadID, [read.readThrough].compactMap({ $0 }).allSatisfy({ !$0.isEmpty && $0.utf8.count <= 512 }) else {
         throw NotebookStorageError.invalidTransaction("invalid chat read position")
       }
     }

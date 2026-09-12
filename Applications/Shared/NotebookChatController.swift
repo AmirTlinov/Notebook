@@ -48,16 +48,13 @@ final class NotebookChatController {
   private(set) var defaultProviderNeedsSignIn = false
   private(set) var conversation: CodexConversation?
   private(set) var messages: [CodexMessage] = []
-  var compactDraftExpanded = false
+  var companionExpanded = false
   private(set) var readPosition: NotebookChatReadPosition?
   private(set) var revealedMessageID: String?
   var taskTitle: String { conversation?.title ?? selectedTask?.title ?? "Задача Codex" }
   var compactReplies: [CodexMessage] { NotebookChatReadPosition.replies(in: messages, conversation: conversation) }
   var unreadReplies: [CodexMessage] { readPosition?.unread(in: compactReplies) ?? [] }
-  var replyCloud: CodexMessage? {
-    guard voice.activeID == nil, let last = unreadReplies.last, last.id != readPosition?.hiddenThrough else { return nil }
-    return last
-  }
+  var workStatus: NotebookChatWorkStatus? { .init(conversation: conversation, connected: connected) }
   private(set) var historyCursor: String?
   private(set) var loadingHistory = false
   private(set) var jobs: [NotebookChatJob] = []
@@ -603,10 +600,6 @@ final class NotebookChatController {
     if readPosition == nil || expanded || voice.activeID != nil { markRepliesRead() }
   }
 
-  func hideReplyCloud() {
-    let last = unreadReplies.last?.id
-    readPosition?.hiddenThrough = last; persistPanel()
-  }
   func revealReply(_ messageID: String? = nil) {
     revealedMessageID = messageID ?? unreadReplies.first?.id
     browsesChats = false; expanded = true

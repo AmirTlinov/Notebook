@@ -4,7 +4,7 @@ import Testing
 
 @Suite("Collapsed replies are presentation receipts, not a second conversation")
 struct NotebookChatReadPositionTests {
-  @Test func onlyUsefulCompletedRepliesBecomeCloudsAndHidingDoesNotMarkThemRead() throws {
+  @Test func onlyUsefulCompletedRepliesCountAsUnread() throws {
     let messages: [CodexMessage] = [
       .init(id: "user", turnID: "1", clientID: nil, role: .user, text: "Question"),
       .init(id: "commentary", turnID: "1", clientID: nil, role: .assistant, text: "Working", phase: "commentary"),
@@ -16,7 +16,7 @@ struct NotebookChatReadPositionTests {
       messages: messages, requests: [], acceptedMessages: [:], turnStatuses: ["1":"completed", "2":"completed", "3":"inProgress"])
     let replies = NotebookChatReadPosition.replies(in: messages, conversation: conversation)
     #expect(replies.map(\.id) == ["first", "second"])
-    let receipt = NotebookChatReadPosition(threadID: conversation.threadID, readThrough: "first", hiddenThrough: "second")
+    let receipt = NotebookChatReadPosition(threadID: conversation.threadID, readThrough: "first")
     #expect(receipt.unread(in: replies).map(\.id) == ["second"])
     #expect(CodexMessage.transportPage(messages).last?.phase == "final_answer")
     #expect(try JSONDecoder().decode(CodexMessage.self, from: JSONEncoder().encode(messages[3])).phase == "final_answer")
@@ -25,7 +25,7 @@ struct NotebookChatReadPositionTests {
     try NotebookChatStoreTests().fixture { store, author in
       let computer = UUID(), thread = UUID().uuidString
       let panel = NotebookChatPanelState(threadID: thread, draft: "Still editable", sidecarID: computer,
-        readPosition: .init(threadID: thread, readThrough: "one", hiddenThrough: "two"))
+        readPosition: .init(threadID: thread, readThrough: "one"))
       try store.saveChatPanel(panel, author: author)
       #expect(try NotebookStore(root: store.root).chatPanel(author: author, computer: computer) == panel)
       #expect(try store.chatPanel(author: author, computer: UUID()).readPosition == nil)
