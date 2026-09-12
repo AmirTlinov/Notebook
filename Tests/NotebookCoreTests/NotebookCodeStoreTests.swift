@@ -76,6 +76,47 @@ struct NotebookCodeStoreTests {
       #expect(try store.codeFragment(fragment.id) == fragment)
     }
   }
+  @Test func explicitRebindingKeepsOriginalInkAndRejectsAStaleDestination() throws {
+    try fixture { store, human in
+      let original = fragment(human), first = action(original, actor: human)
+      _ = try store.commitCodeInk(fragment: original, command: .append(first, journalStamp: first.stamp))
+      let selected = fragment(human)
+      let rebound = try store.rebindCodeFragment(original.id, expected: original.location, to: selected, actor: human)
+      #expect(rebound.currentFile == selected.file && rebound.file == original.file)
+      #expect(rebound.text == original.text && rebound.width == original.width)
+      #expect(try store.codeFragments(file: original.file).isEmpty)
+      #expect(try store.codeFragments(file: selected.file) == [rebound])
+      #expect(try store.codeAnnotation(original.id)?.ink.actions == [first])
+      #expect(throws: NotebookStorageError.transactionConflict) {
+        try store.rebindCodeFragment(original.id, expected: original.location, to: selected, actor: UUID())
+      }
+      // The earlier Pencil capture can finish without resetting the new binding.
+      let later = action(original, actor: human, counter: 10)
+      _ = try store.commitCodeInk(fragment: original, command: .append(later, journalStamp: later.stamp))
+      #expect(try store.codeFragment(original.id) == rebound)
+      let reopened = NotebookStore(root: store.root)
+      #expect(try reopened.codeFragments(file: selected.file) == [rebound])
+      #expect(try reopened.codeAnnotation(original.id)?.ink.actions.count == 2)
+    }
+  }
+
+  @Test func changedDestinationShowsOnlyAMarkerAndConcurrentBindingsConverge() throws {
+    let original = fragment(UUID())
+    let a = try original.rebinding(to: .init(file: original.file, sourceHash: NotebookFileVersion.hash(Data("new code".utf8)),
+      utf16Offset: 0, text: "new code", stamp: .init(counter: 10, actor: UUID())))
+    let b = try original.rebinding(to: .init(file: original.file, sourceHash: NotebookFileVersion.hash(Data("other".utf8)),
+      utf16Offset: 0, text: "other", stamp: .init(counter: 11, actor: UUID())))
+    #expect(!a.canOverlayCurrentText)
+    #expect(a.range(in: "new code") == NSRange(location: 0, length: 8))
+    #expect(a.range(in: "new code new code") == nil)
+    #expect(a.text == original.text)
+    #expect(try a.merging(b) == b.merging(a))
+    #expect(try b.merging(original) == b)
+    let collision = try original.rebinding(to: .init(file: b.currentFile, sourceHash: b.location.sourceHash,
+      utf16Offset: 1, text: "different", stamp: b.location.stamp))
+    #expect(throws: NotebookStorageError.transactionConflict) { try b.merging(collision) }
+  }
+
   @Test func materialInkAndUndoReplicateTogetherAndKeepTheSameFileAddress() throws {
     try fixture { a, actor in
       let b = NotebookStore(root: a.root.appendingPathComponent("peer"))
@@ -108,6 +149,14 @@ struct NotebookCodeStoreTests {
       try deliver(); try deliver()
       #expect(try b.codeAnnotation(fragment.id)?.ink.actions.first?.isActive == false)
       #expect(try b.codeAnnotation(fragment.id)?.ink.actions.first?.spans == contact.spans)
+      let selected = self.fragment(actor)
+      let rebound = try a.rebindCodeFragment(fragment.id, expected: fragment.location, to: selected, actor: actor)
+      try deliver()
+      #expect(try b.codeFragments(file: fragment.file).isEmpty)
+      #expect(try b.codeFragments(file: selected.file) == [rebound])
+      #expect(try b.codeAnnotation(fragment.id)?.ink.actions.first?.isActive == false)
+      try b.captureCodeFragment(fragment)
+      #expect(try b.codeFragment(fragment.id) == rebound)
     }
   }
 

@@ -21,6 +21,7 @@ final class NotebookCodeInkPresenter {
   private var ranges: [UUID: NSRange] = [:]
   private var missingRanges = Set<UUID>()
   private var sourceHash: String?
+  private var locations: [UUID: NotebookCodeLocation] = [:]
   private let review: NotebookCodeFragment?
   var isActive: Bool { captured != nil }
 
@@ -133,6 +134,9 @@ final class NotebookCodeInkPresenter {
     let candidates = review.map { [$0] } ?? notes.fragments
     var placements: [NotebookCodeInkPlacement] = [], requested: [UUID] = [], activeMarkers = Set<UUID>()
     for fragment in candidates {
+      if locations[fragment.id] != fragment.location {
+        ranges[fragment.id] = nil; missingRanges.remove(fragment.id); locations[fragment.id] = fragment.location
+      }
       let range: NSRange?
       if review != nil { range = NSRange(location: 0, length: text.text.utf16.count) }
       else if let stored = ranges[fragment.id] { range = stored }
@@ -146,7 +150,7 @@ final class NotebookCodeInkPresenter {
       let glyphs = text.layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
       let rect = text.layoutManager.boundingRect(forGlyphRange: glyphs, in: text.textContainer)
       let y = rect.minY + text.textContainerInset.top
-      let compatible = abs(fragment.width - text.bounds.width) < 0.5 && abs(fragment.fontSize - Double(text.font?.pointSize ?? 15)) < 0.01
+      let compatible = (review != nil || fragment.canOverlayCurrentText) && abs(fragment.width - text.bounds.width) < 0.5 && abs(fragment.fontSize - Double(text.font?.pointSize ?? 15)) < 0.01
       let area = CGRect(x: 0, y: y, width: text.bounds.width, height: fragment.height)
       if area.intersects(text.bounds), requested.count < 8 {
         requested.append(fragment.id)
@@ -164,7 +168,7 @@ final class NotebookCodeInkPresenter {
           button.backgroundColor = .secondarySystemBackground; button.layer.cornerRadius = 18
           button.accessibilityLabel = "Открыть исходный код с пометкой"
           button.addAction(UIAction { [weak self] _ in
-            self?.gate.performAfterPageContact { [weak self] in self?.notes.reviewed = fragment }
+            self?.gate.performAfterPageContact { [weak self] in self?.notes.reviewed = self?.notes.fragments.first { $0.id == fragment.id } ?? fragment }
           }, for: .touchUpInside)
           text.addSubview(button); markers[fragment.id] = button
         }
@@ -254,6 +258,7 @@ struct NotebookCodeReviewView: View {
       .navigationTitle("Рассмотренный код")
       .toolbar {
         Button("Обсудить") { model.discussCode(fragment); notes.reviewed = nil }
+        Button("Перепривязать") { notes.rebinding = fragment; notes.reviewed = nil }
         Button("Готово") { notes.reviewed = nil }
       }
     }

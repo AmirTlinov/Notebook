@@ -445,10 +445,10 @@ final class NotebookAppModel {
     @discardableResult func discussCode(_ fragment: NotebookCodeFragment) -> Task<Void, Never>? {
       guard !isClosing, !inputGate.hasActivePencil, !isSavingAgentQuestion, let chat else { return nil }
       let generation = UUID(); attentionGeneration = generation; isSavingAgentQuestion = true
-      let source = chat.files.document?.address == fragment.file ? chat.files.document?.text : nil
+      let source = chat.files.document?.address == fragment.currentFile ? chat.files.document?.text : nil
       let selection = source.flatMap { fragment.range(in: $0) }
       let related = chat.files.notes.fragments.filter { note in
-        guard note.id != fragment.id, note.file == fragment.file, let source, let selection,
+        guard note.id != fragment.id, note.currentFile == fragment.currentFile, let source, let selection,
           let range = note.range(in: source) else { return false }
         return NSIntersectionRange(selection, range).length > 0
       }.prefix(31).map(\.id)

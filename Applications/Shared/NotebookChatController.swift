@@ -125,11 +125,12 @@ final class NotebookChatController {
   func stop() async {
     await voice.end()
     await runs.stop()
-    stopped = true; files.stop(); ticker?.cancel(); wake.continuation.finish()
+    stopped = true; ticker?.cancel(); wake.continuation.finish()
     for (_, _, continuation) in directQueries { continuation.resume(throwing: NotebookTransportError.disconnected) }
     directQueries.removeAll()
     loop?.cancel(); retry?.cancel()
     pending?.1.resume(throwing: NotebookTransportError.disconnected); pending = nil
+    await files.stop()
     await loop?.value; loop = nil
   }
 

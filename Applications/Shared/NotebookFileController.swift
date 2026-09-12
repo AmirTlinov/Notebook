@@ -27,6 +27,7 @@ final class NotebookFileController {
   @ObservationIgnored private var upload: Task<Void, Never>?
   @ObservationIgnored private var integrating = Set<UUID>()
   @ObservationIgnored private var loaded = false
+  @ObservationIgnored private var stopped = false
 
   init(persistence: NotebookPersistenceQueue, author: UUID) { self.persistence = persistence; self.author = author; notes = .init(persistence: persistence, author: author) }
   func start() async throws {
@@ -60,7 +61,12 @@ final class NotebookFileController {
     window = state; self.document = document; directories = [:]; expandedFolders = []; navigation = nil; error = nil; notice = nil
     await notes.select(document?.address)
   }
-  func stop() { poll?.cancel(); upload?.cancel(); opening = nil }
+  func stop() async {
+    stopped = true; notes.stop(); opening = nil
+    poll?.cancel(); upload?.cancel()
+    await poll?.value; await upload?.value
+    poll = nil; upload = nil
+  }
   func chooseProject(_ project: CodexProject?) {
     window.project = project; directories = [:]; expandedFolders = []; persistWindow()
     if window.sidebar { Task { await roots() } }
@@ -85,6 +91,7 @@ final class NotebookFileController {
   }
   func collapse(_ address: NotebookFileAddress) { expandedFolders.remove(address) }
   func open(_ address: NotebookFileAddress) async {
+    guard !stopped else { return }
     if let chat, chat.computerID != address.computer, chat.computers.contains(where: { $0.deviceID == address.computer }) {
       await chat.chooseComputer(address.computer)
       guard chat.computerID == address.computer else { return }
@@ -96,7 +103,7 @@ final class NotebookFileController {
     do {
       var value = try await persistence.submit { try $0.fileDraft(address) }
       if value == nil { value = NotebookFileDraft(address: address, text: try await read(address)) }
-      guard !notes.contactActive, opening == token, let value else { return }
+      guard !stopped, !notes.contactActive, opening == token, let value else { return }
       document = value; window.selected = address; window.isOpen = true; error = nil
       persistDocument(); persistWindow(); await notes.select(address)
       if let id = value.pending, let job = chat?.jobs.first(where: { $0.id == id }) { receive(job) }
@@ -104,10 +111,10 @@ final class NotebookFileController {
   }
   func close() { guard !notes.contactActive else { return }; window.isOpen = false; opening = nil; loading = false; persistWindow() }
   func navigate(to fragment: NotebookCodeFragment) async {
-    await open(fragment.file)
+    await open(fragment.currentFile)
     guard !notes.contactActive else { return }
-    if let document, document.address == fragment.file, let range = fragment.range(in: document.text) {
-      navigation = (UUID(), fragment.file, range)
+    if let document, document.address == fragment.currentFile, let range = fragment.range(in: document.text) {
+      navigation = (UUID(), fragment.currentFile, range)
       notes.reviewed = nil
     } else { await notes.review(fragment) }
   }
@@ -123,21 +130,21 @@ final class NotebookFileController {
     navigation = (UUID(), file, NSRange(location: offset, length: 0))
   }
   func edit(_ text: String, address: NotebookFileAddress, selection: Int, scroll: Double) {
-    guard !notes.contactActive, var value = document, value.address == address else { return }
+    guard !stopped, !notes.contactActive, var value = document, value.address == address else { return }
     guard text.utf8.count <= NotebookFileVersion.maximumBytes else { error = "Черновик превышает 2 МиБ. Последний принятый текст сохранён."; return }
     value.text = text; value.selection = min(max(0, selection), text.utf16.count); value.scroll = max(0, scroll)
     document = value; persistDocument()
   }
   func readPosition(address: NotebookFileAddress, selection: Int, scroll: Double) {
-    guard var value = document, value.address == address, scroll.isFinite else { return }
+    guard !stopped, var value = document, value.address == address, scroll.isFinite else { return }
     value.selection = min(max(0, selection), value.text.utf16.count); value.scroll = max(0, scroll)
     if value != document { document = value; persistDocument() }
   }
   func refresh() async {
-    guard !notes.contactActive, let value = document, value.pending == nil else { return }
+    guard !stopped, !notes.contactActive, let value = document, value.pending == nil else { return }
     do {
       let text = try await read(value.address, unchanged: value.other ?? value.base)
-      guard !notes.contactActive, document?.address == value.address, document?.pending == nil else { return }
+      guard !stopped, !notes.contactActive, document?.address == value.address, document?.pending == nil else { return }
       error = nil
       if text != document?.base, text != document?.other {
         document?.receive(text); notice = document?.other == nil ? "Файл обновлён на Mac" : "Есть несовместимые правки. Обе версии сохранены."
@@ -151,7 +158,7 @@ final class NotebookFileController {
   func resolveUsingDraft() { guard !notes.contactActive, let other = document?.other else { return }; document?.base = other; document?.other = nil; notice = nil; persistDocument() }
 
   func save() {
-    guard !notes.contactActive, !saving, let value = document, value.pending == nil, value.other == nil, value.text != value.base else { return }
+    guard !stopped, !notes.contactActive, !saving, let value = document, value.pending == nil, value.other == nil, value.text != value.base else { return }
     saving = true; error = nil
     upload = Task { [weak self] in
       guard let self else { return }; defer { saving = false; upload = nil }
@@ -181,7 +188,7 @@ final class NotebookFileController {
     }
   }
   func receive(_ job: NotebookChatJob) {
-    guard !notes.contactActive, case .saveFile(let address) = job.input.action, job.isTerminal, integrating.insert(job.id).inserted else { return }
+    guard !stopped, !notes.contactActive, case .saveFile(let address) = job.input.action, job.isTerminal, integrating.insert(job.id).inserted else { return }
     Task { [weak self] in
       guard let self else { return }; defer { integrating.remove(job.id) }
       do {
@@ -221,11 +228,11 @@ final class NotebookFileController {
     return try await chat.fileQuery(value)
   }
   private func persistDocument() {
-    guard let value = document else { return }
+    guard !stopped, let value = document else { return }
     persistence.enqueue(owner: .fileDraft(value.address.id), publishesChanges: false) { try $0.saveFileDraft(value); return false }
   }
   private func persistWindow() {
-    guard loaded else { return }
+    guard !stopped, loaded else { return }
     let value = window, author = author, computer = chat?.computerID
     persistence.enqueue(owner: .fileWindow(computer), publishesChanges: false) { try $0.saveFileWindow(value, author: author, computer: computer); return false }
   }

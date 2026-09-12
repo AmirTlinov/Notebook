@@ -47,6 +47,18 @@ struct NotebookCodeDocumentView: View {
         if let message = files.notes.error ?? files.error ?? (document.other == nil ? nil : "Конфликт: черновик и версия Mac сохранены. Сравните их в меню файла.") {
           Text(message).font(.system(size: 12)).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading).padding(10)
         }
+        if let note = files.notes.rebinding {
+          HStack {
+            Text("Выделите новое место для пометки «\(String(note.text.prefix(35)))». Исходный код и почерк сохранятся.")
+              .font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading)
+            Button("Связать с выделенным кодом") {
+              model.inputGate.performAfterPageContact {
+                if let material = files.captureSelection?() { Task { await files.notes.rebind(to: material) } }
+              }
+            }.disabled(files.notes.bindingInFlight).accessibilityIdentifier("code-rebind-selection")
+            Button("Отмена") { files.notes.rebinding = nil }.disabled(files.notes.bindingInFlight)
+          }.padding(10).background(Color(.secondarySystemBackground))
+        }
         Divider()
         NotebookCodeEditor(files: files, document: document, editing: editing, findRequest: findRequest, undoRequest: undoRequest, inputGate: model.inputGate, pen: model.penStyle, eraser: model.eraserStyle, tool: model.drawingTool)
           .id(document.address.id)

@@ -198,10 +198,10 @@ extension NotebookStore {
             guard page.isValid else { throw NotebookStorageError.corruptRecord(file) }; resolved = try .encode(page)
           } else if file.hasPrefix("code-fragments/") {
             let fragment = try value.decode(NotebookCodeFragment.self)
-            guard fragment.isValid, file == codeFragmentFile(fragment.id), before == nil || before == value else {
+            guard fragment.isValid, file == codeFragmentFile(fragment.id) else {
               throw NotebookStorageError.transactionConflict
             }
-            resolved = value
+            resolved = try .encode(before?.decode(NotebookCodeFragment.self).merging(fragment) ?? fragment)
           } else if file.hasPrefix("collaboration/actions/") {
             let receipt = try value.decode(CollaborationReceipt.self)
             guard receipt.id == receipt.action.id else { throw NotebookStorageError.invalidTransaction("receipt identity") }

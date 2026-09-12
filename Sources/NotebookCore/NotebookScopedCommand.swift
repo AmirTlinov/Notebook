@@ -33,8 +33,14 @@ extension NotebookStore {
     if fragment.file.hasPrefix("code-fragments/") {
       let code = try fragment.value.decode(NotebookCodeFragment.self)
       guard code.isValid, fragment.file == codeFragmentFile(code.id), fragment.parent == nil,
-        fragment.address == fragment.file + "#", fragment.collections.isEmpty, previousHash == nil else {
+        fragment.address == fragment.file + "#", fragment.collections.isEmpty else {
         throw NotebookStorageError.invalidTransaction("reviewed code is immutable")
+      }
+      if let previousHash {
+        let accepted = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(previousHash))
+        guard try accepted.value.decode(NotebookCodeFragment.self).merging(code) == code else {
+          throw NotebookStorageError.transactionConflict
+        }
       }
     }
     if fragment.file.hasPrefix("pages/"), fragment.collection == "computations" {

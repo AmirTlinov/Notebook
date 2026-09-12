@@ -13,7 +13,10 @@ final class NotebookCodeAnnotations {
   private(set) var error: String?
   private(set) var contactActive = false
   private(set) var ready = false
+  @ObservationIgnored private var stopped = false
   var reviewed: NotebookCodeFragment?
+  var rebinding: NotebookCodeFragment?
+  private(set) var bindingInFlight = false
   @ObservationIgnored private let persistence: NotebookPersistenceQueue
   @ObservationIgnored private let author: UUID
   @ObservationIgnored private var file: NotebookFileAddress?
@@ -30,29 +33,35 @@ final class NotebookCodeAnnotations {
     self.persistence = persistence; self.author = author; clock = .init(counter: 0, actor: author)
   }
   var acceptsNewContacts = true
+  func stop() { stopped = true; acceptsNewContacts = false; revision &+= 1 }
   func select(_ file: NotebookFileAddress?) async {
+    guard !stopped else { return }
     guard self.file != file else { await refresh(); return }
     self.file = file; ready = false; revision &+= 1; contributionOrder = []; fragments = []; annotations = [:]; visible = []; reviewed = nil; hasMore = false; nextPageAfter = nil
     await refresh()
   }
   func refresh(more: Bool = false) async {
-    guard let file, !refreshing, !contactActive else { return }
+    guard !stopped, let file, !refreshing, !contactActive else { return }
     refreshing = true
     defer {
       refreshing = false
-      if self.file != file { Task { await refresh() } }
+      if !stopped, self.file != file { Task { await refresh() } }
     }
     let after = more ? nextPageAfter : nil, wanted = visible, revision = revision
+    let retained = more ? [] : fragments.map(\.id)
     do {
       let result = try await persistence.submit { store in
         try store.readTransaction { store in
           let fragments = try store.codeFragments(file: file, after: after)
           let ink = try wanted.compactMap { try store.codeAnnotation($0) }
-          return (fragments, ink, try store.readSpatialInk(surfaces: []).stamp)
+          let retained = try retained.filter { id in !fragments.contains { $0.id == id } }
+            .compactMap { try store.codeFragment($0) }.filter { $0.currentFile == file }
+          return (fragments, ink, try store.readSpatialInk(surfaces: []).stamp, retained)
         }
       }
-      guard self.file == file, self.revision == revision, !contactActive else { return }
+      guard !stopped, self.file == file, self.revision == revision, !contactActive else { return }
       clock = max(clock, result.2)
+      for fragment in result.0 + result.3 { clock = max(clock, fragment.location.stamp) }
       // Optimistic contacts have arbitrary UUIDs. Only the last stored row of
       // the preceding page can continue the directory without skipping notes.
       if more || nextPageAfter == nil {
@@ -61,14 +70,14 @@ final class NotebookCodeAnnotations {
       }
       // Retain expanded pages during refresh; each immutable row is read once.
       if more { for fragment in result.0 where !fragments.contains(where: { $0.id == fragment.id }) { fragments.append(fragment) } }
-      else { fragments = result.0 + fragments.filter { old in !result.0.contains { $0.id == old.id } } }
-      for (fragment, _) in pending.values where fragment.file == file && !fragments.contains(where: { $0.id == fragment.id }) { fragments.append(fragment) }
+      else { fragments = result.0 + result.3 }
+      for (fragment, _) in pending.values where fragment.currentFile == file && !fragments.contains(where: { $0.id == fragment.id }) { fragments.append(fragment) }
       var next: [UUID: NotebookCodeAnnotation] = [:]
       for annotation in result.1 {
         clock = max(clock, annotation.ink.stamp); next[annotation.fragment.id] = annotation
       }
       // No stale database read is allowed to replace an accepted contact.
-      for (fragment, command) in pending.values where fragment.file == file {
+      for (fragment, command) in pending.values where fragment.currentFile == file {
         var journal = next[fragment.id]?.ink ?? annotations[fragment.id]?.ink ?? .init(stamp: clock)
         switch command {
         case .append(let action, let stamp): _ = journal.merge(.init(actions: [action], stamp: stamp))
@@ -80,6 +89,7 @@ final class NotebookCodeAnnotations {
     } catch { self.error = error.localizedDescription }
   }
   func show(_ ids: [UUID]) {
+    guard !stopped else { return }
     let ids = Array(ids.prefix(8))
     guard ids != visible else { return }; visible = ids
     Task { await refresh() }
@@ -90,21 +100,44 @@ final class NotebookCodeAnnotations {
     clock = next; contactActive = true; return fragment
   }
   func material(file: NotebookFileAddress, source: String, offset: Int, text: String, width: Double, height: Double, fontSize: Double) -> NotebookCodeFragment? {
-    guard acceptsNewContacts, ready, !contactActive, self.file == file, let next = clock.advanced(by: author) else { return nil }
+    guard !stopped, acceptsNewContacts, ready, !contactActive, self.file == file, let next = clock.advanced(by: author) else { return nil }
     let hash = NotebookFileVersion.hash(Data(source.utf8))
-    let fragment = fragments.first { $0.sourceHash == hash && $0.utf16Offset == offset && $0.text == text && $0.width == width && $0.height == height && $0.fontSize == fontSize }
+    let fragment = fragments.first { $0.file == file && $0.canOverlayCurrentText && $0.sourceHash == hash && $0.utf16Offset == offset && $0.text == text && $0.width == width && $0.height == height && $0.fontSize == fontSize }
       ?? .init(file: file, sourceHash: hash, utf16Offset: offset, text: text, width: width, height: height, fontSize: fontSize, stamp: next)
     guard fragment.isValid else { error = "Рассмотренный фрагмент слишком велик для одной пометки."; return nil }
     return fragment
   }
   func cancelContact() { contactActive = false }
   func review(_ fragment: NotebookCodeFragment) async {
+    guard !stopped else { return }
     do {
       let value = try await persistence.submit { try $0.codeAnnotation(fragment.id) }
-      guard !contactActive else { return }
+      guard !stopped, !contactActive else { return }
       if let value { annotations[fragment.id] = value }
       reviewed = fragment
     } catch { self.error = error.localizedDescription }
+  }
+  func rebind(to material: NotebookCodeFragment) async {
+    guard !stopped, !contactActive, !bindingInFlight, let reviewed = rebinding else { return }
+    bindingInFlight = true; defer { bindingInFlight = false }
+    let author = author
+    do {
+      let result = try await persistence.submit(publishesChanges: true) { store in
+        try store.rebindCodeFragment(reviewed.id, expected: reviewed.location, to: material, actor: author)
+      }
+      clock = max(clock, result.location.stamp); revision &+= 1
+      rebinding = nil; error = nil
+      await refresh()
+    } catch {
+      self.error = "Связь не изменена: " + error.localizedDescription
+      // An unknown receipt must not repeat a different binding. Read back the
+      // same owner; retain both the original note and the user's chosen target.
+      if let current = try? await persistence.submit({ try $0.codeFragment(reviewed.id) }),
+        current.location.file == material.file, current.location.sourceHash == material.sourceHash,
+        current.location.utf16Offset == material.utf16Offset, current.location.text == material.text {
+        rebinding = nil; self.error = nil; await refresh()
+      }
+    }
   }
   func accept(_ measured: PageInkAction, fragment: NotebookCodeFragment, originY: Double) {
     guard contactActive else { return }
@@ -126,12 +159,12 @@ final class NotebookCodeAnnotations {
     contactActive = false
   }
   func undo() {
-    guard !contactActive, let id = contributionOrder.last else { return }
+    guard !stopped, !contactActive, let id = contributionOrder.last else { return }
     if annotations[id] == nil {
       Task {
         do {
           let value = try await persistence.submit { try $0.codeAnnotation(id) }
-          guard let value, value.fragment.file == file, contributionOrder.last == id, !contactActive else { return }
+          guard let value, value.fragment.currentFile == file, contributionOrder.last == id, !contactActive else { return }
           annotations[id] = value; undo()
         } catch { self.error = error.localizedDescription }
       }

@@ -116,8 +116,7 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
   private mutating func mergeValidated(_ incoming: Self) throws {
     var fragments = Dictionary(uniqueKeysWithValues: codeFragments.map { ($0.id, $0) })
     for fragment in incoming.codeFragments {
-      guard fragments[fragment.id] == nil || fragments[fragment.id] == fragment else { throw NotebookStorageError.transactionConflict }
-      fragments[fragment.id] = fragment
+      fragments[fragment.id] = try fragments[fragment.id]?.merging(fragment) ?? fragment
     }
     codeFragments = fragments.values.sorted { $0.id.uuidString < $1.id.uuidString }
     workspace = try workspace.merging(incoming.workspace)

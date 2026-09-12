@@ -105,5 +105,58 @@ final class NotebookCodeAnnotationsTests: XCTestCase {
     let attachment = XCTAttachment(image: image); attachment.name = "code-review-keeps-original-material"; attachment.lifetime = .keepAlways; add(attachment)
     files.close(); try await Task.sleep(for: .milliseconds(80)); XCTAssertEqual(model.presence, camera)
   }
+  func testRebindingAcrossFilesKeepsTheOriginalMaterialAndCamera() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: .init(width: 834, height: 1194))
+    let files = try XCTUnwrap(model.chat?.files), actor = model.actorID
+    let a = NotebookFileAddress(computer: UUID(), project: "demo", root: "/project", path: "before.py")
+    let b = NotebookFileAddress(computer: a.computer, project: a.project, root: a.root, path: "after.py")
+    let source = "old code", target = "# new\nnew code\n"
+    try model.store.saveFileDraft(.init(address: a, text: source))
+    try model.store.saveFileDraft(.init(address: b, text: target))
+    await files.open(a)
+    let original = try XCTUnwrap(files.notes.reserve(file: a, source: source, offset: 0, text: source, width: 600, height: 100, fontSize: 15))
+    files.notes.accept(.init(tool: .pen, samples: [.init(point: .init(x: 20, y: 20), timeOffset: 0, width: 2, opacity: 1, force: 1, azimuth: 0, altitude: 1)]), fragment: original, originY: 0)
+    let flushed = await model.finishPendingPersistence(); XCTAssertTrue(flushed)
+    let ink = try model.store.codeAnnotation(original.id)?.ink
+    let camera = model.presence
+    files.notes.rebinding = original
+    await files.open(b)
+    XCTAssertEqual(files.notes.rebinding, original)
+    let selected = NotebookCodeFragment(file: b, sourceHash: NotebookFileVersion.hash(Data(target.utf8)), utf16Offset: 6,
+      text: "new code", width: 500, height: 100, fontSize: 15, stamp: .init(counter: 20, actor: actor))
+    await files.notes.rebind(to: selected)
+    let rebound = try XCTUnwrap(model.store.codeFragment(original.id))
+    XCTAssertNil(files.notes.rebinding)
+    XCTAssertEqual(files.notes.fragments, [rebound])
+    XCTAssertFalse(rebound.canOverlayCurrentText)
+    XCTAssertEqual(rebound.text, source)
+    XCTAssertEqual(try model.store.codeAnnotation(original.id)?.ink, ink)
+    files.close(); await files.navigate(to: rebound)
+    XCTAssertEqual(files.document?.address, b)
+    XCTAssertEqual(files.navigation?.range.location, 6)
+    XCTAssertEqual(model.presence, camera)
+    await files.open(a); XCTAssertTrue(files.notes.fragments.isEmpty)
+    XCTAssertEqual(model.presence, camera)
+  }
+  func testClosedFileOwnerCannotReopenSQLiteFromLateUIKitCallbacks() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    await model.start(pageSize: .init(width: 834, height: 1194))
+    let files = try XCTUnwrap(model.chat?.files)
+    let file = NotebookFileAddress(computer: UUID(), project: "demo", root: "/project", path: "main.py")
+    try model.store.saveFileDraft(.init(address: file, text: "print(4)"))
+    await files.open(file)
+    let stopped = await model.shutdown(); XCTAssertTrue(stopped)
+    try FileManager.default.removeItem(at: root)
+    files.notes.show([UUID()]); await files.notes.refresh(); await files.open(file)
+    files.readPosition(address: file, selection: 0, scroll: 90)
+    files.edit("late", address: file, selection: 0, scroll: 0)
+    let flushed = await files.notes.flush(); XCTAssertTrue(flushed)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+  }
   private func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
 }

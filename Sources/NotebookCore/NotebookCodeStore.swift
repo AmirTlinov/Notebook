@@ -49,8 +49,27 @@ extension NotebookStore {
   private func publishCodeFragment(_ fragment: NotebookCodeFragment) throws {
     let file = codeFragmentFile(fragment.id), value = try JSONValue.encode(fragment)
     if let current = try storedValue(file) {
-      guard current == value else { throw NotebookStorageError.transactionConflict }
+      // A late accepted contact may carry the prior binding. Merge it without
+      // rolling back a newer destination or altering measured material.
+      let merged = try current.decode(NotebookCodeFragment.self).merging(fragment)
+      if try JSONValue.encode(merged) != current { try publishRecords(writes: [file: try .encode(merged)]) }
     } else { try publishRecords(writes: [file: value]) }
+  }
+
+  /// Compare the destination the person actually reviewed. An ink contribution
+  /// made meanwhile does not conflict; another rebind does. Nothing touches ink.
+  public func rebindCodeFragment(_ id: UUID, expected: NotebookCodeLocation,
+    to material: NotebookCodeFragment, actor: UUID) throws -> NotebookCodeFragment {
+    guard material.isValid else { throw NotebookStorageError.invalidTransaction("code binding") }
+    return try commandTransaction {
+      guard let current = try codeFragment(id), current.location == expected,
+        let stamp = max(current.location.stamp, material.stamp).advanced(by: actor) else { throw NotebookStorageError.transactionConflict }
+      let location = NotebookCodeLocation(file: material.file, sourceHash: material.sourceHash,
+        utf16Offset: material.utf16Offset, text: material.text, stamp: stamp)
+      let result = try current.rebinding(to: location)
+      try publishCodeFragment(result)
+      return result
+    }
   }
 
   /// An indexed file owns its review fragments even if its Mac is unavailable.
