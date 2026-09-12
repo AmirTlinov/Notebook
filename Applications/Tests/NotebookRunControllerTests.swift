@@ -48,7 +48,7 @@ import NotebookCore
       } catch { reply = .failure(error.localizedDescription) }
       chat.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
     }
-    await chat.start(); chat.connect(computer); chat.selectProject(project); chat.expanded = true
+    await chat.start(); await chat.connect(computer); chat.selectProject(project); chat.expanded = true
     let root = try XCTUnwrap(chat.runs.selectedRoot)
     let container = UIView(frame: .init(x: 0, y: 0, width: 560, height: 280))
     let host = UIViewController(); host.view = container
@@ -72,7 +72,7 @@ import NotebookCore
     chat.expanded = false; chat.disconnect(computer); owner.close()
     try mac.receiveRunEvent(id, .output(Data("\r\nWHILE_OFFLINE\r\n".utf8)))
     XCTAssertTrue(try XCTUnwrap(mac.runRecord(id)).isActive)
-    chat.connect(computer)
+    await chat.connect(computer)
     let reopened = NotebookTerminalView.Coordinator(runs: chat.runs, root: root)
     reopened.connected(true); reopened.mount(container)
     defer { reopened.close() }

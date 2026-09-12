@@ -35,7 +35,7 @@ final class NotebookChatControllerTests: XCTestCase {
       controller.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
     }
     await controller.start(); controller.select(.init(id: thread, title: "Task", cwd: "/tmp"))
-    controller.expanded = true; controller.draft = "retained"; controller.connect(peer)
+    controller.expanded = true; controller.draft = "retained"; await controller.connect(peer)
     await fulfillment(of: [subscribed], timeout: 6)
     try await Task.sleep(for: .milliseconds(50))
     let id = try XCTUnwrap(subscription)
@@ -43,7 +43,7 @@ final class NotebookChatControllerTests: XCTestCase {
     controller.receive(.init(body: .event(subscriptionID: id, conversation: snapshot(4))), peerID: UUID())
     controller.receive(.init(body: .event(subscriptionID: UUID(), conversation: snapshot(4))), peerID: peer)
     XCTAssertEqual(controller.conversation?.revision, 3)
-    controller.disconnect(peer); controller.connect(peer)
+    controller.disconnect(peer); await controller.connect(peer)
     controller.receive(.init(body: .event(subscriptionID: id, conversation: snapshot(5))), peerID: peer)
     XCTAssertEqual(controller.conversation?.revision, 3); XCTAssertEqual(controller.draft, "retained")
     await controller.stop(); let saved = await queue.flush(); XCTAssertTrue(saved)
@@ -94,7 +94,7 @@ final class NotebookChatControllerTests: XCTestCase {
     controller.select(.init(id: UUID().uuidString, title: "Другая задача", cwd: "/tmp"))
     XCTAssertTrue(controller.pendingMessages.isEmpty, "Another task never displays this outbox")
     controller.select(.init(id: thread, title: "Урок", cwd: "/tmp"))
-    controller.connect(peer)
+    await controller.connect(peer)
     await fulfillment(of: [admitted], timeout: 10)
     await controller.stop()
     XCTAssertEqual(offers, expected)
@@ -175,7 +175,7 @@ final class NotebookChatControllerTests: XCTestCase {
       while !test(), .now < deadline { try await Task.sleep(for: .milliseconds(30)) }
       XCTAssertTrue(test())
     }
-    await chat.start(); chat.expanded = true; chat.connect(peer)
+    await chat.start(); chat.expanded = true; await chat.connect(peer)
     try await wait { chat.projects == [project] && chat.activities[task.id]?.status == .running }
     chat.selectProject(project)
     try await wait { filtered && chat.tasks == [task] }

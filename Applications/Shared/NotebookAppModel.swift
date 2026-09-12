@@ -504,8 +504,11 @@ final class NotebookAppModel {
             } catch { agentRequestError = error.localizedDescription }
           }
         case .conversation(let computer, let thread):
-          guard computer == chat.computerID else { agentRequestError = "Разговор находится на другом Mac."; return }
-          chat.select(.init(id: thread.uuidString.lowercased(), title: "Сохранённый разговор", cwd: "")); chat.expanded = true
+          Task {
+            if computer != chat.computerID { await chat.chooseComputer(computer) }
+            guard computer == chat.computerID else { agentRequestError = "Разговор находится на Mac, доступ к которому не подключён."; return }
+            chat.select(.init(id: thread.uuidString.lowercased(), title: "Сохранённый разговор", cwd: "")); chat.expanded = true
+          }
         }
       }
     }
@@ -707,7 +710,7 @@ final class NotebookAppModel {
       switch owner {
       case .page, .document, .documentState, .board, .spatialInk, .nativeText, .elementState:
         self?.refreshCommittedHeader()
-      case nil, .presence, .inputActivity, .documentDraft, .fileDraft, .fileWindow, .runCommand: break
+      case nil, .presence, .inputActivity, .documentDraft, .fileDraft, .fileWindow, .chatPanel, .runCommand: break
       }
 
     }
@@ -759,7 +762,11 @@ final class NotebookAppModel {
     pairedPeers = sync?.pairedPeers ?? []
     publishInputActivity()
     #if os(iOS)
-      chat?.connect(peer.deviceID)
+      chat?.updateComputers(pairedPeers)
+      Task { [weak self] in
+        guard let self, peerGenerations[peer.deviceID] == generation else { return }
+        await chat?.connect(peer.deviceID)
+      }
       if let lastSettledPresenceEnvelope { sync?.sendTransient(.presence(lastSettledPresenceEnvelope)) }
     #endif
   }
@@ -809,6 +816,9 @@ final class NotebookAppModel {
     connection.onPairingChange = { [weak self] state in
       self?.pairingState = state
       self?.pairedPeers = self?.sync?.pairedPeers ?? []
+      #if os(iOS)
+      self?.chat?.updateComputers(self?.pairedPeers ?? [])
+      #endif
     }
     connection.onConnect = { [weak self] peer, generation in self?.peerConnected(peer, generation: generation) }
     connection.onDisconnect = { [weak self] peer, generation in self?.peerDisconnected(peerID: peer, generation: generation) }
@@ -822,6 +832,9 @@ final class NotebookAppModel {
     sync = connection
     connection.start()
     pairedPeers = connection.pairedPeers
+    #if os(iOS)
+    chat?.updateComputers(pairedPeers)
+    #endif
   }
 
   /// Called only after the transport has authenticated the workspace and
@@ -860,10 +873,19 @@ final class NotebookAppModel {
 
   func cancelPairing() throws { try sync?.cancelPairing() }
 
+  #if os(iOS)
+  func chooseChatComputer(_ id: UUID) {
+    inputGate.performAfterPageContact { [weak self] in Task { await self?.chat?.chooseComputer(id) } }
+  }
+  #endif
+
   func revokePeer(_ id: UUID) throws {
     guard let sync else { throw NotebookTransportError.storageUnavailable }
     try sync.revokePeer(id)
     pairedPeers = sync.pairedPeers
+    #if os(iOS)
+    chat?.updateComputers(pairedPeers)
+    #endif
   }
 
   isolated deinit {

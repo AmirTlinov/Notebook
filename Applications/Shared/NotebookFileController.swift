@@ -15,6 +15,7 @@ final class NotebookFileController {
   private(set) var notice: String?
   private(set) var loading = false
   private(set) var saving = false
+  var remoteAvailable: Bool { chat?.connected == true && document?.address.computer == chat?.computerID }
   let notes: NotebookCodeAnnotations
   private(set) var navigation: (id: UUID, file: NotebookFileAddress, range: NSRange)?
   @ObservationIgnored var captureSelection: (@MainActor () -> NotebookCodeFragment?)?
@@ -29,10 +30,7 @@ final class NotebookFileController {
 
   init(persistence: NotebookPersistenceQueue, author: UUID) { self.persistence = persistence; self.author = author; notes = .init(persistence: persistence, author: author) }
   func start() async throws {
-    let author = author
-    window = try await persistence.submit { try $0.fileWindow(author: author) }
-    if let address = window.selected { document = try await persistence.submit { try $0.fileDraft(address) } }
-    if let address = document?.address { await notes.select(address) }
+    try await restoreWindow()
     loaded = true
     poll = Task { [weak self] in
       while !Task.isCancelled {
@@ -43,6 +41,24 @@ final class NotebookFileController {
         if window.isOpen { await notes.refresh() }
       }
     }
+  }
+  func suspendForComputerSwitch() async {
+    opening = nil; loading = false; upload?.cancel(); await upload?.value
+  }
+  func restoreWindow() async throws {
+    let author = author, computer = chat?.computerID
+    let saved = try await persistence.submit { store in
+      try store.readTransaction { store in
+        let window = try store.fileWindow(author: author, computer: computer)
+        return (window, try window.selected.flatMap { try store.fileDraft($0) })
+      }
+    }
+    guard chat?.computerID == computer else { return }
+    await installWindow(saved.0, document: saved.1)
+  }
+  func installWindow(_ state: NotebookFileWindowState, document: NotebookFileDraft?) async {
+    window = state; self.document = document; directories = [:]; expandedFolders = []; navigation = nil; error = nil; notice = nil
+    await notes.select(document?.address)
   }
   func stop() { poll?.cancel(); upload?.cancel(); opening = nil }
   func chooseProject(_ project: CodexProject?) {
@@ -60,7 +76,7 @@ final class NotebookFileController {
     expandedFolders.insert(address)
     do {
       guard case .directory(let page) = try await query(.directory(address, after: more ? directories[address]?.next : nil)) else { throw NotebookTransportError.invalidAcknowledgement }
-      guard address.project == window.project?.id else { return }
+      guard address.computer == chat?.computerID, address.project == window.project?.id else { return }
       if more, let previous = directories[address] {
         directories[address] = .init(entries: previous.entries + page.entries.filter { entry in !previous.entries.contains { $0.name == entry.name } }, next: page.next)
       } else { directories[address] = page }
@@ -69,6 +85,10 @@ final class NotebookFileController {
   }
   func collapse(_ address: NotebookFileAddress) { expandedFolders.remove(address) }
   func open(_ address: NotebookFileAddress) async {
+    if let chat, chat.computerID != address.computer, chat.computers.contains(where: { $0.deviceID == address.computer }) {
+      await chat.chooseComputer(address.computer)
+      guard chat.computerID == address.computer else { return }
+    }
     if document?.address == address { window.isOpen = true; persistWindow(); return }
     guard !notes.contactActive else { return }
     let token = UUID(); opening = token; loading = true
@@ -145,6 +165,7 @@ final class NotebookFileController {
           guard case .uploaded(let received) = try await query(.upload(.init(id: id, digest: digest, total: payload.count, offset: offset, data: chunk))), received == offset + chunk.count else { throw NotebookTransportError.invalidAcknowledgement }
           offset = received
         }
+        try Task.checkCancellation()
         // Do not bind an older asynchronous save to a newly opened document.
         var draft = document?.address == value.address ? document! : try await persistence.submit { try $0.fileDraft(value.address) ?? value }
         draft.pending = id; draft.submitted = value.text
@@ -205,8 +226,8 @@ final class NotebookFileController {
   }
   private func persistWindow() {
     guard loaded else { return }
-    let value = window, author = author
-    persistence.enqueue(owner: .fileWindow, publishesChanges: false) { try $0.saveFileWindow(value, author: author); return false }
+    let value = window, author = author, computer = chat?.computerID
+    persistence.enqueue(owner: .fileWindow(computer), publishesChanges: false) { try $0.saveFileWindow(value, author: author, computer: computer); return false }
   }
 }
 #endif

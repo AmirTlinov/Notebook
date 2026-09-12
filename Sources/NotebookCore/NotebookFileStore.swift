@@ -12,21 +12,23 @@ extension NotebookStore {
       try currentSQL!.run("INSERT INTO file_drafts(id,value) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value", [.text(draft.address.id), .blob(try Self.storageEncoder.encode(draft))])
     }
   }
-  public func fileWindow(author: UUID) throws -> NotebookFileWindowState {
-    try sqlRead { db in try db.rows("SELECT value FROM file_window WHERE id=?", [.text(author.uuidString)]).first.map {
+  public func fileWindow(author: UUID, computer: UUID? = nil) throws -> NotebookFileWindowState {
+    try sqlRead { db in
+      let key = try chatScope(author: author, computer: computer ?? activeChatComputer(author: author))
+      return try db.rows("SELECT value FROM file_window WHERE id=?", [.text(key)]).first.map {
       try JSONDecoder().decode(NotebookFileWindowState.self, from: $0[0].blob!)
     } ?? .init() }
   }
-  public func saveFileWindow(_ state: NotebookFileWindowState, author: UUID) throws {
+  public func saveFileWindow(_ state: NotebookFileWindowState, author: UUID, computer: UUID? = nil) throws {
     guard state.selected?.isValid != false else { throw NotebookStorageError.invalidTransaction("invalid file selection") }
     try commandTransaction(advancesReadRevision: false) {
-      try currentSQL!.run("INSERT INTO file_window(id,value) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value", [.text(author.uuidString), .blob(try Self.storageEncoder.encode(state))])
+      try currentSQL!.run("INSERT INTO file_window(id,value) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value", [.text(try chatScope(author: author, computer: computer ?? activeChatComputer(author: author))), .blob(try Self.storageEncoder.encode(state))])
     }
   }
   public func saveFileSubmission(_ input: NotebookChatInput, draft: NotebookFileDraft) throws -> NotebookChatJob {
     guard case .saveFile(let address) = input.action, address == draft.address, draft.pending == input.id else { throw NotebookStorageError.invalidTransaction("file submission identity") }
     return try commandTransaction(advancesReadRevision: false) {
-      let job = try saveChatInput(input); try saveFileDraft(draft); return job
+      let job = try saveChatInput(input, to: address.computer); try saveFileDraft(draft); return job
     }
   }
   @discardableResult public func cacheFileVersion(_ data: Data, address: NotebookFileAddress) throws -> NotebookFileVersion {

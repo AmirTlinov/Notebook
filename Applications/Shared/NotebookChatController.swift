@@ -11,6 +11,9 @@ final class NotebookChatController {
   let runs: NotebookRunController
   let voice: NotebookVoiceController
   var computerID: UUID? { peer }
+  private(set) var computers: [NotebookTransportIdentity] = []
+  private(set) var onlineComputers = Set<UUID>()
+  private(set) var switchingComputer = false
   var expanded = false { didSet { if !expanded { activities = [:]; conversationSubscription = nil; enqueue(.activity(threadIDs: [])) } else { nextConversation = .now } } }
   var browsesChats = false
   private(set) var projects: [CodexProject] = []
@@ -39,7 +42,7 @@ final class NotebookChatController {
   @ObservationIgnored private var loop: Task<Void, Never>?
   @ObservationIgnored private var pending: (NotebookChatEnvelope, CheckedContinuation<NotebookChatReply, Error>)?
   @ObservationIgnored private var retry: Task<Void, Never>?
-  @ObservationIgnored private var directQueries: [(NotebookChatQuery, CheckedContinuation<NotebookChatReply, Error>)] = []
+  @ObservationIgnored private var directQueries: [(NotebookChatQuery, UUID, CheckedContinuation<NotebookChatReply, Error>)] = []
   @ObservationIgnored private let wake = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
   @ObservationIgnored private var ticker: Task<Void, Never>?
   @ObservationIgnored private var queries: [NotebookChatQuery] = []
@@ -63,7 +66,7 @@ final class NotebookChatController {
     guard !loaded else { return }
     do {
       let author = author
-      let state = try await persistence.submit { try $0.chatPanel(author: author) }
+      let state = try await persistence.submit { store in try store.prepareChatComputers(author: author); return try store.chatPanel(author: author) }
       threadID = state.threadID; draft = state.draft; peer = state.sidecarID
       try await refreshJobs()
       try await files.start()
@@ -79,8 +82,9 @@ final class NotebookChatController {
         while !Task.isCancelled, await iterator.next() != nil {
           if connected {
             if !directQueries.isEmpty, deliverJobs {
-              let (query, completion) = directQueries.removeFirst()
+              let (query, computer, completion) = directQueries.removeFirst()
               do {
+                guard peer == computer else { throw NotebookTransportError.disconnected }
                 let reply = try await request(query)
                 if case .failure(let message) = reply { throw NotebookPersistenceQueue.Failure(message: message) }
                 completion.resume(returning: reply)
@@ -106,7 +110,8 @@ final class NotebookChatController {
             }
             else { query = outgoing.first.map { .job($0.input) } }
             if let query {
-              do { try await accept(try await request(query), for: query) }
+              let computer = peer
+              do { try await accept(try await request(query), for: query, computer: computer) }
               catch { if !Task.isCancelled { self.error = error.localizedDescription } }
             }
           }
@@ -121,26 +126,66 @@ final class NotebookChatController {
     await voice.end()
     await runs.stop()
     stopped = true; files.stop(); ticker?.cancel(); wake.continuation.finish()
-    for (_, continuation) in directQueries { continuation.resume(throwing: NotebookTransportError.disconnected) }
+    for (_, _, continuation) in directQueries { continuation.resume(throwing: NotebookTransportError.disconnected) }
     directQueries.removeAll()
     loop?.cancel(); retry?.cancel()
     pending?.1.resume(throwing: NotebookTransportError.disconnected); pending = nil
     await loop?.value; loop = nil
   }
 
-  func connect(_ id: UUID) {
-    guard peer == nil || peer == id else { return }
+  func updateComputers(_ peers: [NotebookTransportIdentity]) {
+    computers = peers.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+    onlineComputers.formIntersection(peers.map(\.deviceID))
+    if let peer, !peers.contains(where: { $0.deviceID == peer }) { disconnect(peer) }
+  }
+  func connect(_ id: UUID) async {
+    onlineComputers.insert(id)
+    if peer == nil { await chooseComputer(id, firstConnection: true); return }
+    guard peer == id else { return }
     if !connected { offeredJobs.removeAll(); conversationSubscription = nil; nextConversation = .now }
-    peer = id; connected = true; persistPanel()
+    connected = true
     if tasks.isEmpty { catalogue(); catalogueProjects() }
     if files.window.sidebar { Task { await files.roots() } }
   }
   func disconnect(_ id: UUID) {
+    onlineComputers.remove(id)
     guard peer == id else { return }
-    for (_, continuation) in directQueries { continuation.resume(throwing: NotebookTransportError.disconnected) }
-    directQueries.removeAll()
-    connected = false; voice.connectionLost(); activities = [:]; retry?.cancel(); conversationSubscription = nil
+    connected = false; voice.connectionLost(); activities = [:]; conversationSubscription = nil
+    cancelQueries()
+  }
+  private func cancelQueries() {
+    for (_, _, continuation) in directQueries { continuation.resume(throwing: NotebookTransportError.disconnected) }
+    directQueries.removeAll(); queries.removeAll(); retry?.cancel()
     pending?.1.resume(throwing: NotebookTransportError.disconnected); pending = nil
+  }
+  func chooseComputer(_ id: UUID, firstConnection: Bool = false) async {
+    guard loaded, !stopped, !switchingComputer, !saving, savingInput == nil, !files.notes.contactActive,
+      firstConnection || computers.contains(where: { $0.deviceID == id }) else { return }
+    if peer == id { return }
+    switchingComputer = true; files.notes.acceptsNewContacts = false
+    defer { switchingComputer = false; files.notes.acceptsNewContacts = true }
+    await voice.end()
+    connected = false; cancelQueries(); await files.suspendForComputerSwitch()
+    do {
+      let author = author
+      let restored = try await persistence.submit { store in
+        do { return try store.selectChatComputer(id, author: author) }
+        catch {
+          guard try store.activeChatComputer(author: author) == id else { throw error }
+          return try store.chatComputerWindow(author: author, computer: id)
+        }
+      }
+      runs.detach(); queries.removeAll()
+      loaded = false; peer = id; threadID = restored.panel.threadID; draft = restored.panel.draft; loaded = true
+      conversation = nil; history = []; historyCursor = nil; projects = []; tasks = []; activities = [:]
+      projectCursor = nil; taskCursor = nil; displayedCatalogueCursor = nil; offeredJobs.removeAll()
+      conversationSubscription = nil; subscriptionRevision = nil; nextConversation = .now; continuationUnavailable = false
+      browsesChats = threadID == nil
+      jobs = restored.jobs
+      await files.installWindow(restored.window, document: restored.document)
+      connected = onlineComputers.contains(id); error = nil
+      catalogueProjects(); catalogue(); wake.continuation.yield(())
+    } catch { self.error = error.localizedDescription; connected = peer.map { onlineComputers.contains($0) } ?? false }
   }
   func receive(_ envelope: NotebookChatEnvelope, peerID: UUID) {
     guard connected, peer == peerID, envelope.isValid(from: peerID) else { return }
@@ -186,9 +231,10 @@ final class NotebookChatController {
 
   func sendMessage(threadID submittedThread: String, text: String, context: String, attentionContextID: UUID? = nil, steeringTurnID: String? = nil) async -> Bool {
     guard submittedThread != threadID || (!continuationUnavailable && !browsesChats) else { return false }
+    let computer = peer
     let action: NotebookChatAction = steeringTurnID.map { .steer(threadID: submittedThread, turnID: $0, text: text, context: context) } ?? .send(threadID: submittedThread, text: text, context: context)
     if await submit(action, attentionContextID: attentionContextID) {
-      if draft == text, threadID == submittedThread { draft = "" }; return true
+      if peer == computer, draft == text, threadID == submittedThread { draft = "" }; return true
     }
     return false
   }
@@ -213,13 +259,15 @@ final class NotebookChatController {
   }
 
   private func submit(_ action: NotebookChatAction, attentionContextID: UUID? = nil) async -> Bool {
-    guard loaded, !stopped, !saving else { return false }
+    guard loaded, !stopped, !saving, !switchingComputer else { return false }
     saving = true; defer { saving = false }
+    let computer = peer
     let controlID = action.controlID(author: author)
     if savingInput == nil, let controlID {
       do {
         if let previous = try await persistence.submit({ try $0.chatJob(controlID) }) {
-          guard previous.input.action == action else {
+          let destination = try await persistence.submit { try $0.chatDestination(controlID) }
+          guard destination == computer, previous.input.action == action else {
             error = "Для этого запроса уже сохранено другое решение. Повторно оно не отправляется."; return false
           }
           try await refreshJobs(); return true
@@ -232,7 +280,7 @@ final class NotebookChatController {
     let input = savingInput ?? NotebookChatInput(id: controlID ?? UUID(), author: author, action: action, attentionContextID: attentionContextID)
     savingInput = input
     do {
-      _ = try await persistence.submit { try $0.saveChatSubmission(input) }
+      _ = try await persistence.submit { try $0.saveChatSubmission(input, to: computer) }
       try await refreshJobs(); savingInput = nil; error = nil; return true
     } catch {
       // A lost local commit acknowledgement also keeps the same message ID.
@@ -243,21 +291,14 @@ final class NotebookChatController {
     }
   }
   private func refreshJobs() async throws {
-    let author = author
-    jobs = try await persistence.submit { store in
-      let recent = try store.recentChatJobs(author: author)
-      let pending = try store.pendingChatJobs().filter { $0.input.author == author }
-      // SQL admission order, not wall time: changing the iPad clock may not
-      // reorder offline messages. Extra pending rows all precede the recent page.
-      return recent + pending.filter { job in !recent.contains { $0.id == job.id } }.reversed()
-    }
+    let author = author, computer = peer
+    let values = try await persistence.submit { try $0.routedChatJobs(author: author, computer: computer) }
+    guard peer == computer else { return }; jobs = values
   }
   private func persistPanel() {
     guard loaded else { return }
     let state = NotebookChatPanelState(threadID: threadID, draft: draft, sidecarID: peer), author = author
-    persistence.enqueueCommand(publishesChanges: false, { try $0.saveChatPanel(state, author: author) }) { [weak self] result in
-      if case .failure(let failure) = result { Task { @MainActor [weak self] in self?.error = failure.localizedDescription } }
-    }
+    persistence.enqueue(owner: .chatPanel(peer), publishesChanges: false) { try $0.saveChatPanel(state, author: author); return false }
   }
   func refreshFileJobs() async { try? await refreshJobs(); wake.continuation.yield(()) }
   func fileQuery(_ query: NotebookFileQuery) async throws -> NotebookFileReply {
@@ -265,25 +306,28 @@ final class NotebookChatController {
     return reply
   }
   func directQuery(_ query: NotebookChatQuery) async throws -> NotebookChatReply {
-    guard connected, !stopped, directQueries.count < 8 else { throw NotebookTransportError.disconnected }
+    let endsVoice: Bool
+    if case .job(let input) = query, case .stopVoice = input.action { endsVoice = true } else { endsVoice = false }
+    guard connected, !stopped, (!switchingComputer || endsVoice), let computer = peer, directQueries.count < 8 else { throw NotebookTransportError.disconnected }
     return try await withCheckedThrowingContinuation { continuation in
-      directQueries.append((query, continuation)); wake.continuation.yield(())
+      directQueries.append((query, computer, continuation)); wake.continuation.yield(())
     }
   }
-  func sessionCommand(_ action: NotebookChatAction, id suppliedID: UUID? = nil) async throws -> NotebookChatJob {
+  func sessionCommand(_ action: NotebookChatAction, id suppliedID: UUID? = nil, computer destination: UUID? = nil) async throws -> NotebookChatJob {
     guard loaded, !stopped, action.isRunCommand || action.isVoiceCommand else { throw NotebookTransportError.disconnected }
+    guard let computer = destination ?? peer else { throw NotebookTransportError.disconnected }
     let id = action.controlID(author: author) ?? suppliedID ?? UUID()
     let existing = try await persistence.submit { try $0.chatJob(id) }
     if let existing, existing.input.action != action { throw NotebookTransportError.invalidAcknowledgement }
     let input = existing?.input ?? NotebookChatInput(id: id, author: author, action: action)
-    do { _ = try await persistence.submit { try $0.saveChatInput(input) } }
+    do { _ = try await persistence.submit { try $0.saveChatInput(input, to: computer) } }
     catch {
-      guard try await persistence.submit({ try $0.chatJob(input.id)?.input == input }) else { throw error }
+      guard try await persistence.submit({ try $0.chatJob(input.id)?.input == input && $0.chatDestination(input.id) == computer }) else { throw error }
     }
     try await refreshJobs()
-    if !connected { return try await persistence.submit { try $0.chatJob(input.id)! } }
+    if !connected || computer != peer { return try await persistence.submit { try $0.chatJob(input.id)! } }
     let query = NotebookChatQuery.job(input), reply = try await directQuery(query)
-    try await accept(reply, for: query)
+    try await accept(reply, for: query, computer: computer)
     guard case .job(let job) = reply else { throw NotebookTransportError.invalidAcknowledgement }
     return job
   }
@@ -294,7 +338,7 @@ final class NotebookChatController {
     guard pending == nil, connected, let peer else { throw NotebookTransportError.disconnected }
     let envelope = NotebookChatEnvelope(body: .request(query))
     if case .conversation = query { conversationSubscription = envelope.id; subscriptionRevision = nil }
-    return try await withCheckedThrowingContinuation { continuation in
+    let reply: NotebookChatReply = try await withCheckedThrowingContinuation { continuation in
       pending = (envelope, continuation)
       retry = Task { [weak self] in
         for _ in 0..<8 {
@@ -306,17 +350,22 @@ final class NotebookChatController {
         self.pending = nil; continuation.resume(throwing: NotebookTransportError.disconnected)
       }
     }
+    guard self.peer == peer else { throw NotebookTransportError.disconnected }
+    return reply
   }
   private func acceptConversation(_ value: CodexConversation) {
     guard subscriptionRevision == nil || value.revision >= subscriptionRevision! else { return }
     subscriptionRevision = value.revision; conversation = value; continuationUnavailable = false; error = nil
   }
 
-  private func accept(_ reply: NotebookChatReply, for query: NotebookChatQuery) async throws {
+  private func accept(_ reply: NotebookChatReply, for query: NotebookChatQuery, computer: UUID?) async throws {
+    guard computer == peer else { return }
     switch (query, reply) {
     case (.job(let input), .job(let job)):
       guard input == job.input else { throw NotebookTransportError.invalidAcknowledgement }
       let received = try await persistence.submit { try $0.receiveChatReceipt(job) }
+      let destination = try await persistence.submit { try $0.chatDestination(input.id) }
+      guard destination == peer else { return }
       offeredJobs.insert(input.id)
       files.receive(received)
       if case .created(let task) = received.result {

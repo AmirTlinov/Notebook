@@ -42,7 +42,7 @@ final class NotebookChatPanelTests: XCTestCase {
       receiver?.receive(.init(id: envelope.id, body: .reply(.catalogue(.init(tasks: tasks, nextCursor: nil)))), peerID: peer)
     }
     receiver = chat
-    await chat.start(); chat.connect(peer); chat.expanded = true
+    await chat.start(); await chat.connect(peer); chat.expanded = true
     let deadline = ContinuousClock.now + .seconds(3)
     while (chat.tasks.count != 3 || chat.activities.count != 3 || chat.projects.count != 1), .now < deadline { try await Task.sleep(for: .milliseconds(20)) }
     XCTAssertEqual(chat.tasks.count, 3)

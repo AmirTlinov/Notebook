@@ -49,6 +49,7 @@ struct NotebookChatPanel: View {
         .highPriorityGesture(windowDrag(move, activity: $moving))
       }
     }
+    .disabled(chat.switchingComputer)
     .buttonStyle(.plain)
     .tint(Color.primary)
     .frame(width: size.width, height: size.height)
@@ -208,9 +209,27 @@ struct NotebookChatPanel: View {
       }.accessibilityLabel(chat.files.window.terminal == true ? "Показать разговор" : "Терминал проекта")
         .accessibilityIdentifier("notebook-terminal-toggle")
       Menu {
+        if !chat.computers.isEmpty {
+          Section("Компьютер") {
+            ForEach(chat.computers, id: \.deviceID) { computer in
+              Button { model.chooseChatComputer(computer.deviceID) } label: {
+                Label(computer.displayName + (chat.onlineComputers.contains(computer.deviceID) ? "" : " · не в сети"),
+                  systemImage: chat.computerID == computer.deviceID ? "checkmark" : "laptopcomputer")
+              }.disabled(chat.switchingComputer)
+            }
+          }
+        }
         ForEach(chat.projects) { project in Button("Настроить «" + project.name + "»") { editingProject = project } }
         Button("Обновить проекты") { chat.catalogueProjects() }
-      } label: { Image(systemName: "slider.horizontal.3").font(.system(size: 14)).frame(width: 44, height: 44) }
+      } label: {
+        VStack(spacing: 2) {
+          Image(systemName: "slider.horizontal.3").font(.system(size: 14))
+          if chat.computers.count > 1 {
+            Text(chat.computers.first(where: { $0.deviceID == chat.computerID })?.displayName ?? "Mac не подключён")
+              .font(.system(size: 9)).lineLimit(1)
+          }
+        }.frame(width: chat.computers.count > 1 ? 84 : 44, height: 44)
+      }
         .accessibilityLabel("Настроить проекты").accessibilityIdentifier("notebook-chat-projects")
     }.padding(.trailing, 7).padding(.bottom, 7)
   }
@@ -384,7 +403,7 @@ struct NotebookChatPanel: View {
   }
   private var canSend: Bool {
     !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && chat.threadID != nil
-      && !chat.saving && !model.isSavingAgentQuestion && !chat.continuationUnavailable && !chat.browsesChats
+      && !chat.saving && !chat.switchingComputer && !model.isSavingAgentQuestion && !chat.continuationUnavailable && !chat.browsesChats
   }
   private var notice: String? {
     if let error = chat.voice.error { return error }

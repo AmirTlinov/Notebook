@@ -20,15 +20,16 @@ import NotebookCore
   @ObservationIgnored private var lease: WebSurfaceLease?
   @ObservationIgnored private var poll: Task<Void, Never>?
   @ObservationIgnored private var deadline: Task<Void, Never>?
+  @ObservationIgnored private var computer: UUID?
   @ObservationIgnored private var submitted = false
   @ObservationIgnored private var appliedAnswer = false
 
   static let dictationUnavailable = "В установленном App Server Codex нет отдельного интерфейса диктовки в черновик. Голосовой разговор не подменяет диктовку; Apple-распознавание и отдельный API-ключ не используются."
   func explainDictation() { error = Self.dictationUnavailable }
   func begin() async {
-    guard activeID == nil, let chat, chat.connected, let thread = chat.threadID, !chat.browsesChats, host != nil else { return }
+    guard activeID == nil, let chat, !chat.switchingComputer, chat.connected, let thread = chat.threadID, !chat.browsesChats, host != nil else { return }
     let id = UUID(); activeID = id; state = .init(id: id, threadID: thread); error = nil; muted = false; mediaReady = false; ending = false
-    submitted = false; appliedAnswer = false
+    computer = chat.computerID; submitted = false; appliedAnswer = false
     guard await AVCaptureDevice.requestAccess(for: .audio) else {
       if activeID == id { error = "Разрешите Notebook доступ к микрофону в настройках iPad."; await end() }; return
     }
@@ -59,7 +60,7 @@ import NotebookCore
       guard let sdp = try await web.callAsyncJavaScript("return await window.voiceBegin()", arguments: [:], in: nil, contentWorld: .page) as? String,
         activeID == id, !ending, let thread = state?.threadID, let chat, chat.connected else { throw NotebookTransportError.disconnected }
       submitted = true
-      let receipt = try await chat.sessionCommand(.startVoice(.init(threadID: thread, sdp: sdp)), id: id)
+      let receipt = try await chat.sessionCommand(.startVoice(.init(threadID: thread, sdp: sdp)), id: id, computer: computer)
       guard activeID == id, !ending else { return }
       guard receipt.state == .accepted else { throw NotebookPersistenceQueue.Failure(message: receipt.error ?? "Начало звонка ещё не подтверждено") }
       poll = Task { [weak self] in
@@ -104,7 +105,7 @@ import NotebookCore
     lease?.release(); lease = nil; mediaReady = false
     if submitted, let chat {
       do {
-        let receipt = try await chat.sessionCommand(.stopVoice(id))
+        let receipt = try await chat.sessionCommand(.stopVoice(id), computer: computer)
         if receipt.state == .uncertain { error = "Микрофон выключен. Завершение на Mac ещё не подтверждено; звонок не повторяется." }
       } catch { self.error = "Микрофон выключен. \(error.localizedDescription)" }
     }

@@ -11,11 +11,12 @@ extension NotebookStore {
 
   /// The first durable write precedes all network/native calls. Same ID with a
   /// different payload is a conflict, never an edit or a second model turn.
-  @discardableResult public func saveChatInput(_ input: NotebookChatInput) throws -> NotebookChatJob {
+  @discardableResult public func saveChatInput(_ input: NotebookChatInput, to computer: UUID? = nil) throws -> NotebookChatJob {
     guard input.isValid else { throw NotebookStorageError.invalidTransaction("invalid chat input") }
     return try commandTransaction(advancesReadRevision: false) {
       if let existing = try chatJob(input.id) {
         guard existing.input == input else { throw NotebookStorageError.invalidTransaction("chat ID collision") }
+        if let computer { try routeChatInput(input.id, to: computer) }
         return existing
       }
       guard try currentSQL!.rows("SELECT COUNT(*) FROM chat_jobs WHERE state IN ('saved','attempting','uncertain')")[0][0].integer! < 128 else {
@@ -24,17 +25,18 @@ extension NotebookStore {
       let job = NotebookChatJob(input: input)
       try currentSQL!.run("INSERT INTO chat_jobs(id,author,state,value) VALUES(?,?,?,?)", [
         .text(input.id.uuidString), .text(input.author.uuidString), .text(job.state.rawValue), .blob(try Self.storageEncoder.encode(job))])
+      if let computer { try routeChatInput(input.id, to: computer) }
       return job
     }
   }
 
   /// Commit the message and clear only its own editor value atomically. A crash
   /// between enqueue and UI refresh must not restore a sendable duplicate draft.
-  public func saveChatSubmission(_ input: NotebookChatInput) throws -> NotebookChatJob {
+  public func saveChatSubmission(_ input: NotebookChatInput, to computer: UUID? = nil) throws -> NotebookChatJob {
     try commandTransaction(advancesReadRevision: false) {
-      let job = try saveChatInput(input)
+      let job = try saveChatInput(input, to: computer)
       if let (thread, text, _) = input.action.message {
-        var panel = try chatPanel(author: input.author)
+        var panel = try chatPanel(author: input.author, computer: computer)
         if panel.threadID == thread, panel.draft == text {
           panel.draft = ""; try saveChatPanel(panel, author: input.author)
         }
@@ -100,9 +102,10 @@ extension NotebookStore {
     }
   }
 
-  public func chatPanel(author: UUID) throws -> NotebookChatPanelState {
+  public func chatPanel(author: UUID, computer: UUID? = nil) throws -> NotebookChatPanelState {
     try sqlRead { db in
-      try db.rows("SELECT value FROM chat_panel WHERE id=?", [.text(author.uuidString)]).first.map {
+      let key = try chatScope(author: author, computer: computer ?? activeChatComputer(author: author))
+      return try db.rows("SELECT value FROM chat_panel WHERE id=?", [.text(key)]).first.map {
         try JSONDecoder().decode(NotebookChatPanelState.self, from: $0[0].blob!)
       } ?? .init()
     }
@@ -114,7 +117,10 @@ extension NotebookStore {
     }
     try commandTransaction(advancesReadRevision: false) {
       try currentSQL!.run("INSERT INTO chat_panel(id,value) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value", [
-        .text(author.uuidString), .blob(try Self.storageEncoder.encode(state))])
+        .text(chatScope(author: author, computer: state.sidecarID)), .blob(try Self.storageEncoder.encode(state))])
+      if let computer = state.sidecarID {
+        try currentSQL!.run("INSERT OR IGNORE INTO chat_active_computer(author,computer) VALUES(?,?)", [.text(author.uuidString), .text(computer.uuidString)])
+      }
     }
   }
 }

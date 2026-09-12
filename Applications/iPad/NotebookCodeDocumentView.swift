@@ -18,7 +18,7 @@ struct NotebookCodeDocumentView: View {
             Text((document.address.path as NSString).lastPathComponent).font(.system(size: 16, weight: .medium)).lineLimit(1)
             Text(status(document)).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
           }.padding(.leading, 16).frame(maxWidth: .infinity, alignment: .leading)
-          control("arrow.clockwise", "Обновить файл") { Task { await files.refresh() } }
+          control("arrow.clockwise", "Обновить файл") { Task { await files.refresh() } }.disabled(!files.remoteAvailable)
           control("magnifyingglass", "Найти в коде") { findRequest += 1 }
           control("text.bubble", "Обсудить выбранный код") {
             if let fragment = files.captureSelection?() { model.discussCode(fragment) }
@@ -40,7 +40,7 @@ struct NotebookCodeDocumentView: View {
             }
           } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }.accessibilityLabel("Действия с файлом")
           control("square.and.arrow.down", "Сохранить файл на Mac") { files.save() }
-            .disabled(files.saving || document.pending != nil || document.other != nil || document.text == document.base)
+            .disabled(!files.remoteAvailable || files.saving || document.pending != nil || document.other != nil || document.text == document.base)
           control("xmark", "Закрыть файл") { editing = false; files.close() }
         }
         .background(Color(.secondarySystemBackground).opacity(0.65))
@@ -73,6 +73,7 @@ struct NotebookCodeDocumentView: View {
     }
   }
   private func status(_ document: NotebookFileDraft) -> String {
+    if !files.remoteAvailable { return document.text == document.base ? "Mac недоступен · сохранённая копия" : "Mac недоступен · черновик сохранён на iPad" }
     if document.pending != nil { return "Черновик на iPad · ожидается подтверждение Mac" }
     if document.other != nil { return "Конфликт · обе версии сохранены" }
     if document.text != document.base { return "Черновик на iPad" }

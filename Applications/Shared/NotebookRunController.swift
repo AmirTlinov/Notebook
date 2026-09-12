@@ -19,7 +19,7 @@ import NotebookCore
   @ObservationIgnored private var reading: Task<Void, Never>?
   @ObservationIgnored private var readerID: UUID?
   @ObservationIgnored private var inputTask: Task<Void, Never>?
-  @ObservationIgnored private var pendingInput: [(UUID, Data)] = []
+  @ObservationIgnored private var pendingInput: [(computer: UUID, run: UUID, bytes: Data)] = []
   private(set) var loadingCommand = false
   @ObservationIgnored private var resizing: Task<Void, Never>?
   init(persistence: NotebookPersistenceQueue) { self.persistence = persistence }
@@ -44,7 +44,7 @@ import NotebookCore
       var runID: UUID?, cursor = "0", initial = true
       while readerID == id, !Task.isCancelled {
         var more = false
-        if chat?.connected == true {
+        if chat?.connected == true, chat?.computerID == root.computer {
           do {
             guard case .run(let output) = try await chat?.directQuery(.run(.init(root: root, runID: runID, after: cursor))),
               readerID == id, !Task.isCancelled else { return }
@@ -76,20 +76,20 @@ import NotebookCore
     let request = NotebookRunRequest(root: root, command: command, replacing: restart ? record?.id : nil, columns: columns, rows: rows)
     guard request.isValid else { error = "Введите команду длиной до 8 КиБ."; return }
     busy = true; defer { busy = false }
-    do { try check(try await chat.sessionCommand(.startRun(request))); error = nil }
+    do { try check(try await chat.sessionCommand(.startRun(request), computer: root.computer)); error = nil }
     catch { self.error = error.localizedDescription }
   }
   func stopRun() async {
-    guard !busy, let id = record?.id, let chat else { return }
+    guard !busy, let id = record?.id, let root, let chat else { return }
     busy = true; defer { busy = false }
-    do { try check(try await chat.sessionCommand(.stopRun(id))); error = nil }
+    do { try check(try await chat.sessionCommand(.stopRun(id), computer: root.computer)); error = nil }
     catch { self.error = error.localizedDescription }
   }
   func input(_ bytes: Data) {
-    guard chat?.connected == true, let record, record.isActive, !inputBlocked, !bytes.isEmpty else { return }
-    guard bytes.count + pendingInput.reduce(0, { $0 + $1.1.count }) <= 8192 else { error = "Ввод превышает 8 КиБ. Вставьте текст меньшими частями."; return }
-    if pendingInput.last?.0 == record.id { pendingInput[pendingInput.count - 1].1.append(bytes) }
-    else { pendingInput.append((record.id, bytes)) }
+    guard chat?.connected == true, let computer = root?.computer, chat?.computerID == computer, let record, record.isActive, !inputBlocked, !bytes.isEmpty else { return }
+    guard bytes.count + pendingInput.reduce(0, { $0 + $1.bytes.count }) <= 8192 else { error = "Ввод превышает 8 КиБ. Вставьте текст меньшими частями."; return }
+    if pendingInput.last?.computer == computer && pendingInput.last?.run == record.id { pendingInput[pendingInput.count - 1].bytes.append(bytes) }
+    else { pendingInput.append((computer, record.id, bytes)) }
     drainInput()
   }
   func continueInput() { inputBlocked = false; drainInput() }
@@ -100,10 +100,10 @@ import NotebookCore
       try? await Task.sleep(for: .milliseconds(60))
       guard let self else { return }
       while !pendingInput.isEmpty {
-        let (id, bytes) = pendingInput.removeFirst()
+        let (computer, id, bytes) = pendingInput.removeFirst()
         do {
           guard let chat else { throw NotebookTransportError.disconnected }
-          try check(try await chat.sessionCommand(.writeRun(id, bytes)))
+          try check(try await chat.sessionCommand(.writeRun(id, bytes), computer: computer))
         } catch {
           self.error = "Ввод не подтверждён; автоматически не повторяется. \(error.localizedDescription)"
           inputBlocked = true; break
@@ -116,12 +116,12 @@ import NotebookCore
     guard (20...500).contains(columns), (4...200).contains(rows) else { return }
     self.columns = columns; self.rows = rows
     resizing?.cancel()
-    guard let record, record.isActive else { return }
+    guard let computer = root?.computer, let record, record.isActive else { return }
     let id = record.id
     resizing = Task { [weak self] in
       do {
         try await Task.sleep(for: .milliseconds(100))
-        guard let self, chat?.connected == true else { return }
+        guard let self, chat?.connected == true, chat?.computerID == computer else { return }
         _ = try await chat?.directQuery(.resizeRun(id, columns: columns, rows: rows))
       } catch { }
     }

@@ -29,7 +29,8 @@ final class NotebookCodeAnnotations {
   init(persistence: NotebookPersistenceQueue, author: UUID) {
     self.persistence = persistence; self.author = author; clock = .init(counter: 0, actor: author)
   }
-  func select(_ file: NotebookFileAddress) async {
+  var acceptsNewContacts = true
+  func select(_ file: NotebookFileAddress?) async {
     guard self.file != file else { await refresh(); return }
     self.file = file; ready = false; revision &+= 1; contributionOrder = []; fragments = []; annotations = [:]; visible = []; reviewed = nil; hasMore = false; nextPageAfter = nil
     await refresh()
@@ -89,7 +90,7 @@ final class NotebookCodeAnnotations {
     clock = next; contactActive = true; return fragment
   }
   func material(file: NotebookFileAddress, source: String, offset: Int, text: String, width: Double, height: Double, fontSize: Double) -> NotebookCodeFragment? {
-    guard ready, !contactActive, self.file == file, let next = clock.advanced(by: author) else { return nil }
+    guard acceptsNewContacts, ready, !contactActive, self.file == file, let next = clock.advanced(by: author) else { return nil }
     let hash = NotebookFileVersion.hash(Data(source.utf8))
     let fragment = fragments.first { $0.sourceHash == hash && $0.utf16Offset == offset && $0.text == text && $0.width == width && $0.height == height && $0.fontSize == fontSize }
       ?? .init(file: file, sourceHash: hash, utf16Offset: offset, text: text, width: width, height: height, fontSize: fontSize, stamp: next)

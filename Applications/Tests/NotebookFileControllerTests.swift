@@ -28,7 +28,7 @@ final class NotebookFileControllerTests: XCTestCase {
       }
       chat.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
     }
-    await chat.start(); chat.connect(peer)
+    await chat.start(); await chat.connect(peer)
     try store.savePresence(.init(mode: .board, camera: .init(center: .init(x: 321, y: -456), scale: 0.43), viewport: .init(x: 834, y: 1194)))
     let before = try store.loadPresence()
     await chat.files.open(address)
