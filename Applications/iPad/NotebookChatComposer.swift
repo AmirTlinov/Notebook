@@ -103,7 +103,7 @@ struct NotebookChatComposer: View {
       Button { Task { await chat.voice.begin() } } label: {
         Image(systemName: "waveform").font(.system(size: 16)).frame(width: 44, height: 44).contentShape(Rectangle())
       }.accessibilityLabel("Голосовой разговор с Codex").accessibilityIdentifier("notebook-chat-voice")
-        .disabled(chat.voice.activeID != nil || !chat.connected || !hasThread)
+        .disabled(chat.voice.capturing || !chat.connected || !hasThread)
       if hasThread, let conversation = chat.conversation, conversation.busy || conversation.activeTurnID != nil {
         Button {
           if let turn = conversation.activeTurnID { Task { await chat.stopTurn(threadID: conversation.threadID, turnID: turn) } }

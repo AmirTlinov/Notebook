@@ -26,7 +26,8 @@ PROFILES = {
         "ipad": ["NotebookTests/NotebookComputerControllerTests", "NotebookTests/NotebookChatControllerTests", "NotebookTests/NotebookFileControllerTests", "NotebookTests/NotebookRunControllerTests", "NotebookTests/NotebookVoiceControllerTests"],
     },
     "voice": {
-        "core": ["NotebookChatStoreTests", "NotebookCodexTests"],
+        "commands": ["voice-audio"],
+        "core": ["NotebookChatStoreTests", "NotebookCodexTests", "NotebookWakeAddressTests", "NotebookChatReadPositionTests"],
         "mac": ["NotebookMacTests/NotebookVoiceTests", "NotebookMacTests/NotebookCodexSidecarTests"],
         "ipad": ["NotebookTests/NotebookVoiceControllerTests", "NotebookTests/NotebookChatPanelTests", "NotebookTests/NotebookChatControllerTests"],
     },
@@ -54,7 +55,7 @@ PROFILES = {
     "chat-transport": {"core": ["NotebookChatStoreTests"], "ipad": ["NotebookTests/NotebookTransportSessionTests/testCodexEnvelopeUsesTheSameAuthenticatedPeerAndReceiptID"]},
     "codex": {"core": ["NotebookCodexTests"]},
     "chat": {
-        "core": ["NotebookChatStoreTests"],
+        "core": ["NotebookChatStoreTests", "NotebookChatReadPositionTests"],
         "mac": ["NotebookMacTests/NotebookChatRenderingTests", "NotebookMacTests/NotebookCodexSidecarTests"],
         "ipad": ["NotebookTests/NotebookChatPanelTests", "NotebookTests/NotebookChatControllerTests", "NotebookTests/NotebookVoiceControllerTests"],
     },
@@ -135,7 +136,7 @@ def owners(path):
     name = Path(path).name
     if name in ("NotebookComputerStore.swift", "NotebookComputerStoreTests.swift", "NotebookComputerControllerTests.swift"):
         return ["computers"]
-    if "Voice" in name or name.startswith("voice-"):
+    if "Voice" in name or "Wake" in name or name.startswith("voice-") or path.startswith("Tests/NotebookVoiceHarness/"):
         return ["voice"]
     if name in ("NotebookProjectRun.swift", "NotebookRunStore.swift", "MacNotebookProjectRuns.swift", "NotebookRunController.swift", "NotebookTerminalView.swift", "NotebookRunStoreTests.swift", "NotebookProjectRunsTests.swift", "NotebookRunControllerTests.swift") or name.startswith(("terminal-", "xterm")):
         return ["project-runs"]
@@ -342,7 +343,9 @@ def run_selected(root, plan, evidence):
         output, _ = command("core", ["swift", "test", "--filter", "|".join(checks["core"])], cwd=root, timeout=600, read_output=True)
         release.require(re.search(rb"Test run with [1-9][0-9]* tests? .*passed", output), "Core не исполнил выбранные тесты.")
     for name in checks["commands"]:
-        if name == "mcp":
+        if name == "voice-audio":
+            command(name, ["node", "--test", str(root / "Tests/NotebookVoiceHarness/audio.test.mjs")], cwd=root)
+        elif name == "mcp":
             if not (root / "MCP/node_modules").is_dir():
                 command("mcp-dependencies", ["npm", "ci", "--ignore-scripts"], cwd=root / "MCP")
             command("mcp-check", ["npm", "run", "check"], cwd=root / "MCP")

@@ -40,6 +40,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.productivity
         NSMicrophoneUsageDescription: Голосовой разговор передаёт речь в Codex через вашу существующую учётную запись. Микрофон включается только по вашему действию.
+        NSSpeechRecognitionUsageDescription: Обращение к GPT распознаётся только на iPad. Окружающая речь не передаётся агенту до обращения; это не диктовка текста.
         NSLocalNetworkUsageDescription: Notebook связывает iPad с помощником на вашем Mac без облачного сервера.
         NSBonjourServices:
           - _notebook._tcp
@@ -54,8 +55,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook
         PRODUCT_NAME: Notebook
         NOTEBOOK_DISPLAY_NAME: Notebook
-        MARKETING_VERSION: 0.3.36
-        CURRENT_PROJECT_VERSION: 39
+        MARKETING_VERSION: 0.3.37
+        CURRENT_PROJECT_VERSION: 40
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: VUNH73AYPY
         TARGETED_DEVICE_FAMILY: 2
@@ -143,8 +144,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook.mac
         PRODUCT_NAME: Notebook
-        MARKETING_VERSION: 0.3.36
-        CURRENT_PROJECT_VERSION: 39
+        MARKETING_VERSION: 0.3.37
+        CURRENT_PROJECT_VERSION: 40
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: VUNH73AYPY
         GENERATE_INFOPLIST_FILE: false

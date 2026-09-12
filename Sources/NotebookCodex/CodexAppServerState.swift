@@ -87,7 +87,7 @@ struct CodexAppServerState: Sendable {
           let index = messages.firstIndex(where: { $0.id == id && $0.turnID == params["turnId"]?.string }) else { return false }
         let prior = messages[index], text = prior.text + delta
         messages[index] = CodexMessage(id: prior.id, turnID: prior.turnID, clientID: prior.clientID, role: prior.role,
-          text: String(text.prefix(16_384)), isTruncated: prior.isTruncated || text.count > 16_384, activity: prior.activity)
+          text: String(text.prefix(16_384)), isTruncated: prior.isTruncated || text.count > 16_384, activity: prior.activity, attachments: prior.attachments, phase: prior.phase)
       default: return false
       }
     }

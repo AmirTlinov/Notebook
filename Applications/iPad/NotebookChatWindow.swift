@@ -49,8 +49,8 @@ struct NotebookChatWindowLayout: Codable, Equatable {
   var anchor = CGPoint(x: 1, y: 1)
   var size = CGSize(width: 560, height: 640)
 
-  func frame(in available: CGRect, expanded: Bool) -> CGRect {
-    let requested = expanded ? size : CGSize(width: 112, height: 48)
+  func frame(in available: CGRect, expanded: Bool, compactSize: CGSize = CGSize(width: 112, height: 48)) -> CGRect {
+    let requested = expanded ? size : compactSize
     let fitted = CGSize(width: min(requested.width, available.width), height: min(requested.height, available.height))
     return CGRect(x: available.minX + (available.width - fitted.width) * anchor.x,
       y: available.minY + (available.height - fitted.height) * anchor.y, width: fitted.width, height: fitted.height)
@@ -102,7 +102,8 @@ struct NotebookChatWindow: View {
   private var layout: NotebookChatWindowLayout { liveLayout ?? .init(restoring: savedLayout) }
 
   var body: some View {
-    let frame = layout.frame(in: available, expanded: chat.expanded)
+    let frame = layout.frame(in: available, expanded: chat.expanded,
+      compactSize: NotebookCollapsedChat.preferredSize(chat: chat, available: available.size))
     NotebookChatPanel(chat: chat, size: frame.size, openPairing: openPairing, openHistory: openHistory,
       move: { update($0, ended: $1, corner: nil, frame: frame) },
       resize: { update($0, ended: $1, corner: $2, frame: frame) },

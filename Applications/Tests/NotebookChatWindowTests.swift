@@ -4,6 +4,16 @@ import XCTest
 final class NotebookChatWindowTests: XCTestCase {
   private let portrait = CGRect(x: 18, y: 82, width: 798, height: 1032)
 
+  func testCompactCloudFitsEachWindowWithoutMutatingThePreferredChatGeometry() {
+    var layout = NotebookChatWindowLayout(); layout.anchor = .init(x: 0.3, y: 0.6)
+    let saved = layout
+    for available in [portrait, CGRect(x: 18, y: 82, width: 700, height: 260), CGRect(x: 18, y: 82, width: 260, height: 180)] {
+      let cloud = layout.frame(in: available, expanded: false, compactSize: .init(width: 340, height: 240))
+      XCTAssertTrue(available.contains(cloud)); XCTAssertEqual(layout, saved)
+      XCTAssertEqual(layout.frame(in: portrait, expanded: true), saved.frame(in: portrait, expanded: true))
+    }
+  }
+
   func testTerminalStartsAtHalfAndItsDividerPreservesTheWindowAndTemporaryKeyboardPreference() {
     let window = NotebookChatWindowLayout(), frame = window.frame(in: portrait, expanded: true)
     let first = NotebookTerminalSplit(height: 500, fraction: nil)

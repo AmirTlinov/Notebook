@@ -84,6 +84,6 @@ extension CodexAppServerState {
     default: return nil
     }
     return CodexMessage(id: id, turnID: turnID, clientID: item["clientId"]?.string, role: role,
-      text: String(text.prefix(16_384)), isTruncated: text.count > 16_384 || detailTruncated, activity: activity, attachments: attachments)
+      text: String(text.prefix(16_384)), isTruncated: text.count > 16_384 || detailTruncated, activity: activity, attachments: attachments, phase: item["phase"]?.string)
   }
 }

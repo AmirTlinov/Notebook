@@ -4,6 +4,54 @@ import XCTest
 
 @MainActor
 final class NotebookChatControllerTests: XCTestCase {
+  func testCollapsedSubscriptionShowsOnlyFinalRepliesAndKeepsDraftAndReadReceipts() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("compact-chat-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), author = UUID(), peer = UUID(), thread = UUID().uuidString
+    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let queue = NotebookPersistenceQueue(store: store)
+    var chat: NotebookChatController!, subscription: UUID?, collapsed = false
+    func snapshot(_ revision: Int) -> CodexConversation {
+      let replies = (1...revision).map { CodexMessage(id: "reply-\($0)", turnID: "turn-\($0)", clientID: nil, role: .assistant, text: "Useful answer \($0)", phase: "final_answer") }
+      let progress = CodexMessage(id: "progress", turnID: "working", clientID: nil, role: .assistant, text: "Internal progress", phase: "commentary")
+      return .init(threadID: thread, revision: revision, title: "One task", ready: true, busy: true, activeTurnID: "working",
+        messages: replies + [progress], requests: [], acceptedMessages: [:], turnStatuses: [:])
+    }
+    chat = .init(persistence: queue, author: author) { envelope, _ in
+      guard case .request(let query) = envelope.body else { return }
+      let reply: NotebookChatReply
+      switch query {
+      case .conversation: subscription = envelope.id; reply = .conversation(snapshot(1))
+      case .history: reply = .history(.init(messages: [], nextCursor: nil))
+      case .projects: reply = .projects(.init(projects: [], nextCursor: nil))
+      case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil))
+      case .activity(let ids):
+        XCTAssertFalse(collapsed && ids.isEmpty, "An empty activity query removes the native subscription and cannot represent collapse")
+        reply = .activity(ids.map { .init(id: $0, status: .idle) })
+      default: return XCTFail("Presentation cannot create a job or approve access")
+      }
+      chat.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
+    }
+    await chat.start(); chat.select(.init(id: thread, title: "One task", cwd: "/fixture")); chat.expanded = true
+    chat.draft = "Retained draft"; await chat.connect(peer)
+    let deadline = ContinuousClock.now + .seconds(4)
+    while subscription == nil, .now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    let id = try XCTUnwrap(subscription)
+    try await Task.sleep(for: .milliseconds(30))
+    collapsed = true; chat.expanded = false
+    chat.receive(.init(body: .event(subscriptionID: id, conversation: snapshot(2))), peerID: peer)
+    XCTAssertFalse(chat.expanded); XCTAssertEqual(chat.replyCloud?.id, "reply-2"); XCTAssertEqual(chat.unreadReplies.count, 1)
+    chat.hideReplyCloud(); XCTAssertNil(chat.replyCloud); XCTAssertEqual(chat.unreadReplies.count, 1)
+    chat.receive(.init(body: .event(subscriptionID: id, conversation: snapshot(3))), peerID: peer)
+    XCTAssertEqual(chat.replyCloud?.id, "reply-3"); XCTAssertEqual(chat.unreadReplies.count, 2)
+    XCTAssertEqual(chat.messages.count, 4); XCTAssertEqual(chat.draft, "Retained draft"); XCTAssertTrue(chat.jobs.isEmpty)
+    chat.revealReply("reply-2")
+    XCTAssertTrue(chat.expanded); XCTAssertEqual(chat.revealedMessageID, "reply-2"); XCTAssertTrue(chat.unreadReplies.isEmpty)
+    await chat.stop(); let flushed = await queue.flush(); XCTAssertTrue(flushed)
+    let restored = try store.chatPanel(author: author, computer: peer)
+    XCTAssertEqual(restored.draft, "Retained draft"); XCTAssertEqual(restored.readPosition?.readThrough, "reply-3")
+  }
+
   func testOneTranscriptMergesLiveAndPagedHistoryAndRefreshesLoadedCataloguesQuietly() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("chat-sync-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -214,7 +262,9 @@ final class NotebookChatControllerTests: XCTestCase {
       case .projects: reply = .projects(.init(projects: [], nextCursor: nil))
       case .activity(let ids): reply = .activity(ids.map { .init(id: $0, status: .idle) })
       case .history: reply = .history(.init(messages: [], nextCursor: nil))
-      default: return XCTFail("Collapsed panel must not poll a conversation")
+      case .conversation(let thread): reply = .conversation(.init(threadID: thread, revision: 1, title: "Task", ready: true, busy: false,
+        activeTurnID: nil, messages: [], requests: [], acceptedMessages: [:], turnStatuses: [:]))
+      default: return XCTFail("Only the same conversation and saved outbox may be queried")
       }
       controller.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
     }

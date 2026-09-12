@@ -115,6 +115,11 @@ extension NotebookStore {
     guard CodexInputAttachment.valid(state.attachments ?? []), state.draft.utf8.count <= 32768, state.threadID == nil || UUID(uuidString: state.threadID!) != nil else {
       throw NotebookStorageError.invalidTransaction("invalid chat panel")
     }
+    if let read = state.readPosition {
+      guard read.threadID == state.threadID, [read.readThrough, read.hiddenThrough].compactMap({ $0 }).allSatisfy({ !$0.isEmpty && $0.utf8.count <= 512 }) else {
+        throw NotebookStorageError.invalidTransaction("invalid chat read position")
+      }
+    }
     try commandTransaction(advancesReadRevision: false) {
       try currentSQL!.run("INSERT INTO chat_panel(id,value) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value", [
         .text(chatScope(author: author, computer: state.sidecarID)), .blob(try Self.storageEncoder.encode(state))])

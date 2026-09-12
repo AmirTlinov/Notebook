@@ -12,10 +12,10 @@ struct CodexAppServerStateTests {
   @Test func nativeItemsStreamWithoutDuplicateRowsOrHiddenReasoning() throws {
     var state = CodexAppServerState(threadID: "thread")
     try state.accept(event("turn/started", ["turn": .object(["id": .string("turn"), "status": .string("inProgress")])]))
-    let item: JSONValue = .object(["id": .string("answer"), "type": .string("agentMessage"), "text": .string("")])
+    let item: JSONValue = .object(["id": .string("answer"), "type": .string("agentMessage"), "text": .string(""), "phase": .string("final_answer")])
     try state.accept(event("item/started", ["turnId": .string("turn"), "item": item]))
     try state.accept(event("item/agentMessage/delta", ["turnId": .string("turn"), "itemId": .string("answer"), "delta": .string("Ответ")]))
-    #expect(state.view.messages.first?.text == "Ответ"); #expect(state.view.busy)
+    #expect(state.view.messages.first?.phase == "final_answer"); #expect(state.view.messages.first?.text == "Ответ"); #expect(state.view.busy)
     try state.accept(event("item/completed", ["turnId": .string("turn"), "item": .object(["id": .string("answer"), "type": .string("agentMessage"), "text": .string("Ответ готов")])]))
     try state.accept(event("item/completed", ["turnId": .string("turn"), "item": .object(["id": .string("hidden"), "type": .string("reasoning"), "text": .string("private")])]))
     try state.accept(event("turn/completed", ["turn": .object(["id": .string("turn"), "status": .string("completed")])]))

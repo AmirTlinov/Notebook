@@ -26,7 +26,10 @@ final class NotebookChatController {
   private(set) var computers: [NotebookTransportIdentity] = []
   private(set) var onlineComputers = Set<UUID>()
   private(set) var switchingComputer = false
-  var expanded = false { didSet { if !expanded { suspendTranscript(); activities = [:]; conversationSubscription = nil; enqueue(.activity(threadIDs: [])) } else { synchronizeVisible() } } }
+  var expanded = false { didSet {
+    if expanded { markRepliesRead(); synchronizeVisible() }
+    else { activities = [:]; nextConversation = .now }
+  } }
   var browsesChats = false { didSet { if browsesChats != oldValue { synchronizeVisible() } } }
   private(set) var browserMode = BrowserMode.chats
   private(set) var expandedProjects = Set<String>()
@@ -45,6 +48,16 @@ final class NotebookChatController {
   private(set) var defaultProviderNeedsSignIn = false
   private(set) var conversation: CodexConversation?
   private(set) var messages: [CodexMessage] = []
+  var compactDraftExpanded = false
+  private(set) var readPosition: NotebookChatReadPosition?
+  private(set) var revealedMessageID: String?
+  var taskTitle: String { conversation?.title ?? selectedTask?.title ?? "Задача Codex" }
+  var compactReplies: [CodexMessage] { NotebookChatReadPosition.replies(in: messages, conversation: conversation) }
+  var unreadReplies: [CodexMessage] { readPosition?.unread(in: compactReplies) ?? [] }
+  var replyCloud: CodexMessage? {
+    guard voice.activeID == nil, let last = unreadReplies.last, last.id != readPosition?.hiddenThrough else { return nil }
+    return last
+  }
   private(set) var historyCursor: String?
   private(set) var loadingHistory = false
   private(set) var jobs: [NotebookChatJob] = []
@@ -99,7 +112,7 @@ final class NotebookChatController {
     do {
       let author = author
       let state = try await persistence.submit { store in try store.prepareChatComputers(author: author); return try store.chatPanel(author: author) }
-      threadID = state.threadID; draft = state.draft; attachments = state.attachments ?? []; peer = state.sidecarID
+      threadID = state.threadID; draft = state.draft; attachments = state.attachments ?? []; readPosition = state.readPosition; peer = state.sidecarID
       try await refreshJobs()
       try await files.start()
       loaded = true
@@ -128,7 +141,7 @@ final class NotebookChatController {
             let outgoing = jobs.reversed().filter { !$0.isTerminal }
             offeredJobs.formIntersection(outgoing.map(\.id))
             if !queries.isEmpty { query = queries.removeFirst() }
-            else if !outgoing.isEmpty, deliverJobs || !expanded {
+            else if !outgoing.isEmpty, deliverJobs {
               // First admission follows the saved order even when earlier jobs
               // complete and disappear during delivery. Receipt polling is fair
               // only after every pending input has reached the Mac at least once.
@@ -138,7 +151,7 @@ final class NotebookChatController {
               let visible = visibleTasks
               let start = activityOffset % visible.count, ids = Array(visible.dropFirst(start).prefix(8).map(\.id))
               query = .activity(threadIDs: ids); activityOffset = start + ids.count; nextActivity = .now + .seconds(2)
-            } else if expanded, !browsesChats, let threadID, .now >= nextConversation {
+            } else if !expanded || !browsesChats, let threadID, .now >= nextConversation {
               query = .conversation(threadID: threadID); nextConversation = .now + .seconds(10)
             }
             else { query = outgoing.first.map { .job($0.input) } }
@@ -202,9 +215,9 @@ final class NotebookChatController {
     guard loaded, !stopped, !switchingComputer, !saving, savingInput == nil, !files.notes.contactActive,
       firstConnection || computers.contains(where: { $0.deviceID == id }) else { return }
     if peer == id { return }
+    guard !voice.capturing else { error = "Сначала выключите микрофон или завершите разговор с «\(voice.taskTitle)»."; return }
     switchingComputer = true; files.notes.acceptsNewContacts = false
     defer { switchingComputer = false; files.notes.acceptsNewContacts = true }
-    await voice.end()
     connected = false; cancelQueries(); await files.suspendForComputerSwitch()
     do {
       let author = author
@@ -216,7 +229,7 @@ final class NotebookChatController {
         }
       }
       runs.detach(); queries.removeAll()
-      loaded = false; peer = id; threadID = restored.panel.threadID; draft = restored.panel.draft; attachments = restored.panel.attachments ?? []; models = []; loadingModels = false; modelError = nil; loaded = true
+      loaded = false; peer = id; threadID = restored.panel.threadID; draft = restored.panel.draft; attachments = restored.panel.attachments ?? []; readPosition = restored.panel.readPosition; revealedMessageID = nil; models = []; loadingModels = false; modelError = nil; loaded = true
       transcriptGeneration = UUID(); catchUpBoundary = nil
       conversation = nil; messages = []; historyCursor = nil; historyLoaded = false; historyBoundary = nil; projects = []; catalogues = [:]; activities = [:]
       projectCursor = nil; projectPages = 1; nextProjectPage = false; offeredJobs.removeAll(); selectedTask = nil; expandedProjects = []; browserMode = .chats
@@ -329,7 +342,9 @@ final class NotebookChatController {
     synchronizeVisibleIfDue(); catchUpTranscript(); wake.continuation.yield(())
   }
   func synchronizeVisibleIfDue(now: ContinuousClock.Instant = .now) {
-    guard expanded, connected, !stopped else { return }
+    guard connected, !stopped else { return }
+    if now >= nextCatchUp { catchUpTranscript() }
+    guard expanded else { return }
     if nextProjectPage || now >= nextProjects { catalogueProjects() }
     if threadID == nil || browsesChats {
       if browserMode == .chats {
@@ -343,7 +358,6 @@ final class NotebookChatController {
       }
     }
     if !browsesChats, !historyLoaded { loadEarlier() }
-    if now >= nextCatchUp { catchUpTranscript() }
   }
   func selectProject(_ project: CodexProject?) {
     selectedTask = nil; files.chooseProject(project)
@@ -373,10 +387,12 @@ final class NotebookChatController {
     loadingHistory = enqueue(.history(threadID: threadID, cursor: historyLoaded ? historyCursor : nil))
   }
   func select(_ task: CodexTask) {
+    guard !voice.capturing || voice.state?.threadID == task.id else { error = "Микрофон относится к «\(voice.taskTitle)». Завершите разговор перед выбором другой задачи."; return }
+    if task.id == threadID { browsesChats = false; return }
     transcriptGeneration = UUID(); catchUpRead?.cancel(); catchUpRead = nil; catchUpBoundary = nil
     nextConversation = .now; conversationSubscription = nil
     selectedTask = task; files.chooseProject(project(for: task))
-    threadID = task.id; continuationUnavailable = false; conversation = nil; messages = []; historyCursor = nil; historyLoaded = false; historyBoundary = nil; loadingHistory = false
+    threadID = task.id; readPosition = nil; revealedMessageID = nil; continuationUnavailable = false; conversation = nil; messages = []; historyCursor = nil; historyLoaded = false; historyBoundary = nil; loadingHistory = false
     browsesChats = false; persistPanel(); loadEarlier()
     if task.projectID != nil, project(for: task) == nil { catalogueProjects() }
   }
@@ -397,6 +413,7 @@ final class NotebookChatController {
     return await submit(.updateProject(edit))
   }
   func create() async {
+    guard !voice.capturing else { error = "Завершите разговор с «\(voice.taskTitle)» перед созданием другой задачи."; return }
     if await submit(.create(title: "Занятие в Notebook", project: selectedProject)) { browsesChats = true; catalogue() }
   }
   func attach(_ value: CodexInputAttachment) {
@@ -520,7 +537,7 @@ final class NotebookChatController {
   }
   private func persistPanel() {
     guard loaded else { return }
-    let state = NotebookChatPanelState(threadID: threadID, draft: draft, sidecarID: peer, attachments: attachments.isEmpty ? nil : attachments), author = author
+    let state = NotebookChatPanelState(threadID: threadID, draft: draft, sidecarID: peer, attachments: attachments.isEmpty ? nil : attachments, readPosition: readPosition), author = author
     persistence.enqueue(owner: .chatPanel(peer), publishesChanges: false) { try $0.saveChatPanel(state, author: author); return false }
   }
   func refreshFileJobs() async { try? await refreshJobs(); wake.continuation.yield(()) }
@@ -582,6 +599,21 @@ final class NotebookChatController {
     guard subscriptionRevision == nil || value.revision >= subscriptionRevision! else { return }
     subscriptionRevision = value.revision; conversation = value; continuationUnavailable = false; error = nil
     mergeMessages(value.messages, preferIncoming: true)
+    if readPosition == nil || expanded || voice.activeID != nil { markRepliesRead() }
+  }
+
+  func hideReplyCloud() {
+    let last = unreadReplies.last?.id
+    readPosition?.hiddenThrough = last; persistPanel()
+  }
+  func revealReply(_ messageID: String? = nil) {
+    revealedMessageID = messageID ?? unreadReplies.first?.id
+    browsesChats = false; expanded = true
+  }
+  private func markRepliesRead() {
+    guard let threadID else { return }
+    let next = NotebookChatReadPosition(threadID: threadID, readThrough: compactReplies.last?.id)
+    if readPosition != next { readPosition = next; persistPanel() }
   }
 
   private func suspendTranscript() {
@@ -591,7 +623,7 @@ final class NotebookChatController {
   /// A reconnect can miss more than the 64-item live window. Fill that gap up
   /// to the last shown native ID without replacing the older reading window.
   private func catchUpTranscript() {
-    guard expanded, connected, !stopped, !browsesChats, catchUpRead == nil, let threadID, let boundary = catchUpBoundary else { return }
+    guard connected, !stopped, !expanded || !browsesChats, catchUpRead == nil, let threadID, let boundary = catchUpBoundary else { return }
     let generation = transcriptGeneration
     catchUpRead = Task { [weak self] in
       guard let self else { return }

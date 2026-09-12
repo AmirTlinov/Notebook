@@ -104,9 +104,9 @@ struct NotebookRootView: View {
           openPairing: { showsPairing = true },
           openHistory: { showsHistory = true }, frameChanged: { chatFrame = $0 })
       }
-      // The collapsed launcher belongs to the paper's controls, not the
-      // disappearing keyboard. Its hit target must not travel during dismissal.
-      .ignoresSafeArea(.keyboard, edges: chat.expanded ? [] : .bottom)
+      // The launcher stays still during keyboard dismissal. A compact editor
+      // or native question follows the keyboard just like the expanded composer.
+      .ignoresSafeArea(.keyboard, edges: chat.expanded || chat.compactDraftExpanded || chat.conversation?.requests.isEmpty == false ? [] : .bottom)
     }
     if let question = model.agentQuestion, model.chat?.expanded != true {
       NotebookQuestionOverlay(question: question, sceneOrigin: sceneOrigin,

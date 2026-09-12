@@ -59,14 +59,7 @@ struct NotebookChatPanel: View {
           }
         }
       } else {
-        Button { chat.expanded = true } label: {
-          Label("Чат", systemImage: "bubble.left")
-            .font(.system(size: 15, weight: .medium))
-            .frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
-        }
-        .accessibilityLabel("Открыть чат")
-        .accessibilityIdentifier("notebook-chat-toggle")
-        .highPriorityGesture(windowDrag(move, activity: $moving))
+        NotebookCollapsedChat(chat: chat, size: size, move: move, endInteraction: endInteraction)
       }
     }
     .disabled(chat.switchingComputer)
@@ -172,7 +165,7 @@ struct NotebookChatPanel: View {
         Image(systemName: "square.and.pencil").frame(width: 44, height: 44).contentShape(Rectangle())
       }
         .accessibilityLabel("Новый чат").accessibilityIdentifier("notebook-chat-new")
-        .disabled(chat.saving)
+        .disabled(chat.saving || chat.voice.capturing)
       Button { chat.expanded = false } label: {
         Image(systemName: "minus").frame(width: 44, height: 44).contentShape(Rectangle())
       }
@@ -225,7 +218,7 @@ struct NotebookChatPanel: View {
 
   private func conversation(height: CGFloat) -> some View {
     VStack(spacing: 0) {
-      NotebookChatTranscript(messages: chat.messages, conversationID: chat.threadID,
+      NotebookChatTranscript(messages: chat.messages, conversationID: chat.threadID, revealMessageID: chat.revealedMessageID,
         canLoadEarlier: chat.canLoadEarlier && !chat.loadingHistory, loadEarlier: chat.loadEarlier,
         openLink: model.openNotebookLink, saveExplanation: { [thread = chat.threadID, computer = chat.computerID] message in
           if let thread, let computer { model.saveChatExplanation(message, thread: thread, computer: computer) }
@@ -361,6 +354,7 @@ private struct NotebookProjectSettings: View {
 struct NotebookChatTranscript: UIViewRepresentable {
   let messages: [CodexMessage]
   var conversationID: String? = nil
+  var revealMessageID: String? = nil
   var canLoadEarlier = false
   var loadEarlier: () -> Void = { }
   var openLink: (URL) -> Void = { _ in }
@@ -374,7 +368,7 @@ struct NotebookChatTranscript: UIViewRepresentable {
   func updateUIView(_ container: UIView, context: Context) {
     context.coordinator.openLink = openLink; context.coordinator.saveExplanation = saveExplanation
     context.coordinator.loadEarlier = loadEarlier; context.coordinator.canLoadEarlier = canLoadEarlier
-    context.coordinator.update(messages: messages, conversationID: conversationID)
+    context.coordinator.update(messages: messages, conversationID: conversationID, revealMessageID: revealMessageID)
   }
   static func dismantleUIView(_ container: UIView, coordinator: Coordinator) { coordinator.close() }
   @MainActor final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler, UIScrollViewDelegate {
@@ -385,6 +379,7 @@ struct NotebookChatTranscript: UIViewRepresentable {
     var preparation: Task<Void, Never>?
     var messages: [CodexMessage] = []
     var conversationID: String?
+    var revealMessageID: String?, revealed: String?
     var canLoadEarlier = false
     var loadEarlier: () -> Void = { }
     var openLink: (URL) -> Void = { _ in }
@@ -413,19 +408,22 @@ struct NotebookChatTranscript: UIViewRepresentable {
       web?.stopLoading(); web?.navigationDelegate = nil; web?.scrollView.delegate = nil; web?.removeFromSuperview(); web = nil
       lease?.release(); lease = nil
     }
-    func update(messages: [CodexMessage], conversationID: String? = nil) {
-      if self.conversationID != conversationID { self.conversationID = conversationID; sent = nil }
+    func update(messages: [CodexMessage], conversationID: String? = nil, revealMessageID: String? = nil) {
+      if self.conversationID != conversationID { self.conversationID = conversationID; sent = nil; revealed = nil }
+      self.revealMessageID = revealMessageID
       self.messages = messages
       json = (try? String(decoding: JSONEncoder().encode(messages), as: UTF8.self)) ?? "[]"
       if let web { publish(web) }
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { ready = true; publish(webView) }
     func publish(_ web: WKWebView) {
-      guard ready, !closed, sent != json else { return }
+      guard ready, !closed, sent != json || revealed != revealMessageID else { return }
       sent = json
       let value = json
       let conversation = conversationID ?? ""
-      Task { _ = try? await web.callAsyncJavaScript("await window.showMessages(json, conversation)", arguments: ["json": value, "conversation": conversation], in: nil, contentWorld: .page) }
+      let focus = revealMessageID != revealed ? revealMessageID : nil
+      if let focus, messages.contains(where: { $0.id == focus }) { revealed = focus }
+      Task { _ = try? await web.callAsyncJavaScript("await window.showMessages(json, conversation, focus)", arguments: ["json": value, "conversation": conversation, "focus": focus ?? ""], in: nil, contentWorld: .page) }
     }
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
       guard !closed, canLoadEarlier, scrollView.isDragging || scrollView.isDecelerating,

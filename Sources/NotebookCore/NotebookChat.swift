@@ -75,7 +75,8 @@ public struct CodexMessage: Codable, Equatable, Sendable, Identifiable {
   /// Display labels only. They do not grant access or turn a Mac path into an
   /// iPad URL; the native Codex item remains the attachment owner.
   public let attachments: [String]?
-  public init(id: String, turnID: String, clientID: String?, role: Role, text: String, isTruncated: Bool = false, activity: Activity? = nil, attachments: [String]? = nil) { self.activity = activity; self.isTruncated = isTruncated; self.id = id; self.turnID = turnID; self.clientID = clientID; self.role = role; self.text = text; self.attachments = attachments }
+  public let phase: String?
+  public init(id: String, turnID: String, clientID: String?, role: Role, text: String, isTruncated: Bool = false, activity: Activity? = nil, attachments: [String]? = nil, phase: String? = nil) { self.activity = activity; self.isTruncated = isTruncated; self.id = id; self.turnID = turnID; self.clientID = clientID; self.role = role; self.text = text; self.attachments = attachments; self.phase = phase }
 
 }
 
@@ -103,7 +104,7 @@ extension CodexMessage {
       let detail = item.activity?.detail.map { prefix($0, bytes: available - text.utf8.count) }
       let activity = item.activity.map { Activity(kind: $0.kind, status: $0.status, detail: detail) }
       return CodexMessage(id: item.id, turnID: item.turnID, clientID: item.clientID, role: item.role,
-        text: text, isTruncated: item.isTruncated || text != item.text || detail != item.activity?.detail || attachments != item.attachments, activity: activity, attachments: attachments)
+        text: text, isTruncated: item.isTruncated || text != item.text || detail != item.activity?.detail || attachments != item.attachments, activity: activity, attachments: attachments, phase: item.phase)
     }
   }
 }
@@ -342,6 +343,7 @@ public struct NotebookChatPanelState: Codable, Equatable, Sendable {
   public var draft: String
   public var sidecarID: UUID?
   public var attachments: [CodexInputAttachment]?
+  public var readPosition: NotebookChatReadPosition?
 
-  public init(threadID: String? = nil, draft: String = "", sidecarID: UUID? = nil, attachments: [CodexInputAttachment]? = nil) { self.threadID = threadID; self.draft = draft; self.sidecarID = sidecarID; self.attachments = attachments }
+  public init(threadID: String? = nil, draft: String = "", sidecarID: UUID? = nil, attachments: [CodexInputAttachment]? = nil, readPosition: NotebookChatReadPosition? = nil) { self.threadID = threadID; self.draft = draft; self.sidecarID = sidecarID; self.attachments = attachments; self.readPosition = readPosition }
 }

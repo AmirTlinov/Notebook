@@ -62,9 +62,10 @@ marked.use({extensions:[
  {name:'mathInline',level:'inline',start:src=>src.search(/\$|\\\(/),tokenizer(src){const m=/^(\\\([\s\S]*?\\\)|\$(?!\$)[^\n$]+?\$)/.exec(src);if(m)return{type:'mathInline',raw:m[0]};},renderer:token=>`<span>${escapeMath(token.raw)}</span>`}
 ]});
 let next=null,running=false,shownConversation=null;
-window.showMessages=async function(json,conversation=''){
- next={messages:JSON.parse(json),conversation};if(running)return;running=true;
- try{await MathJax.startup.promise;while(next){const {messages,conversation}=next;next=null;
+window.revealMessage=id=>{const item=[...document.querySelectorAll('article')].find(x=>x.dataset.itemId===id);if(item){item.querySelectorAll('details').forEach(x=>x.open=true);item.scrollIntoView({block:'start'});}};
+window.showMessages=async function(json,conversation='',focus=''){
+ next={messages:JSON.parse(json),conversation,focus:focus||(next?.conversation===conversation?next.focus:'')};if(running)return;running=true;
+ try{await MathJax.startup.promise;while(next){const {messages,conversation,focus}=next;next=null;
  const root=document.getElementById('messages'),changed=conversation!==shownConversation;shownConversation=conversation;
  const follows=changed||!root.childElementCount||scrollY+innerHeight>=document.documentElement.scrollHeight-60;
  const anchor=!changed&&[...root.querySelectorAll('article')].find(x=>{const r=x.getBoundingClientRect();return r.height>0&&r.bottom>0});
@@ -97,7 +98,8 @@ window.showMessages=async function(json,conversation=''){
  article.dataset.role=m.role==='user'?'user':'assistant';const role=document.createElement('b');role.className='role';role.textContent=m.role==='user'?'Вы':'Codex';article.append(role);
  const content=document.createElement('div');content.className='content';content.innerHTML=DOMPurify.sanitize(marked.parse(m.text),{ALLOWED_URI_REGEXP:/^(?:(?:https?|mailto|notebook):|[#/]|[^a-zA-Z])/,FORBID_TAGS:['img','iframe','form','input','button','style'],FORBID_ATTR:['style']});if(m.role==='user'&&m.text.length>900){const full=document.createElement('details');full.className='long-message';full.dataset.key='message:'+m.id;full.open=expanded.has(full.dataset.key);const preview=document.createElement('summary');const previewText=document.createElement('span');previewText.textContent=m.text.slice(0,180)+'…';preview.append(activityIcon('files'),previewText);full.append(preview);while(content.firstChild)full.append(content.firstChild);content.append(full);}if(m.role==='user'&&m.attachments?.length){const list=document.createElement('div');list.className='attachments';list.setAttribute('aria-label','Прикреплённые файлы');for(const name of m.attachments){const file=document.createElement('span'),label=document.createElement('span');file.className='attachment';label.textContent=name;file.append(activityIcon(/\.(png|jpe?g|gif|webp|heic)$/i.test(name)?'image':'files'),label);list.append(file);}content.prepend(list);}article.append(content);if(m.isTruncated){const note=document.createElement('small');note.textContent='Показан фрагмент сообщения. Полный текст — в Codex.';article.append(note);}if(m.role==='assistant'){const save=document.createElement('button');save.type='button';save.className='save-answer';save.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v6M7 8h8M7 12h4M18 14v8M14 18h8"/></svg>';save.setAttribute('aria-label','Сохранить ответ в заметках');save.title='Сохранить ответ в заметках';save.addEventListener('click',()=>window.webkit?.messageHandlers?.notebookChat?.postMessage({action:'save',id:m.id}));article.append(save);}root.append(article);}
  await MathJax.typesetPromise([root]);
- if(follows)scrollTo(0,document.documentElement.scrollHeight);
+ if(focus)window.revealMessage(focus);
+ else if(follows)scrollTo(0,document.documentElement.scrollHeight);
  else if(position){const anchor=[...root.querySelectorAll('article')].find(x=>x.dataset.itemId===position.id);if(anchor)scrollBy(0,anchor.getBoundingClientRect().top-position.top);}
  }}finally{running=false;}
 };
