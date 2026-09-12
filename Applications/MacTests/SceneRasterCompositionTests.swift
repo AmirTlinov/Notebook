@@ -9,6 +9,74 @@ import SwiftUI
 
 final class SceneRasterCompositionTests: XCTestCase {
   @MainActor
+  func testWholeLargeBoardStreamsItsBackgroundAndInkWithinTheSameBudget() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    model.moveItem(try XCTUnwrap(model.workspace?.selectedItemID), to: .init(x: 10_000, y: 0))
+    let workspace = try XCTUnwrap(model.workspace), hierarchy = try XCTUnwrap(model.boardHierarchy)
+    let origin = WorldPoint(tileX: 0, tileY: -1, localX: 0, localY: 3800)
+    var journal = try XCTUnwrap(model.spatialInk)
+    let surface = SurfaceID.board(workspace.rootBoardID)
+    for (tool, width) in [(SpatialInkTool.pen, 40.0), (.eraser, 12.0)] {
+      _ = journal.append(tool: tool, spans: [.init(surface: surface, samples: [100.0, 1948.0].enumerated().map { i, x in
+        .init(point: .zero, worldPoint: origin.offsetBy(x: x, y: 1024), timeOffset: Double(i),
+          width: width, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+      })], actor: model.actorID)
+    }
+    let resources = SceneRenderResources(byteLimit: 160 * 1024 * 1024, profile: .headless)
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
+    let painter = SceneCompositionRenderer(source: .init(index: index, hierarchy: hierarchy, journal: journal), resources: resources)
+    let result = try await painter.render(presence: .init(boardID: workspace.rootBoardID,
+      mode: .board, camera: .init(center: origin.offsetBy(x: 1024, y: 1024), scale: 1),
+      viewport: .init(x: 2048, y: 2048)))
+    let bitmap = try pixels(result.png)
+    XCTAssertEqual(bitmap.pixelsWide, 4096); XCTAssertEqual(bitmap.pixelsHigh, 4096)
+    for x in [512, 1024, 2048, 3072] {
+      let erased = try XCTUnwrap(bitmap.colorAt(x: x, y: 2048))
+      XCTAssertEqual(erased.alphaComponent, 1, accuracy: 1.0 / 255)
+      XCTAssertGreaterThan(erased.redComponent, 0.5, "Eraser must reveal the board, not clear its background")
+      XCTAssertLessThan(try XCTUnwrap(bitmap.colorAt(x: x, y: 2020)).redComponent, 0.2)
+    }
+    XCTAssertEqual(resources.reservedBytes, 0)
+    XCTAssertLessThanOrEqual(resources.peakAccountedBytes, resources.byteLimit)
+    let persisted = await model.finishPendingPersistence()
+    XCTAssertTrue(persisted)
+  }
+
+  @MainActor
+  func testBoardGridPiecesPreserveNativeDotsAtFractionalPlacement() async throws {
+    let camera = SpatialCamera(center: .init(x: 237.75, y: -1538.5), scale: 0.37)
+    let size = CGSize(width: 834, height: 1194), output = CGSize(width: 720, height: 640)
+    let frame = CGRect(x: 13.25, y: -17.75, width: 650, height: 600)
+    let resources = SceneRenderResources(byteLimit: 32 * 1024 * 1024, profile: .headless)
+    let bounded = try await SceneRasterCompositor.create(size: output, scale: 2, resources: resources)
+    try await bounded.drawBoardGrid(camera: camera, size: size, in: frame)
+    let actual = try await bounded.finishPNG()
+    let whole = try await SceneRasterCompositor.create(size: output, scale: 2, resources: resources)
+    try await whole.drawView(SpatialBoardGrid(camera: camera, outputScale: frame.width / size.width), size: size, in: frame)
+    let expected = try await whole.finishPNG()
+    let actualPixels = try rgba(actual), expectedPixels = try rgba(expected)
+    XCTAssertEqual(actualPixels.count, expectedPixels.count)
+    let maximumDelta = zip(actualPixels, expectedPixels).reduce(0) { max($0, abs(Int($1.0) - Int($1.1))) }
+    // Quartz may quantize a fractional antialiased dot by one 8-bit level
+    // after integer translation. The geometry, opaque base and seams stay put.
+    if maximumDelta > 1 {
+      for (name, png) in [("Bounded board grid", actual), ("Whole board grid", expected)] {
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+      }
+    }
+    XCTAssertLessThanOrEqual(maximumDelta, 1)
+    let repeated = try await SceneRasterCompositor.create(size: output, scale: 2, resources: resources)
+    try await repeated.drawBoardGrid(camera: camera, size: size, in: frame)
+    let repeatedPNG = try await repeated.finishPNG()
+    XCTAssertEqual(SHA256.hash(data: actual).description, SHA256.hash(data: repeatedPNG).description)
+    XCTAssertEqual(resources.reservedBytes, 0)
+  }
+
+  @MainActor
   func testLargeNativeInkRegionUsesOneOutputAndKeepsEraserAcrossTileEdges() async throws {
     let resources = SceneRenderResources(byteLimit: 160 * 1024 * 1024, profile: .headless)
     let surface = SurfaceID.board(UUID()), actor = UUID()
@@ -317,6 +385,11 @@ final class SceneRasterCompositionTests: XCTestCase {
     var compositor: SceneRasterCompositor? = try await .create(size: .init(width: 128, height: 128),
       scale: 2, resources: resources, permitsPreparation: { permit.allowed })
     XCTAssertGreaterThan(resources.reservedBytes, 0)
+    do {
+      try await compositor!.drawBoardGrid(camera: .init(), size: .zero,
+        in: .init(x: 0, y: 0, width: 128, height: 128))
+      XCTFail("Invalid source geometry must be rejected before preparing native artwork")
+    } catch SceneRenderError.resourceLimit { }
     permit.allowed = false
     do { _ = try await compositor!.finishPNG(); XCTFail("A partial or interrupted output is not ready") }
     catch is CancellationError { }

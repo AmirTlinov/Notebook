@@ -86,12 +86,36 @@ final class SceneRasterCompositor {
     try checkPreparation()
   }
 
-  func drawView<Content: View>(_ content: Content, size: CGSize, in frame: CGRect) async throws {
+  /// The board grid has no offscreen effects: each destination-aligned piece
+  /// can be painted independently, unlike paper covers with shadows.
+  func drawBoardGrid(camera: SpatialCamera, size: CGSize, in frame: CGRect) async throws {
     try checkPreparation()
     guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0,
       frame.minX.isFinite, frame.minY.isFinite, frame.width.isFinite, frame.height.isFinite,
       frame.width > 0, frame.height > 0 else { throw SceneRenderError.resourceLimit }
     let visible = frame.intersection(CGRect(origin: .zero, size: self.size))
+    guard !visible.isNull, !visible.isEmpty else { return }
+    let left = Int(floor(visible.minX * scale)), top = Int(floor(visible.minY * scale))
+    let right = Int(ceil(visible.maxX * scale)), bottom = Int(ceil(visible.maxY * scale))
+    for y in stride(from: top, to: bottom, by: CompositionTile.pixelSize) {
+      for x in stride(from: left, to: right, by: CompositionTile.pixelSize) {
+        let region = CGRect(x: Double(x) / scale, y: Double(y) / scale,
+          width: Double(min(CompositionTile.pixelSize, right - x)) / scale,
+          height: Double(min(CompositionTile.pixelSize, bottom - y)) / scale)
+        try await drawView(SpatialBoardGrid(camera: camera, outputScale: frame.width / size.width),
+          size: size, in: frame, clippingTo: region)
+      }
+    }
+  }
+
+  func drawView<Content: View>(_ content: Content, size: CGSize, in frame: CGRect,
+    clippingTo region: CGRect? = nil) async throws {
+    try checkPreparation()
+    guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0,
+      frame.minX.isFinite, frame.minY.isFinite, frame.width.isFinite, frame.height.isFinite,
+      frame.width > 0, frame.height > 0 else { throw SceneRenderError.resourceLimit }
+    let visible = frame.intersection(CGRect(origin: .zero, size: self.size))
+      .intersection(region ?? CGRect(origin: .zero, size: self.size))
     guard !visible.isNull, !visible.isEmpty else { return }
     // Render artwork directly onto the destination pixel grid. A fractional
     // item origin must not introduce another resampling of grain or thin lines.

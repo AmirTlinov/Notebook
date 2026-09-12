@@ -105,7 +105,7 @@ final class SceneCompositionRenderer {
       width: localVisible.width / presence.camera.scale + 2 * padding,
       height: localVisible.height / presence.camera.scale + 2 * padding)
     if range == nil {
-      try await canvas.drawView(SpatialBoardGrid(camera: presence.camera, outputScale: projection),
+      try await canvas.drawBoardGrid(camera: presence.camera,
         size: .init(width: presence.viewport.x, height: presence.viewport.y), in: frame)
     }
     if range?.layer == .ink {
