@@ -84,7 +84,10 @@ final class NotebookFileController {
     persistWindow()
     if changesRoots, window.sidebar { Task { await roots() } }
   }
-  func toggleTerminal() { window.terminal = !(window.terminal ?? false); persistWindow() }
+  func showTerminal(_ visible: Bool) {
+    guard (window.terminal ?? false) != visible else { return }
+    window.terminal = visible; persistWindow()
+  }
   func resizeTerminal(fraction: Double) {
     guard fraction.isFinite, (0...1).contains(fraction) else { return }
     window.terminalFraction = fraction; persistWindow()

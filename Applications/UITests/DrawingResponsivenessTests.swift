@@ -112,7 +112,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(echoed.firstMatch.waitForExistence(timeout: 5), "Typing must traverse the controller and remote peer before appearing in output")
     XCTAssertEqual(paper.frame, paperFrame); XCTAssertEqual(paper.value as? String, ink)
     let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "terminal-below-chat-with-real-keyboard"; proof.lifetime = .keepAlways; add(proof)
-    app.buttons["notebook-terminal-collapse"].tap()
+    app.buttons["notebook-terminal-collapse"].coordinate(withNormalizedOffset: .init(dx: 0.2, dy: 0.25)).tap()
     XCTAssertTrue(terminal.waitForNonExistence(timeout: 4))
     app.buttons["notebook-terminal-toggle"].tap()
     XCTAssertTrue(terminal.waitForExistence(timeout: 5))
@@ -121,6 +121,64 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(reply.isHittable, "Restoring the drawer must retain readable conversation space")
     XCTAssertEqual(paper.frame, paperFrame); XCTAssertEqual(paper.value as? String, ink)
     let restored = XCTAttachment(screenshot: app.screenshot()); restored.name = "terminal-drawer-restored"; restored.lifetime = .keepAlways; add(restored)
+    for point in [CGVector(dx: 0.85, dy: 0.2), .init(dx: 0.2, dy: 0.8), .init(dx: 0.85, dy: 0.8)] {
+      let collapse = app.buttons["notebook-terminal-collapse"]
+      XCTAssertGreaterThanOrEqual(collapse.frame.width, 44); XCTAssertGreaterThanOrEqual(collapse.frame.height, 44)
+      collapse.coordinate(withNormalizedOffset: point).tap()
+      XCTAssertTrue(terminal.waitForNonExistence(timeout: 4))
+      app.buttons["notebook-terminal-toggle"].tap()
+      XCTAssertTrue(terminal.waitForExistence(timeout: 5))
+      XCTAssertTrue(echoed.firstMatch.waitForExistence(timeout: 5))
+    }
+    app.buttons["notebook-terminal-toggle"].tap()
+    XCTAssertTrue(terminal.waitForNonExistence(timeout: 4))
+    XCTAssertEqual(paper.frame, paperFrame); XCTAssertEqual(paper.value as? String, ink)
+  }
+
+  func testChatBrowserSeparatesAllChatsFromExpandableProjectFolders() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-terminal-fixture"]
+    launchPortraitFixture(app)
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 8))
+    let frame = paper.frame, ink = paper.value as? String
+    XCTAssertTrue(app.buttons["notebook-terminal-toggle"].waitForExistence(timeout: 5))
+    XCTAssertEqual(app.buttons["notebook-terminal-toggle"].frame.midY, app.buttons["notebook-files-toggle"].frame.midY, accuracy: 1)
+    let chat = app.otherElements["notebook-chat-panel"]
+    let corner = chat.coordinate(withNormalizedOffset: .init(dx: 1, dy: 1)).withOffset(.init(dx: -5, dy: -20))
+    corner.press(forDuration: 0.05, thenDragTo: corner.withOffset(.init(dx: 90, dy: 200)))
+    app.buttons["notebook-chat-tasks"].tap()
+    let modes = app.segmentedControls["notebook-chat-browser-mode"]
+    XCTAssertTrue(modes.waitForExistence(timeout: 5))
+    XCTAssertFalse(app.buttons["notebook-chat-project-all"].exists)
+    modes.buttons["Чаты"].tap()
+    let first = app.buttons["notebook-chat-task-7e7a1000-0000-4000-8000-000000000088"]
+    let other = app.buttons["notebook-chat-task-7e7a1000-0000-4000-8000-000000000089"]
+    XCTAssertTrue(first.waitForExistence(timeout: 5)); XCTAssertTrue(other.waitForExistence(timeout: 5))
+    modes.buttons["Проекты"].tap()
+    let folder = app.buttons["notebook-chat-project-terminal-fixture"]
+    XCTAssertTrue(folder.waitForExistence(timeout: 5))
+    // The selected project's folder was opened when this fixture selected it.
+    if first.exists { folder.tap(); XCTAssertTrue(first.waitForNonExistence(timeout: 3)) }
+    folder.tap(); XCTAssertTrue(first.waitForExistence(timeout: 5))
+    app.buttons["notebook-chat-project-research-fixture"].tap()
+    XCTAssertTrue(other.waitForExistence(timeout: 5))
+    app.buttons["notebook-chat-project-empty-fixture"].tap()
+    XCTAssertTrue(app.staticTexts["Нет чатов"].waitForExistence(timeout: 5))
+    XCTAssertGreaterThan(first.frame.minX, folder.frame.minX + 20)
+    XCTAssertGreaterThan(other.frame.minX, folder.frame.minX + 20)
+    XCTAssertFalse(other.staticTexts["Исследование"].exists, "Folder rows do not reuse the context and layout of the all-chats projection")
+    let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "chat-browser-project-folders"; proof.lifetime = .keepAlways; add(proof)
+    modes.buttons["Чаты"].tap()
+    XCTAssertTrue(first.waitForExistence(timeout: 3)); XCTAssertTrue(other.exists)
+    XCTAssertFalse(folder.exists)
+    other.tap()
+    XCTAssertTrue(modes.waitForNonExistence(timeout: 3))
+    XCTAssertTrue(app.buttons["notebook-chat-tasks"].staticTexts["Другой разговор"].waitForExistence(timeout: 5))
+    XCTAssertFalse(app.otherElements["notebook-terminal-panel"].exists, "Browsing and choosing a chat cannot start a shell")
+    XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, ink)
   }
 
   func testHistoryOpensAndClosesRepeatedlyWithManySharedFragments() {

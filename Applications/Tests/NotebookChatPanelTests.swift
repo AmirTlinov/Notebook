@@ -83,6 +83,12 @@ final class NotebookChatPanelTests: XCTestCase {
     XCTAssertEqual(chat.activities.count, 3)
     XCTAssertEqual(chat.projects.count, 1)
     let selectedTask = try XCTUnwrap(chat.tasks.first)
+    if active {
+      chat.browse(.projects); chat.toggleProject(chat.projects[0])
+      let deadline = ContinuousClock.now + .seconds(3)
+      while chat.catalogues[.project("project")]?.loaded != true, .now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+      XCTAssertEqual(chat.catalogues[.project("project")]?.tasks.count, 3)
+    }
     if files {
       chat.selectProject(chat.projects.first)
       var state = chat.files.window; state.sidebar = true

@@ -31,10 +31,10 @@ struct NotebookRunPanel: View {
             Button("Завершить сеанс", systemImage: "stop.circle", role: .destructive) { Task { await runs.stopRun() } }
               .disabled(!connected || runs.busy)
           }
-        } label: { Image(systemName: "ellipsis").frame(width: 36, height: 36) }
+        } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44).contentShape(Rectangle()) }
           .accessibilityLabel("Действия терминала").accessibilityIdentifier("notebook-terminal-actions")
-        Button { withAnimation(.easeInOut(duration: 0.18)) { files.toggleTerminal() } } label: {
-          Image(systemName: "minus").frame(width: 36, height: 36)
+        Button { withAnimation(.easeInOut(duration: 0.18)) { files.showTerminal(false) } } label: {
+          Image(systemName: "minus").frame(width: 44, height: 44).contentShape(Rectangle())
         }.accessibilityLabel("Свернуть терминал").accessibilityIdentifier("notebook-terminal-collapse")
       }.padding(.horizontal, 12)
       if let root = runs.selectedRoot {

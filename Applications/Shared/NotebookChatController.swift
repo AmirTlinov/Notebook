@@ -7,6 +7,18 @@ import NotebookCore
 /// can be replaced in the transient lane; mutations survive in SQLite by ID.
 @MainActor @Observable
 final class NotebookChatController {
+  enum BrowserMode: String, CaseIterable { case chats = "Чаты", projects = "Проекты" }
+  enum CatalogueScope: Hashable { case chats, project(String) }
+  struct CatalogueWindow {
+    var tasks: [CodexTask] = []
+    var cursor: String?
+    var pages = 1
+    var loaded = false
+    var loading = false
+    var needsNext = false
+    var error: String?
+    var nextRead = ContinuousClock.now
+  }
   let files: NotebookFileController
   let runs: NotebookRunController
   let voice: NotebookVoiceController
@@ -16,20 +28,21 @@ final class NotebookChatController {
   private(set) var switchingComputer = false
   var expanded = false { didSet { if !expanded { suspendTranscript(); activities = [:]; conversationSubscription = nil; enqueue(.activity(threadIDs: [])) } else { synchronizeVisible() } } }
   var browsesChats = false { didSet { if browsesChats != oldValue { synchronizeVisible() } } }
+  private(set) var browserMode = BrowserMode.chats
+  private(set) var expandedProjects = Set<String>()
+  private(set) var catalogues: [CatalogueScope: CatalogueWindow] = [:]
   private(set) var projects: [CodexProject] = []
   private(set) var projectCursor: String?
   var selectedProject: CodexProject? { files.window.project }
   private(set) var activities: [String: CodexTaskActivity] = [:]
   var draft: String = "" { didSet { persistPanel() } }
   private(set) var threadID: String?
-  private(set) var tasks: [CodexTask] = []
-  private(set) var taskCursor: String?
+  var tasks: [CodexTask] { catalogues[.chats]?.tasks ?? [] }
   private(set) var defaultProviderNeedsSignIn = false
   private(set) var conversation: CodexConversation?
   private(set) var messages: [CodexMessage] = []
   private(set) var historyCursor: String?
   private(set) var loadingHistory = false
-  private(set) var loadingCatalogue = false
   private(set) var jobs: [NotebookChatJob] = []
   private(set) var connected = false
   private(set) var error: String?
@@ -53,15 +66,15 @@ final class NotebookChatController {
   @ObservationIgnored private var catalogueRead: Task<Void, Never>?
   @ObservationIgnored private var projectsRead: Task<Void, Never>?
   @ObservationIgnored private var catalogueGeneration = UUID()
-  @ObservationIgnored private var cataloguePages = 1
   @ObservationIgnored private var projectPages = 1
+  @ObservationIgnored private var nextProjectPage = false
+  @ObservationIgnored private var selectedTask: CodexTask?
   @ObservationIgnored private var historyLoaded = false
   @ObservationIgnored private var historyBoundary: String?
   @ObservationIgnored private var transcriptGeneration = UUID()
   @ObservationIgnored private var catchUpBoundary: String?
   @ObservationIgnored private var catchUpRead: Task<Void, Never>?
   @ObservationIgnored private var nextCatchUp = ContinuousClock.now
-  @ObservationIgnored private var nextCatalogue = ContinuousClock.now
   @ObservationIgnored private var nextProjects = ContinuousClock.now
   @ObservationIgnored private var conversationSubscription: UUID?
   @ObservationIgnored private var subscriptionRevision: Int?
@@ -117,8 +130,9 @@ final class NotebookChatController {
               // only after every pending input has reached the Mac at least once.
               let next = outgoing.first { !offeredJobs.contains($0.id) } ?? outgoing[deliveryIndex % outgoing.count]
               query = .job(next.input); deliveryIndex &+= 1
-            } else if expanded, .now >= nextActivity, !tasks.isEmpty {
-              let start = activityOffset % tasks.count, ids = Array(tasks.dropFirst(start).prefix(8).map(\.id))
+            } else if expanded, .now >= nextActivity, !visibleTasks.isEmpty {
+              let visible = visibleTasks
+              let start = activityOffset % visible.count, ids = Array(visible.dropFirst(start).prefix(8).map(\.id))
               query = .activity(threadIDs: ids); activityOffset = start + ids.count; nextActivity = .now + .seconds(2)
             } else if expanded, !browsesChats, let threadID, .now >= nextConversation {
               query = .conversation(threadID: threadID); nextConversation = .now + .seconds(10)
@@ -173,7 +187,8 @@ final class NotebookChatController {
   }
   private func cancelQueries() {
     catalogueGeneration = UUID(); catalogueRead?.cancel(); projectsRead?.cancel()
-    catalogueRead = nil; projectsRead = nil; loadingCatalogue = false; loadingHistory = false
+    catalogueRead = nil; projectsRead = nil; loadingHistory = false
+    for scope in catalogues.keys { catalogues[scope]?.loading = false }
     catchUpRead?.cancel(); catchUpRead = nil
     for (_, _, continuation) in directQueries { continuation.resume(throwing: NotebookTransportError.disconnected) }
     directQueries.removeAll(); queries.removeAll(); retry?.cancel()
@@ -199,8 +214,8 @@ final class NotebookChatController {
       runs.detach(); queries.removeAll()
       loaded = false; peer = id; threadID = restored.panel.threadID; draft = restored.panel.draft; loaded = true
       transcriptGeneration = UUID(); catchUpBoundary = nil
-      conversation = nil; messages = []; historyCursor = nil; historyLoaded = false; historyBoundary = nil; projects = []; tasks = []; activities = [:]
-      projectCursor = nil; taskCursor = nil; cataloguePages = 1; projectPages = 1; offeredJobs.removeAll()
+      conversation = nil; messages = []; historyCursor = nil; historyLoaded = false; historyBoundary = nil; projects = []; catalogues = [:]; activities = [:]
+      projectCursor = nil; projectPages = 1; nextProjectPage = false; offeredJobs.removeAll(); selectedTask = nil; expandedProjects = []; browserMode = .chats
       conversationSubscription = nil; subscriptionRevision = nil; nextConversation = .now; continuationUnavailable = false
       browsesChats = threadID == nil
       jobs = restored.jobs
@@ -222,34 +237,58 @@ final class NotebookChatController {
 
   /// Refresh only the loaded catalogue window. Publish a complete read so a
   /// recency change cannot drop the older rows the person is currently reading.
-  func catalogue(next: Bool = false) {
-    guard connected, !stopped, catalogueRead == nil, !next || taskCursor != nil else { return }
-    let generation = catalogueGeneration, project = selectedProject, cursor = next ? taskCursor : nil
-    loadingCatalogue = true
+  func catalogue(next: Bool = false, project: CodexProject? = nil) {
+    let scope = project.map { CatalogueScope.project($0.id) } ?? .chats
+    if next, catalogues[scope]?.cursor != nil { catalogues[scope]?.needsNext = true }
+    guard connected, !stopped, catalogueRead == nil, !next || catalogues[scope]?.cursor != nil else { return }
+    let window = catalogues[scope] ?? CatalogueWindow(), generation = catalogueGeneration
+    let next = window.needsNext, cursor = next ? window.cursor : nil
+    catalogues[scope] = window; catalogues[scope]?.loading = true; catalogues[scope]?.needsNext = false
     catalogueRead = Task { [weak self] in
       guard let self else { return }
-      defer { if catalogueGeneration == generation { catalogueRead = nil; loadingCatalogue = false; nextCatalogue = project == selectedProject ? .now + .seconds(10) : .now } }
+      defer {
+        if catalogueGeneration == generation {
+          catalogueRead = nil; catalogues[scope]?.loading = false
+          catalogues[scope]?.nextRead = .now + .seconds(10)
+          wake.continuation.yield(())
+        }
+      }
       do {
-        var cursor = cursor, result: [CodexTask] = [], pages = 0, needsSignIn = false
+        var cursor = cursor, result: [CodexTask] = [], pages = 0, needsSignIn = false, seen = Set<String>()
         repeat {
           guard case .catalogue(let page) = try await directQuery(.catalogue(cursor: cursor, project: project)), page.nextCursor == nil || page.nextCursor != cursor else { throw NotebookTransportError.invalidAcknowledgement }
-          guard !Task.isCancelled, catalogueGeneration == generation, project == selectedProject else { return }
+          guard !Task.isCancelled, catalogueGeneration == generation, catalogues[scope] != nil,
+            project == nil || projects.first(where: { $0.id == project?.id })?.roots == project?.roots else { return }
           result += page.tasks.filter { task in !result.contains { $0.id == task.id } }
           cursor = page.nextCursor; pages += 1; needsSignIn = page.defaultProviderNeedsSignIn
-        } while cursor != nil && (result.isEmpty || (!next && pages < cataloguePages))
-        if next { tasks += result.filter { task in !tasks.contains { $0.id == task.id } }; cataloguePages += pages }
-        else { tasks = result; cataloguePages = pages }
-        taskCursor = cursor; defaultProviderNeedsSignIn = needsSignIn; error = nil
-        activities = activities.filter { entry in tasks.contains { $0.id == entry.key } }
-      } catch { if !Task.isCancelled, tasks.isEmpty { self.error = error.localizedDescription } }
+          if let cursor, !seen.insert(cursor).inserted { throw NotebookTransportError.invalidAcknowledgement }
+        } while cursor != nil && (result.isEmpty || (!next && pages < window.pages))
+        if next {
+          let known = Set(window.tasks.map(\.id))
+          catalogues[scope]?.tasks = window.tasks + result.filter { !known.contains($0.id) }; catalogues[scope]?.pages = window.pages + pages
+        } else { catalogues[scope]?.tasks = result; catalogues[scope]?.pages = pages }
+        catalogues[scope]?.cursor = cursor; catalogues[scope]?.loaded = true; catalogues[scope]?.error = nil
+        defaultProviderNeedsSignIn = needsSignIn; error = nil
+        let known = Set(catalogues.values.flatMap { $0.tasks.map(\.id) })
+        activities = activities.filter { known.contains($0.key) }
+      } catch {
+        if !Task.isCancelled, catalogueGeneration == generation { catalogues[scope]?.error = error.localizedDescription }
+      }
     }
   }
   func catalogueProjects(next: Bool = false) {
+    if next, projectCursor != nil { nextProjectPage = true }
     guard connected, !stopped, projectsRead == nil, !next || projectCursor != nil else { return }
+    let next = nextProjectPage
+    nextProjectPage = false
     let generation = catalogueGeneration, cursor = next ? projectCursor : nil
     projectsRead = Task { [weak self] in
       guard let self else { return }
-      defer { if catalogueGeneration == generation { projectsRead = nil; nextProjects = .now + .seconds(15) } }
+      defer {
+        if catalogueGeneration == generation {
+          projectsRead = nil; nextProjects = .now + .seconds(15); wake.continuation.yield(())
+        }
+      }
       do {
         var cursor = cursor, result: [CodexProject] = [], pages = 0
         repeat {
@@ -258,31 +297,71 @@ final class NotebookChatController {
           result += page.projects.filter { project in !result.contains { $0.id == project.id } }
           cursor = page.nextCursor; pages += 1
         } while !next && pages < projectPages && cursor != nil
+        for project in result {
+          if let previous = projects.first(where: { $0.id == project.id }), previous.roots != project.roots {
+            catalogues.removeValue(forKey: .project(project.id))
+          }
+        }
         if next { projects += result.filter { project in !projects.contains { $0.id == project.id } }; projectPages += pages }
         else { projects = result; projectPages = pages }
         projectCursor = cursor; error = nil
-        if let selectedProject, let current = projects.first(where: { $0.id == selectedProject.id }), current != selectedProject {
-          files.chooseProject(current); catalogue()
+        let retained = Set(projects.map(\.id))
+        expandedProjects.formIntersection(retained)
+        for scope in catalogues.keys {
+          if case .project(let id) = scope, !retained.contains(id) { catalogues.removeValue(forKey: scope) }
         }
+        if let selectedTask, selectedTask.id == threadID, let project = project(for: selectedTask) {
+          files.chooseProject(project)
+        } else if let selectedProject, let current = projects.first(where: { $0.id == selectedProject.id }), current != selectedProject {
+          files.chooseProject(current)
+        }
+        if let selectedTask, selectedTask.projectID != nil, project(for: selectedTask) == nil, cursor != nil { nextProjectPage = true }
       } catch { if !Task.isCancelled, projects.isEmpty { self.error = error.localizedDescription } }
     }
   }
   func synchronizeVisible() {
-    nextConversation = .now; nextCatalogue = .now; nextProjects = .now
+    nextConversation = .now; nextProjects = .now
+    for scope in catalogues.keys { catalogues[scope]?.nextRead = .now }
     synchronizeVisibleIfDue(); catchUpTranscript(); wake.continuation.yield(())
   }
   func synchronizeVisibleIfDue(now: ContinuousClock.Instant = .now) {
     guard expanded, connected, !stopped else { return }
-    if now >= nextProjects { catalogueProjects() }
-    if (threadID == nil || browsesChats), now >= nextCatalogue { catalogue() }
+    if nextProjectPage || now >= nextProjects { catalogueProjects() }
+    if threadID == nil || browsesChats {
+      if browserMode == .chats {
+        let window = catalogues[.chats]
+        if window == nil || window?.needsNext == true || now >= window!.nextRead { catalogue() }
+      } else {
+        for project in projects where expandedProjects.contains(project.id) {
+          if let window = catalogues[.project(project.id)], !window.needsNext, now < window.nextRead { continue }
+          catalogue(project: project); break
+        }
+      }
+    }
     if !browsesChats, !historyLoaded { loadEarlier() }
     if now >= nextCatchUp { catchUpTranscript() }
   }
   func selectProject(_ project: CodexProject?) {
-    catalogueGeneration = UUID(); catalogueRead?.cancel(); projectsRead?.cancel()
-    catalogueRead = nil; projectsRead = nil; loadingCatalogue = false
-    files.chooseProject(project); tasks = []; activities = [:]; taskCursor = nil; cataloguePages = 1
-    browsesChats = true; catalogue()
+    selectedTask = nil; files.chooseProject(project)
+    if let project { expandedProjects.insert(project.id); browse(.projects); catalogue(project: project) }
+    else { browse(.chats) }
+  }
+  func browse(_ mode: BrowserMode) {
+    browserMode = mode; browsesChats = true; synchronizeVisible()
+  }
+  func toggleProject(_ project: CodexProject) {
+    if expandedProjects.remove(project.id) == nil { expandedProjects.insert(project.id); catalogue(project: project) }
+  }
+  func project(for task: CodexTask) -> CodexProject? {
+    if let id = task.projectID { return projects.first { $0.id == id } ?? (selectedProject?.id == id ? selectedProject : nil) }
+    // The native folder stream matches exact roots, never similarly prefixed paths.
+    return projects.first { $0.roots.contains(task.cwd) } ?? (selectedProject?.roots.contains(task.cwd) == true ? selectedProject : nil)
+  }
+  var visibleTasks: [CodexTask] {
+    guard threadID == nil || browsesChats else { return selectedTask.map { [$0] } ?? tasks.filter { $0.id == threadID } }
+    guard browserMode == .projects else { return tasks }
+    var seen = Set<String>()
+    return projects.filter { expandedProjects.contains($0.id) }.flatMap { catalogues[.project($0.id)]?.tasks ?? [] }.filter { seen.insert($0.id).inserted }
   }
   var canLoadEarlier: Bool { !historyLoaded || historyCursor != nil }
   func loadEarlier() {
@@ -292,8 +371,10 @@ final class NotebookChatController {
   func select(_ task: CodexTask) {
     transcriptGeneration = UUID(); catchUpRead?.cancel(); catchUpRead = nil; catchUpBoundary = nil
     nextConversation = .now; conversationSubscription = nil
+    selectedTask = task; files.chooseProject(project(for: task))
     threadID = task.id; continuationUnavailable = false; conversation = nil; messages = []; historyCursor = nil; historyLoaded = false; historyBoundary = nil; loadingHistory = false
     browsesChats = false; persistPanel(); loadEarlier()
+    if task.projectID != nil, project(for: task) == nil { catalogueProjects() }
   }
   func projectUpdatePending(_ id: String) -> Bool {
     jobs.contains { job in
@@ -331,7 +412,7 @@ final class NotebookChatController {
   var pendingCreations: [NotebookChatJob] {
     jobs.filter { job in
       guard !job.isTerminal, case .create(_, let project) = job.input.action else { return false }
-      return selectedProject == nil || project?.id == selectedProject?.id
+      return browserMode == .chats || selectedProject == nil || project?.id == selectedProject?.id
     }
   }
 
@@ -541,7 +622,7 @@ final class NotebookChatController {
     case (.activity(let ids), .activity(let values)):
       guard values.count == ids.count, Set(values.map(\.id)) == Set(ids) else { throw NotebookTransportError.invalidAcknowledgement }
       if expanded {
-        let shown = Set(tasks.map(\.id))
+        let shown = Set(visibleTasks.map(\.id))
         for value in values where shown.contains(value.id) { activities[value.id] = value }
       }
     case (.conversation(let id), .conversation(let value)):

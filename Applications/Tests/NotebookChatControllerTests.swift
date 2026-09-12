@@ -49,9 +49,9 @@ final class NotebookChatControllerTests: XCTestCase {
       XCTAssertTrue(condition())
     }
     await chat.start(); await chat.connect(peer); chat.expanded = true
-    try await wait { chat.tasks.count == 8 && !chat.loadingCatalogue }
+    try await wait { chat.tasks.count == 8 && chat.catalogues[.chats]?.loading == false }
     chat.catalogue(next: true)
-    try await wait { chat.tasks.count == 12 && !chat.loadingCatalogue }
+    try await wait { chat.tasks.count == 12 && chat.catalogues[.chats]?.loading == false }
     generation = 1
     chat.synchronizeVisibleIfDue(now: .now + .seconds(20))
     try await wait { chat.tasks.count == 11 && chat.projects.first?.name == "Version 1" }
@@ -314,7 +314,8 @@ final class NotebookChatControllerTests: XCTestCase {
     await chat.start(); chat.expanded = true; await chat.connect(peer)
     try await wait { chat.projects == [project] && chat.activities[task.id]?.status == .running }
     chat.selectProject(project)
-    try await wait { filtered && chat.tasks == [task] }
+    try await wait { filtered && chat.catalogues[.project(project.id)]?.tasks == [task] }
+    XCTAssertEqual(chat.tasks, [task], "Project browsing does not replace the all-chats window")
     XCTAssertTrue(submitted.isEmpty); XCTAssertTrue(chat.jobs.isEmpty)
     chat.select(task)
     try await wait { chat.conversation?.threadID == task.id }
@@ -327,6 +328,83 @@ final class NotebookChatControllerTests: XCTestCase {
     chat.browsesChats = true
     let hidden = await chat.sendMessage(threadID: task.id, text: "Not to a hidden chat", context: "")
     XCTAssertFalse(hidden)
+    await chat.stop(); let flushed = await queue.flush(); XCTAssertTrue(flushed)
+  }
+
+  func testProjectFoldersOwnTheirPagesWithoutFilteringAllChatsOrChangingTheWorkingProject() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("chat-folders-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = NotebookStore(root: directory), author = UUID(), peer = UUID()
+    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let queue = NotebookPersistenceQueue(store: store)
+    let first = CodexProject(id: "first", name: "Notebook", roots: ["/fixture/Notebook"])
+    let second = CodexProject(id: "second", name: "Research", roots: ["/fixture/Research"])
+    let empty = CodexProject(id: "empty", name: "Empty", roots: ["/fixture/Empty"])
+    let recent = CodexTask(id: UUID().uuidString, title: "Recent", cwd: "/fixture/Notebook", projectID: first.id)
+    let older = CodexTask(id: UUID().uuidString, title: "Older worktree", cwd: "/worktrees/old", projectID: first.id)
+    let other = CodexTask(id: UUID().uuidString, title: "Another project", cwd: "/fixture/Research", projectID: second.id)
+    var chat: NotebookChatController!, reads: [(String?, String?)] = [], held: NotebookChatEnvelope?, hold = false, renamed = false
+    chat = .init(persistence: queue, author: author) { envelope, _ in
+      guard case .request(let query) = envelope.body else { return }
+      let reply: NotebookChatReply
+      switch query {
+      case .projects:
+        reply = .projects(.init(projects: [first, renamed ? .init(id: second.id, name: "Renamed", roots: second.roots) : second, empty], nextCursor: nil))
+      case .catalogue(let cursor, let project):
+        reads.append((project?.id, cursor))
+        if hold, project?.id == first.id { held = envelope; return }
+        if project?.id == first.id { reply = .catalogue(.init(tasks: cursor == nil ? [recent] : [older], nextCursor: cursor == nil ? "first-older" : nil)) }
+        else if project?.id == second.id { reply = .catalogue(.init(tasks: [other], nextCursor: nil)) }
+        else if project?.id == empty.id { reply = .catalogue(.init(tasks: [], nextCursor: nil)) }
+        else { reply = .catalogue(.init(tasks: [recent, other], nextCursor: nil)) }
+      case .history: reply = .history(.init(messages: [], nextCursor: nil))
+      case .activity(let ids):
+        XCTAssertLessThanOrEqual(ids.count, 8); reply = .activity(ids.map { .init(id: $0, status: .idle) })
+      case .conversation(let id): reply = .conversation(.init(threadID: id, revision: 1, title: "Native", ready: true, busy: false, activeTurnID: nil,
+        messages: [], requests: [], acceptedMessages: [:], turnStatuses: [:]))
+      default: return XCTFail("Browsing is read-only, not a task or process launch")
+      }
+      chat.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
+    }
+    func wait(_ condition: () -> Bool) async throws {
+      let deadline = ContinuousClock.now + .seconds(6)
+      while !condition(), .now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+      XCTAssertTrue(condition())
+    }
+    await chat.start(); await chat.connect(peer); chat.expanded = true
+    try await wait { chat.projects.count == 3 && chat.tasks.count == 2 }
+    chat.select(recent); chat.draft = "Keep the draft"
+    chat.browse(.projects)
+    XCTAssertTrue(reads.allSatisfy { $0.0 == nil }, "Closed folders must not load their tasks eagerly")
+    chat.toggleProject(first); chat.toggleProject(second); chat.toggleProject(empty)
+    try await wait { chat.catalogues[.project(empty.id)]?.loaded == true && chat.catalogues[.project(second.id)]?.tasks == [other] }
+    XCTAssertEqual(chat.catalogues[.project(empty.id)]?.tasks, [])
+    XCTAssertEqual(chat.threadID, recent.id); XCTAssertEqual(chat.selectedProject, first)
+    chat.catalogue(next: true, project: first)
+    try await wait { chat.catalogues[.project(first.id)]?.tasks == [recent, older] }
+    XCTAssertEqual(chat.tasks, [recent, other], "A child outside the recent page belongs only to its folder window")
+    XCTAssertTrue(reads.contains { $0.0 == first.id && $0.1 == "first-older" })
+    chat.toggleProject(first)
+    let firstReads = reads.filter { $0.0 == first.id }.count
+    chat.synchronizeVisibleIfDue(now: .now + .seconds(20))
+    try await Task.sleep(for: .milliseconds(80))
+    XCTAssertEqual(reads.filter { $0.0 == first.id }.count, firstReads, "Collapsed folders are not polled")
+    chat.browse(.chats)
+    XCTAssertEqual(chat.tasks, [recent, other]); XCTAssertEqual(chat.expandedProjects, [second.id, empty.id])
+    chat.select(other)
+    XCTAssertEqual(chat.selectedProject, second); XCTAssertEqual(chat.runs.selectedRoot?.root, second.roots[0])
+    XCTAssertEqual(chat.draft, "Keep the draft"); XCTAssertTrue(chat.jobs.isEmpty)
+    renamed = true; chat.synchronizeVisibleIfDue(now: .now + .seconds(20))
+    try await wait { chat.selectedProject?.name == "Renamed" }
+    XCTAssertFalse(chat.browsesChats); XCTAssertEqual(chat.threadID, other.id)
+
+    // A late folder read from a disconnected computer cannot republish its window.
+    chat.browse(.projects); hold = true; chat.toggleProject(first)
+    try await wait { held != nil }
+    let late = try XCTUnwrap(held)
+    chat.disconnect(peer)
+    chat.receive(.init(id: late.id, body: .reply(.catalogue(.init(tasks: [], nextCursor: nil)))), peerID: peer)
+    XCTAssertEqual(chat.catalogues[.project(first.id)]?.tasks, [recent, older])
     await chat.stop(); let flushed = await queue.flush(); XCTAssertTrue(flushed)
   }
 

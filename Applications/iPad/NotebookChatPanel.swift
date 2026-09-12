@@ -16,7 +16,6 @@ struct NotebookChatPanel: View {
   let endInteraction: () -> Void
   @GestureState private var moving = false
   @GestureState private var resizing = false
-  @State private var showsAllChats = false
   @State private var editingProject: CodexProject?
   @State private var terminalDrag: NotebookTerminalSplit?
   @State private var terminalFraction: Double?
@@ -27,14 +26,19 @@ struct NotebookChatPanel: View {
       if chat.expanded {
         VStack(spacing: 0) {
           header
-          projectTabs
+          if chat.threadID == nil || chat.browsesChats { browserToolbar }
           GeometryReader { geometry in
             let split = NotebookTerminalSplit(height: geometry.size.height, fraction: terminalFraction ?? chat.files.window.terminalFraction)
             let height = chat.files.window.terminal == true ? split.conversation : geometry.size.height
             VStack(spacing: 0) {
               HStack(spacing: 0) {
                 VStack(spacing: 0) {
-                  if chat.threadID == nil || chat.browsesChats { recentChats }
+                  if chat.threadID == nil || chat.browsesChats {
+                    NotebookChatBrowser(chat: chat, openPairing: openPairing,
+                      editProject: { editingProject = $0 }, createInProject: { project in
+                        chat.selectProject(project); createChat()
+                      })
+                  }
                   else { conversation(height: height) }
                   composer
                 }
@@ -133,11 +137,10 @@ struct NotebookChatPanel: View {
       Image(systemName: "line.3.horizontal")
         .font(.system(size: 11)).frame(width: 24, height: 44).accessibilityHidden(true)
       Button {
-        chat.browsesChats.toggle(); showsAllChats = false
-        if chat.browsesChats { chat.catalogue() }
+        chat.browsesChats.toggle()
       } label: {
         HStack(spacing: 6) {
-          Text(chat.browsesChats ? (chat.selectedProject?.name ?? "Чаты") : title).lineLimit(1)
+          Text(chat.browsesChats || chat.threadID == nil ? "Codex" : title).lineLimit(1)
           if !chat.browsesChats, chat.conversation?.busy == true { ProgressView().controlSize(.mini) }
           if chat.threadID != nil { Image(systemName: "chevron.down").font(.system(size: 9, weight: .medium)) }
         }
@@ -149,8 +152,17 @@ struct NotebookChatPanel: View {
       Color.clear.frame(minWidth: 24, maxWidth: .infinity, minHeight: 44, maxHeight: 44)
         .contentShape(Rectangle()).accessibilityLabel("Переместить чат")
         .accessibilityIdentifier("notebook-chat-move")
+      Button {
+        let visible = chat.files.window.terminal != true
+        withAnimation(.easeInOut(duration: 0.18)) { chat.files.showTerminal(visible) }
+        if visible { Task { await chat.runs.openTerminal() } }
+      } label: {
+        Image(systemName: "terminal").frame(width: 44, height: 44).contentShape(Rectangle())
+          .foregroundStyle(chat.files.window.terminal == true ? Color.primary : .secondary)
+      }.accessibilityLabel(chat.files.window.terminal == true ? "Свернуть терминал" : "Терминал проекта")
+        .accessibilityIdentifier("notebook-terminal-toggle")
       Button { chat.files.toggleSidebar() } label: {
-        Image(systemName: "sidebar.right").frame(width: 44, height: 44)
+        Image(systemName: "sidebar.right").frame(width: 44, height: 44).contentShape(Rectangle())
       }.accessibilityLabel("Файлы проекта").accessibilityIdentifier("notebook-files-toggle")
       Button(action: createChat) {
         Image(systemName: "square.and.pencil").frame(width: 44, height: 44).contentShape(Rectangle())
@@ -175,93 +187,11 @@ struct NotebookChatPanel: View {
       .onEnded { action($0.translation, true) }
   }
 
-  private var recentChats: some View {
-    GeometryReader { geometry in
-      ScrollView {
-        LazyVStack(alignment: .leading, spacing: 0) {
-          Text(showsAllChats ? (chat.selectedProject?.name ?? "Чаты Codex") : "Недавние чаты")
-            .font(.system(size: 14)).foregroundStyle(.secondary).padding(.bottom, 12)
-          ForEach(chat.pendingCreations) { job in
-            VStack(alignment: .leading, spacing: 4) {
-              Text("Новый чат").font(.system(size: 14, weight: .medium))
-              Text(job.state == .uncertain
-                ? "Codex не подтвердил создание. Проверьте список чатов; запрос не отправлялся повторно."
-                : "Создаётся на Mac…")
-                .font(.system(size: 12)).foregroundStyle(.secondary)
-            }.padding(.vertical, 10).accessibilityIdentifier("notebook-chat-creation-" + job.id.uuidString)
-          }
-          if chat.tasks.isEmpty {
-            Text(chat.connected ? "Здесь пока нет чатов." : "Чаты появятся, когда Mac будет доступен.")
-              .font(.system(size: 14)).foregroundStyle(.secondary).padding(.vertical, 12)
-          }
-          if !chat.connected {
-            Button("Подключить Mac", systemImage: "link", action: openPairing)
-              .font(.system(size: 14)).frame(minHeight: 44)
-              .accessibilityIdentifier("notebook-chat-connect")
-          }
-          ForEach(showsAllChats ? orderedTasks : Array(orderedTasks.prefix(3))) { task in
-            Button { chat.select(task); chat.browsesChats = false } label: {
-              HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                  Text(task.title).font(.system(size: 15)).foregroundStyle(.primary.opacity(0.75)).lineLimit(1)
-                  Text(taskContext(task)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-                  if let activity = chat.activities[task.id], activity.status == .running || activity.status == .waitingForInput,
-                    let summary = activity.summary, !summary.isEmpty {
-                    Text(summary).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
-                  }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-                taskStatus(task)
-              }.frame(minHeight: 44).padding(.vertical, 7).contentShape(Rectangle())
-            }
-            .accessibilityIdentifier("notebook-chat-task-" + task.id)
-          }
-          if !showsAllChats, !chat.tasks.isEmpty {
-            Button("Показать все") { showsAllChats = true }
-              .font(.system(size: 14)).foregroundStyle(.secondary).frame(minHeight: 44)
-              .accessibilityIdentifier("notebook-chat-show-all")
-          }
-          if showsAllChats, let cursor = chat.taskCursor {
-            Color.clear.frame(height: 1).id(cursor)
-              .onScrollVisibilityChange { if $0 { chat.catalogue(next: true) } }
-          }
-        }
-        .padding(.horizontal, 22).padding(.bottom, 24)
-        .frame(minHeight: geometry.size.height, alignment: .bottom)
-      }
-      .scrollBounceBehavior(.basedOnSize)
-    }
-    .accessibilityElement(children: .contain)
-    .accessibilityIdentifier("notebook-chat-recents")
-  }
-
-  private var projectTabs: some View {
-    HStack(spacing: 2) {
-      ScrollView(.horizontal, showsIndicators: false) {
-        HStack(spacing: 7) {
-          projectTab("Все проекты", selected: chat.selectedProject == nil) {
-            chat.selectProject(nil); showsAllChats = false
-          }.accessibilityIdentifier("notebook-chat-project-all")
-          ForEach(chat.projects) { project in
-            projectTab(project.name, selected: chat.selectedProject?.id == project.id, active: projectIsWorking(project)) {
-              chat.selectProject(project); showsAllChats = true
-            }
-            .contextMenu { Button("Настроить проект", systemImage: "slider.horizontal.3") { editingProject = project } }
-            .accessibilityIdentifier("notebook-chat-project-" + project.id)
-          }
-          if chat.projectCursor != nil {
-            Button { chat.catalogueProjects(next: true) } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
-              .accessibilityLabel("Ещё проекты")
-          }
-        }.padding(.horizontal, 18)
-      }
-      Button {
-        withAnimation(.easeInOut(duration: 0.18)) { chat.files.toggleTerminal() }
-        if chat.files.window.terminal == true { Task { await chat.runs.openTerminal() } }
-      } label: {
-        Image(systemName: "terminal").frame(width: 44, height: 44)
-          .foregroundStyle(chat.files.window.terminal == true ? Color.primary : .secondary)
-      }.accessibilityLabel(chat.files.window.terminal == true ? "Свернуть терминал" : "Терминал проекта")
-        .accessibilityIdentifier("notebook-terminal-toggle")
+  private var browserToolbar: some View {
+    HStack(spacing: 12) {
+      Picker("Показать", selection: Binding(get: { chat.browserMode }, set: chat.browse)) {
+        ForEach(NotebookChatController.BrowserMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+      }.pickerStyle(.segmented).accessibilityIdentifier("notebook-chat-browser-mode")
       Menu {
         if !chat.computers.isEmpty {
           Section("Компьютер") {
@@ -284,56 +214,7 @@ struct NotebookChatPanel: View {
         }.frame(width: chat.computers.count > 1 ? 84 : 44, height: 44)
       }
         .accessibilityLabel("Настроить проекты").accessibilityIdentifier("notebook-chat-projects")
-    }.padding(.trailing, 7).padding(.bottom, 7)
-  }
-  private func projectTab(_ name: String, selected: Bool, active: Bool = false, action: @escaping () -> Void) -> some View {
-    Button(action: action) {
-      HStack(spacing: 6) {
-        if active { ProgressView().controlSize(.mini) }
-        Text(name).font(.system(size: 13, weight: selected ? .medium : .regular)).lineLimit(1)
-      }
-      .foregroundStyle(selected ? Color.primary : Color.secondary)
-      .padding(.horizontal, 15).frame(height: 34)
-      .background(selected ? Color(.secondarySystemBackground) : Color.clear, in: Capsule())
-      .overlay { Capsule().strokeBorder(Color(.separator).opacity(selected ? 0 : 0.25), lineWidth: 0.75) }
-      .frame(minHeight: 44)
-    }.accessibilityAddTraits(selected ? .isSelected : [])
-  }
-  private func projectIsWorking(_ project: CodexProject) -> Bool {
-    chat.tasks.contains { task in
-      (task.projectID == project.id || (task.projectID == nil && project.roots.contains(task.cwd)))
-        && chat.activities[task.id]?.status == .running
-    }
-  }
-  private func project(for task: CodexTask) -> CodexProject? {
-    chat.projects.first { $0.id == task.projectID } ?? chat.projects.first { $0.roots.contains(task.cwd) }
-  }
-  private var orderedTasks: [CodexTask] {
-    let activities = chat.activities
-    return chat.tasks.enumerated().sorted { left, right in
-      func rank(_ task: CodexTask) -> Int {
-        switch activities[task.id]?.status { case .waitingForInput: 0; case .running: 1; default: 2 }
-      }
-      return rank(left.element) == rank(right.element) ? left.offset < right.offset : rank(left.element) < rank(right.element)
-    }.map(\.element)
-  }
-  private func taskContext(_ task: CodexTask) -> String {
-    let location = project(for: task)?.name ?? URL(fileURLWithPath: task.cwd).lastPathComponent
-    let status: String
-    switch chat.activities[task.id]?.status {
-    case .running: status = "В работе"
-    case .waitingForInput: status = "Нужен ваш ответ"
-    case .idle: status = "Можно продолжить"
-    default: status = "Статус недоступен"
-    }
-    return location + " · " + status
-  }
-  @ViewBuilder private func taskStatus(_ task: CodexTask) -> some View {
-    switch chat.activities[task.id]?.status {
-    case .running: ProgressView().controlSize(.small).accessibilityLabel("В работе")
-    case .waitingForInput: Image(systemName: "bubble.left.and.exclamationmark.bubble.right").foregroundStyle(.secondary)
-    default: EmptyView()
-    }
+    }.padding(.leading, 22).padding(.trailing, 8).padding(.bottom, 8)
   }
 
   private func conversation(height: CGFloat) -> some View {
@@ -395,7 +276,8 @@ struct NotebookChatPanel: View {
       HStack(alignment: .bottom, spacing: 0) {
         Menu {
           Button("Новый чат", systemImage: "square.and.pencil", action: createChat)
-          Button("Выбрать чат", systemImage: "clock") { chat.browsesChats = true; showsAllChats = true; chat.catalogue() }
+          Button("Проекты и компьютер", systemImage: "folder") { chat.browse(.projects) }
+          Button("Выбрать чат", systemImage: "bubble.left.and.bubble.right") { chat.browse(.chats) }
           if chat.conversation?.activeTurnID != nil {
             Button("Уточнить текущий ход", systemImage: "arrow.turn.down.right") { model.sendChatMessage(steering: true) }
               .disabled(!canSend).accessibilityIdentifier("notebook-chat-steer")

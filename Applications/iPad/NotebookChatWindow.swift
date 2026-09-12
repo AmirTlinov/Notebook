@@ -9,7 +9,7 @@ struct NotebookTerminalSplit {
   var conversation: CGFloat { available - terminal }
   init(height: CGFloat, fraction: Double?) {
     available = max(0, height - Self.divider)
-    // Leave room for the composer, history control and readable message lines.
+    // Leave room for the composer and readable message lines.
     // The terminal may be shorter; its prompt needs fewer rows than a reply.
     let conversationMinimum = min(180, available / 2)
     let terminalMinimum = min(120, available / 2)
