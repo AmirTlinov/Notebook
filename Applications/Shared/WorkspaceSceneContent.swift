@@ -190,11 +190,9 @@ struct WorkspaceItemCoverView: View {
         let retainsTextInput = !isPortalProjection
           && element.kind == .nativeText && editingTextID == element.id
         EditableElementContainer(
-          isEditingEnabled: isElementEditingEnabled && !model.scenePreparationPending,
           isSelected: !model.scenePreparationPending && model.elementEditingSession.selection == reference,
           coordinateScale: 1,
           translation: model.scenePreparationPending ? .zero : elementTranslation(for: reference),
-          isContentInteractive: retainsTextInput || (!model.scenePreparationPending && !element.javaScript.isEmpty),
           onSelect: {
             guard !model.scenePreparationPending else { return }
             model.selectElement(reference)

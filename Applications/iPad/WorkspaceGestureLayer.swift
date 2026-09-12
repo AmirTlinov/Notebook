@@ -239,7 +239,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
 /// Window-level recognizers span embedded paper/WebKit hosts, but a presented
 /// UIKit menu or sheet has its own input owner even when it overlaps the board.
 @MainActor
-private func sceneReceives(_ touch: UITouch, inside anchor: UIView) -> Bool {
+func sceneReceives(_ touch: UITouch, inside anchor: UIView) -> Bool {
   guard anchor.window != nil, anchor.bounds.contains(touch.location(in: anchor)) else { return false }
   guard let source = touch.view else { return true }
   var responder: UIResponder? = anchor

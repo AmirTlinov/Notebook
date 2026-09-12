@@ -19,6 +19,11 @@ import NotebookCore
   @ObservationIgnored private let persistence: NotebookPersistenceQueue
   @ObservationIgnored private var reading: Task<Void, Never>?
   @ObservationIgnored private var readerID: UUID?
+  @ObservationIgnored private var monitoring: Task<Void, Never>?
+  @ObservationIgnored private var statusReadID = UUID()
+  @ObservationIgnored private var nextStatusRead = ContinuousClock.now
+  private var isStopped = false
+  private var lastOutputCursor = "0"
   @ObservationIgnored private var inputTask: Task<Void, Never>?
   @ObservationIgnored private var pendingInput: [(computer: UUID, run: UUID, bytes: Data)] = []
   private var blockedRuns = Set<UUID>()
@@ -34,8 +39,8 @@ import NotebookCore
     return .init(computer: computer, project: project.id, root: path, path: "")
   }
   func attach(_ root: NotebookFileAddress, consume: @escaping @MainActor (NotebookRunOutput, Bool) async throws -> Void) -> UUID {
-    detach()
-    let id = UUID(); readerID = id; self.root = root; record = nil; error = nil; loadingCommand = true
+    detach(); monitoring?.cancel(); monitoring = nil
+    let id = UUID(); readerID = id; self.root = root; record = nil; lastOutputCursor = "0"; error = nil; loadingCommand = true
     reading = Task { [weak self] in
       guard let self else { return }
       do {
@@ -54,7 +59,7 @@ import NotebookCore
             try await consume(output, reset)
             guard readerID == id else { return }
             let sizeNewRun = record?.id != output.record?.id || record?.phase != output.record?.phase
-            initial = false; runID = output.record?.id; cursor = output.after; record = output.record; more = output.more
+            initial = false; runID = output.record?.id; cursor = output.after; lastOutputCursor = cursor; record = output.record; more = output.more
             if sizeNewRun, record?.phase == .running { size(columns: columns, rows: rows) }
           } catch { if readerID == id, !Task.isCancelled { self.error = error.localizedDescription } }
         }
@@ -66,9 +71,28 @@ import NotebookCore
   func detach(_ id: UUID? = nil) {
     guard id == nil || readerID == id else { return }
     readerID = nil; reading?.cancel(); reading = nil; resizing?.cancel(); resizing = nil
+    nextStatusRead = .now
     // Measured keyboard input already belongs to its run and still drains.
   }
-  func stop() async { detach(); await inputTask?.value }
+  func stop() async { isStopped = true; detach(); monitoring?.cancel(); monitoring = nil; await inputTask?.value }
+  /// The conversation's existing synchronization loop also reads a hidden run.
+  /// Restoring a window discovers its Mac process without mounting a terminal
+  /// or starting a second shell. No output view or extra timer stays alive.
+  func synchronizeStatusIfDue(now: ContinuousClock.Instant = .now) {
+    guard !isStopped, readerID == nil, let target = selectedRoot, chat?.connected == true else { return }
+    if root != target { monitoring?.cancel(); monitoring = nil; root = target; record = nil; lastOutputCursor = "0"; nextStatusRead = now }
+    guard monitoring == nil, now >= nextStatusRead else { return }
+    nextStatusRead = now + .seconds(record?.isActive == true ? 1 : 10)
+    let readID = UUID(); statusReadID = readID
+    monitoring = Task { [weak self] in
+      guard let self else { return }
+      defer { if statusReadID == readID { monitoring = nil } }
+      if case .run(let output) = try? await chat?.directQuery(.run(.init(root: target, after: lastOutputCursor))),
+        !Task.isCancelled, !isStopped, readerID == nil, selectedRoot == target {
+        record = output.record; lastOutputCursor = output.after
+      }
+    }
+  }
   private func persistCommand() {
     guard !loadingCommand, let root, command.utf8.count <= 8192 else { return }
     let value = command
@@ -83,13 +107,13 @@ import NotebookCore
       guard case .run(let output) = try await chat.directQuery(.run(.init(root: target))), selectedRoot == target else {
         throw NotebookTransportError.disconnected
       }
-      if output.record?.isActive == true, !restart { error = nil; return }
+      if output.record?.isActive == true, !restart { root = target; record = output.record; nextStatusRead = .now; error = nil; return }
       guard !chat.jobs.contains(where: { job in
         if case .startRun(let request) = job.input.action { return request.root == target && !job.isTerminal && job.id != output.record?.id }
         return false
       }) else { throw NotebookPersistenceQueue.Failure(message: "Mac ещё не подтвердил прежнее открытие терминала. Новый сеанс не создан.") }
       let request = NotebookRunRequest(root: target, replacing: output.record?.id, columns: columns, rows: rows)
-      try check(try await chat.sessionCommand(.startRun(request), computer: target.computer)); error = nil
+      try check(try await chat.sessionCommand(.startRun(request), computer: target.computer)); nextStatusRead = .now; error = nil
     } catch { if selectedRoot == target { self.error = error.localizedDescription } }
   }
   func start(restart: Bool = false) async {

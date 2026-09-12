@@ -89,6 +89,7 @@ struct NotebookChatWindowLayout: Codable, Equatable {
 }
 
 struct NotebookChatWindow: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Bindable var chat: NotebookChatController
   let available: CGRect
   let openPairing: () -> Void
@@ -110,6 +111,7 @@ struct NotebookChatWindow: View {
       endInteraction: { interruptedDrag = false; finishInteraction() })
       .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frameChanged($0) }
       .position(x: frame.midX, y: frame.midY)
+      .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.3, extraBounce: 0), value: chat.expanded)
       .onChange(of: available) {
         if interaction != nil { interruptedDrag = true }
         finishInteraction()

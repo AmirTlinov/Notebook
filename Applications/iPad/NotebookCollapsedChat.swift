@@ -19,7 +19,7 @@ struct NotebookCollapsedChat: View {
     let body: CGFloat = chat.conversation?.requests.isEmpty == false ? 210 : chat.compactDraftExpanded ? 160 : messageHeight
     let height: CGFloat = 48 + (hasVoice ? 70 : 0) + (!chat.draft.isEmpty && !chat.compactDraftExpanded ? 36 : 0)
       + body + (chat.voice.error != nil ? 95 : 0)
-    return .init(width: min(available.width, hasBody || hasVoice ? 340 : 200),
+    return .init(width: min(available.width, hasBody || hasVoice ? 340 : (chat.runs.record?.isActive == true ? 288 : 244)),
       height: min(available.height, max(hasVoice ? 118 : 48, min(height, available.height * 0.42))))
   }
   var body: some View {
@@ -80,10 +80,20 @@ struct NotebookCollapsedChat: View {
           .accessibilityLabel(chat.compactDraftExpanded ? "Свернуть черновик" : "Написать без раскрытия чата")
           .accessibilityIdentifier("notebook-compact-edit")
           .disabled(chat.threadID == nil || chat.browsesChats)
+        Button { chat.voice.explainDictation(); chat.compactDraftExpanded = !chat.draft.isEmpty } label: {
+          Image(systemName: "mic").frame(width: 44, height: 48).contentShape(Rectangle())
+        }.accessibilityLabel("Голосовой ввод Codex").accessibilityIdentifier("notebook-compact-dictation")
+          .disabled(chat.voice.capturing)
         Button { voiceSettings = true } label: {
           Image(systemName: chat.voice.phase == .waiting ? "ear.badge.waveform" : "waveform")
             .foregroundStyle(chat.voice.capturing && !chat.voice.muted ? Color.green : Color.primary).frame(width: 44, height: 48).contentShape(Rectangle())
         }.accessibilityLabel("Голос над доской").accessibilityIdentifier("notebook-compact-voice-settings")
+        if chat.runs.record?.isActive == true {
+          Button { chat.expanded = true; chat.files.showTerminal(true) } label: {
+            Image(systemName: "terminal").overlay(alignment: .topTrailing) { Circle().fill(.green).frame(width: 5, height: 5).offset(x: 4, y: -3) }
+              .frame(width: 44, height: 48).contentShape(Rectangle())
+          }.accessibilityLabel("Открыть работающий терминал").accessibilityIdentifier("notebook-compact-terminal")
+        }
       }.padding(.horizontal, 4)
     }
     .popover(isPresented: $voiceSettings) {

@@ -152,15 +152,20 @@ struct NotebookChatPanel: View {
       }
       .accessibilityLabel("Выбрать чат")
       .accessibilityIdentifier("notebook-chat-tasks")
+      .highPriorityGesture(windowDrag(move, activity: $moving))
       Color.clear.frame(minWidth: 24, maxWidth: .infinity, minHeight: 44, maxHeight: 44)
         .contentShape(Rectangle()).accessibilityLabel("Переместить чат")
         .accessibilityIdentifier("notebook-chat-move")
+        .gesture(windowDrag(move, activity: $moving))
       Button {
         let visible = chat.files.window.terminal != true
         withAnimation(.easeInOut(duration: 0.18)) { chat.files.showTerminal(visible) }
         if visible { Task { await chat.runs.openTerminal() } }
       } label: {
-        Image(systemName: "terminal").frame(width: 44, height: 44).contentShape(Rectangle())
+        Image(systemName: "terminal")
+          .overlay(alignment: .topTrailing) {
+            if chat.runs.record?.isActive == true { Circle().fill(.green).frame(width: 5, height: 5).offset(x: 4, y: -3) }
+          }.frame(width: 44, height: 44).contentShape(Rectangle())
           .foregroundStyle(chat.files.window.terminal == true ? Color.primary : .secondary)
       }.accessibilityLabel(chat.files.window.terminal == true ? "Свернуть терминал" : "Терминал проекта")
         .accessibilityIdentifier("notebook-terminal-toggle")
@@ -179,8 +184,6 @@ struct NotebookChatPanel: View {
     }
     .font(.system(size: 14, weight: .regular)).foregroundStyle(.secondary)
     .padding(.leading, 22).padding(.trailing, 8).padding(.top, 5)
-    .contentShape(Rectangle())
-    .highPriorityGesture(windowDrag(move, activity: $moving))
   }
 
   private func windowDrag(_ action: @escaping (CGSize, Bool) -> Void, activity: GestureState<Bool>) -> some Gesture {

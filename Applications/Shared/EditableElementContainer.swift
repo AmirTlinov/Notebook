@@ -21,11 +21,9 @@ private struct ElementEditingControlBounds: View {
 
 /// The content accepts its own controls; explicit frame handles own editing gestures.
 struct EditableElementContainer<Content: View>: View {
-  let isEditingEnabled: Bool
   let isSelected: Bool
   let coordinateScale: Double
   let translation: SpatialPoint
-  var isContentInteractive = true
   let onSelect: () -> Void
   let onDragChanged: (SpatialPoint) -> Void
   let onDragEnded: (SpatialPoint) -> Void
@@ -37,12 +35,11 @@ struct EditableElementContainer<Content: View>: View {
 
   var body: some View {
     ZStack(alignment: .topTrailing) {
-      content.allowsHitTesting(!isEditingEnabled)
-        .contextMenu { Button("Изменить элемент", action: onSelect) }
+      content
         .accessibilityAction(named: "Изменить элемент", onSelect)
-      if isEditingEnabled || !isContentInteractive {
-        Color.clear.contentShape(Rectangle()).onTapGesture(perform: onSelect)
-      }
+        #if os(macOS)
+        .onTapGesture(perform: onSelect)
+        #endif
       if isSelected {
         Rectangle().stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [8, 5])).allowsHitTesting(false)
         HStack(spacing: 6) {
@@ -58,7 +55,8 @@ struct EditableElementContainer<Content: View>: View {
             Image(systemName: "trash").frame(width: 44, height: 44).background(.regularMaterial, in: Circle())
           }.buttonStyle(.plain).accessibilityLabel("Удалить элемент").accessibilityIdentifier("delete-agent-element")
         }.font(.system(size: 17, weight: .medium))
-          .background(ElementEditingControlBounds()).offset(x: 16, y: -48)
+          .background(ElementEditingControlBounds())
+          .background(ElementEditingInputRegion().accessibilityHidden(true)).offset(x: 16, y: -48)
       }
     }
     .overlay {
@@ -74,6 +72,7 @@ struct EditableElementContainer<Content: View>: View {
         Image(systemName: "arrow.up.left.and.arrow.down.right")
           .frame(width: 44, height: 44).background(.regularMaterial, in: Circle()).contentShape(Circle())
           .background(ElementEditingControlBounds())
+          .background(ElementEditingInputRegion().accessibilityHidden(true))
           .offset(x: 16 + resizeDelta.x * coordinateScale, y: 16 + resizeDelta.y * coordinateScale)
           .gesture(DragGesture(minimumDistance: 3)
             .onChanged { onResizeChanged(logicalTranslation($0.translation)) }
@@ -99,5 +98,16 @@ struct EditableElementContainer<Content: View>: View {
   private func logicalTranslation(_ translation: CGSize) -> SpatialPoint {
     let scale = max(coordinateScale, 0.001)
     return .init(x: translation.width / scale, y: translation.height / scale)
+  }
+}
+
+private struct ElementEditingInputRegion: View {
+  @Environment(NotebookAppModel.self) private var model
+  var body: some View {
+    #if os(iOS)
+      NotebookControlRegion(gate: model.inputGate)
+    #else
+      Color.clear.allowsHitTesting(false)
+    #endif
   }
 }

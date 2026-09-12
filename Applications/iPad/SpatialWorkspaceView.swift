@@ -210,7 +210,7 @@ struct SpatialWorkspaceView: View {
             isEnabled: (presence.mode == .board || presence.mode == .cover)
               && !contentGestureActive
               && editingSpatialTextID == nil
-              && !model.isElementEditingEnabled && !model.isPointing
+
           )
           .allowsHitTesting(false)
 
@@ -231,19 +231,30 @@ struct SpatialWorkspaceView: View {
           itemSelectionControl(presence: presence, viewport: viewport)
 
         NotebookAttentionMarks(presence:presence)
-          if model.isPointing {
-            NotebookPointerView(onPreview:{ pointerPreview = $0 },onPoint:{ start,end in
-              guard cameraGesture == nil, !settling, !model.scenePreparationPending, let cohort else { return }
-              if let selection = NotebookAttentionProjection.capture(start:start,end:end,model:model,presence:presence,
-                cohort:cohort, installedInk: spatialInkSurfaces.installedSources()) {
-                model.publishHumanContext(selection)
-              }
-            })
-            if let rect = pointerPreview {
-              RoundedRectangle(cornerRadius:4).stroke(.indigo,style:StrokeStyle(lineWidth:2,dash:[6,4]))
-                .frame(width:rect.width,height:rect.height).position(x:rect.midX,y:rect.midY).allowsHitTesting(false)
+        NotebookSelectionGesture(inputGate: model.inputGate, onPreview: { rect in
+          if pointerPreview != rect { pointerPreview = rect }
+          if model.isPointing != (rect != nil) { model.isPointing = rect != nil }
+        }, onPoint: { start, end, held in
+          guard cameraGesture == nil, !settling, !model.scenePreparationPending, let cohort else { return }
+          let selection = NotebookAttentionProjection.capture(start: start, end: end, model: model, presence: presence,
+            cohort: cohort, installedInk: spatialInkSurfaces.installedSources())
+          guard let selection else { return }
+          if !held, selection.fragments.allSatisfy({ $0.target.kind == .board && $0.elementID == nil }) { return }
+          if let fragment = selection.fragments.first, let id = fragment.elementID {
+            if !held {
+              let focus: InteractiveElementReference = fragment.target.kind == .page
+                ? .page(pageID: fragment.target.id, elementID: id) : .board(boardID: presence.boardID, elementID: id)
+              if model.interactiveElementFocus == focus { return }
             }
+            if fragment.target.kind == .page { model.selectElement(.page(pageID: fragment.target.id, elementID: id)) }
+            else if fragment.target.kind == .board || fragment.target.kind == .cover { model.selectElement(.spatial(elementID: id)) }
           }
+          model.publishHumanContext(selection)
+        }).allowsHitTesting(false)
+        if let rect = pointerPreview {
+          RoundedRectangle(cornerRadius: 4).stroke(.indigo, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+            .frame(width: rect.width, height: rect.height).position(x: rect.midX, y: rect.midY).allowsHitTesting(false)
+        }
           NotebookDisplayConfirmation {
             guard cameraGesture == nil, !settling, !pageTurnIsActive, !contentGestureActive else { return }
             model.confirmVisibleActions(presence: presence, scene: workset)
@@ -688,11 +699,9 @@ struct SpatialWorkspaceView: View {
             y: base.y + element.frame.y * presence.camera.scale
           )
           EditableElementContainer(
-            isEditingEnabled: model.isElementEditingEnabled && !model.scenePreparationPending,
             isSelected: model.elementEditingSession.selection == reference,
             coordinateScale: presence.camera.scale,
             translation: elementTranslation(for: reference),
-            isContentInteractive: !model.scenePreparationPending && !element.javaScript.isEmpty,
             onSelect: {
               model.selectElement(reference)
               selectedItemID = nil

@@ -28,11 +28,9 @@ struct AgentOverlayView: View {
         )
         let interactiveReference = InteractiveElementReference.page(pageID: pageID, elementID: element.id)
         EditableElementContainer(
-          isEditingEnabled: isElementEditingEnabled,
           isSelected: model.elementEditingSession.selection == reference,
           coordinateScale: 1,
           translation: translation(for: reference),
-          isContentInteractive: !element.javaScript.isEmpty,
           onSelect: { model.selectElement(reference) },
           onDragChanged: { translation in
             model.updateElementDrag(reference, translation: translation)

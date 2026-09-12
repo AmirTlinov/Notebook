@@ -32,7 +32,7 @@ import NotebookCore
   private(set) var captureID: UUID?
   var capturing: Bool { captureID != nil }
   var status: String {
-    if ending { return "Выключаю микрофон…" }
+    if ending { return muted ? "Микрофон выключен · завершаю на Mac…" : "Выключаю микрофон…" }
     switch phase {
     case .off: return "Микрофон выключен"
     case .preparing: return "Подготовка микрофона…"
@@ -55,6 +55,7 @@ import NotebookCore
   @ObservationIgnored private var web: WKWebView?
   @ObservationIgnored private var lease: WebSurfaceLease?
   @ObservationIgnored private var poll: Task<Void, Never>?
+  @ObservationIgnored private var endConfirmation: Task<Void, Never>?
   @ObservationIgnored private var deadline: Task<Void, Never>?
   @ObservationIgnored private var computer: UUID?
   @ObservationIgnored private var wake: NotebookWakeRecognizer?
@@ -166,20 +167,39 @@ import NotebookCore
     guard let id = captureID, !ending else { return }
     ending = true; wake?.stop(); wake = nil; waiting = false; poll?.cancel(); poll = nil; deadline?.cancel(); deadline = nil
     if let web {
-      await web.setMicrophoneCaptureState(.none)
-      _ = try? await web.callAsyncJavaScript("await window.voiceEnd()", arguments: [:], in: nil, contentWorld: .page)
+      // Retire capture before waiting for the network. Navigation also destroys
+      // the audio graph if its JS process cannot complete voiceEnd's promise.
+      web.setMicrophoneCaptureState(.none, completionHandler: nil)
+      web.evaluateJavaScript("window.voiceEnd()", completionHandler: nil)
       web.configuration.userContentController.removeScriptMessageHandler(forName: "notebookVoice")
-      web.stopLoading(); web.navigationDelegate = nil; web.uiDelegate = nil; web.removeFromSuperview(); self.web = nil
+      web.stopLoading(); web.loadHTMLString("", baseURL: nil)
+      web.navigationDelegate = nil; web.uiDelegate = nil; web.removeFromSuperview(); self.web = nil
     }
-    lease?.release(); lease = nil; mediaReady = false
-    if submitted, let chat {
-      do {
-        let receipt = try await chat.sessionCommand(.stopVoice(id), computer: computer)
-        if receipt.state == .uncertain { error = "Микрофон выключен. Завершение на Mac ещё не подтверждено; звонок не повторяется." }
-      } catch { self.error = "Микрофон выключен. \(error.localizedDescription)" }
+    lease?.release(); lease = nil; mediaReady = false; muted = true; phase = .off; agentSpeaking = false
+    guard submitted, let chat else { finishEnd(id); return }
+    do {
+      let receipt = try await chat.sessionCommand(.stopVoice(id), computer: computer)
+      if receipt.state == .accepted { finishEnd(id); return }
+    } catch {
+      self.error = "Микрофон выключен. Mac пока не подтвердил завершение: \(error.localizedDescription)"
     }
-    activeID = nil; captureID = nil; phase = .off; ending = false; muted = false; submitted = false; agentSpeaking = false
+    endConfirmation = Task { [weak self] in
+      while let self, !Task.isCancelled, captureID == id, ending {
+        if chat.connected, chat.computerID == computer,
+          case .voice(let value) = try? await chat.directQuery(.voice(id)), value.id == id, value.phase == .ended {
+          finishEnd(id); return
+        }
+        do { try await Task.sleep(for: .seconds(1)) } catch { return }
+      }
+    }
   }
+  private func finishEnd(_ id: UUID) {
+    guard captureID == id else { return }
+    state?.phase = .ended; state?.sdp = nil
+    activeID = nil; captureID = nil; phase = .off; ending = false; muted = false; submitted = false
+    endConfirmation?.cancel(); endConfirmation = nil
+  }
+  func shutdown() async { await end(); endConfirmation?.cancel(); endConfirmation = nil }
   func detach(_ host: UIView) { guard self.host === host else { return }; self.host = nil; Task { await end() } }
 }
 extension NotebookVoiceController: WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {

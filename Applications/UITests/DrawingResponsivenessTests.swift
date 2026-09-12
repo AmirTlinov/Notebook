@@ -19,14 +19,20 @@ final class DrawingResponsivenessTests: XCTestCase {
     let cloud = app.buttons["notebook-reply-cloud"]
     XCTAssertTrue(cloud.waitForExistence(timeout: 8))
     XCTAssertFalse(app.otherElements["notebook-chat-transcript"].exists)
+    XCTAssertTrue(app.buttons["notebook-compact-dictation"].isHittable)
+    XCTAssertTrue(app.buttons["notebook-compact-voice-settings"].isHittable)
     let priorInk = paper.value as? String
-    let start = paper.coordinate(withNormalizedOffset: .init(dx: 0.2, dy: 0.3))
+    let panel = app.descendants(matching: .any).matching(identifier: "notebook-chat-panel").firstMatch
+    let clearPoints = [CGPoint(x: 0.15, y: 0.4), .init(x: 0.65, y: 0.4), .init(x: 0.15, y: 0.7), .init(x: 0.65, y: 0.7)]
+      .map { CGPoint(x: paper.frame.minX + paper.frame.width * $0.x, y: paper.frame.minY + paper.frame.height * $0.y) }
+      .filter { !panel.frame.intersects(CGRect(origin: $0, size: .init(width: 85, height: 40))) }
+    XCTAssertFalse(clearPoints.isEmpty, "The compact reply must leave room to write")
+    let start = app.coordinate(withNormalizedOffset: .zero).withOffset(.init(dx: clearPoints[0].x, dy: clearPoints[0].y))
     start.press(forDuration: 0.1, thenDragTo: start.withOffset(.init(dx: 80, dy: 35)))
     let inkChanged = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in paper.value as? String != priorInk }, object: nil)
     XCTAssertEqual(XCTWaiter.wait(for: [inkChanged], timeout: 4), .completed)
     let acceptedInk = paper.value as? String
     XCTAssertEqual(paper.frame, frame)
-    let panel = app.descendants(matching: .any).matching(identifier: "notebook-chat-panel").firstMatch
     XCTAssertLessThan(panel.frame.height, app.frame.height * 0.43)
     let first = XCTAttachment(screenshot: app.screenshot()); first.name = "collapsed-reply-keeps-pencil"; first.lifetime = .keepAlways; add(first)
     app.buttons["notebook-reply-dismiss"].tap(); XCTAssertFalse(cloud.exists)
@@ -320,7 +326,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-collaboration-fixture"]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-collaboration-fixture", "--notebook-simulator-finger-gestures"]
     launchPortraitFixture(app)
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout:8))
@@ -328,8 +334,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertNotNil(drawing)
     let element = app.descendants(matching:.any).matching(identifier:"agent-element-shared-element").firstMatch
     XCTAssertTrue(element.waitForExistence(timeout:8))
-    app.buttons["drawing-tool-pointer"].tap()
-    app.coordinate(withNormalizedOffset:.init(dx:0.22,dy:0.18)).press(forDuration:0.05,
+    app.coordinate(withNormalizedOffset:.init(dx:0.22,dy:0.18)).press(forDuration:0.45,
       thenDragTo:app.coordinate(withNormalizedOffset:.init(dx:0.45,dy:0.25)))
     XCTAssertFalse(app.staticTexts["Укажите фрагмент · протяните для области"].exists)
     openSharedHistory(in: app)
@@ -344,17 +349,18 @@ final class DrawingResponsivenessTests: XCTestCase {
     let showProof = XCTAttachment(screenshot: app.screenshot())
     showProof.name = "after-history-show"; showProof.lifetime = .keepAlways; add(showProof)
     XCTAssertTrue(element.waitForExistence(timeout:5))
+    app.buttons["notebook-chat-toggle"].tap()
     element.tap()
     XCTAssertTrue(app.buttons["delete-agent-element"].waitForExistence(timeout:3))
     let card = app.descendants(matching: .any).matching(identifier: "agent-question-card").firstMatch
-    XCTAssertTrue(card.exists, "Editing does not dismiss the pinned question or discard its draft")
+    XCTAssertTrue(card.waitForExistence(timeout: 3), "Finger selection pins the object while the chat stays collapsed")
     for id in ["move-agent-element", "delete-agent-element", "resize-agent-element"] {
       let handle = app.descendants(matching: .any).matching(identifier: id).firstMatch
-      XCTAssertTrue(handle.isHittable)
-      XCTAssertFalse(card.frame.intersects(handle.frame), "The question must not cover \(id)")
+      let reachable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in handle.isHittable }, object: nil)
+      XCTAssertEqual(XCTWaiter.wait(for: [reachable], timeout: 3), .completed, "\(id): \(handle.debugDescription)")
     }
     let editingProof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-    editingProof.name = "pinned-question-keeps-editing-handles-reachable"
+    editingProof.name = "finger-selection-keeps-editing-handles-reachable"
     editingProof.lifetime = .keepAlways; add(editingProof)
     let initial = element.frame
     app.descendants(matching: .any)["move-agent-element"].coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).press(forDuration:0.05,
@@ -388,24 +394,20 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(app.buttons["show-action-result"].firstMatch.exists)
   }
 
-  func testPointerSelectsARegionAndReturnsToThePreviousTool() {
+  func testFingerHoldSelectsARegionWithoutSwitchingTools() {
     continueAfterFailure = false
     let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-pointer-fixture"]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-pointer-fixture", "--notebook-simulator-finger-gestures"]
     launchPortraitFixture(app)
-    let pointer = app.buttons["drawing-tool-pointer"]
-    XCTAssertTrue(pointer.waitForExistence(timeout:5))
-    pointer.tap()
-    XCTAssertTrue(app.staticTexts["Укажите фрагмент · протяните для области"].waitForExistence(timeout:2))
-    let start = app.coordinate(withNormalizedOffset:.init(dx:0.25,dy:0.25))
-    let end = app.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.4))
-    start.press(forDuration:0.05,thenDragTo:end)
+    XCTAssertFalse(app.buttons["drawing-tool-pointer"].exists)
+    XCTAssertTrue(app.otherElements["paper-input"].waitForExistence(timeout: 5))
+    let start = app.coordinate(withNormalizedOffset:.init(dx:0.6,dy:0.25))
+    let end = app.coordinate(withNormalizedOffset:.init(dx:0.85,dy:0.4))
+    start.press(forDuration:0.45,thenDragTo:end)
     XCTAssertFalse(app.staticTexts["Укажите фрагмент · протяните для области"].exists)
-    XCTAssertFalse(pointer.isSelected)
     XCTAssertTrue(app.buttons["drawing-tool-eraser"].isHittable)
-    let history = app.buttons["collaboration-history"]
-    XCTAssertTrue(history.waitForExistence(timeout: 3), "The captured source must also reach the shared context")
-    history.tap()
+    XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "agent-question-card").firstMatch.waitForExistence(timeout: 3))
+    openSharedHistory(in: app)
     XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForExistence(timeout: 2))
     XCTAssertTrue(app.staticTexts["Амир указал область"].firstMatch.exists)
     let proof = XCTAttachment(screenshot: app.screenshot())
@@ -417,7 +419,7 @@ final class DrawingResponsivenessTests: XCTestCase {
   func testClosingQuestionRemovesVisibleIndicationAndHistoryCanResumeIt() {
     continueAfterFailure = false
     let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-pointer-fixture"]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-pointer-fixture", "--notebook-simulator-finger-gestures"]
     launchPortraitFixture(app)
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
@@ -426,9 +428,8 @@ final class DrawingResponsivenessTests: XCTestCase {
     // Read the real pixels along the bottom of the dragged rectangle, away
     // from the adjacent question card and its material/shadow.
     let edge = CGRect(x: 0.28, y: 0.338, width: 0.12, height: 0.004)
-    app.buttons["drawing-tool-pointer"].tap()
     app.coordinate(withNormalizedOffset: .init(dx: 0.24, dy: 0.20))
-      .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: .init(dx: 0.48, dy: 0.34)))
+      .press(forDuration: 0.45, thenDragTo: app.coordinate(withNormalizedOffset: .init(dx: 0.48, dy: 0.34)))
     let card = app.descendants(matching: .any).matching(identifier: "agent-question-card").firstMatch
     XCTAssertTrue(card.waitForExistence(timeout: 5))
     for attempt in 0..<2 {
@@ -497,12 +498,12 @@ final class DrawingResponsivenessTests: XCTestCase {
       for expanded in [false, true] {
         if expanded { toggle.tap() }
         let controls = ["previous-page", "page-overview", "next-page",
-          "pen-controls-toggle", "drawing-tool-eraser", "drawing-tool-pointer", "pen-settings"]
+          "pen-controls-toggle", "drawing-tool-eraser", "pen-settings"]
         let unobstructed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
           let window = app.frame, frame = panel.frame
           guard (window.width > window.height) == landscape,
             window.contains(frame), frame.width > (expanded ? 300 : 100),
-            frame.width <= (expanded ? window.width - 36 : 112) + 1 else { return false }
+            frame.width <= (expanded ? window.width - 36 : 344) + 1 else { return false }
           return controls.allSatisfy { id in
             let control = app.buttons[id]
             return control.exists && control.isHittable && !frame.intersects(control.frame)
@@ -639,8 +640,9 @@ final class DrawingResponsivenessTests: XCTestCase {
       let moved = panel.frame
       let corner = panel.coordinate(withNormalizedOffset: .zero).withOffset(.init(dx: leading ? 10 : moved.width - 10, dy: top ? 10 : moved.height - 10))
       corner.press(forDuration: 0.1, thenDragTo: corner.withOffset(.init(dx: dx, dy: dy)))
-      XCTAssertEqual(panel.frame.width, moved.width + (leading ? -dx : dx), accuracy: 4)
-      XCTAssertEqual(panel.frame.height, moved.height + (top ? -dy : dy), accuracy: 4)
+      let widthLimit = leading ? moved.maxX - 18 : app.frame.maxX - 18 - moved.minX
+      XCTAssertEqual(panel.frame.width, min(widthLimit, max(320, moved.width + (leading ? -dx : dx))), accuracy: 4)
+      XCTAssertEqual(panel.frame.height, max(240, moved.height + (top ? -dy : dy)), accuracy: 4)
       XCTAssertEqual(leading ? panel.frame.maxX : panel.frame.minX, leading ? moved.maxX : moved.minX, accuracy: 1)
       XCTAssertEqual(top ? panel.frame.maxY : panel.frame.minY, top ? moved.maxY : moved.minY, accuracy: 1)
       XCTAssertEqual(paper.frame, paperFrame); XCTAssertEqual(paper.value as? String, drawing)
@@ -655,7 +657,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     openSharedHistory(in: app)
     XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForExistence(timeout: 3))
     app.buttons["Готово"].tap()
-    app.buttons["notebook-chat-actions"].tap()
+    app.buttons["notebook-chat-menu"].tap()
     XCTAssertTrue(app.buttons["pairing-settings"].waitForExistence(timeout: 2))
     app.buttons["pairing-settings"].tap()
     XCTAssertTrue(app.navigationBars["Соединение"].waitForExistence(timeout: 3))
@@ -828,19 +830,8 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(settings.waitForNonExistence(timeout: 2))
     XCTAssertTrue(pen.isSelected, "Закрытие настроек сохраняет выбранную ручку")
 
-    let pointer = app.buttons["drawing-tool-pointer"]
-    pointer.tap()
-    XCTAssertTrue(pointer.isSelected)
-    XCTAssertFalse(pen.isSelected)
-    XCTAssertLessThan(
-      changedPixelShare(from: inactivePen, to: pen.screenshot(), normalizedRect: selectionBackground),
-      0.05,
-      "При выборе указателя ручка возвращается к обычной подложке"
-    )
-    pen.tap()
-    XCTAssertTrue(pen.isSelected)
-    XCTAssertFalse(pointer.isSelected)
-    XCTAssertFalse(settings.exists, "Возврат из указателя сразу передаёт ввод ручке")
+    XCTAssertFalse(app.buttons["drawing-tool-pointer"].exists)
+    XCTAssertTrue(pen.isSelected, "Selection by finger does not add a drawing mode")
 
     app.buttons["pen-settings"].tap()
     XCTAssertTrue(settings.waitForExistence(timeout: 2))

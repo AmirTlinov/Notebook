@@ -12,9 +12,6 @@ struct PenControlsView: View {
       tool("eraser.fill", title: "Ластик", id: "drawing-tool-eraser", selected: isEraserSelected) {
         model.selectDrawingTool(.eraser)
       }
-      tool("hand.point.up.left", title: "Указать", id: "drawing-tool-pointer", selected: model.isPointing) {
-        model.afterPageInput { model.isPointing.toggle() }
-      }
       Divider().frame(height: 22).padding(.horizontal, 4)
       Button { isExpanded = true } label: {
         Image(systemName: "slider.horizontal.3").frame(width: 44, height: 44)
@@ -46,8 +43,8 @@ struct PenControlsView: View {
     .shadow(color: .black.opacity(0.08), radius: 8, y: 3)
   }
 
-  private var isPenSelected: Bool { model.drawingTool == .pen && !model.isElementEditingEnabled && !model.isPointing }
-  private var isEraserSelected: Bool { model.drawingTool == .eraser && !model.isElementEditingEnabled && !model.isPointing }
+  private var isPenSelected: Bool { model.drawingTool == .pen }
+  private var isEraserSelected: Bool { model.drawingTool == .eraser }
 
   private func tool(_ icon: String, title: String, id: String, selected: Bool, action: @escaping () -> Void) -> some View {
     Button(action: action) {

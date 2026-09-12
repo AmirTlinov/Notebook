@@ -170,7 +170,7 @@ final class NotebookChatController {
   }
 
   func stop() async {
-    await voice.end()
+    await voice.shutdown()
     await runs.stop()
     stopped = true; ticker?.cancel(); wake.continuation.finish()
     cancelQueries()
@@ -343,6 +343,7 @@ final class NotebookChatController {
   }
   func synchronizeVisibleIfDue(now: ContinuousClock.Instant = .now) {
     guard connected, !stopped else { return }
+    runs.synchronizeStatusIfDue(now: now)
     if now >= nextCatchUp { catchUpTranscript() }
     guard expanded else { return }
     if nextProjectPage || now >= nextProjects { catalogueProjects() }

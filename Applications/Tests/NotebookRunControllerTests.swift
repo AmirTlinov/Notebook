@@ -9,6 +9,35 @@ import NotebookCore
     while !predicate(), .now < deadline { try await Task.sleep(for: .milliseconds(25)) }
     XCTAssertTrue(predicate())
   }
+  func testClosedRestoredTerminalDiscoversItsExistingRunWithoutStartingAnything() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = NotebookStore(root: directory), author = UUID(), computer = UUID(), queue = NotebookPersistenceQueue(store: store)
+    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let project = CodexProject(id: "restored", name: "Restored", roots: ["/tmp/restored"])
+    let root = NotebookFileAddress(computer: computer, project: project.id, root: "/tmp/restored", path: "")
+    let id = UUID(); try store.admitRun(.init(id: id, author: author, request: .init(root: root)))
+    var reads = 0, chat: NotebookChatController!
+    chat = .init(persistence: queue, author: author) { envelope, peer in
+      guard case .request(let query) = envelope.body else { return }
+      let reply: NotebookChatReply
+      switch query {
+      case .projects: reply = .projects(.init(projects: [project], nextCursor: nil))
+      case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil))
+      case .run(let read): reads += 1; reply = .run(try! store.readRun(read))
+      case .job: XCTFail("Restoring a closed panel is read-only"); reply = .failure("Unexpected command")
+      default: reply = .failure("Outside restoration scenario")
+      }
+      chat.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
+    }
+    await chat.start(); await chat.connect(computer); chat.selectProject(project)
+    chat.expanded = false; chat.files.showTerminal(false)
+    try await wait { chat.runs.record?.id == id }
+    XCTAssertTrue(try XCTUnwrap(chat.runs.record).isActive); XCTAssertGreaterThan(reads, 0)
+    XCTAssertFalse(chat.expanded); XCTAssertNotEqual(chat.files.window.terminal, true)
+    await chat.stop(); let saved = await queue.flush(); XCTAssertTrue(saved)
+    XCTAssertTrue(chat.jobs.isEmpty)
+  }
   func testRealTerminalParsesPTYAndReconnectsSameProcessWithoutMovingPaper() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -108,7 +137,12 @@ import NotebookCore
     try await wait { inputs.contains(Data("CONTINUE".utf8)) }
     XCTAssertEqual(inputs.filter { $0 == Data("UNKNOWN".utf8) }.count, 1)
     XCTAssertEqual(try store.loadPresence(), before)
-    reopened.close(); await chat.stop()
+    reopened.close()
+    try mac.receiveRunEvent(id, .exited(0))
+    try await wait { chat.runs.record?.phase == .exited }
+    XCTAssertFalse(try XCTUnwrap(chat.runs.record).isActive, "A hidden terminal's indicator follows its real exit")
+    XCTAssertEqual(starts, 1)
+    await chat.stop()
     let flushed = await queue.flush(); XCTAssertTrue(flushed)
     XCTAssertEqual(try store.runCommand(root: root), "python3 main.py")
     XCTAssertNil(reopened.web); XCTAssertNil(reopened.lease)

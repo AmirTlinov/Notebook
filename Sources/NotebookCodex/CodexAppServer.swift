@@ -264,7 +264,8 @@ public actor CodexAppServer {
     guard let current = voice, current.id == id, current.phase != .ended else { return }
     guard let rpc else { throw CodexBridgeError.disconnected }
     voice?.phase = .ending
-    _ = try await rpc.request("thread/realtime/stop", params: .object(["threadId": .string(current.threadID)]))
+    do { _ = try await rpc.request("thread/realtime/stop", params: .object(["threadId": .string(current.threadID)])) }
+    catch { throw CodexBridgeError.acceptanceUnknown }
     let deadline = ContinuousClock.now + .seconds(5)
     while voice?.id == id, voice?.phase == .ending, .now < deadline { try await Task.sleep(for: .milliseconds(25)) }
     guard voice?.id == id, voice?.isActive == false else { throw CodexBridgeError.acceptanceUnknown }

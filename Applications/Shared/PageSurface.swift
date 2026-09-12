@@ -30,7 +30,7 @@ struct PageSurface: View {
           PencilCanvasView(
             pageID: page.id,
             drawingData: page.drawingData,
-            isInputEnabled: isInteractive && !model.isElementEditingEnabled && !model.isPointing,
+            isInputEnabled: isInteractive,
             penStyle: model.penStyle,
             eraserStyle: model.eraserStyle,
             drawingTool: model.drawingTool,
