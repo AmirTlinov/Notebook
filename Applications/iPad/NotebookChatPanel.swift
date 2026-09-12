@@ -16,7 +16,6 @@ struct NotebookChatPanel: View {
   let endInteraction: () -> Void
   @GestureState private var moving = false
   @GestureState private var resizing = false
-  @State private var showsHistory = false
   @State private var showsAllChats = false
   @State private var editingProject: CodexProject?
   @State private var terminalDrag: NotebookTerminalSplit?
@@ -94,8 +93,11 @@ struct NotebookChatPanel: View {
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier("notebook-chat-panel")
     .sheet(item: $editingProject) { NotebookProjectSettings(project: $0, chat: chat) }
-    .onChange(of: scenePhase) { if scenePhase == .background { chat.voice.connectionLost() } }
-    .onChange(of: chat.threadID) { showsHistory = false; chat.browsesChats = false }
+    .onChange(of: scenePhase) {
+      if scenePhase == .background { chat.voice.connectionLost() }
+      else if scenePhase == .active { chat.synchronizeVisible() }
+    }
+    .onChange(of: chat.threadID) { chat.browsesChats = false }
     .onChange(of: moving) { if !moving { endInteraction() } }
     .onChange(of: resizing) { if !resizing { endInteraction() } }
     .onChange(of: draggingTerminal) { if !draggingTerminal { finishTerminalResize() } }
@@ -147,11 +149,6 @@ struct NotebookChatPanel: View {
       Color.clear.frame(minWidth: 24, maxWidth: .infinity, minHeight: 44, maxHeight: 44)
         .contentShape(Rectangle()).accessibilityLabel("Переместить чат")
         .accessibilityIdentifier("notebook-chat-move")
-      if let conversation = chat.conversation, let turnID = conversation.activeTurnID {
-        Button { Task { await chat.stopTurn(threadID: conversation.threadID, turnID: turnID) } } label: {
-          Image(systemName: "stop.circle").font(.system(size: 19)).frame(width: 44, height: 44)
-        }.accessibilityLabel("Остановить ответ").accessibilityIdentifier("notebook-chat-stop")
-      }
       Button { chat.files.toggleSidebar() } label: {
         Image(systemName: "sidebar.right").frame(width: 44, height: 44)
       }.accessibilityLabel("Файлы проекта").accessibilityIdentifier("notebook-files-toggle")
@@ -181,7 +178,7 @@ struct NotebookChatPanel: View {
   private var recentChats: some View {
     GeometryReader { geometry in
       ScrollView {
-        VStack(alignment: .leading, spacing: 0) {
+        LazyVStack(alignment: .leading, spacing: 0) {
           Text(showsAllChats ? (chat.selectedProject?.name ?? "Чаты Codex") : "Недавние чаты")
             .font(.system(size: 14)).foregroundStyle(.secondary).padding(.bottom, 12)
           ForEach(chat.pendingCreations) { job in
@@ -194,7 +191,7 @@ struct NotebookChatPanel: View {
             }.padding(.vertical, 10).accessibilityIdentifier("notebook-chat-creation-" + job.id.uuidString)
           }
           if chat.tasks.isEmpty {
-            Text(chat.connected ? (chat.taskCursor != nil ? "На этой странице нет других чатов. Перейдите к следующим." : "Здесь пока нет чатов.") : "Чаты появятся, когда Mac будет доступен.")
+            Text(chat.connected ? "Здесь пока нет чатов." : "Чаты появятся, когда Mac будет доступен.")
               .font(.system(size: 14)).foregroundStyle(.secondary).padding(.vertical, 12)
           }
           if !chat.connected {
@@ -222,12 +219,10 @@ struct NotebookChatPanel: View {
             Button("Показать все") { showsAllChats = true }
               .font(.system(size: 14)).foregroundStyle(.secondary).frame(minHeight: 44)
               .accessibilityIdentifier("notebook-chat-show-all")
-          } else if showsAllChats {
-            HStack {
-              Button("Обновить") { chat.catalogue() }
-              Spacer()
-              if chat.taskCursor != nil { Button("Следующие чаты") { chat.catalogue(next: true) } }
-            }.font(.system(size: 14)).foregroundStyle(.secondary).frame(minHeight: 44)
+          }
+          if showsAllChats, let cursor = chat.taskCursor {
+            Color.clear.frame(height: 1).id(cursor)
+              .onScrollVisibilityChange { if $0 { chat.catalogue(next: true) } }
           }
         }
         .padding(.horizontal, 22).padding(.bottom, 24)
@@ -279,7 +274,6 @@ struct NotebookChatPanel: View {
           }
         }
         ForEach(chat.projects) { project in Button("Настроить «" + project.name + "»") { editingProject = project } }
-        Button("Обновить проекты") { chat.catalogueProjects() }
       } label: {
         VStack(spacing: 2) {
           Image(systemName: "slider.horizontal.3").font(.system(size: 14))
@@ -330,7 +324,7 @@ struct NotebookChatPanel: View {
     case .running: status = "В работе"
     case .waitingForInput: status = "Нужен ваш ответ"
     case .idle: status = "Можно продолжить"
-    default: status = "История · статус недоступен"
+    default: status = "Статус недоступен"
     }
     return location + " · " + status
   }
@@ -344,18 +338,8 @@ struct NotebookChatPanel: View {
 
   private func conversation(height: CGFloat) -> some View {
     VStack(spacing: 0) {
-      HStack {
-        if showsHistory {
-          if chat.historyCursor != nil { Button("Ранее") { chat.older() } }
-          Spacer()
-          Button("К ответу") { showsHistory = false }
-        } else {
-          Button("История") { showsHistory = true; chat.latestHistory() }
-          Spacer()
-        }
-      }
-      .font(.system(size: 12)).foregroundStyle(.secondary).frame(height: 32).padding(.horizontal, 22)
-      NotebookChatTranscript(messages: showsHistory ? chat.history : (chat.conversation?.messages ?? chat.history),
+      NotebookChatTranscript(messages: chat.messages, conversationID: chat.threadID,
+        canLoadEarlier: chat.canLoadEarlier && !chat.loadingHistory, loadEarlier: chat.loadEarlier,
         openLink: model.openNotebookLink, saveExplanation: { [thread = chat.threadID, computer = chat.computerID] message in
           if let thread, let computer { model.saveChatExplanation(message, thread: thread, computer: computer) }
         })
@@ -415,6 +399,7 @@ struct NotebookChatPanel: View {
           if chat.conversation?.activeTurnID != nil {
             Button("Уточнить текущий ход", systemImage: "arrow.turn.down.right") { model.sendChatMessage(steering: true) }
               .disabled(!canSend).accessibilityIdentifier("notebook-chat-steer")
+            Button("Отправить после ответа", systemImage: "text.badge.plus") { model.sendChatMessage() }.disabled(!canSend)
           }
           if compactComposer {
             Button("Голосовой ввод Codex — пока недоступен", systemImage: "mic") { chat.voice.explainDictation() }
@@ -451,13 +436,16 @@ struct NotebookChatPanel: View {
           }.accessibilityLabel("Голосовой разговор с Codex").accessibilityIdentifier("notebook-chat-voice")
             .disabled(chat.voice.activeID != nil || !chat.connected || chat.threadID == nil || chat.browsesChats)
         }
-        Button { model.sendChatMessage() } label: {
-          Image(systemName: "arrow.up").font(.system(size: 15, weight: .medium))
-            .foregroundStyle(.white).frame(width: 30, height: 30)
-            .background(canSend ? Color(.label) : Color(.systemGray), in: Circle())
-            .frame(width: 44, height: 44).contentShape(Rectangle())
+        if !chat.browsesChats, let conversation = chat.conversation, conversation.busy || conversation.activeTurnID != nil {
+          Button {
+            if let turn = conversation.activeTurnID { Task { await chat.stopTurn(threadID: conversation.threadID, turnID: turn) } }
+          } label: { composerAction("stop.fill", enabled: true) }
+            .disabled(conversation.activeTurnID == nil || chat.saving)
+            .accessibilityLabel("Остановить ответ").accessibilityIdentifier("notebook-chat-stop")
+        } else {
+          Button { model.sendChatMessage() } label: { composerAction("arrow.up", enabled: canSend) }
+            .disabled(!canSend).accessibilityLabel("Отправить сообщение").accessibilityIdentifier("notebook-chat-send")
         }
-        .disabled(!canSend).accessibilityLabel("Отправить сообщение").accessibilityIdentifier("notebook-chat-send")
       }
       .padding(3)
       .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 26))
@@ -467,6 +455,13 @@ struct NotebookChatPanel: View {
       .accessibilityIdentifier("notebook-chat-composer")
     }
     .padding(.horizontal, 8).padding(.bottom, 8).padding(.top, 8)
+  }
+
+  private func composerAction(_ symbol: String, enabled: Bool) -> some View {
+    Image(systemName: symbol).font(.system(size: symbol == "stop.fill" ? 11 : 15, weight: .medium))
+      .foregroundStyle(.white).frame(width: 30, height: 30)
+      .background(enabled ? Color(.label) : Color(.systemGray), in: Circle())
+      .frame(width: 44, height: 44).contentShape(Rectangle())
   }
 
   private var filesWidth: CGFloat { min(220, max(120, size.width * 0.32)) }
@@ -487,7 +482,7 @@ struct NotebookChatPanel: View {
     return nil
   }
   private func createChat() {
-    showsHistory = false; chat.browsesChats = false
+    chat.browsesChats = false
     Task { await chat.create() }
   }
 }
@@ -544,6 +539,9 @@ private struct NotebookProjectSettings: View {
 /// one browser per message, reload the document, or touch the canvas hierarchy.
 struct NotebookChatTranscript: UIViewRepresentable {
   let messages: [CodexMessage]
+  var conversationID: String? = nil
+  var canLoadEarlier = false
+  var loadEarlier: () -> Void = { }
   var openLink: (URL) -> Void = { _ in }
   var saveExplanation: (CodexMessage) -> Void = { _ in }
   func makeCoordinator() -> Coordinator { Coordinator() }
@@ -554,16 +552,20 @@ struct NotebookChatTranscript: UIViewRepresentable {
   }
   func updateUIView(_ container: UIView, context: Context) {
     context.coordinator.openLink = openLink; context.coordinator.saveExplanation = saveExplanation
-    context.coordinator.update(messages: messages)
+    context.coordinator.loadEarlier = loadEarlier; context.coordinator.canLoadEarlier = canLoadEarlier
+    context.coordinator.update(messages: messages, conversationID: conversationID)
   }
   static func dismantleUIView(_ container: UIView, coordinator: Coordinator) { coordinator.close() }
-  @MainActor final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+  @MainActor final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler, UIScrollViewDelegate {
     var ready = false, closed = false
     var json = "[]", sent: String?
     var web: WKWebView?
     var lease: WebSurfaceLease?
     var preparation: Task<Void, Never>?
     var messages: [CodexMessage] = []
+    var conversationID: String?
+    var canLoadEarlier = false
+    var loadEarlier: () -> Void = { }
     var openLink: (URL) -> Void = { _ in }
     var saveExplanation: (CodexMessage) -> Void = { _ in }
     func mount(_ container: UIView) {
@@ -577,7 +579,7 @@ struct NotebookChatTranscript: UIViewRepresentable {
           let web = WKWebView(frame: container.bounds, configuration: configuration)
           web.autoresizingMask = [.flexibleWidth, .flexibleHeight]
           web.isOpaque = false; web.backgroundColor = .clear; web.scrollView.backgroundColor = .clear
-          web.navigationDelegate = self; self.web = web; container.addSubview(web)
+          web.navigationDelegate = self; web.scrollView.delegate = self; self.web = web; container.addSubview(web)
           if let root = Bundle.main.url(forResource: "WebResources", withExtension: nil) {
             web.loadFileURL(root.appendingPathComponent("chat-shell.html"), allowingReadAccessTo: root)
           }
@@ -587,10 +589,11 @@ struct NotebookChatTranscript: UIViewRepresentable {
     func close() {
       closed = true; preparation?.cancel(); preparation = nil
       web?.configuration.userContentController.removeScriptMessageHandler(forName: "notebookChat")
-      web?.stopLoading(); web?.navigationDelegate = nil; web?.removeFromSuperview(); web = nil
+      web?.stopLoading(); web?.navigationDelegate = nil; web?.scrollView.delegate = nil; web?.removeFromSuperview(); web = nil
       lease?.release(); lease = nil
     }
-    func update(messages: [CodexMessage]) {
+    func update(messages: [CodexMessage], conversationID: String? = nil) {
+      if self.conversationID != conversationID { self.conversationID = conversationID; sent = nil }
       self.messages = messages
       json = (try? String(decoding: JSONEncoder().encode(messages), as: UTF8.self)) ?? "[]"
       if let web { publish(web) }
@@ -600,7 +603,13 @@ struct NotebookChatTranscript: UIViewRepresentable {
       guard ready, !closed, sent != json else { return }
       sent = json
       let value = json
-      Task { _ = try? await web.callAsyncJavaScript("await window.showMessages(json)", arguments: ["json": value], in: nil, contentWorld: .page) }
+      let conversation = conversationID ?? ""
+      Task { _ = try? await web.callAsyncJavaScript("await window.showMessages(json, conversation)", arguments: ["json": value, "conversation": conversation], in: nil, contentWorld: .page) }
+    }
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+      guard !closed, canLoadEarlier, scrollView.isDragging || scrollView.isDecelerating,
+        scrollView.contentOffset.y <= 120 else { return }
+      canLoadEarlier = false; loadEarlier()
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
       if action.navigationType == .linkActivated, let url = action.request.url, NotebookCodeLink(url: url) != nil {

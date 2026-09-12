@@ -14,8 +14,8 @@ final class NotebookChatController {
   private(set) var computers: [NotebookTransportIdentity] = []
   private(set) var onlineComputers = Set<UUID>()
   private(set) var switchingComputer = false
-  var expanded = false { didSet { if !expanded { activities = [:]; conversationSubscription = nil; enqueue(.activity(threadIDs: [])) } else { nextConversation = .now } } }
-  var browsesChats = false
+  var expanded = false { didSet { if !expanded { suspendTranscript(); activities = [:]; conversationSubscription = nil; enqueue(.activity(threadIDs: [])) } else { synchronizeVisible() } } }
+  var browsesChats = false { didSet { if browsesChats != oldValue { synchronizeVisible() } } }
   private(set) var projects: [CodexProject] = []
   private(set) var projectCursor: String?
   var selectedProject: CodexProject? { files.window.project }
@@ -26,8 +26,10 @@ final class NotebookChatController {
   private(set) var taskCursor: String?
   private(set) var defaultProviderNeedsSignIn = false
   private(set) var conversation: CodexConversation?
-  private(set) var history: [CodexMessage] = []
+  private(set) var messages: [CodexMessage] = []
   private(set) var historyCursor: String?
+  private(set) var loadingHistory = false
+  private(set) var loadingCatalogue = false
   private(set) var jobs: [NotebookChatJob] = []
   private(set) var connected = false
   private(set) var error: String?
@@ -47,7 +49,20 @@ final class NotebookChatController {
   @ObservationIgnored private var ticker: Task<Void, Never>?
   @ObservationIgnored private var queries: [NotebookChatQuery] = []
   @ObservationIgnored private var deliveryIndex = 0
-  @ObservationIgnored private var displayedCatalogueCursor: String?
+  @ObservationIgnored private var activityOffset = 0
+  @ObservationIgnored private var catalogueRead: Task<Void, Never>?
+  @ObservationIgnored private var projectsRead: Task<Void, Never>?
+  @ObservationIgnored private var catalogueGeneration = UUID()
+  @ObservationIgnored private var cataloguePages = 1
+  @ObservationIgnored private var projectPages = 1
+  @ObservationIgnored private var historyLoaded = false
+  @ObservationIgnored private var historyBoundary: String?
+  @ObservationIgnored private var transcriptGeneration = UUID()
+  @ObservationIgnored private var catchUpBoundary: String?
+  @ObservationIgnored private var catchUpRead: Task<Void, Never>?
+  @ObservationIgnored private var nextCatchUp = ContinuousClock.now
+  @ObservationIgnored private var nextCatalogue = ContinuousClock.now
+  @ObservationIgnored private var nextProjects = ContinuousClock.now
   @ObservationIgnored private var conversationSubscription: UUID?
   @ObservationIgnored private var subscriptionRevision: Int?
   @ObservationIgnored private var nextConversation = ContinuousClock.now
@@ -78,9 +93,10 @@ final class NotebookChatController {
         guard let self else { return }
         var iterator = wake.stream.makeAsyncIterator()
         var deliverJobs = true
-        var nextActivity = ContinuousClock.now, nextCatalogue = ContinuousClock.now
+        var nextActivity = ContinuousClock.now
         while !Task.isCancelled, await iterator.next() != nil {
           if connected {
+            synchronizeVisibleIfDue()
             if !directQueries.isEmpty, deliverJobs {
               let (query, computer, completion) = directQueries.removeFirst()
               do {
@@ -102,15 +118,15 @@ final class NotebookChatController {
               let next = outgoing.first { !offeredJobs.contains($0.id) } ?? outgoing[deliveryIndex % outgoing.count]
               query = .job(next.input); deliveryIndex &+= 1
             } else if expanded, .now >= nextActivity, !tasks.isEmpty {
-              query = .activity(threadIDs: tasks.map(\.id)); nextActivity = .now + .seconds(2)
-            } else if expanded, (threadID == nil || browsesChats), .now >= nextCatalogue {
-              query = .catalogue(cursor: displayedCatalogueCursor, project: selectedProject); nextCatalogue = .now + .seconds(10)
+              let start = activityOffset % tasks.count, ids = Array(tasks.dropFirst(start).prefix(8).map(\.id))
+              query = .activity(threadIDs: ids); activityOffset = start + ids.count; nextActivity = .now + .seconds(2)
             } else if expanded, !browsesChats, let threadID, .now >= nextConversation {
               query = .conversation(threadID: threadID); nextConversation = .now + .seconds(10)
             }
             else { query = outgoing.first.map { .job($0.input) } }
             if let query {
               let computer = peer
+              defer { if case .history(let id, _) = query, id == threadID, !queries.contains(where: { if case .history(let thread, _) = $0 { return thread == id }; return false }) { loadingHistory = false } }
               do { try await accept(try await request(query), for: query, computer: computer) }
               catch { if !Task.isCancelled { self.error = error.localizedDescription } }
             }
@@ -126,8 +142,7 @@ final class NotebookChatController {
     await voice.end()
     await runs.stop()
     stopped = true; ticker?.cancel(); wake.continuation.finish()
-    for (_, _, continuation) in directQueries { continuation.resume(throwing: NotebookTransportError.disconnected) }
-    directQueries.removeAll()
+    cancelQueries()
     loop?.cancel(); retry?.cancel()
     pending?.1.resume(throwing: NotebookTransportError.disconnected); pending = nil
     await files.stop()
@@ -145,16 +160,21 @@ final class NotebookChatController {
     guard peer == id else { return }
     if !connected { offeredJobs.removeAll(); conversationSubscription = nil; nextConversation = .now }
     connected = true
-    if tasks.isEmpty { catalogue(); catalogueProjects() }
+    catalogue(); catalogueProjects()
+    if !historyLoaded { loadEarlier() }
+    catchUpTranscript()
     if files.window.sidebar { Task { await files.roots() } }
   }
   func disconnect(_ id: UUID) {
     onlineComputers.remove(id)
     guard peer == id else { return }
-    connected = false; voice.connectionLost(); activities = [:]; conversationSubscription = nil
+    suspendTranscript(); connected = false; voice.connectionLost(); activities = [:]; conversationSubscription = nil
     cancelQueries()
   }
   private func cancelQueries() {
+    catalogueGeneration = UUID(); catalogueRead?.cancel(); projectsRead?.cancel()
+    catalogueRead = nil; projectsRead = nil; loadingCatalogue = false; loadingHistory = false
+    catchUpRead?.cancel(); catchUpRead = nil
     for (_, _, continuation) in directQueries { continuation.resume(throwing: NotebookTransportError.disconnected) }
     directQueries.removeAll(); queries.removeAll(); retry?.cancel()
     pending?.1.resume(throwing: NotebookTransportError.disconnected); pending = nil
@@ -178,8 +198,9 @@ final class NotebookChatController {
       }
       runs.detach(); queries.removeAll()
       loaded = false; peer = id; threadID = restored.panel.threadID; draft = restored.panel.draft; loaded = true
-      conversation = nil; history = []; historyCursor = nil; projects = []; tasks = []; activities = [:]
-      projectCursor = nil; taskCursor = nil; displayedCatalogueCursor = nil; offeredJobs.removeAll()
+      transcriptGeneration = UUID(); catchUpBoundary = nil
+      conversation = nil; messages = []; historyCursor = nil; historyLoaded = false; historyBoundary = nil; projects = []; tasks = []; activities = [:]
+      projectCursor = nil; taskCursor = nil; cataloguePages = 1; projectPages = 1; offeredJobs.removeAll()
       conversationSubscription = nil; subscriptionRevision = nil; nextConversation = .now; continuationUnavailable = false
       browsesChats = threadID == nil
       jobs = restored.jobs
@@ -199,18 +220,80 @@ final class NotebookChatController {
     completion?.resume(returning: reply)
   }
 
-  func catalogue(next: Bool = false) { enqueue(.catalogue(cursor: next ? taskCursor : nil, project: selectedProject)) }
-  func catalogueProjects(next: Bool = false) { enqueue(.projects(cursor: next ? projectCursor : nil)) }
+  /// Refresh only the loaded catalogue window. Publish a complete read so a
+  /// recency change cannot drop the older rows the person is currently reading.
+  func catalogue(next: Bool = false) {
+    guard connected, !stopped, catalogueRead == nil, !next || taskCursor != nil else { return }
+    let generation = catalogueGeneration, project = selectedProject, cursor = next ? taskCursor : nil
+    loadingCatalogue = true
+    catalogueRead = Task { [weak self] in
+      guard let self else { return }
+      defer { if catalogueGeneration == generation { catalogueRead = nil; loadingCatalogue = false; nextCatalogue = project == selectedProject ? .now + .seconds(10) : .now } }
+      do {
+        var cursor = cursor, result: [CodexTask] = [], pages = 0, needsSignIn = false
+        repeat {
+          guard case .catalogue(let page) = try await directQuery(.catalogue(cursor: cursor, project: project)), page.nextCursor == nil || page.nextCursor != cursor else { throw NotebookTransportError.invalidAcknowledgement }
+          guard !Task.isCancelled, catalogueGeneration == generation, project == selectedProject else { return }
+          result += page.tasks.filter { task in !result.contains { $0.id == task.id } }
+          cursor = page.nextCursor; pages += 1; needsSignIn = page.defaultProviderNeedsSignIn
+        } while cursor != nil && (result.isEmpty || (!next && pages < cataloguePages))
+        if next { tasks += result.filter { task in !tasks.contains { $0.id == task.id } }; cataloguePages += pages }
+        else { tasks = result; cataloguePages = pages }
+        taskCursor = cursor; defaultProviderNeedsSignIn = needsSignIn; error = nil
+        activities = activities.filter { entry in tasks.contains { $0.id == entry.key } }
+      } catch { if !Task.isCancelled, tasks.isEmpty { self.error = error.localizedDescription } }
+    }
+  }
+  func catalogueProjects(next: Bool = false) {
+    guard connected, !stopped, projectsRead == nil, !next || projectCursor != nil else { return }
+    let generation = catalogueGeneration, cursor = next ? projectCursor : nil
+    projectsRead = Task { [weak self] in
+      guard let self else { return }
+      defer { if catalogueGeneration == generation { projectsRead = nil; nextProjects = .now + .seconds(15) } }
+      do {
+        var cursor = cursor, result: [CodexProject] = [], pages = 0
+        repeat {
+          guard case .projects(let page) = try await directQuery(.projects(cursor: cursor)), page.nextCursor == nil || page.nextCursor != cursor else { throw NotebookTransportError.invalidAcknowledgement }
+          guard !Task.isCancelled, catalogueGeneration == generation else { return }
+          result += page.projects.filter { project in !result.contains { $0.id == project.id } }
+          cursor = page.nextCursor; pages += 1
+        } while !next && pages < projectPages && cursor != nil
+        if next { projects += result.filter { project in !projects.contains { $0.id == project.id } }; projectPages += pages }
+        else { projects = result; projectPages = pages }
+        projectCursor = cursor; error = nil
+        if let selectedProject, let current = projects.first(where: { $0.id == selectedProject.id }), current != selectedProject {
+          files.chooseProject(current); catalogue()
+        }
+      } catch { if !Task.isCancelled, projects.isEmpty { self.error = error.localizedDescription } }
+    }
+  }
+  func synchronizeVisible() {
+    nextConversation = .now; nextCatalogue = .now; nextProjects = .now
+    synchronizeVisibleIfDue(); catchUpTranscript(); wake.continuation.yield(())
+  }
+  func synchronizeVisibleIfDue(now: ContinuousClock.Instant = .now) {
+    guard expanded, connected, !stopped else { return }
+    if now >= nextProjects { catalogueProjects() }
+    if (threadID == nil || browsesChats), now >= nextCatalogue { catalogue() }
+    if !browsesChats, !historyLoaded { loadEarlier() }
+    if now >= nextCatchUp { catchUpTranscript() }
+  }
   func selectProject(_ project: CodexProject?) {
-    files.chooseProject(project); tasks = []; activities = [:]; taskCursor = nil; displayedCatalogueCursor = nil
+    catalogueGeneration = UUID(); catalogueRead?.cancel(); projectsRead?.cancel()
+    catalogueRead = nil; projectsRead = nil; loadingCatalogue = false
+    files.chooseProject(project); tasks = []; activities = [:]; taskCursor = nil; cataloguePages = 1
     browsesChats = true; catalogue()
   }
-  func latestHistory() { guard let threadID else { return }; enqueue(.history(threadID: threadID, cursor: nil)) }
-  func older() { guard let threadID else { return }; enqueue(.history(threadID: threadID, cursor: historyCursor)) }
+  var canLoadEarlier: Bool { !historyLoaded || historyCursor != nil }
+  func loadEarlier() {
+    guard !stopped, let threadID, !loadingHistory, canLoadEarlier else { return }
+    loadingHistory = enqueue(.history(threadID: threadID, cursor: historyLoaded ? historyCursor : nil))
+  }
   func select(_ task: CodexTask) {
+    transcriptGeneration = UUID(); catchUpRead?.cancel(); catchUpRead = nil; catchUpBoundary = nil
     nextConversation = .now; conversationSubscription = nil
-    threadID = task.id; continuationUnavailable = false; browsesChats = false; conversation = nil; history = []; historyCursor = nil
-    persistPanel(); enqueue(.history(threadID: task.id, cursor: nil))
+    threadID = task.id; continuationUnavailable = false; conversation = nil; messages = []; historyCursor = nil; historyLoaded = false; historyBoundary = nil; loadingHistory = false
+    browsesChats = false; persistPanel(); loadEarlier()
   }
   func projectUpdatePending(_ id: String) -> Bool {
     jobs.contains { job in
@@ -354,8 +437,10 @@ final class NotebookChatController {
     guard case .job(let job) = reply else { throw NotebookTransportError.invalidAcknowledgement }
     return job
   }
-  private func enqueue(_ query: NotebookChatQuery) {
-    if !queries.contains(query), queries.count < 8 { queries.append(query); wake.continuation.yield(()) }
+  @discardableResult private func enqueue(_ query: NotebookChatQuery) -> Bool {
+    if queries.contains(query) { return true }
+    guard queries.count < 8 else { return false }
+    queries.append(query); wake.continuation.yield(()); return true
   }
   private func request(_ query: NotebookChatQuery) async throws -> NotebookChatReply {
     guard pending == nil, connected, let peer else { throw NotebookTransportError.disconnected }
@@ -379,6 +464,52 @@ final class NotebookChatController {
   private func acceptConversation(_ value: CodexConversation) {
     guard subscriptionRevision == nil || value.revision >= subscriptionRevision! else { return }
     subscriptionRevision = value.revision; conversation = value; continuationUnavailable = false; error = nil
+    mergeMessages(value.messages, preferIncoming: true)
+  }
+
+  private func suspendTranscript() {
+    if catchUpBoundary == nil { catchUpBoundary = messages.last?.id }
+    catchUpRead?.cancel(); catchUpRead = nil; nextCatchUp = .now
+  }
+  /// A reconnect can miss more than the 64-item live window. Fill that gap up
+  /// to the last shown native ID without replacing the older reading window.
+  private func catchUpTranscript() {
+    guard expanded, connected, !stopped, !browsesChats, catchUpRead == nil, let threadID, let boundary = catchUpBoundary else { return }
+    let generation = transcriptGeneration
+    catchUpRead = Task { [weak self] in
+      guard let self else { return }
+      defer { if transcriptGeneration == generation, !Task.isCancelled { catchUpRead = nil; nextCatchUp = .now + .seconds(10) } }
+      do {
+        var cursor: String?, before: String?, seen = Set<String>()
+        repeat {
+          guard case .history(let page) = try await directQuery(.history(threadID: threadID, cursor: cursor)) else { throw NotebookTransportError.invalidAcknowledgement }
+          guard !Task.isCancelled, transcriptGeneration == generation else { return }
+          mergeMessages(page.messages, preferIncoming: false, before: before)
+          if page.messages.contains(where: { $0.id == boundary }) || page.nextCursor == nil { catchUpBoundary = nil; return }
+          before = page.messages.first?.id ?? before; cursor = page.nextCursor
+          if let cursor, !seen.insert(cursor).inserted { throw NotebookTransportError.invalidAcknowledgement }
+        } while cursor != nil
+      } catch { /* Keep the reading window; the visible-read schedule retries without resending work. */ }
+    }
+  }
+
+  /// Both sources are chronological native windows. Insert missing runs beside
+  /// their shared IDs; an older prefix in a live window must not become a tail.
+  private func mergeMessages(_ incoming: [CodexMessage], preferIncoming: Bool, before boundary: String? = nil) {
+    let known = Set(messages.map(\.id)), updates = Dictionary(incoming.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+    var before: [String: [CodexMessage]] = [:], pending: [CodexMessage] = [], lastShared: String?, seen = Set<String>()
+    for item in incoming where seen.insert(item.id).inserted {
+      if known.contains(item.id) { before[item.id] = pending; pending = []; lastShared = item.id }
+      else { pending.append(item) }
+    }
+    var result: [CodexMessage] = []
+    for item in messages {
+      if lastShared == nil, item.id == boundary { result += pending; pending = [] }
+      result += before[item.id] ?? []
+      result.append(preferIncoming ? updates[item.id] ?? item : item)
+      if item.id == lastShared { result += pending; pending = [] }
+    }
+    messages = result + pending
   }
 
   private func accept(_ reply: NotebookChatReply, for query: NotebookChatQuery, computer: UUID?) async throws {
@@ -399,7 +530,7 @@ final class NotebookChatController {
       if case .project(let project) = received.result {
         if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = project }
         if selectedProject?.id == project.id {
-          files.chooseProject(project); taskCursor = nil; displayedCatalogueCursor = nil; catalogue()
+          files.chooseProject(project); catalogue()
         }
       }
       try await refreshJobs()
@@ -407,26 +538,26 @@ final class NotebookChatController {
       // particular, an uncertain creation must not poison every later read.
       if received.revision > previousRevision, let message = received.error, received.input.action.threadID == threadID,
         received.input.action.threadID != nil { error = message }
-    case (.projects(let cursor), .projects(let page)):
-      if cursor == nil { projects = page.projects }
-      else { projects += page.projects.filter { candidate in !projects.contains { $0.id == candidate.id } } }
-      projectCursor = page.nextCursor; error = nil
     case (.activity(let ids), .activity(let values)):
       guard values.count == ids.count, Set(values.map(\.id)) == Set(ids) else { throw NotebookTransportError.invalidAcknowledgement }
-      if expanded, tasks.map(\.id) == ids { activities = Dictionary(uniqueKeysWithValues: values.map { ($0.id, $0) }) }
-    case (.catalogue(let cursor, let project), .catalogue(let page)):
-      guard project == selectedProject else { return }
-      displayedCatalogueCursor = cursor
-      activities = activities.filter { entry in page.tasks.contains { $0.id == entry.key } }
-      tasks = page.tasks; taskCursor = page.nextCursor; defaultProviderNeedsSignIn = page.defaultProviderNeedsSignIn; error = nil
+      if expanded {
+        let shown = Set(tasks.map(\.id))
+        for value in values where shown.contains(value.id) { activities[value.id] = value }
+      }
     case (.conversation(let id), .conversation(let value)):
       guard value.threadID == id else { throw NotebookTransportError.invalidAcknowledgement }
       if threadID == id { acceptConversation(value) }
     case (.conversation(let id), .conversationUnavailable(let thread, let reason)):
       guard id == thread else { throw NotebookTransportError.invalidAcknowledgement }
       if threadID == id { continuationUnavailable = true; error = reason }
-    case (.history(let id, _), .history(let page)):
-      if threadID == id { history = page.messages; historyCursor = page.nextCursor; error = nil }
+    case (.history(let id, let cursor), .history(let page)):
+      guard page.nextCursor == nil || page.nextCursor != cursor else { throw NotebookTransportError.invalidAcknowledgement }
+      if threadID == id {
+        mergeMessages(page.messages, preferIncoming: false, before: cursor == nil ? nil : historyBoundary ?? messages.first?.id)
+        historyBoundary = page.messages.first?.id ?? historyBoundary
+        historyLoaded = true; historyCursor = page.nextCursor; loadingHistory = false; error = nil
+        if page.messages.isEmpty, page.nextCursor != nil { loadEarlier() }
+      }
     case (_, .failure(let message)): error = message
     default: throw NotebookTransportError.invalidAcknowledgement
     }

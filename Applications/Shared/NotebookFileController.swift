@@ -34,6 +34,8 @@ final class NotebookFileController {
   @ObservationIgnored private var stopped = false
   @ObservationIgnored private var treeGeneration = UUID()
   @ObservationIgnored private var directoryRetries: [NotebookFileAddress: (after: ContinuousClock.Instant, more: Bool)] = [:]
+  @ObservationIgnored private var directoryReads: [NotebookFileAddress: ContinuousClock.Instant] = [:]
+  @ObservationIgnored private var directoryPages: [NotebookFileAddress: Int] = [:]
 
   init(persistence: NotebookPersistenceQueue, author: UUID) { self.persistence = persistence; self.author = author; notes = .init(persistence: persistence, author: author) }
   func start() async throws {
@@ -76,8 +78,11 @@ final class NotebookFileController {
   }
   func chooseProject(_ project: CodexProject?) {
     guard window.project != project else { return }
-    window.project = project; resetTree(); persistWindow()
-    if window.sidebar { Task { await roots() } }
+    let changesRoots = window.project?.id != project?.id || window.project?.roots != project?.roots
+    window.project = project
+    if changesRoots { resetTree() }
+    persistWindow()
+    if changesRoots, window.sidebar { Task { await roots() } }
   }
   func toggleTerminal() { window.terminal = !(window.terminal ?? false); persistWindow() }
   func resizeTerminal(fraction: Double) {
@@ -93,18 +98,19 @@ final class NotebookFileController {
       await expand(.init(computer: computer, project: project.id, root: root, path: ""))
     }
   }
-  /// Only visible reads recover automatically. Saved file mutations still use
-  /// their durable job and never enter this retry path.
+  /// Only the displayed folder window is read again. No recursive scan and no
+  /// replay of file mutations belongs to this read-only synchronization.
   func refreshVisibleDirectories(now: ContinuousClock.Instant = .now) async {
     guard !stopped, window.sidebar, chat?.expanded == true, chat?.connected == true,
       let computer = chat?.computerID, let project = window.project else { return }
     let roots = project.roots.map { NotebookFileAddress(computer: computer, project: project.id, root: $0, path: "") }
     let visible = expandedFolders.filter { address in
-      guard !address.path.isEmpty else { return false }
+      guard !address.path.isEmpty, address.computer == computer, address.project == project.id, project.roots.contains(address.root) else { return false }
       var parent = NotebookFileAddress(computer: address.computer, project: address.project, root: address.root, path: "")
-      for component in address.path.split(separator: "/").dropLast() {
+      for component in address.path.split(separator: "/") {
+        guard directories[parent]?.entries.contains(where: { $0.name == component && $0.kind == .directory }) == true else { return false }
+        if !parent.path.isEmpty, !expandedFolders.contains(parent) { return false }
         parent = parent.child(String(component))
-        if !expandedFolders.contains(parent) { return false }
       }
       return true
     }
@@ -112,12 +118,14 @@ final class NotebookFileController {
       guard !loadingDirectories.contains(address) else { continue }
       if let retry = directoryRetries[address] {
         if retry.after <= now { await expand(address, more: retry.more); return }
-      } else if directories[address] == nil { await expand(address); return }
+      } else if directories[address] == nil || now >= (directoryReads[address] ?? now) + .seconds(10) {
+        await expand(address); return
+      }
     }
   }
   private func resetTree() {
     treeGeneration = UUID(); directories = [:]; expandedFolders = []
-    loadingDirectories = []; directoryErrors = [:]; directoryRetries = [:]
+    loadingDirectories = []; directoryErrors = [:]; directoryRetries = [:]; directoryReads = [:]; directoryPages = [:]
   }
   func expand(_ address: NotebookFileAddress, more: Bool = false) async {
     guard !stopped, address.computer == chat?.computerID, address.project == window.project?.id,
@@ -125,13 +133,20 @@ final class NotebookFileController {
     let generation = treeGeneration
     defer { if generation == treeGeneration { loadingDirectories.remove(address) } }
     expandedFolders.insert(address)
-    directoryErrors[address] = nil; directoryRetries[address] = nil
     do {
-      guard case .directory(let page) = try await query(.directory(address, after: more ? directories[address]?.next : nil)) else { throw NotebookTransportError.invalidAcknowledgement }
-      guard !stopped, generation == treeGeneration else { return }
+      var cursor = more ? directories[address]?.next : nil, entries: [NotebookFileEntry] = [], pages = 0
+      repeat {
+        guard case .directory(let page) = try await query(.directory(address, after: cursor)), page.next == nil || page.next != cursor else { throw NotebookTransportError.invalidAcknowledgement }
+        guard !stopped, generation == treeGeneration else { return }
+        entries += page.entries.filter { entry in !entries.contains { $0.name == entry.name } }
+        cursor = page.next; pages += 1
+      } while !more && cursor != nil && pages < (directoryPages[address] ?? 1)
       if more, let previous = directories[address] {
-        directories[address] = .init(entries: previous.entries + page.entries.filter { entry in !previous.entries.contains { $0.name == entry.name } }, next: page.next)
-      } else { directories[address] = page }
+        directories[address] = .init(entries: previous.entries + entries.filter { entry in !previous.entries.contains { $0.name == entry.name } }, next: cursor)
+        directoryPages[address, default: 1] += pages
+      } else { directories[address] = .init(entries: entries, next: cursor); directoryPages[address] = pages }
+      directoryReads[address] = .now
+      directoryErrors[address] = nil; directoryRetries[address] = nil
     } catch {
       guard !stopped, generation == treeGeneration else { return }
       directoryErrors[address] = error.localizedDescription

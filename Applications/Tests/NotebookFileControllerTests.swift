@@ -5,6 +5,42 @@ import NotebookCore
 
 @MainActor
 final class NotebookFileControllerTests: XCTestCase {
+  func testVisibleDirectoryUpdatesAfterCreationAndDeletionWithoutDroppingItsLoadedPages() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("tree-sync-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), author = UUID(), peer = UUID()
+    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let queue = NotebookPersistenceQueue(store: store), project = CodexProject(id: "p", name: "Code", roots: ["/fixture"])
+    let address = NotebookFileAddress(computer: peer, project: project.id, root: "/fixture", path: "")
+    var chat: NotebookChatController!, generation = 0, paths: [String] = []
+    chat = .init(persistence: queue, author: author) { envelope, _ in
+      guard case .request(let query) = envelope.body else { return }
+      let reply: NotebookChatReply
+      switch query {
+      case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil))
+      case .projects: reply = .projects(.init(projects: [project], nextCursor: nil))
+      case .activity: reply = .activity([])
+      case .file(.directory(let folder, let after)):
+        paths.append(folder.path)
+        reply = .file(.directory(.init(entries: [.init(name: after == nil ? (generation == 0 ? "deleted.py" : "new.py") : "retained.py", kind: .file)], next: after == nil ? "next" : nil)))
+      default: return XCTFail("No file mutation belongs to directory sync")
+      }
+      chat.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
+    }
+    await chat.start(); await chat.connect(peer)
+    var state = NotebookFileWindowState(); state.project = project; state.sidebar = true
+    await chat.files.installWindow(state, document: nil); chat.expanded = true
+    await chat.files.expand(address); await chat.files.expand(address, more: true)
+    generation = 1
+    await chat.files.refreshVisibleDirectories(now: .now + .seconds(16))
+    XCTAssertEqual(chat.files.directories[address]?.entries.map(\.name), ["new.py", "retained.py"])
+    XCTAssertEqual(paths.count, 4); XCTAssertEqual(Set(paths), [""])
+    chat.files.toggleSidebar()
+    await chat.files.refreshVisibleDirectories(now: .now + .seconds(40))
+    XCTAssertEqual(paths.count, 4)
+    await chat.stop(); let saved = await queue.flush(); XCTAssertTrue(saved)
+  }
+
   func testVisibleTreeRecoversAfterAccessReturnsAndRejectsLateErrorsFromAnotherProject() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("file-tree-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

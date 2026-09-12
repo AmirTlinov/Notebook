@@ -72,7 +72,10 @@ public struct CodexMessage: Codable, Equatable, Sendable, Identifiable {
   public let role: Role
   public let text: String
   public let isTruncated: Bool
-  public init(id: String, turnID: String, clientID: String?, role: Role, text: String, isTruncated: Bool = false, activity: Activity? = nil) { self.activity = activity; self.isTruncated = isTruncated; self.id = id; self.turnID = turnID; self.clientID = clientID; self.role = role; self.text = text }
+  /// Display labels only. They do not grant access or turn a Mac path into an
+  /// iPad URL; the native Codex item remains the attachment owner.
+  public let attachments: [String]?
+  public init(id: String, turnID: String, clientID: String?, role: Role, text: String, isTruncated: Bool = false, activity: Activity? = nil, attachments: [String]? = nil) { self.activity = activity; self.isTruncated = isTruncated; self.id = id; self.turnID = turnID; self.clientID = clientID; self.role = role; self.text = text; self.attachments = attachments }
 
 }
 
@@ -90,12 +93,17 @@ extension CodexMessage {
       return ""
     }
     return messages.map { item in
-      let textBudget = item.activity?.detail == nil ? budget : budget / 2
+      let attachments = item.attachments.map { names in
+        names.prefix(32).map { prefix($0, bytes: max(1, min(256, budget / 2 / max(1, names.count) - 4))) }
+      }
+      let attachmentBytes = attachments?.reduce(0, { $0 + $1.utf8.count + 4 }) ?? 0
+      let available = max(128, budget - attachmentBytes)
+      let textBudget = item.activity?.detail == nil ? available : available / 2
       let text = prefix(item.text, bytes: textBudget)
-      let detail = item.activity?.detail.map { prefix($0, bytes: budget - text.utf8.count) }
+      let detail = item.activity?.detail.map { prefix($0, bytes: available - text.utf8.count) }
       let activity = item.activity.map { Activity(kind: $0.kind, status: $0.status, detail: detail) }
       return CodexMessage(id: item.id, turnID: item.turnID, clientID: item.clientID, role: item.role,
-        text: text, isTruncated: item.isTruncated || text != item.text || detail != item.activity?.detail, activity: activity)
+        text: text, isTruncated: item.isTruncated || text != item.text || detail != item.activity?.detail || attachments != item.attachments, activity: activity, attachments: attachments)
     }
   }
 }

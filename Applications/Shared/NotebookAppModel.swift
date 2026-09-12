@@ -975,7 +975,9 @@ final class NotebookAppModel {
       #endif
       #if os(iOS)
         #if DEBUG && targetEnvironment(simulator)
-        let fixtureChat = try await SimulatorTerminalFixture.make(persistence: persistence, author: actorID, directory: store.root)
+        let syncFixture = try await SimulatorChatFixture.make(persistence: persistence, author: actorID)
+        let terminalFixture = try await SimulatorTerminalFixture.make(persistence: persistence, author: actorID, directory: store.root)
+        let fixtureChat = syncFixture ?? terminalFixture
         #else
         let fixtureChat: NotebookChatController? = nil
         #endif

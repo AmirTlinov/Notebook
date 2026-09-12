@@ -20,7 +20,6 @@ struct NotebookCodeDocumentView: View {
             Text((document.address.path as NSString).lastPathComponent).font(.system(size: 16, weight: .medium)).lineLimit(1)
             Text(status(document)).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
           }.padding(.leading, 16).frame(maxWidth: .infinity, alignment: .leading)
-          control("arrow.clockwise", "Обновить файл") { Task { await files.refresh() } }.disabled(!files.remoteAvailable)
           control("magnifyingglass", "Найти в коде") { findRequest += 1 }
           control("text.bubble", "Обсудить выбранный код") {
             if let fragment = files.captureSelection?() { model.discussCode(fragment) }

@@ -7,12 +7,7 @@ struct NotebookProjectFilesView: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 0) {
-        HStack {
-          Text("Файлы").font(.system(size: 13, weight: .medium))
-          Spacer()
-          Button { Task { await files.roots() } } label: { Image(systemName: "arrow.clockwise").frame(width: 36, height: 44) }
-            .accessibilityLabel("Обновить дерево файлов").accessibilityIdentifier("notebook-files-refresh")
-        }
+        Text("Файлы").font(.system(size: 13, weight: .medium)).frame(minHeight: 36)
         if let selected = files.window.selected {
           Button { Task { await files.open(selected) } } label: {
             Label((selected.path as NSString).lastPathComponent, systemImage: "doc.text")
@@ -63,10 +58,9 @@ struct NotebookProjectFilesView: View {
         if directory.next != nil { Button("Ещё файлы…") { Task { await files.expand(address, more: true) } }.font(.system(size: 12)).frame(minHeight: 44) }
         if directory.entries.isEmpty { Text("Папка пуста").font(.system(size: 12)).foregroundStyle(.secondary).padding(.vertical, 8) }
       }
-      if files.loadingDirectories.contains(address) { ProgressView().controlSize(.small).padding(.vertical, 8) }
+      if files.directories[address] == nil, files.loadingDirectories.contains(address) { ProgressView().controlSize(.small).padding(.vertical, 8) }
       if let error = files.directoryErrors[address] {
         Text(error).font(.system(size: 12)).foregroundStyle(.secondary).textSelection(.enabled).padding(.vertical, 8)
-        Button("Повторить чтение") { Task { await files.expand(address) } }.font(.system(size: 12)).frame(minHeight: 44)
       }
     })
   }

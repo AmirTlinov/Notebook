@@ -4,6 +4,84 @@ import XCTest
 
 @MainActor
 final class NotebookChatControllerTests: XCTestCase {
+  func testOneTranscriptMergesLiveAndPagedHistoryAndRefreshesLoadedCataloguesQuietly() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("chat-sync-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), author = UUID(), peer = UUID(), thread = UUID().uuidString
+    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let queue = NotebookPersistenceQueue(store: store)
+    var chat: NotebookChatController!, historyReads: [String?] = [], generation = 0, catalogueReads = 0
+    var held: NotebookChatEnvelope?
+    func message(_ i: Int, text: String? = nil) -> CodexMessage { .init(id: "m\(i)", turnID: "turn", clientID: nil, role: .assistant, text: text ?? "Message \(i)") }
+    let tasks = (0..<12).map { CodexTask(id: UUID().uuidString, title: "Task \($0)", cwd: "/fixture") }
+    chat = .init(persistence: queue, author: author) { envelope, _ in
+      guard case .request(let query) = envelope.body else { return }
+      let reply: NotebookChatReply
+      switch query {
+      case .projects: reply = .projects(.init(projects: [.init(id: "p", name: "Version \(generation)", roots: ["/fixture"])], nextCursor: nil))
+      case .catalogue(let cursor, _):
+        catalogueReads += 1
+        let current = generation == 0 ? tasks : Array(tasks.dropFirst())
+        reply = .catalogue(.init(tasks: cursor == nil ? Array(current.prefix(8)) : Array(current.dropFirst(8)), nextCursor: cursor == nil ? "next" : nil))
+      case .activity(let ids):
+        XCTAssertLessThanOrEqual(ids.count, 8); reply = .activity(ids.map { .init(id: $0, status: .idle) })
+      case .history(_, let cursor):
+        historyReads.append(cursor)
+        if generation == 2 {
+          reply = .history(.init(messages: (cursor == nil ? 19...22 : 6...19).map { message($0) }, nextCursor: cursor == nil ? "bridge" : "older-still")); break
+        }
+        if cursor != nil { held = envelope; return }
+        reply = .history(.init(messages: [message(4), message(5)], nextCursor: "older"))
+      case .conversation:
+        if generation == 2 {
+          reply = .conversation(.init(threadID: thread, revision: 2, title: "Task", ready: true, busy: false, activeTurnID: nil,
+            messages: (20...22).map { message($0) }, requests: [], acceptedMessages: [:], turnStatuses: [:])); break
+        }
+        reply = .conversation(.init(threadID: thread, revision: 1, title: "Task", ready: true, busy: true, activeTurnID: "turn",
+          messages: [message(3), message(4), message(5, text: "Live text"), message(6)], requests: [], acceptedMessages: [:], turnStatuses: [:]))
+      default: return XCTFail("Silent synchronization cannot submit work")
+      }
+      chat.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
+    }
+    func wait(_ condition: () -> Bool) async throws {
+      let deadline = ContinuousClock.now + .seconds(8)
+      while !condition(), .now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+      XCTAssertTrue(condition())
+    }
+    await chat.start(); await chat.connect(peer); chat.expanded = true
+    try await wait { chat.tasks.count == 8 && !chat.loadingCatalogue }
+    chat.catalogue(next: true)
+    try await wait { chat.tasks.count == 12 && !chat.loadingCatalogue }
+    generation = 1
+    chat.synchronizeVisibleIfDue(now: .now + .seconds(20))
+    try await wait { chat.tasks.count == 11 && chat.projects.first?.name == "Version 1" }
+    XCTAssertFalse(chat.tasks.contains(tasks[0])); XCTAssertTrue(chat.tasks.contains(tasks[11]), "Refreshing the head must keep the loaded tail")
+    chat.select(.init(id: thread, title: "Task", cwd: "/fixture"))
+    try await wait { chat.messages.map(\.id) == ["m3", "m4", "m5", "m6"] }
+    chat.loadEarlier(); chat.loadEarlier()
+    try await wait { held != nil }
+    XCTAssertEqual(historyReads.count, 2, "One scroll demand owns the continuation")
+    let old = try XCTUnwrap(held)
+    chat.receive(.init(id: old.id, body: .reply(.history(.init(messages: [message(1), message(2), message(3), message(4)], nextCursor: nil)))), peerID: peer)
+    try await wait { chat.messages.count == 6 && !chat.loadingHistory }
+    XCTAssertEqual(chat.messages.map(\.id), (1...6).map { "m\($0)" })
+    XCTAssertEqual(chat.messages.first(where: { $0.id == "m5" })?.text, "Live text")
+    XCTAssertFalse(chat.canLoadEarlier); XCTAssertTrue(chat.jobs.isEmpty)
+    chat.disconnect(peer); generation = 2; await chat.connect(peer)
+    try await wait { chat.messages.count == 22 && chat.conversation?.revision == 2 }
+    XCTAssertEqual(chat.messages.map(\.id), (1...22).map { "m\($0)" }, "A reconnect fills the missing interval rather than splicing two distant windows together")
+    chat.selectProject(chat.projects.first); chat.browsesChats = false
+    generation = 3; chat.synchronizeVisibleIfDue(now: .now + .seconds(20))
+    try await wait { chat.selectedProject?.name == "Version 3" }
+    XCTAssertFalse(chat.browsesChats, "A remote project rename cannot navigate away from the conversation")
+    XCTAssertEqual(chat.threadID, thread)
+    chat.expanded = false
+    let readCount = catalogueReads
+    chat.synchronizeVisibleIfDue(now: .now + .seconds(60))
+    try await Task.sleep(for: .milliseconds(40)); XCTAssertEqual(catalogueReads, readCount)
+    await chat.stop(); let saved = await queue.flush(); XCTAssertTrue(saved)
+  }
+
   func testLaterAccessChoiceDoesNotWaitOnAnOlderUnknownGrant() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("chat-access-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

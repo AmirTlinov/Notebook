@@ -5,6 +5,38 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testScrollLoadsEarlierMessagesAndStopReplacesSendWithoutLosingDraftOrPaper() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-chat-sync-fixture"]
+    launchPortraitFixture(app)
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 8))
+    let frame = paper.frame, ink = paper.value as? String
+    let stop = app.buttons["notebook-chat-stop"], send = app.buttons["notebook-chat-send"]
+    XCTAssertTrue(stop.waitForExistence(timeout: 8)); XCTAssertFalse(send.exists)
+    XCTAssertEqual(stop.frame.width, 44, accuracy: 1)
+    XCTAssertTrue(app.otherElements["notebook-chat-composer"].frame.contains(stop.frame))
+    XCTAssertFalse(app.buttons["История"].exists); XCTAssertFalse(app.buttons["Ранее"].exists)
+    XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label CONTAINS 'Обновить'")).firstMatch.exists)
+    XCTAssertTrue(app.webViews.staticTexts["code_image.png"].waitForExistence(timeout: 5))
+    let transcript = app.otherElements["notebook-chat-transcript"]
+    let old = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Ранний ответ 9.'")).firstMatch
+    for _ in 0..<8 {
+      if old.exists { break }
+      transcript.swipeDown()
+    }
+    XCTAssertTrue(old.waitForExistence(timeout: 5), "The actual scroll gesture must request the older native page")
+    let field = app.descendants(matching: .any).matching(identifier: "notebook-chat-text").firstMatch
+    field.tap(); field.typeText("Keep this draft")
+    stop.tap()
+    XCTAssertTrue(send.waitForExistence(timeout: 8)); XCTAssertFalse(stop.exists)
+    XCTAssertEqual(field.value as? String, "Keep this draft")
+    XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, ink)
+    let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "scroll-history-and-composer-stop"; proof.lifetime = .keepAlways; add(proof)
+  }
+
   func testDictationControlBesideVoiceExplainsAvailabilityWithoutLosingTheDraftOrPaper() {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait

@@ -30,6 +30,7 @@ extension CodexAppServerState {
     guard let id = item["id"]?.string, let type = item["type"]?.string else { return nil }
     let role: CodexMessage.Role, text: String
     var activity: CodexMessage.Activity?
+    var attachments: [String]?
     var detailTruncated = false
     let status = item["status"]?.string
     func action(_ kind: CodexMessage.Activity.Kind, _ detail: String? = nil) -> CodexMessage.Activity {
@@ -44,7 +45,10 @@ extension CodexAppServerState {
     switch type {
     case "userMessage":
       guard item["content"] != nil else { return nil }
-      role = .user; text = (item["content"]?.array ?? []).compactMap { $0["text"]?.string }.joined(separator: "\n")
+      role = .user
+      let raw = (item["content"]?.array ?? []).compactMap { $0["text"]?.string }.joined(separator: "\n")
+      let display = CodexUserMessageDisplay(raw)
+      text = display.text; attachments = display.attachments.isEmpty ? nil : display.attachments
     case "agentMessage":
       role = .assistant; text = item["text"]?.string ?? ""
     case "commandExecution":
@@ -80,6 +84,6 @@ extension CodexAppServerState {
     default: return nil
     }
     return CodexMessage(id: id, turnID: turnID, clientID: item["clientId"]?.string, role: role,
-      text: String(text.prefix(16_384)), isTruncated: text.count > 16_384 || detailTruncated, activity: activity)
+      text: String(text.prefix(16_384)), isTruncated: text.count > 16_384 || detailTruncated, activity: activity, attachments: attachments)
   }
 }

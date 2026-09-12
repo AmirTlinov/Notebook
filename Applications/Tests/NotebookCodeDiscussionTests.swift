@@ -5,6 +5,36 @@ import NotebookCore
 @testable import Notebook
 
 @MainActor final class NotebookCodeDiscussionTests: XCTestCase {
+  func testPrependingHistoryKeepsTheVisibleNativeItemAndAttachmentLabelsAreNotMarkup() async throws {
+    let owner = NotebookChatTranscript.Coordinator(), container = UIView(frame: .init(x: 0, y: 0, width: 560, height: 320))
+    func message(_ i: Int) -> CodexMessage { .init(id: "m\(i)", turnID: "turn", clientID: nil, role: .assistant,
+      text: "Message \(i)\n\nA paragraph to read without losing this position.") }
+    let latest = (20..<40).map(message)
+    owner.update(messages: latest, conversationID: "first"); owner.mount(container)
+    defer { owner.close() }
+    let deadline = ContinuousClock.now + .seconds(5)
+    while !owner.ready, .now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    let web = try XCTUnwrap(owner.web)
+    _ = try await web.callAsyncJavaScript("await window.showMessages(json, 'first')", arguments: ["json": owner.json], in: nil, contentWorld: .page)
+    _ = try await web.evaluateJavaScript("scrollTo(0,document.querySelector('[data-item-id=\"m27\"]').offsetTop+12)")
+    let before = try await web.evaluateJavaScript("document.querySelector('[data-item-id=\"m27\"]').getBoundingClientRect().top") as? Double
+    let attachment = CodexMessage(id: "user-file", turnID: "next", clientID: nil, role: .user, text: "Добавь диктовку рядом с разговором.", attachments: ["code_image.png", "<script>bad()</script>.swift"])
+    let updated = (0..<20).map(message) + latest + [attachment]
+    owner.update(messages: updated, conversationID: "first")
+    _ = try await web.callAsyncJavaScript("await window.showMessages(json, 'first')", arguments: ["json": owner.json], in: nil, contentWorld: .page)
+    // Native publication and this awaited display coalesce through one renderer.
+    try await Task.sleep(for: .milliseconds(100))
+    let after = try await web.evaluateJavaScript("document.querySelector('[data-item-id=\"m27\"]').getBoundingClientRect().top") as? Double
+    XCTAssertEqual(try XCTUnwrap(before), try XCTUnwrap(after), accuracy: 1)
+    let labels = try await web.evaluateJavaScript("[...document.querySelectorAll('.attachment')].map(x=>x.textContent)") as? [String]
+    XCTAssertEqual(labels, attachment.attachments)
+    let scripts = try await web.evaluateJavaScript("document.querySelectorAll('article script').length") as? Int
+    XCTAssertEqual(scripts, 0)
+    _ = try await web.callAsyncJavaScript("await window.showMessages(json, 'second')", arguments: ["json": owner.json], in: nil, contentWorld: .page)
+    let bottom = try await web.evaluateJavaScript("Math.abs(scrollY+innerHeight-document.documentElement.scrollHeight)<2") as? Bool
+    XCTAssertEqual(bottom, true, "Choosing a different conversation starts at its newest message")
+  }
+
   func testSelectedNativeCodeBecomesFrozenChatAttentionAndLinksOnlyScrollTheDocument() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)

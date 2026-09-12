@@ -8,6 +8,7 @@ article{position:relative;margin:0 0 22px;line-height:1.55}
 .role{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 article[data-role="user"]{display:flex;justify-content:flex-end}
 article[data-role="user"] .content{max-width:88%;padding:10px 16px;border-radius:20px;background:#eaf3fd}
+.attachments{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}.attachment{display:flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid #d8e4ef;border-radius:8px;font-size:12px;max-width:100%;overflow-wrap:anywhere}.attachment .activity-icon{margin:0}
 p{margin:0 0 12px}p:last-child{margin-bottom:0}
 h1,h2,h3{font-size:1.15em;line-height:1.4;margin:20px 0 10px}
 ul,ol{padding-left:22px}li+li{margin-top:5px}
@@ -60,12 +61,15 @@ marked.use({extensions:[
  {name:'mathBlock',level:'block',start:src=>src.search(/\$\$|\\\[/),tokenizer(src){const m=/^(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\])(?:\n|$)/.exec(src);if(m)return{type:'mathBlock',raw:m[0]};},renderer:token=>`<div>${escapeMath(token.raw)}</div>`},
  {name:'mathInline',level:'inline',start:src=>src.search(/\$|\\\(/),tokenizer(src){const m=/^(\\\([\s\S]*?\\\)|\$(?!\$)[^\n$]+?\$)/.exec(src);if(m)return{type:'mathInline',raw:m[0]};},renderer:token=>`<span>${escapeMath(token.raw)}</span>`}
 ]});
-let next=null,running=false;
-window.showMessages=async function(json){
- next=JSON.parse(json);if(running)return;running=true;
- try{await MathJax.startup.promise;while(next){const messages=next;next=null;
- const follows=scrollY+innerHeight>=document.documentElement.scrollHeight-60;
- const root=document.getElementById('messages');const expanded=new Set([...root.querySelectorAll('details[open]')].map(x=>x.dataset.key));MathJax.typesetClear([root]);root.replaceChildren();
+let next=null,running=false,shownConversation=null;
+window.showMessages=async function(json,conversation=''){
+ next={messages:JSON.parse(json),conversation};if(running)return;running=true;
+ try{await MathJax.startup.promise;while(next){const {messages,conversation}=next;next=null;
+ const root=document.getElementById('messages'),changed=conversation!==shownConversation;shownConversation=conversation;
+ const follows=changed||!root.childElementCount||scrollY+innerHeight>=document.documentElement.scrollHeight-60;
+ const anchor=!changed&&[...root.querySelectorAll('article')].find(x=>{const r=x.getBoundingClientRect();return r.height>0&&r.bottom>0});
+ const position=anchor?{id:anchor.dataset.itemId,top:anchor.getBoundingClientRect().top}:null;
+ const expanded=new Set(changed?[]:[...root.querySelectorAll('details[open]')].map(x=>x.dataset.key));MathJax.typesetClear([root]);root.replaceChildren();
  let group=null,groupEnd=-1;
  for(let index=0;index<messages.length;index++){const m=messages[index];const article=document.createElement('article');article.dataset.itemId=m.id;
  if(index>groupEnd)group=null;
@@ -91,8 +95,10 @@ window.showMessages=async function(json){
    destination.append(article);continue;
  }
  article.dataset.role=m.role==='user'?'user':'assistant';const role=document.createElement('b');role.className='role';role.textContent=m.role==='user'?'Вы':'Codex';article.append(role);
- const content=document.createElement('div');content.className='content';content.innerHTML=DOMPurify.sanitize(marked.parse(m.text),{ALLOWED_URI_REGEXP:/^(?:(?:https?|mailto|notebook):|[#/]|[^a-zA-Z])/,FORBID_TAGS:['img','iframe','form','input','button','style'],FORBID_ATTR:['style']});if(m.role==='user'&&m.text.length>900){const full=document.createElement('details');full.className='long-message';full.dataset.key='message:'+m.id;full.open=expanded.has(full.dataset.key);const preview=document.createElement('summary');const previewText=document.createElement('span');previewText.textContent=m.text.slice(0,180)+'…';preview.append(activityIcon('files'),previewText);full.append(preview);while(content.firstChild)full.append(content.firstChild);content.append(full);}article.append(content);if(m.isTruncated){const note=document.createElement('small');note.textContent='Показан фрагмент сообщения. Полный текст — в Codex.';article.append(note);}if(m.role==='assistant'){const save=document.createElement('button');save.type='button';save.className='save-answer';save.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v6M7 8h8M7 12h4M18 14v8M14 18h8"/></svg>';save.setAttribute('aria-label','Сохранить ответ в заметках');save.title='Сохранить ответ в заметках';save.addEventListener('click',()=>window.webkit?.messageHandlers?.notebookChat?.postMessage({action:'save',id:m.id}));article.append(save);}root.append(article);}
- await MathJax.typesetPromise([root]);if(follows)scrollTo(0,document.documentElement.scrollHeight);
+ const content=document.createElement('div');content.className='content';content.innerHTML=DOMPurify.sanitize(marked.parse(m.text),{ALLOWED_URI_REGEXP:/^(?:(?:https?|mailto|notebook):|[#/]|[^a-zA-Z])/,FORBID_TAGS:['img','iframe','form','input','button','style'],FORBID_ATTR:['style']});if(m.role==='user'&&m.text.length>900){const full=document.createElement('details');full.className='long-message';full.dataset.key='message:'+m.id;full.open=expanded.has(full.dataset.key);const preview=document.createElement('summary');const previewText=document.createElement('span');previewText.textContent=m.text.slice(0,180)+'…';preview.append(activityIcon('files'),previewText);full.append(preview);while(content.firstChild)full.append(content.firstChild);content.append(full);}if(m.role==='user'&&m.attachments?.length){const list=document.createElement('div');list.className='attachments';list.setAttribute('aria-label','Прикреплённые файлы');for(const name of m.attachments){const file=document.createElement('span'),label=document.createElement('span');file.className='attachment';label.textContent=name;file.append(activityIcon(/\.(png|jpe?g|gif|webp|heic)$/i.test(name)?'image':'files'),label);list.append(file);}content.prepend(list);}article.append(content);if(m.isTruncated){const note=document.createElement('small');note.textContent='Показан фрагмент сообщения. Полный текст — в Codex.';article.append(note);}if(m.role==='assistant'){const save=document.createElement('button');save.type='button';save.className='save-answer';save.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v6M7 8h8M7 12h4M18 14v8M14 18h8"/></svg>';save.setAttribute('aria-label','Сохранить ответ в заметках');save.title='Сохранить ответ в заметках';save.addEventListener('click',()=>window.webkit?.messageHandlers?.notebookChat?.postMessage({action:'save',id:m.id}));article.append(save);}root.append(article);}
+ await MathJax.typesetPromise([root]);
+ if(follows)scrollTo(0,document.documentElement.scrollHeight);
+ else if(position){const anchor=[...root.querySelectorAll('article')].find(x=>x.dataset.itemId===position.id);if(anchor)scrollBy(0,anchor.getBoundingClientRect().top-position.top);}
  }}finally{running=false;}
 };
 </script></body></html>
