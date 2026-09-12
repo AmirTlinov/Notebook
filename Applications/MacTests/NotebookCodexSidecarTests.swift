@@ -8,6 +8,8 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   var busy = false, unknown = false
   var projectEdits = 0
   var project: CodexProject?
+  var accessMode = CodexAccessMode.workspace
+  var accessChanges = 0
   var sent: [UUID] = [], interrupted: [String] = [], decisions: [CodexUserDecision] = []
   var accepted: [CodexMessage] = []
   var stopIsStale = false
@@ -21,7 +23,8 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   func close() { }
   func snapshot(threadID: String) -> CodexConversation? {
     .init(threadID: threadID, revision: 1, title: "Математика", ready: true, busy: busy, activeTurnID: busy ? turn : nil,
-      messages: accepted, requests: [], acceptedMessages: [:], turnStatuses: [:])
+      messages: accepted, requests: [], acceptedMessages: [:], turnStatuses: [:],
+      access: .init(profileID: accessMode.rawValue, approvalPolicy: .string(accessMode.approvalPolicy), available: CodexAccessMode.allCases))
   }
   func send(threadID: String, clientMessageID: UUID, text: String, context: String?) throws -> String {
     sent.append(clientMessageID)
@@ -38,6 +41,10 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
     interrupted.append(turnID)
   }
   func respond(threadID: String, request: CodexUserRequest, decision: CodexUserDecision) { decisions.append(decision) }
+  func setAccess(threadID: String, mode: CodexAccessMode) throws {
+    accessChanges += 1; accessMode = mode
+    if unknown { throw CodexBridgeError.acceptanceUnknown }
+  }
   func activities(threadIDs: [String]) -> [CodexTaskActivity] { threadIDs.map { .init(id: $0, status: .idle) } }
   func readProject(id: String) -> CodexProject { project ?? .init(id: id, name: "Notebook", roots: ["/tmp"]) }
   func updateProject(_ edit: CodexProjectEdit) throws -> CodexProject {
@@ -110,6 +117,22 @@ final class NotebookCodexSidecarTests: XCTestCase {
       let edits = await native.projectEdits, turns = await native.counts()
       XCTAssertEqual(edits, 1); XCTAssertEqual(turns.0, 0)
       XCTAssertEqual(try store.chatJob(input.id)?.result, .project(.init(id: edit.id, name: "Исследование", roots: ["/tmp"])))
+      await service.stop()
+    }
+  }
+
+  func testAccessChangeReconcilesNativeStateWithoutRepeatingTheGrant() async throws {
+    try await fixture { store, queue, native, peer in
+      await native.configure(unknown: true)
+      let service = try sidecar(store, queue, native)
+      let input = NotebookChatInput(author: peer, action: .setAccess(threadID: native.thread, mode: .full))
+      let request = NotebookChatEnvelope(body: .request(.job(input)))
+      _ = await service.receive(request, peerID: peer); service.start()
+      try await wait { try await queue.submit { try $0.chatJob(input.id)?.state == .accepted } }
+      _ = await service.receive(request, peerID: peer)
+      let changes = await native.accessChanges, turns = await native.counts()
+      XCTAssertEqual(changes, 1); XCTAssertEqual(turns.0, 0)
+      XCTAssertEqual(try store.chatJob(input.id)?.result, .acknowledged)
       await service.stop()
     }
   }

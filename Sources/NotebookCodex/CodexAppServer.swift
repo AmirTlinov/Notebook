@@ -72,6 +72,14 @@ public actor CodexAppServer {
     guard epoch == generation, let thread = result["thread"], thread["id"] == .string(threadID),
       thread["canAcceptDirectInput"] == .bool(true) else { throw CodexBridgeError.externalOwnerUnavailable }
     states[threadID] = CodexAppServerState(threadID: threadID)
+    states[threadID]?.cwd = result["cwd"]?.string
+    states[threadID]?.access = CodexAccess(profileID: result["activePermissionProfile"]?["id"]?.string,
+      approvalPolicy: result["approvalPolicy"] ?? .null, available: [])
+    let modes = (try? await Self.availableAccess(rpc, cwd: result["cwd"]?.string)) ?? []
+    guard epoch == generation, let currentAccess = states[threadID]?.access else { throw CodexBridgeError.disconnected }
+    // A settings event received during the catalogue read is newer than resume.
+    states[threadID]?.access = CodexAccess(profileID: currentAccess.profileID,
+      approvalPolicy: currentAccess.approvalPolicy, available: modes)
     let history = try await history(threadID: threadID)
     let turns = try await rpc.request("thread/turns/list", params: .object([
       "threadId": .string(threadID), "limit": .number(1), "sortDirection": .string("desc"), "itemsView": .string("notLoaded")]))
@@ -149,14 +157,38 @@ public actor CodexAppServer {
     guard epoch == generation else { throw CodexBridgeError.acceptanceUnknown }
   }
 
+  public func setAccess(threadID: String, mode: CodexAccessMode) async throws {
+    guard let rpc, let current = states[threadID], current.ready else { throw CodexBridgeError.unavailable }
+    guard try await Self.availableAccess(rpc, cwd: current.cwd).contains(mode) else { throw CodexBridgeError.invalidInput }
+    let epoch = generation
+    _ = try await rpc.request("thread/settings/update", params: .object([
+      "threadId": .string(threadID), "permissions": .string(mode.rawValue), "approvalPolicy": .string(mode.approvalPolicy)]))
+    let deadline = ContinuousClock.now + .seconds(12)
+    while states[threadID]?.access?.mode != mode {
+      guard generation == epoch, .now < deadline else { throw CodexBridgeError.acceptanceUnknown }
+      try await Task.sleep(for: .milliseconds(25))
+    }
+    guard generation == epoch else { throw CodexBridgeError.acceptanceUnknown }
+  }
+
   static func response(request: CodexUserRequest, decision: CodexUserDecision) throws -> JSONValue {
+    if [.allowOnce, .allowSession, .allowAlways, .decline].contains(decision), !request.approvalDecisions.contains(decision) {
+      throw CodexBridgeError.unsupportedRequest
+    }
     switch (request.method, decision) {
     case ("item/commandExecution/requestApproval", .allowOnce), ("item/commandExecution/requestApproval", .decline),
+      ("item/commandExecution/requestApproval", .allowSession), ("item/fileChange/requestApproval", .allowSession),
       ("item/fileChange/requestApproval", .allowOnce), ("item/fileChange/requestApproval", .decline):
-      return .object(["decision": .string(isAllow(decision) ? "accept" : "decline")])
-    case ("item/permissions/requestApproval", .allowOnce), ("item/permissions/requestApproval", .decline):
+      return .object(["decision": .string(decision == .allowSession ? "acceptForSession" : decision == .allowOnce ? "accept" : "decline")])
+    case ("item/permissions/requestApproval", .allowOnce), ("item/permissions/requestApproval", .allowSession), ("item/permissions/requestApproval", .decline):
       guard let requested = request.parameters["permissions"], requested.object != nil else { throw CodexBridgeError.invalidResponse }
-      return .object(["permissions": isAllow(decision) ? requested : .object([:]), "scope": .string("turn")])
+      return .object(["permissions": decision == .decline ? .object([:]) : requested, "scope": .string(decision == .allowSession ? "session" : "turn")])
+    case ("mcpServer/elicitation/request", .allowOnce), ("mcpServer/elicitation/request", .allowSession),
+      ("mcpServer/elicitation/request", .allowAlways), ("mcpServer/elicitation/request", .decline):
+      var reply: [String: JSONValue] = ["action": .string(decision == .decline ? "decline" : "accept"),
+        "content": decision == .decline ? .null : .object([:])]
+      if decision == .allowSession || decision == .allowAlways { reply["_meta"] = .object(["persist": .string(decision == .allowAlways ? "always" : "session")]) }
+      return .object(reply)
     case ("item/tool/requestUserInput", .answers(let answers)):
       guard let questions = request.parameters["questions"]?.array,
         answers.count <= 16, Set(answers.keys).isSubset(of: Set(questions.compactMap { $0["id"]?.string })),
@@ -168,7 +200,6 @@ public actor CodexAppServer {
     default: throw CodexBridgeError.unsupportedRequest
     }
   }
-  private static func isAllow(_ decision: CodexUserDecision) -> Bool { if case .allowOnce = decision { true } else { false } }
 
   public func close() async {
     if let current = voice, current.phase != .ended { try? await stopVoice(id: current.id) }

@@ -44,7 +44,7 @@ final class NotebookChatRenderingTests: XCTestCase {
       })()
       """) as? [String: Any]
     XCTAssertEqual(style?["font"] as? String, "15px")
-    XCTAssertEqual(style?["userBackground"] as? String, "rgb(243, 243, 243)")
+    XCTAssertEqual(style?["userBackground"] as? String, "rgb(234, 243, 253)")
     XCTAssertEqual(style?["userRadius"] as? String, "20px")
     XCTAssertEqual(style?["assistantBackground"] as? String, "rgba(0, 0, 0, 0)")
     XCTAssertEqual(style?["labels"] as? [String], ["Вы", "Codex"], "Quiet styling retains accessible speaker names")
@@ -52,19 +52,31 @@ final class NotebookChatRenderingTests: XCTestCase {
 
     let activity = #"[{"id":"native-command","role":"assistant","text":"Выполняется команда · swift test","activity":{"kind":"command","status":"inProgress","detail":"<script>window.executed = true</script>"}},{"id":"native-compaction","role":"assistant","text":"Контекст сжат","activity":{"kind":"compaction"}}]"#
     _ = try await web.callAsyncJavaScript("await window.showMessages(json)", arguments: ["json": activity], in: nil, contentWorld: .page)
+    let folded = try await web.evaluateJavaScript("document.querySelector('details.work')?.open === false") as? Bool
+    XCTAssertEqual(folded, true, "Consecutive native actions start as one quiet, expandable row")
     _ = try await web.evaluateJavaScript("document.querySelector('details').open = true")
     _ = try await web.callAsyncJavaScript("await window.showMessages(json)", arguments: ["json": activity], in: nil, contentWorld: .page)
     let actions = try await web.evaluateJavaScript("""
       ({rows:document.querySelectorAll('[data-kind=activity]').length,
         expanded:document.querySelector('details').open,
         nativeID:document.querySelector('article').dataset.itemId,
+        icons:[...document.querySelectorAll('article .activity-icon')].map(x=>x.dataset.icon),
+        marker:getComputedStyle(document.querySelector('article summary')).listStyleType,
         unsafe:!!window.executed || !!document.querySelector('article script'),
         inactiveButtons:document.querySelectorAll('[data-kind=activity] details').length})
       """) as? [String: Any]
     XCTAssertEqual(actions?["rows"] as? Int, 2)
     XCTAssertEqual(actions?["expanded"] as? Bool, true, "A streamed update preserves the human's expanded native item")
     XCTAssertEqual(actions?["nativeID"] as? String, "native-command")
+    XCTAssertEqual(actions?["icons"] as? [String], ["command", "compaction"], "Each native action carries its semantic icon, not a play triangle")
+    XCTAssertEqual(actions?["marker"] as? String, "none")
     XCTAssertEqual(actions?["unsafe"] as? Bool, false, "A command's text is not HTML or a new instruction")
     XCTAssertEqual(actions?["inactiveButtons"] as? Int, 1, "Events without details do not pretend to expand")
+    let longText = String(repeating: "Материал для обсуждения. ", count: 80)
+    let longMessage = try JSONSerialization.data(withJSONObject: [["id": "long", "role": "user", "text": longText]])
+    _ = try await web.callAsyncJavaScript("await window.showMessages(json)", arguments: ["json": String(decoding: longMessage, as: UTF8.self)], in: nil, contentWorld: .page)
+    let longState = try await web.evaluateJavaScript("({folded:document.querySelector('details.long-message')?.open === false, text:[...document.querySelector('details.long-message').children].filter(x=>x.tagName!=='SUMMARY').map(x=>x.textContent).join('')})") as? [String: Any]
+    XCTAssertEqual(longState?["folded"] as? Bool, true)
+    XCTAssertEqual((longState?["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), longText.trimmingCharacters(in: .whitespacesAndNewlines), "Folding preserves the native message instead of guessing which text to discard")
   }
 }

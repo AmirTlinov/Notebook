@@ -12,6 +12,8 @@ struct CodexAppServerState: Sendable {
   var requests: [CodexUserRequest] = []
   var turnStatuses: [String: String] = [:]
   var runtimeActive = false
+  var access: CodexAccess?
+  var cwd: String?
   private var accepted: [String: String] = [:]
   private var acceptedOrder: [String] = []
 
@@ -19,7 +21,7 @@ struct CodexAppServerState: Sendable {
     CodexConversation(threadID: threadID, revision: revision, title: title, ready: ready,
       busy: runtimeActive || activeTurnID != nil, activeTurnID: activeTurnID, messages: messages, requests: requests,
       acceptedMessages: accepted,
-      turnStatuses: turnStatuses)
+      turnStatuses: turnStatuses, access: access)
   }
 
   mutating func hydrate(thread: JSONValue, history: [CodexMessage], turns: [JSONValue]) throws {
@@ -49,6 +51,11 @@ struct CodexAppServerState: Sendable {
       requests.append(request)
     } else {
       switch method {
+      case "thread/settings/updated":
+        guard let settings = params["threadSettings"], let policy = settings["approvalPolicy"] else { throw CodexBridgeError.invalidResponse }
+        cwd = settings["cwd"]?.string ?? cwd
+        access = CodexAccess(profileID: settings["activePermissionProfile"]?["id"]?.string,
+          approvalPolicy: policy, available: access?.available ?? [])
       case "serverRequest/resolved":
         requests.removeAll { $0.nativeID == params["requestId"] }
       case "thread/status/changed":

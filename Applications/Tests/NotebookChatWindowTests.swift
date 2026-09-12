@@ -18,13 +18,30 @@ final class NotebookChatWindowTests: XCTestCase {
   func testResizeKeepsTheOppositeCornerAndRestoresTheSameGeometry() {
     var layout = NotebookChatWindowLayout()
     let start = layout.frame(in: portrait, expanded: true)
-    layout.resize(start, translation: .init(width: -120, height: -160), in: portrait)
+    layout.resize(start, corner: .bottomTrailing, translation: .init(width: -120, height: -160), in: portrait)
     let resized = layout.frame(in: portrait, expanded: true)
     XCTAssertEqual(resized.origin, start.origin)
     XCTAssertEqual(resized.size, CGSize(width: 440, height: 480))
     XCTAssertEqual(NotebookChatWindowLayout(restoring: layout.encoded), layout)
     XCTAssertEqual(layout.frame(in: portrait, expanded: false).size, CGSize(width: 112, height: 48))
     XCTAssertEqual(layout.frame(in: portrait, expanded: true), resized)
+  }
+
+  func testEveryCornerKeepsItsOppositePointAndClampsToTheAvailableWindow() {
+    for corner in NotebookChatResizeCorner.allCases {
+      var layout = NotebookChatWindowLayout(); layout.anchor = .init(x: 0.5, y: 0.5)
+      let start = layout.frame(in: portrait, expanded: true)
+      layout.resize(start, corner: corner, translation: .init(width: corner.leading ? 120 : -120, height: corner.top ? 160 : -160), in: portrait)
+      let frame = layout.frame(in: portrait, expanded: true)
+      XCTAssertEqual(frame.size, CGSize(width: 440, height: 480))
+      XCTAssertEqual(corner.leading ? frame.maxX : frame.minX, corner.leading ? start.maxX : start.minX, accuracy: 0.001)
+      XCTAssertEqual(corner.top ? frame.maxY : frame.minY, corner.top ? start.maxY : start.minY, accuracy: 0.001)
+      XCTAssertEqual(NotebookChatWindowLayout(restoring: layout.encoded), layout)
+      layout.resize(start, corner: corner, translation: .init(width: corner.leading ? -5000 : 5000, height: corner.top ? -5000 : 5000), in: portrait)
+      XCTAssertTrue(portrait.contains(layout.frame(in: portrait, expanded: true)))
+      let shape = NotebookChatCornerHitShape(corner: corner).path(in: CGRect(x: 0, y: 0, width: 36, height: 36))
+      XCTAssertFalse(shape.contains(CGPoint(x: 18, y: 18)), "The corner cannot take a nearby button's central tap")
+    }
   }
 
   func testKeyboardAndRotationOnlyFitThePresentationNotTheSavedPreference() {
@@ -41,8 +58,10 @@ final class NotebookChatWindowTests: XCTestCase {
   func testResizeCannotLoseControlsOutsideATinyWindow() {
     var layout = NotebookChatWindowLayout()
     let available = CGRect(x: 18, y: 82, width: 280, height: 180)
-    layout.resize(layout.frame(in: available, expanded: true), translation: .init(width: -100, height: -100), in: available)
-    XCTAssertEqual(layout.frame(in: available, expanded: true), available)
+    for corner in NotebookChatResizeCorner.allCases {
+      layout.resize(layout.frame(in: available, expanded: true), corner: corner, translation: .init(width: -100, height: -100), in: available)
+      XCTAssertEqual(layout.frame(in: available, expanded: true), available)
+    }
     XCTAssertEqual(NotebookChatWindowLayout(restoring: "invalid"), NotebookChatWindowLayout())
   }
 }

@@ -231,6 +231,19 @@ final class NotebookChatController {
   func create() async {
     if await submit(.create(title: "Занятие в Notebook", project: selectedProject)) { browsesChats = true; catalogue() }
   }
+  func setAccess(_ mode: CodexAccessMode, thread: String) async {
+    guard threadID == thread, !browsesChats, connected, !continuationUnavailable, conversation?.access?.available.contains(mode) == true,
+      !(latestAccessChange.map { $0.input.action == .setAccess(threadID: thread, mode: mode) && !$0.isTerminal } ?? false) else { return }
+    _ = await submit(.setAccess(threadID: thread, mode: mode))
+  }
+  private var latestAccessChange: NotebookChatJob? {
+    // routedChatJobs is ordered by durable admission, newest first.
+    jobs.first { job in
+      if case .setAccess(let thread, _) = job.input.action { return thread == threadID }
+      return false
+    }
+  }
+  var accessChangePending: Bool { latestAccessChange.map { !$0.isTerminal } ?? false }
 
   var pendingCreations: [NotebookChatJob] {
     jobs.filter { job in

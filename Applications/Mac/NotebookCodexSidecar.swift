@@ -11,6 +11,7 @@ protocol NotebookCodexConversationOwner: Sendable {
   func steer(threadID: String, turnID: String, clientMessageID: UUID, text: String, context: String?) async throws -> String
   func interrupt(threadID: String, turnID: String) async throws
   func respond(threadID: String, request: CodexUserRequest, decision: CodexUserDecision) async throws
+  func setAccess(threadID: String, mode: CodexAccessMode) async throws
   func close() async
 }
 protocol NotebookCodexCatalogueOwner: Sendable {
@@ -232,6 +233,8 @@ final class NotebookCodexSidecar {
     let result: NotebookChatResult
     do {
       switch job.input.action {
+      case .setAccess(let thread, let mode):
+        try await bridge.setAccess(threadID: thread, mode: mode); result = .acknowledged
       case .startRun, .writeRun, .stopRun, .startVoice, .stopVoice: throw CodexBridgeError.invalidInput
       case .renameFile(let request):
         guard request.address.computer == computerID else { throw CodexBridgeError.invalidInput }
@@ -267,7 +270,9 @@ final class NotebookCodexSidecar {
         let unprepared = try await persistence.submit { try $0.fileRename(job.id) == nil }
         fileRejected = error is MacNotebookProjectFiles.RenameRejected || unprepared
       } else { fileRejected = false }
-      let rejected = fileRejected || code == .staleTurn || code == .staleRequest || code == .unsupportedRequest || code == .invalidInput || code == .signInRequired
+      let accessRejected: Bool
+      if case .setAccess = job.input.action { accessRejected = code == .requestRejected } else { accessRejected = false }
+      let rejected = accessRejected || fileRejected || code == .staleTurn || code == .staleRequest || code == .unsupportedRequest || code == .invalidInput || code == .signInRequired
       // busy/unavailable are guaranteed pre-dispatch by send(). Other failures
       // remain uncertain, including success whose native reply was lost.
       let retryable: Bool
@@ -285,6 +290,15 @@ final class NotebookCodexSidecar {
   }
 
   private func reconcile(_ job: NotebookChatJob) async throws {
+    if case .setAccess(let thread, let mode) = job.input.action {
+      guard reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
+      reconciliationAfter[job.id] = Date().addingTimeInterval(15)
+      try await observe(thread)
+      if await bridge.snapshot(threadID: thread)?.access?.mode == mode {
+        _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .acknowledged) }
+      }
+      return
+    }
     if case .renameFile(let request) = job.input.action {
       guard request.address.computer == computerID, reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
       reconciliationAfter[job.id] = Date().addingTimeInterval(5)
@@ -334,12 +348,13 @@ final class NotebookCodexSidecar {
     return .init(threadID: state.threadID, revision: state.revision, title: state.title,
       ready: state.ready, busy: state.busy, activeTurnID: state.activeTurnID, messages: messages,
       requests: state.requests, acceptedMessages: state.acceptedMessages.filter { ids.contains($0.key) },
-      turnStatuses: state.turnStatuses.filter { turns.contains($0.key) || $0.key == state.activeTurnID })
+      turnStatuses: state.turnStatuses.filter { turns.contains($0.key) || $0.key == state.activeTurnID }, access: state.access)
   }
 
   nonisolated static func message(_ error: Error) -> String {
     guard let bridge = error as? CodexBridgeError else { return String(error.localizedDescription.prefix(2048)) }
     switch bridge {
+    case .requestRejected: return "Codex отклонил запрос. Проверьте доступные настройки этой задачи на Mac."
     case .signInRequired: return "Войдите в Codex на Mac. Отдельного входа Notebook нет."
     case .notInstalled: return "Установите Codex на сопряжённом Mac."
     case .incompatibleVersion: return "Версия Codex несовместима с проверенным протоколом Notebook."

@@ -3,7 +3,7 @@ import NotebookCore
 
 public enum CodexBridgeError: String, Error, Sendable {
   case notInstalled, incompatibleVersion, unsafeEndpoint, unavailable, disconnected, timeout
-  case invalidFrame, invalidResponse, historyLimit, busy, staleTurn
+  case invalidFrame, invalidResponse, requestRejected, historyLimit, busy, staleTurn
   case staleRequest, unsupportedRequest, invalidInput, acceptanceUnknown, signInRequired, externalOwnerUnavailable
 }
 
@@ -36,6 +36,11 @@ extension CodexAppServerState {
       detailTruncated = detailTruncated || (detail?.count ?? 0) > 8192
       return .init(kind: kind, status: status, detail: detail.map { String($0.prefix(8192)) })
     }
+    func pretty(_ value: JSONValue?) -> String? {
+      guard let value, value != .null else { return nil }
+      let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+      return try? String(decoding: encoder.encode(value), as: UTF8.self)
+    }
     switch type {
     case "userMessage":
       guard item["content"] != nil else { return nil }
@@ -52,12 +57,14 @@ extension CodexAppServerState {
       role = .assistant
       let changes = item["changes"]?.array ?? []
       text = (status == "inProgress" ? "Изменяются файлы" : "Изменены файлы") + " · \(changes.count)"
-      activity = action(.files, changes.compactMap { $0["path"]?.string }.joined(separator: "\n"))
+      activity = action(.files, changes.compactMap { change in
+        change["path"]?.string.map { $0 + (change["diff"]?.string.map { "\n" + $0 } ?? "") }
+      }.joined(separator: "\n\n"))
     case "mcpToolCall", "dynamicToolCall", "functionCallOutput":
       role = .assistant
       let name = [item["server"]?.string ?? item["namespace"]?.string, item["tool"]?.string ?? item["name"]?.string].compactMap { $0 }.joined(separator: ".")
-      text = (status == "inProgress" ? "Вызывается инструмент" : "Вызван инструмент") + (name.isEmpty ? "" : " · " + name)
-      activity = action(.tool)
+      text = (status == "inProgress" ? "Инструмент работает" : status == "failed" ? "Ошибка инструмента" : "Вызван инструмент") + (name.isEmpty ? "" : " · " + name)
+      activity = action(.tool, [pretty(item["arguments"]), pretty(item["error"] ?? item["result"])].compactMap { $0 }.joined(separator: "\n\n"))
     case "webSearch":
       role = .assistant; text = "Поиск · " + (item["query"]?.string ?? ""); activity = action(.search)
     case "imageView":

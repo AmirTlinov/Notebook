@@ -58,7 +58,7 @@ actor CodexRPC {
     guard let id = frame["id"]?.string, pending[id] != nil else { return }
     if let error = frame["error"] {
       let message = error["message"]?.string ?? ""
-      fail(id, message.contains("already has an active writer") ? .externalOwnerUnavailable : .invalidResponse)
+      fail(id, message.contains("already has an active writer") ? .externalOwnerUnavailable : .requestRejected)
       return
     }
     guard let result = frame["result"] else { throw CodexBridgeError.invalidResponse }

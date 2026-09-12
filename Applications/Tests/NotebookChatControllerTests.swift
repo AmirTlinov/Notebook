@@ -4,6 +4,29 @@ import XCTest
 
 @MainActor
 final class NotebookChatControllerTests: XCTestCase {
+  func testLaterAccessChoiceDoesNotWaitOnAnOlderUnknownGrant() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("chat-access-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), author = UUID(), peer = UUID(), thread = UUID().uuidString
+    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let old = NotebookChatInput(author: author, action: .setAccess(threadID: thread, mode: .full))
+    _ = try store.saveChatSubmission(old, to: peer)
+    _ = try store.advanceChatJob(old.id, from: .saved, to: .attempting)
+    _ = try store.advanceChatJob(old.id, from: .attempting, to: .uncertain)
+    let later = NotebookChatInput(author: author, action: .setAccess(threadID: thread, mode: .workspace))
+    _ = try store.saveChatSubmission(later, to: peer)
+    _ = try store.advanceChatJob(later.id, from: .saved, to: .attempting)
+    _ = try store.advanceChatJob(later.id, from: .attempting, to: .accepted, result: .acknowledged)
+    try store.saveChatPanel(.init(threadID: thread, draft: "", sidecarID: peer), author: author)
+    let queue = NotebookPersistenceQueue(store: store)
+    let chat = NotebookChatController(persistence: queue, author: author) { _, _ in XCTFail("No access change is repeated on restore") }
+    await chat.start()
+    XCTAssertEqual(chat.jobs.count, 2)
+    XCTAssertFalse(chat.accessChangePending, "The last explicit choice is confirmed; an older unknown result stays recorded without an endless spinner")
+    XCTAssertEqual(chat.jobs.first(where: { $0.id == old.id })?.state, .uncertain)
+    await chat.stop(); let saved = await queue.flush(); XCTAssertTrue(saved)
+  }
+
   func testUncertainCreationKeepsItsIDWithoutPoisoningTheCurrentConversation() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("chat-creation-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

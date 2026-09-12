@@ -341,15 +341,17 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(panel.frame.minX, 30, accuracy: 4)
     XCTAssertEqual(panel.frame.minY, 100, accuracy: 4)
     XCTAssertEqual(app.staticTexts["Новый чат"].exists, titleBefore, "Dragging the header must not also choose a conversation")
-    let moved = panel.frame
-    let resize = app.descendants(matching: .any).matching(identifier: "notebook-chat-resize").firstMatch
-    let corner = resize.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
-    let sizeChange = CGVector(dx: moved.width > 420 ? -100 : 100, dy: moved.height > 420 ? -120 : 120)
-    corner.press(forDuration: 0.1, thenDragTo: corner.withOffset(sizeChange))
-    XCTAssertEqual(panel.frame.width, moved.width + sizeChange.dx, accuracy: 4)
-    XCTAssertEqual(panel.frame.height, moved.height + sizeChange.dy, accuracy: 4)
-    XCTAssertEqual(panel.frame.minX, moved.minX, accuracy: 1)
-    XCTAssertEqual(panel.frame.minY, moved.minY, accuracy: 1)
+    XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "notebook-chat-resize").firstMatch.exists)
+    for (leading, top, dx, dy) in [(false, true, -40.0, 30.0), (true, true, 30.0, 20.0), (true, false, -20.0, -30.0), (false, false, 35.0, 25.0)] {
+      let moved = panel.frame
+      let corner = panel.coordinate(withNormalizedOffset: .zero).withOffset(.init(dx: leading ? 10 : moved.width - 10, dy: top ? 10 : moved.height - 10))
+      corner.press(forDuration: 0.1, thenDragTo: corner.withOffset(.init(dx: dx, dy: dy)))
+      XCTAssertEqual(panel.frame.width, moved.width + (leading ? -dx : dx), accuracy: 4)
+      XCTAssertEqual(panel.frame.height, moved.height + (top ? -dy : dy), accuracy: 4)
+      XCTAssertEqual(leading ? panel.frame.maxX : panel.frame.minX, leading ? moved.maxX : moved.minX, accuracy: 1)
+      XCTAssertEqual(top ? panel.frame.maxY : panel.frame.minY, top ? moved.maxY : moved.minY, accuracy: 1)
+      XCTAssertEqual(paper.frame, paperFrame); XCTAssertEqual(paper.value as? String, drawing)
+    }
     let resized = panel.frame
     app.buttons["notebook-chat-toggle"].tap(); app.buttons["notebook-chat-toggle"].tap()
     XCTAssertEqual(panel.frame, resized)

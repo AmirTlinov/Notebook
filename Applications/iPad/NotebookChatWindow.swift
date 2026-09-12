@@ -1,5 +1,25 @@
 import SwiftUI
 
+enum NotebookChatResizeCorner: String, CaseIterable {
+  case topLeading, topTrailing, bottomLeading, bottomTrailing
+  var leading: Bool { self == .topLeading || self == .bottomLeading }
+  var top: Bool { self == .topLeading || self == .topTrailing }
+  var alignment: Alignment { switch self { case .topLeading: .topLeading; case .topTrailing: .topTrailing; case .bottomLeading: .bottomLeading; case .bottomTrailing: .bottomTrailing } }
+  var label: String { switch self { case .topLeading: "верхний левый"; case .topTrailing: "верхний правый"; case .bottomLeading: "нижний левый"; case .bottomTrailing: "нижний правый" } }
+}
+
+/// Only the outer rim takes the drag; nearby header/composer buttons retain
+/// their full central hit targets. Nothing is painted over the conversation.
+struct NotebookChatCornerHitShape: Shape {
+  let corner: NotebookChatResizeCorner
+  func path(in rect: CGRect) -> Path {
+    var path = Path()
+    path.addRect(CGRect(x: corner.leading ? rect.minX : rect.maxX - 14, y: rect.minY, width: 14, height: rect.height))
+    path.addRect(CGRect(x: rect.minX, y: corner.top ? rect.minY : rect.maxY - 14, width: rect.width, height: 14))
+    return path
+  }
+}
+
 /// The preferred window geometry survives temporary keyboard/rotation limits.
 /// It has no world coordinates and cannot publish a board-camera change.
 struct NotebookChatWindowLayout: Codable, Equatable {
@@ -18,10 +38,14 @@ struct NotebookChatWindowLayout: Codable, Equatable {
       y: fraction(frame.minY + translation.height - available.minY, travel: available.height - frame.height, previous: anchor.y))
   }
 
-  mutating func resize(_ frame: CGRect, translation: CGSize, in available: CGRect) {
-    size = CGSize(width: min(max(320, frame.width + translation.width), available.maxX - frame.minX),
-      height: min(max(240, frame.height + translation.height), available.maxY - frame.minY))
-    move(CGRect(origin: frame.origin, size: size), translation: .zero, in: available)
+  mutating func resize(_ frame: CGRect, corner: NotebookChatResizeCorner, translation: CGSize, in available: CGRect) {
+    let widthLimit = corner.leading ? frame.maxX - available.minX : available.maxX - frame.minX
+    let heightLimit = corner.top ? frame.maxY - available.minY : available.maxY - frame.minY
+    size = CGSize(width: min(max(320, frame.width + (corner.leading ? -translation.width : translation.width)), widthLimit),
+      height: min(max(240, frame.height + (corner.top ? -translation.height : translation.height)), heightLimit))
+    let origin = CGPoint(x: corner.leading ? frame.maxX - size.width : frame.minX,
+      y: corner.top ? frame.maxY - size.height : frame.minY)
+    move(CGRect(origin: origin, size: size), translation: .zero, in: available)
   }
 
   private func fraction(_ value: CGFloat, travel: CGFloat, previous: CGFloat) -> CGFloat {
@@ -57,8 +81,8 @@ struct NotebookChatWindow: View {
   var body: some View {
     let frame = layout.frame(in: available, expanded: chat.expanded)
     NotebookChatPanel(chat: chat, size: frame.size, openPairing: openPairing, openHistory: openHistory,
-      move: { update($0, ended: $1, resizing: false, frame: frame) },
-      resize: { update($0, ended: $1, resizing: true, frame: frame) },
+      move: { update($0, ended: $1, corner: nil, frame: frame) },
+      resize: { update($0, ended: $1, corner: $2, frame: frame) },
       endInteraction: { interruptedDrag = false; finishInteraction() })
       .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frameChanged($0) }
       .position(x: frame.midX, y: frame.midY)
@@ -70,7 +94,7 @@ struct NotebookChatWindow: View {
       .onDisappear { finishInteraction() }
   }
 
-  private func update(_ translation: CGSize, ended: Bool, resizing: Bool, frame: CGRect) {
+  private func update(_ translation: CGSize, ended: Bool, corner: NotebookChatResizeCorner?, frame: CGRect) {
     if interruptedDrag {
       if ended { interruptedDrag = false }
       return
@@ -78,7 +102,7 @@ struct NotebookChatWindow: View {
     if interaction == nil { interaction = (frame, available, layout) }
     guard let start = interaction else { return }
     var next = start.layout
-    if resizing { next.resize(start.frame, translation: translation, in: start.available) }
+    if let corner { next.resize(start.frame, corner: corner, translation: translation, in: start.available) }
     else { next.move(start.frame, translation: translation, in: start.available) }
     liveLayout = next
     if ended { finishInteraction() }

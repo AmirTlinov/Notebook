@@ -123,7 +123,8 @@ public struct CodexConversation: Codable, Equatable, Sendable {
   /// Native user items with a real turn ID, never an optimistic local composer item.
   public let acceptedMessages: [String: String]
   public let turnStatuses: [String: String]
-  public init(threadID: String, revision: Int, title: String, ready: Bool, busy: Bool, activeTurnID: String?, messages: [CodexMessage], requests: [CodexUserRequest], acceptedMessages: [String: String], turnStatuses: [String: String]) { self.threadID = threadID; self.revision = revision; self.title = title; self.ready = ready; self.busy = busy; self.activeTurnID = activeTurnID; self.messages = messages; self.requests = requests; self.acceptedMessages = acceptedMessages; self.turnStatuses = turnStatuses }
+  public let access: CodexAccess?
+  public init(threadID: String, revision: Int, title: String, ready: Bool, busy: Bool, activeTurnID: String?, messages: [CodexMessage], requests: [CodexUserRequest], acceptedMessages: [String: String], turnStatuses: [String: String], access: CodexAccess? = nil) { self.threadID = threadID; self.revision = revision; self.title = title; self.ready = ready; self.busy = busy; self.activeTurnID = activeTurnID; self.messages = messages; self.requests = requests; self.acceptedMessages = acceptedMessages; self.turnStatuses = turnStatuses; self.access = access }
 
 }
 
@@ -135,7 +136,7 @@ public struct CodexHistoryPage: Codable, Equatable, Sendable {
 }
 
 public enum CodexUserDecision: Codable, Equatable, Sendable {
-  case allowOnce, decline
+  case allowOnce, allowSession, allowAlways, decline
   case answers([String: [String]])
   case elicitation(JSONValue)
 }
@@ -146,6 +147,7 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
   case steer(threadID: String, turnID: String, text: String, context: String)
   case create(title: String, project: CodexProject? = nil)
   case updateProject(CodexProjectEdit)
+  case setAccess(threadID: String, mode: CodexAccessMode)
   case saveFile(NotebookFileAddress)
   case renameFile(NotebookFileRename)
   case startVoice(NotebookVoiceStart)
@@ -157,7 +159,7 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
   case respond(threadID: String, request: CodexUserRequest, decision: CodexUserDecision)
   public var threadID: String? {
     switch self {
-    case .send(let id, _, _), .steer(let id, _, _, _), .stop(let id, _), .respond(let id, _, _): id
+    case .send(let id, _, _), .steer(let id, _, _, _), .stop(let id, _), .respond(let id, _, _), .setAccess(let id, _): id
     case .create, .updateProject, .saveFile, .renameFile, .startRun, .writeRun, .stopRun, .startVoice, .stopVoice: nil
     }
   }
@@ -186,7 +188,7 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
       address = ["respond", thread.lowercased(), request.turnID.lowercased(), request.method, request.id]
     case .stopVoice(let id): address = ["stopVoice", id.uuidString.lowercased()]
     case .stopRun(let id): address = ["stopRun", id.uuidString.lowercased()]
-    case .send, .steer, .create, .updateProject, .saveFile, .renameFile, .startRun, .writeRun, .startVoice: return nil
+    case .send, .steer, .create, .updateProject, .setAccess, .saveFile, .renameFile, .startRun, .writeRun, .startVoice: return nil
     }
     var data = Data()
     for part in ["NotebookChatControl/1", author.uuidString.lowercased()] + address {
@@ -220,6 +222,7 @@ public struct NotebookChatInput: Codable, Equatable, Sendable, Identifiable {
       return UUID(uuidString: turn) != nil && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.utf8.count <= 32768 && context.utf8.count <= 32768
     case .create(let title, let project): return !title.isEmpty && title.utf8.count <= 256 && (project == nil || (project!.id.utf8.count <= 256 && !project!.id.isEmpty && project!.roots.count <= 32 && project!.roots.allSatisfy { $0.hasPrefix("/") && $0.utf8.count <= 4096 }))
     case .updateProject(let edit): return edit.isValid
+    case .setAccess: return true
     case .saveFile(let address): return address.isValid && !address.path.isEmpty
     case .renameFile(let rename): return rename.isValid
     case .startVoice(let request): return request.isValid
@@ -268,7 +271,7 @@ public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
     case (.updateProject(let edit), .project(let project)): return edit.matches(project)
     case (.create, .created(let task)): return UUID(uuidString: task.id) != nil && task.title.utf8.count <= 1024
     case (.send, .turn(let id)), (.steer, .turn(let id)): return UUID(uuidString: id) != nil
-    case (.stop, .acknowledged), (.respond, .acknowledged): return true
+    case (.stop, .acknowledged), (.respond, .acknowledged), (.setAccess, .acknowledged): return true
     default: return false
     }
   }

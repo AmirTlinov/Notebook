@@ -12,7 +12,7 @@ struct NotebookChatPanel: View {
   let openPairing: () -> Void
   let openHistory: () -> Void
   let move: (CGSize, Bool) -> Void
-  let resize: (CGSize, Bool) -> Void
+  let resize: (CGSize, Bool, NotebookChatResizeCorner) -> Void
   let endInteraction: () -> Void
   @GestureState private var moving = false
   @GestureState private var resizing = false
@@ -63,14 +63,16 @@ struct NotebookChatPanel: View {
         .allowsHitTesting(false)
     }
     .shadow(color: .black.opacity(0.08), radius: 22, y: 7)
-    .overlay(alignment: .bottomTrailing) {
+    .overlay {
       if chat.expanded {
-        Image(systemName: "arrow.up.left.and.arrow.down.right")
-          .font(.system(size: 12, weight: .medium)).foregroundStyle(.tertiary)
-          .frame(width: 44, height: 44).contentShape(Rectangle())
-          .gesture(windowDrag(resize, activity: $resizing))
-          .accessibilityLabel("Изменить размер чата")
-          .accessibilityIdentifier("notebook-chat-resize")
+        ForEach(NotebookChatResizeCorner.allCases, id: \.rawValue) { corner in
+          Color.clear.frame(width: 36, height: 36)
+            .contentShape(NotebookChatCornerHitShape(corner: corner))
+            .gesture(windowDrag({ resize($0, $1, corner) }, activity: $resizing))
+            .accessibilityLabel("Изменить размер за " + corner.label + " угол")
+            .accessibilityIdentifier("notebook-chat-corner-" + corner.rawValue)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: corner.alignment)
+        }
       }
     }
     .background(NotebookControlRegion(gate: model.inputGate))
@@ -315,11 +317,8 @@ struct NotebookChatPanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("notebook-chat-transcript")
       if let conversation = chat.conversation, let request = conversation.requests.first {
-        NotebookCodexRequestView(request: request, threadID: conversation.threadID, chat: chat)
-          .id(request.id).padding(14)
-          .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-          .padding(.horizontal, 14).padding(.bottom, 8)
-          .frame(maxHeight: min(210, size.height * 0.4))
+        NotebookCodexRequestView(request: request, threadID: conversation.threadID, chat: chat, maximumHeight: min(300, size.height * 0.55))
+          .id(request.id).padding(.horizontal, 12).padding(.bottom, 8)
       }
       if !chat.pendingMessages.isEmpty { outbox }
     }
@@ -385,6 +384,7 @@ struct NotebookChatPanel: View {
         } label: {
           Image(systemName: "plus").font(.system(size: 19, weight: .regular)).frame(width: 44, height: 44)
         }.accessibilityLabel("Действия чата").accessibilityIdentifier("notebook-chat-actions")
+        NotebookChatAccessView(chat: chat)
         TextField("Сообщение Codex", text: $chat.draft, axis: .vertical)
           .font(.system(size: 15)).lineLimit(1...5).textFieldStyle(.plain)
           .padding(.vertical, 12).padding(.trailing, 8)
@@ -413,11 +413,11 @@ struct NotebookChatPanel: View {
       .accessibilityElement(children: .contain)
       .accessibilityIdentifier("notebook-chat-composer")
     }
-    .padding(.leading, 8).padding(.trailing, chat.files.window.sidebar ? 8 : 44).padding(.bottom, 8).padding(.top, 8)
+    .padding(.horizontal, 8).padding(.bottom, 8).padding(.top, 8)
   }
 
   private var filesWidth: CGFloat { min(220, max(120, size.width * 0.32)) }
-  private var compactComposer: Bool { size.width - (chat.files.window.sidebar ? filesWidth : 0) < 300 }
+  private var compactComposer: Bool { size.width - (chat.files.window.sidebar ? filesWidth : 0) < (chat.threadID != nil && !chat.browsesChats ? 352 : 300) }
   private var title: String {
     chat.conversation?.title ?? chat.tasks.first(where: { $0.id == chat.threadID })?.title ?? (chat.threadID == nil ? "Новый чат" : "Чат Codex")
   }
@@ -484,65 +484,6 @@ private struct NotebookProjectSettings: View {
       }
     }
     .presentationDetents([.medium, .large])
-  }
-}
-
-private struct NotebookCodexRequestView: View {
-  struct Questions: Decodable { let questions: [Question] }
-  struct Question: Decodable, Identifiable {
-    struct Option: Decodable { let label: String; let description: String? }
-    let id: String; let question: String; let options: [Option]?
-  }
-  let request: CodexUserRequest
-  let threadID: String
-  let chat: NotebookChatController
-  @State private var answers: [String: String] = [:]
-  @State private var submitted = false
-  var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 8) {
-        Text("Codex просит ваше решение").font(.caption.weight(.bold))
-        if request.method == "item/tool/requestUserInput", let questions {
-          ForEach(questions.questions) { question in
-            Text(question.question).font(.callout)
-            if let options = question.options {
-              ForEach(options, id: \.label) { option in
-                Button(option.label) { answers[question.id] = option.label }.font(.caption)
-                if let description = option.description { Text(description).font(.caption2) }
-              }
-            }
-            TextField("Ваш ответ", text: Binding(get: { answers[question.id, default: ""] }, set: { answers[question.id] = $0 }), axis: .vertical)
-              .textFieldStyle(.roundedBorder)
-          }
-          Button("Ответить") { decide(.answers(answers.mapValues { [$0] })) }
-            .disabled(questions.questions.contains { answers[$0.id, default: ""].isEmpty })
-        } else {
-          Text(parameters).font(.caption.monospaced()).textSelection(.enabled)
-          if ["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval"].contains(request.method) {
-            HStack {
-              Button("Разрешить один раз") { decide(.allowOnce) }
-              Button("Отказать", role: .destructive) { decide(.decline) }
-            }
-          } else if request.method == "mcpServer/elicitation/request" {
-            Button("Отклонить") { decide(.elicitation(.object(["action": .string("decline")]))) }
-            Text("Для заполнения этой формы откройте задачу в Codex.").font(.caption)
-          } else { Text("Этот запрос нужно обработать в Codex на Mac.").font(.caption) }
-        }
-        if let job = chat.decisionJob(request, threadID: threadID) {
-          Text(job.state == .uncertain ? "Принятие решения проверяется. Повтора нет." : "Решение сохранено и ожидает Codex.")
-            .font(.caption).foregroundStyle(.secondary)
-        }
-      }.disabled(submitted || chat.decisionJob(request, threadID: threadID) != nil)
-    }.frame(maxHeight: 200)
-  }
-  private var questions: Questions? { try? JSONDecoder().decode(Questions.self, from: JSONEncoder().encode(request.parameters)) }
-  private var parameters: String {
-    let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    return (try? String(decoding: encoder.encode(request.parameters), as: UTF8.self)) ?? request.method
-  }
-  private func decide(_ decision: CodexUserDecision) {
-    submitted = true
-    Task { await chat.respond(request, decision: decision, threadID: threadID); submitted = false }
   }
 }
 

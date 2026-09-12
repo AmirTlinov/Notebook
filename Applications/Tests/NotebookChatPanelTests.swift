@@ -1,6 +1,7 @@
 import NotebookCore
 import SwiftUI
 import UIKit
+import WebKit
 import XCTest
 @testable import Notebook
 
@@ -23,11 +24,22 @@ final class NotebookChatPanelTests: XCTestCase {
     try await panel(width: 420, height: 360, name: "chat-files-right-compact", files: true)
   }
 
-  private func panel(width: CGFloat, height: CGFloat, name: String, active: Bool = false, files: Bool = false) async throws {
+  func testNativeApprovalKeepsItsChoicesAndAccessLevelBesideTheConversation() async throws {
+    try await panel(width: 560, height: 760, name: "chat-tool-approval", approval: true)
+    try await panel(width: 420, height: 600, name: "chat-tool-approval-compact", approval: true)
+    try await panel(width: 560, height: 640, name: "chat-tool-approval-files", files: true, approval: true)
+  }
+
+  private func panel(width: CGFloat, height: CGFloat, name: String, active: Bool = false, files: Bool = false, approval: Bool = false) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("chat-panel-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     let author = UUID(), peer = UUID()
+    let taskIDs = (0..<3).map { _ in UUID().uuidString.lowercased() }
+    let messages: [CodexMessage] = [
+      .init(id: "human", turnID: "turn", clientID: nil, role: .user, text: "Посмотри рисунок на доске и помоги разобраться с формулой."),
+      .init(id: "answer", turnID: "turn", clientID: nil, role: .assistant, text: "Открою рисунок, чтобы обсудить именно ваш пример."),
+      .init(id: "tool", turnID: "turn", clientID: nil, role: .assistant, text: "Чтение доски", activity: .init(kind: .tool, status: "inProgress", detail: "notebook_read_board"))]
     _ = try model.store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
     let queue = NotebookPersistenceQueue(store: model.store)
     weak var receiver: NotebookChatController?
@@ -45,9 +57,21 @@ final class NotebookChatPanelTests: XCTestCase {
           .init(name: "Sources", kind: .directory), .init(name: "Package.swift", kind: .file),
           .init(name: "README.md", kind: .file)], next: nil))))), peerID: peer); return
       }
+      if case .history = query {
+        receiver?.receive(.init(id: envelope.id, body: .reply(.history(.init(messages: messages, nextCursor: nil)))), peerID: peer); return
+      }
+      if case .conversation(let thread) = query {
+        let request = CodexUserRequest(nativeID: .number(4), method: "mcpServer/elicitation/request", turnID: "turn", parameters: .object([
+          "mode": .string("form"), "serverName": .string("notebook"),
+          "requestedSchema": .object(["type": .string("object"), "properties": .object([:])]),
+          "_meta": .object(["codex_approval_kind": .string("mcp_tool_call"), "tool_title": .string("Прочитать выбранный участок доски"), "persist": .array([.string("session"), .string("always")])])]))
+        let value = CodexConversation(threadID: thread, revision: 1, title: "Обсуждение рисунка", ready: true, busy: true, activeTurnID: "turn", messages: messages, requests: [request], acceptedMessages: [:], turnStatuses: [:],
+          access: .init(profileID: CodexAccessMode.workspace.rawValue, approvalPolicy: .string("on-request"), available: CodexAccessMode.allCases))
+        receiver?.receive(.init(id: envelope.id, body: .reply(.conversation(value))), peerID: peer); return
+      }
       guard case .catalogue = query else { return XCTFail("This view never starts or selects a task") }
       let tasks = ["Изучение высшей математики", "Сделай цветным", "Сделай цветным"].enumerated().map {
-        CodexTask(id: "reference-chat-\($0.offset)", title: $0.element, cwd: "/fixture", projectID: "project")
+        CodexTask(id: taskIDs[$0.offset], title: $0.element, cwd: "/fixture", projectID: "project")
       }
       receiver?.receive(.init(id: envelope.id, body: .reply(.catalogue(.init(tasks: tasks, nextCursor: nil)))), peerID: peer)
     }
@@ -58,6 +82,7 @@ final class NotebookChatPanelTests: XCTestCase {
     XCTAssertEqual(chat.tasks.count, 3)
     XCTAssertEqual(chat.activities.count, 3)
     XCTAssertEqual(chat.projects.count, 1)
+    let selectedTask = try XCTUnwrap(chat.tasks.first)
     if files {
       chat.selectProject(chat.projects.first)
       var state = chat.files.window; state.sidebar = true
@@ -65,10 +90,17 @@ final class NotebookChatPanelTests: XCTestCase {
       await chat.files.roots()
       XCTAssertEqual(chat.files.directories.count, 1)
     }
+    if approval {
+      chat.select(selectedTask)
+      let deadline = ContinuousClock.now + .seconds(3)
+      while chat.conversation == nil, .now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+      XCTAssertEqual(chat.conversation?.requests.first?.approvalDecisions, [.allowOnce, .allowSession, .allowAlways, .decline])
+      XCTAssertEqual(chat.conversation?.access?.mode, .workspace)
+    }
     await chat.stop()
 
     let host = UIHostingController(rootView: NotebookChatPanel(chat: chat, size: .init(width: width, height: height),
-      openPairing: {}, openHistory: {}, move: { _, _ in }, resize: { _, _ in }, endInteraction: {})
+      openPairing: {}, openHistory: {}, move: { _, _ in }, resize: { _, _, _ in }, endInteraction: {})
       .environment(model).padding(20).background(Color(.systemGroupedBackground)).preferredColorScheme(.light))
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     window.frame = .init(x: 0, y: 0, width: width + 40, height: height + 40)
@@ -77,6 +109,18 @@ final class NotebookChatPanelTests: XCTestCase {
     host.view.setNeedsLayout(); host.view.layoutIfNeeded()
     try await Task.sleep(for: .milliseconds(100))
     host.view.layoutIfNeeded()
+    if approval {
+      let deadline = ContinuousClock.now + .seconds(8)
+      var visible = false
+      while !visible, .now < deadline {
+        if let web = descendants(host.view).compactMap({ $0 as? WKWebView }).first {
+          visible = (try? await web.evaluateJavaScript("document.querySelectorAll('article').length === 3")) as? Bool == true
+        }
+        if !visible { try await Task.sleep(for: .milliseconds(50)) }
+      }
+      XCTAssertTrue(visible, "The actual mounted transcript must finish rendering before its screenshot")
+      try await Task.sleep(for: .milliseconds(100))
+    }
     let inputs = descendants(host.view).filter { $0 is UITextView || $0 is UITextField }
     let input = try XCTUnwrap(inputs.first)
     XCTAssertFalse(inputs.contains(where: \.isFirstResponder), "Opening chat does not summon the keyboard or take Pencil focus")
