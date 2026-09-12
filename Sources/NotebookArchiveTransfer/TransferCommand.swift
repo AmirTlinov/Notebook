@@ -6,6 +6,25 @@ struct TransferCommand {
   static func main() {
     do {
       let args = Array(CommandLine.arguments.dropFirst())
+      if args.count == 4, args[0] == "--prepare-computer", args[2] == "--output",
+        args[1].hasPrefix("/"), args[3].hasPrefix("/") {
+        let data = try Data(contentsOf: URL(fileURLWithPath: args[1]))
+        guard data.count <= 16_384 else { throw ArchiveTransferError.invalidSource("computer request is too large") }
+        let report = try ArchiveComputerPreparation.prepare(JSONDecoder().decode(ArchiveComputerRequest.self, from: data), output: URL(fileURLWithPath: args[3]))
+        print("Independent current-workspace Mac prepared: \(report.manifest.target.actorID). Existing devices and trust are unchanged.")
+        print("Collect the new Mac activation receipt, admit it, then explicitly pair it with the current iPad.")
+        return
+      }
+      if args.count == 5, args[0] == "--admit-computer", args[3] == "--output", [1, 2, 4].allSatisfy({ args[$0].hasPrefix("/") }) {
+        let reportData = try Data(contentsOf: URL(fileURLWithPath: args[1]))
+        let receiptData = try Data(contentsOf: URL(fileURLWithPath: args[2]))
+        guard reportData.count <= 256 * 1024 * 1024, receiptData.count <= 16_384 else { throw ArchiveTransferError.invalidSource("invalid computer receipt") }
+        let report = try JSONDecoder().decode(ArchiveComputerReport.self, from: reportData)
+        let receipt = try JSONDecoder().decode(NotebookArchiveActivationReceipt.self, from: receiptData)
+        try report.source.publishAdmission(receipt: receipt, manifest: report.manifest, at: URL(fileURLWithPath: args[4]))
+        print("Admission prepared ONLY for the new Mac. Do not replace either existing device's admission or trust.")
+        return
+      }
       if args.count == 4, args[0] == "--prepare-pair", args[2] == "--output",
         args[1].hasPrefix("/"), args[3].hasPrefix("/") {
         let input = try Data(contentsOf: URL(fileURLWithPath: args[1]))
@@ -58,7 +77,7 @@ struct TransferCommand {
       }
       guard args.count == 6, args[0] == "--source", args[2] == "--output", args[4] == "--workspace-id",
         let id = UUID(uuidString: args[5]), args[1].hasPrefix("/"), args[3].hasPrefix("/") else {
-        throw ArchiveTransferError.invalidSource("Usage: notebook-archive-transfer --source ABSOLUTE_BACKUP --output NEW_ABSOLUTE_DIRECTORY --workspace-id UUID\nOr: --legacy-ipad ABSOLUTE_BACKUP --legacy-mac ABSOLUTE_BACKUP --current ABSOLUTE_BACKUP --output NEW_ABSOLUTE_DIRECTORY\nOr: --prepare-pair ABSOLUTE_REQUEST_JSON --output NEW_ABSOLUTE_DIRECTORY\nOr: --admit-pair ABSOLUTE_IPAD_RECEIPT ABSOLUTE_MAC_RECEIPT --output NEW_ABSOLUTE_JSON\nOr: --prepare-installation-pairing ABSOLUTE_IPAD_RECEIPT ABSOLUTE_MAC_RECEIPT --output NEW_ABSOLUTE_JSON\nPrepares offline data only. Does not stop, replace, pair, or install applications.")
+        throw ArchiveTransferError.invalidSource("Usage: notebook-archive-transfer --prepare-computer ABSOLUTE_CURRENT_IPAD_REQUEST --output NEW_ABSOLUTE_DIRECTORY\nOr: --admit-computer ABSOLUTE_REPORT ABSOLUTE_NEW_MAC_RECEIPT --output NEW_ABSOLUTE_JSON\nOr: --source ABSOLUTE_BACKUP --output NEW_ABSOLUTE_DIRECTORY --workspace-id UUID\nOr: --legacy-ipad ABSOLUTE_BACKUP --legacy-mac ABSOLUTE_BACKUP --current ABSOLUTE_BACKUP --output NEW_ABSOLUTE_DIRECTORY\nOr: --prepare-pair ABSOLUTE_REQUEST_JSON --output NEW_ABSOLUTE_DIRECTORY\nOr: --admit-pair ABSOLUTE_IPAD_RECEIPT ABSOLUTE_MAC_RECEIPT --output NEW_ABSOLUTE_JSON\nOr: --prepare-installation-pairing ABSOLUTE_IPAD_RECEIPT ABSOLUTE_MAC_RECEIPT --output NEW_ABSOLUTE_JSON\nPrepares offline data only. Does not stop, replace, pair, or install applications.")
       }
       let report = try ArchiveTransfer.prepare(source: URL(fileURLWithPath: args[1]),
         destination: URL(fileURLWithPath: args[3]), workspaceID: id)

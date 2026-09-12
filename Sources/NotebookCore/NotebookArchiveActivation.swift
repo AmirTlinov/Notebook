@@ -29,7 +29,8 @@ public struct NotebookArchiveActivationReceipt: Codable, Equatable, Sendable {
 
 public struct NotebookArchiveAdmission: Codable, Equatable, Sendable {
   public let receipts: [NotebookArchiveActivationReceipt]
-  public init(receipts: [NotebookArchiveActivationReceipt]) throws {
+  public let enrollment: NotebookArchiveEnrollmentSource?
+  public init(receipts: [NotebookArchiveActivationReceipt], enrollment: NotebookArchiveEnrollmentSource? = nil) throws {
     for receipt in receipts {
       try receipt.content.validate()
       guard NotebookArchiveContentProof.isSHA256(receipt.manifestSHA256), !receipt.target.bundleID.isEmpty else {
@@ -38,21 +39,33 @@ public struct NotebookArchiveAdmission: Codable, Equatable, Sendable {
     }
     guard receipts.count == 2, Set(receipts.map { $0.target.role }).count == 2,
       receipts[0].target.actorID != receipts[1].target.actorID,
-      receipts[0].transitionID == receipts[1].transitionID,
-      receipts[0].content.workspaceID == receipts[1].content.workspaceID,
-      receipts[0].content.sharedRecordsSHA256 == receipts[1].content.sharedRecordsSHA256,
-      receipts[0].content.sharedRecordCount == receipts[1].content.sharedRecordCount else {
-      throw NotebookStorageError.invalidTransaction("both devices must activate the same shared archive")
+      receipts[0].content.workspaceID == receipts[1].content.workspaceID else {
+      throw NotebookStorageError.invalidTransaction("admission requires distinct devices in one workspace")
+    }
+    if let enrollment { try enrollment.validate(receipts: receipts) }
+    else {
+      guard receipts[0].transitionID == receipts[1].transitionID,
+        receipts[0].content.sharedRecordsSHA256 == receipts[1].content.sharedRecordsSHA256,
+        receipts[0].content.sharedRecordCount == receipts[1].content.sharedRecordCount else {
+        throw NotebookStorageError.invalidTransaction("both devices must activate the same shared archive")
+      }
     }
     self.receipts = receipts.sorted { $0.target.role.rawValue < $1.target.role.rawValue }
+    self.enrollment = enrollment
+  }
+
+  /// An enrollment admits only its new Mac. It cannot replace the current
+  /// iPad's pair admission or cause either existing device to re-activate.
+  func admits(_ receipt: NotebookArchiveActivationReceipt) -> Bool {
+    receipts.contains(receipt) && (enrollment == nil || receipt.target.role == .mac)
   }
 
   /// An installer supplies the two actual device receipts, never just a flag.
   public func publish(at control: URL) throws {
-    _ = try Self(receipts: receipts)
+    _ = try Self(receipts: receipts, enrollment: enrollment)
     let local = try NotebookArchiveFiles.read(NotebookArchiveActivationReceipt.self,
       at: control.appendingPathComponent("activation.json"))
-    guard receipts.contains(local) else { throw NotebookStorageError.invalidTransaction("admission does not include this activation") }
+    guard admits(local) else { throw NotebookStorageError.invalidTransaction("admission does not include this activation") }
     try NotebookArchiveFiles.publish(self, at: control.appendingPathComponent("admission.json"))
   }
 }
@@ -217,8 +230,8 @@ public struct NotebookArchiveActivation: Sendable {
     let admissionURL = control.appendingPathComponent("admission.json")
     guard manager.fileExists(atPath: admissionURL.path) else { return .waitingForPair(receipt) }
     let admission = try NotebookArchiveFiles.read(NotebookArchiveAdmission.self, at: admissionURL)
-    _ = try NotebookArchiveAdmission(receipts: admission.receipts)
-    guard admission.receipts.contains(receipt) else { throw NotebookStorageError.invalidTransaction("pair admission mismatch") }
+    _ = try NotebookArchiveAdmission(receipts: admission.receipts, enrollment: admission.enrollment)
+    guard admission.admits(receipt) else { throw NotebookStorageError.invalidTransaction("pair admission mismatch") }
     // A copied admission is not necessarily durable yet. Model/network
     // admission follows the destination's flush of this small control file.
     try localSyncFile(admissionURL)

@@ -23,7 +23,8 @@ extension NotebookStore {
   /// The continuing iPad keeps its drafts/jobs; Mac receives its own presence.
   /// Both start a new delivery journal, never reinterpret historic wire deltas.
   public func prepareDeviceSnapshot(at output: URL, presence: SessionPresence,
-    preservingLocalState: Bool) throws -> NotebookArchiveContentProof {
+    preservingLocalState: Bool, resumingFrom sourcePeer: UUID? = nil) throws -> NotebookArchiveContentProof {
+    guard sourcePeer == nil || !preservingLocalState else { throw NotebookStorageError.invalidTransaction("a new replica cannot inherit device-local work") }
     let manager = FileManager.default
     let source = root.standardizedFileURL.resolvingSymlinksInPath(), destination = output.standardizedFileURL.resolvingSymlinksInPath()
     guard source != destination, !source.path.hasPrefix(destination.path + "/"),
@@ -37,7 +38,7 @@ extension NotebookStore {
     guard try NotebookArchiveFingerprint.read(staging) == original else { throw NotebookStorageError.transactionConflict }
     let replica = NotebookStore(root: staging)
     try replica.prepareContextOrderIndexForTransfer()
-    let before = try replica.archiveContentProof()
+    let before = try replica.archiveContentProof(), sourceCursor = try replica.currentChangeCursor()
     try replica.commandTransaction {
       let database = replica.currentSQL!
       var after = ""
@@ -54,8 +55,12 @@ extension NotebookStore {
         try database.run("DELETE FROM \(table)")
       }
       try database.run("DELETE FROM sqlite_sequence WHERE name='change_log'")
+      if let sourcePeer {
+        try database.run("INSERT INTO peer_cursors(peer_id,direction,sequence) VALUES(?,'incoming',?)",
+          [.text(sourcePeer.uuidString.lowercased()), .integer(Int64(sourceCursor))])
+      }
       if !preservingLocalState {
-        for table in ["chat_jobs", "chat_panel", "file_drafts", "file_window", "file_version_files", "file_versions", "file_uploads", "file_commits"] { try database.run("DELETE FROM \(table)") }
+        for table in ["chat_jobs", "chat_panel", "chat_active_computer", "run_output", "project_runs", "run_commands", "file_drafts", "file_window", "file_version_files", "file_versions", "file_uploads", "file_commits", "file_renames"] { try database.run("DELETE FROM \(table)") }
       }
       // The seed declares every shared value under the current wire contract.
       // Existing content/receipt hashes stay identical; only delivery restarts.
