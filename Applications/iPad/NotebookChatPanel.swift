@@ -416,8 +416,8 @@ struct NotebookChatPanel: View {
             Button("Уточнить текущий ход", systemImage: "arrow.turn.down.right") { model.sendChatMessage(steering: true) }
               .disabled(!canSend).accessibilityIdentifier("notebook-chat-steer")
           }
-          Button("Диктовка в черновик") { chat.voice.explainDictation() }
           if compactComposer {
+            Button("Голосовой ввод Codex — пока недоступен", systemImage: "mic") { chat.voice.explainDictation() }
             Button("Голосовой разговор", systemImage: "waveform") { Task { await chat.voice.begin() } }
               .disabled(chat.voice.activeID != nil || !chat.connected || chat.threadID == nil || chat.browsesChats)
           }
@@ -438,8 +438,16 @@ struct NotebookChatPanel: View {
           ProgressView().controlSize(.small).frame(width: 44, height: 44)
         }
         if !compactComposer {
+          Button { chat.voice.explainDictation() } label: {
+            Image(systemName: "mic").font(.system(size: 16)).foregroundStyle(.secondary)
+              .frame(width: 44, height: 44).contentShape(Rectangle())
+          }
+          .accessibilityLabel("Голосовой ввод Codex").accessibilityValue("Пока недоступен")
+          .accessibilityHint("Показать причину недоступности диктовки в черновик")
+          .accessibilityIdentifier("notebook-chat-dictation")
+          .help("Голосовой ввод Codex — пока недоступен")
           Button { Task { await chat.voice.begin() } } label: {
-            Image(systemName: "waveform").font(.system(size: 16)).frame(width: 44, height: 44)
+            Image(systemName: "waveform").font(.system(size: 16)).frame(width: 44, height: 44).contentShape(Rectangle())
           }.accessibilityLabel("Голосовой разговор с Codex").accessibilityIdentifier("notebook-chat-voice")
             .disabled(chat.voice.activeID != nil || !chat.connected || chat.threadID == nil || chat.browsesChats)
         }
@@ -462,7 +470,7 @@ struct NotebookChatPanel: View {
   }
 
   private var filesWidth: CGFloat { min(220, max(120, size.width * 0.32)) }
-  private var compactComposer: Bool { size.width - (chat.files.window.sidebar ? filesWidth : 0) < (chat.threadID != nil && !chat.browsesChats ? 352 : 300) }
+  private var compactComposer: Bool { size.width - (chat.files.window.sidebar ? filesWidth : 0) < (chat.threadID != nil && !chat.browsesChats ? 396 : 344) }
   private var title: String {
     chat.conversation?.title ?? chat.tasks.first(where: { $0.id == chat.threadID })?.title ?? (chat.threadID == nil ? "Новый чат" : "Чат Codex")
   }

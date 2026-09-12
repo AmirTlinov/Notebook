@@ -5,6 +5,36 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testDictationControlBesideVoiceExplainsAvailabilityWithoutLosingTheDraftOrPaper() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-chat-conversation-fixture"]
+    launchPortraitFixture(app)
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 8))
+    let frame = paper.frame, ink = paper.value as? String
+    app.buttons["notebook-chat-toggle"].tap()
+    let dictation = app.buttons["notebook-chat-dictation"], voice = app.buttons["notebook-chat-voice"]
+    XCTAssertTrue(dictation.waitForExistence(timeout: 4)); XCTAssertTrue(voice.exists)
+    XCTAssertEqual(dictation.frame.width, 44, accuracy: 1)
+    XCTAssertEqual(dictation.frame.height, 44, accuracy: 1)
+    XCTAssertEqual(dictation.frame.maxX, voice.frame.minX, accuracy: 1)
+    XCTAssertEqual(dictation.value as? String, "Пока недоступен")
+    let field = app.descendants(matching: .any).matching(identifier: "notebook-chat-text").firstMatch
+    field.tap(); field.typeText("Keep this draft")
+    dictation.tap()
+    let notice = app.staticTexts["notebook-chat-notice"]
+    XCTAssertTrue(notice.waitForExistence(timeout: 3))
+    XCTAssertTrue(notice.label.contains("не поддерживает диктовку в черновик"))
+    XCTAssertEqual(field.value as? String, "Keep this draft")
+    XCTAssertFalse(app.buttons["Завершить голосовой разговор"].exists)
+    XCTAssertEqual(app.alerts.count, 0, "Explaining unavailable dictation must not request microphone access")
+    XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, ink)
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "dictation-beside-voice-keeps-draft"; proof.lifetime = .keepAlways; add(proof)
+  }
+
   func testTerminalDrawerKeepsChatTypesThroughTheKeyboardAndResizesWithoutMovingPaper() throws {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait

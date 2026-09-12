@@ -87,6 +87,18 @@ import NotebookCore
     XCTAssertNil(navigated); XCTAssertNil(saved)
     let href = try await web.evaluateJavaScript("document.querySelector('article a').getAttribute('href')") as? String
     XCTAssertEqual(href, link.absoluteString)
+    let rawSaveControl = try await web.evaluateJavaScript("""
+      (() => { const button = document.querySelector('.save-answer'), frame = button.getBoundingClientRect();
+        return { text: button.textContent, label: button.getAttribute('aria-label'),
+          icon: button.querySelectorAll('svg[aria-hidden="true"]').length,
+          width: frame.width, height: frame.height }; })()
+      """)
+    let saveControl = try XCTUnwrap(rawSaveControl as? [String: Any])
+    XCTAssertEqual(saveControl["text"] as? String, "", "The note action is an icon, not another line of text")
+    XCTAssertEqual(saveControl["label"] as? String, "Сохранить ответ в заметках")
+    XCTAssertEqual(saveControl["icon"] as? Int, 1)
+    XCTAssertEqual(saveControl["width"] as? Double, 44)
+    XCTAssertEqual(saveControl["height"] as? Double, 44)
     _ = try await web.evaluateJavaScript("document.querySelector('article a').click()")
     _ = try await web.evaluateJavaScript("document.querySelector('.save-answer').click()")
     try await Task.sleep(for: .milliseconds(80))

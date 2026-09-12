@@ -24,7 +24,7 @@ import NotebookCore
   @ObservationIgnored private var submitted = false
   @ObservationIgnored private var appliedAnswer = false
 
-  static let dictationUnavailable = "В установленном App Server Codex нет отдельного интерфейса диктовки в черновик. Голосовой разговор не подменяет диктовку; Apple-распознавание и отдельный API-ключ не используются."
+  static let dictationUnavailable = "Подключение Codex пока не поддерживает диктовку в черновик. Голосовой разговор доступен отдельно."
   func explainDictation() { error = Self.dictationUnavailable }
   func begin() async {
     guard activeID == nil, let chat, !chat.switchingComputer, chat.connected, let thread = chat.threadID, !chat.browsesChats, host != nil else { return }
