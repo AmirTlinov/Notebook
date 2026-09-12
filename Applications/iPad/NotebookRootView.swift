@@ -5,10 +5,7 @@ struct NotebookRootView: View {
   @Environment(NotebookAppModel.self) private var model
   @State private var showsPairing = false
   @State private var showsHistory = false
-  @State private var sceneOrigin = CGPoint.zero
   @State private var penControlsFrame = CGRect.zero
-  @State private var chatFrame = CGRect.zero
-  @State private var elementControlFrames: [CGRect] = []
 
   var body: some View {
     ZStack {
@@ -76,8 +73,6 @@ struct NotebookRootView: View {
       }
     }
     .ignoresSafeArea()
-    .onGeometryChange(for: CGPoint.self) { $0.frame(in: .global).origin } action: { sceneOrigin = $0 }
-    .onPreferenceChange(ElementEditingControlFrames.self) { elementControlFrames = $0 }
     // Only the composer follows the keyboard safe area. The drawing geometry
     // remains the full physical viewport while system input is open.
     NotebookCollaborationView(showsHistory: $showsHistory)
@@ -100,16 +95,13 @@ struct NotebookRootView: View {
           height: max(44, geometry.size.height - 80 - top))
         NotebookChatWindow(chat: chat, available: available,
           openPairing: { showsPairing = true },
-          openHistory: { showsHistory = true }, frameChanged: { chatFrame = $0 })
+          openHistory: { showsHistory = true })
       }
       // The launcher stays still during keyboard dismissal. A compact editor
       // or native question follows the keyboard just like the expanded composer.
       .ignoresSafeArea(.keyboard, edges: chat.expanded || chat.companionExpanded || chat.conversation?.requests.isEmpty == false ? [] : .bottom)
     }
-    if let question = model.agentQuestion, model.chat?.expanded != true {
-      NotebookQuestionOverlay(question: question, sceneOrigin: sceneOrigin,
-        footerHeight: 0, controls: [penControlsFrame, chatFrame] + elementControlFrames).id(question.id)
-    }
+
     }
     .overlay(alignment: .bottomTrailing) {
       if let voice = model.chat?.voice { NotebookVoiceSurface(voice: voice).frame(width: 1, height: 1).allowsHitTesting(false).accessibilityHidden(true) }

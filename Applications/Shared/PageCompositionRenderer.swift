@@ -3,7 +3,7 @@ import ImageIO
 import NotebookCore
 import SwiftUI
 
-/// Physical paper, final pen/erase pixels, then ordered agent layers. Both an
+/// Physical paper, ordered agent layers, then final pen/erase pixels. Both an
 /// exact export and a frozen question choose their own source-raster resolver;
 /// neither can read a new page or another camera during composition.
 @MainActor
@@ -35,7 +35,6 @@ enum PageCompositionRenderer {
     // not expose another element or the handwriting underneath it.
     if elementID == nil {
       try await canvas.drawView(GridPaperView().environment(\.displayScale, scale), size: size, in: frame)
-      try await drawInk(page, size: size, frame: frame, resources: resources, canvas: canvas)
     }
     for element in elements(in: page, region: region, elementID: elementID) {
       try Task.checkCancellation()
@@ -46,6 +45,7 @@ enum PageCompositionRenderer {
         width: element.frame.width, height: element.frame.height))
       canvas.recordDiagnostics(resources.diagnostics(for: [element]))
     }
+    if elementID == nil { try await drawInk(page, size: size, frame: frame, resources: resources, canvas: canvas) }
     let png = try await canvas.finishPNG()
     return .init(png: png, diagnostics: canvas.diagnostics)
   }

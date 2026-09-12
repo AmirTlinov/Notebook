@@ -21,6 +21,7 @@ public struct TargetRenderRequest: Codable, Equatable, Sendable, Identifiable {
     var key: JSONValue = .object(["target": try .encode(target), "source": .string(source),
       "region": try region.map(JSONValue.encode) ?? .null,
       "origin": try worldOrigin.map(JSONValue.encode) ?? .null, "page": .number(Double(pageIndex))])
+    if target.kind == .page { key = key.setting("renderer", .string("NotebookPageComposition/2")) }
     if target.kind == .document { key = key.setting("renderer", .string("NotebookDocumentFragments/2")) }
     if target.kind == .board || target.kind == .cover {
       key = key.setting("renderer", .string("NotebookSpatialComposition/2"))

@@ -180,7 +180,6 @@ struct SpatialWorkspaceView: View {
           .frame(width: viewport.x, height: viewport.y)
 
         boardElements(workset.elements, presence: presence, viewport: viewport, cohort: cohort)
-          .zIndex(model.isElementEditingEnabled ? 8_000 : 0)
 
 
           SpatialInkCanvas(
@@ -234,7 +233,7 @@ struct SpatialWorkspaceView: View {
         NotebookSelectionGesture(inputGate: model.inputGate, onPreview: { rect in
           if pointerPreview != rect { pointerPreview = rect }
           if model.isPointing != (rect != nil) { model.isPointing = rect != nil }
-        }, onPoint: { start, end, held in
+        }, onPoint: { start, end, held, tapCount in
           guard cameraGesture == nil, !settling, !model.scenePreparationPending, let cohort else { return }
           let selection = NotebookAttentionProjection.capture(start: start, end: end, model: model, presence: presence,
             cohort: cohort, installedInk: spatialInkSurfaces.installedSources())
@@ -245,11 +244,37 @@ struct SpatialWorkspaceView: View {
               let focus: InteractiveElementReference = fragment.target.kind == .page
                 ? .page(pageID: fragment.target.id, elementID: id) : .board(boardID: presence.boardID, elementID: id)
               if model.interactiveElementFocus == focus { return }
+              if tapCount > 1 { model.interactiveElementFocus = focus; return }
             }
             if fragment.target.kind == .page { model.selectElement(.page(pageID: fragment.target.id, elementID: id)) }
             else if fragment.target.kind == .board || fragment.target.kind == .cover { model.selectElement(.spatial(elementID: id)) }
           }
           model.publishHumanContext(selection)
+        }, onLift: { point in
+          guard cameraGesture == nil, !settling, let cohort,
+            let selection = NotebookAttentionProjection.capture(start: point, end: point, model: model, presence: presence,
+              cohort: cohort, installedInk: spatialInkSurfaces.installedSources()),
+            let fragment = selection.fragments.first, let id = fragment.elementID else { return nil }
+          let reference: EditableElementReference
+          switch fragment.target.kind {
+          case .page: reference = .page(pageID: fragment.target.id, elementID: id)
+          case .board, .cover: reference = .spatial(elementID: id)
+          default: return nil
+          }
+          let scale = max(presence.camera.scale, 0.001)
+          func translation(_ delta: CGPoint) -> SpatialPoint { .init(x: delta.x / scale, y: delta.y / scale) }
+          return SceneSelectionLift(begin: {
+            model.interactiveElementFocus = nil
+            model.selectElement(reference); selectedItemID = nil; model.isPointing = true
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+          }, change: { model.updateElementDrag(reference, translation: translation($0)) }, end: { delta in
+            model.isPointing = false
+            if hypot(delta.x, delta.y) >= 1 { model.finishElementDrag(reference, translation: translation(delta)) }
+            else { model.updateElementDrag(reference, translation: .zero) }
+          }, cancel: {
+            model.isPointing = false
+            model.updateElementDrag(reference, translation: .zero)
+          })
         }).allowsHitTesting(false)
         if let rect = pointerPreview {
           RoundedRectangle(cornerRadius: 4).stroke(.indigo, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
@@ -369,7 +394,7 @@ struct SpatialWorkspaceView: View {
     presence: SessionPresence,
     viewport: SpatialPoint
   ) -> some View {
-    if !model.isElementEditingEnabled,
+    if model.elementEditingSession.selection == nil,
       presence.mode == .board || presence.mode == .cover,
       !liftedItemIDs.contains(where: { spatialInkSurfaces.pose(for: .cover($0))?.isManipulating == true }),
       let selectedItemID,
@@ -575,7 +600,7 @@ struct SpatialWorkspaceView: View {
             openProgress: presence.focusedItemID == rendered.id
               ? presence.openProgress
               : 0,
-            contentIsInteractive: !model.isPointing && presence.focusedItemID == rendered.id
+            contentIsInteractive: presence.focusedItemID == rendered.id
               && !model.isItemBeingDeleted(rendered.id)
               && (presence.mode == .page || presence.mode == .document)
               && !contentGestureActive
@@ -588,8 +613,7 @@ struct SpatialWorkspaceView: View {
               && (presence.mode == .page || presence.mode == .document)
               && presence.openProgress >= 0.999
               && cameraGesture == nil
-              && !settling
-              && (!model.isElementEditingEnabled || presence.mode == .document),
+              && !settling,
             isSelected: selectedItemID == rendered.id,
             liftRank: liftRank(of: rendered.id),
             editingTextID: editingSpatialTextID,
@@ -648,7 +672,6 @@ struct SpatialWorkspaceView: View {
     let generation: UUID?
     let focus: InteractiveElementReference?
     let elements: [String]
-    let editing: Bool
     let selection: EditableElementReference?
     let translation: SpatialPoint
     let resize: SpatialPoint
@@ -662,7 +685,7 @@ struct SpatialWorkspaceView: View {
     viewport: SpatialPoint, cohort: SceneCompositionCohort?) -> some View {
     let selection = model.elementEditingSession.selection
     let revision = ElementPlaneRevision(cohortID: cohort?.id, generation: model.sceneIndex?.generationID,
-      focus: model.interactiveElementFocus, elements: elements.map(\.id), editing: model.isElementEditingEnabled,
+      focus: model.interactiveElementFocus, elements: elements.map(\.id),
       selection: selection, translation: model.elementEditingSession.translation,
       resize: selection.map { model.elementResizeDelta($0) } ?? .zero,
       pending: model.scenePreparationPending, editingCamera: selection == nil ? nil : presence.camera)
@@ -1898,7 +1921,6 @@ private struct WorkspaceSceneItem: View, Equatable {
       spatialInkSurfaces: spatialInkSurfaces,
       elements: coverElements,
       editingTextID: editingTextID,
-      isElementEditingEnabled: model.isElementEditingEnabled && !model.scenePreparationPending,
       portalOpenProgress: openProgress,
       portalViewport: viewport,
       onTap: handleTap,

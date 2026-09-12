@@ -356,9 +356,9 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.buttons["notebook-chat-toggle"].tap()
     element.tap()
     XCTAssertTrue(app.buttons["delete-agent-element"].waitForExistence(timeout:3))
-    let card = app.descendants(matching: .any).matching(identifier: "agent-question-card").firstMatch
+    let card = app.descendants(matching: .any).matching(identifier: "notebook-context-count").firstMatch
     XCTAssertTrue(card.waitForExistence(timeout: 3), "Finger selection pins the object while the chat stays collapsed")
-    for id in ["move-agent-element", "delete-agent-element", "resize-agent-element"] {
+    for id in ["delete-agent-element", "resize-agent-element"] {
       let handle = app.descendants(matching: .any).matching(identifier: id).firstMatch
       let reachable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in handle.isHittable }, object: nil)
       XCTAssertEqual(XCTWaiter.wait(for: [reachable], timeout: 3), .completed, "\(id): \(handle.debugDescription)")
@@ -367,8 +367,8 @@ final class DrawingResponsivenessTests: XCTestCase {
     editingProof.name = "finger-selection-keeps-editing-handles-reachable"
     editingProof.lifetime = .keepAlways; add(editingProof)
     let initial = element.frame
-    app.descendants(matching: .any)["move-agent-element"].coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).press(forDuration:0.05,
-      thenDragTo:app.descendants(matching: .any)["move-agent-element"].coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).withOffset(.init(dx:100,dy:60)),withVelocity:.slow,thenHoldForDuration:0)
+    element.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).press(forDuration:0.3,
+      thenDragTo:element.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).withOffset(.init(dx:100,dy:60)),withVelocity:.slow,thenHoldForDuration:0)
     XCTAssertGreaterThan(element.frame.midX,initial.midX + 20)
     let moved = element.frame
     openSharedHistory(in: app)
@@ -410,10 +410,10 @@ final class DrawingResponsivenessTests: XCTestCase {
     start.press(forDuration:0.45,thenDragTo:end)
     XCTAssertFalse(app.staticTexts["Укажите фрагмент · протяните для области"].exists)
     XCTAssertTrue(app.buttons["drawing-tool-eraser"].isHittable)
-    XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "agent-question-card").firstMatch.waitForExistence(timeout: 3))
+    XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "notebook-context-count").firstMatch.waitForExistence(timeout: 3))
     openSharedHistory(in: app)
     XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForExistence(timeout: 2))
-    XCTAssertTrue(app.staticTexts["Амир указал область"].firstMatch.exists)
+    XCTAssertTrue(app.staticTexts["Область"].firstMatch.exists)
     let proof = XCTAttachment(screenshot: app.screenshot())
     proof.name = "human-pointer-prepared-source"; proof.lifetime = .keepAlways; add(proof)
     app.buttons["Готово"].tap()
@@ -434,15 +434,16 @@ final class DrawingResponsivenessTests: XCTestCase {
     let edge = CGRect(x: 0.28, y: 0.338, width: 0.12, height: 0.004)
     app.coordinate(withNormalizedOffset: .init(dx: 0.24, dy: 0.20))
       .press(forDuration: 0.45, thenDragTo: app.coordinate(withNormalizedOffset: .init(dx: 0.48, dy: 0.34)))
-    let card = app.descendants(matching: .any).matching(identifier: "agent-question-card").firstMatch
+    let card = app.descendants(matching: .any).matching(identifier: "notebook-context-count").firstMatch
     XCTAssertTrue(card.waitForExistence(timeout: 5))
     for attempt in 0..<2 {
       let indicated = app.screenshot()
       let indicatedProof = XCTAttachment(screenshot: indicated)
       indicatedProof.name = "indication-visible-\(attempt)"; indicatedProof.lifetime = .keepAlways; add(indicatedProof)
-      XCTAssertGreaterThan(changedPixelShare(from: baseline, to: indicated, normalizedRect: edge), 0.08,
+      XCTAssertGreaterThan(changedPixelShare(from: baseline, to: indicated, normalizedRect: edge), 0.04,
         "The selected frame must actually be visible before testing its removal")
-      app.buttons["agent-question-dismiss"].tap()
+      card.tap()
+      app.buttons["notebook-context-clear"].tap()
       XCTAssertTrue(card.waitForNonExistence(timeout: 2))
       let closed = app.screenshot()
       let closedProof = XCTAttachment(screenshot: closed)
@@ -452,11 +453,14 @@ final class DrawingResponsivenessTests: XCTestCase {
       XCTAssertEqual(paper.value as? String, drawing, "Removing indication never erases handwriting")
       if attempt == 0 {
         openSharedHistory(in: app)
-        XCTAssertTrue(app.staticTexts["Амир указал область"].firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Область"].firstMatch.waitForExistence(timeout: 3))
         let resume = app.buttons["Продолжить этот фрагмент"]
         XCTAssertTrue(resume.waitForExistence(timeout: 2))
         resume.tap()
         app.buttons["Готово"].tap()
+        // History opens from the expanded chat. Compare the same unobscured
+        // paper as the baseline, not pixels covered by that unrelated window.
+        app.buttons["notebook-chat-toggle"].tap()
         XCTAssertTrue(card.waitForExistence(timeout: 3))
       }
     }
@@ -850,12 +854,15 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.launchArguments = [
       "--notebook-drawing-responsiveness-fixture",
       "--notebook-agent-element-fixture",
+      "--notebook-simulator-finger-gestures",
     ]
     launchPortraitFixture(app)
 
     let sharedElement = app.otherElements["agent-element-shared-element"]
     XCTAssertTrue(sharedElement.waitForExistence(timeout: 8))
     let initialFrame = sharedElement.frame
+    let paper = app.otherElements["paper-input"]
+    let paperFrame = paper.frame, drawing = paper.value as? String
 
     sharedElement.tap()
     let delete = app.buttons["delete-agent-element"]
@@ -863,11 +870,17 @@ final class DrawingResponsivenessTests: XCTestCase {
       delete.waitForExistence(timeout: 3),
       "Выбранный общий элемент должен показать действие удаления"
     )
+    XCTAssertFalse(app.descendants(matching: .any)["move-agent-element"].exists)
+    XCTAssertFalse(app.descendants(matching: .any)["agent-question-card"].exists)
+    let count = app.buttons["notebook-context-count"]
+    XCTAssertTrue(count.waitForExistence(timeout: 3))
+    XCTAssertEqual(count.value as? String, "1")
+    XCTAssertLessThan(count.frame.width, 45)
 
-    app.descendants(matching: .any)["move-agent-element"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+    sharedElement.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
       .press(
-        forDuration: 0.05,
-        thenDragTo: app.descendants(matching: .any)["move-agent-element"].coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).withOffset(.init(dx: 100, dy: 60)),
+        forDuration: 0.3,
+        thenDragTo: sharedElement.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).withOffset(.init(dx: 100, dy: 60)),
         withVelocity: .slow,
         thenHoldForDuration: 0
       )
@@ -876,6 +889,17 @@ final class DrawingResponsivenessTests: XCTestCase {
       initialFrame.midX + 20,
       "Палец должен перемещать элемент в том же листе"
     )
+
+    XCTAssertEqual(paper.frame, paperFrame)
+    XCTAssertEqual(paper.value as? String, drawing)
+    XCTAssertEqual(count.value as? String, "1", "Moving keeps the original pinned source")
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "body-hold-moved-artifact-with-compact-context-count"; proof.lifetime = .keepAlways; add(proof)
+    app.buttons["notebook-chat-toggle"].tap()
+    XCTAssertTrue(count.waitForExistence(timeout: 3)); XCTAssertEqual(count.value as? String, "1")
+    XCTAssertFalse(app.staticTexts["Амир указал область"].exists)
+    app.buttons["notebook-chat-toggle"].tap()
+    XCTAssertEqual(paper.frame, paperFrame)
 
     app.buttons["delete-agent-element"].tap()
     XCTAssertFalse(

@@ -199,13 +199,11 @@ struct NotebookAttentionMarks: View {
   let presence: SessionPresence
   var body: some View {
     ZStack(alignment:.topLeading) {
-      // A retained history entry is not a live indication. The same question
-      // owns both its card and its frame, even during delayed SQL publication.
+      // Only the current pinned selection is marked, without captions over paper.
       if let question = model.agentQuestion {
-        let entry = model.sharedContexts.first { $0.id == question.contextID }?.previewEntries.first { $0.id == question.entryID }
         ForEach(question.references) { reference in
           if let rect = NotebookAttentionProjection.frame(reference,model:model,presence:presence) {
-            mark(rect, human:true, label:"Указано" + (model.referenceStatusLabel(reference).map { " · " + $0 } ?? ""), changed:entry?.requiresReview ?? false)
+            mark(rect, human: true)
           }
         }
       }
@@ -220,20 +218,15 @@ struct NotebookAttentionMarks: View {
         }
       }
       if let reference = model.highlightedReference, let rect = NotebookAttentionProjection.frame(reference,model:model,presence:presence) {
-        mark(rect,human:false,label:"Результат",changed:model.referenceChanged(reference))
+        mark(rect, human: false)
       }
     }.allowsHitTesting(false).accessibilityHidden(true)
   }
-  private func mark(_ rect: CGRect,human:Bool,label:String,changed:Bool) -> some View {
-    ZStack(alignment:.topLeading) {
-      if human {
-        RoundedRectangle(cornerRadius:4).stroke(.indigo,style:StrokeStyle(lineWidth:2,dash:[6,4]))
-      } else {
-        RoundedRectangle(cornerRadius:12).stroke(.teal,lineWidth:2)
-      }
-      Text(changed ? "\(label) · изменилось" : label).font(.caption2.weight(.semibold))
-        .padding(.horizontal,5).padding(.vertical,2).background(.regularMaterial,in:Capsule()).offset(y:-20)
-    }.frame(width:max(12,rect.width),height:max(12,rect.height)).position(x:rect.midX,y:rect.midY)
+  private func mark(_ rect: CGRect, human: Bool) -> some View {
+    RoundedRectangle(cornerRadius: 4)
+      .stroke(human ? Color.indigo.opacity(0.55) : Color.teal.opacity(0.6), lineWidth: 1)
+      .frame(width: max(12, rect.width), height: max(12, rect.height))
+      .position(x: rect.midX, y: rect.midY)
   }
 }
 

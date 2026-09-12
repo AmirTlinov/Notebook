@@ -190,7 +190,7 @@ enum NotebookAttentionProjection {
       }
     }
     return .init(target:target,elementID:elementID,region:region,worldOrigin:origin,pageIndex:pageIndex,
-      label:dragged ? "Амир указал область" : elementID == nil ? "Амир указал место" : "Амир указал фрагмент")
+      label: dragged ? "Область" : elementID == nil ? "Место" : "Объект")
   }
 
 }

@@ -403,6 +403,13 @@ final class PaperCanvasContainerView: UIView {
     touchView.frame = bounds
   }
 
+  /// Paper owns Pencil above every artifact; fingers reach the material below.
+  override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+    guard touchView.isUserInteractionEnabled, self.point(inside: point, with: event),
+      event?.allTouches?.contains(where: PaperInputView.acceptsDrawingTouch) == true else { return nil }
+    return touchView
+  }
+
   func apply(_ drawing: PageInkDrawing) {
     inkView.apply(drawing)
     touchView.apply(drawing)
@@ -603,7 +610,7 @@ final class PaperInputView: UIView {
     if let pencil = touches.first(where: { $0.type == .pencil }) {
       return pencil
     }
-    return touches.first(where: acceptsDrawingTouch)
+    return touches.first(where: Self.acceptsDrawingTouch)
   }
 
   private func beginAction(with touch: UITouch, event: UIEvent?) {
@@ -650,7 +657,7 @@ final class PaperInputView: UIView {
   private func addActualSamples(for touch: UITouch, event: UIEvent?) {
     let coalesced = event?.coalescedTouches(for: touch) ?? [touch]
     var firstChangedIndex: Int?
-    for sampleTouch in coalesced where acceptsDrawingTouch(sampleTouch) {
+    for sampleTouch in coalesced where Self.acceptsDrawingTouch(sampleTouch) {
       guard let changedIndex = appendActualSample(from: sampleTouch) else {
         continue
       }
@@ -661,7 +668,7 @@ final class PaperInputView: UIView {
     }
   }
 
-  private func acceptsDrawingTouch(_ touch: UITouch) -> Bool {
+  static func acceptsDrawingTouch(_ touch: UITouch) -> Bool {
     if touch.type == .pencil { return true }
     #if DEBUG && targetEnvironment(simulator)
       return touch.type == .direct
@@ -751,7 +758,7 @@ final class PaperInputView: UIView {
       return
     }
     predictedSamples = (event?.predictedTouches(for: touch) ?? [])
-      .filter(acceptsDrawingTouch)
+      .filter(Self.acceptsDrawingTouch)
       .map {
         makeSample(
           from: $0,

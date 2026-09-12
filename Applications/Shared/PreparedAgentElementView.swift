@@ -112,6 +112,7 @@ struct PreparedAgentElementView: View {
           .opacity(isActive && liveProgram == AgentProgramSource(element) ? 1 : 0)
           .allowsHitTesting(isActive && liveProgram == AgentProgramSource(element) && !model.scenePreparationPending)
       }
+      #if os(macOS)
       if allowsInteraction && !element.javaScript.isEmpty && !isActive {
         Button {
           failedSource = nil
@@ -124,6 +125,7 @@ struct PreparedAgentElementView: View {
         .accessibilityLabel("Открыть интерактивную схему")
         .accessibilityIdentifier("activate-agent-element-\(element.id)")
       }
+      #endif
       // An old raster can bridge preparation, but is never presented as current.
       if let failure {
         VStack(spacing: 4) {

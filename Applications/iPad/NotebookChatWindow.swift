@@ -89,12 +89,12 @@ struct NotebookChatWindowLayout: Codable, Equatable {
 }
 
 struct NotebookChatWindow: View {
+  @Environment(NotebookAppModel.self) private var model
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Bindable var chat: NotebookChatController
   let available: CGRect
   let openPairing: () -> Void
   let openHistory: () -> Void
-  let frameChanged: (CGRect) -> Void
   @AppStorage("notebook.companion.show-task") private var showsCompanionTask = true
   @AppStorage("notebook.chat-window") private var savedLayout = ""
   @State private var interaction: (frame: CGRect, available: CGRect, layout: NotebookChatWindowLayout)?
@@ -105,12 +105,11 @@ struct NotebookChatWindow: View {
 
   var body: some View {
     let frame = layout.frame(in: available, expanded: chat.expanded,
-      compactSize: NotebookCompanion.preferredSize(chat: chat, available: available.size, showsTask: showsCompanionTask))
+      compactSize: NotebookCompanion.preferredSize(chat: chat, available: available.size, showsTask: showsCompanionTask, contextCount: model.agentQuestion?.references.count ?? 0))
     NotebookChatPanel(chat: chat, size: frame.size, openPairing: openPairing, openHistory: openHistory,
       move: { update($0, ended: $1, corner: nil, frame: frame) },
       resize: { update($0, ended: $1, corner: $2, frame: frame) },
       endInteraction: { interruptedDrag = false; finishInteraction() })
-      .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frameChanged($0) }
       .position(x: frame.midX, y: frame.midY)
       .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.3, extraBounce: 0), value: chat.expanded)
       .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: chat.companionExpanded)

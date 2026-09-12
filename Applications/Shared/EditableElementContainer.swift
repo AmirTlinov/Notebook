@@ -1,25 +1,7 @@
 import NotebookCore
 import SwiftUI
 
-/// Editing handles publish their actual layout bounds. The question composer
-/// may avoid these controls without owning the element's selection or camera.
-struct ElementEditingControlFrames: PreferenceKey {
-  static let defaultValue: [CGRect] = []
-  static func reduce(value: inout [CGRect], nextValue: () -> [CGRect]) {
-    value.append(contentsOf: nextValue())
-  }
-}
-
-private struct ElementEditingControlBounds: View {
-  var body: some View {
-    GeometryReader { geometry in
-      Color.clear.preference(key: ElementEditingControlFrames.self,
-        value: [geometry.frame(in: .global)])
-    }.allowsHitTesting(false)
-  }
-}
-
-/// The content accepts its own controls; explicit frame handles own editing gestures.
+/// Selection reveals bounded controls; a hold on the material owns movement.
 struct EditableElementContainer<Content: View>: View {
   let isSelected: Bool
   let coordinateScale: Double
@@ -37,25 +19,23 @@ struct EditableElementContainer<Content: View>: View {
     ZStack(alignment: .topTrailing) {
       content
         .accessibilityAction(named: "Изменить элемент", onSelect)
+        .accessibilityAction(named: "Переместить вправо") { onSelect(); onDragEnded(.init(x: 20, y: 0)) }
+        .accessibilityAction(named: "Переместить влево") { onSelect(); onDragEnded(.init(x: -20, y: 0)) }
+        .accessibilityAction(named: "Переместить вниз") { onSelect(); onDragEnded(.init(x: 0, y: 20)) }
+        .accessibilityAction(named: "Переместить вверх") { onSelect(); onDragEnded(.init(x: 0, y: -20)) }
         #if os(macOS)
         .onTapGesture(perform: onSelect)
+        .gesture(DragGesture(minimumDistance: 3)
+          .onChanged { onSelect(); onDragChanged(logicalTranslation($0.translation)) }
+          .onEnded { onDragEnded(logicalTranslation($0.translation)) })
         #endif
       if isSelected {
         Rectangle().stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [8, 5])).allowsHitTesting(false)
         HStack(spacing: 6) {
-          Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
-            .frame(width: 44, height: 44).background(.regularMaterial, in: Circle())
-            .contentShape(Circle()).gesture(moveGesture)
-            .accessibilityLabel("Переместить элемент").accessibilityIdentifier("move-agent-element")
-            .accessibilityAction(named: "Вправо") { onDragEnded(.init(x: 20, y: 0)) }
-            .accessibilityAction(named: "Влево") { onDragEnded(.init(x: -20, y: 0)) }
-            .accessibilityAction(named: "Вниз") { onDragEnded(.init(x: 0, y: 20)) }
-            .accessibilityAction(named: "Вверх") { onDragEnded(.init(x: 0, y: -20)) }
           Button(role: .destructive, action: onDelete) {
             Image(systemName: "trash").frame(width: 44, height: 44).background(.regularMaterial, in: Circle())
           }.buttonStyle(.plain).accessibilityLabel("Удалить элемент").accessibilityIdentifier("delete-agent-element")
         }.font(.system(size: 17, weight: .medium))
-          .background(ElementEditingControlBounds())
           .background(ElementEditingInputRegion().accessibilityHidden(true)).offset(x: 16, y: -48)
       }
     }
@@ -71,7 +51,6 @@ struct EditableElementContainer<Content: View>: View {
       if isSelected {
         Image(systemName: "arrow.up.left.and.arrow.down.right")
           .frame(width: 44, height: 44).background(.regularMaterial, in: Circle()).contentShape(Circle())
-          .background(ElementEditingControlBounds())
           .background(ElementEditingInputRegion().accessibilityHidden(true))
           .offset(x: 16 + resizeDelta.x * coordinateScale, y: 16 + resizeDelta.y * coordinateScale)
           .gesture(DragGesture(minimumDistance: 3)
@@ -86,15 +65,6 @@ struct EditableElementContainer<Content: View>: View {
     .zIndex(isSelected ? 1_000 : 0)
   }
 
-  private var moveGesture: some Gesture {
-    DragGesture(minimumDistance: 3)
-      .onChanged { value in onSelect(); onDragChanged(logicalTranslation(value.translation)) }
-      .onEnded { value in
-        let logical = logicalTranslation(value.translation)
-        guard hypot(logical.x, logical.y) >= 1 else { return }
-        onDragEnded(logical)
-      }
-  }
   private func logicalTranslation(_ translation: CGSize) -> SpatialPoint {
     let scale = max(coordinateScale, 0.001)
     return .init(x: translation.width / scale, y: translation.height / scale)

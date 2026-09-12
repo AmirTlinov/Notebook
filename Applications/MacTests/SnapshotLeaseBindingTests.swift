@@ -5,6 +5,27 @@ import XCTest
 
 final class SnapshotLeaseBindingTests: XCTestCase {
   @MainActor
+  func testPageCompositionKeepsInkAboveArtifactsButElementOnlyReadDoesNotExposeInk() async throws {
+    let size = CGSize(width: 64, height: 64)
+    let resources = SceneRenderResources(byteLimit: 8 * 1024 * 1024)
+    let black = bitmap(size: size, color: .black)
+    let baseline = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(black.tiffRepresentation))?.representation(using: .png, properties: [:]))
+    let element = AgentElement(id: "covered-by-ink", kind: .web,
+      frame: .init(x: 0, y: 0, width: 64, height: 64), source: "red", html: "")
+    let page = PageDocument(size: .init(width: 64, height: 64), actor: UUID(),
+      drawingData: try PageInkDrawing(baselinePNG: baseline, baselineActionCount: 1).dataRepresentation(), elements: [element])
+    XCTAssertTrue(resources.store(bitmap(size: size, color: .red), for: element))
+    let raster = try XCTUnwrap(resources.retainRaster(for: element, minimumScale: 2))
+    defer { raster.release() }
+    let composite = try await PageCompositionRenderer.render(page, resources: resources) { _ in raster }
+    let image = try XCTUnwrap(NSBitmapImageRep(data: composite.png))
+    let center = try XCTUnwrap(image.colorAt(x: image.pixelsWide / 2, y: image.pixelsHigh / 2)?.usingColorSpace(.deviceRGB))
+    XCTAssertLessThan(center.redComponent, 0.1, "Opaque agent content cannot paint over handwriting in the agent's readback")
+    let isolated = try await PageCompositionRenderer.render(page, elementID: element.id, resources: resources) { _ in raster }
+    try assertRed(isolated.png)
+  }
+
+  @MainActor
   func testPageCompositionReadsTheBorrowedEntryAfterALateSameSourceCapture() async throws {
     let resources = SceneRenderResources(byteLimit: 6 * 1024 * 1024)
     let size = CGSize(width: 256, height: 256)

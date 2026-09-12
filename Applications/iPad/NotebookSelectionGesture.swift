@@ -3,11 +3,13 @@ import UIKit
 
 /// Finger selection observes the existing scene without an overlay that can
 /// intercept Pencil. Movement before the hold belongs to the camera; after
-/// the hold it describes a region. A second finger or Pencil cancels selection.
+/// the hold it moves an artifact or describes an empty-paper region.
+/// A second finger or Pencil cancels selection.
 struct NotebookSelectionGesture: UIViewRepresentable {
   let inputGate: NotebookInputGate
   let onPreview: (CGRect?) -> Void
-  let onPoint: (CGPoint, CGPoint, Bool) -> Void
+  let onPoint: (CGPoint, CGPoint, Bool, Int) -> Void
+  let onLift: (CGPoint) -> SceneSelectionLift?
   func makeCoordinator() -> Coordinator { Coordinator() }
   func makeUIView(context: Context) -> GestureAnchorView {
     let view = GestureAnchorView(); view.isUserInteractionEnabled = false
@@ -20,6 +22,7 @@ struct NotebookSelectionGesture: UIViewRepresentable {
     context.coordinator.gate = inputGate
     context.coordinator.recognizer.onPreview = onPreview
     context.coordinator.recognizer.onPoint = onPoint
+    context.coordinator.recognizer.onLift = onLift
     context.coordinator.install(view)
   }
   static func dismantleUIView(_ view: GestureAnchorView, coordinator: Coordinator) { coordinator.uninstall() }
@@ -59,9 +62,20 @@ struct NotebookSelectionGesture: UIViewRepresentable {
   }
 }
 
+/// Frozen callbacks bind one finger to its original owner and coordinate scale.
+/// ElementEditingSession still owns selection and the unsaved translation.
+struct SceneSelectionLift {
+  let begin: () -> Void
+  let change: (CGPoint) -> Void
+  let end: (CGPoint) -> Void
+  let cancel: () -> Void
+}
+
 final class SceneSelectionRecognizer: UIGestureRecognizer {
   var onPreview: ((CGRect?) -> Void)?
-  var onPoint: ((CGPoint, CGPoint, Bool) -> Void)?
+  var onPoint: ((CGPoint, CGPoint, Bool, Int) -> Void)?
+  var onLift: ((CGPoint) -> SceneSelectionLift?)?
+  private var lift: SceneSelectionLift?
   weak var coordinateView: UIView?
   var gate: NotebookInputGate?
   var permitsHold = true
@@ -80,7 +94,8 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
   override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
   func cancelSelection() {
     hold?.cancel(); hold = nil; touch = nil
-    if held { held = false; onPreview?(nil) }
+    if held { held = false; lift?.cancel(); onPreview?(nil) }
+    lift = nil
     if state == .possible { state = .failed }
     else if state == .began || state == .changed { state = .cancelled }
   }
@@ -90,18 +105,27 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
       let first = touches.first, first.type == .direct, let revision = gate?.beginFingerSequence() else { cancelSelection(); return }
     touch = first; start = first.location(in: coordinateView); self.revision = revision
     if permitsHold {
+      lift = onLift?(start)
+      let delay = lift == nil ? 0.35 : NotebookInteractionTouchView.liftDelay
       hold = Task { [weak self] in
-        do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
+        do { try await Task.sleep(for: .seconds(delay)) } catch { return }
         guard let self, state == .possible, gate?.acceptsFingerSequence(revision) == true else { return }
-        held = true; state = .began; onPreview?(CGRect(origin: start, size: .init(width: 1, height: 1)))
+        held = true; state = .began
+        if let lift { lift.begin() }
+        else { onPreview?(CGRect(origin: start, size: .init(width: 1, height: 1))) }
       }
     }
   }
   override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
     guard let touch, touches.contains(touch), let revision, gate?.acceptsFingerSequence(revision) == true else { cancelSelection(); return }
     let end = touch.location(in: coordinateView)
-    guard held else { if hypot(end.x - start.x, end.y - start.y) > 8 { cancelSelection() }; return }
+    guard held else {
+      let tolerance = lift == nil ? 8 : NotebookInteractionTouchView.movementTolerance
+      if hypot(end.x - start.x, end.y - start.y) > tolerance { cancelSelection() }
+      return
+    }
     state = .changed
+    if let lift { lift.change(CGPoint(x: end.x - start.x, y: end.y - start.y)); return }
     onPreview?(CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: max(1, abs(end.x - start.x)), height: max(1, abs(end.y - start.y))))
   }
   override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
@@ -109,10 +133,18 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
     guard let touch, touches.contains(touch), let revision, gate?.acceptsFingerSequence(revision) == true else { cancelSelection(); return }
     let end = touch.location(in: coordinateView)
     self.touch = nil
-    if held { onPreview?(nil) }; onPoint?(start, end, held); state = .ended
+    if held, let lift {
+      self.lift = nil; held = false
+      lift.end(CGPoint(x: end.x - start.x, y: end.y - start.y))
+    } else {
+      if held { onPreview?(nil) }
+      onPoint?(start, end, held, touch.tapCount)
+      held = false; lift = nil
+    }
+    state = .ended
   }
   override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { cancelSelection() }
-  override func reset() { super.reset(); hold?.cancel(); hold = nil; touch = nil; revision = nil; if held { held = false; onPreview?(nil) } }
+  override func reset() { super.reset(); hold?.cancel(); hold = nil; touch = nil; revision = nil; if held { held = false; lift?.cancel(); onPreview?(nil) }; lift = nil }
 }
 
 /// A window-backed display link supplies an opportunity to inspect the current

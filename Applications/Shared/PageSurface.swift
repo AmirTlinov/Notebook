@@ -26,6 +26,22 @@ struct PageSurface: View {
       )
       ZStack(alignment: .topLeading) {
         GridPaperView()
+        AgentOverlayView(
+          pageID: page.id,
+          elements: page.elements,
+          allowsInteraction: isVisible && isInteractive,
+          onRenderReady: { ready in
+            if ready { readyOverlay = page.elements }
+            else if readyOverlay == page.elements { readyOverlay = nil }
+            publishReadiness(ink: inkIsReady, overlay: overlayIsReady)
+          },
+          onState: { elementID, state in
+            guard isVisible, isInteractive, model.activePage?.id == page.id else { return }
+            model.commitElementState(pageID: page.id, elementID: elementID, state: state)
+          }
+        )
+        .opacity(isVisible ? 1 : 0)
+        .allowsHitTesting(isVisible && isInteractive)
         #if os(iOS)
           PencilCanvasView(
             pageID: page.id,
@@ -53,23 +69,7 @@ struct PageSurface: View {
               publishReadiness(ink: true, overlay: overlayIsReady)
             }
         #endif
-        AgentOverlayView(
-          pageID: page.id,
-          elements: page.elements,
-          isElementEditingEnabled: model.isElementEditingEnabled && isInteractive,
-          allowsInteraction: isVisible && isInteractive,
-          onRenderReady: { ready in
-            if ready { readyOverlay = page.elements }
-            else if readyOverlay == page.elements { readyOverlay = nil }
-            publishReadiness(ink: inkIsReady, overlay: overlayIsReady)
-          },
-          onState: { elementID, state in
-            guard isVisible, isInteractive, model.activePage?.id == page.id else { return }
-            model.commitElementState(pageID: page.id, elementID: elementID, state: state)
-          }
-        )
-        .opacity(isVisible ? 1 : 0)
-        .allowsHitTesting(isVisible && isInteractive)
+
       }
       .frame(width: page.size.width, height: page.size.height)
       .clipShape(

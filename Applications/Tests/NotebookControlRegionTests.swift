@@ -4,67 +4,9 @@ import UIKit
 import XCTest
 @testable import Notebook
 
-final class NotebookQuestionPlacementTests: XCTestCase {
-  func testCardUsesAnAdjacentClearSideInsteadOfTheBottomCorner() {
-    let area = CGRect(x: 18, y: 18, width: 800, height: 1000)
-    let selection = CGRect(x: 180, y: 220, width: 180, height: 150)
-    let card = NotebookQuestionPlacement.frame(size: .init(width: 420, height: 330), in: area, near: selection)
-    XCTAssertEqual(card.minX, selection.maxX + 12)
-    XCTAssertEqual(card.minY, selection.minY)
-    XCTAssertTrue(area.contains(card))
-    XCTAssertFalse(card.intersects(selection))
-  }
-
-  func testRightEdgeSelectionUsesTheLeftAndKeepsToolControlsVisible() {
-    let area = CGRect(x: 18, y: 18, width: 800, height: 1000)
-    let selection = CGRect(x: 570, y: 30, width: 220, height: 130)
-    let tools = CGRect(x: 600, y: 18, width: 200, height: 52)
-    let card = NotebookQuestionPlacement.frame(size: .init(width: 420, height: 330), in: area, near: selection, avoiding: [tools])
-    XCTAssertEqual(card.maxX, selection.minX - 12)
-    XCTAssertFalse(card.intersects(tools))
-    XCTAssertFalse(card.intersects(selection))
-  }
-
-  func testPinnedRegionDoesNotCoverTheDifferentElementBeingEdited() {
-    let area = CGRect(x: 18, y: 18, width: 784, height: 1080)
-    let pinned = CGRect(x: 180, y: 212, width: 190, height: 83)
-    let moveAndDelete = CGRect(x: 440, y: 229, width: 94, height: 44)
-    let resize = CGRect(x: 503, y: 466, width: 44, height: 44)
-    let card = NotebookQuestionPlacement.frame(size: .init(width: 420, height: 230),
-      in: area, near: pinned, avoiding: [moveAndDelete, resize])
-    XCTAssertTrue(area.contains(card))
-    XCTAssertFalse(card.intersects(moveAndDelete))
-    XCTAssertFalse(card.intersects(resize))
-  }
-
-  func testKeyboardAndRotationLimitTheCardNotThePhysicalSelection() {
-    let selection = CGRect(x: 380, y: 700, width: 140, height: 160)
-    for area in [CGRect(x: 18, y: 18, width: 800, height: 510), CGRect(x: 18, y: 18, width: 1150, height: 260)] {
-      let card = NotebookQuestionPlacement.frame(size: .init(width: 420, height: 600), in: area, near: selection)
-      XCTAssertTrue(area.contains(card))
-      XCTAssertEqual(card.height, area.height)
-    }
-    XCTAssertEqual(selection.minY, 700)
-  }
-
-  func testOffscreenOrMissingReferenceUsesReachableFallbackWithoutNavigation() {
-    let area = CGRect(x: 18, y: 18, width: 800, height: 900)
-    for anchor in [nil, CGRect(x: -1000, y: -1000, width: 50, height: 50), CGRect.null, CGRect.infinite] as [CGRect?] {
-      let card = NotebookQuestionPlacement.frame(size: .init(width: 420, height: 330), in: area, near: anchor)
-      XCTAssertEqual(card.minX, area.minX)
-      XCTAssertEqual(card.maxY, area.maxY)
-    }
-  }
-
-  func testLargeSelectionAndNarrowWindowKeepTheWholeCardWithinAvailableBounds() {
-    let area = CGRect(x: 18, y: 18, width: 280, height: 450)
-    let card = NotebookQuestionPlacement.frame(size: .init(width: 420, height: 700), in: area,
-      near: .init(x: -100, y: -100, width: 2000, height: 2000))
-    XCTAssertEqual(card, area)
-  }
-
+final class NotebookControlRegionTests: XCTestCase {
   @MainActor
-  func testNativeCardBoundsRejectSceneGesturesButKeepOutsidePencilAndCamera() throws {
+  func testNativeControlBoundsRejectSceneGesturesButKeepOutsidePencilAndCamera() throws {
     let gate = NotebookInputGate(), pencil = UUID()
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene), host = UIViewController()
@@ -84,7 +26,7 @@ final class NotebookQuestionPlacementTests: XCTestCase {
     let cameraGesture = try XCTUnwrap(window.gestureRecognizers?.first { $0 is TwoFingerPaperGestureRecognizer })
     let observer = try XCTUnwrap(window.gestureRecognizers?.first { $0 is NotebookContactObserver })
     let panGesture = try XCTUnwrap(window.gestureRecognizers?.first { $0 is UIPanGestureRecognizer })
-    let touch = QuestionControlTouch(); touch.source = host.view; touch.point = .init(x: 200, y: 200)
+    let touch = RegionControlTouch(); touch.source = host.view; touch.point = .init(x: 200, y: 200)
     XCTAssertFalse(camera.gestureRecognizer(cameraGesture, shouldReceive: touch))
     XCTAssertFalse(camera.gestureRecognizer(observer, shouldReceive: touch))
     XCTAssertFalse(pan.gestureRecognizer(panGesture, shouldReceive: touch))
@@ -123,7 +65,7 @@ final class NotebookQuestionPlacementTests: XCTestCase {
   }
 }
 
-private final class QuestionControlTouch: UITouch {
+private final class RegionControlTouch: UITouch {
   var point = CGPoint.zero
   weak var source: UIView?
   override var view: UIView? { source }

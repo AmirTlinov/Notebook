@@ -14,12 +14,12 @@ struct NotebookCompanion: View {
   @State private var voiceSettings = false
   @AppStorage("notebook.companion.show-task") private var showsTask = true
 
-  static func preferredSize(chat: NotebookChatController, available: CGSize, showsTask: Bool) -> CGSize {
+  static func preferredSize(chat: NotebookChatController, available: CGSize, showsTask: Bool, contextCount: Int = 0) -> CGSize {
     let hasCard = chat.companionExpanded || chat.conversation?.requests.isEmpty == false || chat.voice.error != nil
       || showsTask && (chat.workStatus != nil || !chat.unreadReplies.isEmpty || !chat.pendingMessages.isEmpty || chat.voice.capturing)
     let height: CGFloat = 48 + (hasCard ? 68 : 0) + (chat.companionExpanded ? 52 + (chat.attachments.isEmpty ? 0 : 38) : 0)
       + (chat.conversation?.requests.isEmpty == false ? 160 : 0) + (chat.voice.error != nil ? 90 : 0)
-    return .init(width: min(available.width, hasCard ? 352 : chat.voice.capturing ? 264 : 184),
+    return .init(width: min(available.width, hasCard ? 352 : (chat.voice.capturing ? 264 : 184) + (contextCount > 0 ? 28 : 0)),
       height: min(available.height, height))
   }
   private var needsDecision: Bool { chat.conversation?.requests.isEmpty == false }
@@ -95,6 +95,7 @@ struct NotebookCompanion: View {
         .simultaneousGesture(DragGesture(minimumDistance: 8, coordinateSpace: .named("notebook-window"))
           .updating($moving) { _, state, _ in state = true }
           .onChanged { move($0.translation, false) }.onEnded { move($0.translation, true) })
+      NotebookContextCounter()
       Divider().frame(height: 18).padding(.horizontal, 2)
       if chat.voice.capturing {
         Button { Task { await chat.voice.mute() } } label: {

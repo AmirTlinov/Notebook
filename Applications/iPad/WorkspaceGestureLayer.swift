@@ -639,8 +639,8 @@ struct NotebookInteractionView: UIViewRepresentable {
 
 @MainActor
 final class NotebookInteractionTouchView: UIView {
-  private static let liftDelay: TimeInterval = 0.18
-  private static let movementTolerance: CGFloat = 18
+  static let liftDelay: TimeInterval = 0.18
+  static let movementTolerance: CGFloat = 18
 
   var onTap: (CGPoint, Int) -> Void = { _, _ in }
   var canBeginContact: () -> Bool = { true }

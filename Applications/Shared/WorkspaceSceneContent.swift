@@ -102,7 +102,7 @@ struct BoardPortalPreview: View {
             WorkspaceItemCoverView(
               item: item.item, geometry: item.geometry, spatialInkSurfaces: spatialInkSurfaces,
               elements: cohort.frame.covers[item.id]?.elements ?? [],
-              editingTextID: nil, isElementEditingEnabled: false,
+              editingTextID: nil,
               portalOpenProgress: 0, portalViewport: transitionViewport,
               onTap: { _, _ in },
               onTextEditingEnded: { _ in }, onElementSelected: {},
@@ -159,7 +159,6 @@ struct WorkspaceItemCoverView: View {
   let spatialInkSurfaces: SpatialInkSurfaceRegistry
   let elements: [SpatialElement]
   let editingTextID: String?
-  let isElementEditingEnabled: Bool
   let portalOpenProgress: Double
   let portalViewport: SpatialPoint
   let onTap: (CGPoint, Int) -> Void
@@ -236,7 +235,7 @@ struct WorkspaceItemCoverView: View {
       }
 
       #if os(iOS)
-        if (!isElementEditingEnabled || model.isItemBeingDeleted(item.id)) && !isPortalProjection {
+        if !isPortalProjection {
           NotebookInteractionView(
             inputGate: model.inputGate,
             permitsManipulation: !model.scenePreparationPending && !model.isItemBeingDeleted(item.id),

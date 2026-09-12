@@ -6,7 +6,6 @@ struct AgentOverlayView: View {
 
   let pageID: UUID
   let elements: [AgentElement]
-  let isElementEditingEnabled: Bool
   let allowsInteraction: Bool
   let onRenderReady: (Bool) -> Void
   let onState: (String, JSONValue) -> Void
@@ -15,12 +14,6 @@ struct AgentOverlayView: View {
 
   var body: some View {
     ZStack(alignment: .topLeading) {
-      if isElementEditingEnabled {
-        Color.clear
-          .contentShape(Rectangle())
-          .onTapGesture { model.clearElementSelection() }
-      }
-
       ForEach(elements) { element in
         let reference = EditableElementReference.page(
           pageID: pageID,

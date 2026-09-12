@@ -20,6 +20,7 @@ struct NotebookChatComposer: View {
       if width < 300 {
         HStack(spacing: 0) {
           additions
+          NotebookContextCounter()
           NotebookChatAccessView(chat: chat)
           Spacer(minLength: 0)
           if hasThread { NotebookChatModelControl(chat: chat, compact: true) }
@@ -28,6 +29,7 @@ struct NotebookChatComposer: View {
       } else {
         HStack(spacing: 0) {
           additions
+          NotebookContextCounter()
           NotebookChatAccessView(chat: chat)
           Spacer(minLength: 0)
           savingIndicator

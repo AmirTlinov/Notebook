@@ -261,17 +261,6 @@ struct NotebookChatPanel: View {
   private var composer: some View {
     VStack(alignment: .leading, spacing: 8) {
       NotebookVoiceControls(voice: chat.voice)
-      if let question = model.agentQuestion {
-        HStack(spacing: 6) {
-          Label(question.references.first?.label ?? "Закреплённый фрагмент", systemImage: "scope")
-            .font(.caption).lineLimit(1)
-          Spacer(minLength: 0)
-          Button { model.dismissAgentQuestion() } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }
-            .accessibilityLabel("Снять выделение фрагмента").accessibilityIdentifier("notebook-chat-dismiss-fragment")
-        }
-        .padding(.leading, 12).foregroundStyle(.secondary)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
-      }
       if let notice {
         Text(notice).font(.caption).foregroundStyle(chat.error != nil || model.agentRequestError != nil ? .red : .secondary)
           .lineLimit(3).padding(.horizontal, 12).accessibilityIdentifier("notebook-chat-notice")

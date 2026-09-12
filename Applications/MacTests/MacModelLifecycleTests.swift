@@ -119,7 +119,6 @@ final class MacModelLifecycleTests: XCTestCase {
       elementID: "board-element"
     )
 
-    model.selectElementTool()
     model.selectElement(pageReference)
     model.updateElementDrag(
       pageReference,
@@ -149,7 +148,7 @@ final class MacModelLifecycleTests: XCTestCase {
     XCTAssertEqual(model.elementEditingSession.selection, boardReference)
 
     model.selectDrawingTool(.eraser)
-    XCTAssertFalse(model.isElementEditingEnabled)
+    XCTAssertNil(model.elementEditingSession.selection)
     XCTAssertEqual(model.elementEditingSession, ElementEditingSession())
   }
 

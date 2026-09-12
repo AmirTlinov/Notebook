@@ -528,7 +528,6 @@ final class NotebookAppModel {
   private(set) var penStyle: PenStyle
   private(set) var eraserStyle: EraserStyle
   private(set) var drawingTool: DrawingTool = .pen
-  private(set) var isElementEditingEnabled = false
   private(set) var elementEditingSession = ElementEditingSession()
 
   /// The document bundle supplies its physical size. A notebook or an
@@ -1799,14 +1798,8 @@ final class NotebookAppModel {
     drawingTool = tool
   }
 
-  func selectElementTool() {
-    isPointing = false
-    isElementEditingEnabled = true
-    elementEditingSession = ElementEditingSession()
-  }
-
   func selectElement(_ reference: EditableElementReference) {
-    if !isElementEditingEnabled { selectElementTool() }
+    isPointing = false
     guard elementEditingSession.selection != reference else { return }
     elementEditingSession = ElementEditingSession(selection: reference)
   }
@@ -1815,8 +1808,7 @@ final class NotebookAppModel {
     _ reference: EditableElementReference,
     translation: SpatialPoint
   ) {
-    guard isElementEditingEnabled,
-      elementEditingSession.selection == reference
+    guard elementEditingSession.selection == reference
     else { return }
     elementEditingSession = ElementEditingSession(
       selection: reference,
@@ -1828,8 +1820,7 @@ final class NotebookAppModel {
     _ reference: EditableElementReference,
     translation: SpatialPoint
   ) {
-    guard isElementEditingEnabled,
-      elementEditingSession.selection == reference
+    guard elementEditingSession.selection == reference
     else { return }
     elementEditingSession = ElementEditingSession(selection: reference)
     switch reference {
@@ -1845,12 +1836,12 @@ final class NotebookAppModel {
   }
 
   func updateElementResize(_ reference: EditableElementReference, delta: SpatialPoint) {
-    guard isElementEditingEnabled, elementEditingSession.selection == reference else { return }
+    guard elementEditingSession.selection == reference else { return }
     elementEditingSession = .init(selection: reference, resizeDelta: delta)
   }
 
   func finishElementResize(_ reference: EditableElementReference, delta: SpatialPoint) {
-    guard isElementEditingEnabled, elementEditingSession.selection == reference else { return }
+    guard elementEditingSession.selection == reference else { return }
     elementEditingSession = .init(selection: reference)
     switch reference {
     case .page(let pageID, let elementID): _ = transformPageElement(pageID: pageID, elementID: elementID, by: .zero, resizeBy: delta)
@@ -1863,8 +1854,7 @@ final class NotebookAppModel {
   }
 
   func deleteElement(_ reference: EditableElementReference) {
-    guard isElementEditingEnabled,
-      elementEditingSession.selection == reference
+    guard elementEditingSession.selection == reference
     else { return }
     endElementEditing()
     switch reference {
@@ -1880,7 +1870,6 @@ final class NotebookAppModel {
   }
 
   private func endElementEditing() {
-    isElementEditingEnabled = false
     elementEditingSession = ElementEditingSession()
   }
 
@@ -1929,7 +1918,6 @@ final class NotebookAppModel {
       elements[index] = element.updating(frame: frame)
       return true
     }
-    if moved { showCue(delta == .zero ? "Элемент перемещён" : "Размер элемента изменён") }
     return moved
   }
 
@@ -1940,7 +1928,6 @@ final class NotebookAppModel {
       elements.removeAll { $0.id == elementID }
       return elements.count != count
     }
-    if removed { showCue("Элемент удалён") }
     return removed
   }
 
@@ -1990,7 +1977,6 @@ final class NotebookAppModel {
       )
     else { return false }
     persistBoard(hierarchy)
-    showCue(delta == .zero ? "Элемент перемещён" : "Размер элемента изменён")
     return true
   }
 
@@ -2009,7 +1995,6 @@ final class NotebookAppModel {
       return false
     }
     persistBoard(hierarchy)
-    showCue("Элемент удалён")
     return true
   }
 

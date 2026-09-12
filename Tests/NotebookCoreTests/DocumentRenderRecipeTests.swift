@@ -71,7 +71,7 @@ struct DocumentRenderRecipeTests {
     #expect(try store.requestTargetRender(target: target, expectedRevision: document.contentStamp.revision, pageIndex: 37) == distant)
   }
 
-  @Test func unchangedInkRecipeKeepsItsExistingCompositeIdentity() throws {
+  @Test func pageInkAboveArtifactsGetsANewStableCompositeIdentity() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-render-ink-\(UUID())")
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), page = PageDocument(size: .init(width: 100, height: 100), actor: UUID())
@@ -80,7 +80,9 @@ struct DocumentRenderRecipeTests {
     let key: JSONValue = .object(["target": try .encode(target), "source": .string(source),
       "region": .null, "origin": .null, "page": .number(0)])
     let request = try store.requestTargetRender(target: target, expectedRevision: page.agentStamp.revision)
-    #expect(request.id == (try requestID(key)))
+    #expect(request.id != (try requestID(key)))
+    #expect(request.id == (try requestID(key.setting("renderer", .string("NotebookPageComposition/2")))))
+    #expect(try store.requestTargetRender(target: target, expectedRevision: page.agentStamp.revision).id == request.id)
   }
 
   @Test(arguments: ["error", "ready"])
