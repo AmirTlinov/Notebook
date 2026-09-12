@@ -163,6 +163,7 @@ public struct NotebookFileWindowState: Codable, Equatable, Sendable {
   public var isOpen = false
   public var sidebar = false
   public var terminal: Bool?
+  public var terminalFraction: Double?
   public var runRoot: String?
   public var project: CodexProject?
   public init() { }

@@ -973,7 +973,12 @@ final class NotebookAppModel {
         startPreviewPublication()
       #endif
       #if os(iOS)
-        let chat = NotebookChatController(persistence: persistence, author: actorID) { [weak self] envelope, peer in
+        #if DEBUG && targetEnvironment(simulator)
+        let fixtureChat = try await SimulatorTerminalFixture.make(persistence: persistence, author: actorID, directory: store.root)
+        #else
+        let fixtureChat: NotebookChatController? = nil
+        #endif
+        let chat = fixtureChat ?? NotebookChatController(persistence: persistence, author: actorID) { [weak self] envelope, peer in
           self?.sync?.sendTransient(.codex(envelope), to: peer)
         }
         self.chat = chat

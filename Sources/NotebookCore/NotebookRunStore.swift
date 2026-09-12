@@ -68,9 +68,13 @@ extension NotebookStore {
       guard let record = try latestRun(root: query.root) else { return .init(record: nil) }
       let after = query.runID == record.id ? UInt64(query.after)! : 0
       let db = currentSQL!, first = try db.rows("SELECT MIN(sequence),MAX(sequence) FROM run_output WHERE run=?", [.text(record.id.uuidString)])[0]
-      let rows = try db.rows("SELECT sequence,value FROM run_output WHERE run=? AND sequence>? ORDER BY sequence LIMIT 6", [.text(record.id.uuidString), .integer(Int64(after))])
-      var data = Data(); for row in rows { data.append(row[1].blob!) }
-      let last = rows.last?[0].integer.map(UInt64.init) ?? after
+      let rows = try db.rows("SELECT sequence,value FROM run_output WHERE run=? AND sequence>? ORDER BY sequence LIMIT 64", [.text(record.id.uuidString), .integer(Int64(after))])
+      var data = Data(), last = after
+      for row in rows {
+        let bytes = row[1].blob!
+        guard data.count + bytes.count <= 49_152 else { break }
+        data.append(bytes); last = UInt64(row[0].integer!)
+      }
       return .init(record: record, data: data, after: String(last),
         lostPrefix: first[0].integer.map { UInt64($0) > after + 1 } ?? false,
         more: first[1].integer.map { UInt64($0) > last } ?? false)

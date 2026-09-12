@@ -11,7 +11,8 @@ import NotebookCore
   var command = "" { didSet { persistCommand() } }
   private(set) var error: String?
   private(set) var busy = false
-  private(set) var inputBlocked = false
+  var inputBlocked: Bool { record.map { blockedRuns.contains($0.id) } ?? false }
+  var canInput: Bool { chat?.connected == true && root == selectedRoot && record?.phase == .running && !inputBlocked }
   private(set) var columns = 80
   private(set) var rows = 24
   @ObservationIgnored weak var chat: NotebookChatController?
@@ -20,6 +21,7 @@ import NotebookCore
   @ObservationIgnored private var readerID: UUID?
   @ObservationIgnored private var inputTask: Task<Void, Never>?
   @ObservationIgnored private var pendingInput: [(computer: UUID, run: UUID, bytes: Data)] = []
+  private var blockedRuns = Set<UUID>()
   private(set) var loadingCommand = false
   @ObservationIgnored private var resizing: Task<Void, Never>?
   init(persistence: NotebookPersistenceQueue) { self.persistence = persistence }
@@ -33,7 +35,7 @@ import NotebookCore
   }
   func attach(_ root: NotebookFileAddress, consume: @escaping @MainActor (NotebookRunOutput, Bool) async throws -> Void) -> UUID {
     detach()
-    let id = UUID(); readerID = id; self.root = root; record = nil; inputBlocked = false; loadingCommand = true
+    let id = UUID(); readerID = id; self.root = root; record = nil; error = nil; loadingCommand = true
     reading = Task { [weak self] in
       guard let self else { return }
       do {
@@ -51,11 +53,12 @@ import NotebookCore
             let reset = initial || runID != output.record?.id || output.lostPrefix
             try await consume(output, reset)
             guard readerID == id else { return }
-            if runID != output.record?.id { inputBlocked = false }
+            let sizeNewRun = record?.id != output.record?.id || record?.phase != output.record?.phase
             initial = false; runID = output.record?.id; cursor = output.after; record = output.record; more = output.more
+            if sizeNewRun, record?.phase == .running { size(columns: columns, rows: rows) }
           } catch { if readerID == id, !Task.isCancelled { self.error = error.localizedDescription } }
         }
-        if !more { do { try await Task.sleep(for: .milliseconds(350)) } catch { break } }
+        if !more { do { try await Task.sleep(for: .milliseconds(record?.phase == .running && chat?.connected == true ? 80 : 350)) } catch { break } }
       }
     }
     return id
@@ -70,6 +73,24 @@ import NotebookCore
     guard !loadingCommand, let root, command.utf8.count <= 8192 else { return }
     let value = command
     persistence.enqueue(owner: .runCommand(root.id), publishesChanges: false) { try $0.saveRunCommand(value, root: root); return false }
+  }
+  /// Only an explicit open/new-shell action starts a shell. Mounting a view,
+  /// choosing another computer and restoring saved geometry remain reads.
+  func openTerminal(restart: Bool = false) async {
+    guard !busy, let target = selectedRoot, let chat, chat.connected else { return }
+    busy = true; defer { busy = false }
+    do {
+      guard case .run(let output) = try await chat.directQuery(.run(.init(root: target))), selectedRoot == target else {
+        throw NotebookTransportError.disconnected
+      }
+      if output.record?.isActive == true, !restart { error = nil; return }
+      guard !chat.jobs.contains(where: { job in
+        if case .startRun(let request) = job.input.action { return request.root == target && !job.isTerminal && job.id != output.record?.id }
+        return false
+      }) else { throw NotebookPersistenceQueue.Failure(message: "Mac ещё не подтвердил прежнее открытие терминала. Новый сеанс не создан.") }
+      let request = NotebookRunRequest(root: target, replacing: output.record?.id, columns: columns, rows: rows)
+      try check(try await chat.sessionCommand(.startRun(request), computer: target.computer)); error = nil
+    } catch { if selectedRoot == target { self.error = error.localizedDescription } }
   }
   func start(restart: Bool = false) async {
     guard !busy, !loadingCommand, let root, let chat, root == selectedRoot else { return }
@@ -86,27 +107,27 @@ import NotebookCore
     catch { self.error = error.localizedDescription }
   }
   func input(_ bytes: Data) {
-    guard chat?.connected == true, let computer = root?.computer, chat?.computerID == computer, let record, record.isActive, !inputBlocked, !bytes.isEmpty else { return }
+    guard canInput, let computer = root?.computer, let record, !bytes.isEmpty else { return }
     guard bytes.count + pendingInput.reduce(0, { $0 + $1.bytes.count }) <= 8192 else { error = "Ввод превышает 8 КиБ. Вставьте текст меньшими частями."; return }
     if pendingInput.last?.computer == computer && pendingInput.last?.run == record.id { pendingInput[pendingInput.count - 1].bytes.append(bytes) }
     else { pendingInput.append((computer, record.id, bytes)) }
     drainInput()
   }
-  func continueInput() { inputBlocked = false; drainInput() }
+  func continueInput() { if let record { blockedRuns.remove(record.id) }; error = nil; drainInput() }
   func unavailable(_ message: String) { error = message }
   private func drainInput() {
-    guard inputTask == nil, !inputBlocked, !pendingInput.isEmpty else { return }
+    guard inputTask == nil, pendingInput.contains(where: { !blockedRuns.contains($0.run) }) else { return }
     inputTask = Task { [weak self] in
       try? await Task.sleep(for: .milliseconds(60))
       guard let self else { return }
-      while !pendingInput.isEmpty {
-        let (computer, id, bytes) = pendingInput.removeFirst()
+      while let index = pendingInput.firstIndex(where: { !blockedRuns.contains($0.run) }) {
+        let (computer, id, bytes) = pendingInput.remove(at: index)
         do {
           guard let chat else { throw NotebookTransportError.disconnected }
           try check(try await chat.sessionCommand(.writeRun(id, bytes), computer: computer))
         } catch {
           self.error = "Ввод не подтверждён; автоматически не повторяется. \(error.localizedDescription)"
-          inputBlocked = true; break
+          blockedRuns.insert(id)
         }
       }
       inputTask = nil

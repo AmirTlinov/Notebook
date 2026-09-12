@@ -17,7 +17,7 @@ import NotebookCore
     for db in [store, mac] { _ = try db.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194)) }
     try store.savePresence(.init(mode: .board, camera: .init(center: .init(x: 123, y: -456), scale: 0.31), viewport: .init(x: 834, y: 1194)))
     let before = try store.loadPresence(), queue = NotebookPersistenceQueue(store: store)
-    var chat: NotebookChatController!, starts = 0, inputs: [Data] = []
+    var chat: NotebookChatController!, starts = 0, inputs: [Data] = [], unknownWrite = false
     chat = .init(persistence: queue, author: author) { envelope, peer in
       XCTAssertEqual(peer, computer)
       guard case .request(let query) = envelope.body else { return }
@@ -40,7 +40,9 @@ import NotebookCore
             case .writeRun(let id, let bytes): inputs.append(bytes); try mac.receiveRunEvent(id, .output(bytes)); result = .acknowledged
             default: throw NotebookTransportError.invalidAcknowledgement
             }
-            job = try mac.advanceChatJob(input.id, from: .attempting, to: .accepted, result: result)
+            if unknownWrite, case .writeRun = input.action {
+              job = try mac.advanceChatJob(input.id, from: .attempting, to: .uncertain, error: "lost input receipt")
+            } else { job = try mac.advanceChatJob(input.id, from: .attempting, to: .accepted, result: result) }
           }
           reply = .job(job)
         default: reply = .failure("outside terminal scenario")
@@ -59,8 +61,10 @@ import NotebookCore
     owner.connected(true); owner.mount(container)
     defer { owner.close() }
     try await wait { owner.ready && chat.runs.root == root && !chat.runs.loadingCommand }
-    chat.runs.command = "python3 main.py"; await chat.runs.start()
+    chat.runs.command = "python3 main.py"; await chat.runs.openTerminal()
     try await wait { chat.runs.record?.phase == .running }
+    XCTAssertNil(chat.runs.record?.request.command, "Opening the terminal never guesses or executes the saved project command")
+    await chat.runs.openTerminal(); XCTAssertEqual(starts, 1)
     let id = try XCTUnwrap(chat.runs.record?.id), web = try XCTUnwrap(owner.web)
     let rendered = try await web.evaluateJavaScript("terminal.buffer.active.getLine(0).translateToString(true)") as? String
     XCTAssertEqual(rendered, "READY")
@@ -69,6 +73,17 @@ import NotebookCore
     _ = try await web.evaluateJavaScript("terminal.input('привет\\r',true)")
     try await wait { !inputs.isEmpty }
     XCTAssertEqual(inputs, [Data("привет\r".utf8)])
+    _ = try await web.callAsyncJavaScript("""
+      const write = terminal.write.bind(terminal);
+      terminal.write = (data, done) => write(data, () => setTimeout(done, 80));
+      const output = window.writeOutput(btoa('LIVE_OUTPUT'), false, false, true, false);
+      terminal.input('DURING_OUTPUT', true);
+      await output; terminal.write = write;
+      """, arguments: [:], in: nil, contentWorld: .page)
+    try await wait { inputs.contains(Data("DURING_OUTPUT".utf8)) }
+    unknownWrite = true
+    chat.runs.input(Data("UNKNOWN".utf8))
+    try await wait { chat.runs.inputBlocked }
     chat.expanded = false; chat.disconnect(computer); owner.close()
     try mac.receiveRunEvent(id, .output(Data("\r\nWHILE_OFFLINE\r\n".utf8)))
     XCTAssertTrue(try XCTUnwrap(mac.runRecord(id)).isActive)
@@ -78,8 +93,12 @@ import NotebookCore
     defer { reopened.close() }
     try await wait { reopened.ready && chat.runs.record?.id == id }
     XCTAssertEqual(starts, 1); XCTAssertEqual(chat.runs.command, "python3 main.py")
+    XCTAssertTrue(chat.runs.inputBlocked, "Remounting cannot silently allow input after an unknown write")
     let text = try await XCTUnwrap(reopened.web).evaluateJavaScript("Array.from({length:terminal.buffer.active.length},(_,i)=>terminal.buffer.active.getLine(i).translateToString(true)).join('\\n')") as? String
     XCTAssertTrue(text?.contains("WHILE_OFFLINE") == true)
+    unknownWrite = false; chat.runs.continueInput(); chat.runs.input(Data("CONTINUE".utf8))
+    try await wait { inputs.contains(Data("CONTINUE".utf8)) }
+    XCTAssertEqual(inputs.filter { $0 == Data("UNKNOWN".utf8) }.count, 1)
     XCTAssertEqual(try store.loadPresence(), before)
     reopened.close(); await chat.stop()
     let flushed = await queue.flush(); XCTAssertTrue(flushed)

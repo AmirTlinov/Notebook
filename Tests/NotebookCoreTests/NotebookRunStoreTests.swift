@@ -50,7 +50,7 @@ struct NotebookRunStoreTests {
     try fixture { store, root, author in
       let camera = try store.loadPresence(), revision = try store.currentReadCursor()
       let id = UUID(), record = NotebookRunRecord(id: id, author: author, request: .init(root: root, command: "read value"))
-      try store.saveRunCommand(record.request.command, root: root); try store.admitRun(record)
+      try store.saveRunCommand(try #require(record.request.command), root: root); try store.admitRun(record)
       try store.receiveRunEvent(id, .output(Data("ready\r\n".utf8)))
       let cold = NotebookStore(root: store.root)
       #expect(try cold.runCommand(root: root) == record.request.command)
@@ -67,5 +67,33 @@ struct NotebookRunStoreTests {
     #expect(!NotebookRunRequest(root: root, command: " ").isValid)
     let author = UUID()
     #expect(!NotebookChatInput(author: author, action: .writeRun(UUID(), Data(repeating: 0, count: 8193))).isValid)
+  }
+  @Test func shellIsExplicitAndExistingCommandsAndWindowStateRemainReadable() throws {
+    try fixture { store, root, author in
+      let shell = NotebookRunRequest(root: root)
+      #expect(shell.isValid); #expect(shell.command == nil)
+      try store.admitRun(.init(id: UUID(), author: author, request: shell))
+      #expect(try NotebookStore(root: store.root).latestRun(root: root)?.request == shell)
+      let old = NotebookRunRequest(root: root, command: "printf hello")
+      #expect(try JSONDecoder().decode(NotebookRunRequest.self, from: JSONEncoder().encode(old)) == old)
+      var state = NotebookFileWindowState(); state.terminal = true; state.terminalFraction = 0.7
+      try store.saveFileWindow(state, author: author)
+      #expect(try NotebookStore(root: store.root).fileWindow(author: author).terminalFraction == 0.7)
+      let previous = try JSONDecoder().decode(NotebookFileWindowState.self, from: Data("{\"isOpen\":false,\"sidebar\":true,\"terminal\":true}".utf8))
+      #expect(previous.terminal == true); #expect(previous.terminalFraction == nil)
+    }
+  }
+  @Test func interactiveCharacterBurstsShareAReadWithoutSkippingItsByteLimitedCursor() throws {
+    try fixture { store, root, author in
+      let id = UUID(); try store.admitRun(.init(id: id, author: author, request: .init(root: root)))
+      for _ in 0..<40 { try store.receiveRunEvent(id, .output(Data("x".utf8))) }
+      let page = try store.readRun(.init(root: root))
+      #expect(page.data.count == 40); #expect(page.after == "40"); #expect(!page.more)
+      for _ in 0..<8 { try store.receiveRunEvent(id, .output(Data(repeating: 65, count: 8192))) }
+      let first = try store.readRun(.init(root: root, runID: id, after: page.after))
+      #expect(first.data.count == 49_152); #expect(first.after == "46"); #expect(first.more)
+      let last = try store.readRun(.init(root: root, runID: id, after: first.after))
+      #expect(last.data.count == 16_384); #expect(last.after == "48"); #expect(!last.more)
+    }
   }
 }

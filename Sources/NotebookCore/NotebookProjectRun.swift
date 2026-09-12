@@ -1,18 +1,20 @@
 import Foundation
 
-/// One user-selected command on one computer/project/root. The run UUID is
+/// One shell or user-selected command on one computer/project/root. The run UUID is
 /// also its durable chat input UUID; reconnecting is a read, not another start.
 public struct NotebookRunRequest: Codable, Equatable, Sendable {
   public let root: NotebookFileAddress
-  public let command: String
+  /// nil explicitly opens an interactive shell; an empty command is invalid.
+  public let command: String?
   public let replacing: UUID?
   public let columns: Int
   public let rows: Int
-  public init(root: NotebookFileAddress, command: String, replacing: UUID? = nil, columns: Int = 80, rows: Int = 24) {
+  public init(root: NotebookFileAddress, command: String? = nil, replacing: UUID? = nil, columns: Int = 80, rows: Int = 24) {
     self.root = root; self.command = command; self.replacing = replacing; self.columns = columns; self.rows = rows
   }
-  public var isValid: Bool { root.isValid && root.path.isEmpty && !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    && command.utf8.count <= 8192 && !command.contains("\0") && (20...500).contains(columns) && (4...200).contains(rows) }
+  public var isValid: Bool { root.isValid && root.path.isEmpty
+    && (command.map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.utf8.count <= 8192 && !$0.contains("\0") } ?? true)
+    && (20...500).contains(columns) && (4...200).contains(rows) }
 }
 public struct NotebookRunRecord: Codable, Equatable, Sendable, Identifiable {
   public enum Phase: String, Codable, Sendable { case starting, running, exited, interrupted }

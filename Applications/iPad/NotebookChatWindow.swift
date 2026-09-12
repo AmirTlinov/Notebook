@@ -1,5 +1,28 @@
 import SwiftUI
 
+/// The terminal divides window space, not paper space. The saved proportion
+/// survives a temporarily short keyboard viewport without changing the camera.
+struct NotebookTerminalSplit {
+  static let divider: CGFloat = 12
+  let available: CGFloat
+  let terminal: CGFloat
+  var conversation: CGFloat { available - terminal }
+  init(height: CGFloat, fraction: Double?) {
+    available = max(0, height - Self.divider)
+    // Leave room for the composer, history control and readable message lines.
+    // The terminal may be shorter; its prompt needs fewer rows than a reply.
+    let conversationMinimum = min(180, available / 2)
+    let terminalMinimum = min(120, available / 2)
+    let preferred = fraction.flatMap { $0.isFinite ? $0 : nil } ?? 0.5
+    terminal = min(available - conversationMinimum, max(terminalMinimum, available * preferred))
+  }
+  func fraction(after translation: CGFloat) -> Double {
+    guard available > 0 else { return 0.5 }
+    let next = Self(height: available + Self.divider, fraction: Double((terminal - translation) / available))
+    return Double(next.terminal / available)
+  }
+}
+
 enum NotebookChatResizeCorner: String, CaseIterable {
   case topLeading, topTrailing, bottomLeading, bottomTrailing
   var leading: Bool { self == .topLeading || self == .bottomLeading }

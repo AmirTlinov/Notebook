@@ -4,6 +4,25 @@ import XCTest
 final class NotebookChatWindowTests: XCTestCase {
   private let portrait = CGRect(x: 18, y: 82, width: 798, height: 1032)
 
+  func testTerminalStartsAtHalfAndItsDividerPreservesTheWindowAndTemporaryKeyboardPreference() {
+    let window = NotebookChatWindowLayout(), frame = window.frame(in: portrait, expanded: true)
+    let first = NotebookTerminalSplit(height: 500, fraction: nil)
+    XCTAssertEqual(first.terminal, first.conversation)
+    let fraction = first.fraction(after: -60)
+    let larger = NotebookTerminalSplit(height: 500, fraction: fraction)
+    XCTAssertEqual(larger.terminal, first.terminal + 60, accuracy: 0.001)
+    XCTAssertEqual(NotebookTerminalSplit(height: 500, fraction: 1).conversation, 180)
+    XCTAssertEqual(NotebookTerminalSplit(height: 500, fraction: 0).terminal, 120)
+    for height: CGFloat in [60, 200, 500] {
+      let fit = NotebookTerminalSplit(height: height, fraction: fraction)
+      XCTAssertGreaterThanOrEqual(fit.conversation, 0)
+      XCTAssertGreaterThanOrEqual(fit.terminal, 0)
+      XCTAssertEqual(fit.conversation + fit.terminal + NotebookTerminalSplit.divider, height)
+    }
+    XCTAssertEqual(NotebookTerminalSplit(height: 500, fraction: fraction).terminal, larger.terminal)
+    XCTAssertEqual(window.frame(in: portrait, expanded: true), frame)
+  }
+
   func testDragUsesTheContactFrameAndStopsAtWindowEdges() {
     var layout = NotebookChatWindowLayout()
     let start = layout.frame(in: portrait, expanded: true)

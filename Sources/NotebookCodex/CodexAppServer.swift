@@ -276,7 +276,9 @@ public actor CodexAppServer {
     processes[id]?.task = Task { [weak self] in
       do {
         let result = try await rpc.request("command/exec", params: .object([
-          "processId": .string(id.uuidString.lowercased()), "command": .array([.string("/bin/zsh"), .string("-lc"), .string(request.command)]),
+          "processId": .string(id.uuidString.lowercased()),
+          "command": .array((request.command.map { ["/bin/zsh", "-lc", $0] } ?? ["/bin/zsh", "-il"]).map(JSONValue.string)),
+          "env": .object(["TERM": .string("xterm-256color"), "TERM_PROGRAM": .string("Notebook")]),
           "cwd": .string(request.root.root), "tty": .bool(true), "disableTimeout": .bool(true), "disableOutputCap": .bool(true),
           "size": .object(["cols": .number(Double(request.columns)), "rows": .number(Double(request.rows))])]), timeout: nil)
         guard case .number(let code)? = result["exitCode"], code.isFinite, code.rounded() == code,

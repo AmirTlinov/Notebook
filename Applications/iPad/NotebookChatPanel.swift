@@ -19,6 +19,9 @@ struct NotebookChatPanel: View {
   @State private var showsHistory = false
   @State private var showsAllChats = false
   @State private var editingProject: CodexProject?
+  @State private var terminalDrag: NotebookTerminalSplit?
+  @State private var terminalFraction: Double?
+  @GestureState private var draggingTerminal = false
 
   var body: some View {
     Group {
@@ -26,18 +29,29 @@ struct NotebookChatPanel: View {
         VStack(spacing: 0) {
           header
           projectTabs
-          HStack(spacing: 0) {
+          GeometryReader { geometry in
+            let split = NotebookTerminalSplit(height: geometry.size.height, fraction: terminalFraction ?? chat.files.window.terminalFraction)
+            let height = chat.files.window.terminal == true ? split.conversation : geometry.size.height
             VStack(spacing: 0) {
-              if chat.files.window.terminal == true { NotebookRunPanel(runs: chat.runs, files: chat.files, connected: chat.connected) }
-              else if chat.threadID == nil || chat.browsesChats { recentChats }
-              else { conversation }
-              composer
-            }
-            .frame(maxWidth: .infinity)
-            if chat.files.window.sidebar {
-              Divider()
-              NotebookProjectFilesView(files: chat.files, computer: chat.computerID)
-                .frame(width: filesWidth)
+              HStack(spacing: 0) {
+                VStack(spacing: 0) {
+                  if chat.threadID == nil || chat.browsesChats { recentChats }
+                  else { conversation(height: height) }
+                  composer
+                }
+                .frame(maxWidth: .infinity)
+                if chat.files.window.sidebar {
+                  Divider()
+                  NotebookProjectFilesView(files: chat.files, computer: chat.computerID)
+                    .frame(width: filesWidth)
+                }
+              }.frame(height: height)
+              if chat.files.window.terminal == true {
+                terminalDivider(split)
+                NotebookRunPanel(runs: chat.runs, files: chat.files, connected: chat.connected)
+                  .frame(height: split.terminal)
+                  .transition(.move(edge: .bottom).combined(with: .opacity))
+              }
             }
           }
         }
@@ -57,6 +71,7 @@ struct NotebookChatPanel: View {
     .tint(Color.primary)
     .frame(width: size.width, height: size.height)
     .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: chat.expanded ? 28 : 24))
+    .clipShape(RoundedRectangle(cornerRadius: chat.expanded ? 28 : 24))
     .overlay {
       RoundedRectangle(cornerRadius: chat.expanded ? 28 : 24)
         .strokeBorder(Color(.separator).opacity(0.18), lineWidth: 0.5)
@@ -83,6 +98,32 @@ struct NotebookChatPanel: View {
     .onChange(of: chat.threadID) { showsHistory = false; chat.browsesChats = false }
     .onChange(of: moving) { if !moving { endInteraction() } }
     .onChange(of: resizing) { if !resizing { endInteraction() } }
+    .onChange(of: draggingTerminal) { if !draggingTerminal { finishTerminalResize() } }
+    .onChange(of: chat.computerID) { terminalDrag = nil; terminalFraction = nil }
+  }
+
+  private func terminalDivider(_ split: NotebookTerminalSplit) -> some View {
+    Rectangle().fill(Color(.separator).opacity(0.35)).frame(height: 1)
+      .frame(maxWidth: .infinity, minHeight: NotebookTerminalSplit.divider, maxHeight: NotebookTerminalSplit.divider)
+      .contentShape(Rectangle())
+      .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .named("notebook-window"))
+        .updating($draggingTerminal) { _, value, _ in value = true }
+        .onChanged { value in
+          if terminalDrag == nil { terminalDrag = split }
+          terminalFraction = terminalDrag?.fraction(after: value.translation.height)
+        }
+        .onEnded { _ in finishTerminalResize() })
+      .accessibilityLabel("Высота терминала")
+      .accessibilityValue("\(Int(100 * split.terminal / max(1, split.available))) процентов")
+      .accessibilityAdjustableAction { direction in
+        let delta: CGFloat = direction == .increment ? -40 : 40
+        chat.files.resizeTerminal(fraction: split.fraction(after: delta))
+      }
+      .accessibilityIdentifier("notebook-terminal-divider")
+  }
+  private func finishTerminalResize() {
+    if let terminalFraction { chat.files.resizeTerminal(fraction: terminalFraction) }
+    terminalDrag = nil; terminalFraction = nil
   }
 
   private var header: some View {
@@ -218,9 +259,13 @@ struct NotebookChatPanel: View {
           }
         }.padding(.horizontal, 18)
       }
-      Button { chat.files.toggleTerminal() } label: {
-        Image(systemName: chat.files.window.terminal == true ? "bubble.left" : "terminal").frame(width: 44, height: 44)
-      }.accessibilityLabel(chat.files.window.terminal == true ? "Показать разговор" : "Терминал проекта")
+      Button {
+        withAnimation(.easeInOut(duration: 0.18)) { chat.files.toggleTerminal() }
+        if chat.files.window.terminal == true { Task { await chat.runs.openTerminal() } }
+      } label: {
+        Image(systemName: "terminal").frame(width: 44, height: 44)
+          .foregroundStyle(chat.files.window.terminal == true ? Color.primary : .secondary)
+      }.accessibilityLabel(chat.files.window.terminal == true ? "Свернуть терминал" : "Терминал проекта")
         .accessibilityIdentifier("notebook-terminal-toggle")
       Menu {
         if !chat.computers.isEmpty {
@@ -297,7 +342,7 @@ struct NotebookChatPanel: View {
     }
   }
 
-  private var conversation: some View {
+  private func conversation(height: CGFloat) -> some View {
     VStack(spacing: 0) {
       HStack {
         if showsHistory {
@@ -317,7 +362,7 @@ struct NotebookChatPanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("notebook-chat-transcript")
       if let conversation = chat.conversation, let request = conversation.requests.first {
-        NotebookCodexRequestView(request: request, threadID: conversation.threadID, chat: chat, maximumHeight: min(300, size.height * 0.55))
+        NotebookCodexRequestView(request: request, threadID: conversation.threadID, chat: chat, maximumHeight: min(300, height * 0.45))
           .id(request.id).padding(.horizontal, 12).padding(.bottom, 8)
       }
       if !chat.pendingMessages.isEmpty { outbox }

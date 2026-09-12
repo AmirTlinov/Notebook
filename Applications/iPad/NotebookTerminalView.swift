@@ -6,55 +6,95 @@ struct NotebookRunPanel: View {
   @Bindable var runs: NotebookRunController
   let files: NotebookFileController
   let connected: Bool
+  @State private var showsCommand = false
   var body: some View {
     VStack(spacing: 0) {
-      if let root = runs.selectedRoot {
-        if let project = files.window.project, project.roots.count > 1 {
-          Picker("Папка запуска", selection: Binding(get: { root.root }, set: files.chooseRunRoot)) {
-            ForEach(project.roots, id: \.self) { Text($0).tag($0) }
-          }.font(.caption).padding(.horizontal, 12)
+      HStack(spacing: 8) {
+        Label("Терминал", systemImage: "terminal").font(.system(size: 12, weight: .medium))
+        if let root = runs.selectedRoot {
+          Text(URL(fileURLWithPath: root.root).lastPathComponent).font(.system(size: 12)).lineLimit(1).foregroundStyle(.secondary)
         }
-        HStack(spacing: 8) {
-          TextField("python3 main.py", text: $runs.command).font(.system(size: 13, design: .monospaced))
-            .textInputAutocapitalization(.never).autocorrectionDisabled()
-            .accessibilityIdentifier("notebook-run-command").disabled(runs.loadingCommand)
-          Button { Task { await runs.start(restart: runs.record != nil) } } label: {
-            Image(systemName: runs.record == nil ? "play.fill" : "arrow.clockwise").frame(width: 40, height: 40)
-          }.accessibilityLabel(runs.record == nil ? "Запустить" : "Перезапустить")
-            .accessibilityIdentifier("notebook-run-start").disabled(!connected || runs.busy || runs.command.isEmpty)
-          if runs.record?.isActive == true {
-            Button { Task { await runs.stopRun() } } label: { Image(systemName: "stop.fill").frame(width: 40, height: 40) }
-              .accessibilityLabel("Остановить процесс").accessibilityIdentifier("notebook-run-stop").disabled(!connected || runs.busy)
+        Spacer(minLength: 0)
+        if runs.busy { ProgressView().controlSize(.mini) }
+        Menu {
+          if let project = files.window.project, project.roots.count > 1 {
+            Picker("Папка терминала", selection: Binding(get: { runs.selectedRoot?.root ?? "" }, set: files.chooseRunRoot)) {
+              ForEach(project.roots, id: \.self) { Text($0).tag($0) }
+            }
           }
-        }.padding(.horizontal, 12)
+          Button("Команда проекта…", systemImage: "text.alignleft") { showsCommand = true }
+            .disabled(runs.loadingCommand || runs.root == nil)
+          Button(runs.record?.isActive == true ? "Перезапустить оболочку" : "Новая оболочка", systemImage: "terminal") {
+            Task { await runs.openTerminal(restart: true) }
+          }.disabled(!connected || runs.busy || runs.selectedRoot == nil)
+          if runs.record?.isActive == true {
+            Button("Завершить сеанс", systemImage: "stop.circle", role: .destructive) { Task { await runs.stopRun() } }
+              .disabled(!connected || runs.busy)
+          }
+        } label: { Image(systemName: "ellipsis").frame(width: 36, height: 36) }
+          .accessibilityLabel("Действия терминала").accessibilityIdentifier("notebook-terminal-actions")
+        Button { withAnimation(.easeInOut(duration: 0.18)) { files.toggleTerminal() } } label: {
+          Image(systemName: "minus").frame(width: 36, height: 36)
+        }.accessibilityLabel("Свернуть терминал").accessibilityIdentifier("notebook-terminal-collapse")
+      }.padding(.horizontal, 12)
+      if let root = runs.selectedRoot {
         NotebookTerminalView(runs: runs, root: root, connected: connected).id(root.id)
           .accessibilityIdentifier("notebook-terminal").frame(maxWidth: .infinity, maxHeight: .infinity)
-        HStack {
-          Text(status).lineLimit(2)
-          Spacer(minLength: 4)
-          if runs.record?.isActive == true {
-            Button("Ctrl-C") { runs.input(Data([3])) }.disabled(!connected || runs.inputBlocked)
-              .accessibilityLabel("Прервать команду терминала")
-            Button("↵") { runs.input(Data([13])) }.disabled(!connected || runs.inputBlocked)
-              .accessibilityLabel("Ввод в терминале")
+          .overlay {
+            if !runs.busy, !runs.loadingCommand, runs.record?.isActive != true {
+              VStack(spacing: 8) {
+                if let record = runs.record {
+                  Text(record.error ?? "Сеанс завершён · код \(record.exitCode ?? 0)").font(.caption).lineLimit(2)
+                }
+                Button("Открыть оболочку", systemImage: "terminal") { Task { await runs.openTerminal() } }
+                  .font(.system(size: 13)).padding(10)
+                  .background(.regularMaterial, in: Capsule())
+                  .disabled(!connected).accessibilityIdentifier("notebook-terminal-open-shell")
+              }.padding(12).foregroundStyle(.white)
+            }
           }
-        }.font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.vertical, 6)
-        if let error = runs.error { Text(error).font(.caption2).foregroundStyle(.orange).lineLimit(3).padding(.horizontal, 12) }
-        if runs.inputBlocked { Button("Продолжить ввод без повтора неподтверждённого") { runs.continueInput() }.font(.caption2).disabled(!connected) }
+        HStack(spacing: 0) {
+          Text(connected ? (runs.record?.phase == .starting ? "Открывается на Mac…" : "zsh · Mac") : "Mac не в сети")
+            .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+          Spacer(minLength: 2)
+          terminalKey("Esc", bytes: [27])
+          terminalKey("Tab", bytes: [9])
+          terminalKey("↑", bytes: [27, 91, 65])
+          terminalKey("↓", bytes: [27, 91, 66])
+          terminalKey("Ctrl-C", bytes: [3])
+        }.padding(.horizontal, 12)
+        if let error = runs.error { Text(error).font(.caption2).foregroundStyle(.orange).lineLimit(2).padding(.horizontal, 12) }
+        if runs.inputBlocked {
+          Button("Продолжить ввод без повтора неподтверждённого") { runs.continueInput() }
+            .font(.caption2).disabled(!connected).padding(.horizontal, 12)
+        }
       } else {
-        ContentUnavailableView("Терминал проекта", systemImage: "terminal", description: Text("Выберите проект подключённого Mac."))
+        Text("Выберите проект Mac в чате.").font(.callout).foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
-  }
-  private var status: String {
-    guard connected else { return "Mac не подключён · процесс не остановлен" }
-    guard let record = runs.record else { return "Команда выполняется на Mac, не в модели" }
-    switch record.phase {
-    case .starting: return "Запуск…"
-    case .running: return "Выполняется на Mac"
-    case .exited: return "Завершён · код \(record.exitCode ?? 0)"
-    case .interrupted: return record.error ?? "Прерван · повторного запуска нет"
+    .accessibilityElement(children: .contain).accessibilityIdentifier("notebook-terminal-panel")
+    .sheet(isPresented: $showsCommand) {
+      NavigationStack {
+        Form {
+          TextField("Команда на Mac", text: $runs.command, axis: .vertical)
+            .font(.system(size: 14, design: .monospaced)).textInputAutocapitalization(.never).autocorrectionDisabled()
+            .accessibilityIdentifier("notebook-run-command")
+          if let root = runs.selectedRoot { Text(root.root).font(.caption).foregroundStyle(.secondary) }
+          Button(runs.record?.isActive == true ? "Завершить текущий сеанс и запустить" : "Запустить команду") {
+            Task { await runs.start(restart: runs.record != nil); showsCommand = false }
+          }.disabled(!connected || runs.busy || runs.loadingCommand || runs.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .accessibilityIdentifier("notebook-run-start")
+        }
+        .navigationTitle("Команда проекта").navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { showsCommand = false } } }
+      }.presentationDetents([.medium])
     }
+  }
+  private func terminalKey(_ title: String, bytes: [UInt8]) -> some View {
+    Button(title) { runs.input(Data(bytes)) }.font(.system(size: 11, design: .monospaced))
+      .frame(minWidth: 32, minHeight: 32).disabled(!runs.canInput)
+      .accessibilityLabel(title == "Ctrl-C" ? "Прервать команду терминала" : title)
   }
 }
 
@@ -64,7 +104,7 @@ struct NotebookTerminalView: UIViewRepresentable {
   let connected: Bool
   func makeCoordinator() -> Coordinator { Coordinator(runs: runs, root: root) }
   func makeUIView(context: Context) -> UIView { let view = UIView(); context.coordinator.mount(view); return view }
-  func updateUIView(_ view: UIView, context: Context) { context.coordinator.connected(connected) }
+  func updateUIView(_ view: UIView, context: Context) { context.coordinator.connected(connected, blocked: runs.inputBlocked) }
   static func dismantleUIView(_ view: UIView, coordinator: Coordinator) { coordinator.close() }
   @MainActor final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     weak var runs: NotebookRunController?
@@ -72,6 +112,7 @@ struct NotebookTerminalView: UIViewRepresentable {
     var web: WKWebView?, lease: WebSurfaceLease?, preparation: Task<Void, Never>?
     var reader: UUID?, closed = false, ready = false, online = false
     var lastActive: Bool?
+    var restoring = true, blocked = false
     init(runs: NotebookRunController, root: NotebookFileAddress) { self.runs = runs; self.root = root }
     func mount(_ view: UIView) {
       preparation = Task { [weak self, weak view] in
@@ -92,22 +133,23 @@ struct NotebookTerminalView: UIViewRepresentable {
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
       guard !closed, webView === web else { return }
-      ready = true; connected(online, force: true)
+      ready = true; connected(online, blocked: blocked, force: true)
       reader = runs?.attach(root) { [weak self] output, reset in
         guard let self, !closed, let web else { throw NotebookTransportError.disconnected }
-        let active = output.record?.isActive == true && online
+        if reset { restoring = true }
+        let active = output.record?.phase == .running && (!restoring || !output.more)
         guard reset || !output.data.isEmpty || lastActive != active else { return }
-        _ = try await web.callAsyncJavaScript("await window.writeOutput(data, reset, lost, active)", arguments: [
-          "data": output.data.base64EncodedString(), "reset": reset, "lost": output.lostPrefix, "active": active
+        _ = try await web.callAsyncJavaScript("await window.writeOutput(data, reset, lost, active, replay)", arguments: [
+          "data": output.data.base64EncodedString(), "reset": reset, "lost": output.lostPrefix, "active": active, "replay": restoring
         ], in: nil, contentWorld: .page)
-        lastActive = active
+        lastActive = active; restoring = restoring && output.more
       }
     }
-    func connected(_ value: Bool, force: Bool = false) {
-      guard force || value != online else { return }
-      online = value
+    func connected(_ value: Bool, blocked: Bool = false, force: Bool = false) {
+      guard force || value != online || blocked != self.blocked else { return }
+      online = value; self.blocked = blocked
       guard ready, let web, !closed else { return }
-      Task { _ = try? await web.callAsyncJavaScript("window.setConnected(value)", arguments: ["value": value], in: nil, contentWorld: .page) }
+      Task { _ = try? await web.callAsyncJavaScript("window.setConnected(value)", arguments: ["value": value && !blocked], in: nil, contentWorld: .page) }
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
       action.navigationType == .other && action.request.url?.lastPathComponent == "terminal-shell.html" && action.request.url?.isFileURL == true ? .allow : .cancel
@@ -122,6 +164,7 @@ struct NotebookTerminalView: UIViewRepresentable {
       closed = true; preparation?.cancel(); preparation = nil
       if let reader { runs?.detach(reader) }; reader = nil
       web?.configuration.userContentController.removeScriptMessageHandler(forName: "notebookTerminal")
+      web?.evaluateJavaScript("window.closeTerminal?.()")
       web?.stopLoading(); web?.navigationDelegate = nil; web?.removeFromSuperview(); web = nil
       lease?.release(); lease = nil
     }

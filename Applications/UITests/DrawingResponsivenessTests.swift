@@ -5,6 +5,62 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testTerminalDrawerKeepsChatTypesThroughTheKeyboardAndResizesWithoutMovingPaper() throws {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-terminal-fixture"]
+    launchPortraitFixture(app)
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 8))
+    let paperFrame = paper.frame, ink = paper.value as? String
+    let chat = app.otherElements["notebook-chat-panel"]
+    XCTAssertTrue(chat.waitForExistence(timeout: 5))
+    let corner = chat.coordinate(withNormalizedOffset: .init(dx: 1, dy: 1)).withOffset(.init(dx: -5, dy: -20))
+    corner.press(forDuration: 0.05, thenDragTo: corner.withOffset(.init(dx: 0, dy: 180)))
+    app.buttons["notebook-terminal-toggle"].tap()
+    let terminal = app.otherElements["notebook-terminal-panel"]
+    let divider = app.otherElements["notebook-terminal-divider"]
+    XCTAssertTrue(terminal.waitForExistence(timeout: 5))
+    XCTAssertTrue(divider.waitForExistence(timeout: 5))
+    let reply = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Терминал открыт под разговором'")).firstMatch
+    XCTAssertTrue(reply.waitForExistence(timeout: 8))
+    let tree = XCTAttachment(string: app.debugDescription); tree.name = "terminal-controls-and-transcript"; tree.lifetime = .keepAlways; add(tree)
+    XCTAssertTrue(reply.isHittable, "The conversation must remain visible, not just exist in an offscreen DOM")
+    XCTAssertTrue(app.otherElements["notebook-chat-composer"].exists)
+    XCTAssertLessThan(app.otherElements["notebook-chat-composer"].frame.maxY, terminal.frame.minY)
+    let original = terminal.frame
+    divider.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).press(forDuration: 0.05,
+      thenDragTo: divider.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).withOffset(.init(dx: 0, dy: -95)),
+      withVelocity: .slow, thenHoldForDuration: 0)
+    XCTAssertGreaterThan(terminal.frame.height, original.height + 35)
+    let readable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in reply.isHittable }, object: nil)
+    let readingRestored = XCTWaiter.wait(for: [readable], timeout: 5)
+    let resized = XCTAttachment(screenshot: app.screenshot()); resized.name = "terminal-resized-keeps-readable-reply"; resized.lifetime = .keepAlways; add(resized)
+    let resizedTree = XCTAttachment(string: app.debugDescription); resizedTree.name = "terminal-resized-controls"; resizedTree.lifetime = .keepAlways; add(resizedTree)
+    XCTAssertEqual(readingRestored, .completed)
+    XCTAssertGreaterThanOrEqual(app.otherElements["notebook-chat-transcript"].frame.height, 65)
+    let resizedHeight = terminal.frame.height
+    let input = app.webViews.textViews["Ввод терминала"].firstMatch
+    XCTAssertTrue(input.waitForExistence(timeout: 8))
+    input.tap()
+    XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "An actual terminal touch must open the iPad keyboard")
+    input.typeText("terminal-input-123\n")
+    let echoed = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS 'terminal-input-123'"))
+    XCTAssertTrue(echoed.firstMatch.waitForExistence(timeout: 5), "Typing must traverse the controller and remote peer before appearing in output")
+    XCTAssertEqual(paper.frame, paperFrame); XCTAssertEqual(paper.value as? String, ink)
+    let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "terminal-below-chat-with-real-keyboard"; proof.lifetime = .keepAlways; add(proof)
+    app.buttons["notebook-terminal-collapse"].tap()
+    XCTAssertTrue(terminal.waitForNonExistence(timeout: 4))
+    app.buttons["notebook-terminal-toggle"].tap()
+    XCTAssertTrue(terminal.waitForExistence(timeout: 5))
+    XCTAssertTrue(echoed.firstMatch.waitForExistence(timeout: 5), "Reopening must replay the same process, not a new shell")
+    XCTAssertEqual(terminal.frame.height, resizedHeight, accuracy: 3)
+    XCTAssertTrue(reply.isHittable, "Restoring the drawer must retain readable conversation space")
+    XCTAssertEqual(paper.frame, paperFrame); XCTAssertEqual(paper.value as? String, ink)
+    let restored = XCTAttachment(screenshot: app.screenshot()); restored.name = "terminal-drawer-restored"; restored.lifetime = .keepAlways; add(restored)
+  }
+
   func testHistoryOpensAndClosesRepeatedlyWithManySharedFragments() {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait

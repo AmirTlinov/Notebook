@@ -80,6 +80,10 @@ final class NotebookFileController {
     if window.sidebar { Task { await roots() } }
   }
   func toggleTerminal() { window.terminal = !(window.terminal ?? false); persistWindow() }
+  func resizeTerminal(fraction: Double) {
+    guard fraction.isFinite, (0...1).contains(fraction) else { return }
+    window.terminalFraction = fraction; persistWindow()
+  }
   func chooseRunRoot(_ root: String) { window.runRoot = root; persistWindow() }
   func toggleSidebar() { window.sidebar.toggle(); persistWindow(); if window.sidebar { Task { await roots() } } }
   func roots() async {
