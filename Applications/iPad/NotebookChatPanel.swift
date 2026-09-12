@@ -149,6 +149,10 @@ struct NotebookChatPanel: View {
       }
       .accessibilityLabel("Выбрать чат")
       .accessibilityIdentifier("notebook-chat-tasks")
+      .contextMenu {
+        Button("Совместные ходы", systemImage: "clock.arrow.circlepath", action: openHistory).accessibilityIdentifier("collaboration-history")
+        Button("Подключение и устройства", systemImage: "link", action: openPairing).accessibilityIdentifier("pairing-settings")
+      }
       Color.clear.frame(minWidth: 24, maxWidth: .infinity, minHeight: 44, maxHeight: 44)
         .contentShape(Rectangle()).accessibilityLabel("Переместить чат")
         .accessibilityIdentifier("notebook-chat-move")
@@ -203,6 +207,8 @@ struct NotebookChatPanel: View {
             }
           }
         }
+        Button("Подключение и устройства", systemImage: "link", action: openPairing)
+        Button("Совместные ходы", systemImage: "clock.arrow.circlepath", action: openHistory)
         ForEach(chat.projects) { project in Button("Настроить «" + project.name + "»") { editingProject = project } }
       } label: {
         VStack(spacing: 2) {
@@ -273,81 +279,14 @@ struct NotebookChatPanel: View {
         Text(notice).font(.caption).foregroundStyle(chat.error != nil || model.agentRequestError != nil ? .red : .secondary)
           .lineLimit(3).padding(.horizontal, 12).accessibilityIdentifier("notebook-chat-notice")
       }
-      HStack(alignment: .bottom, spacing: 0) {
-        Menu {
-          Button("Новый чат", systemImage: "square.and.pencil", action: createChat)
-          Button("Проекты и компьютер", systemImage: "folder") { chat.browse(.projects) }
-          Button("Выбрать чат", systemImage: "bubble.left.and.bubble.right") { chat.browse(.chats) }
-          if chat.conversation?.activeTurnID != nil {
-            Button("Уточнить текущий ход", systemImage: "arrow.turn.down.right") { model.sendChatMessage(steering: true) }
-              .disabled(!canSend).accessibilityIdentifier("notebook-chat-steer")
-            Button("Отправить после ответа", systemImage: "text.badge.plus") { model.sendChatMessage() }.disabled(!canSend)
-          }
-          if compactComposer {
-            Button("Голосовой ввод Codex — пока недоступен", systemImage: "mic") { chat.voice.explainDictation() }
-            Button("Голосовой разговор", systemImage: "waveform") { Task { await chat.voice.begin() } }
-              .disabled(chat.voice.activeID != nil || !chat.connected || chat.threadID == nil || chat.browsesChats)
-          }
-          Divider()
-          Button("Совместные ходы", systemImage: "clock.arrow.circlepath", action: openHistory)
-            .accessibilityIdentifier("collaboration-history")
-          Button("Подключение и устройства", systemImage: "link", action: openPairing)
-            .accessibilityIdentifier("pairing-settings")
-        } label: {
-          Image(systemName: "plus").font(.system(size: 19, weight: .regular)).frame(width: 44, height: 44)
-        }.accessibilityLabel("Действия чата").accessibilityIdentifier("notebook-chat-actions")
-        NotebookChatAccessView(chat: chat)
-        TextField("Сообщение Codex", text: $chat.draft, axis: .vertical)
-          .font(.system(size: 15)).lineLimit(1...5).textFieldStyle(.plain)
-          .padding(.vertical, 12).padding(.trailing, 8)
-          .accessibilityIdentifier("notebook-chat-text")
-        if chat.saving || model.isSavingAgentQuestion {
-          ProgressView().controlSize(.small).frame(width: 44, height: 44)
-        }
-        if !compactComposer {
-          Button { chat.voice.explainDictation() } label: {
-            Image(systemName: "mic").font(.system(size: 16)).foregroundStyle(.secondary)
-              .frame(width: 44, height: 44).contentShape(Rectangle())
-          }
-          .accessibilityLabel("Голосовой ввод Codex").accessibilityValue("Пока недоступен")
-          .accessibilityHint("Показать причину недоступности диктовки в черновик")
-          .accessibilityIdentifier("notebook-chat-dictation")
-          .help("Голосовой ввод Codex — пока недоступен")
-          Button { Task { await chat.voice.begin() } } label: {
-            Image(systemName: "waveform").font(.system(size: 16)).frame(width: 44, height: 44).contentShape(Rectangle())
-          }.accessibilityLabel("Голосовой разговор с Codex").accessibilityIdentifier("notebook-chat-voice")
-            .disabled(chat.voice.activeID != nil || !chat.connected || chat.threadID == nil || chat.browsesChats)
-        }
-        if !chat.browsesChats, let conversation = chat.conversation, conversation.busy || conversation.activeTurnID != nil {
-          Button {
-            if let turn = conversation.activeTurnID { Task { await chat.stopTurn(threadID: conversation.threadID, turnID: turn) } }
-          } label: { composerAction("stop.fill", enabled: true) }
-            .disabled(conversation.activeTurnID == nil || chat.saving)
-            .accessibilityLabel("Остановить ответ").accessibilityIdentifier("notebook-chat-stop")
-        } else {
-          Button { model.sendChatMessage() } label: { composerAction("arrow.up", enabled: canSend) }
-            .disabled(!canSend).accessibilityLabel("Отправить сообщение").accessibilityIdentifier("notebook-chat-send")
-        }
-      }
-      .padding(3)
-      .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 26))
-      .overlay { RoundedRectangle(cornerRadius: 26).strokeBorder(Color(.separator).opacity(0.3), lineWidth: 0.5).allowsHitTesting(false) }
-      .shadow(color: .black.opacity(0.035), radius: 6, y: 2)
-      .accessibilityElement(children: .contain)
-      .accessibilityIdentifier("notebook-chat-composer")
+      NotebookChatComposer(chat: chat, width: size.width - (chat.files.window.sidebar ? filesWidth + 1 : 0) - 16,
+        canSend: canSend, saving: chat.saving || model.isSavingAgentQuestion,
+        send: { model.sendChatMessage() }, steer: { model.sendChatMessage(steering: true) })
     }
     .padding(.horizontal, 8).padding(.bottom, 8).padding(.top, 8)
   }
 
-  private func composerAction(_ symbol: String, enabled: Bool) -> some View {
-    Image(systemName: symbol).font(.system(size: symbol == "stop.fill" ? 11 : 15, weight: .medium))
-      .foregroundStyle(.white).frame(width: 30, height: 30)
-      .background(enabled ? Color(.label) : Color(.systemGray), in: Circle())
-      .frame(width: 44, height: 44).contentShape(Rectangle())
-  }
-
   private var filesWidth: CGFloat { min(220, max(120, size.width * 0.32)) }
-  private var compactComposer: Bool { size.width - (chat.files.window.sidebar ? filesWidth : 0) < (chat.threadID != nil && !chat.browsesChats ? 396 : 344) }
   private var title: String {
     chat.conversation?.title ?? chat.tasks.first(where: { $0.id == chat.threadID })?.title ?? (chat.threadID == nil ? "Новый чат" : "Чат Codex")
   }

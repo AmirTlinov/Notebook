@@ -46,6 +46,9 @@ final class NotebookChatPanelTests: XCTestCase {
     let chat = NotebookChatController(persistence: queue, author: author) { envelope, destination in
       XCTAssertEqual(destination, peer)
       guard case .request(let query) = envelope.body else { return XCTFail("Expected a catalogue query") }
+      if case .models = query {
+        receiver?.receive(.init(id: envelope.id, body: .reply(.models([.init(id: "fixture", name: "Fixture", efforts: ["low", "high"], defaultEffort: "low")]))), peerID: peer); return
+      }
       if case .projects = query {
         receiver?.receive(.init(id: envelope.id, body: .reply(.projects(.init(projects: [.init(id: "project", name: "Notebook", roots: ["/fixture"])], nextCursor: nil)))), peerID: peer); return
       }
@@ -66,7 +69,7 @@ final class NotebookChatPanelTests: XCTestCase {
           "requestedSchema": .object(["type": .string("object"), "properties": .object([:])]),
           "_meta": .object(["codex_approval_kind": .string("mcp_tool_call"), "tool_title": .string("Прочитать выбранный участок доски"), "persist": .array([.string("session"), .string("always")])])]))
         let value = CodexConversation(threadID: thread, revision: 1, title: "Обсуждение рисунка", ready: true, busy: true, activeTurnID: "turn", messages: messages, requests: [request], acceptedMessages: [:], turnStatuses: [:],
-          access: .init(profileID: CodexAccessMode.workspace.rawValue, approvalPolicy: .string("on-request"), available: CodexAccessMode.allCases))
+          access: .init(profileID: CodexAccessMode.workspace.rawValue, approvalPolicy: .string("on-request"), available: CodexAccessMode.allCases), model: .init(model: "fixture", effort: "high"), contextUsage: .init(used: 193000, window: 258000))
         receiver?.receive(.init(id: envelope.id, body: .reply(.conversation(value))), peerID: peer); return
       }
       guard case .catalogue = query else { return XCTFail("This view never starts or selects a task") }
@@ -133,7 +136,7 @@ final class NotebookChatPanelTests: XCTestCase {
     let frame = input.convert(input.bounds, to: host.view)
     XCTAssertTrue(host.view.bounds.contains(frame), "The composer cannot require scrolling the conversation to reach it")
     XCTAssertGreaterThan(frame.width, 120)
-    XCTAssertGreaterThan(frame.minY, host.view.bounds.midY)
+    XCTAssertGreaterThan(frame.minY, 64, "The full-width editor stays below the header even in a short panel")
     let image = UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
       XCTAssertTrue(host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true))
     }

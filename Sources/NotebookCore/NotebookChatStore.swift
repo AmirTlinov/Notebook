@@ -37,8 +37,8 @@ extension NotebookStore {
       let job = try saveChatInput(input, to: computer)
       if let (thread, text, _) = input.action.message {
         var panel = try chatPanel(author: input.author, computer: computer)
-        if panel.threadID == thread, panel.draft == text {
-          panel.draft = ""; try saveChatPanel(panel, author: input.author)
+        if panel.threadID == thread, panel.draft == text, (panel.attachments ?? []) == (input.attachments ?? []) {
+          panel.draft = ""; panel.attachments = nil; try saveChatPanel(panel, author: input.author)
         }
       }
       return job
@@ -112,7 +112,7 @@ extension NotebookStore {
   }
 
   public func saveChatPanel(_ state: NotebookChatPanelState, author: UUID) throws {
-    guard state.draft.utf8.count <= 32768, state.threadID == nil || UUID(uuidString: state.threadID!) != nil else {
+    guard CodexInputAttachment.valid(state.attachments ?? []), state.draft.utf8.count <= 32768, state.threadID == nil || UUID(uuidString: state.threadID!) != nil else {
       throw NotebookStorageError.invalidTransaction("invalid chat panel")
     }
     try commandTransaction(advancesReadRevision: false) {

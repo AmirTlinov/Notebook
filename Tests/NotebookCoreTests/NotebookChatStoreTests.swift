@@ -16,6 +16,25 @@ struct NotebookChatStoreTests {
     .init(id: id, author: author, action: .send(threadID: "00000000-0000-0000-0000-000000000001", text: text, context: ""), createdAt: Date(timeIntervalSince1970: 100))
   }
 
+  @Test func attachmentsCommitWithTheirMessageAndCannotClearANewerSelection() throws {
+    try fixture { store, author in
+      let thread = UUID().uuidString, computer = UUID()
+      let file = CodexInputAttachment(kind: .file, name: "code.swift", path: "/tmp/code.swift")
+      let plugin = CodexInputAttachment(kind: .plugin, name: "plugin", path: "plugin://exact@market")
+      try store.saveChatPanel(.init(threadID: thread, draft: "Read", sidecarID: computer, attachments: [file]), author: author)
+      let first = NotebookChatInput(author: author, action: .send(threadID: thread, text: "Read", context: ""), attachments: [file])
+      _ = try store.saveChatSubmission(first, to: computer)
+      let cleared = try store.chatPanel(author: author, computer: computer)
+      #expect(cleared.draft.isEmpty); #expect(cleared.attachments == nil)
+      #expect(try store.chatJob(first.id)?.input.attachments == [file])
+      try store.saveChatPanel(.init(threadID: thread, draft: "Read", sidecarID: computer, attachments: [plugin]), author: author)
+      _ = try store.saveChatSubmission(first, to: computer)
+      #expect(try store.chatPanel(author: author, computer: computer).attachments == [plugin])
+      #expect(try store.chatPanel(author: author, computer: computer).draft == "Read")
+      #expect(try store.chatPanel(author: author, computer: UUID()).attachments == nil)
+    }
+  }
+
   @Test func currentStoredCreationWithoutProjectStillDecodesAndOlderWireVersionRefuses() throws {
     let action = try JSONDecoder().decode(NotebookChatAction.self, from: Data(#"{"create":{"title":"Task"}}"#.utf8))
     #expect(action == .create(title: "Task", project: nil))

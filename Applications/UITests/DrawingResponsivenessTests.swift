@@ -5,6 +5,58 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testComposerAddsResourcesChangesNativeSettingsAndKeepsVoiceAtNarrowWidth() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-chat-sync-fixture"]
+    launchPortraitFixture(app)
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 8))
+    let frame = paper.frame, ink = paper.value as? String
+    let model = app.buttons["notebook-chat-model"]
+    XCTAssertTrue(model.waitForExistence(timeout: 8)); model.tap()
+    app.buttons["notebook-chat-model-picker"].tap()
+    app.buttons.matching(NSPredicate(format: "label CONTAINS 'Fixture B'")).firstMatch.tap()
+    let picked = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      app.buttons["notebook-chat-model-picker"].label.contains("Fixture B")
+    }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [picked], timeout: 8), .completed)
+    app.buttons["notebook-chat-effort-picker"].tap(); app.buttons["Макс."].tap()
+    let effort = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      app.buttons["notebook-chat-effort-picker"].label.contains("Макс.")
+    }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [effort], timeout: 8), .completed)
+    paper.coordinate(withNormalizedOffset: .init(dx: 0.1, dy: 0.3)).tap()
+    app.buttons["notebook-chat-context"].tap()
+    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '193' AND label CONTAINS '258'")).firstMatch.waitForExistence(timeout: 3))
+    paper.coordinate(withNormalizedOffset: .init(dx: 0.1, dy: 0.3)).tap()
+    app.buttons["notebook-chat-actions"].tap(); app.buttons["Плагины"].tap()
+    let resource = app.buttons["notebook-chat-resource-fixture-resource"]
+    XCTAssertTrue(resource.waitForExistence(timeout: 5)); resource.tap()
+    let attachment = app.buttons["notebook-chat-attachment-fixture-resource"]
+    XCTAssertTrue(attachment.waitForExistence(timeout: 3))
+    app.buttons["notebook-chat-actions"].tap()
+    let addFiles = app.buttons["Файлы и папки"]
+    XCTAssertTrue(addFiles.waitForExistence(timeout: 3)); addFiles.tap()
+    let file = app.buttons["notebook-file-example.swift"]
+    XCTAssertTrue(file.waitForExistence(timeout: 5)); file.tap()
+    XCTAssertTrue(app.buttons["notebook-chat-attachment-example.swift"].waitForExistence(timeout: 3))
+    XCTAssertFalse(app.otherElements["notebook-code-document"].exists, "Attaching a file is not opening or moving a document")
+    let panel = app.descendants(matching: .any).matching(identifier: "notebook-chat-panel").firstMatch
+    let corner = panel.coordinate(withNormalizedOffset: .zero).withOffset(.init(dx: 10, dy: panel.frame.height - 10))
+    corner.press(forDuration: 0.1, thenDragTo: corner.withOffset(.init(dx: panel.frame.width - 320, dy: 80)))
+    XCTAssertEqual(panel.frame.width, 320, accuracy: 4)
+    for id in ["notebook-chat-dictation", "notebook-chat-voice", "notebook-chat-stop"] {
+      let button = app.buttons[id]
+      XCTAssertTrue(button.exists); XCTAssertTrue(button.isHittable)
+      XCTAssertTrue(panel.frame.contains(button.frame)); XCTAssertEqual(button.frame.width, 44, accuracy: 1)
+    }
+    XCTAssertEqual(app.buttons["notebook-chat-dictation"].frame.maxX, app.buttons["notebook-chat-voice"].frame.minX, accuracy: 1)
+    XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, ink)
+    let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "composer-model-context-resource-narrow"; proof.lifetime = .keepAlways; add(proof)
+  }
+
   func testScrollLoadsEarlierMessagesAndStopReplacesSendWithoutLosingDraftOrPaper() {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait

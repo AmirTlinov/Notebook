@@ -68,10 +68,13 @@ public actor CodexAppServer {
       states.removeValue(forKey: idle)
     }
     // No settings overrides, stale-turn inference or force takeover. A foreign active writer is a refusal.
+    states[threadID] = CodexAppServerState(threadID: threadID)
     let result = try await rpc.request("thread/resume", params: .object(["threadId": .string(threadID), "excludeTurns": .bool(true)]))
     guard epoch == generation, let thread = result["thread"], thread["id"] == .string(threadID),
       thread["canAcceptDirectInput"] == .bool(true) else { throw CodexBridgeError.externalOwnerUnavailable }
-    states[threadID] = CodexAppServerState(threadID: threadID)
+    if states[threadID]?.model == nil, let model = result["model"]?.string {
+      states[threadID]?.model = .init(model: model, effort: result["reasoningEffort"]?.string)
+    }
     states[threadID]?.cwd = result["cwd"]?.string
     states[threadID]?.access = CodexAccess(profileID: result["activePermissionProfile"]?["id"]?.string,
       approvalPolicy: result["approvalPolicy"] ?? .null, available: [])
@@ -112,13 +115,13 @@ public actor CodexAppServer {
   }
 
   /// SQLite has already recorded the attempt. An unknown response never authorizes resending this input.
-  public func send(threadID: String, clientMessageID: UUID, text: String, context: String? = nil) async throws -> String {
-    try await submit(threadID: threadID, clientMessageID: clientMessageID, text: text, context: context, expectedTurnID: nil)
+  public func send(threadID: String, clientMessageID: UUID, text: String, context: String? = nil, attachments: [CodexInputAttachment] = []) async throws -> String {
+    try await submit(threadID: threadID, clientMessageID: clientMessageID, text: text, context: context, expectedTurnID: nil, attachments: attachments)
   }
-  public func steer(threadID: String, turnID: String, clientMessageID: UUID, text: String, context: String? = nil) async throws -> String {
-    try await submit(threadID: threadID, clientMessageID: clientMessageID, text: text, context: context, expectedTurnID: turnID)
+  public func steer(threadID: String, turnID: String, clientMessageID: UUID, text: String, context: String? = nil, attachments: [CodexInputAttachment] = []) async throws -> String {
+    try await submit(threadID: threadID, clientMessageID: clientMessageID, text: text, context: context, expectedTurnID: turnID, attachments: attachments)
   }
-  private func submit(threadID: String, clientMessageID: UUID, text: String, context: String?, expectedTurnID: String?) async throws -> String {
+  private func submit(threadID: String, clientMessageID: UUID, text: String, context: String?, expectedTurnID: String?, attachments: [CodexInputAttachment]) async throws -> String {
     guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
       text.utf8.count <= CodexProtocol.messageLimit, (context?.utf8.count ?? 0) <= CodexProtocol.messageLimit else { throw CodexBridgeError.invalidInput }
     guard let rpc, let current = states[threadID]?.view, current.ready else { throw CodexBridgeError.unavailable }
@@ -129,7 +132,7 @@ public actor CodexAppServer {
     } else if current.busy { throw CodexBridgeError.busy }
     guard current.requests.isEmpty, starting.insert(threadID).inserted else { throw CodexBridgeError.busy }
     defer { starting.remove(threadID) }
-    var params: [String: JSONValue] = ["threadId": .string(threadID), "clientUserMessageId": .string(messageID), "input": .array([.textInput(text)])]
+    var params: [String: JSONValue] = ["threadId": .string(threadID), "clientUserMessageId": .string(messageID), "input": .array(try Self.composerInput(text: text, attachments: attachments))]
     if let expectedTurnID { params["expectedTurnId"] = .string(expectedTurnID) }
     if let context { params["additionalContext"] = .object(["notebook": .object(["kind": .string("untrusted"), "value": .string(context)])]) }
     do {
@@ -169,6 +172,27 @@ public actor CodexAppServer {
       try await Task.sleep(for: .milliseconds(25))
     }
     guard generation == epoch else { throw CodexBridgeError.acceptanceUnknown }
+  }
+
+  public func setModel(threadID: String, selection: CodexModelSelection) async throws {
+    guard let rpc, states[threadID]?.ready == true else { throw CodexBridgeError.unavailable }
+    guard selection.isValid, let option = try await Self.models(rpc).first(where: { $0.id == selection.model }),
+      let effort = selection.effort, option.efforts.contains(effort) else { throw CodexBridgeError.invalidInput }
+    let epoch = generation
+    _ = try await rpc.request("thread/settings/update", params: .object([
+      "threadId": .string(threadID), "model": .string(selection.model), "effort": .string(effort)]))
+    let deadline = ContinuousClock.now + .seconds(12)
+    while states[threadID]?.model != selection {
+      guard generation == epoch, .now < deadline else { throw CodexBridgeError.acceptanceUnknown }
+      try await Task.sleep(for: .milliseconds(25))
+    }
+    guard generation == epoch else { throw CodexBridgeError.acceptanceUnknown }
+  }
+
+  public func compact(threadID: String) async throws {
+    guard let rpc, let state = states[threadID], state.ready else { throw CodexBridgeError.unavailable }
+    guard !state.view.busy, state.requests.isEmpty else { throw CodexBridgeError.busy }
+    _ = try await rpc.request("thread/compact/start", params: .object(["threadId": .string(threadID)]))
   }
 
   static func response(request: CodexUserRequest, decision: CodexUserDecision) throws -> JSONValue {

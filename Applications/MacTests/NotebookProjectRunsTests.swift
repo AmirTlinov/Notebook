@@ -20,6 +20,8 @@ private actor RunOwner: NotebookCodexProcessOwner, NotebookCodexCatalogueOwner {
   func stopProcess(id: UUID) async throws { stops += 1; try await outputs.removeValue(forKey: id)?(.exited(-15)) }
   func readProject(id: String) -> CodexProject { .init(id: id, name: "Demo", roots: ["/tmp/demo"]) }
   func updateProject(_ edit: CodexProjectEdit) throws -> CodexProject { throw CodexBridgeError.invalidInput }
+  func models() -> [CodexModelOption] { [.init(id: "fixture", name: "Fixture", efforts: ["low", "high"], defaultEffort: "low")] }
+  func resources(threadID: String, kind: CodexResourceKind, cursor: String?) -> CodexResourcePage { .init(resources: []) }
   func projects(cursor: String?) -> CodexProjectPage { .init(projects: [], nextCursor: nil) }
   func tasks(cursor: String?, project: CodexProject?) -> CodexTaskPage { .init(tasks: [], nextCursor: nil) }
   func history(threadID: String, cursor: String?) -> CodexHistoryPage { .init(messages: [], nextCursor: nil) }

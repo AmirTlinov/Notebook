@@ -23,6 +23,7 @@ import NotebookCore
       let reply: NotebookChatReply
       do {
         switch query {
+      case .models: reply = .models([])
         case .projects: reply = .projects(.init(projects: [project, research, empty], nextCursor: nil))
         case .catalogue(_, let selected): reply = .catalogue(.init(tasks: [task, other].filter { selected == nil || $0.projectID == selected?.id }, nextCursor: nil))
         case .activity(let ids): reply = .activity(ids.map { .init(id: $0, status: .idle) })

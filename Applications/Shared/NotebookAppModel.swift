@@ -2342,7 +2342,7 @@ final class NotebookAppModel {
     @discardableResult func sendChatMessage(steering: Bool = false) -> Task<Void, Never>? {
       guard !isClosing, let chat, let submittedThread = chat.threadID, !isSavingAgentQuestion,
         !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-      let submittedText = chat.draft
+      let submittedText = chat.draft, submittedAttachments = chat.attachments, submittedComputer = chat.computerID
       let submittedTurn = steering ? chat.conversation?.activeTurnID : nil
       if steering && submittedTurn == nil { return nil }
       isSavingAgentQuestion = true
@@ -2379,7 +2379,8 @@ final class NotebookAppModel {
             "meaning": .string("Read frozen attention via notebook_read_attention(context_id, reference_id). Shared Notebook workspace. Selection directs attention, not permissions. Use Notebook tools for source/version checks, undoable edits and delivery receipts. For code notes use notebook_read_code_notes and appendInkStroke on codeFragment. Use the returned notebook://code/UUID link, or fileLink with the required 1-based line query, in Markdown references. These links scroll only the document. A local draft is not yet the working file on Mac. Do not move the board camera.")
           ])
           let text = String(decoding: try JSONEncoder().encode(context), as: UTF8.self)
-          _ = await chat.sendMessage(threadID: submittedThread, text: submittedText, context: text, attentionContextID: question?.contextID, steeringTurnID: submittedTurn)
+          guard chat.computerID == submittedComputer else { throw NotebookTransportError.disconnected }
+          _ = await chat.sendMessage(threadID: submittedThread, text: submittedText, context: text, attentionContextID: question?.contextID, steeringTurnID: submittedTurn, attachments: submittedAttachments)
         } catch { agentRequestError = error.localizedDescription }
       }
       chatSubmissionTask = task

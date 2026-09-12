@@ -36,6 +36,10 @@ final class NotebookChatController {
   var selectedProject: CodexProject? { files.window.project }
   private(set) var activities: [String: CodexTaskActivity] = [:]
   var draft: String = "" { didSet { persistPanel() } }
+  private(set) var attachments: [CodexInputAttachment] = []
+  private(set) var models: [CodexModelOption] = []
+  private(set) var loadingModels = false
+  private(set) var modelError: String?
   private(set) var threadID: String?
   var tasks: [CodexTask] { catalogues[.chats]?.tasks ?? [] }
   private(set) var defaultProviderNeedsSignIn = false
@@ -95,7 +99,7 @@ final class NotebookChatController {
     do {
       let author = author
       let state = try await persistence.submit { store in try store.prepareChatComputers(author: author); return try store.chatPanel(author: author) }
-      threadID = state.threadID; draft = state.draft; peer = state.sidecarID
+      threadID = state.threadID; draft = state.draft; attachments = state.attachments ?? []; peer = state.sidecarID
       try await refreshJobs()
       try await files.start()
       loaded = true
@@ -212,7 +216,7 @@ final class NotebookChatController {
         }
       }
       runs.detach(); queries.removeAll()
-      loaded = false; peer = id; threadID = restored.panel.threadID; draft = restored.panel.draft; loaded = true
+      loaded = false; peer = id; threadID = restored.panel.threadID; draft = restored.panel.draft; attachments = restored.panel.attachments ?? []; models = []; loadingModels = false; modelError = nil; loaded = true
       transcriptGeneration = UUID(); catchUpBoundary = nil
       conversation = nil; messages = []; historyCursor = nil; historyLoaded = false; historyBoundary = nil; projects = []; catalogues = [:]; activities = [:]
       projectCursor = nil; projectPages = 1; nextProjectPage = false; offeredJobs.removeAll(); selectedTask = nil; expandedProjects = []; browserMode = .chats
@@ -395,6 +399,38 @@ final class NotebookChatController {
   func create() async {
     if await submit(.create(title: "Занятие в Notebook", project: selectedProject)) { browsesChats = true; catalogue() }
   }
+  func attach(_ value: CodexInputAttachment) {
+    guard !switchingComputer, value.isValid, attachments.count < 16, !attachments.contains(where: { $0.id == value.id }) else { return }
+    attachments.append(value); persistPanel()
+  }
+  func removeAttachment(_ id: String) { attachments.removeAll { $0.id == id }; persistPanel() }
+  func readModels() async {
+    guard !loadingModels, connected else { return }
+    loadingModels = true; let computer = peer
+    defer { if peer == computer { loadingModels = false } }
+    do {
+      guard case .models(let values) = try await directQuery(.models) else { throw NotebookTransportError.invalidAcknowledgement }
+      guard peer == computer else { return }; models = values; modelError = nil
+    } catch { if peer == computer { modelError = error.localizedDescription } }
+  }
+  func setModel(_ selection: CodexModelSelection, thread: String) async {
+    guard threadID == thread, !browsesChats, connected, !continuationUnavailable,
+      let option = models.first(where: { $0.id == selection.model }), let effort = selection.effort,
+      option.efforts.contains(effort),
+      !(latestModelChange.map { !$0.isTerminal && $0.input.action == .setModel(threadID: thread, selection: selection) } ?? false) else { return }
+    _ = await submit(.setModel(threadID: thread, selection: selection))
+  }
+  private var latestModelChange: NotebookChatJob? {
+    jobs.first { if case .setModel(let thread, _) = $0.input.action { return thread == threadID }; return false }
+  }
+  var modelChangePending: Bool { latestModelChange.map { !$0.isTerminal } ?? false }
+  var modelChangeUncertain: Bool { latestModelChange?.state == .uncertain }
+  func compactContext() async {
+    guard let threadID, connected, !browsesChats, conversation?.ready == true, conversation?.busy == false,
+      !jobs.contains(where: { $0.input.action == .compact(threadID: threadID) && !$0.isTerminal }) else { return }
+    _ = await submit(.compact(threadID: threadID))
+  }
+
   func setAccess(_ mode: CodexAccessMode, thread: String) async {
     guard threadID == thread, !browsesChats, connected, !continuationUnavailable, conversation?.access?.available.contains(mode) == true,
       !(latestAccessChange.map { $0.input.action == .setAccess(threadID: thread, mode: mode) && !$0.isTerminal } ?? false) else { return }
@@ -416,12 +452,12 @@ final class NotebookChatController {
     }
   }
 
-  func sendMessage(threadID submittedThread: String, text: String, context: String, attentionContextID: UUID? = nil, steeringTurnID: String? = nil) async -> Bool {
+  func sendMessage(threadID submittedThread: String, text: String, context: String, attentionContextID: UUID? = nil, steeringTurnID: String? = nil, attachments submittedAttachments: [CodexInputAttachment] = []) async -> Bool {
     guard submittedThread != threadID || (!continuationUnavailable && !browsesChats) else { return false }
     let computer = peer
     let action: NotebookChatAction = steeringTurnID.map { .steer(threadID: submittedThread, turnID: $0, text: text, context: context) } ?? .send(threadID: submittedThread, text: text, context: context)
-    if await submit(action, attentionContextID: attentionContextID) {
-      if peer == computer, draft == text, threadID == submittedThread { draft = "" }; return true
+    if await submit(action, attentionContextID: attentionContextID, attachments: submittedAttachments.isEmpty ? nil : submittedAttachments) {
+      if peer == computer, draft == text, threadID == submittedThread, attachments == submittedAttachments { attachments = []; draft = "" }; return true
     }
     return false
   }
@@ -445,7 +481,7 @@ final class NotebookChatController {
     }
   }
 
-  private func submit(_ action: NotebookChatAction, attentionContextID: UUID? = nil) async -> Bool {
+  private func submit(_ action: NotebookChatAction, attentionContextID: UUID? = nil, attachments: [CodexInputAttachment]? = nil) async -> Bool {
     guard loaded, !stopped, !saving, !switchingComputer else { return false }
     saving = true; defer { saving = false }
     let computer = peer
@@ -461,10 +497,10 @@ final class NotebookChatController {
         }
       } catch { self.error = error.localizedDescription; return false }
     }
-    if let savingInput, savingInput.action != action || savingInput.attentionContextID != attentionContextID {
+    if let savingInput, savingInput.action != action || savingInput.attentionContextID != attentionContextID || savingInput.attachments != attachments {
       error = "Сначала завершите сохранение предыдущего сообщения."; return false
     }
-    let input = savingInput ?? NotebookChatInput(id: controlID ?? UUID(), author: author, action: action, attentionContextID: attentionContextID)
+    let input = savingInput ?? NotebookChatInput(id: controlID ?? UUID(), author: author, action: action, attentionContextID: attentionContextID, attachments: attachments)
     savingInput = input
     do {
       _ = try await persistence.submit { try $0.saveChatSubmission(input, to: computer) }
@@ -484,7 +520,7 @@ final class NotebookChatController {
   }
   private func persistPanel() {
     guard loaded else { return }
-    let state = NotebookChatPanelState(threadID: threadID, draft: draft, sidecarID: peer), author = author
+    let state = NotebookChatPanelState(threadID: threadID, draft: draft, sidecarID: peer, attachments: attachments.isEmpty ? nil : attachments), author = author
     persistence.enqueue(owner: .chatPanel(peer), publishesChanges: false) { try $0.saveChatPanel(state, author: author); return false }
   }
   func refreshFileJobs() async { try? await refreshJobs(); wake.continuation.yield(()) }

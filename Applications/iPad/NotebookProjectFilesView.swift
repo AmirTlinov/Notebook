@@ -4,21 +4,25 @@ import NotebookCore
 struct NotebookProjectFilesView: View {
   @Bindable var files: NotebookFileController
   let computer: UUID?
+  var attach: ((NotebookFileAddress, Bool) -> Void)? = nil
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 0) {
-        Text("Файлы").font(.system(size: 13, weight: .medium)).frame(minHeight: 36)
+        if attach == nil { Text("Файлы").font(.system(size: 13, weight: .medium)).frame(minHeight: 36) }
         if let selected = files.window.selected {
-          Button { Task { await files.open(selected) } } label: {
+          Button { if let attach { attach(selected, false) } else { Task { await files.open(selected) } } } label: {
             Label((selected.path as NSString).lastPathComponent, systemImage: "doc.text")
               .font(.system(size: 12)).lineLimit(1).frame(minHeight: 44)
-          }.accessibilityLabel("Вернуться к файлу").accessibilityIdentifier("notebook-file-reopen")
+          }.accessibilityLabel(attach == nil ? "Вернуться к файлу" : "Прикрепить выбранный файл").accessibilityIdentifier("notebook-file-reopen")
           Divider()
         }
         if let project = files.window.project, let computer {
           ForEach(project.roots, id: \.self) { root in
             let address = NotebookFileAddress(computer: computer, project: project.id, root: root, path: "")
-            Text(URL(fileURLWithPath: root).lastPathComponent).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary).padding(.vertical, 8)
+            HStack {
+              Text(URL(fileURLWithPath: root).lastPathComponent).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary).padding(.vertical, 8)
+              if let attach { Spacer(); Button { attach(address, true) } label: { Image(systemName: "plus.circle").frame(width: 44, height: 44) }.accessibilityLabel("Прикрепить папку проекта") }
+            }
             folder(address, depth: 0)
           }
         } else {
@@ -36,11 +40,12 @@ struct NotebookProjectFilesView: View {
       if let directory = files.directories[address] {
         ForEach(directory.entries) { entry in
           let child = address.child(entry.name), isFolder = entry.kind == .directory
+          HStack(spacing: 0) {
           Button {
             if isFolder {
               if files.expandedFolders.contains(child) { files.collapse(child) }
               else { Task { await files.expand(child) } }
-            } else { Task { await files.open(child) } }
+            } else if let attach { attach(child, false) } else { Task { await files.open(child) } }
           } label: {
             HStack(spacing: 6) {
               Image(systemName: isFolder ? (files.expandedFolders.contains(child) ? "folder.fill" : "folder") : (entry.kind == .symbolicLink ? "link" : "doc.text"))
@@ -53,6 +58,10 @@ struct NotebookProjectFilesView: View {
           }
           .disabled(entry.kind == .symbolicLink || entry.kind == .unsupported)
           .accessibilityIdentifier("notebook-file-" + child.path)
+          if isFolder, let attach {
+            Button { attach(child, true) } label: { Image(systemName: "plus.circle").frame(width: 44, height: 44) }.accessibilityLabel("Прикрепить папку «" + entry.name + "»")
+          }
+          }
           if isFolder, files.expandedFolders.contains(child) { folder(child, depth: depth + 1) }
         }
         if directory.next != nil { Button("Ещё файлы…") { Task { await files.expand(address, more: true) } }.font(.system(size: 12)).frame(minHeight: 44) }

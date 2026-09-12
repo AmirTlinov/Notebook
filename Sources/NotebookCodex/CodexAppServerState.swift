@@ -12,7 +12,10 @@ struct CodexAppServerState: Sendable {
   var requests: [CodexUserRequest] = []
   var turnStatuses: [String: String] = [:]
   var runtimeActive = false
+  private var receivedRuntimeState = false
   var access: CodexAccess?
+  var model: CodexModelSelection?
+  var contextUsage: CodexContextUsage?
   var cwd: String?
   private var accepted: [String: String] = [:]
   private var acceptedOrder: [String] = []
@@ -21,7 +24,7 @@ struct CodexAppServerState: Sendable {
     CodexConversation(threadID: threadID, revision: revision, title: title, ready: ready,
       busy: runtimeActive || activeTurnID != nil, activeTurnID: activeTurnID, messages: messages, requests: requests,
       acceptedMessages: accepted,
-      turnStatuses: turnStatuses, access: access)
+      turnStatuses: turnStatuses, access: access, model: model, contextUsage: contextUsage)
   }
 
   mutating func hydrate(thread: JSONValue, history: [CodexMessage], turns: [JSONValue]) throws {
@@ -30,7 +33,7 @@ struct CodexAppServerState: Sendable {
     for message in history { try acceptMessageID(message) }
     let known = Set(messages.map(\.id))
     messages = Array((history.filter { !known.contains($0.id) } + messages).suffix(64))
-    if revision == 0 {
+    if !receivedRuntimeState {
       runtimeActive = thread["status"]?["type"] == .string("active")
       for turn in turns { try acceptTurn(turn) }
     }
@@ -53,16 +56,27 @@ struct CodexAppServerState: Sendable {
       switch method {
       case "thread/settings/updated":
         guard let settings = params["threadSettings"], let policy = settings["approvalPolicy"] else { throw CodexBridgeError.invalidResponse }
+        if let name = settings["model"]?.string {
+          if model?.model != name { contextUsage = nil }
+          model = .init(model: name, effort: settings["effort"]?.string)
+        }
         cwd = settings["cwd"]?.string ?? cwd
         access = CodexAccess(profileID: settings["activePermissionProfile"]?["id"]?.string,
           approvalPolicy: policy, available: access?.available ?? [])
+      case "thread/tokenUsage/updated":
+        guard let usage = params["tokenUsage"], let used = usage["last"]?["totalTokens"]?.integer, used >= 0 else { throw CodexBridgeError.invalidResponse }
+        let window = usage["modelContextWindow"]?.integer
+        guard window == nil || window! > 0 else { throw CodexBridgeError.invalidResponse }
+        contextUsage = .init(used: used, window: window)
       case "serverRequest/resolved":
         requests.removeAll { $0.nativeID == params["requestId"] }
       case "thread/status/changed":
+        receivedRuntimeState = true
         runtimeActive = params["status"]?["type"] == .string("active")
       case "thread/name/updated":
         title = String((params["threadName"]?.string ?? title).prefix(256))
       case "turn/started", "turn/completed":
+        receivedRuntimeState = true
         guard let turn = params["turn"] else { throw CodexBridgeError.invalidResponse }
         try acceptTurn(turn)
       case "item/started", "item/completed":

@@ -9,6 +9,9 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   var projectEdits = 0
   var project: CodexProject?
   var accessMode = CodexAccessMode.workspace
+  var model = CodexModelSelection(model: "fixture", effort: "low")
+  var modelChanges = 0
+  var submittedAttachments: [CodexInputAttachment] = []
   var accessChanges = 0
   var sent: [UUID] = [], interrupted: [String] = [], decisions: [CodexUserDecision] = []
   var accepted: [CodexMessage] = []
@@ -24,23 +27,29 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   func snapshot(threadID: String) -> CodexConversation? {
     .init(threadID: threadID, revision: 1, title: "Математика", ready: true, busy: busy, activeTurnID: busy ? turn : nil,
       messages: accepted, requests: [], acceptedMessages: [:], turnStatuses: [:],
-      access: .init(profileID: accessMode.rawValue, approvalPolicy: .string(accessMode.approvalPolicy), available: CodexAccessMode.allCases))
+      access: .init(profileID: accessMode.rawValue, approvalPolicy: .string(accessMode.approvalPolicy), available: CodexAccessMode.allCases), model: model)
   }
-  func send(threadID: String, clientMessageID: UUID, text: String, context: String?) throws -> String {
+  func send(threadID: String, clientMessageID: UUID, text: String, context: String?, attachments: [CodexInputAttachment]) throws -> String {
+    submittedAttachments = attachments
     sent.append(clientMessageID)
     accepted.append(.init(id: UUID().uuidString, turnID: turn, clientID: clientMessageID.uuidString.lowercased(), role: .user, text: text))
     if unknown { throw CodexBridgeError.acceptanceUnknown }
     return turn
   }
-  func steer(threadID: String, turnID: String, clientMessageID: UUID, text: String, context: String?) throws -> String {
+  func steer(threadID: String, turnID: String, clientMessageID: UUID, text: String, context: String?, attachments: [CodexInputAttachment]) throws -> String {
     guard turnID == turn else { throw CodexBridgeError.staleTurn }
-    return try send(threadID: threadID, clientMessageID: clientMessageID, text: text, context: context)
+    return try send(threadID: threadID, clientMessageID: clientMessageID, text: text, context: context, attachments: attachments)
   }
   func interrupt(threadID: String, turnID: String) throws {
     if stopIsStale { throw CodexBridgeError.staleTurn }
     interrupted.append(turnID)
   }
   func respond(threadID: String, request: CodexUserRequest, decision: CodexUserDecision) { decisions.append(decision) }
+  func setModel(threadID: String, selection: CodexModelSelection) throws {
+    modelChanges += 1; model = selection
+    if unknown { throw CodexBridgeError.acceptanceUnknown }
+  }
+  func compact(threadID: String) { }
   func setAccess(threadID: String, mode: CodexAccessMode) throws {
     accessChanges += 1; accessMode = mode
     if unknown { throw CodexBridgeError.acceptanceUnknown }
@@ -54,6 +63,8 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
     if unknown { throw CodexBridgeError.acceptanceUnknown }
     return value
   }
+  func models() -> [CodexModelOption] { [.init(id: "fixture", name: "Fixture", efforts: ["low", "high"], defaultEffort: "low")] }
+  func resources(threadID: String, kind: CodexResourceKind, cursor: String?) -> CodexResourcePage { .init(resources: []) }
   func projects(cursor: String?) -> CodexProjectPage { .init(projects: [], nextCursor: nil) }
   func tasks(cursor: String?, project: CodexProject?) -> CodexTaskPage { .init(tasks: [.init(id: thread, title: "Математика", cwd: "/tmp")], nextCursor: nil, defaultProviderNeedsSignIn: needsSignIn) }
   func history(threadID: String, cursor: String?) -> CodexHistoryPage { .init(messages: accepted, nextCursor: nil) }
@@ -117,6 +128,27 @@ final class NotebookCodexSidecarTests: XCTestCase {
       let edits = await native.projectEdits, turns = await native.counts()
       XCTAssertEqual(edits, 1); XCTAssertEqual(turns.0, 0)
       XCTAssertEqual(try store.chatJob(input.id)?.result, .project(.init(id: edit.id, name: "Исследование", roots: ["/tmp"])))
+      await service.stop()
+    }
+  }
+
+  func testModelChangeAndMentionedInputKeepTheirNativeIdentityAfterUnknownReplies() async throws {
+    try await fixture { store, queue, native, peer in
+      await native.configure(unknown: true)
+      let service = try sidecar(store, queue, native)
+      let selection = CodexModelSelection(model: "fixture", effort: "high")
+      let change = NotebookChatInput(author: peer, action: .setModel(threadID: native.thread, selection: selection))
+      _ = await service.receive(.init(body: .request(.job(change))), peerID: peer); service.start()
+      try await wait { try await queue.submit { try $0.chatJob(change.id)?.state == .accepted } }
+      _ = await service.receive(.init(body: .request(.job(change))), peerID: peer)
+      let changes = await native.modelChanges; XCTAssertEqual(changes, 1)
+      let attachment = CodexInputAttachment(kind: .plugin, name: "plugin", path: "plugin://plugin@market")
+      let message = NotebookChatInput(author: peer, action: .send(threadID: native.thread, text: "Use it", context: ""), attachments: [attachment])
+      _ = await service.receive(.init(body: .request(.job(message))), peerID: peer)
+      try await wait { try await queue.submit { try $0.chatJob(message.id)?.state == .accepted } }
+      _ = await service.receive(.init(body: .request(.job(message))), peerID: peer)
+      let sent = await native.counts(), attached = await native.submittedAttachments
+      XCTAssertEqual(sent.0, 1); XCTAssertEqual(attached, [attachment])
       await service.stop()
     }
   }

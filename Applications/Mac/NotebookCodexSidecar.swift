@@ -7,14 +7,18 @@ protocol NotebookCodexConversationOwner: Sendable {
   func attach(threadID: String) async throws
   func detach(threadID: String) async
   func snapshot(threadID: String) async -> CodexConversation?
-  func send(threadID: String, clientMessageID: UUID, text: String, context: String?) async throws -> String
-  func steer(threadID: String, turnID: String, clientMessageID: UUID, text: String, context: String?) async throws -> String
+  func send(threadID: String, clientMessageID: UUID, text: String, context: String?, attachments: [CodexInputAttachment]) async throws -> String
+  func steer(threadID: String, turnID: String, clientMessageID: UUID, text: String, context: String?, attachments: [CodexInputAttachment]) async throws -> String
   func interrupt(threadID: String, turnID: String) async throws
   func respond(threadID: String, request: CodexUserRequest, decision: CodexUserDecision) async throws
   func setAccess(threadID: String, mode: CodexAccessMode) async throws
+  func setModel(threadID: String, selection: CodexModelSelection) async throws
+  func compact(threadID: String) async throws
   func close() async
 }
 protocol NotebookCodexCatalogueOwner: Sendable {
+  func models() async throws -> [CodexModelOption]
+  func resources(threadID: String, kind: CodexResourceKind, cursor: String?) async throws -> CodexResourcePage
   func tasks(cursor: String?, project: CodexProject?) async throws -> CodexTaskPage
   func readProject(id: String) async throws -> CodexProject
   func updateProject(_ edit: CodexProjectEdit) async throws -> CodexProject
@@ -172,6 +176,8 @@ final class NotebookCodexSidecar {
           reply = .job(try await runs.receive(input))
         } else { reply = .job(try await persistence.submit { try $0.saveChatInput(input) }) }
       case .catalogue(let cursor, let project): reply = .catalogue(try await metadata.tasks(cursor: cursor, project: project))
+      case .models: reply = .models(try await metadata.models())
+      case .resources(let thread, let kind, let cursor): reply = .resources(try await metadata.resources(threadID: thread, kind: kind, cursor: cursor))
       case .projects(let cursor): reply = .projects(try await metadata.projects(cursor: cursor))
       case .activity(let ids):
         if ids.isEmpty { subscriptions.removeValue(forKey: peerID) }
@@ -233,6 +239,10 @@ final class NotebookCodexSidecar {
     let result: NotebookChatResult
     do {
       switch job.input.action {
+      case .setModel(let thread, let selection):
+        try await bridge.setModel(threadID: thread, selection: selection); result = .acknowledged
+      case .compact(let thread):
+        try await bridge.compact(threadID: thread); result = .acknowledged
       case .setAccess(let thread, let mode):
         try await bridge.setAccess(threadID: thread, mode: mode); result = .acknowledged
       case .startRun, .writeRun, .stopRun, .startVoice, .stopVoice: throw CodexBridgeError.invalidInput
@@ -252,9 +262,9 @@ final class NotebookCodexSidecar {
         if project == nil { try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true) }
         result = .created(try await metadata.create(directory: target, title: title, workspaceID: workspaceID, project: project))
       case .send(let thread, let text, let context):
-        result = .turn(try await bridge.send(threadID: thread, clientMessageID: job.id, text: text, context: context))
+        result = .turn(try await bridge.send(threadID: thread, clientMessageID: job.id, text: text, context: context, attachments: job.input.attachments ?? []))
       case .steer(let thread, let turn, let text, let context):
-        result = .turn(try await bridge.steer(threadID: thread, turnID: turn, clientMessageID: job.id, text: text, context: context))
+        result = .turn(try await bridge.steer(threadID: thread, turnID: turn, clientMessageID: job.id, text: text, context: context, attachments: job.input.attachments ?? []))
       case .stop(let thread, let turn):
         try await bridge.interrupt(threadID: thread, turnID: turn); result = .acknowledged
       case .respond(let thread, let request, let decision):
@@ -271,7 +281,10 @@ final class NotebookCodexSidecar {
         fileRejected = error is MacNotebookProjectFiles.RenameRejected || unprepared
       } else { fileRejected = false }
       let accessRejected: Bool
-      if case .setAccess = job.input.action { accessRejected = code == .requestRejected } else { accessRejected = false }
+      switch job.input.action {
+      case .setAccess, .setModel, .compact: accessRejected = code == .requestRejected
+      default: accessRejected = false
+      }
       let rejected = accessRejected || fileRejected || code == .staleTurn || code == .staleRequest || code == .unsupportedRequest || code == .invalidInput || code == .signInRequired
       // busy/unavailable are guaranteed pre-dispatch by send(). Other failures
       // remain uncertain, including success whose native reply was lost.
@@ -290,6 +303,15 @@ final class NotebookCodexSidecar {
   }
 
   private func reconcile(_ job: NotebookChatJob) async throws {
+    if case .setModel(let thread, let selection) = job.input.action {
+      guard reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
+      reconciliationAfter[job.id] = Date().addingTimeInterval(15)
+      try await observe(thread)
+      if await bridge.snapshot(threadID: thread)?.model == selection {
+        _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .acknowledged) }
+      }
+      return // Never repeat a settings write after an unknown response.
+    }
     if case .setAccess(let thread, let mode) = job.input.action {
       guard reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
       reconciliationAfter[job.id] = Date().addingTimeInterval(15)
@@ -348,7 +370,7 @@ final class NotebookCodexSidecar {
     return .init(threadID: state.threadID, revision: state.revision, title: state.title,
       ready: state.ready, busy: state.busy, activeTurnID: state.activeTurnID, messages: messages,
       requests: state.requests, acceptedMessages: state.acceptedMessages.filter { ids.contains($0.key) },
-      turnStatuses: state.turnStatuses.filter { turns.contains($0.key) || $0.key == state.activeTurnID }, access: state.access)
+      turnStatuses: state.turnStatuses.filter { turns.contains($0.key) || $0.key == state.activeTurnID }, access: state.access, model: state.model, contextUsage: state.contextUsage)
   }
 
   nonisolated static func message(_ error: Error) -> String {

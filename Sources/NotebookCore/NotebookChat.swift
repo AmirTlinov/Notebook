@@ -132,7 +132,9 @@ public struct CodexConversation: Codable, Equatable, Sendable {
   public let acceptedMessages: [String: String]
   public let turnStatuses: [String: String]
   public let access: CodexAccess?
-  public init(threadID: String, revision: Int, title: String, ready: Bool, busy: Bool, activeTurnID: String?, messages: [CodexMessage], requests: [CodexUserRequest], acceptedMessages: [String: String], turnStatuses: [String: String], access: CodexAccess? = nil) { self.threadID = threadID; self.revision = revision; self.title = title; self.ready = ready; self.busy = busy; self.activeTurnID = activeTurnID; self.messages = messages; self.requests = requests; self.acceptedMessages = acceptedMessages; self.turnStatuses = turnStatuses; self.access = access }
+  public let model: CodexModelSelection?
+  public let contextUsage: CodexContextUsage?
+  public init(threadID: String, revision: Int, title: String, ready: Bool, busy: Bool, activeTurnID: String?, messages: [CodexMessage], requests: [CodexUserRequest], acceptedMessages: [String: String], turnStatuses: [String: String], access: CodexAccess? = nil, model: CodexModelSelection? = nil, contextUsage: CodexContextUsage? = nil) { self.threadID = threadID; self.revision = revision; self.title = title; self.ready = ready; self.busy = busy; self.activeTurnID = activeTurnID; self.messages = messages; self.requests = requests; self.acceptedMessages = acceptedMessages; self.turnStatuses = turnStatuses; self.access = access; self.model = model; self.contextUsage = contextUsage }
 
 }
 
@@ -156,6 +158,8 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
   case create(title: String, project: CodexProject? = nil)
   case updateProject(CodexProjectEdit)
   case setAccess(threadID: String, mode: CodexAccessMode)
+  case setModel(threadID: String, selection: CodexModelSelection)
+  case compact(threadID: String)
   case saveFile(NotebookFileAddress)
   case renameFile(NotebookFileRename)
   case startVoice(NotebookVoiceStart)
@@ -167,7 +171,7 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
   case respond(threadID: String, request: CodexUserRequest, decision: CodexUserDecision)
   public var threadID: String? {
     switch self {
-    case .send(let id, _, _), .steer(let id, _, _, _), .stop(let id, _), .respond(let id, _, _), .setAccess(let id, _): id
+    case .send(let id, _, _), .steer(let id, _, _, _), .stop(let id, _), .respond(let id, _, _), .setAccess(let id, _), .setModel(let id, _), .compact(let id): id
     case .create, .updateProject, .saveFile, .renameFile, .startRun, .writeRun, .stopRun, .startVoice, .stopVoice: nil
     }
   }
@@ -196,7 +200,7 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
       address = ["respond", thread.lowercased(), request.turnID.lowercased(), request.method, request.id]
     case .stopVoice(let id): address = ["stopVoice", id.uuidString.lowercased()]
     case .stopRun(let id): address = ["stopRun", id.uuidString.lowercased()]
-    case .send, .steer, .create, .updateProject, .setAccess, .saveFile, .renameFile, .startRun, .writeRun, .startVoice: return nil
+    case .send, .steer, .create, .updateProject, .setAccess, .setModel, .compact, .saveFile, .renameFile, .startRun, .writeRun, .startVoice: return nil
     }
     var data = Data()
     for part in ["NotebookChatControl/1", author.uuidString.lowercased()] + address {
@@ -215,12 +219,14 @@ public struct NotebookChatInput: Codable, Equatable, Sendable, Identifiable {
   public let action: NotebookChatAction
   public let createdAt: Date
   public let attentionContextID: UUID?
+  public let attachments: [CodexInputAttachment]?
 
-  public init(id: UUID = UUID(), author: UUID, action: NotebookChatAction, createdAt: Date = Date(), attentionContextID: UUID? = nil) {
-    self.id = id; self.author = author; self.action = action; self.createdAt = createdAt; self.attentionContextID = attentionContextID
+  public init(id: UUID = UUID(), author: UUID, action: NotebookChatAction, createdAt: Date = Date(), attentionContextID: UUID? = nil, attachments: [CodexInputAttachment]? = nil) {
+    self.id = id; self.author = author; self.action = action; self.createdAt = createdAt; self.attentionContextID = attentionContextID; self.attachments = attachments
   }
   public var isValid: Bool {
-    guard createdAt.timeIntervalSince1970.isFinite,
+    guard createdAt.timeIntervalSince1970.isFinite, CodexInputAttachment.valid(attachments ?? []),
+      attachments == nil || action.message != nil,
       let bytes = try? JSONEncoder().encode(self), bytes.count <= 96 * 1024 else { return false }
     if let id = action.threadID, UUID(uuidString: id) == nil { return false }
     switch action {
@@ -230,7 +236,8 @@ public struct NotebookChatInput: Codable, Equatable, Sendable, Identifiable {
       return UUID(uuidString: turn) != nil && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.utf8.count <= 32768 && context.utf8.count <= 32768
     case .create(let title, let project): return !title.isEmpty && title.utf8.count <= 256 && (project == nil || (project!.id.utf8.count <= 256 && !project!.id.isEmpty && project!.roots.count <= 32 && project!.roots.allSatisfy { $0.hasPrefix("/") && $0.utf8.count <= 4096 }))
     case .updateProject(let edit): return edit.isValid
-    case .setAccess: return true
+    case .setModel(_, let selection): return selection.isValid
+    case .setAccess, .compact: return true
     case .saveFile(let address): return address.isValid && !address.path.isEmpty
     case .renameFile(let rename): return rename.isValid
     case .startVoice(let request): return request.isValid
@@ -279,7 +286,7 @@ public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
     case (.updateProject(let edit), .project(let project)): return edit.matches(project)
     case (.create, .created(let task)): return UUID(uuidString: task.id) != nil && task.title.utf8.count <= 1024
     case (.send, .turn(let id)), (.steer, .turn(let id)): return UUID(uuidString: id) != nil
-    case (.stop, .acknowledged), (.respond, .acknowledged), (.setAccess, .acknowledged): return true
+    case (.stop, .acknowledged), (.respond, .acknowledged), (.setAccess, .acknowledged), (.setModel, .acknowledged), (.compact, .acknowledged): return true
     default: return false
     }
   }
@@ -292,6 +299,8 @@ public enum NotebookChatQuery: Codable, Equatable, Sendable {
   case run(NotebookRunRead)
   case resizeRun(UUID, columns: Int, rows: Int)
   case catalogue(cursor: String?, project: CodexProject? = nil)
+  case models
+  case resources(threadID: String, kind: CodexResourceKind, cursor: String?)
   case projects(cursor: String?)
   case activity(threadIDs: [String])
   case conversation(threadID: String)
@@ -299,6 +308,7 @@ public enum NotebookChatQuery: Codable, Equatable, Sendable {
 }
 
 public enum NotebookChatReply: Codable, Equatable, Sendable {
+  case models([CodexModelOption]), resources(CodexResourcePage)
   case projects(CodexProjectPage), activity([CodexTaskActivity])
   case job(NotebookChatJob), catalogue(CodexTaskPage), conversation(CodexConversation), history(CodexHistoryPage)
   case conversationUnavailable(threadID: String, reason: String)
@@ -331,6 +341,7 @@ public struct NotebookChatPanelState: Codable, Equatable, Sendable {
   public var threadID: String?
   public var draft: String
   public var sidecarID: UUID?
+  public var attachments: [CodexInputAttachment]?
 
-  public init(threadID: String? = nil, draft: String = "", sidecarID: UUID? = nil) { self.threadID = threadID; self.draft = draft; self.sidecarID = sidecarID }
+  public init(threadID: String? = nil, draft: String = "", sidecarID: UUID? = nil, attachments: [CodexInputAttachment]? = nil) { self.threadID = threadID; self.draft = draft; self.sidecarID = sidecarID; self.attachments = attachments }
 }
