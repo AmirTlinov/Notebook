@@ -36,6 +36,7 @@ final class NotebookCodexSidecar {
   private let directory: URL
   private let voice: MacNotebookVoice?
   private let runs: MacNotebookProjectRuns?
+  private let files: MacNotebookProjectFiles
   private var worker: Task<Void, Never>?
   private var observing: String?
   private var stopped = false
@@ -52,6 +53,7 @@ final class NotebookCodexSidecar {
 
   init(persistence: NotebookPersistenceQueue, installation: CodexDesktopInstallation, workspaceID: UUID, computerID: UUID, directory: URL, publish: @escaping (NotebookChatEnvelope, UUID) -> Void) {
     self.publish = publish
+    files = .init(persistence: persistence)
     self.persistence = persistence; self.workspaceID = workspaceID; self.computerID = computerID; self.directory = directory
     let server = CodexAppServer(installation: installation)
     bridge = server; metadata = server; bridgeEvents = server.events
@@ -61,6 +63,7 @@ final class NotebookCodexSidecar {
 
   init(persistence: NotebookPersistenceQueue, bridge: any NotebookCodexConversationOwner,
     metadata: any NotebookCodexCatalogueOwner, workspaceID: UUID, computerID: UUID = UUID(), directory: URL) {
+    files = .init(persistence: persistence)
     self.persistence = persistence; self.bridge = bridge; self.metadata = metadata
     self.workspaceID = workspaceID; self.computerID = computerID; self.directory = directory
     voice = (bridge as? any NotebookCodexVoiceOwner).map { .init(persistence: persistence, executor: $0) }
@@ -126,7 +129,7 @@ final class NotebookCodexSidecar {
   }
 
   func stop() async {
-    stopped = true; worker?.cancel(); eventWorker?.cancel(); publishEvents?.cancel()
+    stopped = true; files.stop(); worker?.cancel(); eventWorker?.cancel(); publishEvents?.cancel()
     subscriptions.removeAll(); pendingEvents.removeAll()
     // Do not cancel a native turn. An in-flight mutation retains its durable attempt.
     await bridge.close()
@@ -150,18 +153,11 @@ final class NotebookCodexSidecar {
         if let address = query.address {
           guard address.computer == computerID else { throw CodexBridgeError.invalidInput }
           let project = try await metadata.readProject(id: address.project)
-          reply = .file(try await persistence.submit { store in
-            switch query {
-            case .directory(let address, let after): return .directory(try MacNotebookProjectFiles.list(address, project: project, after: after))
-            case .read(let address, let version, let offset):
-              guard project.roots.contains(address.root) else { throw CodexBridgeError.invalidInput }
-              let selected: NotebookFileVersion
-              if let version { selected = version }
-              else { selected = try store.cacheFileVersion(MacNotebookProjectFiles.read(address, project: project), address: address) }
-              return .part(try store.filePart(selected, address: address, offset: offset))
-            case .upload: throw CodexBridgeError.invalidInput
-            }
-          })
+          switch query {
+          case .directory(let address, let after): reply = .file(.directory(try await files.list(address, project: project, after: after)))
+          case .read(let address, let version, let offset): reply = .file(.part(try await files.part(address, project: project, version: version, offset: offset)))
+          case .upload: throw CodexBridgeError.invalidInput
+          }
         } else if case .upload(let chunk) = query {
           reply = .file(.uploaded(try await persistence.submit { try $0.stageFileUpload(chunk, author: peerID) }))
         } else { throw CodexBridgeError.invalidInput }
@@ -240,13 +236,11 @@ final class NotebookCodexSidecar {
       case .renameFile(let request):
         guard request.address.computer == computerID else { throw CodexBridgeError.invalidInput }
         let project = try await metadata.readProject(id: request.address.project)
-        result = .renamed(try await persistence.submit { try MacNotebookProjectFiles.rename(job.id, request: request, project: project, store: $0) })
+        result = .renamed(try await files.rename(job.id, request: request, project: project))
       case .saveFile(let address):
         guard address.computer == computerID else { throw CodexBridgeError.invalidInput }
         let project = try await metadata.readProject(id: address.project)
-        result = .file(try await persistence.submit { store in
-          try MacNotebookProjectFiles.commit(job.id, author: job.input.author, address: address, project: project, store: store)
-        })
+        result = .file(try await files.commit(job.id, author: job.input.author, address: address, project: project))
       case .updateProject(let edit): result = .project(try await metadata.updateProject(edit))
       case .create(let title, let selectedProject):
         let project: CodexProject?
@@ -295,7 +289,7 @@ final class NotebookCodexSidecar {
       guard request.address.computer == computerID, reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
       reconciliationAfter[job.id] = Date().addingTimeInterval(5)
       let project = try await metadata.readProject(id: request.address.project)
-      if let result = try await persistence.submit({ try MacNotebookProjectFiles.reconcileRename(job.id, project: project, store: $0) }) {
+      if let result = try await files.reconcileRename(job.id, project: project) {
         _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .renamed(result)) }
       }
       return
@@ -304,7 +298,7 @@ final class NotebookCodexSidecar {
       guard address.computer == computerID, reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
       reconciliationAfter[job.id] = Date().addingTimeInterval(5)
       let project = try await metadata.readProject(id: address.project)
-      if let result = try await persistence.submit({ try MacNotebookProjectFiles.reconcile(job.id, project: project, store: $0) }) {
+      if let result = try await files.reconcile(job.id, project: project) {
         _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .file(result)) }
       }
       return
