@@ -29,10 +29,10 @@ final class NotebookChatControllerTests: XCTestCase {
     _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
     let queue = NotebookPersistenceQueue(store: store)
     var chat: NotebookChatController!, subscription: UUID?, collapsed = false
-    func snapshot(_ revision: Int) -> CodexConversation {
+    func snapshot(_ revision: Int, working: Bool = true) -> CodexConversation {
       let replies = (1...revision).map { CodexMessage(id: "reply-\($0)", turnID: "turn-\($0)", clientID: nil, role: .assistant, text: "Useful answer \($0)", phase: "final_answer") }
       let progress = CodexMessage(id: "progress", turnID: "working", clientID: nil, role: .assistant, text: "Internal progress", phase: "commentary")
-      return .init(threadID: thread, revision: revision, title: "One task", ready: true, busy: true, activeTurnID: "working",
+      return .init(threadID: thread, revision: revision, title: "One task", ready: true, busy: working, activeTurnID: working ? "working" : nil,
         messages: replies + [progress], requests: [], acceptedMessages: [:], turnStatuses: [:])
     }
     chat = .init(persistence: queue, author: author) { envelope, _ in
@@ -64,11 +64,22 @@ final class NotebookChatControllerTests: XCTestCase {
     chat.receive(.init(body: .event(subscriptionID: id, conversation: snapshot(3))), peerID: peer)
     XCTAssertEqual(chat.unreadReplies.map(\.id), ["reply-2", "reply-3"])
     XCTAssertEqual(chat.messages.count, 4); XCTAssertEqual(chat.draft, "Retained draft"); XCTAssertTrue(chat.jobs.isEmpty)
+    XCTAssertNil(chat.companionReply, "Current work retains its status rather than presenting an older reply")
+    chat.receive(.init(body: .event(subscriptionID: id, conversation: snapshot(3, working: false))), peerID: peer)
+    XCTAssertEqual(chat.companionReply?.id, "reply-3")
+    chat.dismissCompanionReply("reply-2")
+    XCTAssertEqual(chat.companionReply?.id, "reply-3", "A stale close action cannot dismiss a newer answer")
+    chat.dismissCompanionReply("reply-3")
+    chat.companionExpanded = true; chat.companionExpanded = false
+    chat.receive(.init(body: .event(subscriptionID: id, conversation: snapshot(3, working: false))), peerID: peer)
+    XCTAssertNil(chat.companionReply); XCTAssertEqual(chat.unreadReplies.map(\.id), ["reply-2", "reply-3"])
+    chat.receive(.init(body: .event(subscriptionID: id, conversation: snapshot(4, working: false))), peerID: peer)
+    XCTAssertEqual(chat.companionReply?.id, "reply-4"); XCTAssertEqual(chat.jobs.count, 0)
     chat.revealReply("reply-2")
     XCTAssertTrue(chat.expanded); XCTAssertEqual(chat.revealedMessageID, "reply-2"); XCTAssertTrue(chat.unreadReplies.isEmpty)
     await chat.stop(); let flushed = await queue.flush(); XCTAssertTrue(flushed)
     let restored = try store.chatPanel(author: author, computer: peer)
-    XCTAssertEqual(restored.draft, "Retained draft"); XCTAssertEqual(restored.readPosition?.readThrough, "reply-3")
+    XCTAssertEqual(restored.draft, "Retained draft"); XCTAssertEqual(restored.readPosition?.readThrough, "reply-4")
   }
 
   func testOneTranscriptMergesLiveAndPagedHistoryAndRefreshesLoadedCataloguesQuietly() async throws {

@@ -57,6 +57,10 @@ final class NotebookChatController {
   var taskTitle: String { conversation?.title ?? selectedTask?.title ?? "Задача Codex" }
   var compactReplies: [CodexMessage] { NotebookChatReadPosition.replies(in: messages, conversation: conversation) }
   var unreadReplies: [CodexMessage] { readPosition?.unread(in: compactReplies) ?? [] }
+  var companionReply: CodexMessage? {
+    guard !voice.capturing, conversation?.requests.isEmpty != false, workStatus == nil, pendingMessages.isEmpty else { return nil }
+    return readPosition?.preview(in: compactReplies)
+  }
   var workStatus: NotebookChatWorkStatus? { .init(conversation: conversation, connected: connected) }
   private(set) var historyCursor: String?
   private(set) var loadingHistory = false
@@ -628,6 +632,10 @@ final class NotebookChatController {
   func revealReply(_ messageID: String? = nil) {
     revealedMessageID = messageID ?? unreadReplies.first?.id
     browsesChats = false; expanded = true
+  }
+  func dismissCompanionReply(_ messageID: String) {
+    guard companionReply?.id == messageID else { return }
+    readPosition?.dismissedThrough = messageID; persistPanel()
   }
   private func markRepliesRead() {
     guard let threadID else { return }

@@ -21,16 +21,32 @@ struct NotebookChatReadPositionTests {
     #expect(CodexMessage.transportPage(messages).last?.phase == "final_answer")
     #expect(try JSONDecoder().decode(CodexMessage.self, from: JSONEncoder().encode(messages[3])).phase == "final_answer")
   }
+  @Test func dismissingPreviewKeepsUnreadMessagesAndTheNextAnswerAppears() throws {
+    let first = CodexMessage(id: "one", turnID: "1", clientID: nil, role: .assistant, text: "First answer", phase: "final_answer")
+    let second = CodexMessage(id: "two", turnID: "2", clientID: nil, role: .assistant, text: "Next answer", phase: "final_answer")
+    var receipt = NotebookChatReadPosition(threadID: UUID().uuidString)
+    #expect(receipt.preview(in: [first]) == first)
+    receipt.dismissedThrough = first.id
+    receipt = try JSONDecoder().decode(NotebookChatReadPosition.self, from: JSONEncoder().encode(receipt))
+    #expect(receipt.preview(in: [first]) == nil)
+    #expect(receipt.unread(in: [first]) == [first])
+    #expect(receipt.preview(in: [first, second]) == second)
+    #expect(receipt.unread(in: [first, second]) == [first, second])
+    receipt.readThrough = second.id
+    #expect(receipt.preview(in: [first, second]) == nil)
+  }
   @Test func receiptsAndTheDraftRestoreWithinTheirComputerWithoutContentMutation() throws {
     try NotebookChatStoreTests().fixture { store, author in
       let computer = UUID(), thread = UUID().uuidString
       let panel = NotebookChatPanelState(threadID: thread, draft: "Still editable", sidecarID: computer,
-        readPosition: .init(threadID: thread, readThrough: "one"))
+        readPosition: .init(threadID: thread, readThrough: "one", dismissedThrough: "two"))
       try store.saveChatPanel(panel, author: author)
       #expect(try NotebookStore(root: store.root).chatPanel(author: author, computer: computer) == panel)
       #expect(try store.chatPanel(author: author, computer: UUID()).readPosition == nil)
       #expect(try store.recentChatJobs(author: author).isEmpty)
       var invalid = panel; invalid.readPosition = .init(threadID: UUID().uuidString)
+      #expect(throws: (any Error).self) { try store.saveChatPanel(invalid, author: author) }
+      invalid = panel; invalid.readPosition?.dismissedThrough = ""
       #expect(throws: (any Error).self) { try store.saveChatPanel(invalid, author: author) }
     }
   }

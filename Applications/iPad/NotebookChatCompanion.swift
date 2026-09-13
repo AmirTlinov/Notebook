@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import NotebookCore
 
 /// The small companion is another presentation of this task, not a voice bot
@@ -21,6 +22,7 @@ struct NotebookCompanion: View {
       || showsTask && (chat.workStatus != nil || !chat.unreadReplies.isEmpty || !chat.pendingMessages.isEmpty)
     let height: CGFloat = 48 + (hasCard ? 68 : 0) + (chat.companionExpanded ? 52 + (chat.attachments.isEmpty ? 0 : 38) : 0)
       + (chat.conversation?.requests.isEmpty == false ? 160 : 0) + (chat.voice.error != nil ? 90 : 0) + (dictationNotice ? 88 : 0)
+      + (hasCard ? chat.companionReply.map { previewHeight($0, width: min(available.width, 352) - 28) + 8 } ?? 0 : 0)
     return .init(width: min(available.width, hasCard || dictationNotice ? 352 : (chat.voice.capturing ? 264 : 184) + (contextCount > 0 ? 28 : 0)),
       height: min(available.height, height))
   }
@@ -34,6 +36,7 @@ struct NotebookCompanion: View {
       && !model.isSavingAgentQuestion && !model.selectionSession.isResolvingContext && !chat.continuationUnavailable && chat.threadID != nil && !chat.browsesChats
   }
   var body: some View {
+    let reply = chat.companionReply
     VStack(alignment: .trailing, spacing: 8) {
       if chat.dictation.showsInput {
         NotebookDictationInput(chat: chat).background { surface(radius: 24) }
@@ -44,18 +47,37 @@ struct NotebookCompanion: View {
       if hasCard {
         ScrollView {
           VStack(alignment: .leading, spacing: 4) {
-            Button { chat.revealReply() } label: {
+            HStack(spacing: 0) {
+            Button { chat.revealReply(reply?.id) } label: {
               HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 3) {
                   Text(chat.voice.capturing ? chat.voice.taskTitle : chat.taskTitle)
                     .font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                  NotebookPearlText(text: status, active: chat.workStatus?.running == true && !chat.voice.capturing)
-                    .font(.system(size: 13)).lineLimit(1)
+                  if reply == nil {
+                    NotebookPearlText(text: status, active: chat.workStatus?.running == true && !chat.voice.capturing)
+                      .font(.system(size: 13)).lineLimit(1)
+                  } else if chat.unreadReplies.count > 1 {
+                    Text("Ещё ответов: \(chat.unreadReplies.count - 1)").font(.system(size: 12)).foregroundStyle(.secondary)
+                  }
                 }.frame(maxWidth: .infinity, alignment: .leading)
                 Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 12)).foregroundStyle(.secondary)
               }.frame(minHeight: 44).contentShape(Rectangle())
             }.accessibilityLabel("Открыть переписку · " + chat.taskTitle + " · " + status)
               .accessibilityIdentifier("notebook-companion-task")
+            if let reply = reply {
+              Button { chat.dismissCompanionReply(reply.id) } label: {
+                Image(systemName: "xmark").font(.system(size: 12)).foregroundStyle(.secondary)
+                  .frame(width: 36, height: 44).contentShape(Rectangle())
+              }.accessibilityLabel("Убрать превью ответа").accessibilityIdentifier("notebook-companion-dismiss-reply")
+            }
+            }
+            if let reply = reply {
+              Button { chat.revealReply(reply.id) } label: {
+                Text(Self.previewText(reply)).font(.system(size: 14)).foregroundStyle(.primary).lineLimit(6)
+                  .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+              }.accessibilityHint("Открыть полный ответ в этой переписке")
+                .accessibilityIdentifier("notebook-companion-reply")
+            }
             if let conversation = chat.conversation, let request = conversation.requests.first {
               NotebookCodexRequestView(request: request, threadID: conversation.threadID, chat: chat, maximumHeight: 160)
                 .id(request.id)
@@ -76,6 +98,19 @@ struct NotebookCompanion: View {
     }
     .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: hasCard)
     .onChange(of: moving) { if !moving { endInteraction() } }
+  }
+  /// The compact surface measures the same bounded native text it displays;
+  /// the full Markdown and native message identity remain in the transcript.
+  private static func previewText(_ reply: CodexMessage) -> String {
+    let text = String(reply.text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(800))
+    return (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+      .map { String($0.characters) } ?? text
+  }
+  private static func previewHeight(_ reply: CodexMessage, width: CGFloat) -> CGFloat {
+    let font = UIFont.systemFont(ofSize: 14)
+    let height = (previewText(reply) as NSString).boundingRect(with: .init(width: max(1, width), height: .greatestFiniteMagnitude),
+      options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font], context: nil).height
+    return ceil(min(height, font.lineHeight * 6))
   }
   private var status: String {
     if needsDecision { return "Нужно ваше решение" }

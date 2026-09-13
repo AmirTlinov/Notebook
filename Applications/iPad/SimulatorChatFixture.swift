@@ -66,12 +66,12 @@ import NotebookCore
       case .job(let input):
         if compact, case .send(let thread, let text, _) = input.action, thread == task.id {
           if admissions.insert(input.id).inserted {
-            submittedMessages += [.init(id: input.id.uuidString, turnID: "7e7a1000-0000-4000-8000-000000000066", clientID: input.id.uuidString, role: .user, text: text),
-              .init(id: "compact-receipt", turnID: "7e7a1000-0000-4000-8000-000000000066", clientID: nil, role: .assistant, text: "Принято поручений: \(admissions.count)", phase: "final_answer")]
+            submittedMessages += [.init(id: input.id.uuidString, turnID: input.id.uuidString, clientID: input.id.uuidString, role: .user, text: text),
+              .init(id: "receipt-" + input.id.uuidString, turnID: input.id.uuidString, clientID: nil, role: .assistant, text: "Принято поручений: \(admissions.count)", phase: "final_answer")]
             revision += 1
           }
           if let subscription { receiver?.receive(.init(body: .event(subscriptionID: subscription, conversation: conversation())), peerID: peer) }
-          reply = .job(.init(input: input, state: .accepted, result: .turn("7e7a1000-0000-4000-8000-000000000066"), revision: 2)); break
+          reply = .job(.init(input: input, state: .accepted, result: .turn(input.id.uuidString), revision: 2)); break
         }
         if case .setModel(_, let value) = input.action { selection = value }
         else if input.action == .stop(threadID: task.id, turnID: turn) { running = false }
