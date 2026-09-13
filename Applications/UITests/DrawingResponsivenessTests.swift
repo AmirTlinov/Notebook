@@ -99,7 +99,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(text.waitForExistence(timeout: 5)); text.tap(); text.typeText("Keep draft")
     app.buttons["notebook-chat-toggle"].tap()
     let taskCard = app.buttons["notebook-companion-task"]
-    XCTAssertTrue(taskCard.waitForExistence(timeout: 8))
+    XCTAssertTrue(waitUntil { taskCard.exists || app.buttons["notebook-companion-reply"].exists }, "Work may already have completed into its reply")
     XCTAssertFalse(app.otherElements["notebook-chat-transcript"].exists)
     XCTAssertTrue(app.buttons["notebook-compact-dictation"].isHittable)
     XCTAssertTrue(app.buttons["notebook-compact-voice"].isHittable)
@@ -123,10 +123,10 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertFalse(preview.label.contains("часть 16."), "Only the compact preview is shortened")
     let replyProof = XCTAttachment(screenshot: app.screenshot()); replyProof.name = "companion-long-reply-preview"; replyProof.lifetime = .keepAlways; add(replyProof)
     app.buttons["notebook-companion-dismiss-reply"].tap()
-    XCTAssertFalse(preview.exists); XCTAssertTrue(taskCard.label.contains("Новых ответов: 1"))
+    XCTAssertTrue(waitUntil { !preview.exists && !taskCard.exists }, "Close removes the entire reply, not only its text")
     app.buttons["notebook-companion-compose"].tap(); app.buttons["notebook-companion-compose"].tap()
     XCTAssertFalse(preview.exists, "Remounting the card cannot show a dismissed reply again")
-    taskCard.tap()
+    app.buttons["notebook-chat-toggle"].tap()
     let full = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Объяснение формулы, часть 1.'")).firstMatch
     XCTAssertTrue(full.waitForExistence(timeout: 5)); XCTAssertTrue(full.isHittable, "Opening unread replies reveals the exact message, not the end of its long text")
     XCTAssertEqual(text.value as? String, "Keep draft")
@@ -237,9 +237,9 @@ final class DrawingResponsivenessTests: XCTestCase {
     let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "scroll-history-and-composer-stop"; proof.lifetime = .keepAlways; add(proof)
   }
 
-  private func waitUntil(_ condition: @escaping () -> Bool) -> Bool {
+  private func waitUntil(timeout: TimeInterval = 8, _ condition: @escaping () -> Bool) -> Bool {
     let expected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in condition() }, object: nil)
-    return XCTWaiter.wait(for: [expected], timeout: 8) == .completed
+    return XCTWaiter.wait(for: [expected], timeout: timeout) == .completed
   }
 
   private func waitForKeyboardLayout(_ app: XCUIApplication, above control: XCUIElement) -> Bool {
@@ -270,6 +270,9 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(toggle.waitForExistence(timeout: 4))
     let menu = XCTAttachment(screenshot: app.screenshot()); menu.name = "dictation-address-setting"; menu.lifetime = .keepAlways; add(menu)
     toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+    let waveform = app.otherElements["notebook-dictation-waveform"]
+    XCTAssertTrue(waveform.waitForExistence(timeout: 5))
+    let recordingProof = XCTAttachment(screenshot: app.screenshot()); recordingProof.name = "addressed-dictation-live-microphone"; recordingProof.lifetime = .keepAlways; add(recordingProof)
     let reply = app.buttons["notebook-companion-reply"]
     XCTAssertTrue(waitUntil { reply.exists && reply.label == "Принято поручений: 1" })
     XCTAssertFalse(app.otherElements["notebook-chat-transcript"].exists)
@@ -279,6 +282,9 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(waitUntil { mic.label == "Диктовать сообщение" })
     XCTAssertEqual(reply.label, "Принято поручений: 1")
     let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "addressed-dictation-single-answer"; proof.lifetime = .keepAlways; add(proof)
+    XCTAssertTrue(waitUntil(timeout: 16) { !reply.exists }, "The reply expires without opening the chat")
+    XCTAssertFalse(app.buttons["notebook-companion-task"].exists)
+    XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, ink)
   }
 
   func testDictationInputStopsIntoAnEditableExpandedChatAndSendsExactlyOnce() {

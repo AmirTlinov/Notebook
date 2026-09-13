@@ -3,13 +3,6 @@ import Foundation
 /// A local address detector, not an authorization parser or a dictation service.
 /// It returns the beginning of an addressed utterance, never a permission decision.
 public enum NotebookWakeAddress {
-  /// A timed recognition segment may contain one word or an entire utterance.
-  public struct Segment: Sendable, Equatable {
-    public let text: String
-    public let start: Double
-    public let duration: Double
-    public init(_ text: String, start: Double, duration: Double) { self.text = text; self.start = start; self.duration = duration }
-  }
   public static func localAddress(language: String) -> String {
     switch language.prefix(2) {
     case "ru": "Слушай"; case "en": "Hey"; case "es": "Oye"; case "fr": "Dis"
@@ -62,21 +55,14 @@ public enum NotebookWakeAddress {
     }
     return names + addresses.flatMap { prefix in names.map { prefix + " " + $0 } }
   }
-  public static func start(in segments: [Segment], language: String, address: String, settled: Bool, agentSpeaking: Bool = false) -> Double? {
-    // Streaming Speech hypotheses can spell the whole address while every
-    // timestamp and duration is still zero. Text alone cannot locate the audio
-    // to admit: using that zero would send earlier speech or an expired buffer.
-    guard !agentSpeaking, !segments.isEmpty,
-      segments.allSatisfy({ $0.start.isFinite && $0.start >= 0 && $0.duration.isFinite && $0.duration > 0 }) else { return nil }
-    var start = 0
-    for index in 1..<segments.count where segments[index].start - (segments[index-1].start + segments[index-1].duration) >= 0.8 { start = index }
-    let utterance = Array(segments[start...])
-    let text = fold(utterance.map(\.text).joined(separator: " "))
+  /// Classification has no authority over audio position. The caller supplies one
+  /// acoustically delimited utterance, never a rolling ambient transcript.
+  public static func match(_ utterance: String, language: String, address: String, settled: Bool, agentSpeaking: Bool = false) -> Bool? {
+    guard !agentSpeaking else { return nil }
+    let text = fold(utterance)
     var boundaryOffsets = Set<Int>(), offset = 0
-    for segment in utterance {
-      for token in segment.text.components(separatedBy: CharacterSet.alphanumerics.inverted) where !token.isEmpty {
-        offset += fold(token).count; boundaryOffsets.insert(offset)
-      }
+    for token in utterance.components(separatedBy: CharacterSet.alphanumerics.inverted) where !token.isEmpty {
+      offset += fold(token).count; boundaryOffsets.insert(offset)
     }
     let names = names(language: language).map(fold)
     let candidates = phrases(language: language, address: address).map { phrase in
@@ -91,7 +77,7 @@ public enum NotebookWakeAddress {
       // Word boundaries belong to the text, not the recognizer's segmentation:
       // it can return "Hey GPT explain this" as a single timed segment.
       if !boundaryOffsets.contains(candidate.name.count) && !["ja", "zh", "ko"].contains(String(language.prefix(2))) { continue }
-      return utterance[0].start
+      return !rest.isEmpty
     }
     return nil
   }

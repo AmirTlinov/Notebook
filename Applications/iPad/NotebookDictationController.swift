@@ -1,6 +1,7 @@
 import AVFoundation
 import CryptoKit
 import Observation
+import OSLog
 import UIKit
 import NotebookCore
 
@@ -17,7 +18,10 @@ import NotebookCore
     var transcript: String?
     var activation: Activation? = nil
   }
-  private(set) var phase = Phase.idle
+  private static let log = Logger(subsystem: "com.amirtlinov.notebook", category: "dictation")
+  private(set) var phase = Phase.idle { didSet {
+    if phase != oldValue { Self.log.info("phase=\(String(describing: self.phase), privacy: .public)") }
+  } }
   private(set) var error: String?
   private(set) var elapsed: TimeInterval = 0
   private(set) var level: Double = 0
@@ -132,7 +136,7 @@ import NotebookCore
         cancel(); error = message
       })
       guard generation == epoch else { return }
-      phase = .waiting
+      phase = .waiting; levels = []; startMeter()
     } catch {
       guard generation == epoch else { return }
       cancel(); self.error = error.localizedDescription
@@ -160,7 +164,7 @@ import NotebookCore
     if activation != nil, submitAddressed == nil {
       disableActivation(); error = "Дождитесь подготовки выбранного материала и повторите обращение."; return
     }
-    utterance = activation.map { .init(hasRequest: $0.hasRequest) }
+    utterance = activation.map { .init(hasRequest: $0.hasRequest, silence: $0.silence) }
     phase = .authorizing
     wake?.stop(); wake = nil
     do { if frame == nil { try await finishCancellation(on: computer) } }
@@ -178,27 +182,31 @@ import NotebookCore
       }
       guard generation == epoch else { return }
       phase = .recording; elapsed = 0; level = 0; progress = 0
-      meter = Task { [weak self] in
-        while !Task.isCancelled {
-          guard let self, phase == .recording else { return }
-          let sample = capture.sample(); elapsed = sample.elapsed; level = sample.level
-          levels.append(level); if levels.count > 240 { levels.removeFirst(levels.count - 240) }
-          switch utterance?.sample(elapsed: elapsed, level: level) {
-          case .send: completeRecording(); return
-          case .abandon:
-            submitAddressed = nil; releaseMicrophone(); clearRecording(); phase = .idle
-            resumeActivation(); return
-          default: break
-          }
-          do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
-        }
-      }
+      startMeter()
     } catch {
       guard generation == epoch else { return }
       releaseMicrophone()
       if let pending, !FileManager.default.fileExists(atPath: audioURL(pending.id).path) { clearRecording() }
       activationEnabled = false; activationTarget = nil
       phase = pending == nil ? .idle : .failed; self.error = error.localizedDescription
+    }
+  }
+  private func startMeter() {
+    meter?.cancel()
+    meter = Task { [weak self] in
+      while !Task.isCancelled {
+        guard let self, phase == .recording || phase == .waiting else { return }
+        let sample = capture.sample(); elapsed = sample.elapsed; level = sample.level
+        levels.append(level); if levels.count > 240 { levels.removeFirst(levels.count - 240) }
+        switch utterance?.sample(elapsed: elapsed, level: level) {
+        case .send: completeRecording(); return
+        case .abandon:
+          submitAddressed = nil; releaseMicrophone(); clearRecording(); phase = .idle
+          resumeActivation(); return
+        default: break
+        }
+        do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+      }
     }
   }
   func recoveryFailed() { phase = .idle; error = "Не удалось восстановить прежнюю запись диктовки. Сохранённые файлы оставлены на iPad." }

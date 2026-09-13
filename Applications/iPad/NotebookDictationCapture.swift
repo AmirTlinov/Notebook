@@ -27,13 +27,13 @@ struct NotebookDictationUtterance {
   private var previous: TimeInterval?
   private var start: TimeInterval?
   private var silence: TimeInterval = 0, speech: TimeInterval = 0
-  init(hasRequest: Bool) { self.hasRequest = hasRequest }
+  init(hasRequest: Bool, silence: Double = 0) { self.hasRequest = hasRequest; self.silence = silence }
   mutating func sample(elapsed: TimeInterval, level: Double) -> Decision? {
     guard elapsed.isFinite, level.isFinite else { return nil }
     guard let previous else { self.previous = elapsed; start = elapsed; return nil }
     let delta = max(0, elapsed - previous); self.previous = elapsed
     // Sampling the same audio again must not manufacture a silence interval.
-    if level >= 0.2 {
+    if level >= 0.08 {
       silence = 0; speech += delta
       if speech >= 0.2 { hasRequest = true }
     } else { silence += delta; speech = 0 }

@@ -20,6 +20,13 @@ import XCTest
     var abandoned = NotebookDictationUtterance(hasRequest: false)
     XCTAssertNil(abandoned.sample(elapsed: 1, level: 0))
     XCTAssertEqual(abandoned.sample(elapsed: 13, level: 0), .abandon)
+    var delayed = NotebookDictationUtterance(hasRequest: true, silence: 0.9)
+    XCTAssertNil(delayed.sample(elapsed: 4, level: 0))
+    XCTAssertEqual(delayed.sample(elapsed: 4.6, level: 0), .send, "The pause observed before ASR admission is not waited a second time")
+    var quiet = NotebookDictationUtterance(hasRequest: false)
+    XCTAssertNil(quiet.sample(elapsed: 0, level: 0))
+    XCTAssertNil(quiet.sample(elapsed: 0.3, level: 0.12))
+    XCTAssertEqual(quiet.sample(elapsed: 1.8, level: 0), .send, "Quiet iPad speech following a name is still a request")
   }
   private func pcm(frame: Int, amplitude: Float = 0.1) -> NotebookDictationPCM {
     let values = (0..<6000).map { amplitude * sin(Float($0) * 2 * .pi / 60) }

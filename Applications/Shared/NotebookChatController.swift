@@ -57,10 +57,7 @@ final class NotebookChatController {
   var taskTitle: String { conversation?.title ?? selectedTask?.title ?? "Задача Codex" }
   var compactReplies: [CodexMessage] { NotebookChatReadPosition.replies(in: messages, conversation: conversation) }
   var unreadReplies: [CodexMessage] { readPosition?.unread(in: compactReplies) ?? [] }
-  var companionReply: CodexMessage? {
-    guard !voice.capturing, conversation?.requests.isEmpty != false, workStatus == nil, pendingMessages.isEmpty else { return nil }
-    return readPosition?.preview(in: compactReplies)
-  }
+  private(set) var companionReplies: [CodexMessage] = []
   var workStatus: NotebookChatWorkStatus? { .init(conversation: conversation, connected: connected) }
   private(set) var historyCursor: String?
   private(set) var loadingHistory = false
@@ -126,8 +123,8 @@ final class NotebookChatController {
       try await refreshJobs()
       try await files.start()
       loaded = true
-      ticker = Task { [wake] in
-        while !Task.isCancelled { wake.continuation.yield(()); do { try await Task.sleep(for: .milliseconds(600)) } catch { break } }
+      ticker = Task { [weak self, wake] in
+        while !Task.isCancelled { self?.refreshCompanionReplies(); wake.continuation.yield(()); do { try await Task.sleep(for: .milliseconds(600)) } catch { break } }
       }
       loop = Task { [weak self] in
         guard let self else { return }
@@ -410,7 +407,7 @@ final class NotebookChatController {
     transcriptGeneration = UUID(); catchUpRead?.cancel(); catchUpRead = nil; catchUpBoundary = nil
     nextConversation = .now; conversationSubscription = nil
     selectedTask = task; files.chooseProject(project(for: task))
-    threadID = task.id; readPosition = nil; revealedMessageID = nil; continuationUnavailable = false; conversation = nil; messages = []; historyCursor = nil; historyLoaded = false; historyBoundary = nil; loadingHistory = false
+    threadID = task.id; readPosition = nil; companionReplies = []; revealedMessageID = nil; continuationUnavailable = false; conversation = nil; messages = []; historyCursor = nil; historyLoaded = false; historyBoundary = nil; loadingHistory = false
     browsesChats = false; persistPanel(); loadEarlier()
     if task.projectID != nil, project(for: task) == nil { catalogueProjects() }
   }
@@ -639,6 +636,7 @@ final class NotebookChatController {
     subscriptionRevision = value.revision; conversation = value; continuationUnavailable = false; error = nil
     mergeMessages(value.messages, preferIncoming: true)
     if readPosition == nil || expanded || voice.activeID != nil { markRepliesRead() }
+    refreshCompanionReplies()
   }
 
   func revealReply(_ messageID: String? = nil) {
@@ -646,13 +644,24 @@ final class NotebookChatController {
     browsesChats = false; expanded = true
   }
   func dismissCompanionReply(_ messageID: String) {
-    guard companionReply?.id == messageID else { return }
-    readPosition?.dismissedThrough = messageID; persistPanel()
+    guard companionReplies.contains(where: { $0.id == messageID }) else { return }
+    readPosition?.dismiss(messageID, at: Date()); persistPanel(); refreshCompanionReplies()
+  }
+  func refreshCompanionReplies(at now: Date = Date()) {
+    guard !expanded, !voice.capturing, conversation?.requests.isEmpty != false,
+      workStatus == nil, pendingMessages.isEmpty, var position = readPosition else {
+      if !companionReplies.isEmpty { companionReplies = [] }; return
+    }
+    position.present(in: compactReplies, at: now)
+    if position != readPosition { readPosition = position; persistPanel() }
+    let visible = position.previews(in: compactReplies, at: now)
+    if companionReplies != visible { companionReplies = visible }
   }
   private func markRepliesRead() {
     guard let threadID else { return }
     let next = NotebookChatReadPosition(threadID: threadID, readThrough: compactReplies.last?.id)
     if readPosition != next { readPosition = next; persistPanel() }
+    companionReplies = []
   }
 
   private func suspendTranscript() {

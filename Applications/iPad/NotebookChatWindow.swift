@@ -113,7 +113,7 @@ struct NotebookChatWindow: View {
       .position(x: frame.midX, y: frame.midY)
       .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.3, extraBounce: 0), value: chat.expanded)
       .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: chat.companionExpanded)
-      .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: chat.companionReply?.id)
+      .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: chat.companionReplies.map(\.id))
       .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: showsCompanionTask)
       .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: chat.voice.capturing)
       .onChange(of: available) {

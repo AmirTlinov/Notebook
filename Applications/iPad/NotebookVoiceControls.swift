@@ -14,7 +14,11 @@ struct NotebookDictationButton: View {
     } label: {
       Group {
         if dictation.busy && !dictation.canRetry { ProgressView().controlSize(.small) }
-        else { Image(systemName: dictation.waiting ? "ear.badge.waveform" : dictation.canRetry ? "arrow.clockwise" : "mic").font(.system(size: 16)) }
+        else if dictation.waiting {
+          Image(systemName: "mic.fill").font(.system(size: 16))
+            .background { Circle().fill(Color.accentColor.opacity(0.1 + dictation.level * 0.25))
+              .frame(width: 22 + dictation.level * 16, height: 22 + dictation.level * 16) }
+        } else { Image(systemName: dictation.canRetry ? "arrow.clockwise" : "mic").font(.system(size: 16)) }
       }.foregroundStyle(dictation.waiting ? Color.accentColor : Color.primary)
         .frame(width: 44, height: compact ? 48 : 44).contentShape(Rectangle())
     }
@@ -50,21 +54,25 @@ struct NotebookDictationInput: View {
   @Bindable var chat: NotebookChatController
   private var dictation: NotebookDictationController { chat.dictation }
   var body: some View {
+    let levels = dictation.levels
     HStack(spacing: 0) {
       Button { dictation.cancel() } label: { symbol("xmark") }
         .disabled(dictation.phase == .inserting)
         .accessibilityLabel("Отменить диктовку").accessibilityIdentifier("notebook-dictation-cancel")
       if dictation.recording {
+        Image(systemName: "mic.fill").font(.system(size: 13)).foregroundStyle(Color.accentColor)
+          .padding(.trailing, 6).accessibilityHidden(true)
         Canvas { context, size in
-          let count = max(1, Int(size.width / 5)), samples = Array(dictation.levels.suffix(count))
+          let count = max(1, Int(size.width / 5)), samples = Array(levels.suffix(count))
           for index in 0..<count {
             let sample = index < count - samples.count ? 0 : samples[index - (count - samples.count)]
-            let height = max(2, min(26, sample * 26))
+            let height = max(2, min(30, sqrt(sample) * 30))
             let rect = CGRect(x: CGFloat(index) * 5 + 1, y: (size.height - height) / 2, width: 2.5, height: height)
-            context.fill(Path(roundedRect: rect, cornerRadius: 1.25), with: .color(.primary.opacity(sample > 0 ? 0.5 : 0.2)))
+            context.fill(Path(roundedRect: rect, cornerRadius: 1.25), with: .color(.accentColor.opacity(sample > 0 ? 0.85 : 0.2)))
           }
         }.frame(minWidth: 28, maxWidth: .infinity).frame(height: 32)
-          .accessibilityLabel(dictation.status).accessibilityIdentifier("notebook-dictation-waveform")
+          .accessibilityLabel(dictation.status).accessibilityValue("Уровень микрофона: \(Int(dictation.level * 100))")
+          .accessibilityIdentifier("notebook-dictation-waveform")
         Button { model.finishDictation(sending: false) } label: { symbol("stop.fill") }
           .accessibilityLabel("Остановить и редактировать").accessibilityIdentifier("notebook-dictation-review")
         Button { model.finishDictation(sending: true) } label: { symbol("arrow.up", send: true) }

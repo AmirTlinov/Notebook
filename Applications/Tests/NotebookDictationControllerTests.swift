@@ -43,6 +43,7 @@ import NotebookCore
     await dictation.arm()
     XCTAssertTrue(dictation.waiting); XCTAssertFalse(dictation.busy)
     XCTAssertTrue(fixture.capture.listening); XCTAssertTrue(recognizer.started)
+    try await wait { dictation.level == fixture.capture.reading.level && !dictation.levels.isEmpty }
     XCTAssertNil(dictation.pending); XCTAssertEqual(fixture.capture.starts, 0)
     XCTAssertTrue(fixture.queries.isEmpty); XCTAssertFalse(fixture.chat.voice.capturing)
     let late = try XCTUnwrap(activate); late(.init(frame: 1200, hasRequest: true))
