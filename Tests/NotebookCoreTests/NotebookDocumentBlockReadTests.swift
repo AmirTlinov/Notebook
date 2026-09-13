@@ -63,6 +63,8 @@ struct NotebookDocumentBlockReadTests {
     try fixture { store, actor, id in
       let absent = try #require(try store.readDocumentBlock(documentID: id, blockID: blockID))
       #expect(absent.state == nil && absent.block.initialState == .number(42))
+      #expect(absent.sourceVersion == (try store.loadDocument(id)).sourceVersion(blockID: blockID))
+      #expect(absent.stateVersion == nil)
       #expect(try JSONValue.encode(absent)["state"] == nil)
       var state = try store.loadDocumentState(id)
       let accepted = state.commit(blockID: blockID, value: .null, actor: actor)
@@ -70,6 +72,7 @@ struct NotebookDocumentBlockReadTests {
       _ = try store.commitDocumentState(.init(documentID: id, record: #require(state.records.first), journalStamp: state.stamp))
       let committed = try #require(try store.readDocumentBlock(documentID: id, blockID: blockID))
       #expect(committed.state == .some(.null))
+      #expect(committed.stateVersion == state.records.first?.fieldVersion)
       let value = try JSONValue.encode(committed)
       #expect(value["state"] == .null)
       #expect(try value.decode(NotebookDocumentBlockRead.self) == committed)
@@ -102,6 +105,8 @@ struct NotebookDocumentBlockReadTests {
         let read = try #require(try store.readDocumentBlock(documentID: id, blockID: block.id))
         #expect(read.block == block && read.state == state.value(for: block.id))
         #expect(read.contentStamp == document.contentStamp && read.stateStamp == state.stamp)
+        #expect(read.sourceVersion == document.sourceVersion(blockID: block.id))
+        #expect(read.stateVersion == state.records.first(where: { $0.id == block.id })?.fieldVersion)
       }
       #expect(try store.readDocumentBlock(documentID: id, blockID: uuid.lowercased()) == store.readDocumentBlock(documentID: id, blockID: uuid))
     }

@@ -6,20 +6,26 @@ public struct NotebookDocumentBlockRead: Codable, Equatable, Sendable {
   public let documentID: UUID
   public let contentStamp: VersionStamp
   public let stateStamp: VersionStamp
+  public let sourceVersion: ContentFieldVersion
+  public let stateVersion: ContentFieldVersion?
   public let block: DocumentBlock
   public let state: JSONValue?
 
-  init(documentID: UUID, contentStamp: VersionStamp, stateStamp: VersionStamp, block: DocumentBlock, state: JSONValue?) {
+  init(documentID: UUID, contentStamp: VersionStamp, stateStamp: VersionStamp,
+    sourceVersion: ContentFieldVersion, stateVersion: ContentFieldVersion?, block: DocumentBlock, state: JSONValue?) {
     self.documentID = documentID; self.contentStamp = contentStamp; self.stateStamp = stateStamp
     self.block = block; self.state = state
+    self.sourceVersion = sourceVersion; self.stateVersion = stateVersion
   }
 
-  private enum CodingKeys: String, CodingKey { case documentID, contentStamp, stateStamp, block, state }
+  private enum CodingKeys: String, CodingKey { case documentID, contentStamp, stateStamp, sourceVersion, stateVersion, block, state }
   public init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     documentID = try values.decode(UUID.self, forKey: .documentID)
     contentStamp = try values.decode(VersionStamp.self, forKey: .contentStamp)
     stateStamp = try values.decode(VersionStamp.self, forKey: .stateStamp)
+    sourceVersion = try values.decode(ContentFieldVersion.self, forKey: .sourceVersion)
+    stateVersion = try values.decodeIfPresent(ContentFieldVersion.self, forKey: .stateVersion)
     block = try values.decode(DocumentBlock.self, forKey: .block)
     // A committed JSON null is a value, not an absent state record.
     state = values.contains(.state) ? try values.decode(JSONValue.self, forKey: .state) : nil
@@ -37,8 +43,10 @@ extension NotebookStore {
       let sourceRoot = sourceFile + "#", journalRoot = journalFile + "#"
       let member = fieldKey([collaborationIdentity(blockID)])
       let sourceAddress = sourceRoot + "/blocks/@" + member, stateAddress = journalRoot + "/records/@" + member
+      let sourceField = fieldKey(["blocks", collaborationIdentity(blockID), "content"])
+      let sourceVersionAddress = sourceRoot + "/collaboration/fields/@" + fieldKey([sourceField])
       let admittedRows = try boundedStoredFragments([(sourceRoot, false), (journalRoot, false),
-        (sourceAddress, true), (stateAddress, true)], maximumCount: 4_096,
+        (sourceAddress, true), (stateAddress, true), (sourceVersionAddress, false)], maximumCount: 4_096,
         maximumBytes: 4 * 1_024 * 1_024, budget: "document_block_read")
       let fragments = Dictionary(uniqueKeysWithValues: admittedRows.map { ($0.address, $0) })
       guard let root = fragments[sourceRoot], let stateRoot = fragments[journalRoot] else {
@@ -71,6 +79,16 @@ extension NotebookStore {
         }) else { throw NotebookStorageError.corruptRecord(file) }
       }
       try requireExactMember(blockRows, value: .encode(block), root: root, collection: "blocks", file: sourceFile)
+      let sourceVersion: ContentFieldVersion
+      if let row = fragments[sourceVersionAddress] {
+        sourceVersion = try row.value.decode(ContentFieldVersion.self)
+        guard sourceVersion.isValid,
+          row == NotebookStoredFragment(address: sourceVersionAddress, file: sourceFile, parent: sourceRoot,
+            collection: "collaboration/fields", member: sourceField, position: 0,
+            value: try .encode(sourceVersion), collections: []) else {
+          throw NotebookStorageError.corruptRecord(sourceVersionAddress)
+        }
+      } else { sourceVersion = document.sourceVersion(blockID: blockID) }
       let stateRows = rows(at: stateAddress)
       let state: DocumentStateRecord?
       if stateRows.isEmpty { state = nil }
@@ -83,6 +101,7 @@ extension NotebookStore {
         state = record
       }
       return .init(documentID: documentID, contentStamp: document.contentStamp, stateStamp: stateHeader.stamp,
+        sourceVersion: sourceVersion, stateVersion: state.map { $0.fieldVersion ?? .init(stamp: $0.stamp, human: true) },
         block: block, state: state?.value)
     }
   }
