@@ -294,6 +294,7 @@ public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
 }
 
 public enum NotebookChatQuery: Codable, Equatable, Sendable {
+  case dictation(NotebookDictationQuery)
   case job(NotebookChatInput)
   case file(NotebookFileQuery)
   case voice(UUID)
@@ -309,6 +310,7 @@ public enum NotebookChatQuery: Codable, Equatable, Sendable {
 }
 
 public enum NotebookChatReply: Codable, Equatable, Sendable {
+  case dictation(NotebookDictationState)
   case models([CodexModelOption]), resources(CodexResourcePage)
   case projects(CodexProjectPage), activity([CodexTaskActivity])
   case job(NotebookChatJob), catalogue(CodexTaskPage), conversation(CodexConversation), history(CodexHistoryPage)
@@ -330,6 +332,8 @@ public struct NotebookChatEnvelope: Codable, Equatable, Sendable {
   public init(id: UUID = UUID(), body: Body) { self.id = id; self.body = body }
   public func isValid(from deviceID: UUID) -> Bool {
     guard let data = try? JSONEncoder().encode(self), data.count <= 192 * 1024 else { return false }
+    if case .request(.dictation(let query)) = body { return query.isValid }
+    if case .reply(.dictation(let state)) = body { return state.isValid }
     if case .request(.file(let query)) = body { return query.isValid }
     if case .request(.run(let query)) = body { return query.isValid }
     if case .request(.resizeRun(_, let columns, let rows)) = body { return (20...500).contains(columns) && (4...200).contains(rows) }
@@ -339,11 +343,12 @@ public struct NotebookChatEnvelope: Codable, Equatable, Sendable {
 }
 
 public struct NotebookChatPanelState: Codable, Equatable, Sendable {
+  public var dictationReceipt: UUID?
   public var threadID: String?
   public var draft: String
   public var sidecarID: UUID?
   public var attachments: [CodexInputAttachment]?
   public var readPosition: NotebookChatReadPosition?
 
-  public init(threadID: String? = nil, draft: String = "", sidecarID: UUID? = nil, attachments: [CodexInputAttachment]? = nil, readPosition: NotebookChatReadPosition? = nil) { self.threadID = threadID; self.draft = draft; self.sidecarID = sidecarID; self.attachments = attachments; self.readPosition = readPosition }
+  public init(threadID: String? = nil, draft: String = "", sidecarID: UUID? = nil, attachments: [CodexInputAttachment]? = nil, readPosition: NotebookChatReadPosition? = nil, dictationReceipt: UUID? = nil) { self.threadID = threadID; self.draft = draft; self.sidecarID = sidecarID; self.attachments = attachments; self.readPosition = readPosition; self.dictationReceipt = dictationReceipt }
 }

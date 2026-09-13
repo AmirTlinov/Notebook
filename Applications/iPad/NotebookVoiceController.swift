@@ -63,13 +63,13 @@ import NotebookCore
   @ObservationIgnored private var submitted = false
   @ObservationIgnored private var appliedAnswer = false
 
-  static let dictationUnavailable = "Подключение Codex пока не поддерживает диктовку в черновик. Голосовой разговор доступен отдельно."
   func dismissError() { error = nil }
   func begin() async { await prepare(waiting: false) }
   func arm() async { await prepare(waiting: true) }
   private func prepare(waiting: Bool) async {
     guard captureID == nil else { return }
     guard let chat, host != nil else { error = "Голосовая поверхность ещё не готова. Попробуйте включить микрофон снова."; return }
+    guard !chat.dictation.busy else { error = "Завершите диктовку или удалите запись перед голосовым разговором."; return }
     guard !chat.switchingComputer else { error = "Дождитесь подключения выбранного Mac."; return }
     guard let thread = chat.threadID, !chat.browsesChats else { error = "Выберите чат для голосового разговора."; return }
     guard chat.connected else { error = "Подключите Mac, чтобы начать голосовой разговор."; return }

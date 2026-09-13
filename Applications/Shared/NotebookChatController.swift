@@ -22,6 +22,9 @@ final class NotebookChatController {
   let files: NotebookFileController
   let runs: NotebookRunController
   let voice: NotebookVoiceController
+  let dictation: NotebookDictationController
+  private(set) var dictationReceipt: UUID?
+  private var insertingDictation = false
   var computerID: UUID? { peer }
   private(set) var computers: [NotebookTransportIdentity] = []
   private(set) var onlineComputers = Set<UUID>()
@@ -101,7 +104,9 @@ final class NotebookChatController {
     files = NotebookFileController(persistence: persistence, author: author)
     runs = NotebookRunController(persistence: persistence)
     voice = NotebookVoiceController()
+    dictation = NotebookDictationController()
     files.chat = self; runs.chat = self; voice.chat = self
+    dictation.chat = self
   }
 
   func start() async {
@@ -110,6 +115,10 @@ final class NotebookChatController {
       let author = author
       let state = try await persistence.submit { store in try store.prepareChatComputers(author: author); return try store.chatPanel(author: author) }
       threadID = state.threadID; draft = state.draft; attachments = state.attachments ?? []; readPosition = state.readPosition; peer = state.sidecarID
+      dictationReceipt = state.dictationReceipt
+      let recordingDirectory = try await persistence.submit { $0.root.appendingPathComponent("runtime/dictation/" + author.uuidString, isDirectory: true) }
+      do { try dictation.restore(directory: recordingDirectory, inserted: state.dictationReceipt) }
+      catch { dictation.recoveryFailed() }
       try await refreshJobs()
       try await files.start()
       loaded = true
@@ -167,6 +176,7 @@ final class NotebookChatController {
   }
 
   func stop() async {
+    dictation.shutdown()
     await voice.shutdown()
     await runs.stop()
     stopped = true; ticker?.cancel(); wake.continuation.finish()
@@ -212,6 +222,7 @@ final class NotebookChatController {
     guard loaded, !stopped, !switchingComputer, !saving, savingInput == nil, !files.notes.contactActive,
       firstConnection || computers.contains(where: { $0.deviceID == id }) else { return }
     if peer == id { return }
+    guard dictation.allowsComputer(id) else { error = "Завершите диктовку или удалите запись перед выбором другого Mac."; return }
     guard !voice.capturing else { error = "Сначала выключите микрофон или завершите разговор с «\(voice.taskTitle)»."; return }
     switchingComputer = true; files.notes.acceptsNewContacts = false
     defer { switchingComputer = false; files.notes.acceptsNewContacts = true }
@@ -227,6 +238,7 @@ final class NotebookChatController {
       }
       runs.detach(); queries.removeAll()
       loaded = false; peer = id; threadID = restored.panel.threadID; draft = restored.panel.draft; attachments = restored.panel.attachments ?? []; readPosition = restored.panel.readPosition; revealedMessageID = nil; models = []; loadingModels = false; modelError = nil; loaded = true
+      dictationReceipt = restored.panel.dictationReceipt
       transcriptGeneration = UUID(); catchUpBoundary = nil
       conversation = nil; messages = []; historyCursor = nil; historyLoaded = false; historyBoundary = nil; projects = []; catalogues = [:]; activities = [:]
       projectCursor = nil; projectPages = 1; nextProjectPage = false; offeredJobs.removeAll(); selectedTask = nil; expandedProjects = []; browserMode = .chats
@@ -385,6 +397,7 @@ final class NotebookChatController {
     loadingHistory = enqueue(.history(threadID: threadID, cursor: historyLoaded ? historyCursor : nil))
   }
   func select(_ task: CodexTask) {
+    guard dictation.allowsThread(task.id) || task.id == threadID else { error = "Завершите диктовку или удалите запись перед выбором другого чата."; return }
     guard !voice.capturing || voice.state?.threadID == task.id else { error = "Микрофон относится к «\(voice.taskTitle)». Завершите разговор перед выбором другой задачи."; return }
     if task.id == threadID { browsesChats = false; return }
     transcriptGeneration = UUID(); catchUpRead?.cancel(); catchUpRead = nil; catchUpBoundary = nil
@@ -411,6 +424,7 @@ final class NotebookChatController {
     return await submit(.updateProject(edit))
   }
   func create() async {
+    guard !dictation.busy else { error = "Завершите диктовку перед созданием другого чата."; return }
     guard !voice.capturing else { error = "Завершите разговор с «\(voice.taskTitle)» перед созданием другой задачи."; return }
     if await submit(.create(title: "Занятие в Notebook", project: selectedProject)) { browsesChats = true; catalogue() }
   }
@@ -468,6 +482,7 @@ final class NotebookChatController {
   }
 
   func sendMessage(threadID submittedThread: String, text: String, context: String, attentionContextID: UUID? = nil, steeringTurnID: String? = nil, attachments submittedAttachments: [CodexInputAttachment] = []) async -> Bool {
+    guard !dictation.busy else { return false }
     guard submittedThread != threadID || (!continuationUnavailable && !browsesChats) else { return false }
     let computer = peer
     let action: NotebookChatAction = steeringTurnID.map { .steer(threadID: submittedThread, turnID: $0, text: text, context: context) } ?? .send(threadID: submittedThread, text: text, context: context)
@@ -534,9 +549,19 @@ final class NotebookChatController {
     guard peer == computer else { return }; jobs = values
   }
   private func persistPanel() {
-    guard loaded else { return }
-    let state = NotebookChatPanelState(threadID: threadID, draft: draft, sidecarID: peer, attachments: attachments.isEmpty ? nil : attachments, readPosition: readPosition), author = author
+    guard loaded, !insertingDictation else { return }
+    let state = NotebookChatPanelState(threadID: threadID, draft: draft, sidecarID: peer, attachments: attachments.isEmpty ? nil : attachments, readPosition: readPosition, dictationReceipt: dictationReceipt), author = author
     persistence.enqueue(owner: .chatPanel(peer), publishesChanges: false) { try $0.saveChatPanel(state, author: author); return false }
+  }
+  func insertDictation(_ text: String, id: UUID, thread: String, computer: UUID) async throws {
+    guard peer == computer, threadID == thread, !stopped else { throw NotebookTransportError.disconnected }
+    // Reads and attachment changes can arrive while the durable insertion is
+    // suspended. Do not enqueue a stale draft after this ordering fence.
+    insertingDictation = true
+    defer { insertingDictation = false; persistPanel() }
+    let author = author
+    let state = try await persistence.submit { try $0.insertChatDictation(text, id: id, thread: thread, computer: computer, author: author) }
+    dictationReceipt = state.dictationReceipt; draft = state.draft
   }
   func refreshFileJobs() async { try? await refreshJobs(); wake.continuation.yield(()) }
   func fileQuery(_ query: NotebookFileQuery) async throws -> NotebookFileReply {

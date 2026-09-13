@@ -32,6 +32,15 @@ import NotebookCodex
     let installation = try await CodexDesktopInstallation.discover()
     let metadata = CodexAppServer(installation: installation)
     let args = CommandLine.arguments
+    if args.count == 3, args[1] == "dictation" {
+      let audio = try Data(contentsOf: URL(fileURLWithPath: args[2]))
+      let start = Date()
+      do {
+        let text = try await metadata.transcribeDictation(audio)
+        try write(["text": text, "elapsedSeconds": String(Date().timeIntervalSince(start)), "audioBytes": String(audio.count)])
+        await metadata.close(); return
+      } catch { await metadata.close(); throw error }
+    }
     if args.count == 3, args[1] == "composer" { try await exerciseComposer(metadata, installation: installation, receipt: args[2]); return }
     if args.count == 3, args[1] == "access" { try await exerciseAccess(metadata, installation: installation, receipt: args[2]); return }
     if args.count == 3, args[1] == "run" { try await exerciseRun(metadata, receipt: args[2]); return }

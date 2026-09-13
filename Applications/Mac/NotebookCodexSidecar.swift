@@ -40,6 +40,7 @@ final class NotebookCodexSidecar {
   private let workspaceID: UUID
   private let directory: URL
   private let voice: MacNotebookVoice?
+  private let dictation: MacNotebookDictation?
   private let runs: MacNotebookProjectRuns?
   private let files: MacNotebookProjectFiles
   private var worker: Task<Void, Never>?
@@ -63,6 +64,7 @@ final class NotebookCodexSidecar {
     let server = CodexAppServer(installation: installation)
     bridge = server; metadata = server; bridgeEvents = server.events
     voice = .init(persistence: persistence, executor: server)
+    dictation = .init(executor: server, computer: computerID)
     runs = .init(persistence: persistence, executor: server, metadata: server, computer: computerID)
   }
 
@@ -72,6 +74,7 @@ final class NotebookCodexSidecar {
     self.persistence = persistence; self.bridge = bridge; self.metadata = metadata
     self.workspaceID = workspaceID; self.computerID = computerID; self.directory = directory
     voice = (bridge as? any NotebookCodexVoiceOwner).map { .init(persistence: persistence, executor: $0) }
+    dictation = (bridge as? any NotebookCodexDictationOwner).map { .init(executor: $0, computer: computerID) }
     runs = (bridge as? any NotebookCodexProcessOwner).map { .init(persistence: persistence, executor: $0, metadata: metadata, computer: computerID) }
   }
 
@@ -134,6 +137,7 @@ final class NotebookCodexSidecar {
   }
 
   func stop() async {
+    dictation?.stop()
     stopped = true; files.stop(); worker?.cancel(); eventWorker?.cancel(); publishEvents?.cancel()
     subscriptions.removeAll(); pendingEvents.removeAll()
     // Do not cancel a native turn. An in-flight mutation retains its durable attempt.
@@ -148,6 +152,9 @@ final class NotebookCodexSidecar {
     let reply: NotebookChatReply
     do {
       switch query {
+      case .dictation(let query):
+        guard let dictation else { throw CodexBridgeError.unavailable }
+        reply = .dictation(try dictation.receive(query, peer: peerID))
       case .voice(let id):
         guard let voice else { throw CodexBridgeError.unavailable }; reply = .voice(try await voice.state(id, peer: peerID))
       case .run(let query):

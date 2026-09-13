@@ -40,6 +40,13 @@ PROFILES = {
         "core": ["NotebookComputerStoreTests", "NotebookChatStoreTests", "NotebookProjectFileTests"],
         "ipad": ["NotebookTests/NotebookComputerControllerTests", "NotebookTests/NotebookChatControllerTests", "NotebookTests/NotebookFileControllerTests", "NotebookTests/NotebookRunControllerTests", "NotebookTests/NotebookVoiceControllerTests"],
     },
+    "dictation": {
+        "core": ["NotebookDictationTests", "NotebookChatStoreTests", "CodexDictationTests"],
+        "mac": ["NotebookMacTests/NotebookDictationTests", "NotebookMacTests/NotebookCodexSidecarTests"],
+        "ipad": ["NotebookTests/NotebookDictationControllerTests", "NotebookTests/NotebookChatControllerTests",
+                 "NotebookTests/NotebookVoiceControllerTests",
+                 UI + "testDictationControlBesideVoiceInvokesItsOwnerWithoutLosingTheDraftOrPaper"],
+    },
     "voice": {
         "commands": ["voice-audio"],
         "core": ["NotebookChatStoreTests", "NotebookCodexTests", "NotebookWakeAddressTests", "NotebookChatReadPositionTests"],
@@ -151,6 +158,8 @@ def owners(path):
     name = Path(path).name
     if name in ("NotebookComputerStore.swift", "NotebookComputerStoreTests.swift", "NotebookComputerControllerTests.swift"):
         return ["computers"]
+    if "Dictation" in name:
+        return ["dictation"]
     if "Voice" in name or "Wake" in name or name.startswith("voice-") or path.startswith("Tests/NotebookVoiceHarness/"):
         return ["voice"]
     if name in ("NotebookProjectRun.swift", "NotebookRunStore.swift", "MacNotebookProjectRuns.swift", "NotebookRunController.swift", "NotebookTerminalView.swift", "NotebookRunStoreTests.swift", "NotebookProjectRunsTests.swift", "NotebookRunControllerTests.swift") or name.startswith(("terminal-", "xterm")):

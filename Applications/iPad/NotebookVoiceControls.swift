@@ -1,28 +1,54 @@
 import SwiftUI
 import NotebookCore
 
-/// An unavailable capability explains itself without changing capture, draft or
-/// a remembered communication mode. Both chat presentations use the same action.
 struct NotebookDictationButton: View {
+  @Bindable var chat: NotebookChatController
   var compact = false
-  @State private var explainsAvailability = false
+  private var dictation: NotebookDictationController { chat.dictation }
   var body: some View {
-    Button { explainsAvailability = true } label: {
-      Image(systemName: "mic.slash").font(.system(size: 16)).foregroundStyle(.tertiary)
+    Button {
+      if dictation.recording { dictation.finish() }
+      else if dictation.canRetry { dictation.retry() }
+      else { Task { await dictation.begin() } }
+    } label: {
+      Group {
+        if dictation.busy && !dictation.recording && !dictation.canRetry { ProgressView().controlSize(.small) }
+        else { Image(systemName: dictation.recording ? "stop.circle.fill" : dictation.canRetry ? "arrow.clockwise" : "mic").font(.system(size: 16)) }
+      }.foregroundStyle(dictation.recording ? Color.red : Color.primary)
         .frame(width: 44, height: compact ? 48 : 44).contentShape(Rectangle())
     }
-    .accessibilityLabel("Диктовка Codex пока недоступна").accessibilityValue("Пока недоступен")
-    .accessibilityHint("Показать причину недоступности диктовки в черновик")
+    .disabled((dictation.busy && !dictation.recording && !dictation.canRetry) || chat.voice.capturing)
+    .accessibilityLabel(dictation.recording ? "Завершить диктовку" : dictation.canRetry ? "Повторить распознавание" : "Диктовать в черновик")
+    .accessibilityValue(dictation.status.isEmpty ? "Готова" : dictation.status)
+    .accessibilityHint("Речь появится в черновике. Отправка выполняется отдельно.")
     .accessibilityIdentifier(compact ? "notebook-compact-dictation" : "notebook-chat-dictation")
-    .popover(isPresented: $explainsAvailability) {
-      VStack(alignment: .leading, spacing: 12) {
-        Text("Диктовка Codex недоступна").font(.headline)
-        Text(NotebookVoiceController.dictationUnavailable).font(.callout).foregroundStyle(.secondary)
-          .accessibilityIdentifier("notebook-dictation-unavailable")
-        Button("Готово") { explainsAvailability = false }
-          .accessibilityIdentifier("notebook-dictation-close")
-      }.padding(18).frame(width: 300).fixedSize(horizontal: false, vertical: true)
-        .presentationCompactAdaptation(.popover)
+  }
+}
+
+struct NotebookDictationStatus: View {
+  @Bindable var dictation: NotebookDictationController
+  var body: some View {
+    if dictation.busy || dictation.error != nil {
+      HStack(spacing: 8) {
+        if dictation.recording {
+          HStack(spacing: 2) {
+            ForEach(0..<5) { bar in
+              Capsule().fill(.red).frame(width: 3, height: 4 + 16 * dictation.level * [0.5, 0.8, 1, 0.8, 0.5][bar])
+            }
+          }.frame(width: 24, height: 22).accessibilityHidden(true)
+        }
+        Text(dictation.status).font(.system(size: 12)).foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+          .accessibilityIdentifier("notebook-dictation-status")
+        if dictation.canRetry {
+          Button { dictation.retry() } label: { Image(systemName: "arrow.clockwise").frame(width: 44, height: 44) }
+            .accessibilityLabel("Повторить распознавание").accessibilityIdentifier("notebook-dictation-retry")
+        }
+        Button { dictation.cancel() } label: { Image(systemName: "xmark").font(.system(size: 12)).frame(width: 44, height: 44) }
+          .disabled(dictation.phase == .inserting)
+          .accessibilityLabel(dictation.pending == nil ? "Закрыть сообщение" : "Отменить диктовку и удалить запись")
+          .accessibilityIdentifier("notebook-dictation-cancel")
+      }.padding(.leading, 12).padding(.trailing, 3)
     }
   }
 }
@@ -39,6 +65,7 @@ struct NotebookVoiceStartButton: View {
       Image(systemName: "waveform").font(.system(size: 16))
         .frame(width: 44, height: compact ? 48 : 44).contentShape(Rectangle())
     }.accessibilityLabel(chat.voice.capturing ? "Управление голосом" : "Начать голосовой разговор")
+      .disabled(chat.dictation.busy)
       .accessibilityHint("Нажмите и говорите. Удерживайте для настройки обращения к GPT.")
       .accessibilityIdentifier(compact ? "notebook-compact-voice" : "notebook-chat-voice")
       .highPriorityGesture(LongPressGesture(minimumDuration: 0.6).onEnded { _ in showsSettings = true })

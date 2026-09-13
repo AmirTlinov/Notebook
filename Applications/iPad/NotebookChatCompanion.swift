@@ -28,12 +28,14 @@ struct NotebookCompanion: View {
       || showsTask && (chat.workStatus != nil || !chat.unreadReplies.isEmpty || !chat.pendingMessages.isEmpty)
   }
   private var canSend: Bool {
-    !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !chat.saving
+    !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !chat.saving && !chat.dictation.busy
       && !model.isSavingAgentQuestion && !model.selectionSession.isResolvingContext && !chat.continuationUnavailable && chat.threadID != nil && !chat.browsesChats
   }
   var body: some View {
     VStack(alignment: .trailing, spacing: 8) {
       controls
+      NotebookDictationStatus(dictation: chat.dictation)
+        .frame(maxWidth: 320).background { surface(radius: 18) }
       if hasCard {
         ScrollView {
           VStack(alignment: .leading, spacing: 4) {
@@ -108,7 +110,7 @@ struct NotebookCompanion: View {
           Image(systemName: "phone.down.fill").foregroundStyle(.red).frame(width: 40, height: 48).contentShape(Rectangle())
         }.accessibilityLabel("Завершить голосовой разговор").disabled(chat.voice.ending)
       } else {
-        NotebookDictationButton(compact: true)
+        NotebookDictationButton(chat: chat, compact: true)
         NotebookVoiceStartButton(chat: chat, compact: true)
       }
       Button { chat.revealReply() } label: {
@@ -133,6 +135,7 @@ struct NotebookCompanion: View {
         .focused(draftFocused)
         .lineLimit(1...3).font(.system(size: 14)).padding(.vertical, 12)
         .accessibilityIdentifier("notebook-companion-draft")
+        .disabled(chat.dictation.busy && !chat.dictation.canRetry)
       if let conversation = chat.conversation, conversation.busy || conversation.activeTurnID != nil {
         Button { if let turn = conversation.activeTurnID { Task { await chat.stopTurn(threadID: conversation.threadID, turnID: turn) } } } label: { sendSymbol("stop.fill") }
           .accessibilityLabel("Остановить ответ").accessibilityIdentifier("notebook-companion-stop").disabled(conversation.activeTurnID == nil || chat.saving)

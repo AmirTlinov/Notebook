@@ -279,7 +279,7 @@ struct NotebookChatPanel: View {
     chat.conversation?.title ?? chat.tasks.first(where: { $0.id == chat.threadID })?.title ?? (chat.threadID == nil ? "Новый чат" : "Чат Codex")
   }
   private var canSend: Bool {
-    !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && chat.threadID != nil
+    !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && chat.threadID != nil && !chat.dictation.busy
       && !chat.saving && !chat.switchingComputer && !model.isSavingAgentQuestion && !model.selectionSession.isResolvingContext && !chat.continuationUnavailable && !chat.browsesChats
   }
   private var notice: String? {

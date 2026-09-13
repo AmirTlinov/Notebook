@@ -242,7 +242,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "scroll-history-and-composer-stop"; proof.lifetime = .keepAlways; add(proof)
   }
 
-  func testDictationControlBesideVoiceExplainsAvailabilityWithoutLosingTheDraftOrPaper() {
+  func testDictationControlBesideVoiceInvokesItsOwnerWithoutLosingTheDraftOrPaper() {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication()
@@ -258,19 +258,19 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(dictation.frame.width, 44, accuracy: 1)
     XCTAssertEqual(dictation.frame.height, 44, accuracy: 1)
     XCTAssertEqual(dictation.frame.maxX, voice.frame.minX, accuracy: 1)
-    XCTAssertEqual(dictation.value as? String, "Пока недоступен")
+    XCTAssertEqual(dictation.value as? String, "Готова")
     let field = app.descendants(matching: .any).matching(identifier: "notebook-chat-text").firstMatch
     field.tap(); field.typeText("Keep this draft")
     dictation.tap()
-    let notice = app.staticTexts["notebook-dictation-unavailable"]
+    let notice = app.staticTexts["notebook-dictation-status"]
     XCTAssertTrue(notice.waitForExistence(timeout: 3))
-    XCTAssertTrue(notice.label.contains("не поддерживает диктовку в черновик"))
+    XCTAssertTrue(notice.label.contains("Подключите Mac"))
     let unavailableProof = XCTAttachment(screenshot: app.screenshot())
-    unavailableProof.name = "dictation-unavailable-without-mode-change"; unavailableProof.lifetime = .keepAlways; add(unavailableProof)
+    unavailableProof.name = "dictation-owner-preserves-offline-draft"; unavailableProof.lifetime = .keepAlways; add(unavailableProof)
     XCTAssertEqual(field.value as? String, "Keep this draft")
     XCTAssertFalse(app.buttons["Завершить голосовой разговор"].exists)
-    XCTAssertEqual(app.alerts.count, 0, "Explaining unavailable dictation must not request microphone access")
-    app.buttons["notebook-dictation-close"].tap()
+    XCTAssertEqual(app.alerts.count, 0, "An offline dictation cannot open the microphone")
+    app.buttons["notebook-dictation-cancel"].tap()
     voice.tap()
     let failure = app.staticTexts["notebook-chat-notice"]
     XCTAssertTrue(failure.waitForExistence(timeout: 3), "A tap must invoke the audio owner, not open another activation menu")
@@ -285,7 +285,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.buttons["notebook-chat-toggle"].tap()
     app.buttons["notebook-compact-dictation"].tap()
     XCTAssertTrue(notice.waitForExistence(timeout: 3))
-    app.buttons["notebook-dictation-close"].tap()
+    app.buttons["notebook-dictation-cancel"].tap()
     XCTAssertEqual(app.buttons["notebook-compact-voice"].label, "Начать голосовой разговор")
     app.buttons["notebook-compact-voice"].tap()
     let compactFailure = app.staticTexts["notebook-compact-voice-error"]

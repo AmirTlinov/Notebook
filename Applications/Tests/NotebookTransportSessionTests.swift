@@ -58,12 +58,14 @@ final class NotebookTransportSessionTests: XCTestCase {
 
   func testCodexEnvelopeUsesTheSameAuthenticatedPeerAndReceiptID() async throws {
     let ready = expectation(description: "Existing pair ready"); ready.expectedFulfillmentCount = 2
-    let received = expectation(description: "Receipt and event returned through TLS"); received.expectedFulfillmentCount = 2
+    let received = expectation(description: "Receipt, event, and audio returned through TLS"); received.expectedFulfillmentCount = 3
     let pair = try NotebookTransportTestPair()
     defer { pair.stop() }
     let input = NotebookChatInput(author: pair.clientIdentity.deviceID,
       action: .send(threadID: UUID().uuidString, text: "x² ≥ 0", context: ""))
     let envelope = NotebookChatEnvelope(body: .request(.job(input)))
+    let recording = UUID(), audio = Data(repeating: 0xA7, count: NotebookDictationRecording.chunkBytes)
+    let chunk = NotebookChatEnvelope(body: .request(.dictation(.append(id: recording, offset: 0, bytes: audio))))
     pair.onReady = { _, _ in ready.fulfill() }
     pair.onTransient = { value, peer in
       guard case .codex(let value) = value else { return XCTFail("Expected the chat lane") }
@@ -81,11 +83,19 @@ final class NotebookTransportSessionTests: XCTestCase {
       case .event(let subscription, let state):
         XCTAssertEqual(subscription, envelope.id); XCTAssertEqual(state.revision, 4)
         XCTAssertNotEqual(peer.deviceID, input.author); received.fulfill()
+      case .request(.dictation(.append(let id, let offset, let bytes))):
+        XCTAssertEqual(value.id, chunk.id); XCTAssertEqual(id, recording); XCTAssertEqual(offset, 0)
+        XCTAssertEqual(bytes, audio); XCTAssertEqual(peer.deviceID, input.author)
+        pair.server?.sendTransient(.codex(.init(id: value.id, body: .reply(.dictation(.init(id: id, receivedBytes: bytes.count))))))
+      case .reply(.dictation(let state)):
+        XCTAssertEqual(value.id, chunk.id); XCTAssertEqual(state.id, recording)
+        XCTAssertEqual(state.receivedBytes, audio.count); XCTAssertNotEqual(peer.deviceID, input.author); received.fulfill()
       default: XCTFail("Unexpected chat reply")
       }
     }
     try pair.start(); await fulfillment(of: [ready], timeout: 10)
     pair.client?.sendTransient(.codex(envelope))
+    pair.client?.sendTransient(.codex(chunk))
     await fulfillment(of: [received], timeout: 10)
   }
 

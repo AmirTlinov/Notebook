@@ -14,11 +14,13 @@ struct NotebookChatComposer: View {
   var body: some View {
     VStack(spacing: 0) {
       NotebookChatAttachmentChips(chat: chat)
+      NotebookDictationStatus(dictation: chat.dictation)
       TextField("Сообщение Codex", text: $chat.draft, axis: .vertical)
         .focused(draftFocused)
         .font(.system(size: 15)).lineLimit(1...5).textFieldStyle(.plain)
         .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 4)
         .accessibilityIdentifier("notebook-chat-text")
+        .disabled(chat.dictation.busy && !chat.dictation.canRetry)
       if width < 300 {
         HStack(spacing: 0) {
           additions
@@ -54,7 +56,7 @@ struct NotebookChatComposer: View {
   }
   private var voiceAndSend: some View {
     HStack(spacing: 0) {
-      NotebookDictationButton()
+      NotebookDictationButton(chat: chat)
       NotebookVoiceStartButton(chat: chat)
       if hasThread, let conversation = chat.conversation, conversation.busy || conversation.activeTurnID != nil {
         Button {
