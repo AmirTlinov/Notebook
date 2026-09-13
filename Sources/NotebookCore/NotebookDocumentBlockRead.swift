@@ -101,7 +101,7 @@ extension NotebookStore {
         state = record
       }
       return .init(documentID: documentID, contentStamp: document.contentStamp, stateStamp: stateHeader.stamp,
-        sourceVersion: sourceVersion, stateVersion: state.map { $0.fieldVersion ?? .init(stamp: $0.stamp, human: true) },
+        sourceVersion: sourceVersion, stateVersion: state?.valueVersion,
         block: block, state: state?.value)
     }
   }

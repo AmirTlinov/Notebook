@@ -383,6 +383,10 @@ public struct DocumentStateRecord: Codable, Equatable, Identifiable, Sendable {
   public private(set) var stamp: VersionStamp
   public private(set) var fieldVersion: ContentFieldVersion?
 
+  /// Historical records predate per-field clocks; their stored stamp remains
+  /// the authoritative version of the value, including a committed JSON null.
+  public var valueVersion: ContentFieldVersion { fieldVersion ?? .init(stamp: stamp, human: true) }
+
   public init(id: String, value: JSONValue, stamp: VersionStamp, fieldVersion: ContentFieldVersion? = nil) {
     precondition(!id.isEmpty && value.isValid)
     self.id = id
