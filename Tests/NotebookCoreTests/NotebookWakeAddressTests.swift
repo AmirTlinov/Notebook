@@ -4,6 +4,24 @@ import Testing
 
 @Suite("Local addresses: missed calls and accidental activations are separate contracts")
 struct NotebookWakeAddressTests {
+  @Test func nameOnlyPartialWaitsForAnUtteranceOrSettledAddress() {
+    for name in ["GPT", "Hey GPT", "Слушай GPT"] {
+      let phrase = [NotebookWakeAddress.Segment(name, start: 1, duration: 0.8)]
+      #expect(NotebookWakeAddress.start(in: phrase, language: "ru-RU", address: "Слушай", settled: false) == nil)
+      #expect(NotebookWakeAddress.start(in: phrase, language: "ru-RU", address: "Слушай", settled: true) == 1)
+    }
+  }
+
+  @Test func activatedDictationRemovesOnlyTheAddressAndKeepsTheRequestVerbatim() {
+    for text in ["GPT, объясни эту формулу?", "Слушай, GPT: объясни эту формулу?", "Hey GPT — объясни эту формулу?", "Хей джипити, объясни эту формулу?"] {
+      #expect(NotebookWakeAddress.removingPrefix(from: text, language: "ru-RU", address: "Слушай") == "объясни эту формулу?")
+    }
+    for text in ["Обсудим GPT", "GPTs are models", "Что такое GPT?"] {
+      #expect(NotebookWakeAddress.removingPrefix(from: text, language: "ru-RU", address: "Слушай") == text)
+    }
+    #expect(NotebookWakeAddress.removingPrefix(from: "GPT, -2 + 3", language: "en-US", address: "Hey") == "-2 + 3")
+    #expect(NotebookWakeAddress.removingPrefix(from: "GPT", language: "en-US", address: "Hey").isEmpty)
+  }
   func words(_ text: String, start: Double = 0) -> [NotebookWakeAddress.Segment] {
     text.split(separator: " ").enumerated().map { .init(String($0.element), start: start + Double($0.offset) * 0.2, duration: 0.18) }
   }

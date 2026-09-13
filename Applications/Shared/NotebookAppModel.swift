@@ -1052,6 +1052,19 @@ final class NotebookAppModel {
         }
         self.chat = chat
         chat.dictation.submissionInProgress = { [weak self] in self?.isSavingAgentQuestion == true }
+        chat.dictation.captureSubmission = { [weak self, weak chat] in
+          guard let self, let chat, !self.isClosing, !self.selectionSession.isResolvingContext else { return nil }
+          let context = self.captureChatSubmissionContext(chat)
+          return { [weak self, weak chat] recording, text in
+            guard let self, let chat, self.chat === chat,
+              chat.threadID == recording.thread, chat.computerID == recording.computer else { return false }
+            return await withCheckedContinuation { continuation in
+              self.sendChatMessage(source: .dictation(recording, text), context: context) { saved in
+                continuation.resume(returning: saved)
+              }
+            }
+          }
+        }
         await chat.start()
       #endif
       if startsNearbySync {
@@ -2428,10 +2441,25 @@ final class NotebookAppModel {
 
     /// Selection narrows attention, not the agent's tool authority. This value
     /// captures the physical owner and camera before any save/network suspension.
-    @discardableResult func sendChatMessage(steering: Bool = false, context captured: ChatSubmissionContext? = nil, onSaved: (@MainActor (Bool) -> Void)? = nil) -> Task<Void, Never>? {
-      guard !isClosing, let chat, let submittedThread = chat.threadID, !isSavingAgentQuestion, captured != nil || !selectionSession.isResolvingContext,
-        !chat.dictation.busy, !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { onSaved?(false); return nil }
-      let submittedText = chat.draft, submittedComputer = chat.computerID
+    enum ChatMessageSource {
+      case draft
+      case dictation(NotebookDictationController.Pending, String)
+    }
+    @discardableResult func sendChatMessage(steering: Bool = false, source: ChatMessageSource = .draft, context captured: ChatSubmissionContext? = nil, onSaved: (@MainActor (Bool) -> Void)? = nil) -> Task<Void, Never>? {
+      guard !isClosing, let chat, let submittedThread = chat.threadID, !isSavingAgentQuestion,
+        captured != nil || !selectionSession.isResolvingContext else { onSaved?(false); return nil }
+      let submittedText: String, dictationID: UUID?
+      switch source {
+      case .draft:
+        guard !chat.dictation.busy else { onSaved?(false); return nil }
+        submittedText = chat.draft; dictationID = nil
+      case .dictation(let recording, let text):
+        guard chat.dictation.pending?.id == recording.id, recording.thread == submittedThread,
+          recording.computer == chat.computerID else { onSaved?(false); return nil }
+        submittedText = text; dictationID = recording.id
+      }
+      guard !submittedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { onSaved?(false); return nil }
+      let submittedComputer = chat.computerID
       let submittedTurn = steering ? chat.conversation?.activeTurnID : nil
       if steering && submittedTurn == nil { onSaved?(false); return nil }
       isSavingAgentQuestion = true
@@ -2443,7 +2471,8 @@ final class NotebookAppModel {
           let context = try await captured.prepare()
           guard chat.computerID == submittedComputer else { throw NotebookTransportError.disconnected }
           saved = await chat.sendMessage(threadID: submittedThread, text: submittedText, context: context.text,
-            attentionContextID: context.attentionContextID, steeringTurnID: submittedTurn, attachments: captured.attachments)
+            attentionContextID: context.attentionContextID, steeringTurnID: submittedTurn, attachments: captured.attachments,
+            dictationID: dictationID)
         } catch { agentRequestError = error.localizedDescription }
       }
       chatSubmissionTask = task

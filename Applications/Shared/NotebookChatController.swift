@@ -208,6 +208,7 @@ final class NotebookChatController {
     if files.window.sidebar { Task { await files.roots() } }
   }
   func disconnect(_ id: UUID) {
+    if id == computerID { dictation.disableActivation() }
     onlineComputers.remove(id)
     guard peer == id else { return }
     suspendTranscript(); connected = false; voice.connectionLost(); activities = [:]; conversationSubscription = nil
@@ -226,6 +227,7 @@ final class NotebookChatController {
     guard loaded, !stopped, !switchingComputer, !saving, savingInput == nil, !files.notes.contactActive,
       firstConnection || computers.contains(where: { $0.deviceID == id }) else { return }
     if peer == id { return }
+    dictation.disableActivation()
     guard dictation.allowsComputer(id) else { error = "Завершите диктовку или удалите запись перед выбором другого Mac."; return }
     guard !voice.capturing else { error = "Сначала выключите микрофон или завершите разговор с «\(voice.taskTitle)»."; return }
     switchingComputer = true; files.notes.acceptsNewContacts = false
@@ -401,6 +403,7 @@ final class NotebookChatController {
     loadingHistory = enqueue(.history(threadID: threadID, cursor: historyLoaded ? historyCursor : nil))
   }
   func select(_ task: CodexTask) {
+    if task.id != threadID { dictation.disableActivation() }
     guard dictation.allowsThread(task.id) || task.id == threadID else { error = "Завершите диктовку или удалите запись перед выбором другого чата."; return }
     guard !voice.capturing || voice.state?.threadID == task.id else { error = "Микрофон относится к «\(voice.taskTitle)». Завершите разговор перед выбором другой задачи."; return }
     if task.id == threadID { browsesChats = false; return }
@@ -428,6 +431,7 @@ final class NotebookChatController {
     return await submit(.updateProject(edit))
   }
   func create() async {
+    dictation.disableActivation()
     guard !dictation.busy else { error = "Завершите диктовку перед созданием другого чата."; return }
     guard !voice.capturing else { error = "Завершите разговор с «\(voice.taskTitle)» перед созданием другой задачи."; return }
     if await submit(.create(title: "Занятие в Notebook", project: selectedProject)) { browsesChats = true; catalogue() }
@@ -485,13 +489,13 @@ final class NotebookChatController {
     }
   }
 
-  func sendMessage(threadID submittedThread: String, text: String, context: String, attentionContextID: UUID? = nil, steeringTurnID: String? = nil, attachments submittedAttachments: [CodexInputAttachment] = []) async -> Bool {
-    guard !dictation.busy else { return false }
+  func sendMessage(threadID submittedThread: String, text: String, context: String, attentionContextID: UUID? = nil, steeringTurnID: String? = nil, attachments submittedAttachments: [CodexInputAttachment] = [], dictationID: UUID? = nil) async -> Bool {
+    guard !dictation.busy || dictationID == dictation.pending?.id && dictationID != nil else { return false }
     guard submittedThread != threadID || (!continuationUnavailable && !browsesChats) else { return false }
     let computer = peer
     let action: NotebookChatAction = steeringTurnID.map { .steer(threadID: submittedThread, turnID: $0, text: text, context: context) } ?? .send(threadID: submittedThread, text: text, context: context)
-    if await submit(action, attentionContextID: attentionContextID, attachments: submittedAttachments.isEmpty ? nil : submittedAttachments) {
-      if peer == computer, draft == text, threadID == submittedThread, attachments == submittedAttachments { attachments = []; draft = "" }; return true
+    if await submit(action, attentionContextID: attentionContextID, attachments: submittedAttachments.isEmpty ? nil : submittedAttachments, messageID: dictationID) {
+      if dictationID == nil, peer == computer, draft == text, threadID == submittedThread, attachments == submittedAttachments { attachments = []; draft = "" }; return true
     }
     return false
   }
@@ -515,11 +519,11 @@ final class NotebookChatController {
     }
   }
 
-  private func submit(_ action: NotebookChatAction, attentionContextID: UUID? = nil, attachments: [CodexInputAttachment]? = nil) async -> Bool {
+  private func submit(_ action: NotebookChatAction, attentionContextID: UUID? = nil, attachments: [CodexInputAttachment]? = nil, messageID: UUID? = nil) async -> Bool {
     guard loaded, !stopped, !saving, !switchingComputer else { return false }
     saving = true; defer { saving = false }
     let computer = peer
-    let controlID = action.controlID(author: author)
+    let controlID = messageID ?? action.controlID(author: author)
     if savingInput == nil, let controlID {
       do {
         if let previous = try await persistence.submit({ try $0.chatJob(controlID) }) {
@@ -531,7 +535,7 @@ final class NotebookChatController {
         }
       } catch { self.error = error.localizedDescription; return false }
     }
-    if let savingInput, savingInput.action != action || savingInput.attentionContextID != attentionContextID || savingInput.attachments != attachments {
+    if let savingInput, savingInput.action != action || savingInput.attentionContextID != attentionContextID || savingInput.attachments != attachments || (messageID != nil && savingInput.id != messageID) {
       error = "Сначала завершите сохранение предыдущего сообщения."; return false
     }
     let input = savingInput ?? NotebookChatInput(id: controlID ?? UUID(), author: author, action: action, attentionContextID: attentionContextID, attachments: attachments)
@@ -566,6 +570,14 @@ final class NotebookChatController {
     let author = author
     let state = try await persistence.submit { try $0.insertChatDictation(text, id: id, thread: thread, computer: computer, author: author) }
     dictationReceipt = state.dictationReceipt; draft = state.draft
+  }
+  func hasSavedDictation(_ id: UUID, thread: String, computer: UUID, text: String) async throws -> Bool {
+    try await persistence.submit { store in
+      guard let job = try store.chatJob(id) else { return false }
+      guard try store.chatDestination(id) == computer, let message = job.input.action.message,
+        message.0 == thread, message.1 == text else { throw NotebookTransportError.invalidAcknowledgement }
+      return true
+    }
   }
   func refreshFileJobs() async { try? await refreshJobs(); wake.continuation.yield(()) }
   func fileQuery(_ query: NotebookFileQuery) async throws -> NotebookFileReply {

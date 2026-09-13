@@ -2,12 +2,19 @@ import AVFoundation
 import Speech
 import NotebookCore
 
+@MainActor protocol NotebookAddressRecognition: AnyObject {
+  func start()
+  func stop()
+  func append(data: Data, frame: Int, sampleRate: Double)
+}
+struct NotebookWakeActivation { let frame: Int; let hasRequest: Bool }
+
 /// Local classification of the address only. This object owns neither a microphone
-/// nor a transcript: PCM comes from the call's one media graph and is never saved.
-@MainActor final class NotebookWakeRecognizer {
+/// nor a transcript: PCM comes from the active audio owner, not a second microphone.
+@MainActor final class NotebookWakeRecognizer: NotebookAddressRecognition {
   let language: String
   let address: String
-  let activated: (Int) -> Void
+  let activated: (NotebookWakeActivation) -> Void
   let failed: (String) -> Void
   private let recognizer: SFSpeechRecognizer
   private var request: SFSpeechAudioBufferRecognitionRequest?
@@ -24,7 +31,7 @@ import NotebookCore
     return languages.first { $0.replacingOccurrences(of: "_", with: "-") == preferred }
       ?? languages.first { $0.prefix(2) == preferred.prefix(2) } ?? "en-US"
   }
-  init(language: String, address: String, activated: @escaping (Int) -> Void, failed: @escaping (String) -> Void) throws {
+  init(language: String, address: String, activated: @escaping (NotebookWakeActivation) -> Void, failed: @escaping (String) -> Void) throws {
     let requested = language.replacingOccurrences(of: "_", with: "-").lowercased()
     guard Self.languages.contains(where: { $0.replacingOccurrences(of: "_", with: "-").lowercased() == requested }),
       let recognizer = SFSpeechRecognizer(locale: Locale(identifier: language)), recognizer.supportsOnDeviceRecognition else {
@@ -100,7 +107,9 @@ import NotebookCore
   @discardableResult private func detect(_ segments: [NotebookWakeAddress.Segment], settled: Bool) -> Bool {
     guard let time = NotebookWakeAddress.start(in: segments, language: language, address: address, settled: settled) else { return false }
     let frame = base + Int(time * rate)
-    stop(); activated(frame); return true
+    let addressed = segments.filter { $0.start >= time }.map(\.text).joined(separator: " ")
+    let hasRequest = !NotebookWakeAddress.removingPrefix(from: addressed, language: language, address: address).isEmpty
+    stop(); activated(.init(frame: frame, hasRequest: hasRequest)); return true
   }
   private func abort(_ message: String) { stop(); failed(message) }
 }

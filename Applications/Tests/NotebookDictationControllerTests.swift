@@ -1,21 +1,113 @@
 import XCTest
 import AVFoundation
+import UIKit
 import NotebookCore
 @testable import Notebook
 
 @MainActor final class TestDictationCapture: NotebookDictationCapture {
   var starts = 0, stops = 0
   var finished: (@MainActor (Bool) -> Void)?
-  func start(at url: URL, finished: @escaping @MainActor (Bool) -> Void) async throws {
+  var listening = false
+  var startFrame: Int?
+  func listen(pcm: @escaping @MainActor (Data, Int, Double) -> Void, failed: @escaping @MainActor (String) -> Void) async throws { listening = true }
+  func start(at url: URL, from frame: Int?, finished: @escaping @MainActor (Bool) -> Void) async throws {
+    startFrame = frame; listening = false
     starts += 1; self.finished = finished
     try Data(repeating: 0x41, count: 200_000).write(to: url)
   }
-  func sample() -> (elapsed: TimeInterval, level: Double) { (1.2, 0.5) }
+  var reading = (elapsed: 1.2, level: 0.5)
+  func sample() -> (elapsed: TimeInterval, level: Double) { reading }
   func stop() { stops += 1; let callback = finished; finished = nil; callback?(true) }
-  func cancel() { finished = nil }
+  func cancel() { finished = nil; listening = false }
 }
 
 @MainActor final class NotebookDictationControllerTests: XCTestCase {
+  @MainActor final class Address: NotebookAddressRecognition {
+    var started = false
+    func start() { started = true }
+    func stop() { started = false }
+    func append(data: Data, frame: Int, sampleRate: Double) {}
+  }
+  func testAddressSendsAfterSilenceThroughTheSameOutboxWithoutTouchingTheDraftOrCalling() async throws {
+    let fixture = try Fixture(fresh: true); await fixture.start()
+    let dictation = fixture.chat.dictation, recognizer = Address()
+    var activate: ((NotebookWakeActivation) -> Void)?
+    dictation.authorizeAddress = { true }
+    dictation.makeAddressRecognizer = { _, _, action, _ in activate = action; return recognizer }
+    dictation.captureSubmission = { [weak fixture] in
+      { recording, text in
+        guard let fixture else { return false }
+        return await fixture.chat.sendMessage(threadID: recording.thread, text: text, context: "frozen material", dictationID: recording.id)
+      }
+    }
+    await dictation.arm()
+    XCTAssertTrue(dictation.waiting); XCTAssertFalse(dictation.busy)
+    XCTAssertTrue(fixture.capture.listening); XCTAssertTrue(recognizer.started)
+    XCTAssertNil(dictation.pending); XCTAssertEqual(fixture.capture.starts, 0)
+    XCTAssertTrue(fixture.queries.isEmpty); XCTAssertFalse(fixture.chat.voice.capturing)
+    let late = try XCTUnwrap(activate); late(.init(frame: 1200, hasRequest: true))
+    try await wait { dictation.recording }
+    XCTAssertEqual(fixture.capture.startFrame, 1200); XCTAssertEqual(fixture.capture.starts, 1)
+    fixture.result = "Hey GPT, объясни формулу?"
+    let id = try XCTUnwrap(dictation.pending?.id)
+    try await wait { dictation.elapsed == 1.2 }
+    fixture.capture.reading = (3, 0)
+    try await wait { dictation.waiting }
+    XCTAssertEqual(fixture.chat.draft, "Вопрос:")
+    let job = try XCTUnwrap(fixture.store.chatJob(id))
+    XCTAssertEqual(job.input.action, .send(threadID: fixture.thread, text: "объясни формулу?", context: "frozen material"))
+    XCTAssertEqual(job.id, id); XCTAssertFalse(fixture.chat.voice.capturing)
+    XCTAssertFalse(fixture.chat.expanded); XCTAssertNil(dictation.reviewRequest)
+    late(.init(frame: 1200, hasRequest: true))
+    try await Task.sleep(for: .milliseconds(40))
+    XCTAssertEqual(fixture.capture.starts, 1, "A late address cannot become a second recording")
+    dictation.disableActivation()
+    XCTAssertFalse(fixture.capture.listening); XCTAssertFalse(dictation.activationEnabled)
+    XCTAssertEqual(fixture.chat.draft, "Вопрос:")
+    await fixture.close()
+  }
+  func testRecoveredAddressAlreadyInTheOutboxDoesNotReinsertOrResubmitTheMessage() async throws {
+    let fixture = try Fixture(transcript: "Объясни формулу", activated: true)
+    let input = NotebookChatInput(id: fixture.id, author: fixture.author,
+      action: .send(threadID: fixture.thread, text: "Объясни формулу", context: "original selection"))
+    _ = try fixture.store.saveChatSubmission(input, to: fixture.peer)
+    await fixture.start()
+    fixture.chat.dictation.retry()
+    try await wait { !fixture.chat.dictation.busy }
+    XCTAssertEqual(fixture.chat.draft, "Вопрос:")
+    XCTAssertEqual(try fixture.store.routedChatJobs(author: fixture.author, computer: fixture.peer).count, 1)
+    XCTAssertEqual(try fixture.store.chatJob(fixture.id)?.input, input)
+    XCTAssertTrue(fixture.queries.isEmpty, "An already committed transcript needs no second upload")
+    await fixture.close()
+  }
+  func testSwitchingTaskStopsWaitingAndCannotRedirectAPendingAddress() async throws {
+    let fixture = try Fixture(fresh: true); await fixture.start()
+    var activate: ((NotebookWakeActivation) -> Void)?
+    fixture.chat.dictation.authorizeAddress = { true }
+    fixture.chat.dictation.makeAddressRecognizer = { _, _, action, _ in activate = action; return Address() }
+    await fixture.chat.dictation.arm()
+    let task = CodexTask(id: UUID().uuidString, title: "Другая задача", cwd: "/tmp")
+    fixture.chat.select(task)
+    activate?(.init(frame: 0, hasRequest: true))
+    try await Task.sleep(for: .milliseconds(40))
+    XCTAssertFalse(fixture.capture.listening); XCTAssertEqual(fixture.capture.starts, 0)
+    XCTAssertFalse(fixture.chat.dictation.activationEnabled); XCTAssertEqual(fixture.submitCount, 0)
+    await fixture.close()
+  }
+  func testDeniedRecognitionAndBackgroundLeaveNoMicrophoneOrRecording() async throws {
+    let fixture = try Fixture(fresh: true); await fixture.start()
+    fixture.chat.dictation.makeAddressRecognizer = { _, _, _, _ in Address() }
+    fixture.chat.dictation.authorizeAddress = { false }
+    await fixture.chat.dictation.arm()
+    XCTAssertFalse(fixture.chat.dictation.activationEnabled); XCTAssertFalse(fixture.capture.listening)
+    fixture.chat.dictation.authorizeAddress = { true }
+    await fixture.chat.dictation.arm()
+    NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+    try await wait { !fixture.chat.dictation.activationEnabled }
+    XCTAssertFalse(fixture.capture.listening); XCTAssertNil(fixture.chat.dictation.pending)
+    XCTAssertEqual(fixture.submitCount, 0); XCTAssertEqual(fixture.chat.draft, "Вопрос:")
+    await fixture.close()
+  }
   @MainActor final class Fixture {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("dictation-" + UUID().uuidString)
     let author = UUID(), peer = UUID(), id = UUID(), thread = UUID().uuidString
@@ -31,7 +123,7 @@ import NotebookCore
     var recognitionFails = false
     var activeID: UUID
     let capture = TestDictationCapture()
-    init(transcript: String? = nil, alreadyInserted: Bool = false, fresh: Bool = false) throws {
+    init(transcript: String? = nil, alreadyInserted: Bool = false, fresh: Bool = false, activated: Bool = false) throws {
       activeID = id
       store = NotebookStore(root: root)
       _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
@@ -40,7 +132,7 @@ import NotebookCore
       let directory = root.appendingPathComponent("runtime/dictation/" + author.uuidString)
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
       if !fresh {
-        let recording = NotebookDictationController.Pending(id: id, thread: thread, computer: peer, transcript: transcript)
+        let recording = NotebookDictationController.Pending(id: id, thread: thread, computer: peer, transcript: transcript, activation: activated ? .init(language: "ru-RU", address: "Слушай") : nil)
         try JSONEncoder().encode(recording).write(to: directory.appendingPathComponent("pending.json"))
         // Synthetic transport input: this test never records a person's microphone.
         try Data(repeating: 0x41, count: 200_000).write(to: directory.appendingPathComponent(id.uuidString + ".m4a"))
@@ -64,7 +156,7 @@ import NotebookCore
           case .cancel(let cancelled): state = .init(id: cancelled, phase: .cancelled)
           }
           reply = .dictation(state)
-        case .job: submitCount += 1; reply = .failure("A transcription cannot submit a turn")
+        case .job(let input): submitCount += 1; reply = .job(.init(input: input, state: .accepted, result: .turn(input.id.uuidString), revision: 2))
         case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil))
         case .projects: reply = .projects(.init(projects: [], nextCursor: nil))
         case .history: reply = .history(.init(messages: [], nextCursor: nil))

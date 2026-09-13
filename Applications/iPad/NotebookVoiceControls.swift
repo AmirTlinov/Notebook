@@ -4,23 +4,42 @@ import NotebookCore
 struct NotebookDictationButton: View {
   @Bindable var chat: NotebookChatController
   var compact = false
+  @State private var showsActivation = false
   private var dictation: NotebookDictationController { chat.dictation }
   var body: some View {
     Button {
-      if dictation.canRetry { dictation.retry() }
+      if dictation.waiting { dictation.disableActivation() }
+      else if dictation.canRetry { dictation.retry() }
       else { Task { await dictation.begin() } }
     } label: {
       Group {
         if dictation.busy && !dictation.canRetry { ProgressView().controlSize(.small) }
-        else { Image(systemName: dictation.canRetry ? "arrow.clockwise" : "mic").font(.system(size: 16)) }
-      }.foregroundStyle(Color.primary)
+        else { Image(systemName: dictation.waiting ? "ear.badge.waveform" : dictation.canRetry ? "arrow.clockwise" : "mic").font(.system(size: 16)) }
+      }.foregroundStyle(dictation.waiting ? Color.accentColor : Color.primary)
         .frame(width: 44, height: compact ? 48 : 44).contentShape(Rectangle())
     }
     .disabled((dictation.busy && !dictation.canRetry) || chat.voice.capturing)
-    .accessibilityLabel(dictation.canRetry ? "Повторить распознавание" : "Диктовать сообщение")
+    .accessibilityLabel(dictation.waiting ? "Выключить обращение GPT и микрофон" : dictation.canRetry ? "Повторить распознавание" : "Диктовать сообщение")
     .accessibilityValue(dictation.status.isEmpty ? "Готова" : dictation.status)
-    .accessibilityHint("Во время записи можно отправить речь или остановиться для редактирования.")
+    .accessibilityHint("Нажмите для диктовки. Удерживайте, чтобы включить диктовку по обращению GPT.")
     .accessibilityIdentifier(compact ? "notebook-compact-dictation" : "notebook-chat-dictation")
+    .highPriorityGesture(LongPressGesture(minimumDuration: 0.6).onEnded { _ in showsActivation = true })
+    .accessibilityAction(named: "Диктовка по обращению GPT") { showsActivation = true }
+    .popover(isPresented: $showsActivation) {
+      VStack(alignment: .leading, spacing: 12) {
+        Text("Диктовка по обращению").font(.headline)
+        Text(chat.taskTitle).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+        Toggle("Включать по GPT", isOn: Binding(get: { dictation.activationEnabled }, set: { enabled in
+          showsActivation = false
+          if enabled { Task { await dictation.arm() } } else { dictation.disableActivation() }
+        })).accessibilityIdentifier("notebook-dictation-wake-toggle")
+        Text(NotebookWakeAddress.examples(language: chat.voice.language, address: chat.voice.address) + " — и сразу просьба. После паузы она сразу отправится в этот чат. Это не звонок; обычное нажатие микрофона оставляет текст для редактирования.")
+          .font(.caption).foregroundStyle(.secondary)
+        Text("До обращения звук остаётся в памяти iPad. Нажатие на значок ожидания выключает микрофон; уход из Notebook также прекращает ожидание.")
+          .font(.caption2).foregroundStyle(.secondary)
+      }.padding(18).frame(width: 300).fixedSize(horizontal: false, vertical: true)
+        .presentationCompactAdaptation(.popover)
+    }
   }
 }
 

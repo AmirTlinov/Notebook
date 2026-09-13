@@ -48,11 +48,12 @@ PROFILES = {
         "ipad": ["NotebookTests/NotebookComputerControllerTests", "NotebookTests/NotebookChatControllerTests", "NotebookTests/NotebookFileControllerTests", "NotebookTests/NotebookRunControllerTests", "NotebookTests/NotebookVoiceControllerTests"],
     },
     "dictation": {
-        "core": ["NotebookDictationTests", "NotebookChatStoreTests", "CodexDictationTests"],
+        "core": ["NotebookDictationTests", "NotebookChatStoreTests", "CodexDictationTests", "NotebookWakeAddressTests"],
         "mac": ["NotebookMacTests/NotebookDictationTests", "NotebookMacTests/NotebookCodexSidecarTests"],
-        "ipad": ["NotebookTests/NotebookDictationControllerTests", "NotebookTests/NotebookChatControllerTests",
+        "ipad": ["NotebookTests/NotebookDictationControllerTests", "NotebookTests/NotebookDictationAudioTests", "NotebookTests/NotebookChatControllerTests",
                  "NotebookTests/NotebookVoiceControllerTests", "NotebookTests/NotebookAgentQuestionTests",
                  UI + "testDictationInputStopsIntoAnEditableExpandedChatAndSendsExactlyOnce",
+                 UI + "testAddressedDictationSendsOnceFromTheCompanionWithoutOpeningOrClearingTheDraft",
                  UI + "testDictationControlBesideVoiceInvokesItsOwnerWithoutLosingTheDraftOrPaper"],
     },
     "voice": {

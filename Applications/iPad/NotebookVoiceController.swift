@@ -70,6 +70,7 @@ import NotebookCore
     guard captureID == nil else { return }
     guard let chat, host != nil else { error = "Голосовая поверхность ещё не готова. Попробуйте включить микрофон снова."; return }
     guard !chat.dictation.busy else { error = "Завершите диктовку или удалите запись перед голосовым разговором."; return }
+    chat.dictation.disableActivation()
     guard !chat.switchingComputer else { error = "Дождитесь подключения выбранного Mac."; return }
     guard let thread = chat.threadID, !chat.browsesChats else { error = "Выберите чат для голосового разговора."; return }
     guard chat.connected else { error = "Подключите Mac, чтобы начать голосовой разговор."; return }
@@ -78,11 +79,11 @@ import NotebookCore
     if waiting {
       do {
         let wake = try NotebookWakeRecognizer(language: language, address: address,
-          activated: { [weak self] frame in
+          activated: { [weak self] activation in
             guard let self, captureID == id, self.waiting, !ending, let web = self.web else { return }
             self.waiting = false; self.wake = nil; activeID = id; phase = .processing
             startDeadline(id)
-            Task { await startOffer(web, id: id, start: frame) }
+            Task { await startOffer(web, id: id, start: activation.frame) }
           }, failed: { [weak self] message in
             guard let self, captureID == id, !ending else { return }
             error = message; Task { await end() }

@@ -84,6 +84,16 @@ import NotebookCore
       receiver?.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
     }
     receiver = chat
+    if dictation {
+      var addressed = false
+      chat.dictation.authorizeAddress = { true }
+      chat.dictation.makeAddressRecognizer = { _, _, activate, _ in
+        SimulatorAddressRecognizer {
+          guard !addressed else { return }; addressed = true
+          activate(.init(frame: 0, hasRequest: true))
+        }
+      }
+    }
     await chat.start(); await chat.connect(peer); chat.select(task); chat.expanded = !dictation
     return chat
   }
@@ -92,17 +102,35 @@ import NotebookCore
 /// Synthetic device input and transcript, isolated to this Simulator fixture.
 /// UI gestures still exercise the production capture lifecycle and send owner.
 @MainActor private final class SimulatorDictationCapture: NotebookDictationCapture {
+  private var listener: Task<Void, Never>?
+  private var addressed = false
+  func listen(pcm: @escaping @MainActor (Data, Int, Double) -> Void, failed: @escaping @MainActor (String) -> Void) async throws {
+    listener = Task {
+      do { try await Task.sleep(for: .seconds(1)) } catch { return }
+      pcm(Data(count: 4096), 0, 24_000)
+    }
+  }
   private var finished: (@MainActor (Bool) -> Void)?
   private var started = Date()
-  func start(at url: URL, finished: @escaping @MainActor (Bool) -> Void) async throws {
+  func start(at url: URL, from frame: Int?, finished: @escaping @MainActor (Bool) -> Void) async throws {
     try Data(repeating: 0x41, count: 4096).write(to: url)
-    started = Date(); self.finished = finished
+    started = Date(); self.finished = finished; addressed = frame != nil
   }
   func sample() -> (elapsed: TimeInterval, level: Double) {
     let elapsed = Date().timeIntervalSince(started)
-    return (elapsed, max(0, sin(elapsed * 2.3) * 0.45 + 0.3))
+    return (elapsed, addressed && elapsed > 0.5 ? 0 : max(0, sin(elapsed * 2.3) * 0.45 + 0.3))
   }
   func stop() { let callback = finished; finished = nil; callback?(true) }
-  func cancel() { finished = nil }
+  func cancel() { finished = nil; listener?.cancel(); listener = nil }
+}
+@MainActor private final class SimulatorAddressRecognizer: NotebookAddressRecognition {
+  let activate: () -> Void
+  private var stopped = true
+  init(activate: @escaping () -> Void) { self.activate = activate }
+  func start() { stopped = false }
+  func stop() { stopped = true }
+  func append(data: Data, frame: Int, sampleRate: Double) {
+    guard !stopped else { return }; stopped = true; activate()
+  }
 }
 #endif

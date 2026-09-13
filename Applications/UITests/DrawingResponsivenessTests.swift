@@ -242,6 +242,45 @@ final class DrawingResponsivenessTests: XCTestCase {
     return XCTWaiter.wait(for: [expected], timeout: 8) == .completed
   }
 
+  private func waitForKeyboardLayout(_ app: XCUIApplication, above control: XCUIElement) -> Bool {
+    var previous = CGRect.zero, stableSince: Date?
+    return waitUntil {
+      let keyboard = app.keyboards.firstMatch
+      guard keyboard.exists, keyboard.frame.height > 180, control.isHittable,
+        control.frame.maxY <= keyboard.frame.minY + 1 else { stableSince = nil; return false }
+      let frame = control.frame
+      if frame != previous { previous = frame; stableSince = Date(); return false }
+      if stableSince == nil { stableSince = Date() }
+      return Date().timeIntervalSince(stableSince!) >= 0.6
+    }
+  }
+
+  func testAddressedDictationSendsOnceFromTheCompanionWithoutOpeningOrClearingTheDraft() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-dictation-fixture"]
+    launchPortraitFixture(app)
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 8))
+    let frame = paper.frame, ink = paper.value as? String
+    let mic = app.buttons["notebook-compact-dictation"]
+    XCTAssertTrue(mic.waitForExistence(timeout: 8)); mic.press(forDuration: 0.8)
+    let toggle = app.switches["notebook-dictation-wake-toggle"]
+    XCTAssertTrue(toggle.waitForExistence(timeout: 4))
+    let menu = XCTAttachment(screenshot: app.screenshot()); menu.name = "dictation-address-setting"; menu.lifetime = .keepAlways; add(menu)
+    toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+    let reply = app.buttons["notebook-companion-reply"]
+    XCTAssertTrue(waitUntil { reply.exists && reply.label == "Принято поручений: 1" })
+    XCTAssertFalse(app.otherElements["notebook-chat-transcript"].exists)
+    XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, ink)
+    XCTAssertTrue(waitUntil { mic.exists && mic.label == "Выключить обращение GPT и микрофон" })
+    mic.tap()
+    XCTAssertTrue(waitUntil { mic.label == "Диктовать сообщение" })
+    XCTAssertEqual(reply.label, "Принято поручений: 1")
+    let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "addressed-dictation-single-answer"; proof.lifetime = .keepAlways; add(proof)
+  }
+
   func testDictationInputStopsIntoAnEditableExpandedChatAndSendsExactlyOnce() {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
@@ -268,6 +307,8 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4), "Stop opens the full chat ready for editing")
     field.typeText(" edited")
     XCTAssertEqual(field.value as? String, "В Notebook работает диктовка Codex edited")
+    field.tap()
+    XCTAssertTrue(waitForKeyboardLayout(app, above: app.buttons["notebook-chat-send"]))
     let review = XCTAttachment(screenshot: app.screenshot()); review.name = "dictation-expanded-editable-draft"; review.lifetime = .keepAlways; add(review)
     app.buttons["notebook-chat-send"].tap()
     XCTAssertTrue(waitUntil { app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Принято поручений: 1")).firstMatch.exists })
@@ -318,6 +359,8 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(dictation.value as? String, "Готова")
     let field = app.descendants(matching: .any).matching(identifier: "notebook-chat-text").firstMatch
     field.tap(); field.typeText("Keep this draft")
+    field.tap()
+    XCTAssertTrue(waitForKeyboardLayout(app, above: dictation))
     dictation.tap()
     let notice = app.staticTexts["notebook-dictation-status"]
     XCTAssertTrue(notice.waitForExistence(timeout: 3))

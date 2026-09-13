@@ -85,8 +85,8 @@ public enum NotebookWakeAddress {
     }
     for candidate in candidates.sorted(by: { $0.name.count > $1.name.count }) where text.hasPrefix(candidate.name) {
       let rest = String(text.dropFirst(candidate.name.count))
-      // A bare name in an unfinished partial transcript is not yet an address.
-      if rest.isEmpty && !settled && !candidate.prefixed { continue }
+      // A name-only partial must settle before it can admit the next phrase.
+      if rest.isEmpty && !settled { continue }
       if !candidate.prefixed && ["это", "этот", "был", "является", "означает", "is", "was", "means", "standsfor", "est", "ist", "esun", "esuna"].contains(where: { rest.hasPrefix($0) }) { continue }
       // Word boundaries belong to the text, not the recognizer's segmentation:
       // it can return "Hey GPT explain this" as a single timed segment.
@@ -94,6 +94,24 @@ public enum NotebookWakeAddress {
       return utterance[0].start
     }
     return nil
+  }
+  /// Only an already voice-activated recording uses this projection. The local
+  /// detector never supplies the dictation text: Codex still transcribes it.
+  public static func removingPrefix(from text: String, language: String, address: String) -> String {
+    let normalized = fold(text)
+    for phrase in phrases(language: language, address: address).map(fold).sorted(by: { $0.count > $1.count }) where normalized.hasPrefix(phrase) {
+      var count = 0
+      for index in text.indices {
+        count += fold(String(text[index])).count
+        guard count == phrase.count else { if count > phrase.count { break }; continue }
+        let end = text.index(after: index)
+        if end < text.endIndex, text[end].isLetter || text[end].isNumber,
+          !["ja", "zh", "ko"].contains(String(language.prefix(2))) { break }
+        let separators = CharacterSet(charactersIn: " \n\t\r,.:;!?—–")
+        return String(text[end...].drop(while: { $0.unicodeScalars.allSatisfy { separators.contains($0) } }))
+      }
+    }
+    return text
   }
   private static func fold(_ text: String) -> String {
     String(text.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
