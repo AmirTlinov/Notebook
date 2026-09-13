@@ -4,6 +4,7 @@ import NotebookCore
 /// Text and tools have separate rows. Narrow windows reflow controls instead of hiding voice input.
 struct NotebookChatComposer: View {
   @Bindable var chat: NotebookChatController
+  let draftFocused: FocusState<Bool>.Binding
   let width: CGFloat
   let canSend: Bool
   let saving: Bool
@@ -14,6 +15,7 @@ struct NotebookChatComposer: View {
     VStack(spacing: 0) {
       NotebookChatAttachmentChips(chat: chat)
       TextField("Сообщение Codex", text: $chat.draft, axis: .vertical)
+        .focused(draftFocused)
         .font(.system(size: 15)).lineLimit(1...5).textFieldStyle(.plain)
         .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 4)
         .accessibilityIdentifier("notebook-chat-text")
@@ -52,14 +54,8 @@ struct NotebookChatComposer: View {
   }
   private var voiceAndSend: some View {
     HStack(spacing: 0) {
-      Button { chat.voice.explainDictation() } label: {
-        Image(systemName: "mic").font(.system(size: 16)).foregroundStyle(.secondary).frame(width: 44, height: 44).contentShape(Rectangle())
-      }.accessibilityLabel("Голосовой ввод Codex").accessibilityValue("Пока недоступен")
-        .accessibilityHint("Показать причину недоступности диктовки в черновик").accessibilityIdentifier("notebook-chat-dictation")
-      Button { Task { await chat.voice.begin() } } label: {
-        Image(systemName: "waveform").font(.system(size: 16)).frame(width: 44, height: 44).contentShape(Rectangle())
-      }.accessibilityLabel("Голосовой разговор с Codex").accessibilityIdentifier("notebook-chat-voice")
-        .disabled(chat.voice.capturing || !chat.connected || !hasThread)
+      NotebookDictationButton()
+      NotebookVoiceStartButton(chat: chat)
       if hasThread, let conversation = chat.conversation, conversation.busy || conversation.activeTurnID != nil {
         Button {
           if let turn = conversation.activeTurnID { Task { await chat.stopTurn(threadID: conversation.threadID, turnID: turn) } }

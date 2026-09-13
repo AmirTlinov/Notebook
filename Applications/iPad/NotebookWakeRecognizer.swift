@@ -25,8 +25,11 @@ import NotebookCore
       ?? languages.first { $0.prefix(2) == preferred.prefix(2) } ?? "en-US"
   }
   init(language: String, address: String, activated: @escaping (Int) -> Void, failed: @escaping (String) -> Void) throws {
-    guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: language)), recognizer.supportsOnDeviceRecognition else {
-      throw NotebookPersistenceQueue.Failure(message: "На этом iPad нет локального распознавания для выбранного языка. Ожидание обращения не включено; разговор можно начать кнопкой.")
+    let requested = language.replacingOccurrences(of: "_", with: "-").lowercased()
+    guard Self.languages.contains(where: { $0.replacingOccurrences(of: "_", with: "-").lowercased() == requested }),
+      let recognizer = SFSpeechRecognizer(locale: Locale(identifier: language)), recognizer.supportsOnDeviceRecognition else {
+      let name = Locale.current.localizedString(forIdentifier: language) ?? language
+      throw NotebookPersistenceQueue.Failure(message: "На этом iPad недоступно локальное распознавание: \(name). Выберите другой язык в настройках голоса или начните разговор кнопкой. Микрофон выключен.")
     }
     self.recognizer = recognizer; self.language = language; self.address = address
     self.activated = activated; self.failed = failed
@@ -60,7 +63,7 @@ import NotebookCore
     let generation = generation
     let request = SFSpeechAudioBufferRecognitionRequest()
     request.requiresOnDeviceRecognition = true; request.shouldReportPartialResults = true
-    request.contextualStrings = NotebookWakeAddress.names(language: language) + [address + " GPT"]
+    request.contextualStrings = NotebookWakeAddress.phrases(language: language, address: address)
     self.request = request
     recognition = recognizer.recognitionTask(with: request) { [weak self] result, error in
       let words = result?.bestTranscription.segments.map { NotebookWakeAddress.Word($0.substring, start: $0.timestamp, duration: $0.duration) }

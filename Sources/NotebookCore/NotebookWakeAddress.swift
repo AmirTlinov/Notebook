@@ -45,6 +45,22 @@ public enum NotebookWakeAddress {
     }
     return ["GPT", "G P T"] + local
   }
+  public static func examples(language: String, address: String) -> String {
+    var values = address.isEmpty ? [String]() : [address + ", GPT"]
+    if language.prefix(2) == "ru", fold(address) == fold(localAddress(language: language)) { values.append("Hey, GPT") }
+    return (values + ["GPT"]).joined(separator: " · ")
+  }
+  /// Names and addresses share one vocabulary with the local speech recognizer.
+  /// Russian recognition can spell the English address phonetically; these are
+  /// exact alternatives, not fuzzy matches of surrounding conversation.
+  public static func phrases(language: String, address: String) -> [String] {
+    let names = names(language: language)
+    var addresses = address.isEmpty ? [String]() : [address]
+    if language.prefix(2) == "ru", fold(address) == fold(localAddress(language: language)) {
+      addresses += ["Hey", "Хей", "Хэй", "Эй"]
+    }
+    return names + addresses.flatMap { prefix in names.map { prefix + " " + $0 } }
+  }
   public static func start(in words: [Word], language: String, address: String, settled: Bool, agentSpeaking: Bool = false) -> Double? {
     guard !agentSpeaking, !words.isEmpty else { return nil }
     var start = 0
@@ -52,8 +68,10 @@ public enum NotebookWakeAddress {
     let utterance = Array(words[start...])
     let text = fold(utterance.map(\.text).joined(separator: " "))
     let names = names(language: language).map(fold)
-    let prefix = fold(address)
-    let candidates = names.map { (name: $0, prefixed: false) } + (prefix.isEmpty ? [] : names.map { (name: prefix + $0, prefixed: true) })
+    let candidates = phrases(language: language, address: address).map { phrase in
+      let name = fold(phrase)
+      return (name: name, prefixed: !names.contains(name))
+    }
     for candidate in candidates.sorted(by: { $0.name.count > $1.name.count }) where text.hasPrefix(candidate.name) {
       let rest = String(text.dropFirst(candidate.name.count))
       // A bare name in an unfinished partial transcript is not yet an address.

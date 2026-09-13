@@ -20,6 +20,7 @@ struct NotebookChatPanel: View {
   @State private var terminalDrag: NotebookTerminalSplit?
   @State private var terminalFraction: Double?
   @State private var showsChatActions = false
+  @FocusState private var draftFocused: Bool
   @GestureState private var draggingTerminal = false
 
   var body: some View {
@@ -64,10 +65,11 @@ struct NotebookChatPanel: View {
         .overlay { RoundedRectangle(cornerRadius: 28).strokeBorder(Color(.separator).opacity(0.18), lineWidth: 0.5).allowsHitTesting(false) }
         .shadow(color: .black.opacity(0.08), radius: 22, y: 7)
       } else {
-        NotebookCompanion(chat: chat, size: size, move: move, endInteraction: endInteraction)
+        NotebookCompanion(chat: chat, draftFocused: $draftFocused, size: size, move: move, endInteraction: endInteraction)
       }
     }
     .disabled(chat.switchingComputer)
+    .onChange(of: chat.expanded) { draftFocused = false }
     .buttonStyle(.plain)
     .tint(Color.primary)
     .frame(width: size.width, height: size.height)
@@ -172,7 +174,7 @@ struct NotebookChatPanel: View {
       }
         .accessibilityLabel("Новый чат").accessibilityIdentifier("notebook-chat-new")
         .disabled(chat.saving || chat.voice.capturing)
-      Button { chat.expanded = false } label: {
+      Button { draftFocused = false; chat.expanded = false } label: {
         Image(systemName: "minus").frame(width: 44, height: 44).contentShape(Rectangle())
       }
         .accessibilityLabel("Свернуть чат").accessibilityIdentifier("notebook-chat-toggle")
@@ -265,7 +267,7 @@ struct NotebookChatPanel: View {
         Text(notice).font(.caption).foregroundStyle(chat.error != nil || model.agentRequestError != nil ? .red : .secondary)
           .lineLimit(3).padding(.horizontal, 12).accessibilityIdentifier("notebook-chat-notice")
       }
-      NotebookChatComposer(chat: chat, width: size.width - (chat.files.window.sidebar ? filesWidth + 1 : 0) - 16,
+      NotebookChatComposer(chat: chat, draftFocused: $draftFocused, width: size.width - (chat.files.window.sidebar ? filesWidth + 1 : 0) - 16,
         canSend: canSend, saving: chat.saving || model.isSavingAgentQuestion,
         send: { model.sendChatMessage() }, steer: { model.sendChatMessage(steering: true) })
     }

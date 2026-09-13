@@ -32,4 +32,17 @@ struct NotebookWakeAddressTests {
     #expect(NotebookWakeAddress.start(in: input, language: "en-US", address: "Hey", settled: false) == 3)
     #expect(NotebookWakeAddress.start(in: words("Ordinary conversation Hey GPT explain this"), language: "en-US", address: "Hey", settled: true) == nil)
   }
+  @Test func russianRecognizerAcceptsEnglishAddressWithoutChangingTheSelectedLanguage() {
+    for text in ["Hey GPT объясни формулу", "Хей джи пи ти объясни формулу", "Хэй джипити", "Эй GPT", "GPT", "Слушай ГПТ"] {
+      #expect(NotebookWakeAddress.start(in: words(text, start: 1), language: "ru-RU", address: "Слушай", settled: true) == 1, "Missed address: \(text)")
+    }
+    for text in ["Я сказал хей GPT", "Хей GPTs", "Эй друг GPT", "GPT это пример", "Привет GPT"] {
+      #expect(NotebookWakeAddress.start(in: words(text), language: "ru-RU", address: "Слушай", settled: true) == nil, "Accidental activation: \(text)")
+    }
+    #expect(NotebookWakeAddress.start(in: words("Хей GPT"), language: "ru-RU", address: "Слушай", settled: true, agentSpeaking: true) == nil)
+    #expect(NotebookWakeAddress.phrases(language: "ru-RU", address: "Слушай").contains("Hey GPT"))
+    #expect(NotebookWakeAddress.examples(language: "ru-RU", address: "Слушай") == "Слушай, GPT · Hey, GPT · GPT")
+    #expect(NotebookWakeAddress.start(in: words("Hey GPT"), language: "ru-RU", address: "Алло", settled: true) == nil, "An explicit custom address is not replaced")
+    #expect(NotebookWakeAddress.start(in: words("Алло GPT"), language: "ru-RU", address: "Алло", settled: true) == 0)
+  }
 }

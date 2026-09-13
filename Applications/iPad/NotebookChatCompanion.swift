@@ -7,11 +7,11 @@ struct NotebookCompanion: View {
   @Environment(NotebookAppModel.self) private var model
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Bindable var chat: NotebookChatController
+  let draftFocused: FocusState<Bool>.Binding
   let size: CGSize
   let move: (CGSize, Bool) -> Void
   let endInteraction: () -> Void
   @GestureState private var moving = false
-  @State private var voiceSettings = false
   @AppStorage("notebook.companion.show-task") private var showsTask = true
 
   static func preferredSize(chat: NotebookChatController, available: CGSize, showsTask: Bool, contextCount: Int = 0) -> CGSize {
@@ -66,10 +66,6 @@ struct NotebookCompanion: View {
           .background { surface(radius: 22) }
       }
     }
-    .popover(isPresented: $voiceSettings) {
-      NotebookVoiceSettings(voice: chat.voice, task: chat.taskTitle, canStart: chat.connected && chat.threadID != nil && !chat.browsesChats) { voiceSettings = false }
-        .presentationCompactAdaptation(.popover)
-    }
     .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: hasCard)
     .onChange(of: moving) { if !moving { endInteraction() } }
   }
@@ -83,7 +79,7 @@ struct NotebookCompanion: View {
   }
   private var controls: some View {
     HStack(spacing: 0) {
-      Button { if chat.threadID == nil { chat.expanded = true } else { chat.companionExpanded.toggle() } } label: {
+      Button { draftFocused.wrappedValue = false; if chat.threadID == nil { chat.expanded = true } else { chat.companionExpanded.toggle() } } label: {
         Image(systemName: "square.and.pencil").frame(width: 44, height: 48).contentShape(Rectangle())
           .overlay(alignment: .topTrailing) {
             if !chat.unreadReplies.isEmpty || !chat.draft.isEmpty {
@@ -112,10 +108,8 @@ struct NotebookCompanion: View {
           Image(systemName: "phone.down.fill").foregroundStyle(.red).frame(width: 40, height: 48).contentShape(Rectangle())
         }.accessibilityLabel("Завершить голосовой разговор").disabled(chat.voice.ending)
       } else {
-        Button { chat.voice.explainDictation() } label: { Image(systemName: "mic").frame(width: 44, height: 48).contentShape(Rectangle()) }
-          .accessibilityLabel("Голосовой ввод Codex").accessibilityIdentifier("notebook-compact-dictation")
-        Button { voiceSettings = true } label: { Image(systemName: "waveform").frame(width: 44, height: 48).contentShape(Rectangle()) }
-          .accessibilityLabel("Голос над доской").accessibilityIdentifier("notebook-compact-voice-settings")
+        NotebookDictationButton(compact: true)
+        NotebookVoiceStartButton(chat: chat, compact: true)
       }
       Button { chat.revealReply() } label: {
         Image(systemName: "chevron.down").font(.system(size: 12)).frame(width: 36, height: 48).contentShape(Rectangle())
@@ -125,7 +119,6 @@ struct NotebookCompanion: View {
       }.accessibilityLabel("Открыть переписку").accessibilityIdentifier("notebook-chat-toggle")
         .contextMenu {
           Toggle("Показывать текущую задачу", isOn: $showsTask)
-          Button("Настройки голоса", systemImage: "waveform") { voiceSettings = true }
           if chat.runs.record?.isActive == true {
             Button("Работающий терминал", systemImage: "terminal") { chat.expanded = true; chat.files.showTerminal(true) }
           }
@@ -137,6 +130,7 @@ struct NotebookCompanion: View {
     HStack(alignment: .bottom, spacing: 0) {
       NotebookChatAdditions(chat: chat, canSend: canSend, send: { model.sendChatMessage() }, steer: { model.sendChatMessage(steering: true) })
       TextField("Продолжить", text: $chat.draft, axis: .vertical)
+        .focused(draftFocused)
         .lineLimit(1...3).font(.system(size: 14)).padding(.vertical, 12)
         .accessibilityIdentifier("notebook-companion-draft")
       if let conversation = chat.conversation, conversation.busy || conversation.activeTurnID != nil {
@@ -191,49 +185,5 @@ struct NotebookPearlText: View {
           }.mask(Text(text)).allowsHitTesting(false).accessibilityHidden(true)
         }
       }
-  }
-}
-
-private struct NotebookVoiceSettings: View {
-  @Bindable var voice: NotebookVoiceController
-  @AppStorage("notebook.companion.show-task") private var showsTask = true
-  let task: String
-  let canStart: Bool
-  let close: () -> Void
-  var body: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      HStack {
-        Text("GPT над доской").font(.headline)
-        Spacer()
-        Button("Готово", action: close)
-      }
-      Toggle("Показывать текущую задачу", isOn: $showsTask)
-      Text(voice.capturing ? voice.taskTitle : task).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-      Picker("Способ общения", selection: $voice.method) {
-        ForEach(NotebookVoiceController.Method.allCases, id: \.rawValue) { Text($0.label).tag($0) }
-      }.pickerStyle(.menu).disabled(voice.capturing).accessibilityIdentifier("notebook-voice-method")
-      if !canStart && !voice.capturing { Text("Выберите разговор и подключите Mac.").font(.caption).foregroundStyle(.secondary) }
-      if voice.method == .dictation {
-        Text(NotebookVoiceController.dictationUnavailable).font(.callout).foregroundStyle(.secondary)
-      } else {
-        Picker("Язык обращения", selection: $voice.language) {
-          ForEach(NotebookWakeRecognizer.languages, id: \.self) { language in
-            Text(Locale.current.localizedString(forIdentifier: language) ?? language).tag(language)
-          }
-        }.disabled(voice.capturing)
-        TextField("Местное обращение перед GPT", text: $voice.address).textFieldStyle(.roundedBorder).disabled(voice.capturing)
-        Text("\(voice.address.isEmpty ? "GPT" : voice.address + ", GPT") · или просто GPT. Просьбу можно произнести сразу после имени.")
-          .font(.caption).foregroundStyle(.secondary)
-        if voice.capturing { NotebookVoiceControls(voice: voice) }
-        else {
-          Button("Ожидать обращения", systemImage: "ear.badge.waveform") { close(); Task { await voice.arm() } }
-            .frame(minHeight: 44).disabled(!canStart).accessibilityIdentifier("notebook-voice-arm")
-          Button("Начать разговор сейчас", systemImage: "waveform") { close(); Task { await voice.begin() } }
-            .frame(minHeight: 44).disabled(!canStart)
-        }
-        Text("До обращения звук остаётся на iPad. Ожидание выключается вместе с микрофоном или при уходе из Notebook.")
-          .font(.caption2).foregroundStyle(.secondary)
-      }
-    }.padding(20).frame(width: 330)
   }
 }

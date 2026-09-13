@@ -1,5 +1,6 @@
 import XCTest
 import WebKit
+import AVFoundation
 import NotebookCore
 @testable import Notebook
 
@@ -24,6 +25,10 @@ import NotebookCore
     web.stopLoading()
   }
   func testActualWebAudioGateKeepsWaitingLocalAndMuteReleasesTheMicrophoneWithoutASecondPeer() async throws {
+    guard AVCaptureDevice.authorizationStatus(for: .audio) == .denied else {
+      XCTFail("Synthetic WebAudio requires denied hardware capture: simctl privacy <test-device> revoke microphone com.amirtlinov.notebook")
+      return
+    }
     let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
     config.allowsInlineMediaPlayback = true; config.mediaTypesRequiringUserActionForPlayback = []
     let sink = VoiceMessages(); config.userContentController.add(sink, name: "notebookVoice")
@@ -78,20 +83,59 @@ import NotebookCore
       if value["type"] as? String == "failed" { errors.append(value["message"] as? String ?? "failed") }
     }
   }
-  func testUnavailableDictationPreservesEditableDraftAndNeverCreatesCallOrSubmission() async throws {
+  func testRetiredDictationPreferenceCannotBlockAnExplicitVoiceActionOrLoseTheDraft() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
     let store = NotebookStore(root: directory), author = UUID(), queue = NotebookPersistenceQueue(store: store)
     _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
-    let chat = NotebookChatController(persistence: queue, author: author) { _, _ in XCTFail("No audio or model request is authorized by the unavailable dictation action") }
+    UserDefaults.standard.set("dictation", forKey: "notebook.voice.method")
+    let chat = NotebookChatController(persistence: queue, author: author) { _, _ in XCTFail("An unavailable voice action cannot send work") }
     await chat.start(); chat.draft = "Мой вопрос"
-    chat.voice.method = .dictation; await chat.voice.arm()
-    XCTAssertEqual(chat.voice.method, .dictation); XCTAssertFalse(chat.voice.capturing)
+    XCTAssertNil(UserDefaults.standard.object(forKey: "notebook.voice.method"))
+    let host = UIView(); chat.voice.host = host
+    await chat.voice.arm()
+    XCTAssertFalse(chat.voice.capturing)
     XCTAssertEqual(chat.draft, "Мой вопрос"); XCTAssertNil(chat.voice.activeID)
-    XCTAssertEqual(chat.voice.error, NotebookVoiceController.dictationUnavailable)
+    XCTAssertEqual(chat.voice.error, "Выберите чат для голосового разговора.")
+    chat.select(.init(id: UUID().uuidString, title: "Моя задача", cwd: "/fixture"))
+    await chat.voice.arm()
+    XCTAssertEqual(chat.voice.error, "Подключите Mac, чтобы начать голосовой разговор.")
     XCTAssertTrue(chat.jobs.isEmpty)
     chat.draft += " остаётся редактируемым"
     await chat.stop(); let saved = await queue.flush(); XCTAssertTrue(saved)
     XCTAssertEqual(try store.chatPanel(author: author).draft, chat.draft)
+  }
+
+  func testFailedWakePreparationReleasesCaptureButRetainsTheReasonAcrossCollapseAndEnd() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = NotebookStore(root: directory), author = UUID(), peer = UUID(), thread = UUID().uuidString, queue = NotebookPersistenceQueue(store: store)
+    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    var chat: NotebookChatController!
+    chat = .init(persistence: queue, author: author) { envelope, _ in
+      guard case .request(let query) = envelope.body else { return }
+      if case .job = query { XCTFail("Failed local preparation must never start a call or send a message") }
+      chat.receive(.init(id: envelope.id, body: .reply(.failure("No remote work in this fixture"))), peerID: peer)
+    }
+    await chat.start(); await chat.connect(peer)
+    chat.select(.init(id: thread, title: "Моя задача", cwd: "/fixture"))
+    chat.draft = "Неотправленный вопрос"
+    let host = UIView(); chat.voice.host = host
+    let language = chat.voice.language, address = chat.voice.address
+    defer { chat.voice.language = language; chat.voice.address = address }
+    chat.voice.language = "zz-ZZ"
+    await chat.voice.arm()
+    let reason = try XCTUnwrap(chat.voice.error)
+    XCTAssertTrue(reason.contains("недоступно локальное распознавание"), reason)
+    XCTAssertFalse(chat.voice.capturing); XCTAssertNil(chat.voice.activeID)
+    XCTAssertEqual(chat.voice.phase, .off); XCTAssertFalse(chat.voice.ending)
+    XCTAssertTrue(host.subviews.isEmpty); XCTAssertTrue(chat.jobs.isEmpty)
+    chat.expanded = true; chat.expanded = false
+    await chat.voice.end()
+    XCTAssertEqual(chat.voice.error, reason, "Resource cleanup cannot dismiss an unacknowledged startup failure")
+    XCTAssertEqual(chat.draft, "Неотправленный вопрос"); XCTAssertEqual(chat.threadID, thread)
+    chat.voice.dismissError(); XCTAssertNil(chat.voice.error)
+    await chat.stop()
+    let saved = await queue.flush(); XCTAssertTrue(saved)
   }
 }

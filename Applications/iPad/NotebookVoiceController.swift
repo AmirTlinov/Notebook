@@ -7,13 +7,7 @@ import NotebookCore
 /// The mounted call outlives the floating chat. Audio travels over WebRTC;
 /// the existing paired Mac authorizes it and owns the same Codex task.
 @MainActor @Observable final class NotebookVoiceController: NSObject {
-  enum Method: String, CaseIterable { case dictation, conversation
-    var label: String { self == .dictation ? "Диктовка · текстовый ответ" : "Живой разговор" }
-  }
   enum Phase { case off, preparing, waiting, listening, processing, speaking, muted }
-  var method = Method(rawValue: UserDefaults.standard.string(forKey: "notebook.voice.method") ?? "") ?? .conversation {
-    didSet { UserDefaults.standard.set(method.rawValue, forKey: "notebook.voice.method") }
-  }
   var language = UserDefaults.standard.string(forKey: "notebook.voice.language") ?? NotebookWakeRecognizer.preferredLanguage {
     didSet {
       UserDefaults.standard.set(language, forKey: "notebook.voice.language")
@@ -25,6 +19,9 @@ import NotebookCore
   }
   override init() {
     super.init()
+    // The unavailable dictation control used to persist a non-executable mode.
+    // Starting a conversation is now an explicit action, never a stored fallback.
+    UserDefaults.standard.removeObject(forKey: "notebook.voice.method")
     address = UserDefaults.standard.string(forKey: "notebook.voice.address." + language) ?? NotebookWakeAddress.localAddress(language: language)
   }
   private(set) var phase: Phase = .off
@@ -67,15 +64,15 @@ import NotebookCore
   @ObservationIgnored private var appliedAnswer = false
 
   static let dictationUnavailable = "Подключение Codex пока не поддерживает диктовку в черновик. Голосовой разговор доступен отдельно."
-  func explainDictation() { if !capturing { method = .dictation }; error = Self.dictationUnavailable }
   func dismissError() { error = nil }
-  func begin() async { guard !capturing else { return }; method = .conversation; await prepare(waiting: false) }
-  func arm() async {
-    guard method == .conversation else { explainDictation(); return }
-    await prepare(waiting: true)
-  }
+  func begin() async { await prepare(waiting: false) }
+  func arm() async { await prepare(waiting: true) }
   private func prepare(waiting: Bool) async {
-    guard captureID == nil, let chat, !chat.switchingComputer, chat.connected, let thread = chat.threadID, !chat.browsesChats, host != nil else { return }
+    guard captureID == nil else { return }
+    guard let chat, host != nil else { error = "Голосовая поверхность ещё не готова. Попробуйте включить микрофон снова."; return }
+    guard !chat.switchingComputer else { error = "Дождитесь подключения выбранного Mac."; return }
+    guard let thread = chat.threadID, !chat.browsesChats else { error = "Выберите чат для голосового разговора."; return }
+    guard chat.connected else { error = "Подключите Mac, чтобы начать голосовой разговор."; return }
     let id = UUID(); captureID = id; activeID = waiting ? nil : id; state = .init(id: id, threadID: thread); taskTitle = chat.taskTitle; phase = .preparing; self.waiting = waiting; error = nil; muted = false; mediaReady = false; ending = false
     computer = chat.computerID; submitted = false; appliedAnswer = false
     if waiting {
@@ -210,7 +207,6 @@ import NotebookCore
   }
   private func finishEnd(_ id: UUID) {
     guard captureID == id else { return }
-    error = nil
     state?.phase = .ended; state?.sdp = nil
     activeID = nil; captureID = nil; phase = .off; ending = false; muted = false; speakerMuted = false; submitted = false
     endConfirmation?.cancel(); endConfirmation = nil
@@ -263,37 +259,4 @@ struct NotebookVoiceSurface: UIViewRepresentable {
   func updateUIView(_ view: UIView, context: Context) { }
   func makeCoordinator() -> NotebookVoiceController { voice }
   static func dismantleUIView(_ view: UIView, coordinator: NotebookVoiceController) { coordinator.detach(view) }
-}
-struct NotebookVoiceControls: View {
-  @Bindable var voice: NotebookVoiceController
-  @State private var showingText = false
-  var body: some View {
-    if voice.capturing {
-      HStack(spacing: 8) {
-        NotebookVoiceOrb(phase: voice.phase).frame(width: 20, height: 20)
-        Text(voice.status).font(.caption).lineLimit(2)
-        Spacer(minLength: 0)
-        Button { Task { await voice.mute() } } label: { Image(systemName: voice.muted ? "mic.fill" : "mic.slash").frame(width: 44,height: 44).contentShape(Rectangle()) }
-          .accessibilityLabel(voice.muted ? "Включить микрофон" : "Выключить микрофон").disabled(voice.ending || voice.changingMute)
-        if voice.activeID != nil {
-        Button { Task { await voice.toggleSpeaker() } } label: { Image(systemName: voice.speakerMuted ? "speaker.slash" : "speaker.wave.2").frame(width: 40, height: 44).contentShape(Rectangle()) }
-          .accessibilityLabel(voice.speakerMuted ? "Включить звук GPT" : "Выключить звук GPT").disabled(voice.ending || voice.changingSpeaker)
-        Button { showingText = true } label: { Image(systemName: "text.bubble").frame(width: 36, height: 44).contentShape(Rectangle()) }
-          .accessibilityLabel("Текст голосового разговора")
-        Button { Task { await voice.end() } } label: { Image(systemName: "phone.down.fill").foregroundStyle(.red).frame(width: 44,height: 44).contentShape(Rectangle()) }
-          .accessibilityLabel("Завершить голосовой разговор").disabled(voice.ending)
-        }
-      }.padding(.leading,12)
-        .popover(isPresented: $showingText) {
-          ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-              Text(voice.taskTitle).font(.headline)
-              if let text = voice.state?.userText, !text.isEmpty { Text(text).foregroundStyle(.secondary) }
-              if let text = voice.state?.assistantText, !text.isEmpty { Text(text) }
-              Button("Готово") { showingText = false }
-            }.textSelection(.enabled).padding(18)
-          }.frame(width: 310, height: 260).presentationCompactAdaptation(.popover)
-        }
-    }
-  }
 }
