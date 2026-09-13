@@ -66,10 +66,10 @@ import NotebookCore
     request.contextualStrings = NotebookWakeAddress.phrases(language: language, address: address)
     self.request = request
     recognition = recognizer.recognitionTask(with: request) { [weak self] result, error in
-      let words = result?.bestTranscription.segments.map { NotebookWakeAddress.Word($0.substring, start: $0.timestamp, duration: $0.duration) }
+      let segments = result?.bestTranscription.segments.map { NotebookWakeAddress.Segment($0.substring, start: $0.timestamp, duration: $0.duration) }
       let final = result?.isFinal == true
       let failure = error?.localizedDescription
-      Task { @MainActor [weak self] in self?.receive(words, final: final, error: failure, generation: generation) }
+      Task { @MainActor [weak self] in self?.receive(segments, final: final, error: failure, generation: generation) }
     }
     for chunk in tail { feed(chunk.samples) }
   }
@@ -81,22 +81,22 @@ import NotebookCore
     samples.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: $0.count) }
     request?.append(buffer)
   }
-  private func receive(_ words: [NotebookWakeAddress.Word]?, final: Bool, error: String?, generation: UUID) {
+  private func receive(_ segments: [NotebookWakeAddress.Segment]?, final: Bool, error: String?, generation: UUID) {
     guard !stopped, generation == self.generation else { return }
-    if let words, !words.isEmpty {
+    if let segments, !segments.isEmpty {
       settle?.cancel()
-      if detect(words, settled: final) { return }
+      if detect(segments, settled: final) { return }
       settle = Task { [weak self] in
         do { try await Task.sleep(for: .milliseconds(750)) } catch { return }
         guard let self, !stopped, generation == self.generation else { return }
-        _ = detect(words, settled: true)
+        _ = detect(segments, settled: true)
       }
     }
     if final { self.request?.endAudio(); self.request = nil; recognition = nil }
     else if let error { abort("Локальное ожидание обращения остановлено: \(error)") }
   }
-  @discardableResult private func detect(_ words: [NotebookWakeAddress.Word], settled: Bool) -> Bool {
-    guard let time = NotebookWakeAddress.start(in: words, language: language, address: address, settled: settled) else { return false }
+  @discardableResult private func detect(_ segments: [NotebookWakeAddress.Segment], settled: Bool) -> Bool {
+    guard let time = NotebookWakeAddress.start(in: segments, language: language, address: address, settled: settled) else { return false }
     let frame = base + Int(time * rate)
     stop(); activated(frame); return true
   }

@@ -33,7 +33,7 @@ import NotebookCore
     switch phase {
     case .off: return "Микрофон выключен"
     case .preparing: return "Подготовка микрофона…"
-    case .waiting: return "Ожидаю «\(address.isEmpty ? "GPT" : address + ", GPT")»"
+    case .waiting: return "Ожидаю «GPT» · скажите просьбу"
     case .listening: return "Слушаю"
     case .processing: return "Обрабатываю обращение…"
     case .speaking: return "GPT отвечает"

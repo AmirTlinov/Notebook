@@ -32,7 +32,9 @@ import NotebookCore
     let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
     config.allowsInlineMediaPlayback = true; config.mediaTypesRequiringUserActionForPlayback = []
     let sink = VoiceMessages(); config.userContentController.add(sink, name: "notebookVoice")
-    let web = WKWebView(frame: .init(x: 0, y: 0, width: 240, height: 100), configuration: config)
+    // The production audio surface stays mounted at one point, outside chat.
+    let web = WKWebView(frame: .init(x: 0, y: 0, width: 1, height: 1), configuration: config)
+    web.isUserInteractionEnabled = false
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene); window.rootViewController = UIViewController(); window.rootViewController?.view.addSubview(web); window.isHidden = false
     defer { web.stopLoading(); config.userContentController.removeScriptMessageHandler(forName: "notebookVoice"); window.isHidden = true; window.rootViewController = nil }
@@ -51,6 +53,7 @@ import NotebookCore
       await window.voicePrepare();
       """, arguments: [:], in: nil, contentWorld: .page)
     XCTAssertGreaterThan(sink.pcm, 0)
+    XCTAssertTrue(sink.decodedPCM, "The local owner must receive typed, contiguous Float32 samples, not merely a PCM event")
     let local = try await web.evaluateJavaScript("typeof peer==='undefined' && captures===1") as? Bool
     XCTAssertEqual(local, true, "Before the address there is no connection carrying ambient speech")
     let offer = try await web.callAsyncJavaScript("return await window.voiceOffer(0)", arguments: [:], in: nil, contentWorld: .page) as? String
@@ -77,9 +80,19 @@ import NotebookCore
   }
   @MainActor private final class VoiceMessages: NSObject, WKScriptMessageHandler {
     var pcm = 0; var errors: [String] = []
+    var decodedPCM = false
+    private var nextFrame = 0
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
       guard let value = message.body as? [String: Any] else { return }
-      if value["type"] as? String == "pcm" { pcm += 1 }
+      if value["type"] as? String == "pcm" {
+        pcm += 1
+        guard let encoded = value["data"] as? String, let data = Data(base64Encoded: encoded),
+          let frame = value["start"] as? Int, let rate = value["rate"] as? Double,
+          frame == nextFrame, rate == 24000, !data.isEmpty, data.count % 4 == 0 else {
+          XCTFail("PCM cannot reach the local recognizer"); return
+        }
+        nextFrame += data.count / 4; decodedPCM = true
+      }
       if value["type"] as? String == "failed" { errors.append(value["message"] as? String ?? "failed") }
     }
   }

@@ -32,11 +32,17 @@ struct NotebookVoiceStartButton: View {
   var compact = false
   @State private var showsSettings = false
   var body: some View {
-    Button { showsSettings = true } label: {
+    Button {
+      if chat.voice.capturing { showsSettings = true }
+      else { Task { await chat.voice.arm() } }
+    } label: {
       Image(systemName: "waveform").font(.system(size: 16))
         .frame(width: 44, height: compact ? 48 : 44).contentShape(Rectangle())
-    }.accessibilityLabel("Голосовой разговор и обращение к GPT")
-      .accessibilityIdentifier(compact ? "notebook-compact-voice-settings" : "notebook-chat-voice")
+    }.accessibilityLabel(chat.voice.capturing ? "Управление голосом" : "Включить обращение к GPT")
+      .accessibilityHint("Нажмите и скажите GPT вместе с просьбой. Удерживайте для настройки языка или разговора без обращения.")
+      .accessibilityIdentifier(compact ? "notebook-compact-voice" : "notebook-chat-voice")
+      .highPriorityGesture(LongPressGesture(minimumDuration: 0.6).onEnded { _ in showsSettings = true })
+      .accessibilityAction(named: "Параметры голоса") { showsSettings = true }
       .popover(isPresented: $showsSettings) {
         NotebookVoiceSettings(voice: chat.voice, task: chat.taskTitle,
           canStart: chat.connected && chat.threadID != nil && !chat.browsesChats && !chat.switchingComputer) { showsSettings = false }
@@ -60,10 +66,8 @@ private struct NotebookVoiceSettings: View {
       Text(voice.capturing ? voice.taskTitle : task).font(.caption).foregroundStyle(.secondary).lineLimit(2)
       if voice.capturing { NotebookVoiceControls(voice: voice) }
       else {
-        Button("Начать разговор сейчас", systemImage: "waveform") { close(); Task { await voice.begin() } }
+        Button("Начать разговор без обращения", systemImage: "waveform") { close(); Task { await voice.begin() } }
           .frame(minHeight: 44).disabled(!canStart).accessibilityIdentifier("notebook-voice-begin")
-        Button("Ожидать «GPT»", systemImage: "ear.badge.waveform") { close(); Task { await voice.arm() } }
-          .frame(minHeight: 44).disabled(!canStart).accessibilityIdentifier("notebook-voice-arm")
         if !canStart { Text("Выберите чат и подключите Mac.").font(.caption).foregroundStyle(.secondary) }
       }
       Text(NotebookWakeAddress.examples(language: voice.language, address: voice.address) + ". Просьбу можно произнести сразу после имени.")
@@ -76,7 +80,7 @@ private struct NotebookVoiceSettings: View {
         }.disabled(voice.capturing)
         TextField("Местное обращение перед GPT", text: $voice.address).textFieldStyle(.roundedBorder).disabled(voice.capturing)
       }.font(.callout)
-      Text("До обращения звук остаётся на iPad. Ожидание включается только этой кнопкой и выключается вместе с микрофоном или при уходе из Notebook.")
+      Text("Нажатие на волну в чате включает ожидание GPT. До обращения звук остаётся на iPad. Выключение микрофона или уход из Notebook прекращает ожидание.")
         .font(.caption2).foregroundStyle(.secondary)
     }.padding(18).frame(width: 330).fixedSize(horizontal: false, vertical: true)
   }

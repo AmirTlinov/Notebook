@@ -15,8 +15,8 @@ struct NotebookCompanion: View {
   @AppStorage("notebook.companion.show-task") private var showsTask = true
 
   static func preferredSize(chat: NotebookChatController, available: CGSize, showsTask: Bool, contextCount: Int = 0) -> CGSize {
-    let hasCard = chat.companionExpanded || chat.conversation?.requests.isEmpty == false || chat.voice.error != nil
-      || showsTask && (chat.workStatus != nil || !chat.unreadReplies.isEmpty || !chat.pendingMessages.isEmpty || chat.voice.capturing)
+    let hasCard = chat.companionExpanded || chat.conversation?.requests.isEmpty == false || chat.voice.error != nil || chat.voice.capturing
+      || showsTask && (chat.workStatus != nil || !chat.unreadReplies.isEmpty || !chat.pendingMessages.isEmpty)
     let height: CGFloat = 48 + (hasCard ? 68 : 0) + (chat.companionExpanded ? 52 + (chat.attachments.isEmpty ? 0 : 38) : 0)
       + (chat.conversation?.requests.isEmpty == false ? 160 : 0) + (chat.voice.error != nil ? 90 : 0)
     return .init(width: min(available.width, hasCard ? 352 : (chat.voice.capturing ? 264 : 184) + (contextCount > 0 ? 28 : 0)),
@@ -24,8 +24,8 @@ struct NotebookCompanion: View {
   }
   private var needsDecision: Bool { chat.conversation?.requests.isEmpty == false }
   private var hasCard: Bool {
-    chat.companionExpanded || needsDecision || chat.voice.error != nil
-      || showsTask && (chat.workStatus != nil || !chat.unreadReplies.isEmpty || !chat.pendingMessages.isEmpty || chat.voice.capturing)
+    chat.companionExpanded || needsDecision || chat.voice.error != nil || chat.voice.capturing
+      || showsTask && (chat.workStatus != nil || !chat.unreadReplies.isEmpty || !chat.pendingMessages.isEmpty)
   }
   private var canSend: Bool {
     !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !chat.saving
