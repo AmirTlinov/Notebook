@@ -33,7 +33,7 @@ final class NotebookChatController {
     if expanded { markRepliesRead(); synchronizeVisible() }
     else { activities = [:]; nextConversation = .now }
   } }
-  var browsesChats = false { didSet { if browsesChats != oldValue { synchronizeVisible() } } }
+  var browsesChats = false { didSet { if browsesChats != oldValue { synchronizeVisible(); dictation.environmentChanged() } } }
   private(set) var browserMode = BrowserMode.chats
   private(set) var expandedProjects = Set<String>()
   private(set) var catalogues: [CatalogueScope: CatalogueWindow] = [:]
@@ -46,12 +46,11 @@ final class NotebookChatController {
   private(set) var models: [CodexModelOption] = []
   private(set) var loadingModels = false
   private(set) var modelError: String?
-  private(set) var threadID: String?
+  private(set) var threadID: String? { didSet { dictation.environmentChanged() } }
   var tasks: [CodexTask] { catalogues[.chats]?.tasks ?? [] }
   private(set) var defaultProviderNeedsSignIn = false
   private(set) var conversation: CodexConversation?
   private(set) var messages: [CodexMessage] = []
-  var companionExpanded = false
   private(set) var readPosition: NotebookChatReadPosition?
   private(set) var revealedMessageID: String?
   var taskTitle: String { conversation?.title ?? selectedTask?.title ?? "Задача Codex" }
@@ -62,9 +61,9 @@ final class NotebookChatController {
   private(set) var historyCursor: String?
   private(set) var loadingHistory = false
   private(set) var jobs: [NotebookChatJob] = []
-  private(set) var connected = false
+  private(set) var connected = false { didSet { dictation.environmentChanged() } }
   private(set) var error: String?
-  private(set) var saving = false
+  private(set) var saving = false { didSet { if !saving { dictation.environmentChanged() } } }
   private(set) var continuationUnavailable = false
   @ObservationIgnored private let persistence: NotebookPersistenceQueue
   @ObservationIgnored private let author: UUID
@@ -100,12 +99,12 @@ final class NotebookChatController {
   @ObservationIgnored private var offeredJobs = Set<UUID>()
   @ObservationIgnored private var savingInput: NotebookChatInput?
 
-  init(persistence: NotebookPersistenceQueue, author: UUID, dictationCapture: (any NotebookDictationCapture)? = nil, send: @escaping (NotebookChatEnvelope, UUID) -> Void) {
+  init(persistence: NotebookPersistenceQueue, author: UUID, dictationCapture: (any NotebookDictationCapture)? = nil, dictationPreferences: UserDefaults = .standard, send: @escaping (NotebookChatEnvelope, UUID) -> Void) {
     self.persistence = persistence; self.author = author; self.send = send
     files = NotebookFileController(persistence: persistence, author: author)
     runs = NotebookRunController(persistence: persistence)
     voice = NotebookVoiceController()
-    dictation = NotebookDictationController(capture: dictationCapture ?? NotebookMicrophoneDictationCapture())
+    dictation = NotebookDictationController(capture: dictationCapture ?? NotebookMicrophoneDictationCapture(), preferences: dictationPreferences)
     files.chat = self; runs.chat = self; voice.chat = self
     dictation.chat = self
   }
@@ -205,7 +204,7 @@ final class NotebookChatController {
     if files.window.sidebar { Task { await files.roots() } }
   }
   func disconnect(_ id: UUID) {
-    if id == computerID { dictation.disableActivation() }
+    if id == computerID { dictation.suspendWaiting() }
     onlineComputers.remove(id)
     guard peer == id else { return }
     suspendTranscript(); connected = false; voice.connectionLost(); activities = [:]; conversationSubscription = nil
@@ -224,11 +223,11 @@ final class NotebookChatController {
     guard loaded, !stopped, !switchingComputer, !saving, savingInput == nil, !files.notes.contactActive,
       firstConnection || computers.contains(where: { $0.deviceID == id }) else { return }
     if peer == id { return }
-    dictation.disableActivation()
+    dictation.suspendWaiting()
     guard dictation.allowsComputer(id) else { error = "Завершите диктовку или удалите запись перед выбором другого Mac."; return }
     guard !voice.capturing else { error = "Сначала выключите микрофон или завершите разговор с «\(voice.taskTitle)»."; return }
     switchingComputer = true; files.notes.acceptsNewContacts = false
-    defer { switchingComputer = false; files.notes.acceptsNewContacts = true }
+    defer { switchingComputer = false; files.notes.acceptsNewContacts = true; dictation.environmentChanged() }
     connected = false; cancelQueries(); await files.suspendForComputerSwitch()
     do {
       let author = author
@@ -400,7 +399,7 @@ final class NotebookChatController {
     loadingHistory = enqueue(.history(threadID: threadID, cursor: historyLoaded ? historyCursor : nil))
   }
   func select(_ task: CodexTask) {
-    if task.id != threadID { dictation.disableActivation() }
+    if task.id != threadID { dictation.suspendWaiting() }
     guard dictation.allowsThread(task.id) || task.id == threadID else { error = "Завершите диктовку или удалите запись перед выбором другого чата."; return }
     guard !voice.capturing || voice.state?.threadID == task.id else { error = "Микрофон относится к «\(voice.taskTitle)». Завершите разговор перед выбором другой задачи."; return }
     if task.id == threadID { browsesChats = false; return }
@@ -428,7 +427,7 @@ final class NotebookChatController {
     return await submit(.updateProject(edit))
   }
   func create() async {
-    dictation.disableActivation()
+    dictation.suspendWaiting()
     guard !dictation.busy else { error = "Завершите диктовку перед созданием другого чата."; return }
     guard !voice.capturing else { error = "Завершите разговор с «\(voice.taskTitle)» перед созданием другой задачи."; return }
     if await submit(.create(title: "Занятие в Notebook", project: selectedProject)) { browsesChats = true; catalogue() }

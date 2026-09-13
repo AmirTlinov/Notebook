@@ -3,20 +3,20 @@ import Speech
 import OSLog
 import NotebookCore
 
-@MainActor protocol NotebookAddressRecognition: AnyObject {
-  func start()
-  func stop()
-  func append(data: Data, frame: Int, sampleRate: Double)
+protocol NotebookAddressRecognition: AnyObject, Sendable {
+  func start() async
+  func stop() async
+  func append(data: Data, audio: NotebookAcousticUtterance.Sample) async
 }
-struct NotebookWakeActivation { let frame: Int; let hasRequest: Bool; var silence: Double = 0 }
+struct NotebookWakeActivation: Sendable { let frame: Int; let hasRequest: Bool }
 
 /// Local classification of the address only. This object owns neither a microphone
 /// nor a transcript: PCM comes from the active audio owner, not a second microphone.
-@MainActor final class NotebookWakeRecognizer: NotebookAddressRecognition {
+actor NotebookWakeRecognizer: NotebookAddressRecognition {
   let language: String
   let address: String
-  let activated: (NotebookWakeActivation) -> Void
-  let failed: (String) -> Void
+  let activated: @Sendable (NotebookWakeActivation) -> Void
+  let failed: @Sendable (String) -> Void
   private let recognizer: SFSpeechRecognizer
   private var request: SFSpeechAudioBufferRecognitionRequest?
   private var recognition: SFSpeechRecognitionTask?
@@ -24,7 +24,7 @@ struct NotebookWakeActivation { let frame: Int; let hasRequest: Bool; var silenc
   private var generation = UUID()
   private var stopped = true
   private var base = 0, rate = 0.0, nextFrame: Int?
-  private var acoustic = NotebookAcousticUtterance()
+  private var silence = 0.0
   private var phraseOpen = false
   private static let log = Logger(subsystem: "com.amirtlinov.notebook", category: "wake")
   private var tail: [(frame: Int, samples: [Float])] = []
@@ -35,7 +35,7 @@ struct NotebookWakeActivation { let frame: Int; let hasRequest: Bool; var silenc
     return languages.first { $0.replacingOccurrences(of: "_", with: "-") == preferred }
       ?? languages.first { $0.prefix(2) == preferred.prefix(2) } ?? "en-US"
   }
-  init(language: String, address: String, activated: @escaping (NotebookWakeActivation) -> Void, failed: @escaping (String) -> Void) throws {
+  init(language: String, address: String, activated: @escaping @Sendable (NotebookWakeActivation) -> Void, failed: @escaping @Sendable (String) -> Void) throws {
     let requested = language.replacingOccurrences(of: "_", with: "-").lowercased()
     guard Self.languages.contains(where: { $0.replacingOccurrences(of: "_", with: "-").lowercased() == requested }),
       let recognizer = SFSpeechRecognizer(locale: Locale(identifier: language)), recognizer.supportsOnDeviceRecognition else {
@@ -53,13 +53,15 @@ struct NotebookWakeActivation { let frame: Int; let hasRequest: Bool; var silenc
     }
     return status == .authorized
   }
-  func start() { acoustic = .init(); rate = 0; stopped = false }
+  func start() { silence = 0; rate = 0; stopped = false }
   func stop() {
     stopped = true; generation = UUID(); settle?.cancel(); settle = nil
     request?.endAudio(); recognition?.cancel(); request = nil; recognition = nil; tail = []; nextFrame = nil; phraseOpen = false
   }
-  func append(data: Data, frame: Int, sampleRate: Double) {
+  func append(data: Data, audio: NotebookAcousticUtterance.Sample) {
     guard !stopped else { return }
+    let frame = audio.frame, sampleRate = audio.rate
+    silence = audio.silence
     guard (8000...96000).contains(sampleRate), frame >= 0, data.count > 0, data.count <= 65536, data.count % 4 == 0,
       nextFrame == nil || nextFrame == frame, rate == 0 || rate == sampleRate else { abort("Локальный звук прервался. Микрофон выключен."); return }
     var samples = [Float](repeating: 0, count: data.count / 4)
@@ -67,8 +69,7 @@ struct NotebookWakeActivation { let frame: Int; let hasRequest: Bool; var silenc
     guard samples.allSatisfy(\.isFinite) else { abort("Локальный звук повреждён. Микрофон выключен."); return }
     rate = sampleRate; nextFrame = frame + samples.count
     tail.append((frame, samples)); while tail.count > 1, tail[1].frame < frame - Int(rate * 1.5) { tail.removeFirst() }
-    let power = samples.reduce(0.0) { $0 + Double($1) * Double($1) }
-    let boundary = acoustic.append(rms: sqrt(power / Double(samples.count)), frame: frame, count: samples.count, rate: rate)
+    let boundary = audio.boundary
     if case .began(let start) = boundary { beginPhrase(at: start) }
     else if phraseOpen { feed(samples) }
     if boundary == .ended {
@@ -93,7 +94,7 @@ struct NotebookWakeActivation { let frame: Int; let hasRequest: Bool; var silenc
       let final = result?.isFinal == true
       let failure = error?.localizedDescription
       let noSpeech = (error as NSError?).map { $0.domain == "kAFAssistantErrorDomain" && $0.code == 1110 || $0.domain == "kLSRErrorDomain" && $0.code == 203 } == true
-      Task { @MainActor [weak self] in self?.receive(text, final: final, error: noSpeech ? nil : failure, generation: generation) }
+      Task { [weak self] in await self?.receive(text, final: final, error: noSpeech ? nil : failure, generation: generation) }
     }
     for chunk in tail where chunk.frame + chunk.samples.count > base {
       feed(Array(chunk.samples.dropFirst(max(0, base - chunk.frame))))
@@ -114,8 +115,7 @@ struct NotebookWakeActivation { let frame: Int; let hasRequest: Bool; var silenc
       if detect(text, settled: final) { return }
       settle = Task { [weak self] in
         do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
-        guard let self, !stopped, generation == self.generation, acoustic.silence >= 0.4 else { return }
-        _ = detect(text, settled: true)
+        await self?.settled(text, generation: generation)
       }
     }
     if final { request = nil; recognition = nil }
@@ -123,9 +123,13 @@ struct NotebookWakeActivation { let frame: Int; let hasRequest: Bool; var silenc
     // rejected candidate, not a failed microphone. Unexpected live failures stop.
     else if let error { abort("Локальное ожидание обращения остановлено: \(error)") }
   }
+  private func settled(_ text: String, generation: UUID) {
+    guard !stopped, generation == self.generation, silence >= 0.4 else { return }
+    _ = detect(text, settled: true)
+  }
   @discardableResult private func detect(_ text: String, settled: Bool) -> Bool {
     guard let hasRequest = NotebookWakeAddress.match(text, language: language, address: address, settled: settled) else { return false }
-    let activation = NotebookWakeActivation(frame: base, hasRequest: hasRequest, silence: acoustic.silence)
+    let activation = NotebookWakeActivation(frame: base, hasRequest: hasRequest)
     let age = Double((nextFrame ?? base) - base) / rate
     Self.log.info("address admitted; audio age=\(age, privacy: .public)s; request=\(hasRequest, privacy: .public)")
     stop(); activated(activation); return true

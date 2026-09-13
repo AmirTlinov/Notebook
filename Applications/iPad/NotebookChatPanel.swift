@@ -65,7 +65,7 @@ struct NotebookChatPanel: View {
         .overlay { RoundedRectangle(cornerRadius: 28).strokeBorder(Color(.separator).opacity(0.18), lineWidth: 0.5).allowsHitTesting(false) }
         .shadow(color: .black.opacity(0.08), radius: 22, y: 7)
       } else {
-        NotebookCompanion(chat: chat, draftFocused: $draftFocused, size: size, move: move, endInteraction: endInteraction)
+        NotebookCompanion(chat: chat, size: size, move: move, endInteraction: endInteraction)
       }
     }
     .disabled(chat.switchingComputer)

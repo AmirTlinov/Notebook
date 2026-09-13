@@ -36,7 +36,8 @@ struct NotebookApp: App {
       .environment(model)
       .statusBarHidden(true)
       .persistentSystemOverlays(.hidden)
-      .onChange(of: scenePhase) { _, phase in
+      .onChange(of: scenePhase, initial: true) { _, phase in
+        model.chat?.dictation.setForeground(phase != .background)
         guard phase == .background else { return }
         let task = UIApplication.shared.beginBackgroundTask(withName: "Сохранение принятого ввода")
         Task {

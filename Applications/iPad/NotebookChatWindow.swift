@@ -95,7 +95,6 @@ struct NotebookChatWindow: View {
   let available: CGRect
   let openPairing: () -> Void
   let openHistory: () -> Void
-  @AppStorage("notebook.companion.show-task") private var showsCompanionTask = true
   @AppStorage("notebook.chat-window") private var savedLayout = ""
   @State private var interaction: (frame: CGRect, available: CGRect, layout: NotebookChatWindowLayout)?
   @State private var liveLayout: NotebookChatWindowLayout?
@@ -105,17 +104,16 @@ struct NotebookChatWindow: View {
 
   var body: some View {
     let frame = layout.frame(in: available, expanded: chat.expanded,
-      compactSize: NotebookCompanion.preferredSize(chat: chat, available: available.size, showsTask: showsCompanionTask, contextCount: model.agentQuestion?.references.count ?? 0))
+      compactSize: NotebookCompanion.preferredSize(chat: chat, available: available.size, contextCount: model.agentQuestion?.references.count ?? 0))
     NotebookChatPanel(chat: chat, size: frame.size, openPairing: openPairing, openHistory: openHistory,
       move: { update($0, ended: $1, corner: nil, frame: frame) },
       resize: { update($0, ended: $1, corner: $2, frame: frame) },
       endInteraction: { interruptedDrag = false; finishInteraction() })
       .position(x: frame.midX, y: frame.midY)
       .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.3, extraBounce: 0), value: chat.expanded)
-      .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: chat.companionExpanded)
       .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: chat.companionReplies.map(\.id))
-      .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: showsCompanionTask)
       .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: chat.voice.capturing)
+      .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: chat.dictation.busy)
       .onChange(of: available) {
         if interaction != nil { interruptedDrag = true }
         finishInteraction()

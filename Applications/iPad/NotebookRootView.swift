@@ -97,9 +97,9 @@ struct NotebookRootView: View {
           openPairing: { showsPairing = true },
           openHistory: { showsHistory = true })
       }
-      // The launcher stays still during keyboard dismissal. A compact editor
-      // or native question follows the keyboard just like the expanded composer.
-      .ignoresSafeArea(.keyboard, edges: chat.expanded || chat.companionExpanded || chat.conversation?.requests.isEmpty == false ? [] : .bottom)
+      // The companion stays still during keyboard dismissal. Only the full
+      // editor and a native question need keyboard avoidance.
+      .ignoresSafeArea(.keyboard, edges: chat.expanded || chat.conversation?.requests.isEmpty == false ? [] : .bottom)
     }
 
     }

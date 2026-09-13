@@ -30,7 +30,7 @@ import NotebookCore
     }
     weak var receiver: NotebookChatController?
     let chat = NotebookChatController(persistence: persistence, author: author,
-      dictationCapture: dictation ? SimulatorDictationCapture() : nil) { envelope, destination in
+      dictationCapture: SimulatorDictationCapture(), dictationPreferences: UserDefaults(suiteName: "simulator-dictation-" + UUID().uuidString)!) { envelope, destination in
       guard destination == peer, case .request(let query) = envelope.body else { return }
       let reply: NotebookChatReply
       switch query {
@@ -84,16 +84,8 @@ import NotebookCore
       receiver?.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
     }
     receiver = chat
-    if dictation {
-      var addressed = false
-      chat.dictation.authorizeAddress = { true }
-      chat.dictation.makeAddressRecognizer = { _, _, activate, _ in
-        SimulatorAddressRecognizer {
-          guard !addressed else { return }; addressed = true
-          activate(.init(frame: 0, hasRequest: true))
-        }
-      }
-    }
+    chat.dictation.authorizeAddress = { true }
+    chat.dictation.makeAddressRecognizer = { _, _, activate, _ in SimulatorAddressRecognizer(activate: activate) }
     await chat.start(); await chat.connect(peer); chat.select(task); chat.expanded = !dictation
     return chat
   }
@@ -102,35 +94,66 @@ import NotebookCore
 /// Synthetic device input and transcript, isolated to this Simulator fixture.
 /// UI gestures still exercise the production capture lifecycle and send owner.
 @MainActor private final class SimulatorDictationCapture: NotebookDictationCapture {
-  private var listener: Task<Void, Never>?
-  private var addressed = false
-  func listen(pcm: @escaping @MainActor (Data, Int, Double) -> Void, failed: @escaping @MainActor (String) -> Void) async throws {
-    listener = Task {
-      do { try await Task.sleep(for: .seconds(1)) } catch { return }
-      pcm(Data(count: 4096), 0, 24_000)
+  private var pump: Task<Void, Never>?
+  private var storage: NotebookDictationAudioStorage?
+  private var events: (@MainActor (NotebookDictationAudioEvent) -> Void)?
+  private var generation = UUID()
+  private var recording = false
+  private var addressedOnce = false
+  func listen(pcm: @escaping @Sendable (Data, NotebookAcousticUtterance.Sample) async -> Void,
+    events: @escaping @MainActor (NotebookDictationAudioEvent) -> Void) async throws {
+    cancel(); self.events = events; run(pcm: pcm)
+  }
+  private func run(pcm: @escaping @Sendable (Data, NotebookAcousticUtterance.Sample) async -> Void) {
+    let storage = NotebookDictationAudioStorage(); self.storage = storage
+    let epoch = generation
+    let addressed = ProcessInfo.processInfo.arguments.contains("--notebook-addressed-dictation-fixture") && !addressedOnce
+    if addressed { addressedOnce = true }
+    pump = Task { [weak self] in
+      var frame = 0
+      while !Task.isCancelled {
+        guard let self, generation == epoch else { return }
+        let time = Double(frame) / 24000
+        let amplitude: Float = (addressed ? time >= 3 && time < 7 : recording) ? Float(0.025 + 0.015 * sin(time * 8)) : 0.0045
+        let values = (0..<1200).map { amplitude * sin(Float($0) * 2 * .pi / 60) }
+        let data = values.withUnsafeBytes { Data($0) }
+        do {
+          let update = try await storage.append(.init(data: data, frame: frame, rate: 24000)); frame += 1200
+          guard generation == epoch else { return }
+          events?(.reading(update.reading))
+          if update.waiting { await pcm(data, update.reading.audio) }
+          if let reason = update.end { await complete(reason); return }
+          try await Task.sleep(for: .milliseconds(50))
+        } catch { return }
+      }
     }
   }
-  private var finished: (@MainActor (Bool) -> Void)?
-  private var started = Date()
-  func start(at url: URL, from frame: Int?, finished: @escaping @MainActor (Bool) -> Void) async throws {
-    try Data(repeating: 0x41, count: 4096).write(to: url)
-    started = Date(); self.finished = finished; addressed = frame != nil
+  func start(at url: URL, id: UUID, from frame: Int?, hasRequest: Bool?,
+    events: @escaping @MainActor (NotebookDictationAudioEvent) -> Void) async throws {
+    self.events = events
+    if storage == nil { run(pcm: { _, _ in }) }
+    try await storage?.begin(at: url, id: id, from: frame, hasRequest: hasRequest); recording = true
   }
-  func sample() -> (elapsed: TimeInterval, level: Double) {
-    let elapsed = Date().timeIntervalSince(started)
-    return (elapsed, addressed && elapsed > 0.5 ? 0 : max(0, sin(elapsed * 2.3) * 0.45 + 0.3))
+  private func complete(_ reason: NotebookDictationEnd) async {
+    guard let storage else { return }
+    let completion = await storage.close(reason: reason)
+    events?(.finished(completion))
   }
-  func stop() { let callback = finished; finished = nil; callback?(true) }
-  func cancel() { finished = nil; listener?.cancel(); listener = nil }
+  func stop() { pump?.cancel(); Task { await complete(.stopped) } }
+  func cancel() {
+    generation = UUID(); pump?.cancel(); pump = nil; recording = false; events = nil
+    if let storage { Task { _ = await storage.close() } }; storage = nil
+  }
 }
-@MainActor private final class SimulatorAddressRecognizer: NotebookAddressRecognition {
-  let activate: () -> Void
+private actor SimulatorAddressRecognizer: NotebookAddressRecognition {
+  let activate: @Sendable (NotebookWakeActivation) -> Void
   private var stopped = true
-  init(activate: @escaping () -> Void) { self.activate = activate }
+  init(activate: @escaping @Sendable (NotebookWakeActivation) -> Void) { self.activate = activate }
   func start() { stopped = false }
   func stop() { stopped = true }
-  func append(data: Data, frame: Int, sampleRate: Double) {
-    guard !stopped else { return }; stopped = true; activate()
+  func append(data: Data, audio: NotebookAcousticUtterance.Sample) {
+    guard !stopped, case .began(let start) = audio.boundary else { return }
+    stopped = true; activate(.init(frame: start, hasRequest: true))
   }
 }
 #endif

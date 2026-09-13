@@ -8,41 +8,31 @@ struct NotebookCompanion: View {
   @Environment(NotebookAppModel.self) private var model
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Bindable var chat: NotebookChatController
-  let draftFocused: FocusState<Bool>.Binding
   let size: CGSize
   let move: (CGSize, Bool) -> Void
   let endInteraction: () -> Void
   @GestureState private var moving = false
-  @AppStorage("notebook.companion.show-task") private var showsTask = true
 
-  static func preferredSize(chat: NotebookChatController, available: CGSize, showsTask: Bool, contextCount: Int = 0) -> CGSize {
-    if chat.dictation.showsInput { return .init(width: min(available.width, 352), height: min(available.height, 48)) }
+  static func preferredSize(chat: NotebookChatController, available: CGSize, contextCount: Int = 0) -> CGSize {
+
     let dictationNotice = chat.dictation.busy || chat.dictation.error != nil
-    let hasCard = chat.companionExpanded || chat.conversation?.requests.isEmpty == false || chat.voice.error != nil || chat.voice.capturing
-      || showsTask && (chat.workStatus != nil || !chat.pendingMessages.isEmpty)
-    let height: CGFloat = 48 + (hasCard ? 68 : 0) + (chat.companionExpanded ? 52 + (chat.attachments.isEmpty ? 0 : 38) : 0)
-      + (chat.conversation?.requests.isEmpty == false ? 160 : 0) + (chat.voice.error != nil ? 90 : 0) + (dictationNotice ? 88 : 0)
-      + chat.companionReplies.reduce(CGFloat(0)) { $0 + 58 + previewHeight($1, width: min(available.width, 352) - 28) }
-    return .init(width: min(available.width, hasCard || dictationNotice || !chat.companionReplies.isEmpty ? 352 : (chat.voice.capturing ? 264 : 184) + (contextCount > 0 ? 28 : 0)),
+    let hasCard = chat.conversation?.requests.isEmpty == false || chat.voice.error != nil || chat.voice.capturing
+      || (chat.workStatus != nil || !chat.pendingMessages.isEmpty)
+    let height: CGFloat = 48 + (hasCard ? 68 : 0)
+      + (chat.conversation?.requests.isEmpty == false ? 160 : 0) + (chat.voice.error != nil ? 90 : 0)
+      + CGFloat((hasCard ? 1 : 0) + chat.companionReplies.count) * 8
+      + chat.companionReplies.reduce(CGFloat(0)) { $0 + 52 + previewHeight($1, width: min(available.width, 352) - 28) }
+    return .init(width: min(available.width, hasCard || dictationNotice || !chat.companionReplies.isEmpty ? 352 : (chat.voice.capturing ? 228 : 148) + (contextCount > 0 ? 28 : 0)),
       height: min(available.height, min(460, height)))
   }
   private var needsDecision: Bool { chat.conversation?.requests.isEmpty == false }
   private var hasCard: Bool {
-    chat.companionExpanded || needsDecision || chat.voice.error != nil || chat.voice.capturing
-      || showsTask && (chat.workStatus != nil || !chat.pendingMessages.isEmpty)
-  }
-  private var canSend: Bool {
-    !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !chat.saving && !chat.dictation.busy
-      && !model.isSavingAgentQuestion && !model.selectionSession.isResolvingContext && !chat.continuationUnavailable && chat.threadID != nil && !chat.browsesChats
+    needsDecision || chat.voice.error != nil || chat.voice.capturing
+      || (chat.workStatus != nil || !chat.pendingMessages.isEmpty)
   }
   var body: some View {
     VStack(alignment: .trailing, spacing: 8) {
-      if chat.dictation.showsInput {
-        NotebookDictationInput(chat: chat).background { surface(radius: 24) }
-      } else {
       controls
-      NotebookDictationStatus(dictation: chat.dictation)
-        .frame(maxWidth: 320).background { surface(radius: 18) }
       if hasCard {
         ScrollView {
           VStack(alignment: .leading, spacing: 4) {
@@ -64,7 +54,6 @@ struct NotebookCompanion: View {
               NotebookCodexRequestView(request: request, threadID: conversation.threadID, chat: chat, maximumHeight: 160)
                 .id(request.id)
             }
-            if chat.companionExpanded { NotebookChatAttachmentChips(chat: chat); composer }
             if let error = chat.voice.error {
               HStack(alignment: .top) {
                 Text(error).font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("notebook-compact-voice-error")
@@ -94,7 +83,6 @@ struct NotebookCompanion: View {
         }.padding(.leading, 14).padding(.trailing, 8).background { surface(radius: 22) }
           .transition(.opacity.combined(with: .move(edge: .top)))
       }
-      }
     }
     .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: chat.companionReplies.map(\.id))
     .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: hasCard)
@@ -118,25 +106,27 @@ struct NotebookCompanion: View {
     if chat.voice.capturing { return chat.voice.status }
     if let work = chat.workStatus { return work.title }
     if !chat.pendingMessages.isEmpty { return "Сообщение сохранено · ожидаю Codex" }
-    return chat.draft.isEmpty ? "Продолжить разговор" : "Черновик сохранён"
+    return ""
   }
   private var controls: some View {
     HStack(spacing: 0) {
-      Button { draftFocused.wrappedValue = false; if chat.threadID == nil { chat.expanded = true } else { chat.companionExpanded.toggle() } } label: {
+      Button { chat.revealReply() } label: {
         Image(systemName: "square.and.pencil").frame(width: 44, height: 48).contentShape(Rectangle())
           .overlay(alignment: .topTrailing) {
-            if !chat.unreadReplies.isEmpty || !chat.draft.isEmpty {
+            if !chat.unreadReplies.isEmpty || !chat.draft.isEmpty || needsDecision || chat.runs.record?.isActive == true {
               Circle().fill(Color.accentColor).frame(width: 5, height: 5).offset(x: -5, y: 8)
             }
           }
-      }.accessibilityLabel(chat.companionExpanded ? "Свернуть поле сообщения" : "Написать в текущую задачу")
+      }.accessibilityLabel("Открыть текущий чат")
         .accessibilityIdentifier("notebook-companion-compose")
-        .simultaneousGesture(DragGesture(minimumDistance: 8, coordinateSpace: .named("notebook-window"))
+        .highPriorityGesture(DragGesture(minimumDistance: 8, coordinateSpace: .named("notebook-window"))
           .updating($moving) { _, state, _ in state = true }
           .onChanged { move($0.translation, false) }.onEnded { move($0.translation, true) })
       NotebookContextCounter()
       Divider().frame(height: 18).padding(.horizontal, 2)
-      if chat.voice.capturing {
+      if chat.dictation.busy || chat.dictation.error != nil {
+        NotebookDictationInput(chat: chat)
+      } else if chat.voice.capturing {
         Button { Task { await chat.voice.mute() } } label: {
           Image(systemName: chat.voice.muted ? "mic.slash" : "mic").frame(width: 40, height: 48).contentShape(Rectangle())
         }.accessibilityLabel(chat.voice.muted ? "Включить микрофон" : "Выключить микрофон")
@@ -154,42 +144,11 @@ struct NotebookCompanion: View {
         NotebookDictationButton(chat: chat, compact: true)
         NotebookVoiceStartButton(chat: chat, compact: true)
       }
-      Button { chat.revealReply() } label: {
-        Image(systemName: "chevron.down").font(.system(size: 12)).frame(width: 36, height: 48).contentShape(Rectangle())
-          .overlay(alignment: .topTrailing) {
-            if needsDecision || chat.runs.record?.isActive == true { Circle().fill(needsDecision ? .orange : .green).frame(width: 5, height: 5).offset(x: -6, y: 8) }
-          }
-      }.accessibilityLabel("Открыть переписку").accessibilityIdentifier("notebook-chat-toggle")
-        .contextMenu {
-          Toggle("Показывать текущую задачу", isOn: $showsTask)
-          if chat.runs.record?.isActive == true {
-            Button("Работающий терминал", systemImage: "terminal") { chat.expanded = true; chat.files.showTerminal(true) }
-          }
-        }
-    }.font(.system(size: 16)).padding(.horizontal, 4).fixedSize()
+    }.font(.system(size: 16)).padding(.horizontal, 4)
+      .frame(width: chat.dictation.busy || chat.dictation.error != nil ? size.width : nil)
+      .fixedSize(horizontal: !(chat.dictation.busy || chat.dictation.error != nil), vertical: true)
       .background { surface(radius: 24) }
-  }
-  private var composer: some View {
-    HStack(alignment: .bottom, spacing: 0) {
-      NotebookChatAdditions(chat: chat, canSend: canSend, send: { model.sendChatMessage() }, steer: { model.sendChatMessage(steering: true) })
-      TextField("Продолжить", text: $chat.draft, axis: .vertical)
-        .focused(draftFocused)
-        .lineLimit(1...3).font(.system(size: 14)).padding(.vertical, 12)
-        .accessibilityIdentifier("notebook-companion-draft")
-        .disabled(chat.dictation.busy && !chat.dictation.canRetry)
-      if let conversation = chat.conversation, conversation.busy || conversation.activeTurnID != nil {
-        Button { if let turn = conversation.activeTurnID { Task { await chat.stopTurn(threadID: conversation.threadID, turnID: turn) } } } label: { sendSymbol("stop.fill") }
-          .accessibilityLabel("Остановить ответ").accessibilityIdentifier("notebook-companion-stop").disabled(conversation.activeTurnID == nil || chat.saving)
-      } else {
-        Button { model.sendChatMessage() } label: { sendSymbol("arrow.up") }
-          .disabled(!canSend).accessibilityLabel("Отправить сообщение").accessibilityIdentifier("notebook-companion-send")
-      }
-    }.background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
-  }
-  private func sendSymbol(_ symbol: String) -> some View {
-    Image(systemName: symbol).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
-      .frame(width: 28, height: 28).background(Color.accentColor, in: Circle())
-      .opacity(symbol == "stop.fill" || canSend ? 1 : 0.35).frame(width: 44, height: 44).contentShape(Rectangle())
+      .accessibilityElement(children: .contain).accessibilityIdentifier("notebook-companion-bar")
   }
   private func surface(radius: CGFloat) -> some View {
     RoundedRectangle(cornerRadius: radius).fill(Color(.systemBackground))

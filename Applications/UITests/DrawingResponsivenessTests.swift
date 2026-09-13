@@ -49,7 +49,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     let frame = paper.frame, ink = paper.value as? String
     app.buttons["notebook-chat-toggle"].tap()
     app.buttons["notebook-companion-compose"].tap()
-    let draft = app.descendants(matching: .any).matching(identifier: "notebook-companion-draft").firstMatch
+    let draft = app.descendants(matching: .any).matching(identifier: "notebook-chat-text").firstMatch
     XCTAssertTrue(draft.waitForExistence(timeout: 4))
     let additions = app.buttons["notebook-chat-actions"]
     for _ in 0..<3 {
@@ -75,8 +75,8 @@ final class DrawingResponsivenessTests: XCTestCase {
     additions.tap(); app.buttons["Проверить изменения"].tap()
     XCTAssertTrue((draft.value as? String)?.hasPrefix("Keep draft\nПроверь изменения") == true)
     let edited = draft.value as? String
-    app.buttons["notebook-companion-compose"].tap()
     app.buttons["notebook-chat-toggle"].tap()
+    app.buttons["notebook-companion-compose"].tap()
     let fullDraft = app.descendants(matching: .any).matching(identifier: "notebook-chat-text").firstMatch
     XCTAssertEqual(fullDraft.value as? String, edited)
     XCTAssertFalse(app.webViews.staticTexts["Принято поручений: 1"].exists, "Menus and attachments never send the draft")
@@ -124,9 +124,14 @@ final class DrawingResponsivenessTests: XCTestCase {
     let replyProof = XCTAttachment(screenshot: app.screenshot()); replyProof.name = "companion-long-reply-preview"; replyProof.lifetime = .keepAlways; add(replyProof)
     app.buttons["notebook-companion-dismiss-reply"].tap()
     XCTAssertTrue(waitUntil { !preview.exists && !taskCard.exists }, "Close removes the entire reply, not only its text")
-    app.buttons["notebook-companion-compose"].tap(); app.buttons["notebook-companion-compose"].tap()
-    XCTAssertFalse(preview.exists, "Remounting the card cannot show a dismissed reply again")
-    app.buttons["notebook-chat-toggle"].tap()
+    XCTAssertFalse(preview.exists, "Dismissal does not need a remount")
+    let pencil = app.buttons["notebook-companion-compose"], origin = app.buttons["notebook-companion-compose"].frame
+    let grip = pencil.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
+    grip.press(forDuration: 0.05, thenDragTo: grip.withOffset(.init(dx: 0, dy: -90)))
+    XCTAssertFalse(app.otherElements["notebook-chat-transcript"].exists, "Dragging the pencil moves the bar, never opens the chat")
+    XCTAssertLessThan(pencil.frame.minY, origin.minY - 35)
+    XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, acceptedInk)
+    pencil.tap()
     let full = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Объяснение формулы, часть 1.'")).firstMatch
     XCTAssertTrue(full.waitForExistence(timeout: 5)); XCTAssertTrue(full.isHittable, "Opening unread replies reveals the exact message, not the end of its long text")
     XCTAssertEqual(text.value as? String, "Keep draft")
@@ -259,27 +264,29 @@ final class DrawingResponsivenessTests: XCTestCase {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-dictation-fixture"]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-dictation-fixture", "--notebook-addressed-dictation-fixture"]
     launchPortraitFixture(app)
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 8))
     let frame = paper.frame, ink = paper.value as? String
     let mic = app.buttons["notebook-compact-dictation"]
-    XCTAssertTrue(mic.waitForExistence(timeout: 8)); mic.press(forDuration: 0.8)
-    let toggle = app.switches["notebook-dictation-wake-toggle"]
-    XCTAssertTrue(toggle.waitForExistence(timeout: 4))
-    let menu = XCTAttachment(screenshot: app.screenshot()); menu.name = "dictation-address-setting"; menu.lifetime = .keepAlways; add(menu)
-    toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+    let bar = app.otherElements["notebook-companion-bar"]
     let waveform = app.otherElements["notebook-dictation-waveform"]
-    XCTAssertTrue(waveform.waitForExistence(timeout: 5))
+    XCTAssertTrue(waveform.waitForExistence(timeout: 8))
+    XCTAssertEqual(bar.frame.height, 48, accuracy: 1)
+    XCTAssertFalse(app.buttons["notebook-chat-toggle"].exists)
+    XCTAssertFalse(app.switches["notebook-dictation-wake-toggle"].exists)
+    XCTAssertTrue(bar.frame.contains(waveform.frame))
+    XCTAssertTrue(app.buttons["notebook-companion-compose"].isHittable)
     let recordingProof = XCTAttachment(screenshot: app.screenshot()); recordingProof.name = "addressed-dictation-live-microphone"; recordingProof.lifetime = .keepAlways; add(recordingProof)
     let reply = app.buttons["notebook-companion-reply"]
     XCTAssertTrue(waitUntil { reply.exists && reply.label == "Принято поручений: 1" })
     XCTAssertFalse(app.otherElements["notebook-chat-transcript"].exists)
     XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, ink)
-    XCTAssertTrue(waitUntil { mic.exists && mic.label == "Выключить обращение GPT и микрофон" })
-    mic.tap()
-    XCTAssertTrue(waitUntil { mic.label == "Диктовать сообщение" })
+    XCTAssertTrue(waitUntil { mic.exists && (mic.value as? String)?.contains("Ожидаю GPT") == true })
+    mic.press(forDuration: 0.8)
+    app.buttons["notebook-microphone-mute"].tap()
+    XCTAssertTrue(waitUntil { mic.label == "Включить микрофон" })
     XCTAssertEqual(reply.label, "Принято поручений: 1")
     let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "addressed-dictation-single-answer"; proof.lifetime = .keepAlways; add(proof)
     XCTAssertTrue(waitUntil(timeout: 16) { !reply.exists }, "The reply expires without opening the chat")
@@ -355,7 +362,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 8))
     let frame = paper.frame, ink = paper.value as? String
-    app.buttons["notebook-chat-toggle"].tap()
+    app.buttons["notebook-companion-compose"].tap()
     let dictation = app.buttons["notebook-chat-dictation"], voice = app.buttons["notebook-chat-voice"]
     XCTAssertTrue(dictation.waitForExistence(timeout: 4)); XCTAssertTrue(voice.exists)
     XCTAssertEqual(voice.label, "Начать голосовой разговор")
@@ -396,7 +403,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.buttons["notebook-compact-voice"].tap()
     let compactFailure = app.staticTexts["notebook-compact-voice-error"]
     XCTAssertTrue(compactFailure.waitForExistence(timeout: 3)); XCTAssertTrue(compactFailure.label.contains("Подключите Mac"))
-    app.buttons["notebook-chat-toggle"].tap()
+    app.buttons["notebook-companion-compose"].tap()
     XCTAssertEqual(field.value as? String, "Keep this draft")
     XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, ink)
     let proof = XCTAttachment(screenshot: app.screenshot())

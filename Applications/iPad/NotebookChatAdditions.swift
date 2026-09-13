@@ -1,7 +1,7 @@
 import SwiftUI
 import NotebookCore
 
-/// Both composers attach to the same draft and resource selection on the paired Mac.
+/// The full chat attaches resources to its existing draft on the paired Mac.
 struct NotebookChatAdditions: View {
   @Bindable var chat: NotebookChatController
   let canSend: Bool
@@ -46,7 +46,7 @@ struct NotebookChatAdditions: View {
   }
 }
 
-/// Native attachment names stay inspectable and removable in either composer.
+/// The draft owns the attachment names and their removal.
 struct NotebookChatAttachmentChips: View {
   let chat: NotebookChatController
   var body: some View {

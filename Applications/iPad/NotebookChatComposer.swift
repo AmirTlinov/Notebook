@@ -13,18 +13,16 @@ struct NotebookChatComposer: View {
   private var hasThread: Bool { chat.threadID != nil && !chat.browsesChats }
   var body: some View {
     VStack(spacing: 0) {
-      if chat.dictation.showsInput {
-        NotebookDictationInput(chat: chat)
-      } else {
       NotebookChatAttachmentChips(chat: chat)
-      NotebookDictationStatus(dictation: chat.dictation)
       TextField("Сообщение Codex", text: $chat.draft, axis: .vertical)
         .focused(draftFocused)
         .font(.system(size: 15)).lineLimit(1...5).textFieldStyle(.plain)
         .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 4)
         .accessibilityIdentifier("notebook-chat-text")
         .disabled(chat.dictation.busy && !chat.dictation.canRetry)
-      if width < 300 {
+      if chat.dictation.busy || chat.dictation.error != nil {
+        NotebookDictationInput(chat: chat)
+      } else if width < 300 {
         HStack(spacing: 0) {
           additions
           NotebookContextCounter()
@@ -43,7 +41,6 @@ struct NotebookChatComposer: View {
           if hasThread { NotebookChatModelControl(chat: chat, compact: width < 450) }
           voiceAndSend
         }
-      }
       }
     }
     .padding(3)

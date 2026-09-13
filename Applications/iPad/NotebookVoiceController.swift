@@ -26,7 +26,7 @@ import NotebookCore
   }
   private(set) var phase: Phase = .off
   private(set) var taskTitle = ""
-  private(set) var captureID: UUID?
+  private(set) var captureID: UUID? { didSet { chat?.dictation.environmentChanged() } }
   var capturing: Bool { captureID != nil }
   var status: String {
     if ending { return muted ? "Микрофон выключен · завершаю на Mac…" : "Выключаю микрофон…" }
@@ -58,6 +58,7 @@ import NotebookCore
   @ObservationIgnored private var deadline: Task<Void, Never>?
   @ObservationIgnored private var computer: UUID?
   @ObservationIgnored private var wake: NotebookWakeRecognizer?
+  @ObservationIgnored private var acoustic = NotebookAcousticUtterance()
   @ObservationIgnored private var waiting = false
   @ObservationIgnored private var agentSpeaking = false
   @ObservationIgnored private var submitted = false
@@ -70,28 +71,32 @@ import NotebookCore
     guard captureID == nil else { return }
     guard let chat, host != nil else { error = "Голосовая поверхность ещё не готова. Попробуйте включить микрофон снова."; return }
     guard !chat.dictation.busy else { error = "Завершите диктовку или удалите запись перед голосовым разговором."; return }
-    chat.dictation.disableActivation()
+    chat.dictation.suspendWaiting()
     guard !chat.switchingComputer else { error = "Дождитесь подключения выбранного Mac."; return }
     guard let thread = chat.threadID, !chat.browsesChats else { error = "Выберите чат для голосового разговора."; return }
     guard chat.connected else { error = "Подключите Mac, чтобы начать голосовой разговор."; return }
     let id = UUID(); captureID = id; activeID = waiting ? nil : id; state = .init(id: id, threadID: thread); taskTitle = chat.taskTitle; phase = .preparing; self.waiting = waiting; error = nil; muted = false; mediaReady = false; ending = false
+    chat.dictation.setMicrophoneMuted(false)
     computer = chat.computerID; submitted = false; appliedAnswer = false
     if waiting {
       do {
         let wake = try NotebookWakeRecognizer(language: language, address: address,
           activated: { [weak self] activation in
-            guard let self, captureID == id, self.waiting, !ending, let web = self.web else { return }
-            self.waiting = false; self.wake = nil; activeID = id; phase = .processing
-            startDeadline(id)
-            Task { await startOffer(web, id: id, start: activation.frame) }
+            Task { @MainActor [weak self] in
+              guard let self, captureID == id, self.waiting, !ending, let web = self.web else { return }
+              self.waiting = false; self.wake = nil; activeID = id; phase = .processing
+              startDeadline(id); await startOffer(web, id: id, start: activation.frame)
+            }
           }, failed: { [weak self] message in
-            guard let self, captureID == id, !ending else { return }
-            error = message; Task { await end() }
+            Task { @MainActor [weak self] in
+              guard let self, captureID == id, !ending else { return }
+              error = message; await end()
+            }
           })
         self.wake = wake
         guard await NotebookWakeRecognizer.authorize() else { throw NotebookPersistenceQueue.Failure(message: "Для локального обращения разрешите распознавание речи в настройках iPad. Звук не передаётся в Apple.") }
         guard captureID == id, !ending else { return }
-        wake.start()
+        acoustic = .init(); await wake.start()
       } catch { if captureID == id { self.error = error.localizedDescription; await end() }; return }
     }
     guard await AVCaptureDevice.requestAccess(for: .audio) else {
@@ -155,7 +160,7 @@ import NotebookCore
     guard let web else { return }
     changingMute = true; defer { changingMute = false }
     let id = captureID, value = !muted
-    do { _ = try await web.callAsyncJavaScript("await window.voiceMute(value)", arguments: ["value": value], in: nil, contentWorld: .page); guard captureID == id, !ending else { return }; muted = value; phase = value ? .muted : .listening }
+    do { _ = try await web.callAsyncJavaScript("await window.voiceMute(value)", arguments: ["value": value], in: nil, contentWorld: .page); guard captureID == id, !ending else { return }; muted = value; chat?.dictation.setMicrophoneMuted(value); phase = value ? .muted : .listening }
     catch { self.error = error.localizedDescription; await end() }
   }
   func connectionLost() {
@@ -178,7 +183,7 @@ import NotebookCore
   }
   func end() async {
     guard let id = captureID, !ending else { return }
-    ending = true; wake?.stop(); wake = nil; waiting = false; poll?.cancel(); poll = nil; deadline?.cancel(); deadline = nil
+    ending = true; if let wake { await wake.stop() }; wake = nil; waiting = false; poll?.cancel(); poll = nil; deadline?.cancel(); deadline = nil
     if let web {
       // Retire capture before waiting for the network. Navigation also destroys
       // the audio graph if its JS process cannot complete voiceEnd's promise.
@@ -243,8 +248,18 @@ extension NotebookVoiceController: WKNavigationDelegate, WKUIDelegate, WKScriptM
       else if ["failed","disconnected","closed"].contains(body["state"] as? String ?? "") { connectionLost() }
     } else if body["type"] as? String == "pcm", waiting,
       let data = body["data"] as? String, data.count <= 90000, let pcm = Data(base64Encoded: data),
-      let frame = body["start"] as? Int, let rate = body["rate"] as? Double {
-      wake?.append(data: pcm, frame: frame, sampleRate: rate)
+      let frame = body["start"] as? Int, let rate = body["rate"] as? Double,
+      pcm.count > 0, pcm.count % 4 == 0, (8000...96000).contains(rate) {
+      let power = pcm.withUnsafeBytes { bytes -> (Double, Double) in
+        var sum = 0.0, peak = 0.0
+        for offset in stride(from: 0, to: bytes.count, by: 4) {
+          let value = Double(bytes.loadUnaligned(fromByteOffset: offset, as: Float.self))
+          sum += value * value; peak = max(peak, abs(value))
+        }
+        return (sqrt(sum / Double(pcm.count / 4)), peak)
+      }
+      let audio = acoustic.append(rms: power.0, peak: power.1, frame: frame, count: pcm.count / 4, rate: rate)
+      if let wake { Task { await wake.append(data: pcm, audio: audio) } }
     } else if body["type"] as? String == "output", let speaking = body["speaking"] as? Bool {
       agentSpeaking = speaking
       if !muted { phase = speaking ? .speaking : .listening }

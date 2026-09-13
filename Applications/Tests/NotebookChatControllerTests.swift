@@ -60,7 +60,7 @@ final class NotebookChatControllerTests: XCTestCase {
     collapsed = true; chat.expanded = false
     chat.receive(.init(body: .event(subscriptionID: id, conversation: snapshot(2))), peerID: peer)
     XCTAssertFalse(chat.expanded); XCTAssertEqual(chat.unreadReplies.map(\.id), ["reply-2"])
-    chat.companionExpanded = true; chat.companionExpanded = false
+    chat.refreshCompanionReplies()
     chat.receive(.init(body: .event(subscriptionID: id, conversation: snapshot(3))), peerID: peer)
     XCTAssertEqual(chat.unreadReplies.map(\.id), ["reply-2", "reply-3"])
     XCTAssertEqual(chat.messages.count, 4); XCTAssertEqual(chat.draft, "Retained draft"); XCTAssertTrue(chat.jobs.isEmpty)
@@ -70,7 +70,7 @@ final class NotebookChatControllerTests: XCTestCase {
     chat.dismissCompanionReply("reply-2")
     XCTAssertEqual(chat.companionReplies.last?.id, "reply-3", "A stale close action cannot dismiss a newer answer")
     chat.dismissCompanionReply("reply-3")
-    chat.companionExpanded = true; chat.companionExpanded = false
+    chat.refreshCompanionReplies()
     chat.receive(.init(body: .event(subscriptionID: id, conversation: snapshot(3, working: false))), peerID: peer)
     XCTAssertTrue(chat.companionReplies.isEmpty); XCTAssertEqual(chat.unreadReplies.map(\.id), ["reply-2", "reply-3"])
     chat.receive(.init(body: .event(subscriptionID: id, conversation: snapshot(4, working: false))), peerID: peer)

@@ -1066,6 +1066,7 @@ final class NotebookAppModel {
           }
         }
         await chat.start()
+        chat.dictation.setForeground(UIApplication.shared.applicationState == .active)
       #endif
       if startsNearbySync {
         try await startTrustedSync()

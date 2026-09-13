@@ -4,50 +4,36 @@ import NotebookCore
 struct NotebookDictationButton: View {
   @Bindable var chat: NotebookChatController
   var compact = false
-  @State private var showsActivation = false
   private var dictation: NotebookDictationController { chat.dictation }
   var body: some View {
-    Button {
-      if dictation.waiting { dictation.disableActivation() }
-      else if dictation.canRetry { dictation.retry() }
-      else { Task { await dictation.begin() } }
+    Menu {
+      Button(dictation.microphoneMuted ? "Включить микрофон" : "Выключить микрофон",
+        systemImage: dictation.microphoneMuted ? "mic" : "mic.slash") {
+          dictation.setMicrophoneMuted(!dictation.microphoneMuted)
+        }.accessibilityIdentifier("notebook-microphone-mute")
     } label: {
-      Group {
-        if dictation.busy && !dictation.canRetry { ProgressView().controlSize(.small) }
-        else if dictation.waiting {
-          Image(systemName: "mic.fill").font(.system(size: 16))
-            .background { Circle().fill(Color.accentColor.opacity(0.1 + dictation.level * 0.25))
-              .frame(width: 22 + dictation.level * 16, height: 22 + dictation.level * 16) }
-        } else { Image(systemName: dictation.canRetry ? "arrow.clockwise" : "mic").font(.system(size: 16)) }
-      }.foregroundStyle(dictation.waiting ? Color.accentColor : Color.primary)
+      Image(systemName: dictation.microphoneMuted ? "mic.slash" : "mic")
+        .font(.system(size: 16))
+        .overlay(alignment: .bottom) {
+          if dictation.waiting { Circle().fill(Color.accentColor).frame(width: 3, height: 3).offset(y: 7) }
+        }
         .frame(width: 44, height: compact ? 48 : 44).contentShape(Rectangle())
+    } primaryAction: {
+      if dictation.microphoneMuted { dictation.setMicrophoneMuted(false) }
+      else { Task { await dictation.begin() } }
     }
-    .disabled((dictation.busy && !dictation.canRetry) || chat.voice.capturing)
-    .accessibilityLabel(dictation.waiting ? "Выключить обращение GPT и микрофон" : dictation.canRetry ? "Повторить распознавание" : "Диктовать сообщение")
+    .disabled(dictation.busy || chat.voice.capturing)
+    .accessibilityLabel(dictation.microphoneMuted ? "Включить микрофон" : "Диктовать сообщение")
     .accessibilityValue(dictation.status.isEmpty ? "Готова" : dictation.status)
-    .accessibilityHint("Нажмите для диктовки. Удерживайте, чтобы включить диктовку по обращению GPT.")
+    .accessibilityHint("Нажмите для диктовки с редактируемым черновиком. Удерживайте, чтобы выключить микрофон. Обращение GPT отправляется после паузы.")
     .accessibilityIdentifier(compact ? "notebook-compact-dictation" : "notebook-chat-dictation")
-    .highPriorityGesture(LongPressGesture(minimumDuration: 0.6).onEnded { _ in showsActivation = true })
-    .accessibilityAction(named: "Диктовка по обращению GPT") { showsActivation = true }
-    .popover(isPresented: $showsActivation) {
-      VStack(alignment: .leading, spacing: 12) {
-        Text("Диктовка по обращению").font(.headline)
-        Text(chat.taskTitle).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-        Toggle("Включать по GPT", isOn: Binding(get: { dictation.activationEnabled }, set: { enabled in
-          showsActivation = false
-          if enabled { Task { await dictation.arm() } } else { dictation.disableActivation() }
-        })).accessibilityIdentifier("notebook-dictation-wake-toggle")
-        Text(NotebookWakeAddress.examples(language: chat.voice.language, address: chat.voice.address) + " — и сразу просьба. После паузы она сразу отправится в этот чат. Это не звонок; обычное нажатие микрофона оставляет текст для редактирования.")
-          .font(.caption).foregroundStyle(.secondary)
-        Text("До обращения звук остаётся в памяти iPad. Нажатие на значок ожидания выключает микрофон; уход из Notebook также прекращает ожидание.")
-          .font(.caption2).foregroundStyle(.secondary)
-      }.padding(18).frame(width: 300).fixedSize(horizontal: false, vertical: true)
-        .presentationCompactAdaptation(.popover)
+    .accessibilityAction(named: dictation.microphoneMuted ? "Включить микрофон" : "Выключить микрофон") {
+      dictation.setMicrophoneMuted(!dictation.microphoneMuted)
     }
   }
 }
 
-/// One input surface replaces the composer during capture. Every visible bar
+/// Capture replaces the existing controls row, not the editable draft. Every visible bar
 /// comes from the recorder's bounded meter history, including actual silence.
 struct NotebookDictationInput: View {
   @Environment(NotebookAppModel.self) private var model
@@ -66,7 +52,7 @@ struct NotebookDictationInput: View {
           let count = max(1, Int(size.width / 5)), samples = Array(levels.suffix(count))
           for index in 0..<count {
             let sample = index < count - samples.count ? 0 : samples[index - (count - samples.count)]
-            let height = max(2, min(30, sqrt(sample) * 30))
+            let height = max(2, min(30, sample * 30))
             let rect = CGRect(x: CGFloat(index) * 5 + 1, y: (size.height - height) / 2, width: 2.5, height: height)
             context.fill(Path(roundedRect: rect, cornerRadius: 1.25), with: .color(.accentColor.opacity(sample > 0 ? 0.85 : 0.2)))
           }
@@ -82,7 +68,10 @@ struct NotebookDictationInput: View {
         Text(dictation.status).font(.system(size: 12)).foregroundStyle(.secondary)
           .frame(maxWidth: .infinity, alignment: .leading).lineLimit(2)
           .accessibilityIdentifier("notebook-dictation-status")
-        ProgressView().controlSize(.small).frame(width: 44, height: 48)
+        if dictation.canRetry {
+          Button { dictation.retry() } label: { symbol("arrow.clockwise") }
+            .accessibilityLabel("Повторить распознавание").accessibilityIdentifier("notebook-dictation-retry")
+        } else if dictation.error == nil { ProgressView().controlSize(.small).frame(width: 44, height: 48) }
       }
     }.padding(.horizontal, 3).frame(height: 48)
       .accessibilityElement(children: .contain).accessibilityIdentifier("notebook-dictation-input")
@@ -93,27 +82,6 @@ struct NotebookDictationInput: View {
       .frame(width: 28, height: 28)
       .background(send ? Color(.label) : Color(.secondarySystemBackground), in: Circle())
       .frame(width: 44, height: 48).contentShape(Rectangle())
-  }
-}
-
-struct NotebookDictationStatus: View {
-  @Bindable var dictation: NotebookDictationController
-  var body: some View {
-    if !dictation.showsInput && (dictation.busy || dictation.error != nil) {
-      HStack(spacing: 8) {
-        Text(dictation.status).font(.system(size: 12)).foregroundStyle(.secondary)
-          .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
-          .accessibilityIdentifier("notebook-dictation-status")
-        if dictation.canRetry {
-          Button { dictation.retry() } label: { Image(systemName: "arrow.clockwise").frame(width: 44, height: 44) }
-            .accessibilityLabel("Повторить распознавание").accessibilityIdentifier("notebook-dictation-retry")
-        }
-        Button { dictation.cancel() } label: { Image(systemName: "xmark").font(.system(size: 12)).frame(width: 44, height: 44) }
-          .disabled(dictation.phase == .inserting)
-          .accessibilityLabel(dictation.pending == nil ? "Закрыть сообщение" : "Отменить диктовку и удалить запись")
-          .accessibilityIdentifier("notebook-dictation-cancel")
-      }.padding(.leading, 12).padding(.trailing, 3)
-    }
   }
 }
 

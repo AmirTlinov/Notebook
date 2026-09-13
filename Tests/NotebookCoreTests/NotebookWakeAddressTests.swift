@@ -50,7 +50,7 @@ struct NotebookWakeAddressTests {
     func feed(_ rms: Double, _ chunks: Int) -> [NotebookAcousticUtterance.Boundary] {
       var boundaries: [NotebookAcousticUtterance.Boundary] = []
       for _ in 0..<chunks {
-        if let boundary = stream.append(rms: rms, frame: frame, count: 2400, rate: 24000) { boundaries.append(boundary) }
+        if let boundary = stream.append(rms: rms, frame: frame, count: 2400, rate: 24000).boundary { boundaries.append(boundary) }
         frame += 2400
       }
       return boundaries
@@ -67,9 +67,9 @@ struct NotebookWakeAddressTests {
   @Test func sustainedRoomNoiseDoesNotKeepCreatingUtterances() {
     var stream = NotebookAcousticUtterance(), starts = 0
     for index in 0..<200 {
-      if case .began = stream.append(rms: 0.003, frame: index * 2400, count: 2400, rate: 24000) { starts += 1 }
+      if case .began = stream.append(rms: 0.003, frame: index * 2400, count: 2400, rate: 24000).boundary { starts += 1 }
     }
     #expect(starts <= 1); #expect(stream.start == nil)
-    #expect(stream.append(rms: 0.04, frame: 480000, count: 2400, rate: 24000) == .began(475200))
+    #expect(stream.append(rms: 0.04, frame: 480000, count: 2400, rate: 24000).boundary == .began(475200))
   }
 }
