@@ -18,10 +18,10 @@ struct NotebookCompanion: View {
     let dictationNotice = chat.dictation.busy || chat.dictation.error != nil
     let hasCard = chat.conversation?.requests.isEmpty == false || chat.voice.error != nil || chat.voice.capturing
       || (chat.workStatus != nil || !chat.pendingMessages.isEmpty)
-    let height: CGFloat = 48 + (hasCard ? 68 : 0)
+    let height: CGFloat = 48 + (hasCard ? 60 : 0)
       + (chat.conversation?.requests.isEmpty == false ? 160 : 0) + (chat.voice.error != nil ? 90 : 0)
       + CGFloat((hasCard ? 1 : 0) + chat.companionReplies.count) * 8
-      + chat.companionReplies.reduce(CGFloat(0)) { $0 + 52 + previewHeight($1, width: min(available.width, 352) - 28) }
+      + chat.companionReplies.reduce(CGFloat(0)) { $0 + 16 + max(40, previewHeight($1, width: min(available.width, 352) - 66)) }
     return .init(width: min(available.width, hasCard || dictationNotice || !chat.companionReplies.isEmpty ? 352 : (chat.voice.capturing ? 228 : 148) + (contextCount > 0 ? 28 : 0)),
       height: min(available.height, min(460, height)))
   }
@@ -36,20 +36,12 @@ struct NotebookCompanion: View {
       if hasCard {
         ScrollView {
           VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 0) {
             Button { chat.revealReply() } label: {
-              HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 3) {
-                  Text(chat.voice.capturing ? chat.voice.taskTitle : chat.taskTitle)
-                    .font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                  NotebookPearlText(text: status, active: chat.workStatus?.running == true && !chat.voice.capturing)
-                    .font(.system(size: 13)).lineLimit(1)
-                }.frame(maxWidth: .infinity, alignment: .leading)
-                Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 12)).foregroundStyle(.secondary)
-              }.frame(minHeight: 44).contentShape(Rectangle())
-            }.accessibilityLabel("Открыть переписку · " + chat.taskTitle + " · " + status)
+              NotebookPearlText(text: status, active: chat.workStatus?.running == true && !chat.voice.capturing)
+                .font(.system(size: 13)).lineLimit(2).multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+            }.accessibilityLabel("Открыть переписку · " + (chat.voice.capturing ? chat.voice.taskTitle : chat.taskTitle) + " · " + status)
               .accessibilityIdentifier("notebook-companion-task")
-            }
             if let conversation = chat.conversation, let request = conversation.requests.first {
               NotebookCodexRequestView(request: request, threadID: conversation.threadID, chat: chat, maximumHeight: 160)
                 .id(request.id)
@@ -66,21 +58,16 @@ struct NotebookCompanion: View {
           .background { surface(radius: 22) }
       }
       ForEach(chat.companionReplies) { reply in
-        VStack(alignment: .leading, spacing: 0) {
-          HStack(spacing: 0) {
-            Text(chat.taskTitle).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-              .frame(maxWidth: .infinity, alignment: .leading)
-            Button { chat.dismissCompanionReply(reply.id) } label: {
-              Image(systemName: "xmark").font(.system(size: 12)).foregroundStyle(.secondary)
-                .frame(width: 40, height: 40).contentShape(Rectangle())
-            }.accessibilityLabel("Убрать превью ответа").accessibilityIdentifier("notebook-companion-dismiss-reply")
-          }
+        HStack(alignment: .top, spacing: 4) {
           Button { chat.revealReply(reply.id) } label: {
             Text(Self.previewText(reply)).font(.system(size: 14)).foregroundStyle(.primary).lineLimit(6)
-              .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+              .multilineTextAlignment(.leading).frame(maxWidth: .infinity, minHeight: 40, alignment: .leading).contentShape(Rectangle())
           }.accessibilityHint("Открыть полный ответ в этой переписке").accessibilityIdentifier("notebook-companion-reply")
-            .padding(.bottom, 12)
-        }.padding(.leading, 14).padding(.trailing, 8).background { surface(radius: 22) }
+          Button { chat.dismissCompanionReply(reply.id) } label: {
+            Image(systemName: "xmark").font(.system(size: 12)).foregroundStyle(.secondary)
+              .frame(width: 40, height: 40).contentShape(Rectangle())
+          }.accessibilityLabel("Убрать превью ответа").accessibilityIdentifier("notebook-companion-dismiss-reply")
+        }.padding(.leading, 14).padding(.trailing, 8).padding(.vertical, 8).background { surface(radius: 22) }
           .transition(.opacity.combined(with: .move(edge: .top)))
       }
     }

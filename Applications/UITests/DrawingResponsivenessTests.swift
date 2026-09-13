@@ -85,6 +85,35 @@ final class DrawingResponsivenessTests: XCTestCase {
     proof.name = "companion-additions-return-to-same-draft"; proof.lifetime = .keepAlways; add(proof)
   }
 
+  func testCompanionMessageOpensCurrentChatWithoutAHeadingOrExpandControl() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-stacked-board-fixture", "--notebook-compact-chat-fixture"]
+    launchPortraitFixture(app)
+    let paper = app.otherElements["spatial-ink"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 8))
+    let frame = paper.frame, ink = paper.value as? String
+    let text = app.descendants(matching: .any).matching(identifier: "notebook-chat-text").firstMatch
+    XCTAssertTrue(text.waitForExistence(timeout: 5)); text.tap(); text.typeText("Keep this draft")
+    app.buttons["notebook-chat-toggle"].tap()
+    let preview = app.buttons["notebook-companion-reply"]
+    XCTAssertTrue(preview.waitForExistence(timeout: 8))
+    XCTAssertFalse(app.staticTexts["Непрерывный разговор"].exists, "A compact message does not repeat the task heading")
+    XCTAssertFalse(app.images["arrow.up.left.and.arrow.down.right"].exists)
+    let close = app.buttons["notebook-companion-dismiss-reply"]
+    XCTAssertEqual(preview.frame.minY, close.frame.minY, accuracy: 1, "The reply starts beside its close action, not below an empty header")
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "companion-message-without-heading"; proof.lifetime = .keepAlways; add(proof)
+    preview.tap()
+    let full = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Объяснение формулы, часть 1.'")).firstMatch
+    XCTAssertTrue(full.waitForExistence(timeout: 5)); XCTAssertTrue(full.isHittable)
+    XCTAssertEqual(text.value as? String, "Keep this draft")
+    XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, ink)
+    app.buttons["notebook-chat-toggle"].tap()
+    XCTAssertFalse(preview.exists, "Opening the message marks that same reply read")
+  }
+
   func testCompanionPreviewCanBeDismissedAndOpenedWithoutLosingPaperOrDraft() {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
