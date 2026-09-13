@@ -11,9 +11,7 @@ public enum NotebookIPC {
   }
 
   public static func decodeCommand(_ data: Data) throws -> NotebookCommand {
-    let allowed: Set<String> = ["command", "query", "limit", "action", "actionID", "target", "elementID",
-      "reference", "expectedRevision", "region", "worldOrigin", "pageIndex", "placement", "contextID",
-      "replyTo", "references", "queries", "expectedCursor", "artifact", "export"]
+    let allowed = Set(NotebookCommand.CodingKeys.allCases.map(\.rawValue))
     guard data.count <= maximumFrameBytes,
       let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
       Set(object.keys).isSubset(of: allowed) else {

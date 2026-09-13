@@ -4,6 +4,8 @@ import Observation
 import NotebookCore
 #if os(macOS)
 import NotebookCodex
+#else
+import UIKit
 #endif
 
 /// A retained native host must relinquish its last presentation when the same
@@ -464,6 +466,8 @@ final class NotebookAppModel {
   private(set) var returnPlaces: [ReturnPlace] = []
   private(set) var requestedReturn: ReturnPlace?
   private(set) var requestedReference: CollaborationReference?
+  let presentationPlayer = NotebookPresentationPlayer()
+  let presentationRelay = NotebookPresentationRelay()
   var highlightedReference: CollaborationReference? { selectionSession.highlightedReference }
   private(set) var pendingAgentHighlights = Set<UUID>()
   private var hasReadCollaborationActions = false
@@ -777,6 +781,7 @@ final class NotebookAppModel {
     inputGate.onActivityChange = { [weak self] active in
       guard let self else { return }
       inputIsActive = active
+      if active { presentationPlayer.interrupt() }
       if active { collaborationReadTask?.cancel() }
       #if os(macOS)
         if active { previewPublisher?.suspendForInput() }
@@ -833,6 +838,8 @@ final class NotebookAppModel {
 
   func peerDisconnected(peerID: UUID, generation: UUID) {
     guard peerGenerations[peerID] == generation else { return }
+    presentationRelay.disconnect(peerID)
+    presentationPlayer.disconnected(peerID)
     #if os(iOS)
       chat?.disconnect(peerID)
     #endif
@@ -2224,6 +2231,12 @@ final class NotebookAppModel {
       guard loadState == .ready, !isClosing else {
         throw CollaborationError("owner_unavailable", "Хранилище Notebook ещё не открыто.")
       }
+      if command.command == .presentation {
+        presentationRelay.send = { [weak self] message, peer in
+          self?.sync?.sendTransient(.presentation(message), to: peer)
+        }
+        return try presentationRelay.handle(command)
+      }
       let deadline = ContinuousClock.now.advanced(by: .seconds(4))
       while true {
         if command.command == .apply || command.command == .undo {
@@ -2249,6 +2262,24 @@ final class NotebookAppModel {
   func receivePeerTransient(_ message: NotebookTransportTransient, peerID: UUID, generation: UUID) {
     guard !isClosing, peerGenerations[peerID] == generation else { return }
     switch message {
+    case .presentation(let message):
+      #if os(iOS)
+        presentationPlayer.currentView = { [weak self] in
+          guard let self, UIApplication.shared.applicationState == .active,
+            chat?.files.window.isOpen != true, let envelope = lastSettledPresenceEnvelope else { return nil }
+          return (actorID, envelope)
+        }
+        presentationPlayer.isInputActive = { [weak self] in
+          guard let self else { return true }
+          return inputGate.isActive || presencePhase != .settled || isClosing
+        }
+        presentationPlayer.reply = { [weak self] receipt, peer in
+          self?.sync?.sendTransient(.presentation(.receipt(receipt)), to: peer)
+        }
+        presentationPlayer.receive(message, peer: peerID)
+      #else
+        if case .receipt(let receipt) = message { presentationRelay.receive(receipt, from: peerID) }
+      #endif
     case .codex(let envelope):
       #if os(iOS)
         chat?.receive(envelope, peerID: peerID)
@@ -2281,6 +2312,7 @@ final class NotebookAppModel {
       #if os(macOS)
         guard presenceSequenceTracker.accepts(envelope), let workspace
         else { return }
+        presentationRelay.observe(envelope, from: peerID)
         let incoming = envelope.phase == .settled
           ? settledPresence(
             from: envelope.presence,
@@ -2968,6 +3000,7 @@ final class NotebookAppModel {
     if shutdownPhase == .stopped { return true }
     if shutdownPhase == .running { shutdownPhase = .closing }
     let task = Task { [self] in
+      presentationPlayer.interrupt("closing")
       if let startupTask { await startupTask.value }
       sync?.stop(); sync = nil
       #if os(macOS)
@@ -3112,10 +3145,7 @@ final class NotebookAppModel {
       return SessionPresence(
         boardID: presence.boardID,
         mode: presence.mode,
-        camera: SpatialCamera(
-          center: itemCenter,
-          scale: itemGeometry(itemID).fitScale(viewport: viewport)
-        ),
+        camera: adapted.camera,
         viewport: viewport,
         focusedItemID: itemID,
         openProgress: 1,

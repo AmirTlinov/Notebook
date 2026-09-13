@@ -5,12 +5,21 @@ import NotebookCore
 
 @Suite("Bounded native items and project cursors")
 struct CodexDisplayProjectionTests {
+  @Test func currentNotebookContractAllowsExplicitPresentationWithoutAUserChatRow() throws {
+    let item = CodexAppServer.notebookRuntimeContext
+    #expect(item["role"] == .string("developer"))
+    #expect(CodexAppServerState.displayMessage(item, turnID: "same-task") == nil)
+    let text = try #require(item["content"]?.array?.first?["text"]?.string)
+    #expect(text.contains("notebook_present"))
+    #expect(text.contains("code links never move"))
+  }
   @Test func notebookActionsExplainTheirMeaningWithoutChangingDeliveryOrHidingDetails() throws {
     let cases = [
       ("notebook_read_document", "Читает документ", "Документ прочитан"),
       ("notebook_apply", "Вносит изменения в материал", "Изменения материала сохранены"),
       ("notebook_action", "Проверяет появление изменений", "Проверено появление изменений"),
       ("notebook_place", "Подбирает место для материала", "Место для материала подобрано"),
+      ("notebook_present", "Показывает фрагмент на доске", "Показ фрагмента отправлен"),
     ]
     for (tool, running, completed) in cases {
       for (status, title) in [("inProgress", running), ("completed", completed)] {

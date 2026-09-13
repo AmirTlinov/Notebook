@@ -17,6 +17,13 @@ import notebook_release as release
 ROOT = Path(__file__).resolve().parents[1]
 UI = "NotebookUITests/DrawingResponsivenessTests/"
 PROFILES = {
+    "presentation": {
+        "core": ["NotebookPresentationTests", "CodexDisplayProjectionTests", "wireCannotChooseRootPathsOrUnknownCommands", "stablePagePreservesExplicitViewportScale",
+                 "viewportProjectionIsReversible", "documentCameraUsesItsOwnGeometry", "documentPageSelectionSurvivesViewportProjection"],
+        "commands": ["mcp"],
+        "mac": ["NotebookMacTests/NotebookPresentationRelayTests"],
+        "ipad": ["NotebookTests/NotebookPresentationTests"],
+    },
     "live-placement": {
         "core": ["BoardMergeOwnershipTests", "BoardPlacementMigrationTests", "NotebookBoardContentRevisionTests", "BoardHierarchyTests", "CollaborationTests", "PlacementActionOwnershipTests", "CollaborationCreationUndoTests",
                  "PortalIntegrityTests", "WorkspacePublicationTests", "NotebookReplicationTests",
@@ -157,6 +164,8 @@ def owners(path):
     if path.startswith("MCP/"):
         return ["mcp"]
     name = Path(path).name
+    if name.startswith("NotebookPresentation"):
+        return ["presentation"]
     if name in ("NotebookComputerStore.swift", "NotebookComputerStoreTests.swift", "NotebookComputerControllerTests.swift"):
         return ["computers"]
     if "Dictation" in name:

@@ -4,7 +4,7 @@ import Foundation
 public struct NotebookCommand: Codable, Sendable {
   public enum Kind: String, Codable, Sendable {
     case apply, undo, action, actions, continuations, search, contexts, point, delivery
-    case referenceStatus, reference, placement, render, pageVision, read, artifact, publishExport
+    case referenceStatus, reference, placement, render, pageVision, read, artifact, publishExport, presentation
   }
   public var command: Kind
   public var query: String?
@@ -26,6 +26,14 @@ public struct NotebookCommand: Codable, Sendable {
   public var expectedCursor: String?
   public var artifact: NotebookArtifactRequest?
   public var export: NotebookExportPublication?
+  public var presentation: NotebookPresentationRequest?
+  public var cancel: Bool?
+
+  enum CodingKeys: String, CodingKey, CaseIterable {
+    case command, query, limit, action, actionID, target, elementID, reference
+    case expectedRevision, region, worldOrigin, pageIndex, placement, contextID
+    case replyTo, references, queries, expectedCursor, artifact, export, presentation, cancel
+  }
 
   public init(command: Kind) { self.command = command }
 
@@ -117,6 +125,8 @@ public struct NotebookCommandDispatcher: Sendable {
 
   private func execute(_ request: NotebookCommand) throws -> JSONValue {
     switch request.command {
+    case .presentation:
+      throw invalid("presentation_unavailable", "Временный показ выполняет открытый iPad через установленный Mac-помощник, не хранилище.")
     case .apply:
       guard let action = request.action else { throw invalid("invalid_action", "Нужен законченный ход.") }
       return try .encode(store.applyCollaborationAction(action, actor: store.collaborationActorID(), waitForInput: 0))

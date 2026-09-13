@@ -110,11 +110,11 @@ func viewportProjectionIsReversible() {
   #expect(abs(restored.camera.scale - original.camera.scale) < 0.000_000_1)
 }
 
-@Test("Полностью открытый лист восстанавливает канонический масштаб")
-func stablePageRepairsLossyViewportScale() {
+@Test("Открытый лист сохраняет явно выбранный зум, а не повторяет переход открытия")
+func stablePagePreservesExplicitViewportScale() {
   let viewport = SpatialPoint(x: 834, y: 1_194)
   let itemID = UUID()
-  let corrupted = SessionPresence(
+  let original = SessionPresence(
     mode: .page,
     camera: SpatialCamera(scale: 0.487_891_719_906_063),
     viewport: viewport,
@@ -122,11 +122,12 @@ func stablePageRepairsLossyViewportScale() {
     openProgress: 1
   )
 
-  let repaired = corrupted.adapted(to: viewport, geometry: .notebook)
+  let projected = original.adapted(to: viewport, geometry: .notebook)
 
-  #expect(repaired.camera.scale == 1)
-  #expect(repaired.focusedItemID == itemID)
-  #expect(repaired.openProgress == 1)
+  #expect(projected == original)
+  let landscape = SpatialPoint(x: 1194, y: 834)
+  let returned = original.adapted(to: landscape, geometry: .notebook).adapted(to: viewport, geometry: .notebook)
+  #expect(abs(returned.camera.scale - original.camera.scale) < 1e-12)
 }
 
 @Test("Смена окна сохраняет выбранный лист документа")

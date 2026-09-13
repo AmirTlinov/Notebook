@@ -78,6 +78,11 @@ final class SceneCameraSettlement {
     let scale = exp(log(from.camera.scale) + log(to.camera.scale / from.camera.scale) * amount)
     let camera = SpatialCamera(center: center,
       scale: min(max(scale, min(from.camera.scale, to.camera.scale)), max(from.camera.scale, to.camera.scale)))
+    if from.mode == to.mode, from.focusedItemID == to.focusedItemID,
+      from.openProgress == to.openProgress, from.notebookPageID == to.notebookPageID,
+      from.documentPageIndex == to.documentPageIndex {
+      return to.replacingCamera(camera)
+    }
     let focus = to.focusedItemID ?? from.focusedItemID
     return SessionPresence(boardID: to.boardID, mode: focus == nil ? .board : .cover,
       camera: camera, viewport: to.viewport, focusedItemID: focus,
@@ -86,4 +91,12 @@ final class SceneCameraSettlement {
   }
 
   isolated deinit { link?.invalidate() }
+}
+
+extension SessionPresence {
+  func replacingCamera(_ camera: SpatialCamera) -> SessionPresence {
+    .init(boardID: boardID, mode: mode, camera: camera, viewport: viewport,
+      focusedItemID: focusedItemID, openProgress: openProgress, documentPageIndex: documentPageIndex,
+      selectedItemID: selectedItemID, notebookPageID: notebookPageID)
+  }
 }

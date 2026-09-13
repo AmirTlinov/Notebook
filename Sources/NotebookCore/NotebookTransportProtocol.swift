@@ -4,7 +4,7 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  public static let protocolVersion = 11
+  public static let protocolVersion = 12
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 180 * 1_024
   public static let maximumUnacknowledgedFrames = 16
@@ -79,6 +79,7 @@ public enum NotebookTransportTransient: Codable, Equatable, Sendable {
   case inputActivity(NotebookInputActivity)
   case documentPageSelection(DocumentPageSelectionRequest)
   case codex(NotebookChatEnvelope)
+  case presentation(NotebookPresentationMessage)
 
   public func isValid(from identity: NotebookTransportIdentity) -> Bool {
     switch self {
@@ -86,6 +87,7 @@ public enum NotebookTransportTransient: Codable, Equatable, Sendable {
     case .inputActivity(let value): value.isValid && value.deviceID == identity.deviceID
     case .documentPageSelection(let value): value.isValid
     case .codex(let value): value.isValid(from: identity.deviceID)
+    case .presentation(let value): value.isValid
     }
   }
 
@@ -96,6 +98,7 @@ public enum NotebookTransportTransient: Codable, Equatable, Sendable {
     case .documentPageSelection: 2
     case .codex(let envelope):
       if case .event = envelope.body { 4 } else { 3 }
+    case .presentation: 5
     }
   }
 }
@@ -286,7 +289,7 @@ public enum NotebookTransportAuthentication {
   }
 }
 
-/// There are three replaceable transient slots, sixteen durable offers, and
+/// Each transient priority has one replaceable slot, beside sixteen durable offers and
 /// two outstanding blob-control/data slots. Bulk never consumes the last two
 /// transfer credits reserved for contact and camera. Credit is not a SQL ACK.
 public struct NotebookTransportOutgoing: Sendable {

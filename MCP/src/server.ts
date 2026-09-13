@@ -6,6 +6,7 @@ type ContextPage = {id:string;entries:ContextEntry[];nextEntryID?:string;readCur
 import { notebookResponseSchema } from "./contracts.js";
 import { runBridge, BridgeError } from "./bridge.js";
 import { registerCollaborationTools } from "./collaboration-tools.js";
+import { registerPresentationTool } from "./presentation.js";
 import { publicAction, type ActionReceipt, registerActionTools } from "./actions.js";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -65,6 +66,7 @@ const documentSelection = {
 
 export function createServer(store = new NotebookStore()): McpServer {
   const server = new McpServer({ name: "notebook", version: packageVersion });
+  registerPresentationTool(server, store);
   const readSafely = (operation: () => Promise<ToolData | { data: ToolData; image?: string }>, hasImage = false) =>
     safely(() => store.withReadSnapshot(operation), hasImage);
 

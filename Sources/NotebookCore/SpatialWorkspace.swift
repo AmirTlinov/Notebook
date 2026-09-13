@@ -1337,19 +1337,14 @@ public struct SessionPresence: Codable, Equatable, Hashable, Sendable {
     }
   }
 
-  /// Projects the same camera into another viewport. A docked page has one
-  /// canonical scale; every free board or cover position keeps its
-  /// dimensionless zoom relative to its owner's physical rectangle.
+  /// Projects the same camera into another viewport. Opening chooses a fitted
+  /// camera; projection preserves subsequent explicit zoom, including on paper.
   public func adapted(to targetViewport: SpatialPoint, geometry: WorkspaceItemGeometry) -> Self {
     precondition(targetViewport.x > 0 && targetViewport.y > 0)
+    if targetViewport == viewport { return self }
     let targetFit = geometry.fitScale(viewport: targetViewport)
-    let resolvedScale: Double
-    if (mode == .page || mode == .document) && openProgress >= 0.999 {
-      resolvedScale = targetFit
-    } else {
-      let sourceFit = geometry.fitScale(viewport: viewport)
-      resolvedScale = camera.scale * targetFit / sourceFit
-    }
+    let sourceFit = geometry.fitScale(viewport: viewport)
+    let resolvedScale = (camera.scale / sourceFit) * targetFit
     return Self(
       boardID: boardID,
       mode: mode,

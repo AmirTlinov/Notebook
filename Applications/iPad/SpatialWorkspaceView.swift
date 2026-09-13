@@ -234,6 +234,8 @@ struct SpatialWorkspaceView: View {
           itemSelectionControl(presence: presence, viewport: viewport)
 
         NotebookAttentionMarks(presence:presence)
+        NotebookPresentationOverlay(player: model.presentationPlayer, presence: presence,
+          cameraIsActive: model.presencePhase == .active)
         if let reference = model.selectionSession.editingElement,
           let rect = NotebookAttentionProjection.editingFrame(reference, model: model, presence: presence) {
           NotebookElementControls(reference: reference, selectionID: model.selectionSession.id,
@@ -312,6 +314,19 @@ struct SpatialWorkspaceView: View {
           pinned: compositionRequest.pinned, displayScale: displayScale, installedItemOwners: compositionRequest.itemOwners)
       }
       .onAppear {
+        model.presentationPlayer.moveCamera = { camera, duration in
+          guard let current = model.presence, !model.inputGate.isActive, cameraGesture == nil,
+            !pageTurnIsActive, !contentGestureActive, model.requestedReference == nil,
+            model.requestedReturn == nil, model.loadState == .ready else { return false }
+          animateSettlement(to: current.replacingCamera(camera), duration: duration, bounce: 0)
+          return true
+        }
+        model.presentationPlayer.stopCamera = {
+          cameraSettlement.cancel(); settling = false
+          if model.presencePhase == .active, let current = model.presence {
+            model.updatePresence(current, settled: true)
+          }
+        }
         let registry = spatialInkSurfaces, owner = model
         model.bindItemOwnerObserver(owner: deletionObserverID) { [weak registry, weak owner] id, boardID, revision in
           guard let shown = owner?.compositionTiles.published, shown.plan.revision <= revision,
@@ -323,6 +338,7 @@ struct SpatialWorkspaceView: View {
       }
       .task(id:model.requestedReference?.id) {
         guard let reference = model.requestedReference else { return }
+        model.presentationPlayer.interrupt("navigation")
         referencePageResolution.cancel()
         while cameraGesture != nil || settling || pageTurnIsActive || contentGestureActive || model.presencePhase != .settled {
           do { try await Task.sleep(for:.milliseconds(40)) } catch { return }
@@ -338,6 +354,7 @@ struct SpatialWorkspaceView: View {
       }
       .task(id: model.requestedReturn?.id) {
         guard let place = model.requestedReturn else { return }
+        model.presentationPlayer.interrupt("navigation")
         referencePageResolution.cancel()
         while cameraGesture != nil || settling || pageTurnIsActive || contentGestureActive || model.presencePhase != .settled {
           do { try await Task.sleep(for: .milliseconds(40)) } catch { return }
@@ -367,6 +384,9 @@ struct SpatialWorkspaceView: View {
         interruptSettlementForInput()
         publishViewportIfNeeded(viewport)
       }
+      .onChange(of: model.chat?.files.window.isOpen) { _, open in
+        if open == true { model.presentationPlayer.interrupt("code_document_opened") }
+      }
       .onChange(of: presence.mode) { _, mode in
         model.endSurfaceEditing()
         if mode != .cover { model.interactiveElementFocus = nil }
@@ -381,6 +401,8 @@ struct SpatialWorkspaceView: View {
         pageTurnIsActive = false
       }
       .onDisappear {
+        model.presentationPlayer.interrupt("scene_not_visible")
+        model.presentationPlayer.moveCamera = nil; model.presentationPlayer.stopCamera = nil
         model.unbindItemOwnerObserver(owner: deletionObserverID)
         model.compositionTiles.cancelPreparation()
         referencePageResolution.cancel()
@@ -1333,6 +1355,7 @@ struct SpatialWorkspaceView: View {
   }
 
   private func interruptSettlementForInput() {
+    model.presentationPlayer.interrupt()
     cameraSettlement.cancel()
     settling = false
   }
