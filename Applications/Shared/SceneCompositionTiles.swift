@@ -371,8 +371,25 @@ final class SceneCompositionTiles {
   @ObservationIgnored private var inFlight: [UUID: Task<Void, Never>] = [:]
   @ObservationIgnored private var stopped = false
   @ObservationIgnored private var requestID = UUID()
-  @ObservationIgnored private var preparingPlan: SceneCompositionPlan?
-  @ObservationIgnored private var preparingSources: WorkspaceSceneFrame.SourceIdentity?
+  private struct Request {
+    let source: SceneCompositionSource
+    let presence: SessionPresence
+    let frame: WorkspaceSceneFrame
+    let pinned: Set<WorkspaceSpatialID>
+    let displayScale: Double
+    let refinesDetails: Bool
+    let permitsPreparation: @MainActor () -> Bool
+    let onSourceInvalidated: @MainActor () -> Void
+
+    func continues(_ other: Self) -> Bool {
+      source.workspaceID == other.source.workspaceID && source.revision == other.source.revision
+        && presence.boardID == other.presence.boardID && presence.mode == other.presence.mode
+        && presence.focusedItemID == other.presence.focusedItemID && presence.viewport == other.presence.viewport
+        && pinned == other.pinned && displayScale == other.displayScale
+    }
+  }
+  @ObservationIgnored private var preparingRequest: Request?
+  @ObservationIgnored private var pendingRequest: Request?
   init(resources: SceneRenderResources = .shared, cacheRoot: URL? = nil,
     surfaceRegistry: SpatialInkSurfaceRegistry = .init()) {
     self.resources = resources; self.surfaceRegistry = surfaceRegistry
@@ -380,22 +397,43 @@ final class SceneCompositionTiles {
   }
 
   func prepare(source: SceneCompositionSource, presence: SessionPresence, frame: WorkspaceSceneFrame,
-    pinned: Set<WorkspaceSpatialID>, displayScale: Double = 2,
+    pinned: Set<WorkspaceSpatialID>, displayScale: Double = 2, refinesDetails: Bool = true,
     permitsPreparation: @escaping @MainActor () -> Bool = { true },
     onSourceInvalidated: @escaping @MainActor () -> Void = {}) {
+    prepare(.init(source: source, presence: presence, frame: frame, pinned: pinned,
+      displayScale: displayScale, refinesDetails: refinesDetails,
+      permitsPreparation: permitsPreparation, onSourceInvalidated: onSourceInvalidated))
+  }
+
+  private func prepare(_ request: Request) {
     guard !stopped else { return }
+    guard request.permitsPreparation() else { cancelPreparation(); return }
+    // Camera samples replace one waiting address. They cannot repeatedly
+    // cancel the source read or WebKit image that must reveal the next area.
+    // A changed content cut, pin or physical scene still invalidates that work.
+    if let preparingRequest {
+      if request.continues(preparingRequest) {
+        pendingRequest = request
+        return
+      }
+      cancelPreparation()
+    }
+    let source = request.source, presence = request.presence, frame = request.frame
+    let pinned = request.pinned, displayScale = request.displayScale
+    let permitsPreparation = request.permitsPreparation, onSourceInvalidated = request.onSourceInvalidated
     let sources = frame.sourceIdentity
-    if let plan = published?.plan, published?.requestedSources == sources,
+    if let plan = published?.plan,
+      (!request.refinesDetails || published?.requestedSources == sources),
       plan.revision == source.revision, plan.workspaceID == source.workspaceID,
-      Self.covers(plan, presence: presence, pinned: pinned) { return }
-    if preparingSources == sources, let plan = preparingPlan,
-      plan.revision == source.revision, plan.workspaceID == source.workspaceID,
-      Self.covers(plan, presence: presence, pinned: pinned) { return }
-    task?.cancel(); requestID = UUID()
+      Self.covers(plan, presence: presence, pinned: pinned, refinesDetails: request.refinesDetails) { return }
+    cancelPreparation()
     let id = requestID
-    isPreparing = true; failure = nil; budgetFailures = []; preparingPlan = nil; preparingSources = sources
+    isPreparing = true; failure = nil; budgetFailures = []; preparingRequest = request
     task = Task { [weak self, resources, surfaceRegistry] in
-      defer { self?.inFlight[id] = nil }
+      defer {
+        self?.inFlight[id] = nil
+        self?.finishRequest(id)
+      }
       var rasters: [SceneCompositionTileKey: RasterLease] = [:]
       var liveRasters: [SceneCompositionLiveOwner: RasterLease] = [:]
       let renderer = SceneCompositionRenderer(source: source, resources: resources,
@@ -418,7 +456,6 @@ final class SceneCompositionTiles {
           plan = try await plan.removingEmptyTiles(source: source)
           try Task.checkCancellation()
           guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
-          self?.preparingPlan = plan
           var phase = "live_source"
           var allocation = BudgetAllocation.raster
           let priorRefusal = resources.lastRasterRefusal?.generation
@@ -490,7 +527,6 @@ final class SceneCompositionTiles {
                 liveData: liveData, rasters: rasters, liveRasters: liveRasters)
             #endif
             rasters.removeAll(); liveRasters.removeAll()
-            self?.isPreparing = false; self?.preparingPlan = nil; self?.preparingSources = nil; self?.task = nil
             return
           } catch SceneRenderError.resourceLimit {
             if !phase.hasSuffix("preflight") {
@@ -521,7 +557,6 @@ final class SceneCompositionTiles {
         for raster in liveRasters.values { raster.release() }
         try? await renderer.finishPreparationAndDrain()
         guard self?.requestID == id else { return }
-        self?.isPreparing = false; self?.preparingPlan = nil; self?.preparingSources = nil; self?.task = nil
         if case NotebookStorageError.transactionConflict = error {
           // The writer advanced while this candidate was being prepared.
           // Ask the model for the new read cut; waiting for camera movement
@@ -533,8 +568,17 @@ final class SceneCompositionTiles {
     inFlight[id] = task
   }
 
+  private func finishRequest(_ id: UUID) {
+    guard requestID == id else { return }
+    task = nil; preparingRequest = nil; isPreparing = false
+    let next = pendingRequest
+    pendingRequest = nil
+    if let next { prepare(next) }
+  }
+
   func cancelPreparation() {
-    requestID = UUID(); task?.cancel(); task = nil; preparingPlan = nil; preparingSources = nil; isPreparing = false
+    requestID = UUID(); task?.cancel(); task = nil
+    preparingRequest = nil; pendingRequest = nil; isPreparing = false
   }
   func removePublishedCoverage() { cancelPreparation(); published = nil }
 
@@ -715,16 +759,15 @@ final class SceneCompositionTiles {
     if let image { try? await diskCache.store(image, for: key) }
   }
 
-  private static func covers(_ plan: SceneCompositionPlan, presence: SessionPresence, pinned: Set<WorkspaceSpatialID>) -> Bool {
+  private static func covers(_ plan: SceneCompositionPlan, presence: SessionPresence,
+    pinned: Set<WorkspaceSpatialID>, refinesDetails: Bool) -> Bool {
     let plane = SceneCompositionPlane.board(presence.boardID)
     guard plan.rootBoardID == presence.boardID, let basis = plan.presentations[plane],
       basis.mode == presence.mode, basis.focusedItemID == presence.focusedItemID, basis.viewport == presence.viewport,
-      // Coverage is not resolution. The old cohort may cover a larger view
-      // when zooming out, but magnifying it would stretch its live rasters
-      // without issuing a new density request. Reuse only at or below the
-      // prepared scale; a settled enlargement prepares the same owners at
-      // the new screen density before replacing the whole cohort.
-      (0.6...1).contains(presence.camera.scale / basis.camera.scale),
+      // During a camera contact, only missing spatial coverage needs work.
+      // Density and live-owner refinement follow settlement, so a pinch within
+      // an already painted area projects the same pixels instead of recapturing.
+      (!refinesDetails || (0.6...1).contains(presence.camera.scale / basis.camera.scale)),
       pinned.allSatisfy({ pin in plan.liveOwners.contains { $0.id == pin } }), let tiles = plan.coverage[plane]?.tiles,
       let first = tiles.first, let last = tiles.last else { return false }
     let visible = WorkspaceSpatialBounds(origin: presence.camera.screenToWorld(.zero, viewport: presence.viewport),

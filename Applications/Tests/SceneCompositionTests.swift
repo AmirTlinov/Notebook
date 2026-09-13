@@ -776,6 +776,44 @@ final class SceneCompositionTests: XCTestCase {
   }
 
   @MainActor
+  func testCameraSamplesFinishTheCurrentImageAndKeepOnlyTheLatestNextView() async throws {
+    let fixture = Fixture(count: 8, side: 32, kind: .nativeText)
+    let resources = SceneRenderResources(byteLimit: 128 * 1024 * 1024)
+    let coordinator = SceneCompositionTiles(resources: resources)
+    addTeardownBlock { @MainActor in await coordinator.stop() }
+    let firstPixels = expectation(description: "The current image is not cancelled by camera samples")
+    firstPixels.assertForOverFulfill = false
+    let workspaceID = fixture.index.generationID
+    let observer = NotificationCenter.default.addObserver(forName: SceneRenderResources.didChange,
+      object: nil, queue: .main) { note in
+      guard let key = note.object as? SceneCompositionTileKey, key.workspaceID == workspaceID else { return }
+      if key.presentationScale == 1 { firstPixels.fulfill() }
+      XCTAssertNotEqual(key.presentationScale, 0.5, "The superseded waiting view must not be rendered")
+    }
+    defer { NotificationCenter.default.removeObserver(observer) }
+    let source = fixture.source()
+    coordinator.prepare(source: source, presence: fixture.presence, frame: fixture.frame(),
+      pinned: [], refinesDetails: false)
+    let last = SessionPresence(mode: .board,
+      camera: .init(center: .init(x: 12_000, y: 0), scale: 0.25), viewport: fixture.presence.viewport)
+    for view in [SessionPresence(mode: .board,
+      camera: .init(center: .init(x: 4_000, y: 0), scale: 0.5), viewport: fixture.presence.viewport), last] {
+      coordinator.prepare(source: source, presence: view,
+        frame: .init(index: fixture.index, presence: view, portalCamera: { _ in nil }),
+        pinned: [], refinesDetails: false)
+    }
+    await fulfillment(of: [firstPixels], timeout: 3)
+    try await waitUntil { !coordinator.isPreparing }
+    XCTAssertNil(coordinator.failure)
+    XCTAssertEqual(coordinator.published?.plan.presentations[.board(last.boardID)]?.camera, last.camera,
+      "The last queued view progresses even after camera samples stop")
+    await coordinator.stop()
+    XCTAssertNil(coordinator.published)
+    XCTAssertEqual(resources.reservedBytes, 0)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+  }
+
+  @MainActor
   func testStopDrainsSupersededPreparationAndRejectsNewWork() async throws {
     let fixture = Fixture(count: 8, side: 32, kind: .nativeText)
     let resources = SceneRenderResources(byteLimit: 128 * 1024 * 1024)

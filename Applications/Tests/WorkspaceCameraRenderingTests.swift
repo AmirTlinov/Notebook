@@ -49,8 +49,10 @@ final class WorkspaceCameraRenderingTests: XCTestCase {
     window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil; model.compositionTiles.cancelPreparation() }
     let deadline = ContinuousClock.now + .seconds(10)
-    while model.compositionTiles.published == nil, model.compositionTiles.failure == nil,
-      ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(30)) }
+    while (model.compositionTiles.published == nil || model.compositionTiles.isPreparing || model.scenePreparationPending),
+      model.compositionTiles.failure == nil, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(30))
+    }
     let cohort = try XCTUnwrap(model.compositionTiles.published, model.compositionTiles.failure ?? "Whole composition is required before measuring camera frames")
     XCTAssertEqual(cohort.rasters.count, cohort.plan.tiles.count)
     XCTAssertLessThanOrEqual(cohort.plan.liveOwners.count + 1, 8)
@@ -66,7 +68,9 @@ final class WorkspaceCameraRenderingTests: XCTestCase {
     XCTAssertEqual(mounted.count, 0, "Готовые статические SVG освобождают WebKit до движения камеры")
     let end = expectation(description: "Repeated diagram camera frames")
     let driver = CameraFrameDriver()
+    var shownCohorts: Set<UUID> = [cohort.id]
     driver.step = { frame in
+      if let shown = model.compositionTiles.published { shownCohorts.insert(shown.id) }
       show(exp(log(0.02) + (log(0.13) - log(0.02)) * (sin(Double(frame) * .pi / 60) + 1) / 2))
       if frame == 480 { driver.stop(); end.fulfill() }
     }
@@ -80,7 +84,9 @@ final class WorkspaceCameraRenderingTests: XCTestCase {
       "За экраном не остаются живые WebKit; готовый снимок сохраняет источник")
     XCTAssertTrue(finalWebViews.isSubset(of: mounted),
       "Повтор камеры не запускает новую подготовку уже готовых статических источников")
-    XCTAssertTrue(model.compositionTiles.published === cohort)
+    XCTAssertNotNil(model.compositionTiles.published)
+    XCTAssertLessThanOrEqual(shownCohorts.count, 4,
+      "Newly exposed coverage may publish, but camera samples cannot recreate the composition every frame")
     for (key, image) in images {
       XCTAssertEqual(cohort.rasters[key].map { ObjectIdentifier($0.image) }, image,
         "Camera contact projects the same completed tiles, not a new source snapshot queue")
@@ -90,7 +96,7 @@ final class WorkspaceCameraRenderingTests: XCTestCase {
     let times = Array(driver.intervals.dropFirst(120)).sorted()
     XCTAssertGreaterThan(times.count, 300)
     let p95 = times[times.count * 95 / 100]
-    let report = "frames=\(times.count); p50=\(times[times.count / 2]); p95=\(p95); max=\(times.last!)"
+    let report = "frames=\(times.count); p50=\(times[times.count / 2]); p95=\(p95); max=\(times.last!); cohorts=\(shownCohorts.count)"
     let attachment = XCTAttachment(string: report)
     attachment.name = "Large diagram camera display-link intervals in seconds"
     attachment.lifetime = .keepAlways; add(attachment)
@@ -140,8 +146,10 @@ final class WorkspaceCameraRenderingTests: XCTestCase {
     window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil; model.compositionTiles.cancelPreparation() }
     let deadline = ContinuousClock.now + .seconds(10)
-    while model.compositionTiles.published == nil, model.compositionTiles.failure == nil,
-      ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    while (model.compositionTiles.published == nil || model.compositionTiles.isPreparing || model.scenePreparationPending),
+      model.compositionTiles.failure == nil, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
     let resourcesAtPublication = SceneRenderResources.shared
     let preparation = "preparing=\(model.compositionTiles.isPreparing); permits=\(model.permitsBackgroundPreparation); scenePending=\(model.scenePreparationPending); publication=\(model.scenePublicationGeneration); revision=\(model.workspaceHeader?.cursor.description ?? "nil"); physical=\(resourcesAtPublication.activePhysicalOwnerCount); resident=\(resourcesAtPublication.residentBytes); reserved=\(resourcesAtPublication.reservedBytes); refusals=\(model.compositionTiles.budgetFailures)"
     let preparationAttachment = XCTAttachment(string: preparation)
@@ -160,7 +168,9 @@ final class WorkspaceCameraRenderingTests: XCTestCase {
     let resourcesBefore = "web=\(resources.activeWebSurfaceCount); pending=\(resources.pendingWebRequestCount); rasterBytes=\(resources.residentBytes)"
     let end = expectation(description: "camera frames")
     let driver = CameraFrameDriver()
+    var shownCohorts: Set<UUID> = [cohort.id]
     driver.step = { frame in
+      if let shown = model.compositionTiles.published { shownCohorts.insert(shown.id) }
       let scale = exp(log(0.035) + (log(0.8) - log(0.035)) * (sin(Double(frame) / 30) + 1) / 2)
       model.updatePresence(SessionPresence(boardID: boardID, mode: .board,
         camera: SpatialCamera(center: center, scale: scale), viewport: size), settled: false)
@@ -173,7 +183,7 @@ final class WorkspaceCameraRenderingTests: XCTestCase {
     XCTAssertGreaterThan(times.count, 100)
     guard !times.isEmpty else { return }
     let p95 = times[times.count * 95 / 100]
-    let report = "frames=\(times.count); p50=\(times[times.count / 2]); p95=\(p95); max=\(times.last!)"
+    let report = "frames=\(times.count); p50=\(times[times.count / 2]); p95=\(p95); max=\(times.last!); cohorts=\(shownCohorts.count)"
     let attachment = XCTAttachment(string: report)
     attachment.name = "Dense board camera frame intervals in seconds"
     attachment.lifetime = .keepAlways
@@ -183,7 +193,9 @@ final class WorkspaceCameraRenderingTests: XCTestCase {
     resourceReport.lifetime = .keepAlways
     add(resourceReport)
     XCTAssertLessThan(p95, 0.1, report)
-    XCTAssertTrue(model.compositionTiles.published === cohort)
+    XCTAssertNotNil(model.compositionTiles.published)
+    XCTAssertLessThanOrEqual(shownCohorts.count, 4,
+      "Newly exposed coverage may publish, but camera samples cannot recreate the composition every frame")
     XCTAssertLessThanOrEqual(resources.residentBytes + resources.reservedBytes, resources.byteLimit)
   }
 }

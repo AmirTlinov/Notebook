@@ -123,7 +123,7 @@ struct SpatialWorkspaceView: View {
         publication: model.scenePublicationGeneration,
         revision: model.workspaceHeader?.cursor, pinned: scenePins(presence: presence),
         itemOwners: sceneItemOwners(presence: presence, cohort: cohort),
-        permitsPreparation: model.permitsBackgroundPreparation)
+        permitsPreparation: model.permitsScenePreparation, refinesDetails: model.presencePhase == .settled)
       let workset = cohort.map { model.presentedWorkset(cohort: $0, boardID: presence.boardID, presence: presence) } ?? .empty
       let rendered = workset.items
 
@@ -428,6 +428,7 @@ struct SpatialWorkspaceView: View {
     let pinned: Set<WorkspaceSpatialID>
     let itemOwners: [UUID: UUID]
     let permitsPreparation: Bool
+    let refinesDetails: Bool
   }
 
   @ViewBuilder

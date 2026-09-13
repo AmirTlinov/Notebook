@@ -44,6 +44,14 @@ final class AgentTableRenderingTests: XCTestCase {
       let presence = SessionPresence(boardID: boardID, mode: .board,
         camera: .init(center: .init(x: element.frame.width / 2, y: element.frame.height / 2), scale: zoom),
         viewport: .init(x: 834, y: 1194))
+      if let shown = model.compositionTiles.published {
+        model.updatePresence(presence, settled: false)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(model.compositionTiles.published === shown,
+          "An enlargement inside the painted area projects the same pixels until settlement")
+      }
+      // The pose does not change on lift: the settlement itself must request
+      // readable density rather than waiting for one more camera movement.
       model.updatePresence(presence, settled: true)
       let deadline = ContinuousClock.now + .seconds(10)
       let minimumScale = floor(element.frame.width * zoom * 2) / element.frame.width

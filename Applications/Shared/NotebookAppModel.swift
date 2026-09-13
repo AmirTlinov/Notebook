@@ -321,11 +321,18 @@ final class NotebookAppModel {
     // An addressed pin is still being fetched. Do not turn the previous
     // partial index into a failed complete source for this new request.
     if missingPin || missingItemPin { compositionTiles.cancelPreparation(); return }
-    guard permitsBackgroundPreparation, !scenePreparationPending else { compositionTiles.cancelPreparation(); return }
+    guard permitsScenePreparation else { compositionTiles.cancelPreparation(); return }
+    if scenePreparationPending {
+      // Extending the same SQL cut must not cancel the image already on its
+      // way to the screen. A changed content generation still invalidates it.
+      if !scenePreparationIsCoverageOnly { compositionTiles.cancelPreparation() }
+      return
+    }
     guard let header = workspaceHeader, let frame else { return }
     let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID)
     compositionTiles.prepare(source: source, presence: presence, frame: frame, pinned: pinned,
-      displayScale: displayScale, permitsPreparation: { [weak self] in self?.permitsBackgroundPreparation == true },
+      displayScale: displayScale, refinesDetails: presencePhase == .settled,
+      permitsPreparation: { [weak self] in self?.permitsScenePreparation == true },
       onSourceInvalidated: { [weak self] in self?.reloadExternalChanges() })
   }
 
@@ -689,6 +696,15 @@ final class NotebookAppModel {
   private(set) var inputIsActive = false
   private(set) var peerInputIsActive = false { didSet { if !peerInputIsActive { publishPreparedSceneIfPossible() } } }
   var permitsBackgroundPreparation: Bool { !isStopped && !inputIsActive && !peerInputIsActive && presencePhase == .settled }
+
+  /// Moving the camera must not leave newly visible material waiting for lift.
+  /// It can project a new immutable scene without replacing an accepted Pencil
+  /// contact or the owner of a content manipulation. Other background work
+  /// still waits for settlement through permitsBackgroundPreparation.
+  var permitsScenePreparation: Bool {
+    !isStopped && !peerInputIsActive && !inputGate.hasActivePencil
+      && (!inputIsActive || presencePhase == .active)
+  }
   #if os(macOS)
     @ObservationIgnored private var codexSidecar: NotebookCodexSidecar?
     private(set) var agentStartupError: String?
