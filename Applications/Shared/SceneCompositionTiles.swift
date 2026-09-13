@@ -719,7 +719,12 @@ final class SceneCompositionTiles {
     let plane = SceneCompositionPlane.board(presence.boardID)
     guard plan.rootBoardID == presence.boardID, let basis = plan.presentations[plane],
       basis.mode == presence.mode, basis.focusedItemID == presence.focusedItemID, basis.viewport == presence.viewport,
-      (0.6...1.6).contains(presence.camera.scale / basis.camera.scale),
+      // Coverage is not resolution. The old cohort may cover a larger view
+      // when zooming out, but magnifying it would stretch its live rasters
+      // without issuing a new density request. Reuse only at or below the
+      // prepared scale; a settled enlargement prepares the same owners at
+      // the new screen density before replacing the whole cohort.
+      (0.6...1).contains(presence.camera.scale / basis.camera.scale),
       pinned.allSatisfy({ pin in plan.liveOwners.contains { $0.id == pin } }), let tiles = plan.coverage[plane]?.tiles,
       let first = tiles.first, let last = tiles.last else { return false }
     let visible = WorkspaceSpatialBounds(origin: presence.camera.screenToWorld(.zero, viewport: presence.viewport),
