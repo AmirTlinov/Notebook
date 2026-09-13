@@ -146,6 +146,37 @@ final class NotebookInputTests: XCTestCase {
   }
 
   @MainActor
+  func testSecondFingerCannotReplaceTheOneFingerPanOrigin() throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow)
+    let window = UIWindow(windowScene: scene), host = UIViewController()
+    let anchor = UIView(frame: .init(x: 0, y: 0, width: 600, height: 800))
+    window.rootViewController = host; host.view.addSubview(anchor); window.makeKeyAndVisible()
+    var samples: [CGPoint] = []
+    let owner = BoardPanView.Coordinator(isEnabled: true, itemFrames: [], inputGate: NotebookInputGate(),
+      onTap: {}, onBegan: {}, onChanged: { samples.append($0) },
+      onEnded: { samples.append($0) }, onCancelled: {})
+    owner.install(on: window, inside: anchor)
+    defer { owner.uninstall(); window.isHidden = true; previous?.makeKey() }
+    let pan = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer }.first)
+    let first = InputTouch(); first.inputType = .direct; first.point = .init(x: 100, y: 200)
+    XCTAssertTrue(owner.gestureRecognizer(pan, shouldReceive: first))
+    let measured = PanTranslationSample()
+    measured.delta = .init(x: 32, y: 12); measured.point = .init(x: 132, y: 212)
+    measured.phase = .began; owner.handle(measured)
+    XCTAssertEqual(samples.last, .init(x: 32, y: 12), "The native recognizer owns measured travel")
+
+    let second = InputTouch(); second.inputType = .direct; second.point = .init(x: 480, y: 610)
+    XCTAssertTrue(owner.gestureRecognizer(pan, shouldReceive: second))
+    measured.phase = .changed; measured.point = .init(x: 306, y: 411)
+    owner.handle(measured)
+    XCTAssertEqual(samples.last, .init(x: 32, y: 12), "Touch admission cannot turn the second location into camera motion")
+    owner.receivePan(state: .cancelled, translation: .zero)
+    XCTAssertEqual(samples.last, .init(x: 32, y: 12), "The handoff keeps the actually shown camera")
+    XCTAssertEqual(pan.maximumNumberOfTouches, 1)
+  }
+
+  @MainActor
   func testBoardPanDefersConfigurationCancellationWithoutStoppingTheNextContact() async throws {
     let gate = NotebookInputGate()
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
@@ -751,6 +782,17 @@ final class NotebookInputTests: XCTestCase {
     XCTAssertEqual(Set(try XCTUnwrap(model.activePage).elements.map(\.id)), ["agent", "human"])
     XCTAssertEqual(Set(try model.store.loadPage(human.id).elements.map(\.id)), ["agent", "human"])
   }
+}
+
+/// Controlled UIKit measurement: adding a contact moves location, not the
+/// recognizer's accumulated translation. The coordinator must use the latter.
+private final class PanTranslationSample: UIPanGestureRecognizer {
+  var phase = UIGestureRecognizer.State.possible
+  var delta = CGPoint.zero
+  var point = CGPoint.zero
+  override var state: UIGestureRecognizer.State { get { phase } set { phase = newValue } }
+  override func translation(in view: UIView?) -> CGPoint { delta }
+  override func location(in view: UIView?) -> CGPoint { point }
 }
 
 @MainActor

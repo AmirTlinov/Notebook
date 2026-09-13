@@ -68,8 +68,9 @@ extension CodexAppServerState {
     case "mcpToolCall", "dynamicToolCall", "functionCallOutput":
       role = .assistant
       let name = [item["server"]?.string ?? item["namespace"]?.string, item["tool"]?.string ?? item["name"]?.string].compactMap { $0 }.joined(separator: ".")
-      text = (status == "inProgress" ? "Инструмент работает" : status == "failed" ? "Ошибка инструмента" : "Вызван инструмент") + (name.isEmpty ? "" : " · " + name)
-      activity = action(.tool, [pretty(item["arguments"]), pretty(item["error"] ?? item["result"])].compactMap { $0 }.joined(separator: "\n\n"))
+      text = notebookToolSummary(name, status: status)
+        ?? ((status == "inProgress" ? "Инструмент работает" : status == "failed" ? "Ошибка инструмента" : "Вызван инструмент") + (name.isEmpty ? "" : " · " + name))
+      activity = action(.tool, [name, pretty(item["arguments"]), pretty(item["error"] ?? item["result"])].compactMap { $0 }.joined(separator: "\n\n"))
     case "webSearch":
       role = .assistant; text = "Поиск · " + (item["query"]?.string ?? ""); activity = action(.search)
     case "imageView":
@@ -86,5 +87,40 @@ extension CodexAppServerState {
     }
     return CodexMessage(id: id, turnID: turnID, clientID: item["clientId"]?.string, role: role,
       text: String(text.prefix(16_384)), isTruncated: text.count > 16_384 || detailTruncated, activity: activity, attachments: attachments, phase: item["phase"]?.string)
+  }
+
+  /// Presentation of Notebook's public actions, not another tool dispatcher.
+  /// Names and arguments remain in the closed detail; delivery IDs are intact.
+  private static func notebookToolSummary(_ name: String, status: String?) -> String? {
+    guard let qualified = name.split(separator: ".").last else { return nil }
+    let tool = String(qualified).components(separatedBy: "__").last ?? String(qualified)
+    let action: (running: String, completed: String, failed: String)
+    switch tool {
+    case "notebook_observe": action = ("Смотрит текущий материал", "Просмотрен текущий материал", "просмотреть текущий материал")
+    case "notebook_read_board": action = ("Читает доску", "Доска прочитана", "прочитать доску")
+    case "notebook_read_notebook": action = ("Читает тетрадь", "Тетрадь прочитана", "прочитать тетрадь")
+    case "notebook_read_document": action = ("Читает документ", "Документ прочитан", "прочитать документ")
+    case "notebook_read_page": action = ("Читает лист", "Лист прочитан", "прочитать лист")
+    case "notebook_read_code_notes": action = ("Читает код и пометки", "Код и пометки прочитаны", "прочитать код и пометки")
+    case "notebook_read_attention": action = ("Рассматривает выбранный фрагмент", "Выбранный фрагмент рассмотрен", "рассмотреть выбранный фрагмент")
+    case "notebook_read_context": action = ("Читает обсуждение материала", "Обсуждение материала прочитано", "прочитать обсуждение материала")
+    case "notebook_point": action = ("Добавляет объяснение к материалу", "Объяснение добавлено к материалу", "добавить объяснение к материалу")
+    case "notebook_render": action = ("Рассматривает материал", "Материал рассмотрен", "рассмотреть материал")
+    case "notebook_render_page": action = ("Рассматривает рукописный лист", "Рукописный лист рассмотрен", "рассмотреть рукописный лист")
+    case "notebook_page_map": action = ("Находит записи на листе", "Записи на листе найдены", "найти записи на листе")
+    case "notebook_render_region", "notebook_render_regions": action = ("Рассматривает рукописный фрагмент", "Рукописный фрагмент рассмотрен", "рассмотреть рукописный фрагмент")
+    case "notebook_place": action = ("Подбирает место для материала", "Место для материала подобрано", "подобрать место для материала")
+    case "notebook_search": action = ("Ищет материал в Notebook", "Поиск в Notebook завершён", "найти материал в Notebook")
+    case "notebook_apply": action = ("Вносит изменения в материал", "Изменения материала сохранены", "сохранить изменения материала")
+    case "notebook_undo": action = ("Отменяет своё изменение", "Своё изменение отменено", "отменить своё изменение")
+    case "notebook_action": action = ("Проверяет появление изменений", "Проверено появление изменений", "проверить появление изменений")
+    case "notebook_export_document": action = ("Готовит PDF документа", "PDF документа подготовлен", "подготовить PDF документа")
+    default: return nil
+    }
+    switch status {
+    case "inProgress": return action.running
+    case "failed": return "Не удалось " + action.failed
+    default: return action.completed
+    }
   }
 }

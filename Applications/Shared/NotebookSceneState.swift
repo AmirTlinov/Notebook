@@ -178,7 +178,10 @@ struct NotebookSceneState: Sendable {
       heavyIDs += candidates.prefix(max(0, 8 - boardIDs.count - 1)).map(\.id)
       let coverIDs = [selected.id] + heavyIDs.filter { $0 != selected.id }
       let surfaces = (boardIDs.map(SurfaceID.board) + coverIDs.map(SurfaceID.cover)).prefix(8)
-      let live = try store.readWorkingSet(itemIDs: loadsLiveContent ? heavyIDs : [], pageIDs: [],
+      // Neighbouring covers need geometry and ink, not every book's source.
+      // The chosen document is the only native reader; composition prepares
+      // its own admitted passive sources through SceneCompositionSource.
+      let live = try store.readWorkingSet(itemIDs: loadsLiveContent && selected.kind == .document ? [selected.id] : [], pageIDs: [],
         boardIDs: boardIDs, surfaces: Array(surfaces))
       for item in live.items where item.id != selected.id { items[item.id] = item.item }
       paper.merge(live.documents.mapValues(\.paperSize)) { _, next in next }

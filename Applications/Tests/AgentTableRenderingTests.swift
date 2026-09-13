@@ -1,6 +1,7 @@
 import NotebookCore
 import SwiftUI
 import UIKit
+import WebKit
 import XCTest
 @testable import Notebook
 
@@ -18,9 +19,14 @@ final class AgentTableRenderingTests: XCTestCase {
     }
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     model.moveItem(try XCTUnwrap(model.workspace?.selectedItemID), to: .init(x: 100_000, y: 100_000))
+    let documentCenter = WorldPoint(x: 498, y: -650)
+    let documentID = try XCTUnwrap(model.createDocument(at: documentCenter, paperSize: .a4))
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    var document = try model.store.loadDocument(documentID)
+    XCTAssertTrue(document.replaceContent(blocks: [.markdown(id: "body", source: "# Возвращение к чёткой таблице\n\nЧитаем документ, затем продолжаем работу на доске.")], actor: model.actorID))
+    _ = try model.store.saveMergedDocument(document)
     let boardID = try XCTUnwrap(model.workspace?.rootBoardID)
-    let before = try model.store.loadBoard(items: try XCTUnwrap(model.workspace).items)
+    let before = try model.store.loadBoard(items: model.store.loadIndex().items)
     var after = before
     let bars = stride(from: 36, to: 924, by: 8).map { "<rect x='\($0)' y='740' width='4' height='60'/>" }.joined()
     let rows = (0..<6).map { row in
@@ -44,11 +50,29 @@ final class AgentTableRenderingTests: XCTestCase {
       let presence = SessionPresence(boardID: boardID, mode: .board,
         camera: .init(center: .init(x: element.frame.width / 2, y: element.frame.height / 2), scale: zoom),
         viewport: .init(x: 834, y: 1194))
+      if zoom == 0.7027193990126275 {
+        let opened = SessionPresence(boardID: boardID, mode: .document,
+          camera: .init(center: documentCenter, scale: model.itemGeometry(documentID).fitScale(viewport: presence.viewport)),
+          viewport: presence.viewport, focusedItemID: documentID, openProgress: 1)
+        model.selectItem(documentID)
+        model.updatePresence(opened, settled: true)
+        let deadline = ContinuousClock.now + .seconds(8)
+        var text = ""
+        while !text.contains("Возвращение к чёткой таблице"), ContinuousClock.now < deadline {
+          try await Task.sleep(for: .milliseconds(30))
+          if let web = webViews(host.view).first {
+            text = (try? await web.evaluateJavaScript("document.querySelector('#document')?.innerText ?? ''")) as? String ?? ""
+          }
+        }
+        XCTAssertTrue(text.contains("Возвращение к чёткой таблице"), "The real document must render before testing its return")
+      }
       if let shown = model.compositionTiles.published {
         model.updatePresence(presence, settled: false)
         try await Task.sleep(for: .milliseconds(100))
-        XCTAssertTrue(model.compositionTiles.published === shown,
-          "An enlargement inside the painted area projects the same pixels until settlement")
+        if zoom != 0.7027193990126275 {
+          XCTAssertTrue(model.compositionTiles.published === shown,
+            "An enlargement inside the painted area projects the same pixels until settlement")
+        }
       }
       // The pose does not change on lift: the settlement itself must request
       // readable density rather than waiting for one more camera movement.
@@ -61,6 +85,15 @@ final class AgentTableRenderingTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(20))
       }
       XCTAssertFalse(model.scenePreparationPending, model.compositionTiles.failure ?? "Table preparation did not finish")
+      let releaseDeadline = ContinuousClock.now + .seconds(3)
+      while !webViews(host.view).isEmpty, ContinuousClock.now < releaseDeadline {
+        try await Task.sleep(for: .milliseconds(20))
+      }
+      XCTAssertTrue(webViews(host.view).isEmpty, "A closed selected document cannot retain invisible live pages over the board")
+      let closedCover = try XCTUnwrap(model.compositionTiles.published?.frame.workset(boardID: boardID).items.first { $0.id == documentID })
+      XCTAssertTrue(WorkspaceSceneProjection.mountsContent(of: closedCover, in: presence),
+        "The visible closed cover remains mounted; culling must not hide a page lifetime defect")
+      XCTAssertTrue(model.compositionTiles.published?.plan.allowsLive(.item(documentID), in: .board(boardID)) == true)
       try await Task.sleep(for: .milliseconds(150))
       let raster = try XCTUnwrap(SceneRenderResources.shared.retainRaster(for: agentElementSnapshotSource(element)))
       let source = XCTAttachment(image: raster.image); source.name = "table-source-\(zoom)-density-\(raster.pixelScale)"; source.lifetime = .keepAlways; add(source)
@@ -109,5 +142,9 @@ final class AgentTableRenderingTests: XCTestCase {
 
   private func descendants(_ view: UIView) -> [AgentSnapshotRasterView] {
     (view as? AgentSnapshotRasterView).map { [$0] } ?? view.subviews.flatMap(descendants)
+  }
+
+  private func webViews(_ view: UIView) -> [WKWebView] {
+    (view as? WKWebView).map { [$0] } ?? view.subviews.flatMap(webViews)
   }
 }

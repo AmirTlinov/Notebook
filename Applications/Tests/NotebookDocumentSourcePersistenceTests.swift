@@ -4,6 +4,36 @@ import XCTest
 
 final class NotebookDocumentSourcePersistenceTests: XCTestCase {
   @MainActor
+  func testSelectingAnUnloadedDocumentReadsItsContentWithoutAnExternalRefresh() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let notebook = try XCTUnwrap(model.workspace?.selectedItemID)
+    var ids: [UUID] = []
+    for _ in 0..<10 { ids.append(try XCTUnwrap(model.createDocument(at: .zero, paperSize: .a4))) }
+    model.selectItem(notebook)
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    await model.reloadExternalChanges()?.value
+    let id = try XCTUnwrap(ids.first { model.documents[$0] == nil },
+      "The bounded working set must leave some document sources unloaded")
+    let camera = try XCTUnwrap(model.presence?.camera)
+    let expected = try model.store.loadDocument(id)
+    let state = try model.store.loadDocumentState(id)
+
+    model.selectItem(id)
+    let deadline = ContinuousClock.now + .seconds(2)
+    while model.documents[id] == nil, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertEqual(model.documents[id], expected, "Opening reads the addressed source, not a later sync event")
+    XCTAssertEqual(model.documentStates[id], state)
+    XCTAssertEqual(Set(model.documents.keys), [id], "Opening does not read neighbouring books before the chosen document")
+    XCTAssertEqual(model.presence?.selectedItemID, id)
+    XCTAssertEqual(model.presence?.camera, camera, "Content readiness cannot reposition the paper")
+  }
+
+  @MainActor
   func testAcceptedSourceUpdatesOnlyItsProgramAndKeepsHumanSelection() async throws {
     let (model, id) = try await makeModel()
     let before = try XCTUnwrap(model.documents[id]), state = try model.store.loadDocumentState(id)

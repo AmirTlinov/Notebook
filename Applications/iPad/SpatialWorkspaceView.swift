@@ -902,8 +902,11 @@ struct SpatialWorkspaceView: View {
     }
     if let focusedItemID = presence.focusedItemID {
       return focusedItemID == itemID
+        && (presence.openProgress > 0 || presence.mode == .page || presence.mode == .document)
     }
-      return model.workspace?.selectedItemID == itemID
+    // Selection keeps the cover address, not an invisible WebKit/page pool.
+    // Opening approaches above prepare content before it becomes visible.
+    return false
   }
 
   private func handleBoardMagnification(_ phase: WorkspaceMagnificationPhase) {
@@ -1676,6 +1679,8 @@ private struct WorkspaceSceneItem: View, Equatable {
 
   nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.rendered == rhs.rendered && lhs.contentRevision == rhs.contentRevision
+      && lhs.document?.contentStamp == rhs.document?.contentStamp
+      && lhs.documentState?.stamp == rhs.documentState?.stamp
       && lhs.coverElements == rhs.coverElements
       && lhs.boardID == rhs.boardID && lhs.camera == rhs.camera && lhs.viewport == rhs.viewport
       && lhs.isFocused == rhs.isFocused && lhs.preparesCoverMotion == rhs.preparesCoverMotion

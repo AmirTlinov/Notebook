@@ -390,7 +390,6 @@ struct BoardPanView: UIViewRepresentable {
     private var pan: UIPanGestureRecognizer?
     private var tap: UITapGestureRecognizer?
     private weak var startingCover: NotebookInteractionTouchView?
-    private var panOrigin = CGPoint.zero
     private let inputSource = UUID()
     private var panRevision: UInt64?
     private var tapRevision: UInt64?
@@ -504,10 +503,9 @@ struct BoardPanView: UIViewRepresentable {
     }
 
     @objc func handle(_ pan: UIPanGestureRecognizer) {
-      let point = pan.location(in: sceneView)
-      // The touch-down point also includes UIKit's recognition travel.
-      let translation = CGPoint(x: point.x - panOrigin.x, y: point.y - panOrigin.y)
-      receivePan(state: pan.state, translation: translation)
+      // UIKit keeps translation continuous when its contact set changes.
+      // A second shouldReceive callback is not a new origin for the camera.
+      receivePan(state: pan.state, translation: pan.translation(in: sceneView))
     }
 
     func receivePan(state: UIGestureRecognizer.State, translation: CGPoint) {
@@ -556,7 +554,6 @@ struct BoardPanView: UIViewRepresentable {
       let isFreeBoard = !itemFrames.contains(where: { $0.contains(point) })
       if gestureRecognizer === pan {
         panRevision = revision
-        panOrigin = point
         startingCover = touch.view as? NotebookInteractionTouchView
         // The cover's direct-touch surface can hand motion to the camera.
         // Its passthrough editors and interactive content keep their own input.

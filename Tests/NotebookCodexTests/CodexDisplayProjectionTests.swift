@@ -5,6 +5,35 @@ import NotebookCore
 
 @Suite("Bounded native items and project cursors")
 struct CodexDisplayProjectionTests {
+  @Test func notebookActionsExplainTheirMeaningWithoutChangingDeliveryOrHidingDetails() throws {
+    let cases = [
+      ("notebook_read_document", "Читает документ", "Документ прочитан"),
+      ("notebook_apply", "Вносит изменения в материал", "Изменения материала сохранены"),
+      ("notebook_action", "Проверяет появление изменений", "Проверено появление изменений"),
+      ("notebook_place", "Подбирает место для материала", "Место для материала подобрано"),
+    ]
+    for (tool, running, completed) in cases {
+      for (status, title) in [("inProgress", running), ("completed", completed)] {
+        let item: JSONValue = .object(["id": .string("native-action"), "type": .string("mcpToolCall"),
+          "server": .string("notebook"), "tool": .string(tool), "status": .string(status),
+          "arguments": .object(["action_id": .string("original")])])
+        let display = try #require(CodexAppServerState.displayMessage(item, turnID: "same-turn"))
+        #expect(display.text == title)
+        #expect(display.id == "native-action" && display.turnID == "same-turn")
+        #expect(display.activity?.kind == .tool && display.activity?.status == status)
+        #expect(display.activity?.detail?.contains("notebook." + tool) == true)
+        #expect(display.activity?.detail?.contains("original") == true)
+      }
+    }
+    for name in ["notebook.notebook_read_page", "mcp__notebook__notebook_read_page", "notebook_read_page"] {
+      let item: JSONValue = .object(["id": .string("failure"), "type": .string("dynamicToolCall"),
+        "name": .string(name), "status": .string("failed"), "error": .string("source unavailable")])
+      let display = try #require(CodexAppServerState.displayMessage(item, turnID: "turn"))
+      #expect(display.text == "Не удалось прочитать лист")
+      #expect(display.activity?.detail?.contains("source unavailable") == true)
+    }
+  }
+
   @Test func realtimeHandoffShowsOnlyTheRequestAndNeverReplaysItsTranscript() throws {
     let raw = "<realtime_delegation>\n<input>Начерти таблицу & объясни её</input>\n<transcript_delta>user: Начерти\nassistant: Сейчас\nuser: Начерти таблицу</transcript_delta>\n</realtime_delegation>"
     let item: JSONValue = .object(["id": .string("voice-request"), "type": .string("userMessage"), "content": .array([.textInput(raw)])])

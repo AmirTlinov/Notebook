@@ -364,12 +364,20 @@ final class NotebookAppModel {
       while let requested = requestedScenePresence, !Task.isCancelled {
         requestedScenePresence = nil
         let epoch = collaborationReadEpoch
+        let draftEpoch = documentDraftEpoch
         let pins = scenePinnedElements, itemPins = scenePinnedItems
         let preparedIDs = preparedNotebookPageIDs(in: requested.selectedItemID)
+        // Selection admits its source through this same addressed read. A
+        // cold document cannot wait for an unrelated peer refresh to appear.
+        // Ordinary camera coverage still reads headers, not document bodies.
+        let loadsDocument = requested.selectedItemID.map {
+          workspace?.item(id: $0)?.kind == .document
+            && (documents[$0] == nil || documentStates[$0] == nil)
+        } ?? false
         do {
           let state = try await persistence.submit { store in
             try NotebookSceneState.read(store: store, presence: requested,
-              viewport: requested.viewport, loadsLiveContent: false, pinnedElements: pins, pinnedItems: itemPins, preparedPages: preparedIDs)
+              viewport: requested.viewport, loadsLiveContent: loadsDocument, pinnedElements: pins, pinnedItems: itemPins, preparedPages: preparedIDs)
           }
           guard epoch == collaborationReadEpoch, state.header.cursor == workspaceHeader?.cursor else {
             externalReloadPending = true
@@ -389,6 +397,11 @@ final class NotebookAppModel {
           })
           boardHierarchy = state.hierarchy
           boardContentRevisions = state.boardContentRevisions
+          if loadsDocument {
+            documents = state.documents
+            documentStates = state.states
+            if draftEpoch == documentDraftEpoch { documentEditingSessions = state.drafts }
+          }
           documentPaperSizes = state.paperSizes.merging(documents.mapValues(\.paperSize)) { _, live in live }
           sceneCoverage = state.coverage
           truncatedSceneBoards = state.truncatedBoards
