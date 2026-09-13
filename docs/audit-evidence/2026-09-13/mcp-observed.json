@@ -1,0 +1,147 @@
+[
+  {
+    "label": "registered_surface",
+    "count": 21,
+    "inputSchemaBytes": 107985,
+    "allToolDefinitionBytes": 416222,
+    "tools": [
+      "notebook_present",
+      "notebook_observe",
+      "notebook_read_board",
+      "notebook_read_notebook",
+      "notebook_read_document",
+      "notebook_export_document",
+      "notebook_read_page",
+      "notebook_render_page",
+      "notebook_apply",
+      "notebook_undo",
+      "notebook_action",
+      "notebook_read_code_notes",
+      "notebook_read_attention",
+      "notebook_read_context",
+      "notebook_point",
+      "notebook_render",
+      "notebook_place",
+      "notebook_search",
+      "notebook_page_map",
+      "notebook_render_region",
+      "notebook_render_regions"
+    ]
+  },
+  {
+    "label": "read_attention",
+    "withImage": false,
+    "isError": true,
+    "content": [
+      {
+        "type": "text",
+        "text": "Output validation error: Invalid structured content for tool notebook_read_attention: status: Invalid option: expected one of \"ready\"|\"saved\"|\"pending\"|\"error\"|\"snapshot_pending\"|\"placement_unavailable\""
+      }
+    ]
+  },
+  {
+    "label": "read_attention",
+    "withImage": true,
+    "isError": true,
+    "content": [
+      {
+        "type": "text",
+        "text": "Output validation error: Invalid structured content for tool notebook_read_attention: status: Invalid option: expected one of \"ready\"|\"saved\"|\"pending\"|\"error\"|\"snapshot_pending\"|\"placement_unavailable\""
+      }
+    ]
+  },
+  {
+    "label": "cold_regional_reference_status",
+    "result": {
+      "error": {
+        "message": "Владелец отклонил некорректное или незавершённое содержимое.",
+        "code": "storage_error"
+      }
+    },
+    "requests": []
+  },
+  {
+    "label": "same_action_retry_after_element_removed",
+    "originalSaved": "saved",
+    "requestID": "220cd61f-3e75-4fbc-9028-a8807b9764fa",
+    "retry": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"status\":\"error\",\"code\":\"action_id_conflict\",\"message\":\"Этот ID уже принадлежит другому ходу.\"}"
+        }
+      ],
+      "structuredContent": {
+        "status": "error",
+        "code": "action_id_conflict",
+        "message": "Этот ID уже принадлежит другому ходу."
+      },
+      "isError": true
+    }
+  },
+  {
+    "label": "read_actions_beyond_ipc_capacity",
+    "attempt": 1,
+    "milliseconds": 12,
+    "isError": true,
+    "code": "ipc_unavailable",
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"status\":\"error\",\"code\":\"ipc_unavailable\",\"message\":\"Notebook helper прервал соединение. Проверьте сохранение по ID хода перед повтором.\"}"
+      }
+    ]
+  },
+  {
+    "label": "read_actions_beyond_ipc_capacity",
+    "attempt": 2,
+    "milliseconds": 1,
+    "isError": true,
+    "code": "ipc_unavailable",
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"status\":\"error\",\"code\":\"ipc_unavailable\",\"message\":\"Notebook helper прервал соединение. Проверьте сохранение по ID хода перед повтором.\"}"
+      }
+    ]
+  },
+  {
+    "label": "read_actions_beyond_ipc_capacity",
+    "attempt": 3,
+    "milliseconds": 0,
+    "isError": true,
+    "code": "ipc_unavailable",
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"status\":\"error\",\"code\":\"ipc_unavailable\",\"message\":\"Notebook helper прервал соединение. Проверьте сохранение по ID хода перед повтором.\"}"
+      }
+    ]
+  },
+  {
+    "label": "read_actions_beyond_ipc_capacity",
+    "attempt": 4,
+    "milliseconds": 0,
+    "isError": true,
+    "code": "ipc_unavailable",
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"status\":\"error\",\"code\":\"ipc_unavailable\",\"message\":\"Notebook helper прервал соединение. Проверьте сохранение по ID хода перед повтором.\"}"
+      }
+    ]
+  },
+  {
+    "label": "read_actions_beyond_ipc_capacity",
+    "attempt": 5,
+    "milliseconds": 0,
+    "isError": true,
+    "code": "ipc_unavailable",
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"status\":\"error\",\"code\":\"ipc_unavailable\",\"message\":\"Notebook helper прервал соединение. Проверьте сохранение по ID хода перед повтором.\"}"
+      }
+    ]
+  }
+]

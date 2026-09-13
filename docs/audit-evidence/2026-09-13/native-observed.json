@@ -1,0 +1,189 @@
+{
+  "kind": "audit_observations_not_full_acceptance",
+  "date": "2026-09-13",
+  "sourceCommit": "fceadf0a7cc553813423f356908bf09574f79a15",
+  "sourceSHA256": "995e15b0302b23d931693e09c0da2cf7202f9756e55dc536ee5824a60dd11f0f",
+  "sourceUnchanged": true,
+  "selected": {
+    "command": "./verify.sh --only --profile mcp --test NotebookMacTests/DocumentLargeSourceTests/testLargeIllustratedMathBookColdMountsAndTurnsToDistantPhysicalPagesWithinTheExistingDeadline --test NotebookTests/PreparedAgentElementViewTests --test NotebookTests/SceneCompositionTests/testMixedPaperCoversPublishInLandscapeWithoutDroppingTheirInputOwners --test NotebookTests/SceneCompositionTests/testSmallStackKeepsBothPhysicalCoversUnderTheSharedBudget --test NotebookTests/SceneCompositionTests/testEmptyTileProofKeepsCoverageAndUnknownPagesKeepTheirPainter --test NotebookTests/SceneCameraPlaneTests --evidence-dir .build/audit-20260913-selected",
+    "exitCode": 1,
+    "verificationReceiptCreated": false,
+    "mcp": {
+      "passedTests": 49,
+      "failedTests": 0,
+      "typeCheck": "passed"
+    },
+    "mac": {
+      "result": "Passed",
+      "totalTestCount": 1,
+      "passedTests": 1,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "testFailures": [],
+      "devicesAndConfigurations": [
+        {
+          "device": {
+            "architecture": "arm64",
+            "deviceName": "My Mac",
+            "modelName": "MacBook Pro",
+            "osBuildNumber": "26A5421a",
+            "osVersion": "27.0",
+            "platform": "macOS"
+          },
+          "expectedFailures": 0,
+          "failedTests": 0,
+          "passedTests": 1,
+          "skippedTests": 0,
+          "testPlanConfiguration": {
+            "configurationId": "1",
+            "configurationName": "Test Scheme Action"
+          }
+        }
+      ]
+    },
+    "ipadSimulator": {
+      "result": "Failed",
+      "totalTestCount": 21,
+      "passedTests": 14,
+      "failedTests": 7,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "testFailures": [
+        {
+          "failureText": "XCTAssertGreaterThan failed: (\"0\") is not greater than (\"0\")",
+          "targetName": "NotebookTests",
+          "testIdentifier": 6,
+          "testIdentifierString": "SceneCameraPlaneTests/testAnimatedParentUnmountRetiresTheNestedPoseDisplayList()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneCameraPlaneTests/testAnimatedParentUnmountRetiresTheNestedPoseDisplayList",
+          "testName": "testAnimatedParentUnmountRetiresTheNestedPoseDisplayList()"
+        },
+        {
+          "failureText": "XCTAssertGreaterThan failed: (\"0\") is not greater than (\"0\")",
+          "targetName": "NotebookTests",
+          "testIdentifier": 8,
+          "testIdentifierString": "SceneCameraPlaneTests/testConditionalParentUnmountRetiresTheNestedPoseDisplayList()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneCameraPlaneTests/testConditionalParentUnmountRetiresTheNestedPoseDisplayList",
+          "testName": "testConditionalParentUnmountRetiresTheNestedPoseDisplayList()"
+        },
+        {
+          "failureText": "XCTAssertGreaterThan failed: (\"0\") is not greater than (\"0\")",
+          "targetName": "NotebookTests",
+          "testIdentifier": 9,
+          "testIdentifierString": "SceneCameraPlaneTests/testConditionalSwiftUIUnmountReleasesTheLastCohortWhileUIKitRetainsTheController()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneCameraPlaneTests/testConditionalSwiftUIUnmountReleasesTheLastCohortWhileUIKitRetainsTheController",
+          "testName": "testConditionalSwiftUIUnmountReleasesTheLastCohortWhileUIKitRetainsTheController()"
+        },
+        {
+          "failureText": "XCTAssertGreaterThan failed: (\"0\") is not greater than (\"0\")",
+          "targetName": "NotebookTests",
+          "testIdentifier": 15,
+          "testIdentifierString": "SceneCameraPlaneTests/testShutdownRetiresNativeOwnersBeforeTheExternalHostReleasesItsContent()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneCameraPlaneTests/testShutdownRetiresNativeOwnersBeforeTheExternalHostReleasesItsContent",
+          "testName": "testShutdownRetiresNativeOwnersBeforeTheExternalHostReleasesItsContent()"
+        },
+        {
+          "failureText": "XCTUnwrap failed: expected non-nil value of type \"RasterLease\"",
+          "targetName": "NotebookTests",
+          "testIdentifier": 16,
+          "testIdentifierString": "SceneCameraPlaneTests/testTerminalCameraHostRetiresItsDisplayListWhileUIKitKeepsTheInnerHost()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneCameraPlaneTests/testTerminalCameraHostRetiresItsDisplayListWhileUIKitKeepsTheInnerHost",
+          "testName": "testTerminalCameraHostRetiresItsDisplayListWhileUIKitKeepsTheInnerHost()"
+        },
+        {
+          "failureText": "XCTAssertGreaterThan failed: (\"0\") is not greater than (\"0\")",
+          "targetName": "NotebookTests",
+          "testIdentifier": 17,
+          "testIdentifierString": "SceneCameraPlaneTests/testTerminalPoseReleasesItsContentOnlyAfterTheLastAcceptedLease()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneCameraPlaneTests/testTerminalPoseReleasesItsContentOnlyAfterTheLastAcceptedLease",
+          "testName": "testTerminalPoseReleasesItsContentOnlyAfterTheLastAcceptedLease()"
+        },
+        {
+          "failureText": "XCTUnwrap failed: expected non-nil value of type \"RasterLease\"",
+          "targetName": "NotebookTests",
+          "testIdentifier": 18,
+          "testIdentifierString": "SceneCameraPlaneTests/testTerminalPoseRetiresItsDisplayListOnlyAfterTheAcceptedLeaseEnds()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneCameraPlaneTests/testTerminalPoseRetiresItsDisplayListOnlyAfterTheAcceptedLeaseEnds",
+          "testName": "testTerminalPoseRetiresItsDisplayListOnlyAfterTheAcceptedLeaseEnds()"
+        }
+      ],
+      "devicesAndConfigurations": [
+        {
+          "device": {
+            "architecture": "arm64",
+            "deviceName": "Notebook InputUI RC 20260910",
+            "modelName": "iPad Air 11-inch (M4)",
+            "osBuildNumber": "24A434",
+            "osVersion": "27.0",
+            "platform": "iOS Simulator"
+          },
+          "expectedFailures": 0,
+          "failedTests": 7,
+          "passedTests": 14,
+          "skippedTests": 0,
+          "testPlanConfiguration": {
+            "configurationId": "1",
+            "configurationName": "Test Scheme Action"
+          }
+        }
+      ]
+    },
+    "failureClassification": "Seven SceneCameraPlaneTests fail before exercising retirement: the blank-paper fixture supplies no static raster after empty-tile pruning. Five preconditions observe pinnedBytes == 0, two unwrap an absent RasterLease. This does not prove a production memory leak.",
+    "coldDocument": {
+      "seconds": 3.782897959,
+      "pages": 38,
+      "sourceBlocks": 140,
+      "svgIllustrations": 35,
+      "formulas": 1680,
+      "sourceBytesGreaterThan": 6291456,
+      "peakAccountedBytes": 29572058,
+      "testDeadlineSeconds": 8,
+      "memoryMeasurement": "accounted scene resource bytes, not process RSS",
+      "scope": "synthetic source on Mac, not physical iPad"
+    },
+    "localEvidenceDirectory": ".build/audit-20260913-selected"
+  },
+  "supplement": {
+    "command": "./verify.sh --only --test NotebookTests/SceneCompositionTests/testTableKeepsScreenDensityBesideTwoNativePaperCovers --test NotebookUITests/DrawingResponsivenessTests/testDocumentRuntimeRendersMarkdownLatexAndInteractiveContent --evidence-dir .build/audit-20260913-ui-density",
+    "exitCode": 0,
+    "verificationReceipt": ".build/audit-20260913-ui-density/verification.json",
+    "ipadSimulator": {
+      "result": "Passed",
+      "totalTestCount": 2,
+      "passedTests": 2,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "testFailures": [],
+      "devicesAndConfigurations": [
+        {
+          "device": {
+            "architecture": "arm64",
+            "deviceName": "Notebook InputUI RC 20260910",
+            "modelName": "iPad Air 11-inch (M4)",
+            "osBuildNumber": "24A434",
+            "osVersion": "27.0",
+            "platform": "iOS Simulator"
+          },
+          "expectedFailures": 0,
+          "failedTests": 0,
+          "passedTests": 2,
+          "skippedTests": 0,
+          "testPlanConfiguration": {
+            "configurationId": "1",
+            "configurationName": "Test Scheme Action"
+          }
+        }
+      ]
+    },
+    "scope": "One SVG/table beside two covers; native document mount and static screenshot. The test does not press or drag the interactive control.",
+    "screenshotVisuallyInspected": true
+  },
+  "unverified": [
+    "Physical iPad SVG-to-paper frame alignment while panning",
+    "Physical cold-open latency and system CPU/GPU/frame/RSS measurements",
+    "Direct interactive-control gesture after camera movement",
+    "Ten repetitions and thirty-minute shared-session acceptance"
+  ],
+  "manualUIAutomation": "Simulator CUA selection failed before interaction with ScreenCaptureKit -3811. Xcode native tests ran independently."
+}
