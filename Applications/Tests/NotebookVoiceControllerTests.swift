@@ -137,7 +137,11 @@ import NotebookCore
     XCTAssertEqual(try store.chatPanel(author: author).draft, chat.draft)
   }
 
-  func testFailedWakePreparationReleasesCaptureButRetainsTheReasonAcrossCollapseAndEnd() async throws {
+  func testFailedWakePreparationRetainsTheReasonButDoesNotBlockDirectConversation() async throws {
+    guard AVCaptureDevice.authorizationStatus(for: .audio) == .denied else {
+      XCTFail("This preparation check requires denied hardware capture in the test Simulator")
+      return
+    }
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
     let store = NotebookStore(root: directory), author = UUID(), peer = UUID(), thread = UUID().uuidString, queue = NotebookPersistenceQueue(store: store)
@@ -166,6 +170,12 @@ import NotebookCore
     XCTAssertEqual(chat.voice.error, reason, "Resource cleanup cannot dismiss an unacknowledged startup failure")
     XCTAssertEqual(chat.draft, "Неотправленный вопрос"); XCTAssertEqual(chat.threadID, thread)
     chat.voice.dismissError(); XCTAssertNil(chat.voice.error)
+    await chat.voice.begin()
+    XCTAssertEqual(chat.voice.error, "Разрешите Notebook доступ к микрофону в настройках iPad.",
+      "A direct call reaches the microphone without waiting for GPT, a supported wake language or Speech authorization")
+    XCTAssertFalse(chat.voice.capturing); XCTAssertNil(chat.voice.activeID)
+    XCTAssertTrue(chat.jobs.isEmpty); XCTAssertTrue(host.subviews.isEmpty)
+    XCTAssertEqual(chat.draft, "Неотправленный вопрос"); XCTAssertEqual(chat.threadID, thread)
     await chat.stop()
     let saved = await queue.flush(); XCTAssertTrue(saved)
   }

@@ -149,7 +149,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(receipt.isHittable)
     app.buttons["notebook-chat-toggle"].tap(); app.buttons["notebook-compact-voice"].press(forDuration: 0.8)
     XCTAssertTrue(app.staticTexts["Голосовой разговор"].waitForExistence(timeout: 3))
-    XCTAssertTrue(app.buttons["notebook-voice-begin"].exists)
+    XCTAssertTrue(app.buttons["notebook-voice-wake"].exists)
     XCTAssertEqual(app.alerts.count, 0)
     app.buttons["notebook-voice-settings-close"].tap()
     XCTAssertEqual(paper.value as? String, acceptedInk)
@@ -254,6 +254,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.buttons["notebook-chat-toggle"].tap()
     let dictation = app.buttons["notebook-chat-dictation"], voice = app.buttons["notebook-chat-voice"]
     XCTAssertTrue(dictation.waitForExistence(timeout: 4)); XCTAssertTrue(voice.exists)
+    XCTAssertEqual(voice.label, "Начать голосовой разговор")
     XCTAssertEqual(dictation.frame.width, 44, accuracy: 1)
     XCTAssertEqual(dictation.frame.height, 44, accuracy: 1)
     XCTAssertEqual(dictation.frame.maxX, voice.frame.minX, accuracy: 1)
@@ -275,7 +276,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(failure.waitForExistence(timeout: 3), "A tap must invoke the audio owner, not open another activation menu")
     XCTAssertTrue(failure.label.contains("Подключите Mac"), "This isolated fixture has no Mac and cannot open a microphone")
     voice.press(forDuration: 0.8)
-    XCTAssertTrue(app.buttons["notebook-voice-begin"].exists)
+    XCTAssertTrue(app.buttons["notebook-voice-wake"].exists)
     XCTAssertFalse(app.buttons["notebook-voice-method"].exists, "An unavailable mode cannot be selected and poison the next wake attempt")
     let settingsProof = XCTAttachment(screenshot: app.screenshot())
     settingsProof.name = "voice-parameters-on-hold-not-an-activation-gate"; settingsProof.lifetime = .keepAlways; add(settingsProof)
@@ -285,6 +286,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.buttons["notebook-compact-dictation"].tap()
     XCTAssertTrue(notice.waitForExistence(timeout: 3))
     app.buttons["notebook-dictation-close"].tap()
+    XCTAssertEqual(app.buttons["notebook-compact-voice"].label, "Начать голосовой разговор")
     app.buttons["notebook-compact-voice"].tap()
     let compactFailure = app.staticTexts["notebook-compact-voice-error"]
     XCTAssertTrue(compactFailure.waitForExistence(timeout: 3)); XCTAssertTrue(compactFailure.label.contains("Подключите Mac"))

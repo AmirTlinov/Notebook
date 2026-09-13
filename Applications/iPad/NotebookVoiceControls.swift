@@ -34,12 +34,12 @@ struct NotebookVoiceStartButton: View {
   var body: some View {
     Button {
       if chat.voice.capturing { showsSettings = true }
-      else { Task { await chat.voice.arm() } }
+      else { Task { await chat.voice.begin() } }
     } label: {
       Image(systemName: "waveform").font(.system(size: 16))
         .frame(width: 44, height: compact ? 48 : 44).contentShape(Rectangle())
-    }.accessibilityLabel(chat.voice.capturing ? "Управление голосом" : "Включить обращение к GPT")
-      .accessibilityHint("Нажмите и скажите GPT вместе с просьбой. Удерживайте для настройки языка или разговора без обращения.")
+    }.accessibilityLabel(chat.voice.capturing ? "Управление голосом" : "Начать голосовой разговор")
+      .accessibilityHint("Нажмите и говорите. Удерживайте для настройки обращения к GPT.")
       .accessibilityIdentifier(compact ? "notebook-compact-voice" : "notebook-chat-voice")
       .highPriorityGesture(LongPressGesture(minimumDuration: 0.6).onEnded { _ in showsSettings = true })
       .accessibilityAction(named: "Параметры голоса") { showsSettings = true }
@@ -66,8 +66,8 @@ private struct NotebookVoiceSettings: View {
       Text(voice.capturing ? voice.taskTitle : task).font(.caption).foregroundStyle(.secondary).lineLimit(2)
       if voice.capturing { NotebookVoiceControls(voice: voice) }
       else {
-        Button("Начать разговор без обращения", systemImage: "waveform") { close(); Task { await voice.begin() } }
-          .frame(minHeight: 44).disabled(!canStart).accessibilityIdentifier("notebook-voice-begin")
+        Button("Включить обращение «GPT»", systemImage: "ear.badge.waveform") { close(); Task { await voice.arm() } }
+          .frame(minHeight: 44).disabled(!canStart).accessibilityIdentifier("notebook-voice-wake")
         if !canStart { Text("Выберите чат и подключите Mac.").font(.caption).foregroundStyle(.secondary) }
       }
       Text(NotebookWakeAddress.examples(language: voice.language, address: voice.address) + ". Просьбу можно произнести сразу после имени.")
@@ -80,7 +80,7 @@ private struct NotebookVoiceSettings: View {
         }.disabled(voice.capturing)
         TextField("Местное обращение перед GPT", text: $voice.address).textFieldStyle(.roundedBorder).disabled(voice.capturing)
       }.font(.callout)
-      Text("Нажатие на волну в чате включает ожидание GPT. До обращения звук остаётся на iPad. Выключение микрофона или уход из Notebook прекращает ожидание.")
+      Text("Кнопка голоса в чате сразу начинает разговор. Ожидание имени включается отдельно здесь: до обращения звук остаётся на iPad. Выключение микрофона или уход из Notebook прекращает ожидание.")
         .font(.caption2).foregroundStyle(.secondary)
     }.padding(18).frame(width: 330).fixedSize(horizontal: false, vertical: true)
   }
