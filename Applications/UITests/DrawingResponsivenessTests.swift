@@ -5,6 +5,86 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testCompanionAdditionsOwnPencilAboveTheBoard() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    // In this fixture direct test contacts exercise the actual spatial Pencil recognizer.
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-stacked-board-fixture", "--notebook-compact-chat-fixture"]
+    launchPortraitFixture(app)
+    let ink = app.otherElements["spatial-ink"]
+    XCTAssertTrue(ink.waitForExistence(timeout: 8))
+    let accepted = ink.value as? String
+    let cover = app.descendants(matching: .any).matching(identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000004").firstMatch
+    XCTAssertTrue(cover.waitForExistence(timeout: 4)); let frame = cover.frame
+    app.buttons["notebook-chat-toggle"].tap(); app.buttons["notebook-companion-compose"].tap()
+    app.buttons["notebook-chat-actions"].tap()
+    XCTAssertTrue(app.buttons["Плагины"].waitForExistence(timeout: 3))
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "companion-additions-over-spatial-pencil"; proof.lifetime = .keepAlways; add(proof)
+    app.buttons["Плагины"].tap()
+    let plugin = app.buttons["notebook-chat-resource-fixture-resource"]
+    XCTAssertTrue(plugin.waitForExistence(timeout: 5), "The menu, not the paper behind it, owns this contact")
+    plugin.tap()
+    XCTAssertTrue(app.buttons["notebook-chat-attachment-fixture-resource"].waitForExistence(timeout: 3))
+    app.buttons["notebook-chat-actions"].tap()
+    XCTAssertTrue(app.buttons["Файлы и папки"].waitForExistence(timeout: 3))
+    app.buttons["notebook-chat-actions"].tap()
+    XCTAssertFalse(app.buttons["Файлы и папки"].exists)
+    XCTAssertEqual(ink.value as? String, accepted, "Choosing a menu item must not write through to the board")
+    XCTAssertEqual(cover.frame, frame)
+    let start = ink.coordinate(withNormalizedOffset: .init(dx: 0.9, dy: 0.3))
+    start.press(forDuration: 0.1, thenDragTo: start.withOffset(.init(dx: -65, dy: 30)))
+    let resumed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in ink.value as? String != accepted }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [resumed], timeout: 4), .completed, "Pencil resumes after the menu without resetting the scene")
+    XCTAssertEqual(cover.frame, frame)
+  }
+
+  func testCompanionAdditionsDismissAndAttachWithAndWithoutKeyboard() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-compact-chat-fixture"]
+    launchPortraitFixture(app)
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 8))
+    let frame = paper.frame, ink = paper.value as? String
+    app.buttons["notebook-chat-toggle"].tap()
+    app.buttons["notebook-companion-compose"].tap()
+    let draft = app.descendants(matching: .any).matching(identifier: "notebook-companion-draft").firstMatch
+    XCTAssertTrue(draft.waitForExistence(timeout: 4))
+    let additions = app.buttons["notebook-chat-actions"]
+    for _ in 0..<3 {
+      additions.tap()
+      XCTAssertTrue(app.buttons["Файлы и папки"].waitForExistence(timeout: 3))
+      paper.coordinate(withNormalizedOffset: .init(dx: 0.1, dy: 0.3)).tap()
+      XCTAssertTrue(additions.isHittable)
+    }
+    draft.tap(); draft.typeText("Keep draft")
+    additions.tap()
+    let menuProof = XCTAttachment(screenshot: app.screenshot())
+    menuProof.name = "companion-additions-with-keyboard"; menuProof.lifetime = .keepAlways; add(menuProof)
+    app.buttons["Плагины"].tap()
+    let plugin = app.buttons["notebook-chat-resource-fixture-resource"]
+    XCTAssertTrue(plugin.waitForExistence(timeout: 5)); plugin.tap()
+    XCTAssertTrue(app.buttons["notebook-chat-attachment-fixture-resource"].waitForExistence(timeout: 3))
+    XCTAssertEqual(draft.value as? String, "Keep draft")
+    additions.tap(); app.buttons["Файлы и папки"].tap()
+    let file = app.buttons["notebook-file-example.swift"]
+    XCTAssertTrue(file.waitForExistence(timeout: 5)); file.tap()
+    XCTAssertTrue(app.buttons["notebook-chat-attachment-example.swift"].waitForExistence(timeout: 3))
+    XCTAssertFalse(app.otherElements["notebook-code-document"].exists)
+    additions.tap(); app.buttons["Проверить изменения"].tap()
+    XCTAssertTrue((draft.value as? String)?.hasPrefix("Keep draft\nПроверь изменения") == true)
+    let edited = draft.value as? String
+    app.buttons["notebook-companion-compose"].tap()
+    app.buttons["notebook-chat-toggle"].tap()
+    let fullDraft = app.descendants(matching: .any).matching(identifier: "notebook-chat-text").firstMatch
+    XCTAssertEqual(fullDraft.value as? String, edited)
+    XCTAssertFalse(app.webViews.staticTexts["Принято поручений: 1"].exists, "Menus and attachments never send the draft")
+    XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, ink)
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "companion-additions-return-to-same-draft"; proof.lifetime = .keepAlways; add(proof)
+  }
+
   func testCompanionKeepsPaperDraftAndOneSubmissionWithoutReplyClouds() {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait

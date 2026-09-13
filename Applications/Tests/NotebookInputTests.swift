@@ -9,20 +9,37 @@ final class NotebookInputTests: XCTestCase {
   }
 
   @MainActor
-  func testPresentedUIKitSurfaceKeepsItsTouchOutsideWindowLevelSceneRecognizers() throws {
+  func testPresentedUIKitSurfaceKeepsItsTouchOutsideWindowLevelSceneRecognizers() async throws {
     let gate = NotebookInputGate()
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene), host = UIViewController()
     window.rootViewController = host
-    let anchor = UIView(frame: .init(x: 0, y: 0, width: 600, height: 800))
+    let anchor = SpatialInkContainerView(frame: .init(x: 0, y: 0, width: 600, height: 800))
     host.view.addSubview(anchor); window.makeKeyAndVisible()
+    let registry = SpatialInkSurfaceRegistry(), board = WorkspaceRoot.boardID
+    let viewport = SpatialPoint(x: 600, y: 800), inkCamera = SpatialCamera(center: .zero, scale: 1)
+    let cohort = try await WorkspaceInkFixture.prepare(boardID: board, camera: inkCamera,
+      viewport: viewport, items: [], registry: registry)
+    let physical = try WorkspaceInkFixture(cohort: cohort,
+      presence: .init(boardID: board, mode: .board, camera: inkCamera, viewport: viewport),
+      canvas: anchor, parent: host, registry: registry, gate: gate)
+    defer { physical.close() }
+    let commit: (SpatialInkTool, SpatialInkColor, [SpatialInkSpan]) -> SpatialInkAction? = { _, _, _ in
+      XCTFail("A menu contact cannot create ink"); return nil
+    }
+    let ink = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate, onCommit: commit)
+    ink.update(view: anchor, cohort: cohort, boardID: board, camera: inkCamera, viewport: viewport,
+      items: [], journal: cohort.liveData.ink, penStyle: .standard, eraserStyle: .standard, drawingTool: .pen,
+      surfaceRegistry: registry, inputGate: gate, isItemBeingDeleted: { _ in false },
+      admitsNewContact: { true }, isEnabled: true, onCommit: commit)
     let camera = WorkspaceGestureLayer.Coordinator(defersHorizontalMotionToPageTurn: false,
       isEnabled: true, inputGate: gate, onCamera: { _ in }, onUndo: {})
     camera.install(on: window, inside: anchor)
     let pan = BoardPanView.Coordinator(isEnabled: true, itemFrames: [], inputGate: gate,
       onTap: {}, onBegan: {}, onChanged: { _ in }, onEnded: { _ in }, onCancelled: {})
     pan.install(on: window, inside: anchor)
-    defer { camera.uninstall(); pan.uninstall(); window.isHidden = true }
+    defer { camera.uninstall(); pan.uninstall(); ink.uninstall(); window.isHidden = true }
+    let pencil = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SpatialPencilGestureRecognizer }.first)
     let gesture = try XCTUnwrap(window.gestureRecognizers?.first { $0 is TwoFingerPaperGestureRecognizer })
     let panGesture = try XCTUnwrap(window.gestureRecognizers?.first { $0 is UIPanGestureRecognizer })
     let observer = try XCTUnwrap(window.gestureRecognizers?.first { $0 is NotebookContactObserver })
@@ -31,12 +48,20 @@ final class NotebookInputTests: XCTestCase {
     embedded.didMove(toParent: host)
     touch.sourceView = embedded.view
     XCTAssertTrue(camera.gestureRecognizer(gesture, shouldReceive: touch), "Embedded paper and WebKit keep the scene camera")
+    XCTAssertEqual(pencil.canBeginContact?(touch), true, "Embedded content remains part of the physical drawing surface")
     let menu = UIViewController(); window.addSubview(menu.view)
     touch.sourceView = menu.view
     XCTAssertFalse(camera.gestureRecognizer(gesture, shouldReceive: touch))
     XCTAssertFalse(camera.gestureRecognizer(observer, shouldReceive: touch), "A menu press cannot invalidate the scene's published cut")
     XCTAssertFalse(pan.gestureRecognizer(panGesture, shouldReceive: touch))
+    XCTAssertEqual(pencil.canBeginContact?(touch), false)
+    touch.inputType = .pencil
+    XCTAssertEqual(pencil.canBeginContact?(touch), false, "Pencil uses the same presented-surface boundary as fingers")
+    pencil.touchesBegan([touch], with: UIEvent())
+    XCTAssertFalse(gate.hasActivePencil)
     XCTAssertFalse(gate.isActive)
+    menu.view.removeFromSuperview(); touch.sourceView = anchor
+    XCTAssertEqual(pencil.canBeginContact?(touch), true, "Dismissal restores drawing without reopening the notebook")
   }
 
   @MainActor
