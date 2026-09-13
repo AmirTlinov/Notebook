@@ -242,6 +242,64 @@ final class DrawingResponsivenessTests: XCTestCase {
     let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "scroll-history-and-composer-stop"; proof.lifetime = .keepAlways; add(proof)
   }
 
+  private func waitUntil(_ condition: @escaping () -> Bool) -> Bool {
+    let expected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in condition() }, object: nil)
+    return XCTWaiter.wait(for: [expected], timeout: 8) == .completed
+  }
+
+  func testDictationInputStopsIntoAnEditableExpandedChatAndSendsExactlyOnce() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-dictation-fixture"]
+    launchPortraitFixture(app)
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 8))
+    let paperFrame = paper.frame, ink = paper.value as? String
+    app.buttons["notebook-compact-dictation"].tap()
+    let input = app.otherElements["notebook-dictation-input"]
+    let stop = app.buttons["notebook-dictation-review"], send = app.buttons["notebook-dictation-send"]
+    XCTAssertTrue(stop.waitForExistence(timeout: 5)); XCTAssertTrue(send.isHittable)
+    XCTAssertFalse(app.buttons["notebook-compact-voice"].exists)
+    for control in [stop, send, app.buttons["notebook-dictation-cancel"]] {
+      XCTAssertTrue(input.frame.contains(control.frame), "Controls belong inside the single recording input")
+      XCTAssertGreaterThanOrEqual(control.frame.width, 44); XCTAssertGreaterThanOrEqual(control.frame.height, 44)
+    }
+    let recording = XCTAttachment(screenshot: app.screenshot()); recording.name = "dictation-single-input-recording"; recording.lifetime = .keepAlways; add(recording)
+    stop.tap()
+    let field = app.descendants(matching: .any).matching(identifier: "notebook-chat-text").firstMatch
+    XCTAssertTrue(field.waitForExistence(timeout: 8))
+    XCTAssertTrue(waitUntil { field.isEnabled && (field.value as? String) == "В Notebook работает диктовка Codex" })
+    XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4), "Stop opens the full chat ready for editing")
+    field.typeText(" edited")
+    XCTAssertEqual(field.value as? String, "В Notebook работает диктовка Codex edited")
+    let review = XCTAttachment(screenshot: app.screenshot()); review.name = "dictation-expanded-editable-draft"; review.lifetime = .keepAlways; add(review)
+    app.buttons["notebook-chat-send"].tap()
+    XCTAssertTrue(waitUntil { app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Принято поручений: 1")).firstMatch.exists })
+    XCTAssertEqual(paper.frame, paperFrame); XCTAssertEqual(paper.value as? String, ink)
+    app.buttons["notebook-chat-toggle"].tap()
+    app.buttons["notebook-compact-dictation"].tap()
+    XCTAssertTrue(send.waitForExistence(timeout: 5)); send.tap()
+    XCTAssertTrue(app.buttons["notebook-compact-dictation"].waitForExistence(timeout: 8))
+    app.buttons["notebook-chat-toggle"].tap()
+    XCTAssertTrue(waitUntil { app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Принято поручений: 2")).firstMatch.exists })
+    XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Принято поручений: 3")).firstMatch.exists)
+    XCTAssertFalse((field.value as? String)?.contains("В Notebook") == true)
+    XCTAssertEqual(paper.frame, paperFrame); XCTAssertEqual(paper.value as? String, ink)
+    let sent = XCTAttachment(screenshot: app.screenshot()); sent.name = "dictation-send-once-in-existing-chat"; sent.lifetime = .keepAlways; add(sent)
+    field.tap(); field.typeText("Keep this draft")
+    app.buttons["notebook-chat-dictation"].tap()
+    XCTAssertTrue(stop.waitForExistence(timeout: 5)); XCTAssertTrue(send.isHittable)
+    // SwiftUI merges this single child into the full composer's existing AX
+    // container. Its stable owner differs from the compact recording surface.
+    let fullInput = app.otherElements["notebook-chat-composer"]
+    XCTAssertTrue(fullInput.frame.contains(stop.frame)); XCTAssertTrue(fullInput.frame.contains(send.frame))
+    XCTAssertFalse(app.buttons["notebook-chat-voice"].exists)
+    app.buttons["notebook-dictation-cancel"].tap()
+    XCTAssertTrue(field.waitForExistence(timeout: 4)); XCTAssertEqual(field.value as? String, "Keep this draft")
+    XCTAssertEqual(paper.frame, paperFrame); XCTAssertEqual(paper.value as? String, ink)
+  }
+
   func testDictationControlBesideVoiceInvokesItsOwnerWithoutLosingTheDraftOrPaper() {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait

@@ -7,36 +7,73 @@ struct NotebookDictationButton: View {
   private var dictation: NotebookDictationController { chat.dictation }
   var body: some View {
     Button {
-      if dictation.recording { dictation.finish() }
-      else if dictation.canRetry { dictation.retry() }
+      if dictation.canRetry { dictation.retry() }
       else { Task { await dictation.begin() } }
     } label: {
       Group {
-        if dictation.busy && !dictation.recording && !dictation.canRetry { ProgressView().controlSize(.small) }
-        else { Image(systemName: dictation.recording ? "stop.circle.fill" : dictation.canRetry ? "arrow.clockwise" : "mic").font(.system(size: 16)) }
-      }.foregroundStyle(dictation.recording ? Color.red : Color.primary)
+        if dictation.busy && !dictation.canRetry { ProgressView().controlSize(.small) }
+        else { Image(systemName: dictation.canRetry ? "arrow.clockwise" : "mic").font(.system(size: 16)) }
+      }.foregroundStyle(Color.primary)
         .frame(width: 44, height: compact ? 48 : 44).contentShape(Rectangle())
     }
-    .disabled((dictation.busy && !dictation.recording && !dictation.canRetry) || chat.voice.capturing)
-    .accessibilityLabel(dictation.recording ? "Завершить диктовку" : dictation.canRetry ? "Повторить распознавание" : "Диктовать в черновик")
+    .disabled((dictation.busy && !dictation.canRetry) || chat.voice.capturing)
+    .accessibilityLabel(dictation.canRetry ? "Повторить распознавание" : "Диктовать сообщение")
     .accessibilityValue(dictation.status.isEmpty ? "Готова" : dictation.status)
-    .accessibilityHint("Речь появится в черновике. Отправка выполняется отдельно.")
+    .accessibilityHint("Во время записи можно отправить речь или остановиться для редактирования.")
     .accessibilityIdentifier(compact ? "notebook-compact-dictation" : "notebook-chat-dictation")
+  }
+}
+
+/// One input surface replaces the composer during capture. Every visible bar
+/// comes from the recorder's bounded meter history, including actual silence.
+struct NotebookDictationInput: View {
+  @Environment(NotebookAppModel.self) private var model
+  @Bindable var chat: NotebookChatController
+  private var dictation: NotebookDictationController { chat.dictation }
+  var body: some View {
+    HStack(spacing: 0) {
+      Button { dictation.cancel() } label: { symbol("xmark") }
+        .disabled(dictation.phase == .inserting)
+        .accessibilityLabel("Отменить диктовку").accessibilityIdentifier("notebook-dictation-cancel")
+      if dictation.recording {
+        Canvas { context, size in
+          let count = max(1, Int(size.width / 5)), samples = Array(dictation.levels.suffix(count))
+          for index in 0..<count {
+            let sample = index < count - samples.count ? 0 : samples[index - (count - samples.count)]
+            let height = max(2, min(26, sample * 26))
+            let rect = CGRect(x: CGFloat(index) * 5 + 1, y: (size.height - height) / 2, width: 2.5, height: height)
+            context.fill(Path(roundedRect: rect, cornerRadius: 1.25), with: .color(.primary.opacity(sample > 0 ? 0.5 : 0.2)))
+          }
+        }.frame(minWidth: 28, maxWidth: .infinity).frame(height: 32)
+          .accessibilityLabel(dictation.status).accessibilityIdentifier("notebook-dictation-waveform")
+        Button { model.finishDictation(sending: false) } label: { symbol("stop.fill") }
+          .accessibilityLabel("Остановить и редактировать").accessibilityIdentifier("notebook-dictation-review")
+        Button { model.finishDictation(sending: true) } label: { symbol("arrow.up", send: true) }
+          .disabled(model.isSavingAgentQuestion || model.selectionSession.isResolvingContext || chat.continuationUnavailable)
+          .accessibilityLabel("Завершить диктовку и отправить").accessibilityIdentifier("notebook-dictation-send")
+      } else {
+        Text(dictation.status).font(.system(size: 12)).foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, alignment: .leading).lineLimit(2)
+          .accessibilityIdentifier("notebook-dictation-status")
+        ProgressView().controlSize(.small).frame(width: 44, height: 48)
+      }
+    }.padding(.horizontal, 3).frame(height: 48)
+      .accessibilityElement(children: .contain).accessibilityIdentifier("notebook-dictation-input")
+  }
+  private func symbol(_ name: String, send: Bool = false) -> some View {
+    Image(systemName: name).font(.system(size: name == "stop.fill" ? 10 : 13, weight: .medium))
+      .foregroundStyle(send ? Color(.systemBackground) : Color.primary)
+      .frame(width: 28, height: 28)
+      .background(send ? Color(.label) : Color(.secondarySystemBackground), in: Circle())
+      .frame(width: 44, height: 48).contentShape(Rectangle())
   }
 }
 
 struct NotebookDictationStatus: View {
   @Bindable var dictation: NotebookDictationController
   var body: some View {
-    if dictation.busy || dictation.error != nil {
+    if !dictation.showsInput && (dictation.busy || dictation.error != nil) {
       HStack(spacing: 8) {
-        if dictation.recording {
-          HStack(spacing: 2) {
-            ForEach(0..<5) { bar in
-              Capsule().fill(.red).frame(width: 3, height: 4 + 16 * dictation.level * [0.5, 0.8, 1, 0.8, 0.5][bar])
-            }
-          }.frame(width: 24, height: 22).accessibilityHidden(true)
-        }
         Text(dictation.status).font(.system(size: 12)).foregroundStyle(.secondary)
           .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
           .accessibilityIdentifier("notebook-dictation-status")

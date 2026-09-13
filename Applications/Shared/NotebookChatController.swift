@@ -99,12 +99,12 @@ final class NotebookChatController {
   @ObservationIgnored private var offeredJobs = Set<UUID>()
   @ObservationIgnored private var savingInput: NotebookChatInput?
 
-  init(persistence: NotebookPersistenceQueue, author: UUID, send: @escaping (NotebookChatEnvelope, UUID) -> Void) {
+  init(persistence: NotebookPersistenceQueue, author: UUID, dictationCapture: (any NotebookDictationCapture)? = nil, send: @escaping (NotebookChatEnvelope, UUID) -> Void) {
     self.persistence = persistence; self.author = author; self.send = send
     files = NotebookFileController(persistence: persistence, author: author)
     runs = NotebookRunController(persistence: persistence)
     voice = NotebookVoiceController()
-    dictation = NotebookDictationController()
+    dictation = NotebookDictationController(capture: dictationCapture ?? NotebookMicrophoneDictationCapture())
     files.chat = self; runs.chat = self; voice.chat = self
     dictation.chat = self
   }

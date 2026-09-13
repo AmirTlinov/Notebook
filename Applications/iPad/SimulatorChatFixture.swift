@@ -6,12 +6,14 @@ import NotebookCore
 /// controller still admits stop through its SQLite outbox and native turn ID.
 @MainActor enum SimulatorChatFixture {
   static func make(persistence: NotebookPersistenceQueue, author: UUID) async throws -> NotebookChatController? {
-    let compact = ProcessInfo.processInfo.arguments.contains("--notebook-compact-chat-fixture")
+    let dictation = ProcessInfo.processInfo.arguments.contains("--notebook-dictation-fixture")
+    let compact = dictation || ProcessInfo.processInfo.arguments.contains("--notebook-compact-chat-fixture")
     guard compact || ProcessInfo.processInfo.arguments.contains("--notebook-chat-sync-fixture") else { return nil }
     let peer = UUID(uuidString: "7E7A1000-0000-4000-8000-000000000099")!
     let turn = "7e7a1000-0000-4000-8000-000000000077"
     let task = CodexTask(id: "7e7a1000-0000-4000-8000-000000000088", title: "Непрерывный разговор", cwd: "/fixture", projectID: "fixture")
-    var running = true, subscription: UUID?
+    var running = !dictation, subscription: UUID?
+    var recordingID = UUID(), receivedAudio = 0
     var deliveredReply = false, admissions = Set<UUID>(), submittedMessages: [CodexMessage] = []
     var selection = CodexModelSelection(model: "fixture-a", effort: "low"), revision = 1
     let earlier = (0..<10).map { CodexMessage(id: "old-\($0)", turnID: "old", clientID: nil, role: .assistant,
@@ -27,10 +29,25 @@ import NotebookCore
         requests: [], acceptedMessages: [:], turnStatuses: [turn: running ? "inProgress" : deliveredReply ? "completed" : "interrupted"], model: selection, contextUsage: .init(used: 193000, window: 258000))
     }
     weak var receiver: NotebookChatController?
-    let chat = NotebookChatController(persistence: persistence, author: author) { envelope, destination in
+    let chat = NotebookChatController(persistence: persistence, author: author,
+      dictationCapture: dictation ? SimulatorDictationCapture() : nil) { envelope, destination in
       guard destination == peer, case .request(let query) = envelope.body else { return }
       let reply: NotebookChatReply
       switch query {
+      case .dictation(let action):
+        guard dictation else { reply = .failure("Outside dictation gesture scenario"); break }
+        let state: NotebookDictationState
+        switch action {
+        case .prepare(let recording):
+          if recordingID != recording.id { receivedAudio = 0 }; recordingID = recording.id
+          state = .init(id: recordingID, receivedBytes: receivedAudio)
+        case .append(_, let offset, let bytes):
+          receivedAudio = offset + bytes.count; state = .init(id: recordingID, receivedBytes: receivedAudio)
+        case .finish, .retry: state = .init(id: recordingID, phase: .transcribing, receivedBytes: receivedAudio)
+        case .status: state = .init(id: recordingID, phase: .completed, receivedBytes: receivedAudio, text: "В Notebook работает диктовка Codex")
+        case .cancel(let id): state = .init(id: id, phase: .cancelled)
+        }
+        reply = .dictation(state)
       case .models: reply = .models([
         .init(id: "fixture-a", name: "Fixture A", efforts: ["low", "high"], defaultEffort: "low", isDefault: true),
         .init(id: "fixture-b", name: "Fixture B", efforts: ["medium", "max"], defaultEffort: "medium")])
@@ -67,8 +84,25 @@ import NotebookCore
       receiver?.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
     }
     receiver = chat
-    await chat.start(); await chat.connect(peer); chat.select(task); chat.expanded = true
+    await chat.start(); await chat.connect(peer); chat.select(task); chat.expanded = !dictation
     return chat
   }
+}
+
+/// Synthetic device input and transcript, isolated to this Simulator fixture.
+/// UI gestures still exercise the production capture lifecycle and send owner.
+@MainActor private final class SimulatorDictationCapture: NotebookDictationCapture {
+  private var finished: (@MainActor (Bool) -> Void)?
+  private var started = Date()
+  func start(at url: URL, finished: @escaping @MainActor (Bool) -> Void) async throws {
+    try Data(repeating: 0x41, count: 4096).write(to: url)
+    started = Date(); self.finished = finished
+  }
+  func sample() -> (elapsed: TimeInterval, level: Double) {
+    let elapsed = Date().timeIntervalSince(started)
+    return (elapsed, max(0, sin(elapsed * 2.3) * 0.45 + 0.3))
+  }
+  func stop() { let callback = finished; finished = nil; callback?(true) }
+  func cancel() { finished = nil }
 }
 #endif

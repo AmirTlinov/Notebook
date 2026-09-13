@@ -44,7 +44,8 @@ PROFILES = {
         "core": ["NotebookDictationTests", "NotebookChatStoreTests", "CodexDictationTests"],
         "mac": ["NotebookMacTests/NotebookDictationTests", "NotebookMacTests/NotebookCodexSidecarTests"],
         "ipad": ["NotebookTests/NotebookDictationControllerTests", "NotebookTests/NotebookChatControllerTests",
-                 "NotebookTests/NotebookVoiceControllerTests",
+                 "NotebookTests/NotebookVoiceControllerTests", "NotebookTests/NotebookAgentQuestionTests",
+                 UI + "testDictationInputStopsIntoAnEditableExpandedChatAndSendsExactlyOnce",
                  UI + "testDictationControlBesideVoiceInvokesItsOwnerWithoutLosingTheDraftOrPaper"],
     },
     "voice": {

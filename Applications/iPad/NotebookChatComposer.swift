@@ -13,6 +13,9 @@ struct NotebookChatComposer: View {
   private var hasThread: Bool { chat.threadID != nil && !chat.browsesChats }
   var body: some View {
     VStack(spacing: 0) {
+      if chat.dictation.showsInput {
+        NotebookDictationInput(chat: chat)
+      } else {
       NotebookChatAttachmentChips(chat: chat)
       NotebookDictationStatus(dictation: chat.dictation)
       TextField("Сообщение Codex", text: $chat.draft, axis: .vertical)
@@ -40,6 +43,7 @@ struct NotebookChatComposer: View {
           if hasThread { NotebookChatModelControl(chat: chat, compact: width < 450) }
           voiceAndSend
         }
+      }
       }
     }
     .padding(3)

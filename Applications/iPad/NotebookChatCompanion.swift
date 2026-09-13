@@ -15,11 +15,13 @@ struct NotebookCompanion: View {
   @AppStorage("notebook.companion.show-task") private var showsTask = true
 
   static func preferredSize(chat: NotebookChatController, available: CGSize, showsTask: Bool, contextCount: Int = 0) -> CGSize {
+    if chat.dictation.showsInput { return .init(width: min(available.width, 352), height: min(available.height, 48)) }
+    let dictationNotice = chat.dictation.busy || chat.dictation.error != nil
     let hasCard = chat.companionExpanded || chat.conversation?.requests.isEmpty == false || chat.voice.error != nil || chat.voice.capturing
       || showsTask && (chat.workStatus != nil || !chat.unreadReplies.isEmpty || !chat.pendingMessages.isEmpty)
     let height: CGFloat = 48 + (hasCard ? 68 : 0) + (chat.companionExpanded ? 52 + (chat.attachments.isEmpty ? 0 : 38) : 0)
-      + (chat.conversation?.requests.isEmpty == false ? 160 : 0) + (chat.voice.error != nil ? 90 : 0)
-    return .init(width: min(available.width, hasCard ? 352 : (chat.voice.capturing ? 264 : 184) + (contextCount > 0 ? 28 : 0)),
+      + (chat.conversation?.requests.isEmpty == false ? 160 : 0) + (chat.voice.error != nil ? 90 : 0) + (dictationNotice ? 88 : 0)
+    return .init(width: min(available.width, hasCard || dictationNotice ? 352 : (chat.voice.capturing ? 264 : 184) + (contextCount > 0 ? 28 : 0)),
       height: min(available.height, height))
   }
   private var needsDecision: Bool { chat.conversation?.requests.isEmpty == false }
@@ -33,6 +35,9 @@ struct NotebookCompanion: View {
   }
   var body: some View {
     VStack(alignment: .trailing, spacing: 8) {
+      if chat.dictation.showsInput {
+        NotebookDictationInput(chat: chat).background { surface(radius: 24) }
+      } else {
       controls
       NotebookDictationStatus(dictation: chat.dictation)
         .frame(maxWidth: 320).background { surface(radius: 18) }
@@ -66,6 +71,7 @@ struct NotebookCompanion: View {
           }.padding(.horizontal, 14).padding(.vertical, 8)
         }.scrollBounceBehavior(.basedOnSize)
           .background { surface(radius: 22) }
+      }
       }
     }
     .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: hasCard)

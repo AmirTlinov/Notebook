@@ -6,7 +6,7 @@ import NotebookCore
 
 /// The chat owns this controller, independent of either presentation. A private
 /// recording survives network errors and app restarts until insertion or cancel.
-@MainActor @Observable final class NotebookDictationController: NSObject {
+@MainActor @Observable final class NotebookDictationController {
   enum Phase { case idle, authorizing, recording, finishing, transcribing, inserting, failed }
   struct Pending: Codable, Equatable {
     let id: UUID
@@ -18,10 +18,13 @@ import NotebookCore
   private(set) var error: String?
   private(set) var elapsed: TimeInterval = 0
   private(set) var level: Double = 0
+  private(set) var levels: [Double] = []
+  private(set) var reviewRequest: UUID?
   private(set) var progress: Double = 0
   private(set) var pending: Pending?
   var busy: Bool { phase != .idle || pending != nil }
   var recording: Bool { phase == .recording }
+  var showsInput: Bool { busy && !canRetry && phase != .failed }
   var canRetry: Bool { phase == .failed && pending.map { cancellations[$0.computer.uuidString] != $0.id } == true }
   func allowsComputer(_ id: UUID) -> Bool { !busy || (phase == .failed && pending?.computer == id) }
   func allowsThread(_ id: String) -> Bool {
@@ -39,14 +42,17 @@ import NotebookCore
     }
   }
   @ObservationIgnored weak var chat: NotebookChatController?
+  @ObservationIgnored var submissionInProgress: @MainActor () -> Bool = { false }
   @ObservationIgnored private var directory: URL?
-  @ObservationIgnored private var recorder: AVAudioRecorder?
+  @ObservationIgnored private let capture: any NotebookDictationCapture
+  @ObservationIgnored private var sendAfterInsertion: (@MainActor () -> Void)?
   @ObservationIgnored private var operation: Task<Void, Never>?
   @ObservationIgnored private var meter: Task<Void, Never>?
   @ObservationIgnored private var observers: [NSObjectProtocol] = []
   @ObservationIgnored private var generation = UUID()
-  @ObservationIgnored private var ownsAudioSession = false
   @ObservationIgnored private var cancellations: [String: UUID] = [:]
+
+  init(capture: any NotebookDictationCapture = NotebookMicrophoneDictationCapture()) { self.capture = capture }
 
   func restore(directory: URL, inserted: UUID?) throws {
     self.directory = directory
@@ -75,10 +81,10 @@ import NotebookCore
     error = nil
     guard let chat, let thread = chat.threadID, !chat.browsesChats else { error = "Выберите чат для диктовки."; return }
     guard chat.connected, let computer = chat.computerID, !chat.switchingComputer else { error = "Подключите Mac, чтобы начать диктовку."; return }
-    guard !chat.saving else { error = "Дождитесь сохранения текущего сообщения и начните диктовку."; return }
+    guard !chat.saving, !submissionInProgress() else { error = "Дождитесь сохранения текущего сообщения и начните диктовку."; return }
     guard !chat.voice.capturing else { error = "Завершите голосовой разговор перед диктовкой."; return }
     guard directory != nil else { error = "Хранилище записи ещё не готово."; return }
-    generation = UUID(); let epoch = generation
+    generation = UUID(); let epoch = generation; sendAfterInsertion = nil; reviewRequest = nil; levels = []
     phase = .authorizing
     do { try await finishCancellation(on: computer) }
     catch {
@@ -86,58 +92,58 @@ import NotebookCore
       phase = .idle; self.error = "Не удалось завершить отмену прежней диктовки на Mac. Повторите после восстановления связи."; return
     }
     guard generation == epoch else { return }
-    let allowed = await AVAudioApplication.requestRecordPermission()
-    guard generation == epoch else { return }
-    guard allowed else { phase = .idle; error = "Разрешите Notebook доступ к микрофону в настройках iPad."; return }
-    guard UIApplication.shared.applicationState != .background else {
-      phase = .idle; error = "Вернитесь в Notebook и начните диктовку."; return
-    }
     do {
-      let capture = Pending(id: UUID(), thread: thread, computer: computer)
-      pending = capture; try savePending()
-      let session = AVAudioSession.sharedInstance()
-      try session.setCategory(.record, mode: .measurement, options: [.allowBluetoothHFP])
-      try session.setActive(true)
-      ownsAudioSession = true
-      let audio = try AVAudioRecorder(url: audioURL(capture.id), settings: [
-        AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 24_000,
-        AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64_000,
-        AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue])
-      audio.delegate = self; audio.isMeteringEnabled = true; recorder = audio
-      guard audio.record(forDuration: NotebookDictationRecording.maximumDuration) else {
-        throw NotebookPersistenceQueue.Failure(message: "Микрофон не начал запись.")
+      let recording = Pending(id: UUID(), thread: thread, computer: computer)
+      pending = recording; try savePending()
+      try await capture.start(at: audioURL(recording.id)) { [weak self] success in
+        self?.captureFinished(epoch: epoch, success: success)
       }
+      guard generation == epoch else { return }
       phase = .recording; elapsed = 0; level = 0; progress = 0
       meter = Task { [weak self] in
         while !Task.isCancelled {
-          guard let self, let recorder, phase == .recording else { return }
-          recorder.updateMeters(); elapsed = recorder.currentTime
-          level = min(1, max(0, (Double(recorder.averagePower(forChannel: 0)) + 55) / 55))
+          guard let self, phase == .recording else { return }
+          let sample = capture.sample(); elapsed = sample.elapsed; level = sample.level
+          levels.append(level); if levels.count > 240 { levels.removeFirst(levels.count - 240) }
           do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
         }
       }
-    } catch { releaseMicrophone(); phase = .failed; self.error = error.localizedDescription }
+    } catch {
+      guard generation == epoch else { return }
+      releaseMicrophone()
+      if let pending, !FileManager.default.fileExists(atPath: audioURL(pending.id).path) { clearRecording() }
+      phase = pending == nil ? .idle : .failed; self.error = error.localizedDescription
+    }
   }
   func recoveryFailed() { phase = .idle; error = "Не удалось восстановить прежнюю запись диктовки. Сохранённые файлы оставлены на iPad." }
-  func finish() {
-    guard phase == .recording, let recorder else { return }
-    elapsed = recorder.currentTime; phase = .finishing; meter?.cancel(); level = 0
-    recorder.stop()
+  func finish(sending: (@MainActor () -> Void)? = nil) {
+    guard phase == .recording else { return }
+    sendAfterInsertion = sending
+    if sending == nil { revealDraft(focus: false) }
+    elapsed = capture.sample().elapsed; phase = .finishing; meter?.cancel(); level = 0
     let epoch = generation
     operation = Task { [weak self] in
       do { try await Task.sleep(for: .seconds(3)) } catch { return }
       guard let self, generation == epoch, phase == .finishing else { return }
-      releaseMicrophone(); phase = .failed; error = "Запись не завершилась вовремя. Аудио сохранено; повторите распознавание."
+      releaseMicrophone(); sendAfterInsertion = nil; phase = .failed
+      error = "Запись не завершилась вовремя. Аудио сохранено; повторите распознавание."; revealDraft(focus: true)
     }
+    capture.stop()
+  }
+  func revealDraft(focus: Bool = true) {
+    guard let chat, pending == nil || (chat.threadID == pending?.thread && chat.computerID == pending?.computer) else { return }
+    chat.browsesChats = false; chat.expanded = true
+    if focus { reviewRequest = UUID() }
   }
   func retry() {
     guard canRetry else { return }
+    sendAfterInsertion = nil; revealDraft(focus: false)
     operation?.cancel(); let epoch = generation
     operation = Task { [weak self] in await self?.recognize(epoch: epoch, retryFailed: true) }
   }
   func cancel() {
     guard phase != .inserting else { return }
-    generation = UUID(); operation?.cancel(); operation = nil
+    generation = UUID(); operation?.cancel(); operation = nil; sendAfterInsertion = nil
     releaseMicrophone()
     let previous = pending
     if let previous {
@@ -164,16 +170,12 @@ import NotebookCore
     catch { cancellations[key] = id; throw error }
   }
   func shutdown() {
-    generation = UUID(); operation?.cancel(); operation = nil; releaseMicrophone()
+    generation = UUID(); operation?.cancel(); operation = nil; sendAfterInsertion = nil; releaseMicrophone()
     for observer in observers { NotificationCenter.default.removeObserver(observer) }; observers.removeAll()
     if pending != nil { phase = .failed }
   }
   private func releaseMicrophone() {
-    meter?.cancel(); meter = nil; recorder?.delegate = nil; recorder?.stop(); recorder = nil; level = 0
-    if ownsAudioSession {
-      ownsAudioSession = false
-      try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-    }
+    meter?.cancel(); meter = nil; capture.cancel(); level = 0
   }
   private func audioURL(_ id: UUID) -> URL { directory!.appendingPathComponent(id.uuidString + ".m4a") }
   private func savePending() throws {
@@ -246,28 +248,21 @@ import NotebookCore
       phase = .inserting
       try await chat.insertDictation(text, id: capture.id, thread: capture.thread, computer: capture.computer)
       guard generation == epoch else { return }
+      let send = sendAfterInsertion; sendAfterInsertion = nil
       clearRecording(); phase = .idle; error = nil; progress = 0
+      if let send { send() } else { revealDraft() }
     } catch {
       guard generation == epoch, !Task.isCancelled else { return }
-      phase = .failed; self.error = error.localizedDescription
+      sendAfterInsertion = nil; phase = .failed; self.error = error.localizedDescription; revealDraft()
     }
   }
-  private func captureFinished(_ id: ObjectIdentifier, success: Bool) {
-    guard let recorder, ObjectIdentifier(recorder) == id, phase == .recording || phase == .finishing else { return }
+  private func captureFinished(epoch: UUID, success: Bool) {
+    guard generation == epoch, phase == .recording || phase == .finishing else { return }
     operation?.cancel(); releaseMicrophone()
-    guard success else { phase = .failed; error = "Запись прервалась. Сохранённое аудио можно попробовать распознать повторно."; return }
-    let epoch = generation
+    guard success else {
+      sendAfterInsertion = nil; phase = .failed
+      error = "Запись прервалась. Сохранённое аудио можно попробовать распознать повторно."; revealDraft(); return
+    }
     operation = Task { [weak self] in await self?.recognize(epoch: epoch, retryFailed: false) }
-  }
-}
-
-extension NotebookDictationController: AVAudioRecorderDelegate {
-  nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
-    let id = ObjectIdentifier(recorder)
-    Task { @MainActor [weak self] in self?.captureFinished(id, success: flag) }
-  }
-  nonisolated func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: Error?) {
-    let id = ObjectIdentifier(recorder)
-    Task { @MainActor [weak self] in self?.captureFinished(id, success: false) }
   }
 }

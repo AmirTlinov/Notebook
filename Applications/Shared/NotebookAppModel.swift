@@ -1031,6 +1031,7 @@ final class NotebookAppModel {
           self?.sync?.sendTransient(.codex(envelope), to: peer)
         }
         self.chat = chat
+        chat.dictation.submissionInProgress = { [weak self] in self?.isSavingAgentQuestion == true }
         await chat.start()
       #endif
       if startsNearbySync {
@@ -2365,54 +2366,85 @@ final class NotebookAppModel {
   func dismissAgentQuestion() { clearSelection() }
 
   #if os(iOS)
+    func finishDictation(sending: Bool) {
+      guard let chat else { return }
+      guard sending else { chat.dictation.finish(); return }
+      guard !isClosing, !isSavingAgentQuestion, !selectionSession.isResolvingContext else { return }
+      let thread = chat.threadID, computer = chat.computerID
+      let context = captureChatSubmissionContext(chat)
+      chat.dictation.finish { [weak self, weak chat] in
+        guard let self, let chat, self.chat === chat, chat.threadID == thread, chat.computerID == computer else { return }
+        self.sendChatMessage(context: context) { [weak self, weak chat] saved in
+          guard !saved, self?.isClosing == false, let chat, chat.threadID == thread, chat.computerID == computer else { return }
+          chat.dictation.revealDraft()
+        }
+      }
+    }
+
     /// Selection narrows attention, not the agent's tool authority. This value
     /// captures the physical owner and camera before any save/network suspension.
-    @discardableResult func sendChatMessage(steering: Bool = false) -> Task<Void, Never>? {
-      guard !isClosing, let chat, let submittedThread = chat.threadID, !isSavingAgentQuestion, !selectionSession.isResolvingContext,
-        !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-      let submittedText = chat.draft, submittedAttachments = chat.attachments, submittedComputer = chat.computerID
+    @discardableResult func sendChatMessage(steering: Bool = false, context captured: ChatSubmissionContext? = nil, onSaved: (@MainActor (Bool) -> Void)? = nil) -> Task<Void, Never>? {
+      guard !isClosing, let chat, let submittedThread = chat.threadID, !isSavingAgentQuestion, captured != nil || !selectionSession.isResolvingContext,
+        !chat.dictation.busy, !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { onSaved?(false); return nil }
+      let submittedText = chat.draft, submittedComputer = chat.computerID
       let submittedTurn = steering ? chat.conversation?.activeTurnID : nil
-      if steering && submittedTurn == nil { return nil }
+      if steering && submittedTurn == nil { onSaved?(false); return nil }
       isSavingAgentQuestion = true
-      let question = agentQuestion
-      let retained = question.flatMap { q in pinnedAttentionSelections.first { $0.0 == q.contextID }?.1 }
-      let capturedPresence = presence, capturedWorkspace = workspaceHeader?.workspaceID
-      let capturedFile = chat.files.window.isOpen ? chat.files.document : nil
+      let captured = captured ?? captureChatSubmissionContext(chat)
       let task = Task { [self] in
-        defer { isSavingAgentQuestion = false; chatSubmissionTask = nil }
+        var saved = false
+        defer { isSavingAgentQuestion = false; chatSubmissionTask = nil; onSaved?(saved) }
         do {
-          if let question {
-            let visual = try await retained?.renderPinnedImages(references: question.references)
-            try await persistence.submit(publishesChanges: true) { store in
-              if try store.hasAttentionEvidence(contextID: question.contextID) { return }
-              guard let retained else { throw CollaborationError("source_missing", "Историческое изображение не сохранено. Укажите фрагмент снова.") }
-              let files = try retained.sourceFiles()
-              let sources = try question.references.map { reference in
-                try AgentPinnedSource.capture(requestID: question.contextID, reference: reference, files: files)
-                  .withVisual(visual?.images[reference.id], unavailable: visual?.unavailable[reference.id] ?? "source_pixels_unavailable")
-              }
-              try store.saveAttentionEvidence(sources, contextID: question.contextID)
-            }
-          }
-          let context: JSONValue = .object([
-            "workspaceID": capturedWorkspace.map { .string($0.uuidString) } ?? .null,
-            "presence": try capturedPresence.map(JSONValue.encode) ?? .null,
-            "file": try capturedFile.map { try .encode($0.address) } ?? .null,
-            "fileLink": capturedFile.map { .string(NotebookCodeLink.file($0.address, line: 1).url.absoluteString) } ?? .null,
-            "fileHasLocalDraft": capturedFile.map { .bool($0.text != $0.base) } ?? .null,
-            "attention": try question.map { question in
-              .object(["contextID": .string(question.contextID.uuidString),
-                "entryID": .string(question.entryID.uuidString), "references": try .encode(question.references)])
-            } ?? .null,
-            "meaning": .string("Read frozen attention via notebook_read_attention(context_id, reference_id). Shared Notebook workspace. Selection directs attention, not permissions. Use Notebook tools for source/version checks, undoable edits and delivery receipts. For code notes use notebook_read_code_notes and appendInkStroke on codeFragment. Use the returned notebook://code/UUID link, or fileLink with the required 1-based line query, in Markdown references. These links scroll only the document. A local draft is not yet the working file on Mac. Do not move the board camera.")
-          ])
-          let text = String(decoding: try JSONEncoder().encode(context), as: UTF8.self)
+          let context = try await captured.prepare()
           guard chat.computerID == submittedComputer else { throw NotebookTransportError.disconnected }
-          _ = await chat.sendMessage(threadID: submittedThread, text: submittedText, context: text, attentionContextID: question?.contextID, steeringTurnID: submittedTurn, attachments: submittedAttachments)
+          saved = await chat.sendMessage(threadID: submittedThread, text: submittedText, context: context.text,
+            attentionContextID: context.attentionContextID, steeringTurnID: submittedTurn, attachments: captured.attachments)
         } catch { agentRequestError = error.localizedDescription }
       }
       chatSubmissionTask = task
       return task
+    }
+
+    struct ChatSubmissionContext {
+      let attachments: [CodexInputAttachment]
+      let prepare: @MainActor () async throws -> (text: String, attentionContextID: UUID?)
+    }
+    /// The send gesture freezes attention and attachments before transcription
+    /// or image rendering can suspend. Both text and dictation use this owner.
+    func captureChatSubmissionContext(_ chat: NotebookChatController) -> ChatSubmissionContext {
+      let question = agentQuestion
+      let retained = question.flatMap { q in pinnedAttentionSelections.first { $0.0 == q.contextID }?.1 }
+      let capturedPresence = presence, capturedWorkspace = workspaceHeader?.workspaceID
+      let capturedFile = chat.files.window.isOpen ? chat.files.document : nil
+      return .init(attachments: chat.attachments) { [self] in
+        if let question {
+          let visual = try await retained?.renderPinnedImages(references: question.references)
+          try await persistence.submit(publishesChanges: true) { store in
+            if try store.hasAttentionEvidence(contextID: question.contextID) { return }
+            guard let retained else { throw CollaborationError("source_missing", "Историческое изображение не сохранено. Укажите фрагмент снова.") }
+            let files = try retained.sourceFiles()
+            let sources = try question.references.map { reference in
+              try AgentPinnedSource.capture(requestID: question.contextID, reference: reference, files: files)
+                .withVisual(visual?.images[reference.id], unavailable: visual?.unavailable[reference.id] ?? "source_pixels_unavailable")
+            }
+            try store.saveAttentionEvidence(sources, contextID: question.contextID)
+          }
+        }
+        let context: JSONValue = .object([
+          "workspaceID": capturedWorkspace.map { .string($0.uuidString) } ?? .null,
+          "presence": try capturedPresence.map(JSONValue.encode) ?? .null,
+          "file": try capturedFile.map { try .encode($0.address) } ?? .null,
+          "fileLink": capturedFile.map { .string(NotebookCodeLink.file($0.address, line: 1).url.absoluteString) } ?? .null,
+          "fileHasLocalDraft": capturedFile.map { .bool($0.text != $0.base) } ?? .null,
+          "attention": try question.map { question in
+            .object(["contextID": .string(question.contextID.uuidString),
+              "entryID": .string(question.entryID.uuidString), "references": try .encode(question.references)])
+          } ?? .null,
+          "meaning": .string("Read frozen attention via notebook_read_attention(context_id, reference_id). Shared Notebook workspace. Selection directs attention, not permissions. Use Notebook tools for source/version checks, undoable edits and delivery receipts. For code notes use notebook_read_code_notes and appendInkStroke on codeFragment. Use the returned notebook://code/UUID link, or fileLink with the required 1-based line query, in Markdown references. These links scroll only the document. A local draft is not yet the working file on Mac. Do not move the board camera.")
+        ])
+        let text = String(decoding: try JSONEncoder().encode(context), as: UTF8.self)
+        return (text, question?.contextID)
+      }
     }
   #endif
 

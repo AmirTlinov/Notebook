@@ -3,6 +3,18 @@ import AVFoundation
 import NotebookCore
 @testable import Notebook
 
+@MainActor final class TestDictationCapture: NotebookDictationCapture {
+  var starts = 0, stops = 0
+  var finished: (@MainActor (Bool) -> Void)?
+  func start(at url: URL, finished: @escaping @MainActor (Bool) -> Void) async throws {
+    starts += 1; self.finished = finished
+    try Data(repeating: 0x41, count: 200_000).write(to: url)
+  }
+  func sample() -> (elapsed: TimeInterval, level: Double) { (1.2, 0.5) }
+  func stop() { stops += 1; let callback = finished; finished = nil; callback?(true) }
+  func cancel() { finished = nil }
+}
+
 @MainActor final class NotebookDictationControllerTests: XCTestCase {
   @MainActor final class Fixture {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("dictation-" + UUID().uuidString)
@@ -16,19 +28,25 @@ import NotebookCore
     var result = "Точный текст диктовки."
     var receivedBytes = 0
     var complete = false
-    init(transcript: String? = nil, alreadyInserted: Bool = false) throws {
+    var recognitionFails = false
+    var activeID: UUID
+    let capture = TestDictationCapture()
+    init(transcript: String? = nil, alreadyInserted: Bool = false, fresh: Bool = false) throws {
+      activeID = id
       store = NotebookStore(root: root)
       _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
       try store.saveChatPanel(.init(threadID: thread, draft: alreadyInserted ? "Вопрос: " + result : "Вопрос:", sidecarID: peer,
         dictationReceipt: alreadyInserted ? id : nil), author: author)
       let directory = root.appendingPathComponent("runtime/dictation/" + author.uuidString)
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-      let recording = NotebookDictationController.Pending(id: id, thread: thread, computer: peer, transcript: transcript)
-      try JSONEncoder().encode(recording).write(to: directory.appendingPathComponent("pending.json"))
-      // Synthetic transport input: this test never records a person's microphone.
-      try Data(repeating: 0x41, count: 200_000).write(to: directory.appendingPathComponent(id.uuidString + ".m4a"))
+      if !fresh {
+        let recording = NotebookDictationController.Pending(id: id, thread: thread, computer: peer, transcript: transcript)
+        try JSONEncoder().encode(recording).write(to: directory.appendingPathComponent("pending.json"))
+        // Synthetic transport input: this test never records a person's microphone.
+        try Data(repeating: 0x41, count: 200_000).write(to: directory.appendingPathComponent(id.uuidString + ".m4a"))
+      }
       queue = NotebookPersistenceQueue(store: store)
-      chat = NotebookChatController(persistence: queue, author: author) { [weak self] packet, _ in
+      chat = NotebookChatController(persistence: queue, author: author, dictationCapture: capture) { [weak self] packet, _ in
         guard let self, case .request(let query) = packet.body else { return }
         let reply: NotebookChatReply
         switch query {
@@ -36,10 +54,13 @@ import NotebookCore
           queries.append(action)
           let state: NotebookDictationState
           switch action {
-          case .prepare: state = .init(id: id, receivedBytes: receivedBytes)
-          case .append(_, let offset, let bytes): receivedBytes = offset + bytes.count; state = .init(id: id, receivedBytes: receivedBytes)
-          case .finish, .retry: state = .init(id: id, phase: .transcribing, receivedBytes: receivedBytes)
-          case .status: complete = !hold; state = .init(id: id, phase: hold ? .transcribing : .completed, receivedBytes: receivedBytes, text: hold ? nil : result)
+          case .prepare(let recording): activeID = recording.id; state = .init(id: activeID, receivedBytes: receivedBytes)
+          case .append(_, let offset, let bytes): receivedBytes = offset + bytes.count; state = .init(id: activeID, receivedBytes: receivedBytes)
+          case .finish, .retry: state = .init(id: activeID, phase: .transcribing, receivedBytes: receivedBytes)
+          case .status:
+            complete = !hold
+            state = recognitionFails ? .init(id: activeID, phase: .failed, receivedBytes: receivedBytes, error: "Попробуйте снова.")
+              : .init(id: activeID, phase: hold ? .transcribing : .completed, receivedBytes: receivedBytes, text: hold ? nil : result)
           case .cancel(let cancelled): state = .init(id: cancelled, phase: .cancelled)
           }
           reply = .dictation(state)
@@ -62,6 +83,91 @@ import NotebookCore
     let end = ContinuousClock.now + .seconds(8)
     while !condition(), .now < end { try await Task.sleep(for: .milliseconds(20)) }
     XCTAssertTrue(condition())
+  }
+  func testStopOpensTheChatThenRequestsEditingAfterTheDurableTranscript() async throws {
+    let fixture = try Fixture(fresh: true); await fixture.start()
+    await fixture.chat.dictation.begin()
+    XCTAssertTrue(fixture.chat.dictation.recording)
+    let compact = NotebookCompanion.preferredSize(chat: fixture.chat, available: .init(width: 834, height: 1194), showsTask: false)
+    XCTAssertEqual(compact, .init(width: 352, height: 48))
+    fixture.chat.dictation.finish()
+    XCTAssertTrue(fixture.chat.expanded); XCTAssertNil(fixture.chat.dictation.reviewRequest)
+    try await wait { !fixture.chat.dictation.busy }
+    XCTAssertNotNil(fixture.chat.dictation.reviewRequest)
+    XCTAssertEqual(fixture.chat.draft, "Вопрос: Точный текст диктовки.")
+    XCTAssertEqual(fixture.capture.stops, 1); XCTAssertEqual(fixture.submitCount, 0)
+    fixture.chat.draft += " Исправлено."
+    _ = await fixture.queue.flush()
+    XCTAssertEqual(try fixture.store.chatPanel(author: fixture.author, computer: fixture.peer).draft, fixture.chat.draft)
+    await fixture.close()
+  }
+  func testSendDecisionRunsOnceOnlyAfterDurableInsertionAndDoubleTapCannotReplaceIt() async throws {
+    let fixture = try Fixture(fresh: true); await fixture.start()
+    await fixture.chat.dictation.begin()
+    var sends = 0
+    fixture.chat.dictation.finish {
+      sends += 1
+      XCTAssertFalse(fixture.chat.dictation.busy)
+      XCTAssertEqual(fixture.chat.draft, "Вопрос: Точный текст диктовки.")
+      XCTAssertEqual(try? fixture.store.chatPanel(author: fixture.author, computer: fixture.peer).dictationReceipt, fixture.activeID)
+    }
+    fixture.chat.dictation.finish { sends += 10 }
+    try await wait { !fixture.chat.dictation.busy }
+    XCTAssertEqual(sends, 1); XCTAssertEqual(fixture.capture.stops, 1)
+    XCTAssertFalse(fixture.chat.expanded); XCTAssertNil(fixture.chat.dictation.reviewRequest)
+    await fixture.close()
+  }
+  func testFailedSendDecisionIsDiscardedAndRetryOnlyOpensTheDraft() async throws {
+    let fixture = try Fixture(fresh: true); fixture.recognitionFails = true; await fixture.start()
+    await fixture.chat.dictation.begin()
+    var sends = 0; fixture.chat.dictation.finish { sends += 1 }
+    try await wait { fixture.chat.dictation.canRetry }
+    XCTAssertTrue(fixture.chat.expanded); XCTAssertEqual(sends, 0)
+    fixture.recognitionFails = false; fixture.chat.dictation.retry()
+    try await wait { !fixture.chat.dictation.busy }
+    XCTAssertEqual(sends, 0); XCTAssertNotNil(fixture.chat.dictation.reviewRequest)
+    XCTAssertEqual(fixture.chat.draft, "Вопрос: Точный текст диктовки.")
+    await fixture.close()
+  }
+  func testCancelWhileFinishingCannotSendLateSpeechAndTheNextCaptureStartsClean() async throws {
+    let fixture = try Fixture(fresh: true); fixture.hold = true; await fixture.start()
+    await fixture.chat.dictation.begin()
+    var sends = 0; fixture.chat.dictation.finish { sends += 1 }
+    try await wait { fixture.queries.contains(.status(fixture.activeID)) }
+    fixture.chat.dictation.cancel(); fixture.hold = false
+    try await Task.sleep(for: .milliseconds(400))
+    XCTAssertEqual(sends, 0); XCTAssertEqual(fixture.chat.draft, "Вопрос:")
+    fixture.receivedBytes = 0; await fixture.chat.dictation.begin(); fixture.chat.dictation.finish()
+    try await wait { !fixture.chat.dictation.busy }
+    XCTAssertEqual(sends, 0); XCTAssertNotNil(fixture.chat.dictation.reviewRequest)
+    await fixture.close()
+  }
+  func testAutomaticCaptureLimitOpensReviewAndSubmissionPreparationDoesNotRecord() async throws {
+    let fixture = try Fixture(fresh: true); await fixture.start()
+    fixture.chat.dictation.submissionInProgress = { true }
+    await fixture.chat.dictation.begin()
+    XCTAssertEqual(fixture.capture.starts, 0); XCTAssertFalse(fixture.chat.dictation.busy)
+    fixture.chat.dictation.submissionInProgress = { false }
+    await fixture.chat.dictation.begin(); fixture.capture.stop()
+    try await wait { !fixture.chat.dictation.busy }
+    XCTAssertTrue(fixture.chat.expanded); XCTAssertNotNil(fixture.chat.dictation.reviewRequest)
+    XCTAssertEqual(fixture.submitCount, 0)
+    await fixture.close()
+  }
+  func testRestartDuringRecognitionRecoversOnlyAReviewableDraftWithoutTheSendDecision() async throws {
+    let fixture = try Fixture(fresh: true); fixture.hold = true; await fixture.start()
+    await fixture.chat.dictation.begin()
+    var sends = 0; fixture.chat.dictation.finish { sends += 1 }
+    try await wait { fixture.queries.contains(.status(fixture.activeID)) }
+    fixture.chat.dictation.shutdown(); fixture.hold = false
+    let recovered = NotebookDictationController()
+    recovered.chat = fixture.chat
+    try recovered.restore(directory: fixture.root.appendingPathComponent("runtime/dictation/" + fixture.author.uuidString), inserted: nil)
+    XCTAssertTrue(recovered.canRetry); recovered.retry()
+    try await wait { !recovered.busy }
+    XCTAssertEqual(sends, 0); XCTAssertNotNil(recovered.reviewRequest)
+    XCTAssertEqual(fixture.chat.draft, "Вопрос: Точный текст диктовки.")
+    recovered.shutdown(); await fixture.close()
   }
   func testRecoveredRecordingUploadsBoundedChunksAndInsertsExactlyOnceWithoutSending() async throws {
     let fixture = try Fixture(), microphone = AVCaptureDevice.authorizationStatus(for: .audio)

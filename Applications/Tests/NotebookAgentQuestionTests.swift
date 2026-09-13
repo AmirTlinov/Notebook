@@ -115,13 +115,38 @@ final class NotebookAgentQuestionTests: XCTestCase {
       chat.select(.init(id: UUID().uuidString, title: "Обсуждение", cwd: "/tmp"))
       chat.draft = "Объясни выбранное"
       model.publishHumanContext(try selection(model))
-      XCTAssertNil(model.sendChatMessage())
+      var saved: Bool?
+      XCTAssertNil(model.sendChatMessage { saved = $0 })
+      XCTAssertEqual(saved, false)
       XCTAssertTrue(chat.jobs.isEmpty); XCTAssertEqual(chat.draft, "Объясни выбранное")
       await model.finishPendingPersistence(); await model.reloadExternalChanges()?.value
       let context = try XCTUnwrap(model.agentQuestion)
-      await model.sendChatMessage()?.value
+      await model.sendChatMessage { saved = $0 }?.value
+      XCTAssertEqual(saved, true)
       XCTAssertEqual(chat.jobs.count, 1)
       XCTAssertEqual(chat.jobs.first?.input.attentionContextID, context.contextID)
+    }
+  }
+
+  @MainActor
+  func testDictationSendContextKeepsThePointedMaterialAndAttachmentsWhileSpeechIsRecognized() async throws {
+    try await fixture { model in
+      let original = try await point(model), chat = try XCTUnwrap(model.chat)
+      chat.select(.init(id: UUID().uuidString, title: "Диктовка", cwd: "/tmp"))
+      let attachment = CodexInputAttachment(kind: .file, name: "example.swift", path: "/tmp/example.swift")
+      chat.attach(attachment)
+      let captured = model.captureChatSubmissionContext(chat)
+      let next = try await point(model, x: 240)
+      chat.removeAttachment(attachment.id)
+      chat.draft = "Результат распознавания"
+      var saved = false
+      await model.sendChatMessage(context: captured) { saved = $0 }?.value
+      let input = try XCTUnwrap(chat.jobs.first?.input)
+      XCTAssertTrue(saved); XCTAssertEqual(input.attentionContextID, original.contextID)
+      XCTAssertEqual(input.attachments, [attachment]); XCTAssertEqual(model.agentQuestion?.contextID, next.contextID)
+      guard case .send(_, let text, let context) = input.action else { return XCTFail("Expected the existing message owner") }
+      XCTAssertEqual(text, "Результат распознавания"); XCTAssertTrue(context.contains(original.contextID.uuidString))
+      XCTAssertFalse(context.contains(next.contextID.uuidString))
     }
   }
 
