@@ -73,6 +73,7 @@ enum TwoFingerUndoClassifier {
   static let maximumCentroidTravel: CGFloat = 4
   static let maximumRelativeTravel: CGFloat = 3.5
   static let maximumTapDuration: TimeInterval = 0.26
+  static let maximumTouchdownInterval: TimeInterval = 0.15
 
   static func remainsStationary(
     maximumFingerTravel: CGFloat,
@@ -119,6 +120,8 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
 
   private var activeTouches: [ObjectIdentifier: UITouch] = [:]
   private var startLocations: [ObjectIdentifier: CGPoint] = [:]
+  private var firstContact: (id: ObjectIdentifier, point: CGPoint, timestamp: TimeInterval)?
+  private var undoIsEligible = true
   private var startTimestamp: TimeInterval?
   private var startCentroid: CGPoint?
   private var startDistance: CGFloat?
@@ -153,7 +156,8 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   }
 
   var permitsUndoRepetition: Bool {
-    intent == .hold && (state == .began || state == .changed) && fingerSequenceIsAccepted
+    intent == .hold && undoIsEligible && undoContactRemainsStationary
+      && (state == .began || state == .changed) && fingerSequenceIsAccepted
   }
 
   isolated deinit {
@@ -171,6 +175,9 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     _ touches: Set<UITouch>,
     with event: UIEvent
   ) {
+    if activeTouches.isEmpty, let first = touches.min(by: { $0.timestamp < $1.timestamp }) {
+      firstContact = (ObjectIdentifier(first), first.location(in: view), first.timestamp)
+    }
     for touch in touches {
       activeTouches[ObjectIdentifier(touch)] = touch
     }
@@ -190,6 +197,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
       return
     }
     guard activeTouches.count == 2, startCentroid == nil else { return }
+    updateUndoEligibilityBeforePair()
     beginTrackingPair()
   }
 
@@ -197,6 +205,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     _ touches: Set<UITouch>,
     with event: UIEvent
   ) {
+    if startCentroid == nil { updateUndoEligibilityBeforePair() }
     guard startCentroid != nil else { return }
     guard fingerSequenceIsAccepted else {
       finishAsInvalid()
@@ -205,7 +214,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     updateMetrics()
 
     switch intent {
-    case .undecided:
+    case .undecided, .hold:
       let motionIntent = TwoFingerIntentArbiter.resolve(
         defersHorizontalMotionToPageTurn: defersHorizontalMotionToPageTurn,
         translation: translation,
@@ -217,11 +226,11 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
       case .navigation:
         cancelHold()
         if defersHorizontalMotionToPageTurn {
-          state = .failed
+          finishAsInvalid()
           return
         }
         intent = .navigation
-        state = .began
+        state = state == .possible ? .began : .changed
       case .magnification:
         cancelHold()
         let isOpeningApproach = TwoFingerIntentArbiter.isOpeningApproach(
@@ -229,16 +238,17 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
         )
         self.isOpeningApproach = isOpeningApproach
         intent = .magnification
-        state = .began
+        state = state == .possible ? .began : .changed
       case .undecided:
-        if !undoContactRemainsStationary { cancelHold() }
+        if !undoContactRemainsStationary {
+          cancelHold()
+          if intent == .hold { intent = .undecided }
+        }
         break
       }
     case .magnification where state == .began || state == .changed:
       state = .changed
     case .navigation where state == .began || state == .changed:
-      state = .changed
-    case .hold where state == .began || state == .changed:
       state = .changed
     default:
       break
@@ -275,7 +285,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     case .magnification:
       state = .ended
     case .undecided
-    where TwoFingerUndoClassifier.isTap(
+    where undoIsEligible && TwoFingerUndoClassifier.isTap(
       maximumFingerTravel: maximumFingerMovement,
       maximumCentroidTravel: maximumCentroidMovement,
       maximumRelativeTravel: maximumRelativeMovement,
@@ -285,13 +295,13 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
       state = .recognized
     case .undecided where releaseIntent == .navigation:
       if defersHorizontalMotionToPageTurn {
-        state = .failed
+        finishAsInvalid()
       } else {
         intent = .navigation
         state = .recognized
       }
     case .tap, .undecided:
-      state = .failed
+      finishAsInvalid()
     }
   }
 
@@ -307,6 +317,8 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     cancelHold()
     activeTouches.removeAll(keepingCapacity: true)
     startLocations.removeAll(keepingCapacity: true)
+    firstContact = nil
+    undoIsEligible = true
     startTimestamp = nil
     startCentroid = nil
     startDistance = nil
@@ -324,6 +336,17 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     centroid = .zero
     magnificationSamples.removeAll(keepingCapacity: true)
     fingerSequenceRevision = nil
+  }
+
+  /// The pair gets a new camera baseline, not a new undo history. A second
+  /// finger joining a pan or a held contact cannot reinterpret it as undo.
+  private func updateUndoEligibilityBeforePair() {
+    guard undoIsEligible, let firstContact, let first = activeTouches[firstContact.id] else { return }
+    let p = first.location(in: view)
+    if hypot(p.x - firstContact.point.x, p.y - firstContact.point.y) > TwoFingerUndoClassifier.maximumFingerTravel
+      || (activeTouches.count == 2 && currentTimestamp() - firstContact.timestamp > TwoFingerUndoClassifier.maximumTouchdownInterval) {
+      undoIsEligible = false
+    }
   }
 
   /// The second touchdown establishes the pair once. Intent recognition must
@@ -345,6 +368,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
         state == .possible,
         activeTouches.count == 2,
         fingerSequenceIsAccepted,
+        undoIsEligible,
         undoContactRemainsStationary
       else { return }
       intent = .hold
@@ -387,6 +411,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
         ) / 2
       )
     }
+    if !undoContactRemainsStationary { undoIsEligible = false }
 
     let timestamp = currentTimestamp()
     if let startDistance, startDistance > 0 {

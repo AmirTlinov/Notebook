@@ -147,11 +147,15 @@ final class SceneCameraPlaneController<Revision: Equatable>: UIViewController, S
     guard !isRetired else { return }
     loadViewIfNeeded()
     guard let host else { return }
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    defer { CATransaction.commit() }
     let needsRebase = anchor.map {
       SceneCameraProjection.requiresRebase(anchor: $0, current: presence)
         || (!isCameraActive && $0.camera != presence.camera)
     } ?? true
     if needsRebase || self.revision != revision {
+      let previousAnchor = anchor
       if needsRebase || reanchorsOnRevision { anchor = presence }
       self.revision = revision
       let projection = self.projection ?? ScenePlaneProjection(presence)
@@ -160,17 +164,22 @@ final class SceneCameraPlaneController<Revision: Equatable>: UIViewController, S
       let prepared = anchor ?? presence
       host.rootView = content(prepared, projection)
       host.view.bounds = CGRect(x: 0, y: 0, width: prepared.viewport.x, height: prepared.viewport.y)
+      if previousAnchor != anchor {
+        // Replacing rootView schedules SwiftUI layout; it does not move the
+        // mounted bodies yet. Install those coordinates before publishing the
+        // new matrix, in this same native transaction. Otherwise independently
+        // refreshed planes show their old bodies under different cameras.
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+      }
       contentPublicationCount += 1
     }
     guard let anchor else { return }
     projection?.update(presence)
     let matrix = SceneCameraProjection(anchor: anchor, current: presence)
-    CATransaction.begin()
-    CATransaction.setDisableActions(true)
     host.view.transform = CGAffineTransform(scaleX: matrix.scale, y: matrix.scale)
     host.view.center = CGPoint(x: anchor.viewport.x / 2 * matrix.scale + matrix.translation.x,
       y: anchor.viewport.y / 2 * matrix.scale + matrix.translation.y)
-    CATransaction.commit()
     cameraProjectionCount += 1
   }
 
@@ -267,6 +276,7 @@ final class SceneCameraPlaneView<Revision: Equatable>: NSView, SceneCameraPlaneA
         || (!isCameraActive && $0.camera != presence.camera)
     } ?? true
     if needsRebase || self.revision != revision {
+      let previousAnchor = anchor
       if needsRebase || reanchorsOnRevision { anchor = presence }
       self.revision = revision
       let projection = self.projection ?? ScenePlaneProjection(presence)
@@ -275,6 +285,10 @@ final class SceneCameraPlaneView<Revision: Equatable>: NSView, SceneCameraPlaneA
       let prepared = anchor ?? presence
       host.rootView = content(prepared, projection)
       host.frame = CGRect(x: 0, y: 0, width: prepared.viewport.x, height: prepared.viewport.y)
+      if previousAnchor != anchor {
+        host.needsLayout = true
+        host.layoutSubtreeIfNeeded()
+      }
       contentPublicationCount += 1
     }
     guard let anchor else { return }

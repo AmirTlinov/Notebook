@@ -497,6 +497,46 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
   }
 
   @MainActor
+  func testSecondFingerJoiningAnExistingContactCannotUndo() async throws {
+    for (firstMoves, holds) in [(false, false), (true, false), (false, true), (true, true)] {
+      let gate = NotebookInputGate(), view = UIView(frame: .init(x: 0, y: 0, width: 500, height: 500))
+      let recognizer = TwoFingerPaperGestureRecognizer()
+      recognizer.inputGate = gate; view.addGestureRecognizer(recognizer)
+      defer { view.removeGestureRecognizer(recognizer) }
+      let first = PairMotionTouch(x: 60), second = PairMotionTouch(x: 300), event = UIEvent()
+      recognizer.touchesBegan([first], with: event)
+      if firstMoves {
+        first.point.x += 40; first.time += 0.04
+        recognizer.touchesMoved([first], with: event)
+      } else { first.time += 0.5 }
+      second.time = first.time
+      recognizer.touchesBegan([second], with: event)
+      if holds { try await Task.sleep(for: .milliseconds(400)) }
+      XCTAssertNotEqual(recognizer.intent, .hold, "A joined camera contact must not start repeated undo")
+      first.time += 0.1; second.time = first.time
+      recognizer.touchesEnded([first, second], with: event)
+      XCTAssertNotEqual(recognizer.intent, .tap, "Movement before the pair existed still excludes undo")
+    }
+  }
+
+  @MainActor
+  func testMovingAfterUndoHoldStopsRepetition() async throws {
+    let gate = NotebookInputGate(), view = UIView(frame: .init(x: 0, y: 0, width: 500, height: 500))
+    let recognizer = TwoFingerPaperGestureRecognizer()
+    recognizer.inputGate = gate; view.addGestureRecognizer(recognizer)
+    defer { view.removeGestureRecognizer(recognizer) }
+    let first = PairMotionTouch(x: 60), second = PairMotionTouch(x: 300), event = UIEvent()
+    recognizer.touchesBegan([first, second], with: event)
+    try await Task.sleep(for: .milliseconds(400))
+    XCTAssertTrue(recognizer.permitsUndoRepetition)
+    first.point.x -= 35; second.point.x += 35
+    first.time += 0.45; second.time = first.time
+    recognizer.touchesMoved([first, second], with: event)
+    XCTAssertFalse(recognizer.permitsUndoRepetition, "A moving pair cannot keep erasing history every 95 ms")
+    XCTAssertEqual(recognizer.intent, .magnification, "Moving the held pair continues the camera without a second touch sequence")
+  }
+
+  @MainActor
   func testOneRecognizerOwnsTheWholeTwoFingerSequence() {
     let host = UIView(frame: CGRect(x: 0, y: 0, width: 800, height: 1_100))
     let scene = UIView(frame: host.bounds)

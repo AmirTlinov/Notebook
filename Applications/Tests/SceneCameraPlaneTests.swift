@@ -432,6 +432,38 @@ final class SceneCameraPlaneTests: XCTestCase {
   }
 
   @MainActor
+  func testRebasePublishesNativeContentAndProjectionTogether() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow)
+    let window = UIWindow(windowScene: scene)
+    window.frame = .init(x: 0, y: 0, width: 1194, height: 834)
+    let controller = SceneCameraPlaneController<Int>()
+    window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { controller.uninstall(); window.isHidden = true; previous?.makeKey() }
+    let button = UIButton(type: .system), world = WorldPoint(x: 140, y: 60)
+    let initial = SessionPresence(mode: .board, camera: .init(scale: 0.7), viewport: .init(x: 1194, y: 834))
+    func content(_ anchor: SessionPresence, _ projection: ScenePlaneProjection) -> AnyView {
+      let p = anchor.camera.worldToScreen(world, viewport: anchor.viewport)
+      return AnyView(ScenePlaneProbeControl(button: button).frame(width: 40, height: 40)
+        .position(x: p.x, y: p.y).frame(width: anchor.viewport.x, height: anchor.viewport.y))
+    }
+    controller.update(presence: initial, revision: 0, content: content)
+    window.layoutIfNeeded()
+    try await Task.sleep(for: .milliseconds(50))
+    for (index, active) in [true, true, false, true, false].enumerated() {
+      let current = SessionPresence(mode: .board,
+        camera: .init(center: .init(x: Double(index + 1) * 37, y: -53), scale: 0.8), viewport: initial.viewport)
+      controller.update(presence: current, revision: index + 1, isCameraActive: active, content: content)
+      // Read the mounted body in the same update, without another SwiftUI or
+      // layout turn. A new matrix over the old body is a visible camera jump.
+      let measured = button.convert(.init(x: 20, y: 20), to: controller.view)
+      let expected = current.camera.worldToScreen(world, viewport: current.viewport)
+      XCTAssertEqual(measured.x, expected.x, accuracy: 1, "rebase \(index)")
+      XCTAssertEqual(measured.y, expected.y, accuracy: 1, "rebase \(index)")
+    }
+  }
+
+  @MainActor
   func testPreviouslyOffscreenNativeControlReceivesInputAfterCameraPan() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let oldKeyWindow = scene.windows.first(where: \.isKeyWindow)

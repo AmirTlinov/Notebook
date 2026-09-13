@@ -71,6 +71,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     private var recognizer: TwoFingerPaperGestureRecognizer?
     private var contactObserver: NotebookContactObserver?
     private var repeatTask: Task<Void, Never>?
+    private var cameraIsActive = false
 
     init(
       defersHorizontalMotionToPageTurn: Bool,
@@ -124,6 +125,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     func uninstall() {
       repeatTask?.cancel()
       repeatTask = nil
+      cameraIsActive = false
       if let recognizer { hostView?.removeGestureRecognizer(recognizer) }
       if let contactObserver {
         contactObserver.finish()
@@ -143,33 +145,11 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       case .began
       where recognizer.intent == .magnification
         || recognizer.intent == .navigation:
-        repeatTask?.cancel()
-        onCamera(
-          .began(
-            centroid: recognizer.startCentroidValue,
-            isOpeningApproach: recognizer.intent == .magnification
-              && recognizer.isOpeningApproach
-          )
-        )
-        onCamera(
-          .changed(
-            scale: recognizer.magnification,
-            velocity: recognizer.magnificationVelocity,
-            elapsed: recognizer.gestureElapsed,
-            centroid: recognizer.centroid
-          )
-        )
+        updateCamera(recognizer)
       case .changed
       where recognizer.intent == .magnification
         || recognizer.intent == .navigation:
-        onCamera(
-          .changed(
-            scale: recognizer.magnification,
-            velocity: recognizer.magnificationVelocity,
-            elapsed: recognizer.gestureElapsed,
-            centroid: recognizer.centroid
-          )
-        )
+        updateCamera(recognizer)
       case .ended:
         repeatTask?.cancel()
         repeatTask = nil
@@ -177,23 +157,36 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
         case .tap:
           onUndo()
         case .navigation:
+          updateCamera(recognizer)
           finishCamera(recognizer)
         case .magnification:
+          updateCamera(recognizer)
           finishCamera(recognizer)
         case .hold, .undecided:
           break
         }
+        cameraIsActive = false
       case .cancelled, .failed:
         repeatTask?.cancel()
         repeatTask = nil
-        if recognizer.intent == .magnification
-          || recognizer.intent == .navigation
-        {
+        if cameraIsActive {
           onCamera(.cancelled)
         }
+        cameraIsActive = false
       default:
         break
       }
+    }
+
+    private func updateCamera(_ recognizer: TwoFingerPaperGestureRecognizer) {
+      repeatTask?.cancel(); repeatTask = nil
+      if !cameraIsActive {
+        cameraIsActive = true
+        onCamera(.began(centroid: recognizer.startCentroidValue,
+          isOpeningApproach: recognizer.intent == .magnification && recognizer.isOpeningApproach))
+      }
+      onCamera(.changed(scale: recognizer.magnification, velocity: recognizer.magnificationVelocity,
+        elapsed: recognizer.gestureElapsed, centroid: recognizer.centroid))
     }
 
     private func startRepeating() {
@@ -394,6 +387,8 @@ struct BoardPanView: UIViewRepresentable {
     private var panRevision: UInt64?
     private var tapRevision: UInt64?
     private var panIsActive = false
+    private var panTouchdown: CGPoint?
+    private var panRecognitionOffset = CGPoint.zero
     private var deferredPanCancellation: (() -> Void)?
 
     init(
@@ -480,6 +475,8 @@ struct BoardPanView: UIViewRepresentable {
     private func cancelFingerSequence(deferCallbacks: Bool = false) {
       panRevision = nil
       tapRevision = nil
+      panTouchdown = nil
+      panRecognitionOffset = .zero
       if panIsActive {
         panIsActive = false
         if deferCallbacks {
@@ -503,9 +500,17 @@ struct BoardPanView: UIViewRepresentable {
     }
 
     @objc func handle(_ pan: UIPanGestureRecognizer) {
-      // UIKit keeps translation continuous when its contact set changes.
-      // A second shouldReceive callback is not a new origin for the camera.
-      receivePan(state: pan.state, translation: pan.translation(in: sceneView))
+      let measured = pan.translation(in: sceneView)
+      if pan.state == .began, let panTouchdown {
+        let point = pan.location(in: sceneView)
+        // UIKit may start accumulated translation only after its recognition
+        // threshold. Retain that first travel once, then use its continuous
+        // measurement; a later second finger cannot replace the origin.
+        panRecognitionOffset = .init(x: point.x - panTouchdown.x - measured.x,
+          y: point.y - panTouchdown.y - measured.y)
+      }
+      receivePan(state: pan.state, translation: .init(x: measured.x + panRecognitionOffset.x,
+        y: measured.y + panRecognitionOffset.y))
     }
 
     func receivePan(state: UIGestureRecognizer.State, translation: CGPoint) {
@@ -525,6 +530,7 @@ struct BoardPanView: UIViewRepresentable {
         guard panIsActive else { return }
         panIsActive = false
         self.panRevision = nil
+        panTouchdown = nil
         onEnded(translation)
       case .cancelled, .failed:
         cancelFingerSequence()
@@ -553,8 +559,12 @@ struct BoardPanView: UIViewRepresentable {
       let point = touch.location(in: sceneView)
       let isFreeBoard = !itemFrames.contains(where: { $0.contains(point) })
       if gestureRecognizer === pan {
-        panRevision = revision
-        startingCover = touch.view as? NotebookInteractionTouchView
+        if !panIsActive, gestureRecognizer.numberOfTouches == 0 {
+          panRevision = revision
+          panTouchdown = point
+          panRecognitionOffset = .zero
+          startingCover = touch.view as? NotebookInteractionTouchView
+        }
         // The cover's direct-touch surface can hand motion to the camera.
         // Its passthrough editors and interactive content keep their own input.
         return startingCover != nil || isFreeBoard

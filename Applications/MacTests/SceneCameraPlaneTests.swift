@@ -6,6 +6,33 @@ import XCTest
 
 final class SceneCameraPlaneTests: XCTestCase {
   @MainActor
+  func testRebasePublishesMountedBodyBeforeNewBounds() {
+    let container = SceneCameraPlaneView<Int>()
+    container.frame = .init(x: 0, y: 0, width: 1194, height: 834)
+    let window = NSWindow(contentRect: container.frame, styleMask: .borderless, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false; window.contentView = container; window.orderBack(nil)
+    defer { window.orderOut(nil); window.close() }
+    let button = NSButton(title: "Body", target: nil, action: nil)
+    let world = WorldPoint(x: 140, y: 60), viewport = SpatialPoint(x: 1194, y: 834)
+    func content(_ anchor: SessionPresence, _ projection: ScenePlaneProjection) -> AnyView {
+      let p = anchor.camera.worldToScreen(world, viewport: viewport)
+      return AnyView(CameraBodyProbe(button: button).frame(width: 40, height: 40)
+        .position(x: p.x, y: p.y).frame(width: viewport.x, height: viewport.y))
+    }
+    container.update(presence: .init(mode: .board, camera: .init(scale: 0.7), viewport: viewport), revision: 0, content: content)
+    container.layoutSubtreeIfNeeded()
+    for index in 1...5 {
+      let current = SessionPresence(mode: .board,
+        camera: .init(center: .init(x: Double(index) * 37, y: -53), scale: 0.8), viewport: viewport)
+      container.update(presence: current, revision: index, isCameraActive: true, content: content)
+      let measured = button.convert(.init(x: button.bounds.midX, y: button.bounds.midY), to: nil)
+      let expected = current.camera.worldToScreen(world, viewport: viewport)
+      XCTAssertEqual(measured.x, expected.x, accuracy: 1)
+      XCTAssertEqual(measured.y, viewport.y - expected.y, accuracy: 1)
+    }
+  }
+
+  @MainActor
   func testNativeCameraConversionKeepsOneHostedRootAndPhysicalBounds() {
     let container = SceneCameraPlaneView<Int>()
     container.frame = CGRect(x: 0, y: 0, width: 1194, height: 834)
@@ -37,4 +64,10 @@ final class SceneCameraPlaneTests: XCTestCase {
     XCTAssertEqual(builds, 1)
     XCTAssertEqual(container.contentPublicationCount, 1)
   }
+}
+
+private struct CameraBodyProbe: NSViewRepresentable {
+  let button: NSButton
+  func makeNSView(context: Context) -> NSButton { button }
+  func updateNSView(_ view: NSButton, context: Context) {}
 }

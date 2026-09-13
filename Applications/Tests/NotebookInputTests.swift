@@ -110,6 +110,109 @@ final class NotebookInputTests: XCTestCase {
   }
 
   @MainActor
+  func testJoinedCameraContactsCannotUndoSavedErasureAfterReload() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let boardID = try XCTUnwrap(model.workspace?.rootBoardID)
+    model.updatePresence(.init(boardID: boardID, mode: .board, camera: .init(scale: 1),
+      viewport: .init(x: 600, y: 800)), settled: true)
+    let surface = SurfaceID.board(boardID)
+    let span = SpatialInkSpan(surface: surface, samples: [
+      .init(point: .init(x: 10, y: 10), worldPoint: .init(x: 10, y: 10), timeOffset: 0,
+        width: 40, opacity: 1, force: 1, azimuth: 0, altitude: 1)])
+    let pen = try XCTUnwrap(model.appendSpatialInk(tool: .pen, color: .black, spans: [span]))
+    let eraser = try XCTUnwrap(model.appendSpatialInk(tool: .eraser, color: .black, spans: [span]))
+    let saved = await model.finishPendingPersistence()
+    XCTAssertTrue(saved)
+    let gate = model.inputGate
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let host = UIViewController(), scene = UIView(frame: .init(x: 0, y: 0, width: 600, height: 800))
+    window.rootViewController = host; host.view.addSubview(scene); window.makeKeyAndVisible()
+    var undoCount = 0
+    let owner = WorkspaceGestureLayer.Coordinator(defersHorizontalMotionToPageTurn: false,
+      isEnabled: true, inputGate: gate, onCamera: { _ in }, onUndo: {
+        undoCount += 1; model.undoLastSurfaceAction()
+      })
+    owner.install(on: window, inside: scene)
+    defer { owner.uninstall(); window.isHidden = true; window.rootViewController = nil }
+    let recognizer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? TwoFingerPaperGestureRecognizer }.first)
+    for (moves, holds) in [(true, false), (false, false), (true, true)] {
+      let first = InputTouch(), second = InputTouch(), event = UIEvent()
+      first.inputType = .direct; second.inputType = .direct
+      first.point = .init(x: 100, y: 300); second.point = .init(x: 300, y: 300)
+      recognizer.touchesBegan([first], with: event)
+      if moves {
+        first.point.x += 50; first.sampleTime += 0.04
+        recognizer.touchesMoved([first], with: event)
+      } else { first.sampleTime += 0.5 }
+      second.sampleTime = first.sampleTime
+      recognizer.touchesBegan([second], with: event)
+      if holds { try await Task.sleep(for: .milliseconds(450)) }
+      first.sampleTime += 0.1; second.sampleTime = first.sampleTime
+      recognizer.touchesEnded([first, second], with: event)
+      try await Task.sleep(for: .milliseconds(100))
+      recognizer.reset()
+    }
+    XCTAssertEqual(undoCount, 0, "The native callback must not publish an undo command for camera input")
+    await model.reloadExternalChanges()?.value
+    let drained = await model.finishPendingPersistence()
+    XCTAssertTrue(drained)
+    let reopened = try NotebookStore(root: root).readSpatialInk(surfaces: [surface])
+    XCTAssertEqual(reopened.actions, [pen, eraser], "Reopening retains the accepted eraser and its exact causal order")
+    XCTAssertEqual(model.spatialInk?.actions, [pen, eraser])
+
+    // An intentional short chord still reaches the same undo owner once.
+    let first = InputTouch(), second = InputTouch(), event = UIEvent()
+    first.inputType = .direct; second.inputType = .direct
+    first.point = .init(x: 100, y: 300); second.point = .init(x: 300, y: 300)
+    recognizer.touchesBegan([first], with: event)
+    second.sampleTime = first.sampleTime + 0.06
+    recognizer.touchesBegan([second], with: event)
+    first.sampleTime += 0.12; second.sampleTime = first.sampleTime
+    recognizer.touchesEnded([first, second], with: event)
+    try await Task.sleep(for: .milliseconds(100))
+    XCTAssertEqual(undoCount, 1)
+    let undoSaved = await model.finishPendingPersistence()
+    XCTAssertTrue(undoSaved)
+    XCTAssertFalse(try XCTUnwrap(model.store.readSpatialInk(surfaces: [surface]).actions.last).isActive)
+  }
+
+  @MainActor
+  func testUndoHoldTransfersToOneCameraSequenceAndStopsUndoing() async throws {
+    let gate = NotebookInputGate()
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let host = UIViewController(), scene = UIView(frame: .init(x: 0, y: 0, width: 600, height: 800))
+    window.rootViewController = host; host.view.addSubview(scene); window.makeKeyAndVisible()
+    var undos = 0, begins = 0, ends = 0
+    let owner = WorkspaceGestureLayer.Coordinator(defersHorizontalMotionToPageTurn: false,
+      isEnabled: true, inputGate: gate, onCamera: { phase in
+        if case .began = phase { begins += 1 }
+        if case .ended = phase { ends += 1 }
+      }, onUndo: { undos += 1 })
+    owner.install(on: window, inside: scene)
+    defer { owner.uninstall(); window.isHidden = true; window.rootViewController = nil }
+    let recognizer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? TwoFingerPaperGestureRecognizer }.first)
+    let first = InputTouch(), second = InputTouch(), event = UIEvent()
+    first.inputType = .direct; second.inputType = .direct
+    first.point = .init(x: 100, y: 300); second.point = .init(x: 300, y: 300)
+    recognizer.touchesBegan([first, second], with: event)
+    for _ in 0..<100 where undos == 0 { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertGreaterThan(undos, 0)
+    let before = undos
+    first.point.x -= 40; second.point.x += 40
+    first.sampleTime += 0.4; second.sampleTime = first.sampleTime
+    recognizer.touchesMoved([first, second], with: event)
+    try await Task.sleep(for: .milliseconds(250))
+    recognizer.touchesEnded([first, second], with: event)
+    try await Task.sleep(for: .milliseconds(50))
+    XCTAssertEqual(undos, before)
+    XCTAssertEqual(begins, 1)
+    XCTAssertEqual(ends, 1)
+  }
+
+  @MainActor
   func testBoardPanCannotStartDuringPencilAndPencilCancelsAnEarlierPanWithoutRewinding() throws {
     let gate = NotebookInputGate(), pencil = UUID()
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
@@ -162,17 +265,20 @@ final class NotebookInputTests: XCTestCase {
     let first = InputTouch(); first.inputType = .direct; first.point = .init(x: 100, y: 200)
     XCTAssertTrue(owner.gestureRecognizer(pan, shouldReceive: first))
     let measured = PanTranslationSample()
-    measured.delta = .init(x: 32, y: 12); measured.point = .init(x: 132, y: 212)
+    measured.delta = .zero; measured.point = .init(x: 132, y: 212)
     measured.phase = .began; owner.handle(measured)
-    XCTAssertEqual(samples.last, .init(x: 32, y: 12), "The native recognizer owns measured travel")
+    XCTAssertEqual(samples.last, .init(x: 32, y: 12), "The initial recognition threshold cannot discard measured travel")
 
     let second = InputTouch(); second.inputType = .direct; second.point = .init(x: 480, y: 610)
     XCTAssertTrue(owner.gestureRecognizer(pan, shouldReceive: second))
     measured.phase = .changed; measured.point = .init(x: 306, y: 411)
     owner.handle(measured)
     XCTAssertEqual(samples.last, .init(x: 32, y: 12), "Touch admission cannot turn the second location into camera motion")
+    measured.delta = .init(x: 20, y: 10)
+    owner.handle(measured)
+    XCTAssertEqual(samples.last, .init(x: 52, y: 22), "Further travel is measured by the same native recognizer")
     owner.receivePan(state: .cancelled, translation: .zero)
-    XCTAssertEqual(samples.last, .init(x: 32, y: 12), "The handoff keeps the actually shown camera")
+    XCTAssertEqual(samples.last, .init(x: 52, y: 22), "The handoff keeps the actually shown camera")
     XCTAssertEqual(pan.maximumNumberOfTouches, 1)
   }
 
