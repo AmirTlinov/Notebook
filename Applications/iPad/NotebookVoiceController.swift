@@ -88,7 +88,7 @@ import NotebookCore
             error = message; Task { await end() }
           })
         self.wake = wake
-        guard await wake.authorize() else { throw NotebookPersistenceQueue.Failure(message: "Для локального обращения разрешите распознавание речи в настройках iPad. Звук не передаётся в Apple.") }
+        guard await NotebookWakeRecognizer.authorize() else { throw NotebookPersistenceQueue.Failure(message: "Для локального обращения разрешите распознавание речи в настройках iPad. Звук не передаётся в Apple.") }
         guard captureID == id, !ending else { return }
         wake.start()
       } catch { if captureID == id { self.error = error.localizedDescription; await end() }; return }

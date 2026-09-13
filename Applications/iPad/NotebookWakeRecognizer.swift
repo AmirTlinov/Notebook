@@ -34,9 +34,11 @@ import NotebookCore
     self.recognizer = recognizer; self.language = language; self.address = address
     self.activated = activated; self.failed = failed
   }
-  func authorize() async -> Bool {
+  static func authorize() async -> Bool {
     let status = await withCheckedContinuation { continuation in
-      SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
+      // Speech may reply on a background queue. Only the awaiting owner resumes
+      // on MainActor; the system callback must not inherit its isolation.
+      SFSpeechRecognizer.requestAuthorization { @Sendable status in continuation.resume(returning: status) }
     }
     return status == .authorized
   }
@@ -65,7 +67,7 @@ import NotebookCore
     request.requiresOnDeviceRecognition = true; request.shouldReportPartialResults = true
     request.contextualStrings = NotebookWakeAddress.phrases(language: language, address: address)
     self.request = request
-    recognition = recognizer.recognitionTask(with: request) { [weak self] result, error in
+    recognition = recognizer.recognitionTask(with: request) { @Sendable [weak self] result, error in
       let segments = result?.bestTranscription.segments.map { NotebookWakeAddress.Segment($0.substring, start: $0.timestamp, duration: $0.duration) }
       let final = result?.isFinal == true
       let failure = error?.localizedDescription

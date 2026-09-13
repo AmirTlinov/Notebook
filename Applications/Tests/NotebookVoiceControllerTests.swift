@@ -1,10 +1,28 @@
 import XCTest
 import WebKit
 import AVFoundation
+import Speech
 import NotebookCore
 @testable import Notebook
 
 @MainActor final class NotebookVoiceControllerTests: XCTestCase {
+  func testSystemSpeechAuthorizationReturnsToTheVoiceOwnerWithoutStartingCapture() async throws {
+    guard SFSpeechRecognizer.authorizationStatus() != .notDetermined else {
+      XCTFail("Resolve the Speech permission once in the test Simulator before this callback check; microphone access is not required")
+      return
+    }
+    let microphone = AVCaptureDevice.authorizationStatus(for: .audio)
+    // Exercise the actual system callback under Swift 6 actor checks. A mock or
+    // the disconnected-chat guard never reaches the callback that crashed on iPad.
+    for _ in 0..<3 {
+      let authorized = await NotebookWakeRecognizer.authorize()
+      XCTAssertNotEqual(SFSpeechRecognizer.authorizationStatus(), .notDetermined)
+      XCTAssertEqual(authorized, SFSpeechRecognizer.authorizationStatus() == .authorized)
+      MainActor.assertIsolated()
+    }
+    XCTAssertEqual(AVCaptureDevice.authorizationStatus(for: .audio), microphone)
+  }
+
   func testBundledWebRTCPageDoesNotStartCaptureWhileMounted() async throws {
     let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
     let web = WKWebView(frame: .init(x: 0, y: 0, width: 1, height: 1), configuration: config)
