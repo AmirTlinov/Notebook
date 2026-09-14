@@ -8,6 +8,26 @@ import XCTest
 
 @MainActor
 final class DocumentResourceLeaseTests: XCTestCase {
+  func testLoadedPhysicalPaperDoesNotClaimAScrollButItsEditorStillScrolls() async throws {
+    let resources = SceneRenderResources(profile: .interactive)
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
+      String(repeating: "A physical page belongs to the native curl.\n\n", count: 100))])
+    let fixture = fixture(resources: resources, interactive: true, document: document)
+    let window = try show(fixture.host)
+    defer { fixture.coordinator.invalidate(); window.isHidden = true }
+    await waitUntil(timeout: .seconds(6)) { fixture.coordinator.hasCanonicalPixels }
+    XCTAssertTrue(fixture.coordinator.hasCanonicalPixels)
+    let web = try XCTUnwrap(fixture.coordinator.webView)
+    XCTAssertFalse(web.scrollView.isScrollEnabled, "The loaded browser must not take the native page's pan")
+    let editorScroll = try await web.evaluateJavaScript("""
+      document.querySelector('[data-block-id=body]').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
+      const editor=document.querySelector('textarea');
+      editor.scrollTop=100; editor.scrollTop;
+      """) as? Double
+    XCTAssertGreaterThan(try XCTUnwrap(editorScroll), 0, "Inner source editing keeps its own scrolling")
+    XCTAssertFalse(web.scrollView.isScrollEnabled)
+  }
+
   func testProducerServesExactPageDemandWithoutExpandingTheSceneWindowAgain() async throws {
     let resources = SceneRenderResources(profile: .interactive)
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:

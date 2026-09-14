@@ -1814,7 +1814,9 @@ private enum DocumentWebViewFactory {
       webView.scrollView.bounces = false
       webView.scrollView.contentInsetAdjustmentBehavior = .never
       webView.scrollView.pinchGestureRecognizer?.isEnabled = false
-      webView.scrollView.panGestureRecognizer.isEnabled = false
+      // Physical page navigation belongs to UIKit. Disabling the recognizer
+      // once is not a scroll policy: WebKit re-enables it after loading.
+      webView.scrollView.isScrollEnabled = false
     #elseif os(macOS)
       webView.allowsMagnification = false
     #endif
