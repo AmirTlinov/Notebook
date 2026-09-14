@@ -15,11 +15,18 @@ struct NotebookCompanion: View {
 
   static func preferredSize(chat: NotebookChatController, available: CGSize, contextCount: Int = 0) -> CGSize {
 
-    let dictationNotice = chat.dictation.busy || chat.dictation.error != nil
-    let hasCard = chat.conversation?.requests.isEmpty == false || chat.voice.error != nil || chat.voice.capturing
+    let dictationNotice = chat.dictation.busy || chat.dictation.notice != nil
+    let hasCard = chat.conversation?.requests.isEmpty == false || chat.voice.error != nil || chat.voice.capturing || chat.dictation.notice != nil
       || (chat.workStatus != nil || !chat.pendingMessages.isEmpty)
-    let height: CGFloat = 48 + (hasCard ? 60 : 0)
+    let hasStatus = !status(chat: chat).isEmpty
+    let noticeHeight = chat.dictation.notice.map {
+      NotebookDictationNotice.preferredHeight(message: $0, width: min(available.width, 352) - 28)
+    } ?? 0
+    let cardSections = [hasStatus, chat.conversation?.requests.isEmpty == false,
+      chat.voice.error != nil, chat.dictation.notice != nil].filter { $0 }.count
+    let height: CGFloat = 48 + (hasCard ? 16 : 0) + (hasStatus ? 44 : 0)
       + (chat.conversation?.requests.isEmpty == false ? 160 : 0) + (chat.voice.error != nil ? 90 : 0)
+      + noticeHeight + CGFloat(max(0, cardSections - 1)) * 4
       + CGFloat((hasCard ? 1 : 0) + chat.companionReplies.count) * 8
       + chat.companionReplies.reduce(CGFloat(0)) { $0 + 16 + max(40, previewHeight($1, width: min(available.width, 352) - 66)) }
     return .init(width: min(available.width, hasCard || dictationNotice || !chat.companionReplies.isEmpty ? 352 : (chat.voice.capturing ? 228 : 148) + (contextCount > 0 ? 28 : 0)),
@@ -27,7 +34,7 @@ struct NotebookCompanion: View {
   }
   private var needsDecision: Bool { chat.conversation?.requests.isEmpty == false }
   private var hasCard: Bool {
-    needsDecision || chat.voice.error != nil || chat.voice.capturing
+    needsDecision || chat.voice.error != nil || chat.voice.capturing || chat.dictation.notice != nil
       || (chat.workStatus != nil || !chat.pendingMessages.isEmpty)
   }
   var body: some View {
@@ -36,12 +43,14 @@ struct NotebookCompanion: View {
       if hasCard {
         ScrollView {
           VStack(alignment: .leading, spacing: 4) {
-            Button { chat.revealReply() } label: {
-              NotebookPearlText(text: status, active: chat.workStatus?.running == true && !chat.voice.capturing)
-                .font(.system(size: 13)).lineLimit(2).multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
-            }.accessibilityLabel("Открыть переписку · " + (chat.voice.capturing ? chat.voice.taskTitle : chat.taskTitle) + " · " + status)
-              .accessibilityIdentifier("notebook-companion-task")
+            if !status.isEmpty {
+              Button { chat.revealReply() } label: {
+                NotebookPearlText(text: status, active: chat.workStatus?.running == true && !chat.voice.capturing)
+                  .font(.system(size: 13)).lineLimit(2).multilineTextAlignment(.leading)
+                  .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+              }.accessibilityLabel("Открыть переписку · " + (chat.voice.capturing ? chat.voice.taskTitle : chat.taskTitle) + " · " + status)
+                .accessibilityIdentifier("notebook-companion-task")
+            }
             if let conversation = chat.conversation, let request = conversation.requests.first {
               NotebookCodexRequestView(request: request, threadID: conversation.threadID, chat: chat, maximumHeight: 160)
                 .id(request.id)
@@ -52,6 +61,9 @@ struct NotebookCompanion: View {
                 Button { chat.voice.dismissError() } label: { Image(systemName: "xmark").frame(width: 32, height: 32).contentShape(Rectangle()) }
                   .accessibilityLabel("Убрать уведомление о голосе")
               }
+            }
+            if let notice = chat.dictation.notice {
+              NotebookDictationNotice(dictation: chat.dictation, message: notice)
             }
           }.padding(.horizontal, 14).padding(.vertical, 8)
         }.scrollBounceBehavior(.basedOnSize)
@@ -88,8 +100,9 @@ struct NotebookCompanion: View {
       options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font], context: nil).height
     return ceil(min(height, font.lineHeight * 6))
   }
-  private var status: String {
-    if needsDecision { return "Нужно ваше решение" }
+  private var status: String { Self.status(chat: chat) }
+  private static func status(chat: NotebookChatController) -> String {
+    if chat.conversation?.requests.isEmpty == false { return "Нужно ваше решение" }
     if chat.voice.capturing { return chat.voice.status }
     if let work = chat.workStatus { return work.title }
     if !chat.pendingMessages.isEmpty { return "Сообщение сохранено · ожидаю Codex" }
@@ -111,7 +124,7 @@ struct NotebookCompanion: View {
           .onChanged { move($0.translation, false) }.onEnded { move($0.translation, true) })
       NotebookContextCounter()
       Divider().frame(height: 18).padding(.horizontal, 2)
-      if chat.dictation.busy || chat.dictation.error != nil {
+      if chat.dictation.busy {
         NotebookDictationInput(chat: chat)
       } else if chat.voice.capturing {
         Button { Task { await chat.voice.mute() } } label: {
@@ -132,8 +145,8 @@ struct NotebookCompanion: View {
         NotebookVoiceStartButton(chat: chat, compact: true)
       }
     }.font(.system(size: 16)).padding(.horizontal, 4)
-      .frame(width: chat.dictation.busy || chat.dictation.error != nil ? size.width : nil)
-      .fixedSize(horizontal: !(chat.dictation.busy || chat.dictation.error != nil), vertical: true)
+      .frame(width: chat.dictation.busy ? size.width : nil)
+      .fixedSize(horizontal: !chat.dictation.busy, vertical: true)
       .background { surface(radius: 24) }
       .accessibilityElement(children: .contain).accessibilityIdentifier("notebook-companion-bar")
   }

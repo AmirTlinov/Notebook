@@ -40,6 +40,8 @@ import NotebookCore
   var busy: Bool { (phase != .idle && phase != .waiting && phase != .preparing) || pending != nil }
   var recording: Bool { phase == .recording }
   var showsInput: Bool { busy && !canRetry && phase != .failed }
+  var needsAddressAuthorization: Bool { !addressAuthorized() }
+  var notice: String? { busy ? nil : error }
   var canRetry: Bool { phase == .failed && pending.map { cancellations[$0.computer.uuidString] != $0.id } == true }
   func allowsComputer(_ id: UUID) -> Bool { !busy || (phase == .failed && pending?.computer == id) }
   func allowsThread(_ id: String) -> Bool {
@@ -72,6 +74,7 @@ import NotebookCore
   @ObservationIgnored private var wake: (any NotebookAddressRecognition)?
   @ObservationIgnored private var activationTarget: (thread: String, computer: UUID)?
   @ObservationIgnored var authorizeAddress: @MainActor () async -> Bool = { await NotebookWakeRecognizer.authorize() }
+  @ObservationIgnored var addressAuthorized: @MainActor () -> Bool = { NotebookWakeRecognizer.authorized }
   @ObservationIgnored var makeAddressRecognizer: @MainActor (String, String, @escaping @Sendable (NotebookWakeActivation) -> Void, @escaping @Sendable (String) -> Void) throws -> any NotebookAddressRecognition = {
     try NotebookWakeRecognizer(language: $0, address: $1, activated: $2, failed: $3)
   }
@@ -89,17 +92,19 @@ import NotebookCore
   func setMicrophoneMuted(_ muted: Bool) {
     microphoneMuted = muted; preferences.set(muted, forKey: "notebook.microphone-muted")
     if muted { interruptCapture() }
-    else { automaticError = false; environmentChanged() }
+    else { automaticError = false; environmentChanged(requestAuthorization: true) }
   }
   /// Eligibility is derived from the existing task and audio session. Ending a
   /// recording is not the user's decision to disable future addresses.
-  func environmentChanged() {
+  func environmentChanged() { environmentChanged(requestAuthorization: false) }
+  private func environmentChanged(requestAuthorization: Bool) {
     guard !stopped else { return }
     guard foreground, !audioInterrupted, !microphoneMuted, let chat, chat.connected, chat.threadID != nil,
       !chat.browsesChats, !chat.switchingComputer, !chat.voice.capturing else { suspendWaiting(); return }
     if waiting, activationTarget?.thread != chat.threadID || activationTarget?.computer != chat.computerID { suspendWaiting() }
     guard !busy, !waiting, phase != .preparing, !automaticError, !chat.saving, !submissionInProgress() else { return }
-    operation = Task { [weak self] in await self?.arm() }
+    guard requestAuthorization || addressAuthorized() else { return }
+    operation = Task { [weak self] in await self?.arm(requestAuthorization: requestAuthorization) }
   }
   func suspendWaiting() {
     guard waiting || phase == .preparing else { return }
@@ -163,8 +168,9 @@ import NotebookCore
     guard directory != nil else { error = "Хранилище записи ещё не готово."; return nil }
     return (thread, computer)
   }
-  private func arm() async {
-    guard foreground, !microphoneMuted, !stopped, !automaticError, !busy, !waiting, phase != .preparing, let target = target(), let chat else { return }
+  private func arm(requestAuthorization: Bool) async {
+    guard foreground, !audioInterrupted, !microphoneMuted, !stopped, !automaticError, !busy, !waiting, phase != .preparing, let target = target(), let chat else { return }
+    guard requestAuthorization || addressAuthorized() else { return }
     generation = UUID(); let epoch = generation
     activationTarget = target; phase = .preparing; error = nil
     do {
@@ -182,11 +188,14 @@ import NotebookCore
         }
       })
       wake = recognizer
-      guard await authorizeAddress() else {
+      if requestAuthorization, !(await authorizeAddress()) {
         throw NotebookPersistenceQueue.Failure(message: "Для обращения GPT разрешите локальное распознавание в настройках iPad. Окружающая речь не отправляется.")
       }
       guard generation == epoch else { return }
       await recognizer.start()
+      guard generation == epoch, !Task.isCancelled else {
+        await recognizer.stop(); return
+      }
       try await capture.listen(pcm: { data, audio in await recognizer.append(data: data, audio: audio) },
         events: { [weak self] event in self?.receive(event, epoch: epoch) })
       guard generation == epoch else { return }
@@ -201,7 +210,13 @@ import NotebookCore
   private func begin(from activation: NotebookWakeActivation?, wakeEpoch: UUID?) async {
     guard !busy else { return }
     if let wakeEpoch { guard generation == wakeEpoch, waiting, !microphoneMuted else { return } }
-    else { if phase == .preparing { suspendWaiting() }; automaticError = false; setMicrophoneMuted(false) }
+    else {
+      if phase == .preparing { suspendWaiting() }
+      automaticError = false
+      // Manual capture owns its own microphone request. It must not race a
+      // second task which is preparing background address recognition.
+      microphoneMuted = false; preferences.set(false, forKey: "notebook.microphone-muted")
+    }
     error = nil
     let frame = activation?.frame
     guard let target = target() else { suspendWaiting(); return }
@@ -310,6 +325,12 @@ import NotebookCore
       Task { [weak self] in try? await self?.finishCancellation(on: previous.computer) }
     }
     resumeActivation()
+  }
+  func dismissNotice() {
+    guard !busy else { return }
+    error = nil
+    // Keep the failed automatic attempt suspended until an explicit retry or
+    // an actual environment transition, rather than immediately looping.
   }
   /// A cancelled recording must not occupy the Mac's single upload slot after
   /// an offline cancel or restart. Its small receipt outlives the deleted audio.

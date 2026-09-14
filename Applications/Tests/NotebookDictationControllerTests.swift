@@ -5,14 +5,14 @@ import NotebookCore
 @testable import Notebook
 
 @MainActor final class TestDictationCapture: NotebookDictationCapture {
-  var starts = 0, stops = 0
+  var starts = 0, stops = 0, listens = 0
   var listening = false
   var startFrame: Int?
   var events: (@MainActor (NotebookDictationAudioEvent) -> Void)?
   var id: UUID?
   func listen(pcm: @escaping @Sendable (Data, NotebookAcousticUtterance.Sample) async -> Void,
     events: @escaping @MainActor (NotebookDictationAudioEvent) -> Void) async throws {
-    listening = true; self.events = events; id = nil
+    listens += 1; listening = true; self.events = events; id = nil
   }
   func start(at url: URL, id: UUID, from frame: Int?, hasRequest: Bool?,
     events: @escaping @MainActor (NotebookDictationAudioEvent) -> Void) async throws {
@@ -35,6 +35,16 @@ import NotebookCore
   @MainActor final class Address: NotebookAddressRecognition {
     var started = false
     func start() { started = true }
+    func stop() { started = false }
+    func append(data: Data, audio: NotebookAcousticUtterance.Sample) {}
+  }
+  @MainActor final class SuspendedAddress: NotebookAddressRecognition {
+    var continuation: CheckedContinuation<Void, Never>?
+    var started = false
+    func start() async {
+      await withCheckedContinuation { continuation = $0 }
+      started = true
+    }
     func stop() { started = false }
     func append(data: Data, audio: NotebookAcousticUtterance.Sample) {}
   }
@@ -117,10 +127,13 @@ import NotebookCore
     let fixture = try Fixture(fresh: true); await fixture.start()
     fixture.chat.dictation.makeAddressRecognizer = { _, _, _, _ in Address() }
     fixture.chat.dictation.authorizeAddress = { false }
+    fixture.chat.dictation.addressAuthorized = { false }
     fixture.chat.dictation.setForeground(true)
+    fixture.chat.dictation.setMicrophoneMuted(false)
     try await wait { fixture.chat.dictation.error != nil }
     XCTAssertFalse(fixture.capture.listening)
     fixture.chat.dictation.authorizeAddress = { true }
+    fixture.chat.dictation.addressAuthorized = { true }
     fixture.chat.dictation.setForeground(false); fixture.chat.dictation.setForeground(true)
     try await wait { fixture.chat.dictation.waiting }
     fixture.chat.dictation.setForeground(false)
@@ -152,14 +165,98 @@ import NotebookCore
     var permission: CheckedContinuation<Bool, Never>?
     dictation.makeAddressRecognizer = { _, _, _, _ in Address() }
     dictation.authorizeAddress = { await withCheckedContinuation { permission = $0 } }
-    dictation.setForeground(true); try await wait { permission != nil }
+    dictation.addressAuthorized = { false }
+    dictation.setForeground(true); dictation.setMicrophoneMuted(false)
+    try await wait { permission != nil }
     XCTAssertEqual(dictation.phase, .preparing); XCTAssertFalse(dictation.busy); XCTAssertFalse(dictation.showsInput)
     dictation.setForeground(false); permission?.resume(returning: true)
     try await Task.sleep(for: .milliseconds(40))
     XCTAssertFalse(fixture.capture.listening); XCTAssertNil(dictation.pending)
     XCTAssertEqual(fixture.chat.draft, "Вопрос:")
-    dictation.authorizeAddress = { true }; dictation.setForeground(true)
+    dictation.authorizeAddress = { true }; dictation.addressAuthorized = { true }; dictation.setForeground(true)
     try await wait { dictation.waiting }
+    await fixture.close()
+  }
+  func testOpeningAndReconnectingTextChatNeverRequestsMissingAudioPermissions() async throws {
+    let fixture = try Fixture(fresh: true); await fixture.start()
+    let dictation = fixture.chat.dictation
+    var prompts = 0, recognizers = 0
+    dictation.addressAuthorized = { false }
+    dictation.authorizeAddress = { prompts += 1; return true }
+    dictation.makeAddressRecognizer = { _, _, _, _ in recognizers += 1; return Address() }
+    dictation.setForeground(true)
+    fixture.chat.expanded = true
+    fixture.chat.select(.init(id: UUID().uuidString, title: "Текстовый чат", cwd: "/tmp"))
+    fixture.chat.disconnect(fixture.peer); await fixture.chat.connect(fixture.peer)
+    try await Task.sleep(for: .milliseconds(40))
+    XCTAssertEqual(prompts, 0); XCTAssertEqual(recognizers, 0)
+    XCTAssertFalse(fixture.capture.listening); XCTAssertEqual(fixture.capture.starts, 0)
+    XCTAssertFalse(dictation.busy); XCTAssertFalse(dictation.showsInput); XCTAssertNil(dictation.notice)
+    XCTAssertTrue(dictation.needsAddressAuthorization); XCTAssertEqual(fixture.chat.draft, "Вопрос:")
+    dictation.setMicrophoneMuted(false)
+    try await wait { dictation.waiting }
+    XCTAssertEqual(prompts, 1); XCTAssertEqual(recognizers, 1)
+    XCTAssertTrue(fixture.capture.listening)
+    await fixture.close()
+  }
+  func testFailedBackgroundRecognitionLeavesTextSubmissionAvailableWithoutRetrying() async throws {
+    let fixture = try Fixture(fresh: true); await fixture.start()
+    let dictation = fixture.chat.dictation
+    var fail: ((String) -> Void)?, recognizers = 0
+    dictation.makeAddressRecognizer = { _, _, _, failed in
+      recognizers += 1; fail = failed; return Address()
+    }
+    dictation.setForeground(true); try await wait { dictation.waiting }
+    fail?("Локальное распознавание недоступно")
+    try await wait { dictation.notice != nil }
+    XCTAssertFalse(dictation.busy); XCTAssertFalse(dictation.showsInput)
+    XCTAssertFalse(fixture.capture.listening); XCTAssertNil(dictation.pending)
+    XCTAssertEqual(dictation.notice, "Локальное распознавание недоступно")
+    XCTAssertEqual(fixture.chat.draft, "Вопрос:")
+    let submitted = await fixture.chat.sendMessage(threadID: fixture.thread, text: "Текст работает", context: "")
+    XCTAssertTrue(submitted)
+    XCTAssertEqual(try fixture.store.routedChatJobs(author: fixture.author, computer: fixture.peer).count, 1)
+    // Admission is durable before the asynchronous outbox delivers to Mac.
+    try await wait { fixture.submitCount == 1 }
+    XCTAssertEqual(fixture.submitCount, 1)
+    dictation.dismissNotice(); dictation.resumeActivation()
+    try await Task.sleep(for: .milliseconds(40))
+    XCTAssertNil(dictation.notice); XCTAssertEqual(recognizers, 1)
+    XCTAssertFalse(fixture.capture.listening); XCTAssertEqual(fixture.capture.starts, 0)
+    await fixture.close()
+  }
+  func testManualDictationDoesNotRequireLocalAddressRecognitionOrRaceItsPreparation() async throws {
+    let fixture = try Fixture(fresh: true); await fixture.start()
+    let dictation = fixture.chat.dictation
+    var prompts = 0, recognizers = 0
+    dictation.addressAuthorized = { false }
+    dictation.authorizeAddress = { prompts += 1; return false }
+    dictation.makeAddressRecognizer = { _, _, _, _ in recognizers += 1; return Address() }
+    dictation.setForeground(true)
+    await dictation.begin()
+    XCTAssertTrue(dictation.recording); XCTAssertEqual(fixture.capture.starts, 1)
+    XCTAssertEqual(prompts, 0); XCTAssertEqual(recognizers, 0)
+    dictation.cancel()
+    try await Task.sleep(for: .milliseconds(40))
+    XCTAssertFalse(dictation.busy); XCTAssertFalse(fixture.capture.listening)
+    XCTAssertEqual(prompts, 0); XCTAssertEqual(recognizers, 0)
+    await fixture.close()
+  }
+  func testLateAddressStartCannotCancelANewerManualRecording() async throws {
+    let fixture = try Fixture(fresh: true); await fixture.start()
+    let dictation = fixture.chat.dictation, recognizer = SuspendedAddress()
+    dictation.makeAddressRecognizer = { _, _, _, _ in recognizer }
+    dictation.setForeground(true)
+    try await wait { recognizer.continuation != nil }
+    XCTAssertEqual(dictation.phase, .preparing)
+    await dictation.begin()
+    let recordingID = try XCTUnwrap(dictation.pending?.id)
+    XCTAssertTrue(dictation.recording); XCTAssertEqual(fixture.capture.starts, 1)
+    recognizer.continuation?.resume(); recognizer.continuation = nil
+    try await Task.sleep(for: .milliseconds(40))
+    XCTAssertEqual(fixture.capture.listens, 0)
+    XCTAssertEqual(fixture.capture.id, recordingID); XCTAssertTrue(dictation.recording)
+    XCTAssertEqual(dictation.pending?.id, recordingID); XCTAssertFalse(recognizer.started)
     await fixture.close()
   }
   func testExplicitMicrophoneMuteSurvivesControllerRecreation() {
@@ -234,6 +331,9 @@ import NotebookCore
         }
         chat.receive(.init(id: packet.id, body: .reply(reply)), peerID: peer)
       }
+      // Existing-grant state is explicit in controller contracts; tests never
+      // inherit the host Simulator's microphone or Speech privacy decisions.
+      chat.dictation.addressAuthorized = { true }
     }
     func start() async { await chat.start(); await chat.connect(peer) }
     func close() async { await chat.stop(); _ = await queue.flush(); try? FileManager.default.removeItem(at: root) }

@@ -20,7 +20,11 @@ struct NotebookChatComposer: View {
         .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 4)
         .accessibilityIdentifier("notebook-chat-text")
         .disabled(chat.dictation.busy && !chat.dictation.canRetry)
-      if chat.dictation.busy || chat.dictation.error != nil {
+      if let notice = chat.dictation.notice {
+        NotebookDictationNotice(dictation: chat.dictation, message: notice)
+          .padding(.horizontal, 10)
+      }
+      if chat.dictation.busy {
         NotebookDictationInput(chat: chat)
       } else if width < 300 {
         HStack(spacing: 0) {

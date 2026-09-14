@@ -53,6 +53,12 @@ actor NotebookWakeRecognizer: NotebookAddressRecognition {
     }
     return status == .authorized
   }
+  /// Automatic foreground resumption may use an existing grant, but must never
+  /// present a permission dialog over an unrelated text or canvas gesture.
+  static var authorized: Bool {
+    SFSpeechRecognizer.authorizationStatus() == .authorized
+      && AVAudioApplication.shared.recordPermission == .granted
+  }
   func start() { silence = 0; rate = 0; stopped = false }
   func stop() {
     stopped = true; generation = UUID(); settle?.cancel(); settle = nil

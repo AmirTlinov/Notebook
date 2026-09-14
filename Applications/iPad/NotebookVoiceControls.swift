@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import NotebookCore
 
 struct NotebookDictationButton: View {
@@ -7,6 +8,11 @@ struct NotebookDictationButton: View {
   private var dictation: NotebookDictationController { chat.dictation }
   var body: some View {
     Menu {
+      if dictation.needsAddressAuthorization {
+        Button("Включить ожидание GPT", systemImage: "ear.badge.waveform") {
+          dictation.setMicrophoneMuted(false)
+        }.accessibilityIdentifier("notebook-dictation-enable-address")
+      }
       Button(dictation.microphoneMuted ? "Включить микрофон" : "Выключить микрофон",
         systemImage: dictation.microphoneMuted ? "mic" : "mic.slash") {
           dictation.setMicrophoneMuted(!dictation.microphoneMuted)
@@ -29,6 +35,32 @@ struct NotebookDictationButton: View {
     .accessibilityIdentifier(compact ? "notebook-compact-dictation" : "notebook-chat-dictation")
     .accessibilityAction(named: dictation.microphoneMuted ? "Включить микрофон" : "Выключить микрофон") {
       dictation.setMicrophoneMuted(!dictation.microphoneMuted)
+    }
+  }
+}
+
+/// A failed background listener owns this notice, not the text composer's
+/// controls. Dismissing it neither deletes a recording nor retries capture.
+struct NotebookDictationNotice: View {
+  @Bindable var dictation: NotebookDictationController
+  let message: String
+  static func preferredHeight(message: String, width: CGFloat) -> CGFloat {
+    let font = UIFont.preferredFont(forTextStyle: .caption1)
+    let textHeight = (message as NSString).boundingRect(
+      with: .init(width: max(1, width - 36), height: .greatestFiniteMagnitude),
+      options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font], context: nil).height
+    return max(32, ceil(min(textHeight, font.lineHeight * 3)))
+  }
+  var body: some View {
+    HStack(alignment: .top, spacing: 4) {
+      Text(message).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("notebook-dictation-notice")
+      Button { dictation.dismissNotice() } label: {
+        Image(systemName: "xmark").font(.system(size: 12))
+          .frame(width: 32, height: 32).contentShape(Rectangle())
+      }.accessibilityLabel("Убрать уведомление о микрофоне")
+        .accessibilityIdentifier("notebook-dictation-dismiss-notice")
     }
   }
 }
