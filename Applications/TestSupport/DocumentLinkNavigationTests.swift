@@ -23,7 +23,7 @@ final class DocumentLinkNavigationTests: XCTestCase {
   private func layout(anchors: [[String: Any]]) throws -> DocumentLayoutRecord {
     let geometry = WorkspaceItemGeometry.document(.a4)
     return try DocumentLayoutRecord(receipt: ["sourceKey": "source", "layoutScope": "source", "layoutCanonical": true,
-      "pageCount": 4, "width": geometry.width, "height": geometry.height, "regions": [], "anchors": anchors] as NSDictionary,
+      "pageCount": 4, "width": geometry.width, "height": geometry.height, "regions": [], "anchors": anchors, "reading": []] as NSDictionary,
       sourceKey: "source", blockIDs: [], geometry: geometry)
   }
 
@@ -64,6 +64,32 @@ final class DocumentLinkNavigationTests: XCTestCase {
     let value = try await evaluate("return String(document.querySelectorAll('.document-layout-preparation').length);", web)
     XCTAssertEqual(value, "0")
     XCTAssertEqual(source.preparationCount, 1)
+  }
+
+  func testMeasuredReadingAddressKeepsTheSameTextAfterPrecedingSourceInsertion() async throws {
+    var document = book()
+    let first = try surface(document)
+    defer { first.close() }
+    try await ready(first.coordinator)
+    let oldLayout = try XCTUnwrap(first.coordinator.payload?.source.layout)
+    let page = try XCTUnwrap(oldLayout.anchorPages["раздел:β"])
+    let anchor = try XCTUnwrap(oldLayout.reading.anchor(page: page, blockOrder: document.blocks.map(\.id)))
+    XCTAssertFalse(anchor.nodeID.isEmpty)
+    let originalBody = try XCTUnwrap(document.blocks.first { $0.id == "body" }).source
+    XCTAssertTrue(document.replaceBlockSource(id: "body", source:
+      String(repeating: "A new preceding paragraph changes page boundaries.\n\n", count: 80) + originalBody, actor: UUID()))
+    let next = try surface(document)
+    defer { next.close() }
+    try await ready(next.coordinator)
+    let layout = try XCTUnwrap(next.coordinator.payload?.source.layout)
+    let restoredPage = try XCTUnwrap(layout.reading.page(for: anchor,
+      survivingBlockOrder: document.blocks.map(\.id), regions: layout.regions))
+    XCTAssertGreaterThan(restoredPage, page)
+    XCTAssertTrue(layout.reading.segments.contains { $0.pageIndex == restoredPage && $0.nodeID == anchor.nodeID },
+      "The new page contains the actual old text, not the old numeric page")
+    let source = try XCTUnwrap(next.coordinator.payload?.source)
+    await source.discardIdlePreparation()
+    XCTAssertEqual(layout.reading.page(for: anchor, survivingBlockOrder: document.blocks.map(\.id), regions: layout.regions), restoredPage)
   }
 
   func testRepeatedHeadingsAllocateTheirAddressesWithLinearWork() async throws {

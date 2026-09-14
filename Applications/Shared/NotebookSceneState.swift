@@ -9,6 +9,7 @@ struct NotebookSceneState: Sendable {
     let document: DocumentDocument
     let state: DocumentStateJournal
     let drafts: [DocumentEditingSession]
+    var reading: DocumentReadingPosition? = nil
   }
 
   /// An accepted opening is a separate read capability from a closed cover's
@@ -22,7 +23,7 @@ struct NotebookSceneState: Sendable {
         throw NotebookStorageError.corruptRecord("opened document source")
       }
       return try .init(header: live.header, document: document, state: state,
-        drafts: store.documentEditingSessions(documentID: documentID))
+        drafts: store.documentEditingSessions(documentID: documentID), reading: store.readDocumentReadingPosition(documentID))
     }
   }
 
@@ -33,6 +34,7 @@ struct NotebookSceneState: Sendable {
   let documents: [UUID: DocumentDocument]
   let states: [UUID: DocumentStateJournal]
   let drafts: [DocumentEditingSession]
+  var reading: DocumentReadingPosition? = nil
   let hierarchy: BoardHierarchy
   let boardContentRevisions: [UUID: String]
   let ink: SpatialInkJournal
@@ -230,6 +232,7 @@ struct NotebookSceneState: Sendable {
       return try Self(header: header, workspace: workspace, pages: pages, pagePositions: pagePositions,
         documents: live.documents, states: live.states,
         drafts: needsSelectedContent && selected.kind == .document ? store.documentEditingSessions(documentID: selected.id) : [],
+        reading: selected.kind == .document ? store.readDocumentReadingPosition(selected.id) : nil,
         hierarchy: hierarchy, boardContentRevisions: boardContentRevisions, ink: live.ink, inkSurfaces: Set(surfaces), presence: presence, paperSizes: paper,
         coverage: coverage, truncatedBoards: truncated, completeCoverElementOwners: completeCoverElementOwners, missingPinnedElements: missingPinnedElements,
         missingPinnedItems: missingPinnedItems, transferredPinnedItems: transferredPinnedItems)

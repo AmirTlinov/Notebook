@@ -925,9 +925,9 @@ struct SpatialWorkspaceView: View {
   ) {
     guard let document = model.documents[documentID],
       layout.pageCount(for: NotebookAppModel.documentPageSourceRevision(document)) != nil else { return }
-    if documentPageLayouts[documentID] != layout {
-      documentPageLayouts[documentID] = layout
-    }
+    model.acceptDocumentReadingLayout(layout, documentID: documentID)
+    let summary = DocumentPageLayout(pageCount: layout.pageCount, sourceRevision: layout.sourceRevision)
+    if documentPageLayouts[documentID] != summary { documentPageLayouts[documentID] = summary }
     guard let presence = model.presence,
       presence.mode == .document,
       presence.focusedItemID == documentID,
@@ -1490,7 +1490,7 @@ struct SpatialWorkspaceView: View {
       if target.kind == .document, let id = reference.elementID, let document = model.documents[itemID], let state = model.documentStates[itemID],
         let region = DocumentRenderRegistry.shared.regions(document:document,state:state).first(where: { $0.id == id }) { pageIndex = region.pageIndex }
       let mode: WorkspaceSemanticMode = target.kind == .page ? .page : target.kind == .document ? .document : .cover
-      if mode == .document { model.prepareDocumentOpening(itemID, pageIndex: pageIndex, boardID: boardID) }
+      if mode == .document { model.prepareDocumentOpening(itemID, pageIndex: pageIndex, boardID: boardID, restoreReading: false) }
       // The reference is a requested destination. A camera settlement cannot
       // publish it as the native page before its physical landing.
       let actualPage = model.presence?.focusedItemID == itemID ? model.presence?.documentPageIndex ?? 0 : 0
@@ -1542,7 +1542,8 @@ struct SpatialWorkspaceView: View {
     let target = SessionPresence(
       boardID: previousPresence?.boardID ?? WorkspaceRoot.boardID,
       mode: openMode(for: itemID),
-      camera: SpatialCamera(center: center, scale: model.itemGeometry(itemID).fitScale(viewport: viewport)),
+      camera: itemKind(itemID) == .document ? model.documentReadingCamera(itemID, center: center, viewport: viewport)
+        : SpatialCamera(center: center, scale: model.itemGeometry(itemID).fitScale(viewport: viewport)),
       viewport: viewport,
       focusedItemID: itemID,
       openProgress: 1,

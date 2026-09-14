@@ -78,10 +78,16 @@ final class DocumentSnapshotCache {
 struct DocumentPageLayout: Equatable, Sendable {
   let pageCount: Int
   let sourceRevision: String?
+  let record: DocumentLayoutRecord?
 
-  init(pageCount: Int, sourceRevision: String? = nil) {
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.pageCount == rhs.pageCount && lhs.sourceRevision == rhs.sourceRevision && lhs.record === rhs.record
+  }
+
+  init(pageCount: Int, sourceRevision: String? = nil, record: DocumentLayoutRecord? = nil) {
     self.pageCount = max(1, pageCount)
     self.sourceRevision = sourceRevision
+    self.record = record
   }
 
   func pageCount(for sourceRevision: String) -> Int? {
@@ -1248,7 +1254,7 @@ final class DocumentWebCoordinator: NSObject,
         self.pageCount = max(1, pageCount)
         onPageLayout(
           DocumentPageLayout(pageCount: pageCount,
-            sourceRevision: "\(payload.source.stamp.actor):\(payload.source.stamp.counter)")
+            sourceRevision: "\(payload.source.stamp.actor):\(payload.source.stamp.counter)", record: payload.source.layout)
         )
       }
       appliedPageIndex = nil

@@ -247,6 +247,7 @@ final class DocumentLayoutRecord {
   let width: Double
   let height: Double
   let anchorPages: [String: Int]
+  let reading: DocumentReadingIndex
   private let pageRanges: [Int: Range<Int>]
   // A raster or an address reader can outlive the source preparation. The
   // shared layout, not a temporary task or registry cache, owns this allocation.
@@ -300,6 +301,12 @@ final class DocumentLayoutRecord {
         anchors[name] = page
       }
     }
+    let readingRows: [[Any]]
+    if scope == "source" {
+      guard let rows = receipt["reading"] as? [[Any]] else { throw DocumentSessionError.invalidLayout }
+      readingRows = rows
+    } else { readingRows = [] }
+    self.reading = try .init(rows: readingRows, blockIDs: blockIDs, pageCount: count, scale: geometry.height / height)
     self.anchorPages = anchors
     self.pageCount = count; self.regions = regions; self.pageRanges = pageRanges
     self.width = geometry.width; self.height = geometry.height
@@ -308,12 +315,12 @@ final class DocumentLayoutRecord {
 
   func matches(_ other: DocumentLayoutRecord, pageIndex: Int? = nil) -> Bool {
     let expectedRegions = regions[pageIndex.map { pageRanges[$0] ?? 0..<0 } ?? regions.startIndex..<regions.endIndex]
-    guard (pageIndex != nil || anchorPages == other.anchorPages),
+    let tolerance = 1.0 / 32
+    guard (pageIndex != nil || (anchorPages == other.anchorPages && reading.matches(other.reading, tolerance: tolerance))),
       pageCount == other.pageCount, width == other.width, height == other.height,
       expectedRegions.count == other.regions.count else { return false }
     // Transform round trips may differ by two WebKit layout subpixels. This
     // tolerance never changes the accepted record or grows with page count.
-    let tolerance = 1.0 / 32
     return zip(expectedRegions, other.regions).allSatisfy { left, right in
       left.id == right.id && left.pageIndex == right.pageIndex
         && abs(left.frame.x - right.frame.x) <= tolerance && abs(left.frame.y - right.frame.y) <= tolerance

@@ -656,7 +656,7 @@
             originX:origin.x,originY:origin.y,regions},()=>preparation.cancelled);
           phase('fragmentIndex');
           const receipt={sourceKey:source.key,layoutScope:'source',layoutCanonical:true,width,height,pageCount,regions,
-            anchors:compiler.anchors,indexedNodes:compiler.indexedNodes,indexedEdges:compiler.indexedEdges,diagnostics:preparation.diagnostics,mathStyles,preparationPhasesMS};
+            anchors:compiler.anchors,reading:compiler.reading,indexedNodes:compiler.indexedNodes,indexedEdges:compiler.indexedEdges,diagnostics:preparation.diagnostics,mathStyles,preparationPhasesMS};
           const layoutJSON=JSON.stringify(receipt),layoutBytes=new TextEncoder().encode(layoutJSON).length;
           if(layoutBytes>16*1024*1024)throw new Error('document_layout_packet_budget');
           Object.assign(preparation,{receipt,compiler,layoutJSON,pendingPage:null});

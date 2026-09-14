@@ -199,6 +199,12 @@ final class NotebookAppModel {
 
   private(set) var documents: [UUID: DocumentDocument] = [:] { didSet { collaborationReadEpoch &+= 1; validateDocumentPageNavigation(); scheduleScenePreparation() } }
   private(set) var documentEditingSessions: [DocumentEditingSession] = []
+  private(set) var documentReadingPositions: [UUID: DocumentReadingPosition] = [:]
+  @ObservationIgnored private var documentReadingLayout: (id: UUID, stamp: VersionStamp, record: DocumentLayoutRecord)?
+  @ObservationIgnored private var readingRestoreDocument: UUID?
+  @ObservationIgnored private var readingSuppressedDocument: UUID?
+  @ObservationIgnored private var readingReturnPosition: DocumentReadingPosition?
+  @ObservationIgnored private var readingRestoreTarget: (id: UUID, stamp: VersionStamp, page: Int)?
   @ObservationIgnored private var documentDraftEpoch: UInt64 = 0
   private struct DocumentOpeningRequest: Sendable {
     let id = UUID()
@@ -420,6 +426,7 @@ final class NotebookAppModel {
           })
           boardHierarchy = state.hierarchy
           boardContentRevisions = state.boardContentRevisions
+          admitDocumentReading(state.reading)
           if loadsDocument {
             documents = state.documents
             documentStates = state.states
@@ -493,6 +500,7 @@ final class NotebookAppModel {
     let id = UUID()
     let presence: SessionPresence
     let pageID: UUID?
+    var reading: DocumentReadingPosition? = nil
   }
   private(set) var returnPlaces: [ReturnPlace] = []
   private(set) var requestedReturn: ReturnPlace?
@@ -832,7 +840,7 @@ final class NotebookAppModel {
       switch owner {
       case .page, .document, .documentState, .board, .spatialInk, .nativeText, .elementState:
         self?.refreshCommittedHeader()
-      case nil, .presence, .inputActivity, .documentDraft, .fileDraft, .fileWindow, .chatPanel, .runCommand: break
+      case nil, .presence, .inputActivity, .documentDraft, .documentReading, .fileDraft, .fileWindow, .chatPanel, .runCommand: break
       }
 
     }
@@ -1321,10 +1329,13 @@ final class NotebookAppModel {
   /// selected. Camera samples and the eventual native mount are consumers of
   /// this request, not prerequisites for reading its source.
   @discardableResult
-  func prepareDocumentOpening(_ documentID: UUID, pageIndex: Int, boardID: UUID? = nil) -> Task<Void, Never>? {
+  func prepareDocumentOpening(_ documentID: UUID, pageIndex: Int, boardID: UUID? = nil, restoreReading: Bool = true) -> Task<Void, Never>? {
     guard !isClosing, pageIndex >= 0, !isItemBeingDeleted(documentID),
       let presence, presence.selectedItemID == documentID,
       let workspaceHeader else { return nil }
+    readingRestoreDocument = restoreReading ? documentID : nil
+    readingSuppressedDocument = restoreReading ? nil : documentID
+    readingRestoreTarget = nil
     // A resolved reference may be outside the camera cache or on another board.
     // Its addressed SQL read validates kind and owner without moving the camera.
     let boardID = boardID ?? presence.boardID
@@ -1372,6 +1383,7 @@ final class NotebookAppModel {
             opened.header.cursor >= (self.workspaceHeader?.cursor ?? 0) else { continue }
           documents[request.documentID] = opened.document
           documentStates[request.documentID] = opened.state
+          admitDocumentReading(opened.reading)
           if read.draftEpoch == documentDraftEpoch {
             documentEditingSessions.removeAll { $0.edit.documentID == request.documentID }
             documentEditingSessions += opened.drafts
@@ -1648,7 +1660,12 @@ final class NotebookAppModel {
   ) {
     guard presence.isValid else { return }
     if presence.mode != .document || presence.focusedItemID != self.presence?.focusedItemID || presence.openProgress <= 0 {
+      rememberDocumentReading()
       documentPageSelection = nil; documentPageNavigationStatus = nil; documentPageController = nil
+      if documentReadingLayout?.id != presence.focusedItemID || (settled && presence.openProgress <= 0) {
+        documentReadingLayout = nil
+      }
+      readingRestoreTarget = nil
     }
     let resolved: SessionPresence
     let selectionItem = presence.selectedItemID ?? self.presence?.selectedItemID
@@ -1690,6 +1707,10 @@ final class NotebookAppModel {
     #else
       if settled { schedulePresenceSave(resolved) }
     #endif
+    if settled {
+      restoreDocumentReadingIfPossible()
+      rememberDocumentReading()
+    }
     if settled && externalReloadPending { externalReloadPending = false; reloadExternalChanges() }
   }
 
@@ -1713,6 +1734,96 @@ final class NotebookAppModel {
     return activation.destination
   }
 
+  func documentReadingPosition(_ documentID: UUID) -> DocumentReadingPosition? {
+    documentReadingPositions[documentID]
+  }
+
+  private func admitDocumentReading(_ reading: DocumentReadingPosition?) {
+    guard let reading, documentReadingPositions[reading.documentID] == nil else { return }
+    documentReadingPositions[reading.documentID] = reading
+  }
+
+  func documentReadingCamera(_ documentID: UUID, center: WorldPoint, viewport: SpatialPoint) -> SpatialCamera {
+    let fit = itemGeometry(documentID).fitScale(viewport: viewport)
+    guard let reading = documentReadingPositions[documentID],
+      let position = center.addressOffset(x: reading.centerOffset.x, y: reading.centerOffset.y) else {
+      return .init(center: center, scale: fit)
+    }
+    return .init(center: position, scale: max(SpatialCamera.minimumScale, fit * reading.zoomRatio))
+  }
+
+  /// Source measurement provides content addresses, never a fabricated landing.
+  /// Only the open document retains this charged record; the view keeps a summary.
+  func acceptDocumentReadingLayout(_ layout: DocumentPageLayout, documentID: UUID) {
+    guard let document = documents[documentID], let record = layout.record,
+      layout.pageCount(for: Self.documentPageSourceRevision(document)) != nil,
+      presence?.focusedItemID == documentID, (presence?.openProgress ?? 0) > 0 else { return }
+    documentReadingLayout = (documentID, document.contentStamp, record)
+    inputGate.performAfterPageContact { [weak self] in self?.restoreDocumentReadingIfPossible() }
+  }
+
+  private func restoreDocumentReadingIfPossible() {
+    guard let presence, presence.mode == .document, presence.openProgress >= 0.999,
+      presencePhase == .settled, !inputGate.isActive,
+      let id = presence.focusedItemID, readingRestoreTarget == nil,
+      readingSuppressedDocument != id, documentPageSelection == nil,
+      let document = documents[id], let measured = documentReadingLayout,
+      measured.id == id, measured.stamp == document.contentStamp else { return }
+    guard let saved = readingReturnPosition ?? documentReadingPositions[id] else {
+      readingRestoreDocument = nil
+      return
+    }
+    guard
+      saved.documentID == id,
+      readingRestoreDocument == id || saved.sourceStamp != document.contentStamp || readingReturnPosition != nil,
+      let page = measured.record.reading.page(for: saved.anchor,
+        survivingBlockOrder: document.blocks.map(\.id), regions: measured.record.regions) else { return }
+    readingRestoreDocument = nil; readingReturnPosition = nil
+    if page != presence.documentPageIndex {
+      readingRestoreTarget = (id, document.contentStamp, page)
+      _ = selectDocumentPage(page, documentID: id, restoresReading: true)
+    }
+    // Reflow preserves zoom; reopening also restores the book-relative camera.
+    guard let center = boardHierarchy?.board(presence.boardID)?.focusedCenter(of: id),
+      let cameraCenter = center.addressOffset(x: saved.centerOffset.x, y: saved.centerOffset.y) else { return }
+    let camera = SpatialCamera(center: cameraCenter, scale: max(SpatialCamera.minimumScale,
+      itemGeometry(id).fitScale(viewport: presence.viewport) * saved.zoomRatio))
+    if camera != presence.camera {
+      applyPresence(.init(boardID: presence.boardID, mode: presence.mode, camera: camera,
+        viewport: presence.viewport, focusedItemID: id, openProgress: presence.openProgress,
+        documentPageIndex: presence.documentPageIndex, selectedItemID: presence.selectedItemID), settled: true)
+    }
+  }
+
+  private func rememberDocumentReading() {
+    guard let presence, presence.mode == .document, presence.openProgress >= 0.999,
+      let id = presence.focusedItemID, readingRestoreDocument != id,
+      readingRestoreTarget?.id != id, let document = documents[id],
+      let measured = documentReadingLayout, measured.id == id, measured.stamp == document.contentStamp,
+      let center = boardHierarchy?.board(presence.boardID)?.focusedCenter(of: id) else { return }
+    let geometry = itemGeometry(id), offset = center.delta(to: presence.camera.center)
+    // At fit, the beginning of the sheet is the reading address. Under zoom,
+    // retain the nearest visible text segment rather than the old page number.
+    let visibleTop = max(0, geometry.height / 2 + offset.y - presence.viewport.y / (2 * presence.camera.scale))
+    let order = document.blocks.map(\.id)
+    let anchor = measured.record.reading.anchor(page: presence.documentPageIndex, blockOrder: order, y: visibleTop)
+      ?? measured.record.regions.first(where: { $0.pageIndex == presence.documentPageIndex }).map {
+        DocumentReadingAnchor(blockID: $0.id, nodeID: "", textOffset: 0, offset: 0, blockOrder: order)
+      }
+    guard let anchor else { return }
+    let position = DocumentReadingPosition(documentID: id, sourceStamp: document.contentStamp, anchor: anchor,
+      zoomRatio: presence.camera.scale / geometry.fitScale(viewport: presence.viewport), centerOffset: offset)
+    guard position.isValid, documentReadingPositions[id] != position else { return }
+    documentReadingPositions[id] = position
+    // The addressed SQL read restores an evicted bookmark. This is a small
+    // current-working-set cache, not another archive-sized history reader.
+    if documentReadingPositions.count > 32 {
+      let keep = Set(documents.keys).union(returnPlaces.compactMap { $0.reading?.documentID }).union([id])
+      documentReadingPositions = documentReadingPositions.filter { keep.contains($0.key) }
+    }
+    enqueueStoreWrite(owner: .documentReading(id)) { try $0.saveDocumentReadingPosition(position) }
+  }
+
   static func documentPageSourceRevision(_ document: DocumentDocument) -> String {
     "\(document.contentStamp.actor):\(document.contentStamp.counter)"
   }
@@ -1721,12 +1832,16 @@ final class NotebookAppModel {
   /// actual page presence; the Mac sends the same request to that owner.
   @discardableResult
   func selectDocumentPage(_ pageIndex: Int, documentID: UUID,
-    publishesRequest: Bool = true) -> Int? {
+    publishesRequest: Bool = true, restoresReading: Bool = false) -> Int? {
     guard !isClosing, !isItemBeingDeleted(documentID), pageIndex >= 0,
       pageIndex <= DocumentPageSelectionRequest.maximumPageIndex,
       let document = documents[documentID], let presence,
       presence.mode == .document, presence.focusedItemID == documentID,
       presence.openProgress >= 0.999 else { return nil }
+    if !restoresReading {
+      readingRestoreDocument = nil; readingReturnPosition = nil; readingRestoreTarget = nil
+      readingSuppressedDocument = documentID
+    }
     if pageIndex == presence.documentPageIndex, documentPageSelection == nil {
       documentPageNavigationStatus = nil
       return pageIndex
@@ -1780,6 +1895,10 @@ final class NotebookAppModel {
       landing.pageIndex <= DocumentPageSelectionRequest.maximumPageIndex,
       let presence else { return false }
     documentPageLandingRevision = landing.revision
+    if let target = readingRestoreTarget, target.id == landing.documentID,
+      target.page == landing.pageIndex, documents[target.id]?.contentStamp == target.stamp {
+      readingRestoreTarget = nil
+    }
     // A is still the actual landing when B superseded its request. A may
     // publish that fact, but cannot clear B or restore an obsolete intent.
     if documentPageSelection?.id == landing.requestID {
@@ -1791,6 +1910,8 @@ final class NotebookAppModel {
         openProgress: presence.openProgress, documentPageIndex: landing.pageIndex,
         selectedItemID: presence.selectedItemID, notebookPageID: presence.notebookPageID), settled: true)
     }
+    rememberDocumentReading()
+    readingSuppressedDocument = nil
     return true
   }
 
@@ -3010,7 +3131,8 @@ final class NotebookAppModel {
     }
     if !replacesPendingShow, let presence,
       returnPlaces.last?.presence != presence {
-      returnPlaces.append(.init(presence: presence, pageID: presence.notebookPageID))
+      returnPlaces.append(.init(presence: presence, pageID: presence.notebookPageID,
+        reading: presence.focusedItemID.flatMap { documentReadingPositions[$0] }))
       returnPlaces = Array(returnPlaces.suffix(32))
     }
     requestedReference = .init(target:reference.target,elementID:reference.elementID,region:reference.region,
@@ -3143,6 +3265,10 @@ final class NotebookAppModel {
           viewport: viewport, focusedItemID: itemID, openProgress: adapted.openProgress,
           documentPageIndex: adapted.documentPageIndex, selectedItemID: itemID,
           notebookPageID: saved.mode == .page ? place.pageID : nil)
+      }
+      if destination.mode == .document, let reading = place.reading {
+        self.readingReturnPosition = reading; self.readingRestoreDocument = reading.documentID
+        self.readingSuppressedDocument = nil; self.readingRestoreTarget = nil
       }
       apply(destination) { [weak self] in
         guard let self, self.navigationGeneration == generation else { return }
@@ -3416,6 +3542,7 @@ final class NotebookAppModel {
     documents = state.documents
     documentStates = state.states
     documentEditingSessions = state.drafts
+    admitDocumentReading(state.reading)
     presence = state.presence
     alignWorkspaceSelection()
   }

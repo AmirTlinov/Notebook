@@ -15,6 +15,19 @@
       || !Array.isArray(regions)) throw new Error('document_fragment_invalid_geometry');
     const segmenter=new Intl.Segmenter('und',{granularity:'grapheme'});
     const range=document.createRange(), listValues=new WeakMap(), entries=new WeakMap(), tableColumns=new WeakMap();
+    // Prefix bounds are monotone in the horizontal page flow. A cut can start
+    // inside one text node; no off-page paragraph or source string is copied.
+    const boundary = (node, edge) => {
+      let low = 1, high = node.length + 1;
+      while (low < high) {
+        const mid = Math.floor((low + high) / 2);
+        range.setStart(node, 0); range.setEnd(node, mid);
+        if (range.getBoundingClientRect().right > edge) high = mid;
+        else low = mid + 1;
+      }
+      return low - 1;
+    };
+
     const regionsByPage=new Map();
     for(const region of regions) {
       if(!Number.isInteger(region.pageIndex)||region.pageIndex<0||region.pageIndex>=pageCount)throw new Error('document_fragment_invalid_geometry');
@@ -26,7 +39,14 @@
     const rootEntry={node:root,childrenByPage:new Map()}, stack=[];
     for(let index=root.childNodes.length-1;index>=0;index--)stack.push({node:root.childNodes[index],parent:rootEntry});
     let indexedNodes=0,indexedEdges=0,anchorBytes=0;
-    const anchors=new Map();
+    const anchors=new Map(),reading=[],blockOffsets=new Map(),blockOccurrences=new Map();
+    const fingerprint=text=>{
+      let a=2166136261,b=0x9e3779b9;
+      for(let i=0;i<text.length;i++){
+        const unit=text.charCodeAt(i);a=Math.imul(a^unit,16777619);b=Math.imul(b^unit,2246822519);
+      }
+      return (a>>>0).toString(16).padStart(8,'0')+(b>>>0).toString(16).padStart(8,'0');
+    };
     // This bounded DOM walk yields an actual browser task, not a chained timer.
     // Hidden WebKit timer throttling must not become part of source layout time.
     // The source owns exactly one channel and closes it on completion or refusal.
@@ -64,6 +84,28 @@
         }
         const entry={node,pages,childrenByPage:new Map()};
         entries.set(node,entry);
+        if(node.nodeType===Node.TEXT_NODE) {
+          const blockID=node.parentElement?.closest('[data-block-id]')?.dataset.blockId;
+          if(blockID) {
+            const textOffset=blockOffsets.get(blockID)||0;
+            blockOffsets.set(blockID,textOffset+node.length);
+            if(node.data.trim()&&pages.size) {
+              // Equal paragraphs have distinct content addresses. A preceding
+              // insertion must not resolve to an earlier identical paragraph
+              // merely because its absolute text offset is now closer.
+              if(!blockOccurrences.has(blockID))blockOccurrences.set(blockID,new Map());
+              const occurrences=blockOccurrences.get(blockID),contentID=fingerprint(node.data);
+              const occurrence=occurrences.get(contentID)||0;
+              occurrences.set(contentID,occurrence+1);
+              const nodeID=fingerprint(contentID+':'+occurrence);
+              for(const [page,rects] of pages) {
+                const left=originX+page*stride;
+                const start=pages.size===1?0:boundary(node,left),end=pages.size===1?node.length:boundary(node,left+width);
+                if(end>start)reading.push([blockID,nodeID,textOffset,start,end,page,Math.max(0,rects[0].y-originY)]);
+              }
+            }
+          }
+        }
         // A link names the original DOM, not whichever page fragment happens
         // to be mounted. Include zero-width named anchors and keep the first
         // occurrence of duplicate HTML IDs, just as the source document does.
@@ -120,18 +162,6 @@
       const admit=count=>{nodeCount+=count;if(nodeCount>maximumNodes)throw new Error('document_fragment_node_budget')};
       const cut=entry=>entry.pages.get(pageIndex)?.[0];
 
-    // Prefix bounds are monotone in the horizontal page flow. A cut can start
-    // inside one text node; no off-page paragraph or source string is copied.
-    const boundary = (node, edge) => {
-      let low = 1, high = node.length + 1;
-      while (low < high) {
-        const mid = Math.floor((low + high) / 2);
-        range.setStart(node, 0); range.setEnd(node, mid);
-        if (range.getBoundingClientRect().right > edge) high = mid;
-        else low = mid + 1;
-      }
-      return low - 1;
-    };
 
     const extract = entry => {
       const node=entry.node;
@@ -312,7 +342,7 @@
       return {format:1, sourceKey, pageIndex, width, height, contentTop, contentBottom, blockIDs, regions:pageRegions, html, nodeCount, utf8Bytes, visitedNodes};
     } finally { measurement.remove(); }
     };
-    return Object.freeze({compile,indexedNodes,indexedEdges,anchors:[...anchors].map(([name,pageIndex])=>({name,pageIndex}))});
+    return Object.freeze({compile,indexedNodes,indexedEdges,reading,anchors:[...anchors].map(([name,pageIndex])=>({name,pageIndex}))});
   };
 
   window.notebookDocumentFragments = Object.freeze({create});
