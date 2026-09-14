@@ -12,7 +12,7 @@ public struct AgentPinnedSource: Codable, Equatable, Sendable, Identifiable {
   public func withVisual(_ image: AgentPinnedImage?, unavailable: String? = nil) throws -> Self {
     var content = payload.object
     content["visual"] = .object(["status": .string(image == nil ? "unavailable" : "source_pixels"),
-      "reason": unavailable.map { .string(String($0.prefix(2_048))) } ?? .null])
+      "reason": image == nil ? (unavailable.map { .string(String($0.prefix(2_048))) } ?? .null) : .null])
     let value = Self(id: id, requestID: requestID, reference: reference, payload: .object(content), image: image)
     try value.validate(); return value
   }

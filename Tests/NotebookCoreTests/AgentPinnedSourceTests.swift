@@ -1,9 +1,31 @@
 import Foundation
+import CryptoKit
 import Testing
 @testable import NotebookCore
 
 @Suite("A pinned program contains the state of that physical block")
 struct AgentPinnedSourceTests {
+  @Test func availableSourcePixelsDoNotCarryTheFallbackUnavailableReason() throws {
+    let target = CollaborationTarget(kind: .page, id: UUID())
+    let region = PageRect(x: 0, y: 0, width: 1, height: 1)
+    let reference = CollaborationReference(target: target, region: region, revision: "source-at-send")
+    let source = AgentPinnedSource(id: reference.id, requestID: UUID(), reference: reference,
+      payload: .object(["reference": try .encode(reference)]))
+    let png = try #require(Data(base64Encoded:
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="))
+    let image = try AgentPinnedImage(referenceID: reference.id, sourceRevision: reference.revision,
+      region: region, worldOrigin: nil, pageIndex: nil, pixelWidth: 1, pixelHeight: 1,
+      pixelsPerPoint: 1, png: png, sha256: SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined())
+    let unavailable = try source.withVisual(nil, unavailable: "source_pixels_unavailable")
+    let available = try source.withVisual(image, unavailable: "source_pixels_unavailable")
+    #expect(unavailable.payload["visual"] == .object([
+      "status": .string("unavailable"), "reason": .string("source_pixels_unavailable")]))
+    #expect(available.payload["visual"] == .object(["status": .string("source_pixels"), "reason": .null]))
+    #expect(available.image == image)
+    #expect(available.reference == source.reference)
+    #expect(source.payload["visual"] == nil, "Adding image metadata cannot alter the original value")
+  }
+
   @Test(arguments: ["counter/a~b", "ABCDEF00-1234-4ABC-8DEF-1234567890AB"])
   func addressedStateIsFrozenWithoutDisclosingAnotherProgram(blockID: String) throws {
     let id = UUID(), actor = UUID(), requestID = UUID()
