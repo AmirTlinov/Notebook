@@ -22,20 +22,24 @@ extension EnvironmentValues {
 @MainActor
 final class PageTurnActivity {
   struct PreparationDemand: Equatable {
+    enum Presentation { case snapshot, live }
     let id: UUID
     let pageIndex: Int
+    let presentation: Presentation
   }
   private(set) var isTransitioning = false
   private(set) var preparationDemand: PreparationDemand?
+  private(set) var installedPreparation: PreparationDemand?
   private var observers: [UUID: @MainActor (Bool) -> Void] = [:]
   private var preparationObservers: [UUID: @MainActor () -> Void] = [:]
 
   /// The native page controller owns the one accepted landing still waiting
   /// for pixels. Repeated view updates preserve its identity; a new landing
   /// replaces it without making the currently installed page noninteractive.
-  func prepare(_ pageIndex: Int?) {
-    guard preparationDemand?.pageIndex != pageIndex else { return }
-    preparationDemand = pageIndex.map { PreparationDemand(id: UUID(), pageIndex: $0) }
+  func prepare(_ pageIndex: Int?, presentation: PreparationDemand.Presentation = .snapshot) {
+    guard preparationDemand?.pageIndex != pageIndex
+      || (pageIndex != nil && preparationDemand?.presentation != presentation) else { return }
+    preparationDemand = pageIndex.map { PreparationDemand(id: UUID(), pageIndex: $0, presentation: presentation) }
     for observer in Array(preparationObservers.values) { observer() }
   }
 
@@ -45,6 +49,14 @@ final class PageTurnActivity {
   }
 
   func removePreparationObserver(_ id: UUID) { preparationObservers[id] = nil }
+
+  /// Native completion precedes the SwiftUI current-page update. Retain that
+  /// exact prepared surface across the gap, not a guess based on host lifetime.
+  func didInstall(_ demand: PreparationDemand?) {
+    guard installedPreparation != demand else { return }
+    installedPreparation = demand
+    for observer in Array(preparationObservers.values) { observer() }
+  }
 
   /// Native owners consult this value in the same event that accepts a curl.
   /// Publishing SwiftUI state later must not permit a capture or a reparent in

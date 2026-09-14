@@ -35,6 +35,8 @@ final class PageTurnSelectionTests: XCTestCase {
     request = .init(id: UUID(), documentID: documentID, sourceRevision: "document-source", pageIndex: 7)
     configure()
     let ready = try XCTUnwrap(readiness[7])
+    XCTAssertEqual(ready.activity?.preparationDemand?.presentation, .live,
+      "A distant document request does not require the page-curl snapshot path")
     ready.failed(.init(kind: .snapshotPending, message: "The requested capture is temporarily unavailable") { retries += 1 })
     let failedDeadline = ContinuousClock.now + .seconds(2)
     while status?.phase != .failed, ContinuousClock.now < failedDeadline { await Task.yield() }

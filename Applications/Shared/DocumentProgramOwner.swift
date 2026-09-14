@@ -169,8 +169,14 @@ final class DocumentProgramOwner {
   private var paperTransfer: PaperTransfer?
   private var passive: DocumentWebCoordinator?
   private let passiveHost = DocumentWebHost()
-  private enum PassiveStage { case idle, preparing, capturing }
+  private enum PassiveStage { case idle, preparing, capturing, staged }
   private var passiveStage = PassiveStage.idle
+  private struct StagedPaper {
+    let entryID: UUID
+    let token: String
+    let demandID: UUID
+  }
+  private var stagedPaper: StagedPaper?
   private var source: DocumentSourceSnapshot?
   private var programs: [String: DocumentBlockRuntime] = [:]
   private var pausedPrograms: [String: PausedProgram] = [:]
@@ -342,7 +348,11 @@ final class DocumentProgramOwner {
     if mountedID != id {
       let geometry = WorkspaceItemGeometry.document(input.document.paperSize)
       host.configure(size: .init(width: geometry.width, height: geometry.height), interactive: false)
-      if let picture = picture(for: entry) { host.installSnapshot(picture.raster); entry.publishReadiness(true) }
+      if hasStagedPaper(for: entry) { entry.publishReadiness(true) }
+      else if requestsLivePaper(for: entry) {
+        entry.publishReadiness(false)
+      }
+      else if let picture = picture(for: entry) { host.installSnapshot(picture.raster); entry.publishReadiness(true) }
       else { host.showLoading(); entry.publishReadiness(false) }
     }
     source?.retainPage(input.pageIndex, hostID: id)
@@ -366,6 +376,11 @@ final class DocumentProgramOwner {
     if work != nil || passive != nil { observe("document_work_interrupt") }
     work?.cancel(); work = nil; workID = nil
     captureTail?.cancel(); captureTail = nil; captureID = nil
+    if let stagedPaper, let entry = entries[stagedPaper.entryID], hasStagedPaper(for: entry),
+      entry.input.isCurrent || preparationDemand?.id == stagedPaper.demandID
+        || entry.activity?.installedPreparation?.id == stagedPaper.demandID
+        || (preparationDemand == nil && entry.activity?.isTransitioning == true) { return }
+    if stagedPaper != nil { retirePassiveRenderer(); return }
     let sourceChanged = current.map { current in
       passive?.payload.map { !$0.source.matches(current.input.document) } ?? false
     } ?? false
@@ -374,13 +389,15 @@ final class DocumentProgramOwner {
   }
 
   private func retirePassiveRenderer() {
+    if let stagedPaper, let entry = entries[stagedPaper.entryID] { entry.publishReadiness(false) }
+    stagedPaper = nil
     passive?.offerIdleReclamation(nil)
     passive?.invalidate(); passive = nil; passiveStage = .idle
     passiveHost.removeFromSuperview()
   }
 
   private func offerPassiveRenderer(_ renderer: DocumentWebCoordinator) {
-    guard passive === renderer else { return }
+    guard passive === renderer, stagedPaper == nil else { return }
     passiveStage = .idle
     renderer.releasePreparedPageDemand()
     renderer.offerIdleReclamation { [weak self, weak renderer] in
@@ -393,6 +410,11 @@ final class DocumentProgramOwner {
     let latest = stateOwner?.activity?.preparationDemand
     guard preparationDemand != latest else { return }
     preparationDemand = latest
+    if latest?.presentation == .live {
+      for entry in entries.values where requestsLivePaper(for: entry) && !hasStagedPaper(for: entry) {
+        entry.publishReadiness(false)
+      }
+    }
     observe("document_preparation_target", page: latest?.pageIndex,
       reason: latest == nil ? "retired" : "accepted")
     // Current paper preparation and accepted input keep their owner. Only an
@@ -550,6 +572,20 @@ final class DocumentProgramOwner {
       }
       try Task.checkCancellation()
       guard !inputLocked, entry.input.token == input.token else { return }
+      if hasStagedPaper(for: entry), let incoming = passive {
+        // The non-curl destination already owns canonical pixels in its native
+        // container. Exchange the two existing paper coordinators; do not render
+        // the destination again or manufacture a full-page bridge snapshot.
+        let outgoing = paper!
+        stagedPaper = nil; passive = nil
+        paper = incoming
+        host.installPreparationHost(passiveHost, size: physicalSize(input))
+        outgoing.holdsEditingOwnership = false
+        outgoing.mount(in: passiveHost, physicalSize: physicalSize(input), isInteractive: false, priority: .visible)
+        passive = outgoing; offerPassiveRenderer(outgoing)
+        paperTransfer = nil
+        observe("document_live_target_adopted", entryID: entry.id, page: input.pageIndex, renderer: incoming)
+      }
       // Blur/draft flushing may have yielded while SwiftUI refreshed callbacks
       // for this same source token. Configure from the current entry so that
       // resuming preparation cannot restore the pre-await navigation closure.
@@ -578,15 +614,22 @@ final class DocumentProgramOwner {
         // same runtime. A replaced/failed renderer cannot keep a departed one.
         paperTransfer = nil
       }
-      try await ready(paper, token: input.token, allowsEditor: true)
+      try await paper.awaitPresentation(token: input.token, allowsEditor: true)
     } else if current == nil, source == nil {
       let renderer = passiveRenderer(in: host, input: input)
       configure(renderer, input: input, page: input.pageIndex)
       renderer.mount(in: passiveHost, physicalSize: physicalSize(input), isInteractive: false, priority: .visible)
-      try await ready(renderer, token: input.token)
+      try await renderer.awaitPresentation(token: input.token)
     }
     guard let layout = source?.layout else { return }
     try Task.checkCancellation()
+    // A staged landing is held until UIKit completes its native handoff. It
+    // cannot be reused for a speculative neighbour while selection catches up.
+    if let stagedPaper, let staged = entries[stagedPaper.entryID], hasStagedPaper(for: staged) {
+      if preparationDemand?.id == stagedPaper.demandID || staged.activity?.isTransitioning == true
+        || staged.activity?.installedPreparation?.id == stagedPaper.demandID { return }
+      retirePassiveRenderer()
+    }
     await retireOutsideWindow()
     guard !stopped else { return }
     if let requestedProgramID, !gestureLocked {
@@ -635,9 +678,30 @@ final class DocumentProgramOwner {
         configure(renderer, input: candidate.input, page: candidate.input.pageIndex)
         landingTrace = renderer.pagePreparationTrace
         measurements?.observeLanding(landingTrace, stage: .preparing)
-        renderer.mount(in: passiveHost, physicalSize: physicalSize(candidate.input), isInteractive: false, priority: .visible)
-        try await ready(renderer, token: token)
+        let liveDemand = preparationDemand.flatMap { demand -> PageTurnActivity.PreparationDemand? in
+          guard demand.presentation == .live, demand.pageIndex == candidate.input.pageIndex,
+            layout.blockIDs(on: [candidate.input.pageIndex]).intersection(source?.programIDs ?? []).isEmpty else { return nil }
+          return demand
+        }
+        // A cut of a shared/tall program still needs its immutable picture
+        // during a transition. Ordinary paper can transfer the prepared WK.
+        let preparationHost = liveDemand == nil ? passiveHost : (candidate.host ?? passiveHost)
+        renderer.preservesFallback = true
+        renderer.mount(in: preparationHost, physicalSize: physicalSize(candidate.input), isInteractive: false, priority: .visible)
+        try await renderer.awaitPresentation(token: token)
         observe("passive_page_canonical_ready", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
+        if let liveDemand {
+          try Task.checkCancellation()
+          guard preparationDemand == liveDemand, entries[candidate.id] === candidate, candidate.input.token == token,
+            candidate.host === preparationHost else { throw CancellationError() }
+          stagedPaper = .init(entryID: candidate.id, token: token, demandID: liveDemand.id)
+          passiveStage = .staged
+          preparationHost.removeFallback(); preparationHost.removeLoading(); preparationHost.removeFailure()
+          measurements?.observeLanding(landingTrace, stage: .completed)
+          observe("document_live_target_prepared", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
+          candidate.publishReadiness(true)
+          return
+        }
         passiveStage = .capturing
         measurements?.observeLanding(landingTrace, stage: .capturing)
         let raster = try await capture(candidate, using: renderer)
@@ -669,6 +733,19 @@ final class DocumentProgramOwner {
   private func physicalSize(_ input: DocumentPagePresentation) -> CGSize {
     let geometry = WorkspaceItemGeometry.document(input.document.paperSize)
     return .init(width: geometry.width, height: geometry.height)
+  }
+
+  private func hasStagedPaper(for entry: Entry) -> Bool {
+    guard let stagedPaper, stagedPaper.entryID == entry.id, stagedPaper.token == entry.input.token,
+      let passive, passive.payload?.renderToken == entry.input.token, passive.hasCanonicalPixels,
+      let web = passive.webView, entry.host?.ownsSurface(web) == true else { return false }
+    return true
+  }
+
+  private func requestsLivePaper(for entry: Entry) -> Bool {
+    guard preparationDemand?.presentation == .live, preparationDemand?.pageIndex == entry.input.pageIndex,
+      let source, let layout = source.layout else { return false }
+    return layout.blockIDs(on: [entry.input.pageIndex]).intersection(source.programIDs).isEmpty
   }
 
   private func passiveRenderer(in host: DocumentWebHost, input: DocumentPagePresentation) -> DocumentWebCoordinator {
@@ -995,16 +1072,6 @@ final class DocumentProgramOwner {
     return raster
   }
 
-  private func ready(_ renderer: DocumentWebCoordinator, token: String, allowsEditor: Bool = false) async throws {
-    let deadline = ContinuousClock.now + .seconds(8)
-    while renderer.payload?.renderToken != token || !(renderer.hasCanonicalPixels || (allowsEditor && renderer.renderIsReady && renderer.isPresentingEditor)) {
-      try Task.checkCancellation()
-      if let error = renderer.acquisitionError { throw error }
-      guard !stopped, ContinuousClock.now < deadline else { throw SceneRenderError.snapshotPending("document_paper") }
-      try await Task.sleep(for: .milliseconds(5))
-    }
-  }
-
   private func requiredScale(_ entry: Entry) -> Double {
     let physical = physicalSize(entry.input)
     if let width = entry.input.snapshotPixelWidth { return Double(width) / physical.width }
@@ -1052,6 +1119,7 @@ final class DocumentProgramOwner {
   }
 
   private func needsPicture(_ entry: Entry) -> Bool {
+    if requestsLivePaper(for: entry), !hasStagedPaper(for: entry) { return true }
     guard let picture = picture(for: entry), let image = picture.raster.image.cgImage else { return true }
     // Both axes are quantized by the snapshot API. Compare integral pixel
     // requirements, not a fractional scale that rounded pixels cannot reach.
@@ -1151,6 +1219,7 @@ final class DocumentProgramOwner {
     stopped = true; work?.cancel(); work = nil; captureTail?.cancel(); captureTail = nil
     paper?.invalidate(); passive?.invalidate(); programs.values.forEach { $0.stop() }; programs.removeAll()
     paperTransfer = nil
+    stagedPaper = nil
     pictures.removeAll(); pausedPrograms.removeAll(); passiveHost.removeFromSuperview()
     if let reclamationOwner { resources.unregisterReclamationOwner(reclamationOwner); self.reclamationOwner = nil }
     DocumentRenderRegistry.shared.revokeLive(hostID: installationID, through: installationGeneration)

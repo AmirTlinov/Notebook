@@ -357,6 +357,60 @@ final class DocumentWebCoordinator: NSObject,
   var onBeforeRuntimeRestart: () -> Void = { }
   var onSurfaceRetirement: (WKWebView) -> Void = { _ in }
 
+  private struct PresentationWaiter {
+    let generation: UInt64
+    let token: String
+    let allowsEditor: Bool
+    let continuation: CheckedContinuation<Void, Error>
+  }
+  private var presentationWaiters: [UUID: PresentationWaiter] = [:]
+  var pendingPresentationRequestCount: Int { presentationWaiters.count }
+
+  /// Wait for this exact request, not a later page that happens to be ready.
+  /// Admission and execution keep their existing owners and deadlines; this
+  /// subscription adds no polling loop or competing overall timeout.
+  func awaitPresentation(token: String, allowsEditor: Bool = false) async throws {
+    try Task.checkCancellation()
+    let id = UUID(), expected = generation
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        presentationWaiters[id] = .init(generation: expected, token: token,
+          allowsEditor: allowsEditor, continuation: continuation)
+        resolvePresentationWaiters()
+        // An admitted surface can lose its canonical receipt without starting
+        // a new source frame (for example when leaving an editor). The same
+        // coordinator owns that execution deadline too; admission has its own.
+        if presentationWaiters[id] != nil, webView != nil { beginPreparationDeadline() }
+      }
+      try Task.checkCancellation()
+    } onCancel: {
+      Task { @MainActor [weak self] in
+        self?.presentationWaiters.removeValue(forKey: id)?.continuation.resume(throwing: CancellationError())
+      }
+    }
+  }
+
+  private func resolvePresentationWaiters() {
+    for (id, waiter) in presentationWaiters {
+      let result: Result<Void, Error>
+      if isInvalidated || waiter.generation != generation || payload?.renderToken != waiter.token {
+        result = .failure(CancellationError())
+      } else if let acquisitionError {
+        result = .failure(acquisitionError)
+      } else if hasCanonicalPixels || (waiter.allowsEditor && renderIsReady && isPresentingEditor) {
+        result = .success(())
+      } else if !waiter.allowsEditor && isPresentingEditor {
+        result = .failure(DocumentSnapshotWait.editorActive)
+      } else { continue }
+      presentationWaiters.removeValue(forKey: id)?.continuation.resume(with: result)
+    }
+  }
+
+  private func cancelPresentationWaiters() {
+    let pending = presentationWaiters; presentationWaiters.removeAll()
+    for waiter in pending.values { waiter.continuation.resume(throwing: acquisitionError ?? CancellationError()) }
+  }
+
   var canAdoptEmptyShell: Bool {
     !isInvalidated && payload == nil && renderSession == nil && acquisitionError == nil
       && webView != nil && surfaceLease?.isReleased == false && preparesCommonRuntime
@@ -569,7 +623,11 @@ final class DocumentWebCoordinator: NSObject,
       return
     }
     if !renderIsReady, !preservesFallback { host.showFallback(source: fallbackSource, resources: resources) }
-    if webView != nil { surfaceLease?.updatePriority(priority); requestedPriority = priority; return }
+    if webView != nil {
+      surfaceLease?.updatePriority(priority); requestedPriority = priority
+      if !hasCanonicalPixels && !isPresentingEditor { beginPreparationDeadline() }
+      return
+    }
     if let snapshotPixelWidth, acquisitionTask == nil, let payload,
       let producer = DocumentRenderRegistry.shared.rasterProducer(documentID: payload.documentID,
         token: payload.renderToken, resources: resources, excluding: hostID) {
@@ -611,6 +669,7 @@ final class DocumentWebCoordinator: NSObject,
         acquisitionTask = nil
         surfaceLease = lease
         recordPreparation(.admittedAt)
+        beginPreparationDeadline()
         let web = DocumentWebViewFactory.make(coordinator: self, lease: lease)
         host.install(web, size: self.physicalSize)
         host.configure(size: self.physicalSize, interactive: acceptsInput)
@@ -837,6 +896,7 @@ final class DocumentWebCoordinator: NSObject,
   }
 
   private func releaseWebSurface() {
+    cancelPresentationWaiters()
     let retiringWeb = webView
     if frameEvaluationID != nil, let retiringWeb, let borrow = try? surfaceLease?.borrow() {
       // End the renderer's logical program wait before returning its executor.
@@ -882,6 +942,7 @@ final class DocumentWebCoordinator: NSObject,
   }
 
   isolated deinit {
+    cancelPresentationWaiters()
     emptyShellDeadline?.cancel()
     payload?.source.releasePage(hostID: hostID, in: webView)
     clearSnapshotWait(); wakeSnapshotWaiters(unavailable: true)
@@ -956,6 +1017,7 @@ final class DocumentWebCoordinator: NSObject,
   ) {
     guard !isInvalidated else { return }
     let configuredAt = preparationRequestID == nil ? 0 : ProcessInfo.processInfo.systemUptime
+    defer { resolvePresentationWaiters() }
     self.preparationRequestID = preparationRequestID
     self.onRenderReady = onRenderReady
     self.onPageLayout = onPageLayout
@@ -1240,6 +1302,7 @@ final class DocumentWebCoordinator: NSObject,
       guard value.epoch > previous.epoch else { return }
     }
     pixelPresentation = value; canonicalPixelEpoch = nil
+    resolvePresentationWaiters()
     onPresentationChange()
     refreshLiveReceipt()
     if readerID != nil {
@@ -1415,6 +1478,12 @@ final class DocumentWebCoordinator: NSObject,
 
   private func setRenderReady(_ ready: Bool) {
     guard !isInvalidated else { return }
+    defer {
+      if (hasCanonicalPixels && !capturesSnapshot) || (renderIsReady && isPresentingEditor) {
+        preparationDeadlineTask?.cancel(); preparationDeadlineTask = nil
+      }
+      resolvePresentationWaiters()
+    }
     guard renderIsReady != ready else {
       refreshInputAdmission()
       if hasCanonicalPixels { recordPreparation(.canonicalReadyAt); wakeSnapshotWaiters() }
@@ -1422,9 +1491,6 @@ final class DocumentWebCoordinator: NSObject,
     }
     renderIsReady = ready
     if hasCanonicalPixels { recordPreparation(.canonicalReadyAt); wakeSnapshotWaiters() }
-    if ready, !capturesSnapshot || pixelPresentation?.kind == .editor {
-      preparationDeadlineTask?.cancel(); preparationDeadlineTask = nil
-    }
     if ready, snapshotPixelWidth == nil, !preservesFallback { host?.removeFallback() }
     refreshInputAdmission()
     onRenderReady(ready && (snapshotPixelWidth == nil || snapshotOnlyComplete))
@@ -1451,19 +1517,11 @@ final class DocumentWebCoordinator: NSObject,
       readerTask = Task { @MainActor [weak self] in
         guard let self else { throw CancellationError() }
         defer { if readerTaskID == taskID { readerTaskID = nil; readerTask = nil } }
-        let deadline = ContinuousClock.now + .seconds(8)
-        while true {
-          try Task.checkCancellation()
-          guard !isInvalidated, generation == expectedGeneration else { throw CancellationError() }
-          if !force, let cached = resources.retainRaster(for: source, minimumScale: minimumScale) {
-            readerPreparedLease?.release(); readerPreparedLease = cached; return
-          }
-          if let acquisitionError { throw acquisitionError }
-          if pixelPresentation?.kind == .editor { throw DocumentSnapshotWait.editorActive }
-          if hasCanonicalPixels, webView != nil { break }
-          guard ContinuousClock.now < deadline else { throw SceneRenderError.snapshotPending("document_snapshot_producer") }
-          try await Task.sleep(for: .milliseconds(20))
+        if !force, let cached = resources.retainRaster(for: source, minimumScale: minimumScale) {
+          readerPreparedLease?.release(); readerPreparedLease = cached; return
         }
+        try await awaitPresentation(token: payload.renderToken)
+        guard generation == expectedGeneration else { throw CancellationError() }
         guard let size = webView?.bounds.size else { throw CancellationError() }
         guard size.width > 0, size.height > 0 else { throw SceneRenderError.resourceLimit }
         let reservation = try await reserveSnapshot(source: source, pixelWidth: pixelWidth,

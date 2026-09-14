@@ -6,6 +6,97 @@ import XCTest
 
 @MainActor
 final class DocumentProgramOwnerTests: XCTestCase {
+  func testDistantLivePaperTransfersWithoutSnapshotOrASecondRender() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
+      "[Far](#far)\n\n" + String(repeating: "Physical paper keeps its canonical geometry and links.\n\n", count: 160)
+      + "\n\n# Far\n\n[Return](#body)")])
+    let measurements = DocumentPresentationRecorder(enabled: true)
+    let fixture = try ProgramFixture(document: document, measurements: measurements, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.canonicalPaper(in: 0) }
+    let original = try XCTUnwrap(fixture.paper(in: 0))
+    let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
+    let target = try XCTUnwrap(source.layout?.anchorPages["far"])
+    XCTAssertGreaterThan(target, 1)
+    let measurementCount = source.measurementCount
+    let request = measurements.request(documentID: document.id, pageIndex: target, cause: .page)
+    fixture.activity.prepare(target, presentation: .live)
+    let demand = try XCTUnwrap(fixture.activity.preparationDemand)
+    fixture.showPages(current: 0, neighbour: target); fixture.restorePresentation(1)
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true && fixture.canonicalPaper(in: 1) }
+    let incoming = try XCTUnwrap(fixture.paper(in: 1))
+    let before = try await incoming.evaluateJavaScript("notebookRenderer.pageReceipt()") as? [String: Any]
+    XCTAssertFalse(incoming === original)
+    XCTAssertFalse(fixture.hosts[1].hasSnapshot)
+    XCTAssertEqual(fixture.resources.rasterAdmission.pinnedCount, 0, "Live landing must not allocate a full-page bridge image")
+    XCTAssertTrue(fixture.hosts[0].isUserInteractionEnabled)
+    XCTAssertFalse(fixture.hosts[1].isUserInteractionEnabled)
+    let attempt = try XCTUnwrap(measurements.records.first { $0.id == request }?.landingAttempts.last)
+    XCTAssertEqual(attempt.stage, .completed); XCTAssertNil(attempt.captureStartedAt)
+
+    fixture.activity.update(true)
+    fixture.activity.didInstall(demand); fixture.activity.prepare(nil); fixture.activity.update(false)
+    fixture.retirePresentation(0)
+    let owner = DocumentProgramOwner.shared(documentID: document.id, resources: fixture.resources)
+    await owner.observePendingPresentationWork()
+    XCTAssertTrue(fixture.paper(in: 1) === incoming, "Native completion retains the target while SwiftUI current input is delayed")
+    fixture.select(1)
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.canonicalPaper(in: 1) && (incoming.navigationDelegate as? DocumentWebCoordinator)?.nativeInputIsReady(in: fixture.hosts[1]) == true
+    }
+    XCTAssertTrue(fixture.paper(in: 1) === incoming)
+    let after = try await incoming.evaluateJavaScript("notebookRenderer.pageReceipt()") as? [String: Any]
+    XCTAssertEqual(after?["generation"] as? String, before?["generation"] as? String)
+    XCTAssertEqual(after?["runtimeID"] as? String, before?["runtimeID"] as? String)
+    XCTAssertEqual(after?["renderToken"] as? String, fixture.currentToken)
+    XCTAssertEqual(source.measurementCount, measurementCount)
+    XCTAssertFalse(fixture.hosts[1].hasSnapshot)
+    let image = XCTAttachment(image: try fixture.windowImage())
+    image.name = "live-distant-paper-without-snapshot"; image.lifetime = .keepAlways; add(image)
+
+    fixture.activity.prepare(0, presentation: .live); fixture.restorePresentation(0)
+    let returning = try XCTUnwrap(fixture.activity.preparationDemand)
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.canonicalPaper(in: 0) }
+    XCTAssertTrue(fixture.paper(in: 0) === original, "Return reuses the other existing paper shell")
+    fixture.activity.update(true); fixture.activity.didInstall(returning)
+    fixture.select(0); fixture.activity.prepare(nil); fixture.activity.update(false)
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.canonicalPaper(in: 0) && (original.navigationDelegate as? DocumentWebCoordinator)?.nativeInputIsReady(in: fixture.hosts[0]) == true
+    }
+    XCTAssertTrue(fixture.preparationErrors.isEmpty, fixture.diagnostics)
+    fixture.close()
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.resources.activeWebSurfaceCount == 0 && fixture.resources.rasterAdmission.pinnedCount == 0
+    }
+  }
+
+  func testLiveTargetSupersessionAndCloseCancelItsQueuedAdmission() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
+      "# Current\n\n" + String(repeating: "An accepted target does not retire the visible page.\n\n", count: 180)
+      + "\n\n# Far")])
+    let resources = SceneRenderResources(maximumWebSurfaces: 1, reservedInteractiveSlots: 0)
+    let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.canonicalPaper(in: 0) }
+    let current = try XCTUnwrap(fixture.paper(in: 0))
+    let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources).source(document)
+    let target = try XCTUnwrap(source.layout?.anchorPages["far"])
+    XCTAssertGreaterThan(target, 2)
+    let owner = DocumentProgramOwner.shared(documentID: document.id, resources: resources)
+    fixture.activity.prepare(target, presentation: .live)
+    fixture.showPages(current: 0, neighbour: target); fixture.restorePresentation(1)
+    try await wait(message: { fixture.diagnostics }) { owner.pendingPassivePageIndex == target && resources.pendingWebRequestCount == 1 }
+    fixture.activity.prepare(target - 1, presentation: .live)
+    fixture.showPages(current: 0, neighbour: target - 1)
+    try await wait(message: { fixture.diagnostics }) { owner.pendingPassivePageIndex == target - 1 && resources.pendingWebRequestCount == 1 }
+    XCTAssertTrue(fixture.paper(in: 0) === current)
+    XCTAssertTrue(fixture.hosts[0].isUserInteractionEnabled)
+    XCTAssertFalse(fixture.ready[1] == true)
+    fixture.close()
+    try await wait(message: { fixture.diagnostics }) { resources.pendingWebRequestCount == 0 && resources.activeWebSurfaceCount == 0 }
+    XCTAssertTrue(fixture.preparationErrors.isEmpty, fixture.diagnostics)
+  }
+
   func testSnapshotDensityUsesTheNativeCameraProjectionAndKeepsPhysicalBounds() throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene), controller = UIViewController()

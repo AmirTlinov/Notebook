@@ -203,6 +203,7 @@ final class IPadPageTurnController: UIViewController,
 
     if ownerChanged {
       observe("page_turn_owner_changed")
+      pageTurnActivity.didInstall(nil)
       pageTurnActivity.prepare(nil)
       transitionRevision &+= 1
       setTransitioning(false, resetsPublication: true)
@@ -241,7 +242,7 @@ final class IPadPageTurnController: UIViewController,
         // Only the current source's canonical layout can resolve a remote or
         // early reference target. The first real page prepares that layout.
         pendingExternalIndex = resolvedDocumentTarget
-        pageTurnActivity.prepare(resolvedDocumentTarget.flatMap { $0 == displayedIndex ? nil : $0 })
+        prepareExternalTarget(resolvedDocumentTarget)
         publishDocumentStatus()
       }
     }
@@ -566,7 +567,7 @@ final class IPadPageTurnController: UIViewController,
     guard (0..<pageCount).contains(requestedIndex) else { return }
     let target = clamped(requestedIndex)
     pendingExternalIndex = target
-    pageTurnActivity.prepare(target == displayedIndex ? nil : target)
+    prepareExternalTarget(target)
     observe("page_turn_external_request", target: target)
     guard isViewLoaded, !isTransitioning, !isUpdatingContents else { return }
     guard target != displayedIndex else {
@@ -589,6 +590,7 @@ final class IPadPageTurnController: UIViewController,
     transitionRevision &+= 1
     let revision = transitionRevision
     let requestID = documentSelection?.id
+    let preparation = pageTurnActivity.preparationDemand
     let adjacent = abs(target - displayedIndex) == 1
     let direction: UIPageViewController.NavigationDirection =
       target > displayedIndex ? .forward : .reverse
@@ -605,7 +607,7 @@ final class IPadPageTurnController: UIViewController,
         animated: pageViewController.viewIfLoaded?.window != nil
       ) { [weak self] finished in
         guard let self, transitionRevision == revision else { return }
-        completeExternalSelection(target, finished: finished, requestID: requestID)
+        completeExternalSelection(target, finished: finished, requestID: requestID, preparation: preparation)
       }
     } else {
       UIView.transition(
@@ -620,12 +622,13 @@ final class IPadPageTurnController: UIViewController,
         )
       } completion: { [weak self] finished in
         guard let self, transitionRevision == revision else { return }
-        completeExternalSelection(target, finished: finished, requestID: requestID)
+        completeExternalSelection(target, finished: finished, requestID: requestID, preparation: preparation)
       }
     }
   }
 
-  private func completeExternalSelection(_ target: Int, finished: Bool, requestID: UUID?) {
+  private func completeExternalSelection(_ target: Int, finished: Bool, requestID: UUID?,
+    preparation: PageTurnActivity.PreparationDemand?) {
     observe("page_turn_external_completion", target: target, reason: finished ? "finished" : "interrupted")
     // A local landing may have published its selection while this external
     // target waited. Confirm the final target without overwriting a newer one.
@@ -637,7 +640,8 @@ final class IPadPageTurnController: UIViewController,
       lastTurnDirection = target > source ? 1 : -1
     }
     anticipatedIndex = nil
-    pageTurnActivity.prepare(pendingExternalIndex.flatMap { $0 == displayedIndex ? nil : $0 })
+    pageTurnActivity.didInstall(finished ? preparation : nil)
+    prepareExternalTarget(pendingExternalIndex)
     setTransitioning(false)
     retainNeededControllers()
     refreshRenderedPages()
@@ -664,6 +668,12 @@ final class IPadPageTurnController: UIViewController,
       return
     }
     requestExternalSelection(target)
+  }
+
+  private func prepareExternalTarget(_ page: Int?) {
+    let target = page.flatMap { $0 == displayedIndex ? nil : $0 }
+    let live = documentNavigation != nil && target.map { abs($0 - displayedIndex) > 1 } == true
+    pageTurnActivity.prepare(target, presentation: live ? .live : .snapshot)
   }
 
   private func transferToPageViewController(
