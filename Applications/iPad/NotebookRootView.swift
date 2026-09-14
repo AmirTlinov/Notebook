@@ -97,9 +97,9 @@ struct NotebookRootView: View {
           openPairing: { showsPairing = true },
           openHistory: { showsHistory = true })
       }
-      // The companion stays still during keyboard dismissal. Only the full
-      // editor and a native question need keyboard avoidance.
-      .ignoresSafeArea(.keyboard, edges: chat.expanded || chat.conversation?.requests.isEmpty == false ? [] : .bottom)
+      // Both task presentations use available window space. A widget may own
+      // the keyboard while the companion must remain reachable. The separate
+      // drawing GeometryReader above still owns the full physical viewport.
     }
 
     }
