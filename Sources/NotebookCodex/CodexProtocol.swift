@@ -7,6 +7,15 @@ public enum CodexBridgeError: String, Error, Sendable {
   case staleRequest, unsupportedRequest, invalidInput, acceptanceUnknown, signInRequired, externalOwnerUnavailable
 }
 
+/// A safe process-start diagnostic. No stderr, account data or command arguments
+/// enter the cross-device error. It never describes an established connection.
+public struct CodexStartupFailure: Error, Sendable, Equatable {
+  public let stage: String
+  public let exitCode: Int32?
+
+  init(exitCode: Int32?) { stage = "initialize"; self.exitCode = exitCode }
+}
+
 enum CodexProtocol {
   static let frameLimit = 8 * 1_048_576
   static let messageLimit = 32_768
@@ -96,6 +105,10 @@ extension CodexAppServerState {
     let tool = String(qualified).components(separatedBy: "__").last ?? String(qualified)
     let action: (running: String, completed: String, failed: String)
     switch tool {
+    case "notebook_context": action = ("Читает материал и внимание", "Материал и внимание прочитаны", "прочитать материал и внимание")
+    case "notebook_execute": action = ("Работает в Notebook", "Получен ответ Notebook", "выполнить действие в Notebook")
+    // These names still occur in saved conversations. They describe history;
+    // they are not tool registrations or an executable compatibility path.
     case "notebook_observe": action = ("Смотрит текущий материал", "Просмотрен текущий материал", "просмотреть текущий материал")
     case "notebook_read_board": action = ("Читает доску", "Доска прочитана", "прочитать доску")
     case "notebook_read_notebook": action = ("Читает тетрадь", "Тетрадь прочитана", "прочитать тетрадь")

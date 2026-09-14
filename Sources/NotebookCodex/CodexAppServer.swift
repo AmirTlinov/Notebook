@@ -11,8 +11,14 @@ public actor CodexAppServer {
   public nonisolated let events: AsyncStream<CodexBridgeEvent>
   private let output: AsyncStream<CodexBridgeEvent>.Continuation
   private let installation: CodexDesktopInstallation
+  let runtimeScope: CodexRuntimeScope?
   private var rpc: CodexRPC?
-  private var connection: Task<CodexRPC, Error>?
+  private struct Connection: Sendable {
+    let rpc: CodexRPC
+    let configuration: CodexScopedConfiguration?
+  }
+  private var scopedConfiguration: CodexScopedConfiguration?
+  private var connection: Task<Connection, Error>?
   private var generation = UUID()
   private var states: [String: CodexAppServerState] = [:]
   private var attaching: [String: Task<Void, Error>] = [:]
@@ -27,8 +33,9 @@ public actor CodexAppServer {
   private var processes: [UUID: RunningProcess] = [:]
   private var selections: Set<String> = []
 
-  public init(installation: CodexDesktopInstallation) {
+  public init(installation: CodexDesktopInstallation, scope: CodexRuntimeScope? = nil) {
     self.installation = installation
+    runtimeScope = scope
     let stream = AsyncStream<CodexBridgeEvent>.makeStream(bufferingPolicy: .bufferingNewest(16))
     events = stream.stream; output = stream.continuation
   }
@@ -62,6 +69,7 @@ public actor CodexAppServer {
 
   private func load(threadID: String, epoch: UUID) async throws {
     let rpc = try await connect()
+    try await validateThreadScope(threadID, rpc: rpc)
     if states.count >= 9 {
       guard let idle = states.keys.sorted().first(where: { !selections.contains($0) && !(voice?.threadID == $0 && voice?.phase != .ended) && states[$0]?.view.busy == false && states[$0]?.requests.isEmpty == true }) else { throw CodexBridgeError.busy }
       _ = try await rpc.request("thread/unsubscribe", params: .object(["threadId": .string(idle)]))
@@ -69,7 +77,8 @@ public actor CodexAppServer {
     }
     // No settings overrides, stale-turn inference or force takeover. A foreign active writer is a refusal.
     states[threadID] = CodexAppServerState(threadID: threadID)
-    let result = try await rpc.request("thread/resume", params: .object(["threadId": .string(threadID), "excludeTurns": .bool(true)]))
+    let parameters = try await scopedThreadParameters(["threadId": .string(threadID), "excludeTurns": .bool(true)], rpc: rpc)
+    let result = try await rpc.request("thread/resume", params: .object(parameters))
     guard epoch == generation, let thread = result["thread"], thread["id"] == .string(threadID),
       thread["canAcceptDirectInput"] == .bool(true) else { throw CodexBridgeError.externalOwnerUnavailable }
     if states[threadID]?.model == nil, let model = result["model"]?.string {
@@ -240,7 +249,7 @@ public actor CodexAppServer {
     if let current = voice, current.phase != .ended { try? await stopVoice(id: current.id) }
     generation = UUID()
     if voice?.isActive == true { voice?.phase = .failed; voice?.sdp = nil; voice?.error = "Mac отключён. Голос не возобновляется автоматически." }
-    let rpc = self.rpc; self.rpc = nil
+    let rpc = self.rpc; self.rpc = nil; scopedConfiguration = nil
     connection?.cancel(); connection = nil
     for task in attaching.values { task.cancel() }; attaching.removeAll()
     states.removeAll(); selections.removeAll()
@@ -369,24 +378,69 @@ public actor CodexAppServer {
 
   private func connect() async throws -> CodexRPC {
     if let rpc { return rpc }
-    if let connection { return try await connection.value }
-    let installation = installation, epoch = generation
+    if let connection {
+      let epoch = generation, result = try await connection.value
+      guard generation == epoch else { throw CodexBridgeError.disconnected }
+      rpc = result.rpc; scopedConfiguration = result.configuration; self.connection = nil
+      return result.rpc
+    }
+    let installation = installation, epoch = generation, scope = runtimeScope
     let task = Task { [weak self] in
       try installation.validate()
-      let channel = try CodexChannel.appServer(binary: installation.binary, directory: FileManager.default.homeDirectoryForCurrentUser)
+      let configuration: CodexScopedConfiguration?
+      if let scope {
+        let bootstrap = try scope.bootstrapConfiguration(installation: installation)
+        let discovery = CodexRPC(channel: try CodexChannel.appServer(binary: installation.binary,
+          directory: scope.directory, configuration: bootstrap.arguments()))
+        do {
+          // Read-only bootstrap has no event subscriptions, threads or model work.
+          try await discovery.start()
+          let effective = try await discovery.request("config/read", params: .object([
+            "includeLayers": .bool(false), "cwd": .string(scope.directory.path)]))
+          configuration = try bootstrap.disablingInheritedServers(in: effective)
+          await discovery.stop()
+        } catch { await discovery.stop(); throw error }
+      } else { configuration = nil }
+      try Task.checkCancellation()
+      let channel = try CodexChannel.appServer(binary: installation.binary,
+        directory: scope?.directory ?? FileManager.default.homeDirectoryForCurrentUser,
+        configuration: try configuration?.arguments() ?? [])
       let rpc = CodexRPC(channel: channel)
       do {
         try await rpc.start(onEvent: { [weak self] frame in try await self?.receive(frame, epoch: epoch) },
           onDisconnect: { [weak self] error in await self?.disconnected(error, epoch: epoch) })
-        return rpc
+        if let configuration {
+          let effective = try await rpc.request("config/read", params: .object([
+            "includeLayers": .bool(false), "cwd": .string(configuration.scope.directory.path)]))
+          try configuration.validateEffective(effective)
+        }
+        return Connection(rpc: rpc, configuration: configuration)
       } catch { await rpc.stop(); throw error }
     }
     connection = task
     do {
       let result = try await task.value
-      guard generation == epoch else { await result.stop(); throw CodexBridgeError.disconnected }
-      rpc = result; connection = nil; return result
+      guard generation == epoch else { await result.rpc.stop(); throw CodexBridgeError.disconnected }
+      rpc = result.rpc; scopedConfiguration = result.configuration; connection = nil; return result.rpc
     } catch { connection = nil; throw error }
+  }
+
+  func scopedThreadParameters(_ original: [String: JSONValue], rpc: CodexRPC) async throws -> [String: JSONValue] {
+    guard runtimeScope != nil else { return original }
+    guard let configuration = scopedConfiguration, self.rpc === rpc else { throw CodexBridgeError.unsafeEndpoint }
+    let effective = try await rpc.request("config/read", params: .object([
+      "includeLayers": .bool(false), "cwd": .string(configuration.scope.directory.path)]))
+    try configuration.validateEffective(effective)
+    return try configuration.threadParameters(original)
+  }
+
+  func validateThreadScope(_ threadID: String, rpc: CodexRPC) async throws {
+    guard let runtimeScope else { return }
+    let value = try await rpc.request("thread/read", params: .object([
+      "threadId": .string(threadID), "includeTurns": .bool(false)]))
+    guard let cwd = value["thread"]?["cwd"]?.string, runtimeScope.allows(directory: cwd) else {
+      throw CodexBridgeError.unsafeEndpoint
+    }
   }
 
   private func receive(_ frame: JSONValue, epoch: UUID) async throws {
@@ -412,7 +466,7 @@ public actor CodexAppServer {
   private func disconnected(_ error: CodexBridgeError, epoch: UUID) async {
     guard generation == epoch else { return }
     if voice?.isActive == true { voice?.phase = .failed; voice?.sdp = nil; voice?.error = "Соединение с Codex прервано. Голос не возобновляется автоматически." }
-    generation = UUID(); rpc = nil; states.removeAll(); selections.removeAll()
+    generation = UUID(); rpc = nil; scopedConfiguration = nil; states.removeAll(); selections.removeAll()
     output.yield(.unavailable(error))
     await interruptProcesses()
   }

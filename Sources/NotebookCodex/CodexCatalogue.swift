@@ -3,10 +3,14 @@ import NotebookCore
 
 extension CodexAppServer {
   public func tasks(cursor: String? = nil, project: CodexProject? = nil) async throws -> CodexTaskPage {
-    try await session { rpc in
+    let scope = runtimeScope
+    if scope != nil, project != nil { throw CodexBridgeError.unsafeEndpoint }
+    return try await session { rpc in
       let needsSignIn = try Self.defaultProviderNeedsSignIn(await rpc.request("account/read", params: .object(["refreshToken": .bool(false)])))
       guard let project else {
-        let page = try await Self.taskPage(rpc, cursor: cursor, limit: 8)
+        let filter: [String: JSONValue] = scope.map { ["cwd": .array([.string($0.directory.path)])] } ?? [:]
+        let page = try await Self.taskPage(rpc, cursor: cursor, limit: 8, filter: filter)
+        if let scope, !page.0.allSatisfy({ scope.allows(directory: $0.cwd) }) { throw CodexBridgeError.unsafeEndpoint }
         return CodexTaskPage(tasks: page.0, nextCursor: page.1, defaultProviderNeedsSignIn: needsSignIn)
       }
       var continuation = try CodexProjectTaskCursor(cursor: cursor, project: project)
@@ -55,7 +59,8 @@ extension CodexAppServer {
   }
 
   public func projects(cursor: String? = nil) async throws -> CodexProjectPage {
-    try await session { rpc in
+    if runtimeScope != nil { return CodexProjectPage(projects: [], nextCursor: nil) }
+    return try await session { rpc in
       var params: [String: JSONValue] = ["limit": .number(32), "sortKey": .string("recencyAt"), "sortDirection": .string("desc")]
       if let cursor { params["cursor"] = .string(cursor) }
       let response = try await rpc.request("project/list", params: .object(params))
@@ -76,6 +81,7 @@ extension CodexAppServer {
   }
 
   public func readProject(id: String) async throws -> CodexProject {
+    guard runtimeScope == nil else { throw CodexBridgeError.unsafeEndpoint }
     guard !id.isEmpty, id.utf8.count <= 256 else { throw CodexBridgeError.invalidInput }
     return try await session { rpc in
       let result = try await rpc.request("project/read", params: .object(["projectId": .string(id)]))
@@ -86,6 +92,7 @@ extension CodexAppServer {
   }
 
   public func updateProject(_ edit: CodexProjectEdit) async throws -> CodexProject {
+    guard runtimeScope == nil else { throw CodexBridgeError.unsafeEndpoint }
     guard edit.isValid else { throw CodexBridgeError.invalidInput }
     return try await session { rpc in
       var params: [String: JSONValue] = ["projectId": .string(edit.id)]
@@ -102,6 +109,7 @@ extension CodexAppServer {
   public func history(threadID: String, cursor: String? = nil) async throws -> CodexHistoryPage {
     guard UUID(uuidString: threadID) != nil else { throw CodexBridgeError.invalidInput }
     return try await session { rpc in
+      try await self.validateThreadScope(threadID, rpc: rpc)
       var params: [String: JSONValue] = ["threadId": .string(threadID), "limit": .number(32), "sortDirection": .string("desc")]
       if let cursor { params["cursor"] = .string(cursor) }
       let result = try await rpc.request("thread/items/list", params: .object(params))
@@ -116,6 +124,9 @@ extension CodexAppServer {
 
   public func create(directory: URL, title: String, workspaceID: UUID, project: CodexProject? = nil) async throws -> CodexTask {
     guard directory.isFileURL, title.utf8.count <= 256 else { throw CodexBridgeError.invalidInput }
+    if let runtimeScope {
+      guard project == nil, runtimeScope.allows(directory: directory.path) else { throw CodexBridgeError.unsafeEndpoint }
+    }
     return try await session { rpc in
       // Read Codex's account state only. Never copy/refresh tokens or begin a login.
       // This default-provider gate applies to creation, not to an existing task
@@ -131,6 +142,7 @@ extension CodexAppServer {
       // Keep the one native request alive; a read-style timeout discards its
       // eventual ID and makes safe recovery impossible. Closing the connection
       // still ends the wait and leaves the durable job uncertain, never retried.
+      params = try await self.scopedThreadParameters(params, rpc: rpc)
       let response = try await rpc.request("thread/start", params: .object(params), timeout: nil)
       guard let id = response["thread"]?["id"]?.string, UUID(uuidString: id) != nil else { throw CodexBridgeError.invalidResponse }
       let context = """

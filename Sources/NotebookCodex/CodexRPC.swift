@@ -6,6 +6,7 @@ actor CodexRPC {
   private let channel: CodexChannel
   private var pending: [String: Pending] = [:]
   private var failure: CodexBridgeError?
+  private var closing = false
   private var onEvent: (@Sendable (JSONValue) async throws -> Void)?
   private var onDisconnect: (@Sendable (CodexBridgeError) async -> Void)?
   private struct Pending {
@@ -18,10 +19,18 @@ actor CodexRPC {
     onDisconnect: (@Sendable (CodexBridgeError) async -> Void)? = nil) async throws {
     self.onEvent = onEvent; self.onDisconnect = onDisconnect
     channel.start(receive: { [weak self] in try await self?.receive($0) }, ended: { [weak self] in await self?.ended($0) })
-    _ = try await request("initialize", params: .object([
-      "clientInfo": .object(["name": .string("notebook"), "version": .string("1")]),
-      "capabilities": .object(["experimentalApi": .bool(true)])]))
-    try await channel.send(.object(["method": .string("initialized")]))
+    do {
+      _ = try await request("initialize", params: .object([
+        "clientInfo": .object(["name": .string("notebook"), "version": .string("1")]),
+        "capabilities": .object(["experimentalApi": .bool(true)])]))
+      guard !closing, !Task.isCancelled else { throw CodexBridgeError.disconnected }
+      try await channel.send(.object(["method": .string("initialized")]))
+    } catch {
+      guard error as? CodexBridgeError == .disconnected, !closing, !Task.isCancelled else { throw error }
+      let exitCode = await channel.startupExitCode()
+      guard !closing, !Task.isCancelled else { throw CodexBridgeError.disconnected }
+      throw CodexStartupFailure(exitCode: exitCode)
+    }
   }
 
   func request(_ method: String, params: JSONValue, timeout: Duration? = .seconds(12)) async throws -> JSONValue {
@@ -50,6 +59,7 @@ actor CodexRPC {
   }
 
   func stop() async {
+    closing = true
     channel.stop(); await ended(.disconnected); await channel.waitForExit()
   }
 

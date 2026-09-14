@@ -6,7 +6,7 @@ import NotebookCore
 private struct RPCFixture {
   let root: URL
   let channel: CodexChannel
-  init(_ body: String) throws {
+  init(_ body: String, respondsToInitialize: Bool = true) throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-app-server-\(UUID())")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
     let file = root.appendingPathComponent("server")
@@ -16,10 +16,7 @@ private struct RPCFixture {
       def read(): return json.loads(sys.stdin.readline())
       def write(v): print(json.dumps(v), flush=True)
       def reply(q,v): write({'id':q['id'],'result':v})
-      reply(read(), {'userAgent':'test'})
-      assert read()['method']=='initialized'
-
-      """ + body).utf8).write(to: file)
+      """ + "\n" + (respondsToInitialize ? "reply(read(), {'userAgent':'test'})\nassert read()['method']=='initialized'\n" : "") + body).utf8).write(to: file)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
     channel = try CodexChannel.appServer(binary: file, directory: root)
   }
@@ -28,6 +25,50 @@ private struct RPCFixture {
 
 @Suite("Persistent App Server transport")
 struct CodexConnectionTests {
+  @Test func failedInitializationReportsOnlyItsStageAndActualExitCode() async throws {
+    let fixture = try RPCFixture("read()\nprint('opaque child stderr', file=sys.stderr)\nsys.exit(17)\n", respondsToInitialize: false)
+    defer { fixture.remove() }
+    let rpc = CodexRPC(channel: fixture.channel)
+    await #expect(throws: CodexStartupFailure(exitCode: 17)) { try await rpc.start() }
+    await rpc.stop()
+  }
+
+  @Test func nonzeroExitOfEstablishedChannelRemainsDisconnected() async throws {
+    let fixture = try RPCFixture("read()\nsys.exit(17)\n")
+    defer { fixture.remove() }
+    let rpc = CodexRPC(channel: fixture.channel); try await rpc.start()
+    await #expect(throws: CodexBridgeError.disconnected) { try await rpc.request("thread/read", params: .object([:])) }
+    await rpc.stop()
+  }
+
+  @Test func explicitStopWhileInitializingIsNotAStartupFailure() async throws {
+    let fixture = try RPCFixture("import os\nread()\nopen(os.path.join(os.path.dirname(__file__),'initializing'),'w').close()\nassert sys.stdin.read()==''\n", respondsToInitialize: false)
+    defer { fixture.remove() }
+    let rpc = CodexRPC(channel: fixture.channel)
+    let start = Task { try await rpc.start() }
+    try await waitForInitialization(fixture)
+    await rpc.stop()
+    await #expect(throws: CodexBridgeError.disconnected) { try await start.value }
+  }
+
+  @Test func cancellingInitializationIsNotAStartupFailure() async throws {
+    let fixture = try RPCFixture("import os\nread()\nopen(os.path.join(os.path.dirname(__file__),'initializing'),'w').close()\nassert sys.stdin.read()==''\n", respondsToInitialize: false)
+    defer { fixture.remove() }
+    let rpc = CodexRPC(channel: fixture.channel)
+    let start = Task { try await rpc.start() }
+    try await waitForInitialization(fixture)
+    start.cancel()
+    await #expect(throws: CodexBridgeError.disconnected) { try await start.value }
+    await rpc.stop()
+  }
+
+  private func waitForInitialization(_ fixture: RPCFixture) async throws {
+    let marker = fixture.root.appendingPathComponent("initializing").path
+    let deadline = ContinuousClock.now + .seconds(3)
+    while !FileManager.default.fileExists(atPath: marker), .now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    try #require(FileManager.default.fileExists(atPath: marker))
+  }
+
   @Test func requestsAndNativeQuestionsShareOneConnectionWithoutLosingNumericIDs() async throws {
     let fixture = try RPCFixture("""
       q=read()

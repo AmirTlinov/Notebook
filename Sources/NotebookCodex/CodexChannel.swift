@@ -50,18 +50,21 @@ final class CodexChannel: @unchecked Sendable {
   private var stopped = false
   private let process: Process?
   private let stdin: FileHandle?
+  private let childExit: ChildExit?
 
-  private init(readFD: Int32, writeFD: Int32, process: Process? = nil, stdin: FileHandle? = nil) {
+  private init(readFD: Int32, writeFD: Int32, process: Process? = nil, stdin: FileHandle? = nil, childExit: ChildExit? = nil) {
     self.readFD = readFD; self.writeFD = writeFD
-    self.process = process; self.stdin = stdin
+    self.process = process; self.stdin = stdin; self.childExit = childExit
     _ = fcntl(writeFD, F_SETNOSIGPIPE, 1)
     _ = fcntl(writeFD, F_SETFL, O_NONBLOCK)
     _ = fcntl(readFD, F_SETFL, O_NONBLOCK)
   }
 
-  static func appServer(binary: URL, directory: URL) throws -> CodexChannel {
+  static func appServer(binary: URL, directory: URL, configuration: [String] = []) throws -> CodexChannel {
     let process = Process(), input = Pipe(), output = Pipe(), errors = Pipe()
-    process.executableURL = binary; process.arguments = ["app-server", "--stdio"]
+    let childExit = ChildExit()
+    process.terminationHandler = { childExit.record($0.terminationStatus) }
+    process.executableURL = binary; process.arguments = ["app-server", "--stdio"] + configuration
     process.currentDirectoryURL = directory
     // Codex uses its own account/configuration. No token reads or copied credentials.
     process.standardInput = input; process.standardOutput = output; process.standardError = errors
@@ -75,7 +78,29 @@ final class CodexChannel: @unchecked Sendable {
       // Do not log account URLs, credentials or unrelated conversation details.
       while let bytes = try? errors.fileHandleForReading.read(upToCount: 4096), !bytes.isEmpty {}
     }
-    return CodexChannel(readFD: readFD, writeFD: writeFD, process: process, stdin: input.fileHandleForWriting)
+    return CodexChannel(readFD: readFD, writeFD: writeFD, process: process, stdin: input.fileHandleForWriting, childExit: childExit)
+  }
+
+  /// EOF and the process-exit notification can race. Wait briefly off the main
+  /// thread for the real status; absence remains unknown, never an invented code.
+  func startupExitCode() async -> Int32? {
+    guard let childExit else { return nil }
+    return await withCheckedContinuation { done in
+      DispatchQueue.global().async { done.resume(returning: childExit.read(until: Date().addingTimeInterval(0.1))) }
+    }
+  }
+
+  private final class ChildExit: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var status: Int32?
+    func record(_ value: Int32) {
+      condition.lock(); status = value; condition.broadcast(); condition.unlock()
+    }
+    func read(until deadline: Date) -> Int32? {
+      condition.lock(); defer { condition.unlock() }
+      while status == nil, condition.wait(until: deadline) { }
+      return status
+    }
   }
 
   func start(receive: @escaping @Sendable (JSONValue) async throws -> Void,
