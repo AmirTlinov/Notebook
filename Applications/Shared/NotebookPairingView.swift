@@ -15,7 +15,7 @@ struct NotebookPairingView: View {
         Section("Подключение к Mac") {
           switch model.pairingState {
           case .idle:
-            Text("На Mac откройте Notebook в строке меню и скопируйте приглашение. Оба устройства должны использовать один перенесённый рабочий архив.")
+            Text("На Mac откройте Notebook в строке меню и скопируйте приглашение. Оба устройства должны использовать одно рабочее пространство.")
             TextField("Приглашение Notebook", text: $invitation, axis: .vertical)
               .textInputAutocapitalization(.never)
               .autocorrectionDisabled()
@@ -30,9 +30,9 @@ struct NotebookPairingView: View {
             Text(peer.displayName).font(.headline)
             LabeledContent("Устройство", value: peer.deviceID.uuidString.lowercased())
               .font(.caption).textSelection(.enabled)
-            LabeledContent("Архив", value: peer.workspaceID.uuidString.lowercased())
+            LabeledContent("Пространство", value: peer.workspaceID.uuidString.lowercased())
               .font(.caption).textSelection(.enabled)
-            Text("Сверьте это устройство и архив с Mac. Имя само по себе не подтверждает подлинность.")
+            Text("Сверьте устройство и пространство с Mac. Имя само по себе не подтверждает подлинность.")
             if locallyConfirmed { Text("Вы подтвердили. Ожидается подтверждение на Mac.") }
             else { Button("Разрешить этому Mac доступ") { perform { try model.confirmPairing(generation: generation) } } }
           case .paired(let peer):
@@ -65,9 +65,11 @@ struct NotebookPairingView: View {
   private func perform(_ operation: () throws -> Void) {
     do { try operation(); error = nil }
     catch NotebookTransportError.identityMismatch {
-      error = "Приглашение относится к другому устройству или архиву. Сначала перенесите согласованный checkpoint; существующие данные не будут заменены автоматически."
+      error = "Приглашение относится к другому устройству или пространству. Откройте одно пространство на обоих устройствах. Существующие данные сохранены."
     } catch NotebookTransportError.pairingExpired {
       error = "Приглашение истекло. Создайте новое на Mac."
+    } catch NotebookTransportError.storageUnavailable {
+      error = "Защищённое хранилище сопряжения пока недоступно. Подключение можно повторить после восстановления доступа."
     } catch { self.error = "Сопряжение не завершено: \(error.localizedDescription)" }
   }
 }

@@ -6,6 +6,57 @@ import XCTest
 @testable import Notebook
 
 final class NearbySyncTests: XCTestCase {
+  @MainActor
+  func testResetCannotPublishIdleWhileCredentialStorageIsUnavailable() throws {
+    let trust = RecoverablePairingStore()
+    let sync = makeRecoverableSync(trust)
+    defer { sync.stop() }
+    var states: [NotebookPairingState] = []
+    sync.onPairingChange = { states.append($0) }
+    sync.start()
+    XCTAssertEqual(trust.loads, 1)
+    guard case .failed(let message) = try XCTUnwrap(states.last) else { return XCTFail("Startup failure must remain visible") }
+    XCTAssertTrue(message.contains("хранилище"))
+    XCTAssertThrowsError(try sync.cancelPairing()) {
+      XCTAssertEqual($0 as? NotebookTransportError, .storageUnavailable)
+    }
+    XCTAssertEqual(trust.loads, 2)
+    XCTAssertEqual(states.count, 1, "Reset cannot promise idle until credentials are accessible")
+    XCTAssertEqual(trust.saves, 0, "A failed read must not overwrite trust with an empty list")
+  }
+
+  @MainActor
+  func testResetRecoversTheSameTransportAndAllowsAnOrdinaryJoin() throws {
+    let trust = RecoverablePairingStore()
+    let sync = makeRecoverableSync(trust)
+    defer { sync.stop() }
+    var states: [NotebookPairingState] = []
+    sync.onPairingChange = { states.append($0) }
+    sync.start()
+    trust.unavailable = false
+    try sync.cancelPairing()
+    guard case .idle = try XCTUnwrap(states.last) else { return XCTFail("Successful restart must be ready") }
+    XCTAssertEqual(trust.loads, 2)
+    let invitation = try NotebookPairingInvitation(
+      inviter: .init(deviceID: UUID(), workspaceID: sync.identity.workspaceID, displayName: "Acceptance Mac"),
+      secret: Data(repeating: 7, count: 16), expiresAt: .now.addingTimeInterval(60))
+    try sync.joinPairingInvitation(invitation.encoded())
+    guard case .connecting = try XCTUnwrap(states.last) else { return XCTFail("The restarted owner must accept the invitation") }
+    XCTAssertEqual(trust.loads, 2, "Joining an already started owner must not restart it")
+    XCTAssertEqual(trust.saves, 0, "A join does not approve a peer or fabricate trust")
+  }
+
+  @MainActor
+  private func makeRecoverableSync(_ trust: RecoverablePairingStore) -> NearbySync {
+    let storage = NotebookTransportStorage(changes: { _, _ in [] }, incomingCursor: { _ in 0 },
+      acknowledgePeer: { _, _ in }, blobSize: { _ in throw NotebookTransportError.invalidBlob },
+      readBlobChunk: { _, _, _ in throw NotebookTransportError.invalidBlob }, stageBlob: { _, _, _ in },
+      missingBlobHashes: { _, _, _ in [] }, applyRemoteChange: { _, _ in 0 })
+    return NearbySync(role: .iPadConnector,
+      identity: .init(deviceID: UUID(), workspaceID: UUID(), displayName: "Acceptance iPad"),
+      storage: storage, stagingRoot: temporaryDirectory(), trustStore: trust)
+  }
+
   func testDiscoveryExcludesTheOldWriterButKeepsItsIdentityForUpgrade() throws {
     let id = UUID()
     let name = NotebookPeerDiscovery.serviceName(deviceID: id, generation: UUID())
@@ -139,6 +190,22 @@ final class NearbySyncTests: XCTestCase {
   private func envelope(sessionID: UUID, sequence: UInt64, centerX: Double) -> PresenceEnvelope {
     .init(sessionID: sessionID, sequence: sequence, phase: .active,
       presence: .init(mode: .board, camera: .init(center: .init(x: centerX, y: 0)), viewport: .init(x: 1_024, y: 1_366)))
+  }
+}
+
+@MainActor
+private final class RecoverablePairingStore: NotebookPairingTrustStore {
+  var unavailable = true
+  private(set) var loads = 0
+  private(set) var saves = 0
+  func load(for identity: NotebookTransportIdentity) throws -> [NotebookTrustedPeer] {
+    loads += 1
+    if unavailable { throw NotebookTransportError.storageUnavailable }
+    return []
+  }
+  func save(_ records: [NotebookTrustedPeer], for identity: NotebookTransportIdentity) throws {
+    saves += 1
+    if unavailable { throw NotebookTransportError.storageUnavailable }
   }
 }
 

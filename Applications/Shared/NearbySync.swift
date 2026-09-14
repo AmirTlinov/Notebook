@@ -90,14 +90,18 @@ protocol NotebookPairingTrustStore {
 @MainActor
 final class NotebookKeychainPairingStore: NotebookPairingTrustStore {
   let activationID: UUID?
-  init(activationID: UUID? = nil) { self.activationID = activationID }
+  private let service: String
+  init(activationID: UUID? = nil, service: String? = nil) {
+    self.activationID = activationID
+    self.service = service ?? "com.amirtlinov.notebook.nearby.pair-v1"
+  }
 
   private func query(_ identity: NotebookTransportIdentity) -> [String: Any] {
     let activation = activationID.map { ":activation:\($0.uuidString.lowercased())" } ?? ""
     // Never fall back to another activation's credentials. Both devices retain
     // their own actor IDs while the newly admitted pair awaits confirmation.
     return [kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: "com.amirtlinov.notebook.nearby.pair-v1",
+      kSecAttrService as String: service,
       kSecAttrAccount as String: "\(identity.deviceID):\(identity.workspaceID)\(activation)"]
   }
   func load(for identity: NotebookTransportIdentity) throws -> [NotebookTrustedPeer] {
@@ -226,8 +230,11 @@ final class NearbySync {
   }
 
   func start() {
+    do { try startIfNeeded() } catch { report(error) }
+  }
+
+  private func startIfNeeded() throws {
     guard !isStarted else { return }
-    do {
       guard identity.isValid else { throw NotebookTransportError.identityMismatch }
       trusted = try trustStore.load(for: identity)
       // Only abandoned generation directories beneath this transport-owned
@@ -240,7 +247,6 @@ final class NearbySync {
       }
       isStarted = true
       refreshDiscovery()
-    } catch { report(error) }
   }
 
   func stop() {
@@ -253,7 +259,8 @@ final class NearbySync {
   }
 
   func createPairingInvitation() throws -> NotebookPairingInvitation {
-    guard role == .macListener, isStarted, trusted.count < 8 else { throw NotebookTransportError.resourceLimit }
+    try startIfNeeded()
+    guard role == .macListener, trusted.count < 8 else { throw NotebookTransportError.resourceLimit }
     try cancelPairing()
     let value = try NotebookPairingInvitation(inviter: identity, secret: NotebookTransportTLS.randomBytes(count: 16), expiresAt: Date().addingTimeInterval(600))
     invitation = value; onPairingChange?(.invitation(value)); refreshListener(); scheduleInvitationExpiry(value)
@@ -261,7 +268,8 @@ final class NearbySync {
   }
 
   func joinPairingInvitation(_ text: String) throws {
-    guard role == .iPadConnector, isStarted, trusted.count < 8 else { throw NotebookTransportError.resourceLimit }
+    try startIfNeeded()
+    guard role == .iPadConnector, trusted.count < 8 else { throw NotebookTransportError.resourceLimit }
     let value = try NotebookPairingInvitation.decode(text)
     guard value.inviter.workspaceID == identity.workspaceID, value.inviter.deviceID != identity.deviceID else {
       throw NotebookTransportError.identityMismatch
@@ -276,6 +284,9 @@ final class NearbySync {
   }
 
   func cancelPairing() throws {
+    // Reset is ready only after the same transport owner has successfully
+    // loaded its credentials. A failed startup must not turn into false idle.
+    try startIfNeeded()
     let pairingIDs = Set([invitation?.id, joinedInvitation?.id].compactMap { $0 }
       + trusted.filter { !$0.isConfirmed }.map(\.pairingID))
     let updated = trusted.filter { $0.isConfirmed || !pairingIDs.contains($0.pairingID) }
@@ -499,6 +510,10 @@ final class NearbySync {
   private func report(_ error: Error) {
     // Credentials, invitation payloads and notebook content never enter logs.
     logger.error("Trusted nearby connection failed: \(String(describing: error), privacy: .public)")
+    if error as? NotebookTransportError == .storageUnavailable {
+      onPairingChange?(.failed("Не удалось открыть защищённое хранилище сопряжения. Повторите подключение после восстановления доступа."))
+      return
+    }
     onPairingChange?(.failed(NotebookPeerDiscovery.upgradeMessage(for: error)
       ?? "Связь не установлена. Проверьте приглашение, подтверждение и локальную сеть."))
   }
