@@ -612,7 +612,7 @@ struct SceneCompositionReference: Equatable, Sendable {
 
   @MainActor
   init(_ cohort: SceneCompositionCohort?) {
-    id = cohort?.id; self.cohort = cohort
+    id = cohort?.paintID; self.cohort = cohort
   }
 
   static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }

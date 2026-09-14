@@ -20,7 +20,7 @@ final class DocumentRuntimeTests: XCTestCase {
     drafts: [DocumentEditingSession] = [],
     source: @escaping (DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status = { _ in .committed },
     draft: @escaping (DocumentEditingSession) -> Void = { _ in },
-    commit: @escaping (String, JSONValue) -> Void = { _,_ in }) -> Surface {
+    commit: @escaping (String, JSONValue) -> ContentFieldVersion? = { _,_ in nil }) -> Surface {
     let resources = suppliedResources ?? SceneRenderResources(maximumWebSurfaces: 4)
     let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
       onPageLayout: { _ in }, onSourceChange: source, onStateChange: commit)
@@ -61,6 +61,7 @@ final class DocumentRuntimeTests: XCTestCase {
     defer { surface.close() }
     await waitUntil { surface.coordinator.renderIsReady }
     let web = try XCTUnwrap(surface.coordinator.webView), source = try XCTUnwrap(surface.coordinator.payload?.source)
+    await source.discardIdlePreparation()
     try await execute("""
       const source=JSON.parse(encoded), renderer=notebookRenderer, bytes=value=>new TextEncoder().encode(value).length;
       const refused=operation=>{let failed=false;try{operation()}catch{failed=true}if(!failed)throw Error('Packet address was accepted');};
@@ -104,16 +105,27 @@ final class DocumentRuntimeTests: XCTestCase {
         };
         return true;
         """, arguments: ["layout": corruptLayout], in: web)
+      await prior.discardIdlePreparation()
       let retainedBytes = resources.reservedBytes
       XCTAssertTrue(document.replaceBlockSource(id: "body", source: "After 👩🏽‍💻", actor: actor))
       surface.coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-        onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in })
+        onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
       await waitUntil { surface.coordinator.acquisitionError != nil }
       XCTAssertEqual(surface.coordinator.acquisitionError?.localizedDescription, "document_layout_invalid")
       XCTAssertFalse(surface.coordinator.renderIsReady)
-      XCTAssertNil(surface.coordinator.payload?.source.layout)
+      if corruptLayout {
+        XCTAssertNil(surface.coordinator.payload?.source.layout)
+      } else {
+        XCTAssertNotNil(surface.coordinator.payload?.source.layout,
+          "A refused page packet does not invalidate the independently checked source geometry")
+      }
       XCTAssertTrue(prior.layout === priorLayout)
-      await waitUntil { resources.activeWebSurfaceCount == 0 && resources.reservedBytes == retainedBytes }
+      await waitUntil { resources.activeWebSurfaceCount == 0 }
+      if corruptLayout { XCTAssertEqual(resources.reservedBytes, retainedBytes) }
+      else {
+        XCTAssertGreaterThan(resources.reservedBytes, retainedBytes, "The remaining source still owns its canonical geometry")
+        XCTAssertFalse(DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: 0))
+      }
       let remaining = try await js("String(document.querySelectorAll('.document-layout-preparation').length)", web)
       XCTAssertEqual(remaining, "0")
     }
@@ -133,6 +145,7 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertTrue(DocumentRenderRegistry.shared.entry(document: document, state: state, pageIndex: 0)?.layout === layout)
     XCTAssertGreaterThan(resources.reservedBytes, 0)
     raster.release()
+    await waitUntil { resources.activeWebSurfaceCount == 0 }
     let replacement = try XCTUnwrap(resources.reserveDerivedBytes(resources.byteLimit, priority: .passive))
     XCTAssertNil(layout)
     XCTAssertNil(DocumentRenderRegistry.shared.entry(document: document, state: state, pageIndex: 0))
@@ -149,7 +162,7 @@ final class DocumentRuntimeTests: XCTestCase {
         "notebook.commit({boot:crypto.randomUUID(),count:notebook.state.count||0})", initialState: .object(["count": .number(0)]), height: 100)])
     var state = DocumentStateJournal(id: document.id, actor: UUID())
     var commits: [JSONValue] = []
-    let surface = surface(document: document, state: state, commit: { _, value in commits.append(value) })
+    let surface = surface(document: document, state: state, commit: { _, value in commits.append(value); return nil })
     defer { surface.close() }
     await waitUntil { surface.coordinator.renderIsReady && commits.count == 1 }
     let web = try XCTUnwrap(surface.coordinator.webView), token = surface.coordinator.payload?.blockTokens["counter"]
@@ -158,12 +171,35 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertTrue(document.replaceBlockSource(id: "body", source: "После", actor: UUID()))
     surface.coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
       onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed },
-      onStateChange: { _, value in commits.append(value) })
+      onStateChange: { _, value in commits.append(value); return nil })
     await waitUntil { surface.coordinator.renderIsReady }
     let actual3 = try await js("window.originalFrame===document.querySelector('iframe')?'same':'replaced'", web)
     XCTAssertEqual(actual3, "same")
     XCTAssertEqual(surface.coordinator.payload?.blockTokens["counter"], token)
     XCTAssertEqual(commits.count, 1, "Keeping an iframe node is insufficient: its boot must not execute a second time")
+  }
+
+  func testCoalescedSourceReplacementCannotReuseThePreviousProgramContext() async throws {
+    let html = "<button>Original source</button>"
+    var document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program", html: html,
+      javaScript: "notebook.commit({boot:crypto.randomUUID()})", height: 100)])
+    let state = DocumentStateJournal(id: document.id, actor: UUID())
+    var boots: [JSONValue] = []
+    let mounted = surface(document: document, state: state, commit: { _, value in boots.append(value); return nil })
+    defer { mounted.close() }
+    await waitUntil { mounted.coordinator.renderIsReady && boots.count == 1 }
+    let web = try XCTUnwrap(mounted.coordinator.webView), previousVersion = document.sourceVersion(blockID: "program")
+    _ = try await js("window.previousProgram=document.querySelector('iframe');'stored'", web)
+    XCTAssertTrue(document.replaceBlockSource(id: "program", source: "<button>Replaced source</button>", actor: UUID()))
+    XCTAssertTrue(document.replaceBlockSource(id: "program", source: html, actor: UUID()))
+    XCTAssertNotEqual(document.sourceVersion(blockID: "program"), previousVersion)
+    mounted.coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed },
+      onStateChange: { _, value in boots.append(value); return nil })
+    await waitUntil { mounted.coordinator.renderIsReady && boots.count == 2 }
+    let replaced = try await js("previousProgram!==document.querySelector('iframe')?'replaced':'same'", web)
+    XCTAssertEqual(replaced, "replaced", "Byte equality after coalesced edits cannot revive an obsolete source identity")
+    XCTAssertNotEqual(boots.first, boots.last)
   }
 
   func testDraftSurvivesStateAndUnrelatedSourceAndCommitsItsCapturedBase() async throws {
@@ -185,7 +221,7 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertTrue(document.replaceBlockSource(id: "other", source: "Внешняя правка", actor: UUID()))
     XCTAssertTrue(state.commit(blockID: "other", value: .number(3), actor: UUID()))
     surface.coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: onSource, onStateChange: { _,_ in },
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: onSource, onStateChange: { _, _ in nil },
       onDraftChange: { drafts.append($0) })
     await waitUntil { surface.coordinator.renderIsReady }
     let actual4 = try await js("document.querySelector('textarea').value", web)
@@ -220,12 +256,50 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertEqual(actual6, "false")
   }
 
+  func testVisibleEditorActionsKeepOnePendingWriteAndPreserveConflictDraft() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "Исходник")])
+    let state = DocumentStateJournal(id: document.id, actor: UUID())
+    var edits: [DocumentSourceEdit] = []
+    var pendingCommit: CheckedContinuation<DocumentSourceCommitResult.Status, any Error>?
+    let surface = surface(document: document, state: state, source: { edit in
+      edits.append(edit)
+      return try await withCheckedThrowingContinuation { pendingCommit = $0 }
+    })
+    defer { pendingCommit?.resume(returning: .conflict); surface.close() }
+    await waitUntil { surface.coordinator.renderIsReady }
+    let web = try XCTUnwrap(surface.coordinator.webView)
+    _ = try await js("""
+      document.querySelector('[data-block-id=body]').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
+      const editor=document.querySelector('textarea'); editor.value='Сохранённый черновик';
+      editor.dispatchEvent(new Event('input',{bubbles:true}));
+      const save=document.querySelector('[data-editor-action=save]'); save.click(); save.click(); 'sent'
+      """, web)
+    await waitUntil { edits.count == 1 && pendingCommit != nil }
+    let pending = try await js("String([...document.querySelectorAll('.source-editor-toolbar button')].every(button=>button.disabled))", web)
+    XCTAssertEqual(pending, "true")
+    pendingCommit?.resume(returning: .conflict); pendingCommit = nil
+    var conflict = false
+    for _ in 0..<100 {
+      conflict = try await js("document.querySelector('.source-editor-status').textContent", web).contains("черновик сохранён")
+      if conflict { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertTrue(conflict); XCTAssertEqual(edits.count, 1)
+    let draft = try await js("document.querySelector('textarea').value", web)
+    XCTAssertEqual(draft, "Сохранённый черновик")
+    let actions = try await js("String([...document.querySelectorAll('.source-editor-toolbar button')].every(button=>!button.disabled&&button.getBoundingClientRect().height>=44))", web)
+    XCTAssertEqual(actions, "true")
+    _ = try await js("document.querySelector('[data-editor-action=cancel]').click(); 'cancelled'", web)
+    let closed = try await js("String(!document.querySelector('textarea')&&!document.querySelector('.source-editor-toolbar'))", web)
+    XCTAssertEqual(closed, "true"); XCTAssertEqual(edits.count, 1)
+  }
+
   func testPrewarmExecutesOnlyProgramsOnItsPhysicalPage() async throws {
     let blocks = (0..<16).map { index in DocumentBlock.interactive(id: "block-\(index)", html: "<p>\(index)</p>",
       javaScript: "notebook.commit({boot:\(index)})", initialState: .null, height: 280) }
     let document = DocumentDocument(actor: UUID(), blocks: blocks), state = DocumentStateJournal(id: document.id, actor: UUID())
     var booted = Set<String>()
-    let surface = surface(document: document, state: state, commit: { block, _ in booted.insert(block) })
+    let surface = surface(document: document, state: state, commit: { block, _ in booted.insert(block); return nil })
     defer { surface.close() }
     let deadline = ContinuousClock.now + .seconds(8)
     while !surface.coordinator.renderIsReady && surface.coordinator.acquisitionError == nil && ContinuousClock.now < deadline {
@@ -253,7 +327,7 @@ final class DocumentRuntimeTests: XCTestCase {
       javaScript: "notebook.commit({boot:crypto.randomUUID()})", initialState: .null, height: 2048)])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
     var boots = 0
-    let surface = surface(document: document, state: state, commit: { _,_ in boots += 1 })
+    let surface = surface(document: document, state: state, commit: { _,_ in boots += 1; return nil })
     defer { surface.close() }
     await waitUntil { surface.coordinator.renderIsReady }
     let web = try XCTUnwrap(surface.coordinator.webView)
@@ -270,7 +344,7 @@ final class DocumentRuntimeTests: XCTestCase {
       if page > 0 {
         surface.coordinator.update(document: document, state: state, selectedPageIndex: page, capturesSnapshot: false,
           onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed },
-          onStateChange: { _,_ in boots += 1 })
+          onStateChange: { _,_ in boots += 1; return nil })
         await waitUntil { surface.coordinator.renderIsReady || surface.coordinator.acquisitionError != nil }
         XCTAssertNil(surface.coordinator.acquisitionError)
       }
@@ -336,11 +410,12 @@ final class DocumentRuntimeTests: XCTestCase {
       let layout = try XCTUnwrap(source.layout)
       for page in 0..<layout.pageCount {
         surface.coordinator.update(document: document, state: state, selectedPageIndex: page, capturesSnapshot: false,
-          onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in })
+          onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
         let deadline = ContinuousClock.now + .seconds(8)
         while !surface.coordinator.renderIsReady && surface.coordinator.acquisitionError == nil && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
         let sourceJSON = try await source.encodedJSON()
         var pixels: [Data] = []
+        var rasterWidth = 0, rasterHeight = 0
         // These PNGs expose the complete native paint paths. The source
         // columns and a physical fragment can snap bitmap-font glyphs differently
         // even when their grapheme addresses are identical (the stock-WebKit
@@ -349,6 +424,7 @@ final class DocumentRuntimeTests: XCTestCase {
         // prepared pixels in testPreparedMathKeepsItsPixelsInAnotherWebKitWithoutASecondTypeset.
         for mode in ["physical", "measured"] {
           if mode == "measured" {
+            await source.discardIdlePreparation()
             try await execute("""
               await notebookRenderer.beginSourcePreparation(JSON.parse(source));
               const host=document.querySelector('.document-layout-preparation');
@@ -360,6 +436,7 @@ final class DocumentRuntimeTests: XCTestCase {
               """, arguments: ["source": sourceJSON, "page": page], in: web)
           }
           let raster = try await capturePixels(web)
+          rasterWidth = raster.width; rasterHeight = raster.height
           pixels.append(raster.bytes)
           let attachment = XCTAttachment(image: raster.image); attachment.name = "Shared pixels \(name) \(paper) page \(page) \(mode)"; attachment.lifetime = .keepAlways; add(attachment)
         }
@@ -385,22 +462,34 @@ final class DocumentRuntimeTests: XCTestCase {
           let detail=XCTAttachment(string:description);detail.name="Fragment geometry \(name) \(paper) \(page)";detail.lifetime = .keepAlways;add(detail)
         }
         let geometry = try await fragmentGeometry(in: web)
-        if !geometry[0].matches(geometry[1]) { mismatches.append("\(name)/\(paper)/page-\(page)") }
+        if !geometry[0].matches(geometry[1]) {
+          mismatches.append("\(name)/\(paper)/page-\(page)")
+          let detail = XCTAttachment(string: geometry[0].difference(from: geometry[1]))
+          detail.name = "Measured mismatch \(name) \(paper) \(page)"
+          detail.lifetime = .keepAlways; add(detail)
+        }
         // CSS list markers are not text nodes and expose no Range geometry.
         // These fixtures also compare actual native pixels, including every
         // ordinal, explicit reset, reversed list and continuation marker.
-        if name == "ordered-list" || name == "nested-list", pixels[0] != pixels[1] {
-          mismatches.append("\(name)/\(paper)/page-\(page)/list-marker-pixels")
+        if name == "ordered-list" || name == "nested-list" {
+          let regions = try await listMarkerRegions(in: web)
+          XCTAssertFalse(regions.isEmpty)
+          let first = listMarkerPixels(pixels[0], width: rasterWidth, height: rasterHeight,
+            scale: Double(rasterWidth) / web.bounds.width, regions: regions)
+          let second = listMarkerPixels(pixels[1], width: rasterWidth, height: rasterHeight,
+            scale: Double(rasterWidth) / web.bounds.width, regions: regions)
+          XCTAssertFalse(first.isEmpty)
+          if first != second { mismatches.append("\(name)/\(paper)/page-\(page)/list-marker-pixels") }
         }
         try await execute("notebookRenderer.finishSourcePreparation(key);document.getElementById('document').style.visibility='';return true;", arguments: ["key": source.message.key], in: web)
 
       }
     }
     }
-    guard mismatches.isEmpty else {
-      throw NSError(domain: "NotebookDocumentPixelContract", code: 1,
-        userInfo: [NSLocalizedDescriptionKey: "Physical graphemes or vectors differ from their measured source: " + mismatches.joined(separator: ", ")])
-    }
+    let report = "Physical graphemes or vectors differ from their measured source: " + mismatches.joined(separator: ", ")
+    let detail = XCTAttachment(string: report)
+    detail.name = "Physical fragment contract mismatches"; detail.lifetime = .keepAlways; add(detail)
+    XCTAssertTrue(mismatches.isEmpty, report)
   }
 
   private struct FragmentGeometry: Decodable {
@@ -410,6 +499,24 @@ final class DocumentRuntimeTests: XCTestCase {
     }
     struct Vector: Decodable { let block: String, source: String; let rectangle: [Double] }
     let glyphs: [Glyph], vectors: [Vector]
+    func difference(from other: Self) -> String {
+      var result = ["glyphs=\(glyphs.count)/\(other.glyphs.count), vectors=\(vectors.count)/\(other.vectors.count)"]
+      var differences = 0
+      for (index, pair) in zip(glyphs, other.glyphs).enumerated() {
+        let (a, b) = pair
+        guard a.text != b.text || a.block != b.block || a.font != b.font || a.color != b.color || a.rectangles != b.rectangles else { continue }
+        result.append("glyph \(index): \(a.text.debugDescription)/\(b.text.debugDescription), block=\(a.block)/\(b.block), font=\(a.font)/\(b.font), color=\(a.color)/\(b.color), boxes=\(a.rectangles)/\(b.rectangles)")
+        differences += 1; if differences == 3 { break }
+      }
+      differences = 0
+      for (index, pair) in zip(vectors, other.vectors).enumerated() {
+        let (a, b) = pair
+        guard a.block != b.block || a.source != b.source || a.rectangle != b.rectangle else { continue }
+        result.append("vector \(index): block=\(a.block)/\(b.block), sourceEqual=\(a.source == b.source), box=\(a.rectangle)/\(b.rectangle)")
+        differences += 1; if differences == 3 { break }
+      }
+      return result.joined(separator: "\n")
+    }
     func matches(_ other: Self) -> Bool {
       func same(_ left: [Double], _ right: [Double]) -> Bool {
         left.count == right.count && zip(left,right).allSatisfy { $0.isFinite && $1.isFinite && abs($0 - $1) <= 1 / 32 }
@@ -422,6 +529,37 @@ final class DocumentRuntimeTests: XCTestCase {
           a.block == b.block && a.source == b.source && same(a.rectangle,b.rectangle)
         }
     }
+  }
+
+  /// ::marker has no Range API. These fixtures use outside markers: their
+  /// complete paint area lies in the list's measured padding, before the li.
+  /// Compare that area from both DOMs, including empty continuation margins.
+  /// Body text already has the separate exact grapheme-geometry oracle above.
+  private func listMarkerRegions(in web: WKWebView) async throws -> [[Double]] {
+    let raw = try await js("""
+      JSON.stringify([document.getElementById('document'),document.querySelector('.document-layout-preparation main')]
+        .flatMap(root=>[...root.querySelectorAll('li')].flatMap(li=>{
+          const padding=parseFloat(getComputedStyle(li.parentElement).paddingLeft);
+          if(!(padding>0)||getComputedStyle(li).listStylePosition!=='outside')throw Error('Unexpected marker geometry');
+          return [...li.getClientRects()].filter(r=>r.width>0&&r.height>0&&r.right>0&&r.x<innerWidth)
+            .map(r=>[r.x-padding,r.y,padding,r.height]);
+        })))
+      """, web)
+    return try JSONDecoder().decode([[Double]].self, from: Data(raw.utf8))
+  }
+
+  private func listMarkerPixels(_ bytes: Data, width: Int, height: Int, scale: Double,
+    regions: [[Double]]) -> Data {
+    var result = Data()
+    for region in regions where region.count == 4 && region.allSatisfy(\.isFinite) {
+      let left = max(0, Int(floor(region[0] * scale)))
+      let right = min(width, Int(floor((region[0] + region[2]) * scale)))
+      let top = max(0, Int(floor(region[1] * scale)))
+      let bottom = min(height, Int(ceil((region[1] + region[3]) * scale)))
+      guard right > left, bottom > top else { continue }
+      for y in top..<bottom { result.append(bytes[((y * width + left) * 4)..<((y * width + right) * 4)]) }
+    }
+    return result
   }
 
   private func fragmentGeometry(in web: WKWebView) async throws -> [FragmentGeometry] {
@@ -508,14 +646,20 @@ final class DocumentRuntimeTests: XCTestCase {
       let web = try XCTUnwrap(live.coordinator.webView), layout = try XCTUnwrap(live.coordinator.payload?.source.layout)
       for page in 0..<layout.pageCount {
         live.coordinator.update(document: document, state: state, selectedPageIndex: page, capturesSnapshot: false,
-          onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in })
+          onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
         await waitUntil { live.coordinator.renderIsReady || live.coordinator.acquisitionError != nil }
         XCTAssertNil(live.coordinator.acquisitionError)
         let raw = try await js("""
           (()=>{const rows=[...document.querySelector('table').rows];
           if(rows.length<3||rows[0].getBoundingClientRect().height!==0)return 'null';
-          const a=rows[0].cells[0].getBoundingClientRect(), b=rows[1].cells[0].getBoundingClientRect();
-          return JSON.stringify({x1:a.x+a.width/2,x2:b.x+b.width/2,y1:a.bottom,y2:b.bottom,next:rows[2].getBoundingClientRect().top})})()
+          const first=rows[0].cells[0], second=rows[1].cells[0];
+          const a=first.getBoundingClientRect(), b=second.getBoundingClientRect();
+          // A cell centre can intersect glyph descenders above the line. Probe
+          // its real empty padding so this compares only the two grid owners.
+          const probe=cell=>{const padding=parseFloat(getComputedStyle(cell).paddingLeft);
+            if(!(padding>2))throw Error('The border fixture needs empty horizontal padding');
+            return cell.getBoundingClientRect().x+padding/2;};
+          return JSON.stringify({x1:probe(first),x2:probe(second),y1:a.bottom,y2:b.bottom,next:rows[2].getBoundingClientRect().top})})()
           """, web)
         if raw == "null" { continue }
         let grid = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Double])
@@ -528,7 +672,7 @@ final class DocumentRuntimeTests: XCTestCase {
         let center = Int(y * scale), scan = (center - 4)...(center + 4)
         func pixel(_ x: Int, _ y: Int) -> Data { Data(raster.bytes[((y * raster.width + x) * 4)..<((y * raster.width + x) * 4 + 4)]) }
         let left = scan.map { pixel(x1, $0) }, right = scan.map { pixel(x2, $0) }
-        XCTAssertEqual(left, right, "A rowspan continuation must not paint a second, darker border")
+        XCTAssertEqual(left, right, "A rowspan continuation must not paint a second, darker border; paper=\(paper), page=\(page), x1=\(x1), x2=\(x2), y=\(center), left=\(left.map(Array.init)), right=\(right.map(Array.init))")
         let background = left[0], occupied = left.map { $0 != background }
         let starts = occupied.indices.filter { occupied[$0] && ($0 == 0 || !occupied[$0 - 1]) }.count
         XCTAssertEqual(starts, 1, "A cell edge cannot leave two separated lines at the continuation")
@@ -586,7 +730,7 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertTrue(document.replaceBlockSource(id: "body", source: "After $x^2$", actor: actor))
     for page in pages {
       page.coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-        onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in })
+        onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
     }
     var producer: Int?
     for _ in 0..<200 {
@@ -618,7 +762,7 @@ final class DocumentRuntimeTests: XCTestCase {
     _ = try await js("window.sourceEntered=false;window.sourceGate=new Promise(resolve=>window.releaseSource=resolve);window.originalTypeset=MathJax.typesetPromise.bind(MathJax);MathJax.typesetPromise=async nodes=>{sourceEntered=true;await sourceGate;return originalTypeset(nodes)};'armed'", web)
     XCTAssertTrue(document.replaceBlockSource(id: "body", source: "Cancelled $x^2$", actor: actor))
     live.coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in })
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
     var entered = false
     for _ in 0..<200 {
       entered = try await js("String(sourceEntered)", web) == "true"
@@ -646,12 +790,13 @@ final class DocumentRuntimeTests: XCTestCase {
     defer { live.close() }
     await waitUntil { live.coordinator.renderIsReady }
     let prior = try XCTUnwrap(live.coordinator.payload?.source), priorLayout = try XCTUnwrap(prior.layout)
+    await prior.discardIdlePreparation()
     let sourceBytes = resources.reservedBytes
     let blocker = try XCTUnwrap(resources.reserveDerivedBytes(resources.passiveByteLimit - sourceBytes, priority: .passive))
     defer { blocker.release() }
     XCTAssertTrue(document.replaceBlockSource(id: "body", source: "After $y^3$", actor: actor))
     live.coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in })
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
     await waitUntil { live.coordinator.acquisitionError != nil }
     XCTAssertFalse(live.coordinator.renderIsReady)
     XCTAssertNil(live.coordinator.payload?.source.layout)
@@ -667,7 +812,9 @@ final class DocumentRuntimeTests: XCTestCase {
     try XCTUnwrap(button(live.host)).performClick(nil)
     await waitUntil { live.coordinator.renderIsReady || live.coordinator.acquisitionError != nil }
     XCTAssertTrue(live.coordinator.renderIsReady); XCTAssertNil(live.coordinator.acquisitionError)
-    XCTAssertEqual(live.coordinator.payload?.source.preparationCount, 2)
+    XCTAssertEqual(live.coordinator.payload?.source.preparationCount, 1,
+      "A cancelled admission retries through the same canonical source owner")
+    XCTAssertEqual(live.coordinator.payload?.source.measurementCount, 1)
     let text = try await js("document.getElementById('document').textContent", try XCTUnwrap(live.coordinator.webView))
     XCTAssertTrue(text.contains("After"))
   }
@@ -689,7 +836,7 @@ final class DocumentRuntimeTests: XCTestCase {
         javaScript: "notebook.commit({boot:crypto.randomUUID(),width:innerWidth,height:innerHeight})", height: 2048)])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
     var boots: [JSONValue] = []
-    let surface = surface(document: document, state: state, commit: { _, value in boots.append(value) })
+    let surface = surface(document: document, state: state, commit: { _, value in boots.append(value); return nil })
     defer { surface.close() }
     await waitUntil { surface.coordinator.renderIsReady && !boots.isEmpty }
     let web = try XCTUnwrap(surface.coordinator.webView)
@@ -704,7 +851,7 @@ final class DocumentRuntimeTests: XCTestCase {
     for page in 0..<count {
       surface.coordinator.update(document: document, state: state, selectedPageIndex: page, capturesSnapshot: false,
         onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed },
-        onStateChange: { _, value in boots.append(value) })
+        onStateChange: { _, value in boots.append(value); return nil })
       await waitUntil { surface.coordinator.renderIsReady }
       let raw = try await js("JSON.stringify(window.notebookRenderer.pageReceipt().regions.filter(region=>region.id==='tall'))", web)
       regions += try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [[String: Any]])
@@ -723,7 +870,7 @@ final class DocumentRuntimeTests: XCTestCase {
       let page = try XCTUnwrap(region["pageIndex"] as? Int)
       surface.coordinator.update(document: document, state: state, selectedPageIndex: page, capturesSnapshot: false,
         onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed },
-        onStateChange: { _, value in boots.append(value) })
+        onStateChange: { _, value in boots.append(value); return nil })
       await waitUntil { surface.coordinator.renderIsReady || surface.coordinator.acquisitionError != nil }
       XCTAssertNil(surface.coordinator.acquisitionError)
       let rawFrame = try await js("""
@@ -785,7 +932,7 @@ final class DocumentRuntimeTests: XCTestCase {
       javaScript: "notebook.commit({boot:crypto.randomUUID()})", initialState: .null, height: 100)])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
     var bootCount = 0
-    let live = surface(document: document, state: state, resources: resources, commit: { _,_ in bootCount += 1 })
+    let live = surface(document: document, state: state, resources: resources, commit: { _,_ in bootCount += 1; return nil })
     defer { live.close() }
     await waitUntil { live.coordinator.renderIsReady && bootCount == 1 }
     let originalWeb = try XCTUnwrap(live.coordinator.webView)
@@ -871,7 +1018,7 @@ final class DocumentRuntimeTests: XCTestCase {
   func testRepeatedRendererMountDoesNotInvalidateObservation() async throws {
     let registry = DocumentRenderRegistry(), resources = SceneRenderResources()
     let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in })
+      onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
     defer { coordinator.invalidate() }
     let hostID = UUID(), documentID = UUID()
     let invalidation = expectation(description: "Transient renderer bookkeeping is not SwiftUI content")
@@ -923,7 +1070,7 @@ final class DocumentRuntimeTests: XCTestCase {
         "document.querySelector('input').value='uncommitted'; notebook.commit({boot:crypto.randomUUID()});", height: 100)])
     var state = DocumentStateJournal(id: document.id, actor: UUID())
     var commits: [JSONValue] = [], drafts: [DocumentEditingSession] = []
-    let surface = surface(document: document, state: state, draft: { drafts.append($0) }, commit: { _, value in commits.append(value) })
+    let surface = surface(document: document, state: state, draft: { drafts.append($0) }, commit: { _, value in commits.append(value); return nil })
     defer { surface.close() }
     await waitUntil { surface.coordinator.renderIsReady && commits.count == 1 }
     let web = try XCTUnwrap(surface.coordinator.webView), source = try XCTUnwrap(surface.coordinator.payload?.source)
@@ -942,7 +1089,7 @@ final class DocumentRuntimeTests: XCTestCase {
       XCTAssertTrue(state.commit(blockID: "counter", value: .object(["count": .number(Double(count))]), actor: UUID()))
       surface.coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
         onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed },
-        onStateChange: { _, value in commits.append(value) }, onDraftChange: { drafts.append($0) })
+        onStateChange: { _, value in commits.append(value); return nil }, onDraftChange: { drafts.append($0) })
       await waitUntil { surface.coordinator.renderIsReady }
     }
     let after = try await js("JSON.stringify(window.notebookRenderer.pageReceipt().work)", web)
@@ -1001,7 +1148,7 @@ final class DocumentRuntimeTests: XCTestCase {
     await waitUntil { pages.allSatisfy { $0.coordinator.renderIsReady } || pages.contains { $0.coordinator.acquisitionError != nil } }
     let source = try XCTUnwrap(pages[0].coordinator.payload?.source), layout = try XCTUnwrap(source.layout)
     XCTAssertGreaterThanOrEqual(layout.pageCount, 4)
-    var layoutPasses = 0, typesetPasses = 0
+    var layoutPasses = 0, typesetPasses = 0, preparationRoots = 0
     for (index, page) in pages.enumerated() {
       XCTAssertNil(page.coordinator.acquisitionError)
       XCTAssertTrue(page.coordinator.renderIsReady)
@@ -1016,12 +1163,13 @@ final class DocumentRuntimeTests: XCTestCase {
       let work = try XCTUnwrap(measured["work"] as? [String: Int])
       layoutPasses += work["layoutPasses"] ?? -100; typesetPasses += work["typesetPasses"] ?? -100
       XCTAssertEqual(measured["scope"] as? String, "page")
-      XCTAssertEqual(measured["preparations"] as? Int, 0, "The measured full DOM must retire after compilation")
+      preparationRoots += try XCTUnwrap(measured["preparations"] as? Int)
       XCTAssertEqual(measured["sheets"] as? Int, 1)
       XCTAssertLessThan(try XCTUnwrap(measured["domText"] as? String).count, prose.count / 2)
       let regions = try XCTUnwrap(measured["regions"] as? [[String: Any]])
       XCTAssertTrue(regions.allSatisfy { $0["pageIndex"] as? Int == index })
     }
+    XCTAssertEqual(preparationRoots, 1, "One admitted page owns the inert source index; neighbors own only their physical page")
     XCTAssertEqual(layoutPasses, 1); XCTAssertEqual(typesetPasses, 1)
     XCTAssertEqual(source.preparationCount, 1)
     XCTAssertEqual(source.encodingCount, 1)
@@ -1047,7 +1195,7 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertTrue(document.replaceBlockSource(id: "body", source: "Intermediate $x^2$", actor: actor))
     func update() {
       surface.coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-        onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in })
+        onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
     }
     update()
     var entered = false
@@ -1101,7 +1249,7 @@ final class DocumentRuntimeTests: XCTestCase {
       javaScript: "notebook.ready(new Promise(()=>{}));", height: 100)], actor: actor))
     func update() {
       surface.coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-        onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in })
+        onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
     }
     // Both accepted generations precede the sender Task's first opportunity to
     // execute. Its first deadline cannot be left naming the superseded one.
@@ -1122,6 +1270,7 @@ final class DocumentRuntimeTests: XCTestCase {
       .snapshotPending("document_preparation_timeout"))
     XCTAssertFalse(surface.coordinator.renderIsReady)
     XCTAssertNil(surface.coordinator.webView)
+    await waitUntil { resources.activeWebSurfaceCount == 0 }
     XCTAssertEqual(resources.activeWebSurfaceCount, 0)
     XCTAssertEqual(resources.pendingWebRequestCount, 0)
   }
@@ -1152,6 +1301,6 @@ final class DocumentRuntimeTests: XCTestCase {
     _ condition: () -> Bool) async {
     let deadline = ContinuousClock.now + timeout
     while !condition(), ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
-    XCTAssertTrue(condition(), "The real WebKit surface did not complete its bounded preparation", file: file, line: line)
+    XCTAssertTrue(condition(), "The real WebKit surface did not complete its bounded preparation at \(file):\(line)", file: file, line: line)
   }
 }

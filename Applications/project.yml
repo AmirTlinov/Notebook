@@ -17,6 +17,12 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete
     ENABLE_USER_SCRIPT_SANDBOXING: true
     CLANG_ENABLE_MODULES: true
+    NOTEBOOK_BUNDLE_SUFFIX: ""
+    NOTEBOOK_SCRIPT_BUNDLE_SUFFIX: $(NOTEBOOK_BUNDLE_SUFFIX)
+    NOTEBOOK_ACCEPTANCE_ENABLED: NO
+    NOTEBOOK_IPAD_ENTITLEMENTS: ""
+    NOTEBOOK_TEX_RUNTIME: $(SRCROOT)/../.build/notebook-tex-runtime
+    NOTEBOOK_IMAGE_RUNTIME: ""
 
 targets:
   Notebook:
@@ -36,6 +42,7 @@ targets:
       path: iPad/Info.plist
       properties:
         CFBundleDisplayName: $(NOTEBOOK_DISPLAY_NAME)
+        NotebookAcceptanceEnabled: $(NOTEBOOK_ACCEPTANCE_ENABLED)
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.productivity
@@ -52,12 +59,13 @@ targets:
           - UIInterfaceOrientationLandscapeRight
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook
+        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook$(NOTEBOOK_BUNDLE_SUFFIX)
         PRODUCT_NAME: Notebook
         NOTEBOOK_DISPLAY_NAME: Notebook
         MARKETING_VERSION: 0.3.62
         CURRENT_PROJECT_VERSION: 65
         CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: $(NOTEBOOK_IPAD_ENTITLEMENTS)
         DEVELOPMENT_TEAM: VUNH73AYPY
         TARGETED_DEVICE_FAMILY: 2
         SUPPORTS_MACCATALYST: false
@@ -129,10 +137,19 @@ targets:
         product: NotebookCore
       - package: NotebookCore
         product: NotebookCodex
+      - package: NotebookCore
+        product: NotebookScriptHost
+      - target: NotebookScriptService
+        embed: true
+      - target: NotebookMarkupService
+        embed: true
     info:
       path: Mac/Info.plist
       properties:
         CFBundleDisplayName: Notebook
+        NotebookAcceptanceEnabled: $(NOTEBOOK_ACCEPTANCE_ENABLED)
+        NotebookScriptService: com.amirtlinov.notebook.script-service$(NOTEBOOK_SCRIPT_BUNDLE_SUFFIX)
+        NotebookMarkupService: com.amirtlinov.notebook.markup-service$(NOTEBOOK_SCRIPT_BUNDLE_SUFFIX)
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.productivity
@@ -142,7 +159,8 @@ targets:
           - _notebook._tcp
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook.mac
+        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook.mac$(NOTEBOOK_BUNDLE_SUFFIX)
+        CODE_SIGN_ENTITLEMENTS: $(NOTEBOOK_MAC_ENTITLEMENTS)
         PRODUCT_NAME: Notebook
         MARKETING_VERSION: 0.3.62
         CURRENT_PROJECT_VERSION: 65
@@ -170,3 +188,133 @@ targets:
         GENERATE_INFOPLIST_FILE: true
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/Notebook.app/Contents/MacOS/Notebook
         BUNDLE_LOADER: $(TEST_HOST)
+
+  NotebookScriptService:
+    type: xpc-service
+    platform: macOS
+    sources:
+      - path: ../Sources/NotebookScriptService/main.swift
+      - path: ../Sources/NotebookScriptWorker/Resources/notebook-sdk.js
+        buildPhase: resources
+    dependencies:
+      - package: NotebookCore
+        product: NotebookScriptWorker
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook.script-service$(NOTEBOOK_SCRIPT_BUNDLE_SUFFIX)
+        GENERATE_INFOPLIST_FILE: false
+        INFOPLIST_FILE: ../Sources/NotebookScriptService/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ../Sources/NotebookScriptService/entitlements.plist
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: VUNH73AYPY
+        ENABLE_APP_SANDBOX: YES
+        SKIP_INSTALL: YES
+
+  NotebookMarkupService:
+    type: xpc-service
+    platform: macOS
+    sources:
+      - path: ../Sources/NotebookMarkupService/main.swift
+      - path: ../Sources/NotebookMarkupService/Resources
+        buildPhase: resources
+    dependencies:
+      - package: NotebookCore
+        product: NotebookScriptWorker
+    postBuildScripts:
+      - name: Bundle pinned TeX compiler and distribution
+        script: /bin/sh "$SRCROOT/bundle_notebook_tex.sh"
+        inputFiles:
+          - $(SRCROOT)/bundle_notebook_tex.sh
+          - $(SRCROOT)/prepare_notebook_tex.py
+          - $(SRCROOT)/../Sources/NotebookMarkupService/TeXResources.lock.json
+          - $(SRCROOT)/../Sources/NotebookMarkupService/tex-child.entitlements.plist
+          - $(NOTEBOOK_TEX_RUNTIME)
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/tectonic
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/texlive.zip
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/manifest.json
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/Tectonic-LICENSE.txt
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/TeXLive-LICENSE.TL
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/LPPL-1.3c.txt
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/FreeType-2.13.3-FTL.txt
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/HarfBuzz-11.3.3-COPYING.txt
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/Graphite-1.3.14-COPYING.txt
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/ICU-74.2-LICENSE.txt
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/zlib-1.3.1-LICENSE.txt
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/libpng-1.6.50-LICENSE.txt
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/Expat-2.7.3-COPYING.txt
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/Brotli-1.1.0-LICENSE.txt
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/fontconfig-2.15.0-COPYING.txt
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/bzip2-1.0.8-LICENSE.txt
+      - name: Bundle pinned SVG to PDF compiler
+        script: /bin/sh "$SRCROOT/bundle_notebook_images.sh"
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers
+          - $(SRCROOT)/bundle_notebook_images.sh
+          - $(SRCROOT)/prepare_notebook_images.py
+          - $(SRCROOT)/NotebookImageResources.xcfilelist
+          - $(SRCROOT)/../Sources/NotebookImageCompiler
+          - $(SRCROOT)/../Sources/NotebookMarkupService/tex-child.entitlements.plist
+          - $(NOTEBOOK_IMAGE_RUNTIME)
+        outputFileLists:
+          - $(SRCROOT)/NotebookImageResources.xcfilelist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook.markup-service$(NOTEBOOK_SCRIPT_BUNDLE_SUFFIX)
+        GENERATE_INFOPLIST_FILE: false
+        INFOPLIST_FILE: ../Sources/NotebookMarkupService/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ../Sources/NotebookMarkupService/entitlements.plist
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: VUNH73AYPY
+        ENABLE_APP_SANDBOX: YES
+        SKIP_INSTALL: YES
+
+  NotebookAcceptanceUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: AcceptanceUITests
+    dependencies:
+      - target: Notebook
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook.acceptance.uitests
+        GENERATE_INFOPLIST_FILE: true
+        TEST_TARGET_NAME: Notebook
+        TARGETED_DEVICE_FAMILY: 2
+
+  NotebookMacAcceptanceUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: MacUITests
+    dependencies:
+      - target: NotebookMac
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook.mac.acceptance.uitests
+        GENERATE_INFOPLIST_FILE: true
+        TEST_TARGET_NAME: NotebookMac
+
+schemes:
+  NotebookAcceptance:
+    build:
+      targets:
+        Notebook: all
+    test:
+      targets:
+        - NotebookAcceptanceUITests
+      gatherCoverageData: false
+  NotebookMacAcceptance:
+    build:
+      targets:
+        NotebookMac: all
+    test:
+      targets:
+        - NotebookMacAcceptanceUITests
+      gatherCoverageData: false

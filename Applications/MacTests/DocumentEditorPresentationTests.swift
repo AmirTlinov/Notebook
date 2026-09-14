@@ -22,7 +22,7 @@ final class DocumentEditorPresentationTests: XCTestCase {
 
   private func surface(_ document: DocumentDocument, _ state: DocumentStateJournal,
     resources: SceneRenderResources, thumbnail: Bool = false,
-    commit: @escaping (String, JSONValue) -> Void = { _,_ in }) -> Surface {
+    commit: @escaping (String, JSONValue) -> ContentFieldVersion? = { _,_ in nil }) -> Surface {
     let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
       onPageLayout: { _ in }, onSourceChange: { _ in .targetMissing }, onStateChange: commit)
     coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: thumbnail,
@@ -47,7 +47,7 @@ final class DocumentEditorPresentationTests: XCTestCase {
     let document = document(), state = DocumentStateJournal(id: document.id, actor: UUID())
     let resources = SceneRenderResources(maximumWebSurfaces: 1)
     var boots = 0
-    let live = surface(document, state, resources: resources, commit: { _,_ in boots += 1 })
+    let live = surface(document, state, resources: resources, commit: { _,_ in boots += 1; return nil })
     defer { live.close() }
     await wait { live.coordinator.hasCanonicalPixels && boots == 1 }
     let web = try XCTUnwrap(live.coordinator.webView)
@@ -118,7 +118,7 @@ final class DocumentEditorPresentationTests: XCTestCase {
     try await openEditor(web)
     func update() {
       live.coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-        onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .targetMissing }, onStateChange: { _,_ in })
+        onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .targetMissing }, onStateChange: { _, _ in nil })
     }
     XCTAssertTrue(document.replaceBlockSource(id: "body", source: "Внешний источник", actor: actor)); update()
     await wait { live.coordinator.renderIsReady }
@@ -169,7 +169,7 @@ final class DocumentEditorPresentationTests: XCTestCase {
     let document = document(), state = DocumentStateJournal(id: document.id, actor: UUID())
     let resources = SceneRenderResources(maximumWebSurfaces: 1)
     var boots = 0
-    let live = surface(document, state, resources: resources, commit: { _,_ in boots += 1 })
+    let live = surface(document, state, resources: resources, commit: { _,_ in boots += 1; return nil })
     defer { live.close() }
     await wait { live.coordinator.hasCanonicalPixels && boots == 1 }
     let web = try XCTUnwrap(live.coordinator.webView)

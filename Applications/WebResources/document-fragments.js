@@ -312,7 +312,7 @@
       return {format:1, sourceKey, pageIndex, width, height, contentTop, contentBottom, blockIDs, regions:pageRegions, html, nodeCount, utf8Bytes, visitedNodes};
     } finally { measurement.remove(); }
     };
-    return Object.freeze({compile,anchors:[...anchors].map(([name,pageIndex])=>({name,pageIndex}))});
+    return Object.freeze({compile,indexedNodes,indexedEdges,anchors:[...anchors].map(([name,pageIndex])=>({name,pageIndex}))});
   };
 
   window.notebookDocumentFragments = Object.freeze({create});

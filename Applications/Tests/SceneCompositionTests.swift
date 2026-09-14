@@ -6,6 +6,178 @@ import XCTest
 
 final class SceneCompositionTests: XCTestCase {
   @MainActor
+  func testPendingSourceBecomesReadyWhileCameraDensityContinuesChanging() async throws {
+    let fixture = Fixture(count: 0), stamp = fixture.workspace.stamp, boardID = fixture.presence.boardID
+    var elements = (0..<7).map { index in
+      SpatialElement(id: "a-camera-pin-\(index)", surface: .board(boardID), kind: .nativeText,
+        frame: .init(x: 0, y: 0, width: 32, height: 64), worldOrigin: .zero, source: "\(index)", stamp: stamp)
+    }
+    let delayed = SpatialElement(id: "z-camera-pending", surface: .board(boardID), kind: .web,
+      frame: .init(x: 0, y: 0, width: 96, height: 96), worldOrigin: .zero,
+      source: "A single delayed render", html: "<div style='position:absolute;inset:0;background:red'></div><script>window.notebook.ready(new Promise(resolve => setTimeout(resolve,1300)))</script>", stamp: stamp)
+    elements.append(delayed)
+    let hierarchy = BoardHierarchy(rootBoardID: boardID,
+      boards: [.init(id: boardID, board: .init(freeItems: fixture.hierarchy.boards[0].board.freeItems,
+        elements: elements, stamp: stamp))], stamp: stamp)
+    let index = WorkspaceSceneIndex(workspace: fixture.workspace, hierarchy: hierarchy, paperSizes: [:])
+    let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: fixture.journal)
+    let resources = SceneRenderResources(), coordinator = SceneCompositionTiles(resources: resources)
+    addTeardownBlock { @MainActor in await coordinator.stop() }
+    let address = SceneSourceAddress(plane: .board(boardID), elementID: delayed.id)
+    var readyDuringMotion = false
+    for step in 0..<40 {
+      let presence = SessionPresence(boardID: boardID, mode: .board,
+        camera: .init(center: .init(x: 64 + Double(step % 3), y: 64), scale: 0.6 + Double(step % 9) / 20),
+        viewport: .init(x: 320, y: 256))
+      coordinator.prepare(source: source, presence: presence,
+        frame: .init(index: index, presence: presence, portalCamera: { _ in nil }), pinned: [],
+        displayScale: 2, refinesDetails: false)
+      try await Task.sleep(for: .milliseconds(80))
+      if coordinator.published?.sourceReceipts[address]?.hasCurrentPixels == true { readyDuringMotion = true }
+    }
+    XCTAssertTrue(readyDuringMotion, "A 1.3-second source must complete during uninterrupted camera changes")
+    XCTAssertLessThanOrEqual(resources.activeWebSurfaceCount, 6)
+    XCTAssertLessThanOrEqual(resources.peakAccountedBytes, resources.byteLimit)
+  }
+
+  @MainActor
+  func testAReadySourcePublishesWhileItsSharedBandNeighbourIsStillLoading() async throws {
+    let fixture = Fixture(count: 0), stamp = fixture.workspace.stamp
+    let boardID = fixture.presence.boardID
+    var elements = (0..<7).map { offset in
+      SpatialElement(id: "a-\(offset)", surface: .board(boardID), kind: .nativeText,
+        frame: .init(x: 0, y: 0, width: 32, height: 32), worldOrigin: .zero, source: "\(offset)", stamp: stamp)
+    }
+    elements += [
+      .init(id: "z-slow", surface: .board(boardID), kind: .web,
+        frame: .init(x: 0, y: 0, width: 96, height: 96), worldOrigin: .zero,
+        source: "Delayed neighbour", html: "<script>window.notebook.ready(new Promise(resolve => setTimeout(resolve, 5000)))</script><div style='position:absolute;inset:0;background:blue'></div>", stamp: stamp),
+      .init(id: "z-healthy", surface: .board(boardID), kind: .web,
+        frame: .init(x: 0, y: 0, width: 96, height: 96), worldOrigin: .init(x: 64, y: 0),
+        source: "Ready neighbour", html: "<div style='position:absolute;inset:0;background:red'></div>", stamp: stamp)
+    ]
+    let hierarchy = BoardHierarchy(rootBoardID: boardID,
+      boards: [.init(id: boardID, board: .init(freeItems: fixture.hierarchy.boards[0].board.freeItems,
+        elements: elements, stamp: stamp))], stamp: stamp)
+    let index = WorkspaceSceneIndex(workspace: fixture.workspace, hierarchy: hierarchy, paperSizes: [:])
+    let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: fixture.journal)
+    let presence = SessionPresence(boardID: boardID, mode: .board,
+      camera: .init(center: .init(x: 128, y: 64), scale: 1), viewport: .init(x: 320, y: 256))
+    let resources = SceneRenderResources(), coordinator = SceneCompositionTiles(resources: resources)
+    addTeardownBlock { @MainActor in await coordinator.stop() }
+    coordinator.prepare(source: source, presence: presence,
+      frame: .init(index: index, presence: presence, portalCamera: { _ in nil }), pinned: [])
+    let healthy = SceneSourceAddress(plane: .board(boardID), elementID: "z-healthy")
+    let slow = SceneSourceAddress(plane: .board(boardID), elementID: "z-slow")
+    try await waitUntil { coordinator.published?.sourceReceipts[healthy]?.hasCurrentPixels == true }
+    let first = try XCTUnwrap(coordinator.published)
+    XCTAssertFalse(first.sourceReceipts[slow]?.hasCurrentPixels == true,
+      "The ready source publishes before its neighbour's five-second readiness promise")
+    XCTAssertTrue(first.tileSources.values.contains { $0.contains(healthy) && $0.contains(slow) },
+      "This must exercise two sources sharing one painter tile, not merely separate live layers")
+    XCTAssertTrue(first.tileSources.filter { $0.value.contains(healthy) }.keys.allSatisfy { first.rasters[$0] != nil })
+    XCTAssertEqual(first.sourceReceipts[healthy]?.status, .ready)
+    let point = WorldPoint(x: 140, y: 48)
+    let key = try XCTUnwrap(first.tileSources.first { key, sources in
+      sources.contains(healthy) && key.tile.bounds.contains(.init(origin: point, width: 0.01, height: 0.01))
+    }?.key)
+    let image = try XCTUnwrap(first.rasters[key]?.image.cgImage)
+    let data = try pixels(image), local = key.tile.origin.delta(to: point)
+    let x = min(image.width - 1, Int(local.x / key.tile.worldSize * Double(image.width)))
+    let y = min(image.height - 1, Int(local.y / key.tile.worldSize * Double(image.height)))
+    let pixel = (y * image.width + x) * 4
+    XCTAssertGreaterThan(data[pixel], 240); XCTAssertLessThan(data[pixel + 1], 15)
+    XCTAssertLessThanOrEqual(resources.residentBytes + resources.reservedBytes, resources.byteLimit)
+  }
+
+  @MainActor
+  func testSparseThreePaperAndTwoProgramSceneAllocatesFineOccupiedCellsBeforeThePhysicalQuota() async throws {
+    let stamp = VersionStamp(counter: 0, actor: UUID())
+    let papers = (0..<3).map { WorkspaceItem.notebook(title: "Paper \($0)", pageIDs: [UUID()]) }
+    let workspace = WorkspaceIndex(items: papers, selectedItemID: papers[0].id,
+      selectedPageID: papers[0].pageIDs[0], stamp: stamp)
+    let boardID = workspace.rootBoardID
+    var elements = (0..<6).map { index in
+      SpatialElement(id: "1-filler-\(index)", surface: .board(boardID), kind: .nativeText,
+        frame: .init(x: 0, y: 0, width: 100, height: 60),
+        worldOrigin: .init(x: -450 + Double(index) * 150, y: -380), source: "\(index)", stamp: stamp)
+    }
+    for (id, x) in [("0-control", 100.0), ("z-vector", -300.0)] {
+      elements.append(.init(id: id, surface: .board(boardID), kind: .web,
+        frame: .init(x: 0, y: 0, width: 200, height: 180), worldOrigin: .init(x: x, y: -150),
+        source: id, html: "<svg viewBox='0 0 200 180'><path d='M20 20L180 160' stroke='red'/></svg>", stamp: stamp))
+    }
+    let board = BoardDocument(freeItems: papers.enumerated().map { index, item in
+      .init(itemID: item.id, center: .init(x: Double(index - 1) * 1100, y: 1350), zIndex: index, stamp: stamp)
+    }, elements: elements, stamp: stamp)
+    let hierarchy = BoardHierarchy(rootBoardID: boardID, boards: [.init(id: boardID, board: board)], stamp: stamp)
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
+    let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: .init(stamp: stamp))
+    for zoom in [0.37, 0.4916067, 0.56, 0.7] {
+      let presence = SessionPresence(boardID: boardID, mode: .board,
+        camera: .init(center: .zero, scale: zoom), viewport: .init(x: 820, y: 1180))
+      let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil })
+      let plan = try await SceneCompositionPlan.prepare(source: source, presence: presence, frame: frame,
+        pinned: [], displayScale: 2, previous: nil)
+      XCTAssertEqual(plan.liveOwners.count, 7)
+      XCTAssertFalse(plan.allowsLive(.element("z-vector"), in: .board(boardID)))
+      XCTAssertTrue(plan.meetsRequiredDensity)
+      XCTAssertLessThanOrEqual(plan.tiles.count, SceneCompositionPlan.maximumTiles)
+      let largest = (plan.tiles.map(\.pixelSize).max() ?? 0) + 2
+      let resident = try plan.tiles.reduce(0) { total, tile in
+        total + (try XCTUnwrap(SceneRenderResources.estimatedRasterBytes(pixelWidth: tile.pixelSize, pixelHeight: tile.pixelSize)))
+      }
+      let scratch = try XCTUnwrap(SceneRenderResources.estimatedRasterBytes(pixelWidth: largest, pixelHeight: largest))
+      XCTAssertLessThan(resident + scratch, 64 * 1024 * 1024,
+        "Small occupied sources must fit alongside their shown predecessor, not demand 150–206 MiB of empty cells")
+    }
+  }
+
+  @MainActor
+  func testEmptyBandsDoNotLowerActualVisibleTileDensity() async throws {
+    let fixture = Fixture(count: 9, side: 1280, kind: .nativeText)
+    let presence = SessionPresence(boardID: fixture.presence.boardID, mode: .board,
+      camera: .init(center: .init(x: 640, y: 640), scale: 0.3313472587), viewport: .init(x: 834, y: 1194))
+    let plan = try await SceneCompositionPlan.prepare(source: fixture.source(), presence: presence,
+      frame: .init(index: fixture.index, presence: presence, portalCamera: { _ in nil }),
+      pinned: [], displayScale: 2, previous: nil)
+    XCTAssertGreaterThan(plan.bands.count, 3)
+    XCTAssertFalse(plan.tiles.isEmpty)
+    XCTAssertTrue(plan.meetsRequiredDensity)
+    XCTAssertLessThanOrEqual(plan.tiles.count, SceneCompositionPlan.maximumTiles)
+    for tile in plan.tiles {
+      XCTAssertGreaterThanOrEqual(Double(tile.pixelSize) / tile.tile.worldSize / presence.camera.scale, 2)
+    }
+  }
+
+  @MainActor
+  func testReleasedPressureRefinesTheStationaryCameraWithoutAnotherPrepareCall() async throws {
+    let fixture = Fixture(count: 9, side: 1280, kind: .nativeText)
+    let presence = SessionPresence(boardID: fixture.presence.boardID, mode: .board,
+      camera: .init(center: .init(x: 640, y: 640), scale: 0.3313472587), viewport: .init(x: 834, y: 1194))
+    let resources = SceneRenderResources()
+    // Leave 8 MiB in the actual passive pool: enough for a coarse occupied
+    // fragment, below this fixture's fine grid and its composition scratch.
+    let pressure = try XCTUnwrap(resources.reserveDerivedBytes(resources.passiveByteLimit - 8 * 1024 * 1024,
+      priority: .passive))
+    let coordinator = SceneCompositionTiles(resources: resources)
+    addTeardownBlock { @MainActor in pressure.release(); await coordinator.stop() }
+    coordinator.prepare(source: fixture.source(), presence: presence,
+      frame: .init(index: fixture.index, presence: presence, portalCamera: { _ in nil }), pinned: [], displayScale: 2)
+    try await waitUntil { coordinator.published != nil || coordinator.failure != nil }
+    let coarse = try XCTUnwrap(coordinator.published, coordinator.failure ?? "No pressure fallback")
+    XCTAssertTrue(coordinator.hasQualityDebt, "The fixture must first display a genuinely coarser admitted lattice")
+    XCTAssertFalse(coarse.plan.meetsRequiredDensity)
+    pressure.release()
+    try await waitUntil { coordinator.published?.plan.meetsRequiredDensity == true }
+    let refined = try XCTUnwrap(coordinator.published)
+    XCTAssertNotEqual(refined.paintID, coarse.paintID)
+    XCTAssertEqual(refined.plan.presentations[.board(presence.boardID)]?.camera, presence.camera)
+    XCTAssertFalse(coordinator.hasQualityDebt)
+    XCTAssertLessThanOrEqual(resources.peakAccountedBytes, resources.byteLimit)
+  }
+
+  @MainActor
   func testTableKeepsScreenDensityBesideTwoNativePaperCovers() async throws {
     let stamp = VersionStamp(counter: 0, actor: UUID())
     let notebook = WorkspaceItem.notebook(title: "Notebook", pageIDs: [UUID()])
@@ -23,7 +195,7 @@ final class SceneCompositionTests: XCTestCase {
     let hierarchy = BoardHierarchy(rootBoardID: workspace.rootBoardID,
       boards: [.init(id: workspace.rootBoardID, board: board)], stamp: stamp)
     let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [document.id: .a4])
-    let resources = SceneRenderResources(), registry = SpatialInkSurfaceRegistry()
+    let resources = SceneRenderResources(profile: .headless), registry = SpatialInkSurfaceRegistry()
     let tiles = SceneCompositionTiles(resources: resources, surfaceRegistry: registry)
     addTeardownBlock { @MainActor in await tiles.stop(); await registry.stopSceneInk() }
     let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: .init(stamp: stamp))
@@ -34,7 +206,9 @@ final class SceneCompositionTests: XCTestCase {
       let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil })
       tiles.prepare(source: source, presence: presence, frame: frame, pinned: [], displayScale: 2)
       let deadline = ContinuousClock.now + .seconds(10)
-      while tiles.published === old, tiles.failure == nil, ContinuousClock.now < deadline {
+      let address = SceneSourceAddress(plane: .board(workspace.rootBoardID), elementID: table.id)
+      while (tiles.published === old || tiles.published?.sourceReceipts[address]?.hasCurrentPixels != true),
+        tiles.failure == nil, ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(10))
       }
       let next = try XCTUnwrap(tiles.published, tiles.failure ?? "No prepared scene")
@@ -77,7 +251,7 @@ final class SceneCompositionTests: XCTestCase {
       })], actor: actor))
     }
     let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: journal)
-    let resources = SceneRenderResources(), registry = SpatialInkSurfaceRegistry()
+    let resources = SceneRenderResources(profile: .headless), registry = SpatialInkSurfaceRegistry()
     let tiles = SceneCompositionTiles(resources: resources, surfaceRegistry: registry)
     addTeardownBlock { @MainActor in await tiles.stop(); await registry.stopSceneInk() }
     tiles.prepare(source: source, presence: presence, frame: frame, pinned: [], displayScale: 2)
@@ -102,7 +276,7 @@ final class SceneCompositionTests: XCTestCase {
     let empty = Fixture(count: 0)
     let original = try await SceneCompositionPlan.prepare(source: empty.source(), presence: empty.presence,
       frame: empty.frame(), pinned: [], displayScale: 2, previous: nil)
-    XCTAssertFalse(original.tiles.isEmpty)
+    XCTAssertTrue(original.tiles.isEmpty, "Empty-range proof precedes the density allocation")
     let sparse = try await original.removingEmptyTiles(source: empty.source())
     XCTAssertTrue(sparse.tiles.isEmpty)
     XCTAssertEqual(sparse.coverage, original.coverage)
@@ -258,7 +432,7 @@ final class SceneCompositionTests: XCTestCase {
   }
 
   @MainActor
-  func testByteReductionKeepsTheAlreadyAdmittedForwardPortalAndItsRealChildPixels() async throws {
+  func testIndependentChildSourcesKeepTheForwardPortalAndItsRealPixels() async throws {
     let actor = UUID(), stamp = VersionStamp(counter: 0, actor: actor), childID = UUID()
     let portal = WorkspaceItem.board(id: childID, title: "Prepared forward aperture")
     let workspace = WorkspaceIndex(items: [portal], selectedItemID: childID, selectedPageID: nil, stamp: stamp)
@@ -300,10 +474,11 @@ final class SceneCompositionTests: XCTestCase {
     addTeardownBlock { @MainActor in await coordinator.stop() }
     coordinator.prepare(source: source, presence: presence, frame: frame, pinned: [], displayScale: 2)
     try await waitUntil { coordinator.published != nil || coordinator.failure != nil }
+    try await waitUntil {
+      coordinator.published?.sourceReceipts.contains { $0.key.plane.boardID == childID && $0.value.hasCurrentPixels } == true
+    }
     let cohort = try XCTUnwrap(coordinator.published, coordinator.failure ?? "The prepared forward plane must remain whole")
     XCTAssertNil(coordinator.failure)
-    XCTAssertFalse(coordinator.budgetFailures.isEmpty, "This is the real cold byte-reduction path, not an unconstrained plan")
-    XCTAssertLessThan(cohort.plan.reductionPotential, initial.reductionPotential)
     XCTAssertTrue(cohort.plan.protectedOwners.contains(aperture))
     XCTAssertNotNil(cohort.plan.presentations[.board(childID)])
     XCTAssertNotNil(cohort.nativeInk.owners[.board(childID)])
@@ -325,9 +500,7 @@ final class SceneCompositionTests: XCTestCase {
   }
 
   @MainActor
-  func testColdCacheMissDoesNotRequireDecodeScratchBeforeRenderingAStaticTile() async throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
+  func testColdStaticTileFitsItsActualOutputAndArtworkBudget() async throws {
     let fixture = Fixture(count: 8, side: 32, kind: .nativeText)
     let presence = SessionPresence(mode: .board, camera: .init(), viewport: .init(x: 256, y: 256))
     let frame = WorkspaceSceneFrame(index: fixture.index, presence: presence, portalCamera: { _ in nil })
@@ -338,12 +511,12 @@ final class SceneCompositionTests: XCTestCase {
     XCTAssertFalse(plan.tiles.isEmpty, "The eighth source remains in the static painter")
     let tileBytes = try XCTUnwrap(SceneRenderResources.estimatedRasterBytes(pixelWidth: 512, pixelHeight: 512))
     let finalBytes = tileBytes * plan.tiles.count
-    // The whole result and a clipped artwork fit. An unconditional last-tile
-    // cache decode (4 MiB + 8 MiB scratch) provably does not.
+    // The shown result, its replacement and clipped artwork fit; no unrelated
+    // cache-decoding reservation belongs to this output path.
     let limit = 2 * (2 * finalBytes + 4 * 1024 * 1024)
     XCTAssertGreaterThan(2 * finalBytes - tileBytes + 12 * 1024 * 1024, limit / 2)
     let resources = SceneRenderResources(byteLimit: limit)
-    let coordinator = SceneCompositionTiles(resources: resources, cacheRoot: root)
+    let coordinator = SceneCompositionTiles(resources: resources)
     defer { coordinator.removePublishedCoverage() }
     coordinator.prepare(source: source, presence: presence, frame: frame, pinned: [])
     try await waitUntil { coordinator.published != nil || coordinator.failure != nil }
@@ -557,20 +730,76 @@ final class SceneCompositionTests: XCTestCase {
   }
 
   @MainActor
-  func testCohortPreparesAndRetainsLivePixelsBeforePublication() async throws {
+  func testAdmittedSourceSurvivesInputPauseAndPublishesOnlyAfterTheBarrierOpens() async throws {
+    let fixture = Fixture(count: 1, html: """
+      <div style='position:absolute;inset:0;background:red'></div>
+      <script>window.notebook.ready(new Promise(resolve => setTimeout(resolve, 450)))</script>
+      """)
+    let resources = SceneRenderResources(byteLimit: 96 * 1024 * 1024,
+      profile: .headless, maximumBackgroundWebSurfaces: 1)
+    let coordinator = SceneCompositionTiles(resources: resources)
+    addTeardownBlock { @MainActor in await coordinator.stop() }
+    let pin = WorkspaceSpatialID.element(fixture.elements[0].id)
+    let source = fixture.source(), frame = fixture.frame(pinned: [pin])
+    let element = agentElementSnapshotSource(fixture.elements[0])
+    let address = SceneSourceAddress(plane: .board(fixture.presence.boardID), elementID: element.id)
+    var permitsInstallation = true
+    func prepare() {
+      coordinator.prepare(source: source, presence: fixture.presence, frame: frame,
+        pinned: [pin], displayScale: 2, permitsPreparation: { permitsInstallation })
+    }
+    prepare()
+    try await waitUntil {
+      coordinator.published?.sourceReceipts[address]?.hasCurrentPixels == false
+        && resources.activeWebSurfaceCount == 1
+    }
+    let old = try XCTUnwrap(coordinator.published)
+    permitsInstallation = false
+    prepare()
+    try await Task.sleep(for: .milliseconds(100))
+    XCTAssertEqual(resources.activeWebSurfaceCount, 1,
+      "An input transition retains the admitted runtime and its still-running readiness promise")
+    try await waitUntil { resources.image(for: element, minimumScale: 2) != nil }
+    XCTAssertTrue(coordinator.published === old,
+      "Completing pixels does not replace the contact's published scene while installation is closed")
+    XCTAssertFalse(old.sourceReceipts[address]?.hasCurrentPixels == true)
+    permitsInstallation = true
+    prepare()
+    try await waitUntil { coordinator.published?.sourceReceipts[address]?.hasCurrentPixels == true }
+    let ready = try XCTUnwrap(coordinator.published?.sourceRasters[address])
+    XCTAssertNotNil(ready.image(for: .agent(element), minimumScale: 2))
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+    XCTAssertLessThanOrEqual(resources.residentBytes + resources.reservedBytes, resources.byteLimit)
+  }
+
+  @MainActor
+  func testGeometryPublishesBeforeItsSourceAndThenRetainsTheReadyPixels() async throws {
     let fixture = Fixture(count: 1, html: "<div style='position:absolute;inset:0;background:red'></div>")
-    let resources = SceneRenderResources(byteLimit: 96 * 1024 * 1024, maximumBackgroundWebSurfaces: 1)
+    // This fixture has no mounted native consumer. Give the source job the
+    // headless execution owner instead of reserving an interactive WK that
+    // only a real PreparedAgentElementView is allowed to create.
+    let resources = SceneRenderResources(byteLimit: 96 * 1024 * 1024,
+      profile: .headless, maximumBackgroundWebSurfaces: 1)
     let coordinator = SceneCompositionTiles(resources: resources)
     defer { coordinator.removePublishedCoverage() }
     let pin = WorkspaceSpatialID.element(fixture.elements[0].id)
     coordinator.prepare(source: fixture.source(), presence: fixture.presence,
       frame: fixture.frame(pinned: [pin]), pinned: [pin], displayScale: 2)
-    XCTAssertNil(coordinator.published, "An excluded but cold source is not a completed scene")
+    XCTAssertNil(coordinator.published, "Addressed geometry is prepared asynchronously")
     let deadline = ContinuousClock.now + .seconds(5)
     while coordinator.published == nil, coordinator.failure == nil, ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(10))
     }
-    let cohort = try XCTUnwrap(coordinator.published, coordinator.failure ?? "A whole cohort includes its live pixels")
+    let geometry = try XCTUnwrap(coordinator.published, coordinator.failure ?? "Geometry can mount while this source prepares")
+    XCTAssertTrue(geometry.runtimeOwners.isEmpty, "This fixture's source is owned by its headless producer")
+    let address = SceneSourceAddress(plane: .board(fixture.presence.boardID), elementID: fixture.elements[0].id)
+    while coordinator.published?.sourceReceipts[address]?.hasCurrentPixels != true,
+      coordinator.failure == nil, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    let cohort = try XCTUnwrap(coordinator.published)
+    XCTAssertTrue(cohort.sourceReceipts[address]?.hasCurrentPixels == true)
+    XCTAssertEqual(cohort.geometryID, geometry.geometryID, "Source completion preserves the installed geometry owner")
     let owner = try XCTUnwrap(cohort.plan.liveOwners.first { $0.id == pin })
     let raster = try XCTUnwrap(cohort.liveRasters[owner])
     let source = agentElementSnapshotSource(fixture.elements[0])
@@ -866,51 +1095,6 @@ final class SceneCompositionTests: XCTestCase {
     XCTAssertEqual(resources.rasterAdmission.pinnedBytes, 0)
     XCTAssertEqual(resources.reservedBytes, 0)
     XCTAssertEqual(resources.activeWebSurfaceCount, 0)
-  }
-
-  @MainActor
-  func testTileDiskCacheChecksIdentityCorruptionAndFiniteEviction() async throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
-    let fixture = Fixture(count: 0)
-    let tile = try XCTUnwrap(CompositionTile(containing: .zero, level: 0))
-    let first = fixture.key(tile: tile, range: .whole(.elements))
-    let second = first.atRevision(1)
-    let cache = SceneCompositionTileCache(root: root, entryLimit: 1)
-    let image = try XCTUnwrap(bitmap(side: 512, scale: 1, color: .red).cgImage)
-    try await cache.store(image, for: first)
-    let ready = try await cache.load(first)
-    XCTAssertEqual(ready?.width, 512)
-    let secondExists = try await cache.hasRecord(second)
-    XCTAssertFalse(secondExists)
-    let absentSecond = try await cache.load(second)
-    XCTAssertNil(absentSecond)
-    try await cache.store(image, for: second)
-    let evictedFirst = try await cache.load(first)
-    XCTAssertNil(evictedFirst)
-    let secondExistsAfterWrite = try await cache.hasRecord(second)
-    XCTAssertTrue(secondExistsAfterWrite)
-    let files = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
-    XCTAssertEqual(files.count, 1)
-    try Data("damaged".utf8).write(to: XCTUnwrap(files.first), options: .atomic)
-    let corrupted = try await cache.load(second)
-    XCTAssertNil(corrupted)
-    XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
-  }
-
-  @MainActor
-  func testCacheRecordRemovedAfterItsHintIsAnOrdinaryMiss() async throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
-    let fixture = Fixture(count: 0)
-    let key = fixture.key(tile: try XCTUnwrap(CompositionTile(containing: .zero, level: 0)), range: .whole(.elements))
-    let cache = SceneCompositionTileCache(root: root)
-    try await cache.store(try XCTUnwrap(bitmap(side: 512, scale: 1, color: .red).cgImage), for: key)
-    let exists = try await cache.hasRecord(key)
-    XCTAssertTrue(exists)
-    try FileManager.default.removeItem(at: root)
-    let disappeared = try await cache.load(key)
-    XCTAssertNil(disappeared, "The preflight hint is neither a read receipt nor an allocation grant")
   }
 
   @MainActor

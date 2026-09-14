@@ -128,6 +128,8 @@ struct SpatialWorkspaceView: View {
       let rendered = workset.items
 
       ZStack {
+        NotebookWorkspacePresentation(presence: presence, cohort: cohort) { [weak cohort] in
+        ZStack {
         SpatialBoardGrid(camera: presence.camera)
         if cohort == nil {
           ProgressView(model.compositionTiles.failure == nil ? "Подготовка пространства" : "Ожидание ресурсов изображения")
@@ -168,8 +170,7 @@ struct SpatialWorkspaceView: View {
             },
             onBegan: {
               referencePageResolution.cancel()
-              model.endSurfaceEditing()
-              model.interactiveElementFocus = nil
+              model.cancelElementManipulation()
               panStart = presenceForNewContact(presence)
             },
             onChanged: { translation in
@@ -219,6 +220,10 @@ struct SpatialWorkspaceView: View {
 
         sceneItems(rendered, presence: presence, viewport: viewport, frame: frame, cohort: cohort)
           .zIndex(liftedItemIDs.isEmpty ? 0 : 9_000)
+        }
+        .frame(width: viewport.x, height: viewport.y)
+        }
+        .frame(width: viewport.x, height: viewport.y)
 
           WorkspaceGestureLayer(
             isEnabled: true,
@@ -302,7 +307,8 @@ struct SpatialWorkspaceView: View {
         }
           NotebookDisplayConfirmation {
             guard cameraGesture == nil, !settling, !pageTurnIsActive, !contentGestureActive else { return }
-            model.confirmVisibleActions(presence: presence, scene: workset)
+            model.prepareCommonDocumentShellIfIdle(presence: presence, cohort: cohort)
+            model.confirmVisibleActions(presence: presence, scene: workset, cohort: cohort)
           }.allowsHitTesting(false)
 
         controls(presence: presence, viewport: viewport)
@@ -314,6 +320,13 @@ struct SpatialWorkspaceView: View {
           pinned: compositionRequest.pinned, displayScale: displayScale, installedItemOwners: compositionRequest.itemOwners)
       }
       .onAppear {
+        model.stopNavigationPresentation = {
+          referencePageResolution.cancel()
+          interruptSettlementForInput()
+          if model.presencePhase == .active, let current = model.presence {
+            model.updatePresence(current, settled: true)
+          }
+        }
         model.presentationPlayer.moveCamera = { camera, duration in
           guard let current = model.presence, !model.inputGate.isActive, cameraGesture == nil,
             !pageTurnIsActive, !contentGestureActive, model.requestedReference == nil,
@@ -336,51 +349,63 @@ struct SpatialWorkspaceView: View {
         }
         publishViewportIfNeeded(viewport)
       }
-      .task(id:model.requestedReference?.id) {
+      .task(id: model.navigationGeneration) {
         guard let reference = model.requestedReference else { return }
+        model.observeNavigation("view_task_enter", reference: reference, fields: ["cameraGesture": .bool(cameraGesture != nil), "settling": .bool(settling), "pageTurn": .bool(pageTurnIsActive), "contentGesture": .bool(contentGestureActive)])
+        defer { model.observeNavigation("view_task_exit", reference: reference) }
         model.presentationPlayer.interrupt("navigation")
         referencePageResolution.cancel()
         while cameraGesture != nil || settling || pageTurnIsActive || contentGestureActive || model.presencePhase != .settled {
           do { try await Task.sleep(for:.milliseconds(40)) } catch { return }
         }
-        if reference.target.kind == .page {
-          guard await model.navigateToNotebookPage(id: reference.target.id,
-            isCurrent: { model.requestedReference?.id == reference.id }) else { return }
-        }
-        model.afterPageInput {
-          guard model.requestedReference?.id == reference.id else { return }
-          showReference(reference,viewport:viewport)
+        model.observeNavigation("view_ready_to_resolve", reference: reference)
+        await model.resolveReferenceLocation(reference) { location in
+          showReference(reference, location: location, viewport: model.presence?.viewport ?? viewport)
         }
       }
-      .task(id: model.requestedReturn?.id) {
+      .task(id: model.navigationGeneration) {
         guard let place = model.requestedReturn else { return }
         model.presentationPlayer.interrupt("navigation")
         referencePageResolution.cancel()
         while cameraGesture != nil || settling || pageTurnIsActive || contentGestureActive || model.presencePhase != .settled {
           do { try await Task.sleep(for: .milliseconds(40)) } catch { return }
         }
-        if let pageID = place.pageID {
-          guard await model.navigateToNotebookPage(id: pageID,
-            isCurrent: { model.requestedReturn?.id == place.id }) else { return }
-        }
-        model.afterPageInput {
-          guard model.requestedReturn?.id == place.id else { return }
-          defer { model.completeReturnToPlace() }
-          guard model.boardHierarchy?.board(place.presence.boardID) != nil else { return }
-          if let itemID = place.presence.focusedItemID {
-            guard model.workspace?.item(id: itemID) != nil else { return }
-            if place.pageID == nil { model.selectItem(itemID) }
+        await model.resolveReturnToPlace(place, viewport: model.presence?.viewport ?? viewport) { destination, completed in
+          guard destination.mode == .document, let documentID = destination.focusedItemID else {
+            animateSettlement(to: destination, duration: 0.3, completion: completed)
+            return
           }
-          animateSettlement(to: place.presence.adapted(to: viewport, geometry: model.itemGeometry(place.presence.focusedItemID)), duration: 0.3)
+          let targetPage = destination.documentPageIndex
+          let generation = model.navigationGeneration
+          model.prepareDocumentOpening(documentID, pageIndex: targetPage, boardID: destination.boardID)
+          let actualPage = documentPageIndex(for: documentID, from: model.presence)
+          let cameraDestination = SessionPresence(boardID: destination.boardID, mode: destination.mode,
+            camera: destination.camera, viewport: destination.viewport, focusedItemID: documentID,
+            openProgress: destination.openProgress, documentPageIndex: actualPage,
+            selectedItemID: destination.selectedItemID, notebookPageID: destination.notebookPageID)
+          animateSettlement(to: cameraDestination, duration: 0.3, completion: completed)
+          referencePageResolution.start(requestID: place.id, documentID: documentID, isCurrent: {
+            model.navigationGeneration == generation
+              && (settling || model.presence?.focusedItemID == documentID)
+              && model.requestedReference == nil
+          }, resolve: {
+            guard !settling, model.documents[documentID] != nil else { return nil }
+            return targetPage
+          }, apply: { page in
+            _ = model.selectDocumentPage(page, documentID: documentID)
+          })
         }
       }
       .onChange(of: scenePhase) { _, phase in
         if phase != .active {
+          model.cancelRequestedNavigation(reason: "scene_phase_not_active")
           referencePageResolution.cancel()
           interruptSettlementForInput()
         }
       }
-      .onChange(of: geometry.size) { _, _ in
+      .onChange(of: geometry.size) { old, new in
+        model.observeNavigation("view_geometry_change", fields: ["oldWidth": .number(old.width), "oldHeight": .number(old.height), "newWidth": .number(new.width), "newHeight": .number(new.height)])
+        model.cancelRequestedNavigation(reason: "geometry_size_changed")
         interruptSettlementForInput()
         publishViewportIfNeeded(viewport)
       }
@@ -401,6 +426,8 @@ struct SpatialWorkspaceView: View {
         pageTurnIsActive = false
       }
       .onDisappear {
+        model.cancelRequestedNavigation()
+        model.stopNavigationPresentation = nil
         model.presentationPlayer.interrupt("scene_not_visible")
         model.presentationPlayer.moveCamera = nil; model.presentationPlayer.stopCamera = nil
         model.unbindItemOwnerObserver(owner: deletionObserverID)
@@ -565,8 +592,11 @@ struct SpatialWorkspaceView: View {
       }
 
     NotebookNavigationView(presence: presence,
-      documentPageCount: presence.focusedItemID.flatMap { documentPageLayouts[$0]?.pageCount } ?? 1,
+      documentPageCount: presence.focusedItemID.flatMap { id in
+        model.documents[id].flatMap { documentPageLayouts[id]?.pageCount(for: NotebookAppModel.documentPageSourceRevision($0)) }
+      },
       onBack: {
+        model.cancelRequestedNavigation()
         referencePageResolution.cancel()
         if !model.returnPlaces.isEmpty { model.requestReturnToPlace() }
         else if presence.mode == .board { leaveBoard(viewport: viewport) }
@@ -608,7 +638,7 @@ struct SpatialWorkspaceView: View {
     let covers = Dictionary(uniqueKeysWithValues: rendered.map { item in
       (item.id, cohort.map { model.presentedCoverElements(cohort: $0, boardID: presence.boardID, itemID: item.id) } ?? [])
     })
-    let revision = ItemPlaneRevision(cohortID: cohort?.id, generation: model.sceneIndex?.generationID,
+    let revision = ItemPlaneRevision(cohortID: cohort?.paintID, generation: model.sceneIndex?.generationID,
       contents: model.collaborationReadEpoch, items: rendered, covers: covers, mode: presence.mode,
       focused: presence.focusedItemID, open: presence.openProgress,
       selected: selectedItemID, lifted: liftedItemIDs, candidate: cameraGesture?.candidateItemID,
@@ -619,7 +649,8 @@ struct SpatialWorkspaceView: View {
       dependentCamera: rendered.contains { $0.stackID != nil || $0.item.kind == .board }
         || selectedItemID != nil ? presence.camera : nil)
     return SceneCameraPlane(presence: presence, revision: revision, reanchorsOnRevision: false,
-      isCameraActive: model.presencePhase == .active || cameraGesture != nil || panStart != nil || settling) { anchor in
+      isCameraActive: model.presencePhase == .active || cameraGesture != nil || panStart != nil || settling,
+      installation: cohort?.installation(for: .covers)) { anchor in
       ZStack {
         if let cohort {
           ForEach(SceneCompositionTileBandView.bands(in: cohort, plane: .board(presence.boardID), layer: .covers, presence: anchor)) { band in
@@ -648,7 +679,7 @@ struct SpatialWorkspaceView: View {
             documentPageIndex: presence.focusedItemID == rendered.id
               ? presence.documentPageIndex
               : 0,
-            documentPageCount: documentPageLayouts[rendered.id]?.pageCount ?? 1,
+            documentPageLayout: documentPageLayouts[rendered.id],
             camera: anchorCamera,
             projectedScale: presence.camera.scale,
             boardID: presence.boardID,
@@ -713,6 +744,7 @@ struct SpatialWorkspaceView: View {
               model.finishInteractiveElementInput(.spatial(boardID: presence.boardID, elementID: elementID), selectionID: selectionID)
             },
             onPageTurnStateChange: { active in
+              if active { model.cancelRequestedNavigation(); referencePageResolution.cancel() }
               pageTurnIsActive = active
             },
             onDocumentPageLayout: { layout in
@@ -741,11 +773,13 @@ struct SpatialWorkspaceView: View {
   private func boardElements(_ elements: [SpatialElement], presence: SessionPresence,
     viewport: SpatialPoint, cohort: SceneCompositionCohort?) -> some View {
     let selection = model.selectionSession.editingElement
-    let revision = ElementPlaneRevision(cohortID: cohort?.id, generation: model.sceneIndex?.generationID,
+    let revision = ElementPlaneRevision(cohortID: cohort?.paintID, generation: model.sceneIndex?.generationID,
       focus: model.interactiveElementFocus, elements: elements,
       selection: selection, selectionID: model.selectionSession.id, manipulation: model.selectionSession.manipulation)
-    return SceneCameraPlane(presence: presence, revision: revision,
-      isCameraActive: model.presencePhase == .active || cameraGesture != nil || panStart != nil || settling) { anchor in
+    return SceneCameraPlane(presence: presence, revision: revision, reanchorsOnRevision: false,
+      isCameraActive: model.presencePhase == .active || cameraGesture != nil || panStart != nil || settling,
+      installation: cohort?.installation(for: .elements),
+      observation: NotebookSceneObservation.context(cohort: cohort, elements: elements)) { anchor in
       ZStack {
         if let cohort {
           ForEach(SceneCompositionTileBandView.bands(in: cohort, plane: .board(presence.boardID), layer: .elements, presence: anchor)) { band in
@@ -754,7 +788,7 @@ struct SpatialWorkspaceView: View {
         }
         boardElementContents(elements, presence: anchor, viewport: anchor.viewport, cohort: cohort)
       }
-        .environment(model)
+        .environment(model).environment(\.sceneComposition, .init(cohort))
     }
   }
 
@@ -776,27 +810,19 @@ struct SpatialWorkspaceView: View {
             x: base.x + element.frame.x * presence.camera.scale,
             y: base.y + element.frame.y * presence.camera.scale
           )
-          EditableElementContainer(reference: reference, coordinateScale: presence.camera.scale) {
-            // The physical viewport belongs to the element. The camera transforms
-            // its whole layer; WebKit layout must not trail the moving frame.
-            SpatialElementContent(element: element, boardID: presence.boardID,
-              isTextEditing: editingSpatialText == reference,
-              onTextEditingEnded: { [selectionID = model.selectionSession.id] in model.finishInteractiveElementInput(reference, selectionID: selectionID) })
-              .frame(width: element.frame.width, height: element.frame.height)
-              .scaleEffect(presence.camera.scale)
-              .frame(
-                width: element.frame.width * presence.camera.scale,
-                height: element.frame.height * presence.camera.scale
-              )
+          SceneElementPose(frame: .init(origin: origin,
+            size: .init(width: element.frame.width * presence.camera.scale,
+              height: element.frame.height * presence.camera.scale)),
+            contentSize: .init(width: element.frame.width, height: element.frame.height),
+            observationElementID: element.id, observationElementStamp: element.stamp) {
+            EditableElementContainer(reference: reference, coordinateScale: 1) {
+              SpatialElementContent(element: element, boardID: presence.boardID,
+                isTextEditing: editingSpatialText == reference,
+                onTextEditingEnded: { [selectionID = model.selectionSession.id] in model.finishInteractiveElementInput(reference, selectionID: selectionID) })
+                .frame(width: element.frame.width, height: element.frame.height)
+            }
           }
-            .frame(
-              width: element.frame.width * presence.camera.scale,
-              height: element.frame.height * presence.camera.scale
-            )
-            .position(
-              x: origin.x + element.frame.width * presence.camera.scale / 2,
-              y: origin.y + element.frame.height * presence.camera.scale / 2
-            )
+            .frame(width: viewport.x, height: viewport.y)
             .zIndex(cohort?.plan.rank(id: .element(element.id), in: .board(presence.boardID)) ?? 0)
         }
       }
@@ -897,12 +923,15 @@ struct SpatialWorkspaceView: View {
     _ layout: DocumentPageLayout,
     documentID: UUID
   ) {
+    guard let document = model.documents[documentID],
+      layout.pageCount(for: NotebookAppModel.documentPageSourceRevision(document)) != nil else { return }
     if documentPageLayouts[documentID] != layout {
       documentPageLayouts[documentID] = layout
     }
     guard let presence = model.presence,
       presence.mode == .document,
       presence.focusedItemID == documentID,
+      model.documentPageSelection == nil,
       presence.documentPageIndex >= layout.pageCount
     else { return }
     _ = model.selectDocumentPage(
@@ -936,8 +965,7 @@ struct SpatialWorkspaceView: View {
     case .began(let centroid, let isOpeningApproach):
       interruptSettlementForInput()
         openingFeedback.prepare()
-      model.endSurfaceEditing()
-      model.interactiveElementFocus = nil
+      model.cancelElementManipulation()
       guard let currentPresence = model.presence else { return }
       let presence = presenceForNewContact(currentPresence)
       let focusedItemID =
@@ -1449,43 +1477,40 @@ struct SpatialWorkspaceView: View {
     )
   }
 
-  private func showReference(_ reference: CollaborationReference, viewport: SpatialPoint) {
-    guard let hierarchy = model.boardHierarchy else { return }
+  private func showReference(_ reference: CollaborationReference, location: NotebookReferenceLocation, viewport: SpatialPoint) {
+    model.observeNavigation("view_apply", reference: reference)
     let target = reference.target
-    let itemID = target.kind == .page ? model.notebookPageOwner(target.id) : target.id
-    let boardID = target.kind == .board ? target.id : itemID.flatMap { hierarchy.ownerBoardID(of:$0) }
-    guard let boardID, let board = hierarchy.board(boardID) else { return }
-    if target.kind == .board {
-      var center = reference.worldOrigin ?? .zero
-      var region = reference.region ?? .init(x:-400,y:-300,width:800,height:600)
-      if let id = reference.elementID, let element = board.elements.first(where: { $0.id == id }) {
-        center = element.worldOrigin ?? .zero
-        region = .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
-      }
-      guard let addressedCenter = center.addressOffset(x: region.x + region.width / 2, y: region.y + region.height / 2) else { return }
-      center = addressedCenter
+    switch location {
+    case .board(let boardID, let center, let region):
       let scale = min(1.5,max(SpatialCamera.minimumScale,min(viewport.x/(region.width+100),viewport.y/(region.height+100))))
       animateSettlement(to:.init(boardID:boardID,mode:.board,camera:.init(center:center,scale:scale),viewport:viewport),duration:0.3)
-    } else if let itemID, let center = board.focusedCenter(of:itemID), center.isValid {
+    case .item(let boardID, let itemID, let center, let geometry):
       if target.kind != .page { model.selectItem(itemID) }
       var pageIndex = reference.pageIndex ?? 0
       if target.kind == .document, let id = reference.elementID, let document = model.documents[itemID], let state = model.documentStates[itemID],
         let region = DocumentRenderRegistry.shared.regions(document:document,state:state).first(where: { $0.id == id }) { pageIndex = region.pageIndex }
       let mode: WorkspaceSemanticMode = target.kind == .page ? .page : target.kind == .document ? .document : .cover
-      let geometry = model.itemGeometry(itemID)
+      if mode == .document { model.prepareDocumentOpening(itemID, pageIndex: pageIndex, boardID: boardID) }
+      // The reference is a requested destination. A camera settlement cannot
+      // publish it as the native page before its physical landing.
+      let actualPage = model.presence?.focusedItemID == itemID ? model.presence?.documentPageIndex ?? 0 : 0
       animateSettlement(to:.init(boardID:boardID,mode:mode,camera:.init(center:center,scale:mode == .cover ? geometry.coverScale(viewport:viewport) : geometry.fitScale(viewport:viewport)),
-        viewport:viewport,focusedItemID:itemID,openProgress:mode == .cover ? 0 : 1,documentPageIndex:pageIndex),duration:0.3)
-      if target.kind == .document, let blockID = reference.elementID {
+        viewport:viewport,focusedItemID:itemID,openProgress:mode == .cover ? 0 : 1,documentPageIndex:mode == .document ? actualPage : pageIndex),duration:0.3)
+      if target.kind == .document {
+        let navigationGeneration = model.navigationGeneration
         referencePageResolution.start(requestID: reference.id, documentID: itemID, isCurrent: {
-          (settling || model.presence?.focusedItemID == itemID)
-            && (settling || model.presence?.documentPageIndex == pageIndex)
+          model.navigationGeneration == navigationGeneration
+            && (settling || model.presence?.focusedItemID == itemID)
             && model.requestedReturn == nil
             && (model.requestedReference == nil || model.requestedReference?.id == reference.id)
         }, resolve: {
           guard !settling, let document = model.documents[itemID], let state = model.documentStates[itemID]
           else { return nil }
-          return DocumentRenderRegistry.shared.regions(document: document, state: state)
-            .first(where: { $0.id == blockID })?.pageIndex
+          if let blockID = reference.elementID {
+            return DocumentRenderRegistry.shared.regions(document: document, state: state)
+              .first(where: { $0.id == blockID })?.pageIndex
+          }
+          return pageIndex
         }, apply: { resolvedPage in
           _ = model.selectDocumentPage(resolvedPage, documentID: itemID)
         })
@@ -1503,12 +1528,17 @@ struct SpatialWorkspaceView: View {
       let presence = model.presence,
       let center = focusedCenter(itemID: itemID, boardID: presence.boardID)
     else { return }
+    model.cancelRequestedNavigation()
+    referencePageResolution.cancel()
     if itemKind(itemID) == .board {
       enterBoard(itemID, center: center, viewport: viewport)
       return
     }
     let previousPresence = model.presence
     model.selectItem(itemID)
+    if itemKind(itemID) == .document {
+      model.prepareDocumentOpening(itemID, pageIndex: documentPageIndex(for: itemID, from: previousPresence))
+    }
     let target = SessionPresence(
       boardID: previousPresence?.boardID ?? WorkspaceRoot.boardID,
       mode: openMode(for: itemID),
@@ -1586,6 +1616,8 @@ struct SpatialWorkspaceView: View {
   ) {
     let offset = Double(model.workspace?.items.count ?? 0) * 28
     guard let center = presence.camera.center.addressOffset(x: offset, y: offset) else { return }
+    model.cancelRequestedNavigation()
+    referencePageResolution.cancel()
     let itemID: UUID?
     switch kind {
     case .notebook:
@@ -1673,7 +1705,11 @@ private struct WorkspaceSceneItem: View, Equatable {
   let document: DocumentDocument?
   let documentState: DocumentStateJournal?
   let documentPageIndex: Int
-  let documentPageCount: Int
+  let documentPageLayout: DocumentPageLayout?
+  private var documentPageCount: Int {
+    guard let document else { return 1 }
+    return documentPageLayout?.pageCount(for: NotebookAppModel.documentPageSourceRevision(document)) ?? 1
+  }
   let camera: SpatialCamera
   let projectedScale: Double
   let boardID: UUID
@@ -1712,7 +1748,7 @@ private struct WorkspaceSceneItem: View, Equatable {
       && lhs.pageNavigationIsEnabled == rhs.pageNavigationIsEnabled
       && lhs.isSelected == rhs.isSelected && lhs.liftRank == rhs.liftRank
       && lhs.editingTextID == rhs.editingTextID && lhs.documentPageIndex == rhs.documentPageIndex
-      && lhs.documentPageCount == rhs.documentPageCount
+      && lhs.documentPageLayout == rhs.documentPageLayout
       && (!(lhs.isSelected || lhs.rendered.item.kind == .board) || lhs.projectedScale == rhs.projectedScale)
   }
 
@@ -1835,11 +1871,21 @@ private struct WorkspaceSceneItem: View, Equatable {
             state: documentState,
             index: index,
             isCurrent: isCurrent,
+            isVisible: isLive,
             onRenderReady: readiness
           )
         },
-        onCommit: commitDocumentPage,
-        onTransitioningChange: onPageTurnStateChange
+        onCommit: { _, _ in },
+        onTransitioningChange: onPageTurnStateChange,
+        canonicalDocumentLayout: documentPageLayout,
+        documentSelection: model.documentPageSelection,
+        documentNavigation: .init(
+          bind: { model.bindDocumentPageController($0, documentID: $1, source: $2) },
+          unbind: model.unbindDocumentPageController,
+          landed: { landing in
+            if model.acceptDocumentPageLanding(landing) { announcePage(landing.pageIndex + 1) }
+          },
+          status: model.acceptDocumentPageNavigationStatus)
       )
       .background(Color(red: 0.985, green: 0.98, blue: 0.955))
       .clipShape(
@@ -1903,9 +1949,11 @@ private struct WorkspaceSceneItem: View, Equatable {
     return AnyView(
       PageSurface(
         page: page,
+        isCurrent: isCurrent,
         isInteractive: isCurrent && contentIsInteractive,
         isVisible: isLive,
-        onRenderReady: onRenderReady
+        onRenderReady: onRenderReady,
+        displayProjection: rendered.geometry.fitScale(viewport: viewport)
       )
     )
   }
@@ -1915,6 +1963,7 @@ private struct WorkspaceSceneItem: View, Equatable {
     state: DocumentStateJournal,
     index: Int,
     isCurrent: Bool,
+    isVisible: Bool,
     onRenderReady: PageTurnReadiness
   ) -> AnyView {
     AnyView(
@@ -1926,21 +1975,27 @@ private struct WorkspaceSceneItem: View, Equatable {
         capturesSnapshot: isCurrent,
         onRenderReady: onRenderReady,
         onPageLayout: onDocumentPageLayout,
-        onPageNavigation: { page in
-          guard isCurrent, contentIsInteractive, model.documents[document.id] == document else { return }
-          commitDocumentPage(page, "\(document.contentStamp.actor):\(document.contentStamp.counter)")
+        onLinkActivation: { activation in
+          model.activateDocumentLink(activation)
         },
         onSourceChange: { edit in try await model.commitDocumentSource(edit: edit) },
         onStateChange: { blockID, value in
           model.commitDocumentState(
             documentID: document.id,
             blockID: blockID,
-            value: value
+            value: value,
+            sourceVersion: document.sourceVersion(blockID: blockID)
           )
         },
         drafts: model.documentEditingSessions.filter { $0.edit.documentID == document.id },
         onDraftChange: model.saveDocumentDraft,
-        onDraftDiscard: model.discardDocumentDraft
+        onDraftDiscard: model.discardDocumentDraft,
+        isCurrent: isCurrent,
+        isVisible: isVisible,
+        onStateCheckpoint: { blockID, value, sourceVersion in
+          try await model.checkpointDocumentState(documentID: document.id, blockID: blockID,
+            value: value, sourceVersion: sourceVersion)
+        }, measurements: model.documentMeasurements
       )
     )
   }
@@ -1953,12 +2008,6 @@ private struct WorkspaceSceneItem: View, Equatable {
     announcePage(targetIndex + 1)
   }
 
-  private func commitDocumentPage(_ targetIndex: Int, _ revision: String) {
-    guard targetIndex >= 0, targetIndex < documentPageCount,
-      model.selectDocumentPage(targetIndex, documentID: rendered.id) != nil
-    else { return }
-    announcePage(targetIndex + 1)
-  }
 
   private func announcePage(_ number: Int) {
       UISelectionFeedbackGenerator().selectionChanged()

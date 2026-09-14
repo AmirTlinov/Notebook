@@ -86,13 +86,16 @@ enum NotebookAttentionProjection {
 
   static func capture(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence,
     cohort: SceneCompositionCohort, installedInk: [SurfaceID: SpatialInkInstalledSource], itemID: UUID? = nil) -> NotebookAttentionSelection? {
-    guard cohort.plan.presentations[.board(presence.boardID)] != nil else { return nil }
+    guard cohort.isPaintInstalled, cohort.plan.presentations[.board(presence.boardID)] != nil else { return nil }
     var sources = CaptureSources(workset: model.presentedWorkset(cohort: cohort, boardID: presence.boardID, presence: presence),
       workspace: model.presentedWorkspace(cohort: cohort), hierarchy: model.presentedHierarchy(cohort: cohort), ink: cohort.liveData.ink,
       pages: cohort.liveData.pages, documents: cohort.liveData.documents, states: cohort.liveData.states,
       selectedPageID: presence.notebookPageID ?? model.workspace?.selectedPageID)
     if let focused = presence.focusedItemID, cohort.plan.allowsLive(.item(focused), in: .board(presence.boardID)) {
       if presence.mode == .page, let id = sources.selectedPageID, let page = model.pages[id] {
+        #if os(iOS)
+        guard model.pagePresentations.isPresented(page) else { return nil }
+        #endif
         sources.pages[id] = page
       } else if presence.mode == .document, let document = model.documents[focused], let state = model.documentStates[focused] {
         guard DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: presence.documentPageIndex) else { return nil }
@@ -108,37 +111,66 @@ enum NotebookAttentionProjection {
       guard preservesPresentedPlacementPixels(cohort: cohort, hierarchy: sources.hierarchy,
         boards: boards, model: model, presence: presence) else { return nil }
     }
-    // The live host may be preparing a new program while retaining its prior
-    // pixels. Geometry is immediate; a pointing contact cannot label those old
-    // pixels as the replacement source before its exact raster exists.
-    var sampled: [EditableElementReference] = []
-    func sample(_ reference: EditableElementReference) {
-      if !sampled.contains(reference) { sampled.append(reference) }
-    }
+    // Readiness is local to the pixels selected by this contact. A ready cache
+    // entry elsewhere is not proof that this source was installed; a pending
+    // neighbour outside this region must not block attention to a ready item.
+    var sampled = Set<SceneSourceAddress>()
     for fragment in fragments where [.board, .cover].contains(fragment.target.kind) {
       let boardID = fragment.target.boardID ?? fragment.target.id
       if let id = fragment.elementID {
-        sample(.spatial(boardID: boardID, elementID: id))
+        let plane: SceneCompositionPlane = fragment.target.kind == .cover
+          ? .cover(boardID: boardID, itemID: fragment.target.id) : .board(boardID)
+        sampled.insert(.init(plane: plane, elementID: id))
       } else {
         let boards = fragment.target.kind == .board
           ? sources.hierarchy.descendantBoardIDs(including: boardID) : [boardID]
-        for owner in cohort.plan.liveOwners where boards.contains(owner.plane.boardID) {
-          guard case .element(let id) = owner.id,
-            fragment.target.kind == .board || owner.plane.coverID == fragment.target.id else { continue }
-          sample(.spatial(boardID: owner.plane.boardID, elementID: id))
+        for address in cohort.sourceReceipts.keys where boards.contains(address.plane.boardID) {
+          guard fragment.target.kind == .board || address.plane.coverID == fragment.target.id,
+            let element = sources.hierarchy.board(address.plane.boardID)?.elements.first(where: { $0.id == address.elementID }),
+            intersects(fragment, element: element, boardID: address.plane.boardID, workset: sources.workset) else { continue }
+          sampled.insert(address)
         }
       }
     }
-    for reference in sampled {
-      guard case .spatial(let boardID, let id) = reference else { continue }
+    for address in sampled {
       // A removed live host contributes no pixels. Its old retained hash and
       // neighboring order edges are removed by the reference basis at sealing.
-      guard let element = sources.hierarchy.board(boardID)?.elements.first(where: { $0.id == id }) else { continue }
-      if element.kind != .nativeText,
-        SceneRenderResources.shared.image(for: agentElementSnapshotSource(element)) == nil { return nil }
+      guard let element = sources.hierarchy.board(address.plane.boardID)?.elements.first(where: { $0.id == address.elementID }) else { continue }
+      if element.kind != .nativeText {
+        guard cohort.hasInstalledPixels(for: address), let receipt = cohort.sourceReceipts[address], receipt.hasCurrentPixels,
+          SceneRasterSource.agent(receipt.demand.source) == .agent(agentElementSnapshotSource(element)) else { return nil }
+      }
     }
+    #if os(iOS)
+    let sceneSources = NotebookWorkspacePresentedSources(workspace: sources.workspace, hierarchy: sources.hierarchy,
+      staticInk: cohort.liveData.ink.stamp, installedInk: installedInk.mapValues(\.journalRevision))
+    var coverSources: [UUID: NotebookCoverPresentedSources] = [:]
+    for fragment in fragments where fragment.target.kind == .cover && fragment.elementID == nil {
+      guard let item = sources.workset.items.first(where: { $0.id == fragment.target.id }), item.item.kind != .board else { continue }
+      let boardID = fragment.target.boardID ?? presence.boardID
+      coverSources[fragment.id] = .init(boardID: boardID,
+        revision: .init(item: item.item, geometry: item.geometry,
+          elements: model.presentedCoverElements(cohort: cohort, boardID: boardID, itemID: item.id), journal: model.spatialInk),
+        installedInkRevision: installedInk[.cover(item.id)]?.journalRevision)
+    }
+    #endif
     let visuals = NotebookFrozenVisualSources.capture(fragments: fragments, hierarchy: sources.hierarchy,
-      pages: sources.pages, documents: sources.documents, states: sources.states)
+      pages: sources.pages, documents: sources.documents, states: sources.states,
+      installedSources: cohort.sourceRasters, capturesLivePrograms: true,
+      liveSourceAddresses: Set(sampled.filter { cohort.plan.allowsLive(.element($0.elementID), in: $0.plane) }),
+      captureSceneRegion: { [weak model] fragment in
+        #if os(iOS)
+        guard let model else { return nil }
+        if fragment.target.kind == .cover {
+          guard let expected = coverSources[fragment.id] else { return nil }
+          return try model.coverPresentations.capture(itemID: fragment.target.id, expected: expected,
+            region: fragment.region, resources: .shared)
+        }
+        return try model.workspacePresentations.capture(fragment: fragment, expectedSources: sceneSources, resources: .shared)
+        #else
+        return nil
+        #endif
+      })
     var requiredInk = Set<SurfaceID>()
     for fragment in fragments where fragment.elementID == nil {
       if fragment.target.kind == .board {
@@ -157,6 +189,27 @@ enum NotebookAttentionProjection {
       referenceIdentities: cohort.liveData.referenceIdentities,
       installedInk: installedInk.filter { requiredInk.contains($0.key) }, requiredInk: requiredInk,
       referenceBasis: cohort.liveData.referenceBasis)
+  }
+
+  private static func intersects(_ fragment: NotebookAttentionSelection.Fragment,
+    element: SpatialElement, boardID: UUID, workset: WorkspaceSceneWorkset) -> Bool {
+    let region = fragment.region
+    let selected = CGRect(x: region.x, y: region.y, width: region.width, height: region.height)
+    if fragment.target.kind == .cover {
+      return selected.intersects(CGRect(x: element.frame.x, y: element.frame.y,
+        width: element.frame.width, height: element.frame.height))
+    }
+    // A nested portal has its own camera and clipping. Until its projection is
+    // resolved, retain its finite admitted dependency instead of omitting paint.
+    guard boardID == fragment.target.id else { return true }
+    let origin: WorldPoint
+    if element.surface.kind == .cover {
+      guard let owner = workset.items.first(where: { $0.id == element.surface.ownerID }) else { return true }
+      origin = owner.center.offsetBy(x: -owner.geometry.width / 2, y: -owner.geometry.height / 2)
+    } else { origin = element.worldOrigin ?? .zero }
+    let delta = (fragment.worldOrigin ?? .zero).delta(to: origin)
+    return selected.intersects(CGRect(x: delta.x + element.frame.x, y: delta.y + element.frame.y,
+      width: element.frame.width, height: element.frame.height))
   }
 
   /// Joining or leaving a stack changes its fan without authoring peer poses.

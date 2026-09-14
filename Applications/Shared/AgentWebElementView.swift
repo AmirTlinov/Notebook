@@ -2,13 +2,50 @@ import NotebookCore
 import SwiftUI
 import WebKit
 
+/// Failure provenance is captured by the operation that failed, before a newer
+/// source, policy or native presenter can replace its callbacks.
+struct AgentWebSourceFailure: Equatable, Sendable {
+  let diagnostic: RenderDiagnostic
+  let source: AgentElement
+  let leaseID: UUID
+  let loadToken: String
+  /// nil denotes program/navigation preparation; a snapshot failure belongs
+  /// only to its submitted crop and density.
+  let policy: AgentSnapshotPolicy?
+  let rasterAdmission: SceneRasterAdmission?
+
+  func canResumeCapture(with current: SceneRasterAdmission) -> Bool {
+    guard diagnostic.kind == "resource_limit", let policy, let rasterAdmission else { return false }
+    return Self.captureFitsAfterImprovement(source: source, policy: policy, previous: rasterAdmission, current: current)
+  }
+
+  static func captureFitsAfterImprovement(source: AgentElement, policy: AgentSnapshotPolicy,
+    previous: SceneRasterAdmission, current: SceneRasterAdmission) -> Bool {
+    guard let pixels = policy.pixelSize(for: source), pixels.width < CGFloat(Int.max - 2), pixels.height < CGFloat(Int.max - 2),
+      let bytes = SceneRenderResources.estimatedRasterBytes(pixelWidth: Int(pixels.width) + 2, pixelHeight: Int(pixels.height) + 2)
+    else { return false }
+    func available(_ admission: SceneRasterAdmission) -> Int {
+      min(admission.byteLimit - admission.heldBytes,
+        admission.passiveByteLimit - admission.pinnedBytes - admission.passiveReservedBytes)
+    }
+    let improved = available(current) > available(previous)
+      || current.countLimit - current.pinnedCount - current.reservedCount
+        > previous.countLimit - previous.pinnedCount - previous.reservedCount
+    return improved && current.fits(additionalBytes: bytes, additionalCount: 1)
+  }
+}
+
 #if os(iOS)
   struct AgentWebElementView: UIViewRepresentable {
     let element: AgentElement
     let lease: WebSurfaceLease
     let snapshotPolicy: AgentSnapshotPolicy
+    var focus: InteractiveElementReference? = nil
     let onRenderReady: (Bool) -> Void
-    var onFailure: (RenderDiagnostic) -> Void = { _ in }
+    var onInteractionReady: (Bool) -> Void = { _ in }
+    var onInteraction: () -> Void = {}
+    var onInstalled: (SceneSourceInstallation) -> Void = { _ in }
+    var onFailure: (AgentWebSourceFailure) -> Void = { _ in }
     let onState: (JSONValue) -> Void
 
     func makeCoordinator() -> AgentWebCoordinator {
@@ -16,6 +53,7 @@ import WebKit
         lease: lease,
         snapshotPolicy: snapshotPolicy,
         onRenderReady: onRenderReady,
+        onInteractionReady: onInteractionReady,
         onFailure: onFailure,
         onState: onState
       )
@@ -28,26 +66,34 @@ import WebKit
     func makeUIView(context: Context) -> PhysicalWebViewport {
       let view = PhysicalWebViewport(
         webView: AgentWebCoordinator.makeWebView(coordinator: context.coordinator),
-        contentSize: physicalSize)
-      // Filter the completed physical surface, not individual WebKit tiles.
-      // The camera transforms this layer without changing its raster scale.
-      view.layer.shouldRasterize = true
-      view.layer.minificationFilter = .trilinear
+        contentSize: physicalSize, holdsFingerInput: true)
+      // The camera projects WebKit's existing backing. Rasterizing this outer
+      // layer again can retain a minified copy across a camera refinement.
+      view.layer.shouldRasterize = false
       return view
     }
 
     static func dismantleUIView(_ view: PhysicalWebViewport, coordinator: AgentWebCoordinator) {
       coordinator.invalidate()
+      view.retire()
     }
 
     func updateUIView(_ view: PhysicalWebViewport, context: Context) {
-      view.layer.rasterizationScale = snapshotPolicy.rasterizationScale(
-        for: element, displayScale: context.environment.displayScale)
+      guard let webView = view.webView else { return }
       view.setContentSize(physicalSize)
+      view.layoutIfNeeded()
       context.coordinator.use(onRenderReady: onRenderReady)
+      context.coordinator.use(onInteractionReady: onInteractionReady)
+      context.coordinator.use(onInteraction: onInteraction)
+      context.coordinator.bindPresentation(to: focus)
+      view.onInstalled = { [weak coordinator = context.coordinator] in
+        guard let installation = coordinator?.installation(for: element), installation.isInstalled else { return }
+        onInstalled(installation)
+      }
       context.coordinator.use(onFailure: onFailure)
       context.coordinator.use(onState: onState)
-      context.coordinator.load(element, in: view.webView)
+      context.coordinator.load(element, policy: snapshotPolicy, in: webView)
+      view.onInstalled?()
     }
   }
 
@@ -56,6 +102,8 @@ import WebKit
   struct AgentElementSnapshotView: UIViewRepresentable {
     @Environment(NotebookAppModel.self) private var model: NotebookAppModel?
     weak var raster: RasterLease?
+    var onInstalled: (RasterLease) -> Void = { _ in }
+    var onSourceInstalled: (SceneSourceInstallation, RasterLease) -> Void = { _, _ in }
 
     func makeUIView(context: Context) -> AgentSnapshotRasterView {
       AgentSnapshotRasterView()
@@ -63,6 +111,10 @@ import WebKit
 
     func updateUIView(_ view: AgentSnapshotRasterView, context: Context) {
       view.bindSceneLifecycle(to: model)
+      view.onRasterInstalled = { [weak view] raster in
+        onInstalled(raster)
+        if let view { onSourceInstalled(view.installation(for: raster), raster) }
+      }
       guard let raster, !raster.isReleased else { return }
       view.updateRaster(raster)
     }
@@ -74,10 +126,12 @@ import WebKit
 
   /// The physical bounds determine backing allocation. An external camera
   /// transform only projects this completed raster and never raises its density.
-  final class AgentSnapshotRasterView: UIView, NotebookScenePresentationOwner {
+  final class AgentSnapshotRasterView: UIView, NotebookScenePresentationOwner, SceneSourceInstallationOwner {
     private weak var sceneModel: NotebookAppModel?
     private var isRetired = false
     private var retainedRaster: RasterLease?
+    private let cropLayer = CALayer()
+    var onRasterInstalled: ((RasterLease) -> Void)?
 
     init() {
       super.init(frame: .zero)
@@ -85,6 +139,9 @@ import WebKit
       isUserInteractionEnabled = false
       layer.shouldRasterize = false
       layer.minificationFilter = .trilinear
+      cropLayer.shouldRasterize = false
+      cropLayer.minificationFilter = .trilinear
+      layer.addSublayer(cropLayer)
     }
 
     @available(*, unavailable)
@@ -99,6 +156,16 @@ import WebKit
 
     /// A tile's cohort may end while this native view is still shown. Its
     /// independent lease retains the same cache entry, without another bitmap.
+    func installation(for raster: RasterLease, requiresVisibility: Bool = true) -> SceneSourceInstallation {
+      .init(source: raster.source, entryID: raster.entryID, requiresVisibility: requiresVisibility, owner: self)
+    }
+
+    func isShowing(_ installation: SceneSourceInstallation) -> Bool {
+      guard !isRetired, let raster = retainedRaster, !raster.isReleased else { return false }
+      return raster.entryID == installation.entryID && raster.source == installation.source
+        && (installation.requiresVisibility ? SceneSourceVisibility.isVisible(self) : SceneSourceVisibility.isMounted(self))
+    }
+
     func updateRaster(_ source: RasterLease) {
       guard !isRetired else { return }
       if let current = retainedRaster,
@@ -112,9 +179,35 @@ import WebKit
     private func installRaster(_ raster: RasterLease) {
       guard !isRetired else { return }
       let image = raster.image
-      if (layer.contents as AnyObject?) !== image.cgImage { layer.contents = image.cgImage }
       retainedRaster = raster
-      layer.contentsScale = image.scale
+      if raster.source.captureRegion != nil {
+        layer.contents = nil
+        cropLayer.contents = image.cgImage; cropLayer.contentsScale = image.scale
+        layoutRaster()
+      } else {
+        cropLayer.contents = nil
+        if (layer.contents as AnyObject?) !== image.cgImage { layer.contents = image.cgImage }
+        layer.contentsScale = image.scale
+      }
+      if window != nil { onRasterInstalled?(raster) }
+    }
+
+    override func layoutSubviews() { super.layoutSubviews(); layoutRaster() }
+
+    private func layoutRaster() {
+      guard let raster = retainedRaster, let region = raster.source.captureRegion,
+        let source = raster.source.agentElement else { return }
+      CATransaction.begin(); CATransaction.setDisableActions(true)
+      cropLayer.frame = CGRect(x: region.x / source.frame.width * bounds.width,
+        y: region.y / source.frame.height * bounds.height,
+        width: region.width / source.frame.width * bounds.width,
+        height: region.height / source.frame.height * bounds.height)
+      CATransaction.commit()
+    }
+
+    override func didMoveToWindow() {
+      super.didMoveToWindow()
+      if window != nil, let retainedRaster { onRasterInstalled?(retainedRaster) }
     }
 
     /// Window transfer preserves this presenter's pixels. Actual dismantle or
@@ -126,7 +219,9 @@ import WebKit
       sceneModel?.unregisterScenePresentation(self)
       sceneModel = nil
       layer.contents = nil
+      cropLayer.contents = nil
       retainedRaster = nil
+      onRasterInstalled = nil
     }
 
 
@@ -137,8 +232,12 @@ import WebKit
     let element: AgentElement
     let lease: WebSurfaceLease
     let snapshotPolicy: AgentSnapshotPolicy
+    var focus: InteractiveElementReference? = nil
     let onRenderReady: (Bool) -> Void
-    var onFailure: (RenderDiagnostic) -> Void = { _ in }
+    var onInteractionReady: (Bool) -> Void = { _ in }
+    var onInteraction: () -> Void = {}
+    var onInstalled: (SceneSourceInstallation) -> Void = { _ in }
+    var onFailure: (AgentWebSourceFailure) -> Void = { _ in }
     let onState: (JSONValue) -> Void
 
     func makeCoordinator() -> AgentWebCoordinator {
@@ -146,6 +245,7 @@ import WebKit
         lease: lease,
         snapshotPolicy: snapshotPolicy,
         onRenderReady: onRenderReady,
+        onInteractionReady: onInteractionReady,
         onFailure: onFailure,
         onState: onState
       )
@@ -161,15 +261,21 @@ import WebKit
 
     func updateNSView(_ webView: WKWebView, context: Context) {
       context.coordinator.use(onRenderReady: onRenderReady)
+      context.coordinator.use(onInteractionReady: onInteractionReady)
+      context.coordinator.use(onInteraction: onInteraction)
       context.coordinator.use(onFailure: onFailure)
       context.coordinator.use(onState: onState)
-      context.coordinator.load(element, in: webView)
+      context.coordinator.load(element, policy: snapshotPolicy, in: webView)
+      context.coordinator.bindPresentation(to: focus)
+      if let installation = context.coordinator.installation(for: element), installation.isInstalled { onInstalled(installation) }
     }
   }
 
   struct AgentElementSnapshotView: NSViewRepresentable {
     @Environment(NotebookAppModel.self) private var model: NotebookAppModel?
     weak var raster: RasterLease?
+    var onInstalled: (RasterLease) -> Void = { _ in }
+    var onSourceInstalled: (SceneSourceInstallation, RasterLease) -> Void = { _, _ in }
 
     func makeNSView(context: Context) -> AgentSnapshotRasterView {
       AgentSnapshotRasterView()
@@ -177,6 +283,10 @@ import WebKit
 
     func updateNSView(_ view: AgentSnapshotRasterView, context: Context) {
       view.bindSceneLifecycle(to: model)
+      view.onRasterInstalled = { [weak view] raster in
+        onInstalled(raster)
+        if let view { onSourceInstalled(view.installation(for: raster), raster) }
+      }
       guard let raster, !raster.isReleased else { return }
       view.updateRaster(raster)
     }
@@ -186,10 +296,13 @@ import WebKit
     }
   }
 
-  final class AgentSnapshotRasterView: NSImageView, NotebookScenePresentationOwner {
+  final class AgentSnapshotRasterView: NSImageView, NotebookScenePresentationOwner, SceneSourceInstallationOwner {
     private weak var sceneModel: NotebookAppModel?
     private var isRetired = false
     private var retainedRaster: RasterLease?
+    private let cropLayer = CALayer()
+    var onRasterInstalled: ((RasterLease) -> Void)?
+    override var isFlipped: Bool { true }
 
     init() {
       super.init(frame: .zero)
@@ -197,6 +310,8 @@ import WebKit
       wantsLayer = true
       layer?.shouldRasterize = false
       layer?.minificationFilter = .trilinear
+      cropLayer.shouldRasterize = false; cropLayer.minificationFilter = .trilinear
+      layer?.addSublayer(cropLayer)
     }
 
     @available(*, unavailable)
@@ -207,6 +322,16 @@ import WebKit
       sceneModel?.unregisterScenePresentation(self)
       sceneModel = model
       model?.registerScenePresentation(self)
+    }
+
+    func installation(for raster: RasterLease, requiresVisibility: Bool = true) -> SceneSourceInstallation {
+      .init(source: raster.source, entryID: raster.entryID, requiresVisibility: requiresVisibility, owner: self)
+    }
+
+    func isShowing(_ installation: SceneSourceInstallation) -> Bool {
+      guard !isRetired, let raster = retainedRaster, !raster.isReleased else { return false }
+      return raster.entryID == installation.entryID && raster.source == installation.source
+        && (installation.requiresVisibility ? SceneSourceVisibility.isVisible(self) : SceneSourceVisibility.isMounted(self))
     }
 
     func updateRaster(_ source: RasterLease) {
@@ -222,8 +347,34 @@ import WebKit
     private func installRaster(_ raster: RasterLease) {
       guard !isRetired else { return }
       let image = raster.image
-      if self.image !== image { self.image = image }
       retainedRaster = raster
+      if raster.source.captureRegion != nil {
+        self.image = nil
+        cropLayer.contents = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        layoutRaster()
+      } else {
+        cropLayer.contents = nil
+        if self.image !== image { self.image = image }
+      }
+      if window != nil { onRasterInstalled?(raster) }
+    }
+
+    override func layout() { super.layout(); layoutRaster() }
+
+    private func layoutRaster() {
+      guard let raster = retainedRaster, let region = raster.source.captureRegion,
+        let source = raster.source.agentElement else { return }
+      CATransaction.begin(); CATransaction.setDisableActions(true)
+      cropLayer.frame = CGRect(x: region.x / source.frame.width * bounds.width,
+        y: region.y / source.frame.height * bounds.height,
+        width: region.width / source.frame.width * bounds.width,
+        height: region.height / source.frame.height * bounds.height)
+      CATransaction.commit()
+    }
+
+    override func viewDidMoveToWindow() {
+      super.viewDidMoveToWindow()
+      if window != nil, let retainedRaster { onRasterInstalled?(retainedRaster) }
     }
 
     func uninstall() {
@@ -233,7 +384,9 @@ import WebKit
       sceneModel = nil
       image = nil
       layer?.contents = nil
+      cropLayer.contents = nil
       retainedRaster = nil
+      onRasterInstalled = nil
     }
 
 
@@ -250,12 +403,35 @@ typealias AgentSnapshotImage = NSImage
 /// Physical layout remains canonical. This policy controls only the number of
 /// pixels allocated for its raster: display samples are bounded, exact exports
 /// request their declared density and may be refused by the resource owner.
-enum AgentSnapshotPolicy: Equatable {
+enum AgentSnapshotPolicy: Equatable, Sendable {
   case display(scale: Double)
   case exact(scale: Double)
+  case region(PageRect, scale: Double)
+
+  func captureRect(for element: AgentElement) -> CGRect {
+    if case .region(let region, _) = self {
+      return CGRect(x: region.x, y: region.y, width: region.width, height: region.height)
+    }
+    return CGRect(x: 0, y: 0, width: element.frame.width, height: element.frame.height)
+  }
+
+  func rasterSource(for element: AgentElement) -> SceneRasterSource {
+    if case .region(let region, _) = self { return .agentRegion(element, region) }
+    return .agent(element)
+  }
+
+  func minimumScale(for element: AgentElement) -> Double {
+    switch self {
+    case .exact(let scale), .region(_, let scale): return scale
+    case .display:
+      guard let pixels = pixelSize(for: element) else { return 0 }
+      let rect = captureRect(for: element)
+      return min(pixels.width / rect.width, pixels.height / rect.height)
+    }
+  }
 
   func rasterizationScale(for element: AgentElement, displayScale: CGFloat) -> CGFloat {
-    let width = element.frame.width, height = element.frame.height
+    let rect = captureRect(for: element), width = rect.width, height = rect.height
     if let pixels = pixelSize(for: element) {
       return min(max(1, displayScale), pixels.width / width, pixels.height / height)
     }
@@ -265,12 +441,15 @@ enum AgentSnapshotPolicy: Equatable {
   }
 
   func pixelSize(for element: AgentElement) -> CGSize? {
-    let width = element.frame.width, height = element.frame.height
+    let rect = captureRect(for: element), width = rect.width, height = rect.height
+    guard width.isFinite, height.isFinite, width > 0, height > 0,
+      rect.minX >= 0, rect.minY >= 0,
+      rect.maxX <= element.frame.width + 0.000_001, rect.maxY <= element.frame.height + 0.000_001 else { return nil }
     let density: Double
     switch self {
     case .display(let scale):
       density = min(scale, 2048 / max(width, height), sqrt(4_194_304 / (width * height)))
-    case .exact(let scale): density = scale
+    case .exact(let scale), .region(_, let scale): density = scale
     }
     guard density.isFinite, density > 0 else { return nil }
     // WebKit derives height from the output width. Quantize that one axis and
@@ -279,7 +458,7 @@ enum AgentSnapshotPolicy: Equatable {
     let pixelWidth: Double
     switch self {
     case .display: pixelWidth = floor(width * density)
-    case .exact:
+    case .exact, .region:
       // Exact admission checks both raster axes. Round the requested height up
       // before deriving width so a wide fractional frame cannot lose density
       // when WebKit rounds its resulting height down.
@@ -288,6 +467,9 @@ enum AgentSnapshotPolicy: Equatable {
     let pixelHeight = ceil(pixelWidth * (height / width))
     guard pixelWidth >= 1, pixelHeight >= 1, pixelWidth.isFinite, pixelHeight.isFinite else { return nil }
     if case .display = self, max(pixelWidth, pixelHeight) > 2048 || pixelWidth * pixelHeight > 4_194_304 {
+      return nil
+    }
+    if case .region = self, max(pixelWidth, pixelHeight) > 4096 || pixelWidth * pixelHeight > 8_388_608 {
       return nil
     }
     return CGSize(width: pixelWidth, height: pixelHeight)
@@ -316,17 +498,20 @@ final class AgentSnapshotCapture {
   let id = UUID()
   private let reservation: RasterReservation
   private var lease: WebSurfaceLease?
+  private var borrow: WebSurfaceBorrow?
   private(set) var isCancelled = false
   private(set) var isComplete = false
   private var waiters: [UUID: CheckedContinuation<Void, Error>] = [:]
   init(reservation: RasterReservation, lease: WebSurfaceLease) {
     precondition(!reservation.isReleased && !lease.isReleased)
     self.reservation = reservation; self.lease = lease
+    borrow = try? lease.borrow()
+    precondition(borrow != nil)
   }
   func cancel() { isCancelled = true }
   func finish() {
     guard !isComplete else { return }
-    isComplete = true; reservation.release(); lease = nil
+    isComplete = true; reservation.release(); borrow?.release(); borrow = nil; lease = nil
     let pending = waiters; waiters.removeAll()
     for waiter in pending.values { waiter.resume() }
   }
@@ -346,18 +531,40 @@ final class AgentSnapshotCapture {
       }
     }
   }
-  isolated deinit { reservation.release() }
+  isolated deinit { reservation.release(); borrow?.release() }
+}
+
+/// The reader may time out while WebKit still owns its submitted backing.
+/// Completion closes the continuation once; the capture keeps its accounting
+/// until WebKit's real callback even if that reader is already gone.
+@MainActor
+private final class AgentCurrentFrameResult {
+  var continuation: CheckedContinuation<RasterLease?, Error>?
+  func finish(_ result: Result<RasterLease?, Error>) {
+    guard let continuation else {
+      if case .success(let raster) = result { raster?.release() }
+      return
+    }
+    self.continuation = nil
+    continuation.resume(with: result)
+  }
 }
 
 @MainActor
-final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, SceneSourceInstallationOwner {
+  private struct WeakPresentation { weak var owner: AgentWebCoordinator? }
+  private static var presentations: [ObjectIdentifier: WeakPresentation] = [:]
+  private var presentationFocus: InteractiveElementReference?
+  private var presentationToken = UUID()
   private let lease: WebSurfaceLease
   private let resources: SceneRenderResources
   private var snapshotPolicy: AgentSnapshotPolicy
   private(set) var snapshotFailure: SceneRenderError?
   private var onState: (JSONValue) -> Void
   private var onRenderReady: (Bool) -> Void
-  private var onFailure: (RenderDiagnostic) -> Void
+  private var onInteractionReady: (Bool) -> Void
+  private var onInteraction: () -> Void = {}
+  private var onFailure: (AgentWebSourceFailure) -> Void
   private var renderIsReady = false
   private var isInvalidated = false
   private var activeNavigation: WKNavigation?
@@ -374,22 +581,34 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private var snapshotInFlight = false
   private var needsSnapshot = false
   private var preparationDeadline: Task<Void, Never>?
+  private var preparationDeadlineAt: ContinuousClock.Instant?
   private var recoveryAttempts = 0
+  private var admissionObserver: NSObjectProtocol?
+  private var lastCaptureAdmission: SceneRasterAdmission?
+  private var lastCaptureFailure: AgentWebSourceFailure?
+  private var readinessGeneration: UInt64 = 0
 
   init(
     lease: WebSurfaceLease,
     resources: SceneRenderResources = .shared,
     snapshotPolicy: AgentSnapshotPolicy = .display(scale: 2),
     onRenderReady: @escaping (Bool) -> Void = { _ in },
-    onFailure: @escaping (RenderDiagnostic) -> Void = { _ in },
+    onInteractionReady: @escaping (Bool) -> Void = { _ in },
+    onFailure: @escaping (AgentWebSourceFailure) -> Void = { _ in },
     onState: @escaping (JSONValue) -> Void
   ) {
     self.lease = lease
     self.resources = resources
     self.snapshotPolicy = snapshotPolicy
     self.onRenderReady = onRenderReady
+    self.onInteractionReady = onInteractionReady
     self.onFailure = onFailure
     self.onState = onState
+    super.init()
+    admissionObserver = NotificationCenter.default.addObserver(forName: SceneRenderResources.didGainRasterAdmission,
+      object: resources, queue: .main) { [weak self] _ in
+      Task { @MainActor [weak self] in self?.retryAfterAdmission() }
+    }
   }
 
   func use(onRenderReady: @escaping (Bool) -> Void) {
@@ -397,7 +616,118 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     self.onRenderReady = onRenderReady
   }
 
-  func use(onFailure: @escaping (RenderDiagnostic) -> Void) {
+  func use(onInteractionReady: @escaping (Bool) -> Void) {
+    guard !isInvalidated else { return }
+    self.onInteractionReady = onInteractionReady
+  }
+
+  func use(onInteraction: @escaping () -> Void) {
+    guard !isInvalidated else { return }
+    self.onInteraction = onInteraction
+  }
+
+  func hasLiveSource(_ element: AgentElement) -> Bool {
+    guard !isInvalidated, !lease.isReleased, runtimeLoaded, let loadedElement else { return false }
+    return appliedState == loadedElement.state && SceneRasterSource.agent(loadedElement) == .agent(element)
+  }
+
+  func bindPresentation(to focus: InteractiveElementReference?) {
+    guard !isInvalidated else { return }
+    if presentationFocus != focus { presentationToken = UUID(); presentationFocus = focus }
+    Self.presentations[ObjectIdentifier(self)] = focus == nil ? nil : .init(owner: self)
+  }
+
+  func installation(for element: AgentElement) -> SceneSourceInstallation? {
+    guard hasLiveSource(element), let loadToken else { return nil }
+    return .init(source: .agent(element), runtimeToken: loadToken + "/" + presentationToken.uuidString, owner: self)
+  }
+
+  func isShowing(_ installation: SceneSourceInstallation) -> Bool {
+    guard let source = installation.source.agentElement, hasLiveSource(source), let loadToken,
+      installation.runtimeToken == loadToken + "/" + presentationToken.uuidString,
+      let web = attachedWebView else { return false }
+    return SceneSourceVisibility.isVisible(web)
+  }
+
+  #if os(iOS)
+  /// Copies the already displayed native subtree in the Send event itself.
+  /// A later JavaScript animation cannot change this immutable regional value.
+  static func capturePresented(focus: InteractiveElementReference, element: AgentElement, region: PageRect,
+    resources: SceneRenderResources = .shared) throws -> RasterLease? {
+    presentations = presentations.filter { $0.value.owner != nil }
+    let owners = presentations.values.compactMap(\.owner).filter {
+      $0.resources === resources && $0.presentationFocus == focus
+        && $0.installation(for: element)?.isInstalled == true
+    }
+    guard !owners.isEmpty else { return nil }
+    guard owners.count == 1 else { throw SceneRenderError.snapshotPending("ambiguous_live_element_" + element.id) }
+    let owner = owners[0]
+    guard let installation = owner.installation(for: element), installation.isInstalled,
+      let web = owner.attachedWebView,
+      let pixels = try NotebookSubmittedPixels.capture(view: web,
+        physicalSize: .init(width: element.frame.width, height: element.frame.height), region: region, resources: resources),
+      installation.isInstalled else { return nil }
+    return try pixels.retainRaster(source: .agentRegion(element, region), resources: resources)
+  }
+  #endif
+
+  /// Explicitly requests a current frame from the installed running context. A missing,
+  /// hidden, replaced or ambiguous owner cannot be substituted with cache data
+  /// or with a newly booted program.
+  static func captureCurrent(focus: InteractiveElementReference, element: AgentElement,
+    resources: SceneRenderResources = .shared) async throws -> RasterLease? {
+    presentations = presentations.filter { $0.value.owner != nil }
+    let owners = presentations.values.compactMap(\.owner).filter {
+      $0.resources === resources && $0.presentationFocus == focus
+        && $0.installation(for: element)?.isInstalled == true
+    }
+    guard !owners.isEmpty else { return nil }
+    guard owners.count == 1 else { throw SceneRenderError.snapshotPending("ambiguous_live_element_" + element.id) }
+    return try await owners[0].captureCurrent(element: element)
+  }
+
+  private func captureCurrent(element: AgentElement) async throws -> RasterLease? {
+    try Task.checkCancellation()
+    guard let installation = installation(for: element), installation.isInstalled,
+      let web = attachedWebView, let token = loadToken else { return nil }
+    let policy = snapshotPolicy
+    guard let pixels = policy.pixelSize(for: element),
+      let configuration = Self.snapshotConfiguration(for: element, policy: policy, backingScale: snapshotScale(of: web)),
+      pixels.width < CGFloat(Int.max - 2), pixels.height < CGFloat(Int.max - 2),
+      let reservation = resources.reserveRaster(pixelWidth: Int(pixels.width) + 2, pixelHeight: Int(pixels.height) + 2)
+    else { throw SceneRenderError.resourceLimit }
+    let capture = AgentSnapshotCapture(reservation: reservation, lease: lease)
+    submittedCaptures[capture.id] = capture
+    let result = AgentCurrentFrameResult()
+    return try await withTaskCancellationHandler(operation: {
+      try await withCheckedThrowingContinuation { continuation in
+        result.continuation = continuation
+        let deadline = Task { @MainActor in
+          do { try await Task.sleep(for: .seconds(8)) } catch { return }
+          result.finish(.failure(SceneRenderError.snapshotPending("live_capture_" + element.id)))
+        }
+        web.takeSnapshot(with: configuration) { [weak self, capture, installation] image, error in
+          defer {
+            deadline.cancel(); capture.finish(); self?.submittedCaptures[capture.id] = nil
+          }
+          guard let self, accepts(token), !capture.isCancelled, installation.isInstalled,
+            hasLiveSource(element) else { result.finish(.success(nil)); return }
+          if let error { result.finish(.failure(error)); return }
+          guard let image else { result.finish(.failure(SceneRenderError.snapshotPending(element.id))); return }
+          guard let raster = resources.storeAndRetain(image, for: policy.rasterSource(for: element), reservation: reservation)
+          else { result.finish(.failure(SceneRenderError.resourceLimit)); return }
+          guard raster.pixelScale + 0.000_001 >= policy.minimumScale(for: element) else {
+            raster.release(); result.finish(.failure(SceneRenderError.snapshotPending("live_capture_density_" + element.id))); return
+          }
+          result.finish(.success(raster))
+        }
+      }
+    }, onCancel: {
+      Task { @MainActor in result.finish(.failure(CancellationError())) }
+    })
+  }
+
+  func use(onFailure: @escaping (AgentWebSourceFailure) -> Void) {
     guard !isInvalidated else { return }
     self.onFailure = onFailure
   }
@@ -412,36 +742,64 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   func invalidate() {
     guard !isInvalidated else { return }
     isInvalidated = true
+    #if os(iOS)
+      if let web = attachedWebView { NotebookInteractionDiagnostics.retire(web) }
+    #endif
+    Self.presentations[ObjectIdentifier(self)] = nil
+    presentationFocus = nil; presentationToken = UUID()
     loadToken = nil
     loadedElement = nil
     appliedState = nil
     activeNavigation = nil
     renderIsReady = false
     stateApplicationID = nil; stateApplication?.cancel(); stateApplication = nil
-    preparationDeadline?.cancel(); preparationDeadline = nil
+    preparationDeadline?.cancel(); preparationDeadline = nil; preparationDeadlineAt = nil
     currentCapture?.cancel(); currentCapture = nil
     onRenderReady = { _ in }
+    onInteractionReady = { _ in }
+    onInteraction = {}
     onFailure = { _ in }
     onState = { _ in }
     attachedWebView?.stopLoading()
     attachedWebView?.navigationDelegate = nil
     attachedWebView?.configuration.userContentController.removeScriptMessageHandler(forName: "notebook")
     attachedWebView = nil
+    if let admissionObserver { NotificationCenter.default.removeObserver(admissionObserver) }
+    admissionObserver = nil
+  }
+
+  private func retryAfterAdmission() {
+    guard snapshotFailure == .resourceLimit, runtimeLoaded, let web = attachedWebView,
+      let token = loadToken, accepts(token), let failure = lastCaptureFailure,
+      failure.policy == snapshotPolicy, loadedElement.map({ SceneRasterSource.agent($0) == .agent(failure.source) }) == true,
+      failure.canResumeCapture(with: resources.rasterAdmission) else { return }
+    snapshotFailure = nil; lastCaptureFailure = nil
+    beginPreparationDeadline(token: token, policy: snapshotPolicy)
+    captureSnapshot(of: web, token: token)
   }
 
   private func accepts(_ token: String) -> Bool {
     !isInvalidated && !lease.isReleased && loadToken == token
   }
 
-  func load(_ element: AgentElement, in webView: WKWebView) {
+  func load(_ element: AgentElement, policy: AgentSnapshotPolicy? = nil, in webView: WKWebView) {
     guard !isInvalidated, !lease.isReleased, attachedWebView === webView else { return }
+    let policyChanged = policy.map { $0 != snapshotPolicy } ?? false
+    if policyChanged { readinessGeneration &+= 1 }
+    if let policy { snapshotPolicy = policy }
     guard loadedElement != element else {
+      if policyChanged, runtimeLoaded, let token = loadToken {
+        snapshotFailure = nil
+        setRenderReady(false, token: token)
+        beginPreparationDeadline(token: token, policy: snapshotPolicy)
+        captureSnapshot(of: webView, token: token)
+      }
       if let token = loadToken { publishRenderReadiness(renderIsReady, token: token) }
       return
     }
     if let previous = loadedElement, AgentProgramSource(previous) == AgentProgramSource(element) {
       loadedElement = element
-      if previous.state != element.state || previous.frame.width != element.frame.width || previous.frame.height != element.frame.height {
+      if policyChanged || previous.state != element.state || previous.frame.width != element.frame.width || previous.frame.height != element.frame.height {
         snapshotFailure = nil
         if let token = loadToken {
           setRenderReady(false, token: token)
@@ -467,6 +825,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   }
 
   private func beginLoad(_ element: AgentElement, in webView: WKWebView) {
+    readinessGeneration &+= 1
     stateApplicationID = nil; stateApplication?.cancel(); stateApplication = nil
     currentCapture?.cancel(); currentCapture = nil
     snapshotInFlight = false; needsSnapshot = false; runtimeLoaded = false
@@ -474,11 +833,15 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     webView.stopLoading()
     let token = "\(lease.id.uuidString)/\(UUID().uuidString)"
     loadToken = token
+    #if os(iOS)
+      NotebookInteractionDiagnostics.bind(webView, elementID: element.id, token: token, ready: false)
+    #endif
     loadedElement = element
     appliedState = element.state
-    snapshotFailure = nil
+    snapshotFailure = nil; lastCaptureFailure = nil
     renderIsReady = false
     publishRenderReadiness(false, token: token)
+    publishInteractionReadiness(false, token: token)
     beginPreparationDeadline(token: token)
     activeNavigation = webView.loadHTMLString(Self.document(for: element, token: token), baseURL: nil)
   }
@@ -505,7 +868,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
           guard accepts(token), !Task.isCancelled else { return }
           appliedState = element.state
         } catch {
-          if accepts(token), !Task.isCancelled { record(error, kind: "render_error", token: token) }
+          if accepts(token), !Task.isCancelled { record(error, kind: "render_error", token: token, source: element) }
           return
         }
         guard accepts(token), !Task.isCancelled else { return }
@@ -516,14 +879,22 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     }
   }
 
-  private func beginPreparationDeadline(token: String) {
-    preparationDeadline?.cancel()
+  private func beginPreparationDeadline(token: String, policy: AgentSnapshotPolicy? = nil) {
+    preparationDeadlineAt = .now + .seconds(8)
+    retargetPreparationDeadline(token: token, policy: policy)
+  }
+
+  private func retargetPreparationDeadline(token: String, policy: AgentSnapshotPolicy?) {
+    guard let source = loadedElement else { return }
+    let deadline = preparationDeadlineAt ?? (.now + .seconds(8))
+    preparationDeadlineAt = deadline; preparationDeadline?.cancel()
     preparationDeadline = Task { @MainActor [weak self] in
-      do { try await Task.sleep(for: .seconds(8)) } catch { return }
-      guard let self, accepts(token) else { return }
+      do { try await Task.sleep(until: deadline) } catch { return }
+      guard let self, !Task.isCancelled, accepts(token) else { return }
       currentCapture?.cancel(); currentCapture = nil
-      fail(.init(kind: "preparation_timeout", elementID: loadedElement?.id,
-        message: "WebKit did not complete source preparation and a snapshot before the deadline."), token: token)
+      fail(.init(kind: "preparation_timeout", elementID: source.id,
+        message: "WebKit did not complete source preparation and a snapshot before the deadline."),
+        token: token, source: source, policy: policy)
     }
   }
 
@@ -540,9 +911,17 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   /// a timer from the preceding document cannot commit into the current source.
   func receive(_ object: [String: Any]) {
     guard let token = object["token"] as? String, accepts(token), let element = loadedElement else { return }
+    #if os(iOS)
+      if object["kind"] as? String == "interactionObservation", let web = attachedWebView {
+        NotebookInteractionDiagnostics.dom(object, webView: web, elementID: element.id, token: token, ready: runtimeLoaded)
+        return
+      }
+    #endif
     if object["kind"] as? String == "diagnostic",
       let kind = object["category"] as? String, let message = object["message"] as? String {
       resources.record(.init(kind: kind, elementID: element.id, message: String(message.prefix(2000))), for: element)
+    } else if object["kind"] as? String == "interaction", runtimeLoaded {
+      onInteraction()
     } else if object["kind"] as? String == "state", let state = object["value"], let value = Self.decodeState(state) {
       onState(value)
     }
@@ -560,7 +939,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
 
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     guard let navigation, navigation === activeNavigation, attachedWebView === webView,
-      let token = loadToken, accepts(token) else { return }
+      let token = loadToken, accepts(token), let element = loadedElement else { return }
     #if os(iOS)
       let frameReadiness = """
         await new Promise(resolve => requestAnimationFrame(
@@ -588,9 +967,13 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         switch result {
         case .success:
           runtimeLoaded = true
+          #if os(iOS)
+            if let element = loadedElement { NotebookInteractionDiagnostics.bind(webView, elementID: element.id, token: token, ready: true) }
+          #endif
+          publishInteractionReadiness(true, token: token)
           applyCurrentState()
         case .failure(let error):
-          record(error, kind: "render_error", token: token)
+          record(error, kind: "render_error", token: token, source: element)
           setRenderReady(false, token: token)
         }
       }
@@ -600,23 +983,28 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private func captureSnapshot(of webView: WKWebView, token: String) {
     guard accepts(token), let element = loadedElement else { return }
     if snapshotInFlight { needsSnapshot = true; return }
-    guard let pixels = snapshotPolicy.pixelSize(for: element),
-      let configuration = Self.snapshotConfiguration(for: element, policy: snapshotPolicy, backingScale: snapshotScale(of: webView)),
+    lastCaptureAdmission = resources.rasterAdmission
+    let policy = snapshotPolicy
+    retargetPreparationDeadline(token: token, policy: policy)
+    guard let pixels = policy.pixelSize(for: element),
+      let configuration = Self.snapshotConfiguration(for: element, policy: policy, backingScale: snapshotScale(of: webView)),
       pixels.width.isFinite, pixels.height.isFinite,
       pixels.width < CGFloat(Int.max - 2), pixels.height < CGFloat(Int.max - 2),
       let reservation = resources.reserveRaster(pixelWidth: Int(pixels.width) + 2, pixelHeight: Int(pixels.height) + 2)
     else {
       fail(.init(kind: "resource_limit", elementID: element.id,
-        message: "The requested snapshot exceeds the raster resource budget."), token: token)
+        message: "The requested snapshot exceeds the raster resource budget."), token: token, policy: policy)
       return
     }
     snapshotInFlight = true
     let capture = holdSubmittedSnapshot(reservation)
     webView.takeSnapshot(with: configuration) { [weak self, capture] image, error in
       defer { capture.finish(); self?.submittedCaptures[capture.id] = nil }
-      guard let self, !capture.isCancelled else { return }
+      guard let self else { return }
       if accepts(token) { snapshotInFlight = false; currentCapture = nil }
-      completeSnapshot(image, error: error, token: token, element: element, reservation: reservation)
+      if !capture.isCancelled {
+        completeSnapshot(image, error: error, token: token, element: element, reservation: reservation, policy: policy)
+      }
       if accepts(token), needsSnapshot, let web = attachedWebView {
         needsSnapshot = false; captureSnapshot(of: web, token: token)
       }
@@ -633,23 +1021,35 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   }
 
   func completeSnapshot(_ image: AgentSnapshotImage?, error: (any Error)?, token: String,
-    element: AgentElement, reservation: RasterReservation) {
+    element: AgentElement, reservation: RasterReservation, policy: AgentSnapshotPolicy? = nil) {
     defer { reservation.release() }
     guard accepts(token), let loadedElement,
       SceneRasterSource.agent(loadedElement) == .agent(element) else { return }
     if let error {
-      record(error, kind: "snapshot_error", token: token)
+      record(error, kind: "snapshot_error", token: token, source: element, policy: policy ?? snapshotPolicy)
     } else if let image {
-      if resources.store(image, for: element, reservation: reservation) {
-        preparationDeadline?.cancel(); preparationDeadline = nil
-        setRenderReady(true, token: token)
+      let capturedPolicy = policy ?? snapshotPolicy
+      let source = capturedPolicy.rasterSource(for: element)
+      if resources.store(image, for: source, reservation: reservation) {
+        // A capture submitted before a density change is a useful fallback,
+        // but cannot acknowledge the newer demand. The one queued capture
+        // uses the latest policy without reloading the running program.
+        if (policy == nil || policy == snapshotPolicy),
+          resources.image(for: source, minimumScale: capturedPolicy.minimumScale(for: element)) != nil {
+          preparationDeadline?.cancel(); preparationDeadline = nil; preparationDeadlineAt = nil; lastCaptureFailure = nil
+          setRenderReady(true, token: token)
+        } else if capturedPolicy != snapshotPolicy { needsSnapshot = true }
+        else {
+          fail(.init(kind: "snapshot_error", elementID: element.id,
+            message: "The completed snapshot does not contain the requested pixel density."), token: token, policy: capturedPolicy)
+        }
       } else {
         fail(.init(kind: "resource_limit", elementID: element.id,
-          message: "The completed raster could not be admitted to the resource budget."), token: token)
+          message: "The completed raster could not be admitted to the resource budget."), token: token, policy: capturedPolicy)
       }
     } else {
       fail(.init(kind: "snapshot_error", elementID: element.id,
-        message: "WebKit returned no image for the completed surface."), token: token)
+        message: "WebKit returned no image for the completed surface."), token: token, policy: policy ?? snapshotPolicy)
     }
   }
 
@@ -679,22 +1079,35 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     setRenderReady(false, token: token)
   }
 
-  private func record(_ error: any Error, kind: String, token: String) {
-    guard accepts(token), let element = loadedElement else { return }
+  private func record(_ error: any Error, kind: String, token: String, source: AgentElement? = nil, policy: AgentSnapshotPolicy? = nil) {
+    guard accepts(token), let element = source ?? loadedElement else { return }
     fail(.init(kind: kind, elementID: element.id,
-      message: String(error.localizedDescription.prefix(2000))), token: token)
+      message: String(error.localizedDescription.prefix(2000))), token: token, source: element, policy: policy)
   }
 
-  private func fail(_ diagnostic: RenderDiagnostic, token: String) {
-    guard accepts(token), let element = loadedElement else { return }
+  private func fail(_ diagnostic: RenderDiagnostic, token: String, source: AgentElement? = nil, policy: AgentSnapshotPolicy? = nil) {
+    guard accepts(token), let loadedElement, let element = source ?? self.loadedElement,
+      SceneRasterSource.agent(loadedElement) == .agent(element),
+      policy == nil || policy == snapshotPolicy else { return }
+    let failure = AgentWebSourceFailure(diagnostic: diagnostic, source: element,
+      leaseID: lease.id, loadToken: token, policy: policy,
+      rasterAdmission: policy == nil ? nil : lastCaptureAdmission)
+    lastCaptureFailure = policy == nil ? nil : failure
+    if policy == nil {
+      // A terminal program/navigation failure revokes live installation too.
+      // Only a failed capture can leave a functioning program interactive.
+      runtimeLoaded = false; needsSnapshot = false
+      publishInteractionReadiness(false, token: token)
+    }
     snapshotFailure = diagnostic.kind == "resource_limit" ? .resourceLimit : .snapshotPending(element.id)
-    preparationDeadline?.cancel(); preparationDeadline = nil
+    preparationDeadline?.cancel(); preparationDeadline = nil; preparationDeadlineAt = nil
     currentCapture?.cancel(); currentCapture = nil
     resources.record(diagnostic, for: element)
     setRenderReady(false, token: token)
     Task { @MainActor [weak self] in
-      guard let self, accepts(token) else { return }
-      onFailure(diagnostic)
+      guard let self, accepts(token), self.loadedElement.map({ SceneRasterSource.agent($0) == .agent(failure.source) }) == true,
+        failure.policy == nil || (failure.policy == snapshotPolicy && lastCaptureFailure == failure) else { return }
+      onFailure(failure)
     }
   }
 
@@ -705,9 +1118,18 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   }
 
   private func publishRenderReadiness(_ ready: Bool, token: String) {
+    let generation = readinessGeneration
     Task { @MainActor [weak self] in
-      guard let self, accepts(token) else { return }
+      guard let self, accepts(token), readinessGeneration == generation,
+        renderIsReady == ready else { return }
       onRenderReady(ready)
+    }
+  }
+
+  private func publishInteractionReadiness(_ ready: Bool, token: String) {
+    Task { @MainActor [weak self] in
+      guard let self, accepts(token), runtimeLoaded == ready else { return }
+      onInteractionReady(ready)
     }
   }
 
@@ -724,7 +1146,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     guard let pixels = policy.pixelSize(for: element) else { return nil }
     let configuration = WKSnapshotConfiguration()
     configuration.afterScreenUpdates = true
-    configuration.rect = CGRect(x: 0, y: 0, width: element.frame.width, height: element.frame.height)
+    configuration.rect = policy.captureRect(for: element)
     // WKSnapshotConfiguration measures output width in points, not pixels.
     configuration.snapshotWidth = NSNumber(value: Double(pixels.width / max(1, backingScale)))
     return configuration
@@ -750,6 +1172,13 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       webView.scrollView.backgroundColor = .clear
       webView.scrollView.contentInsetAdjustmentBehavior = .never
       webView.scrollView.isScrollEnabled = false
+      // This scroll view is a transparent canvas source, not a scrolling
+      // screen beneath navigation chrome. Edge decorations must not become
+      // authored pixels in either its live surface or a WebKit snapshot.
+      webView.scrollView.topEdgeEffect.isHidden = true
+      webView.scrollView.bottomEdgeEffect.isHidden = true
+      webView.scrollView.leftEdgeEffect.isHidden = true
+      webView.scrollView.rightEdgeEffect.isHidden = true
       webView.scrollView.minimumZoomScale = 1
       webView.scrollView.maximumZoomScale = 1
       webView.scrollView.pinchGestureRecognizer?.isEnabled = false
@@ -761,6 +1190,11 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   }
 
   private static func document(for element: AgentElement, token: String) -> String {
+    #if os(iOS)
+      let interactionScript = NotebookInteractionDiagnostics.script
+    #else
+      let interactionScript = ""
+    #endif
     let state = json(element.state).replacingOccurrences(
       of: "</script>",
       with: "<\\/script>",
@@ -781,6 +1215,10 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       </style>
       <script>
         const notebookLoadToken = '\(token)';
+        \(interactionScript)
+        for (const kind of ['pointerdown', 'keydown']) addEventListener(kind, event => {
+          if (event.isTrusted) window.webkit.messageHandlers.notebook.postMessage({token:notebookLoadToken,kind:'interaction'});
+        }, true);
         window.notebookDiagnostic = (category, message) => window.webkit.messageHandlers.notebook.postMessage({token:notebookLoadToken,kind:'diagnostic',category,message:String(message)});
         addEventListener('error', event => window.notebookDiagnostic('javascript_error', event.message || 'Resource load error'));
         addEventListener('unhandledrejection', event => window.notebookDiagnostic('javascript_error', event.reason));

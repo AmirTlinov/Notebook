@@ -24,10 +24,18 @@ extension NotebookStore {
   }
 
   public func collaborationAction(_ id: UUID) throws -> CollaborationReceipt {
+    guard let receipt = try collaborationActionIfPresent(id) else {
+      throw CollaborationError("target_missing", "Ход не найден: \(id)")
+    }
+    return receipt
+  }
+
+  /// Absence is distinct from an unreadable or malformed durable receipt.
+  public func collaborationActionIfPresent(_ id: UUID) throws -> CollaborationReceipt? {
     try prepare()
     return try readTransaction { _ in
       try currentSQL!.limitReads(.agentCommand)
-      return try loadAction(id)
+      return try storedValue(actionFile(id))?.decode(CollaborationReceipt.self)
     }
   }
 
@@ -51,17 +59,42 @@ extension NotebookStore {
     return try value.decode(CollaborationReceipt.self)
   }
 
-  @discardableResult
-  public func applyCollaborationAction(_ action: CollaborationAction, actor: UUID, waitForInput: TimeInterval = 0) throws -> CollaborationReceipt {
-    try waitingForInput(waitForInput) { try applyCollaborationActionImmediately(action, actor: actor) }
+  /// The writer checks current owners before validating derived normalization.
+  func validateCollaborationExpectations(_ action: CollaborationAction, projection: CollaborationWorkspace? = nil) throws {
+    let before = try projection ?? actionSourceProjection(action)
+  for expectation in action.expected {
+    let actual = try targetContentRevision(target: expectation.target)
+    if let expectedInk = expectation.inkRevision, try before.inkRevision(of: expectation.target) != expectedInk.lowercased() {
+      throw CollaborationError("revision_conflict", "Чернила изменились. Рассмотрите поверхность заново.", target: expectation.target,
+        expected: expectedInk, actual: try before.inkRevision(of: expectation.target))
+    }
+    if let expectedSource = expectation.sourceRevision {
+      let source = try referenceRevision(target: expectation.target)
+      guard source == expectedSource else {
+        throw CollaborationError("revision_conflict", "Содержание и геометрия изменились. Рассчитайте место заново.", target:expectation.target,expected:expectedSource,actual:source)
+      }
+    }
+    if let expectedState = expectation.stateRevision, try before.stateRevision(of:expectation.target) != expectedState.lowercased() {
+      throw CollaborationError("revision_conflict", "Состояние блока изменилось.", target:expectation.target, expected:expectedState, actual:try before.stateRevision(of:expectation.target))
+    }
+    guard actual == expectation.revision.lowercased() else {
+      throw CollaborationError("revision_conflict", "Владелец изменился. Прочитайте его текущую версию.",
+        target: expectation.target, expected: expectation.revision, actual: actual)
+    }
+  }
   }
 
-  private func applyCollaborationActionImmediately(_ action: CollaborationAction, actor: UUID) throws -> CollaborationReceipt {
+  @discardableResult
+  public func applyCollaborationAction(_ action: CollaborationAction, actor: UUID, waitForInput: TimeInterval = 0, requestFingerprint: String? = nil) throws -> CollaborationReceipt {
+    try waitingForInput(waitForInput) { try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: requestFingerprint) }
+  }
+
+  private func applyCollaborationActionImmediately(_ action: CollaborationAction, actor: UUID, requestFingerprint: String?) throws -> CollaborationReceipt {
     try prepare()
     return try commandTransaction(readAllowance: .agentCommand) {
       if try hasStoredValue(actionFile(action.id)) {
         let previous = try loadAction(action.id)
-        guard previous.action == action else {
+        guard requestFingerprint.map({ previous.requestFingerprint == $0 }) ?? (previous.action == action) else {
           throw CollaborationError("action_id_conflict", "Этот ID уже принадлежит другому ходу.")
         }
         return previous
@@ -81,69 +114,55 @@ extension NotebookStore {
       let before = try actionSourceProjection(action, references: contextReferences ?? [])
       try requireIdleInput(for: action.operations.map(\.target))
       let scopeReferences = contextReferences ?? action.references
-      for expectation in action.expected {
-        let actual = try targetContentRevision(target: expectation.target)
-        if let expectedInk = expectation.inkRevision, try before.inkRevision(of: expectation.target) != expectedInk.lowercased() {
-          throw CollaborationError("revision_conflict", "Чернила изменились. Рассмотрите поверхность заново.", target: expectation.target,
-            expected: expectedInk, actual: try before.inkRevision(of: expectation.target))
-        }
-        if let expectedSource = expectation.sourceRevision {
-          let source = try referenceRevision(target: expectation.target)
-          guard source == expectedSource else {
-            throw CollaborationError("revision_conflict", "Содержание и геометрия изменились. Рассчитайте место заново.", target:expectation.target,expected:expectedSource,actual:source)
-          }
-        }
-        if let expectedState = expectation.stateRevision, try before.stateRevision(of:expectation.target) != expectedState.lowercased() {
-          throw CollaborationError("revision_conflict", "Состояние блока изменилось.", target:expectation.target, expected:expectedState, actual:try before.stateRevision(of:expectation.target))
-        }
-        guard actual == expectation.revision.lowercased() else {
-          throw CollaborationError("revision_conflict", "Владелец изменился. Прочитайте его текущую версию.",
-            target: expectation.target, expected: expectation.revision, actual: actual)
-        }
-      }
+      try validateCollaborationExpectations(action, projection: before)
       var after = before
       var createdTargets = Set<CollaborationTarget>()
       var inkPointCount = 0
-      for operation in action.operations {
-        if operation.kind == .appendInkStroke {
-          inkPointCount += operation.values["points"]?.array.count ?? 0
-          guard inkPointCount <= 100_000 else { throw invalid("Один ход содержит не более 100000 точек ручки.") }
-          guard createdTargets.contains(operation.target) || action.expected.contains(where: {
-            $0.target == operation.target && $0.inkRevision != nil
-          }) else { throw CollaborationError("revision_required", "Для ручки нужна inkRevision: drawingRevision листа либо spatialInkRevision доски/обложки.", target: operation.target) }
-        }
-        for subject in try Self.compositionSubjects(operation, files: before.files) where !createdTargets.contains(subject.target) {
-          try Self.requireCompositionScope(subject, references: scopeReferences, additionalOwners: action.additionalOwners ?? [], files: before.files)
-        }
-        for target in try before.requiredExpectations(for: operation) {
-          guard createdTargets.contains(target) || action.expected.contains(where: { $0.target == target }) else {
-            throw CollaborationError("revision_required", "Для изменения нужна версия владельца.", target: target)
+      for (index, operation) in action.operations.enumerated() {
+        do {
+          if operation.kind == .appendInkStroke {
+            inkPointCount += operation.values["points"]?.array.count ?? 0
+            guard inkPointCount <= 100_000 else { throw invalid("Один ход содержит не более 100000 точек ручки.") }
+            guard createdTargets.contains(operation.target) || action.expected.contains(where: {
+              $0.target == operation.target && $0.inkRevision != nil
+            }) else { throw CollaborationError("revision_required", "Для ручки нужна inkRevision: drawingRevision листа либо spatialInkRevision доски/обложки.", target: operation.target) }
           }
-        }
-        if operation.kind == .setBlockState, !action.expected.contains(where: { $0.target == operation.target && $0.stateRevision != nil }) {
-          throw CollaborationError("revision_required", "Для состояния блока нужна stateRevision документа.", target:operation.target)
-        }
-        try after.apply(operation, actor: actor)
-        if let id = operation.id.flatMap(UUID.init(uuidString:)) {
-          switch operation.kind {
-          case .createBoard: createdTargets.insert(.init(kind: .board, id: id))
-          case .createDocument: createdTargets.insert(.init(kind: .document, id: id))
-          case .createNotebook:
-            if let pageID = operation.values["pageID"]?.string.flatMap(UUID.init(uuidString:)) {
-              createdTargets.insert(.init(kind: .page, id: pageID))
+          for subject in try Self.compositionSubjects(operation, files: before.files) where !createdTargets.contains(subject.target) {
+            try Self.requireCompositionScope(subject, references: scopeReferences, additionalOwners: action.additionalOwners ?? [], files: before.files)
+          }
+          for target in try before.requiredExpectations(for: operation) {
+            guard createdTargets.contains(target) || action.expected.contains(where: { $0.target == target }) else {
+              throw CollaborationError("revision_required", "Для изменения нужна версия владельца.", target: target)
             }
-          default: break
           }
-          if [.createBoard, .createNotebook, .createDocument].contains(operation.kind) {
-            createdTargets.insert(.init(kind: .cover, id: id, boardID: operation.target.id))
+          if operation.kind == .setBlockState, !action.expected.contains(where: { $0.target == operation.target && $0.stateRevision != nil }) {
+            throw CollaborationError("revision_required", "Для состояния блока нужна stateRevision документа.", target:operation.target)
           }
+          try after.apply(operation, actor: actor)
+          if let id = operation.id.flatMap(UUID.init(uuidString:)) {
+            switch operation.kind {
+            case .createBoard: createdTargets.insert(.init(kind: .board, id: id))
+            case .createDocument: createdTargets.insert(.init(kind: .document, id: id))
+            case .createNotebook:
+              if let pageID = operation.values["pageID"]?.string.flatMap(UUID.init(uuidString:)) {
+                createdTargets.insert(.init(kind: .page, id: pageID))
+              }
+            default: break
+            }
+            if [.createBoard, .createNotebook, .createDocument].contains(operation.kind) {
+              createdTargets.insert(.init(kind: .cover, id: id, boardID: operation.target.id))
+            }
+          }
+        } catch let error as CollaborationError {
+          throw error.atOperation(index, operation)
         }
       }
       try after.recordFieldChanges(from: before, human: false)
       try after.validate(scope: self)
       let changes = collaborationDiff(before.files, after.files).filter { !action.ownsInkField($0) }
-      let receipt = CollaborationReceipt(id: action.id, action: action, createdAt: Date(),
+      var receipt = CollaborationReceipt(id: action.id, action: action, createdAt: Date(),
         revisions: [], changes: changes)
+      receipt.requestFingerprint = requestFingerprint
       return try commitCollaboration(before: before.files, after: after,
         receipt: receipt, revisedTargets: after.changedTargets(from: before))
     }
@@ -567,7 +586,7 @@ struct CollaborationWorkspace {
         let surface: SurfaceID = op.target.kind == .cover ? .cover(op.target.id) : .board(op.target.id)
         value["surface"] = try .encode(surface)
         value["stamp"] = owner["stamp"]
-        value["textStyle"] = try .encode(NativeTextStyle.standard)
+        value["textStyle"] = try .encode(op.values["textStyle"]?.decode(NativeTextStyle.self) ?? .standard)
         value["worldOrigin"] = op.values["worldOrigin"]
       }
       elements.append(.object(value))
@@ -1116,7 +1135,7 @@ private enum CollaborationValueOwner: Equatable {
   }
 }
 
-private func placementAddress(_ file: String, _ path: [CollaborationPathComponent]) -> (boardID: UUID, itemID: UUID)? {
+func placementAddress(_ file: String, _ path: [CollaborationPathComponent]) -> (boardID: UUID, itemID: UUID)? {
   guard file == "board.json", path.count == 5,
     path[0] == .field("boards"), case .member(let board) = path[1],
     path[2] == .field("board"), path[3] == .field("placements"), case .member(let item) = path[4],
@@ -1187,7 +1206,7 @@ private struct MigratedPlacementUndo {
   }
 }
 
-private func usesRetiredPlacementOwner(_ change: CollaborationFieldChange) -> Bool {
+func usesRetiredPlacementOwner(_ change: CollaborationFieldChange) -> Bool {
   guard change.file == "board.json" else { return false }
   let path = change.path
   if path.count >= 4, path[0] == .field("boards"), case .member = path[1], path[2] == .field("board"),
@@ -1205,7 +1224,7 @@ private func usesRetiredPlacementOwner(_ change: CollaborationFieldChange) -> Bo
   return containsRetiredBoard(change.before) || containsRetiredBoard(change.after)
 }
 
-private func collaborationComparable(_ value: JSONValue?, file: String, path: [CollaborationPathComponent]) -> JSONValue? {
+func collaborationComparable(_ value: JSONValue?, file: String, path: [CollaborationPathComponent]) -> JSONValue? {
   let owner = CollaborationValueOwner(file: file, path: path)
   return value.map { owner.comparable($0) }
 }
@@ -1239,7 +1258,7 @@ private func collaborationDiff(_ before: [String: JSONValue], _ after: [String: 
   return result
 }
 
-private func collaborationFieldVersion(file: JSONValue?, path: [CollaborationPathComponent]) -> ContentFieldVersion? {
+func collaborationFieldVersion(file: JSONValue?, path: [CollaborationPathComponent]) -> ContentFieldVersion? {
   guard var owner = file else { return nil }
   var local = path
   if local.count >= 2, local[0] == .field("records"), case .member(let id) = local[1],

@@ -43,11 +43,11 @@ final class DocumentEditorDisplayReceiptTests: XCTestCase {
     controller.view.addSubview(host)
     let resources = SceneRenderResources(maximumWebSurfaces: 1)
     let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onSourceChange: { edit in try await model.commitDocumentSource(edit: edit) }, onStateChange: { _,_ in })
+      onPageLayout: { _ in }, onSourceChange: { edit in try await model.commitDocumentSource(edit: edit) }, onStateChange: { _, _ in nil })
     defer { coordinator.invalidate(); window.isHidden = true }
     coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
       onRenderReady: .init { _ in }, onPageLayout: { _ in },
-      onSourceChange: { edit in try await model.commitDocumentSource(edit: edit) }, onStateChange: { _,_ in },
+      onSourceChange: { edit in try await model.commitDocumentSource(edit: edit) }, onStateChange: { _, _ in nil },
       onDraftChange: model.saveDocumentDraft, onDraftDiscard: model.discardDocumentDraft)
     coordinator.mount(in: host, physicalSize: .init(width: geometry.width, height: geometry.height),
       isInteractive: true, priority: .currentPage)

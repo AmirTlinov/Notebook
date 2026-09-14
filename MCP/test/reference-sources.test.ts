@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { BridgeError, runBridge } from "../src/bridge.js";
-import { NotebookStore } from "../src/store.js";
+import { NotebookStore } from "./native-client.js";
 import { revision } from "../src/domain.js";
 import { appActor, pageID, rootBoardID, writeFixture, fixtureSocket, stopFixture } from "./fixture.js";
 

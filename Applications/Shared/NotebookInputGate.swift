@@ -5,7 +5,44 @@ typealias NotebookInputFinisher = (_ waitsForPublication: Bool, @escaping Notebo
 
 @MainActor
 final class NotebookInputGate {
+  /// Only an admitted, isolated Simulator launch may label measured direct
+  /// contacts as Pencil input. Physical devices always use UITouch's real type.
+  let simulatesPencilContacts: Bool
+  init(simulatesPencilContacts: Bool = false) {
+    #if targetEnvironment(simulator)
+      self.simulatesPencilContacts = simulatesPencilContacts
+    #else
+      self.simulatesPencilContacts = false
+    #endif
+  }
   enum ContactKind { case finger, pencil }
+  enum FingerContactOwner: Equatable {
+    case scene
+    case nativeInput(ObjectIdentifier)
+  }
+  // Identity only: neither a UITouch nor its native view is retained. The
+  // window contact observer retires these claims at lift/cancellation.
+  private var fingerContactOwners: [ObjectIdentifier: FingerContactOwner] = [:]
+  var admittedFingerContactCount: Int { fingerContactOwners.count }
+
+  func fingerContactOwner(for contact: ObjectIdentifier,
+    resolve: () -> FingerContactOwner) -> FingerContactOwner {
+    if let owner = fingerContactOwners[contact] { return owner }
+    let owner = resolve()
+    fingerContactOwners[contact] = owner
+    return owner
+  }
+
+  func endFingerContacts(_ contacts: Set<ObjectIdentifier>) {
+    for contact in contacts { fingerContactOwners[contact] = nil }
+  }
+
+  func transferFingerContacts(_ contacts: Set<ObjectIdentifier>, to next: NotebookInputGate) {
+    for contact in contacts {
+      guard let owner = fingerContactOwners.removeValue(forKey: contact) else { continue }
+      _ = next.fingerContactOwner(for: contact) { owner }
+    }
+  }
   private var controlRegions: [UUID: @MainActor (CGPoint, ContactKind) -> Bool] = [:]
   private var pageFinishers: [UUID: NotebookInputFinisher] = [:]
   private var currentPageSource: UUID?
@@ -21,6 +58,14 @@ final class NotebookInputGate {
   private var newContactAdmission: @MainActor () -> Bool = { true }
   var permitsNewContact: Bool { newContactAdmission() }
   var onActivityChange: ((Bool) -> Void)?
+  var onNewAcceptedContact: (() -> Void)?
+
+  /// Native down events are distinct from aggregate activity: an existing
+  /// Pencil or a pose animation may keep activity true across another contact.
+  func notifyAcceptedContact() {
+    guard permitsNewContact else { return }
+    onNewAcceptedContact?()
+  }
 
   /// The model's lifecycle remains the only admission state. Closing it never
   /// cancels a contact already measured by this gate or skips its final delivery.
@@ -142,6 +187,7 @@ final class NotebookInputGate {
     guard permitsNewContact else { return false }
     activePencilSources.insert(source)
     pencilGeneration &+= 1
+    notifyAcceptedContact()
     updateActivity()
     // Cancel a camera already moving before this Pencil-down synchronously.
     // Waiting for SwiftUI or the next finger event would move measured ink.

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { BridgeError, runBridge } from "../src/bridge.js";
-import { NotebookStore, visibleBounds, workspaceProjection, type ScenePaintPage } from "../src/store.js";
+import { NotebookStore, visibleBounds, workspaceProjection, type ScenePaintPage } from "./native-client.js";
 import { TILE_SIZE } from "../src/spatial.js";
 import { revision } from "../src/domain.js";
 import { appActor, itemID, pageID, rootBoardID, writeFixture, fixtureControl, fixtureSocket, stopFixture } from "./fixture.js";

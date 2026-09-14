@@ -39,7 +39,7 @@ final class DocumentGeometryTests: XCTestCase {
               completed = true
               ready.fulfill()
             }
-          }, onPageLayout: { _ in }, onPageNavigation: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in }
+          }, onPageLayout: { _ in }, onLinkActivation: { _ in nil }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil }
         ).ignoresSafeArea())
       container.addChild(host)
       container.view.addSubview(host.view)
@@ -133,17 +133,18 @@ final class DocumentGeometryTests: XCTestCase {
     let window = UIWindow(windowScene: scene)
     defer { window.isHidden = true }
     let coordinator = DocumentWebCoordinator(onRenderReady: .init { _ in }, onPageLayout: { _ in },
-      onSourceChange: { _ in .committed }, onStateChange: { _,_ in })
+      onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
     defer { coordinator.invalidate() }
     let host = DocumentWebHost(), controller = UIViewController()
     controller.view = host; window.rootViewController = controller
     let onReady = PageTurnReadiness { value in
       if value && !completed { completed = true; ready.fulfill() }
     }
-    let onState: (String, JSONValue) -> Void = { id, value in
+    let onState: (String, JSONValue) -> ContentFieldVersion? = { id, value in
       if id == "interactive", value == .object(["ready": .bool(true)]), !committed {
         committed = true; interactive.fulfill()
       }
+      return nil
     }
     func update(page: Int = 0) {
       coordinator.update(document: document, state: state, selectedPageIndex: page, capturesSnapshot: false,
@@ -157,8 +158,8 @@ final class DocumentGeometryTests: XCTestCase {
     let web = try XCTUnwrap(coordinator.webView)
     let result = try await web.evaluateJavaScript("""
       (() => ({
-        math: document.querySelectorAll('mjx-container svg').length,
-        accessibleMath: document.querySelectorAll('mjx-assistive-mml math').length,
+        math: document.querySelectorAll('#document mjx-container svg').length,
+        accessibleMath: document.querySelectorAll('#document mjx-assistive-mml math').length,
         remoteScripts: [...document.scripts].filter(s => /^https?:/.test(s.src)).length,
         diagnostics: window.notebookRenderer.pageReceipt().diagnostics.length
       }))()

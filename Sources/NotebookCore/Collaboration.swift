@@ -102,21 +102,41 @@ public struct CollaborationAction: Codable, Equatable, Sendable, Identifiable {
   }
 }
 
+/// A safe address within an atomic action, without submitted source or values.
+public struct CollaborationOperationDiagnostic: Codable, Equatable, Sendable {
+  /// Zero-based position in the submitted operations array.
+  public let index: Int
+  public let kind: CollaborationOperation.Kind
+  public let target: CollaborationTarget
+  public let id: String?
+  public init(index: Int, operation: CollaborationOperation) {
+    self.index = index; kind = operation.kind; target = operation.target
+    id = operation.id.map { String($0.prefix(120)) }
+  }
+}
+
 public struct CollaborationError: Error, Codable, Equatable, Sendable, LocalizedError {
   public let code: String
   public let message: String
   public let target: CollaborationTarget?
   public let expected: String?
   public let actual: String?
+  public let operation: CollaborationOperationDiagnostic?
   public var errorDescription: String? { message }
 
   public init(_ code: String, _ message: String, target: CollaborationTarget? = nil,
-    expected: String? = nil, actual: String? = nil) {
+    expected: String? = nil, actual: String? = nil, operation: CollaborationOperationDiagnostic? = nil) {
     self.code = code
     self.message = message
     self.target = target
     self.expected = expected
     self.actual = actual
+    self.operation = operation
+  }
+
+  func atOperation(_ index: Int, _ operation: CollaborationOperation) -> CollaborationError {
+    .init(code, message, target: target, expected: expected, actual: actual,
+      operation: self.operation ?? .init(index: index, operation: operation))
   }
 }
 
@@ -160,6 +180,9 @@ public struct CollaborationReceipt: Codable, Equatable, Sendable, Identifiable {
   public var revisions: [CollaborationExpectation]
   public var changes: [CollaborationFieldChange]
   public var undo: CollaborationUndoResult?
+  /// Identity of the original request, before generated IDs or Markdown HTML.
+  /// Older receipts intentionally remain nil; their raw request cannot be inferred.
+  public var requestFingerprint: String? = nil
 
   public var summary: String { action.summary }
 }

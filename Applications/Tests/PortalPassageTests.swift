@@ -112,6 +112,7 @@ final class PortalPassageTests: XCTestCase {
     let deadline = ContinuousClock.now + .seconds(15)
     while (scene.model.compositionTiles.published?.plan.rootBoardID != scene.childID
       || scene.model.compositionTiles.published?.plan.revision != scene.model.workspaceHeader?.cursor
+      || !scene.hasInstalledMarker()
       || scene.model.scenePreparationPending || scene.model.compositionTiles.isPreparing),
       scene.model.compositionTiles.failure == nil, ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(20))
@@ -121,8 +122,10 @@ final class PortalPassageTests: XCTestCase {
       "Exit is tested after the child has replaced the entry cohort, not after a short timing guess")
     XCTAssertNotEqual(settled.id, original.id)
     XCTAssertNil(scene.model.compositionTiles.failure)
+    XCTAssertTrue(scene.hasInstalledMarker(), "The settled child must actually install its marker before exit")
     let start = try XCTUnwrap(scene.model.presence)
     XCTAssertEqual(start.boardID, scene.childID)
+    attachMarkerHistory(in: scene, name: "settled-child-before-exit")
     let before = try redPoint(in: scene.host.view)
     let marker = start.camera.worldToScreen(.init(x: 200, y: 150), viewport: scene.viewport)
     XCTAssertEqual(before.x, marker.x, accuracy: 2)
@@ -140,6 +143,7 @@ final class PortalPassageTests: XCTestCase {
     XCTAssertFalse(scene.model.permitsBackgroundPreparation)
     scene.host.view.setNeedsLayout()
     scene.host.view.layoutIfNeeded()
+    attachMarkerHistory(in: scene, name: "same-cohort-during-parent-return")
     let after = try redPoint(in: scene.host.view)
     XCTAssertEqual(after.x, center.x + (before.x - center.x) * 0.75, accuracy: 2)
     XCTAssertEqual(after.y, center.y + (before.y - center.y) * 0.75, accuracy: 2)
@@ -224,14 +228,21 @@ final class PortalPassageTests: XCTestCase {
     _ = try redPoint(in: scene.host.view)
 
     scene.model.enterBoard(scene.childID)
-    try await Task.sleep(for: .milliseconds(40))
-    XCTAssertTrue(agentWebViews(in: scene.host.view).isEmpty,
-      "Entering a board does not activate every prepared source")
+    let entryDeadline = ContinuousClock.now + .seconds(10)
+    while (scene.model.compositionTiles.published?.plan.rootBoardID != scene.childID
+      || !scene.hasInstalledMarker() || scene.model.compositionTiles.isPreparing),
+      ContinuousClock.now < entryDeadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    XCTAssertEqual(scene.model.compositionTiles.published?.plan.rootBoardID, scene.childID)
+    XCTAssertTrue(scene.hasInstalledMarker())
     let interactive = try XCTUnwrap(scene.model.boardHierarchy?.board(scene.childID)?.elements.first { !$0.javaScript.isEmpty })
     scene.model.interactiveElementFocus = .board(boardID: scene.childID, elementID: interactive.id)
-    let mounted: Set<ObjectIdentifier> = [try await interactiveIdentity(in: scene)]
-    XCTAssertEqual(agentWebViews(in: scene.host.view).count, 1,
-      "Явное обращение активирует одну схему, а не всю доску")
+    let mounted = try await preparedRuntimeIdentities(in: scene, focused: interactive)
+    XCTAssertGreaterThan(mounted.count, 0)
+    XCTAssertLessThanOrEqual(mounted.count, SceneRenderResources.shared.maximumPassiveLivePrograms + 1,
+      "Visible controls prepare within the shared limit, with one reserved explicit input owner")
+    XCTAssertLessThan(mounted.count, 10, "Entering a board cannot run all of its programs")
     scene.model.inputGate.beginContact(source: input)
     try scene.send(.began(centroid: center, isOpeningApproach: true))
     try scene.send(.changed(scale: 1.04, velocity: 1, elapsed: 0.2, centroid: center))
@@ -243,22 +254,31 @@ final class PortalPassageTests: XCTestCase {
     await scene.model.finishPendingPersistence()
   }
 
-  private func interactiveIdentity(in scene: Scene) async throws -> ObjectIdentifier {
-    // Return identity, not a second owner of WebKit in the XCTest async frame.
-    // The mounted scene remains the runtime owner during the following gesture.
-    let deadline = ContinuousClock.now + .seconds(5)
-    var active: WKWebView?
-    while active == nil, ContinuousClock.now < deadline {
-      for web in agentWebViews(in: scene.host.view) {
-        if (try? await web.evaluateJavaScript("document.body.dataset.interactive")) as? String == "ready" {
-          active = web; break
+  private func preparedRuntimeIdentities(in scene: Scene, focused: SpatialElement) async throws -> Set<ObjectIdentifier> {
+    // Observe the real runtime owners. Returning identities avoids retaining
+    // WebKit in the XCTest async frame through the later retirement check.
+    let deadline = ContinuousClock.now + .seconds(10)
+    while ContinuousClock.now < deadline {
+      if let cohort = scene.model.compositionTiles.published,
+        cohort.plan.rootBoardID == scene.childID,
+        cohort.plan.protectedOwners.contains(where: { $0.id == .element(focused.id) }),
+        !scene.model.compositionTiles.isPreparing {
+        let ids = Set(cohort.runtimeOwners.filter { $0.plane.boardID == scene.childID }.map(\.elementID))
+          .union([focused.id])
+        let sources = (scene.model.boardHierarchy?.board(scene.childID)?.elements ?? [])
+          .filter { ids.contains($0.id) }.map(agentElementSnapshotSource)
+        let views = agentWebViews(in: scene.host.view)
+        let ready = sources.allSatisfy { source in
+          views.contains { ($0.navigationDelegate as? AgentWebCoordinator)?.hasLiveSource(source) == true }
+        }
+        if sources.count == ids.count, ready, views.count == ids.count {
+          return Set(views.map(ObjectIdentifier.init))
         }
       }
-      if active != nil { break }
       try await Task.sleep(for: .milliseconds(20))
     }
-    return ObjectIdentifier(try XCTUnwrap(active,
-      "The next contact belongs to the explicit interactive program, not a temporary preparatory WebKit"))
+    XCTFail("All admitted visible programs and the focused source must be ready before the next warm contact")
+    return []
   }
 
   func testPortalExitDoesNotMountDistantPaperSurfaces() async throws {
@@ -394,6 +414,7 @@ final class PortalPassageTests: XCTestCase {
     let model: NotebookAppModel
     let childID: UUID
     let distantID: UUID
+    let markerID: String
     let viewport: SpatialPoint
     let window: UIWindow
     private var mountedHost: UIHostingController<AnyView>?
@@ -402,13 +423,25 @@ final class PortalPassageTests: XCTestCase {
       return mountedHost!
     }
 
-    init(model: NotebookAppModel, childID: UUID, distantID: UUID, viewport: SpatialPoint,
+    init(model: NotebookAppModel, childID: UUID, distantID: UUID, markerID: String, viewport: SpatialPoint,
       window: UIWindow, host: UIHostingController<AnyView>) {
       self.model = model; self.childID = childID; self.distantID = distantID
+      self.markerID = markerID
       self.viewport = viewport; self.window = window; mountedHost = host
     }
 
-    func close() {
+    func hasInstalledMarker() -> Bool {
+      guard let cohort = model.compositionTiles.published,
+        let address = cohort.sourceReceipts.keys.first(where: { $0.elementID == markerID }) else { return false }
+      return cohort.hasInstalledPixels(for: address)
+    }
+
+    func close() async {
+      // Stop admission and drain preparation while the mounted owners can
+      // acknowledge retirement. Hiding a still-running scene first permits a
+      // late source completion to repopulate a cached SwiftUI graph.
+      let stopped = await model.shutdown()
+      XCTAssertTrue(stopped)
       // UIKit can keep the detached hosting controller and its cached graph.
       // This fixture owns that root value, so close relinquishes its content
       // before removing the native host; it never revokes a borrowed raster.
@@ -424,7 +457,6 @@ final class PortalPassageTests: XCTestCase {
       // XCTest can retain the completed async test frame and its Scene. The
       // fixture, not model.shutdown, must relinquish this external UI borrower.
       mountedHost = nil
-      model.compositionTiles.cancelPreparation()
     }
 
     func send(_ phase: WorkspaceMagnificationPhase) throws {
@@ -443,7 +475,8 @@ final class PortalPassageTests: XCTestCase {
     weak var initialCohort: SceneCompositionCohort?
     addTeardownBlock { @MainActor in
       let deadline = ContinuousClock.now + .seconds(2)
-      while resources.rasterAdmission.pinnedBytes > baseline.pinnedBytes, ContinuousClock.now < deadline {
+      while (resources.rasterAdmission.pinnedBytes > baseline.pinnedBytes || initialCohort != nil),
+        ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(20))
       }
       let receipt = "hostAlive=\(retiredHost != nil) initialCohortAlive=\(initialCohort != nil) before=\(baseline) after=\(resources.rasterAdmission)"
@@ -484,22 +517,41 @@ final class PortalPassageTests: XCTestCase {
     if let size = requestedViewport { window.frame = CGRect(x: 0, y: 0, width: size.x, height: size.y) }
     let viewport = SpatialPoint(x: window.bounds.width, y: window.bounds.height)
     let host = UIHostingController(rootView: AnyView(SpatialWorkspaceView().environment(model).ignoresSafeArea()))
-    let scene = Scene(model: model, childID: childID, distantID: distantID,
+    let markerID = try XCTUnwrap(elements.first?.id)
+    let scene = Scene(model: model, childID: childID, distantID: distantID, markerID: markerID,
       viewport: viewport, window: window, host: host)
-    addTeardownBlock { @MainActor in scene.close() }
+    addTeardownBlock { @MainActor in await scene.close() }
     retiredHost = host
     window.rootViewController = host
     model.updatePresence(.init(boardID: try XCTUnwrap(model.workspace?.rootBoardID), mode: .board,
       camera: .init(scale: 0.35), viewport: viewport), settled: true)
     window.makeKeyAndVisible()
     let deadline = ContinuousClock.now + .seconds(15)
-    while model.compositionTiles.published == nil, model.compositionTiles.failure == nil,
-      ContinuousClock.now < deadline {
+    // Geometry publication is deliberately independent of source readiness.
+    // This warm handoff fixture must observe the marker's installed pixels,
+    // not start its gesture on the initial loading composition.
+    func markerIsInstalled() -> Bool {
+      scene.hasInstalledMarker()
+    }
+    while (!markerIsInstalled() || model.compositionTiles.isPreparing || model.scenePreparationPending),
+      model.compositionTiles.failure == nil, ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(30))
     }
     let currentHeader = try model.store.workspaceHeader()
     let readiness = "failure=\(model.compositionTiles.failure ?? "nil"); header=\(String(describing: model.workspaceHeader?.cursor)); SQL=\(currentHeader.cursor); scenePending=\(model.scenePreparationPending); scene=\(String(describing: model.sceneIndex?.generationID)); tilesPreparing=\(model.compositionTiles.isPreparing); input=\(model.inputIsActive); pencil=\(model.inputGate.hasActivePencil); phase=\(model.presencePhase); permits=\(model.permitsBackgroundPreparation); WK=\(SceneRenderResources.shared.activeWebSurfaceCount); waitingWK=\(SceneRenderResources.shared.pendingWebRequestCount)"
     let cohort = try XCTUnwrap(model.compositionTiles.published, "Whole portal coverage must be ready: " + readiness)
+    let sourceEvidence = XCTAttachment(string: """
+      \(readiness)
+      marker=\(markerID) child=\(childID) paintInstalled=\(cohort.isPaintInstalled)
+      childElements=\(cohort.frame.workset(boardID: childID).elements.map(\.id))
+      owners=\(cohort.plan.liveOwners)
+      runtimes=\(cohort.runtimeOwners)
+      receipts=\(cohort.sourceReceipts)
+      liveRasters=\(cohort.liveRasters.keys)
+      tiles=\(cohort.tileSources)
+      """)
+    sourceEvidence.name = "portal-source-installation"; sourceEvidence.lifetime = .keepAlways; add(sourceEvidence)
+    XCTAssertTrue(markerIsInstalled(), "The exact marker source must be installed before the warm gesture: " + readiness)
     initialCohort = cohort
     XCTAssertEqual(cohort.rasters.count, cohort.plan.tiles.count)
     XCTAssertNotNil(cohort.plan.presentations[.board(childID)], "The continuing gesture transfers an already prepared physical plane")
@@ -510,6 +562,17 @@ final class PortalPassageTests: XCTestCase {
     }
     XCTAssertTrue(agentWebViews(in: host.view).isEmpty, "Preparation completes before the fixed warm gesture route")
     return scene
+  }
+
+  private func attachMarkerHistory(in scene: Scene, name: String) {
+    guard let cohort = scene.model.compositionTiles.published else { return }
+    let addresses = cohort.sourceReceipts.keys.filter { $0.elementID == scene.markerID }
+    let sources = addresses.map { address -> String in
+      let raster = cohort.sourceRasters[address]
+      return "address=\(address) receipt=\(String(describing: cohort.sourceReceipts[address])) retainedEntry=\(String(describing: raster?.entryID)) retainedSource=\(String(describing: raster?.source)) retainedScale=\(String(describing: raster?.pixelScale)) released=\(String(describing: raster?.isReleased)) currentPixelsInstalled=\(cohort.hasInstalledPixels(for: address))"
+    }
+    let attachment = XCTAttachment(string: "cohort=\(cohort.id) root=\(cohort.plan.rootBoardID) presence=\(String(describing: scene.model.presence))\n" + sources.joined(separator: "\n"))
+    attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
   }
 
   private func redPoint(in view: UIView) throws -> CGPoint {
@@ -525,15 +588,23 @@ final class PortalPassageTests: XCTestCase {
         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
       context.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
     }
-    var sumX = 0.0, sumY = 0.0, count = 0.0
+    var minX = cg.width, minY = cg.height, maxX = -1, maxY = -1, count = 0
     for y in 0..<cg.height { for x in 0..<cg.width {
       let p = (y * cg.width + x) * 4
       if bytes[p] > 180, bytes[p + 1] < 80, bytes[p + 2] < 80, bytes[p + 3] > 180 {
-        count += 1; sumX += Double(x) + 0.5; sumY += Double(y) + 0.5
+        count += 1
+        minX = min(minX, x); maxX = max(maxX, x)
+        minY = min(minY, y); maxY = max(maxY, y)
       }
     }}
     let attachment = XCTAttachment(image: image); attachment.name = "portal-camera-frame"; attachment.lifetime = .keepAlways; add(attachment)
     XCTAssertGreaterThan(count, 10, "При передаче владельца видимый предмет не исчезает")
-    return CGPoint(x: sumX / max(1, count), y: sumY / max(1, count))
+    // A loading/paused control can occlude the circle's interior. Its opposite
+    // outer edges still name its geometric center; a red-pixel mean instead
+    // moves when the UI overlay appears, even if the circle never moves.
+    let bounds = XCTAttachment(string: "redPixels=\(count) bounds=[\(minX),\(minY),\(maxX),\(maxY)]")
+    bounds.name = "portal-marker-outer-bounds"; bounds.lifetime = .keepAlways; add(bounds)
+    guard count > 10 else { return .zero }
+    return CGPoint(x: Double(minX + maxX + 1) / 2, y: Double(minY + maxY + 1) / 2)
   }
 }

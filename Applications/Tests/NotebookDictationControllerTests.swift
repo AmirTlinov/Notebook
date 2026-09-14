@@ -302,7 +302,7 @@ import NotebookCore
         try Data(repeating: 0x41, count: 200_000).write(to: directory.appendingPathComponent(id.uuidString + ".m4a"))
       }
       queue = NotebookPersistenceQueue(store: store)
-      chat = NotebookChatController(persistence: queue, author: author, dictationCapture: capture, dictationPreferences: UserDefaults(suiteName: "dictation-tests-" + author.uuidString)!) { [weak self] packet, _ in
+      chat = NotebookChatController(persistence: queue, author: author, dictationCapture: capture, preferences: UserDefaults(suiteName: "dictation-tests-" + author.uuidString)!) { [weak self] packet, _ in
         guard let self, case .request(let query) = packet.body else { return }
         let reply: NotebookChatReply
         switch query {

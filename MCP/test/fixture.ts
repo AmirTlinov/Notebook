@@ -1,4 +1,4 @@
-import { NotebookStore } from "../src/store.js";
+import { NotebookStore } from "./native-client.js";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,7 +13,7 @@ import type {
   SessionPresence,
   VersionStamp,
 } from "../src/domain.js";
-import type { PageVisionReceipt } from "../src/page-vision.js";
+import type { PageVisionReceipt } from "./page-vision-fixture.js";
 
 export const itemID = "7e7a0000-0000-4000-8000-000000000001";
 export const pageID = "7e7a0000-0000-4000-8000-000000000002";

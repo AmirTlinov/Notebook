@@ -4,6 +4,7 @@ import Observation
 import NotebookCore
 #if os(macOS)
 import NotebookCodex
+import NotebookScriptHost
 #else
 import UIKit
 #endif
@@ -125,11 +126,15 @@ final class NotebookAppModel {
 
   /// A numbered command is leased to the order seen at the button press.
   /// It can wait for content/input, but it cannot adopt a new slot occupant.
-  func navigateToNotebookPage(at index: Int, in itemID: UUID, expectedRoot: String) async {
-    guard await finishPendingInteraction(), notebookPageRoot(itemID) == expectedRoot else { return }
+  func navigateToNotebookPage(at index: Int, in itemID: UUID, expectedRoot: String,
+    navigationGeneration generation: UInt64) async {
+    guard !Task.isCancelled, navigationGeneration == generation,
+      await finishNavigationInput(isCurrent: { self.navigationGeneration == generation }), !Task.isCancelled, !isStopped,
+      navigationGeneration == generation, notebookPageRoot(itemID) == expectedRoot else { return }
     await prepareNotebookPage(at: index, in: itemID)
     afterPageInput { [weak self] in
-      guard let self else { return }
+      guard let self, !self.isStopped, self.navigationGeneration == generation,
+        self.presence?.focusedItemID == itemID else { return }
       _ = selectNotebookPage(index, notebookID: itemID, expectedRoot: expectedRoot)
     }
   }
@@ -139,7 +144,8 @@ final class NotebookAppModel {
   /// input, selection, or cancellation overtook that read.
   func navigateToNotebookPage(id pageID: UUID, isCurrent: @MainActor () -> Bool) async -> Bool {
     while !Task.isCancelled, !isStopped, isCurrent() {
-      guard await finishPendingInteraction(), let presence, isCurrent() else { return false }
+      guard await finishNavigationInput(isCurrent: isCurrent), !Task.isCancelled, !isStopped,
+        let presence, isCurrent() else { return false }
       let epoch = collaborationReadEpoch, generation = inputGate.pencilGeneration
       do {
         let state = try await persistence.submit { store in
@@ -153,7 +159,7 @@ final class NotebookAppModel {
             return try NotebookSceneState.read(store: store, presence: selection, viewport: presence.viewport)
           }
         }
-        guard !Task.isCancelled, isCurrent() else { return false }
+        guard !Task.isCancelled, !isStopped, isCurrent() else { return false }
         guard epoch == collaborationReadEpoch, generation == inputGate.pencilGeneration, !inputGate.hasActivePencil else { continue }
         guard let itemID = state.presence.selectedItemID, !isItemBeingDeleted(itemID), state.presence.notebookPageID == pageID else { return false }
         acceptSceneState(state)
@@ -163,6 +169,7 @@ final class NotebookAppModel {
         scheduleWorkspaceSelectionSave(state.workspace, createdPage: nil)
         return true
       } catch {
+        guard !Task.isCancelled, !isStopped, isCurrent() else { return false }
         showCue("Лист недоступен: \(error.localizedDescription)")
         return false
       }
@@ -190,9 +197,23 @@ final class NotebookAppModel {
     }
   }
 
-  private(set) var documents: [UUID: DocumentDocument] = [:] { didSet { collaborationReadEpoch &+= 1; scheduleScenePreparation() } }
+  private(set) var documents: [UUID: DocumentDocument] = [:] { didSet { collaborationReadEpoch &+= 1; validateDocumentPageNavigation(); scheduleScenePreparation() } }
   private(set) var documentEditingSessions: [DocumentEditingSession] = []
   @ObservationIgnored private var documentDraftEpoch: UInt64 = 0
+  private struct DocumentOpeningRequest: Sendable {
+    let id = UUID()
+    let documentID: UUID
+    let boardID: UUID
+    let workspaceID: UUID
+  }
+  private struct DocumentOpeningRead: Sendable {
+    let request: DocumentOpeningRequest
+    let epoch: UInt64
+    let draftEpoch: UInt64
+    let result: AsyncStream<Result<NotebookSceneState.OpenedDocument?, Error>>
+  }
+  @ObservationIgnored private var documentOpeningRequest: DocumentOpeningRequest?
+  @ObservationIgnored private var documentOpeningTask: Task<Void, Never>?
   private(set) var documentStates: [UUID: DocumentStateJournal] = [:] { didSet { collaborationReadEpoch &+= 1 } }
   private(set) var boardContentRevisions: [UUID: String] = [:] {
     didSet { if oldValue != boardContentRevisions { collaborationReadEpoch &+= 1 } }
@@ -430,7 +451,17 @@ final class NotebookAppModel {
       .values.sorted { $0.uuidString < $1.uuidString }
   }
 
-  private(set) var presence: SessionPresence?
+  #if os(iOS)
+  let nativeCameraProjection = SceneNativeCameraProjection()
+  #endif
+
+  private(set) var presence: SessionPresence? {
+    didSet {
+      #if os(iOS)
+      nativeCameraProjection.update(presence)
+      #endif
+    }
+  }
   private(set) var presencePhase = PresencePhase.settled
   var interactiveElementFocus: InteractiveElementReference? {
     get {
@@ -466,6 +497,13 @@ final class NotebookAppModel {
   private(set) var returnPlaces: [ReturnPlace] = []
   private(set) var requestedReturn: ReturnPlace?
   private(set) var requestedReference: CollaborationReference?
+  private(set) var navigationGeneration: UInt64 = 0
+  private(set) var documentPageSelection: DocumentPageNavigationRequest?
+  private(set) var documentPageNavigationStatus: DocumentPageNavigationStatus?
+  @ObservationIgnored private var documentPageController: (id: UUID, documentID: UUID, source: String)?
+  @ObservationIgnored private var documentPageLandingRevision: UInt64 = 0
+  @ObservationIgnored private var documentPageStatusRevision: UInt64 = 0
+  @ObservationIgnored var stopNavigationPresentation: (() -> Void)?
   let presentationPlayer = NotebookPresentationPlayer()
   let presentationRelay = NotebookPresentationRelay()
   var highlightedReference: CollaborationReference? { selectionSession.highlightedReference }
@@ -479,9 +517,13 @@ final class NotebookAppModel {
   @ObservationIgnored private var collaborationReadTask: Task<CollaborationReadSnapshot, Error>?
   @ObservationIgnored private var collaborationReadGeneration = 0
   private var deviceActionReceipts: [DeviceActionReceipt] = []
-  private var readyPages: [UUID: String] = [:]
+  #if os(iOS)
+  let pagePresentations = NotebookPagePresentationRegistry()
+  let workspacePresentations = NotebookWorkspacePresentationRegistry()
+  let coverPresentations = NotebookCoverPresentationRegistry()
+  #endif
   private(set) var isPeerConnected = false
-  private(set) var collaborationActions: [CollaborationReceipt] = [] { didSet { collaborationReadEpoch &+= 1 } }
+  private(set) var collaborationActions: [NotebookActionReadModel] = [] { didSet { collaborationReadEpoch &+= 1 } }
   private(set) var regionalReferenceStatuses: [UUID: ReferenceStatus] = [:]
   private(set) var sharedContexts: [SharedContextSummary] = [] { didSet { collaborationReadEpoch &+= 1 } }
   var activeSharedContext: SharedContextSummary? {
@@ -606,7 +648,7 @@ final class NotebookAppModel {
 
   let store: NotebookStore
   let actorID: UUID
-  let inputGate = NotebookInputGate()
+  let inputGate: NotebookInputGate
 
   private var pageSize = defaultPageSize
   private var started = false
@@ -708,6 +750,8 @@ final class NotebookAppModel {
     weak var value: (any NotebookScenePresentationOwner)?
   }
   @ObservationIgnored private var scenePresentationOwners: [ObjectIdentifier: WeakScenePresentationOwner] = [:]
+  @ObservationIgnored private var documentShellPreparation: DocumentShellPreparation?
+  @ObservationIgnored private var documentPreparationIsForeground = true
   @ObservationIgnored private var shutdownTask: Task<Bool, Never>?
   @ObservationIgnored private var inputSequence: UInt64 = 0
   private(set) var inputIsActive = false
@@ -726,6 +770,7 @@ final class NotebookAppModel {
     @ObservationIgnored private var codexSidecar: NotebookCodexSidecar?
     private(set) var agentStartupError: String?
     @ObservationIgnored private var commandServer: NotebookIPCServer?
+    @ObservationIgnored private var scriptCoordinator: NotebookScriptCoordinator?
     private let commandSocketURL: URL?
     /// Agent vision follows the process-level mirror, not a disposable window.
     private var previewPublisher: MacPreviewPublisher?
@@ -733,6 +778,10 @@ final class NotebookAppModel {
 
   let allowsCodexRegistration: Bool
   let pairingActivationID: UUID?
+  let acceptance: NotebookAcceptanceConfiguration?
+  @ObservationIgnored let documentMeasurements: DocumentPresentationRecorder
+  @ObservationIgnored let preferences: UserDefaults
+  private let pairingService: String?
 
   init(
     store: NotebookStore = NotebookStore(root: NotebookStore.defaultRoot),
@@ -740,6 +789,9 @@ final class NotebookAppModel {
     commandSocketURL: URL? = nil,
     allowsCodexRegistration: Bool = false,
     pairingActivationID: UUID? = nil,
+    preferences: UserDefaults = .standard,
+    pairingService: String? = nil,
+    acceptance: NotebookAcceptanceConfiguration? = nil,
     preparePageInk: @escaping PageInkPreparation = { page, mutation, stamp in
       try await Task.detached(priority: .userInitiated) {
         try page.prepareInkChange(mutation, stamp: stamp)
@@ -749,16 +801,22 @@ final class NotebookAppModel {
     self.store = store
     self.allowsCodexRegistration = allowsCodexRegistration
     self.pairingActivationID = pairingActivationID
+    self.preferences = preferences
+    self.pairingService = pairingService
+    self.acceptance = acceptance
+    documentMeasurements = DocumentPresentationRecorder(enabled: acceptance != nil
+      || ProcessInfo.processInfo.arguments.contains("--notebook-profile-documents"))
+    inputGate = NotebookInputGate(simulatesPencilContacts: acceptance?.simulatorContact == "pencil")
     self.preparePageInk = preparePageInk
     persistence = NotebookPersistenceQueue(store: store)
-    compositionTiles = SceneCompositionTiles(cacheRoot: store.root.appendingPathComponent("derived/composition", isDirectory: true))
+    compositionTiles = SceneCompositionTiles()
     #if os(iOS)
       inputFrameMonitor = InputFrameMonitor(root: store.root)
     #endif
     self.startsNearbySync = startsNearbySync
-    penStyle = Self.loadPenStyle()
-    eraserStyle = Self.loadEraserStyle()
-    actorID = Self.loadActorID()
+    penStyle = Self.loadPenStyle(defaults: preferences)
+    eraserStyle = Self.loadEraserStyle(defaults: preferences)
+    actorID = Self.loadActorID(defaults: preferences)
     #if os(macOS)
       self.commandSocketURL = commandSocketURL ?? (startsNearbySync ? NotebookIPC.defaultSocketURL : nil)
     #endif
@@ -778,6 +836,7 @@ final class NotebookAppModel {
       }
 
     }
+    inputGate.onNewAcceptedContact = { [weak self] in self?.cancelRequestedNavigation() }
     inputGate.onActivityChange = { [weak self] active in
       guard let self else { return }
       inputIsActive = active
@@ -879,7 +938,7 @@ final class NotebookAppModel {
     let connection = NearbySync(role: role,
       identity: .init(deviceID: actorID, workspaceID: header.workspaceID, displayName: name),
       storage: storage, stagingRoot: store.root.appendingPathComponent("transfer-staging", isDirectory: true),
-      trustStore: NotebookKeychainPairingStore(activationID: pairingActivationID))
+      trustStore: NotebookKeychainPairingStore(activationID: pairingActivationID, service: pairingService))
     connection.onPairingChange = { [weak self] state in
       self?.pairingState = state
       self?.pairedPeers = self?.sync?.pairedPeers ?? []
@@ -1016,8 +1075,7 @@ final class NotebookAppModel {
           notebookID: notebookID, pageID: pageID)
       }
       acceptSceneState(stored)
-      presence = settledPresence(from: stored.presence, workspace: stored.workspace,
-        board: stored.hierarchy, viewport: .init(x: pageSize.width, y: pageSize.height))
+      presence = settledPresence(from: stored.presence, viewport: .init(x: pageSize.width, y: pageSize.height))
       if let presence {
         let selection = presence.selectedItemID.flatMap { workspace?.item(id: $0) }
           ?? stored.workspace.selectedItem
@@ -1036,6 +1094,7 @@ final class NotebookAppModel {
       reloadCollaborationMetadata()
       reloadExternalChanges()
       #if os(macOS)
+        try await scripts().start()
         try startCommandServer()
         startPreviewPublication()
       #endif
@@ -1047,7 +1106,7 @@ final class NotebookAppModel {
         #else
         let fixtureChat: NotebookChatController? = nil
         #endif
-        let chat = fixtureChat ?? NotebookChatController(persistence: persistence, author: actorID) { [weak self] envelope, peer in
+        let chat = fixtureChat ?? NotebookChatController(persistence: persistence, author: actorID, preferences: preferences) { [weak self] envelope, peer in
           self?.sync?.sendTransient(.codex(envelope), to: peer)
         }
         self.chat = chat
@@ -1220,6 +1279,7 @@ final class NotebookAppModel {
   }
 
   func selectItem(_ itemID: UUID) {
+    if let request = documentOpeningRequest, request.documentID != itemID { cancelDocumentOpening() }
     guard !isItemBeingDeleted(itemID), var workspace else { return }
     if workspace.item(id: itemID) != nil {
       guard workspace.selectItem(itemID, actor: actorID) else { return }
@@ -1255,6 +1315,107 @@ final class NotebookAppModel {
       }
       if let envelope = makePresenceEnvelope(next, phase: presencePhase) { sync?.sendTransient(.presence(envelope)) }
     #endif
+  }
+
+  /// Opening owns body admission even when the same closed cover was already
+  /// selected. Camera samples and the eventual native mount are consumers of
+  /// this request, not prerequisites for reading its source.
+  @discardableResult
+  func prepareDocumentOpening(_ documentID: UUID, pageIndex: Int, boardID: UUID? = nil) -> Task<Void, Never>? {
+    guard !isClosing, pageIndex >= 0, !isItemBeingDeleted(documentID),
+      let presence, presence.selectedItemID == documentID,
+      let workspaceHeader else { return nil }
+    // A resolved reference may be outside the camera cache or on another board.
+    // Its addressed SQL read validates kind and owner without moving the camera.
+    let boardID = boardID ?? presence.boardID
+    documentMeasurements.request(documentID: documentID, pageIndex: pageIndex, cause: .open)
+    if documents[documentID] != nil, documentStates[documentID] != nil { return nil }
+    if documentOpeningRequest?.documentID != documentID || documentOpeningRequest?.boardID != boardID {
+      documentOpeningRequest = .init(documentID: documentID, boardID: boardID,
+        workspaceID: workspaceHeader.workspaceID)
+      observeNavigation("opening_body_requested", fields: ["documentID": .string(documentID.uuidString),
+        "openingID": .string(documentOpeningRequest!.id.uuidString)])
+    }
+    guard documentOpeningTask == nil, let request = documentOpeningRequest else { return documentOpeningTask }
+    // Register the first read in this accepted MainActor segment, before the
+    // caller starts animation or a later contact enqueues its own writes.
+    let firstRead = enqueueDocumentOpeningRead(request)
+    let task = Task { [weak self] in
+      guard let self else { return }
+      defer { documentOpeningTask = nil }
+      var pendingRead: DocumentOpeningRead? = firstRead
+      while !isClosing, !Task.isCancelled {
+        let read: DocumentOpeningRead
+        if let accepted = pendingRead { read = accepted; pendingRead = nil }
+        else if let request = documentOpeningRequest { read = enqueueDocumentOpeningRead(request) }
+        else { return }
+        var result = read.result.makeAsyncIterator()
+        guard let completion = await result.next() else { return }
+        // Even an opening revoked before this task's first turn retains its
+        // one submitted read. A later intent cannot accumulate more FIFO reads
+        // while that accepted command is still blocked by an earlier write.
+        let request = read.request
+        let observation: [String: JSONValue] = ["documentID": .string(request.documentID.uuidString),
+          "openingID": .string(request.id.uuidString)]
+        do {
+          let opened = try completion.get()
+          observeNavigation("opening_body_read_end", fields: observation)
+          guard documentOpeningRequest?.id == request.id, !isClosing, !Task.isCancelled else { continue }
+          guard self.presence?.selectedItemID == request.documentID,
+            !isItemBeingDeleted(request.documentID), let opened,
+            opened.header.workspaceID == request.workspaceID,
+            self.workspaceHeader?.workspaceID == request.workspaceID else { cancelDocumentOpening(); return }
+          // An accepted edit or a newer read publication can advance while the
+          // FIFO read is running. Re-read its one address instead of publishing
+          // the older body or waiting for camera settlement/global refresh.
+          guard read.epoch == collaborationReadEpoch,
+            opened.header.cursor >= (self.workspaceHeader?.cursor ?? 0) else { continue }
+          documents[request.documentID] = opened.document
+          documentStates[request.documentID] = opened.state
+          if read.draftEpoch == documentDraftEpoch {
+            documentEditingSessions.removeAll { $0.edit.documentID == request.documentID }
+            documentEditingSessions += opened.drafts
+          }
+          documentOpeningRequest = nil
+          observeNavigation("opening_body_published", fields: observation)
+          return
+        } catch {
+          guard documentOpeningRequest?.id == request.id, !isClosing, !Task.isCancelled else { continue }
+          documentOpeningRequest = nil
+          publicationFailure = error.localizedDescription
+          persistenceFailure = error.localizedDescription
+          return
+        }
+      }
+    }
+    documentOpeningTask = task
+    return task
+  }
+
+  private func enqueueDocumentOpeningRead(_ request: DocumentOpeningRequest) -> DocumentOpeningRead {
+    let (result, continuation) = AsyncStream<Result<NotebookSceneState.OpenedDocument?, Error>>
+      .makeStream(bufferingPolicy: .bufferingNewest(1))
+    let read = DocumentOpeningRead(request: request, epoch: collaborationReadEpoch,
+      draftEpoch: documentDraftEpoch, result: result)
+    observeNavigation("opening_body_read_begin", fields: ["documentID": .string(request.documentID.uuidString),
+      "openingID": .string(request.id.uuidString)])
+    persistence.enqueueCommand { store in
+      try NotebookSceneState.readOpenedDocument(store: store, documentID: request.documentID, boardID: request.boardID)
+    } completion: { completion in
+      continuation.yield(completion)
+      continuation.finish()
+    }
+    return read
+  }
+
+  /// A submitted read keeps its FIFO lifetime; revoking its identity prevents
+  /// the completion from publishing into a closed or subsequently opened item.
+  func cancelDocumentOpening() {
+    if let request = documentOpeningRequest {
+      observeNavigation("opening_body_cancelled", fields: ["documentID": .string(request.documentID.uuidString),
+        "openingID": .string(request.id.uuidString)])
+    }
+    documentOpeningRequest = nil
   }
 
   private func alignWorkspaceSelection() {
@@ -1387,10 +1548,21 @@ final class NotebookAppModel {
   func updatePresence(_ presence: SessionPresence, settled: Bool) {
     guard !isItemBeingDeleted(presence.boardID),
       presence.focusedItemID.map({ !isItemBeingDeleted($0) }) ?? true else { return }
+    if let previous = self.presence, let id = previous.focusedItemID,
+      previous.openProgress > 0, presence.focusedItemID != id || presence.openProgress <= 0 {
+      documentMeasurements.cancel(documentID: id)
+    }
+    let openingID: UUID?
+    if let id = presence.focusedItemID, presence.openProgress > 0,
+      itemForDisplay(id: id)?.kind == .document,
+      self.presence?.focusedItemID != id || (self.presence?.openProgress ?? 0) <= 0 {
+      openingID = id
+    } else { openingID = nil }
     applyPresence(
       presence,
       settled: settled
     )
+    if let openingID { prepareDocumentOpening(openingID, pageIndex: presence.documentPageIndex) }
   }
 
   @discardableResult
@@ -1475,19 +1647,22 @@ final class NotebookAppModel {
     settled: Bool
   ) {
     guard presence.isValid else { return }
+    if presence.mode != .document || presence.focusedItemID != self.presence?.focusedItemID || presence.openProgress <= 0 {
+      documentPageSelection = nil; documentPageNavigationStatus = nil; documentPageController = nil
+    }
     let resolved: SessionPresence
     let selectionItem = presence.selectedItemID ?? self.presence?.selectedItemID
     let selectedPage = presence.notebookPageID
       ?? (selectionItem == self.presence?.selectedItemID ? self.presence?.notebookPageID : nil)
       ?? selectionItem.flatMap { workspace?.item(id: $0)?.pageIDs.first }
     let presence = presence.selecting(itemID: selectionItem, pageID: selectedPage)
-    if settled, let workspace {
-      resolved = settledPresence(
-        from: presence,
-        workspace: workspace,
-        board: boardHierarchy,
-        viewport: presence.viewport
-      )
+    if let request = documentOpeningRequest,
+      presence.selectedItemID != request.documentID
+        || (settled && (presence.boardID != request.boardID || presence.focusedItemID != request.documentID || presence.openProgress <= 0)) {
+      cancelDocumentOpening()
+    }
+    if settled {
+      resolved = settledPresence(from: presence, viewport: presence.viewport)
     } else {
       resolved = presence
     }
@@ -1518,50 +1693,133 @@ final class NotebookAppModel {
     if settled && externalReloadPending { externalReloadPending = false; reloadExternalChanges() }
   }
 
-  /// Document pagination is session presence. The iPad remains its durable
-  /// owner; a Mac interaction is an explicit command which the iPad confirms
-  /// by publishing the resulting presence back to the mirror.
-  @discardableResult
-  func selectDocumentPage(
-    _ pageIndex: Int,
-    documentID: UUID,
-    publishesRequest: Bool = true
-  ) -> Int? {
-    guard !isItemBeingDeleted(documentID), pageIndex >= 0,
-      pageIndex <= DocumentPageSelectionRequest.maximumPageIndex,
-      documents[documentID] != nil,
-      let presence,
-      presence.mode == .document,
-      presence.focusedItemID == documentID,
-      presence.openProgress >= 0.999,
-      presence.documentPageIndex != pageIndex
-    else { return nil }
+  /// Native WebKit has already validated the installed frame and the terminal
+  /// activation. This stable owner validates the current document/presence,
+  /// rather than a SwiftUI closure's earlier interaction flags or page count.
+  func activateDocumentLink(_ activation: DocumentLinkActivation) -> DocumentLinkDestination? {
+    let origin = activation.origin, documentID = origin.documentID
+    guard !isClosing, !isItemBeingDeleted(documentID),
+      let document = documents[documentID], origin.source.matches(document),
+      let layout = origin.source.layout,
+      let presence, presence.mode == .document, presence.focusedItemID == documentID,
+      presence.openProgress >= 0.999, presence.documentPageIndex == origin.pageIndex else { return nil }
+    if case .page(let target) = activation.destination {
+      guard target >= 0, target < layout.pageCount else { return nil }
+      if target != presence.documentPageIndex {
+        cancelRequestedNavigation()
+        guard selectDocumentPage(target, documentID: documentID) != nil else { return nil }
+      }
+    }
+    return activation.destination
+  }
 
-    applyPresence(
-      SessionPresence(
-        boardID: presence.boardID,
-        mode: presence.mode,
-        camera: presence.camera,
-        viewport: presence.viewport,
-        focusedItemID: documentID,
-        openProgress: presence.openProgress,
-        documentPageIndex: pageIndex
-      ),
-      settled: true
-    )
-    #if os(macOS)
+  static func documentPageSourceRevision(_ document: DocumentDocument) -> String {
+    "\(document.contentStamp.actor):\(document.contentStamp.counter)"
+  }
+
+  /// Requests preparation. Only a landing by the bound iPad controller writes
+  /// actual page presence; the Mac sends the same request to that owner.
+  @discardableResult
+  func selectDocumentPage(_ pageIndex: Int, documentID: UUID,
+    publishesRequest: Bool = true) -> Int? {
+    guard !isClosing, !isItemBeingDeleted(documentID), pageIndex >= 0,
+      pageIndex <= DocumentPageSelectionRequest.maximumPageIndex,
+      let document = documents[documentID], let presence,
+      presence.mode == .document, presence.focusedItemID == documentID,
+      presence.openProgress >= 0.999 else { return nil }
+    if pageIndex == presence.documentPageIndex, documentPageSelection == nil {
+      documentPageNavigationStatus = nil
+      return pageIndex
+    }
+    let source = Self.documentPageSourceRevision(document)
+    if documentPageSelection?.pageIndex == pageIndex,
+      documentPageSelection?.documentID == documentID,
+      documentPageSelection?.sourceRevision == source { return pageIndex }
+    documentMeasurements.request(documentID: documentID, pageIndex: pageIndex, cause: .page)
+    documentPageNavigationStatus = nil
+    #if os(iOS)
+      documentPageSelection = .init(id: UUID(), documentID: documentID,
+        sourceRevision: source, pageIndex: pageIndex)
+    #elseif os(macOS)
       if publishesRequest {
-        sync?.sendTransient(
-          .documentPageSelection(
-            DocumentPageSelectionRequest(
-              documentID: documentID,
-              pageIndex: pageIndex
-            )
-          )
-        )
+        sync?.sendTransient(.documentPageSelection(.init(documentID: documentID, pageIndex: pageIndex)))
       }
     #endif
     return pageIndex
+  }
+
+  /// Binding is not an observable write: UIViewControllerRepresentable may
+  /// register its owner during update. Status/landing publication is deferred
+  /// by the native controller and checked against this exact binding.
+  func bindDocumentPageController(_ id: UUID, documentID: UUID, source: String) {
+    guard documents[documentID].map(Self.documentPageSourceRevision) == source,
+      presence?.mode == .document, presence?.focusedItemID == documentID else { return }
+    if documentPageController?.id != id || documentPageController?.source != source {
+      documentPageController = (id, documentID, source)
+      documentPageLandingRevision = 0; documentPageStatusRevision = 0
+    }
+  }
+
+  func unbindDocumentPageController(_ id: UUID) {
+    guard documentPageController?.id == id else { return }
+    documentPageController = nil
+  }
+
+  private func acceptsDocumentPageController(_ id: UUID, documentID: UUID, source: String) -> Bool {
+    !isClosing && documentPageController?.id == id
+      && documentPageController?.documentID == documentID && documentPageController?.source == source
+      && documents[documentID].map(Self.documentPageSourceRevision) == source
+      && presence?.mode == .document && presence?.focusedItemID == documentID
+      && (presence?.openProgress ?? 0) >= 0.999 && !isItemBeingDeleted(documentID)
+  }
+
+  @discardableResult
+  func acceptDocumentPageLanding(_ landing: DocumentPageLanding) -> Bool {
+    guard acceptsDocumentPageController(landing.controllerID, documentID: landing.documentID, source: landing.sourceRevision),
+      landing.revision > documentPageLandingRevision, landing.pageIndex >= 0,
+      landing.pageIndex <= DocumentPageSelectionRequest.maximumPageIndex,
+      let presence else { return false }
+    documentPageLandingRevision = landing.revision
+    // A is still the actual landing when B superseded its request. A may
+    // publish that fact, but cannot clear B or restore an obsolete intent.
+    if documentPageSelection?.id == landing.requestID {
+      documentPageSelection = nil; documentPageNavigationStatus = nil
+    }
+    if presence.documentPageIndex != landing.pageIndex {
+      applyPresence(.init(boardID: presence.boardID, mode: presence.mode,
+        camera: presence.camera, viewport: presence.viewport, focusedItemID: landing.documentID,
+        openProgress: presence.openProgress, documentPageIndex: landing.pageIndex,
+        selectedItemID: presence.selectedItemID, notebookPageID: presence.notebookPageID), settled: true)
+    }
+    return true
+  }
+
+  func acceptDocumentPageNavigationStatus(_ status: DocumentPageNavigationStatus) {
+    guard acceptsDocumentPageController(status.controllerID, documentID: status.documentID, source: status.sourceRevision),
+      status.revision > documentPageStatusRevision else { return }
+    documentPageStatusRevision = status.revision
+    guard status.requestID == documentPageSelection?.id else { return }
+    documentPageNavigationStatus = status.target == nil ? nil : status
+  }
+
+  func retryDocumentPageNavigation() {
+    guard let status = documentPageNavigationStatus, let failure = status.failure,
+      status.requestID == documentPageSelection?.id,
+      acceptsDocumentPageController(status.controllerID, documentID: status.documentID, source: status.sourceRevision),
+      let target = status.target else { return }
+    documentMeasurements.request(documentID: status.documentID, pageIndex: target, cause: .page)
+    failure.retry()
+  }
+
+  private func validateDocumentPageNavigation() {
+    if let request = documentPageSelection,
+      documents[request.documentID].map(Self.documentPageSourceRevision) != request.sourceRevision {
+      documentPageSelection = nil; documentPageNavigationStatus = nil
+    }
+    if let binding = documentPageController,
+      documents[binding.documentID].map(Self.documentPageSourceRevision) != binding.source {
+      documentPageController = nil; documentPageNavigationStatus = nil
+    }
   }
 
   @discardableResult
@@ -2138,19 +2396,51 @@ final class NotebookAppModel {
     return result.status
   }
 
+  @discardableResult
   func commitDocumentState(
     documentID: UUID,
     blockID: String,
-    value: JSONValue
-  ) {
-    guard !isStopped, !isItemBeingDeleted(documentID), var journal = documentStates[documentID],
-      journal.commit(blockID: blockID, value: value, actor: actorID)
-    else { return }
+    value: JSONValue,
+    sourceVersion: ContentFieldVersion
+  ) -> ContentFieldVersion? {
+    guard !isStopped, !isItemBeingDeleted(documentID),
+      let document = documents[documentID], document.sourceVersion(blockID: blockID) == sourceVersion,
+      document.blocks.contains(where: { $0.id == blockID && $0.kind == .interactive }),
+      var journal = documentStates[documentID] else { return nil }
+    guard journal.commit(blockID: blockID, value: value, actor: actorID) else {
+      return journal.records.first(where: { $0.id == blockID && $0.value == value })?.valueVersion
+    }
     documentStates[documentID] = journal
 
-    guard let record = journal.records.first(where: { $0.id == blockID }) else { return }
-    let command = NotebookDocumentStateCommand(documentID: documentID, record: record, journalStamp: journal.stamp)
+    guard let record = journal.records.first(where: { $0.id == blockID }) else { return nil }
+    let command = NotebookDocumentStateCommand(documentID: documentID, record: record,
+      journalStamp: journal.stamp, expectedSourceVersion: sourceVersion)
     persistence.enqueue(owner: .documentState(documentID)) { try $0.commitDocumentState(command) != command.expectedResult }
+    // Admission acknowledges this exact human value synchronously. It does
+    // not claim durability; runtime retirement waits for the separate fence.
+    return record.valueVersion
+  }
+
+  /// A runtime may retire only after its last accepted state crossed the sole
+  /// writer. The optimistic SwiftUI echo is not a persistence acknowledgement.
+  func checkpointDocumentState(documentID: UUID, blockID: String, value: JSONValue,
+    sourceVersion: ContentFieldVersion) async throws -> Bool {
+    guard !isStopped, !isItemBeingDeleted(documentID),
+      let document = documents[documentID], document.sourceVersion(blockID: blockID) == sourceVersion,
+      let block = document.blocks.first(where: { $0.id == blockID }),
+      let journal = documentStates[documentID] else { return false }
+    let record = journal.records.first { $0.id == blockID }
+    let stateVersion = record?.valueVersion
+    guard (record?.value ?? block.initialState) == value else { return false }
+    let stored = try await persistence.submit { try $0.readDocumentBlock(documentID: documentID, blockID: blockID) }
+    try Task.checkCancellation()
+    guard !isStopped, !isItemBeingDeleted(documentID), let stored,
+      stored.block == block, stored.sourceVersion == sourceVersion,
+      stored.stateVersion == stateVersion, (stored.state ?? stored.block.initialState) == value,
+      documents[documentID]?.sourceVersion(blockID: blockID) == sourceVersion,
+      documents[documentID]?.blocks.first(where: { $0.id == blockID }) == block,
+      documentStates[documentID]?.records.first(where: { $0.id == blockID }) == record else { return false }
+    return true
   }
 
   @discardableResult
@@ -2188,7 +2478,8 @@ final class NotebookAppModel {
             diskRefreshRequested = true; continue
           }
           if draftEpoch != documentDraftEpoch { documentEditingSessions = liveDrafts }
-          acceptCollaborationMetadata(actions: prepared.actions, contexts: prepared.contexts, delivery: prepared.delivery)
+          acceptCollaborationMetadata(actions: prepared.actions,
+            contexts: prepared.contexts, delivery: prepared.delivery)
         } catch {
           publicationFailure = error.localizedDescription
           persistenceFailure = error.localizedDescription
@@ -2211,18 +2502,28 @@ final class NotebookAppModel {
     private func startCodexSidecar() async {
       guard codexSidecar == nil, let workspaceID = workspaceHeader?.workspaceID else { return }
       do {
-        guard allowsCodexRegistration else {
+        guard allowsCodexRegistration || acceptance != nil else {
           agentStartupError = "Запуск Codex из этого архива закрыт до безопасной активации пары. Действующие инструменты Notebook не перенаправлены."
           return
         }
         let installation = try CodexDesktopInstallation.discover()
         guard let entry = Bundle.main.resourceURL?.appendingPathComponent("NotebookTools/dist/index.mjs"),
           let commandSocketURL else { throw CodexBridgeError.notInstalled }
-        try await installation.registerNotebookTools(entry: entry, socket: commandSocketURL)
-        let directory = FileManager.default.homeDirectoryForCurrentUser
-          .appendingPathComponent("Library/Application Support/Notebook/Codex", isDirectory: true)
+        let directory: URL
+        let scope: CodexRuntimeScope?
+        if let acceptance, let path = acceptance.codexDirectory {
+          directory = URL(fileURLWithPath: path, isDirectory: true)
+          try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
+          scope = try CodexRuntimeScope(directory: directory, toolsEntry: entry, socket: commandSocketURL)
+        } else {
+          try await installation.registerNotebookTools(entry: entry, socket: commandSocketURL)
+          directory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Notebook/Codex", isDirectory: true)
+          scope = nil
+        }
         let sidecar = NotebookCodexSidecar(persistence: persistence, installation: installation,
-          workspaceID: workspaceID, computerID: actorID, directory: directory) { [weak self] envelope, peer in
+          workspaceID: workspaceID, computerID: actorID, directory: directory, scope: scope) { [weak self] envelope, peer in
             self?.sync?.sendTransient(.codex(envelope), to: peer)
           }
         codexSidecar = sidecar; sidecar.start(); agentStartupError = nil
@@ -2245,6 +2546,16 @@ final class NotebookAppModel {
       guard loadState == .ready, !isClosing else {
         throw CollaborationError("owner_unavailable", "Хранилище Notebook ещё не открыто.")
       }
+      if command.command == .script || command.command == .scriptContext {
+        let coordinator = try scripts()
+        if command.command == .script, let request = command.script {
+          return try await coordinator.handle(request)
+        }
+        if command.command == .scriptContext, let request = command.scriptContext {
+          return try await coordinator.context(request)
+        }
+        throw CollaborationError("invalid_script_request", "Запрос исполнения или контекста отсутствует.")
+      }
       if command.command == .presentation {
         presentationRelay.send = { [weak self] message, peer in
           self?.sync?.sendTransient(.presentation(message), to: peer)
@@ -2253,7 +2564,7 @@ final class NotebookAppModel {
       }
       let deadline = ContinuousClock.now.advanced(by: .seconds(4))
       while true {
-        if command.command == .apply || command.command == .undo {
+        if command.command == .apply || command.command == .commitAction || command.command == .undo {
           while (inputIsActive || peerInputIsActive), ContinuousClock.now < deadline {
             guard !isClosing else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
             try await Task.sleep(for: .milliseconds(20))
@@ -2270,6 +2581,25 @@ final class NotebookAppModel {
           try await Task.sleep(for: .milliseconds(20))
         }
       }
+    }
+
+    private func scripts() throws -> NotebookScriptCoordinator {
+      if let scriptCoordinator { return scriptCoordinator }
+      guard let userService = Bundle.main.object(forInfoDictionaryKey: "NotebookScriptService") as? String,
+        let markupService = Bundle.main.object(forInfoDictionaryKey: "NotebookMarkupService") as? String,
+        !userService.isEmpty, !markupService.isEmpty else {
+        throw CollaborationError("script_service_unavailable", "В сборке отсутствует изолированный исполнитель Notebook.")
+      }
+      let persistence = persistence
+      let coordinator = NotebookScriptCoordinator(command: { [weak self] command in
+        guard let self else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
+        return try await self.executeLocalCommand(command)
+      }, persistence: { operation in
+        try await persistence.submit(publishesChanges: false, operation)
+      }, workingDirectory: store.root.appendingPathComponent("derived/script-runtime", isDirectory: true),
+        userServiceName: userService, markupServiceName: markupService)
+      scriptCoordinator = coordinator
+      return coordinator
     }
   #endif
 
@@ -2324,18 +2654,12 @@ final class NotebookAppModel {
       enqueueStoreWrite(owner: .inputActivity(activity.deviceID)) { try $0.saveInputActivity(activity) }
     case .presence(let envelope):
       #if os(macOS)
-        guard presenceSequenceTracker.accepts(envelope), let workspace
-        else { return }
+        guard presenceSequenceTracker.accepts(envelope) else { return }
         presentationRelay.observe(envelope, from: peerID)
         let incoming = envelope.phase == .settled
-          ? settledPresence(
-            from: envelope.presence,
-            workspace: workspace,
-            board: boardHierarchy,
-            viewport: envelope.presence.viewport
-          )
+          ? settledPresence(from: envelope.presence, viewport: envelope.presence.viewport)
           : envelope.presence
-        guard presenceIsUsable(incoming, workspace: workspace) else { return }
+        guard presenceIsUsable(incoming) else { return }
         presence = incoming
         alignWorkspaceSelection()
         presencePhase = envelope.phase
@@ -2348,11 +2672,9 @@ final class NotebookAppModel {
     case .documentPageSelection(let request):
       #if os(iOS)
         guard request.isValid else { return }
-        _ = selectDocumentPage(
-          request.pageIndex,
-          documentID: request.documentID,
-          publishesRequest: false
-        )
+        guard presence?.mode == .document, presence?.focusedItemID == request.documentID else { return }
+        cancelRequestedNavigation()
+        _ = selectDocumentPage(request.pageIndex, documentID: request.documentID, publishesRequest: false)
       #endif
     }
   }
@@ -2488,7 +2810,8 @@ final class NotebookAppModel {
     /// or image rendering can suspend. Both text and dictation use this owner.
     func captureChatSubmissionContext(_ chat: NotebookChatController) -> ChatSubmissionContext {
       let question = agentQuestion
-      let retained = question.flatMap { q in pinnedAttentionSelections.first { $0.0 == q.contextID }?.1 }
+      let retainedSource = question.flatMap { q in pinnedAttentionSelections.first { $0.0 == q.contextID }?.1 }
+      let retained = retainedSource?.freezingSubmissionVisuals()
       let capturedPresence = presence, capturedWorkspace = workspaceHeader?.workspaceID
       let capturedFile = chat.files.window.isOpen ? chat.files.document : nil
       return .init(attachments: chat.attachments) { [self] in
@@ -2515,7 +2838,7 @@ final class NotebookAppModel {
             .object(["contextID": .string(question.contextID.uuidString),
               "entryID": .string(question.entryID.uuidString), "references": try .encode(question.references)])
           } ?? .null,
-          "meaning": .string("Read frozen attention via notebook_read_attention(context_id, reference_id). Shared Notebook workspace. Selection directs attention, not permissions. Use Notebook tools for source/version checks, undoable edits and delivery receipts. For code notes use notebook_read_code_notes and appendInkStroke on codeFragment. Use the returned notebook://code/UUID link, or fileLink with the required 1-based line query, in Markdown references. These links scroll only the document. A local draft is not yet the working file on Mac. Do not move the board camera.")
+          "meaning": .string("Read frozen attention inside notebook_execute with await nb.attention({contextID, referenceID}); use emitImage(result.artifact) when present. notebook_context gives compact current context; nb.help(topic) gives SDK and operation contracts. Shared Notebook workspace. Selection directs attention, not permissions. Use nb.reference, nb.transaction, nb.undo and nb.action for source/version checks, undoable edits and separate saved/received/shown receipts. For code notes use nb.code and the appendInkStroke operation on codeFragment. Use the returned notebook://code/UUID link, or fileLink with the required 1-based line query, in Markdown references. These links scroll only the document. A local draft is not yet the working file on Mac. Do not move the board camera.")
         ])
         let text = String(decoding: try JSONEncoder().encode(context), as: UTF8.self)
         return (text, question?.contextID)
@@ -2523,12 +2846,12 @@ final class NotebookAppModel {
     }
   #endif
 
-  func results(for action: CollaborationReceipt) -> [CollaborationReference] {
+  func results(for action: NotebookActionReadModel) -> [CollaborationReference] {
     guard collaborationDetailsAreCurrent else { return [] }
     return collaborationReadSnapshot?.results[action.id] ?? []
   }
 
-  func continuations(for action: CollaborationReceipt) -> [CollaborationContinuation] {
+  func continuations(for action: NotebookActionReadModel) -> [CollaborationContinuation] {
     guard action.undo == nil, collaborationDetailsAreCurrent else { return [] }
     return collaborationReadSnapshot?.continuations[action.id] ?? []
   }
@@ -2634,36 +2957,206 @@ final class NotebookAppModel {
     }
   }
 
+  private func navigationObservationScope() -> [String: JSONValue] {
+    guard NotebookNavigationObservation.enabled else { return [:] }
+    return ["scopeID": .string(UUID().uuidString),
+      "originGeneration": .string(String(navigationGeneration)),
+      "originRequestID": requestedReference.map { .string($0.id.uuidString) } ?? .null,
+      "originReturnID": requestedReturn.map { .string($0.id.uuidString) } ?? .null]
+  }
+
+  func observeNavigation(_ stage: String, reference: CollaborationReference? = nil,
+    fields: [String: JSONValue] = [:]) {
+    guard NotebookNavigationObservation.enabled else { return }
+    var fields = fields
+    fields["startupPending"] = .bool(startupTask != nil)
+    fields["sceneReadPending"] = .bool(sceneWindowTask != nil)
+    fields["diskReadPending"] = .bool(diskRefreshTask != nil)
+    fields["headerReadPending"] = .bool(headerRefreshTask != nil)
+    fields["writerPendingCount"] = .number(Double(persistence.pendingCount))
+    fields["hasPublicationFailure"] = .bool(publicationFailure != nil)
+    fields["collaborationReadEpoch"] = .string(String(collaborationReadEpoch))
+    fields["workspaceCursor"] = workspaceHeader.map { .string(String($0.cursor)) } ?? .null
+    NotebookNavigationObservation.record(stage, model: self, reference: reference, fields: fields)
+  }
+
   func requestShow(_ reference: CollaborationReference) {
+    observeNavigation("request_received", reference: reference)
+    let replacesPendingShow = requestedReference != nil
+    cancelRequestedNavigation()
+    let generation = navigationGeneration
+    if reference.target.kind == .document {
+      let isOpen = presence?.mode == .document && presence?.focusedItemID == reference.target.id
+        && (presence?.openProgress ?? 0) > 0
+      documentMeasurements.request(documentID: reference.target.id, pageIndex: reference.pageIndex ?? 0,
+        cause: isOpen ? .page : .open)
+    }
     if reference.target.kind == .codeFragment {
       #if os(iOS)
         let id = reference.target.id
         Task { [weak self] in
-          guard let self, let fragment = try? await persistence.submit({ try $0.codeFragment(id) }) else { return }
+          guard let self, let fragment = try? await persistence.submit({ try $0.codeFragment(id) }),
+            !Task.isCancelled, !isStopped, navigationGeneration == generation else { return }
           inputGate.performAfterPageContact { [weak self] in
+            guard let self, self.navigationGeneration == generation, !self.isStopped else { return }
             Task { [weak self] in
-              await self?.chat?.files.navigate(to: fragment)
+              guard let self, self.navigationGeneration == generation, !self.isStopped else { return }
+              await self.chat?.files.navigate(to: fragment)
             }
           }
         }
       #endif
       return
     }
-    if requestedReference == nil, let presence {
-      returnPlaces.append(.init(presence: presence, pageID: workspace?.selectedPageID))
+    if !replacesPendingShow, let presence,
+      returnPlaces.last?.presence != presence {
+      returnPlaces.append(.init(presence: presence, pageID: presence.notebookPageID))
       returnPlaces = Array(returnPlaces.suffix(32))
     }
     requestedReference = .init(target:reference.target,elementID:reference.elementID,region:reference.region,
       worldOrigin:reference.worldOrigin,pageIndex:reference.pageIndex,revision:reference.revision,label:reference.label)
+    observeNavigation("request_published")
+  }
+
+  /// A new human action replaces pending navigation without consuming history
+  /// or changing the current camera. Completion callbacks carry this generation.
+  func cancelRequestedNavigation(reason: String = #function, source: String = #fileID, line: Int = #line) {
+    observeNavigation("cancel", fields: ["reason": .string(reason), "source": .string(source), "line": .number(Double(line))])
+    navigationGeneration &+= 1
+    requestedReference = nil
+    requestedReturn = nil
+    documentPageSelection = nil; documentPageNavigationStatus = nil
+    cancelDocumentOpening()
+    stopNavigationPresentation?()
+  }
+
+  func resolveReferenceLocation(_ reference: CollaborationReference,
+    apply: @MainActor (NotebookReferenceLocation) -> Void) async {
+    observeNavigation("resolver_enter", reference: reference)
+    defer { observeNavigation("resolver_exit", reference: reference) }
+    let generation = navigationGeneration
+    let isCurrent: @MainActor () -> Bool = { self.navigationGeneration == generation && self.requestedReference?.id == reference.id }
+    if reference.target.kind == .page {
+      guard await navigateToNotebookPage(id: reference.target.id, isCurrent: isCurrent) else {
+        if !Task.isCancelled, !isStopped, isCurrent() { cancelRequestedNavigation() }
+        return
+      }
+    }
+    await resolveNavigationLocation(reference, isCurrent: isCurrent, apply: apply)
+  }
+
+  /// Resolve after the accepted input tail, then apply in this same actor
+  /// segment. No delayed callback is allowed to retain an old physical address.
+  private func finishNavigationInput(isCurrent: @MainActor () -> Bool) async -> Bool {
+    let trace = navigationObservationScope()
+    observeNavigation("input_fence_enter", fields: trace)
+    defer { observeNavigation("input_fence_exit", fields: trace) }
+    var observedContactWait = false
+    while !Task.isCancelled, !isStopped, isCurrent() {
+      // A held WebKit control or a physical pose tail also owns the current
+      // view. Pencil's publication fence alone does not end those contacts.
+      if inputGate.isActive {
+        if !observedContactWait { observeNavigation("input_fence_wait_contact", fields: trace); observedContactWait = true }
+        do { try await Task.sleep(for: .milliseconds(20)) } catch { return false }
+        continue
+      }
+      guard await finishPendingInteraction(boundary: .acceptedInput, continuing: isCurrent) else { return false }
+      guard !Task.isCancelled, !isStopped, isCurrent() else { return false }
+      if !inputGate.isActive { return true }
+    }
+    return false
+  }
+
+  private func resolveNavigationLocation(_ reference: CollaborationReference,
+    isCurrent: @MainActor () -> Bool,
+    apply: @MainActor (NotebookReferenceLocation) -> Void) async {
+    while !Task.isCancelled, !isStopped, isCurrent() {
+      guard await finishNavigationInput(isCurrent: isCurrent) else {
+        if !Task.isCancelled, !isStopped, isCurrent() { cancelRequestedNavigation() }
+        return
+      }
+      guard !Task.isCancelled, !isStopped, isCurrent() else { return }
+      let epoch = collaborationReadEpoch
+      let pencilGeneration = inputGate.pencilGeneration
+      do {
+        observeNavigation("location_read_begin", reference: reference)
+        let location = try await persistence.submit { try $0.readReferenceLocation(reference) }
+        observeNavigation("location_read_end", reference: reference)
+        guard !Task.isCancelled, !isStopped, isCurrent() else { return }
+        guard epoch == collaborationReadEpoch, pencilGeneration == inputGate.pencilGeneration,
+          !inputGate.isActive else { continue }
+        switch location {
+        case .board(let id, _, _):
+          guard !isItemBeingDeleted(id) else {
+            throw CollaborationError("reference_unavailable", "Место больше недоступно.", target: reference.target)
+          }
+        case .item(let boardID, let id, _, _):
+          guard !isItemBeingDeleted(boardID), !isItemBeingDeleted(id) else {
+            throw CollaborationError("reference_unavailable", "Место больше недоступно.", target: reference.target)
+          }
+        }
+        observeNavigation("location_apply", reference: reference)
+        apply(location)
+        return
+      } catch {
+        guard !Task.isCancelled, !isStopped, isCurrent() else { return }
+        observeNavigation("location_read_failure", reference: reference)
+        cancelRequestedNavigation()
+        showCue("Место недоступно: \(error.localizedDescription)")
+        return
+      }
+    }
   }
 
   func requestReturnToPlace() {
-    guard requestedReturn == nil, let place = returnPlaces.popLast() else { return }
-    requestedReference = nil
+    guard let place = returnPlaces.last else { return }
+    cancelRequestedNavigation()
     requestedReturn = place
   }
 
-  func completeReturnToPlace() { requestedReturn = nil; if highlightedReference != nil { clearSelection() } }
+  func resolveReturnToPlace(_ place: ReturnPlace, viewport: SpatialPoint,
+    apply: @MainActor (SessionPresence, @escaping @MainActor () -> Void) -> Void) async {
+    let generation = navigationGeneration
+    let isCurrent: @MainActor () -> Bool = { self.navigationGeneration == generation && self.requestedReturn?.id == place.id }
+    let saved = place.presence
+    let target: CollaborationTarget
+    if saved.mode == .page, let pageID = place.pageID {
+      guard await navigateToNotebookPage(id: pageID, isCurrent: isCurrent) else {
+        if !Task.isCancelled, !isStopped, isCurrent() { cancelRequestedNavigation() }
+        return
+      }
+      target = .init(kind: .page, id: pageID)
+    } else if let itemID = saved.focusedItemID {
+      target = .init(kind: saved.mode == .document ? .document : .cover, id: itemID, boardID: saved.boardID)
+    } else { target = .init(kind: .board, id: saved.boardID) }
+    await resolveNavigationLocation(.init(target: target, revision: "return"), isCurrent: isCurrent) { location in
+      let viewport = self.presence?.viewport ?? viewport
+      let destination: SessionPresence
+      switch location {
+      case .board:
+        destination = saved.adapted(to: viewport, geometry: .notebook)
+      case .item(let boardID, let itemID, let center, let geometry):
+        let adapted = saved.adapted(to: viewport, geometry: geometry)
+        if saved.mode != .page { self.selectItem(itemID) }
+        destination = .init(boardID: boardID, mode: adapted.mode,
+          camera: boardID == saved.boardID ? adapted.camera : .init(center: center, scale: adapted.camera.scale),
+          viewport: viewport, focusedItemID: itemID, openProgress: adapted.openProgress,
+          documentPageIndex: adapted.documentPageIndex, selectedItemID: itemID,
+          notebookPageID: saved.mode == .page ? place.pageID : nil)
+      }
+      apply(destination) { [weak self] in
+        guard let self, self.navigationGeneration == generation else { return }
+        self.completeReturnToPlace(place.id)
+      }
+    }
+  }
+
+  private func completeReturnToPlace(_ id: UUID) {
+    guard requestedReturn?.id == id else { return }
+    requestedReturn = nil
+    if returnPlaces.last?.id == id { returnPlaces.removeLast() }
+    if highlightedReference != nil { clearSelection() }
+  }
 
   func locationTitle(for reference: CollaborationReference) -> String {
     let itemID = reference.target.kind == .page
@@ -2682,7 +3175,9 @@ final class NotebookAppModel {
   }
 
   func completeShow(_ reference: CollaborationReference) {
-    if requestedReference?.id == reference.id { requestedReference = nil }
+    observeNavigation("show_complete", reference: reference)
+    guard requestedReference?.id == reference.id else { return }
+    requestedReference = nil
     let generation = replaceSelection(.reference(reference))
     referenceHighlightTask = Task { [weak self] in
       try? await Task.sleep(for: .seconds(3))
@@ -2718,10 +3213,6 @@ final class NotebookAppModel {
     }
   }
 
-  func pagePresented(_ page: PageDocument, ready: Bool) {
-    readyPages[page.id] = ready ? "\(page.drawingStamp.revision)|\(page.agentStamp.revision)" : nil
-  }
-
   private func collaborationRevision(_ target: CollaborationTarget) -> String? {
     switch target.kind {
     case .codeFragment: return nil // Visibility is acknowledged by the code viewport, never by the board.
@@ -2733,15 +3224,19 @@ final class NotebookAppModel {
     }
   }
 
-  func confirmVisibleActions(presence visible: SessionPresence, scene: WorkspaceSceneWorkset? = nil) {
+  func confirmVisibleActions(presence visible: SessionPresence, scene: WorkspaceSceneWorkset? = nil,
+    cohort: SceneCompositionCohort? = nil) {
     #if os(iOS)
-      guard collaborationActions.contains(where: { action in !deviceActionReceipts.contains(where: { $0.id == action.id && $0.revisions == action.revisions && $0.displayComplete }) }),
+      func matches(_ receipt: DeviceActionReceipt, _ action: NotebookActionReadModel) -> Bool {
+        receipt.matches(action)
+      }
+      guard collaborationActions.contains(where: { action in !deviceActionReceipts.contains(where: { matches($0, action) && $0.displayComplete }) }),
         presencePhase == .settled, presence == visible, !isPointing,
-        collaborationDetailsAreCurrent, !scenePreparationPending else { return }
+        collaborationDetailsAreCurrent else { return }
       let receipts = deviceActionReceipts
       var changed: [DeviceActionReceipt] = []
       for action in collaborationActions.prefix(50) {
-        guard var receipt = receipts.first(where: { $0.id == action.id && $0.revisions == action.revisions }), !receipt.displayComplete else { continue }
+        guard var receipt = receipts.first(where: { matches($0, action) }), !receipt.displayComplete else { continue }
         let references = results(for:action)
         let viewport = CGRect(x:0,y:0,width:visible.viewport.x,height:visible.viewport.y)
         for reference in references where !receipt.visibleRegions.contains(where: { $0.id == reference.id }) {
@@ -2755,14 +3250,15 @@ final class NotebookAppModel {
           let ready: Bool
           switch reference.target.kind {
           case .page:
-            if let page = pages[reference.target.id] { ready = readyPages[page.id] == "\(page.drawingStamp.revision)|\(page.agentStamp.revision)" }
+            if let page = pages[reference.target.id] { ready = pagePresentations.isPresented(page) }
             else { ready = false }
           case .document:
             if let document = documents[reference.target.id], let state = documentStates[document.id] {
               ready = DocumentRenderRegistry.shared.hasLiveSurface(document:document,state:state,pageIndex:visible.documentPageIndex)
             } else { ready = false }
           case .board, .cover:
-            ready = scene.map { sceneRepresents(reference, in: $0, presence: visible, inkRevision: expected.inkRevision) } ?? false
+            ready = scene.map { sceneRepresents(reference, in: $0, cohort: cohort,
+              presence: visible, inkRevision: expected.inkRevision) } ?? false
           case .workspace, .codeFragment: ready = false
           }
           guard ready else { continue }
@@ -2785,12 +3281,47 @@ final class NotebookAppModel {
     #endif
   }
 
+  /// This opportunity comes from the native board confirmation path. Prepared
+  /// rasters or a SwiftUI appearance alone cannot start optional WebKit work.
+  func prepareCommonDocumentShellIfIdle(presence visible: SessionPresence, cohort: SceneCompositionCohort?) {
+    #if os(iOS)
+      guard documentPreparationIsForeground, UIApplication.shared.applicationState == .active,
+        !isClosing, permitsBackgroundPreparation, presence == visible,
+        visible.openProgress <= 0, let cohort, cohort.isPaintInstalled,
+        cohort.plan.rootBoardID == visible.boardID,
+        compositionTiles.published === cohort else { return }
+      if documentShellPreparation == nil || documentShellPreparation?.isStopped == true {
+        let resources = SceneRenderResources.shared
+        let owner = resources.documentShellPreparation ?? DocumentShellPreparation(resources: resources)
+        documentShellPreparation = owner
+        owner.onTransition = { [weak self] observation in
+          self?.observeNavigation("common_shell_" + observation.event, fields: [
+            "shellID": .string(observation.shellID.uuidString),
+            "surfaceLeaseID": .string(observation.leaseID.uuidString),
+            "webIdentity": observation.webIdentity.map(JSONValue.string) ?? .null,
+            "commonRuntimeReady": .bool(observation.commonRuntimeReady)])
+        }
+      }
+      documentShellPreparation?.prepareIfIdle()
+    #endif
+  }
+
+  func setDocumentPreparationForeground(_ foreground: Bool) {
+    guard documentPreparationIsForeground != foreground else { return }
+    documentPreparationIsForeground = foreground
+    if foreground { documentShellPreparation?.allowPreparationAfterForeground() }
+    else { documentShellPreparation?.retireUnused() }
+  }
+
   /// A cached image proves preparation, not mounting. The completed display
   /// callback supplies the actual admitted generation; an overview region
   /// cannot acknowledge that its detailed sources were shown.
   private func sceneRepresents(_ reference: CollaborationReference,
-    in scene: WorkspaceSceneWorkset, presence: SessionPresence, inkRevision: String? = nil) -> Bool {
-    guard let sceneIndex, scene.generationID == sceneIndex.generationID else { return false }
+    in scene: WorkspaceSceneWorkset, cohort: SceneCompositionCohort?, presence: SessionPresence,
+    inkRevision: String? = nil) -> Bool {
+    guard let cohort, cohort.isPaintInstalled, scene.generationID == cohort.frame.index.generationID,
+      cohort.plan.rootBoardID == presence.boardID else { return false }
+    let sceneIndex = cohort.frame.index
     #if os(iOS)
       if let inkRevision {
         let surface: SurfaceID = reference.target.kind == .cover ? .cover(reference.target.id) : .board(reference.target.id)
@@ -2820,8 +3351,14 @@ final class NotebookAppModel {
       } else { elements = source }
     default: return false
     }
-    return elements.allSatisfy {
-      $0.kind == .nativeText || SceneRenderResources.shared.image(for: agentElementSnapshotSource($0)) != nil
+    return elements.allSatisfy { element in
+      if element.kind == .nativeText { return true }
+      let plane: SceneCompositionPlane = reference.target.kind == .cover
+        ? .cover(boardID: presence.boardID, itemID: reference.target.id) : .board(reference.target.id)
+      let address = SceneSourceAddress(plane: plane, elementID: element.id)
+      guard cohort.hasInstalledPixels(for: address), let receipt = cohort.sourceReceipts[address],
+        receipt.hasCurrentPixels else { return false }
+      return SceneRasterSource.agent(receipt.demand.source) == .agent(agentElementSnapshotSource(element))
     }
   }
 
@@ -2909,7 +3446,7 @@ final class NotebookAppModel {
     }
   }
 
-  private func acceptCollaborationMetadata(actions: [CollaborationReceipt], contexts: SharedContextDirectory,
+  private func acceptCollaborationMetadata(actions: [NotebookActionReadModel], contexts: SharedContextDirectory,
     delivery: [DeviceActionReceipt]) {
     if hasReadCollaborationActions {
       let known = Set(collaborationActions.map(\.id))
@@ -2988,14 +3525,22 @@ final class NotebookAppModel {
   }
 
   @discardableResult
-  func finishPendingInteraction() async -> Bool {
+  func finishPendingInteraction(boundary: PersistenceBoundary = .quiescent,
+    continuing: @MainActor () -> Bool = { true }) async -> Bool {
+    let trace = navigationObservationScope()
+    observeNavigation("interaction_finish_enter", fields: trace)
+    defer { observeNavigation("interaction_finish_exit", fields: trace) }
     while true {
+      guard !Task.isCancelled, continuing() else { return false }
       let generation = inputGate.pencilGeneration
+      observeNavigation("page_input_finish_begin", fields: trace)
       await withCheckedContinuation { continuation in
         inputGate.performAfterPageInput { continuation.resume() }
       }
+      observeNavigation("page_input_finish_end", fields: trace)
+      guard !Task.isCancelled, continuing() else { return false }
       if presencePhase == .active, let presence { updatePresence(presence, settled: true) }
-      guard await finishPendingPersistence() else { return false }
+      guard await finishPendingPersistence(boundary: boundary, continuing: continuing) else { return false }
       // The await itself is not a contact boundary: a later Pencil may have
       // started or even lifted while the preceding publication was draining.
       if !inputGate.hasActivePencil, generation == inputGate.pencilGeneration { return true }
@@ -3004,20 +3549,49 @@ final class NotebookAppModel {
 
   /// A completed wait is not a successful save: failures retain their writes
   /// and are returned to shutdown/cutover rather than disappearing with a cue.
+  enum PersistenceBoundary {
+    /// The accepted input tail, followed by one immutable writer FIFO cut.
+    case acceptedInput
+    /// Explicit cutover/shutdown also joins background publication owners.
+    case quiescent
+  }
+
   @discardableResult
-  func finishPendingPersistence() async -> Bool {
-    if let startupTask { await startupTask.value }
+  func finishPendingPersistence(boundary: PersistenceBoundary = .quiescent,
+    continuing: @MainActor () -> Bool = { true }) async -> Bool {
+    let trace = navigationObservationScope()
+    observeNavigation("persistence_finish_enter", fields: trace)
+    defer { observeNavigation("persistence_finish_exit", fields: trace) }
+    guard !Task.isCancelled, continuing() else { return false }
+    if let startupTask { observeNavigation("wait_startup_begin", fields: trace); await startupTask.value; observeNavigation("wait_startup_end", fields: trace) }
+    guard !Task.isCancelled, continuing() else { return false }
     #if os(iOS)
+      if chatSubmissionTask != nil { observeNavigation("wait_chat_submission_begin", fields: trace) }
       await chatSubmissionTask?.value
+      observeNavigation("wait_chat_submission_end", fields: trace)
     #endif
     repeat {
+      guard !Task.isCancelled, continuing() else { return false }
+      observeNavigation("wait_accepted_ink_begin", fields: trace)
       guard await finishAcceptedPageInk() else { return false }
-      if let task = diskRefreshTask { await task.value }
-      if let task = sceneWindowTask { await task.value }
-      if let task = headerRefreshTask { await task.value }
+      observeNavigation("wait_accepted_ink_end", fields: trace)
+      guard !Task.isCancelled, continuing() else { return false }
+      if boundary == .quiescent {
+        if let task = diskRefreshTask { observeNavigation("wait_disk_refresh_begin", fields: trace); await task.value; observeNavigation("wait_disk_refresh_end", fields: trace) }
+        guard !Task.isCancelled, continuing() else { return false }
+        if let task = sceneWindowTask { observeNavigation("wait_scene_window_begin", fields: trace); await task.value; observeNavigation("wait_scene_window_end", fields: trace) }
+        guard !Task.isCancelled, continuing() else { return false }
+        if let task = headerRefreshTask { observeNavigation("wait_header_refresh_begin", fields: trace); await task.value; observeNavigation("wait_header_refresh_end", fields: trace) }
+        guard !Task.isCancelled, continuing() else { return false }
+        if let task = documentOpeningTask { await task.value }
+        guard !Task.isCancelled, continuing() else { return false }
+      }
+      observeNavigation("writer_flush_begin", fields: trace)
       guard await persistence.flush() else { return false }
-    } while diskRefreshTask != nil || headerRefreshTask != nil || persistence.pendingCount > 0
-      || pageInkPreparationTask != nil || acceptedPageInkHead != nil
+      observeNavigation("writer_flush_end", fields: trace)
+      guard !Task.isCancelled, continuing() else { return false }
+    } while boundary == .quiescent && (diskRefreshTask != nil || headerRefreshTask != nil || documentOpeningTask != nil || persistence.pendingCount > 0
+      || pageInkPreparationTask != nil || acceptedPageInkHead != nil)
     return publicationFailure == nil
   }
 
@@ -3030,12 +3604,16 @@ final class NotebookAppModel {
     if shutdownPhase == .stopped { return true }
     if shutdownPhase == .running { shutdownPhase = .closing }
     let task = Task { [self] in
+      cancelRequestedNavigation()
+      cancelDocumentOpening()
+      documentShellPreparation?.stop(); documentShellPreparation = nil
       presentationPlayer.interrupt("closing")
       if let startupTask { await startupTask.value }
       sync?.stop(); sync = nil
       #if os(macOS)
         await commandServer?.stopAndDrain(); commandServer = nil
         await codexSidecar?.stop(); codexSidecar = nil
+        await scriptCoordinator?.shutdown(); scriptCoordinator = nil
         let agentStopped = true
         await previewPublisher?.stop()
       #else
@@ -3050,12 +3628,14 @@ final class NotebookAppModel {
       guard agentStopped && inputSaved else { return false }
       shutdownPhase = .draining
       inputGate.onActivityChange = nil
+      inputGate.onNewAcceptedContact = nil
       itemOwnerObserver = nil
-      let readers = [scenePreparationTask, sceneWindowTask, diskRefreshTask, headerRefreshTask]
+      let readers = [scenePreparationTask, sceneWindowTask, diskRefreshTask, headerRefreshTask, documentOpeningTask]
         .compactMap { $0 } + Array(pagePreparationTasks.values)
       for task in readers { task.cancel() }
       for task in readers { await task.value }
       scenePreparationTask = nil; sceneWindowTask = nil; diskRefreshTask = nil; headerRefreshTask = nil
+      documentOpeningTask = nil
       pagePreparationTasks = [:]
       collaborationReadTask?.cancel()
       if let task = collaborationReadTask { _ = await task.result }
@@ -3100,107 +3680,11 @@ final class NotebookAppModel {
     }
   }
 
-  private func initialPresence(
-    workspace: WorkspaceIndex,
-    board: BoardHierarchy?,
-    viewport: PageSize
-  ) -> SessionPresence {
-    let item = workspace.selectedItem
-    let itemID = item.id
-    let viewportPoint = SpatialPoint(x: viewport.width, y: viewport.height)
-    if item.kind == .board, board?.board(itemID) != nil {
-      return SessionPresence(
-        boardID: itemID,
-        mode: .board,
-        camera: SpatialCamera(),
-        viewport: viewportPoint
-      )
-    }
-    let ownerBoardID = board?.ownerBoardID(of: itemID)
-      ?? workspace.rootBoardID
-    let center = board?.focusedCenter(of: itemID, in: ownerBoardID) ?? .zero
-    if !center.isValid {
-      // A fan can extend past the address boundary. Restore an overview at
-      // its stored physical anchor, not a paper centered at another position.
-      let anchor = board?.board(ownerBoardID)?.stack(containing: itemID)?.center ?? .zero
-      return SessionPresence(boardID: ownerBoardID, mode: .board,
-        camera: .init(center: anchor), viewport: viewportPoint)
-        .selecting(itemID: workspace.selectedItemID, pageID: workspace.selectedPageID)
-    }
-    let fit = itemGeometry(itemID).fitScale(
-      viewport: viewportPoint
-    )
-    return SessionPresence(
-      boardID: ownerBoardID,
-      mode: item.kind == .document ? .document : .page,
-      camera: SpatialCamera(center: center, scale: fit),
-      viewport: viewportPoint,
-      focusedItemID: itemID,
-      openProgress: 1
-    ).selecting(itemID: workspace.selectedItemID, pageID: workspace.selectedPageID)
-  }
-
-  private func settledPresence(
-    from presence: SessionPresence,
-    workspace: WorkspaceIndex,
-    board: BoardHierarchy?,
-    viewport: SpatialPoint
-  ) -> SessionPresence {
-    let adapted = presence.adapted(to: viewport, geometry: itemGeometry(presence.focusedItemID))
-    guard board?.board(presence.boardID) != nil else {
-      return SessionPresence(
-        boardID: workspace.rootBoardID,
-        mode: .board,
-        camera: SpatialCamera(),
-        viewport: viewport
-      )
-    }
-    let itemID = presence.focusedItemID
-    let itemCenter = itemID.flatMap { id in
-      board?.focusedCenter(of: id, in: presence.boardID)
-    }
-    let focusedItem = itemID.flatMap { id in
-      workspace.items.first(where: { $0.id == id })
-    }
-    let modeMatchesFocusedItem =
-      (presence.mode == .page && focusedItem?.kind == .notebook)
-      || (presence.mode == .document && focusedItem?.kind == .document)
-
-    if presence.mode == .page || presence.mode == .document,
-      let itemID,
-      let itemCenter,
-      itemCenter.isValid,
-      modeMatchesFocusedItem
-    {
-      return SessionPresence(
-        boardID: presence.boardID,
-        mode: presence.mode,
-        camera: adapted.camera,
-        viewport: viewport,
-        focusedItemID: itemID,
-        openProgress: 1,
-        documentPageIndex: presence.mode == .document
-          ? presence.documentPageIndex
-          : 0,
-        selectedItemID: presence.selectedItemID,
-        notebookPageID: presence.notebookPageID
-      )
-    }
-
-    if presence.mode == .cover, let itemID, !isItemBeingDeleted(itemID) {
-      // No placement in a partial query is not evidence of deletion. The next
-      // addressed scene read validates this intent without snapping its camera.
-      return adapted
-    }
-
-    return SessionPresence(
-      boardID: presence.boardID,
-      mode: .board,
-      camera: adapted.camera,
-      viewport: viewport,
-      selectedItemID: presence.selectedItemID,
-      notebookPageID: presence.notebookPageID
-    )
+  /// Camera settlement only adapts geometry. UUID existence, ownership and
+  /// semantic mode belong to NotebookSceneState's addressed SQL snapshot; a
+  /// bounded display projection cannot revoke a navigation destination.
+  private func settledPresence(from presence: SessionPresence, viewport: SpatialPoint) -> SessionPresence {
+    presence.adapted(to: viewport, geometry: itemGeometry(presence.focusedItemID))
   }
 
   private func makePresenceEnvelope(
@@ -3217,42 +3701,6 @@ final class NotebookAppModel {
     )
   }
 
-  /// Content deletion can invalidate a session focus; visibility alone cannot.
-  private func reconcilePresence(
-    with workspace: WorkspaceIndex,
-    board: BoardHierarchy?
-  ) {
-    guard let current = presence else { return }
-    let resolved: SessionPresence
-    if presenceIsUsable(current, workspace: workspace) {
-      resolved = settledPresence(
-        from: current,
-        workspace: workspace,
-        board: board,
-        viewport: current.viewport
-      )
-    } else {
-      resolved = initialPresence(
-        workspace: workspace,
-        board: board,
-        viewport: PageSize(
-          width: current.viewport.x,
-          height: current.viewport.y
-        )
-      )
-    }
-    guard resolved != current || presencePhase != .settled else { return }
-    presence = resolved
-    presencePhase = .settled
-    schedulePresenceSave(resolved)
-    #if os(iOS)
-      lastSettledPresenceEnvelope = makePresenceEnvelope(
-        resolved,
-        phase: .settled
-      )
-    #endif
-  }
-
   private func restoreSettledPresenceAfterDisconnect() {
     #if os(macOS)
       guard presencePhase == .active, let stored = lastSettledPresenceEnvelope?.presence else { return }
@@ -3262,44 +3710,23 @@ final class NotebookAppModel {
     #endif
   }
 
-  private func presenceIsUsable(
-    _ presence: SessionPresence,
-    workspace: WorkspaceIndex
-  ) -> Bool {
-    guard presence.isValid,
-      let hierarchy = boardHierarchy,
-      hierarchy.board(presence.boardID) != nil
-    else { return false }
-    if let itemID = presence.focusedItemID,
-      !workspace.items.contains(where: { $0.id == itemID })
-    {
-      return false
-    }
-    if let itemID = presence.focusedItemID,
-      let item = workspace.items.first(where: { $0.id == itemID })
-    {
-      guard hierarchy.ownerBoardID(of: itemID) == presence.boardID else {
-        return false
-      }
-      if presence.mode == .page && item.kind != .notebook { return false }
-      if presence.mode == .document && item.kind != .document { return false }
-    }
-    return true
+  private func presenceIsUsable(_ presence: SessionPresence) -> Bool {
+    presence.isValid && !isItemBeingDeleted(presence.boardID)
+      && (presence.focusedItemID.map { !isItemBeingDeleted($0) } ?? true)
   }
 
-  private static func loadActorID() -> UUID {
+  private static func loadActorID(defaults: UserDefaults) -> UUID {
     let key = "notebook.actor-id"
-    if let raw = UserDefaults.standard.string(forKey: key),
+    if let raw = defaults.string(forKey: key),
        let id = UUID(uuidString: raw) {
       return id
     }
     let id = UUID()
-    UserDefaults.standard.set(id.uuidString, forKey: key)
+    defaults.set(id.uuidString, forKey: key)
     return id
   }
 
-  private static func loadPenStyle() -> PenStyle {
-    let defaults = UserDefaults.standard
+  private static func loadPenStyle(defaults: UserDefaults) -> PenStyle {
     let color = defaults.string(forKey: "notebook.pen-color")
       .flatMap(PenColor.init(rawValue:)) ?? PenStyle.standard.color
     let width = defaults.object(forKey: "notebook.pen-width") as? Double
@@ -3321,8 +3748,7 @@ final class NotebookAppModel {
     return style
   }
 
-  private static func loadEraserStyle() -> EraserStyle {
-    let defaults = UserDefaults.standard
+  private static func loadEraserStyle(defaults: UserDefaults) -> EraserStyle {
     let storedWidth =
       defaults.object(forKey: "notebook.eraser-width") as? Double
       ?? EraserStyle.standard.maximumWidth
@@ -3334,16 +3760,16 @@ final class NotebookAppModel {
   }
 
   private func savePenStyle() {
-    UserDefaults.standard.set(penStyle.color.rawValue, forKey: "notebook.pen-color")
-    UserDefaults.standard.set(penStyle.width, forKey: "notebook.pen-width")
-    UserDefaults.standard.set(
+    preferences.set(penStyle.color.rawValue, forKey: "notebook.pen-color")
+    preferences.set(penStyle.width, forKey: "notebook.pen-width")
+    preferences.set(
       penStyle.minimumOpacity,
       forKey: "notebook.pen-minimum-opacity"
     )
   }
 
   private func saveEraserStyle() {
-    UserDefaults.standard.set(
+    preferences.set(
       eraserStyle.maximumWidth,
       forKey: "notebook.eraser-width"
     )

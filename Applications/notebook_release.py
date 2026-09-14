@@ -12,6 +12,7 @@ import subprocess
 import sys
 import stat
 import tempfile
+import prepare_notebook_images as notebook_images
 
 sys.dont_write_bytecode = True
 
@@ -28,6 +29,7 @@ CANONICAL_MAC = Path("/Users/amir/Applications/Notebook.app")
 APP_ID = TEAM + "." + BUNDLE
 GENERATED = {"Applications/iPad/Info.plist", "Applications/Mac/Info.plist"}
 MAC_BUNDLE = "com.amirtlinov.notebook.mac"
+TEX_RESOURCE_LOCK = Path(__file__).resolve().parents[1] / "Sources/NotebookMarkupService/TeXResources.lock.json"
 
 
 class ReleaseError(Exception):
@@ -190,6 +192,14 @@ def signature_identity(display, bundle):
     require("Authority=Apple Development:" in display and "Signature=adhoc" not in display, "Нужна настоящая Apple Development подпись.")
     require(re.fullmatch(r"[0-9a-fA-F]{40,64}", field("CDHash")), "В подписи отсутствует CDHash.")
     return {"identifier": bundle, "team": TEAM, "cdhash": field("CDHash")}
+
+
+def development_signer(display, bundle):
+    identity = signature_identity(display, bundle)
+    authorities = re.findall(r"^Authority=(.+)$", display, re.MULTILINE)
+    require(authorities and authorities[0].startswith("Apple Development: "),
+            "Нужен Apple Development сертификат выбранного владельца.")
+    return authorities[0], identity
 
 
 def validate_signature(display, entitlements, profile):
@@ -397,16 +407,74 @@ def checked_verification(source, evidence):
     return receipt
 
 
-def build_mac(snapshot, evidence, command):
+def prepare_tex_runtime(source, command, stage=None):
+    """Prepare pinned public build inputs; the resulting path never reaches a runtime."""
+    stage = Path(stage or os.environ.get("NOTEBOOK_TEX_RUNTIME", source / ".build/notebook-tex-runtime")).resolve()
+    command("tex-resources", [sys.executable, "-B", source / "Applications/prepare_notebook_tex.py",
+        "--prepare", "--stage", stage], cwd=source, timeout=1800)
+    return stage
+
+
+def prepare_image_runtime(source, command, stage=None, stage_root=None):
+    """Build-time only; each source fingerprint owns a separate immutable stage."""
+    source = Path(source)
+    explicit = stage or os.environ.get("NOTEBOOK_IMAGE_RUNTIME")
+    arguments = ["--stage", Path(explicit).resolve()] if explicit else ["--stage-root", Path(stage_root or source / ".build/notebook-image-runtime").resolve()]
+    output = command("image-resources", [sys.executable, "-B", source / "Applications/prepare_notebook_images.py",
+        "--prepare", *arguments], cwd=source, timeout=1800, read_output=True)[0]
+    value = json.loads(output)
+    require(value.get("status") == "ready" and Path(value.get("stage", "")).is_absolute(),
+            "Подготовка image compiler не вернула проверенный immutable stage.")
+    return Path(value["stage"])
+
+
+def restrict_test_script_services(app, source, command, signing_identity="-"):
+    """Remove Xcode's test-only sandbox grants before executing real workers.
+
+    Xcode injects a read-all-files exception for its test action separately
+    from CODE_SIGN_INJECT_BASE_ENTITLEMENTS. Signing these build products with
+    the source entitlements restores the same boundary as an ordinary build.
+    The enclosing test host retains its own XCTest instrumentation rights.
+    """
+    app, source = Path(app).resolve(), Path(source).resolve()
+    require(not below(app, CANONICAL_MAC.resolve()), "Нельзя переподписывать установленный рабочий Mac.")
+    info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+    require(info.get("CFBundleIdentifier") in (MAC_BUNDLE, MAC_BUNDLE + ".acceptance"),
+            "Ожидался созданный этим маршрутом тестовый Mac bundle.")
+    root = app / "Contents/XPCServices"
+    require(root.is_dir() and {path.name for path in root.iterdir()}
+            == {"NotebookScriptService.xpc", "NotebookMarkupService.xpc"},
+            "Тестовый Mac должен содержать ровно два исполнителя.")
+    targets = [(root / "NotebookMarkupService.xpc/Contents/Helpers/tectonic",
+                source / "Sources/NotebookMarkupService/tex-child.entitlements.plist", "com.amirtlinov.notebook.tex-compiler"),
+               (root / "NotebookMarkupService.xpc/Contents/Helpers/notebook-image-compiler",
+                source / "Sources/NotebookMarkupService/tex-child.entitlements.plist", "com.amirtlinov.notebook.image-compiler")]
+    targets += [(root / (name + ".xpc"), source / "Sources" / name / "entitlements.plist", info.get(name))
+                for name in ("NotebookScriptService", "NotebookMarkupService")]
+    for index, (target, entitlement_file, identifier) in enumerate(targets):
+        require(target.exists() and not target.is_symlink() and isinstance(identifier, str),
+                "Нельзя подписать отсутствующего или неидентифицированного исполнителя.")
+        command("test-worker-sign-" + str(index), ["/usr/bin/codesign", "--force", "--sign", signing_identity, "--timestamp=none",
+            "--identifier", identifier, "--entitlements", entitlement_file, target])
+        rights = command("test-worker-rights-" + str(index), ["/usr/bin/codesign", "--display", "--entitlements", ":-", "--xml", target], read_output=True)[0]
+        require(plistlib.loads(rights) == plistlib.loads(entitlement_file.read_bytes()),
+                "Xcode добавил исполнителю права, отсутствующие в исходном контракте.")
+    command("test-host-reseal", ["/usr/bin/codesign", "--force", "--sign", signing_identity, "--timestamp=none",
+        "--preserve-metadata=identifier,entitlements,flags,runtime", app])
+    command("test-host-seal-verify", ["/usr/bin/codesign", "--verify", "--deep", "--strict", app])
+
+
+def build_mac(snapshot, evidence, command, tex_runtime, image_runtime):
     entitlements = evidence / "mac.entitlements"
     entitlements.write_bytes(plistlib.dumps({"com.apple.security.get-task-allow": True}))
     command("build-mac", ["/usr/bin/xcrun", "xcodebuild", "-project",
         snapshot / "Applications/Notebook.xcodeproj", "-scheme", "NotebookMac",
         "-configuration", CONFIGURATION, "-destination", "generic/platform=macOS",
         "-derivedDataPath", evidence / "derived-mac", "-allowProvisioningUpdates",
-        "PRODUCT_BUNDLE_IDENTIFIER=" + MAC_BUNDLE, "DEVELOPMENT_TEAM=" + TEAM,
+        "DEVELOPMENT_TEAM=" + TEAM,
         "CODE_SIGN_STYLE=Automatic", "CODE_SIGNING_ALLOWED=YES", "CODE_SIGNING_REQUIRED=YES",
-        "CODE_SIGN_IDENTITY=Apple Development", "CODE_SIGN_ENTITLEMENTS=" + str(entitlements),
+        "CODE_SIGN_IDENTITY=Apple Development", "NOTEBOOK_MAC_ENTITLEMENTS=" + str(entitlements),
+        "NOTEBOOK_TEX_RUNTIME=" + str(tex_runtime), "NOTEBOOK_IMAGE_RUNTIME=" + str(image_runtime),
         "SWIFT_OPTIMIZATION_LEVEL=" + SWIFT_OPTIMIZATION, "ARCHS=arm64", "build"],
         cwd=snapshot, timeout=1800)
     return evidence / ("derived-mac/Build/Products/" + CONFIGURATION + "/Notebook.app")
@@ -440,6 +508,7 @@ def inspect_mac(app, command):
             and all(key in allowed and value == allowed[key] for key, value in entitlements.items()),
             "Mac получил неизвестные права или чужую идентичность Keychain.")
     signature["entitlements"] = entitlements
+    signature["services"] = inspect_script_services(app, info, command)
     architectures = command("mac-binary-architectures", ["/usr/bin/xcrun", "lipo", "-archs", executable], read_output=True)[0].decode().split()
     require(architectures == ["arm64"], "Нужен arm64 helper согласованного Mac.")
     output = command("mac-binary-platform", ["/usr/bin/xcrun", "vtool", "-show-build", executable], read_output=True)[0].decode()
@@ -449,6 +518,109 @@ def inspect_mac(app, command):
     require(re.search(r"UUID: [0-9A-Fa-f-]{36} \(arm64\)", uuids), "Mac binary не имеет UUID arm64.")
     require(app_manifest(app) == bundle, "Mac bundle изменился во время проверки подписи.")
     return info, signature, uuids, bundle
+
+
+def inspect_script_services(app, app_info, command):
+    """Require the two separately signed capability-free interpreters in the bundle."""
+    root = app / "Contents/XPCServices"
+    expected = {
+        "NotebookScriptService": ("NotebookScriptService", "com.amirtlinov.notebook.script-service", "notebook-sdk.js"),
+        "NotebookMarkupService": ("NotebookMarkupService", "com.amirtlinov.notebook.markup-service", "notebook-markup.js"),
+    }
+    require(root.is_dir() and {p.name for p in root.iterdir()} == {name + ".xpc" for name in expected},
+            "Mac обязан содержать ровно два изолированных XPC исполнителя.")
+    result = {}
+    for name, (info_key, bundle_id, resource) in expected.items():
+        service = root / (name + ".xpc")
+        info = plistlib.loads((service / "Contents/Info.plist").read_bytes())
+        require(app_info.get(info_key) == bundle_id and info.get("CFBundleIdentifier") == bundle_id
+                and info.get("CFBundlePackageType") == "XPC!"
+                and info.get("XPCService", {}).get("ServiceType") == "Application", "Изменилась идентичность XPC исполнителя.")
+        executable_name = info.get("CFBundleExecutable")
+        require(isinstance(executable_name, str) and executable_name and Path(executable_name).name == executable_name,
+                "Некорректный executable XPC.")
+        executable = service / "Contents/MacOS" / executable_name
+        require(executable.is_file() and (service / "Contents/Resources" / resource).is_file(),
+                "В XPC отсутствует исполнитель или закреплённый SDK.")
+        label = "xpc-" + name
+        requirement = '=anchor apple generic and identifier "' + bundle_id + '" and certificate leaf[subject.OU] = "' + TEAM + '"'
+        command(label + "-verify", ["/usr/bin/codesign", "--verify", "--strict", "-R", requirement, service])
+        display = command(label + "-details", ["/usr/bin/codesign", "--display", "--verbose=4", service], read_output=True)
+        identity = signature_identity(b"\n".join(display).decode(), bundle_id)
+        rights = plistlib.loads(command(label + "-entitlements", ["/usr/bin/codesign", "--display", "--entitlements", ":-", "--xml", service], read_output=True)[0])
+        allowed = {"com.apple.security.app-sandbox": True, "com.apple.security.get-task-allow": True,
+                   "com.apple.application-identifier": TEAM + "." + bundle_id, "com.apple.developer.team-identifier": TEAM}
+        require(isinstance(rights, dict) and rights.get("com.apple.security.app-sandbox") is True
+                and all(key in allowed and value == allowed[key] for key, value in rights.items()),
+                "XPC получил доступ к файлам, сети или чужим возможностям.")
+        architecture = command(label + "-architecture", ["/usr/bin/xcrun", "lipo", "-archs", executable], read_output=True)[0].decode().split()
+        require(architecture == ["arm64"], "XPC обязан использовать arm64.")
+        identity["entitlements"] = rights
+        if name == "NotebookMarkupService":
+            identity["tex"] = inspect_tex_runtime(service, command)
+            identity["images"] = inspect_image_runtime(service, command)
+        result[name] = identity
+    return result
+
+
+def inspect_tex_runtime(service, command):
+    lock = read_json(TEX_RESOURCE_LOCK)
+    resources = service / "Contents/Resources/NotebookTeX"
+    manifest_path = resources / "manifest.json"
+    require(manifest_path.is_file() and not manifest_path.is_symlink(), "Отсутствует закреплённый TeX manifest.")
+    manifest = read_json(manifest_path)
+    require(manifest.get("schema") == 1 and manifest.get("sourceLockSHA256") == file_digest(TEX_RESOURCE_LOCK)
+            and all(manifest.get(key) == lock[key] for key in ("compiler", "distribution", "licenses")),
+            "TeX manifest не соответствует проверенным исходным pins.")
+    inventory = manifest.get("inventory", {})
+    require(inventory.get("fileCount") == lock["distribution"]["fileCount"]
+            and inventory.get("bundleDigest") == lock["distribution"]["bundleDigest"]
+            and all(inventory.get(key) == 0 for key in ("privateFormats", "auxiliaries", "logs")),
+            "TeX bundle содержит неполный набор или пользовательский cache.")
+    pins = {"texlive.zip": lock["distribution"]["zip"]}
+    pins.update({"licenses/" + item["name"]: item for item in lock["licenses"]})
+    members = list(resources.rglob("*"))
+    require(not any(path.is_symlink() for path in members)
+            and {path.relative_to(resources).as_posix() for path in members if not path.is_dir()}
+            == set(pins) | {"manifest.json"}, "Изменился набор закреплённых TeX ресурсов.")
+    for relative, pin in pins.items():
+        path = resources / relative
+        require(path.is_file() and path.stat().st_size == pin["bytes"] and file_digest(path) == pin["sha256"],
+                "Изменился закреплённый TeX ресурс: " + relative)
+    compiler = service / "Contents/Helpers/tectonic"
+    require(compiler.is_file() and not compiler.is_symlink(), "Отсутствует изолированный TeX compiler.")
+    bundle_id = "com.amirtlinov.notebook.tex-compiler"
+    requirement = '=anchor apple generic and identifier "' + bundle_id + '" and certificate leaf[subject.OU] = "' + TEAM + '"'
+    command("tex-compiler-verify", ["/usr/bin/codesign", "--verify", "--strict", "-R", requirement, compiler])
+    display = command("tex-compiler-details", ["/usr/bin/codesign", "--display", "--verbose=4", compiler], read_output=True)
+    identity = signature_identity(b"\n".join(display).decode(), bundle_id)
+    rights = plistlib.loads(command("tex-compiler-entitlements", ["/usr/bin/codesign", "--display", "--entitlements", ":-", "--xml", compiler], read_output=True)[0])
+    require(rights == {"com.apple.security.app-sandbox": True, "com.apple.security.inherit": True},
+            "TeX compiler обязан наследовать только песочницу своего XPC владельца.")
+    architecture = command("tex-compiler-architecture", ["/usr/bin/xcrun", "lipo", "-archs", compiler], read_output=True)[0].decode().split()
+    require(architecture == ["arm64"], "TeX compiler обязан использовать arm64.")
+    identity.update({"entitlements": rights, "sourceLockSHA256": manifest["sourceLockSHA256"],
+                     "distributionSHA256": pins["texlive.zip"]["sha256"]})
+    return identity
+
+
+def inspect_image_runtime(service, command):
+    try:
+        manifest = notebook_images.check(service / "Contents", notebook_images.SOURCE, signed=True, container=True)
+    except (RuntimeError, OSError, ValueError, KeyError) as error:
+        raise ReleaseError("Image compiler resource/source contract failed: " + str(error)) from error
+    compiler = service / "Contents/Helpers/notebook-image-compiler"
+    bundle_id = "com.amirtlinov.notebook.image-compiler"
+    requirement = '=anchor apple generic and identifier "' + bundle_id + '" and certificate leaf[subject.OU] = "' + TEAM + '"'
+    command("image-compiler-verify", ["/usr/bin/codesign", "--verify", "--strict", "-R", requirement, compiler])
+    display = command("image-compiler-details", ["/usr/bin/codesign", "--display", "--verbose=4", compiler], read_output=True)
+    identity = signature_identity(b"\n".join(display).decode(), bundle_id)
+    rights = plistlib.loads(command("image-compiler-entitlements", ["/usr/bin/codesign", "--display", "--entitlements", ":-", "--xml", compiler], read_output=True)[0])
+    require(rights == {"com.apple.security.app-sandbox": True, "com.apple.security.inherit": True},
+            "Image compiler обязан наследовать только песочницу своего XPC владельца.")
+    identity.update({"entitlements": rights, "sourceSHA256": manifest["source"]["sha256"],
+                     "code": manifest["binaryInspection"], "rustVersion": manifest["rustVersion"]})
+    return identity
 
 
 def build_verified_pair(source, verification, evidence, runner=None):
@@ -488,7 +660,9 @@ def build_verified_pair(source, verification, evidence, runner=None):
         command("generate-project", [shutil.which("xcodegen"), "generate", "--spec", "project.yml"], cwd=snapshot / "Applications")
         ipad = build_ipad(snapshot, evidence, command)
         ipad_info, ipad_signature, ipad_uuids, ipad_manifest = inspect_ipad(ipad, device, evidence, command)
-        mac = build_mac(snapshot, evidence, command)
+        tex_runtime = prepare_tex_runtime(source, command)
+        image_runtime = prepare_image_runtime(snapshot, command, stage_root=source / ".build/notebook-image-runtime")
+        mac = build_mac(snapshot, evidence, command, tex_runtime, image_runtime)
         mac_info, mac_signature, mac_uuids, mac_manifest = inspect_mac(mac, command)
         require(all(ipad_info[key] == mac_info[key] for key in ("CFBundleVersion", "CFBundleShortVersionString")),
                 "Пара собрана с разными версиями приложений.")

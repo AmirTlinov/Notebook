@@ -16,6 +16,11 @@ import notebook_release as release
 
 ROOT = Path(__file__).resolve().parents[1]
 UI = "NotebookUITests/DrawingResponsivenessTests/"
+DOCUMENT_BROWSER_CONTRACTS = (
+    "Tests/NotebookDocumentAcceptance/test_common_shell_startup.mjs",
+    "Tests/NotebookDocumentAcceptance/test_document_images.mjs",
+    "Tests/NotebookDocumentAcceptance/test_link_activation.mjs",
+)
 PROFILES = {
     "presentation": {
         "core": ["NotebookPresentationTests", "CodexDisplayProjectionTests", "wireCannotChooseRootPathsOrUnknownCommands", "stablePagePreservesExplicitViewportScale",
@@ -95,14 +100,35 @@ PROFILES = {
     "workspace-controls": {"ipad": ["NotebookTests/NotebookChatWindowTests",
                                       UI + "testChatMovesResizesAndOpensSettingsWithoutMovingPaper",
                                       UI + "testAgentChangesStayQuietAndHistoryKeepsItsActions"]},
+    "document-web": {
+        "commands": ["document-browser"],
+        "mac": ["NotebookMacTests/DocumentRuntimeTests"],
+        "ipad": ["NotebookTests/DocumentShellPreparationTests", "NotebookTests/DocumentImageReadinessTests",
+                 "NotebookTests/DocumentLinkActivationTests"],
+    },
     "documents": {
-        "core": ["DocumentRenderRecipeTests", "DocumentDocumentTests", "DocumentEditingSessionTests"],
+        "commands": ["document-browser"],
+        "core": ["DocumentRenderRecipeTests", "DocumentDocumentTests", "DocumentEditingSessionTests",
+                 "NotebookDocumentBlockReadTests", "NotebookDocumentStateCommandTests"],
         "mac": ["NotebookMacTests/DocumentLargeSourceTests", "NotebookMacTests/DocumentRenderSessionTests",
                 "NotebookMacTests/DocumentLinkNavigationTests",
-                "NotebookMacTests/DocumentSnapshotTests", "NotebookMacTests/AddressedTargetRenderTests"],
+                "NotebookMacTests/DocumentSnapshotTests", "NotebookMacTests/AddressedTargetRenderTests",
+                "NotebookMacTests/DocumentEditorPresentationTests", "NotebookMacTests/DocumentProgramIdentityTests",
+                "NotebookMacTests/DocumentRuntimeTests"],
         "ipad": ["NotebookTests/DocumentLargeSourceTests", "NotebookTests/DocumentResourceLeaseTests",
+                 "NotebookTests/DocumentShellPreparationTests", "NotebookTests/DocumentImageReadinessTests",
+                 "NotebookTests/PhysicalWebViewportTests", "NotebookTests/NotebookDocumentOpeningTests",
+                 "NotebookTests/DocumentLinkActivationTests",
+                 "NotebookTests/DocumentProgramOwnerTests", "NotebookTests/DocumentProgramOverlayHostTests",
+                 "NotebookTests/DocumentBlockRuntimeTests", "NotebookTests/DocumentPresentationRecorderTests",
+                 "NotebookTests/NotebookDocumentStatePersistenceTests",
                  "NotebookTests/DocumentLinkNavigationTests",
                  "NotebookTests/DocumentPageSelectionTests", "NotebookTests/DocumentCutOriginTests"],
+    },
+    "submitted-pixels": {
+        "ipad": ["NotebookTests/NotebookSubmittedPixelsTests", "NotebookTests/NotebookPinnedImageTests",
+                 "NotebookTests/SharedAttentionTests", "NotebookTests/DocumentProgramOwnerTests",
+                 "NotebookTests/NotebookCoverPresentationTests", "NotebookTests/PagePresentationTests"],
     },
     "page-turn": {"ipad": [UI + "testProseDocumentTurnsToDifferentTextAndBack",
                             UI + "testDocumentPageTurnShowsTheCommittedPhysicalPage"]},
@@ -141,12 +167,29 @@ PROFILES = {
                  "NotebookTests/SpatialInkHandoffTests/testFullPortraitRetinaBudgetReadiesNonemptyParentAndChildWithoutLoweringInkDensity"],
     },
     "mcp": {"commands": ["mcp"]},
+    "script-runtime": {
+        "core": ["NotebookScriptAdmissionTests", "NotebookScriptCancellationTests", "NotebookScriptEffectOutcomeTests",
+                 "NotebookScriptEffectRecoveryTests", "NotebookScriptHelpTests", "CodexRuntimeScopeTests",
+                 "NotebookPublicProtocolTests", "NotebookScriptDeadlineTests", "NotebookQuickJSCancellationTests"],
+        "mac": ["NotebookMacTests/NotebookScriptServiceTests"],
+        "commands": ["mcp"],
+    },
+    "acceptance-bootstrap": {
+        "core": ["CodexRuntimeScopeTests"],
+        "mac": ["NotebookMacTests/NotebookAcceptanceLaunchTests"],
+        "ipad": ["NotebookTests/NotebookAcceptanceLaunchTests"],
+        "commands": ["verification", "release", "trace-harness"],
+    },
     "verification": {"commands": ["verification", "release"]},
 }
 
 
 def git(root, *args):
     return subprocess.check_output(["git", "-C", str(root), *args])
+
+
+def document_browser_arguments(root):
+    return ["node", "--test", *(str(root / path) for path in DOCUMENT_BROWSER_CONTRACTS)]
 
 
 def changed_files(root, base):
@@ -164,7 +207,18 @@ def owners(path):
         return ["verification"]
     if path.startswith("MCP/"):
         return ["mcp"]
+    if path in DOCUMENT_BROWSER_CONTRACTS or (path.startswith("Applications/WebResources/")
+                                             and Path(path).name.startswith("document-")):
+        return ["document-web"]
+    if path.startswith("Tests/NotebookDocumentAcceptance/"):
+        return ["acceptance-bootstrap"]
     name = Path(path).name
+    if path.startswith(("Sources/NotebookScript", "Sources/NotebookMarkupService/", "Sources/CQuickJS/", "Tests/NotebookScriptHostTests/", "Tests/NotebookScriptWorkerTests/")) or name.startswith("NotebookScript") or name in ("NotebookActionSubmission.swift", "NotebookPublicProtocolTests.swift"):
+        return ["script-runtime"]
+    if path.startswith("Sources/NotebookAcceptance/") or name in (
+        "NotebookAcceptanceConfiguration.swift", "NotebookAcceptanceLaunchTests.swift", "notebook_acceptance.py",
+        "NotebookSystemTraceIdentitySurface.swift", "NotebookSystemTraceHandshake.swift"):
+        return ["acceptance-bootstrap"]
     if name.startswith("NotebookPresentation"):
         return ["presentation"]
     if name in ("NotebookComputerStore.swift", "NotebookComputerStoreTests.swift", "NotebookComputerControllerTests.swift"):
@@ -193,6 +247,13 @@ def owners(path):
         return ["paper-resources"]
     if path == "Applications/iPad/SpatialWorkspaceView.swift":
         return ["scene-composition", "documents"]
+    if name in ("NotebookSubmittedPixels.swift", "NotebookWorkspacePresentation.swift", "NotebookPinnedImageRenderer.swift",
+                "NotebookAttentionProjection.swift", "NotebookAttentionSelection.swift", "NotebookCoverPresentation.swift",
+                "PagePresentation.swift"):
+        return ["submitted-pixels"]
+    if name in ("NotebookDocumentBlockReadTests.swift", "NotebookDocumentStateCommand.swift", "NotebookDocumentStateCommandTests.swift",
+                "PhysicalWebViewport.swift", "NotebookDocumentOpeningTests.swift"):
+        return ["documents"]
     if name in ("SceneCompositionTiles.swift", "SceneCompositionSource.swift", "SceneCompositionTests.swift"):
         return ["scene-composition"]
     if name == "NotebookChatPanel.swift":
@@ -216,6 +277,32 @@ def test_selector(path):
                 return None
             return ("mac" if target == "NotebookMacTests" else "ipad", target + "/" + Path(path).stem)
     return None
+
+
+def matching_native_tests(root, path):
+    """Use adjacent test naming, not an exhaustive implementation-file map.
+
+    This suggests a local contract, not all effects of a shared implementation.
+    Cross-owner regressions and UI gestures remain an explicit scope decision.
+    """
+    file = Path(path)
+    platforms = {
+        "Applications/Shared": ("Tests", "MacTests"),
+        "Applications/iPad": ("Tests",),
+        "Applications/Mac": ("MacTests",),
+        "Applications/TestSupport": ("Tests", "MacTests"),
+    }.get(str(file.parent), ())
+    if file.suffix != ".swift":
+        return []
+    suite = file.stem if file.stem.endswith("Tests") else file.stem + "Tests"
+    result = []
+    for folder in platforms:
+        candidate = "Applications/" + folder + "/" + suite + ".swift"
+        if (root / candidate).is_file() or (root / "Applications/TestSupport" / (suite + ".swift")).is_file():
+            selector = test_selector(candidate)
+            if selector:
+                result.append(selector)
+    return result
 
 
 def version_only(root, commit, path):
@@ -258,9 +345,15 @@ def make_plan(root, base="HEAD", profiles=(), tests=(), only=False):
             continue
         test = test_selector(path)
         found = owners(path)
+        # Keep explicit gesture/resource routes; use the closest native suite
+        # instead of expanding every document file into the integration profile.
+        nearby = matching_native_tests(root, path) if found in (None, ["documents"]) else []
         if test:
             if not only:
                 direct.append(test)
+        elif nearby:
+            if not only:
+                direct.extend(nearby)
         elif found is None:
             unknown.append(path)
         elif not only:
@@ -284,12 +377,19 @@ def make_plan(root, base="HEAD", profiles=(), tests=(), only=False):
             "checks": {key: sorted(values) for key, values in checks.items()}}
 
 
+def native_test_bundle(node, inherited=""):
+    if node.get("nodeType") in ("Unit test bundle", "UI test bundle"):
+        name = node.get("name", "")
+        return name if name in ("NotebookTests", "NotebookUITests", "NotebookMacTests",
+                               "NotebookAcceptanceUITests", "NotebookMacAcceptanceUITests") else ""
+    return inherited
+
+
 def timing_report(tree):
     rows = []
     def walk(node, target=""):
         name = node.get("name", "")
-        if name in ("NotebookTests", "NotebookUITests", "NotebookMacTests"):
-            target = name
+        target = native_test_bundle(node, target)
         if node.get("nodeType") == "Test Case":
             rows.append({"target": target, "test": node.get("nodeIdentifier", name), "seconds": node.get("durationInSeconds", 0)})
         for child in node.get("children", []):
@@ -311,9 +411,8 @@ def validate_summary(summary):
 def validate_executed_tests(tree, selectors):
     executed = set()
     def walk(node, target=""):
-        if node.get("name") in ("NotebookTests", "NotebookUITests", "NotebookMacTests"):
-            target = node["name"]
-        if node.get("nodeType") == "Test Case" and node.get("result") == "Passed":
+        target = native_test_bundle(node, target)
+        if target and node.get("nodeType") == "Test Case" and node.get("result") == "Passed":
             executed.add(target + "/" + node.get("nodeIdentifier", "").removesuffix("()"))
         for child in node.get("children", []):
             walk(child, target)
@@ -344,6 +443,12 @@ def validate_selected(source, evidence, receipt):
     if completed["core"]:
         expected.add("core")
     release.require(expected.issubset({c["label"] for c in commands}), "Отсутствует команда выбранной проверки.")
+    if "document-browser" in completed["commands"]:
+        browser = next(c for c in commands if c["label"] == "document-browser")
+        cwd = browser.get("cwd")
+        release.require(isinstance(cwd, str) and Path(cwd).is_absolute()
+                        and browser["argv"] == document_browser_arguments(Path(cwd)),
+                        "Браузерные контракты документов исполняли другой набор или источник.")
     for platform in ("mac", "ipad"):
         if completed[platform]:
             release.require((evidence / (platform + ".xcresult")).is_dir(), "Отсутствует xcresult выбранной платформы.")
@@ -364,6 +469,15 @@ def select_simulator(inventory, device_id=None):
     return candidates[0]
 
 
+def native_mac_signing_settings():
+    # Native tests have no persistent worker data. Give their sandbox a stable
+    # signed identity separate from both the paired stand and the installed app.
+    return ["CODE_SIGN_IDENTITY=Apple Development", "CODE_SIGN_STYLE=Automatic",
+            "CODE_SIGNING_ALLOWED=YES", "DEVELOPMENT_TEAM=" + release.TEAM,
+            "NOTEBOOK_BUNDLE_SUFFIX=.acceptance", "NOTEBOOK_ACCEPTANCE_ENABLED=YES",
+            "NOTEBOOK_SCRIPT_BUNDLE_SUFFIX=.native-test"]
+
+
 def run_selected(root, plan, evidence):
     release.require(not evidence.exists(), "Для проверки нужен новый каталог свидетельств.")
     evidence.mkdir(parents=True)
@@ -374,17 +488,24 @@ def run_selected(root, plan, evidence):
     toolchain = release.read_toolchain(command)
     release.write_json(evidence / "toolchain.json", toolchain)
     checks = plan["checks"]
+    # Every Mac host bundles the MCP sidecar, even a document-only XCTest
+    # selection from a clean immutable source copy. Prepare its locked build
+    # dependencies independently of whether MCP behavioral tests are selected.
+    if checks["mac"] or "mcp" in checks["commands"]:
+        command("mcp-dependencies", ["npm", "ci", "--ignore-scripts"], cwd=root / "MCP")
     if checks["core"]:
         output, _ = command("core", ["swift", "test", "--filter", "|".join(checks["core"])], cwd=root, timeout=600, read_output=True)
         release.require(re.search(rb"Test run with [1-9][0-9]* tests? .*passed", output), "Core не исполнил выбранные тесты.")
     for name in checks["commands"]:
-        if name == "voice-audio":
+        if name == "document-browser":
+            command(name, document_browser_arguments(root), cwd=root)
+        elif name == "voice-audio":
             command(name, ["node", "--test", str(root / "Tests/NotebookVoiceHarness/audio.test.mjs")], cwd=root)
         elif name == "mcp":
-            if not (root / "MCP/node_modules").is_dir():
-                command("mcp-dependencies", ["npm", "ci", "--ignore-scripts"], cwd=root / "MCP")
             command("mcp-check", ["npm", "run", "check"], cwd=root / "MCP")
             command("mcp-test", ["npm", "test"], cwd=root / "MCP", timeout=300)
+        elif name == "trace-harness":
+            command(name, [sys.executable, "-B", str(root / "Tests/NotebookDocumentAcceptance/test_system_trace.py")], cwd=root)
         else:
             script = "NotebookVerification" if name == "verification" else "NotebookRelease"
             command(name, [sys.executable, "-B", str(root / "Tests" / script / "run.py")], cwd=root)
@@ -407,7 +528,20 @@ def run_selected(root, plan, evidence):
                 "-resultBundlePath", str(result), "-parallel-testing-enabled", "NO", "-collect-test-diagnostics", "never",
                 "test"] + ["-only-testing:" + selector for selector in checks[platform]]
         if platform == "mac":
-            args.append("CODE_SIGNING_ALLOWED=NO")
+            tex_runtime = release.prepare_tex_runtime(root, command)
+            args.append("NOTEBOOK_TEX_RUNTIME=" + str(tex_runtime))
+            image_runtime = release.prepare_image_runtime(root, command)
+            args.append("NOTEBOOK_IMAGE_RUNTIME=" + str(image_runtime))
+            args.extend(native_mac_signing_settings())
+            build_args = [value for value in args if value not in ("-resultBundlePath", str(result), "test")]
+            command("mac-build-for-testing", build_args + ["build-for-testing"], cwd=root / "Applications", timeout=1800)
+            app = derived / "mac/Build/Products/Debug/Notebook.app"
+            display = command("mac-native-signer", ["/usr/bin/codesign", "--display", "--verbose=4", app], read_output=True)
+            signer, identity = release.development_signer(b"\n".join(display).decode(), release.MAC_BUNDLE + ".acceptance")
+            release.restrict_test_script_services(app, root, command, signing_identity=signer)
+            release.write_json(evidence / "mac-native-signature.json", {"identity": identity,
+                "workerBundleSuffix": ".native-test", "scope": "isolated stateless native-test workers"})
+            args[args.index("test")] = "test-without-building"
         command(platform, args, cwd=root / "Applications", timeout=1800)
         summary, _ = command(platform + "-summary", ["xcrun", "xcresulttool", "get", "test-results", "summary", "--path", str(result), "--compact"], read_output=True)
         summary = json.loads(summary); validate_summary(summary)

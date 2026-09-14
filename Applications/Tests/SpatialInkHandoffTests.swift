@@ -371,8 +371,9 @@ final class SpatialInkHandoffTests: XCTestCase {
   }
 
   private static func prepareAndRetireMountedScene() async throws -> RetiredScene {
-    let fixture = try await Fixture.make(viewport: .init(x: 512, y: 512))
+    let fixture = try await Fixture.make(viewport: .init(x: 512, y: 512), requiresStaticRaster: true)
     try fixture.mountActive(fixture.childID)
+    XCTAssertFalse(fixture.cohort.rasters.isEmpty, "The retirement fixture must own actual painted fragments")
     try fixture.mountActive(fixture.parentID)
     try fixture.mountActive(fixture.childID)
     XCTAssertGreaterThan(fixture.resources.rasterAdmission.pinnedBytes, 0)
@@ -470,7 +471,7 @@ final class SpatialInkHandoffTests: XCTestCase {
     private var currentID: UUID
     var activeCamera: SpatialCamera { cohort.plan.presentations[.board(currentID)]!.camera }
 
-    static func make(viewport: SpatialPoint, displayScale: Double = 1) async throws -> Fixture {
+    static func make(viewport: SpatialPoint, displayScale: Double = 1, requiresStaticRaster: Bool = false) async throws -> Fixture {
       let root = FileManager.default.temporaryDirectory.appendingPathComponent("ink-handoff-" + UUID().uuidString)
       let store = NotebookStore(root: root), actor = UUID()
       let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
@@ -479,6 +480,17 @@ final class SpatialInkHandoffTests: XCTestCase {
       _ = hierarchy.moveItem(workspace.selectedItemID, in: header.rootBoardID, to: .init(x: 100_000, y: 100_000), actor: actor)
       let child = try XCTUnwrap(workspace.createBoard(title: "Ink handoff", actor: actor))
       _ = hierarchy.createBoard(child.id, in: header.rootBoardID, near: .zero, actor: actor)
+      if requiresStaticRaster {
+        // More visible sources than native slots leaves a real painter fragment
+        // pinned. Empty painter bands are correctly pruned by the product.
+        for index in 0..<8 {
+          let element = SpatialElement(id: "retained-fragment-\(index)", surface: .board(child.id), kind: .nativeText,
+            frame: .init(x: 0, y: 0, width: 90, height: 64),
+            worldOrigin: .init(x: Double(index % 4) * 100 - 200, y: Double(index / 4) * 100 - 140),
+            source: "Pin \(index)", stamp: .init(counter: 0, actor: actor))
+          XCTAssertTrue(hierarchy.upsertElement(element, in: child.id, expected: nil, actor: actor))
+        }
+      }
       _ = try store.saveWorkspaceEdits(before: before, after: workspace, boardBefore: oldBoard, boardAfter: hierarchy)
       var journal = SpatialInkJournal(stamp: .init(counter: 0, actor: actor))
       for surface in [SurfaceID.board(header.rootBoardID), .board(child.id)] {

@@ -4,6 +4,7 @@ import NotebookCore
 import UIKit
 
 struct SpatialInkCanvas: UIViewRepresentable {
+  @Environment(NotebookAppModel.self) private var model: NotebookAppModel?
   // The actual input coordinator and its accepted contact own this basis.
   // A cached SwiftUI configuration must not prolong a dismantled scene.
   weak var cohort: SceneCompositionCohort?
@@ -34,6 +35,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
 
   func makeUIView(context: Context) -> SpatialInkContainerView {
     let view = SpatialInkContainerView()
+    view.bindCameraProjection(to: model?.nativeCameraProjection)
     view.onWindowChange = { [weak coordinator = context.coordinator, weak view] window in
       guard let coordinator, let view else { return }
       coordinator.install(on: window, inside: view)
@@ -59,6 +61,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
   }
 
   func updateUIView(_ view: SpatialInkContainerView, context: Context) {
+    view.bindCameraProjection(to: model?.nativeCameraProjection)
     context.coordinator.update(
       view: view, cohort: cohort,
       boardID: boardID,
@@ -185,8 +188,14 @@ struct SpatialInkCanvas: UIViewRepresentable {
       self.cohort = cohort
       let nextBoardSurface = SurfaceID.board(boardID)
       if boardSurface != nextBoardSurface { boardSurface = nextBoardSurface }
-      self.camera = camera
-      self.viewport = viewport
+      let current = view.currentCameraPresence(for: boardID)
+      self.camera = current?.camera ?? camera
+      self.viewport = current?.viewport ?? viewport
+      view.onCameraProjection = { [weak self] presence in
+        guard let self, !isRetired, boardSurface == .board(presence.boardID) else { return }
+        self.camera = presence.camera
+        self.viewport = presence.viewport
+      }
       self.items = items.sorted { $0.zIndex < $1.zIndex }
       if self.journal != journal {
         view.accessibilityValue = "\(journal?.actions.filter(\.isActive).count ?? 0) действий"
@@ -236,6 +245,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
       recognizer.allowedTouchTypes = [
         NSNumber(value: UITouch.TouchType.pencil.rawValue)
       ]
+      if inputGate.simulatesPencilContacts {
+        recognizer.allowedTouchTypes.append(NSNumber(value: UITouch.TouchType.direct.rawValue))
+      }
       #if DEBUG && targetEnvironment(simulator)
         if !ProcessInfo.processInfo.arguments.contains(
           SimulatorDrawingFixture.fingerGestureArgument
@@ -284,6 +296,8 @@ struct SpatialInkCanvas: UIViewRepresentable {
       isRetired = true
       uninstall()
       view?.onWindowChange = nil
+      view?.onCameraProjection = nil
+      view?.bindCameraProjection(to: nil)
       view = nil; cohort = nil; journal = nil; items.removeAll()
       isEnabled = false
       isItemBeingDeleted = { _ in false }
@@ -327,7 +341,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       actionGeometry = .init(camera: camera, viewport: viewport, surfaces: frozen,
         blockedSurfaces: Set(items.filter { isItemBeingDeleted($0.itemID) || surfaceRegistry.isRetired(.cover($0.itemID)) }.map { .cover($0.itemID) }),
         cohort: cohort, leases: leases)
-      setPencilActionActive(touch.type == .pencil)
+      setPencilActionActive(touch.type == .pencil || inputGate.simulatesPencilContacts)
       actionTool = drawingTool
       actionPenStyle = penStyle
       actionEraserStyle = eraserStyle
@@ -660,6 +674,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
 
     private func accepts(_ touch: UITouch) -> Bool {
       if touch.type == .pencil { return true }
+      if inputGate.simulatesPencilContacts, touch.type == .direct { return true }
       #if DEBUG && targetEnvironment(simulator)
         return touch.type == .direct
           && !ProcessInfo.processInfo.arguments.contains(
@@ -728,8 +743,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         cohort.plan.presentations[.board(boardID)] != nil, installedItems == suppliedItems,
         let coverage = cohort.plan.coverage[.board(boardID)]?.tiles,
         let first = coverage.first, let last = coverage.last,
-        surfaceRegistry.canvas(for: boardSurface)?.installedSpatialSource?.surface == boardSurface,
-        cohort.plan.tiles.allSatisfy({ cohort.rasters[$0].map { !$0.isReleased } == true }) else { return nil }
+        surfaceRegistry.canvas(for: boardSurface)?.installedSpatialSource?.surface == boardSurface else { return nil }
       let visible = WorkspaceSpatialBounds(origin: camera.screenToWorld(.zero, viewport: viewport),
         width: viewport.x / camera.scale, height: viewport.y / camera.scale)
       guard WorkspaceSpatialBounds(origin: first.origin, maximum: last.bounds.maximum).contains(visible) else { return nil }
@@ -786,8 +800,12 @@ struct SpatialInkCanvas: UIViewRepresentable {
         guard let view, let canvas = surfaceRegistry.canvas(for: surface) else { return point }
         // The retained board canvas has a fixed centered crop. Measured points
         // are expressed in that same canvas before building live GPU chunks.
+        let localOrigin = canvas.convert(point.location, from: view)
+        let localUnit = canvas.convert(CGPoint(x: point.location.x + 1, y: point.location.y), from: view)
+        let localScale = hypot(localUnit.x - localOrigin.x, localUnit.y - localOrigin.y)
         return PKStrokePoint(location: canvas.convert(point.location, from: view),
-          timeOffset: point.timeOffset, size: point.size, opacity: point.opacity,
+          timeOffset: point.timeOffset,
+          size: CGSize(width: point.size.width * localScale, height: point.size.height * localScale), opacity: point.opacity,
           force: point.force, azimuth: point.azimuth, altitude: point.altitude)
       }
       return PKStrokePoint(

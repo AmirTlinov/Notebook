@@ -22,7 +22,7 @@ public struct TargetRenderRequest: Codable, Equatable, Sendable, Identifiable {
       "region": try region.map(JSONValue.encode) ?? .null,
       "origin": try worldOrigin.map(JSONValue.encode) ?? .null, "page": .number(Double(pageIndex))])
     if target.kind == .page { key = key.setting("renderer", .string("NotebookPageComposition/2")) }
-    if target.kind == .document { key = key.setting("renderer", .string("NotebookDocumentFragments/2")) }
+    if target.kind == .document { key = key.setting("renderer", .string("NotebookDocumentFragments/4")) }
     if target.kind == .board || target.kind == .cover {
       key = key.setting("renderer", .string("NotebookSpatialComposition/2"))
     }
@@ -86,12 +86,15 @@ public struct DeviceActionReceipt: Codable, Equatable, Sendable, Identifiable {
   public let deviceID: UUID
   public let receivedAt: Date
   public let revisions: [CollaborationExpectation]
+  /// Absent only in historical device receipts; never inferred on decoding.
+  public let actionVersion: String?
   public var shown: [CollaborationExpectation]
   public var displayComplete: Bool
   public var visibleRegions: [CollaborationReference]
 
-  public init(id: UUID, deviceID: UUID, receivedAt: Date = Date(), revisions: [CollaborationExpectation] = [], shown: [CollaborationExpectation] = [], displayComplete: Bool = false, visibleRegions: [CollaborationReference] = []) {
+  public init(id: UUID, deviceID: UUID, receivedAt: Date = Date(), revisions: [CollaborationExpectation] = [], actionVersion: String? = nil, shown: [CollaborationExpectation] = [], displayComplete: Bool = false, visibleRegions: [CollaborationReference] = []) {
     self.id = id; self.deviceID = deviceID; self.receivedAt = receivedAt; self.revisions = revisions; self.shown = shown; self.displayComplete = displayComplete; self.visibleRegions = visibleRegions
+    self.actionVersion = actionVersion
   }
 }
 
@@ -154,7 +157,16 @@ public struct CollaborationEnvelope: Codable, Equatable, Sendable {
     var selection = selection
     if let next = incoming.selection, selection.map({ $0.stamp < next.stamp }) ?? true { selection = next }
     var delivery = Dictionary(uniqueKeysWithValues: delivery.map { ($0.id, $0) })
-    for next in incoming.delivery { delivery[next.id] = delivery[next.id].map { $0.merging(next) } ?? next }
+    for next in incoming.delivery {
+      if let previous = delivery[next.id], let action = actions[next.id] {
+        let version = try action.deliveryVersion()
+        if previous.matches(action, version: version) && !next.matches(action, version: version) { continue }
+        if next.matches(action, version: version) && !previous.matches(action, version: version) {
+          delivery[next.id] = next; continue
+        }
+      }
+      delivery[next.id] = delivery[next.id].map { $0.merging(next) } ?? next
+    }
     return .init(content: content, actions: actions.values.sorted { $0.id.uuidString < $1.id.uuidString },
       contexts: contexts.values.sorted { $0.id.uuidString < $1.id.uuidString }, selection: selection,
       delivery: delivery.values.sorted { $0.id.uuidString < $1.id.uuidString })
@@ -163,7 +175,7 @@ public struct CollaborationEnvelope: Codable, Equatable, Sendable {
 
 extension DeviceActionReceipt {
   func merging(_ next: Self) -> Self {
-    guard revisions == next.revisions else { return receivedAt > next.receivedAt ? self : next }
+    guard actionVersion == next.actionVersion, revisions == next.revisions else { return receivedAt > next.receivedAt ? self : next }
     var result = next
     for item in shown where !result.shown.contains(item) { result.shown.append(item) }
     for region in visibleRegions where !result.visibleRegions.contains(where: { $0.id == region.id }) { result.visibleRegions.append(region) }
@@ -354,6 +366,7 @@ extension NotebookStore {
 
   public func saveTargetRender(_ receipt: TargetRenderReceipt, png: Data? = nil) throws {
     try prepare()
+    try publishReferenceBaseline(receipt)
     if let png { try png.write(to: targetPNGURL(receipt.request.id), options: .atomic) }
     try JSONEncoder().encode(receipt).write(to: targetReceiptURL(receipt.request.id), options: .atomic)
     try commandTransaction {
@@ -368,12 +381,19 @@ extension NotebookStore {
     }
   }
 
-  public func saveDeviceActionReceipt(_ receipt: DeviceActionReceipt) throws {
+  @discardableResult
+  public func saveDeviceActionReceipt(_ receipt: DeviceActionReceipt) throws -> Bool {
     try commandTransaction {
+      guard let version = receipt.actionVersion else { return false }
+      let action: NotebookActionReadModel
+      do { action = try actionReadModel(receipt.id) }
+      catch let error as CollaborationError where error.code == "target_missing" { return false }
+      guard version == action.actionVersion, receipt.revisions == action.revisions else { return false }
       let path = "collaboration/delivery/" + receipt.id.uuidString.lowercased() + ".json"
       let previous = try storedValue(path)?.decode(DeviceActionReceipt.self)
-      let result = previous?.merging(receipt) ?? receipt
+      let result = previous?.matches(action) == true ? previous!.merging(receipt) : receipt
       if result != previous { try publishRecords(writes: [path: try .encode(result)]) }
+      return true
     }
   }
 
@@ -383,7 +403,13 @@ extension NotebookStore {
     return try commandTransaction {
     let resolved = envelope.content != nil || !envelope.actions.isEmpty || !envelope.contexts.isEmpty || envelope.selection != nil
       ? try mergeCollaborationContent(envelope.content,local:local,actions:envelope.actions, contexts:envelope.contexts, selection:envelope.selection) : nil
-    for receipt in envelope.delivery { try saveDeviceActionReceipt(receipt) }
+    for receipt in envelope.delivery {
+      let path = "collaboration/delivery/" + receipt.id.uuidString.lowercased() + ".json"
+      let previous = try storedValue(path)?.decode(DeviceActionReceipt.self)
+      if let result = try resolvedDeviceActionReceipt(receipt, previous: previous), result != previous {
+        try publishRecords(writes: [path: try .encode(result)])
+      }
+    }
     return resolved
     }
   }

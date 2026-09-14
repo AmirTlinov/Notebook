@@ -1,9 +1,82 @@
 import NotebookCore
+import SwiftUI
 import UIKit
 import XCTest
 @testable import Notebook
 
 final class NotebookPinnedImageTests: XCTestCase {
+  @MainActor
+  func testWholeBoardSendCapturesInstalledPixelsAfterContextPublicationWithoutControlsOrLaterChanges() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    model.moveItem(try await startedItem(model), to: .init(x: -30_000, y: -30_000))
+    let initialSaved = await model.finishPendingPersistence(); XCTAssertTrue(initialSaved)
+    let boardID = try XCTUnwrap(model.presence?.boardID)
+    var hierarchy = try model.store.loadBoard(items: model.store.loadIndex().items)
+    var element = SpatialElement(id: "red-source", surface: .board(boardID), kind: .web,
+      frame: .init(x: 0, y: 0, width: 100, height: 60), worldOrigin: .zero,
+      source: "Red SVG", html: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 60'><rect width='100' height='60' fill='#ff0000'/></svg>",
+      stamp: .init(counter: 0, actor: model.actorID))
+    XCTAssertTrue(hierarchy.upsertElement(element, in: boardID, expected: nil, actor: model.actorID))
+    try model.store.saveBoard(hierarchy, items: model.store.loadIndex().items)
+    await model.reloadExternalChanges()?.value
+    let presence = SessionPresence(boardID: boardID, mode: .board,
+      camera: .init(scale: 1), viewport: .init(x: 512, y: 512))
+    model.updatePresence(presence, settled: true)
+    let window = try await mountNotebookScene(model)
+    let address = SceneSourceAddress(plane: .board(boardID), elementID: element.id)
+    let deadline = ContinuousClock.now + .seconds(8)
+    while model.compositionTiles.published?.hasInstalledPixels(for: address) != true, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    let current = try XCTUnwrap(model.presence), cohort = try XCTUnwrap(model.compositionTiles.published)
+    XCTAssertTrue(cohort.hasInstalledPixels(for: address))
+    // This green application-level overlay covers the source on the window.
+    // A source-region PNG must come from the painted subtree beneath it.
+    let overlay = UIView(frame: .init(x: 250, y: 250, width: 120, height: 80))
+    overlay.backgroundColor = .green; window.addSubview(overlay)
+    let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start: .init(x: 20, y: 20),
+      end: .init(x: 490, y: 490), model: model, presence: current, cohort: cohort,
+      installedInk: model.compositionTiles.surfaceRegistry.installedSources()))
+    let references = try selection.resolvedReferences()
+    let reference = try XCTUnwrap(references.first { $0.target.kind == .board && $0.elementID == nil })
+    let fragment = try XCTUnwrap(selection.fragments.first { $0.id == reference.id })
+    let capturedSources = NotebookWorkspacePresentedSources.current(model: model, cohort: cohort)
+    model.publishHumanContext(selection)
+    let contextSaved = await model.finishPendingPersistence(); XCTAssertTrue(contextSaved)
+    let contextDeadline = ContinuousClock.now + .seconds(5)
+    while model.activeSharedContext == nil, ContinuousClock.now < contextDeadline { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertNotNil(model.activeSharedContext)
+    while model.workspacePresentations.captureFailure(fragment: fragment, expectedSources: capturedSources) != nil,
+      ContinuousClock.now < contextDeadline { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertNil(model.workspacePresentations.captureFailure(fragment: fragment, expectedSources: capturedSources))
+    let sent = selection.freezingSubmissionVisuals()
+    overlay.removeFromSuperview()
+    let previousStamp = element.stamp
+    XCTAssertTrue(element.update(source: "Blue SVG",
+      html: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 60'><rect width='100' height='60' fill='#0000ff'/></svg>", actor: model.actorID))
+    XCTAssertTrue(hierarchy.upsertElement(element, in: boardID, expected: previousStamp, actor: model.actorID))
+    try model.store.saveBoard(hierarchy, items: model.store.loadIndex().items)
+    await model.reloadExternalChanges()?.value
+    let result = try await sent.renderPinnedImages(references: references)
+    let image = try XCTUnwrap(result.images[reference.id], result.unavailable.description)
+    try image.validate(reference: reference)
+    let red = try pixel(image.png, x: Int(270 * image.pixelsPerPoint), y: Int(260 * image.pixelsPerPoint))
+    XCTAssertGreaterThan(red[0], 240); XCTAssertLessThan(red[1], 15); XCTAssertLessThan(red[2], 15)
+    let toolbarArea = try pixel(image.png, x: Int(50 * image.pixelsPerPoint), y: Int(30 * image.pixelsPerPoint))
+    XCTAssertLessThan(toolbarArea[0], 240, "The white Space toolbar is outside the painted owner")
+    let attachment = XCTAttachment(data: image.png, uniformTypeIdentifier: "public.png")
+    attachment.name = "whole-board-send-red-source-without-green-overlay-or-toolbar"
+    attachment.lifetime = .keepAlways; add(attachment)
+  }
+
+  @MainActor
+  private func startedItem(_ model: NotebookAppModel) async throws -> UUID {
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    return try XCTUnwrap(model.workspace?.selectedItemID)
+  }
+
   @MainActor
   func testFrozenPageCropKeepsPenEraseOrderAndNeverIncludesOutsidePixels() async throws {
     let pen = PageInkAction(tool: .pen, color: .init(red: 1, green: 0, blue: 0),
@@ -51,6 +124,71 @@ final class NotebookPinnedImageTests: XCTestCase {
     XCTAssertGreaterThan(value[0], 240); XCTAssertLessThan(value[1], 10); XCTAssertLessThan(value[2], 10)
     XCTAssertEqual(resources.activeWebSurfaceCount, 0, "Historical pixels must never restart the JavaScript program")
     XCTAssertEqual(resources.pendingWebRequestCount, 0)
+  }
+
+  @MainActor
+  func testSendingCannotReplaceAMissingLiveOwnerWithAnOldCachedProgramFrame() async throws {
+    let element = AgentElement(id: "animated", kind: .web, frame: .init(x: 0, y: 0, width: 32, height: 32),
+      source: "Animated program", html: "<canvas/>")
+    let page = PageDocument(size: .init(width: 64, height: 64), actor: UUID(), elements: [element])
+    let resources = SceneRenderResources(byteLimit: 16 * 1024 * 1024)
+    XCTAssertTrue(resources.store(bitmap(width: 32, height: 32, color: .red), for: element))
+    let captured = selection(page: page, region: element.frame, elementID: element.id,
+      resources: resources, capturesLivePrograms: true)
+    let reference = try XCTUnwrap(captured.resolvedReferences().first)
+    let sent = captured.freezingSubmissionVisuals()
+    let visual = try await sent.renderPinnedImages(references: [reference], resources: resources)
+    XCTAssertNil(visual.images[reference.id])
+    XCTAssertEqual(visual.unavailable[reference.id], "snapshot_pending: historical_live_frame_unavailable")
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0, "Sending must never start a replacement program")
+  }
+
+  @MainActor
+  func testFrozenLargeElementKeepsInstalledCropOriginDensityAndEntry() async throws {
+    let stamp = VersionStamp(counter: 0, actor: UUID())
+    let paper = WorkspaceItem.notebook(title: "Other paper", pageIDs: [UUID()])
+    let workspace = WorkspaceIndex(items: [paper], selectedItemID: paper.id, selectedPageID: paper.pageIDs[0], stamp: stamp)
+    let boardID = workspace.rootBoardID
+    let element = SpatialElement(id: "large-visible-program", surface: .board(boardID), kind: .web,
+      frame: .init(x: 20, y: 30, width: 4000, height: 3000), worldOrigin: .zero,
+      source: "A large live program", html: "<canvas/>", stamp: stamp)
+    let source = agentElementSnapshotSource(element)
+    let crop = PageRect(x: 1000, y: 2000, width: 32, height: 24)
+    let rasterSource = SceneRasterSource.agentRegion(source, crop)
+    let resources = SceneRenderResources(byteLimit: 16 * 1024 * 1024)
+    let format = UIGraphicsImageRendererFormat(); format.scale = 1
+    let pixels = UIGraphicsImageRenderer(size: .init(width: 32, height: 24), format: format).image {
+      UIColor.red.setFill(); $0.fill(.init(x: 0, y: 0, width: 16, height: 24))
+      UIColor.blue.setFill(); $0.fill(.init(x: 16, y: 0, width: 16, height: 24))
+    }
+    XCTAssertTrue(resources.store(pixels, for: rasterSource))
+    let installed = try XCTUnwrap(resources.retainRaster(for: rasterSource))
+    let hierarchy = BoardHierarchy(rootBoardID: boardID,
+      boards: [.init(id: boardID, board: BoardDocument(freeItems: [
+        .init(itemID: paper.id, center: .init(x: 100_000, y: 100_000), zIndex: 0, stamp: stamp)
+      ], elements: [element], stamp: stamp))], stamp: stamp)
+    let fragments: [NotebookAttentionSelection.Fragment] = [
+      .init(target: .init(kind: .board, id: boardID), elementID: element.id,
+        region: .init(x: 1040, y: 2038, width: 8, height: 8), worldOrigin: .zero, pageIndex: nil, label: "Shown crop"),
+      .init(target: .init(kind: .board, id: boardID), elementID: element.id,
+        region: .init(x: 990, y: 2038, width: 8, height: 8), worldOrigin: .zero, pageIndex: nil, label: "Outside retained pixels")
+    ]
+    let visuals = NotebookFrozenVisualSources.capture(fragments: fragments, hierarchy: hierarchy,
+      pages: [:], documents: [:], states: [:], installedSources: [.init(plane: .board(boardID), elementID: element.id): installed],
+      resources: resources)
+    let selection = NotebookAttentionSelection(fragments: fragments, workspace: workspace, hierarchy: hierarchy,
+      ink: .init(stamp: stamp), pages: [:], documents: [:], states: [:], visuals: visuals)
+    let references = try selection.resolvedReferences()
+    XCTAssertTrue(resources.store(bitmap(width: 32, height: 24, color: .green), for: rasterSource))
+    let result = try await selection.renderPinnedImages(references: references, resources: resources)
+    let image = try XCTUnwrap(result.images[references[0].id])
+    XCTAssertEqual(image.pixelWidth, 8); XCTAssertEqual(image.pixelHeight, 8)
+    XCTAssertEqual(image.pixelsPerPoint, 1, "Frozen evidence cannot invent source detail by enlarging the old pixels")
+    let value = try pixel(image.png, x: 3, y: 3)
+    XCTAssertLessThan(value[0], 10); XCTAssertLessThan(value[1], 10); XCTAssertGreaterThan(value[2], 240)
+    XCTAssertEqual(result.unavailable[references[1].id], "snapshot_pending: historical_region_unavailable")
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+    XCTAssertEqual(resources.reservedBytes, 0)
   }
 
   @MainActor
@@ -123,6 +261,7 @@ final class NotebookPinnedImageTests: XCTestCase {
     deadline = ContinuousClock.now + .seconds(5)
     while model.compositionTiles.published == nil, model.compositionTiles.failure == nil,
       ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+    try await mountNotebookScene(model)
     let shown = try XCTUnwrap(model.compositionTiles.published, model.compositionTiles.failure ?? "")
     defer { model.compositionTiles.removePublishedCoverage() }
     let item = try XCTUnwrap(shown.frame.workset(boardID: boardID).items.first { $0.id == itemID })
@@ -131,7 +270,8 @@ final class NotebookPinnedImageTests: XCTestCase {
       let selection = try XCTUnwrap(NotebookAttentionProjection.capture(
         start: .init(x: box.x - 98, y: box.y - 98),
         end: .init(x: box.x + intersection, y: box.y + intersection),
-        model: model, presence: presence, cohort: shown, installedInk: cohortInkSources(shown)))
+        model: model, presence: presence, cohort: shown,
+        installedInk: model.compositionTiles.surfaceRegistry.installedSources()))
       let reference = try XCTUnwrap(selection.resolvedReferences().first { $0.target.kind == .cover })
       XCTAssertNil(reference.elementID, "An area intersection is not a second tap on the corner's element")
       let region = try XCTUnwrap(reference.region)
@@ -155,9 +295,17 @@ final class NotebookPinnedImageTests: XCTestCase {
     await model.finishPendingPersistence()
     let boardID = try XCTUnwrap(model.presence?.boardID)
     var hierarchy = try model.store.loadBoard(items: model.store.loadIndex().items)
-    let old = SpatialElement(id: "visible-text", surface: .board(boardID), kind: .nativeText,
+    let old = SpatialElement(id: "z-visible-svg", surface: .board(boardID), kind: .web,
       frame: .init(x: 0, y: 0, width: 100, height: 60), worldOrigin: .zero,
-      source: "Old visible", stamp: .init(counter: 0, actor: model.actorID))
+      source: "Old visible SVG", html: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 60'><rect width='100' height='60' fill='red'/></svg>", stamp: .init(counter: 0, actor: model.actorID))
+    let fillers = (0..<7).map { offset in
+      SpatialElement(id: "a-\(offset)", surface: .board(boardID), kind: .nativeText,
+        frame: .init(x: -160, y: 0, width: 32, height: 32), worldOrigin: .zero, source: "\(offset)",
+        stamp: .init(counter: 0, actor: model.actorID))
+    }
+    for filler in fillers {
+      XCTAssertTrue(hierarchy.upsertElement(filler, in: boardID, expected: nil, actor: model.actorID))
+    }
     XCTAssertTrue(hierarchy.upsertElement(old, in: boardID, expected: nil, actor: model.actorID))
     try model.store.saveBoard(hierarchy, items: model.store.loadIndex().items)
     await model.reloadExternalChanges()?.value
@@ -167,17 +315,34 @@ final class NotebookPinnedImageTests: XCTestCase {
     var deadline = ContinuousClock.now + .seconds(5)
     while model.scenePreparationPending, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     let frame = WorkspaceSceneFrame(index: try XCTUnwrap(model.sceneIndex), presence: presence, portalCamera: model.scenePortalCamera)
-    model.prepareComposition(presence: presence, frame: frame, pinned: [.element(old.id)], displayScale: 2)
+    model.prepareComposition(presence: presence, frame: frame, pinned: Set(fillers.map { .element($0.id) }), displayScale: 2)
     deadline = ContinuousClock.now + .seconds(5)
-    while model.compositionTiles.published == nil, model.compositionTiles.failure == nil,
+    let address = SceneSourceAddress(plane: .board(boardID), elementID: old.id)
+    while model.compositionTiles.published?.sourceReceipts[address]?.hasCurrentPixels != true, model.compositionTiles.failure == nil,
       ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     let shown = try XCTUnwrap(model.compositionTiles.published, model.compositionTiles.failure ?? "")
     defer { model.compositionTiles.removePublishedCoverage() }
-    let referenceToMove = EditableElementReference.spatial(boardID: boardID, elementID: old.id)
-    model.selectElement(referenceToMove)
-    let move = try XCTUnwrap(model.beginElementManipulation(referenceToMove, kind: .move))
-    XCTAssertTrue(model.finishElementManipulation(move, translation: .init(x: 500, y: 400)))
-    await model.finishPendingPersistence()
+    XCTAssertFalse(shown.plan.allowsLive(.element(old.id), in: .board(boardID)))
+    XCTAssertEqual(shown.sourceReceipts[address]?.hasCurrentPixels, true)
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow)
+    let window = UIWindow(windowScene: scene)
+    window.frame = .init(x: 0, y: 0, width: 512, height: 512)
+    let host = UIHostingController(rootView: FrozenAttentionTileSurface(cohort: shown, presence: presence))
+    window.rootViewController = host; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    deadline = ContinuousClock.now + .seconds(5)
+    while !shown.isPaintInstalled, ContinuousClock.now < deadline {
+      window.layoutIfNeeded(); try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertTrue(shown.isPaintInstalled)
+    // Keep this native presentation fixed while a newer model projection is
+    // admitted. The contact must use the old pixels still mounted in this host.
+    var moved = old
+    XCTAssertTrue(moved.update(frame: .init(x: 500, y: 400, width: 100, height: 60), actor: model.actorID))
+    XCTAssertTrue(hierarchy.upsertElement(moved, in: boardID, expected: old.stamp, actor: model.actorID))
+    try model.store.saveBoard(hierarchy, items: model.store.loadIndex().items)
+    await model.reloadExternalChanges()?.value
     deadline = ContinuousClock.now + .seconds(5)
     while model.scenePreparationPending, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     XCTAssertNotEqual(model.sceneIndex?.generationID, shown.frame.index.generationID)
@@ -194,7 +359,7 @@ final class NotebookPinnedImageTests: XCTestCase {
 
   @MainActor
   private func selection(page: PageDocument, region: PageRect, elementID: String? = nil,
-    resources: SceneRenderResources? = nil) -> NotebookAttentionSelection {
+    resources: SceneRenderResources? = nil, capturesLivePrograms: Bool = false) -> NotebookAttentionSelection {
     let stamp = VersionStamp(counter: 0, actor: UUID())
     let item = WorkspaceItem.notebook(title: "Frozen page", pageIDs: [page.id])
     let workspace = WorkspaceIndex(items: [item], selectedItemID: item.id, selectedPageID: page.id, stamp: stamp)
@@ -204,7 +369,7 @@ final class NotebookPinnedImageTests: XCTestCase {
     let fragments: [NotebookAttentionSelection.Fragment] = [.init(target: .init(kind: .page, id: page.id),
       elementID: elementID, region: region, worldOrigin: nil, pageIndex: nil, label: "Frozen")]
     let visuals = resources.map { NotebookFrozenVisualSources.capture(fragments: fragments, hierarchy: hierarchy,
-      pages: [page.id: page], documents: [:], states: [:], resources: $0) }
+      pages: [page.id: page], documents: [:], states: [:], capturesLivePrograms: capturesLivePrograms, resources: $0) }
     return .init(fragments: fragments, workspace: workspace, hierarchy: hierarchy,
       ink: .init(stamp: stamp), pages: [page.id: page], documents: [:], states: [:], visuals: visuals)
   }
@@ -233,5 +398,26 @@ final class NotebookPinnedImageTests: XCTestCase {
     context.draw(image, in: .init(x: 0, y: 0, width: image.width, height: image.height))
     let bytes = try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self)
     return (0..<(image.width * image.height)).map { index in Array(UnsafeBufferPointer(start: bytes + index * 4, count: 4)) }
+  }
+}
+
+private struct FrozenAttentionTileSurface: View {
+  let cohort: SceneCompositionCohort
+  let presence: SessionPresence
+
+  var body: some View {
+    ZStack { plane(.elements); plane(.covers) }.ignoresSafeArea()
+  }
+
+  private func plane(_ layer: ScenePaintPosition.Layer) -> some View {
+    SceneCameraPlane(presence: presence, revision: cohort.paintID,
+      installation: cohort.installation(for: layer)) { anchor in
+      ZStack {
+        ForEach(SceneCompositionTileBandView.bands(in: cohort, plane: .board(presence.boardID), layer: layer, presence: anchor)) { band in
+          band.zIndex(Double(band.rank))
+        }
+
+      }
+    }
   }
 }

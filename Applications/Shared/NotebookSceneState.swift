@@ -4,6 +4,28 @@ import NotebookCore
 /// One WAL snapshot supplies a bounded scene projection. A missing item outside
 /// its coverage is not a deletion; native commands name their before/after scope.
 struct NotebookSceneState: Sendable {
+  struct OpenedDocument: Sendable {
+    let header: NotebookWorkspaceHeader
+    let document: DocumentDocument
+    let state: DocumentStateJournal
+    let drafts: [DocumentEditingSession]
+  }
+
+  /// An accepted opening is a separate read capability from a closed cover's
+  /// camera projection. It names one owner and never expands neighbouring books.
+  static func readOpenedDocument(store: NotebookStore, documentID: UUID, boardID: UUID) throws -> OpenedDocument? {
+    try store.readTransaction { store in
+      guard try store.readItemHeader(documentID)?.kind == .document,
+        try store.ownerBoardID(of: documentID) == boardID else { return nil }
+      let live = try store.readWorkingSet(itemIDs: [documentID], pageIDs: [], boardIDs: [], surfaces: [])
+      guard let document = live.documents[documentID], let state = live.states[documentID] else {
+        throw NotebookStorageError.corruptRecord("opened document source")
+      }
+      return try .init(header: live.header, document: document, state: state,
+        drafts: store.documentEditingSessions(documentID: documentID))
+    }
+  }
+
   let header: NotebookWorkspaceHeader
   let workspace: WorkspaceIndex
   let pages: [UUID: PageDocument]
@@ -71,8 +93,10 @@ struct NotebookSceneState: Sendable {
       var selected = selectedHeader.item
       var pagePositions: [NotebookPagePosition] = [], pages: [UUID: PageDocument] = [:]
       var pageID: UUID?
+      var notebookRoot: String?
       if selected.kind == .notebook {
         let notebook = try store.readNotebookPageWindow(itemID: selected.id, pages: []).header
+        notebookRoot = notebook.visibleRoot
         let requestedID = considered?.notebookPageID ?? notebook.selectedPageID
         let position = try requestedID.flatMap { try store.resolveNotebookPage($0, in: selected.id, expectedVisibleRoot: notebook.visibleRoot) }
           ?? store.resolveNotebookPage(selectedHeader.firstPageID!, in: selected.id, expectedVisibleRoot: notebook.visibleRoot)
@@ -89,11 +113,6 @@ struct NotebookSceneState: Sendable {
             expectedVisibleRoot: notebook.visibleRoot)
           pagePositions = directory.pages.map(\.position)
         }
-        if loadsLiveContent {
-          let window = try store.readNotebookPageWindow(itemID: selected.id,
-            pages: pagePositions.map { .page($0.pageID) }, expectedVisibleRoot: notebook.visibleRoot)
-          pages = Dictionary(uniqueKeysWithValues: window.pages.map { ($0.document.id, $0.document) })
-        }
         selected = .notebook(id: selected.id, title: selected.title,
           pageIDs: [selectedHeader.firstPageID!] + pagePositions.map(\.pageID).filter { $0 != selectedHeader.firstPageID })
       }
@@ -104,7 +123,9 @@ struct NotebookSceneState: Sendable {
       let geometry = selectedPaper.map(WorkspaceItemGeometry.document) ?? .notebook
       let presence: SessionPresence
       if let considered, considered.boardID == boardID,
-        considered.focusedItemID == nil || (considered.focusedItemID == selected.id && owner == boardID) {
+        considered.focusedItemID == nil || (considered.focusedItemID == selected.id && owner == boardID),
+        considered.mode != .page || selected.kind == .notebook,
+        considered.mode != .document || selected.kind == .document {
         presence = considered.adapted(to: viewport, geometry: geometry).selecting(itemID: selected.id, pageID: pageID)
       } else {
         let placement = try store.readBoardItem(selected.id)
@@ -119,6 +140,16 @@ struct NotebookSceneState: Sendable {
           viewport: viewport, focusedItemID: opensInitialPaper ? selected.id : nil,
           openProgress: opensInitialPaper ? 1 : 0,
           selectedItemID: selected.id, notebookPageID: pageID)
+      }
+      // Selection is an address, not an open reader. Both startup and external
+      // refresh resolve the actual presentation before reading page bodies,
+      // document blocks, runtime state or editing drafts.
+      let needsSelectedContent = loadsLiveContent && presence.focusedItemID == selected.id
+        && (presence.openProgress > 0 || presence.mode == .page || presence.mode == .document)
+      if needsSelectedContent, let notebookRoot {
+        let window = try store.readNotebookPageWindow(itemID: selected.id,
+          pages: pagePositions.map { .page($0.pageID) }, expectedVisibleRoot: notebookRoot)
+        pages = Dictionary(uniqueKeysWithValues: window.pages.map { ($0.document.id, $0.document) })
       }
       var items: [UUID: WorkspaceItem] = [selected.id: selected]
       var nodes: [UUID: BoardNode] = [:]
@@ -181,7 +212,7 @@ struct NotebookSceneState: Sendable {
       // Neighbouring covers need geometry and ink, not every book's source.
       // The chosen document is the only native reader; composition prepares
       // its own admitted passive sources through SceneCompositionSource.
-      let live = try store.readWorkingSet(itemIDs: loadsLiveContent && selected.kind == .document ? [selected.id] : [], pageIDs: [],
+      let live = try store.readWorkingSet(itemIDs: needsSelectedContent && selected.kind == .document ? [selected.id] : [], pageIDs: [],
         boardIDs: boardIDs, surfaces: Array(surfaces))
       for item in live.items where item.id != selected.id { items[item.id] = item.item }
       paper.merge(live.documents.mapValues(\.paperSize)) { _, next in next }
@@ -198,7 +229,7 @@ struct NotebookSceneState: Sendable {
       }
       return try Self(header: header, workspace: workspace, pages: pages, pagePositions: pagePositions,
         documents: live.documents, states: live.states,
-        drafts: loadsLiveContent && selected.kind == .document ? store.documentEditingSessions(documentID: selected.id) : [],
+        drafts: needsSelectedContent && selected.kind == .document ? store.documentEditingSessions(documentID: selected.id) : [],
         hierarchy: hierarchy, boardContentRevisions: boardContentRevisions, ink: live.ink, inkSurfaces: Set(surfaces), presence: presence, paperSizes: paper,
         coverage: coverage, truncatedBoards: truncated, completeCoverElementOwners: completeCoverElementOwners, missingPinnedElements: missingPinnedElements,
         missingPinnedItems: missingPinnedItems, transferredPinnedItems: transferredPinnedItems)

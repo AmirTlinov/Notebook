@@ -5,6 +5,363 @@ import XCTest
 
 final class SceneRenderResourcesTests: XCTestCase {
   @MainActor
+  func testMemoryReclamationAddressesOneCheapOwnerAndKeepsCanonicalWork() throws {
+    let resources = SceneRenderResources(byteLimit: 1_000, profile: .interactive)
+    let canonical = try XCTUnwrap(resources.reserveDerivedBytes(200, priority: .passive))
+    let preview = try XCTUnwrap(resources.reserveDerivedBytes(200, priority: .passive))
+    let canonicalID = UUID(), previewID = UUID()
+    var released: [String] = []
+    let first = resources.registerReclamationOwner { [.init(id: canonicalID, bytes: 200, rasterCount: 0,
+      value: .canonicalLayout, distance: 0, restorationMilliseconds: 300,
+      release: { released.append("canonical"); canonical.release(); return nil })] }
+    let second = resources.registerReclamationOwner { preview.isReleased ? [] : [.init(id: previewID, bytes: 200, rasterCount: 0,
+      value: .neighbour, distance: 2, restorationMilliseconds: 10,
+      release: { released.append("preview"); preview.release(); return nil })] }
+    defer { resources.unregisterReclamationOwner(first); resources.unregisterReclamationOwner(second); canonical.release(); preview.release() }
+    let admitted = try XCTUnwrap(resources.reserveDerivedBytes(200, priority: .passive))
+    defer { admitted.release() }
+    XCTAssertEqual(released, ["preview"])
+    XCTAssertFalse(canonical.isReleased); XCTAssertEqual(resources.reservedBytes, 400)
+  }
+
+  @MainActor
+  func testMemoryReleaseWaitsForTheActualOperationWithoutEvictingAnotherOwner() async throws {
+    let resources = SceneRenderResources(byteLimit: 1_000, profile: .interactive)
+    let first = try XCTUnwrap(resources.reserveDerivedBytes(200, priority: .passive))
+    let second = try XCTUnwrap(resources.reserveDerivedBytes(200, priority: .passive))
+    let firstID = UUID(), secondID = UUID()
+    var finish: CheckedContinuation<Void, Never>?
+    var released: [UUID] = []
+    let owner = resources.registerReclamationOwner {
+      [first, second].filter { !$0.isReleased }.map { (reservation: RasterReservation) -> SceneResourceReclamationCandidate in
+        .init(id: reservation === first ? firstID : secondID, bytes: 200, rasterCount: 0, value: .neighbour,
+          distance: reservation === first ? 2 : 1, restorationMilliseconds: 1,
+          release: {
+            released.append(reservation === first ? firstID : secondID)
+            return Task { @MainActor in
+              await withCheckedContinuation { finish = $0 }
+              reservation.release()
+            }
+          })
+      }
+    }
+    var granted = false
+    let request = Task { @MainActor in
+      let result = try await resources.acquirePassiveDerivedBytes(200); granted = true; return result
+    }
+    defer { request.cancel(); finish?.resume(); finish = nil; first.release(); second.release(); resources.unregisterReclamationOwner(owner) }
+    try await waitUntil { finish != nil && resources.pendingDerivedRequestCount == 1 }
+    XCTAssertEqual(released, [firstID]); XCTAssertFalse(granted)
+    XCTAssertEqual(resources.reservedBytes, 400)
+    for _ in 0..<10 { await Task.yield() }
+    XCTAssertEqual(released, [firstID])
+    finish?.resume(); finish = nil
+    let result = try await request.value
+    defer { result.release() }
+    XCTAssertTrue(granted); XCTAssertFalse(second.isReleased)
+    XCTAssertEqual(released, [firstID]); XCTAssertEqual(resources.reservedBytes, 400)
+  }
+
+  @MainActor
+  func testSmallNewRequestsCannotConsumeCapacityAheadOfALargeAcceptedStage() async throws {
+    let resources = SceneRenderResources(byteLimit: 1_000, profile: .interactive)
+    let blocker = try XCTUnwrap(resources.reserveDerivedBytes(300, priority: .passive))
+    var order: [String] = []
+    let large = Task { @MainActor in
+      let value = try await resources.acquirePassiveDerivedBytes(400); order.append("large"); return value
+    }
+    defer { blocker.release(); large.cancel() }
+    try await waitUntil { resources.pendingDerivedRequestCount == 1 }
+    let small = Task { @MainActor in
+      let value = try await resources.acquirePassiveDerivedBytes(100); order.append("small"); return value
+    }
+    defer { small.cancel() }
+    try await waitUntil { resources.pendingDerivedRequestCount == 2 }
+    XCTAssertTrue(order.isEmpty)
+    blocker.release()
+    let a = try await large.value, b = try await small.value
+    defer { a.release(); b.release() }
+    XCTAssertEqual(order, ["large", "small"])
+    XCTAssertEqual(resources.reservedBytes, 500)
+  }
+
+  @MainActor
+  func testIdleExecutorReclamationTargetsOneOwnerAndWaitsForItsPhysicalBorrow() async throws {
+    let resources = SceneRenderResources(maximumWebSurfaces: 2, maximumBackgroundWebSurfaces: 2,
+      maximumPendingWebRequests: 2, reservedInteractiveSlots: 0)
+    let first = try await resources.acquireWebSurface(priority: .visible)
+    let second = try await resources.acquireWebSurface(priority: .visible)
+    let physicalCall = try first.borrow()
+    var retired: [UUID] = []
+    first.offerIdleReclamation { retired.append(first.id); first.release() }
+    second.offerIdleReclamation { retired.append(second.id); second.release() }
+    var admitted = false
+    let request = Task { @MainActor in
+      let lease = try await resources.acquireWebSurface(priority: .currentPage)
+      admitted = true; return lease
+    }
+    defer { request.cancel(); physicalCall.release(); first.release(); second.release() }
+    for _ in 0..<100 where resources.pendingWebRequestCount == 0 { await Task.yield() }
+    XCTAssertEqual(retired, [first.id])
+    XCTAssertEqual(resources.activeWebSurfaceCount, 2)
+    XCTAssertFalse(admitted)
+    for _ in 0..<10 { await Task.yield() }
+    XCTAssertEqual(retired, [first.id], "A finishing owner must not cause fan-out eviction")
+    physicalCall.release()
+    let current = try await request.value
+    defer { current.release() }
+    XCTAssertTrue(admitted); XCTAssertFalse(second.isReleased)
+    XCTAssertEqual(retired, [first.id]); XCTAssertEqual(resources.pendingWebRequestCount, 0)
+  }
+
+  @MainActor
+  func testStageAdmissionTransfersWithoutLettingAQueuedConsumerTakeItsCapacity() async throws {
+    let resources = SceneRenderResources(byteLimit: 1_000, profile: .interactive)
+    let admitted = try XCTUnwrap(resources.reserveDerivedBytes(500, priority: .passive))
+    var competitorStarted = false
+    let competitor = Task { @MainActor in
+      let reservation = try await resources.acquirePassiveDerivedBytes(100)
+      competitorStarted = true; return reservation
+    }
+    defer { competitor.cancel(); admitted.release() }
+    try await waitUntil { resources.pendingDerivedRequestCount == 1 }
+    let stage = try XCTUnwrap(resources.splitPassiveDerivedReservation(admitted, bytes: 200))
+    defer { stage.release() }
+    XCTAssertEqual(admitted.byteCount, 300)
+    XCTAssertEqual(resources.reservedBytes, 500)
+    XCTAssertTrue(resources.transferPassiveDerivedReservation(admitted, to: stage, bytes: 300))
+    XCTAssertTrue(admitted.isReleased)
+    XCTAssertEqual(stage.byteCount, 500)
+    for _ in 0..<20 { await Task.yield() }
+    XCTAssertFalse(competitorStarted, "Handoff must never publish its admitted bytes as available")
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 1)
+    XCTAssertEqual(resources.reservedBytes, 500)
+    XCTAssertEqual(resources.peakAccountedBytes, 500)
+    stage.release()
+    let next = try await competitor.value
+    XCTAssertTrue(competitorStarted)
+    XCTAssertEqual(resources.reservedBytes, 100)
+    next.release(); admitted.release(); stage.release()
+    XCTAssertEqual(resources.reservedBytes, 0)
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 0)
+  }
+
+  @MainActor
+  func testStageTransferRejectsForeignReleasedAndSelfReservationsWithoutChangingEitherPool() throws {
+    let resources = SceneRenderResources(byteLimit: 1_000, profile: .interactive)
+    let other = SceneRenderResources(byteLimit: 1_000, profile: .interactive)
+    let donor = try XCTUnwrap(resources.reserveDerivedBytes(300, priority: .passive))
+    let receiver = try XCTUnwrap(other.reserveDerivedBytes(200, priority: .passive))
+    defer { donor.release(); receiver.release() }
+    XCTAssertFalse(resources.transferPassiveDerivedReservation(donor, to: receiver, bytes: 100))
+    XCTAssertNil(resources.splitPassiveDerivedReservation(donor, bytes: 301))
+    XCTAssertFalse(resources.transferPassiveDerivedReservation(donor, to: donor, bytes: 100))
+    XCTAssertEqual(resources.reservedBytes, 300)
+    XCTAssertEqual(other.reservedBytes, 200)
+    receiver.release()
+    XCTAssertFalse(resources.transferPassiveDerivedReservation(donor, to: receiver, bytes: 100))
+    XCTAssertEqual(donor.byteCount, 300)
+  }
+
+  @MainActor
+  func testDerivedReservationTransferAdmitsOnlyGrowthAndNeverDropsItsExistingCharge() throws {
+    let resources = SceneRenderResources(byteLimit: 1_000, profile: .interactive)
+    let staging = try XCTUnwrap(resources.reserveDerivedBytes(400, priority: .passive))
+    defer { staging.release() }
+    XCTAssertTrue(resources.resizePassiveDerivedReservation(staging, to: 450),
+      "Only fifty additional bytes are needed, not another full 450-byte reservation")
+    XCTAssertEqual(staging.byteCount, 450)
+    XCTAssertEqual(resources.reservedBytes, 450)
+    XCTAssertFalse(resources.resizePassiveDerivedReservation(staging, to: 600))
+    XCTAssertEqual(staging.byteCount, 450)
+    XCTAssertEqual(resources.reservedBytes, 450, "Failed growth preserves the old materialized packet charge")
+    XCTAssertTrue(resources.resizePassiveDerivedReservation(staging, to: 100))
+    XCTAssertEqual(staging.byteCount, 100)
+    XCTAssertEqual(resources.reservedBytes, 100)
+    XCTAssertLessThanOrEqual(resources.peakAccountedBytes, 500)
+    staging.release(); staging.release()
+    XCTAssertEqual(resources.reservedBytes, 0)
+  }
+
+  @MainActor
+  func testRequiredDerivedBytesWaitForSufficientCapacityWithoutRepeatingRefusals() async throws {
+    let resources = SceneRenderResources(byteLimit: 1_000, profile: .interactive)
+    let large = try XCTUnwrap(resources.reserveDerivedBytes(400, priority: .passive))
+    let small = try XCTUnwrap(resources.reserveDerivedBytes(99, priority: .passive))
+    var admitted = false
+    let request = Task { @MainActor in
+      let reservation = try await resources.acquirePassiveDerivedBytes(200)
+      admitted = true; return reservation
+    }
+    defer { request.cancel(); large.release(); small.release() }
+    try await waitUntil { resources.pendingDerivedRequestCount == 1 }
+    let refusal = try XCTUnwrap(resources.lastRasterRefusal).generation
+    XCTAssertEqual(resources.reservedBytes, 499, "Queued work owns no unadmitted byte buffer")
+    small.release()
+    for _ in 0..<20 { await Task.yield() }
+    XCTAssertFalse(admitted)
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 1)
+    XCTAssertEqual(resources.lastRasterRefusal?.generation, refusal,
+      "An insufficient release cannot rerun the same failed allocation")
+    large.release()
+    let reservation = try await request.value
+    defer { reservation.release() }
+    XCTAssertTrue(admitted)
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 0)
+    XCTAssertEqual(resources.reservedBytes, 200)
+    XCTAssertEqual(resources.passiveReservedBytes, 200)
+    XCTAssertLessThanOrEqual(resources.peakAccountedBytes, 500,
+      "The interactive half of the same pool is never borrowed")
+  }
+
+  @MainActor
+  func testCancellingADerivedAdmissionReleasesOnlyThatWaiterBeforeAnotherRequestRecovers() async throws {
+    let resources = SceneRenderResources(byteLimit: 1_000, profile: .interactive)
+    let blocker = try XCTUnwrap(resources.reserveDerivedBytes(500, priority: .passive))
+    let cancelled = Task { try await resources.acquirePassiveDerivedBytes(200) }
+    let survivor = Task { try await resources.acquirePassiveDerivedBytes(200) }
+    defer { cancelled.cancel(); survivor.cancel(); blocker.release() }
+    try await waitUntil { resources.pendingDerivedRequestCount == 2 }
+    cancelled.cancel()
+    do { _ = try await cancelled.value; XCTFail("Cancelled work received a reservation") }
+    catch { XCTAssertTrue(error is CancellationError) }
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 1)
+    XCTAssertEqual(resources.reservedBytes, 500)
+    blocker.release()
+    let reservation = try await survivor.value
+    defer { reservation.release() }
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 0)
+    XCTAssertEqual(resources.reservedBytes, 200)
+  }
+
+  @MainActor
+  func testImpossibleDerivedSizeAndFullAdmissionQueueFailExplicitly() async throws {
+    let resources = SceneRenderResources(byteLimit: 1_000, profile: .interactive, maximumPendingWebRequests: 1)
+    do { _ = try await resources.acquirePassiveDerivedBytes(501); XCTFail("A request larger than its whole budget must fail") }
+    catch { XCTAssertEqual(error as? SceneRenderError, .resourceLimit) }
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 0)
+    let blocker = try XCTUnwrap(resources.reserveDerivedBytes(500, priority: .passive))
+    let waiting = Task { try await resources.acquirePassiveDerivedBytes(200) }
+    defer { waiting.cancel(); blocker.release() }
+    try await waitUntil { resources.pendingDerivedRequestCount == 1 }
+    do { _ = try await resources.acquirePassiveDerivedBytes(100); XCTFail("The bounded queue cannot grow indefinitely") }
+    catch { XCTAssertEqual(error as? SceneRenderError, .resourceLimit) }
+    waiting.cancel(); _ = try? await waiting.value
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 0)
+    XCTAssertEqual(resources.reservedBytes, 500)
+  }
+
+  @MainActor
+  func testDocumentProgramSharesSourceExclusivityButNotUnrelatedDocumentOrBoardIdentity() async throws {
+    let resources = SceneRenderResources(), documentID = UUID()
+    let old = try await resources.acquireDocumentProgramSurface(priority: .liveProgram,
+      documentID: documentID, blockID: "same-local-id")
+    let submitted = try old.borrow()
+    old.release()
+    var replacementStarted = false
+    let replacement = Task { @MainActor in
+      let value = try await resources.acquireDocumentProgramSurface(priority: .input,
+        documentID: documentID, blockID: "same-local-id", deadline: .now + .seconds(3))
+      replacementStarted = true
+      return value
+    }
+    defer { replacement.cancel(); submitted.release(); old.release() }
+    for _ in 0..<100 where resources.pendingWebRequestCount == 0 { await Task.yield() }
+    XCTAssertEqual(resources.pendingWebRequestCount, 1)
+    let otherDocument = try await resources.acquireDocumentProgramSurface(priority: .input,
+      documentID: UUID(), blockID: "same-local-id")
+    let board = try await resources.acquireWebSurface(priority: .input,
+      source: .board(boardID: documentID, elementID: "same-local-id"))
+    defer { otherDocument.release(); board.release() }
+    XCTAssertFalse(replacementStarted)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 3)
+    submitted.release()
+    let current = try await replacement.value
+    defer { current.release() }
+    XCTAssertTrue(replacementStarted)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 3)
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+  }
+
+  @MainActor
+  func testOneSourceExecutorWaitsForItsActualSubmittedBorrowWhileUnrelatedInputProceeds() async throws {
+    let resources = SceneRenderResources()
+    let source = InteractiveElementReference.board(boardID: UUID(), elementID: "shared-program")
+    let raster = try await resources.acquireWebSurface(priority: .background, source: source)
+    let submitted = try raster.borrow()
+    var hasPromoted = false
+    let promoted = Task { @MainActor in
+      let lease = try await resources.acquireWebSurface(priority: .input, source: source, deadline: .now + .seconds(3))
+      hasPromoted = true
+      return lease
+    }
+    defer { promoted.cancel(); submitted.release(); raster.release() }
+    for _ in 0..<100 where resources.pendingWebRequestCount == 0 { await Task.yield() }
+    XCTAssertEqual(resources.pendingWebRequestCount, 1)
+    let other = try await resources.acquireWebSurface(priority: .input,
+      source: .board(boardID: UUID(), elementID: "unrelated"))
+    defer { other.release() }
+    XCTAssertEqual(resources.activeWebSurfaceCount, 2)
+    XCTAssertFalse(hasPromoted)
+    raster.release()
+    await Task.yield()
+    XCTAssertFalse(hasPromoted, "Dismantling does not end a submitted WebKit operation")
+    submitted.release()
+    let input = try await promoted.value
+    defer { input.release() }
+    XCTAssertTrue(hasPromoted)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 2)
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+  }
+
+  @MainActor
+  func testSourceAdmissionDeadlineTerminatesOnlyItsWaiterAndLeavesNoQueueEntry() async throws {
+    let resources = SceneRenderResources()
+    let source = InteractiveElementReference.page(pageID: UUID(), elementID: "occupied")
+    let owner = try await resources.acquireWebSurface(priority: .liveProgram, source: source)
+    defer { owner.release() }
+    do {
+      let duplicate = try await resources.acquireWebSurface(priority: .input, source: source,
+        deadline: .now + .milliseconds(50))
+      duplicate.release()
+      XCTFail("A second executor cannot enter the same physical source")
+    } catch {
+      XCTAssertTrue(error is SceneRenderError)
+    }
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
+    XCTAssertFalse(owner.isReleased)
+  }
+
+  @MainActor
+  func testVisibleProgramsLeaveAnExecutorForStaticNeighboursAndSlotsForInput() async throws {
+    let resources = SceneRenderResources()
+    var programs: [WebSurfaceLease] = []
+    for _ in 0..<3 { programs.append(try await resources.acquireWebSurface(priority: .liveProgram)) }
+    var admittedFourth = false
+    let fourth = Task { @MainActor in
+      let value = try await resources.acquireWebSurface(priority: .liveProgram)
+      admittedFourth = true
+      return value
+    }
+    defer { fourth.cancel(); programs.forEach { $0.release() } }
+    await Task.yield()
+    XCTAssertFalse(admittedFourth)
+    let staticSource = try await resources.acquireWebSurface(priority: .background)
+    let current = try await resources.acquireWebSurface(priority: .currentPage)
+    let input = try await resources.acquireWebSurface(priority: .input)
+    defer { staticSource.release(); current.release(); input.release() }
+    XCTAssertEqual(resources.activeWebSurfaceCount, 6)
+    XCTAssertEqual(resources.activeBackgroundWebSurfaceCount, 1,
+      "Already running controls do not masquerade as short-lived raster jobs")
+    programs.removeLast().release()
+    let replacement = try await fourth.value
+    defer { replacement.release() }
+    XCTAssertTrue(admittedFourth)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 6)
+  }
+
+  @MainActor
   func testRasterEvictionReleasesItsSharedLayoutBeforeReadmittingDerivedBytes() throws {
     let resources = SceneRenderResources(byteLimit: 64 * 1024, profile: .headless)
     let geometry = WorkspaceItemGeometry.document(.a4)
@@ -159,6 +516,54 @@ final class SceneRenderResourcesTests: XCTestCase {
     XCTAssertNotNil(resources.image(for: c))
     XCTAssertEqual(resources.residentBytes, cost * 2)
     XCTAssertEqual(resources.rasterCount, 2)
+  }
+
+  @MainActor
+  func testRetainingAnOldReceiptCannotReplaceANewerEqualDensityCapture() throws {
+    let resources = SceneRenderResources(), source = element("same-program-state")
+    let previousPixels = image(color: .red), currentPixels = image(color: .green)
+    XCTAssertTrue(resources.store(previousPixels, for: source))
+    let previous = try XCTUnwrap(resources.retainRaster(for: source))
+    defer { previous.release() }
+    XCTAssertTrue(resources.store(currentPixels, for: source))
+    let current = try XCTUnwrap(resources.retainRaster(for: source))
+    defer { current.release() }
+    XCTAssertNotEqual(current.entryID, previous.entryID)
+    XCTAssertEqual(current.pixelScale, previous.pixelScale)
+    let cost = resources.residentBytes
+    for _ in 0..<3 {
+      let immutableReceipt = try XCTUnwrap(previous.retainedCopy())
+      defer { immutableReceipt.release() }
+      XCTAssertTrue(immutableReceipt.image === previousPixels,
+        "An old immutable receipt still retains its own actual pixels")
+      let selected = try XCTUnwrap(resources.retainRaster(for: source))
+      defer { selected.release() }
+      XCTAssertEqual(selected.entryID, current.entryID,
+        "Touching an older receipt changes its eviction priority, not which capture is newest")
+      XCTAssertTrue(selected.image === currentPixels)
+      XCTAssertTrue(resources.image(for: source) === currentPixels)
+      XCTAssertEqual(resources.residentBytes, cost, "Borrowing either version cannot allocate another bitmap")
+    }
+  }
+
+  @MainActor
+  func testRasterPublicationOrderNeverMixesStateSourceOrCropVersions() throws {
+    let resources = SceneRenderResources(), source = element("versioned-program")
+    let changedState = source.updating(state: .number(1))
+    let changedSource = AgentElement(id: source.id, kind: source.kind, frame: source.frame,
+      source: "Changed program", html: "<svg viewBox='0 0 16 16'><circle r='4'/></svg>")
+    let crop = PageRect(x: 0, y: 0, width: 8, height: 8)
+    let a = image(color: .red), b = image(color: .green), c = image(color: .blue), d = image(color: .yellow)
+    XCTAssertTrue(resources.store(a, for: source))
+    XCTAssertTrue(resources.store(b, for: changedState))
+    XCTAssertTrue(resources.store(c, for: changedSource))
+    XCTAssertTrue(resources.store(d, for: .agentRegion(source, crop)))
+    XCTAssertTrue(resources.image(for: source) === a)
+    XCTAssertTrue(resources.image(for: changedState) === b)
+    XCTAssertTrue(resources.image(for: changedSource) === c)
+    XCTAssertTrue(resources.image(for: .agentRegion(source, crop)) === d)
+    XCTAssertNil(resources.image(for: .agentRegion(changedState, crop)))
+    XCTAssertNil(resources.image(for: .agentRegion(source, .init(x: 8, y: 8, width: 8, height: 8))))
   }
 
   @MainActor
@@ -465,11 +870,11 @@ final class SceneRenderResourcesTests: XCTestCase {
   }
 
   @MainActor
-  private func image(scale: CGFloat = 1) -> UIImage {
+  private func image(scale: CGFloat = 1, color: UIColor = .systemBlue) -> UIImage {
     let format = UIGraphicsImageRendererFormat()
     format.scale = scale; format.opaque = true; format.preferredRange = .standard
     return UIGraphicsImageRenderer(size: CGSize(width: 16, height: 16), format: format).image { context in
-      UIColor.systemBlue.setFill(); context.fill(CGRect(x: 0, y: 0, width: 16, height: 16))
+      color.setFill(); context.fill(CGRect(x: 0, y: 0, width: 16, height: 16))
     }
   }
   private func element(_ id: String) -> AgentElement {

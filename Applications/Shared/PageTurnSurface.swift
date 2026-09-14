@@ -20,16 +20,70 @@ extension EnvironmentValues {
 /// A small callback object keeps render readiness outside durable page state.
 /// Metal and WebKit report when their exact mounted page has presented once.
 @MainActor
-final class PageTurnReadiness {
-  private let handler: @MainActor (Bool) -> Void
+final class PageTurnActivity {
+  struct PreparationDemand: Equatable {
+    let id: UUID
+    let pageIndex: Int
+  }
+  private(set) var isTransitioning = false
+  private(set) var preparationDemand: PreparationDemand?
+  private var observers: [UUID: @MainActor (Bool) -> Void] = [:]
+  private var preparationObservers: [UUID: @MainActor () -> Void] = [:]
 
-  init(_ handler: @escaping @MainActor (Bool) -> Void) {
+  /// The native page controller owns the one accepted landing still waiting
+  /// for pixels. Repeated view updates preserve its identity; a new landing
+  /// replaces it without making the currently installed page noninteractive.
+  func prepare(_ pageIndex: Int?) {
+    guard preparationDemand?.pageIndex != pageIndex else { return }
+    preparationDemand = pageIndex.map { PreparationDemand(id: UUID(), pageIndex: $0) }
+    for observer in Array(preparationObservers.values) { observer() }
+  }
+
+  @discardableResult
+  func observePreparation(_ observer: @escaping @MainActor () -> Void) -> UUID {
+    let id = UUID(); preparationObservers[id] = observer; return id
+  }
+
+  func removePreparationObserver(_ id: UUID) { preparationObservers[id] = nil }
+
+  /// Native owners consult this value in the same event that accepts a curl.
+  /// Publishing SwiftUI state later must not permit a capture or a reparent in
+  /// the interval between accepting the gesture and updating the view tree.
+  func update(_ value: Bool) {
+    guard isTransitioning != value else { return }
+    isTransitioning = value
+    for observer in Array(observers.values) { observer(value) }
+  }
+
+  @discardableResult
+  func observe(_ observer: @escaping @MainActor (Bool) -> Void) -> UUID {
+    let id = UUID()
+    observers[id] = observer
+    return id
+  }
+
+  func removeObserver(_ id: UUID) { observers[id] = nil }
+}
+
+@MainActor
+final class PageTurnReadiness {
+  let activity: PageTurnActivity?
+  private let handler: @MainActor (Bool) -> Void
+  private let failureHandler: @MainActor (PageTurnPreparationFailure) -> Void
+
+  init(activity: PageTurnActivity? = nil,
+    onFailure: @escaping @MainActor (PageTurnPreparationFailure) -> Void = { _ in },
+    _ handler: @escaping @MainActor (Bool) -> Void) {
+    self.activity = activity
     self.handler = handler
+    failureHandler = onFailure
   }
 
   func callAsFunction(_ ready: Bool) {
     handler(ready)
   }
+
+  func failed(_ failure: PageTurnPreparationFailure) { failureHandler(failure) }
 }
 
 /// Chooses the small set of live pages that must already have a first frame.
@@ -179,6 +233,9 @@ struct PageTurnSurface: View {
     ) -> AnyView
   let onCommit: @MainActor (Int, String) -> Void
   let onTransitioningChange: @MainActor (Bool) -> Void
+  var canonicalDocumentLayout: DocumentPageLayout? = nil
+  var documentSelection: DocumentPageNavigationRequest? = nil
+  var documentNavigation: DocumentPageNavigationCallbacks? = nil
 
   var body: some View {
     Group {
@@ -206,13 +263,18 @@ struct PageTurnSurface: View {
           canBeginNavigation: canBeginNavigation,
           page: page,
           onCommit: onCommit,
-          onTransitioningChange: onTransitioningChange
+          onTransitioningChange: onTransitioningChange,
+          canonicalDocumentLayout: canonicalDocumentLayout,
+          documentSelection: documentSelection,
+          documentNavigation: documentNavigation
         )
       }
       #endif
     }
     .accessibilityIdentifier("page-turn-surface")
-    .accessibilityValue("Страница \(selectedIndex + 1) из \(max(1, pageCount))")
+    .accessibilityValue(documentNavigation != nil && canonicalDocumentLayout?.pageCount(for: sequenceRevision) == nil
+      ? "Страница \(selectedIndex + 1), число страниц уточняется"
+      : "Страница \(selectedIndex + 1) из \(max(1, pageCount))")
   }
 
   private var clampedSelectedIndex: Int {
@@ -238,6 +300,9 @@ struct PageTurnSurface: View {
       ) -> AnyView
     let onCommit: @MainActor (Int, String) -> Void
     let onTransitioningChange: @MainActor (Bool) -> Void
+    let canonicalDocumentLayout: DocumentPageLayout?
+    let documentSelection: DocumentPageNavigationRequest?
+    let documentNavigation: DocumentPageNavigationCallbacks?
 
     func makeUIViewController(context: Context) -> IPadPageTurnController {
       let controller = IPadPageTurnController()
@@ -264,7 +329,10 @@ struct PageTurnSurface: View {
         canBeginNavigation: canBeginNavigation,
         page: page,
         onCommit: onCommit,
-        onTransitioningChange: onTransitioningChange
+        onTransitioningChange: onTransitioningChange,
+        canonicalDocumentLayout: canonicalDocumentLayout,
+        documentSelection: documentSelection,
+        documentNavigation: documentNavigation
       )
     }
   }

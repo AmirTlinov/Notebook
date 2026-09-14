@@ -5,7 +5,6 @@ import NotebookCore
 @main
 struct NotebookMacApp: App {
   @NSApplicationDelegateAdaptor(NotebookMacLifecycle.self) private var lifecycle
-  @State private var pairingError: String?
 
   var body: some Scene {
     MenuBarExtra("Notebook", systemImage: "book.closed") {
@@ -18,42 +17,6 @@ struct NotebookMacApp: App {
           Text("Изменения ещё не сохранены: \(failure)")
           Button("Повторить сохранение") { model.retryPendingPersistence() }
         }
-        Menu("Сопряжение устройств") {
-          Button("Скопировать приглашение для iPad") {
-            do {
-              let invitation = try model.createPairingInvitation()
-              NSPasteboard.general.clearContents()
-              guard NSPasteboard.general.setString(invitation, forType: .string) else {
-                throw NotebookTransportError.storageUnavailable
-              }
-              pairingError = nil
-            } catch { pairingError = error.localizedDescription }
-          }
-          if case .confirmation(let peer, let generation, let locallyConfirmed) = model.pairingState {
-            Text(peer.displayName)
-            Text("Устройство: \(peer.deviceID.uuidString.lowercased())")
-            Text("Архив: \(peer.workspaceID.uuidString.lowercased())")
-            if locallyConfirmed { Text("Ожидается подтверждение на iPad") }
-            else {
-              Button("Разрешить этому iPad доступ") {
-                do { try model.confirmPairing(generation: generation); pairingError = nil }
-                catch { pairingError = error.localizedDescription }
-              }
-            }
-          }
-          if case .failed(let message) = model.pairingState { Text(message) }
-          Button("Отменить сопряжение") {
-            do { try model.cancelPairing(); pairingError = nil }
-            catch { pairingError = error.localizedDescription }
-          }
-          ForEach(model.pairedPeers, id: \.deviceID) { peer in
-            Button("Отозвать доступ: \(peer.displayName)", role: .destructive) {
-              do { try model.revokePeer(peer.deviceID); pairingError = nil }
-              catch { pairingError = error.localizedDescription }
-            }
-          }
-          if let pairingError { Text(pairingError) }
-        }
         Menu("Codex") {
           Text(model.agentStartupError ?? "Задачи Codex доступны из Notebook на iPad")
           Text("Разговор, модель и разрешения принадлежат Codex")
@@ -64,6 +27,8 @@ struct NotebookMacApp: App {
           Button("Повторить проверку") { lifecycle.start() }
         }
       }
+      Button("Сопряжение устройств…") { lifecycle.showPairing() }
+        .accessibilityIdentifier("notebook.pairing.open")
       if let loginError = lifecycle.loginError { Text(loginError) }
       Toggle("Запускать при входе", isOn: Binding(
         get: { lifecycle.launchesAtLogin },
@@ -82,23 +47,28 @@ struct NotebookMacApp: App {
 final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
   let launch: NotebookApplicationLaunch
   private var launchTask: Task<Void, Never>?
+  @ObservationIgnored private(set) var pairingWindowController: NotebookMacPairingWindowController?
   private(set) var launchesAtLogin = false
   private(set) var loginError: String?
   private let isRunningTests: Bool
   private let isFixture: Bool
+  private let isAcceptance: Bool
 
   override init() {
     isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    let isolated = NotebookAcceptanceConfiguration.requestedLaunch()
+    isAcceptance = isolated != nil
     #if DEBUG
       isFixture = MacDocumentLaunchFixture.isRequested
-      launch = isFixture ? NotebookApplicationLaunch(fixture: MacDocumentLaunchFixture.makeModel())
+      launch = isolated ?? (isFixture ? NotebookApplicationLaunch(fixture: MacDocumentLaunchFixture.makeModel())
         : isRunningTests ? NotebookApplicationLaunch(fixture: nil) : NotebookApplicationLaunch()
+      )
     #else
       isFixture = false
-      launch = isRunningTests ? NotebookApplicationLaunch(fixture: nil) : NotebookApplicationLaunch()
+      launch = isolated ?? (isRunningTests ? NotebookApplicationLaunch(fixture: nil) : NotebookApplicationLaunch())
     #endif
     super.init()
-    if !isRunningTests { start() }
+    if !isRunningTests || isAcceptance { start() }
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -106,7 +76,7 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
     #if DEBUG
       if isFixture, let model = launch.model { Task { await MacDocumentLaunchFixture.writeProof(model: model) } }
     #endif
-    guard !isRunningTests, !isFixture else { return }
+    guard !isRunningTests, !isFixture, !isAcceptance else { return }
     let enabled = UserDefaults.standard.object(forKey: "notebook.launch-at-login") as? Bool ?? true
     setLaunchesAtLogin(enabled)
   }
@@ -121,8 +91,22 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
     }
   }
 
+  /// Reopening the helper is navigation only. Invitation creation and trust
+  /// confirmation remain explicit controls in the same pairing view.
+  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+    showPairing()
+    return false
+  }
+
+  func showPairing() {
+    if pairingWindowController == nil {
+      pairingWindowController = NotebookMacPairingWindowController(launch: launch) { [weak self] in self?.start() }
+    }
+    pairingWindowController?.showPairing()
+  }
+
   func setLaunchesAtLogin(_ enabled: Bool) {
-    guard !isRunningTests, !isFixture else { return }
+    guard !isRunningTests, !isFixture, !isAcceptance else { return }
     do {
       if enabled, SMAppService.mainApp.status == .notRegistered { try SMAppService.mainApp.register() }
       if !enabled, SMAppService.mainApp.status != .notRegistered { try SMAppService.mainApp.unregister() }

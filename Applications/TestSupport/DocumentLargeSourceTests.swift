@@ -52,7 +52,7 @@ final class DocumentLargeSourceTests: XCTestCase {
   private func surface(_ document: DocumentDocument, _ state: DocumentStateJournal,
     resources: SceneRenderResources) throws -> Surface {
     let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in })
+      onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
     update(coordinator, document, state, page: 0)
     let host = DocumentWebHost(), size = WorkspaceItemGeometry.document(document.paperSize)
     #if os(iOS)
@@ -74,7 +74,7 @@ final class DocumentLargeSourceTests: XCTestCase {
   private func update(_ coordinator: DocumentWebCoordinator, _ document: DocumentDocument,
     _ state: DocumentStateJournal, page: Int) {
     coordinator.update(document: document, state: state, selectedPageIndex: page, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in })
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
   }
 
   func testLargeIllustratedMathBookColdMountsAndTurnsToDistantPhysicalPagesWithinTheExistingDeadline() async throws {
@@ -90,6 +90,8 @@ final class DocumentLargeSourceTests: XCTestCase {
     let source = try XCTUnwrap(surface.coordinator.payload?.source), layout = try XCTUnwrap(source.layout)
     XCTAssertGreaterThan(layout.pageCount, 30)
     let web = try XCTUnwrap(surface.coordinator.webView)
+    XCTAssertLessThan(source.compiledPageCount, layout.pageCount, "The first physical page cannot wait for all page packets")
+    XCTAssertTrue(source.retainedPageIndices.isSubset(of: [0, 1]))
     var first: Data?
     for index in [0, layout.pageCount - 1, layout.pageCount / 2, 0] {
       update(surface.coordinator, document, state, page: index)
@@ -97,10 +99,12 @@ final class DocumentLargeSourceTests: XCTestCase {
       let value = try await evaluate("""
         const root=document.getElementById('document'), receipt=notebookRenderer.pageReceipt();
         if(receipt.pageIndex!==index || receipt.layoutScope!=='page')throw Error('Wrong physical page');
-        if(document.querySelector('.document-layout-preparation'))throw Error('Whole book DOM retained');
+        if(document.querySelectorAll('.document-layout-preparation').length!==1)throw Error('Missing sole inert measurement owner');
         if(document.querySelectorAll('.paper-sheet').length!==1)throw Error('More than one physical paper');
         if(!root.textContent.trim() || !root.querySelector('img,mjx-container'))throw Error('Blank book page');
         if([...root.querySelectorAll('img')].some(image=>!image.complete||!image.naturalWidth))throw Error('Undecoded illustration');
+        for(const heading of root.querySelectorAll('h2'))if(heading.textContent.startsWith('Figure ')
+          && !heading.closest('[data-block-id]').querySelector('img'))throw Error('Orphaned figure heading');
         return JSON.stringify({index,characters:root.textContent.length,math:root.querySelectorAll('mjx-container').length,images:root.querySelectorAll('img').length,work:receipt.work});
         """, arguments: ["index": index], web: web)
       let details = XCTAttachment(string: value); details.name = "Large book page \(index)"; details.lifetime = .keepAlways; add(details)
@@ -123,6 +127,8 @@ final class DocumentLargeSourceTests: XCTestCase {
       XCTAssertTrue(surface.coordinator.payload?.source === source)
       XCTAssertEqual(resources.activeWebSurfaceCount, 1)
       XCTAssertEqual(resources.pendingWebRequestCount, 0)
+      XCTAssertTrue(source.retainedPageIndices.isSubset(of: Set(max(0, index - 1)...min(layout.pageCount - 1, index + 1))),
+        "The fragment cache belongs to the current working window, not visited pages")
     }
     XCTAssertEqual(source.preparationCount, 1); XCTAssertEqual(source.encodingCount, 1)
     XCTAssertLessThanOrEqual(resources.peakAccountedBytes, resources.byteLimit / 2,
@@ -130,7 +136,142 @@ final class DocumentLargeSourceTests: XCTestCase {
     let measurement = XCTAttachment(string: "coldReady=\(elapsed), pages=\(layout.pageCount), peakAccountedBytes=\(resources.peakAccountedBytes)")
     measurement.name = "Large book native preparation"; measurement.lifetime = .keepAlways; add(measurement)
     surface.close()
+    let drained = ContinuousClock.now + .seconds(2)
+    while resources.activeWebSurfaceCount != 0, .now < drained { try await Task.sleep(for: .milliseconds(10)) }
     XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+  }
+
+  func testAnIllustrationThatFitsOnePageKeepsItsHeadingOnItsPhysicalSheet() async throws {
+    let svg = "<svg xmlns='http://www.w3.org/2000/svg' width='450' height='158'><rect x='1' y='1' width='448' height='156' fill='#dce9f6'/></svg>"
+    let image = "data:image/svg+xml;base64," + Data(svg.utf8).base64EncodedString()
+    let document = DocumentDocument(actor: UUID(), blocks: (0..<12).map { index in
+      .markdown(id: "figure-\(index)", source: "<div><p>" + String(repeating: "Measured introductory prose. ", count: 24)
+        + "</p><h2>Figure \(index)</h2><img width='450' height='158' src='\(image)'><p>Figure caption \(index).</p></div>")
+    })
+    let state = DocumentStateJournal(id: document.id, actor: UUID())
+    let surface = try surface(document, state, resources: SceneRenderResources())
+    defer { surface.close() }
+    try await ready(surface.coordinator)
+    let layout = try XCTUnwrap(surface.coordinator.payload?.source.layout)
+    XCTAssertGreaterThan(layout.pageCount, 3)
+    var headings = 0
+    let web = try XCTUnwrap(surface.coordinator.webView)
+    for index in 0..<layout.pageCount {
+      update(surface.coordinator, document, state, page: index)
+      try await ready(surface.coordinator)
+      let count = try await evaluate("""
+        const root=document.getElementById('document'), headings=[...root.querySelectorAll('h2')];
+        for(const heading of headings) {
+          const image=heading.closest('[data-block-id]').querySelector('img');
+          if(!image || !image.complete || !image.naturalWidth)throw Error('Illustration heading was stranded on preceding page');
+          if(image.getBoundingClientRect().top < heading.getBoundingClientRect().bottom)throw Error('Heading and image overlap');
+        }
+        return String(headings.length);
+        """, web: web)
+      headings += try XCTUnwrap(Int(count))
+    }
+    XCTAssertEqual(headings, 12, "No heading may be dropped or duplicated while keeping its illustration")
+  }
+
+  func testFirstPageIsUsableBeforeFarPacketsAndPhysicalWindowDropsTraversalHistory() async throws {
+    let actor = UUID(), resources = SceneRenderResources()
+    var document = DocumentDocument(actor: actor, blocks: [.markdown(id: "body", source: "Ready seed")])
+    let state = DocumentStateJournal(id: document.id, actor: actor)
+    let surface = try surface(document, state, resources: resources)
+    defer { surface.close() }
+    try await ready(surface.coordinator)
+    let web = try XCTUnwrap(surface.coordinator.webView)
+    _ = try await evaluate("""
+      const prepare=notebookRenderer.preparePagePacket;
+      window.allowDistantPage=false;window.compiledPages=[];
+      notebookRenderer.preparePagePacket=(key,index)=>{
+        if(index>1&&!allowDistantPage)throw Error('Far page compiled before first page was usable');
+        compiledPages.push(index);return prepare(key,index);
+      };
+      return 'armed';
+      """, web: web)
+    let paragraphs = (0..<150).map { "Paragraph \($0). " + String(repeating: "The requested physical sheet is available independently. ", count: 12) }.joined(separator: "\n\n")
+    XCTAssertTrue(document.replaceBlockSource(id: "body", source: paragraphs, actor: actor))
+    update(surface.coordinator, document, state, page: 0)
+    try await ready(surface.coordinator)
+    let source = try XCTUnwrap(surface.coordinator.payload?.source), layout = try XCTUnwrap(source.layout)
+    XCTAssertGreaterThan(layout.pageCount, 8)
+    XCTAssertLessThanOrEqual(source.compiledPageCount, 2)
+    let first = try await evaluate("""
+      if(!document.getElementById('document').textContent.includes('Paragraph 0'))throw Error('First page is empty');
+      if(compiledPages.some(index=>index>1))throw Error('Unrequested distant page');
+      allowDistantPage=true;return JSON.stringify(compiledPages);
+      """, web: web)
+    let attachment = XCTAttachment(string: first); attachment.name = "First usable page compiled only requested window"; attachment.lifetime = .keepAlways; add(attachment)
+    for index in [layout.pageCount - 1, layout.pageCount / 2, 0] {
+      update(surface.coordinator, document, state, page: index)
+      try await ready(surface.coordinator)
+      XCTAssertTrue(source.retainedPageIndices.isSubset(of: Set(max(0, index - 1)...min(layout.pageCount - 1, index + 1))))
+      XCTAssertEqual(source.measurementCount, 1, "A live producer keeps the one canonical measurement/index")
+      XCTAssertEqual(source.preparationCount, 1)
+    }
+    await source.discardIdlePreparation()
+    XCTAssertTrue(source.retainedPageIndices.isEmpty)
+    let discarded = try await evaluate("return String(document.querySelectorAll('.document-layout-preparation').length);", web: web)
+    XCTAssertEqual(discarded, "0")
+    update(surface.coordinator, document, state, page: layout.pageCount - 1)
+    try await ready(surface.coordinator)
+    XCTAssertEqual(source.measurementCount, 2, "After explicit reclamation the same owner remeasures")
+    XCTAssertTrue(source.layout === layout, "Reclamation must preserve accepted link and page geometry")
+    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
+  }
+
+  func testSpeculativePacketAdmissionWaitsForActuallyAvailableCapacity() async throws {
+    let resources = SceneRenderResources(byteLimit: 96 * 1024 * 1024, profile: .interactive)
+    let occupied = try XCTUnwrap(resources.reserveDerivedBytes(32 * 1024 * 1024, priority: .passive))
+    defer { occupied.release() }
+    let actor = UUID()
+    var document = DocumentDocument(actor: actor, blocks: [.markdown(id: "body", source: "Prepared seed")])
+    let state = DocumentStateJournal(id: document.id, actor: actor)
+    let surface = try surface(document, state, resources: resources)
+    defer { surface.close() }
+    try await ready(surface.coordinator)
+    let previous = try XCTUnwrap(surface.coordinator.payload?.source)
+    await previous.discardIdlePreparation()
+    let web = try XCTUnwrap(surface.coordinator.webView)
+    _ = try await evaluate("""
+      const prepare=notebookRenderer.preparePagePacket;
+      window.neighborAttempts=0;window.allowNeighborPacket=false;
+      notebookRenderer.preparePagePacket=(key,index)=>{
+        const packet=prepare(key,index);
+        if(index===1){neighborAttempts++;if(!allowNeighborPacket)return {...packet,utf8Bytes:8*1024*1024};}
+        return packet;
+      };
+      return 'armed';
+      """, web: web)
+    XCTAssertTrue(document.replaceBlockSource(id: "body", source: (0..<30).map {
+      "Paragraph \($0). " + String(repeating: "Only available capacity can resume speculative work. ", count: 12)
+    }.joined(separator: "\n\n"), actor: actor))
+    update(surface.coordinator, document, state, page: 0)
+    try await ready(surface.coordinator)
+    let source = try XCTUnwrap(surface.coordinator.payload?.source)
+    // The native scene, not the fragment compiler, owns neighbour expansion.
+    let neighbourConsumer = UUID()
+    source.retainPage(1, hostID: neighbourConsumer)
+    defer { source.releasePage(hostID: neighbourConsumer, in: nil) }
+    let neighbourDeadline = ContinuousClock.now + .seconds(3)
+    while try await evaluate("return String(neighborAttempts);", web: web) == "0", ContinuousClock.now < neighbourDeadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    let before = try await evaluate("return String(neighborAttempts);", web: web)
+    XCTAssertGreaterThan(try XCTUnwrap(Int(before)), 0)
+    try await Task.sleep(for: .milliseconds(200))
+    let after = try await evaluate("return String(neighborAttempts);", web: web)
+    XCTAssertEqual(after, before, "Releasing a failed packet's own staging must not spin the same preparation")
+    XCTAssertEqual(source.retainedPageIndices, [0])
+    _ = try await evaluate("allowNeighborPacket=true;return 'released';", web: web)
+    occupied.release()
+    let deadline = ContinuousClock.now + .seconds(3)
+    while !source.retainedPageIndices.contains(1), ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertTrue(source.retainedPageIndices.contains(1), "Actual resource release refines the stationary working window")
+    withExtendedLifetime(previous) {}
   }
 
   #if os(iOS)
@@ -182,7 +323,7 @@ final class DocumentLargeSourceTests: XCTestCase {
       _ = try await evaluate("""
         const receipt=notebookRenderer.pageReceipt(), root=document.getElementById('document');
         if(receipt.pageIndex!==index || receipt.layoutScope!=='page' || !root.textContent.trim())throw Error('Missing physical page');
-        if(document.querySelector('.document-layout-preparation'))throw Error('Full source DOM retained');
+        if(document.querySelectorAll('.document-layout-preparation').length!==1)throw Error('Missing sole inert measurement owner');
         return 'shown';
         """, arguments: ["index": page], web: web)
     }
@@ -202,6 +343,7 @@ final class DocumentLargeSourceTests: XCTestCase {
     defer { surface.close() }
     try await ready(surface.coordinator)
     let source = try XCTUnwrap(surface.coordinator.payload?.source), web = try XCTUnwrap(surface.coordinator.webView)
+    await source.discardIdlePreparation()
     let report = try await evaluate("""
       const source=JSON.parse(encoded), renderer=notebookRenderer;
       await renderer.beginSourcePreparation(source);
@@ -334,7 +476,12 @@ final class DocumentLargeSourceTests: XCTestCase {
     while !coordinator.renderIsReady && coordinator.acquisitionError == nil && .now < deadline {
       try await Task.sleep(for: .milliseconds(10))
     }
-    if let error = coordinator.acquisitionError { throw error }
+    if let error = coordinator.acquisitionError {
+      if let mismatch = coordinator.payload?.source.lastPreparationLayoutMismatch {
+        let attachment = XCTAttachment(string: mismatch); attachment.name = "Canonical preparation mismatch"; attachment.lifetime = .keepAlways; add(attachment)
+      }
+      throw error
+    }
     guard coordinator.renderIsReady else { throw DocumentSessionError.invalidLayout }
   }
 

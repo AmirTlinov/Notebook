@@ -54,6 +54,8 @@ struct DocumentPaperLayout: Codable, Equatable, Sendable {
   let heightPoints: Double
   let marginPoints: Double
   let cornerRadiusRatio: Double
+  let surfaceWidth: Double
+  let surfaceHeight: Double
 
   init(_ size: DocumentPaperSize) {
     kind = size
@@ -61,6 +63,7 @@ struct DocumentPaperLayout: Codable, Equatable, Sendable {
     marginPoints = size.marginPoints
     let geometry = WorkspaceItemGeometry.document(size)
     cornerRadiusRatio = geometry.cornerRadius / geometry.width
+    surfaceWidth = geometry.width; surfaceHeight = geometry.height
   }
 }
 
@@ -85,16 +88,19 @@ final class DocumentSourceSnapshot {
   let message: DocumentSourceMessage
   private let document: DocumentDocument
   let stamp: VersionStamp
+  let programIDs: Set<String>
   private let blockIDs: Set<String>
   private var encoding: Task<String, Error>?
   private(set) var encodingCount = 0
   private(set) var layout: DocumentLayoutRecord?
   private var preparation: DocumentPagePreparation?
   private(set) var preparationCount = 0
+  private var receiptLayoutMismatch: String?
 
   init(_ document: DocumentDocument) {
     self.document = document
     stamp = document.contentStamp
+    programIDs = Set(document.blocks.filter { $0.kind == .interactive }.map(\.id))
     blockIDs = Set(document.blocks.map(\.id))
     message = .init(key: UUID().uuidString, documentID: document.id,
       paper: .init(document.paperSize), blocks: document.blocks,
@@ -114,20 +120,46 @@ final class DocumentSourceSnapshot {
 
   func encodedJSON() async throws -> String { try await encodingTask().value }
 
-  func preparedPage(_ index: Int, in web: WKWebView, lease: WebSurfaceLease,
+  func preparedPage(_ index: Int, hostID: UUID, in web: WKWebView, lease: WebSurfaceLease,
     resources: SceneRenderResources) async throws -> DocumentPreparedPage {
     if preparation == nil {
       preparationCount += 1
-      preparation = try DocumentPagePreparation(message: message, sourceJSON: encodingTask(), web: web, lease: lease, resources: resources)
+      preparation = DocumentPagePreparation(message: message, sourceJSON: encodingTask(), resources: resources)
     }
-    let prepared = try await preparation!.value()
-    if let layout, layout !== prepared.layout, !layout.matches(prepared.layout) { throw DocumentSessionError.inconsistentLayout }
-    layout = prepared.layout
-    return prepared.page(index)
+    let prepared: DocumentPreparedPage
+    do { prepared = try await preparation!.page(index, hostID: hostID, in: web, lease: lease) }
+    catch {
+      // Geometry and a page packet have independent readiness. Preserve a
+      // successfully checked measurement when this one fragment is refused.
+      if preparation?.layout != nil { try acceptPreparedLayout() }
+      throw error
+    }
+    try acceptPreparedLayout()
+    return prepared
   }
 
-  func retryPagePreparation() {
+  private func acceptPreparedLayout() throws {
+    guard let measured = preparation?.layout else { throw DocumentSessionError.invalidLayout }
+    if let layout, layout !== measured, !layout.matches(measured) {
+      receiptLayoutMismatch = "handoff pages=\(layout.pageCount)/\(measured.pageCount); old=\(Array(layout.regions.prefix(3))); new=\(Array(measured.regions.prefix(3)))"
+      throw DocumentSessionError.inconsistentLayout
+    }
+    layout = layout ?? measured
+  }
+
+  func retainPage(_ index: Int, hostID: UUID) { preparation?.retainPage(index, hostID: hostID) }
+  func releasePage(hostID: UUID, in web: WKWebView?) { preparation?.releasePage(hostID: hostID, in: web) }
+  func discardIdlePreparation() async { await preparation?.discardIdlePreparation() }
+  var pendingPreparationReaderCount: Int { preparation?.pendingReaderCount ?? 0 }
+  var retainedPageIndices: Set<Int> { preparation?.retainedPageIndices ?? [] }
+  var compiledPageCount: Int { preparation?.compiledPageCount ?? 0 }
+  var measurementCount: Int { preparation?.measurementCount ?? 0 }
+  var preparationPhasesMS: [String: Double] { preparation?.preparationPhasesMS ?? [:] }
+  var lastPreparationLayoutMismatch: String? { receiptLayoutMismatch ?? preparation?.lastLayoutMismatch }
+
+  func retryPagePreparation(_ pageIndex: Int) {
     if preparation?.failed == true { preparation = nil }
+    else { preparation?.retryPage(pageIndex) }
   }
 
   func acceptLayout(_ receipt: NSDictionary, geometry: WorkspaceItemGeometry) throws -> DocumentLayoutRecord {
@@ -137,8 +169,15 @@ final class DocumentSourceSnapshot {
     if let layout {
       if receipt["layoutScope"] as? String == "page" {
         guard let index = receipt["pageIndex"] as? Int, (0..<layout.pageCount).contains(index),
-          layout.matches(measured, pageIndex: index) else { throw DocumentSessionError.inconsistentLayout }
-      } else if !layout.matches(measured) { throw DocumentSessionError.inconsistentLayout }
+          layout.matches(measured, pageIndex: index) else {
+          let page = receipt["pageIndex"] as? Int
+          receiptLayoutMismatch = "installed page=\(String(describing: page)); pages=\(layout.pageCount)/\(measured.pageCount); old=\(Array(layout.regions.filter { $0.pageIndex == page }.prefix(3))); new=\(Array(measured.regions.prefix(3)))"
+          throw DocumentSessionError.inconsistentLayout
+        }
+      } else if !layout.matches(measured) {
+        receiptLayoutMismatch = "source receipt pages=\(layout.pageCount)/\(measured.pageCount); old=\(Array(layout.regions.prefix(3))); new=\(Array(measured.regions.prefix(3)))"
+        throw DocumentSessionError.inconsistentLayout
+      }
       return layout
     }
     layout = measured
@@ -281,6 +320,19 @@ final class DocumentLayoutRecord {
         && abs(left.frame.width - right.frame.width) <= tolerance && abs(left.frame.height - right.frame.height) <= tolerance
         && abs(left.sourceOffset - right.sourceOffset) <= tolerance
     }
+  }
+
+  func regions(on page: Int) -> ArraySlice<DocumentBlockRegion> {
+    regions[pageRanges[page] ?? 0..<0]
+  }
+
+  func blockIDs(on pages: Set<Int>) -> Set<String> {
+    var result: Set<String> = []
+    for page in pages {
+      guard let range = pageRanges[page] else { continue }
+      for region in regions[range] { result.insert(region.id) }
+    }
+    return result
   }
 
   func destination(for href: String) -> DocumentLinkDestination {

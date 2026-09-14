@@ -24,6 +24,7 @@ final class NotebookPersistenceQueue {
     var onBlocked: (@Sendable (String) -> Void)? = nil
     var boardBaseline: BoardHierarchy? = nil
     var notifiesCommit = true
+    var onCompleted: (@Sendable () -> Void)? = nil
   }
 
   struct Failure: LocalizedError, Sendable {
@@ -130,8 +131,43 @@ final class NotebookPersistenceQueue {
 
   @discardableResult
   func flush() async -> Bool {
-    while let task { await task.value }
-    return failure == nil && pending.isEmpty
+    guard !Task.isCancelled, failure == nil else { return false }
+    let completion = FlushCompletion()
+    return await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        completion.install(continuation)
+        // This nil-owner command is the accepted FIFO cut. Register it before
+        // suspending: later writes and coalescing cannot move ahead of it.
+        pending.append(Write(owner: nil, operation: { _ in .init(merged: false, succeeded: true) },
+          onBlocked: { _ in completion.resolve(false) }, notifiesCommit: false,
+          onCompleted: { completion.resolve(true) }))
+        startIfNeeded()
+      }
+    } onCancel: {
+      // Cancellation abandons this wait, never an accepted write or its order.
+      completion.resolve(false)
+    }
+  }
+
+  private final class FlushCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: Bool?
+    private var continuation: CheckedContinuation<Bool, Never>?
+
+    func install(_ continuation: CheckedContinuation<Bool, Never>) {
+      lock.lock()
+      if let result { lock.unlock(); continuation.resume(returning: result) }
+      else { self.continuation = continuation; lock.unlock() }
+    }
+
+    func resolve(_ result: Bool) {
+      lock.lock()
+      guard self.result == nil else { lock.unlock(); return }
+      self.result = result
+      let continuation = continuation; self.continuation = nil
+      lock.unlock()
+      continuation?.resume(returning: result)
+    }
   }
 
   private func startIfNeeded() {
@@ -153,6 +189,7 @@ final class NotebookPersistenceQueue {
         pending.removeFirst()
         if outcome.merged { onContentMerged?() }
         if next.notifiesCommit && outcome.succeeded { onCommit?(next.owner) }
+        next.onCompleted?()
       case .failure(let error):
         failure = error.localizedDescription
         onFailureChange?(failure)

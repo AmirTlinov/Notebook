@@ -7,6 +7,10 @@ struct NotebookApp: App {
   @State private var launch: NotebookApplicationLaunch
 
   init() {
+    if let isolated = NotebookAcceptanceConfiguration.requestedLaunch() {
+      _launch = State(initialValue: isolated)
+      return
+    }
     #if DEBUG && targetEnvironment(simulator)
       let launch = NotebookSimulatorLaunch(arguments: ProcessInfo.processInfo.arguments,
         environment: ProcessInfo.processInfo.environment)
@@ -23,21 +27,29 @@ struct NotebookApp: App {
         else {
           VStack(spacing: 16) {
             Text(launch.message).multilineTextAlignment(.center)
-            if launch.failure != nil { Button("Повторить проверку") { Task { await launch.waitForAdmission() } } }
-            else { ProgressView() }
+            if launch.canRetry { Button("Повторить проверку") { Task { await launch.waitForAdmission() } } }
+            else if launch.failure == nil { ProgressView() }
           }.padding(32)
         }
-      }.task { await launch.waitForAdmission() }
+      }
+      .background {
+        NotebookSystemTraceIdentitySurface()
+          .frame(width: 1, height: 1)
+          .allowsHitTesting(false)
+      }
+      .task { await launch.waitForAdmission() }
     }
   }
 
   private func workspace(_ model: NotebookAppModel) -> some View {
     NotebookRootView()
       .environment(model)
+      .defaultAppStorage(model.preferences)
       .statusBarHidden(true)
       .persistentSystemOverlays(.hidden)
       .onChange(of: scenePhase, initial: true) { _, phase in
         model.chat?.dictation.setForeground(phase != .background)
+        model.setDocumentPreparationForeground(phase == .active)
         guard phase == .background else { return }
         let task = UIApplication.shared.beginBackgroundTask(withName: "Сохранение принятого ввода")
         Task {

@@ -11,8 +11,8 @@ struct DocumentRenderRecipeTests {
     return try #require(UUID(uuidString: value))
   }
 
-  @Test(arguments: ["error", "ready"])
-  func anotherRecipeCannotReuseOrEraseThePreviousResult(status: String) throws {
+  @Test(arguments: ["error", "ready"], [nil, "NotebookDocumentFragments/2", "NotebookDocumentFragments/3"] as [String?])
+  func anotherRecipeCannotReuseOrEraseThePreviousResult(status: String, previousRenderer: String?) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-render-recipe-\(UUID())")
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), actor = UUID()
@@ -24,7 +24,8 @@ struct DocumentRenderRecipeTests {
     let revision = try store.referenceRevision(target: target)
     let originalKey: JSONValue = .object(["target": try .encode(target), "source": .string(revision),
       "region": .null, "origin": .null, "page": .number(0)])
-    let previous = TargetRenderRequest(id: try requestID(originalKey), target: target, sourceRevision: revision,
+    let historicalKey = previousRenderer.map { originalKey.setting("renderer", .string($0)) } ?? originalKey
+    let previous = TargetRenderRequest(id: try requestID(historicalKey), target: target, sourceRevision: revision,
       region: nil, worldOrigin: nil, pageIndex: 0, pageVisionRevision: nil, createdAt: Date())
     try store.publishRecords(writes: ["collaboration/render-requests/" + previous.id.uuidString.lowercased() + ".json": try .encode(previous)])
     let receipt = TargetRenderReceipt(request: previous, status: status,
@@ -36,10 +37,11 @@ struct DocumentRenderRecipeTests {
     #expect(throws: CollaborationError.self) { try previous.requireCurrentRenderingRecipe() }
     try current.requireCurrentRenderingRecipe()
     #expect(current.id != previous.id)
-    #expect(current.id == (try requestID(originalKey.setting("renderer", .string("NotebookDocumentFragments/2")))))
+    #expect(current.id == (try requestID(originalKey.setting("renderer", .string("NotebookDocumentFragments/4")))))
     #expect(current.sourceRevision == previous.sourceRevision)
     #expect(!FileManager.default.fileExists(atPath: store.targetReceiptURL(current.id).path))
     #expect(try Data(contentsOf: store.targetReceiptURL(previous.id)) == previousBytes)
+    #expect(try store.loadTargetRenderReceipt(previous.id) == receipt)
     #expect(try store.loadDocument(document.id) == acceptedDocument)
     #expect(try store.loadDocumentState(document.id) == acceptedState)
     #expect(try Set(store.targetRenderRequests().map(\.id)) == [previous.id, current.id])
@@ -85,8 +87,8 @@ struct DocumentRenderRecipeTests {
     #expect(try store.requestTargetRender(target: target, expectedRevision: page.agentStamp.revision).id == request.id)
   }
 
-  @Test(arguments: ["error", "ready"])
-  func regionalProofUsesTheCurrentRecipeWithoutRewritingHistoricalBaseline(status: String) throws {
+  @Test(arguments: ["error", "ready"], [nil, "NotebookDocumentFragments/3"] as [String?])
+  func regionalProofUsesTheCurrentRecipeWithoutRewritingHistoricalBaseline(status: String, previousRenderer: String?) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-render-baseline-\(UUID())")
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "$x^2$")])
@@ -94,8 +96,9 @@ struct DocumentRenderRecipeTests {
     let target = CollaborationTarget(kind: .document, id: document.id), region = PageRect(x: 20, y: 20, width: 200, height: 120)
     let revision = try store.referenceRevision(target: target)
     let reference = CollaborationReference(target: target, region: region, pageIndex: 0, revision: revision)
-    let oldKey: JSONValue = .object(["target": try .encode(target), "source": .string(revision),
+    let originalKey: JSONValue = .object(["target": try .encode(target), "source": .string(revision),
       "region": try .encode(region), "origin": .null, "page": .number(0)])
+    let oldKey = previousRenderer.map { originalKey.setting("renderer", .string($0)) } ?? originalKey
     let previous = TargetRenderRequest(id: try requestID(oldKey), target: target, sourceRevision: revision,
       region: region, worldOrigin: nil, pageIndex: 0, pageVisionRevision: nil, createdAt: Date())
     try store.publishRecords(writes: ["collaboration/render-requests/" + previous.id.uuidString.lowercased() + ".json": try .encode(previous)])

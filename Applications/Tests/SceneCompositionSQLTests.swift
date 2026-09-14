@@ -44,14 +44,14 @@ final class SceneCompositionSQLTests: XCTestCase {
   }
 
   @MainActor
-  func testColdCandidateDemotesOnlyOptionalRastersAndNeverDropsThePublishedCut() async throws {
+  func testColdSourcesFailLocallyWithoutRevokingReadyNeighboursOrTheirPublishedCut() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    // A whole old/new static pair and bounded artwork/cache scratch fit
-    // inside the passive half. Six 1024-pixel live sources cannot coexist;
-    // source dimensions, not a historical grid alignment, create the pressure.
+    // Six whole 1024-pixel sources exceed this passive pool. Each admission
+    // failure belongs to that source; it cannot revoke a ready neighbour or
+    // demand a global replacement of their already installed geometry.
     let passivePairAndScratch = (2 * 8 * 2 + 8) * 1024 * 1024
-    let resources = SceneRenderResources(byteLimit: 2 * passivePairAndScratch, maximumBackgroundWebSurfaces: 1)
-    let coordinator = SceneCompositionTiles(resources: resources, cacheRoot: root.appendingPathComponent("previews/scene-tiles"))
+    let resources = SceneRenderResources(byteLimit: passivePairAndScratch, profile: .headless, maximumBackgroundWebSurfaces: 1)
+    let coordinator = SceneCompositionTiles(resources: resources)
     addTeardownBlock { @MainActor in
       await coordinator.stop()
       try? FileManager.default.removeItem(at: root)
@@ -80,6 +80,11 @@ final class SceneCompositionSQLTests: XCTestCase {
     coordinator.prepare(source: oldSource, presence: presence,
       frame: .init(index: oldIndex, presence: presence, portalCamera: { _ in nil }), pinned: [])
     try await waitForPublication(coordinator, revision: oldSource.revision)
+    let readyDeadline = ContinuousClock.now + .seconds(5)
+    let baselineAddress = SceneSourceAddress(plane: .board(initial.rootBoardID), elementID: "baseline")
+    while coordinator.published?.sourceReceipts[baselineAddress]?.hasCurrentPixels != true,
+      ContinuousClock.now < readyDeadline { try await Task.sleep(for: .milliseconds(5)) }
+    XCTAssertTrue(coordinator.published?.sourceReceipts[baselineAddress]?.hasCurrentPixels == true)
     let old = try XCTUnwrap(coordinator.published, coordinator.failure ?? "")
     let oldCost = resources.rasterAdmission.pinnedBytes
     XCTAssertGreaterThan(oldCost, 0)
@@ -109,16 +114,6 @@ final class SceneCompositionSQLTests: XCTestCase {
     let liveCost = requests.reduce(0) { $0 + $1.residentBytes }
     XCTAssertGreaterThan(oldCost + unboundedBytesPlan.tiles.count * tileBytes + liveCost, resources.passiveByteLimit,
       "The actual whole old cut and all cold live sources cannot coexist under this byte limit")
-    var sawPrivateTile = false, oldWasRetained = true
-    let observer = NotificationCenter.default.addObserver(forName: SceneRenderResources.didChange, object: nil, queue: .main) { note in
-      guard let key = note.object as? SceneCompositionTileKey, key.revision == freshRevision else { return }
-      MainActor.assumeIsolated {
-        sawPrivateTile = true
-        oldWasRetained = oldWasRetained && old.rasters.values.allSatisfy { !$0.isReleased }
-          && old.liveRasters.values.allSatisfy { !$0.isReleased }
-      }
-    }
-    defer { NotificationCenter.default.removeObserver(observer) }
     coordinator.prepare(source: fresh, presence: presence, frame: frame, pinned: [])
     let deadline = ContinuousClock.now + .seconds(20)
     while coordinator.isPreparing, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
@@ -127,10 +122,13 @@ final class SceneCompositionSQLTests: XCTestCase {
     XCTAssertEqual(current.plan.revision, freshRevision, coordinator.failure ?? "")
     XCTAssertNil(coordinator.failure)
     XCTAssertFalse(current === old)
-    XCTAssertTrue(sawPrivateTile && oldWasRetained)
-    XCTAssertLessThan(current.plan.liveOwners.count, unboundedBytesPlan.liveOwners.count)
-    XCTAssertFalse(coordinator.budgetFailures.isEmpty)
-    XCTAssertLessThanOrEqual(coordinator.budgetFailures.count, unboundedBytesPlan.reductionPotential + 1)
+    XCTAssertTrue(old.liveRasters.values.allSatisfy { !$0.isReleased })
+    XCTAssertEqual(current.plan.liveOwners.count, unboundedBytesPlan.liveOwners.count)
+    XCTAssertTrue(current.sourceReceipts[baselineAddress]?.hasCurrentPixels == true)
+    XCTAssertTrue(current.sourceReceipts.values.contains { if case .failed = $0.status { return true }; return false },
+      "The finite pool must produce a local failure instead of pretending every source is sharp")
+    XCTAssertTrue(current.sourceReceipts.contains { $0.key != baselineAddress && $0.value.hasCurrentPixels },
+      "The same pressure must still allow an independent new source to publish")
     for element in elements {
       let entry = try XCTUnwrap(index.paintEntry(id: .element(element.id), boardID: presence.boardID))
       let live = current.plan.allowsLive(entry.id, in: .board(presence.boardID)) ? 1 : 0
@@ -146,10 +144,10 @@ final class SceneCompositionSQLTests: XCTestCase {
     coordinator.prepare(source: fresh, presence: presence, frame: pinnedFrame, pinned: pins)
     let refusalDeadline = ContinuousClock.now + .seconds(5)
     while coordinator.isPreparing, ContinuousClock.now < refusalDeadline { try await Task.sleep(for: .milliseconds(5)) }
-    XCTAssertEqual(coordinator.failure, "resource_limit", "Mandatory source quality is refused, not silently demoted")
-    XCTAssertTrue(coordinator.published === current)
+    XCTAssertNil(coordinator.failure, "A source's refused capture does not invalidate the installed geometry")
+    XCTAssertEqual(coordinator.published?.plan.liveOwners.count, current.plan.liveOwners.count)
     XCTAssertTrue(current.rasters.values.allSatisfy { !$0.isReleased })
-    XCTAssertEqual(coordinator.budgetFailures.count, 1, "An impossible all-pinned plan is not retried forever")
+    XCTAssertFalse(coordinator.isPreparing, "An impossible source is not retried forever without a capacity change")
     await coordinator.stop()
     XCTAssertEqual(resources.reservedBytes, 0)
     XCTAssertEqual(resources.activeWebSurfaceCount, 0)
@@ -302,8 +300,9 @@ final class SceneCompositionSQLTests: XCTestCase {
     }
     let before = try source(), oldPlan = try await plan(before)
     let oldData = try await before.liveData(plan: oldPlan, presence: presence, frame: frame)
-    XCTAssertEqual(oldData.documents[documentID], document)
-    XCTAssertEqual(oldData.states[documentID], state)
+    XCTAssertTrue(oldData.documents.isEmpty, "A selected closed cover cannot load its document body")
+    XCTAssertTrue(oldData.states.isEmpty, "Closed cover admission does not need program state")
+    XCTAssertEqual(oldData.documentPaperSizes[documentID], .a4)
     XCTAssertTrue(oldData.pages.isEmpty)
     let resources = SceneRenderResources(byteLimit: 128 * 1024 * 1024)
     let coordinator = SceneCompositionTiles(resources: resources)
@@ -325,9 +324,14 @@ final class SceneCompositionSQLTests: XCTestCase {
     let newData = try await after.liveData(plan: newPlan, presence: presence, frame: frame)
     let carry = try await after.canCarryStaticPixels(from: oldPlan, liveData: oldData, to: newPlan, liveData: newData)
     XCTAssertTrue(carry, "A new Pencil action and live document state do not invalidate excluded background paint")
-    XCTAssertEqual(oldData.documents[documentID]?.blocks.first?.source, "Old body", "Shown passive payload is immutable while another revision prepares")
-    XCTAssertEqual(newData.documents[documentID]?.blocks.first?.source, "New body")
-    XCTAssertEqual(newData.states[documentID]?.value(for: "body"), .number(7))
+    XCTAssertTrue(oldData.documents.isEmpty)
+    XCTAssertTrue(newData.documents.isEmpty, "A body edit cannot pull closed content into the board cohort")
+    XCTAssertTrue(newData.states.isEmpty)
+    let opened = SessionPresence(boardID: header.rootBoardID, mode: .document, camera: presence.camera,
+      viewport: presence.viewport, focusedItemID: documentID, openProgress: 1, selectedItemID: documentID)
+    let openedData = try await after.liveData(plan: newPlan, presence: opened, frame: frame)
+    XCTAssertEqual(openedData.documents[documentID]?.blocks.first?.source, "New body")
+    XCTAssertEqual(openedData.states[documentID]?.value(for: "body"), .number(7))
     XCTAssertEqual(newData.ink.actions.count, 1)
     coordinator.prepare(source: after, presence: presence, frame: frame, pinned: [.item(documentID)])
     try await waitForPublication(coordinator, revision: after.revision)
@@ -359,5 +363,59 @@ final class SceneCompositionSQLTests: XCTestCase {
     while coordinator.published?.plan.revision != revision, coordinator.failure == nil,
       ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     XCTAssertEqual(coordinator.published?.plan.revision, revision, coordinator.failure ?? "Whole cohort was not published")
+  }
+
+  func testStartupAndDiskRefreshLoadOnlyTheActuallyOpenedPaperContent() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    let pageSize = PageSize(width: 834, height: 1194)
+    let initial = try store.initializeWorkspace(actor: actor, pageSize: pageSize)
+    var workspace = try store.loadIndex()
+    let notebookID = workspace.selectedItemID, pageID = try XCTUnwrap(workspace.selectedPageID)
+    var hierarchy = try store.loadBoard(items: workspace.items)
+    let documentID = try XCTUnwrap(workspace.createDocument(title: "Closed content", actor: actor)?.id)
+    XCTAssertTrue(hierarchy.addItem(documentID, to: initial.rootBoardID, near: .zero, actor: actor))
+    let document = DocumentDocument(id: documentID, actor: actor,
+      blocks: [.markdown(id: "body", source: String(repeating: "The unopened body. ", count: 1_000))])
+    var state = DocumentStateJournal(id: documentID, actor: actor)
+    XCTAssertTrue(state.commit(blockID: "body", value: .number(7), actor: actor))
+    try store.saveDocumentWorkspaceBundle(index: workspace, document: document, state: state, board: hierarchy)
+    let draft = DocumentEditingSession(edit: .init(sessionID: UUID(), documentID: documentID, blockID: "body",
+      baseSource: document.blocks[0].source, baseVersion: document.sourceVersion(blockID: "body"), source: "Draft", sequence: 1))
+    try store.saveDocumentDraft(draft)
+    let viewport = SpatialPoint(x: 834, y: 1194)
+    for selectedID in [documentID, notebookID] {
+      let selectedPageID = selectedID == notebookID ? pageID : nil
+      let closed = SessionPresence(boardID: initial.rootBoardID, mode: .board, camera: .init(scale: 0.3),
+        viewport: viewport, selectedItemID: selectedID, notebookPageID: selectedPageID)
+      try store.savePresence(closed)
+      let started = try NotebookSceneState.start(store: store, actor: actor, pageSize: pageSize,
+        notebookID: notebookID, pageID: pageID)
+      let refreshed = try NotebookDiskRefresh.prepare(store: store, presence: closed, receivingDeviceID: nil).scene
+      for snapshot in [started, refreshed] {
+        XCTAssertEqual(snapshot.presence.mode, .board)
+        XCTAssertEqual(snapshot.presence.selectedItemID, selectedID)
+        XCTAssertTrue(snapshot.documents.isEmpty)
+        XCTAssertTrue(snapshot.states.isEmpty)
+        XCTAssertTrue(snapshot.drafts.isEmpty)
+        XCTAssertTrue(snapshot.pages.isEmpty, "A closed notebook also reads its directory without page bodies")
+        if selectedID == notebookID { XCTAssertTrue(snapshot.pagePositions.contains { $0.pageID == pageID }) }
+        else { XCTAssertEqual(snapshot.paperSizes[documentID], document.paperSize) }
+      }
+      let opened = SessionPresence(boardID: initial.rootBoardID, mode: selectedID == notebookID ? .page : .document,
+        camera: closed.camera, viewport: viewport, focusedItemID: selectedID, openProgress: 1,
+        selectedItemID: selectedID, notebookPageID: selectedPageID)
+      let openSnapshot = try NotebookDiskRefresh.prepare(store: store, presence: opened, receivingDeviceID: nil).scene
+      if selectedID == notebookID { XCTAssertNotNil(openSnapshot.pages[pageID]) }
+      else {
+        XCTAssertEqual(openSnapshot.documents[documentID]?.blocks, document.blocks)
+        XCTAssertEqual(openSnapshot.states[documentID]?.value(for: "body"), .number(7))
+        XCTAssertEqual(openSnapshot.drafts.map(\.id), [draft.id])
+      }
+      let metadata = try NotebookSceneState.read(store: store, presence: opened, viewport: viewport, loadsLiveContent: false)
+      XCTAssertTrue(metadata.pages.isEmpty); XCTAssertTrue(metadata.documents.isEmpty)
+      XCTAssertTrue(metadata.states.isEmpty); XCTAssertTrue(metadata.drafts.isEmpty)
+    }
   }
 }

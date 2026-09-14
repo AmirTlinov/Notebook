@@ -8,21 +8,24 @@ import NotebookCore
 /// the existing paired Mac authorizes it and owns the same Codex task.
 @MainActor @Observable final class NotebookVoiceController: NSObject {
   enum Phase { case off, preparing, waiting, listening, processing, speaking, muted }
-  var language = UserDefaults.standard.string(forKey: "notebook.voice.language") ?? NotebookWakeRecognizer.preferredLanguage {
+  @ObservationIgnored private let preferences: UserDefaults
+  var language: String {
     didSet {
-      UserDefaults.standard.set(language, forKey: "notebook.voice.language")
-      address = UserDefaults.standard.string(forKey: "notebook.voice.address." + language) ?? NotebookWakeAddress.localAddress(language: language)
+      preferences.set(language, forKey: "notebook.voice.language")
+      address = preferences.string(forKey: "notebook.voice.address." + language) ?? NotebookWakeAddress.localAddress(language: language)
     }
   }
   var address = "" {
-    didSet { UserDefaults.standard.set(String(address.prefix(48)), forKey: "notebook.voice.address." + language) }
+    didSet { preferences.set(String(address.prefix(48)), forKey: "notebook.voice.address." + language) }
   }
-  override init() {
+  init(preferences: UserDefaults = .standard) {
+    self.preferences = preferences
+    language = preferences.string(forKey: "notebook.voice.language") ?? NotebookWakeRecognizer.preferredLanguage
     super.init()
     // The unavailable dictation control used to persist a non-executable mode.
     // Starting a conversation is now an explicit action, never a stored fallback.
-    UserDefaults.standard.removeObject(forKey: "notebook.voice.method")
-    address = UserDefaults.standard.string(forKey: "notebook.voice.address." + language) ?? NotebookWakeAddress.localAddress(language: language)
+    preferences.removeObject(forKey: "notebook.voice.method")
+    address = preferences.string(forKey: "notebook.voice.address." + language) ?? NotebookWakeAddress.localAddress(language: language)
   }
   private(set) var phase: Phase = .off
   private(set) var taskTitle = ""

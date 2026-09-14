@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { offsetWorld, TILE_SIZE, worldPointSchema, sceneBoundsSchema } from "../src/spatial.js";
-import { visibleBounds } from "../src/store.js";
+import { visibleBounds } from "./native-client.js";
 import type { SessionPresence } from "../src/domain.js";
 
 test("both exact tile endpoints survive JSON and retain normalized local coordinates", () => {

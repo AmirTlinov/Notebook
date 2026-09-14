@@ -1,0 +1,657 @@
+import UIKit
+import XCTest
+
+/// Exercises the paired application's real conversation and human controls.
+/// Agent-reported addresses are evidence for a subsequent public-API audit;
+/// the XCTest never treats prose as a storage or presentation receipt.
+@MainActor final class NotebookCollaborationAcceptanceUITests: XCTestCase {
+  private let app = XCUIApplication(bundleIdentifier: "com.amirtlinov.notebook.acceptance")
+  private var systemTrace: NotebookSystemTraceHandshake?
+  private var increment: XCUIElement { app.webViews.buttons["Acceptance increment"].firstMatch }
+  private var input: XCUIElement { app.webViews.textFields["Acceptance text"].firstMatch }
+  private var context: XCUIElement {
+    app.descendants(matching: .any).matching(identifier: "notebook-context-count").firstMatch
+  }
+  private var transcript: XCUIElement {
+    app.descendants(matching: .any).matching(identifier: "notebook-chat-transcript").firstMatch
+  }
+  private var catalogue: XCUIElement {
+    app.descendants(matching: .any).matching(identifier: "notebook-chat-recents").firstMatch
+  }
+  private var taskRows: XCUIElementQuery {
+    app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "notebook-chat-task-"))
+  }
+
+  private func launchControls() throws {
+    continueAfterFailure = false
+    executionTimeAllowance = 600
+    app.launchEnvironment["NOTEBOOK_ACCEPTANCE_MANIFEST"] = try XCTUnwrap(
+      ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_MANIFEST"])
+    systemTrace = try NotebookSystemTraceHandshake.configured(environment: ProcessInfo.processInfo.environment)
+    systemTrace?.configure(app)
+    app.launch()
+    try systemTrace?.began(app)
+    if XCUIDevice.shared.orientation != .portrait { XCUIDevice.shared.orientation = .portrait }
+    XCTAssertTrue(app.buttons["notebook-companion-compose"].waitForExistence(timeout: 20), app.debugDescription)
+    XCTAssertFalse(app.otherElements["persistence-failure"].exists)
+    for _ in 0..<8 where app.otherElements["page-turn-surface"].exists {
+      let back = app.buttons["leave-nested-board"]
+      XCTAssertTrue(back.isHittable); back.tap()
+    }
+    // Each independent scenario navigates through the real search owner; a
+    // preceding document/camera test may have left the controls offscreen.
+    let searchButton = app.buttons["notebook-search"]
+    XCTAssertTrue(searchButton.isHittable); searchButton.tap()
+    let search = app.searchFields.firstMatch
+    XCTAssertTrue(search.waitForExistence(timeout: 5)); search.tap()
+    let sourceText = "Контрольные кнопка, ползунок и поле ввода"
+    search.typeText(sourceText)
+    let results = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", sourceText))
+    XCTAssertTrue(results.firstMatch.waitForExistence(timeout: 10)); XCTAssertEqual(results.count, 1)
+    XCTAssertTrue(results.firstMatch.isHittable); results.firstMatch.tap()
+    XCTAssertTrue(search.waitForNonExistence(timeout: 10))
+    XCTAssertFalse(app.otherElements["page-turn-surface"].exists)
+    XCTAssertTrue(increment.waitForExistence(timeout: 30)); XCTAssertTrue(increment.isHittable)
+  }
+
+  private func launch() throws {
+    try launchControls()
+    openChat()
+    XCTAssertFalse(app.buttons["notebook-chat-stop"].exists,
+      "An existing real agent turn must finish before starting this isolated scenario.")
+    if context.exists {
+      context.tap()
+      let clear = app.buttons["notebook-context-clear"]
+      XCTAssertTrue(clear.waitForExistence(timeout: 3)); clear.tap()
+    }
+    try createFreshChat()
+    collapseChat()
+    XCTAssertTrue(increment.waitForExistence(timeout: 30),
+      "The public acceptance-controls material must be delivered and actually mounted.\n\(app.debugDescription)")
+    XCTAssertTrue(increment.isHittable)
+  }
+
+  private func openChat() {
+    if !app.buttons["notebook-chat-menu"].isHittable {
+      let compose = app.buttons["notebook-companion-compose"]
+      XCTAssertTrue(compose.waitForExistence(timeout: 5)); compose.tap()
+    }
+    XCTAssertTrue(app.buttons["notebook-chat-menu"].waitForExistence(timeout: 5))
+  }
+
+  private func collapseChat() {
+    let collapse = app.buttons["notebook-chat-toggle"]
+    XCTAssertTrue(collapse.isHittable); collapse.tap()
+    XCTAssertTrue(collapse.waitForNonExistence(timeout: 5))
+  }
+
+  private func showCatalogue() {
+    if !catalogue.exists {
+      let tasks = app.buttons["notebook-chat-tasks"]
+      XCTAssertTrue(tasks.isHittable); tasks.tap()
+    }
+    XCTAssertTrue(catalogue.waitForExistence(timeout: 5))
+    let chats = app.segmentedControls["notebook-chat-browser-mode"].buttons["Чаты"]
+    XCTAssertTrue(chats.exists)
+    if !chats.isSelected { chats.tap() }
+  }
+
+  private func createFreshChat() throws {
+    let conversationPrefix = "notebook-chat-conversation-"
+    let conversations = app.descendants(matching: .any).matching(NSPredicate(
+      format: "identifier BEGINSWITH %@", conversationPrefix))
+    let previousConversationIDs = Set(conversations.allElementsBoundByIndex.map(\.identifier))
+    showCatalogue()
+    let loaded = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
+      taskRows.count > 0 || app.descendants(matching: .any)["notebook-project-empty-chats"].exists
+    }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 30), .completed,
+      "Read the actual Codex catalogue before requesting a new conversation.")
+    let previous = Set(taskRows.allElementsBoundByIndex.map(\.identifier))
+    let pending = app.descendants(matching: .any).matching(NSPredicate(
+      format: "identifier BEGINSWITH %@", "notebook-chat-creation-"))
+    XCTAssertEqual(pending.count, 0, "An earlier creation must finish before this scenario starts.")
+    let newChat = app.buttons["notebook-chat-new"]
+    XCTAssertTrue(newChat.isHittable); XCTAssertTrue(newChat.isEnabled); newChat.tap()
+
+    // The creation receipt opens its exact task. Codex's history catalogue
+    // need not include a task before its first user turn. Reopening that list
+    // here would navigate away from the successful creation we are observing.
+    let opened = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
+      !catalogue.exists && conversations.allElementsBoundByIndex.contains {
+        !previousConversationIDs.contains($0.identifier) &&
+        UUID(uuidString: String($0.identifier.dropFirst(conversationPrefix.count))) != nil
+      }
+    }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [opened], timeout: 60), .completed,
+      "A real creation receipt must open a new, addressable conversation.")
+    let identifiers = Set(conversations.allElementsBoundByIndex.map(\.identifier))
+    XCTAssertEqual(identifiers.count, 1)
+    let identifier = try XCTUnwrap(identifiers.first)
+    let threadID = String(identifier.dropFirst(conversationPrefix.count))
+    XCTAssertNotNil(UUID(uuidString: threadID))
+    XCTAssertFalse(previousConversationIDs.contains(identifier))
+    XCTAssertFalse(previous.contains("notebook-chat-task-" + threadID))
+    XCTAssertTrue(catalogue.waitForNonExistence(timeout: 5))
+    XCTAssertTrue(transcript.waitForExistence(timeout: 30), app.debugDescription)
+    XCTAssertFalse(app.buttons["notebook-chat-stop"].exists)
+    let empty = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
+      transcript.exists && transcript.descendants(matching: .staticText).count == 0
+    }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [empty], timeout: 30), .completed,
+      "A fresh conversation must not inherit another conversation's displayed messages.")
+    try attach(["previousCatalogueTaskIdentifiers": previous.sorted(),
+      "previousConversationIdentifiers": previousConversationIDs.sorted(),
+      "selectedNewConversationIdentifier": identifier, "threadID": threadID],
+      name: "actual-new-codex-conversation-selection")
+    screenshot("collaboration-new-conversation-before-selection")
+  }
+
+  private func screenshot(_ name: String) {
+    let attachment = XCTAttachment(screenshot: app.screenshot())
+    attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+  }
+
+  private func attach(_ value: Any, name: String) throws {
+    let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: value,
+      options: [.prettyPrinted, .sortedKeys]), uniformTypeIdentifier: "public.json")
+    attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+  }
+
+  /// Exercise the ordinary request UI for the two tools explicitly authorized
+  /// by this isolated scenario. Never grant file, shell, network or global access.
+  @discardableResult
+  private func approveNotebookAccessIfRequested() throws -> Bool {
+    let request = app.descendants(matching: .any).matching(identifier: "notebook-codex-request").firstMatch
+    guard request.exists else { return false }
+    XCTAssertTrue(request.staticTexts["Доступ к notebook"].exists,
+      "Unexpected permission request must be inspected separately: \(request.debugDescription)")
+    let details = request.buttons["Подробности запроса"]
+    if details.exists { XCTAssertTrue(details.isHittable); details.tap() }
+    let description = request.debugDescription
+    screenshot("collaboration-notebook-access-request-details")
+    let evidence = XCTAttachment(string: description)
+    evidence.name = "actual-notebook-access-request"; evidence.lifetime = .keepAlways; add(evidence)
+    let offered = try XCTUnwrap(request.staticTexts.allElementsBoundByIndex.compactMap { element -> (String, [String: Any])? in
+      guard let data = element.label.data(using: .utf8) else { return nil }
+      guard let parameters = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+      return (element.label, parameters)
+    }.first(where: { $0.1["serverName"] != nil }), "The actual request details must expose its structured parameters")
+    let parameters = offered.1
+    let metadata = try XCTUnwrap(parameters["_meta"] as? [String: Any])
+    XCTAssertEqual(parameters["serverName"] as? String, "notebook")
+    XCTAssertEqual(parameters["mode"] as? String, "form")
+    XCTAssertEqual(metadata["codex_approval_kind"] as? String, "mcp_tool_call")
+    let expectedMessages = ["notebook_execute", "notebook_context"].map {
+      "Allow the notebook MCP server to run tool \"\($0)\"?"
+    }
+    XCTAssertTrue(expectedMessages.contains(parameters["message"] as? String ?? ""),
+      "Only an exact public Notebook tool request is authorized; mentions inside code or prose are insufficient")
+    let threadID = try XCTUnwrap(parameters["threadId"] as? String)
+    XCTAssertTrue(app.descendants(matching: .any).matching(identifier:
+      "notebook-chat-conversation-" + threadID).firstMatch.exists,
+      "The decision must belong to the currently displayed test conversation")
+    let remember = request.buttons["notebook-approval-remember"]
+    XCTAssertTrue(remember.isHittable); remember.tap()
+    let session = app.buttons["Разрешить на весь чат"]
+    XCTAssertTrue(session.waitForExistence(timeout: 3)); XCTAssertTrue(session.isHittable); session.tap()
+    let originalDetails = request.staticTexts.matching(NSPredicate(format: "label == %@", offered.0)).firstMatch
+    XCTAssertTrue(originalDetails.waitForNonExistence(timeout: 10),
+      "Codex must retire this exact request; a following request is handled separately")
+    return true
+  }
+
+  func testApproveAuthorizedNotebookAccessInExistingConversation() throws {
+    continueAfterFailure = false
+    XCTAssertEqual(app.state, .runningForeground)
+    XCTAssertTrue(app.buttons["notebook-chat-stop"].exists)
+    XCTAssertTrue(try approveNotebookAccessIfRequested())
+    screenshot("collaboration-notebook-session-access-accepted")
+  }
+
+  func testObserveExistingConversationAfterAuthorizedAccess() throws {
+    continueAfterFailure = false
+    app.launchEnvironment["NOTEBOOK_ACCEPTANCE_MANIFEST"] = try XCTUnwrap(
+      ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_MANIFEST"])
+    app.activate()
+    XCTAssertTrue(app.buttons["notebook-companion-compose"].waitForExistence(timeout: 20)
+      || app.buttons["notebook-chat-menu"].exists)
+    openChat()
+    XCTAssertTrue(app.buttons["notebook-chat-menu"].waitForExistence(timeout: 10))
+    let completed = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
+      do { if try approveNotebookAccessIfRequested() { return false } }
+      catch { XCTFail("Cannot complete authorized access: \(error)"); return true }
+      return !app.buttons["notebook-chat-stop"].exists
+    }, object: nil)
+    let result = XCTWaiter.wait(for: [completed], timeout: 180)
+    screenshot("collaboration-existing-conversation-after-access")
+    let state = XCTAttachment(string: app.debugDescription)
+    state.name = "actual-existing-conversation-after-access"; state.lifetime = .keepAlways; add(state)
+    XCTAssertEqual(result, .completed)
+  }
+
+  func testCancelExistingConversationPreservesAcceptedHumanState() throws {
+    continueAfterFailure = false
+    app.activate()
+    XCTAssertTrue(input.waitForExistence(timeout: 10))
+    let beforeCount = try count(), beforeText = try XCTUnwrap(input.value as? String)
+    let hide = app.keyboards.buttons["Hide keyboard"]
+    if hide.exists { XCTAssertTrue(hide.isHittable); hide.tap() }
+    openChat()
+    let stop = app.buttons["notebook-chat-stop"]
+    XCTAssertTrue(stop.waitForExistence(timeout: 10), "Only a currently running real turn can be cancelled")
+    screenshot("collaboration-existing-running-turn-before-cancel")
+    XCTAssertTrue(stop.isHittable); stop.tap()
+    XCTAssertTrue(stop.waitForNonExistence(timeout: 30))
+    screenshot("collaboration-existing-turn-after-real-cancel")
+    let transcriptState = XCTAttachment(string: app.debugDescription)
+    transcriptState.name = "cancelled-conversation-actual-transcript"; transcriptState.lifetime = .keepAlways; add(transcriptState)
+    collapseChat()
+    XCTAssertEqual(try count(), beforeCount); XCTAssertEqual(input.value as? String, beforeText)
+    try attach(["actualHumanCount": beforeCount, "actualHumanText": beforeText],
+      name: "cancel-preserved-human-state-for-public-audit")
+  }
+
+  private func count() throws -> Int {
+    let prefix = "Acceptance count: "
+    let labels = app.webViews.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", prefix))
+      .allElementsBoundByIndex.map(\.label)
+    let counts = labels.compactMap { Int($0.dropFirst(prefix.count)) }
+    XCTAssertEqual(counts.count, 1, "The actual visible fixture must have exactly one counter: \(labels)")
+    return try XCTUnwrap(counts.first)
+  }
+
+  /// Start outside the live WebKit, so the long hold belongs to board selection,
+  /// then include the actual button and count. Coordinates come from current AX
+  /// geometry, not saved camera/DOM coordinates or a model-injected selection.
+  private func selectCounterRegion() throws {
+    let web = app.webViews.containing(.button, identifier: "Acceptance increment").firstMatch
+    XCTAssertTrue(web.exists)
+    let value = app.webViews.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Acceptance count: "))
+      .firstMatch
+    let content = increment.frame.union(value.frame)
+    let screen = app.frame.insetBy(dx: 8, dy: 8)
+    let left = CGPoint(x: web.frame.minX - 14, y: content.minY - 14)
+    let right = CGPoint(x: web.frame.maxX + 14, y: content.minY - 14)
+    let from: CGPoint, to: CGPoint
+    if screen.contains(left) {
+      from = left; to = CGPoint(x: min(screen.maxX, content.maxX + 10), y: content.maxY + 10)
+    } else {
+      XCTAssertTrue(screen.contains(right), "No empty visible board edge beside the public widget; frame=\(web.frame)")
+      from = right; to = CGPoint(x: max(screen.minX, content.minX - 10), y: content.maxY + 10)
+    }
+    XCTAssertTrue(screen.contains(to)); XCTAssertFalse(web.frame.contains(from))
+    let origin = app.coordinate(withNormalizedOffset: .zero)
+    origin.withOffset(CGVector(dx: from.x - app.frame.minX, dy: from.y - app.frame.minY))
+      .press(forDuration: 0.55, thenDragTo: origin.withOffset(
+        CGVector(dx: to.x - app.frame.minX, dy: to.y - app.frame.minY)))
+    XCTAssertTrue(context.waitForExistence(timeout: 5), "The real hold must create human context.")
+    XCTAssertGreaterThan(Int(context.value as? String ?? "") ?? 0, 0)
+    try attach(["start": ["x": from.x, "y": from.y], "end": ["x": to.x, "y": to.y],
+      "contextCount": context.value as? String ?? ""], name: "actual-human-selection-gesture")
+    screenshot("collaboration-human-region-before-send")
+  }
+
+  private func send(_ message: String) throws {
+    openChat()
+    let composer = app.descendants(matching: .any).matching(identifier: "notebook-chat-text").firstMatch
+    XCTAssertTrue(composer.waitForExistence(timeout: 5)); composer.tap()
+    let existing = composer.value as? String ?? ""
+    if !existing.isEmpty, existing != "Сообщение Codex" {
+      XCTAssertTrue(["Помоги разобраться с выделенным фрагментом.", "Совместная проверка конфликта ",
+        "Это проверка изолированного пространства Notebook."].contains { existing.hasPrefix($0) },
+        "Only an earlier acceptance scenario's unsent draft may be replaced.")
+      screenshot("collaboration-earlier-acceptance-draft-before-replacement")
+      composer.typeKey("a", modifierFlags: .command)
+      composer.typeText(XCUIKeyboardKey.delete.rawValue)
+    }
+    composer.typeText(message)
+    XCTAssertEqual(composer.value as? String, message, "Send must submit this exact request once, without an older draft.")
+    let send = app.buttons["notebook-chat-send"]
+    XCTAssertTrue(send.isHittable); XCTAssertTrue(send.isEnabled); send.tap()
+    XCTAssertTrue(app.buttons["notebook-chat-stop"].waitForExistence(timeout: 30),
+      "A saved outgoing message or a locally prepared answer is not a running Codex turn.")
+    screenshot("collaboration-real-codex-running")
+    try attach(["message": message], name: "actual-sent-collaboration-request")
+  }
+
+  /// The prompt describes field names but never contains a completed packet.
+  /// UUIDs/hashes must come from actual API results, and each packet is scoped
+  /// to this fresh conversation. This is an observation, not proof of a write.
+  private func packet(test: String, phase: String, timeout: TimeInterval = 300) throws -> [String: Any] {
+    let expression = try NSRegularExpression(pattern: #"\{[^{}]{1,16384}\}"#)
+    var found: [String: Any]?
+    let expectation = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
+      do { if try approveNotebookAccessIfRequested() { return false } }
+      catch { XCTFail("Cannot complete the authorized Notebook access request: \(error)"); return true }
+      for label in app.webViews.staticTexts.allElementsBoundByIndex.suffix(128).map(\.label)
+        where label.contains(test) && label.contains(phase) {
+        let range = NSRange(label.startIndex..<label.endIndex, in: label)
+        for match in expression.matches(in: label, range: range) {
+          guard let slice = Range(match.range, in: label), let bytes = String(label[slice]).data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+            object["test"] as? String == test, object["phase"] as? String == phase else { continue }
+          found = object; return true
+        }
+      }
+      return false
+    }, object: nil)
+    let result = XCTWaiter.wait(for: [expectation], timeout: timeout)
+    screenshot("collaboration-\(phase)-agent-response")
+    XCTAssertEqual(result, .completed,
+      "No real response packet. Inspect the transcript/tool failures; never substitute a canned reply.\n\(app.debugDescription)")
+    let value = try XCTUnwrap(found)
+    try attach(value, name: "agent-reported-\(phase)-public-addresses-unverified")
+    XCTAssertTrue(app.buttons["notebook-chat-stop"].waitForNonExistence(timeout: 30))
+    return value
+  }
+
+  private func string(_ packet: [String: Any], _ key: String) throws -> String {
+    let value = try XCTUnwrap(packet[key] as? String, key)
+    XCTAssertFalse(value.isEmpty, key); return value
+  }
+
+  @discardableResult private func uuid(_ packet: [String: Any], _ key: String) throws -> UUID {
+    try XCTUnwrap(UUID(uuidString: try string(packet, key)), key)
+  }
+
+  private func tapIncrement(from before: Int) throws {
+    XCTAssertTrue(increment.isHittable); increment.tap()
+    XCTAssertTrue(app.webViews.staticTexts["Acceptance count: \(before + 1)"].firstMatch
+      .waitForExistence(timeout: 3), "One actual tap must update the control exactly once.")
+    XCTAssertEqual(try count(), before + 1)
+  }
+
+  private func replaceInputThroughSelectionMenu(_ text: String) throws {
+    XCTAssertTrue(input.isHittable); input.tap()
+    XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+    // WebKit's AX element press may choose its top-left +5pt hit point,
+    // which lies in this padded input's border. Press the visible text line.
+    let fieldFrame = input.frame
+    let textPoint = input.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.55))
+    try attach(["fieldFrame": ["x": fieldFrame.minX, "y": fieldFrame.minY,
+      "width": fieldFrame.width, "height": fieldFrame.height],
+      "requestedContact": ["x": textPoint.screenPoint.x, "y": textPoint.screenPoint.y]],
+      name: "native-selection-visible-text-contact")
+    textPoint.press(forDuration: 1.1)
+    screenshot("collaboration-native-insertion-point-after-press")
+    // Holding on iPad places the insertion point. A tap on that actual caret
+    // asks the native editor to show its editing commands.
+    textPoint.tap()
+    screenshot("collaboration-native-text-selection-menu")
+    let menu = app.descendants(matching: .any).matching(NSPredicate(
+      format: "(elementType == %d OR elementType == %d) AND label IN %@",
+      XCUIElement.ElementType.button.rawValue, XCUIElement.ElementType.menuItem.rawValue,
+      ["Select All", "Выбрать все", "Выбрать всё", "Выделить все", "Выделить всё"]))
+    XCTAssertTrue(menu.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+    let choices = menu.allElementsBoundByIndex.filter(\.isHittable)
+    XCTAssertEqual(choices.count, 1, app.debugDescription)
+    try XCTUnwrap(choices.first).tap()
+    screenshot("collaboration-native-text-selected-before-replacement")
+    input.typeText(text)
+    let immediate = input.value as? String
+    screenshot("collaboration-native-text-immediately-after-typing")
+    let accepted = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
+      input.value as? String == text
+    }, object: nil)
+    let completion = XCTWaiter.wait(for: [accepted], timeout: 3)
+    try attach(["immediateAXValue": immediate ?? "", "expectedText": text,
+      "subsequentAXValue": input.value as? String ?? "",
+      "measurement": "XCTest accessibility observations; not a control latency measurement"],
+      name: "actual-keyboard-value-before-and-after-webkit-publication")
+    XCTAssertEqual(completion, .completed, "The complete keyboard value must reach the real text field")
+    XCTAssertEqual(input.value as? String, text)
+  }
+
+  func testWidgetTextReplacementUsesNativeSelectionMenu() throws {
+    try launchControls()
+    let before = try count()
+    let previousText = try XCTUnwrap(input.value as? String)
+    XCTAssertFalse(previousText.isEmpty, "The native selection must replace existing content.")
+    let replacement = "Native selection \(UUID().uuidString.lowercased())"
+    screenshot("widget-native-text-before-selection")
+    try replaceInputThroughSelectionMenu(replacement)
+    XCTAssertEqual(try count(), before)
+    screenshot("widget-native-text-replacement-visible")
+    try tapIncrement(from: before)
+    XCTAssertEqual(input.value as? String, replacement)
+    try attach(["previousText": previousText, "replacementText": replacement,
+      "beforeCount": before, "actualCountAfterOneTap": try count()],
+      name: "actual-native-selection-and-first-touch")
+    try systemTrace?.ended(app)
+  }
+
+  /// Continue the exact failed keyboard boundary without creating a new turn,
+  /// reapplying the agent effect or manufacturing a conflict receipt.
+  func testCompletePendingHumanEditThroughNativeSelectionMenu() throws {
+    continueAfterFailure = false
+    app.activate()
+    XCTAssertTrue(input.waitForExistence(timeout: 10))
+    let previous = try XCTUnwrap(input.value as? String)
+    let pattern = #"^Human edit ([0-9a-f-]{36})Agent ready \1$"#
+    let regex = try NSRegularExpression(pattern: pattern)
+    let match = try XCTUnwrap(regex.firstMatch(in: previous,
+      range: NSRange(previous.startIndex..<previous.endIndex, in: previous)))
+    let range = try XCTUnwrap(Range(match.range(at: 1), in: previous))
+    let nonce = String(previous[range]); _ = try XCTUnwrap(UUID(uuidString: nonce))
+    let humanCount = try count(), humanText = "Human edit \(nonce)"
+    try replaceInputThroughSelectionMenu(humanText)
+    XCTAssertEqual(try count(), humanCount)
+    screenshot("collaboration-recovered-human-text-actually-visible")
+    openChat()
+    let receipt = try packet(test: nonce, phase: "conflict_undone", timeout: 240)
+    XCTAssertEqual(try string(receipt, "casErrorCode"), "revision_conflict")
+    XCTAssertEqual(try uuid(receipt, "effectActionID"), try uuid(receipt, "undoReceiptID"))
+    XCTAssertEqual(receipt["humanCount"] as? Int, humanCount)
+    XCTAssertEqual(receipt["afterUndoCount"] as? Int, humanCount)
+    XCTAssertEqual(receipt["afterUndoText"] as? String, humanText)
+    collapseChat()
+    XCTAssertEqual(try count(), humanCount); XCTAssertEqual(input.value as? String, humanText)
+    try attach(["test": nonce, "actualHumanCount": humanCount, "actualHumanText": humanText,
+      "agentReportedPublicAddresses": receipt], name: "ui-recovered-conflict-for-independent-public-audit")
+  }
+
+  func testSentRegionRemainsImmutableWhileRealAgentCreatesAnInteractiveDocument() throws {
+    try launch()
+    let nonce = UUID().uuidString.lowercased()
+    let title = "Collaboration \(nonce)"
+    let button = "Collaboration increment \(nonce)"
+    let output = "Collaboration count \(nonce): "
+    let before = try count()
+    try selectCounterRegion()
+    try send("""
+      Помоги разобраться с выделенным фрагментом. Это настоящая совместная проверка \(nonce).
+      Работай только через notebook_context и notebook_execute; точные методы узнай через nb.help.
+      Прочитай внимание именно отправленного сообщения через nb.attention, получи source_pixels,
+      вызови emitImage с его artifact и самостоятельно прочитай Acceptance count на этих пикселях.
+      Я сейчас нажму кнопку исходного acceptance-controls. Не меняй его. Дождись через ограниченные
+      публичные чтения его нового count, отличного от значения в отправленном изображении; не проси
+      подтверждения и не делай сетевых/файловых вызовов. Повторно прочитай то же внимание: SHA должен
+      остаться прежним. В текущей доске создай одной транзакцией документ «\(title)»: короткое объяснение
+      увиденного и интерактивный блок на первой странице, исходный count 0, настоящая кнопка с aria-label
+      «\(button)», output «\(output)0». Кнопка прибавляет 1, notebook.commit сохраняет состояние,
+      notebookstate его восстанавливает, notebook.ready объявляет готовность. Прочитай сохранённый документ.
+      Не двигай мою камеру. В финале дай один плоский JSON без вложенных объектов: test=\(nonce),
+      phase=attention_created, contextID, referenceID, artifactSHA256, artifactSHA256After, boardID,
+      documentID, programID, creationActionID, creationRunID, attentionRunID, beforeRevision, afterRevision,
+      sentCount (число с исходных
+      пикселей), currentCount (новое публичное значение). IDs/версии/SHA возьми из настоящих результатов.
+      RunID — действительный run_id вызова notebook_execute с соответствующим действием или изображением.
+      Версии относятся к boardID: beforeRevision из expected создания, afterRevision из его сохранённой
+      квитанции. Выведи через emit фактическую квитанцию создания и прочитанные значения; они нужны
+      для независимой проверки по журналу публичного запуска.
+      Если изображения или операции недоступны, опиши реальную ошибку, не придумывай успешный пакет.
+      """)
+    collapseChat()
+    try tapIncrement(from: before)
+    screenshot("collaboration-human-control-changed-after-send")
+    openChat()
+    let receipt = try packet(test: nonce, phase: "attention_created")
+    for key in ["contextID", "referenceID", "boardID", "documentID", "creationActionID", "creationRunID", "attentionRunID"] {
+      try uuid(receipt, key)
+    }
+    _ = try string(receipt, "programID")
+    let sha = try string(receipt, "artifactSHA256")
+    XCTAssertNotNil(sha.range(of: #"^[0-9a-fA-F]{64}$"#, options: .regularExpression))
+    XCTAssertEqual(try string(receipt, "artifactSHA256After").lowercased(), sha.lowercased())
+    XCTAssertEqual(receipt["sentCount"] as? Int, before)
+    XCTAssertEqual(receipt["currentCount"] as? Int, before + 1)
+    XCTAssertNotEqual(try string(receipt, "beforeRevision"), try string(receipt, "afterRevision"))
+    collapseChat()
+    XCTAssertEqual(try count(), before + 1)
+    try inspectCreatedDocument(receipt: receipt, nonce: nonce, before: before)
+    try systemTrace?.ended(app)
+  }
+
+  /// Continue only the observed presentation part of a completed real turn.
+  /// This does not turn an earlier timed-out end-to-end scenario into a pass.
+  func testUseCreatedDocumentFromTheExistingRealConversation() throws {
+    continueAfterFailure = false
+    app.launchEnvironment["NOTEBOOK_ACCEPTANCE_MANIFEST"] = try XCTUnwrap(
+      ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_MANIFEST"])
+    app.activate()
+    XCTAssertTrue(app.buttons["notebook-companion-compose"].waitForExistence(timeout: 20)
+      || app.buttons["notebook-chat-menu"].exists)
+    openChat()
+    XCTAssertFalse(app.buttons["notebook-chat-stop"].exists)
+    var packets: [[String: Any]] = []
+    let loaded = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
+      packets = transcript.descendants(matching: .staticText).allElementsBoundByIndex.compactMap { item -> [String: Any]? in
+      guard let data = item.label.data(using: .utf8),
+        let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+        value["phase"] as? String == "attention_created" else { return nil }
+      return value
+    }
+      return !packets.isEmpty
+    }, object: nil)
+    let loadResult = XCTWaiter.wait(for: [loaded], timeout: 30)
+    screenshot("collaboration-existing-creation-response-before-opening")
+    let state = XCTAttachment(string: app.debugDescription)
+    state.name = "actual-existing-creation-response"; state.lifetime = .keepAlways; add(state)
+    XCTAssertEqual(loadResult, .completed, "The real transcript must load before interpreting a completed response")
+    XCTAssertEqual(packets.count, 1, "Read exactly one actual creation response from the current conversation")
+    let receipt = try XCTUnwrap(packets.first)
+    let nonce = try string(receipt, "test")
+    XCTAssertNotNil(UUID(uuidString: nonce))
+    let before = try XCTUnwrap(receipt["sentCount"] as? Int)
+    XCTAssertEqual(receipt["currentCount"] as? Int, before + 1)
+    try attach(receipt, name: "completed-real-turn-public-addresses-unverified")
+    collapseChat()
+    // This continuation may restore the document left open by the failed tap.
+    // The earlier board observation belongs to the original scenario, not to
+    // an offscreen control in the current restored document.
+    try inspectCreatedDocument(receipt: receipt, nonce: nonce, before: before)
+  }
+
+  private func inspectCreatedDocument(receipt: [String: Any], nonce: String, before: Int) throws {
+    let title = "Collaboration \(nonce)"
+    let button = "Collaboration increment \(nonce)"
+    let output = "Collaboration count \(nonce): "
+    app.buttons["notebook-search"].tap()
+    let search = app.searchFields.firstMatch
+    XCTAssertTrue(search.waitForExistence(timeout: 5)); search.tap(); search.typeText(title)
+    let result = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", title)).firstMatch
+    XCTAssertTrue(result.waitForExistence(timeout: 15)); result.tap()
+    // A title search locates its cover; the ordinary double tap opens the
+    // document. The agent-reported ID only addresses this subsequent UI check.
+    let cover = app.buttons["workspace-item-" + (try uuid(receipt, "documentID")).uuidString.lowercased()]
+    XCTAssertTrue(cover.waitForExistence(timeout: 10)); XCTAssertTrue(cover.isHittable); cover.doubleTap()
+    XCTAssertTrue(app.otherElements["page-turn-surface"].waitForExistence(timeout: 10))
+    let createdButton = app.webViews.buttons[button].firstMatch
+    XCTAssertTrue(createdButton.waitForExistence(timeout: 30)); XCTAssertTrue(createdButton.isHittable)
+    XCTAssertTrue(app.webViews.staticTexts[output + "0"].firstMatch.exists)
+    screenshot("collaboration-created-document-before-first-touch")
+    createdButton.tap()
+    XCTAssertTrue(app.webViews.staticTexts[output + "1"].firstMatch.waitForExistence(timeout: 3))
+    XCTAssertFalse(app.webViews.staticTexts[output + "2"].firstMatch.exists)
+    screenshot("collaboration-created-document-first-touch-result")
+    try attach(["test": nonce, "recordedBeforeSendCount": before, "recordedAfterSendCount": before + 1,
+      "actualCreatedProgramCount": 1, "agentReportedPublicAddresses": receipt],
+      name: "ui-observations-for-independent-public-receipt-audit")
+  }
+
+  func testConcurrentHumanStateRejectsStaleAgentWriteAndSurvivesItsUndo() throws {
+    try launch()
+    let nonce = UUID().uuidString.lowercased()
+    let agentMarker = "Agent ready \(nonce)"
+    let humanMarker = "Human edit \(nonce)"
+    let before = try count()
+    try selectCounterRegion()
+    try send("""
+      Совместная проверка конфликта \(nonce). Работай только через notebook_context и notebook_execute,
+      точные формы читай через nb.help. Прочитай внимание этого сообщения и emitImage его исходного
+      artifact. Найди acceptance-controls на текущей доске. Одной атомарной транзакцией измени только
+      его state.text на «\(agentMarker)», сохрани count/slider. Сохрани actionID и expectedA прямо
+      из результата этой транзакции: saved.receipt.id и saved.receipt.revisions. Это версия той же
+      принятой SQL записи; НЕ делай новое чтение для expectedA после появления маркера, иначе туда
+      уже может попасть моя правка. Сохрани также state, который ты передал этой транзакции.
+      Здесь saved — элемент массива ответа nb.transaction. Сразу emit фактические actionID,
+      expectedA и state, чтобы продолжение другого run сохранило именно эту исходную квитанцию.
+      Сообщи commentary с фактическими actionID/версией. Я увижу текст в самом виджете, нажму его
+      counter и введу «\(humanMarker)» в то же поле. Жди эти ОБА изменения через ограниченные публичные
+      чтения, оставаясь в текущем ходе; один JS run не дольше 30 секунд, продолжения без повторения
+      эффектов. Не проси подтверждения, не используй файловую систему/сеть. После пользовательской
+      правки намеренно попытайся setElementState с точным expectedA из той квитанции: должен вернуться
+      revision_conflict. Не обновляй expected и не повторяй запись на новой версии. Если она неожиданно
+      принята, сообщи ошибку и остановись. Emit фактический объект ошибки и expectedA; не подменяй
+      ошибку ожидаемой строкой. Затем nb.undo отмени только свой исходный actionID. Ещё раз
+      прочитай state и квитанцию undo: пользовательские count и text должны сохраниться. В финале
+      один плоский JSON без вложенных объектов: test=\(nonce), phase=conflict_undone, contextID,
+      referenceID, artifactSHA256, boardID, effectActionID, undoReceiptID, effectRunID, casRunID,
+      undoRunID, attentionRunID, beforeRevision (board revision после твоего эффекта, до моей правки),
+      humanRevision, afterUndoRevision, casErrorCode, undoSavedStatus (publication.saved),
+      undoCompletedAt (исходное число receipt.undo.completedAt), undoRestoredCount (receipt.undo.restored),
+      undoPreservedCount (receipt.undo.preservedCount), beforeCount, humanCount, afterUndoCount,
+      agentText, humanText, afterUndoText. Это реальные публичные значения, не ожидаемые или выдуманные.
+      Undo возвращает изменённую квитанцию первоначального действия: undoReceiptID должен быть равен
+      effectActionID, отдельного actionID отмены здесь нет. RunID — действительный run_id вызова
+      notebook_execute с соответствующей операцией или изображением. Emit полный ответ undo и итоговое
+      чтение state для независимой проверки публичного журнала.
+      """)
+    let ready = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
+      do { if try approveNotebookAccessIfRequested() { return false } }
+      catch { XCTFail("Cannot complete the authorized Notebook access request: \(error)"); return true }
+      return input.value as? String == agentMarker && app.buttons["notebook-chat-stop"].exists
+    }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 240), .completed,
+      "The actual live text field must show the agent's accepted state while Codex is still running.")
+    collapseChat()
+    XCTAssertTrue(input.isHittable)
+    XCTAssertEqual(input.value as? String, agentMarker)
+    XCTAssertEqual(try count(), before)
+    screenshot("collaboration-agent-state-actually-visible-before-human-edit")
+    try tapIncrement(from: before)
+    try replaceInputThroughSelectionMenu(humanMarker)
+    let actualText = try XCTUnwrap(input.value as? String)
+    XCTAssertEqual(actualText, humanMarker)
+    screenshot("collaboration-human-counter-and-field-concurrent-edit")
+    openChat()
+    let receipt = try packet(test: nonce, phase: "conflict_undone", timeout: 240)
+    for key in ["contextID", "referenceID", "boardID", "effectActionID", "undoReceiptID", "effectRunID",
+      "casRunID", "undoRunID", "attentionRunID"] { try uuid(receipt, key) }
+    XCTAssertEqual(try uuid(receipt, "undoReceiptID"), try uuid(receipt, "effectActionID"))
+    XCTAssertNotNil(try string(receipt, "artifactSHA256").range(of: #"^[0-9a-fA-F]{64}$"#, options: .regularExpression))
+    XCTAssertEqual(try string(receipt, "casErrorCode"), "revision_conflict")
+    XCTAssertNotEqual(try string(receipt, "beforeRevision"), try string(receipt, "humanRevision"))
+    _ = try string(receipt, "afterUndoRevision")
+    XCTAssertEqual(try string(receipt, "undoSavedStatus"), "confirmed")
+    let undoCompletedAt = try XCTUnwrap(receipt["undoCompletedAt"] as? Double)
+    XCTAssertTrue(undoCompletedAt.isFinite); XCTAssertGreaterThan(undoCompletedAt, 0)
+    XCTAssertGreaterThanOrEqual(try XCTUnwrap(receipt["undoRestoredCount"] as? Int), 0)
+    XCTAssertGreaterThan(try XCTUnwrap(receipt["undoPreservedCount"] as? Int), 0)
+    XCTAssertEqual(receipt["beforeCount"] as? Int, before)
+    XCTAssertEqual(receipt["humanCount"] as? Int, before + 1)
+    XCTAssertEqual(receipt["afterUndoCount"] as? Int, before + 1)
+    XCTAssertEqual(receipt["agentText"] as? String, agentMarker)
+    XCTAssertEqual(receipt["humanText"] as? String, actualText)
+    XCTAssertEqual(receipt["afterUndoText"] as? String, actualText)
+    collapseChat()
+    XCTAssertEqual(try count(), before + 1)
+    XCTAssertEqual(input.value as? String, actualText)
+    screenshot("collaboration-human-state-survives-agent-undo")
+    try attach(["test": nonce, "actualBeforeCount": before, "actualAfterCount": before + 1,
+      "actualHumanText": actualText, "agentReportedPublicAddresses": receipt],
+      name: "ui-conflict-observations-for-independent-public-receipt-audit")
+    try systemTrace?.ended(app)
+  }
+}

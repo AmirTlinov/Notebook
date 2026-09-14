@@ -1,3 +1,4 @@
+#if DEBUG
 import NotebookCore
 import XCTest
 @testable import Notebook
@@ -26,3 +27,4 @@ final class MacDocumentLaunchFixtureTests: XCTestCase {
     XCTAssertEqual(model.activeDocument?.id, documentID)
   }
 }
+#endif

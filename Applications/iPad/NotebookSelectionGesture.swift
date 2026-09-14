@@ -45,17 +45,19 @@ struct NotebookSelectionGesture: UIViewRepresentable {
       gate?.unregisterFingerCancellation(source: source); window = nil; anchor = nil
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-      guard touch.type == .direct, let anchor,
-        gate?.permitsSceneContact(at: touch.location(in: anchor.window), kind: .finger) == true,
+      guard touch.type == .direct, let anchor, let gate,
+        gate.permitsSceneContact(at: touch.location(in: anchor.window), kind: .finger),
         sceneReceives(touch, inside: anchor) else { return false }
       var view = touch.view
       while let current = view {
-        if current is UIControl || current is UITextView { return false }
         // A closed notebook owns this whole contact, including tap and lift.
         if current is NotebookInteractionTouchView { return false }
         view = current.superview
       }
-      return true
+      // Selection shares the camera's accepted-contact owner. In particular,
+      // a live program cannot also point or lift its containing scene item;
+      // reparenting during that contact cannot give it to selection later.
+      return NotebookSceneFingerRouting.owner(of: touch, gate: gate) == .scene
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
   }

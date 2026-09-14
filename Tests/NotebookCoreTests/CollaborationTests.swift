@@ -162,11 +162,11 @@ func collaborationReadSnapshotUsesCurrentSources() throws {
   let missing = CollaborationReference(target: f.page, elementID: "missing", revision: "missing")
   let regional = CollaborationReference(target: f.page, region: .init(x: 1, y: 1, width: 20, height: 20), revision: "old")
   let references = [before, missing, regional]
-  let paths = content.referenceFilePaths(for: references.map(\.target) + receipt.resultTargets(in: content)).union(receipt.changes.map(\.file))
+  let paths = content.referenceFilePaths(for: references.map(\.target) + (try NotebookActionReadModel(receipt)).resultTargets(in: content)).union(receipt.changes.map(\.file))
   #expect(!paths.contains("pages/\(unrelated.id.uuidString.lowercased()).json"))
   let files = try content.sourceFiles(including: paths)
   #expect(!files.keys.contains("pages/\(unrelated.id.uuidString.lowercased()).json"))
-  let snapshot = try CollaborationReadSnapshot(content: content, actions: [receipt], references: references)
+  let snapshot = try CollaborationReadSnapshot(content: content, actions: [try NotebookActionReadModel(receipt)], references: references)
   #expect(snapshot.results[receipt.id] == receipt.resultReferences(in: content))
   #expect(snapshot.results[receipt.id]?.first?.region?.x == 120)
   #expect(snapshot.continuations[receipt.id] == receipt.continuations(in: files))

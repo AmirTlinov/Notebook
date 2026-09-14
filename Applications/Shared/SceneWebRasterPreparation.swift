@@ -20,12 +20,15 @@ final class SceneWebRasterPreparation {
   private var isPreparing = false
   private(set) var completedJobCount = 0
   var webIdentity: ObjectIdentifier { ObjectIdentifier(web) }
+  var loadToken: String? { coordinator.loadToken }
 
   static func create(resources: SceneRenderResources,
+    executionSource: InteractiveElementReference? = nil,
     permitsPreparation: @MainActor () -> Bool) async throws -> SceneWebRasterPreparation {
     try Task.checkCancellation()
     guard permitsPreparation() else { throw CancellationError() }
-    let lease = try await resources.acquireWebSurface(priority: .background)
+    let lease = try await resources.acquireWebSurface(priority: .background, source: executionSource,
+      deadline: .now + .seconds(8))
     do {
       try Task.checkCancellation()
       guard permitsPreparation() else { throw CancellationError() }
@@ -54,33 +57,38 @@ final class SceneWebRasterPreparation {
     #endif
   }
 
-  func prepare(_ element: AgentElement, requestedScale: Double,
+  func prepare(_ element: AgentElement, requestedScale: Double, region: PageRect? = nil,
+    currentPolicy: (@MainActor () -> AgentSnapshotPolicy)? = nil,
     permitsPreparation: @MainActor () -> Bool) async throws -> RasterLease {
     precondition(!isPreparing, "A raster executor runs exactly one job at a time")
     guard !isClosed else { throw CancellationError() }
+    var policy: AgentSnapshotPolicy = currentPolicy?()
+      ?? region.map { .region($0, scale: requestedScale) } ?? .exact(scale: requestedScale)
     guard requestedScale.isFinite, requestedScale > 0,
-      AgentSnapshotPolicy.exact(scale: requestedScale).pixelSize(for: element) != nil else { throw SceneRenderError.resourceLimit }
+      policy.pixelSize(for: element) != nil else { throw SceneRenderError.resourceLimit }
     try Task.checkCancellation()
     guard permitsPreparation() else { throw CancellationError() }
-    if let raster = resources.retainRaster(for: element, minimumScale: requestedScale) { return raster }
+    if let raster = resources.retainRaster(for: policy.rasterSource(for: element),
+      minimumScale: policy.minimumScale(for: element)) { return raster }
     isPreparing = true
     defer { isPreparing = false }
-    let size = CGSize(width: element.frame.width, height: element.frame.height)
-    #if os(iOS)
-      window.frame = CGRect(origin: .init(x: -20_000 - size.width, y: -20_000 - size.height), size: size)
-      web.frame = CGRect(origin: .zero, size: size)
-      window.isHidden = false
-    #else
-      window.setContentSize(size); window.setFrameOrigin(.init(x: -20_000 - size.width, y: -20_000 - size.height))
-      web.frame = CGRect(origin: .zero, size: size); window.orderBack(nil)
-    #endif
-    coordinator.loadRasterJob(element, policy: .exact(scale: requestedScale), in: web)
+    place(element, policy: policy)
+    coordinator.loadRasterJob(element, policy: policy, in: web)
     let deadline = ContinuousClock.now + .seconds(8)
     do {
       while true {
         try Task.checkCancellation()
         guard permitsPreparation() else { throw CancellationError() }
-        if let raster = resources.retainRaster(for: element, minimumScale: requestedScale) {
+        if let next = currentPolicy?(), next != policy {
+          guard next.pixelSize(for: element) != nil else { throw SceneRenderError.resourceLimit }
+          policy = next
+          place(element, policy: policy)
+          // A camera request changes only this executor's capture window. It
+          // must not restart the program or its still-running readiness promise.
+          coordinator.load(element, policy: policy, in: web)
+        }
+        if let raster = resources.retainRaster(for: policy.rasterSource(for: element),
+          minimumScale: policy.minimumScale(for: element)) {
           completedJobCount += 1
           return raster
         }
@@ -89,6 +97,19 @@ final class SceneWebRasterPreparation {
         try await Task.sleep(for: .milliseconds(20))
       }
     } catch { close(); throw error }
+  }
+
+  private func place(_ element: AgentElement, policy: AgentSnapshotPolicy) {
+    let size = CGSize(width: element.frame.width, height: element.frame.height)
+    let crop = policy.captureRect(for: element)
+    #if os(iOS)
+      window.frame = CGRect(origin: .init(x: -20_000 - crop.width, y: -20_000 - crop.height), size: crop.size)
+      web.frame = CGRect(origin: .init(x: -crop.minX, y: -crop.minY), size: size)
+      window.isHidden = false
+    #else
+      window.setContentSize(crop.size); window.setFrameOrigin(.init(x: -20_000 - crop.width, y: -20_000 - crop.height))
+      web.frame = CGRect(origin: .init(x: -crop.minX, y: -crop.minY), size: size); window.orderBack(nil)
+    #endif
   }
 
   func close() {

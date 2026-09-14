@@ -54,12 +54,14 @@ struct SceneCompositionLiveData: Sendable {
   let ink: SpatialInkJournal
   let referenceIdentities: [NotebookReferenceIdentity]
   let referenceBasis: NotebookReferenceBasis?
+  let documentPaperSizes: [UUID: DocumentPaperSize]
   init(documents: [UUID: DocumentDocument], states: [UUID: DocumentStateJournal], pages: [UUID: PageDocument],
     ink: SpatialInkJournal, referenceIdentities: [NotebookReferenceIdentity] = [],
-    referenceBasis: NotebookReferenceBasis? = nil) {
+    referenceBasis: NotebookReferenceBasis? = nil, documentPaperSizes: [UUID: DocumentPaperSize] = [:]) {
     self.documents = documents; self.states = states; self.pages = pages; self.ink = ink
     self.referenceIdentities = referenceIdentities
     self.referenceBasis = referenceBasis
+    self.documentPaperSizes = documentPaperSizes
   }
 }
 
@@ -193,10 +195,15 @@ actor SceneCompositionSource {
     switch origin {
     case .sql(let store):
       return try checked(store) { store in
-        // Only a selected notebook opens pages. Passive covers need no page
-        // archive, while documents retain their same-cursor program and state.
-        let documents = try itemIDs.filter { try store.readItemHeader($0)?.kind == .document }
-        let pageIDs = presence.selectedItemID.map(itemIDs.contains) == true
+        // Closed paper needs its indexed cover, authored cover elements and
+        // ink. Its body belongs to the opened-page owner, not board admission.
+        let opensPaper = presence.openProgress > 0 || presence.mode == .page || presence.mode == .document
+        let openedID = opensPaper ? presence.focusedItemID : nil
+        let documents = try itemIDs.filter { id in
+          guard id == openedID else { return false }
+          return try store.readItemHeader(id)?.kind == .document
+        }
+        let pageIDs = opensPaper && presence.selectedItemID.map(itemIDs.contains) == true
           ? (presence.notebookPageID.map { [$0] } ?? []) : []
         let data = try store.readWorkingSet(itemIDs: documents, pageIDs: pageIDs, boardIDs: [], surfaces: surfaces)
         guard data.documents.count == documents.count, data.states.count == documents.count,
@@ -229,12 +236,14 @@ actor SceneCompositionSource {
             }
           })
         return .init(documents: data.documents, states: data.states, pages: data.pages, ink: data.ink,
-          referenceIdentities: basis.identities, referenceBasis: basis)
+          referenceIdentities: basis.identities, referenceBasis: basis,
+          documentPaperSizes: frame.index.documentPaperSizes.filter { itemIDs.contains($0.key) })
       }
     case .values(_, _, let journal):
       let wanted = Set(surfaces)
       let ink = SpatialInkJournal(actions: journal.actions.filter { $0.spans.contains { wanted.contains($0.surface) } }, stamp: journal.stamp)
-      return .init(documents: [:], states: [:], pages: [:], ink: ink)
+      return .init(documents: [:], states: [:], pages: [:], ink: ink,
+        documentPaperSizes: frame.index.documentPaperSizes.filter { itemIDs.contains($0.key) })
     }
   }
 
@@ -283,10 +292,10 @@ actor SceneCompositionSource {
         continue
       }
       let file = String(address.split(separator: "#", maxSplits: 1)[0])
-      if let id = documentID(file, directory: "document-states"), liveItems.contains(id),
-        oldData.states[id] != nil, data.states[id] != nil { continue }
+      if let id = documentID(file, directory: "document-states"), liveItems.contains(id) { continue }
       if let id = documentID(file, directory: "documents"), liveItems.contains(id),
-        let old = oldData.documents[id], let new = data.documents[id], old.paperSize == new.paperSize { continue }
+        let oldPaper = oldData.documentPaperSizes[id] ?? oldData.documents[id]?.paperSize,
+        let newPaper = data.documentPaperSizes[id] ?? data.documents[id]?.paperSize, oldPaper == newPaper { continue }
       if let id = documentID(file, directory: "pages"), oldData.pages[id] != nil, data.pages[id] != nil { continue }
       return false
     }
@@ -360,6 +369,16 @@ actor SceneCompositionSource {
   /// An unfinished cursor is unknown, never absence. At most two 32-entry
   /// pages per tile are inspected; dense sources keep the ordinary painter.
   func tilesRequiringPaint(_ tiles: [SceneCompositionTileKey]) throws -> [SceneCompositionTileKey] {
+    struct Probe: Hashable {
+      let plane: SceneCompositionPlane
+      let tile: CompositionTile
+      let pixelSize: Int
+    }
+    struct Read {
+      let entries: [WorkspaceSpatialEntry]
+      let exhausted: Bool
+    }
+    var reads: [Probe: Read] = [:]
     var retained: [SceneCompositionTileKey] = []
     for tile in tiles {
       try Task.checkCancellation()
@@ -367,19 +386,26 @@ actor SceneCompositionSource {
       // Board painting also reaches covers whose shadows cross the tile edge.
       // One output pixel conservatively includes projection rounding at edges.
       let padding = (tile.plane.coverID == nil ? WorkspaceCoverRaster.shadowPadding : 0)
-        + tile.tile.worldSize / Double(CompositionTile.pixelSize)
+        + tile.tile.worldSize / Double(tile.pixelSize)
       let bounds = WorkspaceSpatialBounds(origin: tile.tile.origin.offsetBy(x: -padding, y: -padding),
         width: tile.tile.worldSize + 2 * padding, height: tile.tile.worldSize + 2 * padding)
-      var cursor: SceneCompositionReadCursor?
-      var mayPaint = true
-      for _ in 0..<2 {
-        let page = try readPaintOrder(boardID: tile.plane.boardID, coverID: tile.plane.coverID,
-          bounds: bounds, after: cursor)
-        if page.entries.contains(where: tile.range.contains) { break }
-        cursor = page.next
-        if cursor == nil { mayPaint = false; break }
+      let probe = Probe(plane: tile.plane, tile: tile.tile, pixelSize: tile.pixelSize)
+      let read: Read
+      if let existing = reads[probe] { read = existing }
+      else {
+        var cursor: SceneCompositionReadCursor?
+        var entries: [WorkspaceSpatialEntry] = []
+        for _ in 0..<2 {
+          let page = try readPaintOrder(boardID: tile.plane.boardID, coverID: tile.plane.coverID,
+            bounds: bounds, after: cursor)
+          entries.append(contentsOf: page.entries)
+          cursor = page.next
+          if cursor == nil { break }
+        }
+        read = Read(entries: entries, exhausted: cursor == nil)
+        reads[probe] = read
       }
-      if mayPaint { retained.append(tile) }
+      if !read.exhausted || read.entries.contains(where: tile.range.contains) { retained.append(tile) }
     }
     try validate()
     return retained

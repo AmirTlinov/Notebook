@@ -1,10 +1,59 @@
 import NotebookCore
 import SwiftUI
 import UIKit
+import WebKit
 import XCTest
 @testable import Notebook
 
 final class SceneCameraPlaneTests: XCTestCase {
+  @MainActor
+  func testElementPosePreservesCanonicalWebGeometryAcrossFractionalCameraPhases() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow)
+    let window = UIWindow(windowScene: scene)
+    let viewport = SpatialPoint(x: 820, y: 1180)
+    window.frame = .init(x: 0, y: 0, width: viewport.x, height: viewport.y)
+    let controller = SceneCameraPlaneController<Int>()
+    window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { controller.uninstall(); window.isHidden = true; previous?.makeKey() }
+    let web = WKWebView(), size = CGSize(width: 200, height: 180)
+    var mounts = 0
+    let world = WorldPoint(x: 123.37, y: -151.19)
+    web.loadHTMLString("<meta name='viewport' content='width=device-width,initial-scale=1'><script>window.identity = 'retained-runtime'; window.count = 7;</script><button>Ready</button>", baseURL: nil)
+    func content(_ anchor: SessionPresence, _ projection: ScenePlaneProjection) -> AnyView {
+      let origin = anchor.camera.worldToScreen(world, viewport: anchor.viewport)
+      return AnyView(SceneElementPose(frame: .init(x: origin.x, y: origin.y,
+        width: size.width * anchor.camera.scale, height: size.height * anchor.camera.scale), contentSize: size) {
+          ScenePlaneProbeWeb(web: web, size: size, onMount: { mounts += 1 })
+        }.frame(width: viewport.x, height: viewport.y))
+    }
+    let initial = SessionPresence(mode: .board,
+      camera: .init(scale: 0.49160671462829736), viewport: viewport)
+    controller.update(presence: initial, revision: 0, content: content)
+    window.layoutIfNeeded()
+    try await waitForLifetime { !web.isLoading && web.window != nil }
+    for index in 0..<24 {
+      let current = SessionPresence(mode: .board, camera: .init(
+        center: .init(x: Double(index) * 0.137, y: -Double(index) * 0.193),
+        scale: 0.43 + Double(index % 6) * 0.021937), viewport: viewport)
+      controller.update(presence: current, revision: index / 4, reanchorsOnRevision: false,
+        isCameraActive: index % 4 != 0, content: content)
+      window.layoutIfNeeded()
+      XCTAssertEqual(web.bounds.size, size, "Camera sample \(index) cannot relayout the physical program")
+      for point in [CGPoint.zero, CGPoint(x: 100, y: 70), CGPoint(x: 200, y: 180)] {
+        let actual = web.convert(point, to: controller.view)
+        let expected = current.camera.worldToScreen(world.offsetBy(x: point.x, y: point.y), viewport: viewport)
+        XCTAssertEqual(actual.x, expected.x, accuracy: 0.0001, "Physical X, sample \(index), point \(point)")
+        XCTAssertEqual(actual.y, expected.y, accuracy: 0.0001, "Physical Y, sample \(index), point \(point)")
+      }
+    }
+    let identity = try await web.evaluateJavaScript("[window.identity, window.count].join(':')") as? String
+    XCTAssertEqual(identity, "retained-runtime:7", "Changing camera projection cannot replace or reload the running program")
+    XCTAssertEqual(mounts, 1, "A source publication or camera rebase cannot remount its unchanged physical program")
+    controller.uninstall()
+    XCTAssertTrue(controller.isRetired)
+  }
+
   @MainActor
   func testConditionalParentUnmountRetiresTheNestedPoseDisplayList() async throws {
     try await assertNestedPoseUnmount(animated: false)
@@ -28,7 +77,7 @@ final class SceneCameraPlaneTests: XCTestCase {
     state.cohort = try await WorkspaceInkFixture.prepare(boardID: boardID,
       camera: presence.camera, viewport: presence.viewport,
       items: [.init(itemID: itemID, geometry: .notebook, center: .zero, zIndex: 0)],
-      registry: registry, resources: resources)
+      registry: registry, resources: resources, requiresStaticRaster: true)
     weak let retired = state.cohort
     let host = UIHostingController(rootView: ScenePlaneNestedPoseLifetimeHost(state: state,
       presence: presence, itemID: itemID, registry: registry).environment(model))
@@ -72,7 +121,7 @@ final class SceneCameraPlaneTests: XCTestCase {
   func testTerminalCameraHostRetiresItsDisplayListWhileUIKitKeepsTheInnerHost() async throws {
     let resources = SceneRenderResources(), registry = SpatialInkSurfaceRegistry()
     var cohort: SceneCompositionCohort? = try await WorkspaceInkFixture.prepare(boardID: UUID(),
-      camera: .init(), viewport: .init(x: 256, y: 256), items: [], registry: registry, resources: resources)
+      camera: .init(), viewport: .init(x: 256, y: 256), items: [], registry: registry, resources: resources, requiresStaticRaster: true)
     var raster: RasterLease? = try XCTUnwrap(cohort?.rasters.values.first?.retainedCopy())
     weak let retiredRaster = raster
     cohort = nil
@@ -113,7 +162,7 @@ final class SceneCameraPlaneTests: XCTestCase {
     var cohort: SceneCompositionCohort? = try await WorkspaceInkFixture.prepare(boardID: boardID,
       camera: .init(), viewport: .init(x: 512, y: 512),
       items: [.init(itemID: itemID, geometry: .notebook, center: .zero, zIndex: 0)],
-      registry: registry, resources: resources)
+      registry: registry, resources: resources, requiresStaticRaster: true)
     var raster: RasterLease? = try XCTUnwrap(cohort?.rasters.values.first?.retainedCopy())
     weak let retiredRaster = raster
     let rendered = try XCTUnwrap(cohort?.frame.workset(boardID: boardID).items.first { $0.id == itemID })
@@ -163,20 +212,30 @@ final class SceneCameraPlaneTests: XCTestCase {
   func testShutdownRetiresNativeOwnersBeforeTheExternalHostReleasesItsContent() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("scene-terminal-\(UUID())")
     let store = NotebookStore(root: root)
-    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 100, height: 140))
+    let actor = UUID()
+    let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 100, height: 140))
+    let workspace = try store.loadIndex(), before = try store.loadBoard(items: store.loadIndex().items)
+    var board = before
+    for offset in 0..<8 {
+      XCTAssertTrue(board.upsertElement(.init(id: "shutdown-raster-\(offset)", surface: .board(header.rootBoardID), kind: .nativeText,
+        frame: .init(x: 0, y: 0, width: 128, height: 64), worldOrigin: .zero,
+        source: "Retained shutdown pixels", stamp: workspace.stamp),
+        in: header.rootBoardID, expected: nil, actor: actor))
+    }
+    _ = try store.saveBoardEdits(before: before, after: board)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: .init(width: 100, height: 140))
     let saved = await model.finishPendingPersistence()
     XCTAssertTrue(saved)
     try await waitForLifetime { model.sceneIndex != nil && !model.scenePreparationPending }
-    let index = try XCTUnwrap(model.sceneIndex), header = try XCTUnwrap(model.workspaceHeader)
+    let index = try XCTUnwrap(model.sceneIndex), currentHeader = try XCTUnwrap(model.workspaceHeader)
     let presence = SessionPresence(boardID: header.rootBoardID, mode: .board, camera: .init(scale: 1),
       viewport: .init(x: 256, y: 256))
     let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: model.scenePortalCamera)
     let resources = SceneRenderResources.shared
     let baseline = resources.rasterAdmission.pinnedBytes
-    model.compositionTiles.prepare(source: .init(store: store, revision: header.cursor, workspaceID: header.workspaceID),
+    model.compositionTiles.prepare(source: .init(store: store, revision: currentHeader.cursor, workspaceID: currentHeader.workspaceID),
       presence: presence, frame: frame, pinned: [], displayScale: 1)
     try await waitForLifetime { model.compositionTiles.published != nil }
     weak let latest = model.compositionTiles.published
@@ -235,7 +294,7 @@ final class SceneCameraPlaneTests: XCTestCase {
       viewport: .init(x: 256, y: 256))
     let state = ScenePlaneLifetimeState()
     state.cohort = try await WorkspaceInkFixture.prepare(boardID: boardID, camera: presence.camera,
-      viewport: presence.viewport, items: [], registry: registry, resources: resources)
+      viewport: presence.viewport, items: [], registry: registry, resources: resources, requiresStaticRaster: true)
     let host = UIHostingController(rootView: ScenePlaneLifetimeHost(state: state, presence: presence))
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     window.frame = .init(x: 0, y: 0, width: 256, height: 256)
@@ -245,7 +304,7 @@ final class SceneCameraPlaneTests: XCTestCase {
     let controller = try XCTUnwrap(planeController(in: host))
     try await waitForLifetime { controller.contentPublicationCount == 1 }
     state.cohort = try await WorkspaceInkFixture.prepare(boardID: boardID, camera: presence.camera,
-      viewport: presence.viewport, items: [], registry: registry, resources: resources)
+      viewport: presence.viewport, items: [], registry: registry, resources: resources, requiresStaticRaster: true)
     weak let latest = state.cohort
     try await waitForLifetime { controller.contentPublicationCount == 2 }
     XCTAssertGreaterThan(resources.rasterAdmission.pinnedBytes, 0)
@@ -275,7 +334,7 @@ final class SceneCameraPlaneTests: XCTestCase {
     var cohort: SceneCompositionCohort? = try await WorkspaceInkFixture.prepare(boardID: boardID,
       camera: presence.camera, viewport: presence.viewport,
       items: [.init(itemID: itemID, geometry: .notebook, center: .zero, zIndex: 0)],
-      registry: registry, resources: resources)
+      registry: registry, resources: resources, requiresStaticRaster: true)
     weak let retiredCohort = cohort
     let parent = UIViewController(), controller = WorkspaceItemPoseController()
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
@@ -410,6 +469,32 @@ final class SceneCameraPlaneTests: XCTestCase {
     let screen = controller.contentView.convert(CGPoint(x: viewport.x / 2, y: viewport.y / 2), to: controller.view)
     XCTAssertEqual(screen.x - controller.view.bounds.minX, viewport.x / 2, accuracy: 0.0001)
     XCTAssertEqual(screen.y - controller.view.bounds.minY, viewport.y / 2, accuracy: 0.0001)
+  }
+
+  @MainActor
+  func testNativeFarJumpCannotOverflowBeforeSwiftUIRebasesItsGeometry() {
+    let controller = SceneCameraPlaneController<Int>(), projection = SceneNativeCameraProjection()
+    let viewport = SpatialPoint(x: 1194, y: 834)
+    let first = SessionPresence(mode: .board,
+      camera: .init(center: .init(tileX: Int64.min + 100, tileY: 0, localX: 0, localY: 0), scale: 0.4), viewport: viewport)
+    let last = SessionPresence(mode: .board,
+      camera: .init(center: .init(tileX: Int64.max - 100, tileY: 0, localX: 0, localY: 0), scale: 0.4), viewport: viewport)
+    projection.update(first)
+    controller.bindCameraProjection(to: projection)
+    controller.update(presence: first, revision: 1) { _, _ in AnyView(Color.clear) }
+    projection.update(last)
+    XCTAssertTrue(controller.contentView.center.x.isFinite)
+    var installed: SessionPresence?
+    controller.update(presence: first, revision: 2, reanchorsOnRevision: false) { anchor, _ in
+      installed = anchor
+      return AnyView(Color.clear)
+    }
+    XCTAssertEqual(installed, last, "The late source configuration rebases against the accepted camera")
+    XCTAssertEqual(controller.contentView.center.x, viewport.x / 2, accuracy: 0.0001)
+    controller.uninstall()
+    let count = controller.cameraProjectionCount
+    projection.update(first)
+    XCTAssertEqual(controller.cameraProjectionCount, count, "Retired planes cannot be reactivated by a native sample")
   }
   @MainActor
   func testSettlingCameraRebasesInputOnceAndPreservesVisibleGeometry() {
@@ -567,4 +652,16 @@ private struct ScenePlaneProbeControl: UIViewRepresentable {
   let button: UIButton
   func makeUIView(context: Context) -> UIButton { button }
   func updateUIView(_ view: UIButton, context: Context) {}
+}
+
+private struct ScenePlaneProbeWeb: UIViewRepresentable {
+  let web: WKWebView
+  let size: CGSize
+  let onMount: () -> Void
+  func makeUIView(context: Context) -> PhysicalWebViewport {
+    onMount()
+    return PhysicalWebViewport(webView: web, contentSize: size)
+  }
+  func updateUIView(_ view: PhysicalWebViewport, context: Context) { view.setContentSize(size) }
+  static func dismantleUIView(_ view: PhysicalWebViewport, coordinator: ()) { view.retire() }
 }

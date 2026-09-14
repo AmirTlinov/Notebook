@@ -3,13 +3,15 @@ import Foundation
 import Darwin
 
 public struct NotebookArtifactRequest: Codable, Sendable {
-  public enum Kind: String, Codable, Sendable { case currentView, target, pageOverview, pageRegion }
+  public enum Kind: String, Codable, Sendable { case currentView, target, pageOverview, pageRegion, attention, scriptImage }
   public enum Mode: String, Codable, Sendable { case faithful, ink }
   public var kind: Kind
   public var id: UUID?
   public var regionID: String?
   public var mode: Mode?
   public var expectedSHA256: String
+  public var contextID: UUID?
+  public var referenceID: UUID?
   public init(kind: Kind, id: UUID? = nil, regionID: String? = nil, mode: Mode? = nil, expectedSHA256: String) {
     self.kind = kind; self.id = id; self.regionID = regionID; self.mode = mode; self.expectedSHA256 = expectedSHA256
   }
@@ -31,13 +33,23 @@ public struct NotebookRuntimeStatus: Codable, Sendable {
   }
 }
 
+public struct NotebookExportAsset: Codable, Sendable {
+  public let name: String
+  public let data: Data
+  public init(name: String, data: Data) { self.name = name; self.data = data }
+}
+
 public struct NotebookExportPublication: Codable, Sendable {
+  public let jobID: UUID?
   public let documentID: UUID
   public let expectedRevision: String
   public let source: String
   public let pdf: Data
   public let log: String
-  public init(documentID: UUID, expectedRevision: String, source: String, pdf: Data, log: String) {
+  public let assets: [NotebookExportAsset]?
+  public init(documentID: UUID, expectedRevision: String, source: String, pdf: Data, log: String, jobID: UUID? = nil, assets: [NotebookExportAsset] = []) {
+    self.assets = assets
+    self.jobID = jobID
     self.documentID = documentID; self.expectedRevision = expectedRevision; self.source = source; self.pdf = pdf; self.log = log
   }
 }
@@ -49,6 +61,8 @@ public struct NotebookExportReceipt: Codable, Sendable {
   public let pdfSHA256: String
   public let byteCount: Int
   public let log: String
+  public let packageSHA256: String?
+  public let assets: [NotebookArtifact]?
 }
 
 extension NotebookStore {
@@ -83,7 +97,10 @@ extension NotebookStore {
   }
 
   public func loadActionSnapshots(_ id: UUID) throws -> [TargetRenderReceipt] {
-    let action = try collaborationAction(id)
+    try loadActionSnapshots(actionReadModel(id))
+  }
+
+  func loadActionSnapshots(_ action: NotebookActionReadModel) throws -> [TargetRenderReceipt] {
     return try targetRenderRequests().compactMap { request in
       guard action.revisions.contains(where: { $0.target == request.target }),
         let receipt = try loadTargetRenderReceipt(request.id), receipt.status == "ready", receipt.pngSHA256 != nil else { return nil }
@@ -102,7 +119,13 @@ extension NotebookStore {
     }
     let url: URL
     let hash: String?
+    var expectedPixels: (Int, Int)?
     switch request.kind {
+    case .scriptImage:
+      url = root.appendingPathComponent("local/script-images/\(request.expectedSHA256).png")
+      hash = request.expectedSHA256
+    case .attention:
+      throw CollaborationError("embedded_artifact", "Замороженные пиксели возвращаются через scriptArtifact без файлового пути.")
     case .currentView:
       url = currentViewPreviewURL; hash = try loadCurrentViewReceipt()?.pngSHA256
     case .target:
@@ -113,6 +136,7 @@ extension NotebookStore {
       let ink = request.mode == .ink
       url = ink ? previewInkURL(id) : previewURL(id)
       hash = ink ? receipt?.inkPNG_SHA256 : receipt?.previewPNG_SHA256
+      expectedPixels = receipt.map { ($0.pixelSize.width, $0.pixelSize.height) }
     case .pageRegion:
       let id = try artifactID(request.id)
       guard let regionID = request.regionID,
@@ -124,35 +148,104 @@ extension NotebookStore {
       let ink = request.mode == .ink
       url = previewRegionsURL(id).appendingPathComponent("\(region.id).\(ink ? "ink" : "faithful").png")
       hash = ink ? region.inkPNG_SHA256 : region.faithfulPNG_SHA256
+      expectedPixels = (region.cropPixels.width, region.cropPixels.height)
     }
     guard hash == request.expectedSHA256 else { throw CollaborationError("artifact_missing", "Изображение догоняет прочитанную квитанцию.") }
     let bytes = try boundedArtifactData(url)
     guard artifactHash(bytes) == request.expectedSHA256 else {
       throw CollaborationError("artifact_missing", "Пиксели догоняют прочитанную квитанцию.")
     }
+    if let expectedPixels {
+      guard bytes.count >= 24, bytes.prefix(8) == Data([137,80,78,71,13,10,26,10]),
+        bytes.subdata(in: 12..<16) == Data("IHDR".utf8) else {
+        throw CollaborationError("invalid_artifact", "Квитанция карты требует настоящее PNG изображение.")
+      }
+      let width = bytes[16..<20].reduce(0) { ($0 << 8) | Int($1) }
+      let height = bytes[20..<24].reduce(0) { ($0 << 8) | Int($1) }
+      guard width == expectedPixels.0, height == expectedPixels.1 else {
+        throw CollaborationError("invalid_artifact", "Размер изображения не соответствует геометрии прочитанной карты.")
+      }
+    }
     return .init(path: url.path, sha256: request.expectedSHA256, byteCount: bytes.count, mimeType: "image/png")
   }
 
   public func publishDocumentExport(_ publication: NotebookExportPublication) throws -> NotebookExportReceipt {
-    let document = try loadDocument(publication.documentID)
-    guard document.contentStamp.revision == publication.expectedRevision else {
-      throw CollaborationError("revision_conflict", "Документ изменился во время печати.")
+    // Decode/render/hash/write preparation never holds a SQL transaction. Only
+    // revision admission, atomic installation and the durable receipt use the writer.
+    let prepared = try prepareDocumentExport(publication)
+    defer { try? FileManager.default.removeItem(at: prepared.staging) }
+    return try commandTransaction(advancesReadRevision: false, readAllowance: .agentCommand) {
+      if let id = publication.jobID, let saved = try scriptExportJob(id), saved["status"] == .string("saved"),
+        let receipt = saved["receipt"] { return try receipt.decode(NotebookExportReceipt.self) }
+      let document = try loadDocument(publication.documentID)
+      guard document.contentStamp.revision == publication.expectedRevision else {
+        throw CollaborationError("revision_conflict", "Документ изменился во время печати.")
+      }
+      if !prepared.alreadyInstalled {
+        try FileManager.default.moveItem(at: prepared.staging, to: prepared.destination)
+      }
+      let receipt = prepared.receipt
+      if let id = publication.jobID {
+        try saveScriptExportJob(id, value: .object(["status": .string("saved"), "jobID": .string(id.uuidString.lowercased()),
+          "contentRevision": .string(publication.expectedRevision), "receipt": try .encode(receipt)]))
+      }
+      return receipt
     }
-    guard publication.source.utf8.count <= 4 * 1_024 * 1_024,
-      publication.pdf.count <= 16 * 1_024 * 1_024,
-      publication.pdf.starts(with: Data("%PDF-".utf8)), publication.log.utf8.count <= 32_000 else {
-      throw CollaborationError("invalid_artifact", "Печатный результат должен содержать PDF до 16 МиБ и исходник до 4 МиБ.")
+  }
+
+  private func prepareDocumentExport(_ publication: NotebookExportPublication) throws ->
+    (staging: URL, destination: URL, alreadyInstalled: Bool, receipt: NotebookExportReceipt) {
+    guard currentSQL == nil else { throw NotebookStorageError.invalidTransaction("Export preparation must precede SQL admission") }
+    let assets = publication.assets ?? []
+    let assetBytes = assets.reduce(0) { $0 + $1.data.count }
+    guard publication.source.utf8.count <= 4*1024*1024,
+      publication.pdf.count <= 16*1024*1024, publication.pdf.starts(with: Data("%PDF-".utf8)),
+      publication.log.utf8.count <= 32_000, assets.count <= 128,
+      Set(assets.map(\.name)).count == assets.count, assetBytes <= 8*1024*1024,
+      assetBytes + publication.pdf.count <= 17*1024*1024,
+      assets.enumerated().allSatisfy({ index, asset in
+        asset.name == "notebook-image-\(index).pdf" && asset.data.starts(with: Data("%PDF-".utf8))
+      }) else { throw CollaborationError("invalid_artifact", "Недопустимый или слишком большой печатный пакет.") }
+    let files = [("document.tex", Data(publication.source.utf8)), ("document.pdf", publication.pdf)]
+      + assets.map { ($0.name, $0.data) }
+    // Length-framed names and content hashes bind the entire package, including
+    // TeX sources that happen to compile to identical PDF pixels.
+    var digest = SHA256()
+    for (name, data) in files {
+      let nameData = Data(name.utf8)
+      var length = UInt64(nameData.count).bigEndian
+      withUnsafeBytes(of: &length) { digest.update(data: Data($0)) }
+      digest.update(data: nameData)
+      var size = UInt64(data.count).bigEndian
+      withUnsafeBytes(of: &size) { digest.update(data: Data($0)) }
+      digest.update(data: Data(SHA256.hash(data: data)))
     }
-    // Content-addressed names prevent a later export replacing an already returned artifact.
-    let hash = artifactHash(publication.pdf)
+    let hash = digest.finalize().map { String(format: "%02x", $0) }.joined()
     let directory = root.appendingPathComponent("exports", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    let stem = publication.documentID.uuidString.lowercased() + "-" + hash
-    let tex = directory.appendingPathComponent(stem + ".tex"), pdf = directory.appendingPathComponent(stem + ".pdf")
-    try Data(publication.source.utf8).write(to: tex, options: .atomic)
-    try publication.pdf.write(to: pdf, options: .atomic)
-    return .init(documentID: publication.documentID, texPath: tex.path, pdfPath: pdf.path,
-      pdfSHA256: hash, byteCount: publication.pdf.count, log: publication.log)
+    let destination = directory.appendingPathComponent(publication.documentID.uuidString.lowercased() + "-" + hash, isDirectory: true)
+    let alreadyInstalled = FileManager.default.fileExists(atPath: destination.path)
+    // The serial writer owns this directory even before entering SQL. Verify
+    // an existing immutable package here, so repeated publication never reads
+    // or compares megabytes while a database transaction is open.
+    if alreadyInstalled {
+      for (name, data) in files {
+        guard try Data(contentsOf: destination.appendingPathComponent(name)) == data else {
+          throw CollaborationError("invalid_artifact", "Сохранённый печатный пакет не соответствует своему отпечатку.")
+        }
+      }
+    }
+    let staging = directory.appendingPathComponent(".pending-" + UUID().uuidString.lowercased(), isDirectory: true)
+    try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    do { for (name, data) in files { try data.write(to: staging.appendingPathComponent(name), options: .atomic) } }
+    catch { try? FileManager.default.removeItem(at: staging); throw error }
+    let receipt = NotebookExportReceipt(documentID: publication.documentID,
+      texPath: destination.appendingPathComponent("document.tex").path,
+      pdfPath: destination.appendingPathComponent("document.pdf").path,
+      pdfSHA256: artifactHash(publication.pdf), byteCount: publication.pdf.count, log: publication.log,
+      packageSHA256: hash, assets: assets.map { .init(path: destination.appendingPathComponent($0.name).path,
+        sha256: artifactHash($0.data), byteCount: $0.data.count, mimeType: "application/pdf") })
+    return (staging, destination, alreadyInstalled, receipt)
   }
 
   private func artifactID(_ id: UUID?) throws -> UUID {

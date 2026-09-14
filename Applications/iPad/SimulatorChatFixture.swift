@@ -30,7 +30,7 @@ import NotebookCore
     }
     weak var receiver: NotebookChatController?
     let chat = NotebookChatController(persistence: persistence, author: author,
-      dictationCapture: SimulatorDictationCapture(), dictationPreferences: UserDefaults(suiteName: "simulator-dictation-" + UUID().uuidString)!) { envelope, destination in
+      dictationCapture: SimulatorDictationCapture(), preferences: UserDefaults(suiteName: "simulator-dictation-" + UUID().uuidString)!) { envelope, destination in
       guard destination == peer, case .request(let query) = envelope.body else { return }
       let reply: NotebookChatReply
       switch query {

@@ -1,5 +1,6 @@
 .DS_Store
 .build/
+__pycache__/
 Applications/Notebook.xcodeproj/
 Applications/DerivedData*/
 Applications/iPad/Info.plist

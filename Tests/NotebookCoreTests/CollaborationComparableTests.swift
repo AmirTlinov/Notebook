@@ -156,13 +156,14 @@ func collaborationComparableDocumentStateReceiptAndUndo(stateKey: String) throws
   let f = try ComparableFixture(); defer { f.clean() }
   let initial = programState(stateKey, "human value"), edited = programState(stateKey, "agent value")
   let (target, _) = try f.createDocument(initialState: .object([:]))
+  let document = try f.store.loadDocument(target.id)
   var state = try f.store.loadDocumentState(target.id)
   let committed = state.commit(blockID: "confirmation", value: initial, actor: f.human)
   #expect(committed)
   _ = try f.store.commitDocumentState(.init(documentID: target.id,
-    record: #require(state.records.first { $0.id == "confirmation" }), journalStamp: state.stamp))
+    record: #require(state.records.first { $0.id == "confirmation" }), journalStamp: state.stamp,
+    expectedSourceVersion: document.sourceVersion(blockID: "confirmation")))
   state = try f.store.loadDocumentState(target.id)
-  let document = try f.store.loadDocument(target.id)
   let action = try f.action([.init(kind: .setBlockState, target: target, id: "confirmation", values: ["state": edited])], targets: [target])
   let receipt = try f.store.applyCollaborationAction(action, actor: f.agent)
   let change = try #require(receipt.changes.count == 1 ? receipt.changes.first : nil)
@@ -182,8 +183,10 @@ func collaborationComparableDocumentStateReceiptAndUndo(stateKey: String) throws
   #expect(restored.records[0].stamp > delivered.records[0].stamp)
   #expect(restored.records[0].fieldVersion?.human == true)
   let afterEcho = try f.store.commitDocumentState(.init(documentID: target.id,
-    record: #require(delivered.records.first { $0.id == "confirmation" }), journalStamp: delivered.stamp))
-  #expect(afterEcho.record.value == initial)
+    record: #require(delivered.records.first { $0.id == "confirmation" }), journalStamp: delivered.stamp,
+    expectedSourceVersion: document.sourceVersion(blockID: "confirmation")))
+  guard case .committed(let publication) = afterEcho else { Issue.record("Unchanged program rejected its state echo"); return }
+  #expect(publication.record.value == initial)
 }
 
 @Test("Начальное состояние блока тоже является авторским содержанием, а не служебными полями",

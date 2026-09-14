@@ -34,6 +34,23 @@ public struct CollaborationPlacementRequest: Codable, Sendable {
     self.target = target; self.expectedRevision = expectedRevision; self.items = items; self.movable = movable
     self.contextID = contextID; self.additionalOwners = additionalOwners; self.worldOrigin = worldOrigin
   }
+
+  private enum CodingKeys: String, CodingKey {
+    case target, expectedRevision, items, movable, contextID, additionalOwners, worldOrigin
+  }
+
+  /// The wire contract has the same empty-list defaults as native callers.
+  /// Swift's synthesized decoder does not apply initializer default arguments.
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    target = try values.decode(CollaborationTarget.self, forKey: .target)
+    expectedRevision = try values.decode(String.self, forKey: .expectedRevision)
+    items = try values.decode([CollaborationPlacementItem].self, forKey: .items)
+    movable = try values.decodeIfPresent([CollaborationSubject].self, forKey: .movable) ?? []
+    contextID = try values.decodeIfPresent(UUID.self, forKey: .contextID)
+    additionalOwners = try values.decodeIfPresent([CollaborationTarget].self, forKey: .additionalOwners) ?? []
+    worldOrigin = try values.decodeIfPresent(WorldPoint.self, forKey: .worldOrigin)
+  }
 }
 
 public struct CollaborationPlacement: Codable, Sendable {

@@ -181,8 +181,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     value: InkCanvasView.framesInFlight
   )
 
-  private var spatialCamera: SpatialCamera?
-  private var spatialViewport = SpatialPoint(x: 1, y: 1)
+  /// The coordinate basis of the installed drawable. A physical scene mount
+  /// projects these already presented pixels while another basis is prepared.
+  private(set) var spatialCamera: SpatialCamera?
+  private(set) var spatialViewport = SpatialPoint(x: 1, y: 1)
   private var committedBatches: [CommittedBatch] = []
   private var spatialActionBase: [CommittedBatch]?
   private(set) var installedSpatialSource: SpatialInkInstalledSource?
@@ -338,7 +340,15 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       }
       return
     }
-    requestFrame()
+    if spatialHandoffRetains > 0, isStableFramePresented, hasRevealedFirstFrame,
+      activeInkStroke == nil, activeEraserStroke == nil {
+      // Moving the retained layer out of its preparation window does not
+      // invalidate its presented pixels. Its native owner supplies the pose;
+      // a second drawable here races the first camera sample after mounting.
+      isPaused = true
+    } else {
+      requestFrame()
+    }
     scheduleStableRasterIfNeeded()
   }
 
@@ -789,6 +799,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     fileprivate let replacesMesh: Bool
     fileprivate let layout: SpatialTargetLayout
     fileprivate let viewport: SpatialPoint
+    fileprivate let camera: SpatialCamera?
     fileprivate var target: SpatialTarget?
     fileprivate var drawables: [any CAMetalDrawable]
     fileprivate var ready = false
@@ -818,9 +829,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       if revoked { drawables.removeAll(); target = nil; batches.removeAll() }
     }
     fileprivate init(id: UUID, canvas: InkCanvasView, batches: [CommittedBatch], replacesMesh: Bool,
-      layout: SpatialTargetLayout, viewport: SpatialPoint, target: SpatialTarget?, drawables: [any CAMetalDrawable]) {
+      layout: SpatialTargetLayout, viewport: SpatialPoint, camera: SpatialCamera?,
+      target: SpatialTarget?, drawables: [any CAMetalDrawable]) {
       self.id = id; self.canvas = canvas; self.batches = batches; self.drawables = drawables
-      self.replacesMesh = replacesMesh; self.layout = layout; self.viewport = viewport; self.target = target
+      self.replacesMesh = replacesMesh; self.layout = layout; self.viewport = viewport; self.camera = camera; self.target = target
       sourceGeneration = canvas.spatialSourceGeneration; contentRevision = canvas.stableContentRevision
     }
     var isValid: Bool {
@@ -835,7 +847,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   /// Source and layout changes borrow fixed pools. Only growth allocates new
   /// tiles. No installed layer moves or presents before the whole candidate
   /// validates; cancellation releases private drawables, not displayed pixels.
-  func prepareSpatialFrame(_ mesh: SpatialInkMesh?, size: SpatialPoint, displayScale: Double) async throws -> PreparedSpatialFrame {
+  func prepareSpatialFrame(_ mesh: SpatialInkMesh?, size: SpatialPoint, displayScale: Double,
+    camera requestedCamera: SpatialCamera? = nil) async throws -> PreparedSpatialFrame {
     try Task.checkCancellation()
     guard !spatialHandoffIsStopping, spatialActionBase == nil, spatialStagingID == nil,
       let commandQueue else { throw CancellationError() }
@@ -850,12 +863,12 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     let oldSource = spatialSourceGeneration, oldProjection = stableContentRevision
     let layout = SpatialTargetLayout(size: .init(width: size.x, height: size.y), displayScale: displayScale)
     _ = try layout.tileGrid()
-    let viewport = size, camera = spatialCamera
+    let viewport = size, camera = requestedCamera ?? spatialCamera
     var batches = mesh?.batches.map(CommittedBatch.init) ?? committedBatches
     let visible = try prepareBuffers(in: &batches, camera: camera, viewport: viewport, size: layout.size)
     if visible.isEmpty {
       let result = PreparedSpatialFrame(id: id, canvas: self, batches: batches, replacesMesh: mesh != nil,
-        layout: layout, viewport: viewport, target: nil, drawables: [])
+        layout: layout, viewport: viewport, camera: camera, target: nil, drawables: [])
       result.completeGPU(); result.ready = true; succeeded = true; stagedSpatialFrame = result
       return result
     }
@@ -878,7 +891,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       encoder.endEncoding()
     }
     let result = PreparedSpatialFrame(id: id, canvas: self, batches: batches, replacesMesh: mesh != nil,
-      layout: layout, viewport: viewport, target: target, drawables: drawables)
+      layout: layout, viewport: viewport, camera: camera, target: target, drawables: drawables)
     drawables.removeAll(); stagedSpatialFrame = result
     submittedFrameCount += 1
     let completed = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
@@ -936,7 +949,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       }
     }
     bounds.size = frame.layout.size
-    spatialViewport = frame.viewport; spatialDrawableScale = frame.layout.displayScale
+    spatialCamera = frame.camera; spatialViewport = frame.viewport; spatialDrawableScale = frame.layout.displayScale
     installSpatialTarget(frame.target)
     for tile in frame.target?.tiles ?? [] { tile.layer.presentsWithTransaction = true }
     #if os(iOS)

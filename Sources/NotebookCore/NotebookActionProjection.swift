@@ -37,7 +37,10 @@ extension NotebookStore {
   /// archive. The resulting dictionaries are projections, so they must only
   /// be published through a baseline delta, never through whole-file replace.
   func actionSourceProjection(_ action: CollaborationAction, receipt: CollaborationReceipt? = nil,
-    references: [CollaborationReference] = []) throws -> CollaborationWorkspace {
+    references: [CollaborationReference] = [], readModel: NotebookActionReadModel? = nil) throws -> CollaborationWorkspace {
+    let receiptOperations = receipt?.action.operations ?? readModel?.action.operations.map(\.sourceScope)
+    let receiptFields = receipt?.changes.map { ($0.file, $0.path) }
+      ?? readModel?.changes.map { ($0.file, $0.path) } ?? []
     let header = try workspaceHeader()
     var itemIDs = Set<UUID>(), boardIDs: Set<UUID> = [header.rootBoardID]
     var pageIDs = Set<UUID>(), documentIDs = Set<UUID>(), codeIDs = Set<UUID>()
@@ -63,73 +66,77 @@ extension NotebookStore {
     }
     for target in action.operations.map(\.target) + action.expected.map(\.target)
       + action.references.map(\.target) + references.map(\.target) + (action.additionalOwners ?? []) { try include(target) }
-    for operation in action.operations {
-      if operation.target.kind == .page {
-        if [.updateElement, .setElementState].contains(operation.kind) {
-          guard let id = operation.id, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            id.utf16.count <= 120 else {
-            throw CollaborationError("invalid_operation", "Изменение элемента называет допустимый ID длиной до 120 знаков UTF-16.")
-          }
-          pageElementIDs[operation.target.id, default: []].insert(collaborationIdentity(id))
-        } else { fullPageIDs.insert(operation.target.id) }
-      }
-      if operation.target.kind == .document {
-        if [.setBlockState, .updateBlock].contains(operation.kind) {
-          guard let id = operation.id, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            id.utf16.count <= 120 else {
-            throw CollaborationError("invalid_operation", "Изменение блока называет допустимый ID длиной до 120 знаков UTF-16.")
-          }
+    for (index, operation) in action.operations.enumerated() {
+      do {
+        if operation.target.kind == .page {
+          if [.updateElement, .setElementState].contains(operation.kind) {
+            guard let id = operation.id, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              id.utf16.count <= 120 else {
+              throw CollaborationError("invalid_operation", "Изменение элемента называет допустимый ID длиной до 120 знаков UTF-16.")
+            }
+            pageElementIDs[operation.target.id, default: []].insert(collaborationIdentity(id))
+          } else { fullPageIDs.insert(operation.target.id) }
         }
-        switch operation.kind {
-        case .setBlockState:
-          if let id = operation.id { stateBlockIDs[operation.target.id, default: []].insert(collaborationIdentity(id)) }
-        case .updateBlock:
-          sourceDocumentIDs.insert(operation.target.id)
-          if let id = operation.id { sourceBlockIDs[operation.target.id, default: []].insert(collaborationIdentity(id)) }
-        case .setPreamble: sourceDocumentIDs.insert(operation.target.id)
-        default: fullDocumentIDs.insert(operation.target.id)
-        }
-      }
-      if [.createNotebook, .createDocument, .createBoard, .renameItem, .moveItem].contains(operation.kind),
-        let id = operation.id.flatMap(UUID.init(uuidString:)) { itemIDs.insert(id) }
-      if operation.kind == .createNotebook, let page = operation.values["pageID"]?.string.flatMap(UUID.init(uuidString:)) {
-        pageIDs.insert(page); fullPageIDs.insert(page)
-      }
-      if operation.kind == .createDocument, let id = operation.id.flatMap(UUID.init(uuidString:)) { documentIDs.insert(id) }
-      if operation.kind == .createBoard, let id = operation.id.flatMap(UUID.init(uuidString:)) { boardIDs.insert(id) }
-      if operation.kind == .stackItems { itemIDs.formUnion(try operation.values["itemIDs"]?.decode([UUID].self) ?? []) }
-      if [.insertElement, .updateElement, .setElementState, .removeElement, .reorderElements].contains(operation.kind), operation.target.kind != .page {
-        let board = operation.target.kind == .board ? operation.target.id : operation.target.boardID
-        if let board {
-          if let id = operation.id { elementIDs[board, default: []].insert(id) }
-          if operation.kind == .reorderElements {
-            let ids = try operation.values["ids"]?.decode([String].self) ?? []
-            elementIDs[board, default: []].formUnion(ids)
-            let surface = operation.target.kind == .board ? "element" : "coverElement"
-            let count = try currentSQL!.rows("SELECT count(*) FROM spatial_entries WHERE board_id=? AND kind=? AND (?='element' OR owner_id=?)", [.text(board.uuidString.lowercased()), .text(surface), .text(surface), .text(operation.target.id.uuidString.lowercased())]).first![0].integer!
-            guard count == ids.count else { throw CollaborationError("invalid_operation", "Порядок перечисляет всю выбранную поверхность ровно один раз.") }
+        if operation.target.kind == .document {
+          if [.setBlockState, .updateBlock].contains(operation.kind) {
+            guard let id = operation.id, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              id.utf16.count <= 120 else {
+              throw CollaborationError("invalid_operation", "Изменение блока называет допустимый ID длиной до 120 знаков UTF-16.")
+            }
+          }
+          switch operation.kind {
+          case .setBlockState:
+            if let id = operation.id { stateBlockIDs[operation.target.id, default: []].insert(collaborationIdentity(id)) }
+          case .updateBlock:
+            sourceDocumentIDs.insert(operation.target.id)
+            if let id = operation.id { sourceBlockIDs[operation.target.id, default: []].insert(collaborationIdentity(id)) }
+          case .setPreamble: sourceDocumentIDs.insert(operation.target.id)
+          default: fullDocumentIDs.insert(operation.target.id)
           }
         }
-      }
-      if operation.kind == .appendInkStroke, operation.target.kind != .page {
-        if let id = operation.id.flatMap(UUID.init(uuidString:)) { spatialActionIDs.insert(id) }
+        if [.createNotebook, .createDocument, .createBoard, .renameItem, .moveItem].contains(operation.kind),
+          let id = operation.id.flatMap(UUID.init(uuidString:)) { itemIDs.insert(id) }
+        if operation.kind == .createNotebook, let page = operation.values["pageID"]?.string.flatMap(UUID.init(uuidString:)) {
+          pageIDs.insert(page); fullPageIDs.insert(page)
+        }
+        if operation.kind == .createDocument, let id = operation.id.flatMap(UUID.init(uuidString:)) { documentIDs.insert(id) }
+        if operation.kind == .createBoard, let id = operation.id.flatMap(UUID.init(uuidString:)) { boardIDs.insert(id) }
+        if operation.kind == .stackItems { itemIDs.formUnion(try operation.values["itemIDs"]?.decode([UUID].self) ?? []) }
+        if [.insertElement, .updateElement, .setElementState, .removeElement, .reorderElements].contains(operation.kind), operation.target.kind != .page {
+          let board = operation.target.kind == .board ? operation.target.id : operation.target.boardID
+          if let board {
+            if let id = operation.id { elementIDs[board, default: []].insert(id) }
+            if operation.kind == .reorderElements {
+              let ids = try operation.values["ids"]?.decode([String].self) ?? []
+              elementIDs[board, default: []].formUnion(ids)
+              let surface = operation.target.kind == .board ? "element" : "coverElement"
+              let count = try currentSQL!.rows("SELECT count(*) FROM spatial_entries WHERE board_id=? AND kind=? AND (?='element' OR owner_id=?)", [.text(board.uuidString.lowercased()), .text(surface), .text(surface), .text(operation.target.id.uuidString.lowercased())]).first![0].integer!
+              guard count == ids.count else { throw CollaborationError("invalid_operation", "Порядок перечисляет всю выбранную поверхность ровно один раз.") }
+            }
+          }
+        }
+        if operation.kind == .appendInkStroke, operation.target.kind != .page {
+          if let id = operation.id.flatMap(UUID.init(uuidString:)) { spatialActionIDs.insert(id) }
+        }
+      } catch let error as CollaborationError {
+        throw error.atOperation(index, operation)
       }
     }
     // Undo also considers fields created by the original operation and any
     // human adoption inside a newly created board, without scanning its tree.
-    if let receipt {
-      for change in receipt.changes {
-        if change.file == "board.json", change.path.count >= 2, case .member(let id) = change.path[1], let board = UUID(uuidString: id) {
+    if let receiptOperations {
+      for (file, path) in receiptFields {
+        if file == "board.json", path.count >= 2, case .member(let id) = path[1], let board = UUID(uuidString: id) {
           boardIDs.insert(board)
-          if change.path.count >= 5, case .member(let member) = change.path[4] {
-            if change.path[3] == .field("elements") { elementIDs[board, default: []].insert(member) }
-            if change.path[3] == .field("placements"), let id = UUID(uuidString: member) {
+          if path.count >= 5, case .member(let member) = path[4] {
+            if path[3] == .field("elements") { elementIDs[board, default: []].insert(member) }
+            if path[3] == .field("placements"), let id = UUID(uuidString: member) {
               placementIDs[board, default: []].insert(id); itemIDs.insert(id)
             }
           }
         }
       }
-      for operation in receipt.action.operations where [.createNotebook, .createDocument, .createBoard].contains(operation.kind) {
+      for operation in receiptOperations where [.createNotebook, .createDocument, .createBoard].contains(operation.kind) {
         guard let id = operation.id.flatMap(UUID.init(uuidString:)) else { continue }
         creationInkSurfaces.insert(.cover(id))
         if operation.kind == .createBoard { creationInkSurfaces.insert(.board(id)) }
@@ -178,8 +185,8 @@ extension NotebookStore {
         }
       }
     }
-    if let receipt {
-      for operation in receipt.action.operations where operation.kind == .createBoard {
+    if let receiptOperations {
+      for operation in receiptOperations where operation.kind == .createBoard {
         guard let id = operation.id.flatMap(UUID.init(uuidString:)) else { continue }
         let address = "board.json#/boards/@" + id.uuidString.lowercased()
         if let child = try currentSQL!.rows("SELECT item_id FROM item_owners WHERE board_id=? ORDER BY item_id LIMIT 1",
@@ -277,7 +284,7 @@ extension NotebookStore {
       }
       if documentIDs.contains(item.id) {
         let file = stateFile(item.id)
-        if receipt?.action.operations.contains(where: { $0.kind == .createDocument && $0.id.flatMap(UUID.init(uuidString:)) == item.id }) == true {
+        if receiptOperations?.contains(where: { $0.kind == .createDocument && $0.id.flatMap(UUID.init(uuidString:)) == item.id }) == true {
           // Whole-owner undo still checks every later human adoption.
           files[file] = try storedValue(file)
         } else {

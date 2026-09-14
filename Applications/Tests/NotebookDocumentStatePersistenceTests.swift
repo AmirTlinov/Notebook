@@ -4,16 +4,112 @@ import XCTest
 
 final class NotebookDocumentStatePersistenceTests: XCTestCase {
   @MainActor
+  func testRuntimeCheckpointWaitsForTheAcceptedWriteAndRejectsANewerContact() async throws {
+    let (model, documentID) = try await makeModel()
+    let document = try XCTUnwrap(model.documents[documentID])
+    let version = document.sourceVersion(blockID: "a")
+    let initial = try await model.checkpointDocumentState(documentID: documentID, blockID: "a",
+      value: .object([:]), sourceVersion: version)
+    XCTAssertTrue(initial, "An unchanged durable initial state can release an unvisited runtime")
+    let lock = try NotebookSQLWriteBlocker(store: model.store)
+    defer { try? lock.release() }
+    let admitted = model.commitDocumentState(documentID: documentID, blockID: "a", value: .number(1), sourceVersion: version)
+    XCTAssertEqual(admitted, model.documentStates[documentID]?.records.first { $0.id == "a" }?.valueVersion)
+    XCTAssertNotNil(admitted, "Causal admission is synchronous even while persistence is blocked")
+    var completed = false
+    let checkpoint = Task { @MainActor in
+      let value = try await model.checkpointDocumentState(documentID: documentID, blockID: "a",
+        value: .number(1), sourceVersion: version)
+      completed = true
+      return value
+    }
+    try await Task.sleep(for: .milliseconds(30))
+    XCTAssertFalse(completed, "An optimistic UI echo must not release the program before SQLite accepts it")
+    model.commitDocumentState(documentID: documentID, blockID: "a", value: .number(2), sourceVersion: version)
+    try lock.release()
+    let old = try await checkpoint.value
+    XCTAssertFalse(old, "The old fence cannot retire a runtime after a later accepted contact")
+    let current = try await model.checkpointDocumentState(documentID: documentID, blockID: "a",
+      value: .number(2), sourceVersion: version)
+    XCTAssertTrue(current)
+    XCTAssertEqual(try model.store.readDocumentBlock(documentID: documentID, blockID: "a")?.state, .number(2))
+    let stopped = await model.shutdown()
+    XCTAssertTrue(stopped)
+    let late = try await model.checkpointDocumentState(documentID: documentID, blockID: "a",
+      value: .number(2), sourceVersion: version)
+    XCTAssertFalse(late)
+  }
+
+  @MainActor
+  func testRuntimeCheckpointRejectsAChangedSourceAndAnUnobservedStoredState() async throws {
+    let (model, documentID) = try await makeModel()
+    let document = try XCTUnwrap(model.documents[documentID])
+    var state = try model.store.loadDocumentState(documentID)
+    XCTAssertTrue(state.commit(blockID: "a", value: .object([:]), actor: UUID()))
+    try model.store.saveDocumentState(state)
+    let unseen = try await model.checkpointDocumentState(documentID: documentID, blockID: "a",
+      value: .object([:]), sourceVersion: document.sourceVersion(blockID: "a"))
+    XCTAssertFalse(unseen, "Equal values with an unobserved causal state are not the accepted checkpoint")
+    var changed = document
+    XCTAssertTrue(changed.replaceContent(blocks: [.interactive(id: "a", html: "<button>Different code</button>")], actor: model.actorID))
+    _ = try model.store.saveMergedDocument(changed)
+    let stale = try await model.checkpointDocumentState(documentID: documentID, blockID: "a",
+      value: .object([:]), sourceVersion: document.sourceVersion(blockID: "a"))
+    XCTAssertFalse(stale)
+    await model.reloadExternalChanges()?.value
+    await model.finishPendingPersistence()
+    let current = try XCTUnwrap(model.documents[documentID])
+    XCTAssertNotEqual(current.sourceVersion(blockID: "a"), document.sourceVersion(blockID: "a"))
+    let cursor = try model.store.currentChangeCursor()
+    let journal = model.documentStates[documentID]
+    XCTAssertNil(model.commitDocumentState(documentID: documentID, blockID: "a",
+      value: .number(42), sourceVersion: document.sourceVersion(blockID: "a")),
+      "A delayed callback from replaced source cannot be admitted against the new program")
+    XCTAssertNil(model.commitDocumentState(documentID: documentID, blockID: "b",
+      value: .number(43), sourceVersion: document.sourceVersion(blockID: "b")),
+      "A removed program cannot recreate its state through a delayed callback")
+    await model.finishPendingPersistence()
+    XCTAssertEqual(model.documentStates[documentID], journal)
+    XCTAssertEqual(try model.store.currentChangeCursor(), cursor)
+  }
+
+  @MainActor
+  func testWriterRejectsStaleRuntimeBeforeTheModelObservesSourceReplacement() async throws {
+    let (model, documentID) = try await makeModel()
+    let observed = try XCTUnwrap(model.documents[documentID])
+    let previous = try model.store.loadDocumentState(documentID)
+    var replacement = observed
+    XCTAssertTrue(replacement.replaceBlockSource(id: "a", source: "<button>Replacement</button>", actor: UUID()))
+    _ = try model.store.saveMergedDocument(replacement)
+    XCTAssertEqual(model.documents[documentID], observed, "The race requires the real model to remain behind SQL")
+    let cursor = try model.store.currentChangeCursor()
+    let admitted = model.commitDocumentState(documentID: documentID, blockID: "a", value: .number(47),
+      sourceVersion: observed.sourceVersion(blockID: "a"))
+    XCTAssertNotNil(admitted, "The old visible generation can only acknowledge in-memory admission")
+    let drained = await model.finishPendingPersistence()
+    XCTAssertTrue(drained, model.persistenceFailure ?? "")
+    await model.reloadExternalChanges()?.value
+    XCTAssertEqual(try model.store.loadDocumentState(documentID), previous)
+    XCTAssertEqual(try model.store.currentChangeCursor(), cursor)
+    XCTAssertEqual(model.documentStates[documentID], previous, "A rejected admission reconciles through the ordinary reload")
+    XCTAssertEqual(model.documents[documentID], replacement)
+    let checkpoint = try await model.checkpointDocumentState(documentID: documentID, blockID: "a", value: .number(47),
+      sourceVersion: observed.sourceVersion(blockID: "a"))
+    XCTAssertFalse(checkpoint)
+  }
+
+  @MainActor
   func testShutdownDrainsAcceptedStateAndRejectsALateProgramCallback() async throws {
     let (model, documentID) = try await makeModel()
-    model.commitDocumentState(documentID: documentID, blockID: "a", value: .number(19))
+    let document = try XCTUnwrap(model.documents[documentID])
+    model.commitDocumentState(documentID: documentID, blockID: "a", value: .number(19), sourceVersion: document.sourceVersion(blockID: "a"))
     let stopped = await model.shutdown()
     XCTAssertTrue(stopped, model.persistenceFailure ?? "")
     let state = try model.store.loadDocumentState(documentID), cursor = try model.store.currentChangeCursor()
     XCTAssertEqual(state.value(for: "a"), .number(19))
     let visible = model.documentStates[documentID]
-    model.commitDocumentState(documentID: documentID, blockID: "a", value: .number(23))
-    model.commitDocumentState(documentID: documentID, blockID: "b", value: .number(29))
+    XCTAssertNil(model.commitDocumentState(documentID: documentID, blockID: "a", value: .number(23), sourceVersion: document.sourceVersion(blockID: "a")))
+    XCTAssertNil(model.commitDocumentState(documentID: documentID, blockID: "b", value: .number(29), sourceVersion: document.sourceVersion(blockID: "b")))
     let saved = await model.finishPendingPersistence()
     XCTAssertTrue(saved)
     XCTAssertEqual(model.documentStates[documentID], visible)
@@ -24,13 +120,14 @@ final class NotebookDocumentStatePersistenceTests: XCTestCase {
   @MainActor
   func testMultipleAcceptedProgramsKeepTheirOrderThroughNavigation() async throws {
     let (model, documentID) = try await makeModel()
+    let document = try XCTUnwrap(model.documents[documentID])
     let cursor = try model.store.currentChangeCursor()
     let notebook = try XCTUnwrap(model.workspace?.items.first { $0.kind == .notebook }?.id)
     let lock = try NotebookSQLWriteBlocker(store: model.store)
     defer { try? lock.release() }
-    model.commitDocumentState(documentID: documentID, blockID: "a", value: .number(1))
-    model.commitDocumentState(documentID: documentID, blockID: "b", value: .number(10))
-    model.commitDocumentState(documentID: documentID, blockID: "a", value: .number(2))
+    model.commitDocumentState(documentID: documentID, blockID: "a", value: .number(1), sourceVersion: document.sourceVersion(blockID: "a"))
+    model.commitDocumentState(documentID: documentID, blockID: "b", value: .number(10), sourceVersion: document.sourceVersion(blockID: "b"))
+    model.commitDocumentState(documentID: documentID, blockID: "a", value: .number(2), sourceVersion: document.sourceVersion(blockID: "a"))
     XCTAssertEqual(model.documentStates[documentID]?.value(for: "a"), .number(2))
     XCTAssertEqual(model.documentStates[documentID]?.value(for: "b"), .number(10))
     model.selectItem(notebook)
@@ -57,9 +154,10 @@ final class NotebookDocumentStatePersistenceTests: XCTestCase {
     let ready = model.store.root.appendingPathComponent("test-state-write-ready")
     let observed = model.store.root.appendingPathComponent("test-state-fence.json")
     var state = try model.store.loadDocumentState(documentID)
-    let first = try accepted(&state, block: "a", value: 1, actor: model.actorID)
-    let second = try accepted(&state, block: "b", value: 10, actor: model.actorID)
-    let third = try accepted(&state, block: "a", value: 2, actor: model.actorID)
+    let document = try model.store.loadDocument(documentID)
+    let first = try accepted(&state, block: "a", value: 1, actor: model.actorID, document: document)
+    let second = try accepted(&state, block: "b", value: 10, actor: model.actorID, document: document)
+    let third = try accepted(&state, block: "a", value: 2, actor: model.actorID, document: document)
     let cursor = try model.store.currentChangeCursor()
     queue.enqueue(owner: .documentState(documentID)) { store in
       guard FileManager.default.fileExists(atPath: ready.path) else { throw Failure.unavailable }
@@ -90,9 +188,10 @@ final class NotebookDocumentStatePersistenceTests: XCTestCase {
   @MainActor
   func testCapturedValueSurvivesDocumentLeavingTheLoadedScene() async throws {
     let (model, documentID) = try await makeModel()
+    let document = try XCTUnwrap(model.documents[documentID])
     let lock = try NotebookSQLWriteBlocker(store: model.store)
     defer { try? lock.release() }
-    model.commitDocumentState(documentID: documentID, blockID: "a", value: .number(17))
+    model.commitDocumentState(documentID: documentID, blockID: "a", value: .number(17), sourceVersion: document.sourceVersion(blockID: "a"))
     let acceptedState = try XCTUnwrap(model.documentStates[documentID])
     let notebook = try XCTUnwrap(model.createNotebook(at: .init(x: 30_000, y: 30_000)))
     model.selectItem(notebook)
@@ -105,9 +204,11 @@ final class NotebookDocumentStatePersistenceTests: XCTestCase {
   }
 
   @MainActor
-  private func accepted(_ state: inout DocumentStateJournal, block: String, value: Double, actor: UUID) throws -> NotebookDocumentStateCommand {
+  private func accepted(_ state: inout DocumentStateJournal, block: String, value: Double, actor: UUID,
+    document: DocumentDocument) throws -> NotebookDocumentStateCommand {
     XCTAssertTrue(state.commit(blockID: block, value: .number(value), actor: actor))
-    return .init(documentID: state.id, record: try XCTUnwrap(state.records.first { $0.id == block }), journalStamp: state.stamp)
+    return .init(documentID: state.id, record: try XCTUnwrap(state.records.first { $0.id == block }),
+      journalStamp: state.stamp, expectedSourceVersion: document.sourceVersion(blockID: block))
   }
 
   @MainActor
@@ -124,6 +225,12 @@ final class NotebookDocumentStatePersistenceTests: XCTestCase {
       .interactive(id: "a", html: "<button>A</button>"),
       .interactive(id: "b", html: "<button>B</button>")], actor: model.actorID))
     _ = try model.store.saveMergedDocument(document)
+    let presence = try XCTUnwrap(model.presence)
+    model.updatePresence(.init(boardID: presence.boardID, mode: .document,
+      camera: presence.camera, viewport: presence.viewport, focusedItemID: id,
+      openProgress: 1, selectedItemID: id), settled: true)
+    let opened = await model.finishPendingPersistence()
+    XCTAssertTrue(opened, model.persistenceFailure ?? "")
     await model.reloadExternalChanges()?.value
     let ready = await model.finishPendingPersistence()
     XCTAssertTrue(ready, model.persistenceFailure ?? "")

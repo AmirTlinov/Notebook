@@ -5,6 +5,18 @@ import NotebookCore
 import Observation
 import SwiftUI
 
+/// A failed program belongs to its source; a failed capture belongs to the
+/// submitted crop and density. Physical placement does not create new pixels.
+struct SceneSourceFailure {
+  let demand: SceneSourceDemand
+  let message: String
+  let captureSpecific: Bool
+  func matches(_ current: SceneSourceDemand) -> Bool {
+    SceneRasterSource.agent(demand.source) == .agent(current.source)
+      && (!captureSpecific || demand.policy == current.policy)
+  }
+}
+
 enum SceneCompositionPlane: Hashable, Codable, Sendable {
   case board(UUID)
   case cover(boardID: UUID, itemID: UUID)
@@ -23,10 +35,11 @@ struct SceneCompositionTileKey: Hashable, Codable, Sendable {
   let viewportHeight: Double
   let focusedItemID: UUID?
   let mode: String
+  var pixelSize: Int = CompositionTile.pixelSize
   func atRevision(_ revision: UInt64) -> Self {
     .init(workspaceID: workspaceID, revision: revision, plane: plane, tile: tile, range: range,
       presentationScale: presentationScale, viewportWidth: viewportWidth, viewportHeight: viewportHeight,
-      focusedItemID: focusedItemID, mode: mode)
+      focusedItemID: focusedItemID, mode: mode, pixelSize: pixelSize)
   }
 }
 
@@ -61,13 +74,14 @@ struct SceneCompositionPlan: Sendable {
   let coverage: [SceneCompositionPlane: CompositionTileCoverage]
   let presentations: [SceneCompositionPlane: SessionPresence]
   let tiles: [SceneCompositionTileKey]
+  var requiredPixelDensity: [SceneCompositionPlane: Double] = [:]
   var primitiveCount: Int { tiles.count + liveOwners.count + inkBoardIDs.count }
   /// Every resource retry removes an optional owner or a static tile. Keeping
   /// this integer strictly decreasing bounds preparation without a timer retry.
   private var coverageTileCount: Int {
-    bands.reduce(0) { $0 + (coverage[$1.plane]?.tiles.count ?? 0) }
+    tiles.count
   }
-  var reductionPotential: Int { liveOwners.count - protectedOwners.count + coverageTileCount }
+  var reductionPotential: Int { (liveOwners.count - protectedOwners.count) * (Self.maximumTiles + 1) + coverageTileCount }
   var nativeOwnerCount: Int {
     inkBoardIDs.count + liveOwners.filter { if case .item = $0.id { return true }; return false }.count
   }
@@ -88,7 +102,88 @@ struct SceneCompositionPlan: Sendable {
     let populated = try await source.tilesRequiringPaint(tiles)
     return .init(revision: revision, workspaceID: workspaceID, rootBoardID: rootBoardID,
       inkBoardIDs: inkBoardIDs, liveOwners: liveOwners, protectedOwners: protectedOwners,
-      bands: bands, coverage: coverage, presentations: presentations, tiles: populated)
+      bands: bands, coverage: coverage, presentations: presentations, tiles: populated,
+      requiredPixelDensity: requiredPixelDensity)
+  }
+
+  /// Empty painter ranges and cells preserve order and coverage without a
+  /// backing allocation. Count the occupied fine cells before assigning the
+  /// physical quota: dividing a viewport by its painter bands first creates
+  /// enormous mostly transparent images, even for one small visible source.
+  func allocatingPopulatedCoverage(source: SceneCompositionSource, presence: SessionPresence,
+    frame: WorkspaceSceneFrame, displayScale: Double) async throws -> Self {
+    let sparse = try await removingEmptyTiles(source: source)
+    let occupied = Set(sparse.tiles.map { SceneCompositionBand.SelfID(plane: $0.plane, range: $0.range) })
+    let planes = presentations.keys.sorted { a, b in
+      if (a == .board(rootBoardID)) != (b == .board(rootBoardID)) { return a == .board(rootBoardID) }
+      return String(describing: a) < String(describing: b)
+    }
+    var bounds: [SceneCompositionPlane: WorkspaceSpatialBounds] = [:]
+    for plane in planes {
+      guard let view = presentations[plane] else { throw SceneRenderError.resourceLimit }
+      let area: WorkspaceSpatialBounds
+      if let itemID = plane.coverID,
+        let item = frame.worksets[plane.boardID]?.items.first(where: { $0.id == itemID }) {
+        area = .init(origin: .zero, width: item.geometry.width, height: item.geometry.height)
+      } else if plane == .board(frame.returnBoardID ?? rootBoardID), frame.returnBoardID != nil {
+        area = SceneCompositionSource.returnBounds(view)
+      } else {
+        area = .init(origin: view.camera.screenToWorld(.init(x: -96, y: -96), viewport: view.viewport),
+          width: (view.viewport.x + 192) / view.camera.scale, height: (view.viewport.y + 192) / view.camera.scale)
+      }
+      bounds[plane] = area
+    }
+    var coverage = sparse.coverage
+    var allocated: [SceneCompositionPlane: [SceneCompositionTileKey]] = [:]
+    // This is a finite metadata probe, not an image allocation. Each plane
+    // has at most 256 cells and the source reads at most 64 indexed entries
+    // per cell, shared by all painter bands on that cell.
+    func probe(_ plane: SceneCompositionPlane, gridDensity: Double) async throws {
+      let populated = bands.filter { $0.plane == plane && occupied.contains($0.id) }
+      guard !populated.isEmpty else { return }
+      guard let area = bounds[plane], let view = presentations[plane] else { throw SceneRenderError.resourceLimit }
+      let pixels = (frame.pixelScales[plane.boardID] ?? view.camera.scale) * displayScale
+      let prepared = try CompositionTileCoverage(bounds: area, pixelsPerWorldPoint: gridDensity, maximumTiles: 256)
+      coverage[plane] = prepared
+      var candidates: [SceneCompositionTileKey] = []
+      for band in populated {
+        for tile in prepared.tiles {
+          let pixelSize = Int(min(2048, max(Double(CompositionTile.pixelSize), ceil(tile.worldSize * pixels))))
+          candidates.append(.init(workspaceID: workspaceID, revision: revision, plane: plane, tile: tile,
+            range: band.range, presentationScale: view.camera.scale,
+            viewportWidth: view.viewport.x, viewportHeight: view.viewport.y,
+            focusedItemID: view.focusedItemID, mode: view.mode.rawValue, pixelSize: pixelSize))
+        }
+      }
+      allocated[plane] = try await source.tilesRequiringPaint(candidates)
+    }
+    for plane in planes {
+      guard let view = presentations[plane] else { throw SceneRenderError.resourceLimit }
+      try await probe(plane, gridDensity: (frame.pixelScales[plane.boardID] ?? view.camera.scale) * displayScale)
+    }
+    // Only an actually overfull set coarsens. Each step advances one finite
+    // grid level; re-probe that plane because a new cell can straddle a band.
+    while allocated.values.reduce(0, { $0 + $1.count }) > Self.maximumTiles {
+      guard let plane = planes.filter({
+        !(allocated[$0] ?? []).isEmpty && (coverage[$0]?.level ?? CompositionTile.levels.upperBound) < CompositionTile.levels.upperBound
+      }).max(by: { (allocated[$0]?.count ?? 0) < (allocated[$1]?.count ?? 0) }),
+        let current = coverage[plane], let tile = current.tiles.first else { throw SceneRenderError.resourceLimit }
+      try await probe(plane, gridDensity: Double(CompositionTile.pixelSize) / (tile.worldSize * 2))
+      guard (coverage[plane]?.level ?? current.level) > current.level else { throw SceneRenderError.resourceLimit }
+    }
+    let tiles = planes.flatMap { allocated[$0] ?? [] }
+    let result = Self(revision: revision, workspaceID: workspaceID, rootBoardID: rootBoardID,
+      inkBoardIDs: inkBoardIDs, liveOwners: liveOwners, protectedOwners: protectedOwners,
+      bands: bands, coverage: coverage, presentations: presentations, tiles: tiles,
+      requiredPixelDensity: requiredPixelDensity)
+    return result
+  }
+
+  var meetsRequiredDensity: Bool {
+    tiles.allSatisfy { key in
+      Double(key.pixelSize) / key.tile.worldSize + 0.000_001
+        >= (requiredPixelDensity[key.plane] ?? 0)
+    }
   }
 
   static func prepare(source: SceneCompositionSource, presence: SessionPresence, frame: WorkspaceSceneFrame,
@@ -138,8 +233,10 @@ struct SceneCompositionPlan: Sendable {
     })
     while true {
       do {
-        return try assemble(revision: source.revision, workspaceID: source.workspaceID, owners: owners, presence: presence,
+        let assembled = try assemble(revision: source.revision, workspaceID: source.workspaceID, owners: owners, presence: presence,
           frame: frame, pinned: pinned, protected: protected, displayScale: displayScale, previous: previous)
+        return try await assembled.allocatingPopulatedCoverage(source: source, presence: presence,
+          frame: frame, displayScale: displayScale)
       } catch {
         guard let index = owners.lastIndex(where: { !protected.contains($0) }) else { throw error }
         owners.remove(at: index)
@@ -317,34 +414,134 @@ struct SceneCompositionPlan: Sendable {
       return presentations[.board(id)] != nil
     }
     return .init(revision: revision, workspaceID: workspaceID, rootBoardID: presence.boardID, inkBoardIDs: inkBoardIDs, liveOwners: owners, protectedOwners: protected.union(apertures), bands: bands,
-      coverage: coverage, presentations: presentations, tiles: tiles)
+      coverage: coverage, presentations: presentations, tiles: tiles, requiredPixelDensity: density)
   }
 }
 
 @MainActor
 final class SceneCompositionCohort {
-  let id = UUID()
+  /// Geometry/native ownership survives source-only paint publications.
+  let id: UUID
+  var geometryID: UUID { id }
+  let paintID = UUID()
   let plan: SceneCompositionPlan
   let frame: WorkspaceSceneFrame
   let requestedSources: WorkspaceSceneFrame.SourceIdentity
   let liveData: SceneCompositionLiveData
   let rasters: [SceneCompositionTileKey: RasterLease]
   let liveRasters: [SceneCompositionLiveOwner: RasterLease]
+  let sourceReceipts: [SceneSourceAddress: SceneSourceReceipt]
+  let sourceRasters: [SceneSourceAddress: RasterLease]
+  /// Native geometry does not promise an unlimited persistent WebKit runtime.
+  /// Other native source owners display completed rasters and explicit paused
+  /// program input while the single source executor prepares their pixels.
+  let runtimeOwners: Set<SceneSourceAddress>
+  let tileSources: [SceneCompositionTileKey: Set<SceneSourceAddress>]
+  let tilePresenters: SceneTilePresentationRegistry
+  private var installedLayers: [ScenePaintPosition.Layer: SceneCameraPlaneInstallation] = [:]
+  private var installedTiles: [SceneCompositionTileKey: SceneSourceInstallation] = [:]
+  private var installedSources: [SceneSourceAddress: SceneSourceInstallation] = [:]
+  /// Observes the existing native claim without creating an installation or
+  /// treating a cached raster as displayed pixels.
+  func observedTileInstallation(_ key: SceneCompositionTileKey) -> (entryID: UUID?, isInstalled: Bool) {
+    (installedTiles[key]?.entryID, installedTiles[key]?.isInstalled == true)
+  }
+  var isPaintInstalled: Bool {
+    installedLayers[.elements]?.isInstalled == true && installedLayers[.covers]?.isInstalled == true
+  }
+  func installation(for layer: ScenePaintPosition.Layer) -> SceneCameraPlaneInstallation {
+    if let value = installedLayers[layer] { return value }
+    let value = SceneCameraPlaneInstallation()
+    installedLayers[layer] = value
+    return value
+  }
+  func didInstallTile(_ key: SceneCompositionTileKey, installation: SceneSourceInstallation) {
+    guard rasters[key]?.entryID == installation.entryID else { return }
+    installedTiles[key] = installation
+  }
+  func didReplaceTile(_ key: SceneCompositionTileKey) { installedTiles[key] = nil }
+  func didInstallSource(_ address: SceneSourceAddress, installation: SceneSourceInstallation) {
+    guard let receipt = sourceReceipts[address],
+      let source = installation.source.agentElement,
+      SceneRasterSource.agent(receipt.demand.source) == .agent(source) else { return }
+    installedSources[address] = installation
+  }
+  func hasInstalledPixels(for address: SceneSourceAddress) -> Bool {
+    guard isPaintInstalled, let receipt = sourceReceipts[address], receipt.hasCurrentPixels else { return false }
+    let fragments = tileSources.filter { $0.value.contains(address) }.map(\.key)
+    if !fragments.isEmpty {
+      return fragments.allSatisfy { installedTiles[$0]?.entryID == rasters[$0]?.entryID && installedTiles[$0]?.isInstalled == true }
+    }
+    guard let installation = installedSources[address], let source = installation.source.agentElement else { return false }
+    return installation.isInstalled && SceneRasterSource.agent(source) == .agent(receipt.demand.source)
+  }
+
+  func containsSourceWindows(presence: SessionPresence, frame: WorkspaceSceneFrame, displayScale: Double) -> Bool {
+    for (address, receipt) in sourceReceipts {
+      guard let crop = receipt.demand.region else { continue }
+      guard let origin = receipt.demand.worldOrigin,
+        let view = address.plane.boardID == presence.boardID ? presence : frame.presences[address.plane.boardID] else { return false }
+      let visible = SceneSourceCapture.visibleRect(source: receipt.demand.source, origin: origin, presence: view)
+      if visible.isNull || visible.isEmpty { continue }
+      guard CGRect(x: crop.x, y: crop.y, width: crop.width, height: crop.height).contains(visible),
+        receipt.demand.minimumScale + 0.000_001 >= (frame.pixelScales[address.plane.boardID] ?? view.camera.scale) * displayScale else { return false }
+    }
+    return true
+  }
+  func sharesGeometry(with plan: SceneCompositionPlan, frame: WorkspaceSceneFrame) -> Bool {
+    guard self.plan.workspaceID == plan.workspaceID, self.plan.rootBoardID == plan.rootBoardID,
+      self.plan.liveOwners == plan.liveOwners, self.plan.inkBoardIDs == plan.inkBoardIDs,
+      Set(self.plan.presentations.keys) == Set(plan.presentations.keys) else { return false }
+    for owner in plan.liveOwners {
+      switch owner.id {
+      case .item(let id):
+        guard let previous = self.frame.worksets[owner.plane.boardID]?.items.first(where: { $0.id == id }),
+          let current = frame.worksets[owner.plane.boardID]?.items.first(where: { $0.id == id }),
+          previous.geometry == current.geometry, previous.center == current.center,
+          previous.stackID == current.stackID else { return false }
+      case .element(let id):
+        let previous = owner.plane.coverID.flatMap { self.frame.covers[$0] } ?? self.frame.worksets[owner.plane.boardID]
+        let current = owner.plane.coverID.flatMap { frame.covers[$0] } ?? frame.worksets[owner.plane.boardID]
+        guard let old = previous?.elements.first(where: { $0.id == id }),
+          let new = current?.elements.first(where: { $0.id == id }), old.frame == new.frame,
+          old.worldOrigin == new.worldOrigin, old.surface == new.surface else { return false }
+      }
+    }
+    return true
+  }
   #if os(iOS)
     let nativeInk: SpatialInkSceneLease
     init(plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, requestedSources: WorkspaceSceneFrame.SourceIdentity,
       liveData: SceneCompositionLiveData, rasters: [SceneCompositionTileKey: RasterLease],
-      liveRasters: [SceneCompositionLiveOwner: RasterLease], nativeInk: SpatialInkSceneLease) {
+      liveRasters: [SceneCompositionLiveOwner: RasterLease], nativeInk: SpatialInkSceneLease,
+      geometryID: UUID? = nil, sourceReceipts: [SceneSourceAddress: SceneSourceReceipt] = [:],
+      sourceRasters: [SceneSourceAddress: RasterLease] = [:],
+      runtimeOwners: Set<SceneSourceAddress> = [],
+      tileSources: [SceneCompositionTileKey: Set<SceneSourceAddress>] = [:],
+      tilePresenters: SceneTilePresentationRegistry = .init()) {
+      id = geometryID ?? UUID()
       self.plan = plan; self.frame = frame; self.liveData = liveData; self.rasters = rasters
       self.requestedSources = requestedSources; self.liveRasters = liveRasters; self.nativeInk = nativeInk
+      self.sourceReceipts = sourceReceipts; self.sourceRasters = sourceRasters; self.tileSources = tileSources
+      self.runtimeOwners = runtimeOwners
+      self.tilePresenters = tilePresenters
     }
   #else
   init(plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, requestedSources: WorkspaceSceneFrame.SourceIdentity? = nil,
     liveData: SceneCompositionLiveData,
-    rasters: [SceneCompositionTileKey: RasterLease], liveRasters: [SceneCompositionLiveOwner: RasterLease]) {
+    rasters: [SceneCompositionTileKey: RasterLease], liveRasters: [SceneCompositionLiveOwner: RasterLease],
+    geometryID: UUID? = nil, sourceReceipts: [SceneSourceAddress: SceneSourceReceipt] = [:],
+    sourceRasters: [SceneSourceAddress: RasterLease] = [:],
+    runtimeOwners: Set<SceneSourceAddress> = [],
+    tileSources: [SceneCompositionTileKey: Set<SceneSourceAddress>] = [:],
+    tilePresenters: SceneTilePresentationRegistry = .init()) {
+    id = geometryID ?? UUID()
     self.plan = plan; self.frame = frame; self.liveData = liveData; self.rasters = rasters
     self.requestedSources = requestedSources ?? frame.sourceIdentity
     self.liveRasters = liveRasters
+    self.sourceReceipts = sourceReceipts; self.sourceRasters = sourceRasters; self.tileSources = tileSources
+    self.runtimeOwners = runtimeOwners
+    self.tilePresenters = tilePresenters
   }
   #endif
   func bands(in plane: SceneCompositionPlane, layer: ScenePaintPosition.Layer) -> [SceneCompositionBand] {
@@ -353,6 +550,7 @@ final class SceneCompositionCohort {
   isolated deinit {
     for raster in rasters.values { raster.release() }
     for raster in liveRasters.values { raster.release() }
+    for raster in sourceRasters.values { raster.release() }
   }
 }
 
@@ -366,7 +564,6 @@ final class SceneCompositionTiles {
   private(set) var failure: String?
   private let resources: SceneRenderResources
   let surfaceRegistry: SpatialInkSurfaceRegistry
-  private let diskCache: SceneCompositionTileCache?
   @ObservationIgnored private var task: Task<Void, Never>?
   @ObservationIgnored private var inFlight: [UUID: Task<Void, Never>] = [:]
   @ObservationIgnored private var stopped = false
@@ -390,10 +587,119 @@ final class SceneCompositionTiles {
   }
   @ObservationIgnored private var preparingRequest: Request?
   @ObservationIgnored private var pendingRequest: Request?
-  init(resources: SceneRenderResources = .shared, cacheRoot: URL? = nil,
+  @ObservationIgnored private var lastRequest: Request?
+  @ObservationIgnored private var dirtySources: Set<SceneSourceAddress> = []
+  @ObservationIgnored private var sourceFailures: [SceneSourceAddress: (SceneSourceDemand, String)] = [:]
+  private struct RuntimeSource {
+    let leaseID: UUID
+    var demand: SceneSourceDemand
+    var isMounted = true
+    var failure: AgentWebSourceFailure?
+  }
+  @ObservationIgnored private var runtimeSources: [SceneSourceAddress: RuntimeSource] = [:]
+  private(set) var runtimeSourceGeneration: UInt64 = 0
+
+  /// The physical runtime and static job report to the same composition owner.
+  /// Source-only paint changes do not replace a still-mounted producer attempt.
+  func registerRuntimeSource(focus: InteractiveElementReference, source: AgentElement,
+    policy: AgentSnapshotPolicy, leaseID: UUID, cohort: SceneCompositionCohort?) -> SceneSourceAddress? {
+    guard !stopped, let cohort, case .board(let boardID, let id) = focus else { return nil }
+    let addresses = cohort.sourceReceipts.keys.filter { $0.plane.boardID == boardID && $0.elementID == id }
+    guard addresses.count == 1, let address = addresses.first,
+      cohort.plan.allowsLive(.element(id), in: address.plane),
+      let admitted = cohort.sourceReceipts[address]?.demand.source,
+      ScenePreparedRasterFallback.hasCompatibleGeometry(admitted, source) else { return nil }
+    let region: PageRect? = if case .region(let value, _) = policy { value } else { nil }
+    let demand = SceneSourceDemand(source: source, minimumScale: policy.minimumScale(for: source), region: region)
+    if var current = runtimeSources[address], current.leaseID == leaseID, SceneRasterSource.agent(current.demand.source) == .agent(source) {
+      if current.demand != demand {
+        current.demand = demand
+        if let policy = current.failure?.policy, policy != demand.policy { current.failure = nil }
+        runtimeSources[address] = current; runtimeSourceGeneration &+= 1
+      }
+    } else {
+      let hadFailure = runtimeSources[address]?.failure != nil
+      runtimeSources[address] = .init(leaseID: leaseID, demand: demand)
+      runtimeSourceGeneration &+= 1
+      if hadFailure { dirtySources.insert(address); refreshSources() }
+    }
+    return address
+  }
+
+  func runtimeFailure(at address: SceneSourceAddress?, source: AgentElement,
+    policy: AgentSnapshotPolicy) -> AgentWebSourceFailure? {
+    _ = runtimeSourceGeneration
+    guard let address, let failure = runtimeSources[address]?.failure,
+      SceneRasterSource.agent(failure.source) == .agent(source), failure.policy == nil || failure.policy == policy else { return nil }
+    return failure
+  }
+
+  @discardableResult
+  func failRuntimeSource(_ address: SceneSourceAddress, failure: AgentWebSourceFailure) -> Bool {
+    guard !stopped, var current = runtimeSources[address], current.isMounted,
+      current.leaseID == failure.leaseID, SceneRasterSource.agent(current.demand.source) == .agent(failure.source),
+      failure.policy == nil || failure.policy == current.demand.policy else { return false }
+    current.failure = failure; runtimeSources[address] = current
+    runtimeSourceGeneration &+= 1; dirtySources.insert(address); refreshSources()
+    return true
+  }
+
+  func runtimeSourceBecameReady(_ address: SceneSourceAddress, leaseID: UUID, source: AgentElement) {
+    guard var current = runtimeSources[address], current.isMounted,
+      current.leaseID == leaseID, SceneRasterSource.agent(current.demand.source) == .agent(source),
+      current.failure?.policy != nil else { return }
+    current.failure = nil; runtimeSources[address] = current
+    runtimeSourceGeneration &+= 1; dirtySources.insert(address); refreshSources()
+  }
+
+  func retireRuntimeSource(_ address: SceneSourceAddress, leaseID: UUID) {
+    guard var current = runtimeSources[address], current.leaseID == leaseID else { return }
+    current.isMounted = false
+    runtimeSources[address] = current.failure == nil ? nil : current
+  }
+
+  private var allSourceFailures: [SceneSourceAddress: SceneSourceFailure] {
+    var failures = sourceFailures.mapValues {
+      SceneSourceFailure(demand: $0.0, message: $0.1, captureSpecific: $0.1 == SceneRenderError.resourceLimit.description)
+    }
+    for (address, runtime) in runtimeSources {
+      guard let failure = runtime.failure else { continue }
+      let diagnostic = failure.diagnostic
+      failures[address] = .init(demand: runtime.demand,
+        message: diagnostic.kind == "resource_limit" ? SceneRenderError.resourceLimit.description : diagnostic.kind + ": " + diagnostic.message,
+        captureSpecific: failure.policy != nil)
+    }
+    return failures
+  }
+
+  private func sourceFailure(_ address: SceneSourceAddress, demand: SceneSourceDemand) -> String? {
+    guard let failed = allSourceFailures[address], failed.matches(demand) else { return nil }
+    return failed.message
+  }
+  @ObservationIgnored private var preparedSources: [SceneSourceAddress: RasterLease] = [:]
+  private struct SourceJob {
+    let id: UUID
+    var demand: SceneSourceDemand
+    let task: Task<Void, Never>
+  }
+  @ObservationIgnored private var sourceJobs: [SceneSourceAddress: SourceJob] = [:]
+  @ObservationIgnored private var sourceWork: [UUID: Task<Void, Never>] = [:]
+  @ObservationIgnored private var resourceObserver: NSObjectProtocol?
+  @ObservationIgnored private var admissionObserver: NSObjectProtocol?
+  @ObservationIgnored private var lastRefinementAdmission: SceneRasterAdmission?
+  private(set) var hasQualityDebt = false
+  init(resources: SceneRenderResources = .shared,
     surfaceRegistry: SpatialInkSurfaceRegistry = .init()) {
     self.resources = resources; self.surfaceRegistry = surfaceRegistry
-    diskCache = cacheRoot.map { SceneCompositionTileCache(root: $0) }
+    resourceObserver = NotificationCenter.default.addObserver(forName: SceneRenderResources.didChange,
+      object: nil, queue: .main) { [weak self] note in
+      guard let elementID = note.object as? String else { return }
+      Task { @MainActor [weak self] in self?.sourcePixelsChanged(elementID) }
+    }
+    admissionObserver = NotificationCenter.default.addObserver(forName: SceneRenderResources.didGainRasterAdmission,
+      object: resources, queue: .main) { [weak self] _ in
+      Task { @MainActor [weak self] in self?.refineAfterAdmission() }
+    }
   }
 
   func prepare(source: SceneCompositionSource, presence: SessionPresence, frame: WorkspaceSceneFrame,
@@ -407,7 +713,9 @@ final class SceneCompositionTiles {
 
   private func prepare(_ request: Request) {
     guard !stopped else { return }
+    lastRequest = request
     guard request.permitsPreparation() else { cancelPreparation(); return }
+    resumeRetiredRuntimeCapturesIfAdmitted()
     // Camera samples replace one waiting address. They cannot repeatedly
     // cancel the source read or WebKit image that must reveal the next area.
     // A changed content cut, pin or physical scene still invalidates that work.
@@ -422,12 +730,30 @@ final class SceneCompositionTiles {
     let pinned = request.pinned, displayScale = request.displayScale
     let permitsPreparation = request.permitsPreparation, onSourceInvalidated = request.onSourceInvalidated
     let sources = frame.sourceIdentity
-    if let plan = published?.plan,
+    let needsSourceScheduling = published?.sourceReceipts.contains { address, receipt in
+      guard !receipt.hasCurrentPixels, sourceJobs[address] == nil,
+        sourceFailure(address, demand: receipt.demand) == nil else { return false }
+      #if os(iOS)
+        if published?.runtimeOwners.contains(address) == true { return false }
+      #endif
+      return true
+    } ?? false
+    #if os(iOS)
+      let containsNativeProjection = published?.nativeInk.containsProjectionWindows(presence: presence,
+        frame: frame, refinesDetails: request.refinesDetails) == true
+    #else
+      let containsNativeProjection = true
+    #endif
+    if dirtySources.isEmpty, !needsSourceScheduling, containsNativeProjection, let plan = published?.plan,
+      published?.containsSourceWindows(presence: presence, frame: frame, displayScale: displayScale) == true,
       (!request.refinesDetails || published?.requestedSources == sources),
       plan.revision == source.revision, plan.workspaceID == source.workspaceID,
       Self.covers(plan, presence: presence, pinned: pinned, refinesDetails: request.refinesDetails) { return }
     cancelPreparation()
     let id = requestID
+    let changedSources = dirtySources
+    dirtySources.removeAll()
+    lastRefinementAdmission = resources.rasterAdmission
     isPreparing = true; failure = nil; budgetFailures = []; preparingRequest = request
     task = Task { [weak self, resources, surfaceRegistry] in
       defer {
@@ -436,7 +762,11 @@ final class SceneCompositionTiles {
       }
       var rasters: [SceneCompositionTileKey: RasterLease] = [:]
       var liveRasters: [SceneCompositionLiveOwner: RasterLease] = [:]
+      var fallbacks = self?.published?.sourceRasters ?? [:]
+      fallbacks.merge(self?.preparedSources ?? [:]) { _, prepared in prepared }
       let renderer = SceneCompositionRenderer(source: source, resources: resources,
+        usesPreparedSources: true, fallbackSources: fallbacks,
+        sourceFailures: self?.allSourceFailures ?? [:],
         permitsPreparation: { [weak self] in self?.requestID == id && permitsPreparation() })
       defer { renderer.finishPreparation() }
       do {
@@ -447,8 +777,10 @@ final class SceneCompositionTiles {
         guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
         var plan = try await SceneCompositionPlan.prepare(source: source, presence: presence, frame: frame,
           pinned: pinned, displayScale: displayScale, previous: self?.published?.plan)
+        renderer.useSourcePresentation(plan: plan, frame: frame, displayScale: displayScale)
         let requests = try await renderer.liveRasterRequests(plan: plan, frame: frame, displayScale: displayScale)
         let previous = self?.published
+        let changedSources = changedSources.union(try await renderer.sourcesOutsideCoverage(of: previous))
         let maximumAttempts = plan.reductionPotential + 1
         for attempt in 0..<maximumAttempts {
           try Task.checkCancellation()
@@ -472,11 +804,17 @@ final class SceneCompositionTiles {
             try Task.checkCancellation()
             guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
             let selected = requests.filter { plan.liveOwners.contains($0.owner) }
-            let borrowed = try Self.borrowRasters(plan: plan, requests: selected, previous: previous,
-              canCarry: canCarry, resources: resources)
+            let runtimeOwners = Self.runtimeOwners(requests: selected, plan: plan,
+              previous: previous?.runtimeOwners ?? [], resources: resources)
+            let cached = selected.filter { resources.image(for: $0.demand.rasterSource, minimumScale: $0.requestedScale) != nil }
+            let invalidatedTiles = Set(previous?.tileSources.compactMap { key, addresses in
+              addresses.isDisjoint(with: changedSources) ? nil : key.atRevision(plan.revision)
+            } ?? [])
+            let borrowed = try Self.borrowRasters(plan: plan, requests: cached, previous: previous,
+              canCarry: canCarry, resources: resources, invalidatedTiles: invalidatedTiles)
             rasters = borrowed.tiles; liveRasters = borrowed.live
             phase = "raster_preflight"
-            guard borrowed.fits(borrowed.admission, profile: resources.profile) else {
+            guard borrowed.fits(borrowed.admission) else {
               self?.recordBudgetFailure(phase: phase, plan: plan, attempt: attempt,
                 requestedBytes: borrowed.additionalBytes, admission: borrowed.admission)
               throw SceneRenderError.resourceLimit
@@ -492,41 +830,67 @@ final class SceneCompositionTiles {
               phase = "raster_native_preflight"
               allocation = .raster
               let admission = resources.rasterAdmission
-              guard borrowed.fits(admission, profile: resources.profile) else {
+              guard borrowed.fits(admission) else {
                 self?.recordBudgetFailure(phase: phase, plan: plan, attempt: attempt,
                   requestedBytes: borrowed.additionalBytes, admission: admission)
                 throw SceneRenderError.resourceLimit
               }
             #endif
             phase = "live_raster"
-            liveRasters = try await renderer.prepareLiveRasters(selected, retained: liveRasters)
+            renderer.carrySources(from: previous, tiles: rasters)
+            renderer.useLiveSources(selected)
             for key in plan.tiles where rasters[key] == nil {
               try Task.checkCancellation()
               guard self?.requestID == id, permitsPreparation(), let presentation = plan.presentations[key.plane]
               else { throw CancellationError() }
               phase = "tile:\(key.plane):\(key.range.layer.rawValue):\(key.tile.level):\(key.tile.column):\(key.tile.row):\(key.tile.localColumn):\(key.tile.localRow)"
-              if let raster = try await self?.loadCached(key) { rasters[key] = raster }
-              else {
+              // Screen tiles can contain explicit local pending/fallback
+              // sources. Only the exact renderer uses durable complete PNGs.
+              do {
                 let raster = try await renderer.renderTile(key: key, presentation: presentation)
                 rasters[key] = raster
-                await self?.saveCached(raster, key: key)
               }
             }
             try await source.validate(); try Task.checkCancellation()
             guard self?.requestID == id, permitsPreparation(), rasters.count == plan.tiles.count else { throw CancellationError() }
+            var receipts = renderer.receipts()
+            for (address, receipt) in receipts {
+              guard let runtime = self?.runtimeSources[address], let failed = runtime.failure,
+                SceneRasterSource.agent(failed.source) == .agent(receipt.demand.source),
+                failed.policy == nil || failed.policy == receipt.demand.policy else { continue }
+              receipts[address] = .init(demand: receipt.demand, installedSource: receipt.installedSource,
+                installedScale: receipt.installedScale,
+                status: .failed(failed.diagnostic.kind + ": " + failed.diagnostic.message),
+                installedRegion: receipt.installedRegion)
+            }
+            let ownedSources = renderer.sourceRasters.compactMapValues { $0.retainedCopy() }
+            let geometryID = previous.flatMap { previous in
+              previous.sharesGeometry(with: plan, frame: frame) ? previous.geometryID : nil
+            }
+            let tilePresenters = geometryID == nil ? SceneTilePresentationRegistry()
+              : previous?.tilePresenters ?? SceneTilePresentationRegistry()
             // No await separates the validated native source installation and
             // the matching static publication. Mounted old leases retain their
             // actual owners until the old view, not just this field, lets go.
             #if os(iOS)
               guard let nativeInk else { throw SceneRenderError.snapshotPending("native_ink_preparation") }
               try nativeInk.install()
+              tilePresenters.install(rasters)
               self?.published = .init(plan: plan, frame: frame, requestedSources: sources,
-                liveData: liveData, rasters: rasters, liveRasters: liveRasters, nativeInk: nativeInk)
+                liveData: liveData, rasters: rasters, liveRasters: liveRasters, nativeInk: nativeInk,
+                geometryID: geometryID, sourceReceipts: receipts, sourceRasters: ownedSources,
+                runtimeOwners: runtimeOwners,
+                tileSources: renderer.tileSources, tilePresenters: tilePresenters)
             #else
+              tilePresenters.install(rasters)
               self?.published = .init(plan: plan, frame: frame, requestedSources: sources,
-                liveData: liveData, rasters: rasters, liveRasters: liveRasters)
+                liveData: liveData, rasters: rasters, liveRasters: liveRasters,
+                geometryID: geometryID, sourceReceipts: receipts, sourceRasters: ownedSources,
+                tileSources: renderer.tileSources, tilePresenters: tilePresenters)
             #endif
             rasters.removeAll(); liveRasters.removeAll()
+            self?.hasQualityDebt = !plan.meetsRequiredDensity
+            self?.scheduleSources(receipts, runtimeOwners: runtimeOwners)
             return
           } catch SceneRenderError.resourceLimit {
             if !phase.hasSuffix("preflight") {
@@ -570,26 +934,214 @@ final class SceneCompositionTiles {
 
   private func finishRequest(_ id: UUID) {
     guard requestID == id else { return }
-    task = nil; preparingRequest = nil; isPreparing = false
+    task = nil; preparingRequest = nil; isPreparing = !sourceJobs.isEmpty
     let next = pendingRequest
     pendingRequest = nil
     if let next { prepare(next) }
   }
 
+  private static func runtimeOwners(requests: [SceneCompositionRenderer.LiveRasterRequest],
+    plan: SceneCompositionPlan, previous: Set<SceneSourceAddress>, resources: SceneRenderResources) -> Set<SceneSourceAddress> {
+    #if os(iOS)
+      guard resources.profile == .interactive, let root = plan.presentations[.board(plan.rootBoardID)],
+        root.mode != .page, root.mode != .document else { return [] }
+      let candidates = requests.filter { request in
+        // Only the current board mounts input-capable source consumers.
+        // Portal previews are read-only projections: assigning their sources
+        // a runtime owner would suppress the static producer even though no
+        // such runtime can be mounted, leaving the source pending forever.
+        guard request.source.kind == .web, request.owner.plane.boardID == plan.rootBoardID else { return false }
+        if let coverID = request.owner.plane.coverID { return coverID == root.focusedItemID }
+        guard let view = plan.presentations[request.owner.plane], let origin = request.demand.worldOrigin else { return false }
+        let visible = SceneSourceCapture.visibleRect(source: request.source, origin: origin, presence: view)
+        return !visible.isNull && !visible.isEmpty
+      }.sorted { left, right in
+        let a = SceneSourceAddress(plane: left.owner.plane, elementID: left.source.id)
+        let b = SceneSourceAddress(plane: right.owner.plane, elementID: right.source.id)
+        if plan.protectedOwners.contains(left.owner) != plan.protectedOwners.contains(right.owner) {
+          return plan.protectedOwners.contains(left.owner)
+        }
+        if previous.contains(a) != previous.contains(b) { return previous.contains(a) }
+        return left.source.id < right.source.id
+      }
+      return Set(candidates.prefix(max(0, resources.maximumPassiveLivePrograms)).map {
+        .init(plane: $0.owner.plane, elementID: $0.source.id)
+      })
+    #else
+      return []
+    #endif
+  }
+
+  private func scheduleSources(_ receipts: [SceneSourceAddress: SceneSourceReceipt],
+    runtimeOwners: Set<SceneSourceAddress>) {
+    let wanted = Set(receipts.keys)
+    runtimeSources = runtimeSources.filter { wanted.contains($0.key) }
+    for (address, job) in sourceJobs {
+      guard let demand = receipts[address]?.demand, demand.source == job.demand.source,
+        !runtimeOwners.contains(address) else {
+        job.task.cancel(); sourceJobs[address] = nil; continue
+      }
+      // Source/state identity owns the job. Pinch density and viewport crops
+      // retarget that same executor instead of resetting its readiness work.
+      sourceJobs[address]?.demand = demand
+    }
+    sourceFailures = sourceFailures.filter { address, failure in
+      guard let current = receipts[address]?.demand, current.source == failure.0.source else { return false }
+      return failure.1 != SceneRenderError.resourceLimit.description || current == failure.0
+    }
+    preparedSources = preparedSources.filter { wanted.contains($0.key) }
+    for (address, receipt) in receipts.sorted(by: { $0.key.elementID < $1.key.elementID }) {
+      guard !receipt.hasCurrentPixels, sourceJobs[address] == nil,
+        sourceFailure(address, demand: receipt.demand) == nil else { continue }
+      #if os(iOS)
+        // Its admitted on-screen WebKit is the sole executor of a live
+        // interactive program. Static tiles and passive exports use jobs below.
+        if runtimeOwners.contains(address) { continue }
+      #endif
+      guard sourceJobs.count < 32 else { break }
+      let id = UUID(), demand = receipt.demand
+      let work = Task { @MainActor [weak self, resources] in
+        defer { self?.sourceWork[id] = nil }
+        do {
+          let focus = InteractiveElementReference.board(boardID: address.plane.boardID, elementID: address.elementID)
+          let current = try await AgentWebCoordinator.captureCurrent(focus: focus, element: demand.source, resources: resources)
+          let raster: RasterLease
+          if let current, current.image(for: demand.rasterSource, minimumScale: demand.minimumScale) != nil {
+            raster = current
+          } else {
+            current?.release()
+            // The same keyed WebKit admission waits for a demoted physical
+            // program's actual final borrow before starting a raster executor.
+            raster = try await resources.prepareRaster(demand.source, requestedScale: demand.minimumScale, region: demand.region,
+            executionSource: focus,
+            currentPolicy: { [weak self] in self?.sourceJobs[address]?.demand.policy ?? demand.policy },
+            permitsPreparation: { [weak self] in
+              guard let self, !stopped, sourceJobs[address]?.id == id else { return false }
+              // This address already owns an admitted executor. A transient
+              // input barrier may defer its publication, but cannot reset its
+              // running ready promise at every finger lift. Source replacement,
+              // leaving the workset and shutdown revoke this job explicitly.
+              return true
+            })
+          }
+          guard let self, !stopped, sourceJobs[address]?.id == id,
+            published?.sourceReceipts[address]?.demand.source == demand.source, !Task.isCancelled else { raster.release(); return }
+          preparedSources[address] = raster
+          sourceJobs[address] = nil
+          isPreparing = preparingRequest != nil || !sourceJobs.isEmpty
+          dirtySources.insert(address)
+          refreshSources()
+        } catch {
+          guard let self, sourceJobs[address]?.id == id else { return }
+          let failedDemand = sourceJobs[address]?.demand ?? demand
+          sourceJobs[address] = nil
+          if !(error is CancellationError) {
+            sourceFailures[address] = (failedDemand, String(describing: error))
+            dirtySources.insert(address)
+            refreshSources()
+          }
+          isPreparing = preparingRequest != nil || !sourceJobs.isEmpty
+        }
+      }
+      sourceJobs[address] = .init(id: id, demand: demand, task: work)
+      sourceWork[id] = work
+    }
+    isPreparing = preparingRequest != nil || !sourceJobs.isEmpty
+  }
+
+  private func sourcePixelsChanged(_ elementID: String) {
+    guard !stopped, let published else { return }
+    for (address, receipt) in published.sourceReceipts where address.elementID == elementID && !receipt.hasCurrentPixels {
+      if let raster = resources.retainRaster(for: receipt.demand.rasterSource, minimumScale: receipt.demand.minimumScale) {
+        preparedSources[address] = raster
+        dirtySources.insert(address)
+      }
+    }
+    if !dirtySources.isEmpty { refreshSources() }
+  }
+
+  private func refreshSources() {
+    guard !stopped, let request = lastRequest, request.permitsPreparation() else { return }
+    prepare(request)
+  }
+
+  private func refineAfterAdmission() {
+    guard !stopped, let request = lastRequest, request.permitsPreparation(), request.refinesDetails else { return }
+    if resumeRetiredRuntimeCapturesIfAdmitted() { prepare(request); return }
+    let current = resources.rasterAdmission
+    if let previous = lastRefinementAdmission {
+      let previousBytes = min(previous.byteLimit - previous.heldBytes,
+        previous.passiveByteLimit - previous.pinnedBytes - previous.passiveReservedBytes)
+      let currentBytes = min(current.byteLimit - current.heldBytes,
+        current.passiveByteLimit - current.pinnedBytes - current.passiveReservedBytes)
+      guard currentBytes > previousBytes
+        || current.countLimit - current.pinnedCount - current.reservedCount
+          > previous.countLimit - previous.pinnedCount - previous.reservedCount else { return }
+    }
+    for (address, failed) in sourceFailures where failed.1 == SceneRenderError.resourceLimit.description {
+      sourceFailures[address] = nil
+      dirtySources.insert(address)
+    }
+    #if os(iOS)
+      let needsNativeRefinement = published?.nativeInk.containsProjectionWindows(presence: request.presence,
+        frame: request.frame, refinesDetails: true) != true
+    #else
+      let needsNativeRefinement = false
+    #endif
+    if hasQualityDebt || !dirtySources.isEmpty || needsNativeRefinement { prepare(request) }
+  }
+
+  @discardableResult
+  private func resumeRetiredRuntimeCapturesIfAdmitted() -> Bool {
+    let admission = resources.rasterAdmission
+    var resumed = false
+    for (address, runtime) in runtimeSources where !runtime.isMounted {
+      guard runtime.failure?.canResumeCapture(with: admission) == true else { continue }
+      // The failed demand and admission baseline belong to the physical source,
+      // so consumer remounts cannot lose its stationary refinement wake-up.
+      runtimeSources[address] = nil
+      runtimeSourceGeneration &+= 1
+      dirtySources.insert(address)
+      resumed = true
+    }
+    return resumed
+  }
+
+  func retrySource(_ address: SceneSourceAddress) {
+    let staticFailure = sourceFailures.removeValue(forKey: address) != nil
+    let runtimeFailure = runtimeSources[address]?.failure != nil
+    guard staticFailure || runtimeFailure else { return }
+    if runtimeFailure {
+      runtimeSources[address] = nil
+      runtimeSourceGeneration &+= 1
+    }
+    dirtySources.insert(address); refreshSources()
+  }
+
   func cancelPreparation() {
     requestID = UUID(); task?.cancel(); task = nil
-    preparingRequest = nil; pendingRequest = nil; isPreparing = false
+    preparingRequest = nil; pendingRequest = nil; isPreparing = !sourceJobs.isEmpty
   }
-  func removePublishedCoverage() { cancelPreparation(); published = nil }
+  func removePublishedCoverage() {
+    cancelPreparation(); published = nil; lastRequest = nil
+    for job in sourceJobs.values { job.task.cancel() }
+    sourceJobs.removeAll(); preparedSources.removeAll(); sourceFailures.removeAll(); runtimeSources.removeAll(); dirtySources.removeAll()
+    runtimeSourceGeneration &+= 1
+    hasQualityDebt = false; isPreparing = false
+  }
 
   /// Cancellation revokes publication immediately, but submitted GPU/read work
   /// keeps its leases until completion. Shutdown waits for superseded jobs too.
   func stop() async {
     stopped = true
-    let pending = Array(inFlight.values)
+    let pending = Array(inFlight.values) + Array(sourceWork.values)
     cancelPreparation()
     for task in pending { task.cancel() }
     for task in pending { await task.value }
+    sourceJobs.removeAll(); sourceWork.removeAll(); preparedSources.removeAll()
+    if let resourceObserver { NotificationCenter.default.removeObserver(resourceObserver) }
+    if let admissionObserver { NotificationCenter.default.removeObserver(admissionObserver) }
+    resourceObserver = nil; admissionObserver = nil
     #if os(iOS)
       await surfaceRegistry.stopSceneInk()
     #endif
@@ -625,19 +1177,11 @@ final class SceneCompositionTiles {
     let admission: SceneRasterAdmission
     let additionalBytes: Int
     let additionalCount: Int
-    let outputBytes: Int
-    let replacementScratch: Int
-    func fits(_ admission: SceneRasterAdmission, profile: SceneResourceProfile) -> Bool {
-      guard admission.fits(additionalBytes: additionalBytes, additionalCount: additionalCount) else { return false }
-      guard profile == .interactive else { return true }
-      // Publishing a cold dense cut must not consume the space needed for
-      // its next whole revision. This is a planner bound in the same ledger,
-      // not a speculative allocation or permission to borrow the input half.
-      let passive = admission.passiveByteLimit - admission.passiveReservedBytes
-      let total = admission.byteLimit - admission.reservedBytes
-      let available = min(passive, total)
-      guard replacementScratch <= available else { return false }
-      return outputBytes <= (available - replacementScratch) / 2
+    func fits(_ admission: SceneRasterAdmission) -> Bool {
+      // Old mounted fragments are already charged by their leases. Reserve
+      // this replacement and its real scratch, not a speculative second copy
+      // of every unrelated source in the scene.
+      admission.fits(additionalBytes: additionalBytes, additionalCount: additionalCount)
     }
     func release() {
       for raster in tiles.values { raster.release() }
@@ -647,48 +1191,41 @@ final class SceneCompositionTiles {
 
   private static func borrowRasters(plan: SceneCompositionPlan,
     requests: [SceneCompositionRenderer.LiveRasterRequest], previous: SceneCompositionCohort?,
-    canCarry: Bool, resources: SceneRenderResources) throws -> RasterBorrow {
+    canCarry: Bool, resources: SceneRenderResources,
+    invalidatedTiles: Set<SceneCompositionTileKey> = []) throws -> RasterBorrow {
     var tiles: [SceneCompositionTileKey: RasterLease] = [:]
     var live: [SceneCompositionLiveOwner: RasterLease] = [:]
-    var additional = 0, count = 0, extra = 0, output = 0, replacementScratch = 0
-    var retainedEntries: Set<UUID> = []
+    var additional = 0, count = 0, extra = 0
     do {
       for request in requests {
-        replacementScratch = max(replacementScratch, request.snapshotAdditionalBytes)
-        if let hit = resources.retainRaster(for: request.source, minimumScale: request.requestedScale) {
+        if let hit = resources.retainRaster(for: request.demand.rasterSource, minimumScale: request.requestedScale) {
           live[request.owner] = hit
-          if retainedEntries.insert(hit.entryID).inserted { output = try sumBytes(output, hit.accountedByteCount) }
         }
         else {
           additional = try sumBytes(additional, request.residentBytes); count += 1
-          output = try sumBytes(output, request.residentBytes)
           extra = max(extra, request.snapshotAdditionalBytes)
         }
       }
       for key in plan.tiles {
-        if let hit = resources.retainRaster(for: .composition(key)) { tiles[key] = hit }
-        else if canCarry, let previous, let old = previous.rasters[key.atRevision(previous.plan.revision)],
+        if !invalidatedTiles.contains(key), canCarry, let previous, let old = previous.rasters[key.atRevision(previous.plan.revision)],
           !old.isReleased, let hit = old.retainedCopy() { tiles[key] = hit }
         else {
-          guard let bytes = SceneRenderResources.estimatedRasterBytes(pixelWidth: 512, pixelHeight: 512)
+          guard let bytes = SceneRenderResources.estimatedRasterBytes(pixelWidth: key.pixelSize, pixelHeight: key.pixelSize)
           else { throw SceneRenderError.resourceLimit }
           additional = try sumBytes(additional, bytes); count += 1
-          output = try sumBytes(output, bytes)
         }
-        if let hit = tiles[key], retainedEntries.insert(hit.entryID).inserted { output = try sumBytes(output, hit.accountedByteCount) }
       }
       if !plan.tiles.isEmpty {
         // Artwork is clipped to the output grid. Static WebKit and ink can
         // require more; their real per-allocation grants remain authoritative.
         // Optional disk-cache scratch is not required to render a cold tile.
-        guard let artwork = SceneRenderResources.estimatedRasterBytes(pixelWidth: 514, pixelHeight: 514)
+        let side = (plan.tiles.map(\.pixelSize).max() ?? CompositionTile.pixelSize) + 2
+        guard let artwork = SceneRenderResources.estimatedRasterBytes(pixelWidth: side, pixelHeight: side)
         else { throw SceneRenderError.resourceLimit }
-        replacementScratch = max(replacementScratch, artwork)
         if tiles.count < plan.tiles.count { extra = max(extra, artwork) }
       }
       return .init(tiles: tiles, live: live, admission: resources.rasterAdmission,
-        additionalBytes: try sumBytes(additional, extra), additionalCount: count + (extra > 0 ? 1 : 0),
-        outputBytes: output, replacementScratch: replacementScratch)
+        additionalBytes: try sumBytes(additional, extra), additionalCount: count + (extra > 0 ? 1 : 0))
     } catch {
       for raster in tiles.values { raster.release() }; for raster in live.values { raster.release() }
       throw error
@@ -729,36 +1266,6 @@ final class SceneCompositionTiles {
     return best
   }
 
-  private func loadCached(_ key: SceneCompositionTileKey) async throws -> RasterLease? {
-    guard let diskCache, try await diskCache.hasRecord(key) else { return nil }
-    try Task.checkCancellation()
-    guard let allocation = resources.reserveRaster(pixelWidth: 512, pixelHeight: 512, backingCount: 4) else { return nil }
-    defer { allocation.release() }
-    guard let temporary = resources.reserveDerivedBytes(8 * 1_024 * 1_024, priority: .passive) else { return nil }
-    defer { temporary.release() }
-    guard let pixels = try await diskCache.load(key) else { return nil }
-    try Task.checkCancellation()
-    #if os(iOS)
-      let image = UIImage(cgImage: pixels, scale: 1, orientation: .up)
-    #else
-      let image = NSImage(cgImage: pixels, size: .init(width: pixels.width, height: pixels.height))
-    #endif
-    guard resources.store(image, for: .composition(key), reservation: allocation),
-      let raster = resources.retainRaster(for: .composition(key)) else { throw SceneRenderError.resourceLimit }
-    return raster
-  }
-  private func saveCached(_ raster: RasterLease, key: SceneCompositionTileKey) async {
-    guard let diskCache, !raster.isReleased,
-      let temporary = resources.reserveDerivedBytes(8 * 1_024 * 1_024, priority: .passive) else { return }
-    defer { temporary.release() }
-    #if os(iOS)
-      let image = raster.image.cgImage
-    #else
-      let image = raster.image.cgImage(forProposedRect: nil, context: nil, hints: nil)
-    #endif
-    if let image { try? await diskCache.store(image, for: key) }
-  }
-
   private static func covers(_ plan: SceneCompositionPlan, presence: SessionPresence,
     pinned: Set<WorkspaceSpatialID>, refinesDetails: Bool) -> Bool {
     let plane = SceneCompositionPlane.board(presence.boardID)
@@ -767,14 +1274,19 @@ final class SceneCompositionTiles {
       // During a camera contact, only missing spatial coverage needs work.
       // Density and live-owner refinement follow settlement, so a pinch within
       // an already painted area projects the same pixels instead of recapturing.
-      (!refinesDetails || (0.6...1).contains(presence.camera.scale / basis.camera.scale)),
+      (!refinesDetails || ((0.6...1).contains(presence.camera.scale / basis.camera.scale) && plan.meetsRequiredDensity)),
       pinned.allSatisfy({ pin in plan.liveOwners.contains { $0.id == pin } }), let tiles = plan.coverage[plane]?.tiles,
       let first = tiles.first, let last = tiles.last else { return false }
     let visible = WorkspaceSpatialBounds(origin: presence.camera.screenToWorld(.zero, viewport: presence.viewport),
       width: presence.viewport.x / presence.camera.scale, height: presence.viewport.y / presence.camera.scale)
     return WorkspaceSpatialBounds(origin: first.origin, maximum: last.bounds.maximum).contains(visible)
   }
-  isolated deinit { for task in inFlight.values { task.cancel() } }
+  isolated deinit {
+    for task in inFlight.values { task.cancel() }
+    for task in sourceWork.values { task.cancel() }
+    if let resourceObserver { NotificationCenter.default.removeObserver(resourceObserver) }
+    if let admissionObserver { NotificationCenter.default.removeObserver(admissionObserver) }
+  }
 }
 
 /// Place each band next to its live owners in the SAME ZStack/SceneCameraPlane:
@@ -787,6 +1299,7 @@ struct SceneCompositionTileBandView: View, Identifiable {
     let id: SceneCompositionTileKey
     let frame: CGRect
     weak var raster: RasterLease?
+    weak var cohort: SceneCompositionCohort?
   }
   private let tiles: [Tile]
 
@@ -802,7 +1315,7 @@ struct SceneCompositionTileBandView: View, Identifiable {
         rect = .init(x: screen.x, y: screen.y,
           width: key.tile.worldSize * presence.camera.scale, height: key.tile.worldSize * presence.camera.scale)
       }
-      return Tile(id: key, frame: rect, raster: cohort.rasters[key])
+      return Tile(id: key, frame: rect, raster: cohort.rasters[key], cohort: cohort)
     }
   }
 
@@ -815,7 +1328,12 @@ struct SceneCompositionTileBandView: View, Identifiable {
 
   var body: some View {
     ForEach(tiles) { tile in
-      SceneCompositionTileRasterView(raster: tile.raster)
+      SceneCompositionTileRasterView(raster: tile.raster, onMounted: { [weak cohort = tile.cohort] view in
+        guard let cohort else { return }
+        cohort.tilePresenters.register(view, key: tile.id, cohort: cohort)
+      }, onInstalled: { [weak cohort = tile.cohort] installation in
+        cohort?.didInstallTile(tile.id, installation: installation)
+      })
         .frame(width: tile.frame.width, height: tile.frame.height)
         .position(x: tile.frame.midX, y: tile.frame.midY)
         .allowsHitTesting(false).accessibilityHidden(true)
@@ -827,9 +1345,17 @@ struct SceneCompositionTileBandView: View, Identifiable {
 private struct SceneCompositionTileRasterView: UIViewRepresentable {
   @Environment(NotebookAppModel.self) private var model: NotebookAppModel?
   weak var raster: RasterLease?
+  let onMounted: (AgentSnapshotRasterView) -> Void
+  let onInstalled: (SceneSourceInstallation) -> Void
   func makeUIView(context: Context) -> AgentSnapshotRasterView { .init() }
   func updateUIView(_ view: AgentSnapshotRasterView, context: Context) {
     view.bindSceneLifecycle(to: model)
+    onMounted(view)
+    view.onRasterInstalled = { [weak view] raster in
+      // Overscan fragments are mounted outside the viewport intentionally.
+      // Their native owner still must exist and keep exactly these bytes.
+      if let view { onInstalled(view.installation(for: raster, requiresVisibility: false)) }
+    }
     guard let raster, !raster.isReleased else { return }
     view.updateRaster(raster)
   }
@@ -839,9 +1365,17 @@ private struct SceneCompositionTileRasterView: UIViewRepresentable {
 private struct SceneCompositionTileRasterView: NSViewRepresentable {
   @Environment(NotebookAppModel.self) private var model: NotebookAppModel?
   weak var raster: RasterLease?
+  let onMounted: (AgentSnapshotRasterView) -> Void
+  let onInstalled: (SceneSourceInstallation) -> Void
   func makeNSView(context: Context) -> AgentSnapshotRasterView { .init() }
   func updateNSView(_ view: AgentSnapshotRasterView, context: Context) {
     view.bindSceneLifecycle(to: model)
+    onMounted(view)
+    view.onRasterInstalled = { [weak view] raster in
+      // Overscan fragments are mounted outside the viewport intentionally.
+      // Their native owner still must exist and keep exactly these bytes.
+      if let view { onInstalled(view.installation(for: raster, requiresVisibility: false)) }
+    }
     guard let raster, !raster.isReleased else { return }
     view.updateRaster(raster)
   }

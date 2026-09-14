@@ -254,7 +254,8 @@ func lateHeavyOwnerSaveDoesNotResurrectDeletion(kind: WorkspaceItemKind) throws 
     var index = base, board = tree
     let id = UUID()
     var capturedPage: PageDocument?
-    let capturedDocument = DocumentDocument(id: id, actor: publicationActorA)
+    let capturedDocument = DocumentDocument(id: id, actor: publicationActorA,
+      blocks: [.interactive(id: "accepted", html: "<button>Accepted</button>")])
     var capturedState = DocumentStateJournal(id: id, actor: publicationActorA)
     if kind == .notebook {
       let creation = index.createNotebook(title: "Delete after input", actor: publicationActorA,
@@ -272,7 +273,8 @@ func lateHeavyOwnerSaveDoesNotResurrectDeletion(kind: WorkspaceItemKind) throws 
     let accepted = capturedState.commit(blockID: "accepted", value: .number(1), actor: publicationActorA)
     #expect(accepted)
     let stateCommand = NotebookDocumentStateCommand(documentID: id,
-      record: try #require(capturedState.records.first), journalStamp: capturedState.stamp)
+      record: try #require(capturedState.records.first), journalStamp: capturedState.stamp,
+      expectedSourceVersion: capturedDocument.sourceVersion(blockID: "accepted"))
     let beforeDeletion = index
     _ = index.deleteItem(id, actor: publicationActorA)
     _ = board.deleteItem(id, from: base.rootBoardID, kind: kind,
@@ -284,7 +286,7 @@ func lateHeavyOwnerSaveDoesNotResurrectDeletion(kind: WorkspaceItemKind) throws 
       #expect(!FileManager.default.fileExists(atPath: store.pageURL(capturedPage.id).path))
     } else {
       #expect(throws: CocoaError.self) { _ = try store.saveMergedDocument(capturedDocument) }
-      #expect(throws: CocoaError.self) { _ = try store.commitDocumentState(stateCommand) }
+      #expect(try store.commitDocumentState(stateCommand) == .targetChanged(documentID: id, currentSourceVersion: nil))
       #expect(!FileManager.default.fileExists(atPath: store.documentURL(id).path))
       #expect(!FileManager.default.fileExists(atPath: store.documentStateURL(id).path))
     }

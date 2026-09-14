@@ -12,11 +12,11 @@ final class NotebookApplicationLaunch {
   private(set) var isChecking = false
   private let root: URL
   private let target: NotebookArchiveTarget?
-  private let makeModel: ((NotebookStore, UUID?) -> NotebookAppModel)?
+  private let makeModel: ((NotebookStore, UUID?) throws -> NotebookAppModel)?
   private let isFixture: Bool
 
   init(root: URL = NotebookStore.defaultRoot, target: NotebookArchiveTarget? = nil,
-    makeModel: ((NotebookStore, UUID?) -> NotebookAppModel)? = nil) {
+    makeModel: ((NotebookStore, UUID?) throws -> NotebookAppModel)? = nil) {
     self.root = root; self.target = target; self.makeModel = makeModel; isFixture = false
   }
 
@@ -25,11 +25,19 @@ final class NotebookApplicationLaunch {
     target = nil; makeModel = nil; isFixture = true
   }
 
+  init(failure: String) {
+    self.failure = failure; root = URL(fileURLWithPath: "/unused-notebook-rejected-launch")
+    target = nil; makeModel = nil; isFixture = true
+  }
+
   var message: String {
+    if isFixture, let failure { return failure }
     if let failure { return "Перенос не завершён. Исходные копии сохранены. \(failure)" }
     if case .waitingForPair = activation { return "Архив проверен. Ожидается готовность второго устройства…" }
     return "Проверяется сохранённый архив…"
   }
+
+  var canRetry: Bool { !isFixture && failure != nil }
 
   func start() async {
     guard !isFixture, model == nil, !isChecking else { return }
@@ -56,7 +64,7 @@ final class NotebookApplicationLaunch {
             .consumeInstallationGrant(root: root, receipt: receipt)
         }
         let store = NotebookStore(root: root)
-        model = makeModel?(store, pairingActivationID) ?? NotebookAppModel(store: store,
+        model = try makeModel?(store, pairingActivationID) ?? NotebookAppModel(store: store,
           allowsCodexRegistration: allowsCodexRegistration, pairingActivationID: pairingActivationID)
       case .waitingForPair: break
       }

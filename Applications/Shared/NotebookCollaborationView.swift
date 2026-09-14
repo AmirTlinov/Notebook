@@ -109,7 +109,7 @@ struct NotebookCollaborationView: View {
     } catch { directoryError = "История изменилась или недоступна. Откройте новые фрагменты. " + error.localizedDescription }
   }
 
-  private func actionCard(_ action: CollaborationReceipt) -> some View {
+  private func actionCard(_ action: NotebookActionReadModel) -> some View {
     VStack(alignment: .leading, spacing: 10) {
       Text(action.action.summary).font(.headline)
       if !model.collaborationDetailsAreCurrent {

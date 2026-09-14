@@ -15,10 +15,93 @@ final class SceneCompositionRenderer {
   private let resources: SceneRenderResources
   private let permitsPreparation: @MainActor () -> Bool
   private var webPreparation: SceneWebRasterPreparation?
+  private let usesPreparedSources: Bool
+  private var fallbackSources: [SceneSourceAddress: RasterLease]
+  private var sourceFailures: [SceneSourceAddress: SceneSourceFailure]
+  private var currentTile: SceneCompositionTileKey?
+  private var sourcePresentation: (plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, displayScale: Double)?
+  private(set) var sourceDemands: [SceneSourceAddress: SceneSourceDemand] = [:]
+  private(set) var sourceRasters: [SceneSourceAddress: RasterLease] = [:]
+  private(set) var tileSources: [SceneCompositionTileKey: Set<SceneSourceAddress>] = [:]
+
+  func useSourcePresentation(plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, displayScale: Double) {
+    sourcePresentation = (plan, frame, displayScale)
+  }
+
+  private func demand(for element: SpatialElement, plane: SceneCompositionPlane, density: Double) -> SceneSourceDemand {
+    let source = agentElementSnapshotSource(element)
+    guard let window = sourcePresentation,
+      let view = window.plan.presentations[.board(plane.boardID)] else { return .init(source: source, minimumScale: density) }
+    var region = SceneSourceCapture.region(element: element, plane: plane,
+      presence: view, frame: window.frame, density: density)
+    let origin = SceneSourceCapture.origin(element: element, plane: plane, frame: window.frame)
+    let address = SceneSourceAddress(plane: plane, elementID: source.id)
+    if region != nil, let previous = fallbackSources[address], previous.source.agentElement.map({ SceneRasterSource.agent($0) == .agent(source) }) == true,
+      previous.pixelScale + 0.000_001 >= density, let old = previous.source.captureRegion {
+      let visible = SceneSourceCapture.visibleRect(source: source, origin: origin, presence: view)
+      if CGRect(x: old.x, y: old.y, width: old.width, height: old.height).contains(visible) { region = old }
+    }
+    return .init(source: source, minimumScale: density, region: region, worldOrigin: origin)
+  }
+
+  func sourcesOutsideCoverage(of previous: SceneCompositionCohort?) async throws -> Set<SceneSourceAddress> {
+    guard let previous, let window = sourcePresentation else { return [] }
+    var changed = Set<SceneSourceAddress>()
+    for (address, receipt) in previous.sourceReceipts where receipt.demand.region != nil {
+      guard let element = try await source.element(address.elementID, boardID: address.plane.boardID) else { continue }
+      let scale = (window.frame.pixelScales[address.plane.boardID] ?? 1) * window.displayScale
+      if demand(for: element, plane: address.plane, density: scale) != receipt.demand { changed.insert(address) }
+    }
+    return changed
+  }
+
+  /// Carried tiles keep the source receipts and owned fallbacks that produced
+  /// them. Only fragments actually redrawn in this pass replace those values.
+  func carrySources(from previous: SceneCompositionCohort?, tiles: [SceneCompositionTileKey: RasterLease]) {
+    guard let previous else { return }
+    for key in tiles.keys {
+      let oldKey = key.atRevision(previous.plan.revision)
+      guard let dependencies = previous.tileSources[oldKey] else { continue }
+      tileSources[key] = dependencies
+      for address in dependencies {
+        if let receipt = previous.sourceReceipts[address] { sourceDemands[address] = receipt.demand }
+        if sourceRasters[address] == nil { sourceRasters[address] = previous.sourceRasters[address]?.retainedCopy() }
+      }
+    }
+  }
+
+  func useLiveSources(_ requests: [LiveRasterRequest]) {
+    for request in requests {
+      let address = SceneSourceAddress(plane: request.owner.plane, elementID: request.source.id)
+      sourceDemands[address] = request.demand
+      sourceRasters[address] = resources.retainRaster(for: request.demand.rasterSource, minimumScale: request.requestedScale)
+        ?? fallbackSources[address]?.retainedCopy()
+    }
+  }
+
+  func receipts() -> [SceneSourceAddress: SceneSourceReceipt] {
+    return Dictionary(uniqueKeysWithValues: sourceDemands.map { address, demand in
+      let raster = sourceRasters[address]
+      let installed: AgentElement?
+      installed = raster?.source.agentElement
+      let ready = raster?.image(for: demand.rasterSource, minimumScale: demand.minimumScale) != nil
+      let failure = sourceFailures[address].flatMap { failure in
+        failure.matches(demand) ? failure.message : nil
+      }
+      let status: SceneSourceReceipt.Status = ready ? .ready : failure.map(SceneSourceReceipt.Status.failed) ?? .pending
+      return (address, .init(demand: demand, installedSource: installed,
+        installedScale: raster?.pixelScale ?? 0, status: status, installedRegion: raster?.source.captureRegion))
+    })
+  }
 
   init(source: SceneCompositionSource, resources: SceneRenderResources = .shared,
+    usesPreparedSources: Bool = false,
+    fallbackSources: [SceneSourceAddress: RasterLease] = [:],
+    sourceFailures: [SceneSourceAddress: SceneSourceFailure] = [:],
     permitsPreparation: @escaping @MainActor () -> Bool = { true }) {
     self.source = source; self.resources = resources; self.permitsPreparation = permitsPreparation
+    self.usesPreparedSources = usesPreparedSources
+    self.fallbackSources = fallbackSources; self.sourceFailures = sourceFailures
   }
 
   func render(presence: SessionPresence, scale: Double = 2, transitionViewport: SpatialPoint? = nil) async throws -> Result {
@@ -64,17 +147,19 @@ final class SceneCompositionRenderer {
   /// The live board grid, ink and excluded owners are not duplicated here.
   func renderTile(key: SceneCompositionTileKey, presentation: SessionPresence) async throws -> RasterLease {
     try checkPreparation()
+    currentTile = key
+    defer { currentTile = nil }
     guard key.workspaceID == source.workspaceID, key.revision == source.revision,
       key.plane.boardID == presentation.boardID else { throw NotebookStorageError.transactionConflict }
     let tile = key.tile
     let cameraScale = min(SpatialCamera.maximumScale, max(SpatialCamera.minimumScale,
-      Double(CompositionTile.pixelSize) / tile.worldSize))
+      Double(key.pixelSize) / tile.worldSize))
     let side = tile.worldSize * cameraScale
     let camera = SpatialCamera(center: tile.origin.offsetBy(x: tile.worldSize / 2, y: tile.worldSize / 2), scale: cameraScale)
     let presence = SessionPresence(boardID: key.plane.boardID, mode: presentation.mode, camera: camera,
       viewport: .init(x: side, y: side), focusedItemID: presentation.focusedItemID)
     let size = CGSize(width: side, height: side), frame = CGRect(origin: .zero, size: size)
-    let canvas = try await SceneRasterCompositor.create(size: size, scale: Double(CompositionTile.pixelSize) / side,
+    let canvas = try await SceneRasterCompositor.create(size: size, scale: Double(key.pixelSize) / side,
       resources: resources, permitsPreparation: permitsPreparation)
     switch key.plane {
     case .board:
@@ -135,7 +220,7 @@ final class SceneCompositionRenderer {
           let rect = CGRect(x: frame.minX + screen.x * projection, y: frame.minY + screen.y * projection,
             width: element.frame.width * presence.camera.scale * projection,
             height: element.frame.height * presence.camera.scale * projection)
-          if rect.intersects(visible) { try await paintElement(element, frame: rect, canvas: canvas) }
+          if rect.intersects(visible) { try await paintElement(element, boardID: presence.boardID, frame: rect, canvas: canvas) }
         case .item(let id):
           guard let item = try await source.item(id, presence: itemPresentation ?? presence) else { continue }
           let screen = presence.camera.worldToScreen(item.center, viewport: presence.viewport)
@@ -176,7 +261,7 @@ final class SceneCompositionRenderer {
           throw SceneRenderError.snapshotPending("cover_element_source")
         }
         let delta = bounds.origin.delta(to: .init(x: element.frame.x, y: element.frame.y))
-        try await paintElement(element, frame: .init(x: frame.minX + delta.x * projection,
+        try await paintElement(element, boardID: boardID, frame: .init(x: frame.minX + delta.x * projection,
           y: frame.minY + delta.y * projection, width: element.frame.width * projection,
           height: element.frame.height * projection), canvas: canvas)
       }
@@ -231,7 +316,7 @@ final class SceneCompositionRenderer {
     try await canvas.popClip()
   }
 
-  private func paintElement(_ element: SpatialElement, frame: CGRect, canvas: SceneRasterCompositor) async throws {
+  private func paintElement(_ element: SpatialElement, boardID: UUID, frame: CGRect, canvas: SceneRasterCompositor) async throws {
     try checkPreparation()
     if element.kind == .nativeText {
       try await canvas.drawView(SpatialTextSnapshot(element: element),
@@ -245,6 +330,42 @@ final class SceneCompositionRenderer {
     let density = max(frame.width / element.frame.width, frame.height / element.frame.height) * canvas.scale
     guard density.isFinite, density > 0 else { throw SceneRenderError.resourceLimit }
     let requiredScale = pow(2, ceil(log2(density)))
+    if usesPreparedSources {
+      let plane = element.surface.kind == .cover
+        ? SceneCompositionPlane.cover(boardID: boardID, itemID: element.surface.ownerID!) : .board(boardID)
+      let address = SceneSourceAddress(plane: plane, elementID: element.id)
+      let desired = sourcePresentation.map { ($0.frame.pixelScales[boardID] ?? 1) * $0.displayScale } ?? density
+      let demand = demand(for: element, plane: plane, density: desired)
+      sourceDemands[address] = demand
+      if let currentTile { tileSources[currentTile, default: []].insert(address) }
+      // A painter pass consumes immutable, already admitted pixels. It never
+      // awaits a neighbouring program, even when both overlap this same tile.
+      let fallback = fallbackSources[address].flatMap { raster -> RasterLease? in
+        guard let old = raster.source.agentElement, old.frame.width == source.frame.width,
+          old.frame.height == source.frame.height else { return nil }
+        return raster.retainedCopy()
+      }
+      let raster = sourceRasters[address]
+        ?? resources.retainRaster(for: demand.rasterSource, minimumScale: demand.minimumScale)
+        ?? fallback
+      if let raster {
+        sourceRasters[address] = raster
+        let destination: CGRect
+        if let crop = raster.source.captureRegion {
+          destination = CGRect(x: frame.minX + crop.x / source.frame.width * frame.width,
+            y: frame.minY + crop.y / source.frame.height * frame.height,
+            width: crop.width / source.frame.width * frame.width, height: crop.height / source.frame.height * frame.height)
+        } else { destination = frame }
+        try await canvas.draw(raster, in: destination)
+      } else {
+        let message = sourceFailures[address]?.matches(demand) == true ? "Не удалось загрузить" : "Подготовка…"
+        try await canvas.drawView(ZStack {
+          Color.secondary.opacity(0.07)
+          Text(message).font(.system(size: 14)).foregroundStyle(.secondary)
+        }, size: .init(width: element.frame.width, height: element.frame.height), in: frame)
+      }
+      return
+    }
     let raster = try await prepareRaster(source, requestedScale: requiredScale)
     do { try await canvas.draw(raster, in: frame); raster.release() }
     catch { raster.release(); throw error }
@@ -257,15 +378,14 @@ final class SceneCompositionRenderer {
     let owner: SceneCompositionLiveOwner
     let source: AgentElement
     let requestedScale: Double
+    let demand: SceneSourceDemand
     let residentBytes: Int
     let snapshotAdditionalBytes: Int
-    init(owner: SceneCompositionLiveOwner, element: SpatialElement, displayScale: Double) throws {
+    init(owner: SceneCompositionLiveOwner, element: SpatialElement, displayScale: Double, demand: SceneSourceDemand? = nil) throws {
       self.owner = owner; source = agentElementSnapshotSource(element)
-      guard let display = AgentSnapshotPolicy.display(scale: displayScale).pixelSize(for: source) else {
-        throw SceneRenderError.resourceLimit
-      }
-      requestedScale = display.width / source.frame.width
-      guard let exact = AgentSnapshotPolicy.exact(scale: requestedScale).pixelSize(for: source),
+      let demand = demand ?? .init(source: source, minimumScale: displayScale)
+      self.demand = demand; requestedScale = demand.minimumScale
+      guard let exact = demand.policy.pixelSize(for: source),
         exact.width < Double(Int.max - 2), exact.height < Double(Int.max - 2),
         let resident = SceneRenderResources.estimatedRasterBytes(pixelWidth: Int(exact.width), pixelHeight: Int(exact.height)),
         let capture = SceneRenderResources.estimatedRasterBytes(pixelWidth: Int(exact.width) + 2, pixelHeight: Int(exact.height) + 2)
@@ -287,7 +407,9 @@ final class SceneCompositionRenderer {
         guard let projection = frame.pixelScales[owner.plane.boardID] else {
           throw SceneRenderError.snapshotPending("live_element_projection")
         }
-        requests.append(try .init(owner: owner, element: element, displayScale: projection * displayScale))
+        let density = projection * displayScale
+        requests.append(try .init(owner: owner, element: element, displayScale: density,
+          demand: demand(for: element, plane: owner.plane, density: density)))
       }
     }
     return requests
@@ -302,11 +424,11 @@ final class SceneCompositionRenderer {
       for request in requests {
         try checkPreparation()
         if let hit = rasters[request.owner] {
-          guard hit.image(for: .agent(request.source), minimumScale: request.requestedScale) != nil else {
+          guard hit.image(for: request.demand.rasterSource, minimumScale: request.requestedScale) != nil else {
             throw SceneRenderError.snapshotPending("live_raster_lease")
           }
         } else {
-          rasters[request.owner] = try await prepareRaster(request.source, requestedScale: request.requestedScale)
+          rasters[request.owner] = try await prepareRaster(request.source, requestedScale: request.requestedScale, region: request.demand.region)
         }
       }
       return rasters
@@ -316,13 +438,14 @@ final class SceneCompositionRenderer {
     }
   }
 
-  private func prepareRaster(_ element: AgentElement, requestedScale: Double) async throws -> RasterLease {
+  private func prepareRaster(_ element: AgentElement, requestedScale: Double, region: PageRect? = nil) async throws -> RasterLease {
     try checkPreparation()
-    if let cached = resources.retainRaster(for: element, minimumScale: requestedScale) { return cached }
+    let source: SceneRasterSource = region.map { .agentRegion(element, $0) } ?? .agent(element)
+    if let cached = resources.retainRaster(for: source, minimumScale: requestedScale) { return cached }
     if webPreparation == nil {
       webPreparation = try await SceneWebRasterPreparation.create(resources: resources, permitsPreparation: permitsPreparation)
     }
-    return try await webPreparation!.prepare(element, requestedScale: requestedScale, permitsPreparation: permitsPreparation)
+    return try await webPreparation!.prepare(element, requestedScale: requestedScale, region: region, permitsPreparation: permitsPreparation)
   }
 
   func finishPreparation() { webPreparation?.close(); webPreparation = nil }

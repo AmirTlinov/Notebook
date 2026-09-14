@@ -230,7 +230,8 @@ extension NotebookStore {
             } else { resolved = value }
           } else if file.hasPrefix("collaboration/delivery/") {
             let receipt = try value.decode(DeviceActionReceipt.self)
-            resolved = try .encode(before?.decode(DeviceActionReceipt.self).merging(receipt) ?? receipt)
+            let previous = try before?.decode(DeviceActionReceipt.self)
+            resolved = try resolvedDeviceActionReceipt(receipt, previous: previous).map(JSONValue.encode)
           } else if file.hasPrefix("collaboration/attention/") {
             guard before == nil || before == value else { throw NotebookStorageError.transactionConflict }
             try value.decode(AgentPinnedSource.self).validate(); resolved = value

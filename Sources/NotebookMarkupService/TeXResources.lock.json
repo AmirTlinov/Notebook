@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "compiler": {
+    "name": "tectonic-0.16.9-aarch64-apple-darwin.tar.gz",
+    "url": "https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic%400.16.9/tectonic-0.16.9-aarch64-apple-darwin.tar.gz",
+    "bytes": 20590132,
+    "sha256": "edb67c61aba768289f6da441c9e6f523cfaff4f8b2a5708523ef29c543f8e88e",
+    "executable": {
+      "bytes": 50593552,
+      "sha256": "e62304878074c889e7f96d169698632c4fe695b525fb54a3473d7b2128f54512"
+    },
+    "version": "0.16.9",
+    "architecture": "arm64",
+    "staticLibrarySource": "https://github.com/microsoft/vcpkg/tree/a62ce77d56ee07513b4b67de1ec2daeaebfae51a"
+  },
+  "distribution": {
+    "name": "tlextras-2022.0r0.tar",
+    "url": "https://data1b.fullyjustified.net/tlextras-2022.0r0.tar",
+    "bytes": 2881562112,
+    "sha256": "425685e124746c15ba9bb8e0596bdaad98fce886afa347fbcf9ec0e9acd7fe79",
+    "bundleDigest": "6ffe055852f8faf66c0acbe1a7fb27f87b869a90bad1204f3bf4d9683f597c7c",
+    "fileCount": 134980,
+    "zip": {
+      "bytes": 1481187938,
+      "sha256": "c508958589f4c18218f98a7785ff21af901fb2460106e9a11d7b7bf065204487"
+    }
+  },
+  "licenses": [
+    {
+      "name": "Tectonic-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/tectonic-typesetting/tectonic/tectonic%400.16.9/LICENSE",
+      "bytes": 1192,
+      "sha256": "814a258f76e420b25cb3c07172eb2b3956f34cefbf0a650413b78e65c425f306"
+    },
+    {
+      "name": "TeXLive-LICENSE.TL",
+      "url": "https://www.tug.org/texlive/LICENSE.TL",
+      "bytes": 5129,
+      "sha256": "8147ff504e6d7d89a7c42d5c3dfbaa8705ad17f72c82a5c1bce5f4f0ee8b2fb7"
+    },
+    {
+      "name": "LPPL-1.3c.txt",
+      "url": "https://www.latex-project.org/lppl/lppl-1-3c.txt",
+      "bytes": 19102,
+      "sha256": "3d262cdf34dafa6955f703c634a8c238ec44109bc8dd6ef34fb7aa54809f7e66"
+    },
+    {
+      "name": "FreeType-2.13.3-FTL.txt",
+      "url": "https://raw.githubusercontent.com/freetype/freetype/VER-2-13-3/docs/FTL.TXT",
+      "bytes": 6743,
+      "sha256": "08c135755dd589039470f1fdbb400daaabaaa50d0b366d19cebff4d22986baa1"
+    },
+    {
+      "name": "HarfBuzz-11.3.3-COPYING.txt",
+      "url": "https://raw.githubusercontent.com/harfbuzz/harfbuzz/11.3.3/COPYING",
+      "bytes": 1971,
+      "sha256": "ba8f810f2455c2f08e2d56bb49b72f37fcf68f1f4fade38977cfd7372050ad64"
+    },
+    {
+      "name": "Graphite-1.3.14-COPYING.txt",
+      "url": "https://raw.githubusercontent.com/silnrsi/graphite/1.3.14/COPYING",
+      "bytes": 1235,
+      "sha256": "2c272829ff23f182c8bf7ea12fedea69b0ae148663123ed5240c117cb129c9c1"
+    },
+    {
+      "name": "ICU-74.2-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/unicode-org/icu/release-74-2/LICENSE",
+      "bytes": 25185,
+      "sha256": "17510cf7a58b4879b887ec05a45d72cf1b73544dd9ec7e72f20110ed104229ee"
+    },
+    {
+      "name": "zlib-1.3.1-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/madler/zlib/v1.3.1/LICENSE",
+      "bytes": 1002,
+      "sha256": "845efc77857d485d91fb3e0b884aaa929368c717ae8186b66fe1ed2495753243"
+    },
+    {
+      "name": "libpng-1.6.50-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/pnggroup/libpng/v1.6.50/LICENSE",
+      "bytes": 5345,
+      "sha256": "16d9daaafbf63a31a5bdc91d4600972548fef5aaa1244202393288dbd079c49a"
+    },
+    {
+      "name": "Expat-2.7.3-COPYING.txt",
+      "url": "https://raw.githubusercontent.com/libexpat/libexpat/R_2_7_3/expat/COPYING",
+      "bytes": 1144,
+      "sha256": "31b15de82aa19a845156169a17a5488bf597e561b2c318d159ed583139b25e87"
+    },
+    {
+      "name": "Brotli-1.1.0-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/google/brotli/v1.1.0/LICENSE",
+      "bytes": 1084,
+      "sha256": "3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94"
+    },
+    {
+      "name": "fontconfig-2.15.0-COPYING.txt",
+      "url": "https://raw.githubusercontent.com/fontconfig/fontconfig/2.15.0/COPYING",
+      "bytes": 8616,
+      "sha256": "51a51aa9823704fd90bccc616cdd17ebabb5b2b3e9cbde886ca02c7002288067"
+    },
+    {
+      "name": "bzip2-1.0.8-LICENSE.txt",
+      "url": "https://sourceware.org/git/?p=bzip2.git;a=blob_plain;f=LICENSE;hb=bzip2-1.0.8",
+      "bytes": 1896,
+      "sha256": "c6dbbf828498be844a89eaa3b84adbab3199e342eb5cb2ed2f0d4ba7ec0f38a3"
+    }
+  ]
+}

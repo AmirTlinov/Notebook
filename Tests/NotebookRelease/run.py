@@ -17,6 +17,8 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "Applications"))
 import notebook_release as release
+import image_fixture
+from test_images import ImagePackagingTests
 
 spec = importlib.util.spec_from_file_location("preview_fixture", ROOT / "Tests/PreviewInstaller/run.py")
 preview = importlib.util.module_from_spec(spec)
@@ -31,6 +33,8 @@ class PairCLI(preview.FakeCLI):
         self.verification = verification
         self.mac = None
         self.mac_info = {"CFBundleIdentifier": release.MAC_BUNDLE, "LSUIElement": True,
+            "NotebookScriptService": "com.amirtlinov.notebook.script-service",
+            "NotebookMarkupService": "com.amirtlinov.notebook.markup-service",
             "CFBundlePackageType": "APPL", "DTPlatformName": "macosx", "CFBundleExecutable": "Notebook",
             "CFBundleShortVersionString": self.info["CFBundleShortVersionString"],
             "CFBundleVersion": self.info["CFBundleVersion"], "LSMinimumSystemVersion": "27.0"}
@@ -41,6 +45,14 @@ class PairCLI(preview.FakeCLI):
         self.mac_sidecar = True
         self.mac_adhoc = False
         self.mac_fail = False
+        self.xpc_rights = {"com.apple.security.app-sandbox": True}
+        self.missing_xpc = False
+        self.tex_rights = {"com.apple.security.app-sandbox": True, "com.apple.security.inherit": True}
+        self.missing_tex = False
+        self.changed_tex = False
+        self.image_rights = {"com.apple.security.app-sandbox": True, "com.apple.security.inherit": True}
+        self.missing_image = False
+        self.changed_image = False
         self.mutate_proof = False
         self.mutate_ipad = False
         self.mutate_mac = False
@@ -53,6 +65,12 @@ class PairCLI(preview.FakeCLI):
             output = self.toolchain[label.removeprefix("toolchain-").removeprefix("after-")].encode()
         elif label == "dependencies":
             assert argv[1:] == ["ci", "--ignore-scripts"]
+        elif label == "tex-resources":
+            assert argv[1:3] == ["-B", str(self.source / "Applications/prepare_notebook_tex.py")]
+            assert "--prepare" in argv and "--stage" in argv
+        elif label == "image-resources":
+            assert "--prepare" in argv and "--stage-root" in argv
+            output = json.dumps({"status": "ready", "stage": str(self.source / ".build/fixture-image-runtime")}).encode()
         elif label == "build-mac":
             if self.mac_fail:
                 exit_code = 1
@@ -61,6 +79,36 @@ class PairCLI(preview.FakeCLI):
                 (self.mac / "Contents/MacOS").mkdir(parents=True)
                 (self.mac / "Contents/Info.plist").write_bytes(plistlib.dumps(self.mac_info))
                 (self.mac / "Contents/MacOS/Notebook").write_bytes(b"fixture Mac executable")
+                if not self.missing_xpc:
+                    for name, bundle_id, resource in (
+                        ("NotebookScriptService", self.mac_info["NotebookScriptService"], "notebook-sdk.js"),
+                        ("NotebookMarkupService", self.mac_info["NotebookMarkupService"], "notebook-markup.js")):
+                        xpc = self.mac / "Contents/XPCServices" / (name + ".xpc")
+                        (xpc / "Contents/MacOS").mkdir(parents=True)
+                        (xpc / "Contents/Resources").mkdir()
+                        (xpc / "Contents/Info.plist").write_bytes(plistlib.dumps({
+                            "CFBundleIdentifier": bundle_id, "CFBundlePackageType": "XPC!", "CFBundleExecutable": name,
+                            "XPCService": {"ServiceType": "Application"}}))
+                        (xpc / "Contents/MacOS" / name).write_bytes(b"fabricated service executable")
+                        (xpc / "Contents/Resources" / resource).write_text("// fabricated service SDK")
+                        if name == "NotebookMarkupService":
+                            (xpc / "Contents/Helpers").mkdir()
+                            (xpc / "Contents/Helpers/tectonic").write_bytes(b"fabricated signed compiler")
+                            if not self.missing_image:
+                                image_fixture.stage(xpc / "Contents", release.notebook_images.SOURCE)
+                                if self.changed_image:
+                                    compiler = xpc / "Contents/Helpers/notebook-image-compiler"
+                                    changed = bytearray(compiler.read_bytes()); changed[255] = 1; compiler.write_bytes(changed)
+                            tex = xpc / "Contents/Resources/NotebookTeX"
+                            (tex / "licenses").mkdir(parents=True)
+                            lock = release.read_json(release.TEX_RESOURCE_LOCK)
+                            if not self.missing_tex:
+                                (tex / "texlive.zip").write_bytes(b"changed distribution" if self.changed_tex else b"fixture distribution")
+                            (tex / "licenses/LICENSE").write_bytes(b"fixture public license")
+                            release.write_json(tex / "manifest.json", {"schema": 1,
+                                "sourceLockSHA256": release.file_digest(release.TEX_RESOURCE_LOCK), **lock,
+                                "inventory": {"fileCount": 1, "bundleDigest": "fixture-bundle",
+                                    "privateFormats": 0, "auxiliaries": 0, "logs": 0}})
                 if self.mac_sidecar:
                     tools = self.mac / "Contents/Resources/NotebookTools"
                     (tools / "dist").mkdir(parents=True)
@@ -72,6 +120,30 @@ class PairCLI(preview.FakeCLI):
                     (self.app / "Notebook").write_bytes(b"changed iPad after signature")
         elif label == "mac-signature-verify":
             exit_code = 1 if self.fail_signature else 0
+        elif label.startswith("image-compiler-"):
+            if label.endswith("-details"):
+                error = ("Identifier=com.amirtlinov.notebook.image-compiler\nTeamIdentifier=" + release.TEAM
+                    + "\nAuthority=Apple Development: Fixture\nCDHash=" + "e" * 40 + "\n").encode()
+            elif label.endswith("-entitlements"):
+                output = plistlib.dumps(self.image_rights)
+        elif label.startswith("tex-compiler-"):
+            if label.endswith("-details"):
+                error = ("Identifier=com.amirtlinov.notebook.tex-compiler\nTeamIdentifier=" + release.TEAM
+                    + "\nAuthority=Apple Development: Fixture\nCDHash=" + "d" * 40 + "\n").encode()
+            elif label.endswith("-entitlements"):
+                output = plistlib.dumps(self.tex_rights)
+            elif label.endswith("-architecture"):
+                output = b"arm64"
+        elif label.startswith("xpc-"):
+            name = label.split("-")[1]
+            bundle_id = self.mac_info[name]
+            if label.endswith("-details"):
+                error = ("Identifier=" + bundle_id + "\nTeamIdentifier=" + release.TEAM
+                    + "\nAuthority=Apple Development: Fixture\nCDHash=" + "c" * 40 + "\n").encode()
+            elif label.endswith("-entitlements"):
+                output = plistlib.dumps(self.xpc_rights)
+            elif label.endswith("-architecture"):
+                output = b"arm64"
         elif label == "mac-signature-details":
             error = ("Identifier=" + release.MAC_BUNDLE + "\nTeamIdentifier=" + self.mac_signature_team
                 + "\nAuthority=Apple Development: Fixture\nCDHash=" + "b" * 40 + "\n"
@@ -99,13 +171,25 @@ class ReleaseTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="notebook-release-contract-")
         self.root = Path(self.temp.name).resolve()
         self.source = self.root / "source"
-        for directory in ("Sources/Core", "Tests/CoreTests", "Applications", "MCP"):
+        for directory in ("Sources/Core", "Sources/NotebookMarkupService", "Tests/CoreTests", "Applications", "MCP"):
             (self.source / directory).mkdir(parents=True)
         for file in ("Package.swift", "verify.sh", "Sources/Core/value.swift", "Tests/CoreTests/test.swift",
                      "MCP/package.json", "MCP/package-lock.json", "MCP/tool.ts"):
             (self.source / file).write_text("// fixture input " + file + "\n")
         (self.source / "Applications/project.yml").write_text((ROOT / "Applications/project.yml").read_text())
         (self.source / "Applications/notebook_release.py").write_bytes((ROOT / "Applications/notebook_release.py").read_bytes())
+        def pin(data):
+            import hashlib
+            return {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+        tex_lock = self.source / "Sources/NotebookMarkupService/TeXResources.lock.json"
+        release.write_json(tex_lock, {"compiler": {"executable": pin(b"fixture upstream compiler")},
+            "distribution": {"fileCount": 1, "bundleDigest": "fixture-bundle", "zip": pin(b"fixture distribution")},
+            "licenses": [{"name": "LICENSE", **pin(b"fixture public license")}]})
+        lock_patch = patch.object(release, "TEX_RESOURCE_LOCK", tex_lock)
+        lock_patch.start(); self.addCleanup(lock_patch.stop)
+        image_source = image_fixture.source(self.source / "Sources/NotebookImageCompiler")
+        image_patch = patch.object(release.notebook_images, "SOURCE", image_source)
+        image_patch.start(); self.addCleanup(image_patch.stop)
         self.verification = self.root / "verification"
         self.verification.mkdir()
         for file in release.VERIFICATION_FILES:
@@ -151,7 +235,10 @@ class ReleaseTests(unittest.TestCase):
         builds = [call for call in self.cli.calls if "xcodebuild" in call and "build" == call[-1]]
         self.assertEqual(len(builds), 2)
         self.assertIn("PRODUCT_BUNDLE_IDENTIFIER=" + release.BUNDLE, builds[0])
-        self.assertIn("PRODUCT_BUNDLE_IDENTIFIER=" + release.MAC_BUNDLE, builds[1])
+        self.assertFalse(any(arg.startswith("PRODUCT_BUNDLE_IDENTIFIER=") for arg in builds[1]))
+        self.assertFalse(any(arg.startswith("CODE_SIGN_ENTITLEMENTS=") for arg in builds[1]))
+        self.assertTrue(any(arg.startswith("NOTEBOOK_MAC_ENTITLEMENTS=") for arg in builds[1]))
+        self.assertTrue(any(arg.startswith("NOTEBOOK_IMAGE_RUNTIME=") for arg in builds[1]))
         for argv in builds:
             self.assertIn("CODE_SIGN_IDENTITY=Apple Development", argv)
             self.assertIn("SWIFT_OPTIMIZATION_LEVEL=-O", argv)
@@ -167,6 +254,54 @@ class ReleaseTests(unittest.TestCase):
             self.build()
         self.assertEqual(self.cli.calls, calls)
         self.assertEqual(release.read_json(self.evidence / "build.json"), receipt)
+
+    def test_missing_isolated_worker_prevents_release(self):
+        self.cli.missing_xpc = True
+        self.refused("ровно два")
+
+    def test_network_capability_on_worker_prevents_release(self):
+        self.cli.xpc_rights["com.apple.security.network.client"] = True
+        self.refused("XPC получил доступ")
+
+    def test_worker_without_sandbox_prevents_release(self):
+        self.cli.xpc_rights = {}
+        self.refused("XPC получил доступ")
+
+    def test_tex_child_without_inherited_sandbox_prevents_release(self):
+        self.cli.tex_rights = {"com.apple.security.app-sandbox": True}
+        self.refused("наследовать только песочницу")
+
+    def test_xcode_injected_read_all_files_exception_prevents_release(self):
+        self.cli.xpc_rights["com.apple.security.temporary-exception.files.absolute-path.read-only"] = ["/"]
+        self.refused("XPC получил доступ")
+
+    def test_tex_child_with_network_access_prevents_release(self):
+        self.cli.tex_rights["com.apple.security.network.client"] = True
+        self.refused("наследовать только песочницу")
+
+    def test_missing_tex_distribution_prevents_release(self):
+        self.cli.missing_tex = True
+        self.refused("набор закреплённых TeX ресурсов")
+
+    def test_changed_tex_distribution_prevents_release(self):
+        self.cli.changed_tex = True
+        self.refused("Изменился закреплённый TeX ресурс")
+
+    def test_image_helper_without_inherited_sandbox_prevents_release(self):
+        self.cli.image_rights = {"com.apple.security.app-sandbox": True}
+        self.refused("Image compiler обязан наследовать")
+
+    def test_image_helper_with_network_right_prevents_release(self):
+        self.cli.image_rights["com.apple.security.network.client"] = True
+        self.refused("Image compiler обязан наследовать")
+
+    def test_missing_image_helper_prevents_release(self):
+        self.cli.missing_image = True
+        self.refused("Image compiler resource/source contract failed")
+
+    def test_changed_image_code_prevents_release(self):
+        self.cli.changed_image = True
+        self.refused("fingerprint changed")
 
     def test_evidence_cannot_be_inside_verification(self):
         self.evidence = self.verification / "build"

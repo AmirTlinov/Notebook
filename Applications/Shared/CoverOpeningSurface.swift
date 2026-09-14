@@ -17,6 +17,11 @@ import SwiftUI
 /// direction without handing the gesture to a second animation.
 struct CoverOpeningSurface<Cover: View>: View {
   @Environment(NotebookAppModel.self) private var model
+  @Environment(\.sceneComposition) private var composition
+  @Environment(\.displayScale) private var displayScale
+  #if os(iOS)
+    @Environment(\.workspaceItemPose) private var pose
+  #endif
 
   let ownerID: UUID
   let progress: Double
@@ -53,7 +58,7 @@ struct CoverOpeningSurface<Cover: View>: View {
       preparesCoverMotion: preparesCoverMotion,
       canPrepare: { permitsPreparation && model.permitsBackgroundPreparation },
       cornerRadius: revision.geometry.cornerRadius,
-      cover: AnyView(cover.environment(model))
+      cover: hostedCover
     )
     .allowsHitTesting(progress < CoverOpeningPhysics.liveCoverLimit)
     .accessibilityElement(children: .contain)
@@ -61,6 +66,20 @@ struct CoverOpeningSurface<Cover: View>: View {
     .accessibilityValue(
       "Обложка \(Int((CoverOpeningPhysics.clamped(progress) * 100).rounded()))%"
     )
+  }
+
+  private var hostedCover: AnyView {
+    // A new hosting controller is a new SwiftUI environment root. Keep the
+    // existing scene and physical pose owners across this native boundary;
+    // otherwise covers fall back to uncoordinated elements and omit their ink.
+    let inherited = cover.environment(model)
+      .environment(\.sceneComposition, composition)
+      .environment(\.displayScale, displayScale)
+    #if os(iOS)
+      return AnyView(inherited.environment(\.workspaceItemPose, pose))
+    #else
+      return AnyView(inherited)
+    #endif
   }
 }
 
@@ -278,6 +297,7 @@ struct CoverSnapshotLifecycle {
 
 #if os(iOS)
   private struct PlatformCoverOpeningSurface: UIViewControllerRepresentable {
+    @Environment(NotebookAppModel.self) private var model
     let ownerID: UUID
     let progress: Double
     let revision: CoverRenderingRevision
@@ -295,6 +315,7 @@ struct CoverSnapshotLifecycle {
       _ controller: IPadCoverOpeningController,
       context: Context
     ) {
+      controller.bind(to: model, itemID: ownerID)
       controller.update(
         ownerID: ownerID,
         progress: progress,
@@ -306,11 +327,19 @@ struct CoverSnapshotLifecycle {
         cover: cover
       )
     }
+
+    static func dismantleUIViewController(_ controller: IPadCoverOpeningController, coordinator: ()) {
+      controller.uninstallPresentation()
+    }
   }
 
   @MainActor
   final class IPadCoverOpeningController: UIViewController {
-    private let coverHost = UIHostingController(rootView: AnyView(EmptyView()))
+    private let coverHost = CoverPaintHostingController(rootView: AnyView(EmptyView()))
+    private weak var model: NotebookAppModel?
+    private var presentationItemID: UUID?
+    private var installedRevision: CoverRenderingRevision?
+    private var hasInstalledLayout = false
     // Visibility belongs to the wrapper so the captured hosting layer keeps
     // fully opaque pixels while the live cover rests behind the open page.
     private let coverVisibilityView = UIView()
@@ -334,6 +363,11 @@ struct CoverSnapshotLifecycle {
       addChild(coverHost)
       coverHost.view.backgroundColor = .clear
       coverHost.view.isOpaque = false
+      coverHost.safeAreaRegions = []
+      coverHost.didLayout = { [weak self] in
+        guard let self else { return }
+        installedRevision = lifecycle.revision; hasInstalledLayout = true
+      }
       coverVisibilityView.backgroundColor = .clear
       coverVisibilityView.isOpaque = false
       view.addSubview(coverVisibilityView)
@@ -363,6 +397,7 @@ struct CoverSnapshotLifecycle {
       cornerRadius: CGFloat,
       cover: AnyView
     ) {
+      if lifecycle.revision != revision { hasInstalledLayout = false; installedRevision = nil }
       lifecycle.update(
         ownerID: ownerID,
         progress: progress,
@@ -377,6 +412,66 @@ struct CoverSnapshotLifecycle {
       guard isViewLoaded else { return }
       view.setNeedsLayout()
       renderCurrentState()
+    }
+
+    func bind(to model: NotebookAppModel, itemID: UUID) {
+      guard self.model !== model || presentationItemID != itemID else { return }
+      uninstallPresentation()
+      self.model = model; presentationItemID = itemID
+      model.coverPresentations.register(self, itemID: itemID)
+    }
+
+    func uninstallPresentation() {
+      if let presentationItemID { model?.coverPresentations.remove(self, itemID: presentationItemID) }
+      model = nil; presentationItemID = nil; hasInstalledLayout = false; installedRevision = nil
+    }
+
+    /// Only the existing live subtree can fix Send-time pixels. Curl snapshots
+    /// and cache preparation are separate consumers and cannot supply this proof.
+    func capturePresented(expected: NotebookCoverPresentedSources, region: PageRect,
+      resources: SceneRenderResources) throws -> NotebookSubmittedPixels? {
+      if let failure = presentationFailure(expected: expected) { throw SceneRenderError.snapshotPending(failure) }
+      return try NotebookSubmittedPixels.capture(view: coverHost.view,
+        physicalSize: .init(width: expected.revision.geometry.width, height: expected.revision.geometry.height),
+        region: region, resources: resources)
+    }
+
+    func presentationFailure(expected: NotebookCoverPresentedSources) -> String? {
+      guard let model, let itemID = presentationItemID, isViewLoaded, view.window != nil else { return "cover_owner_unavailable" }
+      guard model.presencePhase == .settled, let presence = model.presence,
+        presence.boardID == expected.boardID,
+        (presence.focusedItemID != itemID || CoverOpeningPhysics.isClosed(presence.openProgress)),
+        CoverOpeningPhysics.isClosed(lifecycle.progress) else { return "cover_is_moving" }
+      guard NotebookCoverPresentedSources.current(model: model, itemID: itemID, boardID: expected.boardID) == expected,
+        lifecycle.revision == expected.revision else { return "cover_source_changed" }
+      guard hasInstalledLayout, installedRevision == expected.revision,
+        coverHost.view.window === view.window, coverHost.view.superview === coverVisibilityView,
+        coverHost.view.frame == view.bounds, coverVisibilityView.frame == view.bounds,
+        !coverVisibilityView.isHidden, coverVisibilityView.alpha == 1,
+        CATransform3DIsIdentity(coverHost.view.layer.transform) else { return "cover_layout_pending" }
+      var ancestor: UIView? = coverHost.view
+      while let node = ancestor {
+        if node.isHidden || node.alpha <= 0.001 { return "cover_hidden" }
+        ancestor = node.superview
+      }
+      guard let cohort = model.compositionTiles.published else { return "cover_scene_unavailable" }
+      for element in model.presentedCoverElements(cohort: cohort, boardID: expected.boardID, itemID: itemID)
+        where element.kind != .nativeText {
+        let address = SceneSourceAddress(plane: .cover(boardID: expected.boardID, itemID: itemID), elementID: element.id)
+        guard cohort.hasInstalledPixels(for: address), let receipt = cohort.sourceReceipts[address], receipt.hasCurrentPixels,
+          SceneRasterSource.agent(receipt.demand.source) == .agent(agentElementSnapshotSource(element)) else { return "cover_element_pending" }
+      }
+      let registry = model.compositionTiles.surfaceRegistry, surface = SurfaceID.cover(itemID)
+      guard !registry.hasActiveAction(on: surface), !registry.hasContact(on: surface) else { return "cover_ink_contact" }
+      if let inkRevision = expected.installedInkRevision {
+        guard let canvas = registry.canvas(for: surface) else { return "cover_ink_owner_unavailable" }
+        guard canvas.isDescendant(of: coverHost.view) else { return "cover_ink_detached:\(type(of: canvas.superview))" }
+        guard canvas.window === view.window else { return "cover_ink_other_window" }
+        guard !canvas.isHidden, canvas.alpha > 0.001 else { return "cover_ink_hidden" }
+        guard canvas.isStableFramePresented else { return "cover_ink_frame_pending" }
+        guard canvas.installedSpatialSource?.journalRevision == inkRevision else { return "cover_ink_source_changed" }
+      } else if !expected.revision.ink.isEmpty { return "cover_ink_unavailable" }
+      return nil
     }
 
     private func renderCurrentState() {
@@ -430,6 +525,7 @@ struct CoverSnapshotLifecycle {
       guard view.bounds.width > 0, view.bounds.height > 0 else { return nil }
       coverVisibilityView.frame = view.bounds
       if coverHost.view.frame != view.bounds {
+        hasInstalledLayout = false
         coverHost.view.frame = view.bounds
       }
       let layout = CoverCurlLayout(sheetSize: view.bounds.size)
@@ -544,6 +640,12 @@ struct CoverSnapshotLifecycle {
       coverHost.view.isUserInteractionEnabled = false
       curlView.isHidden = true
     }
+  }
+
+  @MainActor
+  private final class CoverPaintHostingController: UIHostingController<AnyView> {
+    var didLayout: () -> Void = { }
+    override func viewDidLayoutSubviews() { super.viewDidLayoutSubviews(); didLayout() }
   }
 #elseif os(macOS)
   private struct PlatformCoverOpeningSurface: NSViewRepresentable {

@@ -1,0 +1,28 @@
+{
+  "format": 1,
+  "packages": [
+    "krilla@0.8.2",
+    "krilla-svg@0.8.1"
+  ],
+  "gitRevision": "3ffdf0588cf98050aad6edba51ca70162e1fb5b5",
+  "artifacts": [
+    {
+      "path": "krilla/LICENSE_APACHE",
+      "url": "https://raw.githubusercontent.com/LaurenzV/krilla/3ffdf0588cf98050aad6edba51ca70162e1fb5b5/LICENSE_APACHE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358
+    },
+    {
+      "path": "krilla/LICENSE_MIT",
+      "url": "https://raw.githubusercontent.com/LaurenzV/krilla/3ffdf0588cf98050aad6edba51ca70162e1fb5b5/LICENSE_MIT",
+      "sha256": "9d1eb142840c7acfd5511b4dd298cece3f0053f5809228906445cd8a3365592f",
+      "bytes": 1071
+    },
+    {
+      "path": "krilla/NOTICE.md",
+      "url": "https://raw.githubusercontent.com/LaurenzV/krilla/3ffdf0588cf98050aad6edba51ca70162e1fb5b5/NOTICE.md",
+      "sha256": "7aa87a70e18c9c160b5a14e24b46a8e407858b21fed635920c701657b4bd7976",
+      "bytes": 1366
+    }
+  ]
+}

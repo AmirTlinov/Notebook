@@ -57,11 +57,12 @@ final class NotebookCodexSidecar {
   private var historyCursors: [UUID: String] = [:]
   private var reconciliationAfter: [UUID: Date] = [:]
 
-  init(persistence: NotebookPersistenceQueue, installation: CodexDesktopInstallation, workspaceID: UUID, computerID: UUID, directory: URL, publish: @escaping (NotebookChatEnvelope, UUID) -> Void) {
+  init(persistence: NotebookPersistenceQueue, installation: CodexDesktopInstallation, workspaceID: UUID, computerID: UUID, directory: URL,
+    scope: CodexRuntimeScope? = nil, publish: @escaping (NotebookChatEnvelope, UUID) -> Void) {
     self.publish = publish
     files = .init(persistence: persistence)
     self.persistence = persistence; self.workspaceID = workspaceID; self.computerID = computerID; self.directory = directory
-    let server = CodexAppServer(installation: installation)
+    let server = CodexAppServer(installation: installation, scope: scope)
     bridge = server; metadata = server; bridgeEvents = server.events
     voice = .init(persistence: persistence, executor: server)
     dictation = .init(executor: server, computer: computerID)
@@ -381,6 +382,10 @@ final class NotebookCodexSidecar {
   }
 
   nonisolated static func message(_ error: Error) -> String {
+    if let startup = error as? CodexStartupFailure {
+      let status = startup.exitCode.map { "; код выхода \($0)" } ?? ""
+      return "Codex не завершил запуск (\(startup.stage)\(status)). Проверьте Codex на Mac."
+    }
     guard let bridge = error as? CodexBridgeError else { return String(error.localizedDescription.prefix(2048)) }
     switch bridge {
     case .requestRejected: return "Codex отклонил запрос. Проверьте доступные настройки этой задачи на Mac."

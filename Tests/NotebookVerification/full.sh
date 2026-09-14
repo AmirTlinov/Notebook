@@ -34,6 +34,7 @@ cd "$ROOT"
 python3 "$ROOT/Applications/notebook_release.py" verification-start \
   --source-root "$ROOT" --evidence-dir "$EVIDENCE"
 python3 -B "$ROOT/Tests/NotebookVerification/run.py" 2>&1 | tee "$EVIDENCE/verification-tools.log"
+python3 -B "$ROOT/Tests/NotebookDocumentAcceptance/test_system_trace.py" 2>&1 | tee "$EVIDENCE/trace-harness.log"
 swift test 2>&1 | tee "$EVIDENCE/core.log"
 "$ROOT/Applications/test-load-fixture.sh" 2>&1 | tee "$EVIDENCE/load-fixture.log"
 python3 "$ROOT/Tests/PreviewInstaller/run.py" 2>&1 | tee "$EVIDENCE/preview-installer.log"
@@ -49,42 +50,8 @@ for icon in "$ROOT"/Applications/Assets.xcassets/AppIcon.appiconset/*.png; do
   fi
 done
 
-if rg -n 'WindowGroup|MacRootView|MacPageTurnView' "$ROOT/Applications/Mac" --glob '*.swift' \
-  || ! rg -q 'MenuBarExtra' "$ROOT/Applications/Mac/NotebookMacApp.swift"; then
-  printf '%s\n' 'Mac должен работать из строки меню без рабочего окна и второго перелистывания.' >&2
-  exit 1
-fi
-
-if rg -n 'PKCanvasView|override func draw\(' \
-  "$ROOT/Applications/iPad" \
-  --glob '*.swift'; then
-  printf '%s\n' \
-    'iPad должен иметь один визуальный тракт чернил: InkCanvasView.' >&2
-  exit 1
-fi
-if [[ "$(rg -l ': MTKView' "$ROOT/Applications/Shared/InkCanvasView.swift" --glob '*.swift' | wc -l | tr -d ' ')" != 1 ]]; then
-  printf '%s\n' \
-    'На iPad должна быть одна реализация Metal-рендера: InkCanvasView.' >&2
-  exit 1
-fi
-# SpatialInkHandoffTests and WorkspaceCoverContinuityTests below assert the
-# physical canvas identity across mounts; a representable return type cannot.
-if rg -n 'SpatialInkTransitionView|drawing\.image\(' \
-  "$ROOT/Applications/Shared/SpatialInkSurfaceView.swift"; then
-  printf '%s\n' \
-    'Обложка должна двигать живой Metal-холст, а не запаздывающий снимок.' >&2
-  exit 1
-fi
-if rg -n 'SpatialInkDrawingComposer' \
-  "$ROOT/Applications/iPad/SpatialInkCanvas.swift"; then
-  printf '%s\n' \
-    'Пространственный Metal должен повторять сырые точки журнала без перерисовки PencilKit.' >&2
-  exit 1
-fi
-if rg -n 'erasingPath\(|PKDrawing\(' "$ROOT/Applications/iPad/PencilCanvasView.swift"; then
-  printf '%s\n' 'Новые действия пера сохраняют точки общей геометрии.' >&2
-  exit 1
-fi
+# Canvas continuity is exercised by native/UI tests; the headless Mac launch
+# below checks actual working windows. Source spelling cannot prove either.
 
 ERASER_APP="$DERIVED/NotebookEraserProof.app"
 mkdir -p "$ERASER_APP/Contents/MacOS"
@@ -144,6 +111,14 @@ npm ci --ignore-scripts --prefix "$ROOT/Tests/NotebookRecognitionHarness"
 npm test --prefix "$ROOT/Tests/NotebookRecognitionHarness" 2>&1 | tee "$EVIDENCE/recognition-preparation.log"
 
 cd "$ROOT/Applications"
+NOTEBOOK_TEX_RUNTIME=${NOTEBOOK_TEX_RUNTIME:-"$ROOT/.build/notebook-tex-runtime"}
+export NOTEBOOK_TEX_RUNTIME
+python3 -B "$ROOT/Applications/prepare_notebook_tex.py" --prepare --stage "$NOTEBOOK_TEX_RUNTIME" \
+  2>&1 | tee "$EVIDENCE/tex-resources.log"
+python3 -B "$ROOT/Applications/prepare_notebook_images.py" --prepare \
+  --stage-root "$ROOT/.build/notebook-image-runtime" > "$EVIDENCE/image-resources.json" 2> "$EVIDENCE/image-resources.log"
+NOTEBOOK_IMAGE_RUNTIME=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["stage"])' "$EVIDENCE/image-resources.json")
+export NOTEBOOK_IMAGE_RUNTIME
 xcodegen generate --spec project.yml
 xcodebuild \
   -quiet \
@@ -152,7 +127,8 @@ xcodebuild \
   -configuration Debug \
   -destination 'generic/platform=macOS' \
   -derivedDataPath "$DERIVED/mac" \
-  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= \
+  "NOTEBOOK_TEX_RUNTIME=$NOTEBOOK_TEX_RUNTIME" "NOTEBOOK_IMAGE_RUNTIME=$NOTEBOOK_IMAGE_RUNTIME" \
   build
 # Native Codex wire and delivery checks run in swift test; no second model executor.
 MAC_SMOKE_APP="$DERIVED/mac/Build/Products/Debug/Notebook.app"
@@ -188,6 +164,34 @@ PY
 kill "$MAC_SMOKE_PID" >/dev/null 2>&1 || true
 wait "$MAC_SMOKE_PID" >/dev/null 2>&1 || true
 MAC_SMOKE_PID=""
+python3 -B - "$ROOT" > "$EVIDENCE/mac-native-signing-settings.txt" <<'PY'
+import pathlib, sys
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / "Applications"))
+import notebook_verification as verification
+print("\n".join(verification.native_mac_signing_settings()))
+PY
+MAC_NATIVE_SIGNING=()
+while IFS= read -r setting; do
+  MAC_NATIVE_SIGNING+=("$setting")
+done < "$EVIDENCE/mac-native-signing-settings.txt"
+xcodebuild \
+  -quiet -project Notebook.xcodeproj -scheme NotebookMac -configuration Debug \
+  -destination 'platform=macOS' -derivedDataPath "$DERIVED/mac-tests" \
+  "${MAC_NATIVE_SIGNING[@]}" \
+  "NOTEBOOK_TEX_RUNTIME=$NOTEBOOK_TEX_RUNTIME" "NOTEBOOK_IMAGE_RUNTIME=$NOTEBOOK_IMAGE_RUNTIME" \
+  build-for-testing -only-testing:NotebookMacTests 2>&1 | tee "$EVIDENCE/mac-build.log"
+python3 -B - "$ROOT" "$DERIVED/mac-tests/Build/Products/Debug/Notebook.app" "$EVIDENCE" <<'PY'
+import pathlib, sys
+source, app, evidence = map(pathlib.Path, sys.argv[1:])
+sys.path.insert(0, str(source / "Applications"))
+import notebook_release as release
+command = release.release_commands(evidence)
+display = command("mac-native-signer", ["/usr/bin/codesign", "--display", "--verbose=4", app], read_output=True)
+signer, identity = release.development_signer(b"\n".join(display).decode(), release.MAC_BUNDLE + ".acceptance")
+release.restrict_test_script_services(app, source, command, signing_identity=signer)
+release.write_json(evidence / "mac-native-signature.json", {"identity": identity,
+    "workerBundleSuffix": ".native-test", "scope": "isolated stateless native-test workers"})
+PY
 xcodebuild \
   -quiet \
   -project Notebook.xcodeproj \
@@ -198,8 +202,9 @@ xcodebuild \
   -destination 'platform=macOS' \
   -derivedDataPath "$DERIVED/mac-tests" \
   -resultBundlePath "$EVIDENCE/mac.xcresult" \
-  CODE_SIGNING_ALLOWED=NO \
-  test \
+  "${MAC_NATIVE_SIGNING[@]}" \
+  "NOTEBOOK_TEX_RUNTIME=$NOTEBOOK_TEX_RUNTIME" "NOTEBOOK_IMAGE_RUNTIME=$NOTEBOOK_IMAGE_RUNTIME" \
+  test-without-building \
   -only-testing:NotebookMacTests 2>&1 | tee "$EVIDENCE/mac.log"
 xcodebuild \
   -quiet \

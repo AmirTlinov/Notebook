@@ -5,9 +5,13 @@ struct PageSurface: View {
   @Environment(NotebookAppModel.self) private var model
 
   let page: PageDocument
+  let isCurrent: Bool
   let isInteractive: Bool
   let isVisible: Bool
   let onRenderReady: PageTurnReadiness
+  /// Maximum physical projection of the already owned paper while it opens.
+  /// A standalone page/thumbnail is laid out directly and needs no outer scale.
+  var displayProjection: Double = 1
 
   @State private var inkIsReady = false
   @State private var readyOverlay: [AgentElement]?
@@ -26,22 +30,27 @@ struct PageSurface: View {
       )
       ZStack(alignment: .topLeading) {
         GridPaperView()
-        AgentOverlayView(
-          pageID: page.id,
-          elements: page.elements,
-          allowsInteraction: isVisible && isInteractive,
-          onRenderReady: { ready in
-            if ready { readyOverlay = page.elements }
-            else if readyOverlay == page.elements { readyOverlay = nil }
-            publishReadiness(ink: inkIsReady, overlay: overlayIsReady)
-          },
-          onState: { elementID, state in
-            guard isVisible, isInteractive, model.activePage?.id == page.id else { return }
-            model.commitElementState(pageID: page.id, elementID: elementID, state: state)
-          }
-        )
-        .opacity(isVisible ? 1 : 0)
-        .allowsHitTesting(isVisible && isInteractive)
+        if scale > 0 {
+          AgentOverlayView(
+            pageID: page.id,
+            pageSize: page.size,
+            renderingScale: scale * displayProjection,
+            elements: page.elements,
+            allowsInteraction: isVisible && isCurrent,
+            inputEnabled: isVisible && isInteractive,
+            onRenderReady: { ready in
+              if ready { readyOverlay = page.elements }
+              else if readyOverlay == page.elements { readyOverlay = nil }
+              publishReadiness(ink: inkIsReady, overlay: overlayIsReady)
+            },
+            onState: { elementID, state in
+              guard isVisible, isCurrent, model.activePage?.id == page.id else { return }
+              model.commitElementState(pageID: page.id, elementID: elementID, state: state)
+            }
+          )
+          .opacity(isVisible ? 1 : 0)
+          .allowsHitTesting(isVisible && isInteractive)
+        }
         #if os(iOS)
           PencilCanvasView(
             pageID: page.id,
@@ -72,6 +81,9 @@ struct PageSurface: View {
 
       }
       .frame(width: page.size.width, height: page.size.height)
+      .background(PagePresentationView(page: page, isCurrent: isCurrent,
+        isVisible: isVisible, isReady: inkIsReady && overlayIsReady,
+        activity: onRenderReady.activity).allowsHitTesting(false))
       .clipShape(
         RoundedRectangle(
           cornerRadius: WorkspaceItemGeometry.notebook.cornerRadius,
@@ -101,7 +113,6 @@ struct PageSurface: View {
 
   private func publishReadiness(ink: Bool, overlay: Bool) {
     onRenderReady(ink && overlay)
-    model.pagePresented(page,ready:ink && overlay)
   }
 }
 

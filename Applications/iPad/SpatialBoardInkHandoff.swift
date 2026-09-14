@@ -30,12 +30,28 @@ final class SpatialInkSceneLease {
         && !registry.hasActiveAction(on: $0.owner.surface) && !registry.hasContact(on: $0.owner.surface)
         && ($0.frame?.isValid ?? true) }) else { throw CancellationError() }
     try registry.installSceneAllocationPriorities(rootBoardID: rootBoardID, focusedCoverID: focusedCoverID)
+    // A new GPU basis and the native projection of those pixels are one
+    // transaction. Camera motion itself only transforms the installed basis.
+    CATransaction.begin(); CATransaction.setDisableActions(true)
+    defer { CATransaction.commit() }
     for update in updates {
       if let frame = update.frame {
         update.owner.canvas.installSpatialFrame(frame, journal: update.journal, surface: update.owner.surface)
+        update.owner.refreshMount()
       }
     }
     updates.removeAll(); isInstalled = true
+  }
+
+  func containsProjectionWindows(presence: SessionPresence, frame: WorkspaceSceneFrame,
+    refinesDetails: Bool) -> Bool {
+    for (surface, owner) in owners where surface.kind == .board {
+      guard let id = surface.ownerID,
+        let current = id == presence.boardID ? presence : frame.presences[id] else { return false }
+      if owner.needsProjection(camera: current.camera, viewport: current.viewport,
+        refinesDetails: refinesDetails) { return false }
+    }
+    return true
   }
   /// Observe the native layer transactions, not the earlier GPU-ready result.
   /// No frame, drawable or cohort is retained after the last callback fires.
@@ -67,7 +83,6 @@ final class SpatialInkPhysicalOwner {
   private weak var registry: SpatialInkSurfaceRegistry?
   private var mounts: [UUID: WeakMount] = [:]
   private weak var currentMount: SpatialInkPhysicalMountView?
-  private var preparedCamera: SpatialCamera
   private var serial: UInt64 = 0
   private struct WeakMount {
     weak var view: SpatialInkPhysicalMountView?
@@ -77,7 +92,7 @@ final class SpatialInkPhysicalOwner {
   init(surface: SurfaceID, size: SpatialPoint, camera: SpatialCamera,
     registry: SpatialInkSurfaceRegistry, resources: SceneRenderResources,
     displayScale: Double, physical: ScenePhysicalOwnerLease) {
-    self.surface = surface; self.registry = registry; preparedCamera = camera; self.physical = physical
+    self.surface = surface; self.registry = registry; self.physical = physical
     canvas = InkCanvasView(frame: .init(x: 0, y: 0, width: size.x, height: size.y), resources: resources)
     retention = canvas.retainForSpatialHandoff(displayScale: displayScale)
     canvas.holdPhysicalAdmission(physical)
@@ -112,14 +127,49 @@ final class SpatialInkPhysicalOwner {
       currentMount?.unbindCanvas(canvas); currentMount = selected
     }
     if let selected {
+      CATransaction.begin(); CATransaction.setDisableActions(true)
+      defer { CATransaction.commit() }
       selected.bindCanvas(canvas)
-      canvas.project(camera: surface.kind == .board ? selected.camera : nil,
-        viewport: .init(x: canvas.bounds.width, y: canvas.bounds.height))
+      if surface.kind == .board, let basis = canvas.spatialCamera, let id = surface.ownerID {
+        let anchor = SessionPresence(boardID: id, mode: .board, camera: basis, viewport: canvas.spatialViewport)
+        let current = SessionPresence(boardID: id, mode: .board, camera: selected.camera,
+          viewport: .init(x: selected.bounds.width, y: selected.bounds.height))
+        let projection = SceneCameraProjection(anchor: anchor, current: current)
+        canvas.transform = CGAffineTransform(scaleX: projection.scale, y: projection.scale)
+        canvas.center = .init(x: anchor.viewport.x / 2 * projection.scale + projection.translation.x,
+          y: anchor.viewport.y / 2 * projection.scale + projection.translation.y)
+      } else {
+        canvas.transform = .identity
+        canvas.center = .init(x: selected.bounds.midX, y: selected.bounds.midY)
+      }
     } else {
+      CATransaction.begin(); CATransaction.setDisableActions(true)
+      defer { CATransaction.commit() }
+      canvas.transform = .identity
       registry.parkSceneCanvas(canvas)
-      canvas.project(camera: surface.kind == .board ? preparedCamera : nil,
-        viewport: .init(x: canvas.bounds.width, y: canvas.bounds.height))
     }
+  }
+
+  /// Refill the existing finite backing before its edge reaches the viewport.
+  /// Settlement requests exact density and a fresh input basis even when the
+  /// camera then remains stationary. This demand uses the one scene producer.
+  func needsProjection(camera: SpatialCamera, viewport: SpatialPoint, refinesDetails: Bool) -> Bool {
+    guard surface.kind == .board, let basis = canvas.spatialCamera, let id = surface.ownerID else { return false }
+    if refinesDetails, camera != basis { return true }
+    let anchor = SessionPresence(boardID: id, mode: .board, camera: basis, viewport: canvas.spatialViewport)
+    let current = SessionPresence(boardID: id, mode: .board, camera: camera, viewport: viewport)
+    let projection = SceneCameraProjection(anchor: anchor, current: current)
+    let backing = CGRect(x: projection.translation.x, y: projection.translation.y,
+      width: canvas.bounds.width * projection.scale, height: canvas.bounds.height * projection.scale)
+    // A small demand margin spends no additional bytes; it starts the next
+    // ordinary cohort while the already allocated overscan is still visible.
+    // The long edge can exactly fill an existing backing. Do not repeatedly
+    // request an impossible margin after installing that same finite extent.
+    let marginX = min(64, max(0, backing.width - viewport.x) / 4)
+    let marginY = min(64, max(0, backing.height - viewport.y) / 4)
+    let wanted = CGRect(x: -marginX, y: -marginY,
+      width: viewport.x + marginX * 2, height: viewport.y + marginY * 2)
+    return !backing.contains(wanted)
   }
   func prepareNew(mesh: SpatialInkMesh, journal: SpatialInkJournal) {
     canvas.applySpatial(mesh); canvas.installSpatialSource(journal, on: surface)
@@ -144,11 +194,14 @@ final class SpatialInkPhysicalOwner {
 /// The registry chooses one physical parent; stale portal/update callbacks
 /// cannot steal the active board from the current window-level input owner.
 @MainActor
-class SpatialInkPhysicalMountView: UIView {
+class SpatialInkPhysicalMountView: UIView, SceneNativeCameraOwner {
   let mountID = UUID()
   private(set) var inkView: InkCanvasView?
   private var lease: SpatialInkSceneLease?
   private var owner: SpatialInkPhysicalOwner?
+  private weak var cameraProjection: SceneNativeCameraProjection?
+  private var cameraIsRegistered = false
+  var onCameraProjection: ((SessionPresence) -> Void)?
   private(set) var camera = SpatialCamera()
   private(set) var isActive = false
   private(set) var boardID: UUID?
@@ -159,6 +212,40 @@ class SpatialInkPhysicalMountView: UIView {
   }
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+  func bindCameraProjection(to projection: SceneNativeCameraProjection?) {
+    if cameraProjection !== projection {
+      cameraProjection?.remove(self)
+      cameraIsRegistered = false
+      cameraProjection = projection
+    }
+    registerCameraIfMounted()
+  }
+
+  func currentCameraPresence(for boardID: UUID) -> SessionPresence? {
+    cameraProjection?.current(for: boardID)
+  }
+
+  private func registerCameraIfMounted() {
+    let shouldRegister = window != nil && owner?.surface.kind == .board
+    if shouldRegister && !cameraIsRegistered, let cameraProjection {
+      cameraIsRegistered = true
+      cameraProjection.register(self)
+    } else if !shouldRegister && cameraIsRegistered {
+      cameraProjection?.remove(self)
+      cameraIsRegistered = false
+    }
+  }
+
+  func projectSceneCamera(_ presence: SessionPresence) {
+    guard window != nil, boardID == presence.boardID,
+      owner?.surface == .board(presence.boardID) else { return }
+    camera = presence.camera
+    // The input coordinator receives the same sample before accepting another
+    // Pencil contact. Its already accepted ContactGeometry remains frozen.
+    onCameraProjection?(presence)
+    owner?.refreshMount()
+  }
 
   func update(lease: SpatialInkSceneLease?, surface: SurfaceID, boardID: UUID, camera: SpatialCamera, active: Bool) {
     let next = lease?.isInstalled == true ? lease?.owners[surface] : nil
@@ -171,10 +258,16 @@ class SpatialInkPhysicalMountView: UIView {
       }
       owner?.unmount(self); owner = next
     }
-    self.lease = lease; self.camera = camera; isActive = active; self.boardID = boardID
+    self.lease = lease
+    self.camera = surface == .board(boardID)
+      ? currentCameraPresence(for: boardID)?.camera ?? camera : camera
+    isActive = active; self.boardID = boardID
     next?.mount(self)
+    registerCameraIfMounted()
   }
   func unmount() {
+    cameraProjection?.remove(self)
+    cameraIsRegistered = false
     if isActive, owner?.surface.kind == .board { lease?.registry.deactivateBoardInk(mount: mountID) }
     owner?.unmount(self); owner = nil; lease = nil
   }
@@ -192,10 +285,15 @@ class SpatialInkPhysicalMountView: UIView {
     // defers this latest mount geometry until its final routing lease releases.
     owner?.refreshMount()
   }
-  override func didMoveToWindow() { super.didMoveToWindow(); owner?.refreshMount() }
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    registerCameraIfMounted()
+    owner?.refreshMount()
+  }
 }
 
 struct SpatialBoardInkView: UIViewRepresentable {
+  @Environment(NotebookAppModel.self) private var model: NotebookAppModel?
   private weak var nativeInk: SpatialInkSceneLease?
   let boardID: UUID
   let camera: SpatialCamera
@@ -206,6 +304,7 @@ struct SpatialBoardInkView: UIViewRepresentable {
 
   func makeUIView(context: Context) -> SpatialInkPhysicalMountView { .init(frame: .zero) }
   func updateUIView(_ view: SpatialInkPhysicalMountView, context: Context) {
+    view.bindCameraProjection(to: model?.nativeCameraProjection)
     // Cached SwiftUI configuration is not a second owner of the physical ink.
     guard let nativeInk else { return }
     view.update(lease: nativeInk, surface: .board(boardID), boardID: boardID, camera: camera, active: false)

@@ -1,10 +1,12 @@
 import Foundation
+import CryptoKit
 
 /// The wire names domain owners. Neither commands nor reads can select a store or a file path.
 public struct NotebookCommand: Codable, Sendable {
   public enum Kind: String, Codable, Sendable {
-    case apply, undo, action, actions, continuations, search, contexts, point, delivery
-    case referenceStatus, reference, placement, render, pageVision, read, artifact, publishExport, presentation
+    case apply, admitAction, prepareAction, commitAction, undo, action, actions, continuations, search, contexts, point, delivery
+    case referenceStatus, referenceStatuses, actionDetails, reference, placement, render, pageVision, read, artifact, publishExport, presentation
+    case script, scriptContext, scriptArtifact
   }
   public var command: Kind
   public var query: String?
@@ -28,11 +30,15 @@ public struct NotebookCommand: Codable, Sendable {
   public var export: NotebookExportPublication?
   public var presentation: NotebookPresentationRequest?
   public var cancel: Bool?
+  public var fingerprint: String?
+  public var script: NotebookScriptRequest?
+  public var scriptContext: NotebookScriptContextRequest?
+  public var actionPage: NotebookActionDetailsPage?
 
   enum CodingKeys: String, CodingKey, CaseIterable {
     case command, query, limit, action, actionID, target, elementID, reference
     case expectedRevision, region, worldOrigin, pageIndex, placement, contextID
-    case replyTo, references, queries, expectedCursor, artifact, export, presentation, cancel
+    case replyTo, references, queries, expectedCursor, artifact, export, presentation, cancel, fingerprint, script, scriptContext, actionPage
   }
 
   public init(command: Kind) { self.command = command }
@@ -40,7 +46,7 @@ public struct NotebookCommand: Codable, Sendable {
   /// These commands can commit or enqueue work; the Mac owner orders them with native intents.
   public var changesStore: Bool {
     switch command {
-    case .apply, .undo, .point, .placement, .render, .pageVision, .publishExport: true
+    case .apply, .admitAction, .commitAction, .undo, .point, .placement, .render, .pageVision, .publishExport: true
     default: false
     }
   }
@@ -101,6 +107,9 @@ public struct NotebookCommandDispatcher: Sendable {
 
   public func handle(_ request: NotebookCommand) throws -> JSONValue {
     do {
+      // Export owns preparation before its final writer transaction. Wrapping
+      // it here would hold SQLite while hashing and staging image/PDF bytes.
+      if request.command == .publishExport { return try execute(request) }
       if request.changesStore {
         return try store.commandTransaction(readAllowance: .agentCommand) { try execute(request) }
       }
@@ -125,27 +134,81 @@ public struct NotebookCommandDispatcher: Sendable {
 
   private func execute(_ request: NotebookCommand) throws -> JSONValue {
     switch request.command {
+    case .script, .scriptContext:
+      throw invalid("script_owner_unavailable", "Программы обслуживает координатор установленного Mac-помощника.")
+    case .scriptArtifact:
+      guard let artifact = request.artifact else { throw invalid("invalid_artifact", "Нужен точный адрес изображения.") }
+      if artifact.kind == .attention {
+        guard let contextID = artifact.contextID, let referenceID = artifact.referenceID,
+          let source = try store.attentionEvidence(contextID: contextID, referenceID: referenceID),
+          let image = source.image, image.sha256 == artifact.expectedSHA256 else {
+          throw invalid("artifact_missing", "Исходные пиксели внимания ещё не доставлены.")
+        }
+        try image.validate(reference: source.reference)
+        return .object(["data": .string(image.png.base64EncodedString()), "mimeType": .string("image/png"), "sha256": .string(image.sha256)])
+      }
+      let receipt = try store.authorizedArtifact(artifact)
+      let bytes = try Data(contentsOf: URL(fileURLWithPath: receipt.path), options: .mappedIfSafe)
+      guard bytes.count == receipt.byteCount, bytes.count <= 16 * 1024 * 1024,
+        SHA256.hash(data: bytes).map({ String(format: "%02x", $0) }).joined() == receipt.sha256 else {
+        throw invalid("invalid_snapshot", "Изображение изменилось после проверки квитанции.")
+      }
+      return .object(["data": .string(bytes.base64EncodedString()), "mimeType": .string(receipt.mimeType), "sha256": .string(receipt.sha256)])
     case .presentation:
       throw invalid("presentation_unavailable", "Временный показ выполняет открытый iPad через установленный Mac-помощник, не хранилище.")
     case .apply:
       guard let action = request.action else { throw invalid("invalid_action", "Нужен законченный ход.") }
       return try .encode(store.applyCollaborationAction(action, actor: store.collaborationActorID(), waitForInput: 0))
+    case .admitAction:
+      guard let action = request.action else { throw invalid("invalid_action", "Нужен исходный ход.") }
+      let admission = try store.admitCollaborationSubmission(action)
+      return .object(["state": .string(admission.state.rawValue), "fingerprint": .string(admission.fingerprint),
+        "receipt": admission.receipt.map(NotebookStore.actionCompletion) ?? .null])
+    case .prepareAction:
+      guard let fingerprint = request.fingerprint else { throw invalid("invalid_action", "Нужна исходная идентичность хода.") }
+      return try .encode(store.prepareCollaborationSubmission(required(request.actionID), fingerprint: fingerprint))
+    case .commitAction:
+      guard let action = request.action, let fingerprint = request.fingerprint else { throw invalid("invalid_action", "Нужен нормализованный ход с исходной идентичностью.") }
+      return try store.scriptActionOutcome(store.commitCollaborationSubmission(action, fingerprint: fingerprint, actor: store.collaborationActorID()))
     case .undo:
-      return try .encode(store.undoCollaborationAction(required(request.actionID), actor: store.collaborationActorID(), waitForInput: 0))
+      return try store.scriptActionOutcome(store.undoCollaborationAction(required(request.actionID), actor: store.collaborationActorID(), waitForInput: 0))
     case .action: return try .encode(store.collaborationAction(required(request.actionID)))
     case .actions: return try .encode(store.collaborationActions(afterID: nil, contextID: request.contextID, limit: boundedLimit(request.limit)))
     case .continuations: return try .encode(store.collaborationContinuations(required(request.actionID)))
+    case .actionDetails:
+      guard request.actionID != nil || request.actionPage?.section == nil else {
+        throw invalid("action_required", "Раздел квитанции требует actionID.")
+      }
+      let limit = min(50, try boundedLimit(request.limit))
+      let receipts = try request.actionID.map { [try store.actionReadModel($0)] }
+        ?? store.actionReadModels(afterID: request.actionPage?.after, contextID: request.contextID, limit: limit)
+      return .array(try receipts.map { receipt in
+        var detail = try store.actionDetails(receipt, page: request.actionPage).object
+        if request.actionID == nil {
+          detail["nextActionID"] = receipts.count == limit ? receipts.last.map { .string($0.id.uuidString.lowercased()) } : .null
+        }
+        return .object(detail)
+      })
     case .search:
       guard (request.query?.utf8.count ?? 0) <= 2_000 else { throw invalid("invalid_query", "Запрос поиска слишком длинный.") }
       return try .encode(store.search(request.query ?? "", limit: boundedLimit(request.limit)))
     case .contexts: return try .encode(store.sharedContexts(contextID: request.contextID, limit: boundedLimit(request.limit)))
     case .point:
+      if let id = request.actionID {
+        return try store.appendScriptPoint(id, references: request.references ?? [],
+          contextID: request.contextID, replyTo: request.replyTo, actor: store.collaborationActorID())
+      }
       return try .encode(store.appendContext(references: request.references ?? [], author: .agent,
         actor: store.collaborationActorID(), contextID: request.contextID, replyTo: request.replyTo))
     case .delivery: return try delivery(required(request.actionID))
     case .referenceStatus:
       guard let reference = request.reference else { throw invalid("invalid_reference", "Нужна рассмотренная ссылка.") }
-      return try .encode(store.referenceStatus(reference))
+      return try .encode(store.referenceStatus(reference, prepareRender: false))
+    case .referenceStatuses:
+      guard let references = request.references, references.count <= 256 else {
+        throw invalid("resource_limit", "Один срез проверяет до 256 ссылок.")
+      }
+      return .array(try references.map { try .encode(store.referenceStatus($0, prepareRender: false)) })
     case .reference:
       guard let target = request.target else { throw invalid("invalid_reference", "Нужен владелец указания.") }
       return .object(["revision": .string(try store.referenceRevision(target: target, elementID: request.elementID))])

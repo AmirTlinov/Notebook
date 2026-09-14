@@ -78,8 +78,6 @@ final class MacPreviewPublisher {
   private var stoppingTask: Task<Void, Never>?
   private var targetTask: Task<Void, Never>?
   private var targetInProgress: UUID?
-  private var referenceVisionTask: Task<Void, Never>?
-  private var referenceVisionKey: String?
 
   init(
     model: NotebookAppModel,
@@ -96,7 +94,6 @@ final class MacPreviewPublisher {
     pageRequestTask?.cancel()
     reconciliationTask?.cancel()
     targetTask?.cancel()
-    referenceVisionTask?.cancel()
   }
 
   func start() {
@@ -140,15 +137,14 @@ final class MacPreviewPublisher {
     started = false
     documentSnapshotObserver?.cancel(); documentSnapshotObserver = nil
     agentSnapshotObserver?.cancel(); agentSnapshotObserver = nil
-    let tasks = [currentViewTask, pageRequestTask, reconciliationTask, targetTask,
-      referenceVisionTask].compactMap { $0 }
+    let tasks = [currentViewTask, pageRequestTask, reconciliationTask, targetTask].compactMap { $0 }
     for task in tasks { task.cancel() }
     let drain = Task { @MainActor [weak self] in
       for task in tasks { await task.value }
       guard let self else { return }
       currentViewTask = nil; pageRequestTask = nil; reconciliationTask = nil
-      targetTask = nil; referenceVisionTask = nil
-      targetInProgress = nil; referenceVisionKey = nil; requestedPageKey = nil
+      targetTask = nil
+      targetInProgress = nil; requestedPageKey = nil
       currentView = .init()
       stoppingTask = nil
     }
@@ -160,8 +156,6 @@ final class MacPreviewPublisher {
     currentViewTask?.cancel()
     pageRequestTask?.cancel()
     targetTask?.cancel()
-    referenceVisionTask?.cancel()
-    referenceVisionKey = nil
   }
 
   /// Observation gives immediate updates. This small process-level pass gives
@@ -178,7 +172,6 @@ final class MacPreviewPublisher {
       try? data.write(to: model.store.root.appendingPathComponent("previews/runtime.json"), options: .atomic)
     }
     guard model.permitsBackgroundPreparation else { targetTask?.cancel(); return }
-    scheduleReferenceVision(model)
     scheduleTargetRender(model)
   }
 
@@ -200,7 +193,11 @@ final class MacPreviewPublisher {
         self?.targetInProgress = request.id
         do {
           try await CurrentViewPreviewWriter.writeTarget(request, model: model)
-          self?.referenceVisionKey = nil
+        } catch is CancellationError {
+          // A cancelled producer has no terminal result. The durable request
+          // remains owned by this publisher's queue and can resume on admission.
+          // Historical ready/error receipts are never rewritten here.
+          return
         } catch {
           guard self?.started == true, !Task.isCancelled, model.permitsBackgroundPreparation else { return }
           let receipt = TargetRenderReceipt(request: request, status: "error", diagnostics: [
@@ -208,24 +205,6 @@ final class MacPreviewPublisher {
           try await model.performStoreCommand { try $0.saveTargetRender(receipt) }
         }
       } catch { /* The next publisher observation can retry an unread request. */ }
-    }
-  }
-
-  private func scheduleReferenceVision(_ model: NotebookAppModel) {
-    guard started, model.permitsBackgroundPreparation else { return }
-    let references = Array(model.sharedContexts.sorted(by: { ($0.lastEntry?.createdAt ?? .distantPast) > ($1.lastEntry?.createdAt ?? .distantPast) })
-      .prefix(8).flatMap({ $0.previewEntries.flatMap(\.references) }).filter { $0.region != nil && $0.elementID == nil }.prefix(32))
-    guard !references.isEmpty else { return }
-    let key = String(model.collaborationReadEpoch)
-    guard referenceVisionTask == nil, referenceVisionKey != key else { return }
-    referenceVisionKey = key
-    referenceVisionTask = Task { [weak self, weak model] in
-      defer { self?.referenceVisionTask = nil }
-      guard self?.started == true, !Task.isCancelled, let model else { return }
-      for reference in references {
-        guard self?.started == true, !Task.isCancelled else { return }
-        _ = try? await model.performStoreCommand { try $0.referenceStatus(reference) }
-      }
     }
   }
 

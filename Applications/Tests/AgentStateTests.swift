@@ -157,18 +157,31 @@ final class AgentStateTests: XCTestCase {
     XCTAssertTrue(creationSaved, model.persistenceFailure ?? "")
     XCTAssertEqual(try store.loadDocument(documentID).paperSize, .letter)
 
-    let document = try store.loadDocument(documentID)
+    var document = try store.loadDocument(documentID)
+    XCTAssertTrue(document.replaceContent(blocks: document.blocks + [
+      .interactive(id: "counter", html: "<button>Count</button>", initialState: .object(["count": .number(0)]))
+    ], actor: model.actorID))
+    _ = try store.saveMergedDocument(document)
+    let presence = try XCTUnwrap(model.presence)
+    model.updatePresence(.init(boardID: presence.boardID, mode: .document,
+      camera: presence.camera, viewport: presence.viewport, focusedItemID: documentID,
+      openProgress: 1, selectedItemID: documentID), settled: true)
+    await model.finishPendingPersistence()
+    await model.reloadExternalChanges()?.value
+    document = try XCTUnwrap(model.documents[documentID])
     let source = try XCTUnwrap(document.blocks.first { $0.id == "body" }?.source)
     let status = try await model.commitDocumentSource(edit: .init(
       sessionID: UUID(), documentID: documentID, blockID: "body", baseSource: source,
       baseVersion: document.sourceVersion(blockID: "body"), source: "# Отредактировано на iPad", sequence: 1
     ))
     XCTAssertEqual(status, .committed)
-    model.commitDocumentState(
+    let stateVersion = model.commitDocumentState(
       documentID: documentID,
       blockID: "counter",
-      value: .object(["count": .number(4)])
+      value: .object(["count": .number(4)]),
+      sourceVersion: document.sourceVersion(blockID: "counter")
     )
+    XCTAssertNotNil(stateVersion)
 
     await model.finishPendingPersistence()
     XCTAssertEqual(

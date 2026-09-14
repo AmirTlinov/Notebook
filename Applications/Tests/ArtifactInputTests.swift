@@ -27,7 +27,7 @@ import XCTest
     model.selectElement(.page(pageID: page.id, elementID: element.id))
     model.interactiveElementFocus = .page(pageID: page.id, elementID: element.id)
     var ready = false
-    host.rootView = AnyView(PageSurface(page: page, isInteractive: true, isVisible: true,
+    host.rootView = AnyView(PageSurface(page: page, isCurrent: true, isInteractive: true, isVisible: true,
       onRenderReady: .init { ready = $0 }).environment(model).ignoresSafeArea())
     window.rootViewController = host; window.makeKeyAndVisible()
     try await waitUntil { ready }

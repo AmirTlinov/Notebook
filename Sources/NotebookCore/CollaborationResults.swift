@@ -2,6 +2,12 @@ import Foundation
 
 extension CollaborationReceipt {
   public func resultReferences(in content: CollaborationContent) -> [CollaborationReference] {
+    (try? NotebookActionReadModel(self).resultReferences(in: content)) ?? []
+  }
+}
+
+extension NotebookActionReadModel {
+  public func resultReferences(in content: CollaborationContent) -> [CollaborationReference] {
     let paths = content.referenceFilePaths(for: resultTargets(in: content))
     guard let files = try? content.sourceFiles(including: paths) else { return [] }
     return resultReferences(in: content, files: files)
@@ -11,7 +17,7 @@ extension CollaborationReceipt {
     action.operations.flatMap { resultLocations($0, in: content).map(\.0) }
   }
 
-  private func resultLocations(_ operation: CollaborationOperation, in content: CollaborationContent) -> [(CollaborationTarget, String?)] {
+  private func resultLocations(_ operation: NotebookActionReadModel.Operation, in content: CollaborationContent) -> [(CollaborationTarget, String?)] {
     switch operation.kind {
     case .appendInkStroke, .reorderElements, .reorderBlocks, .setPreamble, .replaceDocument:
       return [(operation.target, nil)]
@@ -20,8 +26,8 @@ extension CollaborationReceipt {
       let kind: CollaborationTarget.Kind = operation.kind == .createDocument ? .document : operation.kind == .createBoard ? .board : .cover
       return [(.init(kind: kind, id: id, boardID: kind == .cover ? content.hierarchy.ownerBoardID(of: id) : nil), nil)]
     case .stackItems:
-      return (operation.values["itemIDs"]?.array ?? []).compactMap { value in
-        guard let id = value.string.flatMap(UUID.init(uuidString:)), let boardID = content.hierarchy.ownerBoardID(of: id) else { return nil }
+      return operation.itemIDs.compactMap { id in
+        guard let boardID = content.hierarchy.ownerBoardID(of: id) else { return nil }
         return (.init(kind: .cover, id: id, boardID: boardID), nil)
       }
     default: return [(operation.target, operation.id)]
@@ -34,12 +40,11 @@ extension CollaborationReceipt {
     for operation in action.operations {
       if Task.isCancelled { return [] }
       let targets = resultLocations(operation, in: content)
-      let stroke = operation.kind == .appendInkStroke ? try? CollaborationInkStroke(operation) : nil
       for (target, elementID) in targets {
-        let key = target.key + ":" + (stroke?.id.uuidString ?? elementID ?? "")
+        let key = target.key + ":" + (operation.strokeID?.uuidString ?? elementID ?? "")
         guard seen.insert(key).inserted else { continue }
-        var region: PageRect? = stroke?.region
-        var origin: WorldPoint? = stroke?.worldOrigin
+        var region: PageRect? = operation.strokeRegion
+        var origin: WorldPoint? = operation.strokeOrigin
         if target.kind == .page, let element = content.pages.first(where: { $0.id == target.id })?.elements.first(where: { $0.id == elementID }) {
           region = element.frame
         }

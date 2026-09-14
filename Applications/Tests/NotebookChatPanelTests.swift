@@ -10,10 +10,18 @@ final class NotebookChatPanelTests: XCTestCase {
   func testNativeWorkShimmersOnceAndDisclosureSurvivesResizeWithoutReplayingItems() async throws {
     let coordinator = NotebookChatTranscript.Coordinator()
     let container = UIView(frame: .init(x: 0, y: 0, width: 540, height: 560))
-    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
-    window.rootViewController = UIViewController(); window.rootViewController?.view.addSubview(container); window.isHidden = false
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+      .first { $0.activationState == .foregroundActive }, "The capture fixture needs the foreground app scene")
+    let previousKeyWindow = scene.keyWindow
+    let window = UIWindow(windowScene: scene), root = UIViewController()
+    window.frame = container.frame
+    root.view = container; window.rootViewController = root
+    window.makeKeyAndVisible(); window.layoutIfNeeded(); container.layoutIfNeeded()
     coordinator.mount(container)
-    defer { coordinator.close(); window.isHidden = true; window.rootViewController = nil }
+    defer {
+      coordinator.close(); window.isHidden = true; window.rootViewController = nil
+      previousKeyWindow?.makeKey()
+    }
     let messages: [CodexMessage] = [
       .init(id: "human", turnID: "turn", clientID: nil, role: .user, text: "Проверь рисунок"),
       .init(id: "progress", turnID: "turn", clientID: nil, role: .assistant, text: "Проверяю рисунок на доске", phase: "commentary"),
@@ -35,16 +43,69 @@ final class NotebookChatPanelTests: XCTestCase {
     let status = try await web.evaluateJavaScript("document.querySelectorAll('.work').length===1 && document.querySelector('.work-label').textContent==='Проверяю рисунок на доске' && document.querySelectorAll('[data-running=true]').length===1") as? Bool
     XCTAssertEqual(status, true)
     _ = try await web.evaluateJavaScript("document.querySelector('.work').open=true;window.kept=document.querySelector('[data-item-id=tool]');true")
-    container.frame.size.width = 340; container.layoutIfNeeded()
+    window.frame.size.width = 340; window.setNeedsLayout(); window.layoutIfNeeded(); container.layoutIfNeeded()
+    XCTAssertEqual(container.bounds.size, CGSize(width: 340, height: 560))
     coordinator.update(messages: messages, work: work, conversationID: "task")
     let retained = try await web.evaluateJavaScript("kept===document.querySelector('[data-item-id=tool]') && document.querySelectorAll('[data-item-id=tool]').length===1 && document.querySelector('.work').open") as? Bool
     XCTAssertEqual(retained, true, "Geometry must not republish, collapse details or duplicate a native item")
-    let proof = XCTAttachment(image: UIGraphicsImageRenderer(bounds: container.bounds).image { _ in container.drawHierarchy(in: container.bounds, afterScreenUpdates: true) })
-    proof.name = "companion-chat-pearlescent-work"; proof.lifetime = .keepAlways; add(proof)
+    try await attachInstalledWindow(window, web: web)
     coordinator.update(messages: messages, work: .init(conversation: conversation(busy: false), connected: true), conversationID: "task")
     try await Task.sleep(for: .milliseconds(100))
     let finished = try await web.evaluateJavaScript("document.querySelectorAll('[data-running=true]').length===0 && document.querySelectorAll('article').length===3 && document.querySelector('.work').open") as? Bool
     XCTAssertEqual(finished, true, "Completion retires the shimmer without rewriting the conversation")
+  }
+
+  private func attachInstalledWindow(_ window: UIWindow, web: WKWebView) async throws {
+    XCTAssertTrue(window.isKeyWindow); XCTAssertFalse(window.isHidden)
+    XCTAssertTrue(web.window === window); XCTAssertFalse(web.isHidden); XCTAssertGreaterThan(web.alpha, 0)
+    let deadline = ContinuousClock.now + .seconds(8)
+    let format = UIGraphicsImageRendererFormat(); format.preferredRange = .standard
+    var captured: UIImage?, drawn = false, nonempty = false, attempts = 0
+    repeat {
+      window.setNeedsLayout(); window.layoutIfNeeded(); window.rootViewController?.view.layoutIfNeeded()
+      let frame = web.convert(web.bounds, to: window)
+      XCTAssertGreaterThan(frame.width, 0); XCTAssertGreaterThan(frame.height, 0)
+      XCTAssertTrue(window.bounds.contains(frame), "Capture must contain the installed native transcript")
+      attempts += 1
+      let image = UIGraphicsImageRenderer(bounds: window.bounds, format: format).image { _ in
+        drawn = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+      }
+      captured = image
+      nonempty = Self.hasNonuniformVisiblePixels(image)
+      if drawn && nonempty { break }
+      if .now < deadline { try await Task.sleep(for: .milliseconds(30)) }
+    } while .now < deadline
+    let proof = XCTAttachment(image: try XCTUnwrap(captured))
+    proof.name = "chat-transcript-installed-window-work"; proof.lifetime = .keepAlways; add(proof)
+    let geometry = XCTAttachment(string: "window=\(window.frame) root=\(String(describing: window.rootViewController?.view.frame)) web=\(web.convert(web.bounds, to: window)) attempts=\(attempts) drawHierarchy=\(drawn) nonempty=\(nonempty)")
+    geometry.name = "chat-transcript-window-capture-geometry"; geometry.lifetime = .keepAlways; add(geometry)
+    XCTAssertTrue(drawn, "UIKit must complete the actual window hierarchy capture")
+    XCTAssertTrue(nonempty, "A transparent or uniform plane is not transcript image evidence")
+  }
+
+  private static func hasNonuniformVisiblePixels(_ image: UIImage) -> Bool {
+    guard let source = image.cgImage else { return false }
+    let width = source.width, height = source.height
+    guard width > 0, height > 0, width * height <= 16_000_000 else { return false }
+    // Decode the captured bytes for inspection only. This buffer is never an
+    // attachment or a replacement image; no background or pixels are added.
+    var pixels = [UInt8](repeating: 0, count: width * height * 4)
+    return pixels.withUnsafeMutableBytes { bytes in
+      guard let context = CGContext(data: bytes.baseAddress, width: width, height: height,
+        bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
+      context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+      let values = bytes.bindMemory(to: UInt8.self)
+      var first: UInt32?, differs = false, visible = false
+      for offset in stride(from: 0, to: values.count, by: 4) {
+        let rgba = UInt32(values[offset]) << 24 | UInt32(values[offset + 1]) << 16
+          | UInt32(values[offset + 2]) << 8 | UInt32(values[offset + 3])
+        if let first { differs = differs || first != rgba } else { first = rgba }
+        visible = visible || values[offset + 3] != 0
+        if differs && visible { return true }
+      }
+      return false
+    }
   }
 
   func testRecentChatsAndFixedComposerMatchReferenceWithoutTakingFocus() async throws {

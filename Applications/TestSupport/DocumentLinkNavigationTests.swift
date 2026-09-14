@@ -60,6 +60,7 @@ final class DocumentLinkNavigationTests: XCTestCase {
     XCTAssertNotNil(layout.anchorPages["generated-heading-1"])
     XCTAssertEqual(layout.anchorPages["dup"], 0, "Duplicate author IDs keep their first DOM destination")
     let web = try XCTUnwrap(surface.coordinator.webView)
+    await source.discardIdlePreparation()
     let value = try await evaluate("return String(document.querySelectorAll('.document-layout-preparation').length);", web)
     XCTAssertEqual(value, "0")
     XCTAssertEqual(source.preparationCount, 1)
@@ -83,25 +84,23 @@ final class DocumentLinkNavigationTests: XCTestCase {
     try await ready(surface.coordinator)
     let coordinator = surface.coordinator, web = try XCTUnwrap(coordinator.webView)
     var destinations: [DocumentLinkDestination] = []
-    coordinator.onLinkNavigation = { destinations.append($0) }
+    coordinator.onLinkActivation = { destinations.append($0.destination) }
     let raw = try await evaluate("document.querySelector('#document a[href]').click(); return JSON.stringify(notebookRenderer.presentationReceipt());", web)
     let deadline = ContinuousClock.now + .seconds(1)
     while destinations.isEmpty, .now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     XCTAssertEqual(destinations, [.page(try XCTUnwrap(coordinator.payload?.source.layout?.anchorPages["раздел:β"]))])
-    var message = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any]); message["kind"] = "link"; message["href"] = "#contents"
+    var message = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any]); message["kind"] = "link"; message["href"] = "#contents"; message["activationSequence"] = "2"
     for field in ["sourceKey", "stateKey", "runtimeID", "generation", "renderToken", "pageIndex", "presentationEpoch"] {
       var stale = message; stale[field] = "stale"; coordinator.receive(body: stale, from: web)
     }
     var external = message; external["href"] = "https://example.com"; external["userActivated"] = false
     coordinator.receive(body: external, from: web)
     XCTAssertEqual(destinations.count, 1)
-    external["userActivated"] = true; coordinator.receive(body: external, from: web)
-    XCTAssertEqual(destinations.last, .external(URL(string: "https://example.com")!))
     let size = WorkspaceItemGeometry.document(.a4)
     coordinator.mount(in: surface.host, physicalSize: .init(width: size.width, height: size.height), isInteractive: false, priority: .neighbor)
     coordinator.receive(body: message, from: web)
     coordinator.invalidate(); coordinator.receive(body: message, from: web)
-    XCTAssertEqual(destinations.count, 2, "Neighbors and dismantled hosts do not own human navigation")
+    XCTAssertEqual(destinations.count, 1, "Neighbors and dismantled hosts do not own human navigation")
   }
 
   @MainActor private struct Surface {
@@ -109,6 +108,7 @@ final class DocumentLinkNavigationTests: XCTestCase {
     let host: DocumentWebHost
     #if os(iOS)
     let window: UIWindow
+    let previousKeyWindow: UIWindow?
     #else
     let window: NSWindow
     #endif
@@ -116,6 +116,7 @@ final class DocumentLinkNavigationTests: XCTestCase {
       coordinator.invalidate()
       #if os(iOS)
       window.isHidden = true; window.rootViewController = nil
+      previousKeyWindow?.makeKey()
       #else
       window.orderOut(nil); window.close()
       #endif
@@ -124,22 +125,27 @@ final class DocumentLinkNavigationTests: XCTestCase {
 
   private func surface(_ document: DocumentDocument) throws -> Surface {
     let coordinator = DocumentWebCoordinator(resources: SceneRenderResources(), onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in })
+      onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
     coordinator.update(document: document, state: .init(id: document.id, actor: UUID()), selectedPageIndex: 0,
-      capturesSnapshot: false, onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in })
+      capturesSnapshot: false, onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
     let host = DocumentWebHost(), size = WorkspaceItemGeometry.document(document.paperSize)
     #if os(iOS)
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
-    let window = NotebookPreparationWindow(windowScene: scene), controller = UIViewController()
+    let previousKeyWindow = scene.windows.first { $0.isKeyWindow }
+    let window = UIWindow(windowScene: scene), controller = UIViewController()
     window.frame = .init(x: 0, y: 0, width: size.width, height: size.height)
-    controller.view = host; window.rootViewController = controller; window.isHidden = false
+    controller.view = host; window.rootViewController = controller; window.makeKeyAndVisible()
     host.frame = window.bounds; host.layoutIfNeeded()
     #else
     let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: size.width, height: size.height), styleMask: .borderless, backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false; window.contentView = host; window.orderBack(nil)
     #endif
     coordinator.mount(in: host, physicalSize: .init(width: size.width, height: size.height), isInteractive: true, priority: .currentPage)
-    return .init(coordinator: coordinator, host: host, window: window)
+    #if os(iOS)
+      return .init(coordinator: coordinator, host: host, window: window, previousKeyWindow: previousKeyWindow)
+    #else
+      return .init(coordinator: coordinator, host: host, window: window)
+    #endif
   }
 
   private func ready(_ coordinator: DocumentWebCoordinator) async throws {

@@ -25,7 +25,7 @@ struct NotebookAttentionSelection: Sendable {
   // Retaining this value is constant-time. Only addressed physical paper is
   // read later; document programs never enter a board/cover reference hash.
   private let paperSources: [UUID: DocumentDocument]
-  private let visuals: NotebookFrozenVisualSources?
+  private var visuals: NotebookFrozenVisualSources?
   private var referenceIdentities: [NotebookReferenceIdentity]
   private var installedInk: [SurfaceID: SpatialInkInstalledSource]
   private var requiredInk: Set<SurfaceID>
@@ -55,6 +55,13 @@ struct NotebookAttentionSelection: Sendable {
 
   func sourceFiles() throws -> [String: JSONValue] {
     try resolvingPresentedSources().encodedSourceFiles()
+  }
+
+  @MainActor
+  func freezingSubmissionVisuals() -> Self {
+    var frozen = self
+    frozen.visuals = visuals?.freezingForSubmission()
+    return frozen
   }
 
   private func encodedSourceFiles() throws -> [String: JSONValue] {

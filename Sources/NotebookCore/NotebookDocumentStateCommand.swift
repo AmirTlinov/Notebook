@@ -6,19 +6,29 @@ public struct NotebookDocumentStateCommand: Sendable {
   public let documentID: UUID
   public let record: DocumentStateRecord
   public let journalStamp: VersionStamp
+  public let expectedSourceVersion: ContentFieldVersion
 
-  public init(documentID: UUID, record: DocumentStateRecord, journalStamp: VersionStamp) {
+  public init(documentID: UUID, record: DocumentStateRecord, journalStamp: VersionStamp,
+    expectedSourceVersion: ContentFieldVersion) {
     self.documentID = documentID; self.record = record; self.journalStamp = journalStamp
+    self.expectedSourceVersion = expectedSourceVersion
   }
 
   public var expectedResult: NotebookDocumentStateResult {
-    .init(documentID: documentID, record: record, journalStamp: journalStamp)
+    .committed(.init(documentID: documentID, record: record, journalStamp: journalStamp))
   }
 }
 
 /// Only the addressed value and aggregate clock return to the native queue.
 /// A differing result asks the model to read the concurrently changed scene.
-public struct NotebookDocumentStateResult: Equatable, Sendable {
+public enum NotebookDocumentStateResult: Equatable, Sendable {
+  case committed(NotebookDocumentStatePublication)
+  /// Admission in memory cannot authorize a different durable program. A nil
+  /// version identifies a missing target; neither case advances the journal.
+  case targetChanged(documentID: UUID, currentSourceVersion: ContentFieldVersion?)
+}
+
+public struct NotebookDocumentStatePublication: Equatable, Sendable {
   public let documentID: UUID
   public let record: DocumentStateRecord
   public let journalStamp: VersionStamp
@@ -28,11 +38,18 @@ extension NotebookStore {
   @discardableResult
   public func commitDocumentState(_ command: NotebookDocumentStateCommand) throws -> NotebookDocumentStateResult {
     guard command.journalStamp.counter <= VersionStamp.maximumCounter,
-      command.record.fieldVersion != nil, command.record.isValid(in: command.journalStamp) else {
+      command.record.fieldVersion != nil, command.record.isValid(in: command.journalStamp),
+      command.expectedSourceVersion.isValid else {
       throw NotebookStorageError.invalidTransaction("document state clock or value")
     }
     return try commandTransaction {
-      guard try readItemHeader(command.documentID)?.kind == .document else { throw CocoaError(.fileNoSuchFile) }
+      guard try readItemHeader(command.documentID)?.kind == .document,
+        let target = try readDocumentBlock(documentID: command.documentID, blockID: command.record.id) else {
+        return .targetChanged(documentID: command.documentID, currentSourceVersion: nil)
+      }
+      guard target.block.kind == .interactive, target.sourceVersion == command.expectedSourceVersion else {
+        return .targetChanged(documentID: command.documentID, currentSourceVersion: target.sourceVersion)
+      }
       let file = stateFile(command.documentID), rootAddress = file + "#"
       guard let root = try storedFragments(address: rootAddress, descendants: false).first else {
         throw NotebookStorageError.corruptRecord(rootAddress)
@@ -65,7 +82,7 @@ extension NotebookStore {
       let after = root.value.setting("stamp", try .encode(stamp))
         .setting("records", .array([try .encode(resolved)]))
       try publishProjectionEdits(file: file, before: before, after: after)
-      return .init(documentID: command.documentID, record: resolved, journalStamp: stamp)
+      return .committed(.init(documentID: command.documentID, record: resolved, journalStamp: stamp))
     }
   }
 

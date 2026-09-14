@@ -4,7 +4,7 @@ import XCTest
 
 final class NotebookDocumentSourcePersistenceTests: XCTestCase {
   @MainActor
-  func testSelectingAnUnloadedDocumentReadsItsContentWithoutAnExternalRefresh() async throws {
+  func testOpeningAnUnloadedDocumentReadsItsContentWithoutAnExternalRefresh() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
@@ -22,6 +22,8 @@ final class NotebookDocumentSourcePersistenceTests: XCTestCase {
     let state = try model.store.loadDocumentState(id)
 
     model.selectItem(id)
+    XCTAssertNil(model.documents[id], "Selecting a closed cover does not request its body")
+    await model.prepareDocumentOpening(id, pageIndex: 0)?.value
     let deadline = ContinuousClock.now + .seconds(2)
     while model.documents[id] == nil, ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(10))
@@ -116,6 +118,12 @@ final class NotebookDocumentSourcePersistenceTests: XCTestCase {
     await model.reloadExternalChanges()?.value
     let ready = await model.finishPendingPersistence()
     XCTAssertTrue(ready, model.persistenceFailure ?? "")
+    let presence = try XCTUnwrap(model.presence)
+    model.selectItem(id)
+    model.updatePresence(.init(boardID: presence.boardID, mode: .document,
+      camera: presence.camera, viewport: presence.viewport, focusedItemID: id,
+      openProgress: 1, selectedItemID: id), settled: true)
+    await model.prepareDocumentOpening(id, pageIndex: 0)?.value
     XCTAssertEqual(model.documents[id], document)
     return (model, id)
   }

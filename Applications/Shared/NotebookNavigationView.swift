@@ -4,7 +4,7 @@ import SwiftUI
 struct NotebookNavigationView: View {
   @Environment(NotebookAppModel.self) private var model
   let presence: SessionPresence
-  let documentPageCount: Int
+  let documentPageCount: Int?
   let onBack: () -> Void
   @State private var showsSearch = false
   @State private var showsPages = false
@@ -14,7 +14,13 @@ struct NotebookNavigationView: View {
   private var pageIndex: Int {
     presence.mode == .document ? presence.documentPageIndex : presence.notebookPageID.flatMap { id in item.flatMap { model.notebookPageIndex(id, in: $0.id) } } ?? 0
   }
-  private var pageCount: Int { presence.mode == .document ? max(documentPageCount, pageIndex + 1) : item.map { model.notebookPageCount($0.id) } ?? 1 }
+  private var pageCount: Int { presence.mode == .document ? max(documentPageCount ?? 1, pageIndex + 1) : item.map { model.notebookPageCount($0.id) } ?? 1 }
+  private var pageCounter: String {
+    presence.mode == .document && documentPageCount == nil ? "\(pageIndex + 1) / …" : "\(pageIndex + 1) / \(pageCount)"
+  }
+  private var pageCounterLabel: String {
+    presence.mode == .document && documentPageCount == nil ? "Страница \(pageIndex + 1), число страниц уточняется" : "Страница \(pageIndex + 1) из \(pageCount)"
+  }
   private var path: [String] {
     var names: [String] = [], id: UUID? = presence.boardID, seen: Set<UUID> = []
     while let current = id, seen.insert(current).inserted {
@@ -44,15 +50,32 @@ struct NotebookNavigationView: View {
       .buttonStyle(.plain).padding(4).background(.regularMaterial, in: Capsule())
       Spacer(minLength: 0)
       if presence.mode == .page || presence.mode == .document {
+        if presence.mode == .document,
+          let status = model.documentPageNavigationStatus,
+          status.documentID == presence.focusedItemID, let target = status.target {
+          HStack(spacing: 8) {
+            if status.phase == .failed {
+              Text("Не удалось открыть страницу \(target + 1)").font(.caption)
+              Button("Повторить") { model.retryDocumentPageNavigation() }
+                .accessibilityIdentifier("retry-document-page-navigation")
+            } else {
+              ProgressView().controlSize(.small)
+              Text("Открываем страницу \(target + 1)…").font(.caption)
+            }
+          }
+          .padding(10).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+          .accessibilityIdentifier("document-page-navigation-status")
+          .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 18)
+        }
         HStack(spacing: 0) {
           Button { select(pageIndex - 1) } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44) }
             .disabled(pageIndex == 0).accessibilityLabel("Предыдущая страница").accessibilityIdentifier("previous-page")
-          Button { pageWindow = pageIndex / 4; showsPages = true } label: { Text("\(pageIndex + 1) / \(pageCount)").monospacedDigit().frame(minWidth: 64, minHeight: 44) }
-            .accessibilityLabel("Страница \(pageIndex + 1) из \(pageCount)")
+          Button { pageWindow = pageIndex / 4; showsPages = true } label: { Text(pageCounter).monospacedDigit().frame(minWidth: 64, minHeight: 44) }
+            .accessibilityLabel(pageCounterLabel)
             .accessibilityHint("Открыть список страниц").accessibilityIdentifier("page-overview")
             .popover(isPresented: $showsPages, arrowEdge: .bottom) { pageOverview }
           Button { select(pageIndex + 1) } label: { Image(systemName: "chevron.right").frame(width: 44, height: 44) }
-            .disabled(presence.mode == .document && pageIndex + 1 >= pageCount)
+            .disabled(presence.mode == .document && (documentPageCount == nil || pageIndex + 1 >= pageCount))
             .accessibilityLabel("Следующая страница").accessibilityIdentifier("next-page")
         }.buttonStyle(.plain).font(.callout).padding(4).background(.regularMaterial, in: Capsule())
           .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 18).padding(.bottom, 18)
@@ -89,14 +112,18 @@ struct NotebookNavigationView: View {
 
   private func select(_ index: Int) {
     guard let item, index >= 0 else { return }
+    model.cancelRequestedNavigation()
+    let generation = model.navigationGeneration
     let expectedRoot = model.notebookPageRoot(item.id)
     model.afterPageInput {
+      guard model.navigationGeneration == generation,
+        model.presence?.focusedItemID == item.id, model.presence?.mode == presence.mode else { return }
       if presence.mode == .document { _ = model.selectDocumentPage(index, documentID: item.id) }
       else if let root = expectedRoot {
         if index == model.notebookPageCount(item.id) || model.notebookPage(at: index, in: item.id) != nil {
           _ = model.selectNotebookPage(index, notebookID: item.id, expectedRoot: root)
         } else {
-          Task { await model.navigateToNotebookPage(at: index, in: item.id, expectedRoot: root) }
+          Task { await model.navigateToNotebookPage(at: index, in: item.id, expectedRoot: root, navigationGeneration: generation) }
         }
       }
     }
@@ -127,7 +154,7 @@ private struct NotebookPageThumbnail: View {
           .scaleEffect(90 / geometry.width)
           .frame(width: 90, height: 128)
       } else if let itemID, let page = model.notebookPage(at: index, in: itemID) {
-        PageSurface(page: page, isInteractive: false, isVisible: true, onRenderReady: .init { value in Task { @MainActor in ready = value } })
+        PageSurface(page: page, isCurrent: false, isInteractive: false, isVisible: true, onRenderReady: .init { value in Task { @MainActor in ready = value } })
       }
       if let itemID, model.documents[itemID] == nil, model.notebookPage(at: index, in: itemID) == nil {
         VStack(spacing: 8) {
@@ -162,6 +189,7 @@ struct NotebookSearchView: View {
         } else if let response, !response.results.isEmpty {
           List(response.results) { result in
             Button {
+              model.observeNavigation("search_result_tap", reference: result.reference)
               dismiss()
               model.requestShow(result.reference)
             } label: {

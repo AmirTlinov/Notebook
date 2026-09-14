@@ -1,6 +1,38 @@
 import SwiftUI
 import UIKit
 
+/// A physical interactive program opts in explicitly. A WK paper host does
+/// not: the WebKit class alone says nothing about the contact's scene owner.
+@MainActor
+protocol NotebookSceneFingerInputOwner: AnyObject {
+  var ownsSceneFingerInput: Bool { get }
+}
+
+@MainActor
+enum NotebookSceneFingerRouting {
+  static func owner(of view: UIView?) -> NotebookInputGate.FingerContactOwner {
+    var current = view
+    while let candidate = current {
+      if let owner = candidate as? NotebookSceneFingerInputOwner, owner.ownsSceneFingerInput {
+        return .nativeInput(ObjectIdentifier(candidate))
+      }
+      if candidate is UIControl || candidate is UITextView {
+        return .nativeInput(ObjectIdentifier(candidate))
+      }
+      if let scroll = candidate as? UIScrollView,
+        scroll.isScrollEnabled, scroll.panGestureRecognizer.isEnabled {
+        return .nativeInput(ObjectIdentifier(scroll))
+      }
+      current = candidate.superview
+    }
+    return .scene
+  }
+
+  static func owner(of touch: UITouch, gate: NotebookInputGate) -> NotebookInputGate.FingerContactOwner {
+    gate.fingerContactOwner(for: ObjectIdentifier(touch)) { owner(of: touch.view) }
+  }
+}
+
 struct WorkspaceGestureLayer: UIViewRepresentable {
   let isEnabled: Bool
   let defersHorizontalMotionToPageTurn: Bool
@@ -216,8 +248,12 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       shouldReceive touch: UITouch
     ) -> Bool {
       guard let sceneView else { return false }
-      return inputGate.permitsSceneContact(at: touch.location(in: sceneView.window), kind: .finger)
-        && sceneReceives(touch, inside: sceneView)
+      guard inputGate.permitsSceneContact(at: touch.location(in: sceneView.window), kind: .finger),
+        sceneReceives(touch, inside: sceneView) else { return false }
+      let owner = NotebookSceneFingerRouting.owner(of: touch, gate: inputGate)
+      // The passive observer still follows native input for admission and
+      // persistence. The camera cannot take that owner's first or later finger.
+      return gestureRecognizer === contactObserver || owner == .scene
     }
 
     func gestureRecognizer(
@@ -261,25 +297,48 @@ final class NotebookContactObserver: UIGestureRecognizer {
     delaysTouchesEnded = false
   }
 
+  isolated deinit {
+    gate.endFingerContacts(contacts)
+    gate.endContact(source: source)
+  }
+
   func use(_ next: NotebookInputGate) {
     guard gate !== next else { return }
-    if !contacts.isEmpty { gate.endContact(source: source); next.beginContact(source: source) }
+    if !contacts.isEmpty {
+      gate.transferFingerContacts(contacts, to: next)
+      gate.endContact(source: source); next.beginContact(source: source)
+    }
     gate = next
   }
 
   override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
   override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
   override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+    for touch in touches {
+      _ = NotebookSceneFingerRouting.owner(of: touch, gate: gate)
+      NotebookInteractionDiagnostics.contact(touch, phase: "began")
+    }
+    gate.notifyAcceptedContact()
     contacts.formUnion(touches.map(ObjectIdentifier.init))
     gate.beginContact(source: source)
   }
-  override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) { end(touches) }
-  override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { end(touches) }
+  override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+    for touch in touches { NotebookInteractionDiagnostics.contact(touch, phase: "ended") }
+    end(touches)
+  }
+  override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+    for touch in touches { NotebookInteractionDiagnostics.contact(touch, phase: "cancelled") }
+    end(touches)
+  }
   private func end(_ touches: Set<UITouch>) {
-    contacts.subtract(touches.map(ObjectIdentifier.init))
+    let ended = Set(touches.map(ObjectIdentifier.init))
+    gate.endFingerContacts(ended)
+    contacts.subtract(ended)
     if contacts.isEmpty { finish(); state = .failed }
   }
   func finish() {
+    NotebookInteractionDiagnostics.abandon(contacts)
+    gate.endFingerContacts(contacts)
     contacts.removeAll()
     gate.endContact(source: source)
   }
@@ -553,9 +612,10 @@ struct BoardPanView: UIViewRepresentable {
       // A following contact must not be cleared by the previous pan's queued
       // completion, even if disable and re-enable preceded the next run loop.
       flushPanCancellation()
-      guard let revision = inputGate.beginFingerSequence(), !Self.ownsInteractiveInput(touch.view) else { return false }
+      guard let revision = inputGate.beginFingerSequence() else { return false }
       guard inputGate.permitsSceneContact(at: touch.location(in: sceneView.window), kind: .finger),
         sceneReceives(touch, inside: sceneView) else { return false }
+      guard NotebookSceneFingerRouting.owner(of: touch, gate: inputGate) == .scene else { return false }
       let point = touch.location(in: sceneView)
       let isFreeBoard = !itemFrames.contains(where: { $0.contains(point) })
       if gestureRecognizer === pan {
@@ -571,15 +631,6 @@ struct BoardPanView: UIViewRepresentable {
       }
       tapRevision = revision
       return isFreeBoard
-    }
-
-    static func ownsInteractiveInput(_ view: UIView?) -> Bool {
-      var current = view
-      while let candidate = current {
-        if candidate is UIControl || candidate is UITextView || candidate is UIScrollView { return true }
-        current = candidate.superview
-      }
-      return false
     }
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {

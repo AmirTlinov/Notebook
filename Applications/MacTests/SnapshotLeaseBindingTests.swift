@@ -52,6 +52,10 @@ final class SnapshotLeaseBindingTests: XCTestCase {
     let id = try XCTUnwrap(model.createDocument(at: .zero, paperSize: .a4))
     let created = await model.finishPendingPersistence()
     XCTAssertTrue(created, model.persistenceFailure ?? "")
+    // Closed covers deliberately do not retain the document body. Admit the
+    // addressed opening through its owner before testing the borrowed pixels.
+    model.selectItem(id)
+    await model.prepareDocumentOpening(id, pageIndex: 0)?.value
     let document = try XCTUnwrap(model.documents[id])
     let state = try XCTUnwrap(model.documentStates[id])
     let geometry = WorkspaceItemGeometry.document(document.paperSize)

@@ -32,7 +32,7 @@ final class WorkspaceInkFixture {
   static func prepare(boardID: UUID, camera: SpatialCamera, viewport: SpatialPoint,
     items: [SpatialWorkspaceItemSurface], journal: SpatialInkJournal? = nil,
     registry: SpatialInkSurfaceRegistry = .init(),
-    resources: SceneRenderResources = .init()) async throws -> SceneCompositionCohort {
+    resources: SceneRenderResources = .init(), requiresStaticRaster: Bool = false) async throws -> SceneCompositionCohort {
     let stamp = journal?.stamp ?? VersionStamp(counter: 0, actor: UUID())
     // An empty visible board still belongs to a valid nonempty workspace.
     let placements = items.isEmpty
@@ -41,8 +41,16 @@ final class WorkspaceInkFixture {
     let values = placements.map { WorkspaceItem.notebook(id: $0.itemID, title: "Physical input", pageIDs: [UUID()]) }
     let workspace = WorkspaceIndex(items: values, selectedItemID: values[0].id,
       selectedPageID: values[0].pageIDs[0], stamp: stamp, rootBoardID: boardID)
+    // Lifetime checks must install actual pixels. Eight visible text sources
+    // leave at least one in a static range after bounded live-owner admission;
+    // empty paper alone legitimately has no raster after sparse pruning.
+    let elements = requiresStaticRaster ? (0..<8).map { offset in
+      SpatialElement(id: "lifetime-raster-\(offset)", surface: .board(boardID), kind: .nativeText,
+        frame: .init(x: 0, y: 0, width: 128, height: 64), worldOrigin: .zero,
+        source: "Lease pixels", stamp: stamp)
+    } : []
     let hierarchy = BoardHierarchy(rootBoardID: boardID,
-      boards: [.init(id: boardID, board: .init(freeItems: placements, stamp: stamp))], stamp: stamp)
+      boards: [.init(id: boardID, board: .init(freeItems: placements, elements: elements, stamp: stamp))], stamp: stamp)
     let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
     let presence = SessionPresence(boardID: boardID, mode: .board, camera: camera, viewport: viewport)
     let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil })

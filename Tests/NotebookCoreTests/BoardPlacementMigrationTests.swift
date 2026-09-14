@@ -76,7 +76,7 @@ struct BoardPlacementMigrationTests {
     let legacy = try installStoredVersionTwo(store)
     let reopened = NotebookStore(root: root)
     #expect(try reopened.loadIndex() == before.workspace)
-    #expect(try databaseVersion(reopened) == 3)
+    #expect(try databaseVersion(reopened) == 4)
     let receipt = try #require(try reopened.migrateBoardPlacements())
     #expect(receipt.sourceCursor == cursor)
     #expect(try receipt.sourceHash == collaborationHash(legacy))
@@ -166,7 +166,7 @@ struct BoardPlacementMigrationTests {
     #expect(try databaseVersion(store) == 2)
     let migrated = try #require(try store.migrateBoardPlacements())
     #expect(migrated.sourceCursor == 1)
-    #expect(try databaseVersion(store) == 3)
+    #expect(try databaseVersion(store) == 4)
     #expect(try store.currentChangeCursor() == 2)
   }
 
@@ -182,7 +182,7 @@ struct BoardPlacementMigrationTests {
     for _ in 0..<3 {
       let reopened = NotebookStore(root: root)
       #expect(try reopened.workspaceHeader() == header)
-      #expect(try databaseVersion(reopened) == 3)
+      #expect(try databaseVersion(reopened) == 4)
       #expect(try reopened.currentReadCursor() == read)
       #expect(try reopened.currentChangeCursor() == delivery)
       #expect(try reopened.archiveContentProof() == proof)
@@ -195,7 +195,7 @@ struct BoardPlacementMigrationTests {
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root)
     try store.prepareDatabase()
-    #expect(try databaseVersion(store) == 3)
+    #expect(try databaseVersion(store) == 4)
     #expect(try store.currentReadCursor() == 0)
     #expect(try store.currentChangeCursor() == 0)
   }
@@ -220,7 +220,7 @@ struct BoardPlacementMigrationTests {
     #expect(try databaseVersion(store) == 2)
     #expect(!(try database.rows("PRAGMA table_info(chat_jobs)")).contains { $0[1].text == "computer" })
     #expect(try store.workspaceHeader() == header)
-    #expect(try databaseVersion(store) == 3)
+    #expect(try databaseVersion(store) == 4)
     #expect(try database.rows("PRAGMA table_info(chat_jobs)").contains { $0[1].text == "computer" })
     #expect(try store.currentReadCursor() == read)
   }
@@ -238,7 +238,7 @@ struct BoardPlacementMigrationTests {
       }
       for try await workspaceID in group { #expect(workspaceID == header.workspaceID) }
     }
-    #expect(try databaseVersion(store) == 3)
+    #expect(try databaseVersion(store) == 4)
     let receipt = try #require(try store.migrateBoardPlacements())
     #expect(receipt.sourceCursor == cursor)
     #expect(try store.currentChangeCursor() == cursor + 1)
@@ -251,10 +251,10 @@ struct BoardPlacementMigrationTests {
     let store = NotebookStore(root: root)
     _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
     let database = try NotebookSQLConnection(url: store.databaseURL, writable: true)
-    try database.run("PRAGMA user_version=4")
+    try database.run("PRAGMA user_version=5")
     let before = try database.rows("SELECT address||':'||hash FROM records ORDER BY address").compactMap { $0[0].text }
     #expect(throws: NotebookStorageError.unsupportedFormat) { _ = try NotebookStore(root: root).workspaceHeader() }
-    #expect(try databaseVersion(store) == 4)
+    #expect(try databaseVersion(store) == 5)
     #expect(try database.rows("SELECT address||':'||hash FROM records ORDER BY address").compactMap { $0[0].text } == before)
   }
 

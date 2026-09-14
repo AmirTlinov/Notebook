@@ -51,6 +51,7 @@ final class SharedAttentionTests: XCTestCase {
     presence = presence.selecting(itemID: model.presence?.selectedItemID, pageID: model.presence?.notebookPageID)
     model.updatePresence(presence,settled:true)
     try await waitForScene(model)
+    try await mountNotebookScene(model)
     let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start:.init(x:100,y:100),end:.init(x:220,y:200),model:model,presence:presence,
       cohort: XCTUnwrap(model.compositionTiles.published), installedInk: [:]))
     let prepared = try await Task.detached { try selection.resolvedReferences() }.value
@@ -99,7 +100,11 @@ final class SharedAttentionTests: XCTestCase {
     model.confirmVisibleActions(presence:presence)
     await model.finishPendingPersistence()
     XCTAssertFalse(try XCTUnwrap(model.store.deviceActionReceipts().first).displayComplete, "Подготовленные адреса ещё не являются показом")
-    model.pagePresented(try XCTUnwrap(model.activePage),ready:true)
+    try await mountNotebookScene(model)
+    let presentationDeadline = ContinuousClock.now + .seconds(8)
+    while !(try XCTUnwrap(model.store.deviceActionReceipts().first).displayComplete), ContinuousClock.now < presentationDeadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
     model.confirmVisibleActions(presence:presence)
     await model.finishPendingPersistence()
     XCTAssertTrue(try XCTUnwrap(model.store.deviceActionReceipts().first).displayComplete)
@@ -119,8 +124,9 @@ final class SharedAttentionTests: XCTestCase {
     presence = presence.selecting(itemID: model.presence?.selectedItemID, pageID: model.presence?.notebookPageID)
     model.updatePresence(presence, settled: true)
     try await waitForScene(model)
+    try await mountNotebookScene(model)
     let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start: .init(x: 80, y: 350), end: .init(x: 760, y: 850), model: model, presence: presence,
-      cohort: XCTUnwrap(model.compositionTiles.published), installedInk: cohortInkSources(XCTUnwrap(model.compositionTiles.published))))
+      cohort: XCTUnwrap(model.compositionTiles.published), installedInk: model.compositionTiles.surfaceRegistry.installedSources()))
     let references = try await Task.detached { try selection.resolvedReferences() }.value
     XCTAssertTrue(references.contains { $0.target.id == first && $0.target.kind == .cover })
     XCTAssertTrue(references.contains { $0.target.id == second && $0.target.kind == .cover })
@@ -183,7 +189,8 @@ final class SharedAttentionTests: XCTestCase {
     XCTAssertEqual(detailed.elements.count, 2)
     model.confirmVisibleActions(presence: presence, scene: detailed)
     await model.finishPendingPersistence()
-    XCTAssertTrue(try XCTUnwrap(model.store.deviceActionReceipts().first { $0.id == action.id }).displayComplete)
+    XCTAssertFalse(try XCTUnwrap(model.store.deviceActionReceipts().first { $0.id == action.id }).displayComplete,
+      "A detailed workset without an installed paint is still only prepared data")
   }
 
   @MainActor
@@ -203,6 +210,7 @@ final class SharedAttentionTests: XCTestCase {
     presence = presence.selecting(itemID: model.presence?.selectedItemID, pageID: model.presence?.notebookPageID)
     model.updatePresence(presence, settled: true)
     try await waitForScene(model)
+    try await mountNotebookScene(model)
     let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start: .init(x: 100, y: 100),
       end: .init(x: 240, y: 180), model: model, presence: presence,
       cohort: XCTUnwrap(model.compositionTiles.published), installedInk: [:]))

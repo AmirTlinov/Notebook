@@ -1584,8 +1584,14 @@ final class DrawingResponsivenessTests: XCTestCase {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture",
-      "--notebook-document-runtime-fixture", "--notebook-document-links-fixture"]
+      "--notebook-document-runtime-fixture", "--notebook-document-links-fixture", "--notebook-profile-documents"]
     launchPortraitFixture(app)
+    func attachInstallation(_ name: String) {
+      let records = app.descendants(matching: .any).matching(identifier: "document-runtime")
+        .allElementsBoundByIndex.compactMap { $0.value as? String }
+      let attachment = XCTAttachment(string: records.joined(separator: "\n"))
+      attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+    }
     let surface = app.otherElements["page-turn-surface"]
     let outward = app.links["К дальней главе"].firstMatch
     XCTAssertTrue(outward.waitForExistence(timeout: 8))
@@ -1597,9 +1603,11 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertFalse((surface.value as? String ?? "").hasPrefix("Страница 1 из "))
     let proof = XCTAttachment(screenshot: app.screenshot())
     proof.name = "document-link-distant-page"; proof.lifetime = .keepAlways; add(proof)
+    attachInstallation("distant-page-installation")
     returning.tap()
     await fulfillment(of: [XCTNSPredicateExpectation(
       predicate: NSPredicate(format: "value BEGINSWITH 'Страница 1 из '"), object: surface)], timeout: 5)
+    attachInstallation("return-page-installation")
     XCTAssertTrue(outward.waitForExistence(timeout: 3)); XCTAssertTrue(outward.isHittable)
     XCTAssertFalse(app.textViews["Исходный Markdown или LaTeX"].exists, "Following links must not start source editing")
     app.links["Отсутствующий раздел"].firstMatch.tap()

@@ -159,6 +159,12 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     let model = await makeModel()
     let documentID = try XCTUnwrap(model.createDocument(at: .zero, paperSize: .letter))
     await model.finishPendingPersistence()
+    var document = try model.store.loadDocument(documentID)
+    XCTAssertTrue(document.replaceContent(blocks: document.blocks + [
+      .interactive(id: "counter", html: "<button>Next</button>", initialState: .object(["step": .number(0)]))
+    ], actor: model.actorID))
+    _ = try model.store.saveMergedDocument(document)
+    await model.reloadExternalChanges()?.value
     try await waitForIndex(model)
     let boardID = try XCTUnwrap(model.presence?.boardID)
     let generation = model.sceneIndexGeneration
@@ -174,19 +180,30 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     XCTAssertEqual(model.sceneIndexGeneration, generation, "Camera changes query prepared metadata; they never rebuild it")
     model.updatePresence(try XCTUnwrap(model.presence), settled: true)
     await model.finishPendingPersistence()
-    var document = try XCTUnwrap(model.documents[documentID])
+    XCTAssertNil(model.documents[documentID], "Camera work does not hydrate a closed document body")
+    document = try model.store.loadDocument(documentID)
     XCTAssertTrue(document.replaceBlockSource(id: "body", source: "A changed sentence", actor: model.actorID))
     _ = try model.store.saveMergedDocument(document)
     await model.reloadExternalChanges()?.value
     await model.finishPendingPersistence()
     try await waitForIndex(model)
-    XCTAssertEqual(model.documents[documentID]?.blocks.first?.source, "A changed sentence")
+    XCTAssertEqual(try model.store.loadDocument(documentID).blocks.first?.source, "A changed sentence")
     XCTAssertEqual(model.sceneIndexGeneration, generation, "Document text is not physical paper geometry")
-    model.commitDocumentState(documentID: documentID, blockID: "body", value: .object(["step": .number(2)]))
+    let presence = try XCTUnwrap(model.presence)
+    model.updatePresence(.init(boardID: boardID, mode: .document,
+      camera: presence.camera, viewport: viewport, focusedItemID: documentID,
+      openProgress: 1, selectedItemID: documentID), settled: true)
+    await model.finishPendingPersistence()
+    await model.reloadExternalChanges()?.value
+    try await waitForIndex(model)
+    let openedGeneration = model.sceneIndexGeneration
+    document = try XCTUnwrap(model.documents[documentID])
+    XCTAssertNotNil(model.commitDocumentState(documentID: documentID, blockID: "counter",
+      value: .object(["step": .number(2)]), sourceVersion: document.sourceVersion(blockID: "counter")))
     await model.finishPendingPersistence()
     try await waitForIndex(model)
-    XCTAssertEqual(model.documentStates[documentID]?.value(for: "body"), .object(["step": .number(2)]))
-    XCTAssertEqual(model.sceneIndexGeneration, generation, "Interactive state does not rebuild spatial metadata")
+    XCTAssertEqual(model.documentStates[documentID]?.value(for: "counter"), .object(["step": .number(2)]))
+    XCTAssertEqual(model.sceneIndexGeneration, openedGeneration, "Interactive state does not rebuild spatial metadata")
   }
 
   @MainActor
@@ -375,29 +392,42 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     model.updatePresence(presence, settled: true)
     window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil; model.compositionTiles.cancelPreparation() }
-    let deadline = ContinuousClock.now + .seconds(8)
+    let deadline = ContinuousClock.now + .seconds(12)
     let workset = model.sceneWorkset(presence: presence)
+    let visibleAddresses = Set(elements.prefix(4).map {
+      SceneSourceAddress(plane: .board(boardID), elementID: $0.id)
+    })
     XCTAssertEqual(workset.elements.count, 4)
-    while model.compositionTiles.published == nil || elements.prefix(4).contains(where: {
-      SceneRenderResources.shared.image(for: agentElementSnapshotSource($0)) == nil
-    }) || !webViews(in: host.view).isEmpty {
-      guard ContinuousClock.now < deadline else { break }
+    while ContinuousClock.now < deadline {
+      if let current = model.compositionTiles.published,
+        visibleAddresses.allSatisfy({ current.hasInstalledPixels(for: $0) }),
+        webViews(in: host.view).count == 3 { break }
       try await Task.sleep(for: .milliseconds(30))
-      XCTAssertLessThanOrEqual(webViews(in: host.view).count, 6)
+      XCTAssertLessThanOrEqual(SceneRenderResources.shared.activeWebSurfaceCount, 6)
     }
-    let cohort = try XCTUnwrap(model.compositionTiles.published, model.compositionTiles.failure ?? "Whole coverage must be shown before contact")
+    let cohort = try XCTUnwrap(model.compositionTiles.published, model.compositionTiles.failure ?? "")
+    XCTAssertEqual(cohort.runtimeOwners.count, 3,
+      "The actual passive program budget leaves a raster executor for its neighbour")
     XCTAssertEqual(cohort.rasters.count, cohort.plan.tiles.count)
     XCTAssertLessThanOrEqual(cohort.plan.liveOwners.count + 1, 8)
-    XCTAssertTrue(elements.prefix(4).allSatisfy {
-      SceneRenderResources.shared.image(for: agentElementSnapshotSource($0)) != nil
-    })
-    XCTAssertTrue(webViews(in: host.view).isEmpty,
-      "Four visible SVGs keep their rasters, not four idle browser sessions")
+    XCTAssertTrue(visibleAddresses.allSatisfy { cohort.hasInstalledPixels(for: $0) },
+      "Every visible source needs actual mounted current pixels, whether runtime or raster")
+    XCTAssertEqual(Set(cohort.sourceReceipts.keys), visibleAddresses,
+      "The 996 offscreen programs create neither preparation demand nor native owners")
+    let paused = try XCTUnwrap(visibleAddresses.subtracting(cohort.runtimeOwners).first)
+    let pausedRaster = try XCTUnwrap(cohort.sourceRasters[paused])
+    let pausedDemand = try XCTUnwrap(cohort.sourceReceipts[paused]?.demand)
+    XCTAssertNotNil(pausedRaster.image(for: pausedDemand.rasterSource, minimumScale: pausedDemand.minimumScale))
+    let sourcePicture = XCTAttachment(image: pausedRaster.image)
+    sourcePicture.name = "Paused SVG exact source pixels before placement"
+    sourcePicture.lifetime = .keepAlways
+    add(sourcePicture)
+    XCTAssertEqual(webViews(in: host.view).count, 3)
     let picture = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
       window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
     }
     let attachment = XCTAttachment(image: picture)
-    attachment.name = "Four visible SVG surfaces from a thousand stored sources"
+    attachment.name = "Three live SVG programs and one explicitly paused prepared neighbour"
     attachment.lifetime = .keepAlways
     add(attachment)
     let identities = Set(webViews(in: host.view).map(ObjectIdentifier.init))
@@ -407,27 +437,35 @@ final class WorkspaceSceneIndexTests: XCTestCase {
         camera: .init(center: .init(x: Double(frame) / 4, y: 0), scale: 0.85 + Double(frame % 5) / 25),
         viewport: presence.viewport), settled: false)
       try await Task.sleep(for: .milliseconds(20))
-      XCTAssertEqual(Set(webViews(in: host.view).map(ObjectIdentifier.init)), identities)
+      XCTAssertEqual(Set(webViews(in: host.view).map(ObjectIdentifier.init)), identities,
+        "The camera moves existing native programs without rebooting their runtime")
     }
     XCTAssertEqual(model.sceneIndexGeneration, generation)
-    XCTAssertTrue(model.compositionTiles.published === cohort)
+    XCTAssertEqual(model.compositionTiles.published?.runtimeOwners, cohort.runtimeOwners)
     model.updatePresence(try XCTUnwrap(model.presence), settled: true)
     model.selectElement(.spatial(boardID: boardID, elementID: elements[4].id))
-    let pinDeadline = ContinuousClock.now + .seconds(5)
-    while SceneRenderResources.shared.image(for: agentElementSnapshotSource(elements[4])) == nil,
+    let offscreenAddress = SceneSourceAddress(plane: .board(boardID), elementID: elements[4].id)
+    let pinDeadline = ContinuousClock.now + .seconds(8)
+    while model.compositionTiles.published?.sourceReceipts[offscreenAddress]?.hasCurrentPixels != true,
       ContinuousClock.now < pinDeadline {
       try await Task.sleep(for: .milliseconds(20))
     }
-    XCTAssertNotNil(SceneRenderResources.shared.image(for: agentElementSnapshotSource(elements[4])),
-      "The pinned offscreen owner gets a completed image through the same limited renderer")
+    let pinned = try XCTUnwrap(model.compositionTiles.published)
+    let pinnedDemand = try XCTUnwrap(pinned.sourceReceipts[offscreenAddress]?.demand)
+    let pinnedRaster = try XCTUnwrap(pinned.sourceRasters[offscreenAddress])
+    XCTAssertNotNil(pinnedRaster.image(for: pinnedDemand.rasterSource, minimumScale: pinnedDemand.minimumScale),
+      "The offscreen selection has an exact prepared source, without inventing mounted-pixel proof")
+    XCTAssertFalse(pinned.runtimeOwners.contains(offscreenAddress))
     XCTAssertEqual(model.sceneWorkset(presence: try XCTUnwrap(model.presence),
       pinned: [.element(elements[4].id)]).elements.count, 5)
     model.endSurfaceEditing()
     let releaseDeadline = ContinuousClock.now + .seconds(5)
-    while !webViews(in: host.view).isEmpty, ContinuousClock.now < releaseDeadline {
+    while model.compositionTiles.published?.sourceReceipts[offscreenAddress] != nil,
+      ContinuousClock.now < releaseDeadline {
       try await Task.sleep(for: .milliseconds(20))
     }
-    XCTAssertTrue(webViews(in: host.view).isEmpty)
+    XCTAssertEqual(Set(webViews(in: host.view).map(ObjectIdentifier.init)), identities)
+    XCTAssertNil(model.compositionTiles.published?.sourceReceipts[offscreenAddress])
     XCTAssertEqual(model.sceneWorkset(presence: try XCTUnwrap(model.presence)).elements.count, 4)
     await model.finishPendingPersistence()
   }

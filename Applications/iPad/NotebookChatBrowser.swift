@@ -66,7 +66,10 @@ struct NotebookChatBrowser: View {
 
   @ViewBuilder private func taskRows(_ window: NotebookChatController.CatalogueWindow?, project: CodexProject?) -> some View {
     let tasks = window?.tasks ?? []
-    if tasks.isEmpty {
+    if let error = window?.error {
+      Text("Не удалось прочитать чаты. " + error)
+        .font(.system(size: 12)).foregroundStyle(.secondary).padding(.vertical, 10)
+    } else if tasks.isEmpty {
       if window?.loaded == true {
         HStack {
           Text("Нет чатов").foregroundStyle(.secondary)
@@ -79,8 +82,7 @@ struct NotebookChatBrowser: View {
         }.font(.system(size: 13)).frame(minHeight: 36)
           .accessibilityIdentifier("notebook-project-empty-" + (project?.id ?? "chats"))
       } else {
-        Text(window?.error != nil ? "Не удалось прочитать чаты. Подключение проверяется…"
-          : chat.connected ? "Загружаются чаты…" : "Mac не в сети")
+        Text(chat.connected ? "Загружаются чаты…" : "Mac не в сети")
           .font(.system(size: 12)).foregroundStyle(.secondary).padding(.vertical, 10)
       }
     }

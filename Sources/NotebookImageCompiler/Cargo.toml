@@ -1,0 +1,17 @@
+[package]
+name = "notebook-image-compiler"
+version = "1.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+krilla = "=0.8.2"
+krilla-svg = "=0.8.1"
+usvg = "=0.47.0"
+log = "=0.4.34"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = false
+panic = "abort"

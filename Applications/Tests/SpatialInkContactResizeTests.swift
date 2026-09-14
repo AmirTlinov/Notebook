@@ -13,6 +13,14 @@ final class SpatialInkContactResizeTests: XCTestCase {
     try await assertContactResize(tool: .eraser, cancels: true)
   }
 
+  func testPencilKeepsWorldSamplesWhenItsRetainedGpuBasisHasAnotherScale() async throws {
+    try await assertContactResize(tool: .pen, cancels: false, cameraScale: 2.3)
+  }
+
+  func testEraserKeepsWorldSamplesWhenItsRetainedGpuBasisHasAnotherScale() async throws {
+    try await assertContactResize(tool: .eraser, cancels: true, cameraScale: 2.3)
+  }
+
   func testUntouchedLeasedBoardKeepsItsPoseUntilTheLastContactLeaseReleases() async throws {
     let fixture = try await Fixture.make()
     addTeardownBlock { await fixture.close() }
@@ -71,9 +79,10 @@ final class SpatialInkContactResizeTests: XCTestCase {
     XCTAssertTrue(try native.installedSpatialSource?.referenceInk().actions.contains { $0.id == action.id } == true)
   }
 
-  private func assertContactResize(tool: DrawingTool, cancels: Bool) async throws {
+  private func assertContactResize(tool: DrawingTool, cancels: Bool, cameraScale: Double = 1) async throws {
     let fixture = try await Fixture.make()
     addTeardownBlock { await fixture.close() }
+    fixture.camera = .init(scale: cameraScale)
     fixture.update(tool: tool)
     let native = try XCTUnwrap(fixture.mount.inkView)
     let originalCenter = native.center
@@ -94,8 +103,8 @@ final class SpatialInkContactResizeTests: XCTestCase {
         "A new view layout cannot move the already measured beginning of this contact")
       let point = points[index + 1]
       let livePoint = native.convert(point, from: fixture.mount)
-      XCTAssertEqual(livePoint.x, frozenOrigin.x + point.x, accuracy: 0.00001)
-      XCTAssertEqual(livePoint.y, frozenOrigin.y + point.y, accuracy: 0.00001,
+      XCTAssertEqual(livePoint.x, frozenOrigin.x + point.x / cameraScale, accuracy: 0.00001)
+      XCTAssertEqual(livePoint.y, frozenOrigin.y + point.y / cameraScale, accuracy: 0.00001,
         "The next live point must use the same installed map as the first point and durable world samples")
       touch.point = point; touch.sampleTime += 0.1
       recognizer.touchesMoved([touch], with: event)
@@ -122,7 +131,7 @@ final class SpatialInkContactResizeTests: XCTestCase {
   private final class Fixture {
     let boardID = UUID(), actor = UUID()
     let initialViewport = SpatialPoint(x: 384, y: 384)
-    let camera = SpatialCamera(scale: 1)
+    var camera = SpatialCamera(scale: 1)
     let registry = SpatialInkSurfaceRegistry(), gate = NotebookInputGate()
     let resources = SceneRenderResources()
     let window: UIWindow, host = UIViewController()

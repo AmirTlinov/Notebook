@@ -3,18 +3,56 @@ import SwiftUI
 
 struct AgentOverlayView: View {
   @Environment(NotebookAppModel.self) private var model
+  @Environment(\.displayScale) private var displayScale
 
   let pageID: UUID
+  let pageSize: PageSize
+  let renderingScale: Double
   let elements: [AgentElement]
   let allowsInteraction: Bool
+  let inputEnabled: Bool
   let onRenderReady: (Bool) -> Void
   let onState: (String, JSONValue) -> Void
 
   @State private var readiness = AgentOverlayReadiness()
 
+  private var visibleElements: [AgentElement] { elements.filter { captureRegion(for: $0) != nil } }
+
+  private func captureRegion(for element: AgentElement) -> PageRect? {
+    let frame = element.frame
+    let left = max(0, frame.x), top = max(0, frame.y)
+    let right = min(pageSize.width, frame.x + frame.width), bottom = min(pageSize.height, frame.y + frame.height)
+    guard right > left, bottom > top else { return nil }
+    return .init(x: left - frame.x, y: top - frame.y, width: right - left, height: bottom - top)
+  }
+
+  private func capturePolicy(for element: AgentElement) -> AgentSnapshotPolicy {
+    let region = captureRegion(for: element)!
+    let density = renderingScale * displayScale
+    // A full physical source keeps its canonical cache identity. A clipped
+    // source uses the existing regional capture and its original local origin.
+    if region.x == 0, region.y == 0, region.width == element.frame.width, region.height == element.frame.height {
+      return .exact(scale: density)
+    }
+    return .region(region, scale: density)
+  }
+
+  private func runtimeIDs(in elements: [AgentElement]) -> Set<String> {
+    let focusedID: String?
+    if case .page(let owner, let id) = model.interactiveElementFocus, owner == pageID { focusedID = id }
+    else { focusedID = nil }
+    let programs = elements.filter { $0.kind == .web }.sorted {
+      if ($0.id == focusedID) != ($1.id == focusedID) { return $0.id == focusedID }
+      return $0.id < $1.id
+    }
+    return Set(programs.prefix(max(0, SceneRenderResources.shared.maximumPassiveLivePrograms)).map(\.id))
+  }
+
   var body: some View {
+    let visible = visibleElements
+    let runningPrograms = runtimeIDs(in: visible)
     ZStack(alignment: .topLeading) {
-      ForEach(elements) { element in
+      ForEach(visible) { element in
         let reference = EditableElementReference.page(
           pageID: pageID,
           elementID: element.id
@@ -24,6 +62,9 @@ struct AgentOverlayView: View {
           PreparedAgentElementView(
             element: element,
             allowsInteraction: allowsInteraction,
+            inputEnabled: inputEnabled,
+            allowsProgramExecution: runningPrograms.contains(element.id),
+            capturePolicy: capturePolicy(for: element),
             focus: interactiveReference,
             onRenderReady: { ready in
               setElement(element, ready: ready)
@@ -57,6 +98,7 @@ struct AgentOverlayView: View {
       }
       publishReadiness()
     }
+    .onChange(of: pageSize) { _, _ in publishReadiness() }
   }
 
 
@@ -66,7 +108,7 @@ struct AgentOverlayView: View {
   }
 
   private func publishReadiness() {
-    onRenderReady(readiness.isReady(for: elements))
+    onRenderReady(readiness.isReady(for: visibleElements))
   }
 }
 

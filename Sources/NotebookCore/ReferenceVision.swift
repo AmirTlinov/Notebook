@@ -19,7 +19,7 @@ private struct ReferenceBaseline: Codable {
 extension NotebookStore {
   /// A regional source is compared only after the common renderer has examined its final pixels.
   /// A missing baseline is never replaced by the newer source and called fresh.
-  public func referenceStatus(_ reference: CollaborationReference, prepareRender: Bool = true) throws -> ReferenceStatus {
+  public func referenceStatus(_ reference: CollaborationReference, prepareRender: Bool = false) throws -> ReferenceStatus {
     let revision: String
     do {
       revision = try referenceRevision(target: reference.target, elementID: reference.elementID)
@@ -61,14 +61,40 @@ extension NotebookStore {
     }
     if baseline == nil, let fingerprint = proof(reference.revision) {
       baseline = .init(reference: reference, fingerprint: fingerprint)
-      try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
-      try JSONEncoder().encode(baseline!).write(to: path, options: .atomic)
     }
     if let baseline, let current = proof(revision) {
       return .init(current == baseline.fingerprint ? .current : .changed, currentRevision: revision, fingerprint: current)
     }
     guard baseline != nil || revision == reference.revision else { return .init(.reviewRequired, currentRevision: revision) }
     return .init(.checking, currentRevision: revision)
+  }
+
+  /// Publication, not a status read, owns the durable regional baseline. Old
+  /// baseline files remain readable; every new proof is retained when rendered.
+  func publishReferenceBaseline(_ receipt: TargetRenderReceipt) throws {
+    let request = receipt.request
+    guard request.region != nil, request.pageVisionRevision == nil,
+      receipt.status == "ready", receipt.diagnostics.isEmpty,
+      let fingerprint = receipt.referenceFingerprint else { return }
+    // Historical receipts remain addressable, but cannot mint a proof in the
+    // current renderer's namespace from pixels produced by an older recipe.
+    guard (try? request.requireCurrentRenderingRecipe()) != nil else { return }
+    let key = try TargetRenderRequest.compositeFingerprint(target: request.target, source: request.sourceRevision,
+      region: request.region, worldOrigin: request.worldOrigin, pageIndex: request.pageIndex)
+    let reference = CollaborationReference(id: request.id, target: request.target,
+      region: request.region, worldOrigin: request.worldOrigin, pageIndex: request.pageIndex,
+      revision: request.sourceRevision)
+    let path = root.appendingPathComponent("previews/reference-baselines/\(key).json")
+    let value = ReferenceBaseline(reference: reference, fingerprint: fingerprint)
+    if let previous = try? Data(contentsOf: path),
+      let saved = try? JSONDecoder().decode(ReferenceBaseline.self, from: previous) {
+      guard saved.fingerprint == fingerprint else {
+        throw CollaborationError("invalid_snapshot", "Одна версия области не может иметь разные окончательные пиксели.")
+      }
+      return
+    }
+    try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try JSONEncoder().encode(value).write(to: path, options: .atomic)
   }
 
   /// Ink is supplied by the same final raster as iPad. Position is used to select

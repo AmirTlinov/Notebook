@@ -10,11 +10,15 @@ struct CodexDisplayProjectionTests {
     #expect(item["role"] == .string("developer"))
     #expect(CodexAppServerState.displayMessage(item, turnID: "same-task") == nil)
     let text = try #require(item["content"]?.array?.first?["text"]?.string)
-    #expect(text.contains("notebook_present"))
+    #expect(text.contains("nb.present"))
+    #expect(text.contains("notebook_context") && text.contains("notebook_execute"))
+    #expect(text.contains("resume reads an existing run and never replays it"))
     #expect(text.contains("code links never move"))
   }
   @Test func notebookActionsExplainTheirMeaningWithoutChangingDeliveryOrHidingDetails() throws {
     let cases = [
+      ("notebook_context", "Читает материал и внимание", "Материал и внимание прочитаны"),
+      ("notebook_execute", "Работает в Notebook", "Получен ответ Notebook"),
       ("notebook_read_document", "Читает документ", "Документ прочитан"),
       ("notebook_apply", "Вносит изменения в материал", "Изменения материала сохранены"),
       ("notebook_action", "Проверяет появление изменений", "Проверено появление изменений"),

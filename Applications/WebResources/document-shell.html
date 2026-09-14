@@ -106,6 +106,9 @@
     th, td { padding: .45em .6em; text-align: left; border-bottom: 1px solid rgba(23,23,19,.11); }
     a { color: inherit; text-decoration-thickness: .06em; text-underline-offset: .14em; }
     img, svg { max-width: 100%; }
+    /* A heading and its standalone illustration form one reading unit. */
+    .document-illustration-lead { break-inside: avoid-column; }
+    .document-illustration-lead > :is(img,svg) { display: block; }
     .latex { overflow-x: auto; padding: .2em 0; text-align: center; }
     .interactive-frame {
       display: block;
@@ -141,6 +144,34 @@
       touch-action: manipulation;
       pointer-events: auto;
     }
+    .source-editor-toolbar {
+      position: absolute;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 52px;
+      padding: 4px;
+      box-sizing: border-box;
+      border-radius: 10px;
+      background: #fff;
+      box-shadow: 0 2px 12px #18243a16;
+      z-index: 3;
+      font: 13px -apple-system, sans-serif;
+    }
+    .source-editor-status { flex: 1; color: #424d60; }
+    .source-editor-toolbar button {
+      min-width: 44px;
+      min-height: 44px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 8px;
+      color: #174da8;
+      background: #edf3ff;
+      font: 600 15px -apple-system, sans-serif;
+      touch-action: manipulation;
+    }
+    .source-editor-toolbar button[data-editor-action="save"] { color: #fff; background: #2165db; }
+    .source-editor-toolbar button:disabled { opacity: .5; }
     #editor-layer {
       position: absolute;
       inset: 0;
@@ -178,6 +209,7 @@
   <script src="marked.umd.js"></script>
   <script src="purify.min.js"></script>
   <script src="document-fragments.js"></script>
+  <script src="document-images.js"></script>
   <script src="tex-svg-nofont.js"></script>
 </head>
 <body>
@@ -212,6 +244,27 @@
       let layoutCanonical = false;
       const work = {sourceInstalls:0,pageInstalls:0,stateApplications:0,layoutPasses:0,regionMeasurements:0,typesetPasses:0,headingAddressProbes:0};
       let installedFragment = null;
+      // An explicit native measurement attempt owns these bounded observations.
+      // They never request pixels/layout or participate in page readiness.
+      let preparationObservation = null;
+      const observationMatches = (frame, observation = preparationObservation) => !!frame && !!observation
+        && ['documentID','runtimeID','generation','sourceKey','stateKey','renderToken','pageIndex']
+          .every(key => frame[key] === observation[key]);
+      const observePreparation = observation => {
+        if (!observation || typeof observation.attemptID !== 'string'
+          || !['documentID','runtimeID','generation','sourceKey','stateKey','renderToken'].every(key => typeof observation[key] === 'string')
+          || !Number.isInteger(observation.pageIndex)) return;
+        if (preparationObservation?.attemptID === observation.attemptID) return;
+        preparationObservation = {...observation, phasesMS: {}, states: {}};
+      };
+      const observeBrowserState = (observation, name) => {
+        if (!observation || preparationObservation !== observation) return;
+        // Reading FontFaceSet.status/size or geometry here could itself force
+        // style/layout. Only document lifecycle flags are sampled before waits.
+        observation.states[name] = {documentHidden: document.hidden ? 1 : 0,
+          documentReadyState: ['loading','interactive','complete'].indexOf(document.readyState),
+          sourcePreparationConnected: sourcePreparation?.host.isConnected ? 1 : 0};
+      };
       let sourcePreparation = null;
       let editingBlockID = null;
       let presentationEpoch = 0n;
@@ -224,7 +277,7 @@
 
       const bridge = (message) => {
         const handler = window.webkit?.messageHandlers?.notebook;
-        if (handler) handler.postMessage({ ...message, runtimeID: payload?.runtimeID });
+        if (handler) handler.postMessage({ ...message, runtimeID: message.runtimeID ?? payload?.runtimeID });
       };
 
       // Source layout and the pixels currently covering it have different
@@ -253,14 +306,12 @@
 
       const configurePaper = (nextPayload, requestedPage = currentPageIndex()) => {
         const paper = nextPayload.paper;
-        const viewportBounds = viewport.getBoundingClientRect();
-        const viewportWidth = Math.max(1, viewportBounds.width);
-        const viewportHeight = Math.max(1, viewportBounds.height);
-        // The native owner gives this view exactly one physical sheet. The
-        // same ratio scales typesetting; surrounding space belongs to the scene.
+        // The native paper geometry owns typography. WebKit can report a
+        // slightly different viewport subpixel after reparenting or resize;
+        // that projection must never rescale an already measured source.
         const scale = Math.min(
-          viewportWidth / paper.widthPoints,
-          viewportHeight / paper.heightPoints
+          paper.surfaceWidth / paper.widthPoints,
+          paper.surfaceHeight / paper.heightPoints
         );
         const pageWidth = paper.widthPoints * scale;
         const pageHeight = paper.heightPoints * scale;
@@ -269,8 +320,7 @@
         const contentWidth = pageWidth - 2 * margin;
         const contentHeight = pageHeight - 2 * margin;
         const columnGap = 2 * margin + gap;
-        const side = (viewportWidth - pageWidth) / 2;
-        const top = (viewportHeight - pageHeight) / 2;
+        const side = 0, top = 0;
         const stride = pageWidth + gap;
         pageLayout = {
           kind: paper.kind,
@@ -280,6 +330,8 @@
           pageCount: pageLayout?.pageCount || 1
         };
         const style = document.documentElement.style;
+        viewport.style.width = `${pageWidth}px`;
+        viewport.style.height = `${pageHeight}px`;
         style.setProperty('--page-width', `${pageWidth}px`);
         style.setProperty('--page-height', `${pageHeight}px`);
         style.setProperty('--page-radius', `${pageWidth * paper.cornerRadiusRatio}px`);
@@ -291,11 +343,10 @@
         style.setProperty('--body-font-size', `${12 * scale}px`);
         track.style.top = `${top}px`;
         track.style.left = `${side}px`;
-        // Page curl reparents and resizes a prewarmed WKWebView. Geometry owns
-        // the fixed page in the same layout transaction as its new size.
+        // Page curl only changes placement of the same physical page.
         track.style.transform = `translate3d(${-requestedPage * stride}px, 0, 0)`;
         track.style.height = `${pageHeight}px`;
-        stage.style.height = `${viewportHeight}px`;
+        stage.style.height = `${pageHeight}px`;
       };
 
       let runtimeDiagnostics = [];
@@ -338,22 +389,31 @@
         const safeCSS = String(block.css || '').replace(/<\/style/gi, '<\\/style');
         const csp = "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; font-src data:; media-src data: blob:; form-action 'none'; base-uri 'none'; object-src 'none';";
         const html = block.html || '';
-        return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}${safeCSS}</style></head><body>${html}<script>(()=>{
+        return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}${safeCSS}</style><script>(()=>{
           const blockID=${safeID}, token=${safeToken};
           const post=message=>parent.postMessage({...message,blockID,token},'*');
           const report=(kind,message)=>post({channel:'notebook-diagnostic',kind,message:String(message)});
           addEventListener('error',e=>report('javascript_error',e.message));
           addEventListener('unhandledrejection',e=>report('javascript_error',e.reason));
-          let value=${safeState};
+          let value=${safeState},suspended=false;
           const stable=value=>JSON.stringify(value,(_,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,v[k]])):v);
           let declaredReady=null;
+          const reportFocus=()=>post({channel:'notebook-program-focus',focused:!!document.activeElement?.matches('input,textarea,[contenteditable=true]')});
+          addEventListener('focusin',reportFocus);
+          addEventListener('focusout',()=>queueMicrotask(reportFocus));
           window.notebook=Object.freeze({
             get state(){return value},
-            commit(next){if(stable(value)===stable(next))return;value=next;post({channel:'notebook-interactive',state:next})},
+            commit(next){if(suspended||stable(value)===stable(next))return false;value=next;post({channel:'notebook-interactive',state:next});return true},
             ready(promise){declaredReady=Promise.resolve(promise);declaredReady.then(()=>post({channel:'notebook-program-ready'}),error=>report('program_ready_error',error));return declaredReady}
           });
           addEventListener('message',event=>{
-            if(event.source!==parent||event.data?.channel!=='notebook-state'||event.data.token!==token)return;
+            if(event.source!==parent||event.data?.token!==token)return;
+            if(event.data.channel==='notebook-suspend'){
+              suspended=true;post({channel:'notebook-program-flushed',requestID:event.data.requestID,state:value});return;
+            }
+            if(event.data.channel==='notebook-resume'){suspended=false;return;}
+            if(event.data.channel==='notebook-navigation-blur'){document.activeElement?.blur();reportFocus();return;}
+            if(event.data.channel!=='notebook-state')return;
             const next=event.data.state;
             if(stable(value)!==stable(next)){value=next;dispatchEvent(new CustomEvent('notebookstate',{detail:value}))}
             post({channel:'notebook-state-applied',requestID:event.data.requestID});
@@ -366,14 +426,15 @@
             try{await declaredReady;post({channel:'notebook-program-started'})}
             catch(error){report('program_ready_error',error)}
           });
-          try{const script=document.createElement('script');script.textContent=${safeScript};document.body.append(script)}catch(error){report('javascript_error',error)}
-        })()<\/script></body></html>`;
+          addEventListener('DOMContentLoaded',()=>{try{const script=document.createElement('script');script.textContent=${safeScript};document.body.append(script)}catch(error){report('javascript_error',error)}});
+        })()<\/script></head><body>${html}</body></html>`;
       };
 
       const positionInteractiveFrames = () => {
         for (const [blockID, runtime] of interactiveFrames) {
           const fragment = measuredRegions.find(region => region.id === blockID && region.pageIndex === currentPageIndex());
-          runtime.container.hidden = !fragment;
+          runtime.container.style.visibility = fragment ? 'visible' : 'hidden';
+          runtime.container.inert = !fragment;
           if (!fragment) continue;
           // A multi-column union is neither one page nor the program viewport.
           // Move the same full-height iframe behind its measured physical cut.
@@ -384,54 +445,53 @@
         }
       };
 
+      // A program belongs to the mounted document runtime, not to a page cut.
+      // Its native owner can show passive page pixels without another script.
+      const ensureInteractiveFrame = (block, state, token) => {
+        let runtime=interactiveFrames.get(block.id);
+        if(runtime && runtime.token!==token){runtime.container.remove();runtime.cancel();interactiveFrames.delete(block.id);runtime=null;}
+        if(!runtime) {
+          const container=document.createElement('div');container.className='interactive-fragment';
+          container.style.visibility='hidden';container.inert=true;
+          const frame=document.createElement('iframe');frame.className='interactive-frame';frame.title=block.id;
+          frame.setAttribute('sandbox','allow-scripts');frame.setAttribute('scrolling','no');frame.dataset.blockId=block.id;
+          let resolve,reject;const started=new Promise((yes,no)=>{resolve=yes;reject=no});
+          runtime={container,frame,token,started,resolve,reject,readiness:'unknown',isStarted:false,
+            appliedState:stable(state),cancel:()=>reject(new Error('Interactive surface was superseded'))};
+          interactiveFrames.set(block.id,runtime);
+          started.then(()=>{runtime.isStarted=true;bridge({kind:'programReady',blockID:block.id,blockToken:token});},()=>{});
+          frame.srcdoc=interactiveDocument(block,state,token);container.append(frame);interactiveLayer.append(container);
+        }
+        runtime.height=block.height||320;runtime.initialState=block.initialState??{};
+        return runtime;
+      };
+
       // Iframes never belong to reordered flow nodes: detach/reinsert destroys
       // their browsing contexts, even when the JavaScript node stays identical.
       const prepareInteractiveFrames = async () => {
-        const page = currentPageIndex();
-        const visible = new Set(blockRegions().filter(region => region.pageIndex === page).map(region => region.id));
-        const blocks = new Map((payload.blocks || []).filter(block => block.kind === 'interactive').map(block => [block.id,block]));
-        for (const [blockID, runtime] of interactiveFrames) {
-          if (!visible.has(blockID) || !blocks.has(blockID) || runtime.token !== payload.blockTokens?.[blockID]) {
-            runtime.container.remove(); runtime.cancel(); interactiveFrames.delete(blockID);
+        if(payload.programMode==='external')return;
+        const page=currentPageIndex();
+        const visible=new Set(blockRegions().filter(region=>region.pageIndex===page).map(region=>region.id));
+        const blocks=new Map((payload.blocks||[]).filter(block=>block.kind==='interactive').map(block=>[block.id,block]));
+        for(const [blockID,runtime] of interactiveFrames) {
+          if(runtime.token!==payload.blockTokens?.[blockID]) {
+            runtime.container.remove();runtime.cancel();interactiveFrames.delete(blockID);
           }
         }
-        for (const [blockID, block] of blocks) {
-          if (!visible.has(blockID)) continue;
-          let runtime = interactiveFrames.get(blockID);
-          if (!runtime) {
-            const container = document.createElement('div');
-            container.className = 'interactive-fragment';
-            const frame = document.createElement('iframe');
-            frame.className = 'interactive-frame'; frame.title = blockID;
-            frame.setAttribute('sandbox','allow-scripts'); frame.setAttribute('scrolling','no');
-            frame.dataset.blockId = blockID;
-            let resolve, reject;
-            const started = new Promise((yes,no) => {resolve=yes;reject=no});
-            runtime = {container,frame,token:payload.blockTokens?.[blockID],started,resolve,reject,readiness:'unknown',
-              appliedState:stable(stateFor(block)),
-              cancel:()=>reject(new Error('Interactive surface was superseded'))};
-            interactiveFrames.set(blockID,runtime);
-            frame.srcdoc = interactiveDocument(block,stateFor(block),runtime.token);
-            container.append(frame);
-            interactiveLayer.append(container);
-          }
-          runtime.height = block.height || 320;
-        }
+        for(const [blockID,block] of blocks)if(visible.has(blockID))
+          ensureInteractiveFrame(block,stateFor(block),payload.blockTokens?.[blockID]);
         positionInteractiveFrames();
-        await Promise.all([...interactiveFrames.values()].map(runtime=>runtime.started));
-        if (payload.programMode === 'headless') for (const [blockID, runtime] of interactiveFrames) {
-          if (runtime.readiness !== 'declared' && blocks.get(blockID)?.javaScript) {
-            diagnostic('program_completion_unknown', 'This is a captured frame. The program has not declared completion with notebook.ready(promise).', blockID);
-          }
+        await Promise.all([...interactiveFrames].filter(([id])=>visible.has(id)).map(([,runtime])=>runtime.started));
+        if(payload.programMode==='headless')for(const [blockID,runtime] of interactiveFrames)if(visible.has(blockID)) {
+          if(runtime.readiness!=='declared' && blocks.get(blockID)?.javaScript)
+            diagnostic('program_completion_unknown','This is a captured frame. The program has not declared completion with notebook.ready(promise).',blockID);
         }
       };
 
       const applyInteractiveState = async () => {
-        const blocks = new Map((payload.blocks || []).filter(block => block.kind === 'interactive').map(block => [block.id,block]));
         await Promise.all([...interactiveFrames].map(([blockID,runtime])=>new Promise(resolve=>{
-          const block = blocks.get(blockID);
-          if(!block){resolve();return}
-          const nextState=stateFor(block), stateKey=stable(nextState);
+          const nextState=Object.prototype.hasOwnProperty.call(payload.states,blockID)?payload.states[blockID]:runtime.initialState;
+          const stateKey=stable(nextState);
           if(runtime.appliedState===stateKey){resolve();return}
           const requestID=crypto.randomUUID(); runtime.stateRequestID=requestID; runtime.stateApplied=resolve;
           runtime.appliedState=stateKey;
@@ -493,6 +553,8 @@
       // A source is measured once in an already admitted WebKit. This passive
       // root cannot start programs or replace the physical DOM/editor beside it.
       const beginSourcePreparation = async source => {
+        const preparationPhasesMS={};let phaseStarted=performance.now();
+        const phase=name=>{const now=performance.now();preparationPhasesMS[name]=now-phaseStarted;phaseStarted=now;};
         const dimensions=viewport.getBoundingClientRect();
         if (sourcePreparation) throw new Error('document_source_preparation_busy');
         if (!source?.key || !Array.isArray(source.blocks) || !dimensions
@@ -506,11 +568,11 @@
         const host=document.createElement('div'), flow=document.createElement('main');
         const preparation={key:source.key,host,flow,cancelled:false,diagnostics:[]};
         sourcePreparation=preparation;
-        const paper=source.paper, scale=Math.min(dimensions.width/paper.widthPoints,dimensions.height/paper.heightPoints);
+        const paper=source.paper, scale=Math.min(paper.surfaceWidth/paper.widthPoints,paper.surfaceHeight/paper.heightPoints);
         const width=paper.widthPoints*scale,height=paper.heightPoints*scale,margin=paper.marginPoints*scale;
         const gap=Math.max(18,Math.min(30,22*scale)), stride=width+gap;
         host.className='document-layout-preparation'; host.setAttribute('aria-hidden','true');host.inert=true;
-        Object.assign(host.style,{position:'absolute',left:`${(dimensions.width-width)/2}px`,top:`${(dimensions.height-height)/2}px`,visibility:'hidden',width:`${width}px`,height:`${height}px`,
+        Object.assign(host.style,{position:'absolute',left:'0',top:'0',visibility:'hidden',width:`${width}px`,height:`${height}px`,
           pointerEvents:'none',fontSize:`${12*scale}px`});
         for(const [name,value] of Object.entries({'page-margin':margin,'content-width':width-2*margin,
           'content-height':height-2*margin,'column-gap':2*margin+gap}))host.style.setProperty('--'+name,`${value}px`);
@@ -520,10 +582,19 @@
           // before it completes leaves WebKit's initial rowspan fragmentation
           // different from the same source measured after startup.
           await window.MathJax?.startup?.promise;
+          phase('runtimeStartup');
           if(preparation.cancelled)throw new Error('document_source_preparation_cancelled');
           document.body.append(host);
           work.sourceInstalls+=1;
           for(const block of source.blocks)flow.append(createBlock(block));
+          // WebKit can strand a heading at the end of a fragmented parent even
+          // with break-after on the heading and break-before on the image.
+          // Give the two adjacent semantic nodes one ordinary fragmentation
+          // box; browser layout remains the sole owner of the physical cut.
+          for(const image of flow.querySelectorAll(':is(h1,h2,h3,h4,h5,h6) + :is(img,svg)')) {
+            const heading=image.previousElementSibling, lead=document.createElement('div');
+            lead.className='document-illustration-lead';heading.before(lead);lead.append(heading,image);
+          }
           // Markdown headings without an explicit HTML ID receive one stable
           // document-wide address before layout. Author IDs always take priority.
           const headingIDs=new Set([...flow.querySelectorAll('[id],a[name]')].flatMap(node=>[node.id,node.getAttribute('name')]).filter(Boolean));
@@ -535,10 +606,24 @@
             while(headingIDs.has(id)){id=stem+'-'+(++suffix);work.headingAddressProbes+=1;}
             heading.id=id;headingIDs.add(id);nextHeadingSuffix.set(stem,suffix+1);
           }
+          phase('sourceDOM');
           await typeset([...flow.children].filter(node=>node.dataset.kind!=='interactive'),
             (kind,message,blockID)=>preparation.diagnostics.push({kind,message:String(message),blockID}));
-          await document.fonts.ready;
-          await Promise.all([...flow.querySelectorAll('img')].map(image=>image.decode().catch(()=>{})));
+          phase('typesetting');
+          const observation = preparationObservation?.sourceKey === source.key ? preparationObservation : null;
+          observeBrowserState(observation, 'fonts_before');
+          const fontGetterStart = observation ? performance.now() : 0;
+          const fontsReady = document.fonts.ready;
+          const fontAwaitStart = observation ? performance.now() : 0;
+          await fontsReady;
+          if (observation) {
+            preparationPhasesMS.fontsReadyGetter = fontAwaitStart - fontGetterStart;
+            preparationPhasesMS.fontsReadyAwait = performance.now() - fontAwaitStart;
+            observeBrowserState(observation, 'fonts_after');
+          }
+          phase('fontsReady');
+          await notebookDocumentImages.waitForGeometry(flow,()=>preparation.cancelled);
+          phase('imageDecode');
           if(preparation.cancelled)throw new Error('document_source_preparation_cancelled');
           const contentWidth=width-2*margin,columnGap=2*margin+gap;
           const pageCount=Math.max(1,Math.round((Math.max(contentWidth,flow.scrollWidth)+columnGap)/(contentWidth+columnGap)));
@@ -565,11 +650,13 @@
             ? MathJax.startup.adaptor.cssText(MathJax.svgStylesheet()) : '';
           if(new TextEncoder().encode(mathStyles).length>128*1024)throw new Error('document_math_style_budget');
           const flowRect=flow.getBoundingClientRect();
+          phase('canonicalGeometry');
           const compiler=await notebookDocumentFragments.create(flow,{sourceKey:source.key,pageCount,width,height,stride,
             contentTop:flowRect.y-origin.y,contentBottom:flowRect.bottom-origin.y,
             originX:origin.x,originY:origin.y,regions},()=>preparation.cancelled);
+          phase('fragmentIndex');
           const receipt={sourceKey:source.key,layoutScope:'source',layoutCanonical:true,width,height,pageCount,regions,
-            anchors:compiler.anchors,diagnostics:preparation.diagnostics,mathStyles};
+            anchors:compiler.anchors,indexedNodes:compiler.indexedNodes,indexedEdges:compiler.indexedEdges,diagnostics:preparation.diagnostics,mathStyles,preparationPhasesMS};
           const layoutJSON=JSON.stringify(receipt),layoutBytes=new TextEncoder().encode(layoutJSON).length;
           if(layoutBytes>16*1024*1024)throw new Error('document_layout_packet_budget');
           Object.assign(preparation,{receipt,compiler,layoutJSON,pendingPage:null});
@@ -600,6 +687,10 @@
         const json=preparation.pendingPage.json;preparation.pendingPage=null;
         return json;
       };
+      const discardPreparedPacket = (key,pageIndex) => {
+        const preparation=sourcePreparation;
+        if(preparation?.key===key && preparation.pendingPage?.pageIndex===pageIndex)preparation.pendingPage=null;
+      };
       const finishSourcePreparation = key => {
         const preparation=sourcePreparation;
         if(!preparation || preparation.key!==key)return;
@@ -608,7 +699,7 @@
         preparation.host.remove();sourcePreparation=null;
       };
 
-      const installPhysicalFragment = job => {
+      const installPhysicalFragment = (job, fragmentDOM) => {
         const fragment=job.fragment;
         configurePaper(payload,fragment.pageIndex);
         if(Math.abs(pageLayout.pageWidth-fragment.width)>1/32 || Math.abs(pageLayout.pageHeight-fragment.height)>1/32) {
@@ -620,17 +711,16 @@
         const origin=fragment.pageIndex*pageLayout.stride;
         Object.assign(root.style,{left:`${origin}px`,top:`${fragment.contentTop}px`,width:`${fragment.width}px`,
           height:`${fragment.contentBottom-fragment.contentTop}px`,overflow:'hidden'});
-        const template=document.createElement('template');template.innerHTML=fragment.html;
         const oldEditor=editingBlockID && [...root.children].find(node=>node.dataset.blockId===editingBlockID);
         let keptEditor=false;
-        for(const node of [...template.content.children]) {
+        for(const node of [...fragmentDOM.children]) {
           node.style.top=`${parseFloat(node.style.top)-fragment.contentTop}px`;
           if(oldEditor && node.dataset.blockId===editingBlockID) {
             node.replaceWith(oldEditor);keptEditor=true;
           }
         }
-        if(oldEditor&&!keptEditor)template.content.append(oldEditor);
-        root.replaceChildren(template.content);
+        if(oldEditor&&!keptEditor)fragmentDOM.append(oldEditor);
+        root.replaceChildren(...fragmentDOM.childNodes);
         let sheet=backgrounds.firstElementChild;
         if(!sheet){sheet=document.createElement('section');backgrounds.append(sheet)}
         sheet.className='paper-sheet';sheet.style.left=`${origin}px`;
@@ -643,14 +733,80 @@
         installedSourceKey=payload.sourceKey;
       };
 
+      let activeImagePreparation = null;
+      let requiredFrame = null;
+      let retiredPresentation = null;
+      let activeProgramPreparation = null;
+      const frameIsRequired = frame => frame.runtimeID!==retiredPresentation
+        && (!requiredFrame || (frame.runtimeID===requiredFrame.runtimeID
+        && frame.generation===requiredFrame.generation));
+      const requireFrame = frame => {
+        if(typeof frame?.runtimeID!=='string' || !/^[0-9]{1,20}$/.test(frame?.generation || ''))
+          throw new Error('document_frame_requirement_invalid');
+        if(requiredFrame?.runtimeID===frame.runtimeID && BigInt(frame.generation)<BigInt(requiredFrame.generation))return;
+        requiredFrame={runtimeID:frame.runtimeID,generation:frame.generation};
+        if(activeImagePreparation && !frameIsRequired(activeImagePreparation.job.frame))
+          activeImagePreparation.controller.abort();
+        if(activeProgramPreparation && !frameIsRequired(activeProgramPreparation.frame))
+          activeProgramPreparation.controller.abort();
+      };
+      // Program readiness/state replies are logical subscriptions. Cancelling a
+      // frame stops its wait; a retained program can serve the next generation.
+      // Image decode uses its own drain barrier and is never raced this way.
+      const waitForProgram = (promise, signal) => new Promise((resolve,reject)=>{
+        const abort=()=>{signal.removeEventListener('abort',abort);reject(new DOMException('Document frame superseded','AbortError'))};
+        Promise.resolve(promise).then(value=>{signal.removeEventListener('abort',abort);resolve(value)},
+          error=>{signal.removeEventListener('abort',abort);reject(error)});
+        if(signal.aborted){abort();return;}
+        signal.addEventListener('abort',abort,{once:true});
+      });
+      const retirePresentation = runtimeID => {
+        retiredPresentation=runtimeID;
+        if(pendingFrame?.frame.runtimeID===runtimeID)pendingFrame=null;
+        if(activeImagePreparation?.job.frame.runtimeID===runtimeID)activeImagePreparation.controller.abort();
+        if(activeProgramPreparation?.frame.runtimeID===runtimeID)activeProgramPreparation.controller.abort();
+        // An unstarted program has never admitted native input. End its actual
+        // browsing context so an unresolved ready promise cannot retain a slot.
+        if(payload?.runtimeID===runtimeID)for(const [id,runtime] of interactiveFrames)if(!runtime.isStarted) {
+          runtime.container.remove();runtime.cancel();interactiveFrames.delete(id);
+        }
+      };
       const renderFrame = async (job) => {
-        currentFrame = job;
+        if(!frameIsRequired(job.frame))return;
+        const observation = observationMatches(job.frame) ? preparationObservation : null;
+        const startedAt = observation ? performance.now() : 0;
+        const mark = name => {
+          if (observation && preparationObservation === observation)
+            observation.phasesMS['render_' + name] = performance.now() - startedAt;
+        };
+        mark('enter'); observeBrowserState(observation, 'render_enter');
         const localStates = job.refreshSource && payload?.stateKey === job.state.key ? payload.states : job.state.states;
         const previousPage = currentPageIndex();
         const sourceChanged = installedSourceKey !== job.source.key || job.refreshSource;
         const fragmentChanged = installedFragment !== job.fragment || sourceChanged;
         const stateChanged = appliedStateKey !== job.state.key;
         const modeChanged = payload?.programMode !== job.frame.programMode;
+        let fragmentDOM = null;
+        if (fragmentChanged) {
+          // A detached element still belongs to the active document. Template
+          // contents have an inert owner document, where img.decode may reject.
+          fragmentDOM=document.createElement('div');fragmentDOM.innerHTML=job.fragment.html;
+          mark('fragmentDOM');
+          const attempt={job,controller:new AbortController(),fragmentDOM};
+          activeImagePreparation=attempt;
+          try {
+            await notebookDocumentImages.waitForPixels(fragmentDOM,attempt.controller.signal);
+            mark('images');
+            // Newer source/state/page work replaces the pending requirement,
+            // never the pixels of this older frame after a delayed decode.
+            if(activeImagePreparation!==attempt || attempt.controller.signal.aborted || pendingFrame || !frameIsRequired(attempt.job.frame)) return;
+            job=attempt.job; // A mounted host may have changed editing authority while pixels were pending.
+          } finally {
+            if(activeImagePreparation===attempt)activeImagePreparation=null;
+          }
+        }
+        if (pendingFrame || !frameIsRequired(job.frame)) return;
+        currentFrame = job;
         payload = {...job.source,...job.frame,states:{...localStates}};
         presentationIsRendering = true;
         presentationChanged();
@@ -663,23 +819,58 @@
           const style=document.getElementById('document-math-styles');
           const css=`@scope (#document) {${job.mathStyles}}`;
           if(style.textContent!==css)style.textContent=css;
-          runtimeDiagnostics=job.diagnostics.slice();installPhysicalFragment(job);
+          runtimeDiagnostics=job.diagnostics.slice();installPhysicalFragment(job,fragmentDOM);
         }
         else setPageIndex(payload.pageIndex);
+        mark('install');
+        const dependency={frame:job.frame,controller:new AbortController()};
+        activeProgramPreparation=dependency;
+        try {
         if(fragmentChanged || previousPage !== currentPageIndex() || modeChanged){
-          await prepareInteractiveFrames();
+          await waitForProgram(prepareInteractiveFrames(),dependency.controller.signal);
+          if(!frameIsRequired(job.frame))return;
           activeEditorLayout?.();
           restoreEditor();
         }
+        mark('programs');
         if(stateChanged || sourceChanged || previousPage !== currentPageIndex()){
           work.stateApplications += 1;
-          await applyInteractiveState();
+          await waitForProgram(applyInteractiveState(),dependency.controller.signal);
+          if(!frameIsRequired(job.frame))return;
           appliedStateKey = job.state.key;
         }
+        } finally { if(activeProgramPreparation===dependency)activeProgramPreparation=null; }
+        mark('state');
+        if(pendingFrame || !frameIsRequired(job.frame) || !currentFrame
+          || ['documentID','renderToken','sourceKey','stateKey','generation','pageIndex'].some(key=>currentFrame.frame[key]!==job.frame[key]))return;
         presentationIsRendering = false;
         presentationChanged();
+        mark('complete');
         bridge({kind:'rendered',documentID:payload.documentID,renderToken:payload.renderToken,
           sourceKey:payload.sourceKey,stateKey:payload.stateKey,generation:payload.generation,layoutCanonical,pageCount:pageLayout.pageCount});
+      };
+
+      const observedPageReceipt = async (index, waitsForFrames, attemptID) => {
+        const observation = observationMatches(payload) && preparationObservation.attemptID === attemptID
+          ? preparationObservation : null;
+        const startedAt = observation ? performance.now() : 0;
+        const phases = {};
+        const mark = name => {
+          if (observation) phases['receipt_' + name] = performance.now() - startedAt;
+        };
+        mark('enter'); observeBrowserState(observation, 'receipt_enter');
+        setPageIndex(index); mark('setPage');
+        if (waitsForFrames) await new Promise(resolve => requestAnimationFrame(() => {
+          mark('raf1'); observeBrowserState(observation, 'receipt_raf1');
+          requestAnimationFrame(() => {
+            mark('raf2'); observeBrowserState(observation, 'receipt_raf2'); resolve();
+          });
+        }));
+        const receipt = pageReceipt(); mark('complete');
+        if (receipt && observation && preparationObservation === observation && observationMatches(payload, observation))
+          receipt.preparationObservation = {attemptID: observation.attemptID,
+            phasesMS: {...observation.phasesMS, ...phases}, states: {...observation.states}};
+        return receipt;
       };
 
       // Each pending frame retains its immutable inputs. A newer source or
@@ -700,16 +891,20 @@
       const applyState = state => { stateSnapshot = state; };
       const enqueueFrame = job => {
         pendingFrame = job;
+        // Abort only further submissions; the owner retains one template and
+        // waits for every already-submitted decode before taking the latest job.
+        activeImagePreparation?.controller.abort();
         if (!renderTask) {
           renderTask = (async () => {
             while (pendingFrame) {
               const next = pendingFrame;
               pendingFrame = null;
               try { await renderFrame(next); } catch(error) {
-                diagnostic('render_error',error);
-                bridge({kind:'renderFailed',documentID:next.frame.documentID,
+                if(error?.name==='AbortError' || pendingFrame || !frameIsRequired(next.frame))continue;
+                diagnostic(error?.blockID ? 'image_error' : 'render_error',error,error?.blockID);
+                bridge({kind:'renderFailed',documentID:next.frame.documentID,runtimeID:next.frame.runtimeID,
                   renderToken:next.frame.renderToken,sourceKey:next.frame.sourceKey,stateKey:next.frame.stateKey,
-                  generation:next.frame.generation,message:String(error)});
+                  generation:next.frame.generation,message:String(error),blockID:error?.blockID});
               }
             }
           })().finally(() => { renderTask = null; });
@@ -722,10 +917,11 @@
           || frame.documentID !== stateSnapshot.documentID){
           throw new Error('Document frame does not match its immutable source and state');
         }
+        requireFrame(frame);
         return enqueueFrame({...sourceSnapshot,state:stateSnapshot,frame,refreshSource:false});
       };
       const refreshSourcePresentation = () => {
-        const latest = pendingFrame || currentFrame;
+        const latest = pendingFrame || activeImagePreparation?.job || currentFrame;
         if(latest)enqueueFrame({...latest,refreshSource:true});
       };
 
@@ -738,6 +934,7 @@
         editingBlockID = blockID;
         presentationChanged();
         const minimumHeight = 144;
+        const toolbarHeight = 52;
         let editorTop = pageLayout.margin;
         const editor = document.createElement('textarea');
         editor.className = 'source-editor';
@@ -769,6 +966,20 @@
         editor.setAttribute('inputmode', 'text');
         section.style.visibility = 'hidden';
         editorLayer.append(editor);
+        const toolbar = document.createElement('div');
+        toolbar.className = 'source-editor-toolbar';
+        toolbar.setAttribute('role', 'group');
+        toolbar.setAttribute('aria-label', 'Редактирование исходника');
+        const status = document.createElement('span');
+        status.className = 'source-editor-status'; status.setAttribute('role', 'status');
+        const cancelButton = document.createElement('button');
+        cancelButton.type = 'button'; cancelButton.textContent = 'Отменить';
+        cancelButton.dataset.editorAction = 'cancel';
+        const saveButton = document.createElement('button');
+        saveButton.type = 'button'; saveButton.textContent = 'Сохранить';
+        saveButton.dataset.editorAction = 'save';
+        toolbar.append(status, cancelButton, saveButton);
+        editorLayer.append(toolbar);
         const fitEditor = () => {
           const available = Math.max(
             minimumHeight,
@@ -785,7 +996,7 @@
           const trackRect = track.getBoundingClientRect();
           const page = currentPageIndex();
           editorTop = Math.max(
-            pageLayout.margin,
+            pageLayout.margin + toolbarHeight,
             Math.min(
               sectionRect.top - trackRect.top,
               pageLayout.pageHeight - pageLayout.margin - minimumHeight
@@ -794,6 +1005,9 @@
           editor.style.left = `${page * pageLayout.stride + pageLayout.margin}px`;
           editor.style.top = `${editorTop}px`;
           editor.style.width = `${pageLayout.contentWidth}px`;
+          toolbar.style.left = editor.style.left;
+          toolbar.style.top = `${editorTop - toolbarHeight}px`;
+          toolbar.style.width = editor.style.width;
           fitEditor();
         };
         positionEditor();
@@ -812,13 +1026,8 @@
         editor.setSelectionRange(restored?.selectionStart ?? editor.value.length, restored?.selectionEnd ?? editor.value.length);
         if(!restored)reportDraft();
 
-        const status = document.createElement('div');
-        status.className='source-editor-status'; status.setAttribute('role','status');
-        Object.assign(status.style,{position:'absolute',left:editor.style.left,top:`${editorTop-28}px`,
-          font:'13px -apple-system',background:'white',padding:'4px',zIndex:2});
-        editorLayer.append(status);
         const close = () => {
-          editor.remove(); status.remove(); section.style.visibility='';
+          editor.remove(); toolbar.remove(); section.style.visibility='';
           editingBlockID=null; activeEditorFinish=null; activeEditorLayout=null; activeEditor=null;
           presentationIsRendering=true;
           presentationChanged();
@@ -831,6 +1040,7 @@
             close(); refreshSourcePresentation(); return;
           }
           reportDraft(); waitingForCommit=true; editor.readOnly=true;
+          saveButton.disabled = true; cancelButton.disabled = true;
           status.textContent='Сохранение…';
           bridge({kind:'source',documentID:edit.documentID,blockID,edit:{...edit,source:editor.value,sequence}});
         };
@@ -839,6 +1049,7 @@
         },complete:(result)=>{
           if(result.sequence!==sequence)return;
           waitingForCommit=false;editor.readOnly=false;
+          saveButton.disabled = false; cancelButton.disabled = false;
           if(result.status==='committed'){
             finishedSessionIDs.add(edit.sessionID.toLowerCase());
             close(); refreshSourcePresentation();
@@ -847,6 +1058,8 @@
               :result.status==='targetMissing'?'Блок удалён. Ваш черновик сохранён.':'Не удалось сохранить. Черновик остаётся здесь.';
           }
         }};
+        saveButton.addEventListener('click', () => finish(true));
+        cancelButton.addEventListener('click', () => finish(false));
         activeEditorFinish = finish;
         editor.addEventListener('keydown', event => {
           if (event.key === 'Escape') { event.preventDefault(); finish(false); }
@@ -870,6 +1083,7 @@
         const updating = job => job && {...job,frame:{...job.frame,editable:enabled,
           drafts:enabled ? drafts : job.frame.drafts}};
         pendingFrame=updating(pendingFrame);currentFrame=updating(currentFrame);
+        if(activeImagePreparation)activeImagePreparation.job=updating(activeImagePreparation.job);
         if(!payload)return null;
         if(!enabled){
           const draft=activeEditor?.suspend() || null;
@@ -880,6 +1094,7 @@
         payload.editable=true;payload.drafts=drafts;restoreEditor();return null;
       };
 
+      let linkActivationSequence = 0;
       root.addEventListener('click', event => {
         const link=event.target.closest('a[href]');
         if(!link || !root.contains(link))return;
@@ -887,7 +1102,8 @@
         // physical cut. The native presence owner opens the measured target.
         event.preventDefault();lastTouchTap=null;
         if(!payload || !layoutCanonical || editingBlockID || presentationIsRendering)return;
-        bridge({kind:'link',...presentationReceipt(),href:link.getAttribute('href'),userActivated:event.isTrusted});
+        bridge({kind:'link',...presentationReceipt(),href:link.getAttribute('href'),
+          activationSequence:String(++linkActivationSequence),userActivated:event.isTrusted});
       });
       root.addEventListener('dblclick', event => {
         if(event.target.closest('a[href]'))return;
@@ -929,6 +1145,13 @@
         if(!found)return;
         const [blockID,runtime]=found;
         if(message.token!==runtime.token)return;
+        if(message.channel==='notebook-program-focus'){
+          runtime.focused=message.focused===true;
+          bridge({kind:'programFocus',blockID,blockToken:runtime.token,focused:message.focused===true});return;
+        }
+        if(message.channel==='notebook-program-flushed'){
+          if(message.requestID===runtime.retirementID)runtime.flushed?.(message.state);return;
+        }
         if(message.channel==='notebook-diagnostic'){diagnostic(message.kind,message.message,blockID);return}
         if(message.channel==='notebook-program-started'){runtime.resolve();return}
         if(message.channel==='notebook-program-ready'){runtime.readiness='declared';return}
@@ -939,25 +1162,13 @@
         bridge({kind:'state',documentID:payload.documentID,blockID,blockToken:runtime.token,value:message.state});
       });
       addEventListener('dragstart', event => event.preventDefault());
-      // The laid-out viewport owns paper size, including a shrink back after
-      // expansion. Window resize can arrive before WebKit updates this box.
-      let lastViewportWidth = null, lastViewportHeight = null;
-      new ResizeObserver(() => {
-        if (!payload) return;
-        const bounds = viewport.getBoundingClientRect();
-        if(bounds.width === lastViewportWidth && bounds.height === lastViewportHeight)return;
-        lastViewportWidth=bounds.width;lastViewportHeight=bounds.height;
-        const requestedPage = currentPageIndex();
-        configurePaper(payload, requestedPage);
-        positionInteractiveFrames();
-        activeEditorLayout?.();
-      }).observe(viewport);
-
       window.notebookRenderer = {
-        beginSourcePreparation, preparePagePacket, readPreparedPacket, finishSourcePreparation,
+        beginSourcePreparation, preparePagePacket, readPreparedPacket, discardPreparedPacket, finishSourcePreparation,
         installPageSource,
+        blurPrograms:()=>{for(const runtime of interactiveFrames.values())if(runtime.focused)
+          runtime.frame.contentWindow.postMessage({channel:'notebook-navigation-blur',token:runtime.token},'*');return true;},
         applyState,
-        presentPage,
+        presentPage, requireFrame, retirePresentation, observePreparation, observedPageReceipt,
         setPageIndex,
         pageReceipt,
         presentationReceipt,
@@ -965,6 +1176,17 @@
         completeSourceEdit: result => {if(activeEditor?.sessionID.toLowerCase()===result.sessionID.toLowerCase())activeEditor.complete(result)}
       };
       bridge({ kind: 'ready' });
+      // A body-free shell may finish common startup before a document exists.
+      // This acknowledges the actual shared promise, never page/pixel readiness.
+      Promise.resolve().then(async () => {
+        if (!MathJax?.startup?.promise) throw new Error('common_document_runtime_missing');
+        await MathJax.startup.promise;
+        if (typeof MathJax.typesetPromise !== 'function') throw new Error('common_document_math_runtime_missing');
+        bridge({ kind: 'commonRuntimeReady' });
+      }).catch(error => {
+        diagnostic('common_runtime_error', error);
+        bridge({ kind: 'commonRuntimeFailed' });
+      });
     })();
   </script>
 </body>

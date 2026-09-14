@@ -4,20 +4,195 @@ import contextlib
 import copy
 import io
 import json
+import plistlib
 from pathlib import Path
 import subprocess
+import struct
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+import uuid
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "Applications"))
 import notebook_release as release
 import notebook_verification as verify
+import notebook_acceptance as acceptance
 
 
 class SelectionTests(unittest.TestCase):
+    def test_document_ui_requires_a_real_address_and_ipad_before_touching_the_stand(self):
+        method = "NotebookDocumentAcceptanceUITests/testRealPageControlsLinksAndTouchSourceEditingSurviveColdReopening"
+        identifier = "ADB44DE5-5B67-44F8-8371-9D03883E55EC"
+        value = acceptance.document_ui_request("ipad", method, identifier, "Контрольный документ")
+        self.assertEqual(value["documentID"], identifier.lower())
+        self.assertEqual(value["timeoutSeconds"], 300)
+        self.assertEqual(value["environment"], {"NOTEBOOK_ACCEPTANCE_DOCUMENT_ID": identifier.lower(),
+                                             "NOTEBOOK_ACCEPTANCE_DOCUMENT_TITLE": "Контрольный документ"})
+        for platform, document_id, title in (("mac", identifier, "Title"), ("ipad", None, "Title"),
+                ("ipad", "not-a-uuid", "Title"), ("ipad", identifier.replace("-", ""), "Title"),
+                ("ipad", "00000000-0000-0000-0000-000000000000", "Title"),
+                ("ipad", identifier, None), ("ipad", identifier, "   "),
+                ("ipad", identifier, "bad\x00title"), ("ipad", identifier, "x" * 513)):
+            with self.subTest(platform=platform, document_id=document_id, title=title):
+                with self.assertRaises(release.ReleaseError):
+                    acceptance.document_ui_request(platform, method, document_id, title)
+
+    def test_only_the_exact_cold_document_scenario_gets_660_seconds(self):
+        identifier = "adb44de5-5b67-44f8-8371-9d03883e55ec"
+        method = "NotebookDocumentAcceptanceUITests/testTenColdOpeningsAndWarmDistantLinksMeetNativeInstallationBudgets"
+        value = acceptance.document_ui_request("ipad", method, identifier, "Control")
+        self.assertEqual(value["timeoutSeconds"], 660)
+        changed = acceptance.document_ui_request("ipad", method + "Other", identifier, "Control")
+        self.assertEqual(changed["timeoutSeconds"], 300)
+        ordinary = "NotebookAcceptanceUITests/testRealChatReplyAfterPairing"
+        self.assertIsNone(acceptance.document_ui_request("ipad", ordinary, None, None))
+        with self.assertRaises(release.ReleaseError):
+            acceptance.document_ui_request("ipad", ordinary, identifier, "Control")
+
+    def test_collaborative_host_deadline_exceeds_real_native_agent_waits_only_for_exact_scenarios(self):
+        scenarios = [
+            "NotebookCollaborationAcceptanceUITests/testSentRegionRemainsImmutableWhileRealAgentCreatesAnInteractiveDocument",
+            "NotebookCollaborationAcceptanceUITests/testConcurrentHumanStateRejectsStaleAgentWriteAndSurvivesItsUndo",
+        ]
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario):
+                self.assertEqual(acceptance.ui_timeout("ipad", scenario), 660)
+                self.assertGreater(acceptance.ui_timeout("ipad", scenario), 600)
+                self.assertEqual(acceptance.ui_timeout("ipad", scenario + "Other"), 240)
+                with self.assertRaises(release.ReleaseError):
+                    acceptance.ui_timeout("mac", scenario)
+
+    def test_ui_deadlines_preserve_document_and_bounded_mixed_workload_contracts(self):
+        self.assertEqual(acceptance.ui_timeout("ipad", "NotebookAcceptanceUITests/testRealChatReplyAfterPairing"), 240)
+        for seconds in (300, 660):
+            self.assertEqual(acceptance.ui_timeout("ipad", "NotebookDocumentAcceptanceUITests/testDocument",
+                                                  document={"timeoutSeconds": seconds}), seconds)
+        workload = "NotebookAcceptanceUITests/testThirtyMinutesOfMixedInteraction"
+        for seconds in (1800, 2700):
+            self.assertEqual(acceptance.ui_timeout("ipad", workload, workload_seconds=seconds), seconds + 180)
+        for platform, seconds in (("mac", 1800), ("ipad", 1799), ("ipad", 2701)):
+            with self.subTest(platform=platform, seconds=seconds), self.assertRaises(release.ReleaseError):
+                acceptance.ui_timeout(platform, workload, workload_seconds=seconds)
+
+    def test_attached_trace_accepts_only_ipad_scenarios_with_the_launch_handshake(self):
+        collaborative = [
+            "NotebookCollaborationAcceptanceUITests/testSentRegionRemainsImmutableWhileRealAgentCreatesAnInteractiveDocument",
+            "NotebookCollaborationAcceptanceUITests/testConcurrentHumanStateRejectsStaleAgentWriteAndSurvivesItsUndo",
+        ]
+        for scenario in collaborative + ["NotebookAcceptanceUITests/testRealChatReplyAfterPairing",
+                                        "NotebookDocumentAcceptanceUITests/testRealPageControlsLinksAndTouchSourceEditingSurviveColdReopening"]:
+            self.assertTrue(acceptance.supports_attached_ui_trace("ipad", scenario))
+            self.assertFalse(acceptance.supports_attached_ui_trace("mac", scenario))
+        for scenario in [collaborative[0] + "Other", "NotebookCollaborationAcceptanceUITests/testWithoutHandshake",
+                         "NotebookChatPanelTests/testNativeWorkShimmersOnceAndDisclosureSurvivesResizeWithoutReplayingItems",
+                         "UnknownUITests/testRealGesture"]:
+            self.assertFalse(acceptance.supports_attached_ui_trace("ipad", scenario))
+
+    def test_simulator_signature_requires_only_its_private_keychain_group(self):
+        identifier = acceptance.SIMULATOR_TEAM + "." + acceptance.IPAD_BUNDLE
+        valid = {"application-identifier": identifier, "keychain-access-groups": [identifier]}
+        acceptance.validate_simulator_entitlements(valid)
+        for invalid in ({}, {**valid, "application-identifier": "production"},
+                        {**valid, "keychain-access-groups": []},
+                        {**valid, "keychain-access-groups": [identifier, "production"]},
+                        {**valid, "com.apple.security.application-groups": ["production"]}):
+            with self.assertRaises(release.ReleaseError):
+                acceptance.validate_simulator_entitlements(invalid)
+
+    def test_acceptance_mac_has_its_own_stable_apple_identity(self):
+        display = ("Identifier=" + acceptance.MAC_BUNDLE + "\nTeamIdentifier=" + release.TEAM
+                   + "\nAuthority=Apple Development: Test Developer\nCDHash=" + "a" * 40 + "\n")
+        signer, identity = acceptance.mac_acceptance_signer(display)
+        self.assertEqual(signer, "Apple Development: Test Developer")
+        self.assertEqual(identity["identifier"], acceptance.MAC_BUNDLE)
+        for invalid in (display + "Signature=adhoc\n",
+                        display.replace(acceptance.MAC_BUNDLE, release.MAC_BUNDLE),
+                        display.replace(release.TEAM, "OTHERTEAM"),
+                        display.replace("Apple Development: Test Developer", "Untrusted Developer")):
+            with self.assertRaises(release.ReleaseError):
+                acceptance.mac_acceptance_signer(invalid)
+
+    def test_ui_drives_the_installed_app_without_removing_runner_dependencies(self):
+        app = "/test/products/Notebook.app"
+        dependencies = ["/test/products/TestRunner.app", app, "/test/products/Support.framework"]
+        target = {"UITargetAppPath": app, "DependentProductPaths": dependencies[:],
+                  "TestBundlePath": "/test/products/Tests.xctest"}
+        acceptance.use_installed_ui_application(target)
+        self.assertNotIn("UITargetAppPath", target)
+        self.assertTrue(target["UseUITargetAppProvidedByTests"])
+        self.assertEqual(target["DependentProductPaths"], [dependencies[0], dependencies[2]])
+        self.assertEqual(target["TestBundlePath"], "/test/products/Tests.xctest")
+        before = dict(target)
+        acceptance.use_installed_ui_application(target)
+        self.assertEqual(target, before)
+
+    def test_native_workers_have_stable_signed_identity_separate_from_the_paired_stand(self):
+        settings = dict(value.split("=", 1) for value in verify.native_mac_signing_settings())
+        self.assertEqual(settings["CODE_SIGN_IDENTITY"], "Apple Development")
+        self.assertEqual(settings["DEVELOPMENT_TEAM"], release.TEAM)
+        self.assertEqual(settings["NOTEBOOK_BUNDLE_SUFFIX"], ".acceptance")
+        self.assertEqual(settings["NOTEBOOK_ACCEPTANCE_ENABLED"], "YES")
+        self.assertEqual(settings["NOTEBOOK_SCRIPT_BUNDLE_SUFFIX"], ".native-test")
+        self.assertNotEqual(settings["NOTEBOOK_SCRIPT_BUNDLE_SUFFIX"], settings["NOTEBOOK_BUNDLE_SUFFIX"])
+
+    def test_simulator_entitlements_come_from_the_executable_and_refuse_wrong_platform_or_bounds(self):
+        identifier = acceptance.SIMULATOR_TEAM + "." + acceptance.IPAD_BUNDLE
+        entitlements = {"application-identifier": identifier, "keychain-access-groups": [identifier]}
+        payload = plistlib.dumps(entitlements)
+        def executable(platform=7):
+            build = struct.pack("<IIIIII", 0x32, 24, platform, 0, 0, 0)
+            segment = struct.pack("<II16sQQQQIIII", 0x19, 152, b"__TEXT", 0, 0, 0, 0, 0, 0, 1, 0)
+            section = struct.pack("<16s16sQQIIIIIIII", b"__entitlements", b"__TEXT", 0, len(payload),
+                                  208, 0, 0, 0, 0, 0, 0, 0)
+            header = struct.pack("<IiiIIIII", 0xFEEDFACF, 0x0100000C, 0, 2, 2, 176, 0, 0)
+            return header + build + segment + section + payload
+        valid = executable()
+        self.assertEqual(acceptance.simulator_entitlements(valid), entitlements)
+        outside = bytearray(valid)
+        struct.pack_into("<I", outside, 176, len(valid) + 1)
+        for invalid in (b"", valid[:40], valid[:-1], executable(platform=2), bytes(outside),
+                        valid.replace(b"__entitlements", b"__missing-data")):
+            with self.assertRaises(release.ReleaseError):
+                acceptance.simulator_entitlements(invalid)
+
+    def test_simulator_relocation_preserves_every_identity_and_changes_only_root(self):
+        old = self.root / "old-container"
+        new = self.root / "new-container"
+        manifest = {"root": str(old / "Documents/acceptance/run/workspace"),
+                    "actorID": "ipad-actor", "workspaceID": "shared-workspace", "runID": "run",
+                    "bundleID": acceptance.IPAD_BUNDLE, "sourceRevision": "original-checkpoint"}
+        changed = acceptance.rebase_simulator_manifest(manifest, old, new)
+        self.assertEqual(changed, {**manifest, "root": str(new.resolve() / "Documents/acceptance/run/workspace")})
+        self.assertEqual(manifest["root"], str(old / "Documents/acceptance/run/workspace"))
+        for outside in (self.root / "production", old):
+            with self.assertRaises(release.ReleaseError):
+                acceptance.rebase_simulator_manifest({**manifest, "root": str(outside)}, old, new)
+
+    def test_installed_manifest_follows_moved_container_without_reading_missing_original(self):
+        old, new = (self.root / str(uuid.uuid4()) for _ in range(2))
+        run_id, workspace = str(uuid.uuid4()), str(uuid.uuid4())
+        relative = Path("Documents/acceptance") / run_id / "ipad.json"
+        current = new / relative
+        current.parent.mkdir(parents=True)
+        manifest = {"runID": run_id, "workspaceID": workspace, "bundleID": acceptance.IPAD_BUNDLE,
+                    "actorID": str(uuid.uuid4()), "root": str(old / relative.parent / "store")}
+        current.write_text(json.dumps(manifest))
+        original_bytes = current.read_bytes()
+        value = {"runID": run_id, "workspaceID": workspace, "iPadManifest": str(old / relative)}
+        with patch.object(acceptance, "run", return_value=str(new).encode()):
+            container, path, relocated = acceptance.installed_ipad_manifest(value, "selected-simulator")
+            self.assertEqual(container, new.resolve())
+            self.assertEqual(path, current.resolve())
+            self.assertEqual(relocated, {**manifest, "root": str((new / relative.parent / "store").resolve())})
+            self.assertFalse((old / relative).exists())
+            self.assertEqual(current.read_bytes(), original_bytes)
+            current.write_text(json.dumps({**manifest, "workspaceID": str(uuid.uuid4())}))
+            with self.assertRaises(release.ReleaseError):
+                acceptance.installed_ipad_manifest(value, "selected-simulator")
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -64,11 +239,36 @@ class SelectionTests(unittest.TestCase):
         self.assertTrue(all(s.count("/") == 2 and "HundredThousand" not in s and "UITests" not in s for s in plan["checks"]["ipad"]))
 
     def test_a_misspelled_selector_cannot_hide_behind_other_passed_tests(self):
-        tree = {"testNodes": [{"name": "NotebookTests", "children": [
+        tree = {"testNodes": [{"name": "NotebookTests", "nodeType": "Unit test bundle", "children": [
             {"nodeType": "Test Case", "nodeIdentifier": "Suite/testCase()", "result": "Passed"}]}]}
         verify.validate_executed_tests(tree, ["NotebookTests/Suite", "NotebookTests/Suite/testCase"])
         with self.assertRaises(release.ReleaseError):
             verify.validate_executed_tests(tree, ["NotebookTests/Suite/testCase", "NotebookTests/Suite/missing"])
+
+    def test_acceptance_selector_uses_actual_bundle_owner_not_the_project_name(self):
+        for bundle in ("NotebookAcceptanceUITests", "NotebookMacAcceptanceUITests"):
+            case = {"name": "testPair()", "nodeType": "Test Case", "result": "Passed",
+                    "nodeIdentifier": bundle + "/testPair()", "durationInSeconds": 2}
+            tree = {"testNodes": [{"name": "NotebookAcceptanceUIHarness", "nodeType": "Test Plan", "children": [
+                {"name": bundle, "nodeType": "UI test bundle", "children": [
+                    {"name": bundle, "nodeType": "Test Suite", "children": [case]}]}]}]}
+            selector = bundle + "/" + bundle + "/testPair"
+            verify.validate_executed_tests(tree, [selector])
+            self.assertEqual(verify.timing_report(tree)["targets"], {bundle: {"tests": 1, "seconds": 2}})
+            for wrong in (bundle + "/OtherSuite/testPair", bundle + "/" + bundle + "/testOther",
+                          "NotebookAcceptanceUIHarness/" + bundle + "/testPair"):
+                with self.assertRaises(release.ReleaseError): verify.validate_executed_tests(tree, [wrong])
+
+    def test_suite_name_cannot_impersonate_the_selected_bundle_or_a_skipped_case(self):
+        bundle = {"name": "OtherUITests", "nodeType": "UI test bundle", "children": [
+            {"name": "NotebookAcceptanceUITests", "nodeType": "Test Suite", "children": [
+                {"nodeType": "Test Case", "nodeIdentifier": "NotebookAcceptanceUITests/testPair()", "result": "Passed"}]}]}
+        tree = {"testNodes": [bundle]}
+        selector = "NotebookAcceptanceUITests/NotebookAcceptanceUITests/testPair"
+        with self.assertRaises(release.ReleaseError): verify.validate_executed_tests(tree, [selector])
+        bundle["name"] = "NotebookAcceptanceUITests"
+        bundle["children"][0]["children"][0]["result"] = "Skipped"
+        with self.assertRaises(release.ReleaseError): verify.validate_executed_tests(tree, [selector])
 
     def test_live_placement_profile_covers_delivery_and_held_scene_without_full_acceptance(self):
         plan = verify.make_plan(self.root, profiles=["live-placement"], only=True)
@@ -116,8 +316,156 @@ class SelectionTests(unittest.TestCase):
     def test_document_markup_does_not_run_ui_gestures(self):
         self.change("Applications/WebResources/document-fragments.js")
         plan = verify.make_plan(self.root)
-        self.assertEqual(plan["profiles"], ["documents"])
+        self.assertEqual(plan["profiles"], ["document-web"])
         self.assertFalse(any(s.startswith("NotebookUITests") for s in plan["checks"]["ipad"]))
+
+    def test_each_browser_contract_selects_web_boundaries_not_all_documents(self):
+        paths = ["Tests/NotebookDocumentAcceptance/test_common_shell_startup.mjs",
+                 "Tests/NotebookDocumentAcceptance/test_document_images.mjs",
+                 "Tests/NotebookDocumentAcceptance/test_link_activation.mjs"]
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertEqual(verify.owners(path), ["document-web"])
+        plan = verify.make_plan(self.root, profiles=["document-web"], only=True)
+        self.assertEqual(plan["checks"]["commands"], ["document-browser"])
+        for suite in ("DocumentShellPreparationTests", "DocumentImageReadinessTests", "DocumentLinkActivationTests"):
+            self.assertIn("NotebookTests/" + suite, plan["checks"]["ipad"])
+        self.assertEqual(verify.owners("Tests/NotebookDocumentAcceptance/test_system_trace.py"), ["acceptance-bootstrap"])
+
+    def test_document_shell_selects_four_native_boundaries_and_js_not_storage_or_full_ui(self):
+        self.change("Applications/WebResources/document-shell.html")
+        plan = verify.make_plan(self.root)
+        self.assertEqual(plan["profiles"], ["document-web"])
+        self.assertEqual(plan["checks"]["commands"], ["document-browser"])
+        self.assertEqual(plan["checks"]["core"], [])
+        self.assertEqual(plan["checks"]["mac"], ["NotebookMacTests/DocumentRuntimeTests"])
+        self.assertEqual(plan["checks"]["ipad"], ["NotebookTests/DocumentImageReadinessTests",
+            "NotebookTests/DocumentLinkActivationTests", "NotebookTests/DocumentShellPreparationTests"])
+        scenario = verify.UI + "testDocumentLinksOpenTheMeasuredDistantPageAndReturnToContents"
+        self.assertIn(scenario, verify.make_plan(self.root, tests=[scenario])["checks"]["ipad"])
+
+    def test_new_native_owner_uses_existing_same_named_tests_without_a_map_entry(self):
+        for path in ("Applications/Tests/NewOwnerTests.swift", "Applications/MacTests/NewOwnerTests.swift"):
+            self.change(path)
+        self.git("add", "."); self.git("commit", "-qm", "existing contracts")
+        self.change("Applications/Shared/NewOwner.swift")
+        plan = verify.make_plan(self.root)
+        self.assertFalse(plan["profiles"])
+        self.assertFalse(plan["unclassified"])
+        self.assertEqual(plan["checks"]["ipad"], ["NotebookTests/NewOwnerTests"])
+        self.assertEqual(plan["checks"]["mac"], ["NotebookMacTests/NewOwnerTests"])
+        explicit = verify.make_plan(self.root, tests=["NotebookTests/OtherTests/testRegression"], only=True)
+        self.assertEqual(explicit["checks"]["ipad"], ["NotebookTests/OtherTests/testRegression"])
+        self.assertFalse(explicit["checks"]["mac"])
+
+    def test_native_lookup_keeps_platform_scope_and_missing_tests_visible(self):
+        self.change("Applications/MacTests/NewOwnerTests.swift")
+        self.git("add", "."); self.git("commit", "-qm", "mac contract")
+        self.change("Applications/iPad/NewOwner.swift")
+        plan = verify.make_plan(self.root)
+        self.assertEqual(plan["unclassified"], ["Applications/iPad/NewOwner.swift"])
+        self.assertFalse(any(plan["checks"].values()))
+
+    def test_document_owner_uses_nearest_native_contract_instead_of_integration_profile(self):
+        self.change("Applications/Tests/DocumentBlockRuntimeTests.swift")
+        self.git("add", "."); self.git("commit", "-qm", "document contract")
+        self.change("Applications/Shared/DocumentBlockRuntime.swift")
+        plan = verify.make_plan(self.root)
+        self.assertFalse(plan["profiles"])
+        self.assertEqual(plan["checks"], {"core": [], "mac": [], "commands": [],
+                                         "ipad": ["NotebookTests/DocumentBlockRuntimeTests"]})
+
+    def test_shared_native_test_routes_both_targets_but_scale_stays_explicit(self):
+        self.change("Applications/TestSupport/SharedOwnerTests.swift")
+        plan = verify.make_plan(self.root)
+        self.assertEqual(plan["checks"]["ipad"], ["NotebookTests/SharedOwnerTests"])
+        self.assertEqual(plan["checks"]["mac"], ["NotebookMacTests/SharedOwnerTests"])
+        self.change("Applications/Tests/NotebookPageAddressTests.swift")
+        self.change("Applications/Shared/NotebookPageAddress.swift")
+        plan = verify.make_plan(self.root)
+        self.assertIn("Applications/Shared/NotebookPageAddress.swift", plan["unclassified"])
+        self.assertNotIn("NotebookTests/NotebookPageAddressTests", plan["checks"]["ipad"])
+
+    def test_browser_contract_runner_executes_all_three_files_and_refuses_any_failure(self):
+        for path in ("Sources/Fixture.swift", "MCP/fixture.ts", "docs/fixture.md"):
+            self.change(path, "source inventory fixture\n")
+        paths = ["Tests/NotebookDocumentAcceptance/test_common_shell_startup.mjs",
+                 "Tests/NotebookDocumentAcceptance/test_document_images.mjs",
+                 "Tests/NotebookDocumentAcceptance/test_link_activation.mjs"]
+        plan = {"unclassified": [], "manualSelection": True,
+                "checks": {"core": [], "mac": [], "ipad": [], "commands": ["document-browser"]}}
+        for failed in (None, *paths):
+            with self.subTest(failed=failed):
+                for index, path in enumerate(paths):
+                    self.change(path, "import test from 'node:test';import assert from 'node:assert/strict';"
+                                + f"test('required-contract-{index}',()=>assert.equal({str(path != failed).lower()},true));")
+                evidence = self.root / ".build" / ("browser-" + str(failed is not None) + (Path(failed).stem if failed else "passed"))
+                with patch.object(release, "read_toolchain", return_value={"fixture": "command routing only"}):
+                    if failed is None:
+                        receipt = verify.run_selected(self.root, plan, evidence)
+                        self.assertEqual(receipt["status"], "passed")
+                        self.assertEqual(json.loads((evidence / "completed.json").read_text()), plan["checks"])
+                    else:
+                        with self.assertRaises(release.ReleaseError): verify.run_selected(self.root, plan, evidence)
+                        self.assertFalse((evidence / "completed.json").exists())
+                        self.assertFalse((evidence / "verification.json").exists())
+                commands = json.loads((evidence / "commands.json").read_text())
+                self.assertEqual(len(commands), 1, "No application, package install, or native runner is part of these CPU contracts")
+                self.assertEqual(commands[0]["label"], "document-browser")
+                self.assertEqual(commands[0]["argv"], ["node", "--test", *(str(self.root / path) for path in paths)])
+                self.assertEqual(commands[0]["exitCode"] == 0, failed is None)
+                output = (evidence / "document-browser.stdout.log").read_text()
+                for index in range(3): self.assertIn("required-contract-" + str(index), output)
+                if failed is None:
+                    verify.validate_selected(self.root, evidence, receipt)
+                    relocated = self.root / ".build/identical-source"
+                    release.copy_source(self.root, relocated, receipt["source"])
+                    verify.validate_selected(relocated, evidence, receipt)
+                    # Even a successful process cannot certify an omitted or
+                    # substituted script by keeping only the command label.
+                    for omitted in paths:
+                        narrowed = copy.deepcopy(commands)
+                        narrowed[0]["argv"].remove(str(self.root / omitted))
+                        release.write_json(evidence / "commands.json", narrowed)
+                        changed = {**receipt, "artifacts": release.verification_artifacts(evidence, full=False)}
+                        with self.assertRaisesRegex(release.ReleaseError, "другой набор"):
+                            verify.validate_selected(self.root, evidence, changed)
+                    release.write_json(evidence / "commands.json", commands)
+                    substituted = copy.deepcopy(commands)
+                    substituted[0]["cwd"] = str(self.root / "different-source")
+                    release.write_json(evidence / "commands.json", substituted)
+                    changed = {**receipt, "artifacts": release.verification_artifacts(evidence, full=False)}
+                    with self.assertRaisesRegex(release.ReleaseError, "другой набор"):
+                        verify.validate_selected(self.root, evidence, changed)
+                    release.write_json(evidence / "commands.json", commands)
+
+    def test_script_runtime_selects_real_xpc_and_core_admission(self):
+        self.change("Sources/NotebookScriptHost/Coordinator.swift")
+        self.change("Sources/CQuickJS/notebook-quickjs.c")
+        self.change("Sources/NotebookCore/NotebookScriptRun.swift")
+        self.change("Sources/NotebookCore/NotebookScriptEffectOutcome.swift")
+        self.change("Tests/NotebookScriptHostTests/NotebookScriptEffectRecoveryTests.swift")
+        self.change("Tests/NotebookCoreTests/NotebookPublicProtocolTests.swift")
+        self.change("Tests/NotebookScriptWorkerTests/NotebookQuickJSCancellationTests.swift")
+        plan = verify.make_plan(self.root)
+        self.assertFalse(plan["unclassified"])
+        self.assertEqual(plan["profiles"], ["script-runtime"])
+        self.assertIn("NotebookScriptAdmissionTests", plan["checks"]["core"])
+        self.assertTrue({"NotebookScriptCancellationTests", "NotebookScriptEffectOutcomeTests",
+                         "NotebookScriptEffectRecoveryTests", "NotebookScriptHelpTests", "NotebookPublicProtocolTests",
+                         "NotebookScriptDeadlineTests", "NotebookQuickJSCancellationTests"}.issubset(plan["checks"]["core"]))
+        self.assertEqual(plan["checks"]["mac"], ["NotebookMacTests/NotebookScriptServiceTests"])
+        self.assertIn("mcp", plan["checks"]["commands"])
+        self.assertFalse(plan["checks"]["ipad"])
+
+    def test_acceptance_bootstrap_does_not_silently_claim_real_pairing(self):
+        self.change("Applications/Shared/NotebookAcceptanceConfiguration.swift")
+        self.change("Sources/NotebookAcceptance/main.swift")
+        plan = verify.make_plan(self.root)
+        self.assertFalse(plan["unclassified"])
+        self.assertEqual(plan["profiles"], ["acceptance-bootstrap"])
+        self.assertEqual(plan["checks"]["ipad"], ["NotebookTests/NotebookAcceptanceLaunchTests"])
+        self.assertFalse(any("UITests" in check for group in plan["checks"].values() for check in group))
 
     def test_window_and_context_controls_name_their_live_gestures(self):
         for path in ("Applications/iPad/NotebookRootView.swift", "Applications/iPad/NotebookChatWindow.swift",
@@ -134,7 +482,7 @@ class SelectionTests(unittest.TestCase):
         plan = verify.make_plan(self.root)
         self.assertEqual(sum(s.startswith(verify.UI) for s in plan["checks"]["ipad"]), 2)
 
-    def test_explicit_only_does_not_append_suites_and_still_refuses_unknown_owners(self):
+    def test_explicit_only_does_not_append_suites_and_records_unclassified_files(self):
         self.change("Applications/WebResources/document-shell.html")
         self.change("Applications/MacTests/DocumentSnapshotTests.swift")
         scenario = "NotebookMacTests/DocumentLinkNavigationTests"
@@ -171,7 +519,7 @@ class SelectionTests(unittest.TestCase):
         self.change("Applications/WebResources/document-shell.html")
         plan = verify.make_plan(self.root)
         self.assertIn("Package.swift", plan["unclassified"])
-        self.assertEqual(set(plan["profiles"]), {"chat", "chat-touch", "documents"})
+        self.assertEqual(set(plan["profiles"]), {"chat", "chat-touch", "document-web"})
 
     def test_committed_change_uses_explicit_base(self):
         self.change("Applications/iPad/NotebookChatPanel.swift"); self.git("add", "."); self.git("commit", "-qm", "edit")
@@ -200,10 +548,65 @@ class SelectionTests(unittest.TestCase):
             verify.main(["--plan", "--full"])
         runner.assert_not_called()
 
+    def test_clean_mac_document_selection_prepares_sidecar_build_without_forcing_mcp_tests(self):
+        class BuildReached(Exception): pass
+        for commands in ([], ["mcp"]):
+            with self.subTest(commands=commands):
+                calls = []
+                def command(label, argv, **kwargs):
+                    calls.append((label, argv, kwargs))
+                    if label == "mac-build-for-testing": raise BuildReached()
+                    return b"", None
+                plan = {"checks": {"core": [], "ipad": [], "mac": ["NotebookMacTests/DocumentRenderSessionTests"],
+                                    "commands": commands}}
+                evidence = self.root / ("with-mcp" if commands else "mac-only")
+                self.assertFalse((self.root / "MCP/node_modules").exists())
+                with patch.object(release, "release_commands", return_value=command), \
+                     patch.object(release, "source_inputs", return_value={"source": "fixture"}), \
+                     patch.object(release, "read_toolchain", return_value={"toolchain": "fixture"}), \
+                     patch.object(release, "prepare_tex_runtime", return_value=self.root / "tex"), \
+                     patch.object(release, "prepare_image_runtime", return_value=self.root / "images"), \
+                     self.assertRaises(BuildReached):
+                    verify.run_selected(self.root, plan, evidence)
+                labels = [item[0] for item in calls]
+                self.assertEqual(labels.count("mcp-dependencies"), 1)
+                self.assertLess(labels.index("mcp-dependencies"), labels.index("mac-build-for-testing"))
+                dependency = next(item for item in calls if item[0] == "mcp-dependencies")
+                self.assertEqual(dependency[1], ["npm", "ci", "--ignore-scripts"])
+                self.assertEqual(dependency[2]["cwd"], self.root / "MCP")
+                self.assertEqual("mcp-test" in labels, bool(commands))
+                build = next(item[1] for item in calls if item[0] == "mac-build-for-testing")
+                self.assertIn("NOTEBOOK_IMAGE_RUNTIME=" + str(self.root / "images"), build)
+
+    def test_submitted_pixel_owner_selects_native_display_and_immutable_attention_contracts(self):
+        self.change("Applications/Shared/NotebookWorkspacePresentation.swift")
+        plan = verify.make_plan(self.root)
+        self.assertFalse(plan["unclassified"])
+        self.assertIn("NotebookTests/NotebookSubmittedPixelsTests", plan["checks"]["ipad"])
+        self.assertIn("NotebookTests/SharedAttentionTests", plan["checks"]["ipad"])
+        self.assertFalse(plan["checks"]["mac"])
+
+    def test_system_trace_requires_actual_started_marker_and_live_recorder(self):
+        class Process:
+            def __init__(self, code=None): self.code = code
+            def poll(self): return self.code
+        path = self.root / "trace.log"
+        path.write_text("Recording started.\n")
+        acceptance.SimulatorRecording.wait_for_start(Process(), path, 20, "fixture")
+        with self.assertRaises(release.ReleaseError):
+            acceptance.SimulatorRecording.wait_for_start(Process(2), path, 20, "fixture")
+        path.write_text("Hitches is not supported on this platform.\n")
+        with self.assertRaisesRegex(release.ReleaseError, "Hitches is not supported"):
+            acceptance.SimulatorRecording.wait_for_start(Process(2), path, 20, "fixture")
+        path.write_text("Preparing recording...\n")
+        with patch.object(acceptance.time, "monotonic", side_effect=[0, 21]), \
+             self.assertRaisesRegex(release.ReleaseError, "Preparing recording"):
+            acceptance.SimulatorRecording.wait_for_start(Process(), path, 20, "fixture")
+
     def test_timing_report_separates_ui_from_scale_inside_runtime(self):
         def case(name, seconds): return {"nodeType": "Test Case", "nodeIdentifier": name, "durationInSeconds": seconds}
-        result = verify.timing_report({"testNodes": [{"name": "NotebookTests", "children": [case("100k", 260)]},
-                                                   {"name": "NotebookUITests", "children": [case("tap", 25), case("curl", 50)]}]})
+        result = verify.timing_report({"testNodes": [{"name": "NotebookTests", "nodeType": "Unit test bundle", "children": [case("100k", 260)]},
+                                                   {"name": "NotebookUITests", "nodeType": "UI test bundle", "children": [case("tap", 25), case("curl", 50)]}]})
         self.assertEqual(result["targets"]["NotebookUITests"], {"tests": 2, "seconds": 75})
         self.assertEqual(result["slowest"][0]["test"], "100k")
 
@@ -264,6 +667,286 @@ class SelectionTests(unittest.TestCase):
         release.write_json(evidence / "selection.json", plan)
         receipt["artifacts"] = release.verification_artifacts(evidence, full=False)
         with self.assertRaises(release.ReleaseError): verify.validate_selected(self.root, evidence, receipt)
+
+
+class UIOnlyBuildTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.source = self.root / "source"
+        self.swift = self.source / "Applications/AcceptanceUITests/Proof.swift"
+        self.swift.parent.mkdir(parents=True); self.swift.write_text("import XCTest\n")
+        self.products = self.root / "derived/ipad/Build/Products"
+        self.runner = self.products / "Release-iphonesimulator/NotebookAcceptanceUITests-Runner.app"
+        self.bundle = self.runner / "PlugIns/NotebookAcceptanceUITests.xctest"
+        self.bundle.mkdir(parents=True)
+        (self.bundle / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": acceptance.UI_TEST_BUNDLE}))
+        self.binary = self.runner / "Runner"
+        self.binary.write_bytes(b"immutable diagnostic test runner")
+        self.target = {"BlueprintName": "NotebookAcceptanceUITests",
+            "TestHostPath": "__TESTROOT__/Release-iphonesimulator/NotebookAcceptanceUITests-Runner.app",
+            "TestBundlePath": "__TESTHOST__/PlugIns/NotebookAcceptanceUITests.xctest",
+            "DependentProductPaths": ["__TESTROOT__/Release-iphonesimulator/NotebookAcceptanceUITests-Runner.app",
+                                      "__TESTHOST__/PlugIns/NotebookAcceptanceUITests.xctest"]}
+        self.original = self.products / "Diagnostic.xctestrun"
+        self.write_spec(self.target)
+        self.app = self.root / "accepted/Notebook.app"
+        self.app.mkdir(parents=True); (self.app / "Notebook").write_bytes(b"accepted app")
+        source = acceptance.ui_test_inputs(self.source)
+        acceptance.write(self.root / "test-source.json", source)
+        self.value = {"runID": "selected-run", "build": str(self.app.parent)}
+        self.built = {"sourceSHA256": "accepted-source", "ipadApp": str(self.app), "simulator": {"udid": "selected-simulator"}}
+        receipt = {"status": "built", "diagnosticOnly": True, "runID": self.value["runID"],
+            "applicationBuild": self.value["build"], "applicationSourceSHA256": self.built["sourceSHA256"],
+            "applicationBundleSHA256": release.app_manifest(self.app)["sha256"],
+            "simulatorUDID": "selected-simulator", "testSourceSHA256": source["sha256"],
+            "products": str(self.products), "runner": str(self.runner),
+            "runnerSHA256": release.app_manifest(self.runner)["sha256"],
+            "xctestrun": str(self.original), "xctestrunSHA256": release.file_digest(self.original)}
+        acceptance.write(self.root / "ui-build.json", receipt)
+
+    def write_spec(self, target):
+        self.original.write_bytes(plistlib.dumps({"NotebookAcceptanceUITests": target}))
+
+    def selected(self, **changes):
+        arguments = {"platform": "ipad", "value": self.value, "built": self.built}
+        arguments.update(changes)
+        return acceptance.selected_ui_build(self.root, **arguments)
+
+    def test_project_has_only_an_independent_ui_bundle_and_no_application_target_or_package(self):
+        project = acceptance.ui_only_project()
+        self.assertNotIn("packages", project)
+        self.assertEqual(list(project["targets"]), ["NotebookAcceptanceUITests"])
+        target = project["targets"]["NotebookAcceptanceUITests"]
+        self.assertEqual(target["type"], "bundle.ui-testing")
+        self.assertNotIn("dependencies", target)
+        self.assertNotIn("TEST_TARGET_NAME", target["settings"]["base"])
+        self.assertEqual(target["settings"]["base"]["PRODUCT_BUNDLE_IDENTIFIER"], acceptance.UI_TEST_BUNDLE)
+
+    def test_test_sources_are_separate_from_application_sources_and_refuse_symlinks(self):
+        before = acceptance.ui_test_inputs(self.source)
+        (self.source / "Other.swift").write_text("unrelated application edit")
+        self.assertEqual(acceptance.ui_test_inputs(self.source), before)
+        self.swift.write_text("import XCTest\n// changed UI observation\n")
+        self.assertNotEqual(acceptance.ui_test_inputs(self.source), before)
+        self.swift.with_name("Alias.swift").symlink_to(self.swift)
+        with self.assertRaises(release.ReleaseError): acceptance.ui_test_inputs(self.source)
+
+    def test_guard_refuses_an_app_target_dependency_or_wrong_test_bundle(self):
+        self.assertEqual(acceptance.ui_only_products(self.products, self.original), self.runner)
+        for changed in ({**self.target, "UITargetAppPath": "__TESTROOT__/Release-iphonesimulator/Notebook.app"},
+                        {**self.target, "DependentProductPaths": self.target["DependentProductPaths"] + [str(self.app)]},
+                        {**self.target, "TestHostPath": str(self.app)}):
+            with self.subTest(changed=changed):
+                self.write_spec(changed)
+                with self.assertRaises(release.ReleaseError): acceptance.ui_only_products(self.products, self.original)
+        self.write_spec(self.target)
+        (self.bundle / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": "production.tests"}))
+        with self.assertRaises(release.ReleaseError): acceptance.ui_only_products(self.products, self.original)
+
+    def test_selection_keeps_both_provenances_and_rejects_other_run_or_application(self):
+        products, original, provenance = self.selected()
+        self.assertEqual((products, original), (self.products, self.original))
+        self.assertTrue(provenance["diagnosticOnly"])
+        self.assertEqual(provenance["applicationSourceSHA256"], "accepted-source")
+        self.assertNotEqual(provenance["testSourceSHA256"], provenance["applicationSourceSHA256"])
+        for arguments in ({"platform": "mac"}, {"value": {**self.value, "runID": "other-run"}},
+                          {"built": {**self.built, "sourceSHA256": "other-source"}},
+                          {"built": {**self.built, "simulator": {"udid": "other-simulator"}}}):
+            with self.subTest(arguments=arguments), self.assertRaises(release.ReleaseError): self.selected(**arguments)
+
+    def test_selection_rejects_modified_source_runner_spec_and_accepted_application(self):
+        for path in (self.swift, self.binary, self.original, self.app / "Notebook"):
+            before = path.read_bytes()
+            try:
+                path.write_bytes(before + b"changed")
+                with self.subTest(path=path), self.assertRaises(release.ReleaseError): self.selected()
+            finally:
+                path.write_bytes(before)
+        self.selected()
+
+
+class UICleanupTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.evidence = Path(self.temp.name)
+        self.installed = {"bundlePath": "/private/Notebook.app", "dataContainer": "/private/data", "bundleSHA256": "accepted"}
+
+    def finish(self, **changes):
+        arguments = dict(evidence=self.evidence, scenario={"runID": "proof"}, primary_error=None,
+                         trace=None, trace_finished=False, recording=None,
+                         installed_before=self.installed, simulator="private-simulator")
+        arguments.update(changes)
+        return acceptance.finalize_ui_attempt(**arguments)
+
+    def receipt(self):
+        return json.loads((self.evidence / "scenario.json").read_text())
+
+    def test_failed_completed_runner_exports_both_result_documents(self):
+        (self.evidence / "result.xcresult").mkdir()
+        summary, tree = {"failedTests": 1}, {"testNodes": ["failed-case"]}
+        with patch.object(acceptance, "installed_ipad_state", return_value=self.installed), \
+             patch.object(acceptance, "run", side_effect=[b"", b"", json.dumps(summary).encode(), json.dumps(tree).encode()]):
+            self.finish(primary_error=ValueError("UI failure"), runner_exit=65, expected_test="Suite/testCase")
+        self.assertEqual(json.loads((self.evidence / "summary.json").read_text()), summary)
+        self.assertEqual(json.loads((self.evidence / "tests.json").read_text()), tree)
+        self.assertEqual(self.receipt()["runnerExitCode"], 65)
+        self.assertEqual(self.receipt()["primaryError"]["message"], "UI failure")
+        self.assertEqual(self.receipt()["cleanupErrors"], [])
+
+    def test_failed_summary_export_does_not_skip_tests_or_replace_primary(self):
+        (self.evidence / "result.xcresult").mkdir()
+        with patch.object(acceptance, "installed_ipad_state", return_value=self.installed), \
+             patch.object(acceptance, "run", side_effect=[b"", b"", RuntimeError("summary unavailable"), b'{"testNodes": []}']):
+            self.finish(primary_error=ValueError("UI failure"), runner_exit=65)
+        self.assertTrue((self.evidence / "tests.json").exists())
+        self.assertEqual(self.receipt()["cleanupErrors"][0]["stage"], "export.summary")
+        self.assertEqual(self.receipt()["primaryError"]["message"], "UI failure")
+
+    def test_xcresult_directory_without_exit_witness_is_not_a_completed_result(self):
+        (self.evidence / "result.xcresult").mkdir()
+        with patch.object(acceptance, "installed_ipad_state", return_value=self.installed), \
+             patch.object(acceptance, "run", return_value=b"") as commands:
+            self.finish(primary_error=subprocess.TimeoutExpired("runner", 1))
+        self.assertEqual(len(commands.call_args_list), 2)
+        self.assertFalse((self.evidence / "summary.json").exists())
+        self.assertFalse((self.evidence / "tests.json").exists())
+        self.assertIsNone(self.receipt()["runnerExitCode"])
+
+    def test_success_requires_completed_result_and_still_validates_exact_test(self):
+        with patch.object(acceptance, "installed_ipad_state", return_value=self.installed):
+            with self.assertRaises(release.ReleaseError):
+                self.finish(runner_exit=0, expected_test="Suite/testCase")
+        self.assertEqual(self.receipt()["cleanupErrors"][0]["stage"], "runner-result.completed")
+        (self.evidence / "result.xcresult").mkdir()
+        summary = {"passedTests": 1, "failedTests": 0, "skippedTests": 0, "runtimeWarnings": []}
+        with patch.object(acceptance, "installed_ipad_state", return_value=self.installed), \
+             patch.object(acceptance, "run", side_effect=[b"", b"", json.dumps(summary).encode(), b'{"testNodes": []}']), \
+             patch.object(acceptance.verification, "validate_executed_tests", side_effect=release.ReleaseError("missing expected test")) as validate:
+            with self.assertRaises(release.ReleaseError):
+                self.finish(runner_exit=0, expected_test="Suite/testCase")
+        validate.assert_called_once_with({"testNodes": []}, ["Suite/testCase"])
+        self.assertEqual(self.receipt()["cleanupErrors"][0]["stage"], "result-tests.validate")
+
+    def test_exit_witness_comes_from_completed_child_not_timeout_or_launch_failure(self):
+        exits = []
+        with self.assertRaises(release.ReleaseError):
+            acceptance.run([sys.executable, "-c", "raise SystemExit(65)"],
+                           output=self.evidence / "exit.log", on_exit=exits.append)
+        self.assertEqual(exits, [65])
+        with self.assertRaises(subprocess.TimeoutExpired):
+            acceptance.run([sys.executable, "-c", "import time; time.sleep(2)"],
+                           output=self.evidence / "timeout.log", timeout=0.05, on_exit=exits.append)
+        with self.assertRaises(FileNotFoundError):
+            acceptance.run([str(self.evidence / "missing-executable")],
+                           output=self.evidence / "missing.log", on_exit=exits.append)
+        self.assertEqual(exits, [65])
+
+    def test_actual_ui_keeps_its_failure_and_writes_receipt_when_after_snapshot_fails(self):
+        build, directory = self.evidence / "build", self.evidence / "run"
+        products = build / "derived/ipad/Build/Products"
+        products.mkdir(parents=True); directory.mkdir()
+        (products / "original.xctestrun").write_bytes(plistlib.dumps({"TestConfigurations": [{"TestTargets": [{
+            "BlueprintName": "NotebookAcceptanceUITests", "UITargetAppPath": "/private/Notebook.app"}]}]}))
+        (directory / "run.json").write_text(json.dumps({"runID": "proof", "workspaceID": "workspace",
+            "build": str(build), "macManifest": str(self.evidence / "mac.json")}))
+        (build / "build.json").write_text(json.dumps({"sourceSHA256": "source", "sourceRevision": "revision",
+            "simulator": {"udid": "private-simulator"}, "ipadApp": "/private/Notebook.app"}))
+        (self.evidence / "mac.json").write_text(json.dumps({"actorID": "mac-actor"}))
+        args = SimpleNamespace(run=directory, platform="ipad", test="NotebookAcceptanceUITests/testProof",
+                               document_id=None, document_title=None, workload_seconds=1800, trace=None, pencil=False)
+        original, cleanup = ValueError("UI scenario failed"), RuntimeError("Simulator disconnected")
+        recording = Mock()
+        with patch.object(acceptance, "installed_ipad_manifest", return_value=(self.evidence,
+                self.evidence / "ipad.json", {"actorID": "ipad-actor"})), \
+             patch.object(acceptance, "installed_ipad_state", side_effect=[self.installed, cleanup]), \
+             patch.object(acceptance.release, "app_manifest", return_value={"sha256": "accepted"}), \
+             patch.object(acceptance, "SimulatorRecording", return_value=recording), \
+             patch.object(acceptance, "run", side_effect=original):
+            with self.assertRaises(ValueError) as failure:
+                acceptance.ui(args)
+        self.assertIs(failure.exception, original)
+        recording.stop.assert_called_once_with()
+        receipts = list(directory.glob("ipad-*/scenario.json"))
+        self.assertEqual(len(receipts), 1)
+        receipt = json.loads(receipts[0].read_text())
+        self.assertEqual(receipt["status"], "failed")
+        self.assertEqual(receipt["primaryError"], {"type": "ValueError", "message": "UI scenario failed"})
+        self.assertEqual(receipt["cleanupErrors"], [{"stage": "installed-application.snapshot",
+            "type": "RuntimeError", "message": "Simulator disconnected"}])
+        self.assertIsNone(receipt["installedApplicationPreserved"])
+
+    def test_trace_and_recording_failures_do_not_skip_snapshot_or_exports(self):
+        (self.evidence / "result.xcresult").mkdir()
+        trace, recording = Mock(), Mock()
+        trace.cancel.side_effect = RuntimeError("cancel failed")
+        recording.stop.side_effect = OSError("video stop failed")
+        with patch.object(acceptance, "installed_ipad_state", return_value=self.installed), \
+             patch.object(acceptance, "run") as commands:
+            self.finish(primary_error=ValueError("trace finish failed"), trace=trace, recording=recording)
+        self.assertEqual([call.args[0][3] for call in commands.call_args_list], ["attachments", "metrics"])
+        receipt = self.receipt()
+        self.assertEqual(receipt["primaryError"]["message"], "trace finish failed")
+        self.assertEqual([error["stage"] for error in receipt["cleanupErrors"]], ["trace.cancel", "recording.stop"])
+        self.assertTrue(receipt["installedApplicationPreserved"])
+        self.assertFalse(receipt["systemTraceLifecycleFinished"])
+        self.assertTrue((self.evidence / "installed-application-after.json").exists())
+
+    def test_export_failure_keeps_primary_and_still_exports_the_other_artifacts(self):
+        (self.evidence / "result.xcresult").mkdir()
+        with patch.object(acceptance, "installed_ipad_state", return_value=self.installed), \
+             patch.object(acceptance, "run", side_effect=[RuntimeError("attachments failed"), b""]) as commands:
+            self.finish(primary_error=ValueError("UI failure"))
+        self.assertEqual(commands.call_count, 2)
+        self.assertEqual(self.receipt()["cleanupErrors"], [{"stage": "export.attachments",
+            "type": "RuntimeError", "message": "attachments failed"}])
+        self.assertEqual(self.receipt()["primaryError"]["message"], "UI failure")
+
+    def test_successful_ui_cannot_pass_when_after_snapshot_is_unavailable(self):
+        cleanup = RuntimeError("snapshot unavailable")
+        with patch.object(acceptance, "installed_ipad_state", side_effect=cleanup):
+            with self.assertRaises(RuntimeError) as failure:
+                self.finish()
+        self.assertIs(failure.exception, cleanup)
+        self.assertEqual(self.receipt()["status"], "failed")
+        self.assertIsNone(self.receipt()["primaryError"])
+        self.assertIsNone(self.receipt()["installedApplicationPreserved"])
+
+    def test_successful_ui_cannot_pass_after_the_bundle_or_container_changes(self):
+        for field in ("bundleSHA256", "dataContainer"):
+            with self.subTest(field=field), patch.object(acceptance, "installed_ipad_state",
+                    return_value={**self.installed, field: "changed"}):
+                with self.assertRaises(release.ReleaseError):
+                    self.finish()
+                self.assertFalse(self.receipt()["installedApplicationPreserved"])
+                self.assertEqual(self.receipt()["status"], "failed")
+                self.assertEqual(self.receipt()["cleanupErrors"][0]["stage"], "installed-application.identity")
+
+    def test_completed_trace_is_not_cancelled_and_clean_completion_is_recorded(self):
+        trace, recording = Mock(), Mock()
+        with patch.object(acceptance, "installed_ipad_state", return_value=self.installed):
+            self.finish(trace=trace, trace_finished=True, recording=recording)
+        trace.cancel.assert_not_called(); recording.stop.assert_called_once_with()
+        self.assertEqual(self.receipt()["status"], "passed")
+        self.assertEqual(self.receipt()["cleanupErrors"], [])
+        self.assertTrue(self.receipt()["systemTraceLifecycleFinished"])
+
+    def test_unwritable_receipt_cannot_replace_primary_or_allow_false_success(self):
+        original_write = acceptance.write
+        def fail_receipt(path, value):
+            if path.name == "scenario.json":
+                raise OSError("evidence disk unavailable")
+            original_write(path, value)
+        original = ValueError("UI failed")
+        with patch.object(acceptance, "installed_ipad_state", return_value=self.installed), \
+             patch.object(acceptance, "write", side_effect=fail_receipt):
+            self.finish(primary_error=original)
+            if hasattr(original, "__notes__"):
+                self.assertTrue(any("scenario.receipt" in note for note in original.__notes__))
+            with self.assertRaisesRegex(OSError, "evidence disk unavailable"):
+                self.finish()
 
 
 if __name__ == "__main__":

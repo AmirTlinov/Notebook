@@ -41,8 +41,19 @@ enum PageCompositionRenderer {
       let image = try await raster(element)
       // The resolver returns a borrowed entry. A frozen selection owns its
       // lease, whereas the export resolver releases its previous entry.
-      try await canvas.draw(image, in: CGRect(x: element.frame.x - region.x, y: element.frame.y - region.y,
-        width: element.frame.width, height: element.frame.height))
+      let frame = CGRect(x: element.frame.x - region.x, y: element.frame.y - region.y,
+        width: element.frame.width, height: element.frame.height)
+      if let crop = image.source.captureRegion {
+        let captured = CGRect(x: crop.x, y: crop.y, width: crop.width, height: crop.height)
+        let requested = CGRect(x: -frame.minX, y: -frame.minY, width: region.width, height: region.height)
+          .intersection(CGRect(origin: .zero, size: frame.size))
+        guard !requested.isNull, captured.contains(requested) else {
+          throw SceneRenderError.snapshotPending("historical_region_unavailable")
+        }
+        try await canvas.draw(image, in: captured.offsetBy(dx: frame.minX, dy: frame.minY))
+      } else {
+        try await canvas.draw(image, in: frame)
+      }
       canvas.recordDiagnostics(resources.diagnostics(for: [element]))
     }
     if elementID == nil { try await drawInk(page, size: size, frame: frame, resources: resources, canvas: canvas) }

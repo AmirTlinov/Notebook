@@ -187,8 +187,10 @@ final class SpatialInkSurfaceRegistry {
           }
           owners[surface] = owner
           let staged: InkCanvasView.PreparedSpatialFrame?
-          if previous != nil, prepared.1 != nil || owner.canvas.needsSpatialTarget(size: size, displayScale: displayScale) {
-            staged = try await owner.canvas.prepareSpatialFrame(prepared.1, size: size, displayScale: displayScale)
+          if previous != nil, prepared.1 != nil || owner.canvas.needsSpatialTarget(size: size, displayScale: displayScale)
+            || (surface.kind == .board && owner.canvas.spatialCamera != camera) {
+            staged = try await owner.canvas.prepareSpatialFrame(prepared.1, size: size, displayScale: displayScale,
+              camera: surface.kind == .board ? camera : nil)
           }
           else { staged = nil }
           updates.append(.init(owner: owner, generation: owner.canvas.spatialSourceGeneration,

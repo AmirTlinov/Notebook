@@ -126,7 +126,8 @@ final class BoardPublicationTests: XCTestCase {
     // A real later durable write invalidates the read cut before its next
     // raster. No navigation or periodic reload is allowed to rescue the scene.
     let cut = try model.store.currentChangeCursor()
-    try model.store.saveDeviceActionReceipt(.init(id: UUID(), deviceID: model.actorID))
+    try model.store.saveDeviceActionReceipt(.init(id: action.id, deviceID: model.actorID,
+      revisions: action.revisions, actionVersion: action.deliveryVersion()))
     XCTAssertGreaterThan(try model.store.currentChangeCursor(), cut)
     try await waitUntil {
       (try? model.compositionTiles.surfaceRegistry.installedSource(on: .board(boardID))?.referenceInk()
@@ -142,7 +143,8 @@ final class BoardPublicationTests: XCTestCase {
     XCTAssertGreaterThan(before, 1000, "The received line must be visible, not merely installed in a source record")
     await model.refreshCollaborationDetails()
     model.confirmVisibleActions(presence: try XCTUnwrap(model.presence),
-      scene: try XCTUnwrap(model.compositionTiles.published).frame.workset(boardID: boardID))
+      scene: try XCTUnwrap(model.compositionTiles.published).frame.workset(boardID: boardID),
+      cohort: model.compositionTiles.published)
     let confirmed = await model.finishPendingPersistence(); XCTAssertTrue(confirmed)
     XCTAssertTrue(try XCTUnwrap(model.store.deviceActionReceipts().first { $0.id == action.id }).displayComplete)
     model.selectEraserWidth(40)
