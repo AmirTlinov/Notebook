@@ -4,6 +4,72 @@ import XCTest
 
 @MainActor
 final class NotebookChatControllerTests: XCTestCase {
+  func testCreationWaitsForItsReceiptWithoutReopeningThePreviousEmptyConversation() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("chat-creation-selection-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), author = UUID(), peer = UUID()
+    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let queue = NotebookPersistenceQueue(store: store)
+    let previous = CodexTask(id: UUID().uuidString, title: "Previous empty task", cwd: "/fixture")
+    let created = CodexTask(id: UUID().uuidString, title: "New empty task", cwd: "/fixture")
+    var chat: NotebookChatController!, offered: (NotebookChatEnvelope, NotebookChatInput)?
+    var offers = 0
+    chat = .init(persistence: queue, author: author) { envelope, _ in
+      guard case .request(let query) = envelope.body else { return }
+      let reply: NotebookChatReply
+      switch query {
+      case .job(let input):
+        guard case .create = input.action else { return XCTFail("Creation cannot send a model turn") }
+        offers += 1; offered = (envelope, input); return
+      case .run: reply = .run(.init(record: nil))
+      case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil))
+      case .projects: reply = .projects(.init(projects: [], nextCursor: nil))
+      case .history: reply = .history(.init(messages: [], nextCursor: nil))
+      case .activity(let ids): reply = .activity(ids.map { .init(id: $0, status: .idle) })
+      case .conversation(let id): reply = .conversation(.init(threadID: id, revision: 1,
+        title: id == created.id ? created.title : previous.title, ready: true, busy: false,
+        activeTurnID: nil, messages: [], requests: [], acceptedMessages: [:], turnStatuses: [:]))
+      default: return XCTFail("Unexpected creation query: \(query)")
+      }
+      chat.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
+    }
+    func wait(_ condition: () -> Bool) async throws {
+      let deadline = ContinuousClock.now + .seconds(5)
+      while !condition(), .now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+      XCTAssertTrue(condition())
+    }
+    await chat.start(); await chat.connect(peer); chat.expanded = true; chat.select(previous)
+    try await wait { chat.conversation?.threadID == previous.id && chat.catalogues[.chats]?.loaded == true }
+    XCTAssertFalse(chat.browsesChats); XCTAssertTrue(chat.tasks.isEmpty)
+
+    // Hold the real persistence lane: the pending presentation must belong to
+    // the accepted UI intent, not to a later asynchronous save completion.
+    let writer = DispatchSemaphore(value: 0)
+    defer { writer.signal() }
+    queue.enqueue(publishesChanges: false) { _ in _ = writer.wait(timeout: .now() + 8); return false }
+    let saving = Task { await chat.create() }
+    try await wait { chat.saving }
+    XCTAssertTrue(chat.browsesChats, "The old empty task must not appear as the result of New Chat")
+    XCTAssertEqual(chat.threadID, previous.id, "Only Codex's creation receipt may replace selection")
+    XCTAssertNil(offered)
+    writer.signal(); await saving.value
+    try await wait { offered != nil }
+    XCTAssertTrue(chat.browsesChats); XCTAssertEqual(chat.threadID, previous.id)
+    let request = try XCTUnwrap(offered)
+    let receipt = NotebookChatJob(input: request.1, state: .accepted, result: .created(created), revision: 2)
+    chat.receive(.init(id: request.0.id, body: .reply(.job(receipt))), peerID: peer)
+    try await wait { chat.threadID == created.id && chat.jobs.first?.state == .accepted }
+    XCTAssertFalse(chat.browsesChats)
+    XCTAssertTrue(chat.tasks.isEmpty, "An empty native history catalogue cannot revoke the actual creation receipt")
+    XCTAssertEqual(offers, 1); XCTAssertTrue(chat.messages.isEmpty)
+    chat.catalogue()
+    try await wait { chat.catalogues[.chats]?.loading == false }
+    XCTAssertEqual(chat.threadID, created.id); XCTAssertFalse(chat.browsesChats)
+    await chat.stop(); let flushed = await queue.flush(); XCTAssertTrue(flushed)
+    XCTAssertEqual(try store.chatPanel(author: author, computer: peer).threadID, created.id)
+    XCTAssertEqual(try store.chatJob(request.1.id)?.result, .created(created))
+  }
+
   func testWorkStatusUsesOnlyCurrentPublicProgressAndStopsForDecisionsOrDisconnect() {
     let messages: [CodexMessage] = [
       .init(id: "old", turnID: "old", clientID: nil, role: .assistant, text: "Old status", phase: "commentary"),

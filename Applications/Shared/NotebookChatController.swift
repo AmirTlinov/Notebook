@@ -430,7 +430,11 @@ final class NotebookChatController {
     dictation.suspendWaiting()
     guard !dictation.busy else { error = "Завершите диктовку перед созданием другого чата."; return }
     guard !voice.capturing else { error = "Завершите разговор с «\(voice.taskTitle)» перед созданием другой задачи."; return }
-    if await submit(.create(title: "Занятие в Notebook", project: selectedProject)) { browsesChats = true; catalogue() }
+    // Selection changes only when Codex acknowledges the new task. Set the
+    // pending presentation before suspension so a fast receipt cannot be
+    // overwritten by the local save completing afterwards.
+    browsesChats = true
+    if await submit(.create(title: "Занятие в Notebook", project: selectedProject)) { catalogue() }
   }
   func attach(_ value: CodexInputAttachment) {
     guard !switchingComputer, value.isValid, attachments.count < 16, !attachments.contains(where: { $0.id == value.id }) else { return }

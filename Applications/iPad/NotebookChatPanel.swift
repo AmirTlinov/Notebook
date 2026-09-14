@@ -243,6 +243,8 @@ struct NotebookChatPanel: View {
       }
       if !chat.pendingMessages.isEmpty { outbox }
     }
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("notebook-chat-conversation-" + (chat.threadID ?? "none"))
   }
 
   private var outbox: some View {
@@ -297,7 +299,6 @@ struct NotebookChatPanel: View {
     return nil
   }
   private func createChat() {
-    chat.browsesChats = false
     Task { await chat.create() }
   }
 }
