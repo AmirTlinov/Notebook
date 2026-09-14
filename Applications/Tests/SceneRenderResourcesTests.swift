@@ -5,6 +5,67 @@ import XCTest
 
 final class SceneRenderResourcesTests: XCTestCase {
   @MainActor
+  func testOptionalSynchronousAllocationsCannotPassAnAcceptedDerivedStage() async throws {
+    let resources = SceneRenderResources(byteLimit: 10_000, profile: .interactive)
+    let held = try XCTUnwrap(resources.reserveDerivedBytes(4_000, priority: .passive))
+    let waiting = Task { try await resources.acquirePassiveDerivedBytes(4_500) }
+    defer { held.release(); waiting.cancel() }
+    try await waitUntil { resources.pendingDerivedRequestCount == 1 }
+    XCTAssertNil(resources.reserveDerivedBytes(500, priority: .passive))
+    XCTAssertNil(resources.reserveRaster(pixelWidth: 1, pixelHeight: 1))
+    XCTAssertNil(resources.reserveRasterBatch([(1, 1)]))
+    held.release()
+    let granted = try await waiting.value
+    granted.release()
+    XCTAssertNotNil(resources.reserveRaster(pixelWidth: 1, pixelHeight: 1))
+  }
+
+  @MainActor
+  func testCompleteRasterCaptureKeepsEveryGrantedSlotThroughPublication() async throws {
+    let image = image(), cost = try byteCost(image)
+    let resources = SceneRenderResources(byteLimit: cost * 3, profile: .headless, maximumRasterCount: 3)
+    let grants = try XCTUnwrap(resources.reserveRasterBatch([(16, 16), (16, 16), (16, 16)]))
+    defer { grants.forEach { $0.release() } }
+    XCTAssertEqual(resources.rasterAdmission.reservedCount, 3)
+    XCTAssertEqual(resources.reservedBytes, cost * 3)
+    XCTAssertNil(resources.reserveRaster(pixelWidth: 1, pixelHeight: 1))
+    let waiting = Task { try await resources.acquirePassiveDerivedBytes(cost) }
+    defer { waiting.cancel() }
+    try await waitUntil { resources.pendingDerivedRequestCount == 1 }
+    var rasters: [RasterLease] = []
+    defer { rasters.forEach { $0.release() } }
+    for (index, grant) in grants.enumerated() {
+      let source = SceneRasterSource.document(id: UUID(), token: "granted-\(index)")
+      rasters.append(try XCTUnwrap(resources.storeAndRetain(image, for: source, reservation: grant)))
+      XCTAssertEqual(resources.rasterAdmission.heldBytes, cost * 3)
+      XCTAssertEqual(resources.rasterAdmission.pinnedCount + resources.rasterAdmission.reservedCount, 3)
+    }
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 1)
+    rasters.removeLast().release()
+    let stage = try await waiting.value
+    stage.release()
+  }
+
+  @MainActor
+  func testPublicationObserversCannotReclaimTheIncomingRetainedRaster() throws {
+    let image = image(), cost = try byteCost(image)
+    let resources = SceneRenderResources(byteLimit: cost, profile: .headless, maximumRasterCount: 1)
+    let source = SceneRasterSource.document(id: UUID(), token: "publication")
+    let grant = try XCTUnwrap(resources.reserveRaster(pixelWidth: 16, pixelHeight: 16))
+    let observer = NotificationCenter.default.addObserver(forName: SceneRenderResources.didChange,
+      object: nil, queue: .main) { _ in
+        MainActor.assumeIsolated {
+          XCTAssertNil(resources.reserveRaster(pixelWidth: 16, pixelHeight: 16),
+            "Publication already owns the returned image, even before observers return")
+        }
+      }
+    defer { NotificationCenter.default.removeObserver(observer); grant.release() }
+    let raster = try XCTUnwrap(resources.storeAndRetain(image, for: source, reservation: grant))
+    defer { raster.release() }
+    XCTAssertEqual(resources.rasterAdmission.pinnedBytes, cost)
+  }
+
+  @MainActor
   func testMemoryReclamationAddressesOneCheapOwnerAndKeepsCanonicalWork() throws {
     let resources = SceneRenderResources(byteLimit: 1_000, profile: .interactive)
     let canonical = try XCTUnwrap(resources.reserveDerivedBytes(200, priority: .passive))

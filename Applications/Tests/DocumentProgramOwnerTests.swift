@@ -6,6 +6,37 @@ import XCTest
 
 @MainActor
 final class DocumentProgramOwnerTests: XCTestCase {
+  func testIndependentLandingDoesNotJoinAnInvisibleProgramsCheckpoint() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [
+      .interactive(id: "program", html: "<button>Count</button>", css: "",
+        javaScript: "notebook.commit({count:7})", initialState: .null, height: 200),
+      .markdown(id: "body", source: String(repeating: "An independent paper does not wait for an invisible program's disk acknowledgement.\n\n", count: 200) + "\n\n# Far")
+    ])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    var held: CheckedContinuation<Void, Never>?
+    defer { held?.resume(); fixture.close() }
+    fixture.onCheckpoint = { block in
+      if block == "program" { await withCheckedContinuation { held = $0 } }
+    }
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.web(in: 0) != nil }
+    let runtime = try XCTUnwrap(fixture.web(in: 0))
+    let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
+    let target = try XCTUnwrap(source.layout?.anchorPages["far"])
+    XCTAssertGreaterThan(target, 3)
+    fixture.activity.prepare(target, presentation: .live)
+    fixture.showPages(current: 2, neighbour: target); fixture.restorePresentation(1)
+    try await wait(message: { fixture.diagnostics }) { held != nil }
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.ready[0] == true && fixture.ready[1] == true && fixture.canonicalPaper(in: 1)
+    }
+    XCTAssertTrue(fixture.hosts[0].isUserInteractionEnabled)
+    XCTAssertNotNil(runtime.superview, "Unconfirmed program state still owns its native surface")
+    XCTAssertFalse(fixture.checkpoints.contains("program"))
+    held?.resume(); held = nil
+    try await wait(message: { fixture.diagnostics }) { fixture.checkpoints.contains("program") && runtime.superview == nil }
+    XCTAssertEqual(fixture.checkpointValues["program"]?["count"], .number(7))
+  }
+
   func testDistantLivePaperTransfersWithoutSnapshotOrASecondRender() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
       "[Far](#far)\n\n" + String(repeating: "Physical paper keeps its canonical geometry and links.\n\n", count: 160)
@@ -37,7 +68,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     fixture.activity.update(true)
     fixture.activity.didInstall(demand); fixture.activity.prepare(nil); fixture.activity.update(false)
     fixture.retirePresentation(0)
-    let owner = DocumentProgramOwner.shared(documentID: document.id, resources: fixture.resources)
+    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
     await owner.observePendingPresentationWork()
     XCTAssertTrue(fixture.paper(in: 1) === incoming, "Native completion retains the target while SwiftUI current input is delayed")
     fixture.select(1)
@@ -82,7 +113,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources).source(document)
     let target = try XCTUnwrap(source.layout?.anchorPages["far"])
     XCTAssertGreaterThan(target, 2)
-    let owner = DocumentProgramOwner.shared(documentID: document.id, resources: resources)
+    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: resources)
     fixture.activity.prepare(target, presentation: .live)
     fixture.showPages(current: 0, neighbour: target); fixture.restorePresentation(1)
     try await wait(message: { fixture.diagnostics }) { owner.pendingPassivePageIndex == target && resources.pendingWebRequestCount == 1 }
@@ -95,6 +126,18 @@ final class DocumentProgramOwnerTests: XCTestCase {
     fixture.close()
     try await wait(message: { fixture.diagnostics }) { resources.pendingWebRequestCount == 0 && resources.activeWebSurfaceCount == 0 }
     XCTAssertTrue(fixture.preparationErrors.isEmpty, fixture.diagnostics)
+  }
+
+  func testPlainNeighbourUsesItsSingleGrantedRasterSlot() async throws {
+    let resources = SceneRenderResources(maximumRasterCount: 1)
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
+      String(repeating: "A plain page has no program or composition output to reserve.\n\n", count: 150))])
+    let fixture = try ProgramFixture(document: document, resources: resources)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.ready[1] == true }
+    XCTAssertTrue(fixture.hosts[1].hasSnapshot)
+    XCTAssertEqual(resources.rasterAdmission.pinnedCount, 1)
+    XCTAssertLessThanOrEqual(resources.rasterCount, 1)
   }
 
   func testSnapshotDensityUsesTheNativeCameraProjectionAndKeepsPhysicalBounds() throws {
@@ -116,7 +159,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertEqual(host.bounds, bounds, "Pixel density must not relayout the canonical paper")
   }
 
-  func testPressureReclaimsAnInvisibleNeighbourWithoutRevokingCurrentInput() async throws {
+  func testPressureReclaimsAnUnselectedMountedNeighbourWithoutRevokingCurrentInput() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
       (0..<50).map { "Paragraph \($0). " + String(repeating: "A neighbouring page is disposable until a real turn accepts it. ", count: 10) }.joined(separator: "\n\n"))])
     let fixture = try ProgramFixture(document: document)
@@ -129,7 +172,10 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let renderer = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)
     let snapshotID = try XCTUnwrap(fixture.hosts[1].snapshotEntryID)
     XCTAssertTrue(fixture.hosts[1].hasVisibleSnapshot)
-    fixture.hosts[1].isHidden = true
+    // The same screen rectangle is not proof that UIKit displays this page:
+    // ordinary prewarm children remain mounted behind the selected page.
+    fixture.hosts[1].frame = fixture.hosts[0].frame
+    fixture.hosts[0].superview?.bringSubviewToFront(fixture.hosts[0])
     fixture.activity.update(true)
     let protected = fixture.resources.rasterAdmission
     let protectedRequest = fixture.resources.reserveDerivedBytes(
@@ -186,7 +232,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let coordinator = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)
     coordinator.webView(web, didFail: nil, withError: NSError(domain: "SourceFailureContract", code: 1))
     try await wait(message: { fixture.diagnostics }) { !fixture.preparationErrors.isEmpty }
-    let owner = DocumentProgramOwner.shared(documentID: document.id, resources: fixture.resources)
+    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
     await owner.observePendingPresentationWork()
     fixture.replaceSource(blockID: "body", source: "# Repaired source\n\nThe same page number now has a different version.")
     try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) }
@@ -204,7 +250,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let text = (0..<70).map { "Paragraph \($0). " + String(repeating: "A measured page keeps reusable preparation. ", count: 12) }.joined(separator: "\n\n")
     let fixture = try ProgramFixture(document: .init(actor: UUID(), blocks: [.markdown(id: "body", source: text)]))
     defer { fixture.close() }
-    let owner = DocumentProgramOwner.shared(documentID: fixture.document.id, resources: fixture.resources)
+    let owner = DocumentPagePresentationOwner.shared(documentID: fixture.document.id, resources: fixture.resources)
     try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true }
     func allWeb(_ view: UIView) -> [WKWebView] {
       (view as? WKWebView).map { [$0] } ?? view.subviews.flatMap(allWeb)
@@ -241,7 +287,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     fixture.select(1)
     try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 1) && !fixture.hosts[1].hasSnapshot }
     fixture.retirePresentation(0)
-    let owner = DocumentProgramOwner.shared(documentID: document.id, resources: fixture.resources)
+    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
     await owner.observePendingPresentationWork()
     let web = try XCTUnwrap(fixture.paper(in: 1))
     let oldPinnedBytes = fixture.resources.rasterAdmission.pinnedBytes
@@ -263,7 +309,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.canonicalPaper(in: 0) }
-    let owner = DocumentProgramOwner.shared(documentID: document.id, resources: resources)
+    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: resources)
     let layout = try XCTUnwrap(DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources).source(document).layout)
     let target = try XCTUnwrap(layout.anchorPages["destination"])
     XCTAssertGreaterThan(target, 2)
@@ -479,7 +525,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     defer { fixture.close() }
     var phase = "initial"
     defer {
-      let attachment = XCTAttachment(string: "phase=\(phase) \(fixture.diagnostics)\n" + DocumentProgramOwner.presentationDiagnostic(documentID: document.id, resources: fixture.resources))
+      let attachment = XCTAttachment(string: "phase=\(phase) \(fixture.diagnostics)\n" + DocumentPagePresentationOwner.presentationDiagnostic(documentID: document.id, resources: fixture.resources))
       attachment.name = "paper-transfer-final-owner"; attachment.lifetime = .keepAlways; add(attachment)
     }
     try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled }
@@ -548,7 +594,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     var phase = "initial_ready", caughtError = "none"
     defer {
       let proof = XCTAttachment(string: "phase=\(phase) error=\(caughtError)\n\(fixture.diagnostics)\n" +
-        DocumentProgramOwner.presentationDiagnostic(documentID: document.id, resources: fixture.resources))
+        DocumentPagePresentationOwner.presentationDiagnostic(documentID: document.id, resources: fixture.resources))
       proof.name = "delayed-current-gap-boundary"; proof.lifetime = .keepAlways; add(proof)
     }
     do {
@@ -569,7 +615,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
       let runtimeID = try XCTUnwrap(receipt["runtimeID"] as? String)
       let sourceKey = try XCTUnwrap(receipt["sourceKey"] as? String)
       XCTAssertFalse(runtimeID.isEmpty); XCTAssertFalse(sourceKey.isEmpty)
-      let owner = DocumentProgramOwner.shared(documentID: document.id, resources: fixture.resources)
+      let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
 
       phase = "retire_original_presentation"
       fixture.retirePresentation(0)
@@ -630,7 +676,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     }
     let original = WeakDocumentPaper(fixture.paper(in: 0))
     XCTAssertNotNil(original.value)
-    let owner = DocumentProgramOwner.shared(documentID: document.id, resources: fixture.resources)
+    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
     fixture.retirePresentation(0)
     await Task.yield()
     await owner.observePendingPresentationWork()
@@ -944,20 +990,20 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let attachment = XCTAttachment(image: after.image)
     attachment.name = "document-attention-current-blue-program"; attachment.lifetime = .keepAlways; add(attachment)
     let physical = WorkspaceItemGeometry.document(document.paperSize)
-    let frozen = try XCTUnwrap(DocumentProgramOwner.capturePresented(documentID: document.id, pageIndex: 0,
+    let frozen = try XCTUnwrap(DocumentPagePresentationOwner.capturePresented(documentID: document.id, pageIndex: 0,
       token: fixture.currentToken, region: .init(x: 0, y: 0, width: physical.width, height: physical.height), resources: fixture.resources))
     _ = try await web.evaluateJavaScript("document.querySelector('#swatch').style.background='#ff0000';true")
     let encodedLater = try await frozen.png()
     XCTAssertGreaterThan(try bluePixels(try XCTUnwrap(UIImage(data: encodedLater))), 100,
       "Encoding after a later DOM change retains the blue native frame frozen synchronously before that change")
-    let wrongPage = try await DocumentProgramOwner.captureCurrent(documentID: document.id, pageIndex: 1,
+    let wrongPage = try await DocumentPagePresentationOwner.captureCurrent(documentID: document.id, pageIndex: 1,
       token: fixture.currentToken, resources: fixture.resources)
     XCTAssertNil(wrongPage)
-    let wrongVersion = try await DocumentProgramOwner.captureCurrent(documentID: document.id, pageIndex: 0,
+    let wrongVersion = try await DocumentPagePresentationOwner.captureCurrent(documentID: document.id, pageIndex: 0,
       token: "previous-source", resources: fixture.resources)
     XCTAssertNil(wrongVersion)
     fixture.hosts[0].removeFromSuperview()
-    let detached = try await DocumentProgramOwner.captureCurrent(documentID: document.id, pageIndex: 0,
+    let detached = try await DocumentPagePresentationOwner.captureCurrent(documentID: document.id, pageIndex: 0,
       token: fixture.currentToken, resources: fixture.resources)
     XCTAssertNil(detached)
   }
@@ -1136,6 +1182,7 @@ private final class ProgramFixture {
   var ready: [Int: Bool] = [:]
   var checkpoints: Set<String> = []
   var checkpointValues: [String: JSONValue] = [:]
+  var onCheckpoint: (String) async -> Void = { _ in }
   var preparationErrors: [String] = []
   var diagnostics: String { "ready=\(ready) errors=\(preparationErrors) web=\(resources.activeWebSurfaceCount) queued=\(resources.pendingWebRequestCount) held=\(resources.rasterAdmission.heldBytes) state=\(state.records.map { ($0.id, $0.value) })" }
   var currentToken: String { DocumentSnapshotCache.token(document: document, state: state, pageIndex: pageIndices[selected]) }
@@ -1197,6 +1244,7 @@ private final class ProgramFixture {
         },
         onStateCheckpoint: { [weak self] block, value, version in
           guard let self, document.sourceVersion(blockID: block) == version, self.value(block) == value else { return false }
+          await onCheckpoint(block)
           checkpoints.insert(block); checkpointValues[block] = value; return true
         }, measurements: measurements), in: hosts[index], resources: resources)
     }
@@ -1258,7 +1306,7 @@ private final class ProgramFixture {
     let token = DocumentSnapshotCache.token(document: document, state: state, pageIndex: page)
     let deadline = ContinuousClock.now + .seconds(5)
     while ContinuousClock.now < deadline {
-      if let raster = try await DocumentProgramOwner.captureCurrent(documentID: document.id, pageIndex: page,
+      if let raster = try await DocumentPagePresentationOwner.captureCurrent(documentID: document.id, pageIndex: page,
         token: token, resources: resources) { return raster }
       try await Task.sleep(for: .milliseconds(10))
     }

@@ -324,6 +324,9 @@ final class DocumentWebCoordinator: NSObject,
   private var onDraftDiscard: (UUID) -> Void = { _ in }
   private var preparationDeadlineTask: Task<Void, Never>?
   private var preparationDeadlineGeneration: UInt64?
+  private var preparationAdmissionGeneration: UInt64?
+  private var preparationDeadlineRemaining: Duration = .seconds(8)
+  private var preparationDeadlineStarted: ContinuousClock.Instant?
   private var recoveryAttempts = 0
   private var snapshotTask: Task<Void, Never>?
   private var readerTask: Task<Void, any Error>?
@@ -778,14 +781,37 @@ final class DocumentWebCoordinator: NSObject,
   }
 
   private func beginPreparationDeadline() {
-    guard preparationDeadlineTask == nil || preparationDeadlineGeneration != generation else { return }
-    preparationDeadlineTask?.cancel()
-    let expected = generation
-    preparationDeadlineGeneration = expected
+    if preparationDeadlineGeneration != generation {
+      preparationDeadlineTask?.cancel(); preparationDeadlineTask = nil
+      preparationDeadlineGeneration = generation; preparationAdmissionGeneration = nil
+      preparationDeadlineRemaining = .seconds(8); preparationDeadlineStarted = nil
+    }
+    guard preparationDeadlineTask == nil, preparationAdmissionGeneration != generation else { return }
+    let expected = generation, remaining = preparationDeadlineRemaining
+    preparationDeadlineStarted = .now
     preparationDeadlineTask = Task { @MainActor [weak self] in
-      do { try await Task.sleep(for: .seconds(8)) } catch { return }
-      guard let self, !isInvalidated, generation == expected else { return }
+      do { try await Task.sleep(for: remaining) } catch { return }
+      guard let self, !isInvalidated, generation == expected, preparationAdmissionGeneration != expected else { return }
       failPreparation(SceneRenderError.snapshotPending("document_preparation_timeout"))
+    }
+  }
+
+  /// The source owner reports actual pool admission events. A queued fragment
+  /// consumes none of its renderer's execution deadline; repeated waits cannot
+  /// reset the eight seconds already spent executing the same generation.
+  private func preparationAdmissionChanged(_ waiting: Bool, generation expected: UInt64) {
+    guard !isInvalidated, generation == expected, acquisitionError == nil else { return }
+    if waiting {
+      guard preparationAdmissionGeneration != expected else { return }
+      preparationAdmissionGeneration = expected
+      if let started = preparationDeadlineStarted, preparationDeadlineTask != nil {
+        preparationDeadlineRemaining = max(.zero, preparationDeadlineRemaining - started.duration(to: .now))
+      }
+      preparationDeadlineStarted = nil
+      preparationDeadlineTask?.cancel(); preparationDeadlineTask = nil
+    } else if preparationAdmissionGeneration == expected {
+      preparationAdmissionGeneration = nil
+      beginPreparationDeadline()
     }
   }
 
@@ -1339,10 +1365,14 @@ final class DocumentWebCoordinator: NSObject,
         do {
           guard let lease = surfaceLease else { throw CancellationError() }
           recordPreparation(.preparedPageStartAt, trace: trace)
-          let prepared = try await next.source.preparedPage(next.pageIndex, hostID: hostID, in: web, lease: lease, resources: resources)
+          let admissionChanged: (Bool) -> Void = { [weak self] waiting in
+            self?.preparationAdmissionChanged(waiting, generation: expected)
+          }
+          let prepared = try await next.source.preparedPage(next.pageIndex, hostID: hostID, in: web, lease: lease,
+            resources: resources, onAdmissionWait: admissionChanged)
           recordPreparation(.preparedPageReadyAt, trace: trace)
           let source = sentSourceKey == next.source.message.key && sentSourcePage == prepared.fragment.pageIndex
-            ? nil : try await prepared.encodedMessage(resources: resources)
+            ? nil : try await prepared.encodedMessage(resources: resources, onAdmissionWait: admissionChanged)
           recordPreparation(.pageSourceEncodedAt, trace: trace)
           defer { withExtendedLifetime(source) {} }
           let state = sentStateKey == next.state.message.key ? nil : try await next.state.encodedJSON()
@@ -1499,7 +1529,7 @@ final class DocumentWebCoordinator: NSObject,
   /// A thumbnail borrows pixels from the already mounted page. It neither
   /// starts that page's programs again nor revokes the page's input lease.
   func retainPreparedSnapshot(pixelWidth: Int, nativeScale: Double? = nil, force: Bool = false,
-    waitsForRasterAdmission: Bool = false) async throws -> RasterLease {
+    waitsForRasterAdmission: Bool = false, reservation granted: RasterReservation? = nil) async throws -> RasterLease {
     guard let payload, !isInvalidated else { throw CancellationError() }
     let requestGeneration = generation
     let source = SceneRasterSource.document(id: payload.documentID, token: payload.rasterToken)
@@ -1524,9 +1554,15 @@ final class DocumentWebCoordinator: NSObject,
         guard generation == expectedGeneration else { throw CancellationError() }
         guard let size = webView?.bounds.size else { throw CancellationError() }
         guard size.width > 0, size.height > 0 else { throw SceneRenderError.resourceLimit }
-        let reservation = try await reserveSnapshot(source: source, pixelWidth: pixelWidth,
-          pixelHeight: Int(ceil(Double(pixelWidth) * size.height / size.width)),
-          waitsForAdmission: waitsForRasterAdmission)
+        let height = Int(ceil(Double(pixelWidth) * size.height / size.width))
+        let reservation: RasterReservation
+        if let granted {
+          guard resources.ownsRasterReservation(granted, pixelWidth: pixelWidth, pixelHeight: height) else { throw SceneRenderError.resourceLimit }
+          reservation = granted
+        } else {
+          reservation = try await reserveSnapshot(source: source, pixelWidth: pixelWidth,
+            pixelHeight: height, waitsForAdmission: waitsForRasterAdmission)
+        }
         guard !Task.isCancelled, !isInvalidated, generation == expectedGeneration, let web = webView else {
           reservation.release(); throw CancellationError()
         }
@@ -1571,10 +1607,10 @@ final class DocumentWebCoordinator: NSObject,
 
   private func reserveSnapshot(source: SceneRasterSource, pixelWidth: Int, pixelHeight: Int,
     waitsForAdmission: Bool) async throws -> RasterReservation {
-    if let reservation = resources.reserveRaster(pixelWidth: pixelWidth, pixelHeight: pixelHeight) { return reservation }
+    if let reservation = resources.reserveRaster(pixelWidth: pixelWidth, pixelHeight: pixelHeight, bytesPerPixel: SceneRenderResources.webSnapshotBytesPerPixel) { return reservation }
     let admission = resources.rasterAdmission
     guard waitsForAdmission,
-      let bytes = SceneRenderResources.estimatedRasterBytes(pixelWidth: pixelWidth, pixelHeight: pixelHeight),
+      let bytes = SceneRenderResources.estimatedRasterBytes(pixelWidth: pixelWidth, pixelHeight: pixelHeight, bytesPerPixel: SceneRenderResources.webSnapshotBytesPerPixel),
       bytes <= admission.byteLimit, bytes <= admission.passiveByteLimit, admission.countLimit > 0 else {
       throw SceneRenderError.resourceLimit
     }
@@ -1606,7 +1642,7 @@ final class DocumentWebCoordinator: NSObject,
       || current.countLimit - current.pinnedCount - current.reservedCount
         > previous.countLimit - previous.pinnedCount - previous.reservedCount
     guard improved, current.fits(additionalBytes: demand.bytes, additionalCount: 1),
-      let reservation = resources.reserveRaster(pixelWidth: demand.pixelWidth, pixelHeight: demand.pixelHeight) else { return }
+      let reservation = resources.reserveRaster(pixelWidth: demand.pixelWidth, pixelHeight: demand.pixelHeight, bytesPerPixel: SceneRenderResources.webSnapshotBytesPerPixel) else { return }
     let continuation = rasterSnapshotAdmissionContinuation
     clearRasterSnapshotAdmission()
     continuation?.resume(returning: reservation)

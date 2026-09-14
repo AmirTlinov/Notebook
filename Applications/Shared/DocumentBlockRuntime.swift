@@ -131,7 +131,8 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
 
   func blur() async { _ = try? await webView?.evaluateJavaScript("document.activeElement?.blur();true") }
 
-  func capture(sourceOffset: Double, height: Double, pixelWidth: Int) async throws -> RasterLease {
+  func capture(sourceOffset: Double, height: Double, pixelWidth: Int,
+    reservation granted: RasterReservation? = nil) async throws -> RasterLease {
     guard queuedCaptures < 4 else { throw SceneRenderError.resourceLimit }
     queuedCaptures += 1
     let preceding = captureTask, operation = UUID()
@@ -146,8 +147,9 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
       guard size.width > 0, height > 0, CGRect(origin: .zero, size: size).contains(rect) else {
         throw DocumentSessionError.invalidLayout
       }
-      guard let reservation = resources.reserveRaster(pixelWidth: pixelWidth,
-        pixelHeight: Int(ceil(Double(pixelWidth) * height / size.width))) else { throw SceneRenderError.resourceLimit }
+      let pixelHeight = Int(ceil(Double(pixelWidth) * height / size.width))
+      guard let reservation = granted ?? resources.reserveRaster(pixelWidth: pixelWidth, pixelHeight: pixelHeight),
+        resources.ownsRasterReservation(reservation, pixelWidth: pixelWidth, pixelHeight: pixelHeight) else { throw SceneRenderError.resourceLimit }
       let borrow = try lease.borrow()
       defer { borrow.release(); reservation.release() }
       let configuration = WKSnapshotConfiguration(); configuration.rect = rect; configuration.afterScreenUpdates = true

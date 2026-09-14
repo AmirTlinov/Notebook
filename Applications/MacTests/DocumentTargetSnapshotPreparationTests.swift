@@ -5,6 +5,24 @@ import XCTest
 
 @MainActor
 final class DocumentTargetSnapshotPreparationTests: XCTestCase {
+  func testExtendedColorSnapshotFitsItsGrantBeforePublication() async throws {
+    let resources = SceneRenderResources(byteLimit: 32 * 1024 * 1024)
+    let paper = BackgroundPaper(resources: resources)
+    defer { paper.close() }
+    try await waitUntil { paper.coordinator.hasCanonicalPixels }
+    let size = try XCTUnwrap(paper.coordinator.webView).bounds.size
+    let width = 256, height = Int(ceil(256 * size.height / size.width))
+    let bytes = try XCTUnwrap(SceneRenderResources.estimatedRasterBytes(pixelWidth: width, pixelHeight: height,
+      bytesPerPixel: SceneRenderResources.webSnapshotBytesPerPixel))
+    let before = resources.reservedBytes
+    let lease = try await paper.coordinator.retainPreparedSnapshot(pixelWidth: width, force: true)
+    defer { lease.release() }
+    let bitmap = try XCTUnwrap(lease.image.cgImage(forProposedRect: nil, context: nil, hints: nil))
+    XCTAssertLessThanOrEqual(bitmap.bytesPerRow * bitmap.height * 2, bytes)
+    XCTAssertLessThanOrEqual(resources.peakAccountedBytes, before + bytes)
+    XCTAssertEqual(resources.reservedBytes, before)
+  }
+
   func testActualNewDocumentPreparesItsOwnRequestedRasterWithoutASeededCache() async throws {
     try await check(blocks: [.markdown(id: "body", source: "# A fresh source\n\nIts real image must become available.")], name: "fresh-text")
   }

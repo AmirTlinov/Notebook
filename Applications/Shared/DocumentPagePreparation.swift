@@ -18,7 +18,10 @@ private final class DocumentPreparationCharges {
   }
   private var charges: [WeakCharge] = []
   private var recoveryCapacity: RasterReservation?
-  var waitsForAdmission = false
+  var onAdmissionWait: (Bool) -> Void = { _ in }
+  var waitsForAdmission = false {
+    didSet { if oldValue != waitsForAdmission { onAdmissionWait(waitsForAdmission) } }
+  }
 
   func adoptRecovery(_ reservation: RasterReservation) {
     precondition(recoveryCapacity == nil && !reservation.isReleased)
@@ -69,7 +72,7 @@ private enum DocumentPreparationAdmission {
 
   static func reserve(_ bytes: Int, stage: String, message: DocumentSourceMessage,
     page: Int?, resources: SceneRenderResources, waitsForAdmission: Bool = true,
-    charges: DocumentPreparationCharges? = nil) async throws -> RasterReservation {
+    charges: DocumentPreparationCharges? = nil, onAdmissionWait: (Bool) -> Void = { _ in }) async throws -> RasterReservation {
     if let reservation = try charges?.consumeRecovery(bytes, resources: resources) {
       resources.observeDocumentReservation(reservation, documentID: message.documentID,
         sourceKey: message.key, page: page, purpose: stage)
@@ -80,9 +83,9 @@ private enum DocumentPreparationAdmission {
         resources: resources, charges: charges)
     }
     let before = resources.lastRasterRefusal?.generation
-    defer { charges?.waitsForAdmission = false }
+    defer { charges?.waitsForAdmission = false; onAdmissionWait(false) }
     let reservation = try await resources.acquirePassiveDerivedBytes(bytes) {
-      charges?.waitsForAdmission = true
+      charges?.waitsForAdmission = true; onAdmissionWait(true)
       report(stage, kind: "pool_refusal", requested: bytes, limit: nil, message: message, page: page,
         resources: resources, refusal: resources.lastRasterRefusal.flatMap { $0.generation != before ? $0 : nil })
     }
@@ -233,14 +236,14 @@ final class DocumentPreparedPage {
   }
   /// The snapshot keeps one DOM fragment, not one full source encoding per
   /// historical page. Only the physical host's current bridge message is encoded.
-  func encodedMessage(resources: SceneRenderResources) async throws -> DocumentPageMessage {
+  func encodedMessage(resources: SceneRenderResources, onAdmissionWait: (Bool) -> Void = { _ in }) async throws -> DocumentPageMessage {
     // The bound belongs to this page, not every source block in the book.
     // Twice the browser JSON bounds Swift's slash escaping.
     // Both encoder output and the submitted script stay charged until callback.
     try DocumentPreparationAdmission.require(encodingBudget, atMost: 40 * 1024 * 1024,
       stage: "page_encoding_bound", message: envelope.source, page: fragment.pageIndex, resources: resources)
     let reservation = try await DocumentPreparationAdmission.reserve(encodingBudget * 2,
-      stage: "page_encoding", message: envelope.source, page: fragment.pageIndex, resources: resources)
+      stage: "page_encoding", message: envelope.source, page: fragment.pageIndex, resources: resources, onAdmissionWait: onAdmissionWait)
     do {
       let envelope = envelope
       let json = try await Task.detached(priority: .userInitiated) {
@@ -301,6 +304,7 @@ final class DocumentPagePreparation {
     let ordinal: UInt64
     let hostID: UUID
     let surface: ReaderSurface
+    let onAdmissionWait: (Bool) -> Void
     let continuation: CheckedContinuation<DocumentPreparedPage, Error>
   }
   private let message: DocumentSourceMessage
@@ -352,6 +356,10 @@ final class DocumentPagePreparation {
 
   init(message: DocumentSourceMessage, sourceJSON: Task<String, Error>, resources: SceneRenderResources) {
     self.message = message; self.sourceJSON = sourceJSON; self.resources = resources
+    charges.onAdmissionWait = { [weak self] waiting in
+      guard let self else { return }
+      for waiter in Array(waiters.values) { waiter.onAdmissionWait(waiting) }
+    }
     idleReclaimer = resources.registerReclamationOwner { [weak self] in
       guard let self, task == nil, admissionRetry == nil, retirement == nil,
         waiters.isEmpty, let measured else { return [] }
@@ -421,7 +429,8 @@ final class DocumentPagePreparation {
     pages.removeAll()
   }
 
-  func page(_ requested: Int, hostID: UUID, in web: WKWebView, lease: WebSurfaceLease) async throws -> DocumentPreparedPage {
+  func page(_ requested: Int, hostID: UUID, in web: WKWebView, lease: WebSurfaceLease,
+    onAdmissionWait: @escaping (Bool) -> Void = { _ in }) async throws -> DocumentPreparedPage {
     try Task.checkCancellation()
     retainPage(requested, hostID: hostID)
     if let error { throw error }
@@ -441,7 +450,8 @@ final class DocumentPagePreparation {
         guard !Task.isCancelled else { continuation.resume(throwing: CancellationError()); return }
         nextOrdinal &+= 1
         waiters[id] = Waiter(pageIndex: max(0, requested), ordinal: nextOrdinal, hostID: hostID,
-          surface: ReaderSurface(web: web, lease: lease), continuation: continuation)
+          surface: ReaderSurface(web: web, lease: lease), onAdmissionWait: onAdmissionWait, continuation: continuation)
+        onAdmissionWait(charges.waitsForAdmission)
         start()
       }
     } onCancel: {
@@ -524,7 +534,7 @@ final class DocumentPagePreparation {
           for (id, waiter) in Array(waiters) {
             if let page = cachedPage(waiter.pageIndex) {
               deliveredPage = true
-              waiters[id] = nil; waiter.continuation.resume(returning: page)
+              waiters[id] = nil; waiter.onAdmissionWait(false); waiter.continuation.resume(returning: page)
             }
           }
           let requested = waiters.values.min(by: { $0.ordinal < $1.ordinal }).map { min($0.pageIndex, measured.layout.pageCount - 1) }
@@ -564,7 +574,7 @@ final class DocumentPagePreparation {
           pages[index] = page
           for (id, waiter) in Array(waiters) where min(waiter.pageIndex, measured.layout.pageCount - 1) == index {
             deliveredPage = true
-            waiters[id] = nil; waiter.continuation.resume(returning: page)
+            waiters[id] = nil; waiter.onAdmissionWait(false); waiter.continuation.resume(returning: page)
           }
           trimPages()
           await Task.yield()
@@ -586,7 +596,7 @@ final class DocumentPagePreparation {
 
   private func cancelAdmissionRetry() {
     admissionRetryID = nil; admissionRetry?.cancel(); admissionRetry = nil
-    charges.releaseRecovery()
+    charges.releaseRecovery(); charges.waitsForAdmission = false
   }
 
   func retryPage(_ index: Int) {
@@ -597,6 +607,7 @@ final class DocumentPagePreparation {
   private func waitForReleasedCapacity(_ deferred: DocumentPreparationAdmission.Deferred) {
     let bytes = max(1, deferred.recoveryBytes), identity = UUID()
     admissionRetryID = identity
+    charges.waitsForAdmission = true
     // Recreating our released working set plus the full failed allocation (or
     // full resize growth, never only the shortage) must fit. Our own cleanup
     // cannot satisfy this gate; a concurrent external release is not lost.
@@ -607,12 +618,12 @@ final class DocumentPagePreparation {
         guard !Task.isCancelled, admissionRetryID == identity, !waiters.isEmpty else {
           capacity.release(); return
         }
-        charges.adoptRecovery(capacity)
+        charges.adoptRecovery(capacity); charges.waitsForAdmission = false
         admissionRetry = nil; admissionRetryID = nil
         start()
       } catch {
         guard admissionRetryID == identity else { return }
-        admissionRetry = nil; admissionRetryID = nil
+        admissionRetry = nil; admissionRetryID = nil; charges.waitsForAdmission = false
         if !(error is CancellationError) { fail(error) }
       }
     }

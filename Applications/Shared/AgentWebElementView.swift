@@ -22,7 +22,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
   static func captureFitsAfterImprovement(source: AgentElement, policy: AgentSnapshotPolicy,
     previous: SceneRasterAdmission, current: SceneRasterAdmission) -> Bool {
     guard let pixels = policy.pixelSize(for: source), pixels.width < CGFloat(Int.max - 2), pixels.height < CGFloat(Int.max - 2),
-      let bytes = SceneRenderResources.estimatedRasterBytes(pixelWidth: Int(pixels.width) + 2, pixelHeight: Int(pixels.height) + 2)
+      let bytes = SceneRenderResources.estimatedRasterBytes(pixelWidth: Int(pixels.width) + 2, pixelHeight: Int(pixels.height) + 2, bytesPerPixel: SceneRenderResources.webSnapshotBytesPerPixel)
     else { return false }
     func available(_ admission: SceneRasterAdmission) -> Int {
       min(admission.byteLimit - admission.heldBytes,
@@ -694,7 +694,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     guard let pixels = policy.pixelSize(for: element),
       let configuration = Self.snapshotConfiguration(for: element, policy: policy, backingScale: snapshotScale(of: web)),
       pixels.width < CGFloat(Int.max - 2), pixels.height < CGFloat(Int.max - 2),
-      let reservation = resources.reserveRaster(pixelWidth: Int(pixels.width) + 2, pixelHeight: Int(pixels.height) + 2)
+      let reservation = resources.reserveRaster(pixelWidth: Int(pixels.width) + 2, pixelHeight: Int(pixels.height) + 2, bytesPerPixel: SceneRenderResources.webSnapshotBytesPerPixel)
     else { throw SceneRenderError.resourceLimit }
     let capture = AgentSnapshotCapture(reservation: reservation, lease: lease)
     submittedCaptures[capture.id] = capture
@@ -990,7 +990,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       let configuration = Self.snapshotConfiguration(for: element, policy: policy, backingScale: snapshotScale(of: webView)),
       pixels.width.isFinite, pixels.height.isFinite,
       pixels.width < CGFloat(Int.max - 2), pixels.height < CGFloat(Int.max - 2),
-      let reservation = resources.reserveRaster(pixelWidth: Int(pixels.width) + 2, pixelHeight: Int(pixels.height) + 2)
+      let reservation = resources.reserveRaster(pixelWidth: Int(pixels.width) + 2, pixelHeight: Int(pixels.height) + 2, bytesPerPixel: SceneRenderResources.webSnapshotBytesPerPixel)
     else {
       fail(.init(kind: "resource_limit", elementID: element.id,
         message: "The requested snapshot exceeds the raster resource budget."), token: token, policy: policy)

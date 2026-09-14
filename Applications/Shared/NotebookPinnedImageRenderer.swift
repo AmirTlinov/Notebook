@@ -97,7 +97,7 @@ final class NotebookFrozenVisualSources {
           admits(fragment.id, "document-page") {
           let token = DocumentSnapshotCache.token(document: document, state: state, pageIndex: pageIndex)
           regionalCaptures[fragment.id] = {
-            try DocumentProgramOwner.capturePresented(documentID: document.id, pageIndex: pageIndex,
+            try DocumentPagePresentationOwner.capturePresented(documentID: document.id, pageIndex: pageIndex,
               token: token, region: fragment.region, resources: resources)
           }
         }

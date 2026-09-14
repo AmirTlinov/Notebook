@@ -782,13 +782,14 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertEqual(abandoned, "0")
   }
 
-  func testPreparationAdmissionFailureRetainsTheSourceUntilAnExplicitRetry() async throws {
+  func testQueuedPreparationKeepsItsSourceBeyondTheExecutionDeadline() async throws {
     let actor = UUID()
     var document = DocumentDocument(actor: actor, blocks: [.markdown(id: "body", source: "Before")])
     let state = DocumentStateJournal(id: document.id, actor: actor), resources = SceneRenderResources(maximumWebSurfaces: 1)
     let live = surface(document: document, state: state, resources: resources)
     defer { live.close() }
-    await waitUntil { live.coordinator.renderIsReady }
+    await waitUntil { live.coordinator.hasCanonicalPixels }
+    let web = try XCTUnwrap(live.coordinator.webView)
     let prior = try XCTUnwrap(live.coordinator.payload?.source), priorLayout = try XCTUnwrap(prior.layout)
     await prior.discardIdlePreparation()
     let sourceBytes = resources.reservedBytes
@@ -797,25 +798,20 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertTrue(document.replaceBlockSource(id: "body", source: "After $y^3$", actor: actor))
     live.coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
       onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
-    await waitUntil { live.coordinator.acquisitionError != nil }
+    await waitUntil { resources.pendingDerivedRequestCount == 1 }
+    try await Task.sleep(for: .milliseconds(8_250))
+    XCTAssertNil(live.coordinator.acquisitionError, "Waiting for actual bytes is not failed WebKit execution")
     XCTAssertFalse(live.coordinator.renderIsReady)
     XCTAssertNil(live.coordinator.payload?.source.layout)
     XCTAssertTrue(prior.layout === priorLayout)
-    await waitUntil { resources.activeWebSurfaceCount == 0 && resources.reservedBytes == sourceBytes + blocker.byteCount }
+    XCTAssertTrue(live.coordinator.webView === web)
     blocker.release()
-    live.coordinator.mount(in: live.host, physicalSize: .init(width: priorLayout.width, height: priorLayout.height), isInteractive: true, priority: .currentPage)
-    try await Task.sleep(for: .milliseconds(50))
-    XCTAssertEqual(resources.activeWebSurfaceCount, 0, "A layout/update is not an implicit retry of a rejected preparation")
-    func button(_ view: NSView) -> NSButton? {
-      (view as? NSButton) ?? view.subviews.lazy.compactMap { button($0) }.first
-    }
-    try XCTUnwrap(button(live.host)).performClick(nil)
-    await waitUntil { live.coordinator.renderIsReady || live.coordinator.acquisitionError != nil }
-    XCTAssertTrue(live.coordinator.renderIsReady); XCTAssertNil(live.coordinator.acquisitionError)
-    XCTAssertEqual(live.coordinator.payload?.source.preparationCount, 1,
-      "A cancelled admission retries through the same canonical source owner")
+    await waitUntil { live.coordinator.hasCanonicalPixels || live.coordinator.acquisitionError != nil }
+    XCTAssertTrue(live.coordinator.hasCanonicalPixels); XCTAssertNil(live.coordinator.acquisitionError)
+    XCTAssertTrue(live.coordinator.webView === web, "Admission resumes the same request without a hidden retry")
+    XCTAssertEqual(live.coordinator.payload?.source.preparationCount, 1)
     XCTAssertEqual(live.coordinator.payload?.source.measurementCount, 1)
-    let text = try await js("document.getElementById('document').textContent", try XCTUnwrap(live.coordinator.webView))
+    let text = try await js("document.getElementById('document').textContent", web)
     XCTAssertTrue(text.contains("After"))
   }
 

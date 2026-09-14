@@ -121,13 +121,13 @@ final class DocumentSourceSnapshot {
   func encodedJSON() async throws -> String { try await encodingTask().value }
 
   func preparedPage(_ index: Int, hostID: UUID, in web: WKWebView, lease: WebSurfaceLease,
-    resources: SceneRenderResources) async throws -> DocumentPreparedPage {
+    resources: SceneRenderResources, onAdmissionWait: @escaping (Bool) -> Void = { _ in }) async throws -> DocumentPreparedPage {
     if preparation == nil {
       preparationCount += 1
       preparation = DocumentPagePreparation(message: message, sourceJSON: encodingTask(), resources: resources)
     }
     let prepared: DocumentPreparedPage
-    do { prepared = try await preparation!.page(index, hostID: hostID, in: web, lease: lease) }
+    do { prepared = try await preparation!.page(index, hostID: hostID, in: web, lease: lease, onAdmissionWait: onAdmissionWait) }
     catch {
       // Geometry and a page packet have independent readiness. Preserve a
       // successfully checked measurement when this one fragment is refused.

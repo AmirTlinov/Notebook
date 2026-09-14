@@ -352,7 +352,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
       XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4,
         "Settled live pages are the current page, its neighbours and one directional prewarm, not traversal history")
       let web = try await livePage(expected, in: next.view,
-        diagnostics: { DocumentProgramOwner.presentationDiagnostic(documentID: document.id, resources: resources) })
+        diagnostics: { DocumentPagePresentationOwner.presentationDiagnostic(documentID: document.id, resources: resources) })
       let receipt = try await web.evaluateJavaScript("window.notebookRenderer.pageReceipt()") as? [String: Any]
       XCTAssertEqual(receipt?["pageIndex"] as? Int, expected,
         "The prepared next controller contains its own physical document page, not page zero")
@@ -417,7 +417,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
     configure(9)
     let visible = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
     let web = try await livePage(9, in: visible.view,
-      diagnostics: { DocumentProgramOwner.presentationDiagnostic(documentID: document.id, resources: resources) })
+      diagnostics: { DocumentPagePresentationOwner.presentationDiagnostic(documentID: document.id, resources: resources) })
     XCTAssertTrue(web === preparedWeb)
     let receipt = try await web.evaluateJavaScript("window.notebookRenderer.pageReceipt()") as? [String: Any]
     XCTAssertEqual(receipt?["pageIndex"] as? Int, 9)
