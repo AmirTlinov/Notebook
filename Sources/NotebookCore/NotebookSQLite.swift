@@ -332,6 +332,9 @@ extension NotebookStore {
   private var connectionKey: String { "Notebook.SQL." + root.standardizedFileURL.path }
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
+  // SQLite admission is local to this database, independently of wire and content formats.
+  private static let currentDatabaseVersion: Int64 = 3
+
   func prepareDatabase(initialWorkspaceID: UUID? = nil) throws {
     if currentSQL != nil { guard initialWorkspaceID == nil else { throw NotebookStorageError.invalidTransaction("workspace identity already initialized") }; return }
     let manager = FileManager.default
@@ -346,7 +349,9 @@ extension NotebookStore {
     let database = try NotebookSQLConnection(url: databaseURL, writable: true, create: true)
     let applicationID = try database.rows("PRAGMA application_id").first?.first?.integer ?? 0
     let version = try database.rows("PRAGMA user_version").first?.first?.integer ?? 0
-    guard applicationID == 0 || (applicationID == 1_313_999_665 && version == 2) else { throw NotebookStorageError.unsupportedFormat }
+    guard applicationID == 0 || (applicationID == 1_313_999_665 && (2...Self.currentDatabaseVersion).contains(version)) else { throw NotebookStorageError.unsupportedFormat }
+    // A current database admits addressed reads without consulting content bodies.
+    if applicationID == 1_313_999_665 && version == Self.currentDatabaseVersion { return }
     try database.run("PRAGMA journal_mode=WAL")
     try database.run("PRAGMA wal_autocheckpoint=1000")
     if applicationID == 0 {
@@ -398,11 +403,27 @@ extension NotebookStore {
         try database.run("CREATE INDEX item_placement ON item_owners(address,item_id)")
         try database.run("CREATE TABLE ink_surfaces(address TEXT NOT NULL REFERENCES records(address) ON DELETE CASCADE, kind TEXT NOT NULL, owner_id TEXT NOT NULL, PRIMARY KEY(address,kind,owner_id))")
         try database.run("CREATE INDEX ink_owner ON ink_surfaces(kind,owner_id,address)")
+        try prepareCurrentDatabaseSchema(database)
         try database.run("PRAGMA application_id=1313999665")
-        try database.run("PRAGMA user_version=2")
+        try database.run("PRAGMA user_version=\(Self.currentDatabaseVersion)")
         try database.run("COMMIT")
       } catch { try? database.run("ROLLBACK"); throw error }
+      return
     }
+    // Schema, content conversion and the durable admission version share the
+    // sole writer. Another opener may have completed admission while we waited.
+    try commandTransaction(preparedDatabase: database) {
+      let admittedVersion = try database.rows("PRAGMA user_version").first?.first?.integer ?? 0
+      if admittedVersion == Self.currentDatabaseVersion { return }
+      guard admittedVersion == 2 else { throw NotebookStorageError.unsupportedFormat }
+      try prepareCurrentDatabaseSchema(database)
+      try migrateStoredBoardPlacements(database: database)
+      try database.run("PRAGMA user_version=\(Self.currentDatabaseVersion)")
+    }
+  }
+
+  /// Called only inside the bootstrap or admission writer transaction.
+  private func prepareCurrentDatabaseSchema(_ database: NotebookSQLConnection) throws {
     try database.run("CREATE TABLE IF NOT EXISTS file_renames(id TEXT PRIMARY KEY,request BLOB NOT NULL,identity BLOB NOT NULL,completed INTEGER NOT NULL DEFAULT 0)")
     try database.run("CREATE TABLE IF NOT EXISTS code_fragment_files(address TEXT PRIMARY KEY REFERENCES records(address) ON DELETE CASCADE,file_id TEXT NOT NULL,fragment_id TEXT NOT NULL)")
     try database.run("CREATE INDEX IF NOT EXISTS code_fragment_file ON code_fragment_files(file_id,fragment_id)")
@@ -424,13 +445,7 @@ extension NotebookStore {
     try database.run("CREATE INDEX IF NOT EXISTS chat_author ON chat_jobs(author,ordinal)")
     try database.run("CREATE TABLE IF NOT EXISTS chat_active_computer(author TEXT PRIMARY KEY,computer TEXT NOT NULL)")
     if !(try database.rows("PRAGMA table_info(chat_jobs)")).contains(where: { $0[1].text == "computer" }) {
-      try database.run("BEGIN IMMEDIATE")
-      do {
-        if !(try database.rows("PRAGMA table_info(chat_jobs)")).contains(where: { $0[1].text == "computer" }) {
-          try database.run("ALTER TABLE chat_jobs ADD COLUMN computer TEXT")
-        }
-        try database.run("COMMIT")
-      } catch { try? database.run("ROLLBACK"); throw error }
+      try database.run("ALTER TABLE chat_jobs ADD COLUMN computer TEXT")
     }
     let placementColumns = Set(try database.rows("PRAGMA table_info(item_owners)").compactMap { $0[1].text })
     for (column, type) in [("stack_id", "TEXT"), ("stack_order", "INTEGER"), ("placement_counter", "INTEGER"), ("placement_actor", "TEXT")] where !placementColumns.contains(column) {
@@ -441,11 +456,6 @@ extension NotebookStore {
     try database.run("CREATE INDEX IF NOT EXISTS chat_computer_recent ON chat_jobs(author,computer,ordinal)")
     try database.run("CREATE INDEX IF NOT EXISTS chat_computer_pending ON chat_jobs(author,computer,state,ordinal)")
     try database.run("CREATE TABLE IF NOT EXISTS chat_panel(id TEXT PRIMARY KEY,value BLOB NOT NULL)")
-    if try needsBoardPlacementMigration(database: database) {
-      try commandTransaction(preparedDatabase: database) { try migrateStoredBoardPlacements(database: database) }
-    }
-
-
   }
 
   /// All typed reads in the closure observe the same WAL snapshot. A read
@@ -477,6 +487,7 @@ extension NotebookStore {
     }
     if let readAllowance { try database.limitReads(readAllowance) }
     try database.run("BEGIN IMMEDIATE")
+    let changesAtStart = sqlite3_total_changes64(database.handle)
     Thread.current.threadDictionary[connectionKey] = database
     defer { Thread.current.threadDictionary.removeObject(forKey: connectionKey) }
     var committed = false
@@ -487,7 +498,7 @@ extension NotebookStore {
       try refreshBoardFrontier(database: database)
       try refreshReferenceIndex(database: database)
       if !advancesReadRevision, database.pendingChangeCount > 0 { throw NotebookStorageError.invalidTransaction("local chat changed shared content") }
-      if advancesReadRevision && sqlite3_total_changes64(database.handle) > 0 {
+      if advancesReadRevision && sqlite3_total_changes64(database.handle) > changesAtStart {
         let revision = try currentReadCursor()
         guard revision < UInt64(Int64.max) else { throw NotebookStorageError.limitExceeded("read_revision") }
         try database.run("UPDATE metadata SET value=? WHERE key='read_revision'", [.text(String(revision + 1))])

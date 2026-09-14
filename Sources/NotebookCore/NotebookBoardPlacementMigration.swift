@@ -74,12 +74,13 @@ extension NotebookStore {
     return try storedValue(placementMigrationFile)?.decode(NotebookBoardPlacementMigrationReceipt.self)
   }
 
-  func needsBoardPlacementMigration(database: NotebookSQLConnection) throws -> Bool {
+  private func needsBoardPlacementMigration(database: NotebookSQLConnection) throws -> Bool {
     let rows = try database.rows("SELECT json_extract(CAST(b.data AS TEXT),'$.value.board.format') FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.parent='board.json#' AND r.collection='boards' ORDER BY r.member LIMIT 1")
     return rows.first?[0].integer == 2
   }
 
   func migrateStoredBoardPlacements(database: NotebookSQLConnection) throws {
+    guard currentSQL === database, database.writable else { throw NotebookStorageError.readOnlyTransaction }
     guard try needsBoardPlacementMigration(database: database) else { return }
     let cursor = try currentChangeCursor()
     let peers = try database.rows("SELECT DISTINCT peer_id FROM peer_cursors").compactMap { $0[0].text }

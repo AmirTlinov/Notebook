@@ -332,10 +332,19 @@ struct DocumentSourceReplicationTests {
         return NotebookDurableChange(sequence: source.sequence, transactionID: source.transactionID,
           manifestHash: try b.currentSQL!.putBlob(data), byteCount: data.count)
       }
-      #expect(throws: NotebookStorageError.self) { try b.applyRemoteChange(retired, peerID: peer) }
+      let read = try b.currentReadCursor(), proof = try b.archiveContentProof()
+      do { _ = try b.applyRemoteChange(retired, peerID: peer); Issue.record("Retired wire format was accepted") }
+      catch let error as CollaborationError { #expect(error.code == "placement_peer_upgrade_required") }
       #expect(try b.loadDocument(id) == before)
       #expect(try b.currentChangeCursor() == cursor)
+      #expect(try b.currentReadCursor() == read)
+      #expect(try b.archiveContentProof() == proof)
       #expect(try b.peerCursor(peerID: peer, direction: .incoming) == 2)
+      // Rejection did not claim the transaction identity or incoming sequence.
+      _ = try b.applyRemoteChange(source, peerID: peer)
+      #expect(try b.loadDocument(id) == a.loadDocument(id))
+      #expect(try b.currentChangeCursor() == cursor + 1)
+      #expect(try b.peerCursor(peerID: peer, direction: .incoming) == source.sequence)
     }
   }
 

@@ -249,7 +249,8 @@ struct NotebookPageAppendTests {
           try store.currentSQL!.run("UPDATE blobs SET data=? WHERE hash=(SELECT hash FROM records WHERE address=?)", [.blob(Data("unrelated damaged body".utf8)), .text(address)])
         }
       }
-      _ = try store.saveWorkspaceSelection(index: intent, createdPage: page)
+      // A fresh owner must use durable SQL admission, without a warm-process shortcut.
+      _ = try NotebookStore(root: store.root).saveWorkspaceSelection(index: intent, createdPage: page)
       #expect(try store.pageCount(in: base.selectedItemID) == 2)
       #expect(try store.pageID(at: 1, in: base.selectedItemID) == page.id)
       #expect(try store.loadPage(page.id) == page)

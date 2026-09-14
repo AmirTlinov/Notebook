@@ -12,16 +12,22 @@ struct LegacyDocumentAndBoardTests {
     try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
   }
   private func oldBoard(_ current: BoardDocument) throws -> [String: Any] {
-    var value = try object(current)
-    let free = try #require(value.removeValue(forKey: "freeItems") as? [[String: Any]])
+    // Board/1 is a historical input schema. Construct it explicitly; a
+    // current Board/3 serializes causal placements, not these retired fields.
+    let free = try current.freeItems.map { try object($0) }
+    let stacks = try current.stacks.map { try object($0) }
+    var value: [String: Any] = [
+      "format": 1,
+      "elements": try JSONSerialization.jsonObject(with: JSONEncoder().encode(current.elements)),
+      "stamp": try object(current.stamp)
+    ]
     value["freeNotebooks"] = free.map { original in
       var item = original; item["notebookID"] = item.removeValue(forKey: "itemID"); return item
     }
-    let stacks = try #require(value["stacks"] as? [[String: Any]])
     value["stacks"] = stacks.map { original in
       var stack = original; stack["notebookIDs"] = stack.removeValue(forKey: "itemIDs"); return stack
     }
-    value["format"] = 1
+    if let collaboration = current.collaboration { value["collaboration"] = try object(collaboration) }
     return value
   }
 
@@ -45,9 +51,22 @@ struct LegacyDocumentAndBoardTests {
     var board = BoardDocument.initial(itemIDs: ids, actor: actor)
     let stacked = board.createStack(moving: ids[0], onto: ids[1], actor: actor)
     #expect(stacked != nil)
-    let bytes = try data(oldBoard(board))
+    let oldValue = try oldBoard(board), bytes = try data(oldValue)
+    #expect(oldValue["format"] as? Int == 1)
+    #expect(oldValue["placements"] == nil && oldValue["freeItems"] == nil)
+    #expect((oldValue["freeNotebooks"] as? [[String: Any]])?.count == 1)
+    #expect((oldValue["stacks"] as? [[String: Any]])?.count == 1)
     #expect(throws: DecodingError.self) { try JSONDecoder().decode(BoardDocument.self, from: bytes) }
-    #expect(try convertLegacyBoard(bytes) == board)
+    let converted = try convertLegacyBoard(bytes)
+    #expect(converted == board)
+    #expect(converted.freeItems == board.freeItems)
+    #expect(converted.stacks == board.stacks)
+    for placement in converted.placements {
+      let original = try #require(board.placements.first { $0.id == placement.id })
+      #expect(placement.pose == original.pose)
+      #expect(placement.stamp == original.stamp)
+      #expect(placement.heads == original.heads)
+    }
     #expect(try convertLegacyBoard(JSONEncoder().encode(board)) == board)
     let node = BoardNode(id: UUID(), board: board)
     let tree = BoardHierarchy(rootBoardID: node.id, boards: [node], stamp: board.stamp)

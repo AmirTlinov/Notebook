@@ -4,6 +4,11 @@ import Testing
 
 @Suite("One explicit current-data placement migration")
 struct BoardPlacementMigrationTests {
+  private func databaseVersion(_ store: NotebookStore) throws -> Int64? {
+    let database = try NotebookSQLConnection(url: store.databaseURL, writable: false)
+    return try database.rows("PRAGMA user_version").first?.first?.integer
+  }
+
   private func versionTwo(_ board: BoardDocument) throws -> JSONValue {
     .object(["format": .number(2), "freeItems": try .encode(board.freeItems),
       "stacks": try .encode(board.stacks), "elements": try .encode(board.elements),
@@ -52,6 +57,9 @@ struct BoardPlacementMigrationTests {
           try db.noteOwner(.referenceRoot, row.address)
         }
       }
+      // This fixture represents a pre-admission database, not a legacy body
+      // injected into a database whose durable admission has already completed.
+      try db.run("PRAGMA user_version=2")
     }
     return value
   }
@@ -68,6 +76,7 @@ struct BoardPlacementMigrationTests {
     let legacy = try installStoredVersionTwo(store)
     let reopened = NotebookStore(root: root)
     #expect(try reopened.loadIndex() == before.workspace)
+    #expect(try databaseVersion(reopened) == 3)
     let receipt = try #require(try reopened.migrateBoardPlacements())
     #expect(receipt.sourceCursor == cursor)
     #expect(try receipt.sourceHash == collaborationHash(legacy))
@@ -107,6 +116,7 @@ struct BoardPlacementMigrationTests {
     #expect(try db.rows("SELECT json_extract(CAST(b.data AS TEXT),'$.value.board.format') FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.collection='boards'").first?[0].integer == 2)
     #expect(try db.rows("SELECT 1 FROM records WHERE file='local/migrations/board-placements-v3.json'").isEmpty)
     #expect(try db.rows("SELECT MAX(sequence) FROM change_log").first?[0].integer == 1)
+    #expect(try databaseVersion(store) == 2)
   }
 
   @Test func equalOldJoinedFieldsDoNotGiveDifferentGeometryTheSameAuthoredDot() throws {
@@ -153,9 +163,99 @@ struct BoardPlacementMigrationTests {
     let interrupted = NotebookStore(root: root) { point in if point == fault { throw CocoaError(.fileWriteUnknown) } }
     #expect(throws: (any Error).self) { _ = try interrupted.migrateBoardPlacements() }
     #expect(try identities() == before)
+    #expect(try databaseVersion(store) == 2)
     let migrated = try #require(try store.migrateBoardPlacements())
     #expect(migrated.sourceCursor == 1)
+    #expect(try databaseVersion(store) == 3)
     #expect(try store.currentChangeCursor() == 2)
+  }
+
+
+  @Test func currentContentAdmissionIsDurableWithoutInventingAReadOrDeliveryChange() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root)
+    let header = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    let proof = try store.archiveContentProof(), read = try store.currentReadCursor(), delivery = try store.currentChangeCursor()
+    let database = try NotebookSQLConnection(url: store.databaseURL, writable: true)
+    try database.run("PRAGMA user_version=2")
+    for _ in 0..<3 {
+      let reopened = NotebookStore(root: root)
+      #expect(try reopened.workspaceHeader() == header)
+      #expect(try databaseVersion(reopened) == 3)
+      #expect(try reopened.currentReadCursor() == read)
+      #expect(try reopened.currentChangeCursor() == delivery)
+      #expect(try reopened.archiveContentProof() == proof)
+      #expect(try reopened.migrateBoardPlacements() == nil)
+    }
+  }
+
+  @Test func emptyDatabaseAdmissionDoesNotInventAReadRevision() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root)
+    try store.prepareDatabase()
+    #expect(try databaseVersion(store) == 3)
+    #expect(try store.currentReadCursor() == 0)
+    #expect(try store.currentChangeCursor() == 0)
+  }
+
+  @Test func schemaAdmissionRollsBackItsColumnsAndVersionTogether() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root)
+    let header = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    let read = try store.currentReadCursor()
+    let database = try NotebookSQLConnection(url: store.databaseURL, writable: true)
+    try database.run("BEGIN IMMEDIATE")
+    try database.run("DROP INDEX chat_computer_recent")
+    try database.run("DROP INDEX chat_computer_pending")
+    try database.run("ALTER TABLE chat_jobs DROP COLUMN computer")
+    try database.run("PRAGMA user_version=2")
+    try database.run("COMMIT")
+    let interrupted = NotebookStore(root: root) { point in
+      if point == .beforeCommit { throw CocoaError(.fileWriteUnknown) }
+    }
+    #expect(throws: (any Error).self) { _ = try interrupted.workspaceHeader() }
+    #expect(try databaseVersion(store) == 2)
+    #expect(!(try database.rows("PRAGMA table_info(chat_jobs)")).contains { $0[1].text == "computer" })
+    #expect(try store.workspaceHeader() == header)
+    #expect(try databaseVersion(store) == 3)
+    #expect(try database.rows("PRAGMA table_info(chat_jobs)").contains { $0[1].text == "computer" })
+    #expect(try store.currentReadCursor() == read)
+  }
+
+  @Test func simultaneousOpenersCompleteOnePlacementAdmission() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root)
+    let header = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    let cursor = try store.currentChangeCursor()
+    _ = try installStoredVersionTwo(store)
+    try await withThrowingTaskGroup(of: UUID.self) { group in
+      for _ in 0..<4 {
+        group.addTask { try NotebookStore(root: root).workspaceHeader().workspaceID }
+      }
+      for try await workspaceID in group { #expect(workspaceID == header.workspaceID) }
+    }
+    #expect(try databaseVersion(store) == 3)
+    let receipt = try #require(try store.migrateBoardPlacements())
+    #expect(receipt.sourceCursor == cursor)
+    #expect(try store.currentChangeCursor() == cursor + 1)
+    #expect(try store.changeJournal(after: cursor).count == 1)
+  }
+
+  @Test func anUnknownDatabaseVersionIsNotDowngradedOrWritten() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root)
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    let database = try NotebookSQLConnection(url: store.databaseURL, writable: true)
+    try database.run("PRAGMA user_version=4")
+    let before = try database.rows("SELECT address||':'||hash FROM records ORDER BY address").compactMap { $0[0].text }
+    #expect(throws: NotebookStorageError.unsupportedFormat) { _ = try NotebookStore(root: root).workspaceHeader() }
+    #expect(try databaseVersion(store) == 4)
+    #expect(try database.rows("SELECT address||':'||hash FROM records ORDER BY address").compactMap { $0[0].text } == before)
   }
 
   @Test func deletingTheLastChildDoesNotMakeItsPlacementTombstoneHoldAnEmptyBoard() throws {

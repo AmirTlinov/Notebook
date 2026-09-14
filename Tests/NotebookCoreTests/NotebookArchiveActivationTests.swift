@@ -262,7 +262,15 @@ struct NotebookArchiveActivationTests {
       let bytes = try NotebookStore.storageEncoder.encode(old), hash = try database.putBlob(bytes)
       try database.run("UPDATE change_log SET manifest_hash=?,byte_count=? WHERE sequence=?", [.text(hash), .integer(Int64(bytes.count)), .integer(Int64(change.sequence))])
     }
-    #expect(throws: NotebookStorageError.self) { try store.validateArchiveSnapshot() }
+    // WAL reader bookkeeping may change file bytes; admission must preserve
+    // durable content, delivery and the read revision, including the old packet.
+    let rejectedRead = try store.currentReadCursor(), rejectedProof = try store.archiveContentProof()
+    let rejectedJournal = try store.changeJournal(after: 0)
+    do { _ = try store.validateArchiveSnapshot(); Issue.record("Retired delivery was accepted as a current archive") }
+    catch let error as CollaborationError { #expect(error.code == "placement_peer_upgrade_required") }
+    #expect(try store.currentReadCursor() == rejectedRead)
+    #expect(try store.archiveContentProof() == rejectedProof)
+    #expect(try store.changeJournal(after: 0) == rejectedJournal)
     let before = try NotebookArchiveFingerprint.read(store.root), proof = try store.archiveContentProof()
     let output = value.base.appendingPathComponent("continuing-device"), presence = try store.loadPresence()
     let prepared = try store.prepareDeviceSnapshot(at: output, presence: presence, preservingLocalState: true)
