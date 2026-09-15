@@ -8,6 +8,46 @@ import XCTest
 @testable import Notebook
 
 final class PreparedAgentElementViewTests: XCTestCase {
+  @MainActor
+  func testUpdatingAnInstalledRuntimeDoesNotRepublishItsReadiness() async throws {
+    let resources = SceneRenderResources(), source = element(id: UUID().uuidString, source: "Stable readiness")
+    let lease = try await resources.acquireWebSurface(priority: .liveProgram)
+    var reports: [Bool] = []
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources,
+      onRenderReady: { reports.append($0) }, onState: { _ in })
+    let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let host = UIViewController(); window.rootViewController = host; window.makeKeyAndVisible()
+    host.view.addSubview(web); web.frame = .init(x: 100, y: 100, width: 160, height: 120)
+    defer {
+      coordinator.invalidate(); lease.release(); web.removeFromSuperview()
+      window.isHidden = true; window.rootViewController = nil
+    }
+    coordinator.load(source, policy: .exact(scale: 2), in: web)
+    try await waitUntil("The real capture and input installation finish") {
+      reports.last == true && coordinator.installation(for: source)?.isInstalled == true
+        && coordinator.pendingSnapshotCaptures.isEmpty
+    }
+    let count = reports.count, token = coordinator.loadToken
+    for _ in 0..<40 {
+      // updateUIView replaces closures, not the physical preparation request.
+      coordinator.use(onRenderReady: { reports.append($0) })
+      coordinator.load(source, policy: .exact(scale: 2), in: web)
+    }
+    let moved = source.updating(frame: .init(x: 400, y: 200, width: 160, height: 120))
+    coordinator.load(moved, policy: .exact(scale: 2), in: web)
+    try await Task.sleep(for: .milliseconds(150))
+    XCTAssertEqual(reports.count, count, "Representable refresh must not turn readiness into a self-sustaining render loop")
+    let changed = moved.updating(state: .number(1))
+    coordinator.load(changed, policy: .exact(scale: 2), in: web)
+    try await waitUntil("A genuine state transition still captures and publishes readiness") {
+      reports.count > count && reports.last == true && coordinator.installation(for: changed)?.isInstalled == true
+        && coordinator.pendingSnapshotCaptures.isEmpty
+    }
+    XCTAssertTrue(reports.dropFirst(count).contains(false))
+    XCTAssertEqual(coordinator.loadToken, token, "Neither placement nor state restarts the program")
+  }
+
   func testSourceFailureScopeSurvivesPlacementButRejectsNewCapturePolicyAndState() {
     let source = element(id: "failure-scope", source: "Failure scope")
     let demand = SceneSourceDemand(source: source, minimumScale: 2, region: .init(x: 0, y: 0, width: 80, height: 60))
@@ -179,28 +219,33 @@ final class PreparedAgentElementViewTests: XCTestCase {
     let prior = try XCTUnwrap(resources.retainRaster(for: .agent(source), minimumScale: 2))
     defer { prior.release() }
     let token = try XCTUnwrap(coordinator.loadToken)
-    // The completion seam controls only callback ordering after a real mounted
-    // load/capture. It does not manufacture initial readiness or native pixels.
-    // Both submissions execute in one actor turn before their deferred delivery.
-    coordinator.load(source, policy: policy, in: web)
+    // A lower-density demand can use the real pixels already captured from
+    // this unchanged DOM. Its successful and failed completions are delivered
+    // in one actor turn, before the queued readiness event can run.
+    let currentPolicy = AgentSnapshotPolicy.exact(scale: 1)
+    coordinator.load(source, policy: currentPolicy, in: web)
+    coordinator.completeSnapshot(prior.image, error: nil, token: token, element: source,
+      reservation: try XCTUnwrap(resources.reserveRaster(pixelWidth: 320, pixelHeight: 240)), policy: currentPolicy)
+    let queued = try XCTUnwrap(resources.retainRaster(for: .agent(source), minimumScale: 2))
+    defer { queued.release() }
     coordinator.completeSnapshot(nil, error: NSError(domain: "CurrentNativeCapture", code: 1),
       token: token, element: source,
-      reservation: try XCTUnwrap(resources.reserveRaster(pixelWidth: 320, pixelHeight: 240)), policy: policy)
+      reservation: try XCTUnwrap(resources.reserveRaster(pixelWidth: 320, pixelHeight: 240)), policy: currentPolicy)
     failureIssued = true
     try await waitUntil("The current failed capture delivers failure and false readiness") {
       failures.count == 1 && afterFailureReadiness.contains(false)
     }
     XCTAssertFalse(afterFailureReadiness.contains(true),
       "A ready event queued before the current failure cannot acknowledge readiness after it")
-    XCTAssertEqual(failures.first?.policy, policy)
+    XCTAssertEqual(failures.first?.policy, currentPolicy)
     XCTAssertEqual(failures.first?.loadToken, token)
     XCTAssertTrue(coordinator.installation(for: source)?.isInstalled == true,
       "A capture failure cannot revoke the healthy live control")
     let current = try XCTUnwrap(resources.retainRaster(for: .agent(source), minimumScale: 2))
     defer { current.release() }
-    XCTAssertEqual(current.entryID, prior.entryID,
+    XCTAssertEqual(current.entryID, queued.entryID,
       "Rejecting stale readiness does not discard legitimate pixels captured before the failure")
-    let attachment = XCTAttachment(string: "afterFailureReadiness=\(afterFailureReadiness), priorEntry=\(prior.entryID), retainedEntry=\(current.entryID), navigation=\(token)")
+    let attachment = XCTAttachment(string: "afterFailureReadiness=\(afterFailureReadiness), queuedEntry=\(queued.entryID), retainedEntry=\(current.entryID), navigation=\(token)")
     attachment.name = "Actual ready runtime with deterministic capture-failure callback ordering"
     attachment.lifetime = .keepAlways; add(attachment)
   }

@@ -195,7 +195,7 @@ struct PreparedAgentElementView: View {
             guard model.shutdownPhase != .stopped, self.web?.id == web.id, !web.isReleased else { return }
             if ready, let next = SceneRenderResources.shared.retainRaster(for: rasterSource, minimumScale: requiredScale) {
               if let runtimeAddress { model.compositionTiles.runtimeSourceBecameReady(runtimeAddress, leaseID: web.id, source: element) }
-              raster = next
+              if raster?.entryID != next.entryID { raster = next }
               preparedSource = element
               failure = nil
               failedSource = nil

@@ -804,7 +804,8 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         beginPreparationDeadline(token: token, policy: snapshotPolicy)
         captureSnapshot(of: webView, token: token)
       }
-      if let token = loadToken { publishRenderReadiness(renderIsReady, token: token) }
+      // Updating the representable replaces its callbacks, not its request.
+      // Readiness is published only by an actual preparation transition.
       return
     }
     if let previous = loadedElement, AgentProgramSource(previous) == AgentProgramSource(element) {
@@ -816,7 +817,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
           beginPreparationDeadline(token: token)
         }
         applyCurrentState()
-      } else if let token = loadToken { publishRenderReadiness(renderIsReady, token: token) }
+      }
       return
     }
     recoveryAttempts = 0
