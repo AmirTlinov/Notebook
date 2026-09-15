@@ -6,6 +6,56 @@ import XCTest
 
 final class SceneCompositionTests: XCTestCase {
   @MainActor
+  func testAnInstalledProgramCannotBeDemotedByANewNeighbourAndDeletionStillRetiresIt() async throws {
+    let fixture = Fixture(count: 0), boardID = fixture.presence.boardID, stamp = fixture.workspace.stamp
+    let program = SpatialElement(id: "z-running", surface: .board(boardID), kind: .web,
+      frame: .init(x: 0, y: 0, width: 96, height: 96), worldOrigin: .zero,
+      source: "An unsaved field", html: "<input value='Keep my draft'>", stamp: stamp)
+    let neighbours = (0..<6).map { offset in
+      SpatialElement(id: "b-neighbour-\(offset)", surface: .board(boardID), kind: .nativeText,
+        frame: .init(x: 0, y: 0, width: 32, height: 32), worldOrigin: .zero, source: "\(offset)", stamp: stamp)
+    }
+    let presence = SessionPresence(boardID: boardID, mode: .board,
+      camera: .init(center: .init(x: 48, y: 48), scale: 1), viewport: .init(x: 320, y: 256))
+    let resources = SceneRenderResources(), coordinator = SceneCompositionTiles(resources: resources)
+    addTeardownBlock { @MainActor in await coordinator.stop() }
+    func prepare(_ elements: [SpatialElement], counter: UInt64) {
+      let revision = VersionStamp(counter: counter, actor: stamp.actor)
+      let hierarchy = BoardHierarchy(rootBoardID: boardID,
+        boards: [.init(id: boardID, board: .init(freeItems: fixture.hierarchy.boards[0].board.freeItems,
+          elements: elements, stamp: revision))], stamp: revision)
+      let index = WorkspaceSceneIndex(workspace: fixture.workspace, hierarchy: hierarchy, paperSizes: [:])
+      let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: fixture.journal)
+      coordinator.prepare(source: source, presence: presence,
+        frame: .init(index: index, presence: presence, portalCamera: { _ in nil }), pinned: [])
+    }
+    prepare(neighbours + [program], counter: 1)
+    try await waitUntil { coordinator.published != nil }
+    let old = try XCTUnwrap(coordinator.published)
+    let reference = InteractiveElementReference.board(boardID: boardID, elementID: program.id)
+    let lease = try await resources.acquireWebSurface(priority: .liveProgram, source: reference)
+    defer { lease.release() }
+    let address = try XCTUnwrap(coordinator.registerRuntimeSource(focus: reference,
+      source: agentElementSnapshotSource(program), policy: .exact(scale: 2), leaseID: lease.id, cohort: old))
+    XCTAssertNil(old.sourceRasters[address], "The live program has no static replacement yet")
+    let added = SpatialElement(id: "a-new", surface: .board(boardID), kind: .nativeText,
+      frame: .init(x: 0, y: 0, width: 32, height: 32), worldOrigin: .zero, source: "New", stamp: stamp)
+    prepare([added] + neighbours + [program], counter: 2)
+    try await waitUntil { coordinator.published?.id != old.id || coordinator.failure != nil }
+    let current = try XCTUnwrap(coordinator.published)
+    XCTAssertNil(coordinator.failure)
+    XCTAssertTrue(current.plan.allowsLive(.element(program.id), in: .board(boardID)),
+      "A neighbour cannot replace an installed program with a pending static producer")
+    XCTAssertTrue(current.runtimeOwners.contains(address))
+    XCTAssertEqual(resources.webActivity(for: reference).activeLeaseCount, 1)
+    prepare([added] + neighbours, counter: 3)
+    try await waitUntil { coordinator.published?.id != current.id || coordinator.failure != nil }
+    XCTAssertNil(coordinator.failure)
+    XCTAssertFalse(coordinator.published?.plan.allowsLive(.element(program.id), in: .board(boardID)) == true,
+      "Protecting the installed representation never resurrects a deleted source")
+  }
+
+  @MainActor
   func testStaticSVGPublishesWithoutRetainingAProgramExecutor() async throws {
     let fixture = Fixture(count: 0), stamp = fixture.workspace.stamp, boardID = fixture.presence.boardID
     let element = SpatialElement(id: "static-svg", surface: .board(boardID), kind: .web,

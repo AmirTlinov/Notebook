@@ -728,7 +728,8 @@ final class SceneCompositionTiles {
       cancelPreparation()
     }
     let source = request.source, presence = request.presence, frame = request.frame
-    let pinned = request.pinned, displayScale = request.displayScale
+    let pinned = request.pinned.union(installedRuntimePins(frame: frame, presence: presence))
+    let displayScale = request.displayScale
     let permitsPreparation = request.permitsPreparation, onSourceInvalidated = request.onSourceInvalidated
     let sources = frame.sourceIdentity
     let needsSourceScheduling = published?.sourceReceipts.contains { address, receipt in
@@ -964,6 +965,27 @@ final class SceneCompositionTiles {
     #else
       return []
     #endif
+  }
+
+  /// A working surface is not an optional raster-quality choice. Keep its
+  /// physical owner while it remains visible; only leaving the scene, deletion
+  /// or its explicit retirement can hand that position back to static paint.
+  private func installedRuntimePins(frame: WorkspaceSceneFrame, presence: SessionPresence) -> Set<WorkspaceSpatialID> {
+    Set(runtimeSources.compactMap { address, runtime in
+      guard runtime.isMounted, address.plane.boardID == presence.boardID else { return nil }
+      let element: SpatialElement?
+      if let coverID = address.plane.coverID {
+        guard presence.focusedItemID == coverID else { return nil }
+        element = frame.covers[coverID]?.elements.first { $0.id == address.elementID }
+      } else {
+        element = frame.worksets[presence.boardID]?.elements.first { $0.id == address.elementID }
+      }
+      guard let element else { return nil }
+      let origin = SceneSourceCapture.origin(element: element, plane: address.plane, frame: frame)
+      let visible = SceneSourceCapture.visibleRect(source: agentElementSnapshotSource(element), origin: origin, presence: presence)
+      guard !visible.isNull, !visible.isEmpty else { return nil }
+      return .element(element.id)
+    })
   }
 
   private func scheduleSources(_ receipts: [SceneSourceAddress: SceneSourceReceipt],
