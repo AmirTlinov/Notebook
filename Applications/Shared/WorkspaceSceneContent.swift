@@ -20,6 +20,25 @@ struct RenderedWorkspaceItem: Identifiable, Equatable, Sendable {
 enum WorkspaceSceneProjection {
   static let portalPasses = 32
 
+  /// Opening is a local presentation, not a durable move or a finger lift.
+  /// Keep its existing native body above every passive cover band, below an
+  /// explicitly lifted body. Closing restores the unchanged source order.
+  static func presentationRank(of item: RenderedWorkspaceItem, in presence: SessionPresence,
+    liftRank: Double? = nil) -> Double? {
+    if let liftRank { return liftRank }
+    guard item.item.kind != .board, presence.focusedItemID == item.id,
+      presence.openProgress > 0 else { return nil }
+    return Double(SceneCompositionPlan.maximumLiveOwners * 2 + 1)
+  }
+
+  static func isPaintedBelow(_ left: RenderedWorkspaceItem, _ right: RenderedWorkspaceItem,
+    in presence: SessionPresence) -> Bool {
+    let a = presentationRank(of: left, in: presence), b = presentationRank(of: right, in: presence)
+    if a != b { return (a ?? -1) < (b ?? -1) }
+    return ScenePaintPosition(layer: .covers, zIndex: left.zIndex, key: left.id.uuidString)
+      < ScenePaintPosition(layer: .covers, zIndex: right.zIndex, key: right.id.uuidString)
+  }
+
   static func showsPortal(pixelScale: Double, remainingPasses: Int) -> Bool {
     remainingPasses > 0 && WorkspaceItemGeometry.notebook.width * pixelScale >= 8
   }

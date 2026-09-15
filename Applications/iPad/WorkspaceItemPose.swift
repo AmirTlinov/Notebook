@@ -284,7 +284,8 @@ final class WorkspaceItemPoseController: UIViewController, NotebookScenePresenta
       c: y.x - origin.x, d: y.y - origin.y, tx: origin.x, ty: origin.y)
     guard matrix.isFiniteAndInvertible else { return nil }
     return .init(id: .cover(rendered.id), localBounds: host.view.bounds, localToScreen: matrix,
-      zIndex: rendered.zIndex, liftRank: publishedLiftRank)
+      zIndex: rendered.zIndex,
+      presentationRank: WorkspaceSceneProjection.presentationRank(of: rendered, in: currentPresence, liftRank: publishedLiftRank))
   }
 
   func acquirePose(in coordinateView: UIView) -> WorkspaceItemPoseLease? {

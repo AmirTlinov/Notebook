@@ -33,17 +33,17 @@ struct SpatialScreenSurface: Equatable {
   let localBounds: CGRect
   let localToScreen: CGAffineTransform
   let zIndex: Double
-  let liftRank: Double?
+  let presentationRank: Double?
 
-  init(id: SurfaceID, localBounds: CGRect, localToScreen: CGAffineTransform, zIndex: Double, liftRank: Double? = nil) {
+  init(id: SurfaceID, localBounds: CGRect, localToScreen: CGAffineTransform, zIndex: Double, presentationRank: Double? = nil) {
     self.id = id; self.localBounds = localBounds; self.localToScreen = localToScreen
-    self.zIndex = zIndex; self.liftRank = liftRank
+    self.zIndex = zIndex; self.presentationRank = presentationRank
   }
 
   func isPaintedBelow(_ other: Self) -> Bool {
-    // The published lift tier is above the complete static composition, not a
-    // durable z coordinate. Resting ties use the renderer's one painter order.
-    switch (liftRank, other.liftRank) {
+    // Open paper and published lifts use their installed presentation tier,
+    // never a durable move. Resting ties retain the source painter order.
+    switch (presentationRank, other.presentationRank) {
     case (.some(let left), .some(let right)) where left != right: return left < right
     case (.none, .some): return true
     case (.some, .none): return false

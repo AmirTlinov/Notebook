@@ -216,7 +216,7 @@ final class WorkspaceItemPoseTests: XCTestCase {
       XCTAssertEqual(SpatialSurfaceRouter.surface(at: point, covers: restingSurfaces, board: .board(boardID)), .cover(b),
         "Equal durable z uses the same canonical UUID tie-break as the composed image")
       first.beginLift()
-      try await waitUntil { first.screenSurface(in: canvas)?.liftRank != nil }
+      try await waitUntil { first.screenSurface(in: canvas)?.presentationRank != nil }
       host.view.layoutIfNeeded()
       let lifted = try XCTUnwrap(first.screenSurface(in: canvas))
       let inputPoint = CGPoint(x: 300, y: 200).applying(lifted.localToScreen)
@@ -258,8 +258,8 @@ final class WorkspaceItemPoseTests: XCTestCase {
     try await pause(second, fraction: 0.4, in: driver.canvas)
     XCTAssertEqual(driver.physical.engaged, [a, b], "A returning or causally pending body cannot block its neighbor")
     let sa = try XCTUnwrap(first.screenSurface(in: driver.canvas)), sb = try XCTUnwrap(second.screenSurface(in: driver.canvas))
-    XCTAssertLessThan(try XCTUnwrap(sa.liftRank), try XCTUnwrap(sb.liftRank))
-    XCTAssertGreaterThan(try XCTUnwrap(sa.liftRank), 8_000)
+    XCTAssertLessThan(try XCTUnwrap(sa.presentationRank), try XCTUnwrap(sb.presentationRank))
+    XCTAssertGreaterThan(try XCTUnwrap(sa.presentationRank), 8_000)
     driver.begin(at: CGPoint(x: 400, y: 450).applying(sb.localToScreen), tool: .eraser)
     first.cancelManipulation(); second.cancelManipulation()
     driver.physical.publish(a); driver.physical.publish(b)

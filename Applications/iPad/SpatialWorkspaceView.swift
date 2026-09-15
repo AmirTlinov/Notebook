@@ -756,7 +756,8 @@ struct SpatialWorkspaceView: View {
             }
           )
           .equatable()
-          .zIndex(liftRank(of: rendered.id) ?? (cohort?.plan.rank(id: .item(rendered.id), in: .board(presence.boardID)) ?? 0))
+          .zIndex(WorkspaceSceneProjection.presentationRank(of: rendered, in: presence, liftRank: liftRank(of: rendered.id))
+            ?? cohort?.plan.rank(id: .item(rendered.id), in: .board(presence.boardID)) ?? 0)
         }
 
   }

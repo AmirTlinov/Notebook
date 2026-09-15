@@ -1,10 +1,80 @@
 import Foundation
+import SwiftUI
+import UIKit
+import WebKit
 import XCTest
 @testable import NotebookCore
 @testable import Notebook
 
 @MainActor
 final class NotebookDocumentOpeningTests: XCTestCase {
+  func testOpenedDocumentOwnsPixelsHitTestingAndAttentionAboveAnOverlappingCoverWithoutMovingIt() async throws {
+    let (model, first, second) = try await fixture()
+    model.moveItem(second.id, to: .zero)
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    await model.reloadExternalChanges()?.value
+    let boardID = try XCTUnwrap(model.presence?.boardID)
+    let placements = try XCTUnwrap(model.boardHierarchy?.board(boardID)?.placements)
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let host = UIHostingController(rootView: SpatialWorkspaceView().environment(model).ignoresSafeArea())
+    window.rootViewController = host
+    let viewport = SpatialPoint(x: window.bounds.width, y: window.bounds.height)
+    let camera = SpatialCamera(center: .zero, scale: model.itemGeometry(first.id).fitScale(viewport: viewport))
+    model.selectItem(first.id)
+    await model.prepareDocumentOpening(first.id, pageIndex: 0)?.value
+    model.updatePresence(.init(boardID: boardID, mode: .document, camera: camera, viewport: viewport,
+      focusedItemID: first.id, openProgress: 1, selectedItemID: first.id), settled: true)
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil; model.compositionTiles.cancelPreparation() }
+    func views(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(views) }
+    func until(_ predicate: () -> Bool) async throws {
+      let deadline = ContinuousClock.now + .seconds(15)
+      while !predicate(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+      XCTAssertTrue(predicate(), model.compositionTiles.failure ?? "The opened document was not installed")
+      if !predicate() { throw CocoaError(.featureUnsupported) }
+    }
+    try await until {
+      guard let document = model.documents[first.id], let state = model.documentStates[first.id] else { return false }
+      return !model.scenePreparationPending && model.compositionTiles.published?.isPaintInstalled == true
+        && DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: 0, scope: .paper)
+    }
+    let presence = try XCTUnwrap(model.presence), cohort = try XCTUnwrap(model.compositionTiles.published)
+    let workset = model.presentedWorkset(cohort: cohort, boardID: boardID, presence: presence)
+    let opened = try XCTUnwrap(workset.items.first { $0.id == first.id })
+    let neighbour = try XCTUnwrap(workset.items.first { $0.id == second.id })
+    XCTAssertLessThan(opened.zIndex, neighbour.zIndex, "The test must open a paper underneath an actual overlapping cover")
+    XCTAssertTrue(WorkspaceSceneProjection.isPaintedBelow(neighbour, opened, in: presence))
+    let rank = try XCTUnwrap(WorkspaceSceneProjection.presentationRank(of: opened, in: presence))
+    XCTAssertGreaterThan(rank, Double(cohort.plan.bands.filter { $0.plane == .board(boardID) }.map(\.rank).max() ?? 0))
+    let point = CGPoint(x: window.bounds.midX, y: window.bounds.midY)
+    let hit = try XCTUnwrap(window.hitTest(point, with: nil))
+    let web = try XCTUnwrap(views(host.view).compactMap { $0 as? WKWebView }.first {
+      $0.navigationDelegate is DocumentWebCoordinator && hit.isDescendant(of: $0)
+    }, "The native contact must reach the opened document, not its overlapping neighbour")
+    XCTAssertGreaterThan(web.convert(web.bounds, to: window).intersection(window.bounds).width, 100)
+    let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
+      window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+    }
+    let pixels = XCTAttachment(image: image); pixels.name = "opened-document-above-unchanged-overlapping-cover"
+    pixels.lifetime = .keepAlways; add(pixels)
+    var selected: CollaborationTarget?
+    _ = NotebookAttentionProjection.capture(start: point, end: point, model: model, presence: presence,
+      cohort: cohort, installedInk: [:], acceptsFirstFragment: { fragment in selected = fragment.target; return false })
+    XCTAssertEqual(selected, .init(kind: .document, id: first.id), "Attention resolves the same paper as native hit testing")
+    let pose = try XCTUnwrap(model.compositionTiles.surfaceRegistry.pose(for: .cover(first.id)))
+    let surface = try XCTUnwrap(pose.screenSurface(in: host.view))
+    XCTAssertEqual(surface.presentationRank, rank, "Accepted native surface samples retain this same presentation tier")
+    XCTAssertEqual(model.boardHierarchy?.board(boardID)?.placements, placements)
+    let closed = SessionPresence(boardID: boardID, mode: .cover, camera: camera, viewport: viewport,
+      focusedItemID: first.id, openProgress: 0, selectedItemID: first.id)
+    model.updatePresence(closed, settled: true)
+    XCTAssertNil(WorkspaceSceneProjection.presentationRank(of: opened, in: closed))
+    XCTAssertTrue(WorkspaceSceneProjection.isPaintedBelow(opened, neighbour, in: closed))
+    let persisted = await model.finishPendingPersistence(); XCTAssertTrue(persisted)
+    XCTAssertEqual(try model.store.loadBoard(items: try XCTUnwrap(model.workspace).items).board(boardID)?.placements, placements,
+      "Opening/closing must not author a move, alter a stack, or change causal placement heads")
+  }
+
   func testAcceptedOpeningReadsAnAlreadySelectedCoverBeforeAnyCameraSample() async throws {
     let (model, first, second) = try await fixture()
     let closed = try XCTUnwrap(model.presence)

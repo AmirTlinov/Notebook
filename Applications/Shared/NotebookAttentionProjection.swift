@@ -292,11 +292,11 @@ enum NotebookAttentionProjection {
     var origin: WorldPoint?
     var elementID: String?
     var pageIndex: Int?
-    if let item = items.reversed().first(where: { item in
+    if let item = items.filter({ item in
       if let ownerID { return item.id == ownerID }
       let frame = item.geometry.screenFrame(center:item.center,camera:presence.camera,viewport:presence.viewport)
       return CGRect(x:frame.x,y:frame.y,width:frame.width,height:frame.height).contains(rect)
-    }) {
+    }).max(by: { WorkspaceSceneProjection.isPaintedBelow($0, $1, in: presence) }) {
       let box = item.geometry.screenFrame(center:item.center,camera:presence.camera,viewport:presence.viewport)
       region = .init(x:max(0,(rect.minX-box.x)/presence.camera.scale),y:max(0,(rect.minY-box.y)/presence.camera.scale),
         width:rect.width/presence.camera.scale,height:rect.height/presence.camera.scale)
