@@ -44,6 +44,17 @@ final class AgentTableRenderingTests: XCTestCase {
     host.rootView = AnyView(SpatialWorkspaceView().environment(model).environment(\.displayScale, 2).ignoresSafeArea())
     window.rootViewController = host; window.makeKeyAndVisible()
     let originalInk = model.spatialInk
+    let tableSource = agentElementSnapshotSource(element)
+    let tableAddress = SceneSourceAddress(plane: .board(boardID), elementID: element.id)
+    func installedTableWebViews() -> [WKWebView] {
+      webViews(host.view).filter {
+        ($0.navigationDelegate as? AgentWebCoordinator)?.installation(for: tableSource)?.isInstalled == true
+      }
+    }
+    func documentWebViews() -> [WKWebView] {
+      webViews(host.view).filter { $0.navigationDelegate is DocumentWebCoordinator }
+    }
+    var returnedRuntimeToken: String?
     // The second enlargement stays inside the former 1.6x coverage shortcut.
     // Jumping directly from the overview to reading scale misses this defect.
     for zoom in [0.13101832425163298, 0.5, 0.7027193990126275, 0.62] {
@@ -60,7 +71,7 @@ final class AgentTableRenderingTests: XCTestCase {
         var text = ""
         while !text.contains("Возвращение к чёткой таблице"), ContinuousClock.now < deadline {
           try await Task.sleep(for: .milliseconds(30))
-          if let web = webViews(host.view).first {
+          if let web = documentWebViews().first {
             text = (try? await web.evaluateJavaScript("document.querySelector('#document')?.innerText ?? ''")) as? String ?? ""
           }
         }
@@ -80,37 +91,57 @@ final class AgentTableRenderingTests: XCTestCase {
       let deadline = ContinuousClock.now + .seconds(10)
       let minimumScale = floor(element.frame.width * zoom * 2) / element.frame.width
       while (model.compositionTiles.published == nil || model.scenePreparationPending || model.compositionTiles.isPreparing
-        || SceneRenderResources.shared.image(for: agentElementSnapshotSource(element), minimumScale: minimumScale) == nil),
+        || SceneRenderResources.shared.image(for: tableSource, minimumScale: minimumScale) == nil
+        || (model.compositionTiles.published?.runtimeOwners.contains(tableAddress) == true && installedTableWebViews().isEmpty)),
         ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(20))
       }
       XCTAssertFalse(model.scenePreparationPending, model.compositionTiles.failure ?? "Table preparation did not finish")
       let releaseDeadline = ContinuousClock.now + .seconds(3)
-      while !webViews(host.view).isEmpty, ContinuousClock.now < releaseDeadline {
+      while !documentWebViews().isEmpty, ContinuousClock.now < releaseDeadline {
         try await Task.sleep(for: .milliseconds(20))
       }
-      XCTAssertTrue(webViews(host.view).isEmpty, "A closed selected document cannot retain invisible live pages over the board")
+      XCTAssertTrue(documentWebViews().isEmpty, "A closed selected document cannot retain invisible live pages over the board")
       let closedCover = try XCTUnwrap(model.compositionTiles.published?.frame.workset(boardID: boardID).items.first { $0.id == documentID })
       XCTAssertTrue(WorkspaceSceneProjection.mountsContent(of: closedCover, in: presence),
         "The visible closed cover remains mounted; culling must not hide a page lifetime defect")
       XCTAssertTrue(model.compositionTiles.published?.plan.allowsLive(.item(documentID), in: .board(boardID)) == true)
       try await Task.sleep(for: .milliseconds(150))
-      let raster = try XCTUnwrap(SceneRenderResources.shared.retainRaster(for: agentElementSnapshotSource(element)))
+      let raster = try XCTUnwrap(SceneRenderResources.shared.retainRaster(for: tableSource))
       let source = XCTAttachment(image: raster.image); source.name = "table-source-\(zoom)-density-\(raster.pixelScale)"; source.lifetime = .keepAlways; add(source)
       let output = UIGraphicsImageRenderer(size: host.view.bounds.size).image { _ in
         host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
       }
       let shown = XCTAttachment(image: output); shown.name = "table-mounted-\(zoom)"; shown.lifetime = .keepAlways; add(shown)
       let presenters = descendants(host.view)
+      let live = installedTableWebViews()
       let descriptions = presenters.map { "\($0.bounds), contents=\($0.layer.contents.map { ($0 as! CGImage).width } ?? 0), scale=\($0.layer.contentsScale)" }
-      let description = "zoom=\(zoom) cached=\(raster.pixelScale) frame=\(model.compositionTiles.published?.frame.pixelScales[boardID] ?? -1) presenters=\(descriptions)"
+      let liveDescriptions = live.map { "\($0.bounds), scale=\($0.contentScaleFactor), runtime=\(($0.navigationDelegate as? AgentWebCoordinator)?.loadToken ?? "missing")" }
+      let description = "zoom=\(zoom) cached=\(raster.pixelScale) frame=\(model.compositionTiles.published?.frame.pixelScales[boardID] ?? -1) rasters=\(descriptions) live=\(liveDescriptions)"
       let report = XCTAttachment(string: description); report.name = "table-density-\(zoom)"; report.lifetime = .keepAlways; add(report)
       XCTAssertGreaterThanOrEqual(raster.pixelScale, minimumScale, description)
-      XCTAssertEqual(presenters.count, 1, "A new density replaces the same material, not an overlapping copy")
+      // Visible programs now keep their actual runtime. Neither a hidden
+      // document page nor a merely allocated WK is a table presentation.
+      XCTAssertEqual(presenters.count + live.count, 1, "A new density replaces the same material, not an overlapping copy")
+      if model.compositionTiles.published?.runtimeOwners.contains(tableAddress) == true {
+        XCTAssertEqual(live.count, 1, "A passive image cannot certify a demanded live program")
+      }
       for presenter in presenters {
         let shownPixels = try XCTUnwrap(presenter.layer.contents) as! CGImage
         XCTAssertGreaterThanOrEqual(shownPixels.width, Int(floor(element.frame.width * zoom * 2)), description)
         XCTAssertFalse(presenter.layer.shouldRasterize)
+      }
+      for web in live {
+        // WKWebView's outer UIKit layer is not WebKit's painted backing.
+        // Keep the page's actual CSS-pixel density separate from that wrapper;
+        // assertFineEdges below still checks the installed output itself.
+        let pagePixelRatio = try await web.evaluateJavaScript("window.devicePixelRatio") as? Double
+        let pixelRatio = try XCTUnwrap(pagePixelRatio)
+        XCTAssertGreaterThanOrEqual(web.bounds.width * pixelRatio, floor(element.frame.width * zoom * 2), description)
+        XCTAssertFalse(web.layer.shouldRasterize)
+        let token = try XCTUnwrap((web.navigationDelegate as? AgentWebCoordinator)?.loadToken)
+        if zoom == 0.7027193990126275 { returnedRuntimeToken = token }
+        if zoom == 0.62 { XCTAssertEqual(token, returnedRuntimeToken, "A settled zoom must not restart the returned program") }
       }
       if zoom >= 0.5 { try assertFineEdges(output, element: element, zoom: zoom) }
       XCTAssertEqual(model.presence?.camera, presence.camera)
