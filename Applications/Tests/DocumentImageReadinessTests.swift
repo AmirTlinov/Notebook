@@ -52,6 +52,8 @@ final class DocumentImageReadinessTests: XCTestCase {
     let firstCalls = try await web.evaluateJavaScript("imageProbe.calls") as? Int
     XCTAssertEqual(firstCalls, 0,
       "A far fixed image has no decode barrier on the first text page")
+    let loadingPolicy = try await web.evaluateJavaScript("[...document.querySelectorAll('.document-layout-preparation img')].map(image=>image.loading)") as? [String]
+    XCTAssertEqual(loadingPolicy, ["lazy"], "The measuring source cannot enqueue a far illustration into the document load/font-ready barrier")
     XCTAssertEqual(source.measurementCount, 1)
     let rawInstalls = try await web.evaluateJavaScript("notebookRenderer.pageReceipt().work.pageInstalls")
     let initialInstalls = try XCTUnwrap(rawInstalls as? Int)

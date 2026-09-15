@@ -609,30 +609,16 @@ final class IPadPageTurnController: UIViewController,
     refreshControllerState()
     transferToPageViewController(targetController)
 
-    if adjacent {
-      pageViewController.setViewControllers(
-        [targetController],
-        direction: direction,
-        animated: pageViewController.viewIfLoaded?.window != nil
-      ) { [weak self] finished in
-        guard let self, transitionRevision == revision else { return }
-        completeExternalSelection(target, finished: finished, requestID: requestID, preparation: preparation)
-      }
-    } else {
-      UIView.transition(
-        with: pageViewController.view,
-        duration: 0.14,
-        options: [.transitionCrossDissolve, .allowAnimatedContent]
-      ) {
-        self.pageViewController.setViewControllers(
-          [targetController],
-          direction: direction,
-          animated: false
-        )
-      } completion: { [weak self] finished in
-        guard let self, transitionRevision == revision else { return }
-        completeExternalSelection(target, finished: finished, requestID: requestID, preparation: preparation)
-      }
+    // Non-curl navigation already owns the prepared live destination. UIKit's
+    // completion confirms its installation; a second cross-dissolve would
+    // snapshot that surface and delay input without contributing readiness.
+    pageViewController.setViewControllers(
+      [targetController],
+      direction: direction,
+      animated: adjacent && pageViewController.viewIfLoaded?.window != nil
+    ) { [weak self] finished in
+      guard let self, transitionRevision == revision else { return }
+      completeExternalSelection(target, finished: finished, requestID: requestID, preparation: preparation)
     }
   }
 

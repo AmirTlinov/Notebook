@@ -1,6 +1,38 @@
 # Проверка Notebook
 
 
+## 15 сентября — дальние изображения не входят в load; non-curl без cross-dissolve
+
+Markdown теперь один раз санитизируется в inert DOM fragment. До подключения
+изображения получают `loading=lazy`. `waitForGeometry` по-прежнему ожидает
+декодирование при зависимости разметки от intrinsic размеров; каждая показанная
+страница явно переводит свои изображения в eager и ждёт настоящий `img.decode`.
+`document.fonts.ready`, typesetting, проверки геометрии и две paint callbacks
+не удалены. В WebKit font-ready promise также связан с окончанием document load
+([FontFaceSet.cpp](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/css/FontFaceSet.cpp));
+поэтому ненужная загрузка дальних фиксированных иллюстраций могла удерживать
+первую страницу. Эффект на Release latency ещё предстоит измерить.
+
+Дальняя ссылка передаёт уже подготовленную поверхность непосредственно через
+`UIPageViewController.setViewControllers(animated:false)` и подтверждает её
+настоящим completion. Удалён отдельный cross-dissolve с лишними 140 мс и
+композиторной копией. Смежное ручное перелистывание и его curl сохранены.
+
+`.build/document-load-policy-final/verification.json`: **7 Mac + 16 iPad =
+23 PASS**, 0 skips/runtime warnings, source SHA
+`56413ba5273812610f0dfb6bf8197906ea8a6f46f4a612f37f50285fae7ae666`.
+Большой источник проверен в настоящих Mac/iPad WebKit: неизменное измерение,
+геометрия и пиксели возврата, видимые декодированные SVG/формулы, дальний live
+handoff без второго render, ошибка composite не отравляет live, реальные ссылки
+туда/назад. `/tmp/notebook-document-load-policy-js-final.log`: 12 JS checks PASS.
+
+v1: 7 Mac + 13 iPad фактически прошли, но квитанция верно отказана из-за опечатки
+в дополнительном селекторе теста. Отдельный JS-прогон обнаружил устаревшую
+изолированную extraction-фикстуру: её render scope не включал настоящий
+`waitForProgram`; теперь она исполняет этот же production helper, не заглушку.
+Это проверка корректности изменения, не достижение Release p95 и не допуск пары.
+
+
 ## 15 сентября — внимание подтверждает выбранные пиксели, а не исправность соседей
 
 `DocumentPresentationScope.region` проверяет каноническую бумагу и точные

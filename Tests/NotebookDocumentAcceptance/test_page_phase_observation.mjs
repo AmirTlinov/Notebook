@@ -11,6 +11,7 @@ function section(start, end) {
 const observationSource = section('      let preparationObservation = null;', '      let sourcePreparation = null;');
 const receiptSource = section('      const observedPageReceipt = async', '      // Each pending frame');
 const renderSource = section('      const renderFrame = async', '      const observedPageReceipt');
+const programWaitSource = section('      const waitForProgram = ', '      const retirePresentation = ');
 const fontSource = section('          const observation = preparationObservation?.sourceKey', "          phase('fontsReady');") + "phase('fontsReady');";
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const frame = {documentID:'document', runtimeID:'runtime', generation:'18', sourceKey:'source',
@@ -29,8 +30,8 @@ function execution() {
     sourcePreparation:{host:{isConnected:true}}, payload:{...frame},
     requestAnimationFrame:fn=>frames.push(fn),
     setPageIndex:index=>actions.push(['setPageIndex',index]), pageReceipt:()=>({...scope.payload}),
-    getComputedStyle:()=>{throw new Error('No observer layout')}, AbortController};
-  vm.runInNewContext(observationSource + receiptSource + `
+    getComputedStyle:()=>{throw new Error('No observer layout')}, AbortController, DOMException};
+  vm.runInNewContext(observationSource + receiptSource + programWaitSource + `
     globalThis.api={observePreparation, observedPageReceipt, observeBrowserState,
       observation:()=>preparationObservation};`, scope);
   return {scope, frames, actions, api:scope.api, time:value=>{now=value}, reads:()=>clockReads};

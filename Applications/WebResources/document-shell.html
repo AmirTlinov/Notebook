@@ -516,13 +516,20 @@
           section.textContent = ownsDisplayMath ? source : `\\[${source}\\]`;
         } else {
           const source = block.source || '';
-          section.innerHTML = source
-            ? DOMPurify.sanitize(marked.parse(source), {
-                USE_PROFILES: { html: true, svg: true, svgFilters: true },
-                FORBID_TAGS: ['script', 'iframe', 'object', 'embed'],
-                FORBID_ATTR: ['style', 'onerror', 'onload']
-              })
+          const html = source ? marked.parse(source)
             : '<p class="empty-hint">Дважды коснитесь, чтобы начать писать.</p>';
+          const content = DOMPurify.sanitize(html, {
+            RETURN_DOM_FRAGMENT: true,
+            USE_PROFILES: { html: true, svg: true, svgFilters: true },
+            FORBID_TAGS: ['script', 'iframe', 'object', 'embed'],
+            FORBID_ATTR: ['style', 'onerror', 'onload']
+          });
+          // Set policy while the sanitized fragment is still inert. The hidden
+          // measurement source must not add every far illustration to the
+          // document load event (and therefore document.fonts.ready). Intrinsic
+          // geometry and displayed pages still explicitly await real decode.
+          for (const image of content.querySelectorAll('img')) image.loading = 'lazy';
+          section.append(content);
         }
         return section;
       };
