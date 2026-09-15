@@ -524,6 +524,12 @@ final class DocumentWebCoordinator: NSObject,
         runtimeID: payload.runtimeID, generation: generation, renderToken: payload.renderToken,
         pageIndex: payload.pageIndex, presentationEpoch: presentation.epoch)
     }
+    // A one-page export or neighbour has no demand for the entire navigation
+    // index. The current reader owns that continuation, including when it
+    // adopts a surface whose canonical pixels were prepared in the background.
+    if hasCanonicalPixels, requestedPriority == .currentPage {
+      payload?.source.didPresentPage()
+    }
     refreshLiveReceipt()
   }
 
@@ -661,6 +667,7 @@ final class DocumentWebCoordinator: NSObject,
     if !renderIsReady, !preservesFallback { host.showFallback(source: fallbackSource, resources: resources) }
     if webView != nil {
       surfaceLease?.updatePriority(priority); requestedPriority = priority
+      refreshInputAdmission()
       if !hasCanonicalPixels && !isPresentingEditor { beginPreparationDeadline() }
       return
     }
@@ -1572,7 +1579,6 @@ final class DocumentWebCoordinator: NSObject,
           canonicalPixelEpoch = presentation.kind == .canonical && pixelPresentation == presentation ? presentation.epoch : nil
         } else { canonicalPixelEpoch = nil }
         setRenderReady(requestedPageIndex == receiptPage)
-        if hasCanonicalPixels { payload.source.didPresentPage() }
         applyPageIndexIfReady()
         capturePendingSnapshotIfReady()
       }

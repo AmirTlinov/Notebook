@@ -52,7 +52,7 @@ final class DocumentLargeSourceTests: XCTestCase {
   }
 
   private func surface(_ document: DocumentDocument, _ state: DocumentStateJournal,
-    resources: SceneRenderResources, acceptsInput: Bool = false) throws -> Surface {
+    resources: SceneRenderResources, acceptsInput: Bool = false, priority: WebPriority = .currentPage) throws -> Surface {
     let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
       onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
     update(coordinator, document, state, page: 0)
@@ -72,7 +72,7 @@ final class DocumentLargeSourceTests: XCTestCase {
     window.isReleasedWhenClosed = false; window.contentView = host; window.orderBack(nil)
     #endif
     coordinator.mount(in: host, physicalSize: .init(width: size.width, height: size.height),
-      isInteractive: true, priority: .currentPage)
+      isInteractive: priority == .currentPage, priority: priority)
     #if os(iOS)
     return Surface(coordinator: coordinator, host: host, window: window, previousKeyWindow: previousKeyWindow)
     #else
@@ -226,6 +226,62 @@ final class DocumentLargeSourceTests: XCTestCase {
     let deadline = ContinuousClock.now + .seconds(8)
     while source.layout?.isComplete != true, .now < deadline { try await Task.sleep(for: .milliseconds(10)) }
     XCTAssertEqual(source.layout?.isComplete, true, source.lastPreparationLayoutMismatch ?? "Navigation index did not finish")
+  }
+
+  func testPassivePageDoesNotStartTheWholeBookUntilItsReadySurfaceBecomesTheReader() async throws {
+    let actor = UUID(), resources = SceneRenderResources(profile: .interactive)
+    var document = DocumentDocument(actor: actor, blocks: [.markdown(id: "initial", source: "Initial page")])
+    let state = DocumentStateJournal(id: document.id, actor: actor)
+    let surface = try surface(document, state, resources: resources, priority: .background)
+    defer { surface.close() }
+    try await ready(surface.coordinator)
+    let web = try XCTUnwrap(surface.coordinator.webView)
+    _ = try await evaluate("""
+      const original=MathJax.typesetPromise.bind(MathJax);
+      window.tailStarts=0;
+      const gate=new Promise(resolve=>window.releaseTail=resolve);
+      MathJax.typesetPromise=async nodes=>{
+        if(nodes.some(node=>node.dataset.blockId==='distant')){window.tailStarts++;await gate;}
+        return original(nodes);
+      };
+      return 'installed';
+      """, arguments: [:], web: web)
+    document = DocumentDocument(id: document.id, actor: actor, blocks: [
+      .markdown(id: "visible", source: "# Passive useful page\n\n" +
+        String(repeating: "A visible measured paragraph with $x^2+1$ stays at its physical address.\n\n", count: 120)),
+      .markdown(id: "distant", source: "# Distant section\n\n$\\int_0^1 t^2 dt$")
+    ])
+    update(surface.coordinator, document, state, page: 0)
+    try await ready(surface.coordinator)
+    let source = try XCTUnwrap(surface.coordinator.payload?.source)
+    let first = try await capture(web, name: "Passive page without unrequested whole-book work")
+    // Give the completion task the same chance to run as an ordinary snapshot
+    // request. The actual gate records entry; elapsed time is not readiness.
+    try await Task.sleep(for: .milliseconds(200))
+    let unrequested = try await evaluate("return String(window.tailStarts);", arguments: [:], web: web)
+    XCTAssertEqual(unrequested, "0", "A background page image must not start the entire book's navigation index")
+    XCTAssertEqual(source.layout?.isComplete, false)
+    let size = WorkspaceItemGeometry.document(document.paperSize)
+    surface.coordinator.mount(in: surface.host, physicalSize: .init(width: size.width, height: size.height),
+      isInteractive: true, priority: .currentPage)
+    let deadline = ContinuousClock.now + .seconds(2)
+    var starts = "0"
+    while starts == "0", .now < deadline {
+      starts = try await evaluate("return String(window.tailStarts);", arguments: [:], web: web)
+      if starts == "0" { try await Task.sleep(for: .milliseconds(10)) }
+    }
+    _ = try await evaluate("window.releaseTail();return 'released';", arguments: [:], web: web)
+    XCTAssertEqual(starts, "1", "Adopting ready pixels into the current reader must start its index once")
+    try await complete(source)
+    XCTAssertTrue(surface.coordinator.webView === web)
+    XCTAssertEqual(source.measurementCount, 1)
+    let returned = try await capture(web, name: "Same passive pixels after adoption into the reader")
+    XCTAssertEqual(first, returned)
+    surface.close()
+    let drained = ContinuousClock.now + .seconds(2)
+    while resources.activeWebSurfaceCount != 0, .now < drained { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
   }
 
   func testIncrementalBookAgreesWithFullRemeasureAfterIndexReclamation() async throws {

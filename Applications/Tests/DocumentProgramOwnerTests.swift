@@ -6,6 +6,38 @@ import XCTest
 
 @MainActor
 final class DocumentProgramOwnerTests: XCTestCase {
+  func testSavingIndependentTextKeepsTheProgramContextAndItsUnsavedDOM() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [
+      .markdown(id: "text", source: "# Original heading"),
+      .interactive(id: "counter", html: "<button>Increment</button><input value='draft'><output>3</output>", javaScript: """
+        window.contextNonce=crypto.randomUUID();
+        document.querySelector('button').onclick=()=>{
+          notebook.commit({count:notebook.state.count+1});
+          document.querySelector('output').textContent=String(notebook.state.count);
+        };
+        """, initialState: .object(["count": .number(3)]), height: 100)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "counter") != nil }
+    let paper = try XCTUnwrap(fixture.paper(in: 0)), program = try XCTUnwrap(fixture.web(block: "counter"))
+    let nonce = try await program.evaluateJavaScript("""
+      document.querySelector('input').value='Uncommitted DOM survives';
+      document.querySelector('button').click();window.contextNonce
+      """) as? String
+    try await wait(message: { fixture.diagnostics }) { fixture.number("counter", field: "count") == 4 && fixture.isPresented }
+    fixture.replaceSource(blockID: "text", source: "# Corrected independent heading\n\nA locally saved paragraph.")
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented }
+    XCTAssertTrue(fixture.paper(in: 0) === paper)
+    XCTAssertTrue(fixture.web(block: "counter") === program)
+    XCTAssertEqual(fixture.number("counter", field: "count"), 4)
+    let retainedNonce = try await program.evaluateJavaScript("window.contextNonce") as? String
+    let retainedInput = try await program.evaluateJavaScript("document.querySelector('input').value") as? String
+    let savedText = try await paper.evaluateJavaScript("document.querySelector('#document').textContent") as? String
+    XCTAssertEqual(retainedNonce, nonce)
+    XCTAssertEqual(retainedInput, "Uncommitted DOM survives")
+    XCTAssertTrue(savedText?.contains("Corrected independent heading") == true)
+  }
+
   func testProgramStateChangesOnlyItsCompositeAndNeverReframesIndependentPaper() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [
       .interactive(id: "counter", html: "<button>Increment</button><output>0</output>", javaScript: """
@@ -83,7 +115,9 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let fixture = try ProgramFixture(document: document, showsNeighbour: false)
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) }
-    let layout = try XCTUnwrap(DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document).layout)
+    let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
+    try await wait(message: { fixture.diagnostics }) { source.layout?.isComplete == true }
+    let layout = try XCTUnwrap(source.layout)
     let target = try XCTUnwrap(layout.regions.first { $0.id == "bad" }?.pageIndex)
     XCTAssertGreaterThan(target, 1)
     fixture.showPages(current: 0, neighbour: target); fixture.restorePresentation(1)
@@ -1192,7 +1226,12 @@ final class DocumentProgramOwnerTests: XCTestCase {
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) { (0..<3).allSatisfy { fixture.web(block: "program-\($0)") != nil } }
     fixture.reveal(block: "program-3")
-    try await wait(message: { fixture.diagnostics }) { fixture.web(block: "program-3") != nil }
+    // The fourth control is no longer held behind the removed three-program
+    // quota. Its presence cannot stand in for completion of the others' writes.
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.web(block: "program-3") != nil && resources.activeWebSurfaceCount <= 2
+        && (0..<3).allSatisfy { fixture.checkpointValues["program-\($0)"]?["accepted"] == .number(1) }
+    }
     XCTAssertTrue((0..<3).allSatisfy { fixture.checkpointValues["program-\($0)"]?["accepted"] == .number(1) })
     XCTAssertEqual(resources.rasterAdmission.pinnedCount, 0)
     XCTAssertLessThanOrEqual(resources.activeWebSurfaceCount, 2)
@@ -1210,11 +1249,15 @@ final class DocumentProgramOwnerTests: XCTestCase {
     })
     let fixture = try ProgramFixture(document: document, showsNeighbour: false)
     defer { fixture.close() }
+    // One physical paper and one transient-preparation reserve leave the
+    // remaining ordinary scene slots to already visible input owners.
+    let liveCapacity = fixture.resources.maximumWebSurfaces - 2
+    XCTAssertGreaterThanOrEqual(liveCapacity, 4)
     try await wait(message: { fixture.diagnostics }) {
-      (0..<3).allSatisfy { fixture.web(block: "program-\($0)") != nil }
-        && fixture.resources.pendingWebRequestCount == 6
+      (0..<liveCapacity).allSatisfy { fixture.web(block: "program-\($0)") != nil }
+        && fixture.resources.pendingWebRequestCount == 9 - liveCapacity
     }
-    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 4)
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, liveCapacity + 1)
     XCTAssertNil(fixture.web(block: "program-8"))
     XCTAssertFalse(fixture.hasProgramAction("program-8"), "Waiting is not a fake control or an activation button")
     fixture.reveal(block: "program-8")
@@ -1232,7 +1275,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
     }
     fixture.revealAll()
     try await wait(message: { fixture.diagnostics }) {
-      (0..<9).filter { fixture.web(block: "program-\($0)") != nil }.count == 3 && fixture.resources.pendingWebRequestCount == 6
+      (0..<9).filter { fixture.web(block: "program-\($0)") != nil }.count == liveCapacity
+        && fixture.resources.pendingWebRequestCount == 9 - liveCapacity
     }
     XCTAssertNil(fixture.web(block: "program-8"))
     let paused = UIGraphicsImageRenderer(bounds: fixture.hosts[0].bounds).image { _ in

@@ -108,7 +108,7 @@
         .appendingPathComponent("NotebookUITests", isDirectory: true)
         .appendingPathComponent(fixtureName, isDirectory: true)
       do {
-        if materialCount != nil, ProcessInfo.processInfo.arguments.contains("--notebook-reopen-fixture"),
+        if ProcessInfo.processInfo.arguments.contains("--notebook-reopen-fixture"),
           fileManager.fileExists(atPath: root.path) {
           return NotebookAppModel(store: NotebookStore(root: root), startsNearbySync: false)
         }

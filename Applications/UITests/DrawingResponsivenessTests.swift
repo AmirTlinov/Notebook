@@ -1963,6 +1963,48 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue((surface.value as? String ?? "").hasPrefix("Страница 1 из "))
   }
 
+  func testDocumentFarLinkEditSaveAndColdReopeningKeepTheVisibleSavedText() async throws {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures",
+      "--notebook-document-runtime-fixture", "--notebook-document-links-fixture"]
+    launchPortraitFixture(app)
+    let outward = app.links["К дальней главе"].firstMatch
+    XCTAssertTrue(outward.waitForExistence(timeout: 8)); outward.tap()
+    let returning = app.links["К оглавлению"].firstMatch
+    XCTAssertTrue(returning.waitForExistence(timeout: 5)); returning.tap()
+    let firstPage = app.otherElements["page-turn-page-0"].firstMatch
+    let heading = firstPage.staticTexts["Оглавление проверки"].firstMatch
+    XCTAssertTrue(heading.waitForExistence(timeout: 5)); heading.doubleTap()
+    let editor = app.textViews["Исходный Markdown или LaTeX"].firstMatch
+    XCTAssertTrue(editor.waitForExistence(timeout: 5)); editor.tap()
+    XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+    editor.typeText("\n\nСохранено до закрытия\n\n")
+    XCTAssertTrue((editor.value as? String)?.contains("Сохранено до закрытия") == true)
+    app.buttons["Сохранить"].firstMatch.tap()
+    let saved = firstPage.staticTexts["Сохранено до закрытия"].firstMatch
+    XCTAssertTrue(saved.waitForExistence(timeout: 12), "Save must install the new readable text before closing")
+    XCTAssertFalse(editor.exists)
+    let installed = XCTAttachment(screenshot: app.screenshot())
+    installed.name = "full-document-cycle-saved-before-close"; installed.lifetime = .keepAlways; add(installed)
+    app.otherElements["page-turn-surface"].pinch(withScale: 0.28, velocity: -2)
+    XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
+    app.terminate()
+    app.launchArguments.append("--notebook-reopen-fixture")
+    launchPortraitFixture(app)
+    let cover = app.descendants(matching: .any).matching(
+      identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000006").firstMatch
+    XCTAssertTrue(cover.waitForExistence(timeout: 5)); cover.doubleTap()
+    XCTAssertTrue(saved.waitForExistence(timeout: 8), "A fresh process must read the saved source from SQLite")
+    XCTAssertFalse(editor.exists)
+    XCTAssertTrue(outward.waitForExistence(timeout: 3)); outward.tap()
+    XCTAssertTrue(returning.waitForExistence(timeout: 5)); returning.tap()
+    XCTAssertTrue(saved.waitForExistence(timeout: 5), "Reopened anchors and the saved first page must still agree")
+    let reopened = XCTAttachment(screenshot: app.screenshot())
+    reopened.name = "full-document-cycle-cold-reopened"; reopened.lifetime = .keepAlways; add(reopened)
+    app.terminate()
+  }
+
   func testProseDocumentTurnsToDifferentTextAndBack() async throws {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
