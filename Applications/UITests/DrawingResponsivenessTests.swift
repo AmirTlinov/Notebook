@@ -648,7 +648,15 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-pointer-fixture", "--notebook-simulator-finger-gestures"]
     launchPortraitFixture(app)
     XCTAssertFalse(app.buttons["drawing-tool-pointer"].exists)
-    XCTAssertTrue(app.otherElements["paper-input"].waitForExistence(timeout: 5))
+    // This is a finger selection over displayed ink, not a Pencil hit-test.
+    // On iOS 27 the Pencil-only leaf can be absent from the AX traversal while
+    // its actual Metal pixels and native contact owner are installed.
+    XCTAssertTrue(app.buttons["page-overview"].waitForExistence(timeout: 5))
+    let inkReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      self.visibleInkPixelShare(in: app.screenshot(),
+        normalizedRect: CGRect(x: 0.12, y: 0.16, width: 0.76, height: 0.68)) > 0.005
+    }, object: app)
+    XCTAssertEqual(XCTWaiter.wait(for: [inkReady], timeout: 5), .completed)
     let start = app.coordinate(withNormalizedOffset:.init(dx:0.6,dy:0.25))
     let end = app.coordinate(withNormalizedOffset:.init(dx:0.85,dy:0.4))
     start.press(forDuration:0.45,thenDragTo:end)
@@ -1696,10 +1704,10 @@ final class DrawingResponsivenessTests: XCTestCase {
   }
 
   private func openSharedHistory(in app: XCUIApplication) {
-    if !app.buttons["collaboration-history"].exists {
-      if !app.buttons["notebook-chat-tasks"].exists { app.buttons["notebook-chat-toggle"].tap() }
-      app.buttons["notebook-chat-menu"].tap()
-    }
+    let menu = app.buttons["notebook-chat-menu"]
+    if !menu.exists { app.buttons["notebook-companion-compose"].tap() }
+    XCTAssertTrue(menu.waitForExistence(timeout: 3))
+    menu.tap()
     XCTAssertTrue(app.buttons["collaboration-history"].waitForExistence(timeout: 3))
     app.buttons["collaboration-history"].tap()
   }

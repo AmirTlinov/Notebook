@@ -1,9 +1,44 @@
 import NotebookCore
 import UIKit
+import SwiftUI
 import XCTest
 @testable import Notebook
 
 final class PagePresentationTests: XCTestCase {
+  @MainActor
+  func testStoredInkPageOpensWithoutAnExistingPresence() async throws {
+    let model = SimulatorDrawingFixture.makeModel()
+    retainNotebookUntilTeardown(model, removing: model.store.root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let presence = try XCTUnwrap(model.presence), page = try XCTUnwrap(model.activePage)
+    XCTAssertEqual(presence.mode, .page)
+    XCTAssertEqual(presence.focusedItemID, model.workspace?.selectedItemID)
+    XCTAssertFalse(page.drawingData.isEmpty)
+    let window = try await mountNotebookScene(model)
+    XCTAssertNotNil(model.presentedItem(id: try XCTUnwrap(presence.focusedItemID),
+      cohort: try XCTUnwrap(model.compositionTiles.published), presence: try XCTUnwrap(model.presence)))
+    func find(_ view: UIView) -> UIView? {
+      if view.accessibilityIdentifier == "paper-input" { return view }
+      return view.subviews.lazy.compactMap(find).first
+    }
+    XCTAssertNotNil(find(window))
+  }
+
+  @MainActor
+  func testColdRootInstallsTheStoredInkPageAtTheActualViewport() async throws {
+    let model = SimulatorDrawingFixture.makeModel()
+    retainNotebookUntilTeardown(model, removing: model.store.root)
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    window.rootViewController = UIHostingController(rootView: NotebookRootView().environment(model))
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    let deadline = ContinuousClock.now + .seconds(8)
+    func ready() -> Bool { model.activePage.map { model.pagePresentations.isPresented($0) } == true }
+    while !ready(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertTrue(ready(), "presence=\(String(describing: model.presence)), scenePending=\(model.scenePreparationPending), sceneFailure=\(String(describing: model.compositionTiles.failure)), published=\(model.compositionTiles.published != nil), pages=\(model.pages.keys), failure=\(model.persistenceFailure ?? "none")")
+  }
+
   @MainActor
   func testOnlyMountedCurrentReadySourceCanAcknowledgePaperAndRetirementRevokesIt() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("page-presentation-\(UUID())")

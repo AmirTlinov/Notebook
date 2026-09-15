@@ -10,7 +10,7 @@ struct DocumentBlockRegion: Equatable {
 }
 
 enum DocumentPresentationScope {
-  case paper, block(String), page
+  case paper, block(String), region(PageRect), page
 }
 
 /// The actual WebKit layout names the block fragments on each physical sheet.

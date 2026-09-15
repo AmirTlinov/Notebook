@@ -152,7 +152,7 @@ final class DocumentPagePresentationOwner {
       let entry = owner.current, entry.input.pageIndex == pageIndex, entry.input.token == token,
       owner.mountedID == entry.id, let host = entry.host, host.window != nil, !host.hasSnapshot,
       owner.paper.hasCanonicalPixels, !owner.gestureLocked,
-      owner.programsReady(on: pageIndex), owner.isInstalled(entry) else { return nil }
+      owner.programsReady(on: pageIndex, scope: .region(region)), owner.isInstalled(entry) else { return nil }
     let pixels = try NotebookSubmittedPixels.capture(view: host,
       physicalSize: owner.physicalSize(entry.input), region: region, resources: resources)
     guard owner.current?.id == entry.id, entry.input.token == token, !owner.gestureLocked,
@@ -927,6 +927,13 @@ final class DocumentPagePresentationOwner {
     case .paper: return true
     case .block(let id):
       return layout.blockIDs(on: [page]).contains(id) && (!source.programIDs.contains(id) || programOwner.presents(id))
+    case .region(let region):
+      let crop = CGRect(x: region.x, y: region.y, width: region.width, height: region.height)
+      guard [region.x, region.y, region.width, region.height].allSatisfy(\.isFinite), !crop.isEmpty,
+        CGRect(x: 0, y: 0, width: layout.width, height: layout.height).contains(crop) else { return false }
+      return layout.regions(on: page).filter { source.programIDs.contains($0.id)
+        && crop.intersects(CGRect(x: $0.frame.x, y: $0.frame.y, width: $0.frame.width, height: $0.frame.height))
+      }.allSatisfy { programOwner.presents($0.id) }
     case .page: return layout.blockIDs(on: [page]).intersection(source.programIDs).allSatisfy { programOwner.presents($0) }
     }
   }

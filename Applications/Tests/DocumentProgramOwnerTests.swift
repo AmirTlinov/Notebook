@@ -59,6 +59,16 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertTrue(fixture.presents(.block("good")))
     XCTAssertFalse(fixture.presents(.block("bad")))
     XCTAssertFalse(fixture.presents(.page))
+    let good = try XCTUnwrap(DocumentRenderRegistry.shared.regions(document: document).first { $0.id == "good" }?.frame)
+    XCTAssertTrue(fixture.presents(.region(good)))
+    let selected = try XCTUnwrap(DocumentPagePresentationOwner.capturePresented(documentID: document.id, pageIndex: 0,
+      token: fixture.currentToken, region: good, resources: fixture.resources))
+    let png = try await selected.png()
+    XCTAssertGreaterThan(png.count, 100)
+    let bad = try XCTUnwrap(DocumentRenderRegistry.shared.regions(document: document).first { $0.id == "bad" }?.frame)
+    XCTAssertNil(try DocumentPagePresentationOwner.capturePresented(documentID: document.id, pageIndex: 0,
+      token: fixture.currentToken, region: bad, resources: fixture.resources), "Unavailable selected pixels cannot be invented")
+    XCTAssertFalse(fixture.presents(.region(.init(x: -1, y: 0, width: 100, height: 100))))
     XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 2, "A failed program cannot retain the slot needed by its neighbour")
     XCTAssertTrue(fixture.preparationErrors.isEmpty, "A program failure is local, not a failure of independent paper")
     let web = try XCTUnwrap(fixture.web(block: "good"))

@@ -76,6 +76,25 @@ final class DocumentEditorDisplayReceiptTests: XCTestCase {
     XCTAssertTrue(try XCTUnwrap(afterClose.first).displayComplete,
       "Only the actually installed canonical result after editor dismissal may confirm the action")
     XCTAssertTrue(coordinator.webView === web)
+    await wait { model.compositionTiles.published?.isPaintInstalled == true }
+    let presence = try XCTUnwrap(model.presence), cohort = try XCTUnwrap(model.compositionTiles.published)
+    XCTAssertTrue(cohort.plan.presentations[.board(presence.boardID)] != nil)
+    XCTAssertTrue(cohort.plan.allowsLive(.item(id), in: .board(presence.boardID)))
+    for block in ["body", "broken"] {
+      let reference = CollaborationReference(target: target, elementID: block, pageIndex: 0,
+        revision: document.contentStamp.revision)
+      let rect = try XCTUnwrap(NotebookAttentionProjection.frame(reference, model: model, presence: presence)).insetBy(dx: 2, dy: 2)
+      let measured = try XCTUnwrap(DocumentRenderRegistry.shared.regions(document: document).first { $0.id == block && $0.pageIndex == 0 })
+      if block == "body" {
+        XCTAssertTrue(DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: 0, scope: .region(measured.frame)))
+      }
+      let selected = NotebookAttentionProjection.capture(start: .init(x: rect.minX, y: rect.minY),
+        end: .init(x: rect.maxX, y: rect.maxY), model: model, presence: presence, cohort: cohort,
+        installedInk: [:], itemID: id)
+      if block == "body" { XCTAssertNotNil(selected, "A region of canonical text does not depend on a broken neighbour: \(rect), measured=\(measured.frame), presence=\(presence)") }
+      else { XCTAssertNil(selected, "The selected broken program cannot masquerade as captured content") }
+    }
+
   }
 
   private func wait(file: StaticString = #filePath, line: UInt = #line, _ condition: () -> Bool) async {

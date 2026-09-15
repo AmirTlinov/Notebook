@@ -98,7 +98,7 @@ enum NotebookAttentionProjection {
         #endif
         sources.pages[id] = page
       } else if presence.mode == .document, let document = model.documents[focused], let state = model.documentStates[focused] {
-        guard DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: presence.documentPageIndex) else { return nil }
+        guard DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: presence.documentPageIndex, scope: .paper) else { return nil }
         sources.documents[focused] = document; sources.states[focused] = state
       }
     }
@@ -106,6 +106,12 @@ enum NotebookAttentionProjection {
       fragment(start: start, end: end, sources: sources, presence: presence, ownerID: id, dragged: true).map { [$0] } ?? []
     } ?? fragments(start: start, end: end, sources: sources, presence: presence)
     guard !fragments.isEmpty else { return nil }
+    for fragment in fragments where fragment.target.kind == .document {
+      guard let document = sources.documents[fragment.target.id], let state = sources.states[fragment.target.id],
+        let page = fragment.pageIndex,
+        DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: page,
+          scope: .region(fragment.region)) else { return nil }
+    }
     for fragment in fragments where fragment.elementID == nil && fragment.target.kind == .board {
       let boards = sources.hierarchy.descendantBoardIDs(including: fragment.target.id)
       guard preservesPresentedPlacementPixels(cohort: cohort, hierarchy: sources.hierarchy,
