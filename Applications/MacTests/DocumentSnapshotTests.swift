@@ -48,7 +48,8 @@ final class DocumentSnapshotTests: XCTestCase {
     var document = DocumentDocument(
       id: UUID(),
       actor: actor,
-      blocks: [.markdown(id: "body", source: "# Первый кадр")]
+      blocks: [.markdown(id: "body", source: "# Первый кадр"),
+        .interactive(id: "counter", html: "<button>Counter</button>", height: 100)]
     )
     var state = DocumentStateJournal(id: document.id, actor: actor)
     let image = bitmap(width: 834, height: 1_194)
@@ -95,6 +96,9 @@ final class DocumentSnapshotTests: XCTestCase {
       documentID: document.id,
       token: secondToken, layout: try measuredLayout(document)
     )
+    XCTAssertTrue(state.commit(blockID: "unrelated", value: .number(1), actor: actor))
+    XCTAssertNotNil(DocumentSnapshotCache.shared.image(for: document, state: state, pageIndex: 0),
+      "A record outside the document's actual programs cannot invalidate its image")
     XCTAssertTrue(state.commit(
       blockID: "counter",
       value: .number(1),

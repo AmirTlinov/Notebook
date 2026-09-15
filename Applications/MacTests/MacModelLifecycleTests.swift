@@ -334,10 +334,18 @@ final class MacModelLifecycleTests: XCTestCase {
     model.selectItem(documentID)
     let selected = await model.finishPendingPersistence()
     XCTAssertTrue(selected)
+    XCTAssertNil(model.documents[documentID], "Selecting a closed cover must not load its body")
+    let selection = try XCTUnwrap(model.presence)
+    model.updatePresence(.init(boardID: boardID, mode: .document, camera: selection.camera,
+      viewport: selection.viewport, focusedItemID: documentID, openProgress: 1,
+      documentPageIndex: 0, selectedItemID: documentID), settled: true)
+    await model.prepareDocumentOpening(documentID, pageIndex: 0)?.value
+    XCTAssertEqual(model.documents[documentID]?.blocks.first?.source, "# Первый текст")
     try await fixture.apply([.init(kind: .updateBlock, target: .init(kind: .document, id: documentID), id: "body",
       values: ["source": .string("# Изменено агентом")])])
     try await fixture.waitUntil { model.documents[documentID]?.blocks.first?.source == "# Изменено агентом" }
     XCTAssertEqual(try store.loadDocument(documentID).blocks.first?.source, "# Изменено агентом")
     XCTAssertEqual(model.presence?.selectedItemID, documentID)
+    XCTAssertEqual(model.presence?.camera, selection.camera)
   }
 }

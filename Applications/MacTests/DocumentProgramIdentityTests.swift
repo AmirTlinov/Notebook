@@ -12,7 +12,7 @@ final class DocumentProgramIdentityTests: XCTestCase {
 
   func testStateAndPageChangesKeepEveryProgramAtTheMaximumDocumentSize() throws {
     let document = DocumentDocument(actor: UUID(), blocks: (0..<DocumentDocument.maximumBlockCount).map {
-      .markdown(id: "block-\($0)", source: "Program \($0)")
+      .interactive(id: "block-\($0)", html: "<button>Program \($0)</button>", height: 100)
     })
     var state = DocumentStateJournal(id: document.id, actor: UUID())
     let coordinator = DocumentWebCoordinator(onRenderReady: .init { _ in }, onPageLayout: { _ in },
