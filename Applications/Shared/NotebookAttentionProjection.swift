@@ -85,7 +85,8 @@ enum NotebookAttentionProjection {
   }
 
   static func capture(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence,
-    cohort: SceneCompositionCohort, installedInk: [SurfaceID: SpatialInkInstalledSource], itemID: UUID? = nil) -> NotebookAttentionSelection? {
+    cohort: SceneCompositionCohort, installedInk: [SurfaceID: SpatialInkInstalledSource], itemID: UUID? = nil,
+    acceptsFirstFragment: (NotebookAttentionSelection.Fragment) -> Bool = { _ in true }) -> NotebookAttentionSelection? {
     guard cohort.isPaintInstalled, cohort.plan.presentations[.board(presence.boardID)] != nil else { return nil }
     var sources = CaptureSources(workset: model.presentedWorkset(cohort: cohort, boardID: presence.boardID, presence: presence),
       workspace: model.presentedWorkspace(cohort: cohort), hierarchy: model.presentedHierarchy(cohort: cohort), ink: cohort.liveData.ink,
@@ -105,7 +106,10 @@ enum NotebookAttentionProjection {
     let fragments = itemID.map { id in
       fragment(start: start, end: end, sources: sources, presence: presence, ownerID: id, dragged: true).map { [$0] } ?? []
     } ?? fragments(start: start, end: end, sources: sources, presence: presence)
-    guard !fragments.isEmpty else { return nil }
+    // A contact owner can decline this resolved source before borrowing or
+    // copying pixels. In particular, a document link cannot become an element
+    // drag, so touch-down must not snapshot the whole visible paper first.
+    guard let first = fragments.first, acceptsFirstFragment(first) else { return nil }
     for fragment in fragments where fragment.target.kind == .document {
       guard let document = sources.documents[fragment.target.id], let state = sources.states[fragment.target.id],
         let page = fragment.pageIndex,

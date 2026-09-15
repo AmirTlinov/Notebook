@@ -1,6 +1,7 @@
 import NotebookCore
 import SwiftUI
 import UIKit
+import WebKit
 import XCTest
 @testable import Notebook
 
@@ -40,12 +41,15 @@ final class NotebookLiveGesturePresentationTests: XCTestCase {
     try await waitUntil {
       model.compositionTiles.published?.plan.allowsLive(.element(element.id), in: .board(boardID)) == true
         && !model.scenePreparationPending && !model.inputIsActive
-        && SceneRenderResources.shared.image(for: agentElementSnapshotSource(element)) != nil
+        && model.compositionTiles.published?.sourceReceipts[
+          .init(plane: .board(boardID), elementID: element.id)]?.hasCurrentPixels == true
     }
     let original = try XCTUnwrap(model.compositionTiles.published)
-    let pixels = try XCTUnwrap(SceneRenderResources.shared.image(for: agentElementSnapshotSource(element))?.cgImage)
-    try await waitUntil { self.raster(in: host.view, image: pixels) != nil }
-    let body = try XCTUnwrap(raster(in: host.view, image: pixels))
+    // A visible program now owns a live WebKit, not a passive image view.
+    // Follow that actual source through both gestures and the accepted resize.
+    let source = agentElementSnapshotSource(element)
+    try await waitUntil { self.liveWeb(in: host.view, source: source) != nil }
+    let body = try XCTUnwrap(liveWeb(in: host.view, source: source))
     let recognizer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SceneSelectionRecognizer }.first)
     let observer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? NotebookContactObserver }.first)
     let reference = EditableElementReference.spatial(boardID: boardID, elementID: element.id)
@@ -95,7 +99,7 @@ final class NotebookLiveGesturePresentationTests: XCTestCase {
         return self.framesEqual(body.convert(body.bounds, to: host.view), expected)
       }
       XCTAssertTrue(model.compositionTiles.published === original, "The whole old cohort remains held at this sample")
-      XCTAssertTrue(raster(in: host.view, image: pixels) === body, "The same admitted native body follows the accepted edit")
+      XCTAssertTrue(liveWeb(in: host.view, source: source) === body, "The same admitted runtime follows the accepted edit")
       try assertCornerFrame(in: host.view, expected: expected)
       let shown = try pixelPatch(in: host.view, at: .init(x: expected.midX, y: expected.midY), name: "artifact-after-drop-\(index + 1)-old-cohort")
       for channel in 0..<3 { XCTAssertEqual(shown[channel], baseline[channel], accuracy: 12) }
@@ -136,8 +140,11 @@ final class NotebookLiveGesturePresentationTests: XCTestCase {
     }
   }
 
-  private func raster(in view: UIView, image: CGImage) -> AgentSnapshotRasterView? {
-    descendants(view, as: AgentSnapshotRasterView.self).first { ($0.layer.contents as AnyObject?) === image }
+  private func liveWeb(in view: UIView, source: AgentElement) -> WKWebView? {
+    descendants(view, as: WKWebView.self).first { web in
+      (web.navigationDelegate as? AgentWebCoordinator)?.hasLiveSource(source) == true
+        && web.window != nil && !web.isHidden
+    }
   }
 
   private func descendants<T: UIView>(_ view: UIView, as type: T.Type) -> [T] {

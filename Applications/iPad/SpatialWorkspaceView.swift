@@ -281,7 +281,8 @@ struct SpatialWorkspaceView: View {
         }, onLift: { point in
           guard cameraGesture == nil, !settling, let cohort,
             let capture = NotebookAttentionProjection.capture(start: point, end: point, model: model, presence: presence,
-              cohort: cohort, installedInk: spatialInkSurfaces.installedSources()),
+              cohort: cohort, installedInk: spatialInkSurfaces.installedSources(),
+              acceptsFirstFragment: { editableReference($0, boardID: presence.boardID) != nil }),
             let fragment = capture.fragments.first,
             let reference = editableReference(fragment, boardID: presence.boardID) else { return nil }
           let scale = max(presence.camera.scale, 0.001)

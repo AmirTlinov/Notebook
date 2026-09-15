@@ -52,6 +52,14 @@ final class SharedAttentionTests: XCTestCase {
     model.updatePresence(presence,settled:true)
     try await waitForScene(model)
     try await mountNotebookScene(model)
+    var declinedSource: NotebookAttentionSelection.Fragment?
+    let beforeBytes = SceneRenderResources.shared.reservedBytes
+    let declined = NotebookAttentionProjection.capture(start: .init(x: 100, y: 100), end: .init(x: 220, y: 200),
+      model: model, presence: presence, cohort: try XCTUnwrap(model.compositionTiles.published), installedInk: [:],
+      acceptsFirstFragment: { declinedSource = $0; return false })
+    XCTAssertNil(declined, "An ineligible contact must not construct a captured selection")
+    XCTAssertEqual(declinedSource?.target, .init(kind: .page, id: page.id))
+    XCTAssertEqual(SceneRenderResources.shared.reservedBytes, beforeBytes)
     let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start:.init(x:100,y:100),end:.init(x:220,y:200),model:model,presence:presence,
       cohort: XCTUnwrap(model.compositionTiles.published), installedInk: [:]))
     let prepared = try await Task.detached { try selection.resolvedReferences() }.value
