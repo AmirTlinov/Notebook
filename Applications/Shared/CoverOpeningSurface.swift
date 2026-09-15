@@ -146,7 +146,6 @@ enum CoverOpeningPhysics {
   static let endpointTolerance = 0.001
   static let liveCoverLimit = 0.001
   static let warmCoverOpacity: CGFloat = 0.001
-  static let warmCurlOpacity: CGFloat = 0.001
   static let curlRadiusRatio = 0.075
   static let shadowHandoffProgress = 0.08
   static let systemShadowSize: Float = 0
@@ -484,7 +483,7 @@ struct CoverSnapshotLifecycle {
         coverVisibilityView.isHidden = false
         coverVisibilityView.alpha = 1
         coverHost.view.isUserInteractionEnabled = true
-        prepareRestingCoverIfNeeded(at: endpointWarmProgress)
+        prepareRestingCoverIfNeeded()
         return
       }
       if CoverOpeningPhysics.isOpen(lifecycle.progress) {
@@ -496,7 +495,7 @@ struct CoverSnapshotLifecycle {
         coverVisibilityView.isHidden = false
         coverVisibilityView.alpha = CoverOpeningPhysics.warmCoverOpacity
         coverHost.view.isUserInteractionEnabled = false
-        prepareRestingCoverIfNeeded(at: 1 - endpointWarmProgress)
+        prepareRestingCoverIfNeeded()
         return
       }
 
@@ -535,34 +534,14 @@ struct CoverSnapshotLifecycle {
       return layout
     }
 
-    private var endpointWarmProgress: Double {
-      CoverOpeningPhysics.endpointTolerance * 2
-    }
-
-    private func prepareRestingCoverIfNeeded(at progress: Double) {
-      guard preparesCoverMotion, canPrepare() else {
-        curlView.isHidden = true
-        return
-      }
-      if lifecycle.needsCurrentSnapshot {
-        scheduleCapture()
-      }
-      guard let capturedCover = lifecycle.capturedCover,
-        let layout = layoutSurfaces()
-      else { return }
-      // A hidden CAMetalLayer allocates its first drawable inside the person's
-      // gesture. Render one practically invisible endpoint frame while the
-      // cover rests so texture allocation and the exact Core Image graph are
-      // already warm when the sheet first bends.
-      curlView.isHidden = false
-      curlView.alpha = CoverOpeningPhysics.warmCurlOpacity
-      curlView.update(
-        cover: capturedCover,
-        progress: progress,
-        backsideColor: backsideColor,
-        cornerRadius: cornerRadius,
-        layout: layout
-      )
+    private func prepareRestingCoverIfNeeded() {
+      // The live cover/paper owns the endpoint. An almost transparent Metal
+      // layer is not an offscreen executor: its unpresented drawables can fill
+      // the display pool and block the document's MainActor for a second.
+      // Keep the snapshot and shared CI program warm, not a fake screen frame.
+      curlView.isHidden = true
+      guard preparesCoverMotion, canPrepare() else { return }
+      if lifecycle.needsCurrentSnapshot { scheduleCapture() }
     }
 
     // A deferred frame lets the attached hosting tree commit its first content.
@@ -747,7 +726,7 @@ struct CoverSnapshotLifecycle {
         resetCoverHostGeometry()
         coverHost.isHidden = false
         coverHost.alphaValue = 1
-        prepareRestingCoverIfNeeded(at: endpointWarmProgress)
+        prepareRestingCoverIfNeeded()
         return
       }
       if CoverOpeningPhysics.isOpen(lifecycle.progress) {
@@ -755,7 +734,7 @@ struct CoverSnapshotLifecycle {
         resetCoverHostGeometry()
         coverHost.isHidden = false
         coverHost.alphaValue = CoverOpeningPhysics.warmCoverOpacity
-        prepareRestingCoverIfNeeded(at: 1 - endpointWarmProgress)
+        prepareRestingCoverIfNeeded()
         return
       }
 
@@ -791,30 +770,12 @@ struct CoverSnapshotLifecycle {
       return layout
     }
 
-    private var endpointWarmProgress: Double {
-      CoverOpeningPhysics.endpointTolerance * 2
-    }
-
-    private func prepareRestingCoverIfNeeded(at progress: Double) {
-      guard preparesCoverMotion, canPrepare() else {
-        curlView.isHidden = true
-        return
-      }
+    private func prepareRestingCoverIfNeeded() {
+      curlView.isHidden = true
+      guard preparesCoverMotion, canPrepare() else { return }
       if lifecycle.needsCurrentSnapshot {
         lifecycle.storeCapturedCover(captureCover())
       }
-      guard let capturedCover = lifecycle.capturedCover,
-        let layout = layoutSurfaces()
-      else { return }
-      curlView.isHidden = false
-      curlView.alphaValue = CoverOpeningPhysics.warmCurlOpacity
-      curlView.update(
-        cover: capturedCover,
-        progress: progress,
-        backsideColor: backsideColor,
-        cornerRadius: cornerRadius,
-        layout: layout
-      )
     }
 
     private func captureCover() -> CGImage? {

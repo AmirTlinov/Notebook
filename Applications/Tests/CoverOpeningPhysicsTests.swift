@@ -269,39 +269,35 @@ final class CoverOpeningPhysicsTests: XCTestCase {
   }
 
   @MainActor
-  func testQueuedWarmFrameRechecksContactAndResumesAfterIt() async throws {
+  func testRestingSnapshotsDoNotConsumeScreenDrawablesBeforeTheRealCurl() async throws {
     let (window, controller) = try coverWindow()
     defer { window.isHidden = true }
     let gate = NotebookInputGate(), contact = UUID(), owner = UUID()
-    func update() {
-      controller.update(ownerID: owner, progress: 0, revision: revision(title: "Warm frame"),
+    func update(_ progress: Double) {
+      controller.update(ownerID: owner, progress: progress, revision: revision(title: "Ready snapshot"),
         backsideColor: .document, preparesCoverMotion: true,
         canPrepare: { !gate.isActive }, cornerRadius: 12, cover: AnyView(Color.red))
     }
-    update()
+    update(0)
+    for _ in 0..<100 where controller.capturedCoverCount == 0 {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertEqual(controller.capturedCoverCount, 1)
+    let curl = try XCTUnwrap(controller.view.subviews.compactMap { $0 as? MTKView }.first)
+    curl.delegate?.mtkView(curl, drawableSizeWillChange: curl.drawableSize)
+    curl.draw()
+    update(1); curl.draw()
+    XCTAssertEqual(controller.submittedCurlFrameCount, 0,
+      "Neither resting endpoint needs an invisible screen drawable")
+    gate.beginContact(source: contact)
+    update(0.35)
     for _ in 0..<100 where controller.submittedCurlFrameCount == 0 {
       try await Task.sleep(for: .milliseconds(10))
     }
-    XCTAssertGreaterThan(controller.submittedCurlFrameCount, 0)
-    let curl = try XCTUnwrap(controller.view.subviews.compactMap { $0 as? MTKView }.first)
-    let submitted = controller.submittedCurlFrameCount
-    gate.beginContact(source: contact)
-    // A frame requested before UIKit delivers the next SwiftUI update is still
-    // background preparation, not a visible curl owned by the current pinch.
-    curl.delegate?.mtkView(curl, drawableSizeWillChange: curl.drawableSize)
-    curl.draw()
-    try await Task.sleep(for: .milliseconds(100))
-    XCTAssertEqual(controller.submittedCurlFrameCount, submitted)
-    gate.endContact(source: contact)
-    for _ in 0..<100 where gate.isActive { await Task.yield() }
-    XCTAssertFalse(gate.isActive)
-    update()
-    for _ in 0..<100 where controller.submittedCurlFrameCount == submitted {
-      try await Task.sleep(for: .milliseconds(10))
-    }
-    XCTAssertGreaterThan(controller.submittedCurlFrameCount, submitted,
-      "Ожидающий кадр возобновляется без нового снимка и без смены прогресса")
+    XCTAssertGreaterThan(controller.submittedCurlFrameCount, 0,
+      "The actual camera-owned curl renders during its accepted contact")
     XCTAssertEqual(controller.capturedCoverCount, 1)
+    gate.endContact(source: contact)
   }
 
   @MainActor
@@ -314,7 +310,7 @@ final class CoverOpeningPhysicsTests: XCTestCase {
         backsideColor: .document, preparesCoverMotion: true,
         canPrepare: { true }, cornerRadius: 12, cover: AnyView(Color.red))
     }
-    update(0)
+    update(0.2)
     for _ in 0..<100 where controller.submittedCurlFrameCount == 0 {
       try await Task.sleep(for: .milliseconds(10))
     }
@@ -343,7 +339,7 @@ final class CoverOpeningPhysicsTests: XCTestCase {
         backsideColor: .document, preparesCoverMotion: true,
         canPrepare: { true }, cornerRadius: 12, cover: AnyView(Color.red))
     }
-    update(0)
+    update(0.2)
     for _ in 0..<100 where controller.submittedCurlFrameCount == 0 {
       try await Task.sleep(for: .milliseconds(10))
     }
