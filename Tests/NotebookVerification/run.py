@@ -609,7 +609,7 @@ class SelectionTests(unittest.TestCase):
         self.assertIn("NotebookTests/SharedAttentionTests", plan["checks"]["ipad"])
         self.assertFalse(plan["checks"]["mac"])
 
-    def test_system_trace_requires_actual_started_marker_and_live_recorder(self):
+    def test_simulator_video_requires_actual_started_marker_and_live_recorder(self):
         class Process:
             def __init__(self, code=None): self.code = code
             def poll(self): return self.code
@@ -625,6 +625,78 @@ class SelectionTests(unittest.TestCase):
         with patch.object(acceptance.time, "monotonic", side_effect=[0, 21]), \
              self.assertRaisesRegex(release.ReleaseError, "Preparing recording"):
             acceptance.SimulatorRecording.wait_for_start(Process(), path, 20, "fixture")
+
+    def test_all_process_trace_requires_explicit_host_scope_before_starting_any_recorder(self):
+        with patch.object(acceptance.subprocess, "Popen") as start:
+            for template in ("Time Profiler", "Animation Hitches", "Metal System Trace", "Allocations"):
+                with self.subTest(template=template), self.assertRaisesRegex(release.ReleaseError, "процессы Mac"):
+                    acceptance.SimulatorRecording("private-simulator", self.root, template)
+            start.assert_not_called()
+
+    def test_ui_rejects_unacknowledged_host_scope_before_reading_the_stand(self):
+        for platform, template, consent in (("ipad", "Animation Hitches", False),
+                ("ipad", "Allocations", False), ("ipad", None, True), ("mac", "Time Profiler", True)):
+            args = SimpleNamespace(test="NotebookAcceptanceUITests/testProof", platform=platform,
+                                   trace=template, allow_host_processes=consent)
+            with self.subTest(platform=platform, template=template, consent=consent), \
+                 patch.object(acceptance, "read") as read, patch.object(acceptance.subprocess, "Popen") as start:
+                with self.assertRaises(release.ReleaseError):
+                    acceptance.ui(args)
+                read.assert_not_called(); start.assert_not_called()
+
+    def test_authorized_host_trace_uses_existing_system_start_notification_not_log_prose(self):
+        recorder = acceptance.SimulatorRecording("private-simulator", self.root, "Time Profiler", 120,
+                                                allow_host_processes=True)
+        video, process, notification = Mock(), Mock(), Mock()
+        for child in (video, process):
+            child.poll.return_value = None; child.wait.return_value = 0
+        notification.name = "actual-notification"; notification.wait.return_value = True
+        module = Mock(); module.TraceStartNotification.return_value.__enter__ = Mock(return_value=notification)
+        module.TraceStartNotification.return_value.__exit__ = Mock(return_value=False)
+        with patch.object(acceptance.subprocess, "Popen", side_effect=[video, process]) as start, \
+             patch.object(acceptance, "system_trace_module", return_value=module), \
+             patch.object(acceptance, "run", return_value=b'{"Hangs":{"hangsThreshold":250},"Time Profiler":{}}'), \
+             patch.object(recorder, "wait_for_start") as video_started:
+            try:
+                recorder.start()
+                command = start.call_args.args[0]
+                self.assertIn("--all-processes", command)
+                self.assertEqual(command[command.index("--time-limit") + 1], "120s")
+                self.assertEqual(command[command.index("--notify-tracing-started") + 1], notification.name)
+                video_started.assert_called_once()
+                notification.wait.assert_called_once_with(0.1)
+                scope = json.loads((self.root / "trace-scope.json").read_text())
+                self.assertEqual(scope["scope"], "system_wide_including_host_mac")
+                self.assertEqual(scope["assessment"], "unassessed")
+                self.assertEqual(json.loads((self.root / "trace-started.json").read_text())["assessment"], "captured_unassessed")
+                self.assertEqual(json.loads((self.root / "trace-options.json").read_text())["Hangs"]["hangsThreshold"], 100)
+                self.assertEqual((self.root / "trace.log").read_bytes(), b"")
+            finally:
+                recorder.stop()
+
+    def test_trace_log_without_notification_never_admits_the_workload(self):
+        recorder = acceptance.SimulatorRecording("private-simulator", self.root, "Animation Hitches",
+                                                allow_host_processes=True)
+        video, process, notification = Mock(), Mock(), Mock()
+        for child in (video, process):
+            child.poll.return_value = None; child.wait.return_value = 0
+        notification.name = "actual-notification"; notification.wait.return_value = False
+        module = Mock(); module.TraceStartNotification.return_value.__enter__ = Mock(return_value=notification)
+        module.TraceStartNotification.return_value.__exit__ = Mock(return_value=False)
+        def spawn(*args, **kwargs):
+            if args[0][1] == "simctl": return video
+            kwargs["stdout"].write(b"Starting recording with the template.\n"); kwargs["stdout"].flush()
+            return process
+        with patch.object(acceptance.subprocess, "Popen", side_effect=spawn), \
+             patch.object(acceptance, "system_trace_module", return_value=module), \
+             patch.object(recorder, "wait_for_start"), \
+             patch.object(acceptance.time, "monotonic", side_effect=[0, 0, 21]):
+            try:
+                with self.assertRaisesRegex(release.ReleaseError, "не подтвердил начало"):
+                    recorder.start()
+                self.assertFalse((self.root / "trace-started.json").exists())
+            finally:
+                recorder.stop()
 
     def test_timing_report_separates_ui_from_scale_inside_runtime(self):
         def case(name, seconds): return {"nodeType": "Test Case", "nodeIdentifier": name, "durationInSeconds": seconds}

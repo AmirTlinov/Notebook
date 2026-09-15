@@ -391,6 +391,28 @@ import XCTest
     try systemTrace?.ended(app)
   }
 
+  /// A short causal workload for a standard system trace, not the displayed-
+  /// pixel acceptance test. In particular, AX completion never proves 100 ms.
+  func testTenReadyControlContactsForSystemTraceDiagnosis() throws {
+    let session = UUID().uuidString
+    app.launchEnvironment["NOTEBOOK_INTERACTION_SESSION_ID"] = session
+    app.launchEnvironment["NOTEBOOK_INTERACTION_SELECTORS"] = "[\"#count\",\"#level\",\"#text\"]"
+    let metadata = XCTAttachment(string: "interactionSessionID=\(session)\nscope=Native contacts and existing runtime journal; no displayed-pixel latency verdict")
+    metadata.name = "system-trace-control-session"; metadata.lifetime = .keepAlways; add(metadata)
+    try launch()
+    // The stand must already be left on the control board. Opening Search here
+    // would exercise the first-responder chain before the measured first tap.
+    XCTAssertFalse(app.otherElements["page-turn-surface"].exists)
+    let button = app.webViews.buttons["Acceptance increment"]
+    XCTAssertTrue(button.waitForExistence(timeout: 20)); XCTAssertTrue(button.isHittable)
+    let before = try counterValue()
+    for index in 0..<10 {
+      try tapAndObserveIncrement(button, expected: before + index + 1, name: "system-trace-\(index)")
+    }
+    XCTAssertFalse(app.otherElements["persistence-failure"].exists)
+    try systemTrace?.ended(app)
+  }
+
   func testCameraAndFirstTouchControlsOnAgentMaterial() throws {
     try launch()
     try navigateToAcceptanceControls()

@@ -117,7 +117,11 @@ def simulator_entitlements(data):
 
 
 class SimulatorRecording:
-    def __init__(self, udid, evidence, trace=None, duration=240):
+    def __init__(self, udid, evidence, trace=None, duration=240, *, allow_host_processes=False):
+        # Simulator is a host process tree, not a tracing isolation boundary:
+        # xctrace --device <simulator> --all-processes also captures the Mac.
+        release.require(trace is None or allow_host_processes,
+                        "Системная трасса захватывает также процессы Mac; нужно явное --allow-host-processes.")
         self.udid, self.evidence, self.trace, self.duration = udid, evidence, trace, duration
         self.processes = []
         self.logs = []
@@ -129,9 +133,8 @@ class SimulatorRecording:
             if b"Recording started" in log_path.read_bytes():
                 return
             time.sleep(0.05)
-        # A spawned xctrace process or an empty .trace directory is not a
-        # recording. Unsupported templates must stop this scenario before its
-        # workload starts, rather than produce an apparently measured receipt.
+        # A spawned simctl process is not an active video recording. Stop the
+        # scenario before its workload if the selected device never starts it.
         detail = log_path.read_text(errors="replace")[-2000:]
         raise release.ReleaseError(label + " не подтвердил начало записи: " + detail)
 
@@ -143,6 +146,9 @@ class SimulatorRecording:
         self.processes.append(process)
         self.wait_for_start(process, log_path, 10, "Simulator")
         if self.trace:
+            write(self.evidence / "trace-scope.json", {"template": self.trace,
+                "simulatorUDID": self.udid, "scope": "system_wide_including_host_mac",
+                "explicitHostProcessConsent": True, "assessment": "unassessed"})
             trace_path = self.evidence / "trace.log"
             log = trace_path.open("wb"); self.logs.append(log)
             command = ["xcrun", "xctrace", "record", "--template", self.trace,
@@ -162,9 +168,22 @@ class SimulatorRecording:
                 # fails before recording with a misleading missing-data error.
                 write(options, defaults)
                 command.extend(["--recording-options", str(options)])
-            process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
-            self.processes.append(process)
-            self.wait_for_start(process, trace_path, 20, "Системный инструмент " + self.trace)
+            # Reuse the per-launch trace owner's documented notification.
+            # RC xctrace no longer prints the old "Recording started" text;
+            # its "Starting recording" line is not a readiness acknowledgement.
+            with system_trace_module().TraceStartNotification() as notification:
+                command.extend(["--notify-tracing-started", notification.name])
+                process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+                self.processes.append(process)
+                deadline = time.monotonic() + 20
+                while True:
+                    release.require(process.poll() is None and time.monotonic() < deadline,
+                        "Системный инструмент не подтвердил начало записи: " + trace_path.read_text(errors="replace")[-2000:])
+                    if notification.wait(0.1):
+                        break
+                release.require(process.poll() is None, "Системный инструмент завершился при подтверждении начала записи.")
+                write(self.evidence / "trace-started.json", {"notification": notification.name,
+                    "uptimeSeconds": time.monotonic(), "assessment": "captured_unassessed"})
 
     def stop(self):
         failures = []
@@ -726,6 +745,13 @@ def ui(args):
     driver_sha = release.file_digest(Path(__file__))
     release.require(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*/test[A-Za-z0-9_]+", args.test),
                     "Нужен точный Suite/testMethod из изолированного UI target.")
+    allow_host_processes = getattr(args, "allow_host_processes", False)
+    release.require(not allow_host_processes or (args.platform == "ipad" and args.trace),
+                    "--allow-host-processes относится только к явно выбранной системной трассе iPad Simulator.")
+    release.require(args.trace is None or args.platform == "ipad",
+                    "UI-драйвер системной трассы работает только с iPad Simulator.")
+    release.require(args.trace in (None, "Time Profiler") or allow_host_processes,
+                    "Этот инструмент записывает также процессы Mac; нужно явное --allow-host-processes.")
     document = document_ui_request(args.platform, args.test, args.document_id, args.document_title)
     interaction_request = interaction_acceptance.request(args)
     scene_request = scene_observation.request(args)
@@ -737,7 +763,7 @@ def ui(args):
     built = read(Path(value["build"]) / "build.json")
     attempt = str(uuid.uuid4())
     evidence = directory / (args.platform + "-" + args.test.split("/")[-1] + "-" + attempt)
-    attached_trace = args.trace == "Time Profiler"
+    attached_trace = args.trace == "Time Profiler" and not allow_host_processes
     release.require(not attached_trace or supports_attached_ui_trace(args.platform, args.test),
         "Time Profiler требует iPad сценарий с настоящим per-launch trace handshake.")
     trace_session = str(uuid.uuid4()) if attached_trace else None
@@ -826,6 +852,8 @@ def ui(args):
                 "runID": value["runID"], "platform": args.platform, "scenario": args.test, "startedAt": started,
                 "timeoutSeconds": timeout,
                 "requestedWorkloadSeconds": args.workload_seconds if workload else None, "systemTraceTemplate": args.trace,
+                "systemTraceScope": ("system_wide_including_host_mac" if allow_host_processes
+                    else "launched_private_app" if attached_trace else None),
                 "systemTraceSessionID": trace_session,
                 "interaction": {key: value for key, value in interaction.items() if key != "environment"} if interaction else None,
                 "sceneObservation": {key: value for key, value in scene.items() if key != "environment"} if scene else None,
@@ -850,7 +878,8 @@ def ui(args):
             release.require(installed_before["bundleSHA256"] == release.app_manifest(Path(built["ipadApp"]))["sha256"],
                             "Установленный iPad bundle отличается от выбранной сборки; сценарий не начат.")
         recording = SimulatorRecording(built["simulator"]["udid"], evidence,
-            None if attached_trace else args.trace, timeout) if args.platform == "ipad" else None
+            None if attached_trace else args.trace, timeout,
+            allow_host_processes=allow_host_processes) if args.platform == "ipad" else None
         if attached_trace:
             module = system_trace_module()
             bundle = Path(installed_before["bundlePath"])
@@ -894,6 +923,8 @@ def main():
     command = commands.add_parser("ui"); command.add_argument("--run", type=Path, required=True); command.add_argument("--platform", choices=["mac", "ipad"], required=True); command.add_argument("--test", required=True)
     command.add_argument("--test-build", type=Path, help="Отдельный diagnostic UI runner; не финальная приёмка единого среза")
     command.add_argument("--trace", choices=["Animation Hitches", "Time Profiler", "Metal System Trace", "Allocations"])
+    command.add_argument("--allow-host-processes", action="store_true",
+        help="Явное согласие на системную трассу всех процессов, включая Mac и другие приложения; Simulator не изолирует захват")
     command.add_argument("--pencil", action="store_true", help="Явно направить измеренные касания Simulator владельцу Pencil; не измеряет физический стилус")
     command.add_argument("--workload-seconds", type=int, default=1800,
                          help="Продолжительность testThirtyMinutesOfMixedInteraction; минимум 1800 секунд")
