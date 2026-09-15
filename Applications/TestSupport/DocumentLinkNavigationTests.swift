@@ -47,6 +47,34 @@ final class DocumentLinkNavigationTests: XCTestCase {
     ] { XCTAssertThrowsError(try layout(anchors: anchors)) }
   }
 
+  func testCanonicalPrefixCanOnlyGrowWithoutMovingAcceptedGeometryOrAddresses() throws {
+    let geometry = WorkspaceItemGeometry.document(.a4)
+    func record(complete: Bool, x: Double = 20, anchor: Int = 0, offset: Int = 0) throws -> DocumentLayoutRecord {
+      let regions: [[String: Any]] = (0..<(complete ? 2 : 1)).map { page in
+        ["id": "body", "pageIndex": page, "x": page == 0 ? x : 20, "y": 30.0,
+          "width": 100.0, "height": 40.0, "sourceOffset": Double(page * 40)]
+      }
+      let reading: [[Any]] = [["body", "0123456789abcdef", offset, 0, 10, 0, 30.0]]
+      let receipt: [String: Any] = ["sourceKey": "source", "layoutScope": complete ? "source" : "source-prefix",
+        "layoutCanonical": true, "pageCount": complete ? 2 : 1, "width": geometry.width, "height": geometry.height,
+        "regions": regions, "anchors": [["name": "first", "pageIndex": anchor]], "reading": reading]
+      let browser = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONSerialization.data(withJSONObject: receipt)) as? NSDictionary)
+      return try DocumentLayoutRecord(receipt: browser,
+        sourceKey: "source", blockIDs: ["body"], geometry: geometry)
+    }
+    let prefix = try record(complete: false)
+    XCTAssertFalse(prefix.isComplete)
+    for invalid in [try record(complete: true, x: 21), try record(complete: true, anchor: 1),
+      try record(complete: true, offset: 1)] {
+      XCTAssertThrowsError(try prefix.acceptExtension(invalid))
+      XCTAssertFalse(prefix.isComplete); XCTAssertEqual(prefix.pageCount, 1)
+    }
+    try prefix.acceptExtension(record(complete: true))
+    XCTAssertTrue(prefix.isComplete); XCTAssertEqual(prefix.pageCount, 2)
+    XCTAssertEqual(prefix.destination(for: "#first"), .page(0))
+    XCTAssertThrowsError(try prefix.acceptExtension(record(complete: false)))
+  }
+
   func testSourceMeasurementRetainsEncodedNamedAndGeneratedLinkDestinationsWithoutFullDOM() async throws {
     let surface = try surface(book())
     defer { surface.close() }
@@ -176,9 +204,11 @@ final class DocumentLinkNavigationTests: XCTestCase {
 
   private func ready(_ coordinator: DocumentWebCoordinator) async throws {
     let deadline = ContinuousClock.now + .seconds(8)
-    while !coordinator.renderIsReady, coordinator.acquisitionError == nil, .now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    while (!coordinator.renderIsReady || coordinator.payload?.source.layout?.isComplete != true),
+      coordinator.acquisitionError == nil, .now < deadline { try await Task.sleep(for: .milliseconds(10)) }
     if let error = coordinator.acquisitionError { throw error }
     XCTAssertTrue(coordinator.renderIsReady)
+    XCTAssertEqual(coordinator.payload?.source.layout?.isComplete, true)
   }
 
   private func evaluate(_ script: String, _ web: WKWebView) async throws -> String {

@@ -928,9 +928,9 @@ struct SpatialWorkspaceView: View {
     guard let document = model.documents[documentID],
       layout.pageCount(for: NotebookAppModel.documentPageSourceRevision(document)) != nil else { return }
     model.acceptDocumentReadingLayout(layout, documentID: documentID)
-    let summary = DocumentPageLayout(pageCount: layout.pageCount, sourceRevision: layout.sourceRevision)
+    let summary = DocumentPageLayout(pageCount: layout.pageCount, sourceRevision: layout.sourceRevision, isComplete: layout.isComplete)
     if documentPageLayouts[documentID] != summary { documentPageLayouts[documentID] = summary }
-    guard let presence = model.presence,
+    guard layout.isComplete, let presence = model.presence,
       presence.mode == .document,
       presence.focusedItemID == documentID,
       model.documentPageSelection == nil,

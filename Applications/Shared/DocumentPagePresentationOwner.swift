@@ -234,7 +234,7 @@ final class DocumentPagePresentationOwner {
         layout.blockIDs(on: [origin.pageIndex]).contains(block),
         host.programOverlay.isPresenting(placements(on: current), paperSize: physicalSize(current.input),
           passive: passivePlacements(on: current)) else { return }
-      current.input.onLinkActivation(.init(origin: origin, destination: layout.destination(for: href)))
+      paper.resolveLink(href, origin: origin, deliver: current.input.onLinkActivation)
     }
     reclamationOwner = resources.registerReclamationOwner { [weak self] in self?.reclamationCandidates() ?? [] }
     observe("document_owner_created")
@@ -947,7 +947,7 @@ final class DocumentPagePresentationOwner {
   }
 
   private func programsReady(on page: Int, scope: DocumentPresentationScope = .page) -> Bool {
-    guard let source, let layout = source.layout else { return false }
+    guard let source, let layout = source.layout, (0..<layout.pageCount).contains(page) else { return false }
     switch scope {
     case .paper: return true
     case .block(let id):

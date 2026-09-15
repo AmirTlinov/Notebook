@@ -17,6 +17,7 @@ final class DocumentLargeSourceTests: XCTestCase {
     let host: DocumentWebHost
     #if os(iOS)
     let window: UIWindow
+    let previousKeyWindow: UIWindow?
     #else
     let window: NSWindow
     #endif
@@ -24,6 +25,7 @@ final class DocumentLargeSourceTests: XCTestCase {
       coordinator.invalidate()
       #if os(iOS)
       window.isHidden = true; window.rootViewController = nil
+      previousKeyWindow?.makeKey()
       #else
       window.orderOut(nil); window.close()
       #endif
@@ -50,17 +52,20 @@ final class DocumentLargeSourceTests: XCTestCase {
   }
 
   private func surface(_ document: DocumentDocument, _ state: DocumentStateJournal,
-    resources: SceneRenderResources) throws -> Surface {
+    resources: SceneRenderResources, acceptsInput: Bool = false) throws -> Surface {
     let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
       onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
     update(coordinator, document, state, page: 0)
     let host = DocumentWebHost(), size = WorkspaceItemGeometry.document(document.paperSize)
     #if os(iOS)
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
-    let window = NotebookPreparationWindow(windowScene: scene), controller = UIViewController()
+    let previousKeyWindow = acceptsInput ? scene.windows.first { $0.isKeyWindow } : nil
+    let window: UIWindow = acceptsInput ? UIWindow(windowScene: scene) : NotebookPreparationWindow(windowScene: scene)
+    let controller = UIViewController()
     window.frame = .init(x: 0, y: 0, width: size.width, height: size.height)
     controller.view = host; window.rootViewController = controller; window.isHidden = false
     host.frame = window.bounds; host.layoutIfNeeded()
+    if acceptsInput { window.makeKeyAndVisible() }
     #else
     let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: size.width, height: size.height),
       styleMask: .borderless, backing: .buffered, defer: false)
@@ -68,7 +73,11 @@ final class DocumentLargeSourceTests: XCTestCase {
     #endif
     coordinator.mount(in: host, physicalSize: .init(width: size.width, height: size.height),
       isInteractive: true, priority: .currentPage)
+    #if os(iOS)
+    return Surface(coordinator: coordinator, host: host, window: window, previousKeyWindow: previousKeyWindow)
+    #else
     return Surface(coordinator: coordinator, host: host, window: window)
+    #endif
   }
 
   private func update(_ coordinator: DocumentWebCoordinator, _ document: DocumentDocument,
@@ -87,7 +96,9 @@ final class DocumentLargeSourceTests: XCTestCase {
     try await ready(surface.coordinator)
     let elapsed = start.duration(to: .now)
     XCTAssertLessThan(elapsed, .seconds(8), "The production preparation deadline is not enlarged for a book")
-    let source = try XCTUnwrap(surface.coordinator.payload?.source), layout = try XCTUnwrap(source.layout)
+    let source = try XCTUnwrap(surface.coordinator.payload?.source)
+    try await complete(source)
+    let layout = try XCTUnwrap(source.layout)
     XCTAssertGreaterThan(layout.pageCount, 30)
     let web = try XCTUnwrap(surface.coordinator.webView)
     XCTAssertLessThan(source.compiledPageCount, layout.pageCount, "The first physical page cannot wait for all page packets")
@@ -142,6 +153,101 @@ final class DocumentLargeSourceTests: XCTestCase {
     XCTAssertEqual(resources.activeWebSurfaceCount, 0)
   }
 
+  func testFirstUsefulPageDoesNotWaitForDistantTypesetting() async throws {
+    let actor = UUID()
+    var document = DocumentDocument(actor: actor, blocks: [.markdown(id: "initial", source: "Initial page")])
+    let state = DocumentStateJournal(id: document.id, actor: actor)
+    let surface = try surface(document, state, resources: SceneRenderResources(profile: .interactive), acceptsInput: true)
+    defer { surface.close() }
+    try await ready(surface.coordinator)
+    let web = try XCTUnwrap(surface.coordinator.webView)
+    _ = try await evaluate("""
+      const original=MathJax.typesetPromise.bind(MathJax);
+      window.tailStarted=false;
+      const gate=new Promise(resolve=>window.releaseTail=resolve);
+      MathJax.typesetPromise=async nodes=>{
+        if(nodes.some(node=>node.dataset.blockId==='distant')){window.tailStarted=true;await gate;}
+        return original(nodes);
+      };
+      return 'installed';
+      """, arguments: [:], web: web)
+    document = DocumentDocument(id: document.id, actor: actor, blocks: [
+      .markdown(id: "visible", source: "# Useful first page\n\n[Far section](#distant)\n\n" +
+        String(repeating: "A visible measured paragraph with $x^2+1$ stays at its physical address.\n\n", count: 65)),
+      .markdown(id: "distant", source: "<h1 id='distant'>Distant section</h1>\n\n$\\int_0^1 t^2 dt$")
+    ])
+    update(surface.coordinator, document, state, page: 0)
+    let started = ContinuousClock.now
+    let deadline = ContinuousClock.now + .seconds(2)
+    while !surface.coordinator.hasCanonicalPixels, .now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    let shownBeforeTail = surface.coordinator.hasCanonicalPixels
+    let firstDuration = started.duration(to: .now)
+    let source = try XCTUnwrap(surface.coordinator.payload?.source)
+    let prefix = source.layout
+    var firstPixels: Data?
+    var links: [DocumentLinkDestination] = []
+    surface.coordinator.onLinkActivation = { links.append($0.destination) }
+    if shownBeforeTail {
+      XCTAssertEqual(prefix?.isComplete, false)
+      XCTAssertNil(source.programIDs(on: 1), "An unmeasured page is not a proved empty program set")
+      XCTAssertNil(DocumentRenderRegistry.shared.programIDs(document: document, pageIndex: 1))
+      let actual = try await evaluate("""
+        const root=document.querySelector('#document');
+        if(!root.textContent.includes('Useful first page') || !root.querySelector('mjx-container'))throw Error('Not useful paper');
+        root.querySelector('a').click();
+        return 'visible';
+        """, arguments: [:], web: web)
+      XCTAssertEqual(actual, "visible")
+      firstPixels = try await capture(web, name: "Useful page while distant typesetting is blocked")
+      XCTAssertTrue(links.isEmpty, "An unresolved far section is pending, not missing or activated twice")
+    }
+    // Always release the diagnostic gate, including the negative baseline.
+    _ = try await evaluate("window.releaseTail();return 'released';", arguments: [:], web: web)
+    XCTAssertTrue(shownBeforeTail, "Visible text/formulas must be canonical while distant typesetting is still blocked")
+    try await ready(surface.coordinator)
+    try await complete(source)
+    XCTAssertTrue(source.layout === prefix, "The canonical owner extends; it does not swap pagination")
+    let far = try XCTUnwrap(source.layout?.anchorPages["distant"])
+    let linked = ContinuousClock.now + .seconds(2)
+    while links.isEmpty, .now < linked { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertEqual(links, [.page(far)])
+    for page in [far, 0] {
+      update(surface.coordinator, document, state, page: page)
+      try await ready(surface.coordinator)
+    }
+    let returned = try await capture(web, name: "Same useful page after full index and far-link return")
+    XCTAssertEqual(firstPixels, returned, "Appending the tail cannot move already shown text or formulas")
+    XCTAssertEqual(source.measurementCount, 1)
+    let measurement = XCTAttachment(string: "firstUseful=\(firstDuration), fullPages=\(source.layout?.pageCount ?? 0)")
+    measurement.name = "Incremental canonical source"; measurement.lifetime = .keepAlways; add(measurement)
+  }
+
+  private func complete(_ source: DocumentSourceSnapshot) async throws {
+    let deadline = ContinuousClock.now + .seconds(8)
+    while source.layout?.isComplete != true, .now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertEqual(source.layout?.isComplete, true, source.lastPreparationLayoutMismatch ?? "Navigation index did not finish")
+  }
+
+  func testIncrementalBookAgreesWithFullRemeasureAfterIndexReclamation() async throws {
+    let document = illustratedBook(), state = DocumentStateJournal(id: document.id, actor: UUID())
+    let surface = try surface(document, state, resources: SceneRenderResources(profile: .interactive))
+    defer { surface.close() }
+    try await ready(surface.coordinator)
+    let source = try XCTUnwrap(surface.coordinator.payload?.source)
+    try await complete(source)
+    let layout = try XCTUnwrap(source.layout), web = try XCTUnwrap(surface.coordinator.webView)
+    let first = try await capture(web, name: "Incremental mixed book first page")
+    await source.discardIdlePreparation()
+    update(surface.coordinator, document, state, page: layout.pageCount - 1)
+    try await ready(surface.coordinator)
+    XCTAssertEqual(source.measurementCount, 2, source.lastPreparationLayoutMismatch ?? "")
+    XCTAssertTrue(source.layout === layout)
+    update(surface.coordinator, document, state, page: 0)
+    try await ready(surface.coordinator)
+    let restored = try await capture(web, name: "Remeasured mixed book first page")
+    XCTAssertEqual(first, restored)
+  }
+
   func testAnIllustrationThatFitsOnePageKeepsItsHeadingOnItsPhysicalSheet() async throws {
     let svg = "<svg xmlns='http://www.w3.org/2000/svg' width='450' height='158'><rect x='1' y='1' width='448' height='156' fill='#dce9f6'/></svg>"
     let image = "data:image/svg+xml;base64," + Data(svg.utf8).base64EncodedString()
@@ -153,6 +259,7 @@ final class DocumentLargeSourceTests: XCTestCase {
     let surface = try surface(document, state, resources: SceneRenderResources())
     defer { surface.close() }
     try await ready(surface.coordinator)
+    try await complete(try XCTUnwrap(surface.coordinator.payload?.source))
     let layout = try XCTUnwrap(surface.coordinator.payload?.source.layout)
     XCTAssertGreaterThan(layout.pageCount, 3)
     var headings = 0
@@ -399,9 +506,11 @@ final class DocumentLargeSourceTests: XCTestCase {
     try await CurrentViewPreviewWriter.writeTarget(first, model: model)
     let coldDuration = started.duration(to: .now)
     let layout = try XCTUnwrap(DocumentRenderRegistry.shared.entry(document: document, pageIndex: 0)?.layout)
-    XCTAssertGreaterThan(layout.pageCount, 30)
+    XCTAssertGreaterThanOrEqual(layout.pageCount, 1)
     var firstPixels: Data?
-    for index in [0, layout.pageCount - 1, layout.pageCount / 2, 0] {
+    // A one-page export owns no open document/navigation session. Its prefix
+    // is not a final page count; request real distant physical pages directly.
+    for index in [0, 30, 15, 0] {
       let request = try store.requestTargetRender(target: target,
         expectedRevision: document.contentStamp.revision, pageIndex: index)
       if index != 0 { try await CurrentViewPreviewWriter.writeTarget(request, model: model) }
@@ -410,6 +519,7 @@ final class DocumentLargeSourceTests: XCTestCase {
       let png = try Data(contentsOf: store.targetPNGURL(request.id))
       XCTAssertEqual(receipt.request, request); XCTAssertEqual(receipt.status, "ready")
       XCTAssertTrue(receipt.diagnostics.isEmpty, "\(receipt.diagnostics)")
+      XCTAssertGreaterThan(try XCTUnwrap(DocumentRenderRegistry.shared.entry(document: document, pageIndex: index)?.layout).pageCount, index)
       XCTAssertEqual(receipt.pngSHA256, SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined())
       let bitmap = try XCTUnwrap(NSBitmapImageRep(data: png)), cg = try XCTUnwrap(bitmap.cgImage)
       let pixels = try rgba(cg)

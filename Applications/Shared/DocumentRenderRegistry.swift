@@ -246,7 +246,7 @@ final class DocumentRenderRegistry {
 
   func programIDs(document: DocumentDocument, pageIndex: Int) -> Set<String>? {
     guard let entry = entries[document.id]?.last(where: { $0.layout != nil && $0.sourceStamp == document.contentStamp }),
-      let layout = entry.layout else { return nil }
+      let layout = entry.layout, (0..<layout.pageCount).contains(pageIndex) else { return nil }
     return layout.blockIDs(on: [pageIndex]).intersection(entry.programIDs)
   }
 

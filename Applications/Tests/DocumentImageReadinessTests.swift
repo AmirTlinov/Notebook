@@ -48,13 +48,16 @@ final class DocumentImageReadinessTests: XCTestCase {
         window.notebookDocumentFragments={...fragments,create:async (...args)=>{
           try {const value=await fragments.create(...args);imageProbe.measuredRoot=args[0];
             imageProbe.measuredLoading=[...args[0].querySelectorAll('img')].map(image=>image.loading);return value;
-          } finally {window.notebookDocumentFragments=fragments}
+          } finally {if(imageProbe.measuredLoading?.length)window.notebookDocumentFragments=fragments}
         }};return true;
       })()
       """)
     fixture.replaceWithImage()
     try await ready(fixture)
     let source = try XCTUnwrap(fixture.renderer.payload?.source)
+    let callsBeforeIndex = try await web.evaluateJavaScript("imageProbe.calls") as? Int
+    XCTAssertEqual(callsBeforeIndex, 0)
+    await waitUntil { source.layout?.isComplete == true }
     let layout = try XCTUnwrap(source.layout)
     let target = try XCTUnwrap(layout.anchorPages["image-target"])
     XCTAssertGreaterThan(target, 0)
@@ -108,7 +111,7 @@ final class DocumentImageReadinessTests: XCTestCase {
     try await ready(fixture)
     let web = try XCTUnwrap(fixture.renderer.webView)
     try await installDecodeGate(in: web)
-    fixture.replaceWithImage(fixed: false)
+    fixture.replaceWithImage(fixed: false, distant: false)
     try await entered(in: web)
     XCTAssertFalse(fixture.renderer.renderIsReady)
     XCTAssertNil(fixture.renderer.payload?.source.layout, "Intrinsic dimensions are an input to the canonical cut")
@@ -118,12 +121,31 @@ final class DocumentImageReadinessTests: XCTestCase {
     XCTAssertEqual(fixture.renderer.payload?.source.measurementCount, 1)
   }
 
+  func testDistantIntrinsicImageCannotBlockTheAcceptedFirstPage() async throws {
+    let fixture = try ImageFixture(); defer { fixture.stop() }
+    try await ready(fixture)
+    let web = try XCTUnwrap(fixture.renderer.webView)
+    try await installDecodeGate(in: web)
+    fixture.replaceWithImage(fixed: false)
+    try await ready(fixture)
+    try await entered(in: web)
+    let source = try XCTUnwrap(fixture.renderer.payload?.source), prefix = try XCTUnwrap(source.layout)
+    XCTAssertFalse(prefix.isComplete)
+    XCTAssertNil(prefix.anchorPages["image-target"], "Unmeasured intrinsic geometry has no fabricated destination")
+    XCTAssertTrue(fixture.renderer.hasCanonicalPixels)
+    _ = try await web.evaluateJavaScript("imageProbe.release(); true")
+    await waitUntil { prefix.isComplete }
+    XCTAssertTrue(source.layout === prefix)
+    XCTAssertGreaterThan(try XCTUnwrap(prefix.anchorPages["image-target"]), 0)
+  }
+
   func testBrokenFarFixedImageFailsOnlyWhenItsPhysicalPageIsRequested() async throws {
     let fixture = try ImageFixture(); defer { fixture.stop() }
     try await ready(fixture)
     fixture.replaceWithImage(source: "data:image/png;base64,bm90LWFuLWltYWdl")
     try await ready(fixture)
     let source = try XCTUnwrap(fixture.renderer.payload?.source)
+    await waitUntil { source.layout?.isComplete == true }
     let target = try XCTUnwrap(source.layout?.anchorPages["image-target"])
     XCTAssertGreaterThan(target, 0)
     fixture.update(page: target)
@@ -148,6 +170,7 @@ final class DocumentImageReadinessTests: XCTestCase {
     try await installDecodeGate(in: web)
     fixture.replaceWithImage()
     try await ready(fixture)
+    await waitUntil { fixture.renderer.payload?.source.layout?.isComplete == true }
     let target = try XCTUnwrap(fixture.renderer.payload?.source.layout?.anchorPages["image-target"])
     fixture.update(page: target)
     try await entered(in: web)
@@ -236,11 +259,12 @@ private final class ImageFixture {
       onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
   }
 
-  func replaceWithImage(fixed: Bool = true, source: String = ImageFixture.svg) {
+  func replaceWithImage(fixed: Bool = true, source: String = ImageFixture.svg, distant: Bool = true) {
     let paragraphs = (0..<55).map { "Paragraph \($0). " + String(repeating: "Physical text keeps its canonical line position. ", count: 5) }.joined(separator: "\n\n")
     let image = "<h2 id='image-target'>Distant image</h2><img data-image-gate='yes' \(fixed ? "width='451' height='158'" : "") src='\(source)'>"
-    XCTAssertTrue(document.replaceContent(blocks: [.markdown(id: "first", source: "# First page\n\n[Image](#image-target)\n\n" + paragraphs),
-      .markdown(id: "picture", source: image)], actor: UUID()))
+    var blocks: [DocumentBlock] = distant ? [.markdown(id: "first", source: "# First page\n\n[Image](#image-target)\n\n" + paragraphs)] : []
+    blocks.append(.markdown(id: "picture", source: image))
+    XCTAssertTrue(document.replaceContent(blocks: blocks, actor: UUID()))
     update()
   }
 

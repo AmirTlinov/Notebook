@@ -209,7 +209,8 @@ struct DocumentPacketDescriptor: Decodable {
 
 private struct DocumentPageSource: Encodable, Sendable {
   let source: DocumentSourceMessage
-  let pageCount: Int
+  var pageCount: Int
+  var layoutComplete: Bool
   let diagnostics: [DocumentBrowserDiagnostic]
   let mathStyles: String
   let fragment: DocumentPageFragment
@@ -230,9 +231,11 @@ final class DocumentPreparedPage {
   private let encodingBudget: Int
   private let reservation: RasterReservation
   private let mathStyleReservation: RasterReservation
-  fileprivate init(envelope: DocumentPageSource, encodingBudget: Int, reservation: RasterReservation, mathStyleReservation: RasterReservation) {
+  private let layout: DocumentLayoutRecord
+  fileprivate init(envelope: DocumentPageSource, layout: DocumentLayoutRecord, encodingBudget: Int, reservation: RasterReservation, mathStyleReservation: RasterReservation) {
     fragment = envelope.fragment; self.envelope = envelope; self.encodingBudget = encodingBudget; self.reservation = reservation
     self.mathStyleReservation = mathStyleReservation
+    self.layout = layout
   }
   /// The snapshot keeps one DOM fragment, not one full source encoding per
   /// historical page. Only the physical host's current bridge message is encoded.
@@ -245,10 +248,13 @@ final class DocumentPreparedPage {
     let reservation = try await DocumentPreparationAdmission.reserve(encodingBudget * 2,
       stage: "page_encoding", message: envelope.source, page: fragment.pageIndex, resources: resources, onAdmissionWait: onAdmissionWait)
     do {
-      let envelope = envelope
+      var envelope = envelope
+      envelope.pageCount = layout.pageCount
+      envelope.layoutComplete = layout.isComplete
+      let current = envelope
       let json = try await Task.detached(priority: .userInitiated) {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-        return String(decoding: try encoder.encode(envelope), as: UTF8.self)
+        return String(decoding: try encoder.encode(current), as: UTF8.self)
       }.value
       try Task.checkCancellation()
       try DocumentPreparationAdmission.require(json.utf8.count, atMost: encodingBudget,
@@ -280,7 +286,6 @@ private final class DocumentPreparedSource {
     self.sourceBytes = sourceBytes; allBodyBytes = bodyBytes.values.reduce(0, +); self.diagnosticsBytes = diagnosticsBytes
     self.mathStyleReservation = mathStyleReservation; self.indexReservation = indexReservation
   }
-  isolated deinit { indexReservation.release() }
 }
 
 /// One source owner measures once on an existing physical WebKit and serves
@@ -328,6 +333,9 @@ final class DocumentPagePreparation {
   private var measured: DocumentPreparedSource?
   private(set) var layout: DocumentLayoutRecord?
   private var deliveredPage = false
+  private var mayComplete = false
+  private var layoutReaders: [UUID: CheckedContinuation<DocumentLayoutRecord, Error>] = [:]
+  var onLayoutAccepted: (DocumentLayoutRecord) throws -> Void = { _ in }
   private weak var web: WKWebView?
   private weak var lease: WebSurfaceLease?
   private var retiring = false
@@ -341,6 +349,50 @@ final class DocumentPagePreparation {
   var pendingReaderCount: Int { waiters.count }
   var retainedPageIndices: Set<Int> { Set(pages.keys) }
   var failed: Bool { error != nil }
+
+  /// The tail has no right to delay installation of the already prepared page.
+  /// Its owner is released by the ordinary canonical-pixel receipt, not a timer.
+  func didPresentPage() { mayComplete = true; start() }
+
+  func completeLayout(in web: WKWebView, lease: WebSurfaceLease) async throws -> DocumentLayoutRecord {
+    if let layout, layout.isComplete { return layout }
+    if let error { throw error }
+    await retirement?.value
+    try Task.checkCancellation()
+    if let layout, layout.isComplete { return layout }
+    if self.web == nil { self.web = web; self.lease = lease }
+    mayComplete = true
+    let id = UUID()
+    return try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        layoutReaders[id] = continuation; start()
+      }
+    } onCancel: {
+      Task { @MainActor [weak self] in self?.layoutReaders.removeValue(forKey: id)?.resume(throwing: CancellationError()) }
+    }
+  }
+
+  private var needsCompletion: Bool {
+    mayComplete && layout?.isComplete != true && !retiring && error == nil
+      && (!demand.isEmpty || !layoutReaders.isEmpty)
+  }
+
+  private func accept(_ value: DocumentPreparedSource) throws {
+    if let layout {
+      do { try layout.acceptExtension(value.layout) }
+      catch {
+        lastLayoutMismatch = "prefix pages=\(layout.pageCount)/\(value.layout.pageCount); old=\(Array(layout.regions.prefix(3))); new=\(Array(value.layout.regions.prefix(3)))"
+        throw error
+      }
+      value.layout = layout
+    } else { layout = value.layout }
+    measured = value
+    try onLayoutAccepted(value.layout)
+    if value.layout.isComplete {
+      let readers = layoutReaders.values; layoutReaders.removeAll()
+      for reader in readers { reader.resume(returning: value.layout) }
+    }
+  }
 
   private func observeProducer(_ stage: String, reason: String) {
     guard NotebookNavigationObservation.enabled else { return }
@@ -417,6 +469,8 @@ final class DocumentPagePreparation {
       cancelAdmissionRetry()
       pages.removeAll()
       if waiters.isEmpty { task?.cancel(); retireProducer(reason: "last_page_demand_released") }
+      let readers = layoutReaders.values; layoutReaders.removeAll()
+      for reader in readers { reader.resume(throwing: CancellationError()) }
     }
   }
 
@@ -433,9 +487,9 @@ final class DocumentPagePreparation {
     onAdmissionWait: @escaping (Bool) -> Void = { _ in }) async throws -> DocumentPreparedPage {
     try Task.checkCancellation()
     retainPage(requested, hostID: hostID)
-    if let error { throw error }
-    if let layout, let error = pageErrors[min(max(0, requested), layout.pageCount - 1)] { throw error }
     if let page = cachedPage(requested) { start(); return page }
+    if let error { throw error }
+    if let error = pageErrors[resolvedPage(requested)] { throw error }
     // Retiring a producer drains its actual browser callbacks before the same
     // admitted WebKit can become another source's measurement host.
     await retirement?.value
@@ -460,15 +514,19 @@ final class DocumentPagePreparation {
   }
 
   private func cachedPage(_ requested: Int) -> DocumentPreparedPage? {
-    guard let layout else { return nil }
-    return pages[min(max(0, requested), layout.pageCount - 1)]
+    pages[resolvedPage(requested)]
+  }
+
+  private func resolvedPage(_ requested: Int) -> Int {
+    guard let layout, layout.isComplete else { return max(0, requested) }
+    return min(max(0, requested), layout.pageCount - 1)
   }
 
   private var neededPages: Set<Int> {
     guard let layout else { return [] }
     // The scene's page plan already includes its neighbours. A producer serves
     // exact consumers; extending each demand again multiplies the working set.
-    return Set(demand.values.map { min($0, layout.pageCount - 1) })
+    return Set(demand.values.map { resolvedPage($0) }.filter { $0 < layout.pageCount })
   }
 
   private func trimPages() {
@@ -484,7 +542,7 @@ final class DocumentPagePreparation {
 
   private func start() {
     guard task == nil, admissionRetry == nil, retirement == nil,
-      !waiters.isEmpty || (measured != nil && !neededPages.subtracting(pages.keys).subtracting(pageErrors.keys).isEmpty
+      !waiters.isEmpty || needsCompletion || (measured != nil && !neededPages.subtracting(pages.keys).subtracting(pageErrors.keys).isEmpty
         && deferredPrefetchAdmission.map { admissionImproved(since: $0) } != false),
       let web, let lease, !lease.isReleased else { return }
     let borrow: WebSurfaceBorrow
@@ -513,18 +571,16 @@ final class DocumentPagePreparation {
           measuredPhasesMS["nativeSourceEncodingWait"] = (ProcessInfo.processInfo.systemUptime - encodingStarted) * 1_000
           try Task.checkCancellation()
           let measurementStarted = ProcessInfo.processInfo.systemUptime
-          let value = try await Self.measure(message: message, json: json, in: web, resources: resources, charges: charges)
+          let firstPage = waiters.values.min(by: { $0.ordinal < $1.ordinal })?.pageIndex ?? 0
+          let value = try await Self.measure(message: message, json: json,
+            throughPage: mayComplete || layout?.isComplete == true ? nil : max(firstPage, (layout?.pageCount ?? 1) - 1),
+            in: web, resources: resources, charges: charges)
           measuredPhasesMS["nativeSourceMeasurement"] = (ProcessInfo.processInfo.systemUptime - measurementStarted) * 1_000
           for (name, duration) in value.measured.preparationPhasesMS ?? [:]
             where name.utf8.count <= 80 && duration.isFinite && duration >= 0 {
             measuredPhasesMS["browser_" + name] = duration
           }
-          if let layout, !layout.matches(value.layout) {
-            lastLayoutMismatch = "remeasure pages=\(layout.pageCount)/\(value.layout.pageCount); old=\(Array(layout.regions.prefix(3))); new=\(Array(value.layout.regions.prefix(3)))"
-            throw DocumentSessionError.inconsistentLayout
-          }
-          if let layout { value.layout = layout } else { layout = value.layout }
-          measured = value; measurementCount += 1
+          try accept(value); measurementCount += 1
           preparationPhasesMS = measuredPhasesMS
           observeProducer("document_source_measured", reason: "canonical_measurement_accepted")
         }
@@ -537,9 +593,18 @@ final class DocumentPagePreparation {
               waiters[id] = nil; waiter.onAdmissionWait(false); waiter.continuation.resume(returning: page)
             }
           }
-          let requested = waiters.values.min(by: { $0.ordinal < $1.ordinal }).map { min($0.pageIndex, measured.layout.pageCount - 1) }
+          let requested = waiters.values.min(by: { $0.ordinal < $1.ordinal }).map { resolvedPage($0.pageIndex) }
           let neighbor = !retiring ? neededPages.subtracting(pages.keys).subtracting(pageErrors.keys).sorted().first : nil
+          if needsCompletion, requested == nil || requested! >= measured.layout.pageCount {
+            let json = try await sourceJSON.value
+            let extended = try await Self.measure(message: message, json: json, throughPage: nil,
+              extending: measured, in: web, resources: resources, charges: charges)
+            try accept(extended)
+            observeProducer("document_source_extended", reason: "complete_navigation_index")
+            continue
+          }
           guard let index = requested ?? neighbor else { break }
+          guard index < measured.layout.pageCount else { break }
           let page: DocumentPreparedPage
           let fragmentStarted = ProcessInfo.processInfo.systemUptime
           do { page = try await Self.compile(index, message: message, prepared: measured, in: web, resources: resources,
@@ -553,7 +618,7 @@ final class DocumentPagePreparation {
               if error is DocumentPreparationAdmission.Deferred || (error as? SceneRenderError) == .resourceLimit { throw error }
               let failure = error is FragmentMismatch ? DocumentSessionError.inconsistentLayout : error
               pageErrors[index] = failure
-              for (id, waiter) in Array(waiters) where min(waiter.pageIndex, measured.layout.pageCount - 1) == index {
+              for (id, waiter) in Array(waiters) where resolvedPage(waiter.pageIndex) == index {
                 waiters[id] = nil; waiter.continuation.resume(throwing: failure)
               }
               continue
@@ -572,7 +637,7 @@ final class DocumentPagePreparation {
           try Task.checkCancellation()
           compiledPageCount += 1
           pages[index] = page
-          for (id, waiter) in Array(waiters) where min(waiter.pageIndex, measured.layout.pageCount - 1) == index {
+          for (id, waiter) in Array(waiters) where resolvedPage(waiter.pageIndex) == index {
             deliveredPage = true
             waiters[id] = nil; waiter.onAdmissionWait(false); waiter.continuation.resume(returning: page)
           }
@@ -633,6 +698,8 @@ final class DocumentPagePreparation {
     if !(error is CancellationError) { self.error = error }
     let pending = waiters.values; waiters.removeAll()
     for waiter in pending { waiter.continuation.resume(throwing: error) }
+    let readers = layoutReaders.values; layoutReaders.removeAll()
+    for reader in readers { reader.resume(throwing: error) }
   }
 
   /// Capture the cleanup borrow synchronously, before the physical host returns
@@ -683,6 +750,7 @@ final class DocumentPagePreparation {
     if let admissionObserver { NotificationCenter.default.removeObserver(admissionObserver) }
     task?.cancel(); admissionRetry?.cancel()
     for waiter in waiters.values { waiter.continuation.resume(throwing: CancellationError()) }
+    for reader in layoutReaders.values { reader.resume(throwing: CancellationError()) }
     // Normally the last mounted demand retires the producer. This path also
     // covers an abandoned source snapshot retained only by diagnostic readers.
     if let web, retirement == nil {
@@ -708,15 +776,19 @@ final class DocumentPagePreparation {
     }
   }
 
-  private static func measure(message: DocumentSourceMessage, json: String, in web: WKWebView,
+  private static func measure(message: DocumentSourceMessage, json: String, throughPage: Int?, extending previous: DocumentPreparedSource? = nil, in web: WKWebView,
     resources: SceneRenderResources, charges: DocumentPreparationCharges) async throws -> DocumentPreparedSource {
     let geometry = WorkspaceItemGeometry.document(message.paper.kind), sourceBytes = json.utf8.count
     try DocumentPreparationAdmission.require(sourceBytes, atMost: 16 * 1024 * 1024,
       stage: "source_size", message: message, page: nil, resources: resources)
     let (raw, layoutPacket) = try await readPacket(
-      preparing: "return JSON.stringify(await window.notebookRenderer.beginSourcePreparation(JSON.parse(source)));",
-      arguments: ["source": json], sourceKey: message.key, pageIndex: nil,
-      maximumBytes: 16 * 1024 * 1024, inputBytes: sourceBytes, message: message, in: web, resources: resources, charges: charges)
+      preparing: previous != nil
+        ? "return JSON.stringify(await window.notebookRenderer.extendSourcePreparation(key, page));"
+        : "return JSON.stringify(await window.notebookRenderer.beginSourcePreparation(JSON.parse(source), page));",
+      arguments: previous != nil ? ["key": message.key, "page": throughPage.map { $0 as Any } ?? NSNull()]
+        : ["source": json, "page": throughPage.map { $0 as Any } ?? NSNull()], sourceKey: message.key, pageIndex: nil,
+      maximumBytes: 16 * 1024 * 1024, inputBytes: previous == nil ? sourceBytes : 0,
+      message: message, in: web, resources: resources, charges: charges)
     // Keep every materialized-stage charge alive through browser cleanup if
     // a later synchronous growth is refused. No index or packet waits uncharged.
     var heldCharges = [layoutPacket]
@@ -742,8 +814,17 @@ final class DocumentPagePreparation {
       let mathStyleReservation = try DocumentPreparationAdmission.reserveMaterialized(max(1, mathStyleBytes),
         stage: "math_style", message: message, page: nil, resources: resources, charges: charges)
       heldCharges.append(mathStyleReservation)
-      let indexReservation = try DocumentPreparationAdmission.reserveMaterialized(max(1, sourceBytes * 2 + measured.indexedNodes * 128 + measured.indexedEdges * 64),
-        stage: "source_index", message: message, page: nil, resources: resources, charges: charges)
+      let indexBytes = max(1, sourceBytes * 2 + measured.indexedNodes * 128 + measured.indexedEdges * 64)
+      let indexReservation: RasterReservation
+      if let previous {
+        // The same DOM grows; it is not a second full-source allocation.
+        indexReservation = previous.indexReservation
+        try DocumentPreparationAdmission.transfer(indexReservation, to: indexBytes, stage: "source_index",
+          message: message, page: nil, resources: resources, charges: charges)
+      } else {
+        indexReservation = try DocumentPreparationAdmission.reserveMaterialized(indexBytes,
+          stage: "source_index", message: message, page: nil, resources: resources, charges: charges)
+      }
       heldCharges.append(indexReservation)
       try DocumentPreparationAdmission.transfer(layoutPacket, to: raw.utf8.count * 3, stage: "source_packet",
         message: message, page: nil, resources: resources, charges: charges)
@@ -788,7 +869,7 @@ final class DocumentPagePreparation {
     let source = DocumentSourceMessage(key: message.key, documentID: message.documentID, paper: message.paper,
       blocks: fragment.blockIDs.compactMap { blocks[$0] },
       sourceVersions: Dictionary(uniqueKeysWithValues: fragment.blockIDs.compactMap { id in message.sourceVersions[id].map { (id, $0) } }))
-    let envelope = DocumentPageSource(source: source, pageCount: layout.pageCount,
+    let envelope = DocumentPageSource(source: source, pageCount: layout.pageCount, layoutComplete: layout.isComplete,
       diagnostics: prepared.measured.diagnostics, mathStyles: prepared.measured.mathStyles, fragment: fragment)
     let retainedBytes = max(1, json.utf8.count)
     try DocumentPreparationAdmission.transfer(staging, to: retainedBytes, stage: "retained_page",
@@ -796,7 +877,7 @@ final class DocumentPagePreparation {
     transferred = true
     let pageSourceBytes = prepared.sourceBytes - prepared.allBodyBytes
       + fragment.blockIDs.reduce(0) { $0 + (prepared.bodyBytes[$1] ?? 0) }
-    return DocumentPreparedPage(envelope: envelope,
+    return DocumentPreparedPage(envelope: envelope, layout: layout,
       encodingBudget: pageSourceBytes + json.utf8.count * 2 + prepared.diagnosticsBytes + prepared.measured.mathStyles.utf8.count * 6 + 256,
       reservation: staging, mathStyleReservation: prepared.mathStyleReservation)
   }

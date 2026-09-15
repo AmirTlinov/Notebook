@@ -11,7 +11,7 @@ struct DocumentRenderRecipeTests {
     return try #require(UUID(uuidString: value))
   }
 
-  @Test(arguments: ["error", "ready"], [nil, "NotebookDocumentFragments/2", "NotebookDocumentFragments/3"] as [String?])
+  @Test(arguments: ["error", "ready"], [nil, "NotebookDocumentFragments/2", "NotebookDocumentFragments/3", "NotebookDocumentFragments/4"] as [String?])
   func anotherRecipeCannotReuseOrEraseThePreviousResult(status: String, previousRenderer: String?) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-render-recipe-\(UUID())")
     defer { try? FileManager.default.removeItem(at: root) }
@@ -37,7 +37,7 @@ struct DocumentRenderRecipeTests {
     #expect(throws: CollaborationError.self) { try previous.requireCurrentRenderingRecipe() }
     try current.requireCurrentRenderingRecipe()
     #expect(current.id != previous.id)
-    #expect(current.id == (try requestID(originalKey.setting("renderer", .string("NotebookDocumentFragments/4")))))
+    #expect(current.id == (try requestID(originalKey.setting("renderer", .string("NotebookDocumentFragments/5")))))
     #expect(current.sourceRevision == previous.sourceRevision)
     #expect(!FileManager.default.fileExists(atPath: store.targetReceiptURL(current.id).path))
     #expect(try Data(contentsOf: store.targetReceiptURL(previous.id)) == previousBytes)

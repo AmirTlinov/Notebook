@@ -90,15 +90,18 @@ final class DocumentSnapshotCache {
 
 struct DocumentPageLayout: Equatable, Sendable {
   let pageCount: Int
+  let isComplete: Bool
   let sourceRevision: String?
   let record: DocumentLayoutRecord?
 
   static func == (lhs: Self, rhs: Self) -> Bool {
-    lhs.pageCount == rhs.pageCount && lhs.sourceRevision == rhs.sourceRevision && lhs.record === rhs.record
+    lhs.pageCount == rhs.pageCount && lhs.isComplete == rhs.isComplete
+      && lhs.sourceRevision == rhs.sourceRevision && lhs.record === rhs.record
   }
 
-  init(pageCount: Int, sourceRevision: String? = nil, record: DocumentLayoutRecord? = nil) {
+  @MainActor init(pageCount: Int, sourceRevision: String? = nil, record: DocumentLayoutRecord? = nil, isComplete: Bool? = nil) {
     self.pageCount = max(1, pageCount)
+    self.isComplete = isComplete ?? record?.isComplete ?? true
     self.sourceRevision = sourceRevision
     self.record = record
   }
@@ -199,14 +202,12 @@ struct DocumentRuntimePayload {
   var drafts: [DocumentEditingSession]
 
   var rasterToken: String {
-    let omitsPrograms = programMode == "external" && source.layout.map { layout in
-      layout.blockIDs(on: [pageIndex]).intersection(source.programIDs).isEmpty == false
-    } != false
+    let omitsPrograms = programMode == "external" && source.programIDs(on: pageIndex).map { !$0.isEmpty } != false
     return omitsPrograms ? "paper:" + renderToken : compositeToken
   }
 
   var compositeToken: String {
-    let ids = source.layout?.blockIDs(on: [pageIndex]).intersection(source.programIDs) ?? source.programIDs
+    let ids = source.programIDs(on: pageIndex) ?? source.programIDs
     return DocumentSnapshotCache.compositeToken(sourceRevision: source.stamp.revision, records: state.records,
       pageIndex: pageIndex, programIDs: ids)
   }
@@ -1132,7 +1133,7 @@ final class DocumentWebCoordinator: NSObject,
     }
     guard let renderSession else { return }
     let nextSource = renderSession.source(document)
-    let stateIDs = externallyHostedPrograms ? [] : (nextSource.layout?.blockIDs(on: [selectedPageIndex]).intersection(nextSource.programIDs) ?? nextSource.programIDs)
+    let stateIDs = externallyHostedPrograms ? [] : (nextSource.programIDs(on: selectedPageIndex) ?? nextSource.programIDs)
     let records = state.records.filter { stateIDs.contains($0.id) }
     // A first frame may predate measurement. Keep its immutable packet when
     // only records outside this physical page changed; they cannot affect it.
@@ -1283,7 +1284,7 @@ final class DocumentWebCoordinator: NSObject,
       let destination = layout.destination(for: href)
       if case .external = destination, !userActivated { return }
       lastLinkSequence = sequence
-      onLinkActivation(.init(origin: origin, destination: destination))
+      resolveLink(href, origin: origin, deliver: onLinkActivation)
       return
     }
     if kind == "renderStarted" {
@@ -1309,9 +1310,9 @@ final class DocumentWebCoordinator: NSObject,
       recordPreparation(.renderedAt)
       renderedToken = renderToken
       if let pageCount = (body["pageCount"] as? NSNumber)?.intValue {
-        self.pageCount = max(1, pageCount)
+        self.pageCount = max(1, payload.source.layout?.pageCount ?? pageCount)
         onPageLayout(
-          DocumentPageLayout(pageCount: pageCount,
+          DocumentPageLayout(pageCount: self.pageCount,
             sourceRevision: "\(payload.source.stamp.actor):\(payload.source.stamp.counter)", record: payload.source.layout)
         )
       }
@@ -1433,7 +1434,14 @@ final class DocumentWebCoordinator: NSObject,
             self?.preparationAdmissionChanged(waiting, generation: expected)
           }
           let prepared = try await next.source.preparedPage(next.pageIndex, hostID: hostID, in: web, lease: lease,
-            resources: resources, onAdmissionWait: admissionChanged)
+            resources: resources, onAdmissionWait: admissionChanged, onLayoutChanged: { [weak self, weak source = next.source] layout in
+              guard let self, let source, payload?.source === source, hasCanonicalPixels else { return }
+              pageCount = layout.pageCount
+              webView?.callAsyncJavaScript("window.notebookRenderer.acceptSourceExtent(key, count); return true;",
+                arguments: ["key": source.message.key, "count": layout.pageCount], in: nil, in: .page, completionHandler: nil)
+              onPageLayout(.init(pageCount: layout.pageCount,
+                sourceRevision: "\(source.stamp.actor):\(source.stamp.counter)", record: layout))
+            })
           recordPreparation(.preparedPageReadyAt, trace: trace)
           let source = sentSourceKey == next.source.message.key && sentSourcePage == prepared.fragment.pageIndex
             ? nil : try await prepared.encodedMessage(resources: resources, onAdmissionWait: admissionChanged)
@@ -1564,10 +1572,31 @@ final class DocumentWebCoordinator: NSObject,
           canonicalPixelEpoch = presentation.kind == .canonical && pixelPresentation == presentation ? presentation.epoch : nil
         } else { canonicalPixelEpoch = nil }
         setRenderReady(requestedPageIndex == receiptPage)
+        if hasCanonicalPixels { payload.source.didPresentPage() }
         applyPageIndexIfReady()
         capturePendingSnapshotIfReady()
       }
     )
+  }
+
+  /// Missing from a prefix is not a missing section. Keep the terminal
+  /// activation while its sole source owner finishes the navigation index.
+  func resolveLink(_ href: String, origin: DocumentLinkOrigin,
+    deliver: @escaping (DocumentLinkActivation) -> Void) {
+    guard let layout = origin.source.layout else { return }
+    let destination = layout.destination(for: href)
+    if layout.isComplete || !href.hasPrefix("#") {
+      deliver(.init(origin: origin, destination: destination)); return
+    }
+    if case .page = destination { deliver(.init(origin: origin, destination: destination)); return }
+    guard let web = webView, let lease = surfaceLease else { return }
+    Task { @MainActor [weak self] in
+      let result: DocumentLinkDestination
+      do { result = try await origin.source.completeLayout(in: web, lease: lease).destination(for: href) }
+      catch { result = .unavailable("Не удалось подготовить раздел документа: \(error.localizedDescription)") }
+      guard let current = self?.currentLinkOrigin, current.hasSamePresentation(as: origin) else { return }
+      deliver(.init(origin: origin, destination: result))
+    }
   }
 
   private func setRenderReady(_ ready: Bool) {

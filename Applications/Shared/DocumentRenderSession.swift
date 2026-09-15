@@ -96,6 +96,7 @@ final class DocumentSourceSnapshot {
   private(set) var encodingCount = 0
   private(set) var layout: DocumentLayoutRecord?
   private var preparation: DocumentPagePreparation?
+  private var layoutObservers: [UUID: (DocumentLayoutRecord) -> Void] = [:]
   private(set) var preparationCount = 0
   private var receiptLayoutMismatch: String?
 
@@ -111,6 +112,11 @@ final class DocumentSourceSnapshot {
 
   func matches(_ document: DocumentDocument) -> Bool { self.document == document }
 
+  func programIDs(on page: Int) -> Set<String>? {
+    guard let layout, (0..<layout.pageCount).contains(page) else { return nil }
+    return layout.blockIDs(on: [page]).intersection(programIDs)
+  }
+
   private func encodingTask() -> Task<String, Error> {
     if encoding == nil {
       encodingCount += 1
@@ -123,10 +129,18 @@ final class DocumentSourceSnapshot {
   func encodedJSON() async throws -> String { try await encodingTask().value }
 
   func preparedPage(_ index: Int, hostID: UUID, in web: WKWebView, lease: WebSurfaceLease,
-    resources: SceneRenderResources, onAdmissionWait: @escaping (Bool) -> Void = { _ in }) async throws -> DocumentPreparedPage {
+    resources: SceneRenderResources, onAdmissionWait: @escaping (Bool) -> Void = { _ in },
+    onLayoutChanged: @escaping (DocumentLayoutRecord) -> Void = { _ in }) async throws -> DocumentPreparedPage {
+    layoutObservers[hostID] = onLayoutChanged
     if preparation == nil {
       preparationCount += 1
       preparation = DocumentPagePreparation(message: message, sourceJSON: encodingTask(), resources: resources)
+      preparation?.onLayoutAccepted = { [weak self] record in
+        guard let self else { return }
+        if let layout, layout !== record { try layout.acceptExtension(record) }
+        else { layout = record }
+        for observer in Array(layoutObservers.values) { observer(layout!) }
+      }
     }
     let prepared: DocumentPreparedPage
     do { prepared = try await preparation!.page(index, hostID: hostID, in: web, lease: lease, onAdmissionWait: onAdmissionWait) }
@@ -150,7 +164,17 @@ final class DocumentSourceSnapshot {
   }
 
   func retainPage(_ index: Int, hostID: UUID) { preparation?.retainPage(index, hostID: hostID) }
-  func releasePage(hostID: UUID, in web: WKWebView?) { preparation?.releasePage(hostID: hostID, in: web) }
+  func releasePage(hostID: UUID, in web: WKWebView?) {
+    // An idle executor releases page demand, not its mounted source metadata.
+    // A physical WebKit/source retirement ends the observer as well.
+    if web != nil { layoutObservers[hostID] = nil }
+    preparation?.releasePage(hostID: hostID, in: web)
+  }
+  func didPresentPage() { preparation?.didPresentPage() }
+  func completeLayout(in web: WKWebView, lease: WebSurfaceLease) async throws -> DocumentLayoutRecord {
+    guard let preparation else { throw DocumentSessionError.invalidLayout }
+    return try await preparation.completeLayout(in: web, lease: lease)
+  }
   func discardIdlePreparation() async { await preparation?.discardIdlePreparation() }
   var pendingPreparationReaderCount: Int { preparation?.pendingReaderCount ?? 0 }
   var retainedPageIndices: Set<Int> { preparation?.retainedPageIndices ?? [] }
@@ -236,28 +260,29 @@ enum DocumentLinkDestination: Equatable {
   case unavailable(String)
 }
 
-/// A measured source layout is immutable after acceptance. Several page frames
-/// may reference it, but a disagreeing neighbor cannot replace its geometry.
+/// Accepted physical pages never change. The sole source preparation can
+/// extend its measured prefix; a page receipt cannot replace or extend it.
 @MainActor
 final class DocumentLayoutRecord {
-  let pageCount: Int
-  let regions: [DocumentBlockRegion]
+  private(set) var pageCount: Int
+  private(set) var isComplete: Bool
+  private(set) var regions: [DocumentBlockRegion]
   let width: Double
   let height: Double
-  let anchorPages: [String: Int]
-  let reading: DocumentReadingIndex
-  private let pageRanges: [Int: Range<Int>]
+  private(set) var anchorPages: [String: Int]
+  private(set) var reading: DocumentReadingIndex
+  private var pageRanges: [Int: Range<Int>]
   // A raster or an address reader can outlive the source preparation. The
   // shared layout, not a temporary task or registry cache, owns this allocation.
-  private let reservation: RasterReservation?
+  private var reservation: RasterReservation?
   private var releaseObservers: [ObjectIdentifier: @MainActor () -> Void] = [:]
 
   init(receipt: NSDictionary, sourceKey: String, blockIDs: Set<String>, geometry: WorkspaceItemGeometry,
     reservation: RasterReservation? = nil) throws {
     guard receipt["sourceKey"] as? String == sourceKey,
-      let scope = receipt["layoutScope"] as? String, scope == "source" || scope == "page",
+      let scope = receipt["layoutScope"] as? String, ["source", "source-prefix", "page"].contains(scope),
       receipt["layoutCanonical"] as? Bool == true,
-      let count = receipt["pageCount"] as? Int, count > 0,
+      let count = receipt["pageCount"] as? Int, (1...4096).contains(count),
       let width = receipt["width"] as? Double, width.isFinite, width > 0,
       let height = receipt["height"] as? Double, height.isFinite, height > 0,
       let values = receipt["regions"] as? [[String: Any]] else { throw DocumentSessionError.invalidLayout }
@@ -285,7 +310,7 @@ final class DocumentLayoutRecord {
     // Page receipts describe pixels, never a replacement for the complete
     // source's link index. The source packet and its existing lease own both.
     var anchors: [String: Int] = [:]
-    if scope == "source" {
+    if scope != "page" {
       guard let values = receipt["anchors"] as? [[String: Any]], values.count <= 16_384
       else { throw DocumentSessionError.invalidLayout }
       var bytes = 0
@@ -300,13 +325,14 @@ final class DocumentLayoutRecord {
       }
     }
     let readingRows: [[Any]]
-    if scope == "source" {
+    if scope != "page" {
       guard let rows = receipt["reading"] as? [[Any]] else { throw DocumentSessionError.invalidLayout }
       readingRows = rows
     } else { readingRows = [] }
     self.reading = try .init(rows: readingRows, blockIDs: blockIDs, pageCount: count, scale: geometry.height / height)
     self.anchorPages = anchors
     self.pageCount = count; self.regions = regions; self.pageRanges = pageRanges
+    isComplete = scope != "source-prefix"
     self.width = geometry.width; self.height = geometry.height
     self.reservation = reservation
   }
@@ -315,7 +341,8 @@ final class DocumentLayoutRecord {
     let expectedRegions = regions[pageIndex.map { pageRanges[$0] ?? 0..<0 } ?? regions.startIndex..<regions.endIndex]
     let tolerance = 1.0 / 32
     guard (pageIndex != nil || (anchorPages == other.anchorPages && reading.matches(other.reading, tolerance: tolerance))),
-      pageCount == other.pageCount, width == other.width, height == other.height,
+      (pageIndex != nil || (pageCount == other.pageCount && isComplete == other.isComplete)),
+      width == other.width, height == other.height,
       expectedRegions.count == other.regions.count else { return false }
     // Transform round trips may differ by two WebKit layout subpixels. This
     // tolerance never changes the accepted record or grows with page count.
@@ -325,6 +352,28 @@ final class DocumentLayoutRecord {
         && abs(left.frame.width - right.frame.width) <= tolerance && abs(left.frame.height - right.frame.height) <= tolerance
         && abs(left.sourceOffset - right.sourceOffset) <= tolerance
     }
+  }
+
+  /// All old physical regions and text addresses must survive byte-for-byte
+  /// (apart from the same fixed WebKit subpixel tolerance). New anchors may be
+  /// resolved by the complete index, but an accepted author anchor cannot move.
+  func acceptExtension(_ other: DocumentLayoutRecord) throws {
+    if matches(other) { return }
+    guard !isComplete, other.pageCount >= pageCount, width == other.width, height == other.height,
+      anchorPages.allSatisfy({ other.anchorPages[$0.key] == $0.value }),
+      reading.matchesPrefix(of: other.reading, pageCount: pageCount, tolerance: 1.0 / 32),
+      (0..<pageCount).allSatisfy({ page in
+        let left = regions(on: page), right = other.regions(on: page)
+        return left.count == right.count && zip(left, right).allSatisfy { a, b in
+          a.id == b.id && a.pageIndex == b.pageIndex
+            && abs(a.frame.x - b.frame.x) <= 1.0 / 32 && abs(a.frame.y - b.frame.y) <= 1.0 / 32
+            && abs(a.frame.width - b.frame.width) <= 1.0 / 32 && abs(a.frame.height - b.frame.height) <= 1.0 / 32
+            && abs(a.sourceOffset - b.sourceOffset) <= 1.0 / 32
+        }
+      }) else { throw DocumentSessionError.inconsistentLayout }
+    pageCount = other.pageCount; isComplete = other.isComplete; regions = other.regions
+    anchorPages = other.anchorPages; reading = other.reading; pageRanges = other.pageRanges
+    reservation = other.reservation
   }
 
   func regions(on page: Int) -> ArraySlice<DocumentBlockRegion> {

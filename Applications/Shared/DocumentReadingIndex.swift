@@ -56,6 +56,15 @@ struct DocumentReadingIndex: Equatable, Sendable {
     }
   }
 
+  func matchesPrefix(of other: Self, pageCount: Int, tolerance: Double) -> Bool {
+    let prefix = other.segments.filter { $0.pageIndex < pageCount }
+    return segments.count == prefix.count && zip(segments, prefix).allSatisfy { left, right in
+      left.blockID == right.blockID && left.nodeID == right.nodeID && left.textOffset == right.textOffset
+        && left.start == right.start && left.end == right.end && left.pageIndex == right.pageIndex
+        && abs(left.y - right.y) <= tolerance
+    }
+  }
+
   func anchor(page: Int, blockOrder: [String], y: Double = 0) -> DocumentReadingAnchor? {
     guard let indices = pages[page], let index = indices.min(by: {
       let lhs = segments[$0], rhs = segments[$1]

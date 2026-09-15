@@ -1789,7 +1789,7 @@ final class NotebookAppModel {
       let id = presence.focusedItemID, readingRestoreTarget == nil,
       readingSuppressedDocument != id, documentPageSelection == nil,
       let document = documents[id], let measured = documentReadingLayout,
-      measured.id == id, measured.stamp == document.contentStamp else { return }
+      measured.id == id, measured.stamp == document.contentStamp, measured.record.isComplete else { return }
     guard let saved = readingReturnPosition ?? documentReadingPositions[id] else {
       readingRestoreDocument = nil
       return

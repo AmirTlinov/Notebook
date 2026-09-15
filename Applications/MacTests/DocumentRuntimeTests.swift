@@ -1155,17 +1155,18 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertNil(producer.coordinator.acquisitionError); XCTAssertNil(neighbor.coordinator.acquisitionError)
     let source = try XCTUnwrap(producer.coordinator.payload?.source)
     XCTAssertTrue(neighbor.coordinator.payload?.source === source); XCTAssertEqual(source.preparationCount, 1)
-    var pictures: [Data] = [], typesets = 0
+    var pictures: [Data] = [], typesets: [Int] = []
     for (index, page) in [producer, neighbor].enumerated() {
       let web = try XCTUnwrap(page.coordinator.webView)
       let raw = try await js("JSON.stringify({work:notebookRenderer.pageReceipt().work,styles:[...document.querySelectorAll('style')].map(node=>({id:node.id,text:node.textContent})),math:[...document.querySelectorAll('mjx-container')].map(node=>({box:node.getBoundingClientRect().toJSON(),display:getComputedStyle(node).display}))})", web)
       let evidence = XCTAttachment(string: raw); evidence.name = "Shared math runtime \(index)"; evidence.lifetime = .keepAlways; add(evidence)
       let value = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
-      typesets += (value["work"] as? [String: Int])?["typesetPasses"] ?? -100
+      typesets.append((value["work"] as? [String: Int])?["typesetPasses"] ?? -100)
       let raster = try await capturePixels(web); pictures.append(raster.bytes)
       let image = XCTAttachment(image: raster.image); image.name = "Shared math pixels \(index)"; image.lifetime = .keepAlways; add(image)
     }
-    XCTAssertEqual(typesets, 1)
+    XCTAssertEqual(typesets, [document.blocks.count, 0],
+      "Each source block is typeset once by its producer; the other WebKit typesets nothing")
     guard pictures[0] == pictures[1] else { throw NSError(domain: "NotebookSharedMathPixels", code: 1,
       userInfo: [NSLocalizedDescriptionKey: "A physical neighbor lost the prepared mathematical styles or pixels"]) }
   }

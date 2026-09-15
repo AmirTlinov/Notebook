@@ -557,87 +557,105 @@
         }
       };
 
-      // A source is measured once in an already admitted WebKit. This passive
-      // root cannot start programs or replace the physical DOM/editor beside it.
-      const beginSourcePreparation = async source => {
-        const preparationPhasesMS={};let phaseStarted=performance.now();
-        const phase=name=>{const now=performance.now();preparationPhasesMS[name]=now-phaseStarted;phaseStarted=now;};
+      // One canonical flow grows forwards. A requested page is published only
+      // with two trailing columns of lookahead (or the source ends). WebKit
+      // can adjust the penultimate column's fragment box when appending a
+      // sibling; neither trailing column is an accepted prefix. Far blocks have no DOM,
+      // typesetting or image decode on the first-page critical path.
+      const beginSourcePreparation = async (source, throughPage = null) => {
         const dimensions=viewport.getBoundingClientRect();
-        if (sourcePreparation) throw new Error('document_source_preparation_busy');
-        if (!source?.key || !Array.isArray(source.blocks) || !dimensions
-          || ![dimensions.width,dimensions.height].every(value=>Number.isFinite(value)&&value>0)) {
+        if(sourcePreparation)throw new Error('document_source_preparation_busy');
+        if(!source?.key || !Array.isArray(source.blocks) || !dimensions
+          || ![dimensions.width,dimensions.height].every(value=>Number.isFinite(value)&&value>0))
           throw new Error('document_source_preparation_invalid');
-        }
-        // The first source must see the same physical typography as the page,
-        // including browser/MathJax measurements that inherit the document root.
-        // Later source work never reconfigures an already shown editor plane.
         if(!payload)configurePaper(source,0);
-        const host=document.createElement('div'), flow=document.createElement('main');
-        const preparation={key:source.key,host,flow,cancelled:false,diagnostics:[]};
-        sourcePreparation=preparation;
-        const paper=source.paper, scale=Math.min(paper.surfaceWidth/paper.widthPoints,paper.surfaceHeight/paper.heightPoints);
+        const host=document.createElement('div'),flow=document.createElement('main');
+        const paper=source.paper,scale=Math.min(paper.surfaceWidth/paper.widthPoints,paper.surfaceHeight/paper.heightPoints);
         const width=paper.widthPoints*scale,height=paper.heightPoints*scale,margin=paper.marginPoints*scale;
-        const gap=Math.max(18,Math.min(30,22*scale)), stride=width+gap;
-        host.className='document-layout-preparation'; host.setAttribute('aria-hidden','true');host.inert=true;
+        const gap=Math.max(18,Math.min(30,22*scale)),stride=width+gap;
+        host.className='document-layout-preparation';host.setAttribute('aria-hidden','true');host.inert=true;
         Object.assign(host.style,{position:'absolute',left:'0',top:'0',visibility:'hidden',width:`${width}px`,height:`${height}px`,
           pointerEvents:'none',fontSize:`${12*scale}px`});
         for(const [name,value] of Object.entries({'page-margin':margin,'content-width':width-2*margin,
           'content-height':height-2*margin,'column-gap':2*margin+gap}))host.style.setProperty('--'+name,`${value}px`);
-        flow.className='document-content document-flow';host.append(flow);
+        flow.className='document-content document-flow';
+        sourcePreparation={key:source.key,source,host,flow,cursor:0,cancelled:false,diagnostics:[],
+          width,height,margin,gap,stride,advancing:false};
+        work.sourceInstalls+=1;
+        return extendSourcePreparation(source.key,throughPage);
+      };
+
+      const extendSourcePreparation = async (key, throughPage = null) => {
+        const preparation=sourcePreparation;
+        if(!preparation || preparation.key!==key || preparation.cancelled || preparation.advancing
+          || preparation.pendingPage || (throughPage!==null && (!Number.isInteger(throughPage)||throughPage<0)))
+          throw new Error('document_source_preparation_not_ready');
+        preparation.advancing=true;
+        const {source,host,flow,width,height,margin,gap,stride}=preparation;
+        const preparationPhasesMS={};let phaseStarted=performance.now();
+        const phase=name=>{const now=performance.now();preparationPhasesMS[name]=(preparationPhasesMS[name]||0)+now-phaseStarted;phaseStarted=now;};
         try {
-          // MathJax startup changes browser metrics. Admitting a column table
-          // before it completes leaves WebKit's initial rowspan fragmentation
-          // different from the same source measured after startup.
-          await window.MathJax?.startup?.promise;
-          phase('runtimeStartup');
+          // Startup may change table metrics, even for a math-free first page.
+          await window.MathJax?.startup?.promise;phase('runtimeStartup');
           if(preparation.cancelled)throw new Error('document_source_preparation_cancelled');
-          document.body.append(host);
-          work.sourceInstalls+=1;
-          for(const block of source.blocks)flow.append(createBlock(block));
-          // WebKit can strand a heading at the end of a fragmented parent even
-          // with break-after on the heading and break-before on the image.
-          // Give the two adjacent semantic nodes one ordinary fragmentation
-          // box; browser layout remains the sole owner of the physical cut.
-          for(const image of flow.querySelectorAll(':is(h1,h2,h3,h4,h5,h6) + :is(img,svg)')) {
-            const heading=image.previousElementSibling, lead=document.createElement('div');
-            lead.className='document-illustration-lead';heading.before(lead);lead.append(heading,image);
-          }
-          // Markdown headings without an explicit HTML ID receive one stable
-          // document-wide address before layout. Author IDs always take priority.
-          const headingIDs=new Set([...flow.querySelectorAll('[id],a[name]')].flatMap(node=>[node.id,node.getAttribute('name')]).filter(Boolean));
-          const nextHeadingSuffix=new Map();
-          for(const heading of flow.querySelectorAll('h1,h2,h3,h4,h5,h6'))if(!heading.id) {
-            const stem=heading.textContent.trim().toLowerCase().replace(/[^\p{L}\p{N}\p{M}_\s-]/gu,'').replace(/\s/g,'-')||'section';
-            let suffix=nextHeadingSuffix.get(stem)||0,id=suffix ? stem+'-'+suffix : stem;
-            work.headingAddressProbes+=1;
-            while(headingIDs.has(id)){id=stem+'-'+(++suffix);work.headingAddressProbes+=1;}
-            heading.id=id;headingIDs.add(id);nextHeadingSuffix.set(stem,suffix+1);
-          }
-          phase('sourceDOM');
-          await typeset([...flow.children].filter(node=>node.dataset.kind!=='interactive'),
-            (kind,message,blockID)=>preparation.diagnostics.push({kind,message:String(message),blockID}));
-          phase('typesetting');
-          const observation = preparationObservation?.sourceKey === source.key ? preparationObservation : null;
-          observeBrowserState(observation, 'fonts_before');
-          const fontGetterStart = observation ? performance.now() : 0;
-          const fontsReady = document.fonts.ready;
-          const fontAwaitStart = observation ? performance.now() : 0;
-          await fontsReady;
-          if (observation) {
-            preparationPhasesMS.fontsReadyGetter = fontAwaitStart - fontGetterStart;
-            preparationPhasesMS.fontsReadyAwait = performance.now() - fontAwaitStart;
-            observeBrowserState(observation, 'fonts_after');
-          }
-          phase('fontsReady');
-          Object.assign(preparationPhasesMS, await notebookDocumentImages.waitForGeometry(flow,()=>preparation.cancelled));
-          phase('imageDecode');
-          if(preparation.cancelled)throw new Error('document_source_preparation_cancelled');
+          document.body.append(host);host.append(flow);
           const contentWidth=width-2*margin,columnGap=2*margin+gap;
-          const pageCount=Math.max(1,Math.round((Math.max(contentWidth,flow.scrollWidth)+columnGap)/(contentWidth+columnGap)));
-          if(pageCount>4096)throw new Error('document_layout_page_budget');
+          const countPages=()=>Math.max(1,Math.round((Math.max(contentWidth,flow.scrollWidth)+columnGap)/(contentWidth+columnGap)));
+          let pageCount=countPages();
+          while(preparation.cursor<source.blocks.length && (throughPage===null || pageCount<throughPage+3)) {
+            // Small forward batches yield at actual runtime/image callbacks.
+            // No far markup is parsed merely to discover a first-page anchor.
+            const nodes=[];
+            const end=Math.min(source.blocks.length,preparation.cursor+(throughPage===null?4:1));
+            while(preparation.cursor<end) {
+              const node=createBlock(source.blocks[preparation.cursor++]);
+              for(const image of node.querySelectorAll(':is(h1,h2,h3,h4,h5,h6) + :is(img,svg)')) {
+                const heading=image.previousElementSibling,lead=document.createElement('div');
+                lead.className='document-illustration-lead';heading.before(lead);lead.append(heading,image);
+              }
+              flow.append(node);nodes.push(node);
+            }
+            phase('sourceDOM');
+            await typeset(nodes.filter(node=>node.dataset.kind!=='interactive'),
+              (kind,message,blockID)=>preparation.diagnostics.push({kind,message:String(message),blockID}));
+            phase('typesetting');
+            const observation = preparationObservation?.sourceKey === source.key ? preparationObservation : null;
+            observeBrowserState(observation, 'fonts_before');
+            const fontGetterStart = observation ? performance.now() : 0;
+            const fontsReady = document.fonts.ready;
+            const fontAwaitStart = observation ? performance.now() : 0;
+            await fontsReady;
+            if (observation) {
+              preparationPhasesMS.fontsReadyGetter = (preparationPhasesMS.fontsReadyGetter || 0) + fontAwaitStart - fontGetterStart;
+              preparationPhasesMS.fontsReadyAwait = (preparationPhasesMS.fontsReadyAwait || 0) + performance.now() - fontAwaitStart;
+              observeBrowserState(observation, 'fonts_after');
+            }
+            phase('fontsReady');
+            for(const node of nodes) {
+              const phases=await notebookDocumentImages.waitForGeometry(node,()=>preparation.cancelled);
+              for(const [name,ms] of Object.entries(phases))preparationPhasesMS[name]=(preparationPhasesMS[name]||0)+ms;
+            }
+            phase('imageDecode');
+            if(preparation.cancelled)throw new Error('document_source_preparation_cancelled');
+            pageCount=countPages();
+            if(pageCount>4096)throw new Error('document_layout_page_budget');
+          }
+          const complete=preparation.cursor===source.blocks.length;
+          if(complete) {
+            // Automatic addresses are a navigation index, not a paint barrier.
+            // Only the complete flow can reserve every explicit author ID.
+            const headingIDs=new Set([...flow.querySelectorAll('[id],a[name]')].flatMap(node=>[node.id,node.getAttribute('name')]).filter(Boolean));
+            const nextHeadingSuffix=new Map();
+            for(const heading of flow.querySelectorAll('h1,h2,h3,h4,h5,h6'))if(!heading.id) {
+              const stem=heading.textContent.trim().toLowerCase().replace(/[^\p{L}\p{N}\p{M}_\s-]/gu,'').replace(/\s/g,'-')||'section';
+              let suffix=nextHeadingSuffix.get(stem)||0,id=suffix?stem+'-'+suffix:stem;
+              work.headingAddressProbes+=1;
+              while(headingIDs.has(id)){id=stem+'-'+(++suffix);work.headingAddressProbes+=1;}
+              heading.id=id;headingIDs.add(id);nextHeadingSuffix.set(stem,suffix+1);
+            }
+          }
           work.layoutPasses+=1;work.regionMeasurements+=1;
-          const origin=host.getBoundingClientRect();
-          const regions=[];
+          const origin=host.getBoundingClientRect(),regions=[];
           for(const node of flow.children) {
             let sourceOffset=0;
             for(const rect of node.getClientRects()) {
@@ -651,29 +669,25 @@
               }
             }
           }
-          // A program-only source has no SVG output or output stylesheet.
-          // It must not force a second typeset just to manufacture that sheet.
-          const mathStyles=flow.querySelector('mjx-container')
-            ? MathJax.startup.adaptor.cssText(MathJax.svgStylesheet()) : '';
+          const mathStyles=flow.querySelector('mjx-container')?MathJax.startup.adaptor.cssText(MathJax.svgStylesheet()):'';
           if(new TextEncoder().encode(mathStyles).length>128*1024)throw new Error('document_math_style_budget');
-          const flowRect=flow.getBoundingClientRect();
-          phase('canonicalGeometry');
-          const compiler=await notebookDocumentFragments.create(flow,{sourceKey:source.key,pageCount,width,height,stride,
+          const flowRect=flow.getBoundingClientRect();phase('canonicalGeometry');
+          const compiler=await notebookDocumentFragments.create(flow,{sourceKey:key,pageCount,width,height,stride,
             contentTop:flowRect.y-origin.y,contentBottom:flowRect.bottom-origin.y,
             originX:origin.x,originY:origin.y,regions},()=>preparation.cancelled);
-          phase('fragmentIndex');
-          Object.assign(preparationPhasesMS,compiler.preparationPhasesMS);
-          const receipt={sourceKey:source.key,layoutScope:'source',layoutCanonical:true,width,height,pageCount,regions,
-            anchors:compiler.anchors,reading:compiler.reading,indexedNodes:compiler.indexedNodes,indexedEdges:compiler.indexedEdges,diagnostics:preparation.diagnostics,mathStyles,preparationPhasesMS};
+          phase('fragmentIndex');Object.assign(preparationPhasesMS,compiler.preparationPhasesMS);
+          const acceptedCount=complete?pageCount:Math.min(throughPage+1,pageCount-2);
+          const receipt={sourceKey:key,layoutScope:complete?'source':'source-prefix',layoutCanonical:true,width,height,
+            pageCount:acceptedCount,regions:regions.filter(value=>value.pageIndex<acceptedCount),
+            anchors:compiler.anchors.filter(value=>value.pageIndex<acceptedCount),
+            reading:compiler.reading.filter(value=>value[5]<acceptedCount),indexedNodes:compiler.indexedNodes,
+            indexedEdges:compiler.indexedEdges,diagnostics:preparation.diagnostics,mathStyles,preparationPhasesMS};
           const layoutJSON=JSON.stringify(receipt),layoutBytes=new TextEncoder().encode(layoutJSON).length;
           if(layoutBytes>16*1024*1024)throw new Error('document_layout_packet_budget');
-          // Keep the measured DOM under this source lease, but not in WebKit's
-          // live layout tree. The compiler owns its cuts, baselines and insets;
-          // only each requested page clone re-enters the unchanged typography host.
           flow.remove();
-          Object.assign(preparation,{receipt,compiler,layoutJSON,pendingPage:null});
-          return {sourceKey:source.key,pageIndex:null,utf8Bytes:layoutBytes};
-        } catch(error) { finishSourcePreparation(source.key); throw error; }
+          Object.assign(preparation,{receipt,compiler,layoutJSON,pendingPage:null,advancing:false});
+          return {sourceKey:key,pageIndex:null,utf8Bytes:layoutBytes};
+        } catch(error){finishSourcePreparation(key);throw error;}
       };
 
       const preparePagePacket = (key,pageIndex) => {
@@ -739,7 +753,8 @@
         let sheet=backgrounds.firstElementChild;
         if(!sheet){sheet=document.createElement('section');backgrounds.append(sheet)}
         sheet.className='paper-sheet';sheet.style.left=`${origin}px`;
-        sheet.setAttribute('role','region');sheet.setAttribute('aria-label',`Страница ${fragment.pageIndex+1} из ${job.pageCount}`);
+        sheet.setAttribute('role','region');sheet.setAttribute('aria-label',`Страница ${fragment.pageIndex+1}`
+          +(job.layoutComplete?` из ${job.pageCount}`:''));
         sheet.dataset.page=String(fragment.pageIndex+1);sheet.dataset.paper=pageLayout.kind;
         track.style.width=`${fragment.width+origin}px`;backgrounds.style.height=`${fragment.height}px`;
         stage.style.width=`${fragment.width}px`;
@@ -904,6 +919,18 @@
         sourceSnapshot=page;
       };
       const applyState = state => { stateSnapshot = state; };
+      // The source owner may finish navigation after this page is already
+      // visible. Only its extent changes: no source install or paint restart.
+      const acceptSourceExtent = (key,count) => {
+        if(!Number.isInteger(count)||count<1||count>4096)throw new Error('document_layout_page_budget');
+        const extend=job=>job?.source.key===key?{...job,pageCount:count,layoutComplete:true}:job;
+        sourceSnapshot=extend(sourceSnapshot);pendingFrame=extend(pendingFrame);currentFrame=extend(currentFrame);
+        if(activeImagePreparation)activeImagePreparation.job=extend(activeImagePreparation.job);
+        if(installedSourceKey===key && pageLayout) {
+          pageLayout.pageCount=count;
+          backgrounds.firstElementChild?.setAttribute('aria-label',`Страница ${currentPageIndex()+1} из ${count}`);
+        }
+      };
       const enqueueFrame = job => {
         pendingFrame = job;
         // Abort only further submissions; the owner retains one template and
@@ -1187,8 +1214,8 @@
       });
       addEventListener('dragstart', event => event.preventDefault());
       window.notebookRenderer = {
-        beginSourcePreparation, preparePagePacket, readPreparedPacket, discardPreparedPacket, finishSourcePreparation,
-        installPageSource,
+        beginSourcePreparation, extendSourcePreparation, preparePagePacket, readPreparedPacket, discardPreparedPacket, finishSourcePreparation,
+        installPageSource, acceptSourceExtent,
         blurPrograms:()=>{for(const runtime of interactiveFrames.values())if(runtime.focused)
           runtime.frame.contentWindow.postMessage({channel:'notebook-navigation-blur',token:runtime.token},'*');return true;},
         applyState,
