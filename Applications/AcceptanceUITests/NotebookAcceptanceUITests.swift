@@ -71,7 +71,7 @@ import XCTest
     let sourceText = "Контрольные кнопка, ползунок и поле ввода"
     field.tap(); field.typeText(sourceText)
     XCTAssertEqual(field.value as? String, sourceText)
-    let results = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", sourceText))
+    let results = app.collectionViews.buttons.matching(NSPredicate(format: "label CONTAINS %@", sourceText))
     let found = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in results.count > 0 }, object: nil)
     XCTAssertEqual(XCTWaiter.wait(for: [found], timeout: 10), .completed, app.debugDescription)
     let matches = results.allElementsBoundByIndex
