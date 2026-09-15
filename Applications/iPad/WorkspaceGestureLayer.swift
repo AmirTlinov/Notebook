@@ -5,16 +5,18 @@ import UIKit
 /// not: the WebKit class alone says nothing about the contact's scene owner.
 @MainActor
 protocol NotebookSceneFingerInputOwner: AnyObject {
-  var ownsSceneFingerInput: Bool { get }
+  func sceneFingerOwner(at point: CGPoint) -> NotebookInputGate.FingerContactOwner?
 }
 
 @MainActor
 enum NotebookSceneFingerRouting {
-  static func owner(of view: UIView?) -> NotebookInputGate.FingerContactOwner {
+  static func owner(of view: UIView?, at point: CGPoint? = nil) -> NotebookInputGate.FingerContactOwner {
     var current = view
     while let candidate = current {
-      if let owner = candidate as? NotebookSceneFingerInputOwner, owner.ownsSceneFingerInput {
-        return .nativeInput(ObjectIdentifier(candidate))
+      if let owner = candidate as? NotebookSceneFingerInputOwner,
+        let resolved = owner.sceneFingerOwner(at: point.map { candidate.convert($0, from: view) }
+          ?? CGPoint(x: candidate.bounds.midX, y: candidate.bounds.midY)) {
+        return resolved
       }
       if candidate is UIControl || candidate is UITextView {
         return .nativeInput(ObjectIdentifier(candidate))
@@ -29,7 +31,7 @@ enum NotebookSceneFingerRouting {
   }
 
   static func owner(of touch: UITouch, gate: NotebookInputGate) -> NotebookInputGate.FingerContactOwner {
-    gate.fingerContactOwner(for: ObjectIdentifier(touch)) { owner(of: touch.view) }
+    gate.fingerContactOwner(for: ObjectIdentifier(touch)) { owner(of: touch.view, at: touch.location(in: touch.view)) }
   }
 }
 
@@ -253,7 +255,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       let owner = NotebookSceneFingerRouting.owner(of: touch, gate: inputGate)
       // The passive observer still follows native input for admission and
       // persistence. The camera cannot take that owner's first or later finger.
-      return gestureRecognizer === contactObserver || owner == .scene
+      return gestureRecognizer === contactObserver || owner.permitsSceneNavigation
     }
 
     func gestureRecognizer(
@@ -488,7 +490,7 @@ struct BoardPanView: UIViewRepresentable {
       pan.allowedTouchTypes = [
         NSNumber(value: UITouch.TouchType.direct.rawValue)
       ]
-      pan.cancelsTouchesInView = false
+      pan.cancelsTouchesInView = true
       pan.delegate = self
       pan.isEnabled = isEnabled
       let tap = UITapGestureRecognizer(
@@ -615,7 +617,8 @@ struct BoardPanView: UIViewRepresentable {
       guard let revision = inputGate.beginFingerSequence() else { return false }
       guard inputGate.permitsSceneContact(at: touch.location(in: sceneView.window), kind: .finger),
         sceneReceives(touch, inside: sceneView) else { return false }
-      guard NotebookSceneFingerRouting.owner(of: touch, gate: inputGate) == .scene else { return false }
+      let owner = NotebookSceneFingerRouting.owner(of: touch, gate: inputGate)
+      guard owner.permitsSceneNavigation else { return false }
       let point = touch.location(in: sceneView)
       let isFreeBoard = !itemFrames.contains(where: { $0.contains(point) })
       if gestureRecognizer === pan {
@@ -632,7 +635,7 @@ struct BoardPanView: UIViewRepresentable {
         return true
       }
       tapRevision = revision
-      return isFreeBoard
+      return isFreeBoard && owner == .scene
     }
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {

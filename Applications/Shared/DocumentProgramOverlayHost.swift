@@ -445,8 +445,8 @@ fileprivate final class ProgramFragmentClip: UIView, NotebookSceneFingerInputOwn
   private let observer = ProgramContactObserver()
   private(set) var hasContact = false
   private(set) var allowsInteraction = true
-  var ownsSceneFingerInput: Bool {
-    allowsInteraction && isUserInteractionEnabled && webView?.superview === self
+  func sceneFingerOwner(at point: CGPoint) -> NotebookInputGate.FingerContactOwner? {
+    allowsInteraction && isUserInteractionEnabled && webView?.superview === self ? .nativeInput(ObjectIdentifier(self)) : nil
   }
   private var contactGeneration: UInt64 = 0
   var waiters: [ObjectIdentifier: () -> Void] = [:]

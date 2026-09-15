@@ -25,6 +25,7 @@
     static let historyArgument = "--notebook-history-performance-fixture"
     static let pointerArgument = "--notebook-pointer-fixture"
     static let passiveSVGArgument = "--notebook-passive-svg-fixture"
+    static let mixedWebArgument = "--notebook-mixed-web-fixture"
 
     static func makeModel() -> NotebookAppModel {
       let fileManager = FileManager.default
@@ -62,7 +63,9 @@
         agentElementArgument
       )
       let fixtureName: String
-      if ProcessInfo.processInfo.arguments.contains(passiveSVGArgument) {
+      if ProcessInfo.processInfo.arguments.contains(mixedWebArgument) {
+        fixtureName = "MixedWebCamera"
+      } else if ProcessInfo.processInfo.arguments.contains(passiveSVGArgument) {
         fixtureName = "PassiveSVGCamera"
       } else if ProcessInfo.processInfo.arguments.contains(historyArgument) {
         fixtureName = "HistoryPerformance"
@@ -146,7 +149,28 @@
             ] : [])
         )
         try store.savePage(page)
-        if ProcessInfo.processInfo.arguments.contains(passiveSVGArgument) {
+        if ProcessInfo.processInfo.arguments.contains(mixedWebArgument) {
+          var board = BoardDocument.initial(itemIDs: [itemID], actor: actor)
+          _ = board.moveItem(itemID, to: .init(x: 8_000, y: 8_000), actor: actor)
+          for element in [
+            SpatialElement(id: "mixed-moodboard", surface: .board(index.rootBoardID), kind: .web,
+              frame: .init(x: 0, y: 0, width: 340, height: 300), worldOrigin: .init(x: -360, y: -300),
+              source: "Тихое утро", html: "<main id='board'><h1>Тихое утро</h1><a href='#photo'><svg role='img' aria-label='Утренний свет' width='300' height='180'><rect width='300' height='180' fill='#b7c6a5'/><path d='M20 150L150 20L280 150' stroke='#354e37' stroke-width='5' fill='none'/></svg></a><p>Место для спокойной работы</p></main>",
+              css: "#board{width:340px;height:300px;padding:20px;background:#f3efe6;transform-origin:0 0}h1{font:32px Georgia;margin:0 0 12px}p{font-size:17px}a{display:block}",
+              javaScript: "function fit(){document.getElementById('board').style.transform='scale('+Math.min(innerWidth/340,innerHeight/300)+')'}fit();addEventListener('resize',fit);notebook.ready(document.fonts.ready)",
+              stamp: .init(counter: 0, actor: actor)),
+            SpatialElement(id: "mixed-nutrition", surface: .board(index.rootBoardID), kind: .web,
+              frame: .init(x: 0, y: 0, width: 320, height: 440), worldOrigin: .init(x: 30, y: -120),
+              source: "Порции и КБЖУ", html: "<main id='sheet'><h1>Порции и КБЖУ</h1><p>Изменяйте граммы, а не положение листа</p><div id='menu'></div><button aria-label='Пересчитать порции'>Пересчитать</button><output id='count'></output><input type='range' aria-label='Размер порции' value='20'><footer>Итого за день</footer></main>",
+              css: "#sheet{width:320px;height:440px;padding:20px;background:#f5f6eb;transform-origin:0 0}h1{font:30px Georgia;margin:0 0 12px}input,button{display:block;width:240px;height:48px;margin:10px 0}output,footer{display:block}footer{margin-top:25px}",
+              javaScript: "document.getElementById('menu').innerHTML='<label>Овсянка<input aria-label=\"Овсянка, граммы\" value=\"60\"></label>';const grams=document.querySelector('#menu input');grams.addEventListener('change',()=>notebook.commit({...notebook.state,grams:grams.value}));document.querySelector('button').onclick=()=>{notebook.commit({...notebook.state,count:notebook.state.count+1});draw()};function draw(){document.getElementById('count').textContent='Count '+notebook.state.count}function fit(){document.getElementById('sheet').style.transform='scale('+Math.min(innerWidth/320,innerHeight/440)+')'}fit();addEventListener('resize',fit);addEventListener('notebookstate',draw);draw();notebook.ready(document.fonts.ready)",
+              state: .object(["count": .number(0), "grams": .string("60")]), stamp: .init(counter: 0, actor: actor))
+          ] { _ = board.upsertElement(element, expected: nil, actor: actor) }
+          try store.saveBoard(.init(rootBoardID: index.rootBoardID,
+            boards: [.init(id: index.rootBoardID, board: board)], stamp: board.stamp), items: index.items)
+          try store.savePresence(.init(boardID: index.rootBoardID, mode: .board,
+            camera: .init(center: .zero, scale: 1), viewport: .init(x: size.width, y: size.height)))
+        } else if ProcessInfo.processInfo.arguments.contains(passiveSVGArgument) {
           var board = BoardDocument.initial(itemIDs: [itemID], actor: actor)
           _ = board.moveItem(itemID, to: .init(x: 8_000, y: 8_000), actor: actor)
           for element in [

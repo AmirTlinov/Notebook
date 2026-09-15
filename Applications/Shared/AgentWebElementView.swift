@@ -573,10 +573,16 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private var loadedElement: AgentElement?
   private(set) var loadToken: String?
   private var runtimeLoaded = false
-  private var contentRequiresFingerInput = true
-  /// Ready visual content without authored code or native controls remains
-  /// part of the scene. Runtime installation alone does not claim a gesture.
-  var yieldsFingerMotionToScene: Bool { runtimeLoaded && !contentRequiresFingerInput }
+  private var fingerRegions: AgentWebFingerRegions?
+  func fingerInput(at point: CGPoint, in size: CGSize) -> AgentWebFingerInput {
+    guard runtimeLoaded else { return .input }
+    return fingerRegions?.input(at: point, in: size) ?? .input
+  }
+  private func receiveFingerRegions(_ value: Any) {
+    guard let next = AgentWebFingerRegions(value) else { fingerRegions = nil; return }
+    guard next.revision > (fingerRegions?.revision ?? -1) else { return }
+    fingerRegions = next
+  }
   private var appliedState: JSONValue?
   private var localStateRevision: UInt64 = 0
   private var stateToApply: JSONValue?
@@ -853,7 +859,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     stateApplicationID = nil; stateApplication?.cancel(); stateApplication = nil
     currentCapture?.cancel(); currentCapture = nil
     snapshotInFlight = false; needsSnapshot = false; runtimeLoaded = false
-    contentRequiresFingerInput = true
+    fingerRegions = nil
     activeNavigation = nil
     webView.stopLoading()
     let token = "\(lease.id.uuidString)/\(UUID().uuidString)"
@@ -954,7 +960,9 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     if object["kind"] as? String == "diagnostic",
       let kind = object["category"] as? String, let message = object["message"] as? String {
       resources.record(.init(kind: kind, elementID: element.id, message: String(message.prefix(2000))), for: element)
-    } else if object["kind"] as? String == "interaction", runtimeLoaded, contentRequiresFingerInput {
+    } else if object["kind"] as? String == "fingerRegions", let value = object["value"] {
+      receiveFingerRegions(value)
+    } else if object["kind"] as? String == "interaction", runtimeLoaded {
       onInteraction()
     } else if object["kind"] as? String == "state",
       let sequence = (object["revision"] as? String).flatMap(UInt64.init), sequence > localStateRevision,
@@ -1011,10 +1019,6 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       // arbitrary program's rAF or claim that its computation has finished.
       let frameReadiness = ""
     #endif
-    // Authored scripts can install listeners and remove their own DOM nodes.
-    // Keep those programs' input; inspect the parsed DOM for declarative input.
-    let hasProgramCode = !element.javaScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-      || element.html.range(of: #"<script[\s/>]"#, options: [.regularExpression, .caseInsensitive]) != nil
     webView.callAsyncJavaScript(
       """
       await document.fonts.ready;
@@ -1023,18 +1027,14 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       \(frameReadiness)
       for (const image of document.images) if (!image.naturalWidth) window.notebookDiagnostic('load_error', 'Image failed to load');
       if (Math.max(document.body.scrollHeight, document.documentElement.scrollHeight) > innerHeight + 1 || Math.max(document.body.scrollWidth, document.documentElement.scrollWidth) > innerWidth + 1) window.notebookDiagnostic('overflow', 'Content exceeds its frame');
-      const controls = document.body.querySelector('a,area,button,input,textarea,select,details,summary,audio[controls],video[controls],iframe,object,embed,[contenteditable]:not([contenteditable="false"])');
-      const handlers = [document.body, ...document.body.querySelectorAll('*')].some(node => [...node.attributes].some(attribute =>
-        attribute.name.toLowerCase().startsWith('on') ||
-        (['begin','end'].includes(attribute.name) && /(?:click|mouse|pointer|touch|key|focus|activate)/i.test(attribute.value))));
-      return {requiresFingerInput: hasProgramCode || controls !== null || handlers};
+      return window.notebookFingerInput.start();
       """,
-      arguments: ["hasProgramCode": hasProgramCode], in: nil, in: .page,
+      arguments: [:], in: nil, in: .page,
       completionHandler: { [weak self, weak webView] result in
         guard let self, let webView, accepts(token), attachedWebView === webView else { return }
         switch result {
         case .success(let value):
-          contentRequiresFingerInput = (value as? [String: Any])?["requiresFingerInput"] as? Bool ?? true
+          receiveFingerRegions(value)
           runtimeLoaded = true
           #if os(iOS)
             if let element = loadedElement { NotebookInteractionDiagnostics.bind(webView, elementID: element.id, token: token, ready: true) }
@@ -1298,7 +1298,8 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         const notebookLoadToken = '\(token)';
         \(interactionScript)
         for (const kind of ['pointerdown', 'keydown']) addEventListener(kind, event => {
-          if (event.isTrusted) window.webkit.messageHandlers.notebook.postMessage({token:notebookLoadToken,kind:'interaction'});
+          if (event.isTrusted && (kind === 'keydown' || window.notebookFingerInput.forEvent(event) === 'input'))
+            window.webkit.messageHandlers.notebook.postMessage({token:notebookLoadToken,kind:'interaction'});
         }, true);
         window.notebookDiagnostic = (category, message) => window.webkit.messageHandlers.notebook.postMessage({token:notebookLoadToken,kind:'diagnostic',category,message:String(message)});
         addEventListener('error', event => window.notebookDiagnostic('javascript_error', event.message || 'Resource load error'));
@@ -1326,6 +1327,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
             return window.notebookReadyPromise;
           }
         });
+        \(AgentWebFingerRegions.script)
       </script>
       </head><body>
       \(element.html)

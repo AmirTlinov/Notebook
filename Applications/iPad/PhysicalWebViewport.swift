@@ -10,9 +10,14 @@ final class PhysicalWebViewport: UIView, NotebookSceneFingerInputOwner {
   var onInstalled: (() -> Void)?
   private var contentSize: CGSize
   private let holdsFingerInput: Bool
-  var ownsSceneFingerInput: Bool {
-    holdsFingerInput && webView?.superview === self
-      && (webView?.navigationDelegate as? AgentWebCoordinator)?.yieldsFingerMotionToScene != true
+  func sceneFingerOwner(at point: CGPoint) -> NotebookInputGate.FingerContactOwner? {
+    guard holdsFingerInput, let webView, webView.superview === self else { return nil }
+    guard let coordinator = webView.navigationDelegate as? AgentWebCoordinator else { return .nativeInput(ObjectIdentifier(self)) }
+    switch coordinator.fingerInput(at: webView.convert(point, from: self), in: webView.bounds.size) {
+    case .scene: return .scene
+    case .link: return .webLink(ObjectIdentifier(self))
+    case .input: return .nativeInput(ObjectIdentifier(self))
+    }
   }
 
   init(webView: WKWebView, contentSize: CGSize, holdsFingerInput: Bool = false) {
@@ -28,6 +33,15 @@ final class PhysicalWebViewport: UIView, NotebookSceneFingerInputOwner {
 
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError("Use init(webView:contentSize:)") }
+
+  override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+    guard let hit = super.hitTest(point, with: event) else { return nil }
+    // A scene-owned background must not enter WKContentView at all: WebKit
+    // can otherwise blur another program's editor before camera motion wins.
+    // Controls and links keep their original native delivery; no event replay.
+    if sceneFingerOwner(at: point) == .scene { return self }
+    return hit
+  }
 
   func setContentSize(_ size: CGSize) {
     guard contentSize != size else { return }

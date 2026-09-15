@@ -5,6 +5,81 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testMixedWebControlsKeepInputWhileBackgroundPansAndPinches() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures",
+      "--notebook-mixed-web-fixture"]
+    launchPortraitFixture(app)
+    let mood = app.webViews.containing(.image, identifier: "Утренний свет").firstMatch
+    let nutrition = app.webViews.containing(.button, identifier: "Пересчитать порции").firstMatch
+    XCTAssertTrue(mood.waitForExistence(timeout: 10)); XCTAssertTrue(nutrition.waitForExistence(timeout: 10))
+    let before = [mood.frame, nutrition.frame]
+    nutrition.buttons["Пересчитать порции"].tap()
+    XCTAssertTrue(nutrition.staticTexts["Count 1"].waitForExistence(timeout: 3))
+    let slider = nutrition.sliders["Размер порции"], previousValue = nutrition.sliders["Размер порции"].value as? String
+    slider.coordinate(withNormalizedOffset: .init(dx: 0.25, dy: 0.5)).press(forDuration: 0.01,
+      thenDragTo: slider.coordinate(withNormalizedOffset: .init(dx: 0.75, dy: 0.5)))
+    XCTAssertNotEqual(slider.value as? String, previousValue)
+    XCTAssertEqual([mood.frame, nutrition.frame], before, "Native controls must not pan the board")
+    let field = nutrition.textFields["Овсянка, граммы"]
+    field.tap(); field.typeText("7")
+    let typed = field.value as? String
+    XCTAssertTrue(typed?.contains("7") == true)
+    // XCTest may use the connected hardware keyboard. Continue through the
+    // application, not field.typeText (which could focus it again for us).
+    let start = mood.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.15))
+    start.press(forDuration: 0.01, thenDragTo: start.withOffset(.init(dx: 30, dy: 20)), withVelocity: .fast, thenHoldForDuration: 0)
+    XCTAssertEqual(mood.frame.midX - before[0].midX, 30, accuracy: 6)
+    XCTAssertEqual(mood.frame.midY - before[0].midY, 20, accuracy: 6)
+    app.typeText("8")
+    XCTAssertTrue((field.value as? String)?.contains("78") == true,
+      "The existing first responder, not a second tap, receives text: \(field.value ?? "missing")")
+    let focused = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    focused.name = "mixed-material-text-retained-after-pan"; focused.lifetime = .keepAlways; add(focused)
+    let width = mood.frame.width
+    mood.pinch(withScale: 1.2, velocity: 0.5)
+    XCTAssertGreaterThan(mood.frame.width, width * 1.1)
+    app.typeText("9")
+    XCTAssertTrue((field.value as? String)?.contains("789") == true, "Pinch preserves the editor: \(field.value ?? "missing")")
+    XCTAssertFalse(app.buttons["delete-agent-element"].exists)
+    let proof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    proof.name = "mixed-material-controls-camera-and-keyboard"; proof.lifetime = .keepAlways; add(proof)
+  }
+
+  func testMixedWebMaterialsPanFromBackgroundAndLinkedImageWithoutActivation() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures",
+      "--notebook-mixed-web-fixture"]
+    launchPortraitFixture(app)
+    let mood = app.webViews.containing(.image, identifier: "Утренний свет").firstMatch
+    let nutrition = app.webViews.containing(.button, identifier: "Пересчитать порции").firstMatch
+    XCTAssertTrue(mood.waitForExistence(timeout: 10)); XCTAssertTrue(nutrition.waitForExistence(timeout: 10))
+    // Fresh outer native WK frames, not child AX positions after the camera.
+    for (surface, offset, delta) in [
+      (mood, CGVector(dx: 0.5, dy: 0.15), CGVector(dx: 45, dy: 35)),
+      (nutrition, CGVector(dx: 0.5, dy: 0.12), CGVector(dx: -35, dy: -25)),
+      (mood, CGVector(dx: 0.5, dy: 0.5), CGVector(dx: 30, dy: 20))
+    ] {
+      let before = [mood.frame, nutrition.frame]
+      let start = surface.coordinate(withNormalizedOffset: offset)
+      start.press(forDuration: 0.01, thenDragTo: start.withOffset(delta), withVelocity: .fast, thenHoldForDuration: 0)
+      let after = [mood.frame, nutrition.frame]
+      let proof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+      proof.name = "mixed-material-pan-\(offset.dy)-\(delta.dx)"; proof.lifetime = .keepAlways; add(proof)
+      let geometry = XCTAttachment(string: "Native WK frames before: \(before)\nafter: \(after)")
+      geometry.name = "mixed-material-native-geometry"; geometry.lifetime = .keepAlways; add(geometry)
+      for (frame, previous) in zip(after, before) {
+        XCTAssertEqual(frame.midX - previous.midX, delta.dx, accuracy: 6)
+        XCTAssertEqual(frame.midY - previous.midY, delta.dy, accuracy: 6)
+        XCTAssertEqual(frame.size, previous.size)
+      }
+      XCTAssertTrue(nutrition.staticTexts["Count 0"].exists)
+      XCTAssertFalse(app.buttons["delete-agent-element"].exists)
+    }
+  }
+
   func testHoldingPassiveSVGMovesOnlyTheDrawingFromItsFirstContact() {
     continueAfterFailure = false
     let app = XCUIApplication()
