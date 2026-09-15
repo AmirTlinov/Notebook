@@ -980,7 +980,8 @@ final class NotebookAppModel {
       reloadExternalChanges()
     }
     sync = connection
-    connection.start()
+    await connection.start()
+    guard !isClosing, sync === connection else { connection.stop(); return }
     pairedPeers = connection.pairedPeers
     #if os(iOS)
     chat?.updateComputers(pairedPeers)
@@ -1006,22 +1007,25 @@ final class NotebookAppModel {
     return cursor
   }
 
-  func createPairingInvitation() throws -> String {
-    guard let sync else { throw NotebookTransportError.storageUnavailable }
-    return try sync.createPairingInvitation().encoded()
+  func createPairingInvitation() async throws -> String {
+    guard !isClosing, let sync else { throw NotebookTransportError.storageUnavailable }
+    return try await sync.createPairingInvitation().encoded()
   }
 
-  func joinPairingInvitation(_ invitation: String) throws {
-    guard let sync else { throw NotebookTransportError.storageUnavailable }
-    try sync.joinPairingInvitation(invitation.trimmingCharacters(in: .whitespacesAndNewlines))
+  func joinPairingInvitation(_ invitation: String) async throws {
+    guard !isClosing, let sync else { throw NotebookTransportError.storageUnavailable }
+    try await sync.joinPairingInvitation(invitation.trimmingCharacters(in: .whitespacesAndNewlines))
   }
 
-  func confirmPairing(generation: UUID) throws {
-    guard let sync else { throw NotebookTransportError.storageUnavailable }
-    try sync.confirmPairing(generation: generation)
+  func confirmPairing(generation: UUID) async throws {
+    guard !isClosing, let sync else { throw NotebookTransportError.storageUnavailable }
+    try await sync.confirmPairing(generation: generation)
   }
 
-  func cancelPairing() throws { try sync?.cancelPairing() }
+  func cancelPairing() async throws {
+    guard !isClosing else { throw NotebookTransportError.storageUnavailable }
+    try await sync?.cancelPairing()
+  }
 
   #if os(iOS)
   func chooseChatComputer(_ id: UUID) {
@@ -1029,9 +1033,9 @@ final class NotebookAppModel {
   }
   #endif
 
-  func revokePeer(_ id: UUID) throws {
-    guard let sync else { throw NotebookTransportError.storageUnavailable }
-    try sync.revokePeer(id)
+  func revokePeer(_ id: UUID) async throws {
+    guard !isClosing, let sync else { throw NotebookTransportError.storageUnavailable }
+    try await sync.revokePeer(id)
     pairedPeers = sync.pairedPeers
     #if os(iOS)
     chat?.updateComputers(pairedPeers)
@@ -3797,7 +3801,8 @@ final class NotebookAppModel {
       documentShellPreparation?.stop(); documentShellPreparation = nil
       presentationPlayer.interrupt("closing")
       if let startupTask { await startupTask.value }
-      sync?.stop(); sync = nil
+      if let sync, !(await sync.stopAndDrainTrust()) { return false }
+      sync = nil
       #if os(macOS)
         await commandServer?.stopAndDrain(); commandServer = nil
         await codexSidecar?.stop(); codexSidecar = nil

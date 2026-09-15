@@ -68,7 +68,7 @@ enum NotebookTransportTLS {
   }
 }
 
-struct NotebookTrustedPeer: Codable, Equatable {
+struct NotebookTrustedPeer: Codable, Equatable, Sendable {
   let identity: NotebookTransportIdentity
   let pairingID: UUID
   let secret: Data
@@ -78,17 +78,15 @@ struct NotebookTrustedPeer: Codable, Equatable {
   var tlsKey: NotebookTransportTLS.Key { .init(identity: "paired:\(pairingID)", secret: secret) }
 }
 
-@MainActor
-protocol NotebookPairingTrustStore {
-  func load(for identity: NotebookTransportIdentity) throws -> [NotebookTrustedPeer]
-  func save(_ records: [NotebookTrustedPeer], for identity: NotebookTransportIdentity) throws
+protocol NotebookPairingTrustStore: Sendable {
+  func load(for identity: NotebookTransportIdentity) async throws -> [NotebookTrustedPeer]
+  func save(_ records: [NotebookTrustedPeer], for identity: NotebookTransportIdentity) async throws
 }
 
 /// One bounded, device-only Keychain item owns the pair credentials for a local
 /// device/workspace and admitted archive activation. Pending approval is durable too, so a disconnect between
 /// the two confirmations neither grants access nor strands an approved pair.
-@MainActor
-final class NotebookKeychainPairingStore: NotebookPairingTrustStore {
+actor NotebookKeychainPairingStore: NotebookPairingTrustStore {
   let activationID: UUID?
   private let service: String
   init(activationID: UUID? = nil, service: String? = nil) {
@@ -221,6 +219,10 @@ final class NearbySync {
   private var retryTask: Task<Void, Never>?
   private var invitationTask: Task<Void, Never>?
   private var isStarted = false
+  private var lifetime = UUID()
+  private var pairingIntent = UUID()
+  private var startup: (id: UUID, task: Task<Void, Error>)?
+  private var trustWrite: (id: UUID, task: Task<Void, Error>)?
   private let logger = Logger(subsystem: "com.amirtlinov.notebook", category: "NearbySync")
 
   init(role: Role, identity: NotebookTransportIdentity, storage: NotebookTransportStorage, stagingRoot: URL,
@@ -229,14 +231,26 @@ final class NearbySync {
     self.trustStore = trustStore ?? NotebookKeychainPairingStore()
   }
 
-  func start() {
-    do { try startIfNeeded() } catch { report(error) }
+  func start() async {
+    do { try await startIfNeeded() }
+    catch is CancellationError {} catch { report(error) }
   }
 
-  private func startIfNeeded() throws {
+  private func startIfNeeded() async throws {
     guard !isStarted else { return }
+    if let startup { try await startup.task.value; return }
+    let epoch = lifetime, id = UUID(), previous = trustWrite?.task
+    let task = Task { @MainActor [self] in
+      // A stopped owner's already accepted Keychain write must finish before
+      // a new start reads trust. It cannot resurrect discovery on completion.
+      if let previous { _ = await previous.result }
+      try Task.checkCancellation()
+      guard lifetime == epoch else { throw CancellationError() }
       guard identity.isValid else { throw NotebookTransportError.identityMismatch }
-      trusted = try trustStore.load(for: identity)
+      let records = try await trustStore.load(for: identity)
+      try Task.checkCancellation()
+      guard lifetime == epoch else { throw CancellationError() }
+      trusted = records
       // Only abandoned generation directories beneath this transport-owned
       // cache are removed. Authoritative SQLite blobs are never staging files.
       if FileManager.default.fileExists(atPath: stagingRoot.path) {
@@ -247,9 +261,32 @@ final class NearbySync {
       }
       isStarted = true
       refreshDiscovery()
+    }
+    startup = (id, task)
+    defer { if startup?.id == id { startup = nil } }
+    try await task.value
+  }
+
+  /// Only credential mutations are ordered here. Each transform sees the
+  /// last saved peers, not the list from before another peer's confirmation.
+  /// Content delivery and active connections never wait on this task chain.
+  private func updateTrust(_ transform: @escaping @MainActor ([NotebookTrustedPeer]) throws -> [NotebookTrustedPeer]) async throws {
+    let previous = trustWrite?.task, epoch = lifetime, id = UUID()
+    let task = Task { @MainActor [self] in
+      if let previous { _ = await previous.result }
+      guard isStarted, lifetime == epoch else { throw CancellationError() }
+      let updated = try transform(trusted)
+      if updated != trusted { try await trustStore.save(updated, for: identity) }
+      guard isStarted, lifetime == epoch else { throw CancellationError() }
+      trusted = updated
+    }
+    trustWrite = (id, task)
+    defer { if trustWrite?.id == id { trustWrite = nil } }
+    try await task.value
   }
 
   func stop() {
+    lifetime = UUID(); pairingIntent = UUID(); startup?.task.cancel(); startup = nil
     isStarted = false; retryTask?.cancel(); retryTask = nil; invitationTask?.cancel(); invitationTask = nil
     listener?.cancel(); listener = nil; browser?.cancel(); browser = nil
     endpointByPeer.removeAll(); suspendedPeers.removeAll()
@@ -258,50 +295,75 @@ final class NearbySync {
     invitation = nil; joinedInvitation = nil
   }
 
-  func createPairingInvitation() throws -> NotebookPairingInvitation {
-    try startIfNeeded()
+  /// Retirement suppresses network publication immediately. Process shutdown
+  /// still awaits an admitted credential write; it must not cut off Keychain.
+  func stopAndDrainTrust() async -> Bool {
+    let pending = trustWrite?.task
+    stop()
+    guard let pending else { return true }
+    do { try await pending.value; return true }
+    catch is CancellationError { return true }
+    catch { report(error); return false }
+  }
+
+  func createPairingInvitation() async throws -> NotebookPairingInvitation {
+    let intent = UUID(); pairingIntent = intent
+    try await startIfNeeded()
+    guard pairingIntent == intent else { throw CancellationError() }
     guard role == .macListener, trusted.count < 8 else { throw NotebookTransportError.resourceLimit }
-    try cancelPairing()
+    try await cancelPairing(intent: intent)
+    guard pairingIntent == intent else { throw CancellationError() }
     let value = try NotebookPairingInvitation(inviter: identity, secret: NotebookTransportTLS.randomBytes(count: 16), expiresAt: Date().addingTimeInterval(600))
     invitation = value; onPairingChange?(.invitation(value)); refreshListener(); scheduleInvitationExpiry(value)
     return value
   }
 
-  func joinPairingInvitation(_ text: String) throws {
-    try startIfNeeded()
+  func joinPairingInvitation(_ text: String) async throws {
+    let intent = UUID(); pairingIntent = intent
+    try await startIfNeeded()
+    guard pairingIntent == intent else { throw CancellationError() }
     guard role == .iPadConnector, trusted.count < 8 else { throw NotebookTransportError.resourceLimit }
     let value = try NotebookPairingInvitation.decode(text)
     guard value.inviter.workspaceID == identity.workspaceID, value.inviter.deviceID != identity.deviceID else {
       throw NotebookTransportError.identityMismatch
     }
-    try cancelPairing(); joinedInvitation = value; onPairingChange?(.connecting)
+    try await cancelPairing(intent: intent)
+    guard pairingIntent == intent else { throw CancellationError() }
+    joinedInvitation = value; onPairingChange?(.connecting)
     scheduleInvitationExpiry(value); refreshDiscovery(); connectDiscoveredPeers()
   }
 
-  func confirmPairing(generation: UUID) throws {
+  func confirmPairing(generation: UUID) async throws {
     guard let session = sessions[generation] else { throw NotebookTransportError.disconnected }
-    try session.confirmPairing()
+    try await session.confirmPairing()
   }
 
-  func cancelPairing() throws {
+  func cancelPairing() async throws {
+    let intent = UUID(); pairingIntent = intent
+    try await cancelPairing(intent: intent)
+  }
+
+  private func cancelPairing(intent: UUID) async throws {
     // Reset is ready only after the same transport owner has successfully
     // loaded its credentials. A failed startup must not turn into false idle.
-    try startIfNeeded()
+    try await startIfNeeded()
+    guard pairingIntent == intent else { throw CancellationError() }
     let pairingIDs = Set([invitation?.id, joinedInvitation?.id].compactMap { $0 }
       + trusted.filter { !$0.isConfirmed }.map(\.pairingID))
-    let updated = trusted.filter { $0.isConfirmed || !pairingIDs.contains($0.pairingID) }
-    if updated != trusted { try trustStore.save(updated, for: identity); trusted = updated }
     invitationTask?.cancel(); invitationTask = nil
     invitation = nil; joinedInvitation = nil
     for session in Array(sessions.values) where session.pairingID.map(pairingIDs.contains) == true && !session.isReady { session.stop() }
+    try await updateTrust { $0.filter { $0.isConfirmed || !pairingIDs.contains($0.pairingID) } }
+    guard pairingIntent == intent else { throw CancellationError() }
     onPairingChange?(.idle)
     if isStarted { refreshDiscovery() }
   }
 
-  func revokePeer(_ deviceID: UUID) throws {
-    let remaining = trusted.filter { $0.identity.deviceID != deviceID }
-    try trustStore.save(remaining, for: identity); trusted = remaining
+  func revokePeer(_ deviceID: UUID) async throws {
+    try await startIfNeeded()
+    suspendedPeers.insert(deviceID)
     for session in Array(sessions.values) where session.peerIdentity?.deviceID == deviceID { session.stop() }
+    try await updateTrust { $0.filter { $0.identity.deviceID != deviceID } }
     endpointByPeer.removeValue(forKey: deviceID); suspendedPeers.remove(deviceID); refreshDiscovery()
   }
 
@@ -316,8 +378,12 @@ final class NearbySync {
     invitationTask = Task { [weak self] in
       do { try await Task.sleep(for: .seconds(max(0, value.expiresAt.timeIntervalSinceNow))) } catch { return }
       guard let self, self.invitation?.id == value.id || self.joinedInvitation?.id == value.id else { return }
-      do { try self.cancelPairing(); self.onPairingChange?(.failed("Срок приглашения истёк. Создайте новое на Mac.")) }
-      catch { self.report(error) }
+      let intent = UUID(); self.pairingIntent = intent
+      do {
+        try await self.cancelPairing(intent: intent)
+        guard self.pairingIntent == intent else { return }
+        self.onPairingChange?(.failed("Срок приглашения истёк. Создайте новое на Mac."))
+      } catch is CancellationError {} catch { self.report(error) }
     }
   }
 
@@ -400,6 +466,7 @@ final class NearbySync {
   }
 
   private func resolve(_ hello: NotebookTransportHello) throws -> NotebookPeerCredential {
+    guard !suspendedPeers.contains(hello.identity.deviceID) else { throw NotebookTransportError.authenticationRequired }
     guard hello.identity.isValid, hello.identity.workspaceID == identity.workspaceID, hello.identity.deviceID != identity.deviceID else {
       throw NotebookTransportError.identityMismatch
     }
@@ -415,23 +482,26 @@ final class NearbySync {
     throw NotebookTransportError.authenticationRequired
   }
 
-  private func authenticate(_ peer: NotebookTransportIdentity, credential: NotebookPeerCredential, generation: UUID) throws -> Bool {
+  private func authenticate(_ peer: NotebookTransportIdentity, credential: NotebookPeerCredential, generation: UUID) async throws -> Bool {
     if credential.kind == .invitation {
-      guard let invitation = invitation ?? joinedInvitation, invitation.id == credential.pairingID, invitation.expiresAt > Date() else {
-        throw NotebookTransportError.pairingExpired
-      }
-      let joiner = invitation.inviter.deviceID == identity.deviceID ? peer : identity
-      let secret = try NotebookTransportAuthentication.pairedSecret(invitation: invitation, joiner: joiner)
-      guard !trusted.contains(where: { $0.identity.deviceID == peer.deviceID && $0.pairingID != credential.pairingID }) else {
-        throw NotebookTransportError.identityMismatch
-      }
-      if !trusted.contains(where: { $0.identity.deviceID == peer.deviceID && $0.pairingID == credential.pairingID }) {
-        guard trusted.count < 8 else { throw NotebookTransportError.resourceLimit }
-        var updated = trusted.filter { $0.identity.deviceID != peer.deviceID }
+      try await updateTrust { [self] records in
+        guard sessions[generation] != nil, !suspendedPeers.contains(peer.deviceID) else { throw NotebookTransportError.disconnected }
+        guard let invitation = invitation ?? joinedInvitation, invitation.id == credential.pairingID, invitation.expiresAt > Date() else {
+          throw NotebookTransportError.pairingExpired
+        }
+        let joiner = invitation.inviter.deviceID == identity.deviceID ? peer : identity
+        let secret = try NotebookTransportAuthentication.pairedSecret(invitation: invitation, joiner: joiner)
+        guard !records.contains(where: { $0.identity.deviceID == peer.deviceID && $0.pairingID != credential.pairingID }) else {
+          throw NotebookTransportError.identityMismatch
+        }
+        if records.contains(where: { $0.identity.deviceID == peer.deviceID && $0.pairingID == credential.pairingID }) { return records }
+        guard records.count < 8 else { throw NotebookTransportError.resourceLimit }
+        var updated = records.filter { $0.identity.deviceID != peer.deviceID }
         updated.append(.init(identity: peer, pairingID: credential.pairingID, secret: secret, locallyConfirmed: false, remotelyConfirmed: false))
-        try trustStore.save(updated, for: identity); trusted = updated
+        return updated
       }
     }
+    guard isStarted, sessions[generation] != nil, !suspendedPeers.contains(peer.deviceID) else { throw NotebookTransportError.disconnected }
     guard let record = trusted.first(where: { $0.identity.deviceID == peer.deviceID && $0.pairingID == credential.pairingID }) else {
       throw NotebookTransportError.authenticationRequired
     }
@@ -439,14 +509,21 @@ final class NearbySync {
     return record.locallyConfirmed
   }
 
-  private func confirm(_ peer: NotebookTransportIdentity, pairingID: UUID, local: Bool, generation: UUID) throws {
-    guard let index = trusted.firstIndex(where: { $0.identity.deviceID == peer.deviceID && $0.pairingID == pairingID }) else {
-      throw NotebookTransportError.authenticationRequired
+  private func confirm(_ peer: NotebookTransportIdentity, pairingID: UUID, local: Bool, generation: UUID) async throws {
+    try await updateTrust { [self] records in
+      guard sessions[generation] != nil, !suspendedPeers.contains(peer.deviceID),
+        let index = records.firstIndex(where: { $0.identity.deviceID == peer.deviceID && $0.pairingID == pairingID }) else {
+        throw NotebookTransportError.authenticationRequired
+      }
+      var updated = records
+      if local { updated[index].locallyConfirmed = true } else { updated[index].remotelyConfirmed = true }
+      return updated
     }
-    var updated = trusted
-    if local { updated[index].locallyConfirmed = true } else { updated[index].remotelyConfirmed = true }
-    try trustStore.save(updated, for: identity); trusted = updated
-    onPairingChange?(.confirmation(peer: peer, generation: generation, locallyConfirmed: updated[index].locallyConfirmed))
+    guard isStarted, sessions[generation] != nil, !suspendedPeers.contains(peer.deviceID),
+      let record = trusted.first(where: { $0.identity.deviceID == peer.deviceID && $0.pairingID == pairingID }) else {
+      throw NotebookTransportError.disconnected
+    }
+    onPairingChange?(.confirmation(peer: peer, generation: generation, locallyConfirmed: record.locallyConfirmed))
   }
 
   private func addSession(connection: NWConnection, credential: NotebookPeerCredential?) {
@@ -458,11 +535,11 @@ final class NearbySync {
       session.resolveCredential = { [weak self] hello in guard let self else { throw NotebookTransportError.disconnected }; return try self.resolve(hello) }
       session.onAuthenticated = { [weak self] peer, credential in
         guard let self, self.sessions[generation] != nil else { throw NotebookTransportError.disconnected }
-        return try self.authenticate(peer, credential: credential, generation: generation)
+        return try await self.authenticate(peer, credential: credential, generation: generation)
       }
       session.onConfirmation = { [weak self] peer, pairingID, local in
         guard let self, self.sessions[generation] != nil else { throw NotebookTransportError.disconnected }
-        try self.confirm(peer, pairingID: pairingID, local: local, generation: generation)
+        try await self.confirm(peer, pairingID: pairingID, local: local, generation: generation)
       }
       session.onReady = { [weak self, weak session] peer in
         guard let self, let session, self.sessions[generation] != nil else { return }
@@ -526,8 +603,8 @@ final class NearbySync {
 final class NotebookTransportSession {
   let generation = UUID()
   var resolveCredential: ((NotebookTransportHello) throws -> NotebookPeerCredential)?
-  var onAuthenticated: ((NotebookTransportIdentity, NotebookPeerCredential) throws -> Bool)?
-  var onConfirmation: ((NotebookTransportIdentity, UUID, Bool) throws -> Void)?
+  var onAuthenticated: ((NotebookTransportIdentity, NotebookPeerCredential) async throws -> Bool)?
+  var onConfirmation: ((NotebookTransportIdentity, UUID, Bool) async throws -> Void)?
   var onReady: ((NotebookTransportIdentity) -> Void)?
   var onTransient: ((NotebookTransportTransient, NotebookTransportIdentity) -> Void)?
   var onDurableChange: ((NotebookDurableChange, NotebookTransportIdentity) -> Void)?
@@ -548,6 +625,7 @@ final class NotebookTransportSession {
   private var transcript: Data?
   private var authenticated = false
   private var locallyConfirmed = false
+  private var localConfirmation: Task<Void, Error>?
   private var remotelyConfirmed = false
   private var sentReady = false
   private var remoteCursor: UInt64?
@@ -626,15 +704,22 @@ final class NotebookTransportSession {
     resolveCredential = nil; onAuthenticated = nil; onConfirmation = nil; onReady = nil; onTransient = nil; onDurableChange = nil; onStop = nil
   }
 
-  func confirmPairing() throws {
+  func confirmPairing() async throws {
     guard !isStopped, authenticated, let peerIdentity, let credential, let transcript else {
       throw NotebookTransportError.authenticationRequired
     }
     guard !locallyConfirmed else { return }
-    try onConfirmation?(peerIdentity, credential.pairingID, true)
-    locallyConfirmed = true
-    enqueue(.confirm(NotebookTransportAuthentication.confirmation(secret: credential.secret, transcript: transcript, sender: identity.deviceID)))
-    prepareReady()
+    if let localConfirmation { try await localConfirmation.value; return }
+    let task = Task { @MainActor [self] in
+      try await onConfirmation?(peerIdentity, credential.pairingID, true)
+      guard !isStopped else { throw NotebookTransportError.disconnected }
+      locallyConfirmed = true
+      enqueue(.confirm(NotebookTransportAuthentication.confirmation(secret: credential.secret, transcript: transcript, sender: identity.deviceID)))
+      prepareReady()
+    }
+    localConfirmation = task
+    defer { localConfirmation = nil }
+    try await task.value
   }
 
   func sendTransient(_ value: NotebookTransportTransient) {
@@ -677,7 +762,7 @@ final class NotebookTransportSession {
         guard !isStopped, !Task.isCancelled else { return }
         let packet = try await Task.detached(priority: .userInitiated) { try NotebookTransportFraming.decode(payload) }.value
         guard !isStopped, !Task.isCancelled else { return }
-        try receive(packet)
+        try await receive(packet)
       }
     } catch { if !isStopped { stop(error) } }
   }
@@ -693,7 +778,7 @@ final class NotebookTransportSession {
   }
 
   /// The same admission path serves real frames and deterministic negative tests.
-  func receive(_ packet: NotebookTransportPacket) throws {
+  func receive(_ packet: NotebookTransportPacket) async throws {
     guard !isStopped, isTLSReady else { throw NotebookTransportError.authenticationRequired }
     guard packet.version == NotebookTransportLimits.protocolVersion,
       (packet.sequence == 0) == packet.message.isControl else { throw NotebookTransportError.invalidFrame }
@@ -703,12 +788,13 @@ final class NotebookTransportSession {
     }
     switch packet.message {
     case .hello(let hello): try receiveHello(hello)
-    case .proof(let proof): try receiveProof(proof)
+    case .proof(let proof): try await receiveProof(proof)
     case .confirm(let proof):
       guard authenticated, !remotelyConfirmed, let transcript, let credential, let peerIdentity,
         NotebookTransportAuthentication.verifiesConfirmation(proof, secret: credential.secret, transcript: transcript, sender: peerIdentity.deviceID)
       else { throw NotebookTransportError.authenticationRequired }
-      try onConfirmation?(peerIdentity, credential.pairingID, false)
+      try await onConfirmation?(peerIdentity, credential.pairingID, false)
+      guard !isStopped else { throw NotebookTransportError.disconnected }
       remotelyConfirmed = true; prepareReady()
     case .ready(let cursor):
       guard authenticated, locallyConfirmed, remotelyConfirmed, remoteCursor == nil, cursor <= UInt64(Int64.max) else {
@@ -767,13 +853,15 @@ final class NotebookTransportSession {
     enqueue(.proof(NotebookTransportAuthentication.proof(secret: credential.secret, transcript: transcript, sender: identity.deviceID)))
   }
 
-  private func receiveProof(_ proof: Data) throws {
+  private func receiveProof(_ proof: Data) async throws {
     guard !authenticated, let credential, let transcript, let peerIdentity,
       NotebookTransportAuthentication.verifies(proof, secret: credential.secret, transcript: transcript, sender: peerIdentity.deviceID)
     else { throw NotebookTransportError.authenticationRequired }
-    let approved = try onAuthenticated?(peerIdentity, credential) ?? false
-    authenticated = true; setTimeout(seconds: 600)
-    if approved { try confirmPairing() }
+    authenticated = true
+    let approved = try await onAuthenticated?(peerIdentity, credential) ?? false
+    guard !isStopped else { throw NotebookTransportError.disconnected }
+    setTimeout(seconds: 600)
+    if approved { try await confirmPairing() }
   }
 
   private func prepareReady() {

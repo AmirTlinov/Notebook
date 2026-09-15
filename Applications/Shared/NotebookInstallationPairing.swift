@@ -3,7 +3,7 @@ import NotebookCore
 
 /// The single Keychain value retains both peer credentials and consumption of
 /// installer authority. Removing a peer never makes that authority reusable.
-struct NotebookPairingTrustState: Codable, Equatable {
+struct NotebookPairingTrustState: Codable, Equatable, Sendable {
   var format = 1
   var installedGrantSHA256: String?
   var records: [NotebookTrustedPeer] = []

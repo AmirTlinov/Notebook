@@ -127,13 +127,55 @@ final class NotebookTransportSessionTests: XCTestCase {
     XCTAssertFalse(server.isReady); XCTAssertFalse(client.isReady)
     let cursorReads = await pair.serverStorage.cursorReads + pair.clientStorage.cursorReads
     XCTAssertEqual(cursorReads, 0)
-    XCTAssertThrowsError(try server.receive(.init(sequence: 1, message: .offer(pair.sampleChange))))
-    XCTAssertThrowsError(try client.receive(.init(sequence: 0, message: .ready(cursor: 0))))
-    XCTAssertThrowsError(try client.receive(.init(sequence: 0, message: .contentUnavailable(.checkpoint))))
-    try client.confirmPairing()
+    for (session, packet) in [(server, NotebookTransportPacket(sequence: 1, message: .offer(pair.sampleChange))),
+      (client, .init(sequence: 0, message: .ready(cursor: 0))),
+      (client, .init(sequence: 0, message: .contentUnavailable(.checkpoint)))] {
+      do { try await session.receive(packet); XCTFail("Unconfirmed peers cannot exchange content or cursors") }
+      catch { XCTAssertEqual(error as? NotebookTransportError, .authenticationRequired) }
+    }
+    try await client.confirmPairing()
     XCTAssertFalse(server.isReady); XCTAssertFalse(client.isReady)
-    try server.confirmPairing()
+    try await server.confirmPairing()
     await fulfillment(of: [ready], timeout: 10)
+  }
+
+  func testStoppedSessionCannotPublishAConfirmationWhoseTrustWriteCompletesLater() async throws {
+    let authenticated = expectation(description: "Both identities proved"); authenticated.expectedFulfillmentCount = 2
+    let pair = try NotebookTransportTestPair(autoConfirm: false)
+    defer { pair.stop() }
+    pair.onAuthenticated = { _, _ in authenticated.fulfill() }
+    try pair.start()
+    await fulfillment(of: [authenticated], timeout: 10)
+    let server = try XCTUnwrap(pair.server), client = try XCTUnwrap(pair.client)
+    try await client.confirmPairing()
+    let saving = expectation(description: "Local approval awaits its actual persistence callback")
+    let original = server.onConfirmation
+    var gate: CheckedContinuation<Void, Never>?
+    defer { gate?.resume() }
+    var localWrites = 0
+    server.onConfirmation = { peer, pairing, local in
+      if local {
+        localWrites += 1
+        await withCheckedContinuation { gate = $0; saving.fulfill() }
+      }
+      try await original?(peer, pairing, local)
+    }
+    let first = Task { try await server.confirmPairing() }
+    await fulfillment(of: [saving], timeout: 2)
+    let submitted = expectation(description: "Repeated approval awaits the same write")
+    let repeated = Task { submitted.fulfill(); try await server.confirmPairing() }
+    await fulfillment(of: [submitted], timeout: 2)
+    XCTAssertEqual(localWrites, 1)
+    XCTAssertFalse(server.isReady); XCTAssertFalse(client.isReady)
+    server.stop()
+    gate?.resume(); gate = nil
+    for task in [first, repeated] {
+      do { try await task.value; XCTFail("A stopped session cannot confirm readiness") }
+      catch { XCTAssertEqual(error as? NotebookTransportError, .disconnected) }
+    }
+    let reads = await pair.serverStorage.cursorReads + pair.clientStorage.cursorReads
+    XCTAssertEqual(reads, 0, "The durable content lane cannot open before saved approval")
+    XCTAssertFalse(server.isReady); XCTAssertFalse(client.isReady)
   }
 
   func testDurableAcknowledgementWaitsForCommitWhileCameraAndContactContinue() async throws {

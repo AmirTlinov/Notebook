@@ -33,17 +33,19 @@ private struct NotebookMacPairingView: View {
   let launch: NotebookApplicationLaunch
   let retry: () -> Void
   @State private var error: String?
+  @State private var performing = false
 
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 20) {
         Text("Подключение iPad").font(.title2.weight(.semibold))
         if let model = launch.model {
-          connection(model)
+          connection(model).disabled(performing)
         } else {
           Text(launch.message).textSelection(.enabled)
           if launch.failure != nil { Button("Повторить проверку", action: retry) }
         }
+        if performing { ProgressView("Обновляется подключение…").controlSize(.small) }
         if let error {
           Text(error).foregroundStyle(.red).textSelection(.enabled)
             .accessibilityIdentifier("notebook.pairing.error")
@@ -63,7 +65,7 @@ private struct NotebookMacPairingView: View {
     VStack(alignment: .leading, spacing: 10) {
       Button("Скопировать приглашение для iPad") {
         perform {
-          let invitation = try model.createPairingInvitation()
+          let invitation = try await model.createPairingInvitation()
           NSPasteboard.general.clearContents()
           guard NSPasteboard.general.setString(invitation, forType: .string) else {
             throw NotebookTransportError.storageUnavailable
@@ -99,7 +101,7 @@ private struct NotebookMacPairingView: View {
           Text("Вы подтвердили. Ожидается подтверждение на iPad.")
             .accessibilityIdentifier("notebook.pairing.waiting-for-peer")
         } else {
-          Button("Разрешить этому iPad доступ") { perform { try model.confirmPairing(generation: generation) } }
+          Button("Разрешить этому iPad доступ") { perform { try await model.confirmPairing(generation: generation) } }
             .accessibilityIdentifier("notebook.pairing.confirm")
         }
       }
@@ -112,7 +114,7 @@ private struct NotebookMacPairingView: View {
     }
 
     if case .idle = model.pairingState {} else {
-      Button("Отменить сопряжение", role: .cancel) { perform { try model.cancelPairing() } }
+      Button("Отменить сопряжение", role: .cancel) { perform { try await model.cancelPairing() } }
         .accessibilityIdentifier("notebook.pairing.cancel")
     }
     if !model.pairedPeers.isEmpty {
@@ -120,15 +122,19 @@ private struct NotebookMacPairingView: View {
       Text("Доверенные устройства").font(.headline)
       ForEach(model.pairedPeers, id: \.deviceID) { peer in
         Button("Отозвать доступ: \(peer.displayName)", role: .destructive) {
-          perform { try model.revokePeer(peer.deviceID) }
+          perform { try await model.revokePeer(peer.deviceID) }
         }
         .accessibilityIdentifier("notebook.pairing.revoke." + peer.deviceID.uuidString.lowercased())
       }
     }
   }
 
-  private func perform(_ operation: () throws -> Void) {
-    do { try operation(); error = nil }
-    catch { self.error = error.localizedDescription }
+  private func perform(_ operation: @escaping @MainActor () async throws -> Void) {
+    guard !performing else { return }; performing = true
+    Task { @MainActor in
+      defer { performing = false }
+      do { try await operation(); error = nil }
+      catch is CancellationError {} catch { self.error = error.localizedDescription }
+    }
   }
 }

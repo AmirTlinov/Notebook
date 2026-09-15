@@ -92,37 +92,45 @@ final class NotebookArchiveLaunchTests: XCTestCase {
     XCTAssertNil(launch.pairingActivationID)
   }
 
-  func testNewActivationRequiresFreshKeychainConfirmationWithoutChangingDeviceIdentity() throws {
+  func testNewActivationRequiresFreshKeychainConfirmationWithoutChangingDeviceIdentity() async throws {
     let workspace = UUID(), activation = UUID()
     let device = NotebookTransportIdentity(deviceID: UUID(), workspaceID: workspace, displayName: "activation fixture")
     let peer = NotebookTransportIdentity(deviceID: UUID(), workspaceID: workspace, displayName: "independent peer")
     let old = NotebookKeychainPairingStore()
     let current = NotebookKeychainPairingStore(activationID: activation)
     let next = NotebookKeychainPairingStore(activationID: UUID())
-    addTeardownBlock { @MainActor in
-      try old.save([], for: device)
-      try current.save([], for: device)
-      try next.save([], for: device)
+    addTeardownBlock {
+      try await old.save([], for: device)
+      try await current.save([], for: device)
+      try await next.save([], for: device)
     }
     let previous = NotebookTrustedPeer(identity: peer, pairingID: UUID(), secret: Data(repeating: 11, count: 32),
       locallyConfirmed: true, remotelyConfirmed: true)
-    try old.save([previous], for: device)
-    XCTAssertEqual(try old.load(for: device), [previous])
-    XCTAssertEqual(try current.load(for: device), [], "The retained actor and workspace cannot reuse pre-activation trust")
+    try await old.save([previous], for: device)
+    let oldPeers = try await old.load(for: device)
+    let unapproved = try await current.load(for: device)
+    XCTAssertEqual(oldPeers, [previous])
+    XCTAssertEqual(unapproved, [], "The retained actor and workspace cannot reuse pre-activation trust")
 
     var accepted = NotebookTrustedPeer(identity: peer, pairingID: UUID(), secret: Data(repeating: 23, count: 32),
       locallyConfirmed: true, remotelyConfirmed: false)
-    try current.save([accepted], for: device)
+    try await current.save([accepted], for: device)
     let reopened = NotebookKeychainPairingStore(activationID: activation)
-    XCTAssertEqual(try reopened.load(for: device), [accepted])
-    XCTAssertFalse(try XCTUnwrap(reopened.load(for: device).first).isConfirmed)
+    let pending = try await reopened.load(for: device)
+    XCTAssertEqual(pending, [accepted])
+    XCTAssertFalse(try XCTUnwrap(pending.first).isConfirmed)
     accepted.remotelyConfirmed = true
-    try reopened.save([accepted], for: device)
-    XCTAssertTrue(try XCTUnwrap(current.load(for: device).first).isConfirmed)
-    XCTAssertEqual(try old.load(for: device), [previous], "Fresh trust never overwrites another activation's credentials")
-    XCTAssertEqual(try next.load(for: device), [])
-    try current.save([], for: device)
-    XCTAssertEqual(try reopened.load(for: device), [])
-    XCTAssertEqual(try old.load(for: device), [previous])
+    try await reopened.save([accepted], for: device)
+    let confirmed = try await current.load(for: device)
+    let retainedOld = try await old.load(for: device)
+    let nextPeers = try await next.load(for: device)
+    XCTAssertTrue(try XCTUnwrap(confirmed.first).isConfirmed)
+    XCTAssertEqual(retainedOld, [previous], "Fresh trust never overwrites another activation's credentials")
+    XCTAssertEqual(nextPeers, [])
+    try await current.save([], for: device)
+    let revoked = try await reopened.load(for: device)
+    let oldAfterRevoke = try await old.load(for: device)
+    XCTAssertEqual(revoked, [])
+    XCTAssertEqual(oldAfterRevoke, [previous])
   }
 }

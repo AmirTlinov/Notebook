@@ -7,40 +7,39 @@ import XCTest
 
 final class NearbySyncTests: XCTestCase {
   @MainActor
-  func testResetCannotPublishIdleWhileCredentialStorageIsUnavailable() throws {
+  func testResetCannotPublishIdleWhileCredentialStorageIsUnavailable() async throws {
     let trust = RecoverablePairingStore()
     let sync = makeRecoverableSync(trust)
     defer { sync.stop() }
     var states: [NotebookPairingState] = []
     sync.onPairingChange = { states.append($0) }
-    sync.start()
+    await sync.start()
     XCTAssertEqual(trust.loads, 1)
     guard case .failed(let message) = try XCTUnwrap(states.last) else { return XCTFail("Startup failure must remain visible") }
     XCTAssertTrue(message.contains("хранилище"))
-    XCTAssertThrowsError(try sync.cancelPairing()) {
-      XCTAssertEqual($0 as? NotebookTransportError, .storageUnavailable)
-    }
+    do { try await sync.cancelPairing(); XCTFail("Unavailable trust must reject reset") }
+    catch { XCTAssertEqual(error as? NotebookTransportError, .storageUnavailable) }
     XCTAssertEqual(trust.loads, 2)
     XCTAssertEqual(states.count, 1, "Reset cannot promise idle until credentials are accessible")
     XCTAssertEqual(trust.saves, 0, "A failed read must not overwrite trust with an empty list")
   }
 
   @MainActor
-  func testResetRecoversTheSameTransportAndAllowsAnOrdinaryJoin() throws {
+  func testResetRecoversTheSameTransportAndAllowsAnOrdinaryJoin() async throws {
     let trust = RecoverablePairingStore()
     let sync = makeRecoverableSync(trust)
     defer { sync.stop() }
     var states: [NotebookPairingState] = []
     sync.onPairingChange = { states.append($0) }
-    sync.start()
+    await sync.start()
     trust.unavailable = false
-    try sync.cancelPairing()
+    try await sync.cancelPairing()
     guard case .idle = try XCTUnwrap(states.last) else { return XCTFail("Successful restart must be ready") }
     XCTAssertEqual(trust.loads, 2)
     let invitation = try NotebookPairingInvitation(
       inviter: .init(deviceID: UUID(), workspaceID: sync.identity.workspaceID, displayName: "Acceptance Mac"),
       secret: Data(repeating: 7, count: 16), expiresAt: .now.addingTimeInterval(60))
-    try sync.joinPairingInvitation(invitation.encoded())
+    try await sync.joinPairingInvitation(invitation.encoded())
     guard case .connecting = try XCTUnwrap(states.last) else { return XCTFail("The restarted owner must accept the invitation") }
     XCTAssertEqual(trust.loads, 2, "Joining an already started owner must not restart it")
     XCTAssertEqual(trust.saves, 0, "A join does not approve a peer or fabricate trust")
@@ -55,6 +54,102 @@ final class NearbySyncTests: XCTestCase {
     return NearbySync(role: .iPadConnector,
       identity: .init(deviceID: UUID(), workspaceID: UUID(), displayName: "Acceptance iPad"),
       storage: storage, stagingRoot: temporaryDirectory(), trustStore: trust)
+  }
+
+  @MainActor
+  func testStoppedStartupCannotPublishLateCredentialsAndRestartReadsAgain() async throws {
+    let trust = RecoverablePairingStore(); trust.unavailable = false
+    let sync = makeRecoverableSync(trust); defer { sync.stop() }
+    let peer = NotebookTrustedPeer(identity: .init(deviceID: UUID(), workspaceID: sync.identity.workspaceID,
+      displayName: "Retained peer"), pairingID: UUID(), secret: Data(repeating: 3, count: 32),
+      locallyConfirmed: true, remotelyConfirmed: true)
+    trust.records = [peer]; trust.suspendNextLoad = true
+    let loading = expectation(description: "Credential read suspended")
+    trust.onLoad = { loading.fulfill() }
+    let first = Task { await sync.start() }
+    await fulfillment(of: [loading], timeout: 2)
+    sync.stop(); trust.onLoad = nil; trust.releaseLoad(); await first.value
+    XCTAssertTrue(sync.pairedPeers.isEmpty, "A retired start cannot publish credentials or restart discovery")
+    await sync.start()
+    XCTAssertEqual(trust.loads, 2)
+    XCTAssertEqual(sync.pairedPeers, [peer.identity])
+  }
+
+  @MainActor
+  func testConcurrentRevocationsTransformTheLastSavedTrustNotStaleCopies() async throws {
+    let trust = RecoverablePairingStore(); trust.unavailable = false
+    let sync = makeRecoverableSync(trust); defer { sync.stop() }
+    let peers = (0..<2).map { index in
+      NotebookTrustedPeer(identity: .init(deviceID: UUID(), workspaceID: sync.identity.workspaceID,
+        displayName: "Peer \(index)"), pairingID: UUID(), secret: Data(repeating: 3, count: 32),
+        locallyConfirmed: true, remotelyConfirmed: true)
+    }
+    trust.records = peers; await sync.start()
+    trust.suspendNextSave = true
+    let saving = expectation(description: "First revocation awaits Keychain")
+    trust.onSave = { saving.fulfill() }
+    let first = Task { try await sync.revokePeer(peers[0].identity.deviceID) }
+    await fulfillment(of: [saving], timeout: 2)
+    let submitted = expectation(description: "Second revocation submitted")
+    let second = Task { submitted.fulfill(); try await sync.revokePeer(peers[1].identity.deviceID) }
+    await fulfillment(of: [submitted], timeout: 2)
+    XCTAssertEqual(trust.saves, 1, "The next credential mutation cannot race the accepted write")
+    XCTAssertEqual(trust.records, peers)
+    trust.onSave = nil; trust.releaseSave()
+    try await first.value; try await second.value
+    XCTAssertEqual(trust.saves, 2)
+    XCTAssertTrue(trust.records.isEmpty); XCTAssertTrue(sync.pairedPeers.isEmpty)
+  }
+
+  @MainActor
+  func testNewerJoinReplacesAnIntentStillWaitingForCredentialStartup() async throws {
+    let trust = RecoverablePairingStore(); trust.unavailable = false; trust.suspendNextLoad = true
+    let sync = makeRecoverableSync(trust); defer { sync.stop() }
+    func invitation(_ name: String) throws -> String {
+      try NotebookPairingInvitation(inviter: .init(deviceID: UUID(), workspaceID: sync.identity.workspaceID,
+        displayName: name), secret: Data(repeating: 7, count: 16), expiresAt: .now.addingTimeInterval(60)).encoded()
+    }
+    let firstInvitation = try invitation("Old intent"), secondInvitation = try invitation("Current intent")
+    let loading = expectation(description: "Shared startup read")
+    trust.onLoad = { loading.fulfill() }
+    var connecting = 0
+    sync.onPairingChange = { if case .connecting = $0 { connecting += 1 } }
+    let first = Task { try await sync.joinPairingInvitation(firstInvitation) }
+    await fulfillment(of: [loading], timeout: 2)
+    let submitted = expectation(description: "Newer join submitted")
+    let second = Task { submitted.fulfill(); try await sync.joinPairingInvitation(secondInvitation) }
+    await fulfillment(of: [submitted], timeout: 2)
+    trust.releaseLoad()
+    do { try await first.value; XCTFail("An older intent cannot replace the newer invitation") }
+    catch { XCTAssertTrue(error is CancellationError) }
+    try await second.value
+    XCTAssertEqual(connecting, 1); XCTAssertEqual(trust.loads, 1); XCTAssertEqual(trust.saves, 0)
+  }
+
+  @MainActor
+  func testStopDuringCredentialWriteSuppressesPublicationButRetainsTheAcceptedWrite() async throws {
+    let trust = RecoverablePairingStore(); trust.unavailable = false
+    let sync = makeRecoverableSync(trust); defer { sync.stop() }
+    let peer = NotebookTrustedPeer(identity: .init(deviceID: UUID(), workspaceID: sync.identity.workspaceID,
+      displayName: "Retained peer"), pairingID: UUID(), secret: Data(repeating: 3, count: 32),
+      locallyConfirmed: true, remotelyConfirmed: true)
+    trust.records = [peer]; await sync.start(); trust.suspendNextSave = true
+    let saving = expectation(description: "Accepted revocation awaits Keychain")
+    trust.onSave = { saving.fulfill() }
+    let revoke = Task { try await sync.revokePeer(peer.identity.deviceID) }
+    await fulfillment(of: [saving], timeout: 2)
+    var stopped = false
+    let stopping = expectation(description: "Shutdown submitted")
+    let shutdown = Task { stopping.fulfill(); let result = await sync.stopAndDrainTrust(); stopped = true; return result }
+    await fulfillment(of: [stopping], timeout: 2)
+    XCTAssertFalse(stopped, "Shutdown cannot complete before the admitted Keychain write")
+    trust.releaseSave()
+    let drained = await shutdown.value; XCTAssertTrue(drained)
+    do { try await revoke.value; XCTFail("A stopped transport cannot publish success") }
+    catch { XCTAssertTrue(error is CancellationError) }
+    XCTAssertTrue(trust.records.isEmpty, "Stopping the UI cannot roll back an accepted revocation")
+    await sync.start()
+    XCTAssertTrue(sync.pairedPeers.isEmpty)
   }
 
   func testDiscoveryExcludesTheOldWriterButKeepsItsIdentityForUpgrade() throws {
@@ -196,17 +291,31 @@ final class NearbySyncTests: XCTestCase {
 @MainActor
 private final class RecoverablePairingStore: NotebookPairingTrustStore {
   var unavailable = true
+  var records: [NotebookTrustedPeer] = []
+  var suspendNextLoad = false
+  var suspendNextSave = false
+  var onLoad: (() -> Void)?
+  var onSave: (() -> Void)?
+  private var loadGate: CheckedContinuation<Void, Never>?
+  private var saveGate: CheckedContinuation<Void, Never>?
   private(set) var loads = 0
   private(set) var saves = 0
-  func load(for identity: NotebookTransportIdentity) throws -> [NotebookTrustedPeer] {
+  func load(for identity: NotebookTransportIdentity) async throws -> [NotebookTrustedPeer] {
     loads += 1
     if unavailable { throw NotebookTransportError.storageUnavailable }
-    return []
+    onLoad?()
+    if suspendNextLoad { suspendNextLoad = false; await withCheckedContinuation { loadGate = $0 } }
+    return records
   }
-  func save(_ records: [NotebookTrustedPeer], for identity: NotebookTransportIdentity) throws {
+  func save(_ records: [NotebookTrustedPeer], for identity: NotebookTransportIdentity) async throws {
     saves += 1
     if unavailable { throw NotebookTransportError.storageUnavailable }
+    onSave?()
+    if suspendNextSave { suspendNextSave = false; await withCheckedContinuation { saveGate = $0 } }
+    self.records = records
   }
+  func releaseLoad() { loadGate?.resume(); loadGate = nil }
+  func releaseSave() { saveGate?.resume(); saveGate = nil }
 }
 
 final class NotebookTransportBlobTests: XCTestCase, @unchecked Sendable {

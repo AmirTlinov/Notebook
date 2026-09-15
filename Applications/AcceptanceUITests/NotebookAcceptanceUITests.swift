@@ -145,6 +145,8 @@ import XCTest
     screenshot("ipad-real-peer-before-confirmation")
     try assertPresentedPairingIdentity()
     confirm.tap()
+    XCTAssertTrue(app.staticTexts["Вы подтвердили. Ожидается подтверждение на Mac."].waitForExistence(timeout: 10),
+      "The local approval must be saved before this UI step completes")
     screenshot("ipad-confirmed-awaiting-mac")
     try systemTrace?.ended(app)
   }

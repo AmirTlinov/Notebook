@@ -46,54 +46,60 @@ final class NotebookInstallationPairingTests: XCTestCase {
     func file(_ index: Int) -> URL {
       NotebookArchiveActivation.controlURL(for: roots[index]).appendingPathComponent(NotebookInstallationPairingGrant.fileName)
     }
-    func remove() throws {
-      for index in roots.indices { try keychain(index).saveState(.init(), for: identity(index)) }
+    func remove() async throws {
+      for index in roots.indices { try await keychain(index).saveState(.init(), for: identity(index)) }
       try FileManager.default.removeItem(at: base)
     }
   }
 
   func testInstallerPreparesReciprocalKeysBeforeConstructingModel() async throws {
-    let pair = try Pair(); defer { try? pair.remove() }
+    let pair = try Pair()
+    addTeardownBlock { @MainActor in try await pair.remove() }
     for i in pair.roots.indices {
       try pair.grant.publish(at: pair.file(i))
       var checked = false
       let launch = NotebookApplicationLaunch(root: pair.roots[i], target: pair.receipts[i].target) { store, activation in
-        let records = try? pair.keychain(i).load(for: pair.identity(i))
-        XCTAssertEqual(records?.count, 1)
-        XCTAssertEqual(records?.first?.identity.deviceID, pair.receipts[1 - i].target.actorID)
-        XCTAssertEqual(records?.first?.pairingID, pair.grant.pairingID)
-        XCTAssertEqual(records?.first?.secret, pair.grant.secret)
-        XCTAssertTrue(records?.first?.isConfirmed == true)
         XCTAssertFalse(FileManager.default.fileExists(atPath: pair.file(i).path))
         checked = true
         return NotebookAppModel(store: store, startsNearbySync: false, pairingActivationID: activation)
       }
       await launch.start()
+      let records = try? await pair.keychain(i).load(for: pair.identity(i))
+      XCTAssertEqual(records?.count, 1)
+      XCTAssertEqual(records?.first?.identity.deviceID, pair.receipts[1 - i].target.actorID)
+      XCTAssertEqual(records?.first?.pairingID, pair.grant.pairingID)
+      XCTAssertEqual(records?.first?.secret, pair.grant.secret)
+      XCTAssertTrue(records?.first?.isConfirmed == true)
       XCTAssertTrue(checked, launch.message); XCTAssertNotNil(launch.model)
       if let model = launch.model { _ = await model.shutdown() }
     }
   }
 
-  func testRevocationAndInterruptedConsumptionCannotReplayInstallerAuthority() throws {
-    let pair = try Pair(); defer { try? pair.remove() }
+  func testRevocationAndInterruptedConsumptionCannotReplayInstallerAuthority() async throws {
+    let pair = try Pair()
+    addTeardownBlock { @MainActor in try await pair.remove() }
     let keychain = pair.keychain(0), identity = pair.identity(0)
     try pair.grant.publish(at: pair.file(0))
     // Emulate termination after the atomic Keychain update but before unlink.
     var state = NotebookPairingTrustState()
     try state.install(pair.grant, receipt: pair.receipts[0], admission: pair.admission)
-    try keychain.saveState(state, for: identity)
-    try keychain.consumeInstallationGrant(root: pair.roots[0], receipt: pair.receipts[0])
-    XCTAssertEqual(try keychain.load(for: identity).count, 1)
-    try keychain.save([], for: identity)
-    XCTAssertEqual(try keychain.load(for: identity), [])
+    try await keychain.saveState(state, for: identity)
+    try await keychain.consumeInstallationGrant(root: pair.roots[0], receipt: pair.receipts[0])
+    let installed = try await keychain.load(for: identity)
+    XCTAssertEqual(installed.count, 1)
+    try await keychain.save([], for: identity)
+    let revoked = try await keychain.load(for: identity)
+    XCTAssertEqual(revoked, [])
     try pair.grant.publish(at: pair.file(0))
-    try keychain.consumeInstallationGrant(root: pair.roots[0], receipt: pair.receipts[0])
-    XCTAssertEqual(try keychain.load(for: identity), [], "Restoring an installer file must not undo revocation")
+    try await keychain.consumeInstallationGrant(root: pair.roots[0], receipt: pair.receipts[0])
+    let afterReplay = try await keychain.load(for: identity)
+    XCTAssertEqual(afterReplay, [], "Restoring an installer file must not undo revocation")
     XCTAssertFalse(FileManager.default.fileExists(atPath: pair.file(0).path))
   }
 
   func testDifferentGrantNeverRotatesCredentialsSilently() throws {
-    let pair = try Pair(); defer { try? pair.remove() }
+    let pair = try Pair()
+    addTeardownBlock { @MainActor in try await pair.remove() }
     var state = NotebookPairingTrustState()
     try state.install(pair.grant, receipt: pair.receipts[0], admission: pair.admission)
     let before = state
@@ -104,7 +110,7 @@ final class NotebookInstallationPairingTests: XCTestCase {
 
   func testForeignGrantBlocksModelAndPreservesFile() async throws {
     let pair = try Pair(), foreign = try Pair()
-    defer { try? pair.remove(); try? foreign.remove() }
+    addTeardownBlock { @MainActor in try await pair.remove(); try await foreign.remove() }
     try foreign.grant.publish(at: pair.file(0))
     let launch = NotebookApplicationLaunch(root: pair.roots[0], target: pair.receipts[0].target) { _, _ in
       XCTFail("Unverified grant must not reach the model")
@@ -112,12 +118,14 @@ final class NotebookInstallationPairingTests: XCTestCase {
     }
     await launch.start()
     XCTAssertNil(launch.model); XCTAssertNotNil(launch.failure)
-    XCTAssertEqual(try pair.keychain(0).load(for: pair.identity(0)), [])
+    let records = try await pair.keychain(0).load(for: pair.identity(0))
+    XCTAssertEqual(records, [])
     XCTAssertTrue(FileManager.default.fileExists(atPath: pair.file(0).path))
   }
 
   func testGrantCannotOverwriteExistingManualApproval() throws {
-    let pair = try Pair(); defer { try? pair.remove() }
+    let pair = try Pair()
+    addTeardownBlock { @MainActor in try await pair.remove() }
     var state = NotebookPairingTrustState()
     let peer = NotebookTrustedPeer(identity: pair.identity(1), pairingID: UUID(), secret: Data(repeating: 1, count: 32),
       locallyConfirmed: true, remotelyConfirmed: false)
@@ -126,7 +134,8 @@ final class NotebookInstallationPairingTests: XCTestCase {
     XCTAssertEqual(state.records, [peer]); XCTAssertNil(state.installedGrantSHA256)
   }
   func testDanglingSymlinkIsNotAnAbsentGrant() async throws {
-    let pair = try Pair(); defer { try? pair.remove() }
+    let pair = try Pair()
+    addTeardownBlock { @MainActor in try await pair.remove() }
     try FileManager.default.createSymbolicLink(at: pair.file(0), withDestinationURL: pair.base.appendingPathComponent("missing"))
     let launch = NotebookApplicationLaunch(root: pair.roots[0], target: pair.receipts[0].target) { _, _ in
       XCTFail("A malformed installation payload must block model construction")
@@ -134,7 +143,8 @@ final class NotebookInstallationPairingTests: XCTestCase {
     }
     await launch.start()
     XCTAssertNil(launch.model); XCTAssertNotNil(launch.failure)
-    XCTAssertEqual(try pair.keychain(0).load(for: pair.identity(0)), [])
+    let records = try await pair.keychain(0).load(for: pair.identity(0))
+    XCTAssertEqual(records, [])
   }
 
 }

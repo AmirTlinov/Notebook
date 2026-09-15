@@ -735,6 +735,8 @@ def ui(args):
                    "NOTEBOOK_ACCEPTANCE_INVITATION_FILE": str(directory / "invitation.private"),
                    "NOTEBOOK_ACCEPTANCE_PEER_ID": peer["actorID"], "NOTEBOOK_ACCEPTANCE_WORKSPACE_ID": value["workspaceID"],
                    "NOTEBOOK_ACCEPTANCE_REPLY_MARKER": "ACCEPTANCE_REPLY_" + value["runID"]}
+    if args.platform == "mac":
+        environment["NOTEBOOK_ACCEPTANCE_MAC_APPLICATION"] = built["macApp"]
     if interaction:
         environment.update(interaction["environment"])
     if document:

@@ -8,10 +8,12 @@ struct NotebookPairingView: View {
   @Environment(\.dismiss) private var dismiss
   @State private var invitation = ""
   @State private var error: String?
+  @State private var performing = false
 
   var body: some View {
     NavigationStack {
       Form {
+        if performing { ProgressView("Обновляется подключение…") }
         Section("Подключение к Mac") {
           switch model.pairingState {
           case .idle:
@@ -20,7 +22,7 @@ struct NotebookPairingView: View {
               .textInputAutocapitalization(.never)
               .autocorrectionDisabled()
               .accessibilityIdentifier("pairing-invitation")
-            Button("Подключиться") { perform { try model.joinPairingInvitation(invitation) } }
+            Button("Подключиться") { perform { try await model.joinPairingInvitation(invitation) } }
               .disabled(invitation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
           case .invitation:
             Text("Приглашение создано на Mac. До подтверждения на обоих устройствах содержание не передаётся.")
@@ -34,15 +36,15 @@ struct NotebookPairingView: View {
               .font(.caption).textSelection(.enabled)
             Text("Сверьте устройство и пространство с Mac. Имя само по себе не подтверждает подлинность.")
             if locallyConfirmed { Text("Вы подтвердили. Ожидается подтверждение на Mac.") }
-            else { Button("Разрешить этому Mac доступ") { perform { try model.confirmPairing(generation: generation) } } }
+            else { Button("Разрешить этому Mac доступ") { perform { try await model.confirmPairing(generation: generation) } } }
           case .paired(let peer):
             Label("Подключено: \(peer.displayName)", systemImage: "checkmark.shield")
           case .failed(let message):
             Text(message).foregroundStyle(.red)
-            Button("Начать заново") { perform { try model.cancelPairing() } }
+            Button("Начать заново") { perform { try await model.cancelPairing() } }
           }
           if case .idle = model.pairingState {} else {
-            Button("Отменить сопряжение", role: .cancel) { perform { try model.cancelPairing() } }
+            Button("Отменить сопряжение", role: .cancel) { perform { try await model.cancelPairing() } }
           }
         }
         if let error { Section { Text(error).foregroundStyle(.red).accessibilityIdentifier("pairing-error") } }
@@ -51,26 +53,31 @@ struct NotebookPairingView: View {
             ForEach(model.pairedPeers, id: \.deviceID) { peer in
               VStack(alignment: .leading, spacing: 8) {
                 Text(peer.displayName)
-                Button("Отозвать доступ", role: .destructive) { perform { try model.revokePeer(peer.deviceID) } }
+                Button("Отозвать доступ", role: .destructive) { perform { try await model.revokePeer(peer.deviceID) } }
               }
             }
           }
         }
       }
+      .disabled(performing)
       .navigationTitle("Соединение")
       .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { dismiss() } } }
     }
   }
 
-  private func perform(_ operation: () throws -> Void) {
-    do { try operation(); error = nil }
-    catch NotebookTransportError.identityMismatch {
-      error = "Приглашение относится к другому устройству или пространству. Откройте одно пространство на обоих устройствах. Существующие данные сохранены."
-    } catch NotebookTransportError.pairingExpired {
-      error = "Приглашение истекло. Создайте новое на Mac."
-    } catch NotebookTransportError.storageUnavailable {
-      error = "Защищённое хранилище сопряжения пока недоступно. Подключение можно повторить после восстановления доступа."
-    } catch { self.error = "Сопряжение не завершено: \(error.localizedDescription)" }
+  private func perform(_ operation: @escaping @MainActor () async throws -> Void) {
+    guard !performing else { return }; performing = true
+    Task { @MainActor in
+      defer { performing = false }
+      do { try await operation(); error = nil }
+      catch NotebookTransportError.identityMismatch {
+        error = "Приглашение относится к другому устройству или пространству. Откройте одно пространство на обоих устройствах. Существующие данные сохранены."
+      } catch NotebookTransportError.pairingExpired {
+        error = "Приглашение истекло. Создайте новое на Mac."
+      } catch NotebookTransportError.storageUnavailable {
+        error = "Защищённое хранилище сопряжения пока недоступно. Подключение можно повторить после восстановления доступа."
+      } catch is CancellationError {} catch { self.error = "Сопряжение не завершено: \(error.localizedDescription)" }
+    }
   }
 }
 
