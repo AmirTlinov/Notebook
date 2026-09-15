@@ -8,14 +8,14 @@ import XCTest
 /// callbacks, SQL command, lightweight index and retained raster cohort.
 @MainActor
 final class WorkspaceCoverContinuityTests: XCTestCase {
-  func testDroppedCoverRetainsItsNativeBodyAndPixelsWhileTheNewIndexWaitsForItsCohort() async throws {
+  func testDroppedCoverRetainsItsNativeBodyWhileAnUnrelatedSourceWaitsForAdmission() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("cover-continuity-" + UUID().uuidString)
     let store = NotebookStore(root: root), actor = UUID()
     let (boardID, itemID, delayedElement) = try await Task.detached {
       let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
       let workspace = try store.loadIndex(), before = try store.loadBoard(items: workspace.items)
       var after = before
-      let element = SpatialElement(id: "cohort-permit-barrier", surface: .board(header.rootBoardID), kind: .web,
+      let element = SpatialElement(id: "cohort-permit-barrier", surface: .board(header.rootBoardID), kind: .markdown,
         frame: .init(x: 0, y: 0, width: 64, height: 64), worldOrigin: .init(x: -800, y: -500),
         source: "A finite unrelated raster dependency", html: "<svg width='64' height='64'><rect width='64' height='64' fill='#38624f'/></svg>",
         css: "svg{display:block}", javaScript: "", stamp: .init(counter: 0, actor: actor))
@@ -36,9 +36,13 @@ final class WorkspaceCoverContinuityTests: XCTestCase {
     window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil; model.compositionTiles.cancelPreparation() }
     let resources = SceneRenderResources.shared
-    try await waitUntil {
+    let address = SceneSourceAddress(plane: .board(boardID), elementID: delayedElement.id)
+    try await waitUntil(diagnostic: {
+      "source=\(String(describing: model.compositionTiles.published?.sourceReceipts[address])) background=\(resources.activeBackgroundWebSurfaceCount) pending=\(resources.pendingWebRequestCount) scenePending=\(model.scenePreparationPending) input=\(model.inputIsActive)"
+    }) {
       model.compositionTiles.published != nil && !model.scenePreparationPending
-        && !model.inputIsActive && resources.activeBackgroundWebSurfaceCount == 0
+        && model.compositionTiles.published?.sourceReceipts[address]?.hasCurrentPixels == true
+        && !model.inputIsActive
         && !self.descendants(host.view, as: NotebookInteractionTouchView.self).isEmpty
     }
     let original = try XCTUnwrap(model.compositionTiles.published, model.compositionTiles.failure ?? "No completed initial scene")
@@ -68,8 +72,13 @@ final class WorkspaceCoverContinuityTests: XCTestCase {
       !model.scenePreparationPending && resources.pendingWebRequestCount > 0
         && model.sceneIndex?.element(id: delayedElement.id, boardID: boardID)?.state == .object(["revision": .number(1)])
     }
-    XCTAssertTrue(model.compositionTiles.published === original)
+    XCTAssertFalse(model.compositionTiles.published?.sourceReceipts[address]?.hasCurrentPixels == true)
+    XCTAssertEqual(model.compositionTiles.published?.sourceReceipts[address]?.status, .pending)
     XCTAssertNil(model.compositionTiles.failure)
+    try await Task.sleep(for: .milliseconds(8_200))
+    XCTAssertEqual(model.compositionTiles.published?.sourceReceipts[address]?.status, .pending,
+      "An occupied executor is not a failed render; releasing it must resume this same request")
+    XCTAssertGreaterThan(resources.pendingWebRequestCount, 0)
 
     var lifted = false
     let onLift = touchView.onLiftChanged
@@ -93,9 +102,13 @@ final class WorkspaceCoverContinuityTests: XCTestCase {
     }
     XCTAssertEqual(model.sceneIndex?.board(id: boardID)?.placement(of: itemID)?.center, accepted.center)
     XCTAssertNotEqual(original.frame.index.board(id: boardID)?.placement(of: itemID)?.center, accepted.center)
-    XCTAssertTrue(model.compositionTiles.published === original, "The explicit permit barrier still holds the whole old cohort")
+    // The retained cohort describes its immutable pixels. Accepted placement
+    // comes from the index/native owner; verify that actual moving body below,
+    // rather than requiring an unrelated raster to publish a new whole cohort.
+    XCTAssertEqual(model.compositionTiles.published?.sourceReceipts[address]?.status, .pending)
     XCTAssertNil(model.compositionTiles.failure)
-    XCTAssertTrue(original.rasters.values.allSatisfy { !$0.isReleased })
+    XCTAssertEqual(model.compositionTiles.published?.sourceRasters[address]?.isReleased, false,
+      "The waiting source keeps its actual earlier pixels, independently of the cover's native owner")
     host.view.layoutIfNeeded()
     let observedCenter = touchView.convert(CGPoint(x: touchView.bounds.midX, y: touchView.bounds.midY), to: host.view)
     XCTAssertEqual(observedCenter.x, initialCenter.x + delta.width, accuracy: 0.5,
@@ -114,7 +127,8 @@ final class WorkspaceCoverContinuityTests: XCTestCase {
     }
 
     for permit in permits { permit.release() }; permits.removeAll()
-    try await waitUntil { model.compositionTiles.published?.id != original.id && !model.compositionTiles.isPreparing }
+    try await waitUntil { model.compositionTiles.published?.sourceReceipts[address]?.hasCurrentPixels == true
+      && !model.compositionTiles.isPreparing }
     let complete = try XCTUnwrap(model.compositionTiles.published, model.compositionTiles.failure ?? "Replacement did not complete")
     XCTAssertEqual(complete.frame.index.board(id: boardID)?.placement(of: itemID)?.center, accepted.center)
     XCTAssertTrue(complete.plan.allowsLive(.item(itemID), in: .board(boardID)), "A held selected owner cannot silently turn into an unrelated tile")
@@ -124,10 +138,10 @@ final class WorkspaceCoverContinuityTests: XCTestCase {
     for channel in 0..<3 { XCTAssertEqual(finalPixels[channel], baseline[channel], accuracy: 12) }
   }
 
-  private func waitUntil(_ predicate: () -> Bool) async throws {
+  private func waitUntil(diagnostic: () -> String = { "" }, _ predicate: () -> Bool) async throws {
     let deadline = ContinuousClock.now + .seconds(8)
     while !predicate(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
-    XCTAssertTrue(predicate(), "The addressed scene or native contact did not reach its explicit readiness condition")
+    XCTAssertTrue(predicate(), "The addressed scene or native contact did not reach its explicit readiness condition: \(diagnostic())")
   }
 
   private func descendants<T: UIView>(_ view: UIView, as type: T.Type) -> [T] {

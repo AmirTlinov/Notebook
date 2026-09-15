@@ -1,6 +1,20 @@
 import NotebookCore
 import WebKit
 
+/// One source job owns its latest camera crop/density. Retargeting delivers an
+/// event to that job's admitted executor; waiting for admission needs no poll.
+@MainActor
+final class SceneRasterCaptureRequest {
+  private(set) var policy: AgentSnapshotPolicy
+  fileprivate var onPolicyChange: ((AgentSnapshotPolicy) -> Void)?
+  init(policy: AgentSnapshotPolicy) { self.policy = policy }
+  func update(_ policy: AgentSnapshotPolicy) {
+    guard self.policy != policy else { return }
+    self.policy = policy
+    onPolicyChange?(policy)
+  }
+}
+
 /// One sequential renderer owns one temporary WebKit, not one process session
 /// per source. Human web surfaces keep their independent data stores and leases.
 @MainActor
@@ -17,7 +31,13 @@ final class SceneWebRasterPreparation {
   private var isClosed = false
   private var closingCaptures: [AgentSnapshotCapture] = []
   private var closeTask: Task<Void, Never>?
-  private var isPreparing = false
+  private struct Job {
+    let id: UUID
+    let element: AgentElement
+    let capture: SceneRasterCaptureRequest
+    let completion: CheckedContinuation<RasterLease, any Error>
+  }
+  private var job: Job?
   private(set) var completedJobCount = 0
   var webIdentity: ObjectIdentifier { ObjectIdentifier(web) }
   var loadToken: String? { coordinator.loadToken }
@@ -27,8 +47,7 @@ final class SceneWebRasterPreparation {
     permitsPreparation: @MainActor () -> Bool) async throws -> SceneWebRasterPreparation {
     try Task.checkCancellation()
     guard permitsPreparation() else { throw CancellationError() }
-    let lease = try await resources.acquireWebSurface(priority: .background, source: executionSource,
-      deadline: .now + .seconds(8))
+    let lease = try await resources.acquireWebSurface(priority: .background, source: executionSource)
     do {
       try Task.checkCancellation()
       guard permitsPreparation() else { throw CancellationError() }
@@ -55,48 +74,72 @@ final class SceneWebRasterPreparation {
         styleMask: .borderless, backing: .buffered, defer: false)
       window.isReleasedWhenClosed = false; window.contentView = web
     #endif
+    coordinator.use(onSnapshotPrepared: { [weak self] raster in
+      guard let self, let job,
+        raster.image(for: job.capture.policy.rasterSource(for: job.element),
+          minimumScale: job.capture.policy.minimumScale(for: job.element)) != nil else {
+        raster.release(); return
+      }
+      finish(.success(raster))
+    })
+    coordinator.use(onFailure: { [weak self] _ in
+      guard let self, let job else { return }
+      finish(.failure(coordinator.snapshotFailure ?? SceneRenderError.snapshotPending(job.element.id)))
+    })
   }
 
   func prepare(_ element: AgentElement, requestedScale: Double, region: PageRect? = nil,
-    currentPolicy: (@MainActor () -> AgentSnapshotPolicy)? = nil,
+    captureRequest: SceneRasterCaptureRequest? = nil,
     permitsPreparation: @MainActor () -> Bool) async throws -> RasterLease {
-    precondition(!isPreparing, "A raster executor runs exactly one job at a time")
+    precondition(job == nil, "A raster executor runs exactly one job at a time")
     guard !isClosed else { throw CancellationError() }
-    var policy: AgentSnapshotPolicy = currentPolicy?()
-      ?? region.map { .region($0, scale: requestedScale) } ?? .exact(scale: requestedScale)
+    let request = captureRequest ?? SceneRasterCaptureRequest(policy:
+      region.map { .region($0, scale: requestedScale) } ?? .exact(scale: requestedScale))
+    let policy = request.policy
     guard requestedScale.isFinite, requestedScale > 0,
       policy.pixelSize(for: element) != nil else { throw SceneRenderError.resourceLimit }
     try Task.checkCancellation()
     guard permitsPreparation() else { throw CancellationError() }
     if let raster = resources.retainRaster(for: policy.rasterSource(for: element),
       minimumScale: policy.minimumScale(for: element)) { return raster }
-    isPreparing = true
-    defer { isPreparing = false }
-    place(element, policy: policy)
-    coordinator.loadRasterJob(element, policy: policy, in: web)
-    let deadline = ContinuousClock.now + .seconds(8)
+    let id = UUID()
     do {
-      while true {
+      let raster: RasterLease = try await withTaskCancellationHandler {
         try Task.checkCancellation()
-        guard permitsPreparation() else { throw CancellationError() }
-        if let next = currentPolicy?(), next != policy {
-          guard next.pixelSize(for: element) != nil else { throw SceneRenderError.resourceLimit }
-          policy = next
+        return try await withCheckedThrowingContinuation { completion in
+          precondition(request.onPolicyChange == nil, "A capture request belongs to one admitted executor")
+          job = Job(id: id, element: element, capture: request, completion: completion)
+          request.onPolicyChange = { [weak self] policy in self?.retarget(id, policy: policy) }
           place(element, policy: policy)
-          // A camera request changes only this executor's capture window. It
-          // must not restart the program or its still-running readiness promise.
-          coordinator.load(element, policy: policy, in: web)
+          // The coordinator owns the versioned render/capture deadline and its
+          // actual ready/error events. There is no second overall stage timer.
+          coordinator.loadRasterJob(element, policy: policy, in: web)
         }
-        if let raster = resources.retainRaster(for: policy.rasterSource(for: element),
-          minimumScale: policy.minimumScale(for: element)) {
-          completedJobCount += 1
-          return raster
+      } onCancel: {
+        Task { @MainActor [weak self] in
+          guard let self, job?.id == id else { return }
+          close()
         }
-        if let failure = coordinator.snapshotFailure { throw failure }
-        guard ContinuousClock.now < deadline else { throw SceneRenderError.snapshotPending(element.id) }
-        try await Task.sleep(for: .milliseconds(20))
       }
+      guard !Task.isCancelled, permitsPreparation() else { raster.release(); throw CancellationError() }
+      completedJobCount += 1
+      return raster
     } catch { close(); throw error }
+  }
+
+  private func retarget(_ id: UUID, policy: AgentSnapshotPolicy) {
+    guard let job, job.id == id, !isClosed else { return }
+    guard policy.pixelSize(for: job.element) != nil else { finish(.failure(SceneRenderError.resourceLimit)); return }
+    place(job.element, policy: policy)
+    // Only capture geometry changes; the admitted program, focus and its
+    // pending readiness promise retain their one source/load identity.
+    coordinator.load(job.element, policy: policy, in: web)
+  }
+
+  private func finish(_ result: Result<RasterLease, any Error>) {
+    guard let job else { if case .success(let raster) = result { raster.release() }; return }
+    self.job = nil; job.capture.onPolicyChange = nil
+    job.completion.resume(with: result)
   }
 
   private func place(_ element: AgentElement, policy: AgentSnapshotPolicy) {
@@ -114,7 +157,9 @@ final class SceneWebRasterPreparation {
 
   func close() {
     guard !isClosed else { return }
-    isClosed = true; coordinator.invalidate()
+    isClosed = true
+    finish(.failure(CancellationError()))
+    coordinator.invalidate()
     #if os(iOS)
       web.removeFromSuperview(); window.isHidden = true; window.rootViewController = nil
     #else

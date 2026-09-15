@@ -6,6 +6,74 @@ import XCTest
 
 final class SceneWebRasterPreparationTests: XCTestCase {
   @MainActor
+  func testQueuedCaptureOutlivesTheExecutionDeadlineAndUsesItsLatestDemandAfterAdmission() async throws {
+    let resources = SceneRenderResources(maximumBackgroundWebSurfaces: 1)
+    let held = try await resources.acquireWebSurface(priority: .background)
+    defer { held.release() }
+    let element = AgentElement(id: "queued-capture", kind: .web,
+      frame: .init(x: 0, y: 0, width: 128, height: 128), source: "Queued pixels",
+      html: "<div style='position:absolute;inset:0;background:red'></div>")
+    let request = SceneRasterCaptureRequest(policy: .exact(scale: 1))
+    var finished = false
+    let task = Task { @MainActor in
+      defer { finished = true }
+      return try await resources.prepareRaster(element, captureRequest: request)
+    }
+    defer { task.cancel() }
+    let deadline = ContinuousClock.now + .seconds(2)
+    while resources.pendingWebRequestCount == 0, ContinuousClock.now < deadline { await Task.yield() }
+    XCTAssertEqual(resources.pendingWebRequestCount, 1)
+    // A real occupied executor, not an artificial render delay. The old
+    // eight-second admission deadline failed here before WebKit even existed.
+    try await Task.sleep(for: .milliseconds(8_200))
+    XCTAssertFalse(finished)
+    XCTAssertEqual(resources.pendingWebRequestCount, 1)
+    XCTAssertEqual(resources.activeBackgroundWebSurfaceCount, 1)
+    request.update(.region(.init(x: 32, y: 16, width: 64, height: 64), scale: 2))
+    held.release()
+    let raster = try await task.value
+    defer { raster.release() }
+    XCTAssertEqual(raster.source, request.policy.rasterSource(for: element))
+    XCTAssertEqual(raster.pixelScale, 2, accuracy: 0.0001)
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+  }
+
+  @MainActor
+  func testRejectedProgramReadinessCompletesItsOwnRequestAndReleasesItsExecutor() async throws {
+    let resources = SceneRenderResources()
+    let element = AgentElement(id: "rejected-capture", kind: .web,
+      frame: .init(x: 0, y: 0, width: 64, height: 64), source: "A definite render error",
+      html: "<script>window.notebook.ready(Promise.reject(new Error('Expected rejection')))</script>")
+    do {
+      let raster = try await resources.prepareRaster(element)
+      raster.release(); XCTFail("A rejected readiness promise cannot produce a ready image")
+    } catch let error as SceneRenderError {
+      XCTAssertEqual(error, .snapshotPending(element.id))
+    }
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+  }
+
+  @MainActor
+  func testClosingTheActualExecutorCompletesItsWaitingRequest() async throws {
+    let resources = SceneRenderResources()
+    let preparation = try await SceneWebRasterPreparation.create(resources: resources, permitsPreparation: { true })
+    let element = AgentElement(id: "closed-capture", kind: .web,
+      frame: .init(x: 0, y: 0, width: 64, height: 64), source: "Never ready",
+      html: "<script>window.notebook.ready(new Promise(() => {}))</script>")
+    let task = Task { try await preparation.prepare(element, requestedScale: 1, permitsPreparation: { true }) }
+    defer { task.cancel(); preparation.close() }
+    let deadline = ContinuousClock.now + .seconds(2)
+    while preparation.loadToken == nil, ContinuousClock.now < deadline { await Task.yield() }
+    XCTAssertNotNil(preparation.loadToken)
+    preparation.close()
+    do { _ = try await task.value; XCTFail("Closing the owner must cancel its request") }
+    catch is CancellationError { }
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+  }
+
+  @MainActor
   func testTransparentSVGSnapshotContainsOnlyItsAuthoredCross() async throws {
     let resources = SceneRenderResources()
     let preparation = try await SceneWebRasterPreparation.create(resources: resources, permitsPreparation: { true })
@@ -34,7 +102,7 @@ final class SceneWebRasterPreparationTests: XCTestCase {
           viewport:[innerWidth,innerHeight], background:getComputedStyle(document.body).backgroundColor,
           svgFill:getComputedStyle(document.querySelector('svg')).fill})
         """)
-      let diagnostic = XCTAttachment(string: "window=\(window.frame) web=\(web.frame) safe=\(web.safeAreaInsets) scrollInset=\(web.scrollView.adjustedContentInset) edgeHidden=\(web.scrollView.topEdgeEffect.isHidden) DOM=\(dom)")
+      let diagnostic = XCTAttachment(string: "window=\(window.frame) web=\(web.frame) safe=\(web.safeAreaInsets) scrollInset=\(web.scrollView.adjustedContentInset) edgeHidden=\(web.scrollView.topEdgeEffect.isHidden) DOM=\(String(describing: dom))")
       diagnostic.name = "Transparent source native and DOM geometry"; diagnostic.lifetime = .keepAlways
       add(diagnostic)
     }
@@ -51,9 +119,9 @@ final class SceneWebRasterPreparationTests: XCTestCase {
     let element = AgentElement(id: "moving-pending-source", kind: .web,
       frame: .init(x: 0, y: 0, width: 512, height: 512), source: "One readiness promise",
       html: "<div style='position:absolute;inset:0;background:red'></div><script>window.notebook.ready(new Promise(resolve => setTimeout(resolve,1800)))</script>")
-    var policy = AgentSnapshotPolicy.region(.init(x: 0, y: 0, width: 128, height: 128), scale: 1)
+    let request = SceneRasterCaptureRequest(policy: .region(.init(x: 0, y: 0, width: 128, height: 128), scale: 1))
     let job = Task { try await preparation.prepare(element, requestedScale: 1,
-      currentPolicy: { policy }, permitsPreparation: { true }) }
+      captureRequest: request, permitsPreparation: { true }) }
     defer { job.cancel() }
     let start = ContinuousClock.now
     while preparation.loadToken == nil, ContinuousClock.now - start < .seconds(2) {
@@ -62,16 +130,16 @@ final class SceneWebRasterPreparationTests: XCTestCase {
     let token = try XCTUnwrap(preparation.loadToken)
     let identity = preparation.webIdentity
     for index in 0..<12 {
-      policy = .region(.init(x: Double(index * 8), y: Double(index * 4), width: 128, height: 128),
-        scale: 1 + Double(index) / 16)
+      request.update(.region(.init(x: Double(index * 8), y: Double(index * 4), width: 128, height: 128),
+        scale: 1 + Double(index) / 16))
       try await Task.sleep(for: .milliseconds(80))
       XCTAssertEqual(preparation.loadToken, token, "Pinch and pan cannot restart a pending readiness promise")
       XCTAssertEqual(preparation.webIdentity, identity)
     }
     let raster = try await job.value
     defer { raster.release() }
-    XCTAssertEqual(raster.source, policy.rasterSource(for: element))
-    XCTAssertGreaterThanOrEqual(raster.pixelScale + 0.000_001, policy.minimumScale(for: element))
+    XCTAssertEqual(raster.source, request.policy.rasterSource(for: element))
+    XCTAssertGreaterThanOrEqual(raster.pixelScale + 0.000_001, request.policy.minimumScale(for: element))
     XCTAssertEqual(preparation.loadToken, token)
     let pixel = try centerPixel(try XCTUnwrap(raster.image.cgImage))
     XCTAssertGreaterThan(pixel[0], 240); XCTAssertLessThan(pixel[2], 10)

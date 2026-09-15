@@ -254,11 +254,28 @@ final class SceneRasterCompositionTests: XCTestCase {
       let source = AgentElement(id: UUID().uuidString, kind: .web,
         frame: .init(x: 0, y: 0, width: 256, height: 256), source: "unique \(index)",
         html: "<svg width='256' height='256'><rect width='256' height='256' fill='rgb(\(index * 30),0,0)'/></svg>")
-      let raster = try await resources.prepareRaster(source, requestedScale: 2)
-      XCTAssertEqual(resources.activeWebSurfaceCount, 0)
-      try await compositor.draw(raster, in: CGRect(origin: .zero, size: size))
-      raster.release()
-      XCTAssertLessThanOrEqual(resources.residentBytes + resources.reservedBytes, resources.byteLimit)
+      // The 512x512 output and a complete wide-gamut WebKit capture do
+      // not fit in this unchanged 5 MiB pool. Addressed crops retain the same
+      // source geometry and 2x density; no smaller-resolution fallback is used.
+      if index == 0 {
+        do {
+          let unexpected = try await resources.prepareRaster(source, requestedScale: 2)
+          unexpected.release()
+          XCTFail("The full capture must not bypass admission")
+        } catch {
+          XCTAssertEqual(error as? SceneRenderError, .resourceLimit)
+        }
+        XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+      }
+      for x in [0.0, 128.0] {
+        let region = PageRect(x: x, y: 0, width: 128, height: 256)
+        let raster = try await resources.prepareRaster(source, requestedScale: 2, region: region)
+        XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+        XCTAssertNotNil(raster.image(for: .agentRegion(source, region), minimumScale: 2))
+        try await compositor.draw(raster, in: CGRect(x: x, y: 0, width: 128, height: 256))
+        raster.release()
+        XCTAssertLessThanOrEqual(resources.residentBytes + resources.reservedBytes, resources.byteLimit)
+      }
     }
     let result = try pixels(try await compositor.finishPNG())
     XCTAssertEqual(result.colorAt(x: 256, y: 256)!.redComponent, 210.0 / 255, accuracy: 0.025)

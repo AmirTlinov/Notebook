@@ -680,6 +680,7 @@ final class SceneCompositionTiles {
   private struct SourceJob {
     let id: UUID
     var demand: SceneSourceDemand
+    let capture: SceneRasterCaptureRequest
     let task: Task<Void, Never>
   }
   @ObservationIgnored private var sourceJobs: [SceneSourceAddress: SourceJob] = [:]
@@ -977,6 +978,7 @@ final class SceneCompositionTiles {
       // Source/state identity owns the job. Pinch density and viewport crops
       // retarget that same executor instead of resetting its readiness work.
       sourceJobs[address]?.demand = demand
+      job.capture.update(demand.policy)
     }
     sourceFailures = sourceFailures.filter { address, failure in
       guard let current = receipts[address]?.demand, current.source == failure.0.source else { return false }
@@ -993,13 +995,15 @@ final class SceneCompositionTiles {
       #endif
       guard sourceJobs.count < 32 else { break }
       let id = UUID(), demand = receipt.demand
+      let capture = SceneRasterCaptureRequest(policy: demand.policy)
       let work = Task { @MainActor [weak self, resources] in
         defer { self?.sourceWork[id] = nil }
         do {
           let focus = InteractiveElementReference.board(boardID: address.plane.boardID, elementID: address.elementID)
           let current = try await AgentWebCoordinator.captureCurrent(focus: focus, element: demand.source, resources: resources)
           let raster: RasterLease
-          if let current, current.image(for: demand.rasterSource, minimumScale: demand.minimumScale) != nil {
+          if let current, current.image(for: capture.policy.rasterSource(for: demand.source),
+            minimumScale: capture.policy.minimumScale(for: demand.source)) != nil {
             raster = current
           } else {
             current?.release()
@@ -1007,7 +1011,7 @@ final class SceneCompositionTiles {
             // program's actual final borrow before starting a raster executor.
             raster = try await resources.prepareRaster(demand.source, requestedScale: demand.minimumScale, region: demand.region,
             executionSource: focus,
-            currentPolicy: { [weak self] in self?.sourceJobs[address]?.demand.policy ?? demand.policy },
+            captureRequest: capture,
             permitsPreparation: { [weak self] in
               guard let self, !stopped, sourceJobs[address]?.id == id else { return false }
               // This address already owns an admitted executor. A transient
@@ -1036,7 +1040,7 @@ final class SceneCompositionTiles {
           isPreparing = preparingRequest != nil || !sourceJobs.isEmpty
         }
       }
-      sourceJobs[address] = .init(id: id, demand: demand, task: work)
+      sourceJobs[address] = .init(id: id, demand: demand, capture: capture, task: work)
       sourceWork[id] = work
     }
     isPreparing = preparingRequest != nil || !sourceJobs.isEmpty

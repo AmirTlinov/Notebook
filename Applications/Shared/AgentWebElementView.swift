@@ -562,6 +562,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private(set) var snapshotFailure: SceneRenderError?
   private var onState: (JSONValue) -> Void
   private var onRenderReady: (Bool) -> Void
+  private var onSnapshotPrepared: ((RasterLease) -> Void)?
   private var onInteractionReady: (Bool) -> Void
   private var onInteraction: () -> Void = {}
   private var onFailure: (AgentWebSourceFailure) -> Void
@@ -614,6 +615,14 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   func use(onRenderReady: @escaping (Bool) -> Void) {
     guard !isInvalidated else { return }
     self.onRenderReady = onRenderReady
+  }
+
+  /// The raster reader takes its pin in the actual capture completion, before
+  /// another admission can reclaim the cache entry. Live UI keeps its separate
+  /// deferred readiness callback; an image is not an input installation proof.
+  func use(onSnapshotPrepared: ((RasterLease) -> Void)?) {
+    guard !isInvalidated else { return }
+    self.onSnapshotPrepared = onSnapshotPrepared
   }
 
   func use(onInteractionReady: @escaping (Bool) -> Void) {
@@ -756,6 +765,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     preparationDeadline?.cancel(); preparationDeadline = nil; preparationDeadlineAt = nil
     currentCapture?.cancel(); currentCapture = nil
     onRenderReady = { _ in }
+    onSnapshotPrepared = nil
     onInteractionReady = { _ in }
     onInteraction = {}
     onFailure = { _ in }
@@ -1038,6 +1048,17 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
           resources.image(for: source, minimumScale: capturedPolicy.minimumScale(for: element)) != nil {
           preparationDeadline?.cancel(); preparationDeadline = nil; preparationDeadlineAt = nil; lastCaptureFailure = nil
           setRenderReady(true, token: token)
+          if let onSnapshotPrepared,
+            let raster = resources.retainRaster(for: source, minimumScale: capturedPolicy.minimumScale(for: element)) {
+            let generation = readinessGeneration
+            // Keep the pixels pinned now, but deliver outside WebKit's capture
+            // callback, like the existing readiness event. A consumer may close
+            // its window immediately; the submitted capture must finish first.
+            Task { @MainActor [weak self] in
+              guard let self, accepts(token), readinessGeneration == generation else { raster.release(); return }
+              onSnapshotPrepared(raster)
+            }
+          }
         } else if capturedPolicy != snapshotPolicy { needsSnapshot = true }
         else {
           fail(.init(kind: "snapshot_error", elementID: element.id,
