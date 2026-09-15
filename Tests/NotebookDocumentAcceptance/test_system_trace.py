@@ -7,6 +7,7 @@ import plistlib
 import signal
 import struct
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -29,6 +30,17 @@ class Process:
     def kill(self): self.code = -9
 
 
+class StartNotification:
+    def __init__(self):
+        self.name = str(uuid.uuid4())
+        self.started = threading.Event()
+        self.closed = False
+    def __enter__(self): return self
+    def __exit__(self, *args): self.close()
+    def wait(self, timeout): return self.started.wait(timeout)
+    def close(self): self.closed = True
+
+
 class HandshakeTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -39,12 +51,14 @@ class HandshakeTests(unittest.TestCase):
             evidence_directory=self.root/'evidence', simulator_udid=self.udid,
             expected_bundle_id='com.amirtlinov.notebook.acceptance', expected_executable_uuid=self.binary)
         self.processes = []
+        self.notifications = {}
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.stack.enter_context(patch.object(trace.subprocess, 'check_output', return_value=json.dumps({
             'Hangs': {'hangsThreshold': 250, 'detectPriorityInversions': False},
             'Time Profiler': {'recordWaitingThreads': False}}).encode()))
         self.stack.enter_context(patch.object(trace.subprocess, 'Popen', side_effect=self.spawn))
+        self.stack.enter_context(patch.object(trace, 'TraceStartNotification', side_effect=self.notification))
         self.stack.enter_context(patch.object(self.coordinator, '_process_identity', side_effect=lambda value:
             {'pid': value['pid'], 'path': value['executablePath'], 'processStart': value['launchID']}))
         self.stack.enter_context(patch.object(self.coordinator, '_check_liveness'))
@@ -52,8 +66,15 @@ class HandshakeTests(unittest.TestCase):
         self.coordinator.start()
         self.addCleanup(self.coordinator.cancel)
 
+    def notification(self):
+        value = StartNotification(); self.notifications[value.name] = value; return value
+
     def spawn(self, command, **kwargs):
-        value = Process(command, **kwargs);self.processes.append(value);return value
+        value = Process(command, **kwargs)
+        value.notification = self.notifications[command[command.index('--notify-tracing-started')+1]]
+        self.assertFalse(value.notification.closed)
+        self.processes.append(value)
+        return value
 
     def export(self, command, **kwargs):
         path = Path(command[command.index('--output')+1])
@@ -92,8 +113,9 @@ class HandshakeTests(unittest.TestCase):
         self.wait(lambda: len(self.processes)>count)
         process = self.processes[-1]
         self.assertFalse((self.coordinator.control/(value['segmentID']+'.started.json')).exists())
-        process.log.write_text('Starting recording\nRecording started\n')
+        process.notification.started.set()
         self.assertEqual(self.ack(value,'started')['identity'],value['identity'])
+        self.assertTrue(process.notification.closed)
         return process
 
     def test_two_actual_launch_identities_get_separate_attach_segments(self):
@@ -111,7 +133,7 @@ class HandshakeTests(unittest.TestCase):
         self.assertEqual(options['Hangs'],{'hangsThreshold':100,'detectPriorityInversions':False})
         self.assertIn('Time Profiler',options)
 
-    def test_process_exit_before_recording_marker_never_releases_workload(self):
+    def test_process_exit_before_start_notification_never_releases_workload(self):
         value=self.message();self.publish(value,'ready');self.wait(lambda: bool(self.processes))
         self.processes[0].code=1
         self.assertIn('exited',self.ack(value,'failed')['error'])
@@ -125,6 +147,16 @@ class HandshakeTests(unittest.TestCase):
             self.assertIn('deadline',self.ack(value,'failed')['error'])
         self.assertFalse((self.coordinator.control/(value['segmentID']+'.started.json')).exists())
         self.assertEqual(self.processes[0].signals,[signal.SIGINT])
+        self.assertTrue(self.processes[0].notification.closed)
+
+    def test_log_prose_is_not_a_recording_start_event(self):
+        value=self.message(); self.publish(value,'ready'); self.wait(lambda: bool(self.processes))
+        process=self.processes[0]
+        process.log.write_text('Starting recording with the Time Profiler template.\nRecording started\n')
+        time.sleep(.25)
+        self.assertFalse((self.coordinator.control/(value['segmentID']+'.started.json')).exists())
+        process.notification.started.set()
+        self.ack(value,'started'); self.publish(value,'end'); self.ack(value,'closed')
 
     def test_start_failure_survives_recorder_shutdown_failure_in_ack_and_session(self):
         value=self.message()
@@ -212,10 +244,10 @@ class HandshakeTests(unittest.TestCase):
         self.assertIn('accepted build',self.ack(value,'failed')['error'])
         self.assertEqual(self.processes,[])
 
-    def test_start_marker_from_an_already_exited_process_does_not_release_ui(self):
+    def test_start_notification_from_an_already_exited_process_does_not_release_ui(self):
         value=self.message();self.publish(value,'ready');self.wait(lambda: bool(self.processes))
         self.processes[0].code=0
-        self.processes[0].log.write_text('Recording started\n')
+        self.processes[0].notification.started.set()
         self.ack(value,'failed')
         self.assertFalse((self.coordinator.control/(value['segmentID']+'.started.json')).exists())
 
@@ -232,6 +264,25 @@ class HandshakeTests(unittest.TestCase):
         path=self.root/'ack.json';trace.write_json(path,{'pid':1})
         with self.assertRaises(FileExistsError):trace.write_json(path,{'pid':2})
         self.assertEqual(trace.read_json(path),{'pid':1})
+
+
+class NativeNotificationTests(unittest.TestCase):
+    def test_only_the_registered_darwin_notification_releases_its_descriptor(self):
+        # Public libnotify, not a fake recorder and not Simulator profiling proof.
+        with trace.TraceStartNotification() as notification:
+            library = notification._library
+            library.notify_post.argtypes = [trace.ctypes.c_char_p]
+            library.notify_post.restype = trace.ctypes.c_uint32
+            self.assertFalse(notification.wait(0))
+            self.assertEqual(library.notify_post((notification.name+'.other').encode()), 0)
+            self.assertFalse(notification.wait(.02))
+            self.assertEqual(library.notify_post(notification.name.encode()), 0)
+            self.assertTrue(notification.wait(1))
+            self.assertFalse(notification.wait(0))
+            fd = notification._fd
+        with self.assertRaises(OSError): os.fstat(fd)
+        notification.close()
+        with self.assertRaisesRegex(trace.TraceError, 'already closed'): notification.wait(0)
 
 
 class BinaryIdentityTests(unittest.TestCase):

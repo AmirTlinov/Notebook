@@ -88,8 +88,9 @@ LC_UUID фактически загруженного главного Mach-O, l
 После настоящего `app.launch()` XCTest helper читает эту identity и посылает
 READY для нового segment UUID. Host сверяет Simulator container, bundle,
 установленный Mach-O UUID, PID executable и время создания процесса. Затем
-выполняется `xctrace record --device UDID --attach PID`. Только реальная строка
-`Recording started` от ещё живого собственного xctrace разрешает STARTED.
+выполняется `xctrace record --device UDID --attach PID`. До запуска регистрируется уникальное Darwin notification через публичный libnotify.
+Только событие `--notify-tracing-started` от ещё живого собственного xctrace
+разрешает STARTED; текст лога не является подтверждением начала записи.
 XCTest повторно проверяет identity и продолжает обычные UI-жесты. Перед
 `app.terminate()` helper отправляет END и ждёт CLOSED; каждый новый launch
 получает собственный сегмент. Максимум16 последовательных сегментов.
@@ -127,3 +128,12 @@ xctrace только для проверки порядка событий и о
 сообщил об отказе tap configuration/start. Это отрицательное доказательство,
 не успешно собранная трасса. Диагностика и точная идентичность сохранены в
 `.build/v6-trace-diagnosis/`; пороги и границы измерений не изменены.
+
+15 сентября: прежнее ожидание строки `Recording started` заменено публичным
+событием xctrace. Настоящий host-Mac recorder успешно завершил запись, не выдав
+такую строку вообще; notification пришёл за 1,965 s при живом процессе.
+18 CPU/notification contracts PASS, включая настоящий libnotify descriptor,
+изоляцию имени, освобождение и запрет запуска workload по одному логу.
+Это исправление START-barrier не снимает отдельный отказ Simulator tap: проба
+`.build/profiler-simulator-notification-diagnostic` не получила события за20s,
+запись не принята. Mac trace не выдан за Simulator CPU/GPU/frames acceptance.

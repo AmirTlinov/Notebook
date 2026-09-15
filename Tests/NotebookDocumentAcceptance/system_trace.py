@@ -4,10 +4,11 @@ This module collects traces; it never certifies FPS or absence of hangs merely
 because a trace exists. The ordinary UI runner owns app launch and all gestures.
 """
 from pathlib import Path
+import ctypes
 import json
 import os
 import plistlib
-import re
+import select
 import signal
 import struct
 import subprocess
@@ -19,6 +20,54 @@ import xml.etree.ElementTree as ET
 
 class TraceError(RuntimeError):
     pass
+
+
+class TraceStartNotification:
+    """Own xctrace's documented recording-start notification, not its log prose."""
+    def __init__(self):
+        self.name = 'com.amirtlinov.notebook.trace-start.' + str(uuid.uuid4())
+        self._library = ctypes.CDLL('/usr/lib/system/libsystem_notify.dylib')
+        self._library.notify_register_file_descriptor.argtypes = [ctypes.c_char_p,
+            ctypes.POINTER(ctypes.c_int), ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
+        self._library.notify_register_file_descriptor.restype = ctypes.c_uint32
+        self._library.notify_cancel.argtypes = [ctypes.c_int]
+        self._library.notify_cancel.restype = ctypes.c_uint32
+        fd, token = ctypes.c_int(-1), ctypes.c_int(-1)
+        status = self._library.notify_register_file_descriptor(
+            self.name.encode(), ctypes.byref(fd), 0, ctypes.byref(token))
+        if status:
+            raise TraceError('Could not register trace-start notification: ' + str(status))
+        self._fd, self._token = fd.value, token.value
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, kind, error, traceback):
+        try:
+            self.close()
+        except TraceError as cleanup:
+            if error is None:
+                raise
+            if hasattr(error, 'add_note'):
+                error.add_note(str(cleanup))
+
+    def wait(self, timeout):
+        if self._token is None:
+            raise TraceError('Trace-start notification is already closed')
+        if not select.select([self._fd], [], [], timeout)[0]:
+            return False
+        data = os.read(self._fd, 4)
+        if len(data) != 4 or struct.unpack('!I', data)[0] != self._token:
+            raise TraceError('Trace-start notification token does not match its owner')
+        return True
+
+    def close(self):
+        if self._token is not None:
+            token, self._token = self._token, None
+            # notify_cancel owns closing the descriptor it allocated.
+            status = self._library.notify_cancel(token)
+            if status:
+                raise TraceError('Could not cancel trace-start notification: ' + str(status))
 
 
 def canonical_uuid(value):
@@ -250,9 +299,14 @@ class TraceHandshake:
         directory.mkdir(mode=0o700)
         before = self._process_identity(identity)
         write_json(directory/'identity-before.json', dict(before, app=identity))
+        with TraceStartNotification() as notification:
+            self._capture(directory, ready, identity, before, notification)
+
+    def _capture(self, directory, ready, identity, before, notification):
         command = ['xcrun', 'xctrace', 'record', '--template', 'Time Profiler', '--device', self.udid,
                    '--attach', str(identity['pid']), '--recording-options', str(self.evidence/'trace-options.json'),
                    '--time-limit', str(self.duration)+'s', '--run-name', ready['segmentID'],
+                   '--notify-tracing-started', notification.name,
                    '--output', str(directory/'system.trace')]
         write_json(directory/'command.json', command)
         log_path = directory/'trace.log'
@@ -262,11 +316,13 @@ class TraceHandshake:
             primary_error = None
             try:
                 deadline = time.monotonic()+20
-                while not re.search(rb'^Recording started(?:[. :]|$)', log_path.read_bytes(), re.MULTILINE):
+                while True:
                     self._check(process, deadline)
                     self._check_liveness(identity['pid'])
-                    self._cancel.wait(.1)
+                    if notification.wait(.1):
+                        break
                 self._check(process, deadline)
+                notification.close()
                 if self._process_identity(identity) != before:
                     raise TraceError('Target process changed at tracing start')
                 started = time.monotonic()
@@ -286,7 +342,8 @@ class TraceHandshake:
                 if after != before:
                     raise TraceError('Target process changed before workload completion')
                 write_json(directory/'identity-after.json', dict(after, app=identity))
-                write_json(directory/'workload.json', {'ready': ready, 'startedAt': started, 'ended': ended})
+                write_json(directory/'workload.json', {'ready': ready, 'startedAt': started, 'ended': ended,
+                    'startNotification': notification.name})
             except BaseException as error:
                 primary_error = error
                 raise
