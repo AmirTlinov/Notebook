@@ -308,10 +308,12 @@ final class NotebookScriptServiceTests: XCTestCase {
     // Full pinned resources preserve arbitrary supported TeX preambles.
     let svg = ##"<svg xmlns="http://www.w3.org/2000/svg" width="240" height="100"><style>.paint{fill:url(#gradient)}</style><defs><linearGradient id="gradient"><stop stop-color="yellow"/><stop offset="1" stop-color="blue"/></linearGradient><clipPath id="clip"><circle cx="210" cy="75" r="18"/></clipPath><filter id="blur"><feGaussianBlur stdDeviation="2"/></filter></defs><rect width="240" height="100" fill="#ed182a"/><text x="12" y="50" font-size="22" fill="white">Printed SVG vector</text><rect class="paint" x="190" y="55" width="40" height="40" clip-path="url(#clip)" filter="url(#blur)"/></svg>"##
     let svgURL = "data:image/svg+xml;base64," + Data(svg.utf8).base64EncodedString()
+    let interactiveID = "collaboration-counter-1d13a2ed-6e64-4ff6-b973-aa1b28bc328e"
     let document = DocumentDocument(actor: UUID(), preamble: "\\usepackage{tikz,siunitx}", blocks: [
       .markdown(id: "print", source: "# Проверка PDF\n\n**Сохранённый** русский источник и формула $x_1$.\n\n<a href='#vector'>К рисунку</a> <a href='https://example.org/notebook'>Сайт</a>"),
       .markdown(id: "vector", source: "<h2 id='vector'>Векторное изображение</h2><img width='240' height='100' src='\(svgURL)'><p><a href='#проверка-pdf'>К началу</a></p>"),
-      .latex(id: "math", source: "\\[E=mc^2,\\qquad \\int_0^1 x^2\\,dx=\\frac{1}{3}\\]\n\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}\\num{1234.5}")
+      .latex(id: "math", source: "\\[E=mc^2,\\qquad \\int_0^1 x^2\\,dx=\\frac{1}{3}\\]\n\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}\\num{1234.5}"),
+      .interactive(id: interactiveID, html: "<button>+1</button>")
     ])
     try owner.store.saveDocument(document); try owner.store.saveDocumentState(.init(id: document.id, actor: UUID()))
     owner.holdPublication = true
@@ -352,6 +354,16 @@ final class NotebookScriptServiceTests: XCTestCase {
     XCTAssertTrue(try String(contentsOfFile: receipt.texPath, encoding: .utf8).contains("Проверка PDF"))
     let printed = try XCTUnwrap(PDFDocument(data: pdf))
     let pages = (0..<printed.pageCount).compactMap { printed.page(at: $0) }
+    XCTAssertTrue((printed.string ?? "").filter { !$0.isWhitespace }.contains(interactiveID),
+      "The complete interactive address must survive wrapping in the actual PDF")
+    for page in pages {
+      let paper = page.bounds(for: .mediaBox)
+      for index in 0..<page.numberOfCharacters {
+        let character = page.characterBounds(at: index)
+        XCTAssertTrue(character.isEmpty || paper.contains(character),
+          "Printed text must not be clipped by the page edge: \(character) outside \(paper)")
+      }
+    }
     let annotations = pages.flatMap(\.annotations).filter { $0.type == "Link" }
     XCTAssertGreaterThanOrEqual(annotations.count, 3, "The actual PDF keeps forward, backward and HTTPS links.")
     XCTAssertTrue(annotations.contains { ($0.action as? PDFActionURL)?.url?.absoluteString == "https://example.org/notebook" })

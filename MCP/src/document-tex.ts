@@ -140,7 +140,7 @@ export function documentExport(document: DocumentDocument): DocumentExport {
   const body = rendered.map(({ block, fragment, math }) => {
     if (block.kind === "latex") return block.source;
     if (block.kind === "interactive") return ["\\begin{center}", "\\fcolorbox{black!18}{black!2}{%", "\\begin{minipage}{0.88\\linewidth}",
-      `\\textbf{Интерактивный элемент:} \\texttt{${escapeTeX(block.id)}}\\par`, "Откройте документ в Notebook, чтобы использовать этот элемент.",
+      `\\textbf{Интерактивный элемент:} \\texttt{${Array.from(block.id, escapeTeX).join("\\allowbreak{}")}}\\par`, "Откройте документ в Notebook, чтобы использовать этот элемент.",
       "\\end{minipage}}", "\\end{center}"].join("\n");
     currentMath = math;
     let text = renderNodes(fragment!.childNodes);

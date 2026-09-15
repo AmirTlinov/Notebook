@@ -9433,7 +9433,7 @@ ${prefix}${body2}\\par
         "\\begin{center}",
         "\\fcolorbox{black!18}{black!2}{%",
         "\\begin{minipage}{0.88\\linewidth}",
-        `\\textbf{\u0418\u043D\u0442\u0435\u0440\u0430\u043A\u0442\u0438\u0432\u043D\u044B\u0439 \u044D\u043B\u0435\u043C\u0435\u043D\u0442:} \\texttt{${escapeTeX(block.id)}}\\par`,
+        `\\textbf{\u0418\u043D\u0442\u0435\u0440\u0430\u043A\u0442\u0438\u0432\u043D\u044B\u0439 \u044D\u043B\u0435\u043C\u0435\u043D\u0442:} \\texttt{${Array.from(block.id, escapeTeX).join("\\allowbreak{}")}}\\par`,
         "\u041E\u0442\u043A\u0440\u043E\u0439\u0442\u0435 \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442 \u0432 Notebook, \u0447\u0442\u043E\u0431\u044B \u0438\u0441\u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u044C \u044D\u0442\u043E\u0442 \u044D\u043B\u0435\u043C\u0435\u043D\u0442.",
         "\\end{minipage}}",
         "\\end{center}"

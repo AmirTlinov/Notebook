@@ -88,6 +88,18 @@ test("keeps document boundaries owned by the exporter", () => {
   );
 });
 
+test("wraps an interactive block address without dropping characters or interpreting TeX", () => {
+  const id = "collaboration-counter-1d13a2ed-6e64-4ff6-b973-aa1b28bc328e_%{x}\\end";
+  const value = document([{ ...markdown(id, ""), kind: "interactive" }]);
+  const before = JSON.stringify(value), source = documentTeX(value);
+  assert.equal(JSON.stringify(value), before);
+  assert.ok(source.includes(Array.from("collaboration-counter-").join("\\allowbreak{}")));
+  assert.ok(source.includes("\\_\\allowbreak{}\\%\\allowbreak{}\\{\\allowbreak{}x\\allowbreak{}\\}"));
+  assert.ok(source.includes("\\textbackslash{}\\allowbreak{}e\\allowbreak{}n\\allowbreak{}d"));
+  assert.equal((source.match(/\\allowbreak\{\}/g) ?? []).length, Array.from(id).length - 1);
+  assert.doesNotMatch(source, /\\texttt\{collaboration-counter-/);
+});
+
 test("preserves HTML SVGs and real internal/external link destinations instead of flattening tags", async () => {
   const { documentExport } = await import("../src/document-tex.js");
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80"><rect width="120" height="80" fill="#f00"/><text x="8" y="30">Vector</text></svg>';
