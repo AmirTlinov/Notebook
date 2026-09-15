@@ -1,5 +1,94 @@
 # Проверка Notebook
 
+## 15 сентября — непрерывный native pan и граница accessibility
+
+Три небольших кандидата отклонены и полностью удалены. Помимо layoutChanged
+проверен UIKit layout из обновления representable: source `94beb7d4…`, run
+`5c604f4b…`, **FAIL за24,967 s**. После шести pan WK frame ушёл с x51,25
+до−404,75; дочерние AX frames остались прежними. Третий кандидат обновлял
+геометрию смонтированных PhysicalWebViewport после финальной матрицы сцены:
+source `b5c8ec11…`, run `c61322a1…`, **FAIL за33,755 s** ещё при поиске.
+WK уже x51,25/y405,5, а AX кнопки x0/y132,8; ожидание20 s не исправило это.
+Два следующих preserving upgrade сохранили данные и доверие частной пары.
+Проверка не переводится на вычисленные вручную координаты старого AX-кеша.
+
+Малые воспроизведения находятся только в `.build`, без Notebook/model/writer:
+- `webkit-native-ax-repro`: одиночные native frame/transform/layout перемещения
+  **4 PASS** на каждом из двух iPad Simulator27RC. Первая диагностическая
+  app имела4 orientation warnings; исходный результат не объявлен warning-free.
+- `webkit-hosted-ax-repro`: UIViewRepresentable, UIHostingController, custom
+  accessibility action, scale и snapshot — **4 PASS**, 0 runtime warnings.
+- `webkit-gesture-ax-repro`: непрерывный настоящий pan оставил AX0/19pt при
+  native50,5pt. Этот первый опыт также ошибочно ожидал все75pt запроса: начало
+  движения до recognition не принято обычным UIPan. Его FAIL сохранён.
+- `webkit-settled-ax-repro` сравнивает с фактическим native delta50,5pt, без
+  ослабления допуска1pt: **3 PASS/2 FAIL**, 0 warnings. AX после hosting-layout
+  и layoutChanged остановился на19pt; обычный WebKit layout и ещё два варианта
+  прошли. Это не устойчивое исправление: контроль без явного layout в двух
+  опытах разошёлся. Просмотренные оригиналы `F59CD4FA…`/`998AEAC4…` подтверждают
+  реальное перемещение видимой кнопки, отличное от устаревшего AX frame.
+
+Исходники, xcresult и screenshots сохранены. Все созданные только для этих
+опытов micro-app/runner bundles удалены с обоих Simulator; production bundle,
+пара и содержимое не менялись. Диагностическая коллекция первого probe зависла
+в собственном simctl diagnose после завершения тестов; прерван только этот
+проверенный дочерний процесс, не тесты. Следующие прогоны используют штатный
+collect-test-diagnostics=never, как основной маршрут.
+
+В рабочем коде не оставлены уведомления, принудительный layout, visitor или
+новая система очередей. Сохраняются лишь17-цикловая регрессия и независимая
+запись native/AX geometry. AX-переход остаётся открытым в GUI-200; ни отдельный
+удачный probe, ни сборка не считаются его исправлением. Продолжается независимая
+приёмка чата и сохранности, не зависящая от поиска контролов по AX-координатам.
+
+## 15 сентября — первый пиксельный отклик и устаревшие AX-координаты
+
+Чистый `b9f74af`, source SHA
+`945e44e8c9cc0a467bd79975fb2293feb89c3b99c241d5f3a6c24fd6c1453d0e`,
+собран в `.build/completed-input-release`; preserving upgrade прежнего run
+`d3f8489d…` сохранил обе описи данных, manifests, идентичности и доверие.
+ScreenCaptureKit снова вернул complete PNG точного окна Simulator 339571 /
+PID60210, 958×1369. Никакие настройки/разрешения не менялись. Источник и SHA
+скомпилированного helper — `.build/window-capture-recheck-20260915/helper.json`.
+
+`testTenReadyControlTapsWithNativeAndDisplayedFrameEvidence`, run `5173ef41…`:
+**1 UI PASS**, 0 skips/runtime warnings, count17→27 ровно по одному. 337
+подлинных PNG связаны с десятью touch begin/end, trusted click, неизменным
+runtime/PID и калиброванными Mach clocks. Все 11 состояний в неизменном count
+ROI просмотрены, сохранены `ready-controls-window/review.json`, оригинальные
+PNG/ndjson и `analysis.json`. **Пиксельный порог ≤100 ms не пройден:** первый
+release→count 102,78–120,78 ms (FAIL), остальные девять upper bounds
+47,80–79,40 ms (PASS). Touch-start→count считается отдельно; FPS и физический
+iPad этим не измеряются. Причина первого медленного интервала не установлена.
+
+Следующий long-run `fe80f4b3…` — **FAIL за226,961 s**, 15 полных итераций,
+ошибка на16-й. Count27→43, все четыре новых полных маркера0/5/10/15 прошли.
+Публичная независимая заметка продолжена во время работы: run`a1733bb4…`,
+action`F0DADB6A…`, contentRevision3, saved/readConfirmed. Это не30минут.
+Отказ теперь у camera-fit: повторные pan продолжали двигать уже перемещённый
+контрол по прежним AX frames, затем проверка не увидела очередного движения.
+
+UI-only observer `ff73f02d…` на том же app воспроизвёл проблему за21,715 s
+до смешанных циклов. Все шесть принятых pan переместили native WK frame
+с x51,25 до−338,75 по−65/−9,5 pt; frames дочерних button/slider/field во всех
+семи наблюдениях остались прежними (button/field x140,624). Сохранены
+`control-fit-observed-geometry`, реальные native contacts и журнал`39f93ca7…`.
+Это установленный разрыв native projection→AX, не доказательство потери
+принятого pan. Проверяется публичный layoutChanged после native rebase,
+без смены фокуса и уведомлений на каждом кадре; кандидат пока не принят.
+
+Кандидат layoutChanged проверен на source SHA `88e80812…`: run `7e9d25f5…`,
+**FAIL за23,619 s**, до смешанных циклов. Native frames двигались, дочерние
+AX frames оставались прежними; сохранён native scene journal `760054e1…`.
+Уведомление удалено, а не оставлено как запасной путь. Следующий опыт проверяет
+обычный UIKit layout самого WebKit при изменении его фактической проекции;
+без изменения canonical bounds, перезагрузки или явного сброса AX-кеша.
+
+Time Profiler повторён после восстановления WindowCapture: вновь нет
+start notification, exit1 (`.build/simulator-trace-recheck-20260915`). LLDB
+attach не получил DAP stopped; выражения не выполнялись, private app продолжает
+работать. Системные/физические условия и общий выпуск остаются открытыми.
+
 ## 15 сентября — XCTest завершал синтез раньше доставки последних клавиш
 
 Повтор 30-минутного сценария на чистом `8af2a06/c66cf36a…`, run

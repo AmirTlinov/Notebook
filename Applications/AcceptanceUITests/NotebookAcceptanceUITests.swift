@@ -504,7 +504,7 @@ import XCTest
   }
 
   /// The same native gestures as the long scenario, narrowed to its first
-  /// second-keyboard/rotation boundary. The existing observer only records.
+  /// repeated keyboard/rotation boundary. The existing observer only records.
   func testKeyboardAfterCameraAndRotationPreservesAcceptedInput() throws {
     let session = UUID().uuidString
     app.launchEnvironment["NOTEBOOK_INTERACTION_SESSION_ID"] = session
@@ -515,7 +515,7 @@ import XCTest
     try navigateToAcceptanceControls()
     let began = ProcessInfo.processInfo.systemUptime
     var lastScreenshot = began - 60
-    for iteration in 0..<7 {
+    for iteration in 0..<17 {
       try performMixedIteration(iteration, pencil: false, began: began, lastScreenshot: &lastScreenshot)
     }
     try systemTrace?.ended(app)
@@ -626,6 +626,14 @@ import XCTest
         app.webViews.sliders["Acceptance slider"], app.webViews.textFields["Acceptance text"]]
       let frames = controls.map(\.frame)
       let frame = frames.reduce(CGRect.null) { $0.union($1) }, viewport = controlViewport
+      let geometry: [String: Any] = [
+        "controlFrames": frames.map { [$0.minX, $0.minY, $0.width, $0.height] },
+        "webFrame": [controlWebView.frame.minX, controlWebView.frame.minY, controlWebView.frame.width, controlWebView.frame.height],
+        "viewport": [viewport.minX, viewport.minY, viewport.width, viewport.height]
+      ]
+      let observation = XCTAttachment(data: try JSONSerialization.data(withJSONObject: geometry, options: [.sortedKeys]),
+        uniformTypeIdentifier: "public.json")
+      observation.name = "control-fit-observed-geometry"; observation.lifetime = .keepAlways; add(observation)
       guard !frame.isEmpty, !frame.isInfinite, !frame.isNull else {
         throw ControlGeometryError(description: "The live control has no finite native frame: \(frame)")
       }
