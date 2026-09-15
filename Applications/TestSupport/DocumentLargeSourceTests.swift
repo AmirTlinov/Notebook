@@ -100,6 +100,7 @@ final class DocumentLargeSourceTests: XCTestCase {
         const root=document.getElementById('document'), receipt=notebookRenderer.pageReceipt();
         if(receipt.pageIndex!==index || receipt.layoutScope!=='page')throw Error('Wrong physical page');
         if(document.querySelectorAll('.document-layout-preparation').length!==1)throw Error('Missing sole inert measurement owner');
+        if(document.querySelector('.document-layout-preparation main'))throw Error('Measured source remained in the live layout tree');
         if(document.querySelectorAll('.paper-sheet').length!==1)throw Error('More than one physical paper');
         if(!root.textContent.trim() || !root.querySelector('img,mjx-container'))throw Error('Blank book page');
         if([...root.querySelectorAll('img')].some(image=>!image.complete||!image.naturalWidth))throw Error('Undecoded illustration');
@@ -346,11 +347,15 @@ final class DocumentLargeSourceTests: XCTestCase {
     await source.discardIdlePreparation()
     let report = try await evaluate("""
       const source=JSON.parse(encoded), renderer=notebookRenderer;
-      await renderer.beginSourcePreparation(source);
+      const fragments=notebookDocumentFragments;let original;
+      window.notebookDocumentFragments={...fragments,create:async (...args)=>{
+        const compiler=await fragments.create(...args);
+        original=new Set([...args[0].querySelectorAll('mjx-container [id]')].map(node=>node.id));
+        return compiler;
+      }};
       try {
+        await renderer.beginSourcePreparation(source);
         renderer.readPreparedPacket(source.key,null);
-        const measured=document.querySelector('.document-layout-preparation');
-        const original=new Set([...measured.querySelectorAll('mjx-container [id]')].map(node=>node.id));
         if(original.size===0)throw Error('Fixture did not create a local MathJax cache');
         renderer.preparePagePacket(source.key,0);
         const packet=JSON.parse(renderer.readPreparedPacket(source.key,0)), template=document.createElement('template');
@@ -373,7 +378,7 @@ final class DocumentLargeSourceTests: XCTestCase {
         }
         if(definitions<4||references<10)throw Error('Insufficient glyph ownership coverage');
         return JSON.stringify({definitions,references});
-      } finally { renderer.finishSourcePreparation(source.key); }
+      } finally { window.notebookDocumentFragments=fragments;renderer.finishSourcePreparation(source.key); }
       """, arguments: ["encoded": try await source.encodedJSON()], web: web)
     let evidence = XCTAttachment(string: report); evidence.name = "Physical MathJax ownership"; evidence.lifetime = .keepAlways; add(evidence)
   }
@@ -431,6 +436,49 @@ final class DocumentLargeSourceTests: XCTestCase {
     measurement.name = "Large book addressed preparation"; measurement.lifetime = .keepAlways; add(measurement)
   }
   #endif
+
+  func testMeasuredSourceLeavesLayoutTreeAndPageCutsDoNotReadItsGeometryAgain() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
+      "<div style='padding-top:13px;border-top:2px solid black'>" + String(repeating:
+        "<p>👩🏽‍💻 é A measured paragraph keeps its actual baseline across page cuts. "
+          + String(repeating: "Continued text العربية 中文. ", count: 12) + "</p>", count: 40) + "</div>")])
+    let state = DocumentStateJournal(id: document.id, actor: UUID())
+    let surface = try surface(document, state, resources: SceneRenderResources())
+    defer { surface.close() }
+    try await ready(surface.coordinator)
+    let source = try XCTUnwrap(surface.coordinator.payload?.source), web = try XCTUnwrap(surface.coordinator.webView)
+    await source.discardIdlePreparation()
+    let report = try await evaluate("""
+      const source=JSON.parse(encoded),fragments=notebookDocumentFragments;
+      const getStyle=window.getComputedStyle,getRects=Range.prototype.getClientRects,getBox=Range.prototype.getBoundingClientRect;
+      let measured,host,expected,pages;
+      window.notebookDocumentFragments={...fragments,create:async (...args)=>{
+        const compiler=await fragments.create(...args);measured=args[0];host=measured.parentElement;
+        pages=[0,args[1].pageCount-1];
+        if(pages[1]<2)throw Error('Missing continued page coverage');
+        expected=pages.map(page=>compiler.compile(page));return compiler;
+      }};
+      try {
+        await notebookRenderer.beginSourcePreparation(source);
+        if(measured.isConnected||!host.isConnected||host.querySelector('main'))throw Error('Source still participates in live layout');
+        const check=node=>{if(node===measured||measured.contains(node))throw Error('Re-read measured source geometry')};
+        window.getComputedStyle=(node,...args)=>{check(node);return getStyle(node,...args)};
+        Range.prototype.getClientRects=function(){check(this.startContainer);return getRects.call(this)};
+        Range.prototype.getBoundingClientRect=function(){check(this.startContainer);return getBox.call(this)};
+        for(let index=0;index<pages.length;index++) {
+          notebookRenderer.preparePagePacket(source.key,pages[index]);
+          const actual=JSON.parse(notebookRenderer.readPreparedPacket(source.key,pages[index]));
+          if(JSON.stringify(actual)!==JSON.stringify(expected[index]))throw Error('Detached cut changed its real measured fragment');
+        }
+        return JSON.stringify({pages,detached:!measured.isConnected});
+      } finally {
+        window.notebookDocumentFragments=fragments;window.getComputedStyle=getStyle;
+        Range.prototype.getClientRects=getRects;Range.prototype.getBoundingClientRect=getBox;
+        notebookRenderer.finishSourcePreparation(source.key);
+      }
+      """, arguments: ["encoded": try await source.encodedJSON()], web: web)
+    let evidence = XCTAttachment(string: report); evidence.name = "Detached measured source cuts"; evidence.lifetime = .keepAlways; add(evidence)
+  }
 
   func testFragmentIndexOwnsAndClosesOneTaskChannelOnCompletionAndCancellation() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "seed", source: "Ready")])

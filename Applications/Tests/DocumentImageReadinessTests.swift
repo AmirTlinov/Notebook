@@ -43,6 +43,15 @@ final class DocumentImageReadinessTests: XCTestCase {
     try await ready(fixture)
     let web = try XCTUnwrap(fixture.renderer.webView)
     try await installDecodeGate(in: web)
+    _ = try await web.evaluateJavaScript("""
+      (()=>{const fragments=notebookDocumentFragments;
+        window.notebookDocumentFragments={...fragments,create:async (...args)=>{
+          try {const value=await fragments.create(...args);imageProbe.measuredRoot=args[0];
+            imageProbe.measuredLoading=[...args[0].querySelectorAll('img')].map(image=>image.loading);return value;
+          } finally {window.notebookDocumentFragments=fragments}
+        }};return true;
+      })()
+      """)
     fixture.replaceWithImage()
     try await ready(fixture)
     let source = try XCTUnwrap(fixture.renderer.payload?.source)
@@ -52,8 +61,10 @@ final class DocumentImageReadinessTests: XCTestCase {
     let firstCalls = try await web.evaluateJavaScript("imageProbe.calls") as? Int
     XCTAssertEqual(firstCalls, 0,
       "A far fixed image has no decode barrier on the first text page")
-    let loadingPolicy = try await web.evaluateJavaScript("[...document.querySelectorAll('.document-layout-preparation img')].map(image=>image.loading)") as? [String]
+    let loadingPolicy = try await web.evaluateJavaScript("imageProbe.measuredLoading") as? [String]
     XCTAssertEqual(loadingPolicy, ["lazy"], "The measuring source cannot enqueue a far illustration into the document load/font-ready barrier")
+    let sourceDetached = try await web.evaluateJavaScript("!imageProbe.measuredRoot.isConnected") as? Bool
+    XCTAssertEqual(sourceDetached, true)
     XCTAssertEqual(source.measurementCount, 1)
     let rawInstalls = try await web.evaluateJavaScript("notebookRenderer.pageReceipt().work.pageInstalls")
     let initialInstalls = try XCTUnwrap(rawInstalls as? Int)

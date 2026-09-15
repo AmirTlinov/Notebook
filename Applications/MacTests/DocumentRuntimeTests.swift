@@ -426,8 +426,17 @@ final class DocumentRuntimeTests: XCTestCase {
           if mode == "measured" {
             await source.discardIdlePreparation()
             try await execute("""
-              await notebookRenderer.beginSourcePreparation(JSON.parse(source));
+              const fragments=notebookDocumentFragments;let measured;
+              window.notebookDocumentFragments={...fragments,create:async (...args)=>{
+                const compiler=await fragments.create(...args);measured=args[0];return compiler;
+              }};
+              try { await notebookRenderer.beginSourcePreparation(JSON.parse(source)); }
+              finally { window.notebookDocumentFragments=fragments; }
               const host=document.querySelector('.document-layout-preparation');
+              // This independent source-pixel oracle deliberately reconnects
+              // the actual measured DOM. Production page extraction never does.
+              if(measured.isConnected)throw Error('Source was not detached after indexing');
+              host.append(measured);
               if(host?.firstElementChild.childElementCount!==JSON.parse(source).blocks.length)throw Error('Reference source was not measured');
               const width=parseFloat(host.style.width), gap=Math.max(18,Math.min(30,22*width/JSON.parse(source).paper.widthPoints));
               document.getElementById('document').style.visibility='hidden';

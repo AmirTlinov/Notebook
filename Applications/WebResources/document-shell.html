@@ -667,6 +667,10 @@
             anchors:compiler.anchors,reading:compiler.reading,indexedNodes:compiler.indexedNodes,indexedEdges:compiler.indexedEdges,diagnostics:preparation.diagnostics,mathStyles,preparationPhasesMS};
           const layoutJSON=JSON.stringify(receipt),layoutBytes=new TextEncoder().encode(layoutJSON).length;
           if(layoutBytes>16*1024*1024)throw new Error('document_layout_packet_budget');
+          // Keep the measured DOM under this source lease, but not in WebKit's
+          // live layout tree. The compiler owns its cuts, baselines and insets;
+          // only each requested page clone re-enters the unchanged typography host.
+          flow.remove();
           Object.assign(preparation,{receipt,compiler,layoutJSON,pendingPage:null});
           return {sourceKey:source.key,pageIndex:null,utf8Bytes:layoutBytes};
         } catch(error) { finishSourcePreparation(source.key); throw error; }

@@ -15,6 +15,8 @@
       || !Array.isArray(regions)) throw new Error('document_fragment_invalid_geometry');
     const segmenter=new Intl.Segmenter('und',{granularity:'grapheme'});
     const range=document.createRange(), listValues=new WeakMap(), entries=new WeakMap(), tableColumns=new WeakMap();
+    const measurementHost=root.parentElement;
+    if(!measurementHost)throw new Error('document_fragment_missing_measurement_host');
     // Prefix bounds are monotone in the horizontal page flow. A cut can start
     // inside one text node; no off-page paragraph or source string is copied.
     const boundary = (node, edge) => {
@@ -81,12 +83,29 @@
         for(const rect of rects) {
           const page=Math.max(0,Math.floor((rect.x-originX)/stride));
           if(page>=pageCount || rect.width<=0 || rect.height<=0)continue;
-          if(!pages.has(page))pages.set(page,[]);
-          pages.get(page).push(rect);
+          // Future fragments need one physical box, not every line's DOMRect.
+          if(!pages.has(page))pages.set(page,{rect});
         }
         const entry={node,pages,childrenByPage:new Map()};
         entries.set(node,entry);
+        if(node.nodeType===Node.ELEMENT_NODE&&node.parentNode===root) {
+          const style=getComputedStyle(node);
+          entry.contentInset=parseFloat(style.paddingTop)+parseFloat(style.borderTopWidth);
+        }
         if(node.nodeType===Node.TEXT_NODE) {
+          // Freeze the already measured cuts and baseline anchors once. The
+          // retained source DOM can then leave the browser's layout/render tree;
+          // requesting a page never reflows that whole book to read a prefix.
+          for(const [page,cut] of pages) {
+            const left=originX+page*stride;
+            cut.start=pages.size===1?0:boundary(node,left);
+            cut.end=pages.size===1?node.length:boundary(node,left+width);
+            if(cut.end<=cut.start)continue;
+            cut.length=segmenter.segment(node.data.slice(cut.start,cut.end))[Symbol.iterator]().next().value.segment.length;
+            range.setStart(node,cut.start);range.setEnd(node,cut.start+cut.length);
+            const first=[...range.getClientRects()].find(rect=>rect.width>0&&rect.height>0&&rect.x>=left&&rect.x<left+width);
+            if(first)cut.y=first.y-originY;
+          }
           const blockID=node.parentElement?.closest('[data-block-id]')?.dataset.blockId;
           if(blockID) {
             const textOffset=blockOffsets.get(blockID)||0;
@@ -100,10 +119,8 @@
               const occurrence=occurrences.get(contentID)||0;
               occurrences.set(contentID,occurrence+1);
               const nodeID=fingerprint(contentID+':'+occurrence);
-              for(const [page,rects] of pages) {
-                const left=originX+page*stride;
-                const start=pages.size===1?0:boundary(node,left),end=pages.size===1?node.length:boundary(node,left+width);
-                if(end>start)reading.push([blockID,nodeID,textOffset,start,end,page,Math.max(0,rects[0].y-originY)]);
+              for(const [page,cut] of pages) {
+                if(cut.end>cut.start)reading.push([blockID,nodeID,textOffset,cut.start,cut.end,page,Math.max(0,cut.rect.y-originY)]);
               }
             }
           }
@@ -125,7 +142,7 @@
         if(node.nodeType===Node.ELEMENT_NODE&&cellTags.has(node.localName)) {
           const table=node.closest('table'), tableEntry=entries.get(table);
           const first=pages.entries().next().value;
-          const tableRect=first&&tableEntry?.pages.get(first[0])?.[0], cellRect=first?.[1][0];
+          const tableRect=first&&tableEntry?.pages.get(first[0])?.rect, cellRect=first?.[1].rect;
           if(tableRect&&cellRect) {
             if(!tableColumns.has(table))tableColumns.set(table,new Set());
             const edges=tableColumns.get(table);
@@ -165,11 +182,11 @@
     const compile = pageIndex => {
       if(!Number.isInteger(pageIndex)||pageIndex<0||pageIndex>=pageCount||isCancelled())throw new Error('document_fragment_page_mismatch');
       const pageRegions=regionsByPage.get(pageIndex)||[];
-      const left=originX+pageIndex*stride,right=left+width;
+      const left=originX+pageIndex*stride;
       const tablePlacements=[],rowPlacements=new Map(),blockContentPlacements=[],cellPlacements=[],textAnchors=new WeakMap();
       let nodeCount=0,visitedNodes=0;
       const admit=count=>{nodeCount+=count;if(nodeCount>maximumNodes)throw new Error('document_fragment_node_budget')};
-      const cut=entry=>entry.pages.get(pageIndex)?.[0];
+      const cut=entry=>entry.pages.get(pageIndex)?.rect;
 
 
     const extract = entry => {
@@ -180,15 +197,11 @@
         // its complete text occupies only one. WebKit's partial-range bounds
         // can then refer to the first cell fragment; the measured whole-text
         // address, not a synthetic prefix, owns that indivisible text node.
-        const whole = entry.pages.size === 1;
-        const start = whole ? 0 : boundary(node, left), end = whole ? node.length : boundary(node, right);
-        if (end <= start) return null;
+        const measured=entry.pages.get(pageIndex);
+        if (!measured || measured.end <= measured.start) return null;
         admit(1);
-        const clone=document.createTextNode(node.data.slice(start,end));
-        const length=segmenter.segment(clone.data)[Symbol.iterator]().next().value.segment.length;
-        range.setStart(node,start);range.setEnd(node,start+length);
-        const first=[...range.getClientRects()].find(rect=>rect.width>0&&rect.height>0&&rect.x>=left&&rect.x<right);
-        if(first)textAnchors.set(clone,{y:first.y-originY,length});
+        const clone=document.createTextNode(node.data.slice(measured.start,measured.end));
+        if(Number.isFinite(measured.y))textAnchors.set(clone,{y:measured.y,length:measured.length});
         return clone;
       }
       if (node.nodeType !== Node.ELEMENT_NODE) return null;
@@ -230,7 +243,7 @@
       const clone = node.cloneNode(false);
       if (node.localName === 'li') {
         if (listValues.has(node)) clone.value = listValues.get(node);
-        const first = entry.pages.values().next().value?.[0];
+        const first = entry.pages.values().next().value?.rect;
         if (first && first.right <= left) clone.style.listStyleType = 'none';
       }
       if (node.localName === 'table') {
@@ -268,8 +281,7 @@
         const first=(entry.childrenByPage.get(pageIndex)||[]).find(value=>value.node.nodeType===Node.ELEMENT_NODE);
         const childRect=first && cut(first), sectionRect=cut(entry);
         if(childRect&&sectionRect&&clone.firstElementChild) {
-          const style=getComputedStyle(node), inset=parseFloat(style.paddingTop)+parseFloat(style.borderTopWidth);
-          clone.firstElementChild.style.marginTop=`${Math.max(0,childRect.y-sectionRect.y-inset)}px`;
+          clone.firstElementChild.style.marginTop=`${Math.max(0,childRect.y-sectionRect.y-entry.contentInset)}px`;
           const target={clone:clone.firstElementChild,y:childRect.y-originY};
           const text=document.createTreeWalker(target.clone,NodeFilter.SHOW_TEXT);
           while(text.nextNode())if(textAnchors.has(text.currentNode)) {
@@ -315,7 +327,7 @@
       // Keep the source's exact inherited typography. A computed line-height
       // string is a rounded length, not its original unitless font relation;
       // copying it changes the baseline when this DOM is installed on a page.
-      root.parentElement.append(measurement);
+      measurementHost.append(measurement);
       const base = measurement.getBoundingClientRect();
       for(const target of blockContentPlacements) {
         let actual=target.clone.getBoundingClientRect();

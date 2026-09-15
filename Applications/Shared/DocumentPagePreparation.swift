@@ -742,7 +742,7 @@ final class DocumentPagePreparation {
       let mathStyleReservation = try DocumentPreparationAdmission.reserveMaterialized(max(1, mathStyleBytes),
         stage: "math_style", message: message, page: nil, resources: resources, charges: charges)
       heldCharges.append(mathStyleReservation)
-      let indexReservation = try DocumentPreparationAdmission.reserveMaterialized(max(1, sourceBytes * 2 + measured.indexedNodes * 128 + measured.indexedEdges * 32),
+      let indexReservation = try DocumentPreparationAdmission.reserveMaterialized(max(1, sourceBytes * 2 + measured.indexedNodes * 128 + measured.indexedEdges * 64),
         stage: "source_index", message: message, page: nil, resources: resources, charges: charges)
       heldCharges.append(indexReservation)
       try DocumentPreparationAdmission.transfer(layoutPacket, to: raw.utf8.count * 3, stage: "source_packet",
