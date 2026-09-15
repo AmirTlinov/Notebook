@@ -10,7 +10,9 @@ extension NotebookActionReadModel {
   public func resultReferences(in content: CollaborationContent) -> [CollaborationReference] {
     let paths = content.referenceFilePaths(for: resultTargets(in: content))
     guard let files = try? content.sourceFiles(including: paths) else { return [] }
-    return resultReferences(in: content, files: files)
+    return resultReferences(in: content) { target, elementID in
+      try NotebookStore.referenceRevision(target: target, elementID: elementID, files: files)
+    }
   }
 
   func resultTargets(in content: CollaborationContent) -> [CollaborationTarget] {
@@ -34,7 +36,8 @@ extension NotebookActionReadModel {
     }
   }
 
-  func resultReferences(in content: CollaborationContent, files: [String: JSONValue]) -> [CollaborationReference] {
+  func resultReferences(in content: CollaborationContent,
+    referenceRevision: (CollaborationTarget, String?) throws -> String) -> [CollaborationReference] {
     var results: [CollaborationReference] = []
     var seen = Set<String>()
     for operation in action.operations {
@@ -53,8 +56,8 @@ extension NotebookActionReadModel {
           region = .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
           origin = element.worldOrigin
         }
-        let specificRevision = try? NotebookStore.referenceRevision(target:target,elementID:elementID,files:files)
-        guard let revision = specificRevision ?? (try? NotebookStore.referenceRevision(target:target,files:files)) else { continue }
+        let specificRevision = try? referenceRevision(target, elementID)
+        guard let revision = specificRevision ?? (try? referenceRevision(target, nil)) else { continue }
         let hash = (try? collaborationHash(id.uuidString + key)) ?? id.uuidString.replacingOccurrences(of:"-",with:"")
         let chars = Array(hash)
         let stableID = UUID(uuidString:String(chars[0..<8])+"-"+String(chars[8..<12])+"-4"+String(chars[13..<16])+"-8"+String(chars[17..<20])+"-"+String(chars[20..<32]))!

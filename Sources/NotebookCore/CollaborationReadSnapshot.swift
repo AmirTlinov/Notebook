@@ -18,18 +18,28 @@ public struct CollaborationReadSnapshot: Sendable {
     var results: [UUID: [CollaborationReference]] = [:]
     var continuations: [UUID: [CollaborationContinuation]] = [:]
     var statuses: [UUID: ReferenceStatus] = [:]
-    var revisions: [Source: String] = [:]
+    // Results and context references share this immutable cut. In particular,
+    // a history of edits to one board must not rebuild its Merkle tree for
+    // every action (or again when a removed element falls back to the board).
+    // Missing sources are also final for this cut; nothing survives the init.
+    var revisions: [Source: Result<String, Error>] = [:]
+    func revision(_ target: CollaborationTarget, _ elementID: String?) throws -> String {
+      try Task.checkCancellation()
+      let source = Source(target: target, elementID: elementID)
+      if let result = revisions[source] { return try result.get() }
+      let result = Result { try NotebookStore.referenceRevision(target: target, elementID: elementID, files: files) }
+      revisions[source] = result
+      return try result.get()
+    }
     for action in actions {
       try Task.checkCancellation()
-      results[action.id] = action.resultReferences(in: content, files: files)
+      results[action.id] = action.resultReferences(in: content, referenceRevision: revision)
       continuations[action.id] = try action.continuations(in: files)
     }
     for reference in references {
       try Task.checkCancellation()
       do {
-        let source = Source(target: reference.target, elementID: reference.elementID)
-        let revision = try revisions[source] ?? NotebookStore.referenceRevision(target: reference.target, elementID: reference.elementID, files: files)
-        revisions[source] = revision
+        let revision = try revision(reference.target, reference.elementID)
         let regional = reference.region != nil && reference.elementID == nil && reference.target.kind != .workspace
         statuses[reference.id] = .init(regional ? .checking : revision == reference.revision ? .current : .changed, currentRevision: revision)
       } catch let error as CollaborationError where error.code == "target_missing" {

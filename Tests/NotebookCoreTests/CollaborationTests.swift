@@ -188,6 +188,48 @@ func collaborationReadSnapshotCancellation() async throws {
   }.value
 }
 
+@Test("Повторные результаты истории сохраняют один текущий источник и отдельные ID")
+func collaborationReadSnapshotReusesRepeatedSourceRevisions() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  var content = try f.store.collaborationContent()
+  for index in 0..<32 {
+    let element = SpatialElement(id: "detail-\(index)", surface: .board(f.boardID), kind: .web,
+      frame: .init(x: Double(index * 20), y: 20, width: 100, height: 80), worldOrigin: .zero,
+      source: String(repeating: "Source \(index). ", count: 200), html: "<p>Detail \(index)</p>",
+      stamp: .init(counter: 0, actor: f.agent))
+    let inserted = content.hierarchy.upsertElement(element, in: f.boardID, expected: nil, actor: f.agent)
+    #expect(inserted)
+  }
+  // Distinct historical actions address the same owner. A removed element
+  // falls back to that owner, but must not share the other action's result ID.
+  let actions = try (0..<64).map { index in
+    let action = CollaborationAction(summary: "History \(index)", expected: [], operations: [
+      .init(kind: .reorderElements, target: f.board),
+      .init(kind: .removeElement, target: f.board, id: "removed")])
+    return try NotebookActionReadModel(CollaborationReceipt(id: action.id, action: action,
+      createdAt: Date(timeIntervalSince1970: Double(index)), revisions: [], changes: []))
+  }
+  let files = try content.sourceFiles(), revision = try NotebookStore.referenceRevision(target: f.board, files: files)
+  let reference = CollaborationReference(target: f.board, revision: revision)
+  var samples: [Double] = []
+  for _ in 0..<10 {
+    let clock = ContinuousClock(), started = clock.now
+    let snapshot = try CollaborationReadSnapshot(content: content, actions: actions, references: [reference])
+    let elapsed = started.duration(to: clock.now).components
+    samples.append(Double(elapsed.seconds) * 1_000 + Double(elapsed.attoseconds) / 1e15)
+    let results = actions.flatMap { snapshot.results[$0.id] ?? [] }
+    #expect(results.count == 128 && Set(results.map(\.id)).count == 128)
+    #expect(results.allSatisfy { $0.target == f.board && $0.elementID == nil && $0.revision == revision })
+    #expect(snapshot.references[reference.id]?.status == .current)
+  }
+  print("history-repeated-source-ms " + String(decoding: try JSONEncoder().encode(samples), as: UTF8.self))
+  let removed = content.hierarchy.removeElements(ids: ["detail-0"], from: f.boardID, actor: f.human)
+  #expect(removed == 1)
+  let changed = try CollaborationReadSnapshot(content: content, actions: actions, references: [reference])
+  #expect(changed.references[reference.id]?.status == .changed)
+  #expect(changed.results[actions[0].id]?.allSatisfy { $0.revision != revision } == true)
+}
+
 @Test("Проверка готового отпечатка не захватывает замок содержания повторно")
 func referenceProofReadDoesNotLockContent() throws {
   let f = try CollaborationFixture(); defer { f.clean() }
