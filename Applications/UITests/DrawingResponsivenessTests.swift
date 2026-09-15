@@ -182,9 +182,17 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(app.buttons["notebook-compact-voice"].isHittable)
     let priorInk = paper.value as? String
     let panel = app.descendants(matching: .any).matching(identifier: "notebook-chat-panel").firstMatch
-    let clearPoints = [CGPoint(x: 0.15, y: 0.4), .init(x: 0.65, y: 0.4), .init(x: 0.15, y: 0.7), .init(x: 0.65, y: 0.7)]
+    // This fixture's addressed journal retains the first notebook, not its
+    // unselected neighbour. Observe ink on that same owner across rotation;
+    // a still-visible neighbour stroke need not stay in this bounded count.
+    let inkOwner = app.descendants(matching: .any).matching(identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000002").firstMatch
+    let ownerFrame = inkOwner.frame
+    let clearPoints = [CGPoint(x: 0.15, y: 0.4), .init(x: 0.15, y: 0.55), .init(x: 0.15, y: 0.7), .init(x: 0.15, y: 0.85)]
       .map { CGPoint(x: paper.frame.minX + paper.frame.width * $0.x, y: paper.frame.minY + paper.frame.height * $0.y) }
-      .filter { !panel.frame.intersects(CGRect(origin: $0, size: .init(width: 85, height: 40))) }
+      .filter { point in
+        let stroke = CGRect(origin: point, size: .init(width: 85, height: 40))
+        return ownerFrame.contains(stroke) && !coverFrame.intersects(stroke) && !panel.frame.intersects(stroke)
+      }
     XCTAssertFalse(clearPoints.isEmpty, "The companion must leave room to write")
     let start = app.coordinate(withNormalizedOffset: .zero).withOffset(.init(dx: clearPoints[0].x, dy: clearPoints[0].y))
     start.press(forDuration: 0.1, thenDragTo: start.withOffset(.init(dx: 80, dy: 35)))
@@ -199,10 +207,13 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(preview.label.contains("Объяснение формулы, часть 1."))
     XCTAssertFalse(preview.label.contains("часть 16."), "Only the compact preview is shortened")
     let replyProof = XCTAttachment(screenshot: app.screenshot()); replyProof.name = "companion-long-reply-preview"; replyProof.lifetime = .keepAlways; add(replyProof)
+    let controlsWithReply = app.buttons["notebook-companion-compose"].frame
     app.buttons["notebook-companion-dismiss-reply"].tap()
     XCTAssertTrue(waitUntil { !preview.exists && !taskCard.exists }, "Close removes the entire reply, not only its text")
     XCTAssertFalse(preview.exists, "Dismissal does not need a remount")
     let pencil = app.buttons["notebook-companion-compose"], origin = app.buttons["notebook-companion-compose"].frame
+    XCTAssertEqual(origin.minX, controlsWithReply.minX, accuracy: 0.5)
+    XCTAssertEqual(origin.minY, controlsWithReply.minY, accuracy: 0.5, "Transient cards cannot displace the control bar")
     let grip = pencil.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
     grip.press(forDuration: 0.05, thenDragTo: grip.withOffset(.init(dx: 0, dy: -90)))
     XCTAssertFalse(app.otherElements["notebook-chat-transcript"].exists, "Dragging the pencil moves the bar, never opens the chat")
@@ -222,6 +233,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     let portrait = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.width < app.frame.height }, object: nil)
     XCTAssertEqual(XCTWaiter.wait(for: [portrait], timeout: 5), .completed)
     XCTAssertTrue(app.buttons["notebook-companion-compose"].waitForExistence(timeout: 5))
+    let rotatedProof = XCTAttachment(screenshot: app.screenshot()); rotatedProof.name = "companion-accepted-stroke-after-rotation"; rotatedProof.lifetime = .keepAlways; add(rotatedProof)
     XCTAssertEqual(paper.value as? String, acceptedInk)
     app.buttons["notebook-compact-voice"].press(forDuration: 0.8)
     XCTAssertTrue(app.staticTexts["Голосовой разговор"].waitForExistence(timeout: 3))
@@ -428,6 +440,29 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.buttons["notebook-dictation-cancel"].tap()
     XCTAssertTrue(field.waitForExistence(timeout: 4)); XCTAssertEqual(field.value as? String, "Keep this draft")
     XCTAssertEqual(paper.frame, paperFrame); XCTAssertEqual(paper.value as? String, ink)
+  }
+
+  func testCompactDictationControlsFitAndCancelWithoutMovingPaper() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-dictation-fixture"]
+    launchPortraitFixture(app)
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 8))
+    let frame = paper.frame, ink = paper.value as? String
+    let mic = app.buttons["notebook-compact-dictation"]
+    XCTAssertTrue(mic.isHittable); mic.tap()
+    let input = app.otherElements["notebook-dictation-input"]
+    XCTAssertTrue(input.waitForExistence(timeout: 5))
+    let compose = app.buttons["notebook-companion-compose"]
+    XCTAssertTrue(compose.isHittable); XCTAssertFalse(compose.frame.intersects(input.frame))
+    for control in [app.buttons["notebook-dictation-review"], app.buttons["notebook-dictation-send"], app.buttons["notebook-dictation-cancel"]] {
+      XCTAssertTrue(control.isHittable); XCTAssertTrue(input.frame.contains(control.frame))
+    }
+    let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "compact-anchored-dictation-controls"; proof.lifetime = .keepAlways; add(proof)
+    app.buttons["notebook-dictation-cancel"].tap()
+    XCTAssertTrue(mic.waitForExistence(timeout: 5))
+    XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, ink)
   }
 
   func testDictationControlBesideVoiceInvokesItsOwnerWithoutLosingTheDraftOrPaper() {

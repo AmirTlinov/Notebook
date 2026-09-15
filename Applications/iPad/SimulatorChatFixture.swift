@@ -85,6 +85,7 @@ import NotebookCore
     }
     receiver = chat
     chat.dictation.authorizeAddress = { true }
+    chat.dictation.addressAuthorized = { dictation }
     chat.dictation.makeAddressRecognizer = { _, _, activate, _ in SimulatorAddressRecognizer(activate: activate) }
     await chat.start(); await chat.connect(peer); chat.select(task); chat.expanded = !dictation
     return chat

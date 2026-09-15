@@ -11,6 +11,8 @@ struct NotebookChatPanel: View {
   let size: CGSize
   let openPairing: () -> Void
   let openHistory: () -> Void
+  let companion: NotebookCompanionPlacement
+  let onCompanionControlsSize: (CGSize) -> Void
   let move: (CGSize, Bool) -> Void
   let resize: (CGSize, Bool, NotebookChatResizeCorner) -> Void
   let endInteraction: () -> Void
@@ -65,7 +67,8 @@ struct NotebookChatPanel: View {
         .overlay { RoundedRectangle(cornerRadius: 28).strokeBorder(Color(.separator).opacity(0.18), lineWidth: 0.5).allowsHitTesting(false) }
         .shadow(color: .black.opacity(0.08), radius: 22, y: 7)
       } else {
-        NotebookCompanion(chat: chat, size: size, move: move, endInteraction: endInteraction)
+        NotebookCompanion(chat: chat, size: size, placement: companion, onControlsSize: onCompanionControlsSize,
+          move: move, endInteraction: endInteraction)
       }
     }
     .disabled(chat.switchingComputer)

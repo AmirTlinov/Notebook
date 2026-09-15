@@ -56,6 +56,22 @@ struct NotebookChatWindowLayout: Codable, Equatable {
       y: available.minY + (available.height - fitted.height) * anchor.y, width: fitted.width, height: fitted.height)
   }
 
+  /// The saved anchor belongs to the controls, not to a transient reply. Fit
+  /// cards on the roomier side without moving an already reachable button.
+  func companion(in available: CGRect, preferredSize: CGSize, controlsSize: CGSize) -> NotebookCompanionPlacement {
+    let controls = frame(in: available, expanded: false, compactSize: controlsSize)
+    let above = controls.minY - available.minY > available.maxY - controls.maxY
+    let room = above ? controls.minY - available.minY : available.maxY - controls.maxY
+    let height = min(max(0, preferredSize.height - controls.height - 8), max(0, room - 8))
+    guard height > 0 else { return .init(frame: controls, controls: CGRect(origin: .zero, size: controls.size), cards: .zero) }
+    let width = min(available.width, max(controls.width, preferredSize.width))
+    let cards = CGRect(x: min(available.maxX - width, max(available.minX, controls.maxX - width)),
+      y: above ? controls.minY - 8 - height : controls.maxY + 8, width: width, height: height)
+    let frame = controls.union(cards)
+    return .init(frame: frame, controls: controls.offsetBy(dx: -frame.minX, dy: -frame.minY),
+      cards: cards.offsetBy(dx: -frame.minX, dy: -frame.minY))
+  }
+
   mutating func move(_ frame: CGRect, translation: CGSize, in available: CGRect) {
     anchor = CGPoint(x: fraction(frame.minX + translation.width - available.minX, travel: available.width - frame.width, previous: anchor.x),
       y: fraction(frame.minY + translation.height - available.minY, travel: available.height - frame.height, previous: anchor.y))
@@ -88,6 +104,14 @@ struct NotebookChatWindowLayout: Codable, Equatable {
   }
 }
 
+/// Immutable placement produced by the window's single geometry owner.
+struct NotebookCompanionPlacement: Equatable {
+  let frame: CGRect
+  let controls: CGRect
+  let cards: CGRect
+  var movementFrame: CGRect { controls.offsetBy(dx: frame.minX, dy: frame.minY) }
+}
+
 struct NotebookChatWindow: View {
   @Environment(NotebookAppModel.self) private var model
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -99,21 +123,23 @@ struct NotebookChatWindow: View {
   @State private var interaction: (frame: CGRect, available: CGRect, layout: NotebookChatWindowLayout)?
   @State private var liveLayout: NotebookChatWindowLayout?
   @State private var interruptedDrag = false
+  @State private var companionControlsSize = CGSize(width: 148, height: 48)
 
   private var layout: NotebookChatWindowLayout { liveLayout ?? .init(restoring: savedLayout) }
 
   var body: some View {
-    let frame = layout.frame(in: available, expanded: chat.expanded,
-      compactSize: NotebookCompanion.preferredSize(chat: chat, available: available.size, contextCount: model.agentQuestion?.references.count ?? 0))
+    let preferred = NotebookCompanion.preferredSize(chat: chat, available: available.size, contextCount: model.agentQuestion?.references.count ?? 0)
+    let companion = layout.companion(in: available,
+      preferredSize: preferred,
+      controlsSize: .init(width: chat.dictation.busy ? preferred.width : companionControlsSize.width, height: companionControlsSize.height))
+    let frame = chat.expanded ? layout.frame(in: available, expanded: true) : companion.frame
     NotebookChatPanel(chat: chat, size: frame.size, openPairing: openPairing, openHistory: openHistory,
-      move: { update($0, ended: $1, corner: nil, frame: frame) },
+      companion: companion, onCompanionControlsSize: { if $0.width > 0, $0.height > 0 { companionControlsSize = $0 } },
+      move: { update($0, ended: $1, corner: nil, frame: chat.expanded ? frame : companion.movementFrame) },
       resize: { update($0, ended: $1, corner: $2, frame: frame) },
       endInteraction: { interruptedDrag = false; finishInteraction() })
       .position(x: frame.midX, y: frame.midY)
       .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.3, extraBounce: 0), value: chat.expanded)
-      .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: chat.companionReplies.map(\.id))
-      .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: chat.voice.capturing)
-      .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: chat.dictation.busy)
       .onChange(of: available) {
         if interaction != nil { interruptedDrag = true }
         finishInteraction()

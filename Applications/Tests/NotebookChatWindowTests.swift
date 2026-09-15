@@ -4,6 +4,31 @@ import XCTest
 final class NotebookChatWindowTests: XCTestCase {
   private let portrait = CGRect(x: 18, y: 82, width: 798, height: 1032)
 
+  func testIncomingAndExpiringCardsCannotMoveTheCompanionControls() {
+    for available in [portrait, CGRect(x: 18, y: 82, width: 300, height: 180)] {
+      for x: CGFloat in [0, 0.3, 1] {
+        for y: CGFloat in [0, 0.6, 1] {
+          var layout = NotebookChatWindowLayout(); layout.anchor = .init(x: x, y: y)
+          let controlSize = CGSize(width: 172.5, height: 48)
+          let controls = layout.frame(in: available, expanded: false, compactSize: controlSize)
+          for height: CGFloat in [48, 112, 240, 460, 48] {
+            let shown = layout.companion(in: available, preferredSize: .init(width: 352, height: height), controlsSize: controlSize)
+            XCTAssertEqual(shown.movementFrame.minX, controls.minX, accuracy: 0.001)
+            XCTAssertEqual(shown.movementFrame.minY, controls.minY, accuracy: 0.001)
+            XCTAssertEqual(shown.movementFrame.size, controls.size)
+            XCTAssertTrue(available.contains(shown.frame))
+            if !shown.cards.isEmpty { XCTAssertFalse(shown.controls.intersects(shown.cards)) }
+          }
+          // A drag uses that same real control frame, not the transient union.
+          layout.move(controls, translation: .init(width: 25, height: -35), in: available)
+          let moved = layout.companion(in: available, preferredSize: .init(width: 352, height: 112), controlsSize: controlSize)
+          XCTAssertEqual(moved.movementFrame.minX, min(available.maxX - controls.width, controls.minX + 25), accuracy: 0.001)
+          XCTAssertEqual(moved.movementFrame.minY, max(available.minY, controls.minY - 35), accuracy: 0.001)
+        }
+      }
+    }
+  }
+
   func testCompactCloudFitsEachWindowWithoutMutatingThePreferredChatGeometry() {
     var layout = NotebookChatWindowLayout(); layout.anchor = .init(x: 0.3, y: 0.6)
     let saved = layout

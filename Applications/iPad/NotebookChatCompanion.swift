@@ -9,6 +9,8 @@ struct NotebookCompanion: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Bindable var chat: NotebookChatController
   let size: CGSize
+  let placement: NotebookCompanionPlacement
+  let onControlsSize: (CGSize) -> Void
   let move: (CGSize, Bool) -> Void
   let endInteraction: () -> Void
   @GestureState private var moving = false
@@ -38,8 +40,15 @@ struct NotebookCompanion: View {
       || (chat.workStatus != nil || !chat.pendingMessages.isEmpty)
   }
   var body: some View {
+    NotebookCompanionLayout(placement: placement) {
+      controls.onGeometryChange(for: CGSize.self) { $0.size } action: { onControlsSize($0) }
+      cards
+    }
+    .onChange(of: moving) { if !moving { endInteraction() } }
+  }
+
+  private var cards: some View {
     VStack(alignment: .trailing, spacing: 8) {
-      controls
       if hasCard {
         ScrollView {
           VStack(alignment: .leading, spacing: 4) {
@@ -80,12 +89,11 @@ struct NotebookCompanion: View {
               .frame(width: 40, height: 40).contentShape(Rectangle())
           }.accessibilityLabel("Убрать превью ответа").accessibilityIdentifier("notebook-companion-dismiss-reply")
         }.padding(.leading, 14).padding(.trailing, 8).padding(.vertical, 8).background { surface(radius: 22) }
-          .transition(.opacity.combined(with: .move(edge: .top)))
+          .transition(.opacity)
       }
     }
     .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: chat.companionReplies.map(\.id))
     .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy(duration: 0.28), value: hasCard)
-    .onChange(of: moving) { if !moving { endInteraction() } }
   }
   /// The compact surface measures the same bounded native text it displays;
   /// the full Markdown and native message identity remain in the transcript.
@@ -154,6 +162,21 @@ struct NotebookCompanion: View {
     RoundedRectangle(cornerRadius: radius).fill(Color(.systemBackground))
       .overlay { RoundedRectangle(cornerRadius: radius).strokeBorder(Color(.separator).opacity(0.3), lineWidth: 0.5) }
       .shadow(color: .black.opacity(0.1), radius: 9, y: 3).allowsHitTesting(false)
+  }
+}
+
+/// Layout keeps the same control subtree while cards appear above or below it.
+/// No gesture, delayed action or second presentation state is owned here.
+private struct NotebookCompanionLayout: Layout {
+  let placement: NotebookCompanionPlacement
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    placement.frame.size
+  }
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    for (view, frame) in zip(subviews, [placement.controls, placement.cards]) {
+      view.place(at: .init(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY), anchor: .topLeading,
+        proposal: .init(width: frame.width, height: frame.height))
+    }
   }
 }
 

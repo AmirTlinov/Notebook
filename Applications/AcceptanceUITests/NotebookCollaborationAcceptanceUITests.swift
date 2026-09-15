@@ -883,6 +883,92 @@ import XCTest
       "draft": draft, "actualCountAfterReconnect": 102], name: "reconnected-same-conversation-for-independent-history-audit")
   }
 
+  /// A diagnostic contact spans the real reply's presentation deadline. This
+  /// is not a latency measurement, and never injects a reply or a read receipt.
+  func testCompactComposeStationaryContactOpensCurrentChat() throws {
+    let nonce = try launchExistingCreatedMaterial()
+    XCTAssertFalse(app.buttons["notebook-companion-reply"].exists)
+    let compose = app.buttons["notebook-companion-compose"]
+    XCTAssertTrue(compose.isHittable)
+    let frame = compose.frame
+    screenshot("compact-stationary-contact-before")
+    app.coordinate(withNormalizedOffset: .zero).withOffset(.init(
+      dx: frame.midX - app.frame.minX, dy: frame.midY - app.frame.minY)).press(forDuration: 4)
+    screenshot("compact-stationary-contact-after")
+    XCTAssertTrue(app.buttons["notebook-chat-menu"].waitForExistence(timeout: 5))
+    let composer = app.descendants(matching: .any).matching(identifier: "notebook-chat-text").firstMatch
+    XCTAssertEqual(composer.value as? String, "Неотправленный черновик \(nonce)")
+    collapseChat()
+  }
+
+  func testCompactComposeContactSurvivesActualReplyExpiry() throws {
+    let nonce = try launchExistingCreatedMaterial()
+    openChat()
+    let threadID = try currentConversationID()
+    XCTAssertFalse(app.buttons["notebook-chat-stop"].exists)
+    let composer = app.descendants(matching: .any).matching(identifier: "notebook-chat-text").firstMatch
+    let draft = "Неотправленный черновик \(nonce)"
+    let existing = composer.value as? String ?? ""
+    XCTAssertEqual(existing, draft, "Only this stand's known test draft may be temporarily replaced")
+    let marker = "COMPACT " + UUID().uuidString.lowercased()
+    let message = "Ответь только: \(marker). Не вызывай инструменты и ничего не меняй."
+    composer.tap()
+    // Establish the visible final-line caret with a contact. Send keyboard
+    // input to the app, not an element action that can retarget that caret.
+    composer.coordinate(withNormalizedOffset: .init(dx: 0.99, dy: 0.95)).tap()
+    screenshot("compact-probe-final-line-caret-before-keyboard-edit")
+    app.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count))
+    screenshot("compact-probe-keyboard-edit-before-send")
+    XCTAssertTrue((composer.value as? String ?? "").isEmpty || composer.value as? String == "Сообщение Codex",
+      "Actual keyboard value after Backspace: \(composer.value as? String ?? "missing")")
+    app.typeText(message); XCTAssertEqual(composer.value as? String, message)
+    let send = app.buttons["notebook-chat-send"]
+    XCTAssertTrue(send.isHittable); XCTAssertTrue(send.isEnabled); send.tap()
+    composer.tap(); composer.typeText(draft); XCTAssertEqual(composer.value as? String, draft)
+    collapseChat()
+    let preview = app.buttons["notebook-companion-reply"]
+    XCTAssertTrue(preview.waitForExistence(timeout: 120))
+    XCTAssertTrue([marker, marker + "."].contains(preview.label), "The actual short reply, not local outgoing status, starts this observation")
+    let observed = ProcessInfo.processInfo.systemUptime
+    screenshot("compact-actual-reply-before-expiry")
+    // Short replies remain for 12 seconds. A four-second stationary contact
+    // beginning near nine seconds crosses expiry without an app-side timer,
+    // synthetic state, activation tap or corrective gesture.
+    Thread.sleep(forTimeInterval: max(0, 9 - (ProcessInfo.processInfo.systemUptime - observed)))
+    XCTAssertTrue(preview.exists, "The preview must still exist when the contact starts")
+    let compose = app.buttons["notebook-companion-compose"]
+    let frame = compose.frame
+    XCTAssertTrue(compose.isHittable)
+    screenshot("compact-compose-contact-down-image")
+    let point = CGPoint(x: frame.midX, y: frame.midY)
+    let started = ProcessInfo.processInfo.systemUptime
+    app.coordinate(withNormalizedOffset: .zero)
+      .withOffset(.init(dx: point.x - app.frame.minX, dy: point.y - app.frame.minY))
+      .press(forDuration: 4)
+    let released = ProcessInfo.processInfo.systemUptime
+    let opened = app.buttons["notebook-chat-menu"].waitForExistence(timeout: 5)
+    screenshot("compact-compose-contact-released-image")
+    func bounds(_ rect: CGRect) -> [String: Double] {
+      ["x": rect.minX, "y": rect.minY, "width": rect.width, "height": rect.height]
+    }
+    try attach(["test": nonce, "threadID": threadID, "request": message, "actualReply": marker,
+      "previewObservedUptime": observed, "contactStartedUptime": started, "contactReturnedUptime": released,
+      "contactPoint": ["x": point.x, "y": point.y], "composeAXBefore": bounds(frame),
+      "composeAXAfter": compose.exists ? bounds(compose.frame) : [:],
+      "previewExistsAfter": preview.exists, "chatOpened": opened,
+      "scope": "One stationary real contact during actual reply expiry; not native geometry or latency acceptance"],
+      name: "compact-compose-actual-expiry-contact")
+    XCTAssertTrue(opened, "An already accepted compose contact must not disappear with its sibling preview")
+    XCTAssertEqual(try currentConversationID(), threadID)
+    XCTAssertEqual(composer.value as? String, draft)
+    let fullReply = app.webViews.staticTexts.matching(NSPredicate(format: "label == %@ OR label == %@", marker, marker + ".")).firstMatch
+    XCTAssertTrue(fullReply.waitForExistence(timeout: 15), "Opening the native panel alone does not prove the reply was installed")
+    XCTAssertTrue(fullReply.isHittable)
+    screenshot("compact-compose-actual-reply-installed")
+    collapseChat()
+    XCTAssertTrue(app.webViews.staticTexts["Collaboration count \(nonce): 102"].firstMatch.exists)
+  }
+
   func testConcurrentHumanStateRejectsStaleAgentWriteAndSurvivesItsUndo() throws {
     try launch()
     let nonce = UUID().uuidString.lowercased()
