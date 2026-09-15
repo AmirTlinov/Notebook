@@ -5,6 +5,64 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testHoldingPassiveSVGMovesOnlyTheDrawingFromItsFirstContact() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures",
+      "--notebook-passive-svg-fixture"]
+    launchPortraitFixture(app)
+    let svg = app.webViews.containing(.image, identifier: "Пассивная схема").firstMatch
+    let controls = app.webViews.containing(.button, identifier: "SVG scene counter").firstMatch
+    XCTAssertTrue(svg.waitForExistence(timeout: 10)); XCTAssertTrue(controls.waitForExistence(timeout: 10))
+    for delta in [CGVector(dx: 80, dy: 50), CGVector(dx: -40, dy: -30)] {
+      let before = [svg.frame, controls.frame]
+      let start = svg.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
+      start.press(forDuration: 0.45, thenDragTo: start.withOffset(delta), withVelocity: .slow, thenHoldForDuration: 0)
+      let after = [svg.frame, controls.frame]
+      let geometry = XCTAttachment(string: "Native WK frames before: \(before)\nafter: \(after)")
+      geometry.name = "passive-svg-hold-\(delta.dx)-geometry"; geometry.lifetime = .keepAlways; add(geometry)
+      let pixels = XCTAttachment(screenshot: app.screenshot())
+      pixels.name = "passive-svg-after-hold-\(delta.dx)"; pixels.lifetime = .keepAlways; add(pixels)
+      XCTAssertTrue(app.buttons["delete-agent-element"].exists, "The first hold selects the drawing without an activating tap")
+      XCTAssertEqual(after[0].midX - before[0].midX, delta.dx, accuracy: 6)
+      XCTAssertEqual(after[0].midY - before[0].midY, delta.dy, accuracy: 6)
+      XCTAssertEqual(after[0].size, before[0].size)
+      XCTAssertEqual(after[1], before[1], "Lifting the drawing cannot move the camera or its neighbour")
+      XCTAssertTrue(controls.staticTexts["Count 0"].exists)
+    }
+  }
+
+  func testPinchingPassiveSVGScalesAfterRotationWithoutSelectingTheDrawing() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures",
+      "--notebook-passive-svg-fixture"]
+    launchPortraitFixture(app)
+    let svg = app.webViews.containing(.image, identifier: "Пассивная схема").firstMatch
+    XCTAssertTrue(svg.waitForExistence(timeout: 10))
+    // Gesture coordinates belong to the freshly observed native WK surface,
+    // never the SVG child's potentially stale accessibility rectangle.
+    for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+      XCUIDevice.shared.orientation = orientation
+      let before = svg.frame
+      svg.pinch(withScale: 1.25, velocity: 0.5)
+      let after = svg.frame
+      let geometry = XCTAttachment(string: "Native WK frames before: \(before)\nafter: \(after)")
+      geometry.name = "passive-svg-pinch-\(orientation.rawValue)-geometry"; geometry.lifetime = .keepAlways; add(geometry)
+      // Capture the screen after rotation: XCTest can retain the application's
+      // old portrait crop even while its native window is already landscape.
+      let pixels = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+      pixels.name = "passive-svg-after-pinch-\(orientation.rawValue)"; pixels.lifetime = .keepAlways; add(pixels)
+      let scale = after.width / before.width
+      XCTAssertGreaterThan(scale, 1.1, "A pinch beginning on SVG must reach the scene camera")
+      XCTAssertEqual(after.height / before.height, scale, accuracy: 0.01)
+      // The outer native WK frame, not the inner SVG DOM rectangle, proves
+      // scene magnification. Off-screen neighbours may legitimately retire;
+      // their independent input is exercised by the pan/control regression.
+      XCTAssertFalse(app.buttons["delete-agent-element"].exists, "A pair cannot also select the drawing")
+    }
+  }
+
   func testDraggingPassiveSVGFromFirstContactMovesCameraAndKeepsControlsIndependent() {
     continueAfterFailure = false
     let app = XCUIApplication()
