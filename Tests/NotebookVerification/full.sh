@@ -35,10 +35,10 @@ python3 "$ROOT/Applications/notebook_release.py" verification-start \
   --source-root "$ROOT" --evidence-dir "$EVIDENCE"
 python3 -B "$ROOT/Tests/NotebookVerification/run.py" 2>&1 | tee "$EVIDENCE/verification-tools.log"
 python3 -B "$ROOT/Tests/NotebookDocumentAcceptance/test_system_trace.py" 2>&1 | tee "$EVIDENCE/trace-harness.log"
-swift test 2>&1 | tee "$EVIDENCE/core.log"
-"$ROOT/Applications/test-load-fixture.sh" 2>&1 | tee "$EVIDENCE/load-fixture.log"
 python3 "$ROOT/Tests/PreviewInstaller/run.py" 2>&1 | tee "$EVIDENCE/preview-installer.log"
 python3 "$ROOT/Tests/NotebookRelease/run.py" 2>&1 | tee "$EVIDENCE/release-tools.log"
+swift test 2>&1 | tee "$EVIDENCE/core.log"
+"$ROOT/Applications/test-load-fixture.sh" 2>&1 | tee "$EVIDENCE/load-fixture.log"
 
 ICON_PROOF="$DERIVED/AppIcon.appiconset"
 "$ROOT/Applications/render-app-icon.sh" "$ICON_PROOF"

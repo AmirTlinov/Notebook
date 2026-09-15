@@ -403,11 +403,20 @@ class PreviewInstallerTests(unittest.TestCase):
         self.assertEqual(len(self.cli.install_calls), first_count)
 
     def test_product_default_remains_canonical_and_mac_name_unchanged(self):
-        spec = (ROOT / "Applications/project.yml").read_text()
-        self.assertEqual(spec.count("CFBundleDisplayName: $(NOTEBOOK_DISPLAY_NAME)"), 1)
-        self.assertEqual(spec.count("NOTEBOOK_DISPLAY_NAME: Notebook"), 1)
-        self.assertIn("PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook\n", spec)
-        self.assertIn("CFBundleDisplayName: Notebook\n", spec.split("  NotebookMac:", 1)[1])
+        # Parse the real configuration instead of requiring one YAML spelling.
+        # Release admission separately inspects the built bundle and signature.
+        output = self.root / "resolved-project.json"
+        subprocess.run(["xcodegen", "dump", "--spec", str(ROOT / "Applications/project.yml"),
+            "--type", "json", "--file", str(output), "--quiet"], check=True)
+        spec = json.loads(output.read_text())
+        suffix = spec["settings"]["base"]["NOTEBOOK_BUNDLE_SUFFIX"]
+        self.assertEqual(suffix, "", "Private identities require an explicit build override")
+        ipad, mac = spec["targets"]["Notebook"], spec["targets"]["NotebookMac"]
+        settings = ipad["settings"]["base"]
+        self.assertEqual(settings["PRODUCT_BUNDLE_IDENTIFIER"].replace("$(NOTEBOOK_BUNDLE_SUFFIX)", suffix), MODULE.CANONICAL)
+        self.assertEqual(settings["NOTEBOOK_DISPLAY_NAME"], "Notebook")
+        self.assertEqual(ipad["info"]["properties"]["CFBundleDisplayName"], "$(NOTEBOOK_DISPLAY_NAME)")
+        self.assertEqual(mac["info"]["properties"]["CFBundleDisplayName"], "Notebook")
 
 
 if __name__ == "__main__":

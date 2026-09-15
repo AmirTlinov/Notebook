@@ -1,5 +1,28 @@
 # Проверка Notebook
 
+## 15 сентября — полный прогон: исправление ранней проверки идентичности
+
+Первый общий прогон `.build/notebook-integrated-plan-full` на source SHA
+`7fff61fafe6b8f566c202b0fb692300f181718198d99f550bebbafe7594bfb6a`
+закончил Core без ошибок, включая обе нагрузки на 100 000 записей
+(основная группа: 683 проверки, 998.998 s). Opt-in проверка настоящего
+Codex scope была пропущена: её частный manifest не был передан.
+Load fixture, 70 проверок verification и 18 проверок trace harness прошли.
+Общий прогон **не принят**: PreviewInstaller получил 38 PASS / 1 FAIL,
+следующие MCP/native/UI стадии не запускались.
+
+Причина — устаревшее сравнение буквальной строки YAML с bundle ID.
+Проверка теперь читает разобранную конфигурацию XcodeGen и подтверждает
+пустой стандартный суффикс, каноническую iPad identity и прежние имена.
+Продуктовые идентичности не менялись; фактические bundle/signature остаются
+предметом release admission. Быстрые проверки установщика и release tools
+перенесены перед тяжёлым Core, без удаления условий полной приёмки.
+После исправления: **39 PreviewInstaller, 64 release tools, 70 verification
+PASS** (`.build/preview-default-identity.log`,
+`.build/release-preflight-plan.log`, `.build/full-preflight-order.log`).
+Нужен новый неизменный общий прогон; предыдущая частичная проверка его
+не заменяет.
+
 ## 15 сентября — остановленный ход не выдаётся за выполненный инструмент
 
 Transcript получает существующие `CodexConversation.turnStatuses`. Изменение
