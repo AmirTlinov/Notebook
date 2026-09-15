@@ -9,6 +9,10 @@ struct DocumentBlockRegion: Equatable {
   let sourceOffset: Double
 }
 
+enum DocumentPresentationScope {
+  case paper, block(String), page
+}
+
 /// The actual WebKit layout names the block fragments on each physical sheet.
 @MainActor
 @Observable
@@ -58,7 +62,7 @@ final class DocumentRenderRegistry {
     let token: String
     let pageIndex: Int
     let generation: UInt64
-    let isAttached: @MainActor () -> Bool
+    let isAttached: @MainActor (DocumentPresentationScope) -> Bool
   }
   @ObservationIgnored private var liveSurfaces: [UUID: LiveSurface] = [:]
   private struct LiveObserver {
@@ -211,15 +215,16 @@ final class DocumentRenderRegistry {
 
   /// Layout history can resolve an address, but only the exact mounted current
   /// surface can confirm what the person is seeing now.
-  func hasLiveSurface(document: DocumentDocument, state: DocumentStateJournal, pageIndex: Int) -> Bool {
+  func hasLiveSurface(document: DocumentDocument, state: DocumentStateJournal, pageIndex: Int,
+    scope: DocumentPresentationScope = .page) -> Bool {
     let token = DocumentSnapshotCache.token(document: document, state: state, pageIndex: pageIndex)
     return liveSurfaces.values.contains {
-      $0.documentID == document.id && $0.token == token && $0.pageIndex == pageIndex && $0.isAttached()
+      $0.documentID == document.id && $0.token == token && $0.pageIndex == pageIndex && $0.isAttached(scope)
     }
   }
 
   func publishLive(documentID: UUID, token: String, pageIndex: Int, hostID: UUID, generation: UInt64,
-    isAttached: @escaping @MainActor () -> Bool) {
+    isAttached: @escaping @MainActor (DocumentPresentationScope) -> Bool) {
     if let previous = liveSurfaces[hostID], previous.generation > generation { return }
     liveSurfaces[hostID] = .init(documentID: documentID, token: token, pageIndex: pageIndex,
       generation: generation, isAttached: isAttached)

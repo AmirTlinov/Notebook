@@ -13,6 +13,7 @@ struct AgentOverlayView: View {
   let inputEnabled: Bool
   let onRenderReady: (Bool) -> Void
   let onState: (String, JSONValue) -> Void
+  var visibleRegion: CGRect? = nil
 
   @State private var readiness = AgentOverlayReadiness()
 
@@ -38,14 +39,11 @@ struct AgentOverlayView: View {
   }
 
   private func runtimeIDs(in elements: [AgentElement]) -> Set<String> {
-    let focusedID: String?
-    if case .page(let owner, let id) = model.interactiveElementFocus, owner == pageID { focusedID = id }
-    else { focusedID = nil }
-    let programs = elements.filter { $0.kind == .web }.sorted {
-      if ($0.id == focusedID) != ($1.id == focusedID) { return $0.id == focusedID }
-      return $0.id < $1.id
-    }
-    return Set(programs.prefix(max(0, SceneRenderResources.shared.maximumPassiveLivePrograms)).map(\.id))
+    Set(elements.filter { element in
+      element.kind == .web && (visibleRegion.map {
+        $0.intersects(CGRect(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height))
+      } ?? true)
+    }.map(\.id))
   }
 
   var body: some View {

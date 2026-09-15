@@ -1,6 +1,7 @@
 #if os(iOS)
 import Foundation
 import NotebookCore
+import Observation
 import UIKit
 import WebKit
 
@@ -22,8 +23,8 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   private var startTask: Task<Void, Never>?
   private var startID: UUID?
   private var requestedPriority: WebPriority?
+  private var refusedAdmission: UInt64?
   private var readinessDeadline: Task<Void, Never>?
-  private var readinessTimedOut = false
   private var captureTask: Task<RasterLease, Error>?
   private var captureID: UUID?
   private var queuedCaptures = 0
@@ -66,6 +67,8 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     guard !stopped else { return }
     if let lease { lease.updatePriority(priority); requestedPriority = priority; return }
     guard failure == nil else { return }
+    if refusedAdmission == resources.webAdmissionGeneration { requestedPriority = priority; return }
+    refusedAdmission = nil
     if startTask != nil {
       guard requestedPriority != priority else { return }
       startTask?.cancel(); startTask = nil
@@ -75,7 +78,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
       guard let self else { return }
       do {
         let acquired = try await resources.acquireDocumentProgramSurface(priority: priority,
-          documentID: documentID, blockID: block.id, deadline: .now + .seconds(8))
+          documentID: documentID, blockID: block.id)
         guard !stopped, !Task.isCancelled, startID == request else { acquired.release(); return }
         lease = acquired
         let content = WKUserContentController(); content.add(self, name: "documentProgram")
@@ -92,13 +95,21 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
         readinessDeadline = Task { @MainActor [weak self, weak web] in
           do { try await Task.sleep(for: .seconds(8)) } catch { return }
           guard let self, self.webView === web, !ready, !stopped, failure == nil else { return }
-          readinessTimedOut = true; failure = SceneRenderError.snapshotPending("document_program_readiness"); onChange()
+          fail(SceneRenderError.snapshotPending("document_program_readiness"))
         }
         if startID == request { startID = nil; startTask = nil }
       } catch {
         guard startID == request else { return }
         startID = nil; startTask = nil
-        if !(error is CancellationError) { failure = error; onChange() }
+        if error as? SceneRenderError == .resourceLimit {
+          refusedAdmission = resources.webAdmissionGeneration
+          withObservationTracking { _ = resources.webAdmissionGeneration } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+              guard let self, !stopped, let requestedPriority else { return }
+              start(priority: requestedPriority)
+            }
+          }
+        } else if !(error is CancellationError) { fail(error) }
       }
     }
   }
@@ -181,8 +192,8 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     guard !stopped, message.webView === webView, let body = message.body as? [String: Any], body["runtimeID"] as? String == id.uuidString else { return }
     switch body["kind"] as? String {
     case "ready":
-      guard failure == nil || readinessTimedOut else { return }
-      readinessDeadline?.cancel(); readinessDeadline = nil; readinessTimedOut = false; failure = nil
+      guard failure == nil else { return }
+      readinessDeadline?.cancel(); readinessDeadline = nil
       ready = true
       if let value = body["revision"] as? String, UInt64(value) == revision { presentedRevision = revision }
       onChange()
@@ -196,11 +207,11 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
       value = next; appliedValue = next; revision &+= 1
       if let accepted = onStateChange(next) { observedStateVersion = accepted }
       else if requiresStateAcceptance {
-        ready = false; failure = SceneRenderError.snapshotPending("document_state_not_accepted"); onChange()
+        fail(SceneRenderError.snapshotPending("document_state_not_accepted"))
       }
     case "focus": focused = body["value"] as? Bool == true; onFocus(focused)
     case "link": if body["userActivated"] as? Bool == true, let href = body["href"] as? String { onLink(href) }
-    case "failure": ready = false; readinessTimedOut = false; failure = SceneRenderError.snapshotPending(body["message"] as? String ?? "document_program"); onChange()
+    case "failure": fail(SceneRenderError.snapshotPending(body["message"] as? String ?? "document_program"))
     default: break
     }
   }
@@ -226,8 +237,14 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   }
 
   func stop() { stopped = true; startTask?.cancel(); startTask = nil; startID = nil; releaseSurface() }
+  private func fail(_ error: Error) {
+    failure = error; ready = false; focused = false; presentedRevision = nil
+    // A failed program keeps its accepted explicit state, not a broken slot
+    // which could starve every healthy neighbour. Retry owns a fresh executor.
+    releaseSurface(); onFocus(false); onChange()
+  }
   private func releaseSurface() {
-    readinessDeadline?.cancel(); readinessDeadline = nil; readinessTimedOut = false
+    readinessDeadline?.cancel(); readinessDeadline = nil
     initialNavigationPending = false
     webView?.stopLoading(); webView?.navigationDelegate = nil
     webView?.configuration.userContentController.removeScriptMessageHandler(forName: "documentProgram")

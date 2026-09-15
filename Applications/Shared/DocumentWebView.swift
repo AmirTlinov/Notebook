@@ -936,7 +936,7 @@ final class DocumentWebCoordinator: NSObject,
     guard !externallyHostedPrograms, hasCanonicalPixels, snapshotPixelWidth == nil, acceptsInput, let payload,
       appliedPageIndex == requestedPageIndex, let pageIndex = appliedPageIndex else { revokeLiveReceipt(); return }
     DocumentRenderRegistry.shared.publishLive(documentID: payload.documentID, token: payload.compositeToken,
-      pageIndex: pageIndex, hostID: hostID, generation: generation) { [weak self] in
+      pageIndex: pageIndex, hostID: hostID, generation: generation) { [weak self] _ in
         guard let self, !isInvalidated, hasCanonicalPixels, acceptsInput, let host else { return false }
         #if os(iOS)
           return host.window?.isKeyWindow == true && UIApplication.shared.applicationState == .active && !host.isHidden

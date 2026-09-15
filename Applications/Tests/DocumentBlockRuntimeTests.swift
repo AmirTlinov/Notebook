@@ -77,6 +77,22 @@ final class DocumentBlockRuntimeTests: XCTestCase {
     XCTAssertFalse(background.isReleased, "Foreground navigation uses its reserved slot instead of waiting for an unrelated neighbor")
   }
 
+  func testAFullAdmissionQueueResumesTheVisibleRuntimeOnActualCapacityRelease() async throws {
+    let resources = SceneRenderResources(maximumWebSurfaces: 1, maximumPendingWebRequests: 0)
+    let held = try await resources.acquireWebSurface(priority: .input)
+    defer { held.release() }
+    let fixture = try RuntimeFixture(block: .interactive(id: "waiting", html: "<button>First touch</button>", height: 100),
+      resources: resources, priority: .input)
+    defer { fixture.close() }
+    await Task.yield(); await Task.yield()
+    XCTAssertNil(fixture.runtime.webView)
+    XCTAssertNil(fixture.runtime.failure, "Admission waiting is not a program failure")
+    held.release()
+    try await fixture.waitUntilReady()
+    XCTAssertNotNil(fixture.runtime.webView, "Actual release wakes the same demand without an activation tap or a timer")
+    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
+  }
+
   private func bluePixels(_ value: UIImage) throws -> Int {
     let image = try XCTUnwrap(value.cgImage)
     var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)

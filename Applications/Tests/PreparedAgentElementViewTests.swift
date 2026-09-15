@@ -749,7 +749,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
   }
 
   @MainActor
-  func testFourthVisiblePageProgramHasPreparedPixelsAndExplicitPromotionWithoutRestartingNeighbours() async throws {
+  func testFourthVisiblePageProgramQueuesAndStartsWhenItsActualViewportIsRevealed() async throws {
     let model = makeModel(), pageID = UUID()
     let elements = (0..<4).map { index in
       AgentElement(id: "program-\(index)-" + pageID.uuidString, kind: .web,
@@ -760,72 +760,49 @@ final class PreparedAgentElementViewTests: XCTestCase {
           <script>window.clicks=0; window.runtimeIdentity=crypto.randomUUID();</script>
           """)
     }
-    var ready = false, commits: [String: JSONValue] = [:]
-    let host = try SurfaceHost(content: AnyView(AgentOverlayView(pageID: pageID,
-      pageSize: .init(width: 400, height: 320), renderingScale: 1, elements: elements,
-      allowsInteraction: true, inputEnabled: true, onRenderReady: { ready = $0 },
-      onState: { commits[$0] = $1 }).frame(width: 400, height: 320).environment(model)))
+    let viewport = PageProgramViewport()
+    var commits: [String: JSONValue] = [:]
+    let host = try SurfaceHost(content: AnyView(PageProgramViewportFixture(viewport: viewport, pageID: pageID,
+      elements: elements, onState: { commits[$0] = $1 }).environment(model)))
     defer { host.close() }
-    try await waitUntil("Three programs and the fourth's actual static preparation complete", timeout: .seconds(12)) {
-      ready && self.webViews(in: host.controller.view).count == 3
+    try await waitUntil("Visible programs automatically queue at the unchanged resource cap", timeout: .seconds(12)) {
+      let views = self.webViews(in: host.controller.view)
+      return views.count == 3 && SceneRenderResources.shared.pendingWebRequestCount == 1 && views.allSatisfy { web in
+        elements.contains { (web.navigationDelegate as? AgentWebCoordinator)?.hasLiveSource($0) == true }
+      }
     }
-    let oldViews = webViews(in: host.controller.view)
-    var owners: [String: WKWebView] = [:]
-    for view in oldViews {
+    let original = webViews(in: host.controller.view)
+    let identities = Set(original.map(ObjectIdentifier.init))
+    var admitted: Set<String> = []
+    for view in original {
       let label = try await view.evaluateJavaScript("document.getElementById('control').textContent") as? String
-      if let label { owners[label] = view }
+      if let label { admitted.insert(label) }
     }
-    XCTAssertEqual(Set(owners.keys), Set((0..<3).map { "Ready control \($0)" }))
-    XCTAssertTrue(commits.isEmpty)
-    let retiring = try XCTUnwrap(owners["Ready control 2"])
-    _ = try await retiring.evaluateJavaScript("document.body.style.background='rgb(0,255,0)'")
-    let pausedRasters = rasterViews(in: host.controller.view).filter { SceneSourceVisibility.isVisible($0) }
-    XCTAssertFalse(pausedRasters.isEmpty,
-      "The fourth source has a real mounted raster while its runtime is explicitly paused")
-    // This native contract drives the explicit start action's model intent.
-    // The acceptance UI suite separately supplies the physical first tap.
-    model.interactiveElementFocus = .page(pageID: pageID, elementID: elements[3].id)
-    var fourth: WKWebView?
+    let waiting = try XCTUnwrap((0..<4).first { !admitted.contains("Ready control \($0)") })
+    let target = elements[waiting]
+    viewport.region = CGRect(x: target.frame.x, y: target.frame.y, width: target.frame.width, height: target.frame.height)
+    var current: WKWebView?
     let deadline = ContinuousClock.now + .seconds(8)
-    while fourth == nil, ContinuousClock.now < deadline {
+    while current == nil, ContinuousClock.now < deadline {
       for view in webViews(in: host.controller.view) {
-        if (try? await view.evaluateJavaScript("document.getElementById('control')?.textContent")) as? String == "Ready control 3" {
-          fourth = view
+        if (try? await view.evaluateJavaScript("document.getElementById('control')?.textContent")) as? String == "Ready control \(waiting)" {
+          current = view
         }
       }
-      if fourth == nil { try await Task.sleep(for: .milliseconds(20)) }
+      if current == nil { try await Task.sleep(for: .milliseconds(20)) }
     }
-    let current = try XCTUnwrap(fourth)
-    try await waitUntil("The replacement runtime is physically visible") { SceneSourceVisibility.isVisible(current) }
-    XCTAssertTrue(commits.isEmpty, "Promoting a source cannot replay a control click")
-    _ = try await current.evaluateJavaScript("document.getElementById('control').click()")
-    try await waitUntil("The first ready control event executes once") {
-      commits[elements[3].id] == .object(["click": .number(1)])
-    }
-    for index in 0..<2 {
-      XCTAssertTrue(webViews(in: host.controller.view).contains { $0 === owners["Ready control \(index)"] },
-        "Unrelated ready programs retain their original native execution owner")
-    }
+    let web = try XCTUnwrap(current)
+    try await waitUntil("The newly visible control is physically ready") { SceneSourceVisibility.isVisible(web) }
+    XCTAssertFalse(identities.contains(ObjectIdentifier(web)))
+    XCTAssertNil(model.interactiveElementFocus, "Visibility alone, not a hidden activating tap, starts this control")
+    XCTAssertTrue(commits.isEmpty, "Queued input is never replayed")
+    // Native unit tests set the accepted contact intent; the UI test supplies
+    // the trusted first gesture. Visibility and startup above needed no focus.
+    model.interactiveElementFocus = .page(pageID: pageID, elementID: target.id)
+    await Task.yield()
+    _ = try await web.evaluateJavaScript("document.getElementById('control').click()")
+    try await waitUntil("The first ready event executes once") { commits[target.id] == .object(["click": .number(1)]) }
     XCTAssertLessThanOrEqual(SceneRenderResources.shared.activeWebSurfaceCount, 6)
-    try await waitUntil("The demoted program finishes its actual current-frame capture") {
-      !self.webViews(in: host.controller.view).contains { $0 === retiring }
-    }
-    let demoted = try XCTUnwrap(SceneRenderResources.shared.retainRaster(for: .agent(elements[2])))
-    defer { demoted.release() }
-    XCTAssertTrue(rasterViews(in: host.controller.view).contains {
-      $0.installation(for: demoted).isInstalled
-    }, "The captured entry, not an unrelated cache alias, is installed in the passive native view")
-    let cg = try XCTUnwrap(demoted.image.cgImage)
-    let context = try XCTUnwrap(CGContext(data: nil, width: cg.width, height: cg.height, bitsPerComponent: 8,
-      bytesPerRow: cg.width * 4, space: CGColorSpaceCreateDeviceRGB(),
-      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
-    context.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
-    let bytes = try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self)
-    let green = stride(from: 0, to: cg.width * cg.height * 4, by: 4).filter {
-      bytes[$0] < 20 && bytes[$0 + 1] > 230 && bytes[$0 + 2] < 20
-    }.count
-    XCTAssertGreaterThan(green, cg.width * cg.height / 3,
-      "Pausing preserves the latest DOM-only pixels instead of returning to the initial screenshot")
   }
 
   @MainActor
@@ -1241,5 +1218,22 @@ private final class SurfaceHost {
     controller.rootView = AnyView(EmptyView())
     window.isHidden = true
     window.rootViewController = nil
+  }
+}
+
+@MainActor
+@Observable
+private final class PageProgramViewport { var region: CGRect? }
+
+private struct PageProgramViewportFixture: View {
+  let viewport: PageProgramViewport
+  let pageID: UUID
+  let elements: [AgentElement]
+  let onState: (String, JSONValue) -> Void
+  var body: some View {
+    AgentOverlayView(pageID: pageID, pageSize: .init(width: 400, height: 320), renderingScale: 1,
+      elements: elements, allowsInteraction: true, inputEnabled: true, onRenderReady: { _ in },
+      onState: onState, visibleRegion: viewport.region)
+      .frame(width: 400, height: 320)
   }
 }

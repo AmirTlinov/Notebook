@@ -18,6 +18,8 @@ final class DocumentProgramOwner {
     let layout: DocumentLayoutRecord
     let pages: Set<Int>
     let currentPage: Int?
+    let visibleIDs: Set<String>
+    let preparationPage: Int?
     let blocked: Bool
     let contacts: Set<String>
     let densities: [String: Double]
@@ -38,7 +40,6 @@ final class DocumentProgramOwner {
   private var pausedPrograms: [String: PausedProgram] = [:]
   private(set) var liveIDs: Set<String> = []
   private(set) var retiringIDs: Set<String> = []
-  private(set) var requestedID: String?
   private var previewID: String?
   private(set) var pauseFailures: [String: String] = [:]
   private var jobs: [String: Job] = [:]
@@ -46,10 +47,10 @@ final class DocumentProgramOwner {
   private var retirementAttempts: [String: String] = [:]
   private var stopped = false
   var onChange: () -> Void = {}
-  var onFailure: (String, Error) -> Void = { _, _ in }
   var onMount: (WKWebView, CGSize) -> Void = { _, _ in }
   var onLink: (String, ContentFieldVersion, String) -> Void = { _, _, _ in }
   var hasFocus: Bool { runtimes.values.contains { $0.focused } }
+  var visibleIDs: Set<String> { context?.visibleIDs ?? [] }
   var retainedIDs: Set<String> {
     guard let context else { return [] }
     let ids = Set(context.input.document.blocks.filter { $0.kind == .interactive }.map(\.id))
@@ -61,10 +62,10 @@ final class DocumentProgramOwner {
   }
 
   func update(input: DocumentPagePresentation, layout: DocumentLayoutRecord, pages: Set<Int>,
-    currentPage: Int?, blocked: Bool, contacts: Set<String>, densities: [String: Double]) {
+    currentPage: Int?, visibleIDs: Set<String>, preparationPage: Int?, blocked: Bool, contacts: Set<String>, densities: [String: Double]) {
     guard !stopped else { return }
     context = .init(input: input, layout: layout, pages: pages, currentPage: currentPage,
-      blocked: blocked, contacts: contacts, densities: densities)
+      visibleIDs: visibleIDs, preparationPage: preparationPage, blocked: blocked, contacts: contacts, densities: densities)
     reconcile()
   }
 
@@ -84,14 +85,10 @@ final class DocumentProgramOwner {
     return runtime.presents(record?.value ?? block.initialState, version: record?.valueVersion)
   }
 
-  func activate(_ id: String) {
-    guard retainedIDs.contains(id) else { return }
-    requestedID = id; pauseFailures[id] = nil
-    reconcile(); onChange()
-  }
-
   func retry(_ id: String) {
-    pauseFailures[id] = nil; retirementAttempts[id] = nil; runtimes[id]?.retry(); activate(id)
+    guard retainedIDs.contains(id) else { return }
+    pauseFailures[id] = nil; retirementAttempts[id] = nil; runtimes[id]?.retry()
+    reconcile(); onChange()
   }
 
   func blurFocused() async {
@@ -106,14 +103,16 @@ final class DocumentProgramOwner {
     let currentIDs = context.layout.blockIDs(on: [context.currentPage ?? input.pageIndex])
     let blocks = input.document.blocks.filter { $0.kind == .interactive && retained.contains($0.id) }
     let ordered = (blocks.filter { currentIDs.contains($0.id) } + blocks.filter { !currentIDs.contains($0.id) }).map(\.id)
-    let automaticCount = min(resources.maximumPassiveLivePrograms, max(0, resources.maximumWebSurfaces - 3))
-    var desired = Set(ordered.prefix(automaticCount))
-    if let requestedID, retained.contains(requestedID) { desired.insert(requestedID) }
-    else { requestedID = nil }
+    var desired = context.visibleIDs.intersection(retained)
+    desired.formUnion(runtimes.filter { $0.value.focused || context.contacts.contains($0.key) }.map(\.key))
     if !context.blocked { liveIDs = desired }
-    if let previewID, !retained.contains(previewID) || liveIDs.contains(previewID) { self.previewID = nil }
-    if previewID == nil {
-      previewID = ordered.first { !liveIDs.contains($0) && paused($0) == nil && pauseFailures[$0] == nil }
+    let previewPages = context.preparationPage.map { Set([$0]) } ?? context.pages.subtracting(context.currentPage.map { [$0] } ?? [])
+    let previewCandidates = context.layout.blockIDs(on: previewPages).intersection(retained)
+    if let previewID, context.blocked || !previewCandidates.contains(previewID) || liveIDs.contains(previewID)
+      || runtimes[previewID]?.failure != nil { self.previewID = nil }
+    if previewID == nil, !context.blocked {
+      previewID = ordered.first { previewCandidates.contains($0) && !liveIDs.contains($0) && paused($0) == nil
+        && pauseFailures[$0] == nil && runtimes[$0]?.failure == nil }
     }
     var demanded = liveIDs
     if let previewID { demanded.insert(previewID) }
@@ -132,7 +131,6 @@ final class DocumentProgramOwner {
           value: state, stateVersion: record?.valueVersion, width: region.frame.width, resources: resources)
         runtime.onChange = { [weak self, weak runtime] in
           guard let self, let runtime, runtimes[id] === runtime else { return }
-          if let failure = runtime.failure { onFailure(id, failure) }
           reconcile(); onChange()
         }
         runtime.onFocus = { [weak self] _ in self?.reconcile(); self?.onChange() }
@@ -150,7 +148,7 @@ final class DocumentProgramOwner {
       }
       guard let runtime = runtimes[id] else { continue }
       runtime.requiresStateAcceptance = true
-      runtime.start(priority: id == requestedID ? .input : (liveIDs.contains(id) ? .liveProgram : .visible))
+      runtime.start(priority: liveIDs.contains(id) ? .liveProgram : .visible)
       if !runtime.focused, context.contacts.isEmpty, jobs[id] == nil,
         applications[id]?.version != record?.valueVersion || applications[id] == nil {
         apply(state, version: record?.valueVersion, to: runtime)
@@ -158,6 +156,11 @@ final class DocumentProgramOwner {
     }
     for (id, runtime) in runtimes {
       let outside = !retained.contains(id)
+      // A no-longer-visible queued start has never accepted input. It cannot
+      // keep its old place ahead of the new visible controls.
+      if !demanded.contains(id), !runtime.ready, runtime.failure == nil, !context.blocked, !runtime.focused, !context.contacts.contains(id) {
+        retireImmediately(id, runtime: runtime); continue
+      }
       if outside && (!input.document.blocks.contains { $0.id == id }
         || input.document.sourceVersion(blockID: id) != runtime.sourceVersion || !runtime.ready) {
         if !context.blocked, !runtime.focused, !context.contacts.contains(id) { retireImmediately(id, runtime: runtime) }
@@ -206,7 +209,13 @@ final class DocumentProgramOwner {
         try Task.checkCancellation()
         if keepsPicture {
           let width = max(1, Int(ceil(runtime.blockWidth * (context.densities[block] ?? 2))))
-          pixels = try await runtime.capture(sourceOffset: 0, height: runtime.block.height, pixelWidth: width)
+          do { pixels = try await runtime.capture(sourceOffset: 0, height: runtime.block.height, pixelWidth: width) }
+          catch SceneRenderError.resourceLimit {
+            // An offscreen former input owner may keep a useful image, but its
+            // optional pixels cannot pin the executor ahead of visible work.
+            // A requested cut still owns its capture and explicit failure.
+            guard self.previewID != block, !self.liveIDs.contains(block) else { throw SceneRenderError.resourceLimit }
+          }
         }
         let accepted = try await context.input.onStateCheckpoint(block, value, runtime.sourceVersion)
         try Task.checkCancellation()

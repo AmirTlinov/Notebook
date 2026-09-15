@@ -804,8 +804,7 @@ final class SceneCompositionTiles {
             try Task.checkCancellation()
             guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
             let selected = requests.filter { plan.liveOwners.contains($0.owner) }
-            let runtimeOwners = Self.runtimeOwners(requests: selected, plan: plan,
-              previous: previous?.runtimeOwners ?? [], resources: resources)
+            let runtimeOwners = Self.runtimeOwners(requests: selected, plan: plan, resources: resources)
             let cached = selected.filter { resources.image(for: $0.demand.rasterSource, minimumScale: $0.requestedScale) != nil }
             let invalidatedTiles = Set(previous?.tileSources.compactMap { key, addresses in
               addresses.isDisjoint(with: changedSources) ? nil : key.atRevision(plan.revision)
@@ -941,7 +940,7 @@ final class SceneCompositionTiles {
   }
 
   private static func runtimeOwners(requests: [SceneCompositionRenderer.LiveRasterRequest],
-    plan: SceneCompositionPlan, previous: Set<SceneSourceAddress>, resources: SceneRenderResources) -> Set<SceneSourceAddress> {
+    plan: SceneCompositionPlan, resources: SceneRenderResources) -> Set<SceneSourceAddress> {
     #if os(iOS)
       guard resources.profile == .interactive, let root = plan.presentations[.board(plan.rootBoardID)],
         root.mode != .page, root.mode != .document else { return [] }
@@ -955,16 +954,10 @@ final class SceneCompositionTiles {
         guard let view = plan.presentations[request.owner.plane], let origin = request.demand.worldOrigin else { return false }
         let visible = SceneSourceCapture.visibleRect(source: request.source, origin: origin, presence: view)
         return !visible.isNull && !visible.isEmpty
-      }.sorted { left, right in
-        let a = SceneSourceAddress(plane: left.owner.plane, elementID: left.source.id)
-        let b = SceneSourceAddress(plane: right.owner.plane, elementID: right.source.id)
-        if plan.protectedOwners.contains(left.owner) != plan.protectedOwners.contains(right.owner) {
-          return plan.protectedOwners.contains(left.owner)
-        }
-        if previous.contains(a) != previous.contains(b) { return previous.contains(a) }
-        return left.source.id < right.source.id
       }
-      return Set(candidates.prefix(max(0, resources.maximumPassiveLivePrograms)).map {
+      // Membership expresses real visibility, not an optimistic resource grant.
+      // The existing allocator admits these owners and queues the remainder.
+      return Set(candidates.map {
         .init(plane: $0.owner.plane, elementID: $0.source.id)
       })
     #else

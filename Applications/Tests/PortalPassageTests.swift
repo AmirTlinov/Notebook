@@ -268,10 +268,14 @@ final class PortalPassageTests: XCTestCase {
         let sources = (scene.model.boardHierarchy?.board(scene.childID)?.elements ?? [])
           .filter { ids.contains($0.id) }.map(agentElementSnapshotSource)
         let views = agentWebViews(in: scene.host.view)
-        let ready = sources.allSatisfy { source in
-          views.contains { ($0.navigationDelegate as? AgentWebCoordinator)?.hasLiveSource(source) == true }
+        let expected = min(ids.count, SceneRenderResources.shared.maximumPassiveLivePrograms + 1)
+        let ready = views.allSatisfy { web in
+          sources.contains { (web.navigationDelegate as? AgentWebCoordinator)?.hasLiveSource($0) == true }
         }
-        if sources.count == ids.count, ready, views.count == ids.count {
+        let focusedReady = views.contains {
+          ($0.navigationDelegate as? AgentWebCoordinator)?.hasLiveSource(agentElementSnapshotSource(focused)) == true
+        }
+        if sources.count == ids.count, ready, focusedReady, views.count == expected {
           return Set(views.map(ObjectIdentifier.init))
         }
       }

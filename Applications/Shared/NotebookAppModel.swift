@@ -478,6 +478,8 @@ final class NotebookAppModel {
             resources: .shared).retainOpenDocument()
         }
       }
+      openDocumentPresentation?.cameraDidChange()
+      pagePresentations.cameraDidChange()
       #endif
     }
   }
@@ -2566,7 +2568,7 @@ final class NotebookAppModel {
       readingRestoreTarget?.id != saved.documentID, readingRestoreDocument != saved.documentID,
       let document = documents[saved.documentID], let state = documentStates[saved.documentID],
       document.blocks.first(where: { $0.id == saved.blockID })?.source == saved.source,
-      DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: presence.documentPageIndex) else { return }
+      DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: presence.documentPageIndex, scope: .paper) else { return }
     documentSavePresentation?.phase = .installed
     documentSavePresentation?.source = nil
     if let documentSaveObserver { DocumentRenderRegistry.shared.removeLiveObserver(documentSaveObserver) }
@@ -3436,7 +3438,8 @@ final class NotebookAppModel {
             else { ready = false }
           case .document:
             if let document = documents[reference.target.id], let state = documentStates[document.id] {
-              ready = DocumentRenderRegistry.shared.hasLiveSurface(document:document,state:state,pageIndex:visible.documentPageIndex)
+              ready = DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: visible.documentPageIndex,
+                scope: reference.elementID.map(DocumentPresentationScope.block) ?? .page)
             } else { ready = false }
           case .board, .cover:
             ready = scene.map { sceneRepresents(reference, in: $0, cohort: cohort,

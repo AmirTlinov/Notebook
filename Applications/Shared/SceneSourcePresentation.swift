@@ -30,7 +30,10 @@ final class SceneSourceInstallation {
 enum SceneSourceVisibility {
   #if os(iOS)
   static func isVisible(_ view: UIView) -> Bool {
-    guard isMounted(view), let window = view.window else { return false }
+    !visibleRect(view).isEmpty
+  }
+  static func visibleRect(_ view: UIView) -> CGRect {
+    guard isMounted(view), let window = view.window else { return .null }
     var visible = view.convert(view.bounds, to: window).intersection(window.bounds)
     var ancestor = view.superview
     while let current = ancestor {
@@ -39,7 +42,8 @@ enum SceneSourceVisibility {
       }
       ancestor = current.superview
     }
-    return !visible.isNull && !visible.isEmpty
+    guard !visible.isNull, !visible.isEmpty else { return .null }
+    return view.convert(visible, from: window).intersection(view.bounds)
   }
   static func isMounted(_ view: UIView) -> Bool {
     guard let window = view.window, !window.isHidden, !view.bounds.isEmpty else { return false }

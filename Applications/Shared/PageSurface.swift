@@ -13,6 +13,7 @@ struct PageSurface: View {
   /// A standalone page/thumbnail is laid out directly and needs no outer scale.
   var displayProjection: Double = 1
 
+  @State private var visibleRegion: CGRect?
   @State private var inkIsReady = false
   @State private var readyOverlay: [AgentElement]?
 
@@ -46,7 +47,7 @@ struct PageSurface: View {
             onState: { elementID, state in
               guard isVisible, isCurrent, model.activePage?.id == page.id else { return }
               model.commitElementState(pageID: page.id, elementID: elementID, state: state)
-            }
+            }, visibleRegion: visibleRegion
           )
           .opacity(isVisible ? 1 : 0)
           .allowsHitTesting(isVisible && isInteractive)
@@ -83,7 +84,7 @@ struct PageSurface: View {
       .frame(width: page.size.width, height: page.size.height)
       .background(PagePresentationView(page: page, isCurrent: isCurrent,
         isVisible: isVisible, isReady: inkIsReady && overlayIsReady,
-        activity: onRenderReady.activity).allowsHitTesting(false))
+        activity: onRenderReady.activity, onVisibleRegion: { visibleRegion = $0 }).allowsHitTesting(false))
       .clipShape(
         RoundedRectangle(
           cornerRadius: WorkspaceItemGeometry.notebook.cornerRadius,

@@ -398,36 +398,37 @@ final class WorkspaceSceneIndexTests: XCTestCase {
       SceneSourceAddress(plane: .board(boardID), elementID: $0.id)
     })
     XCTAssertEqual(workset.elements.count, 4)
+    func liveAddresses() -> Set<SceneSourceAddress> {
+      Set(elements.prefix(4).filter { element in
+        webViews(in: host.view).contains {
+          ($0.navigationDelegate as? AgentWebCoordinator)?.hasLiveSource(agentElementSnapshotSource(element)) == true
+        }
+      }.map { .init(plane: .board(boardID), elementID: $0.id) })
+    }
     while ContinuousClock.now < deadline {
-      if let current = model.compositionTiles.published,
-        visibleAddresses.allSatisfy({ current.hasInstalledPixels(for: $0) }),
-        webViews(in: host.view).count == 3 { break }
+      let actual = liveAddresses()
+      if actual.count == 3, SceneRenderResources.shared.pendingWebRequestCount == 1,
+        let current = model.compositionTiles.published, actual.allSatisfy({ current.hasInstalledPixels(for: $0) }) { break }
       try await Task.sleep(for: .milliseconds(30))
       XCTAssertLessThanOrEqual(SceneRenderResources.shared.activeWebSurfaceCount, 6)
     }
     let cohort = try XCTUnwrap(model.compositionTiles.published, model.compositionTiles.failure ?? "")
-    XCTAssertEqual(cohort.runtimeOwners.count, 3,
-      "The actual passive program budget leaves a raster executor for its neighbour")
+    XCTAssertEqual(cohort.runtimeOwners, visibleAddresses, "Every visible control requests its own runtime automatically")
     XCTAssertEqual(cohort.rasters.count, cohort.plan.tiles.count)
     XCTAssertLessThanOrEqual(cohort.plan.liveOwners.count + 1, 8)
-    XCTAssertTrue(visibleAddresses.allSatisfy { cohort.hasInstalledPixels(for: $0) },
-      "Every visible source needs actual mounted current pixels, whether runtime or raster")
+    let admitted = liveAddresses()
+    XCTAssertEqual(admitted.count, 3, "The resource owner, not a second visibility quota, bounds real runtimes")
+    XCTAssertTrue(admitted.allSatisfy { cohort.hasInstalledPixels(for: $0) })
     XCTAssertEqual(Set(cohort.sourceReceipts.keys), visibleAddresses,
       "The 996 offscreen programs create neither preparation demand nor native owners")
-    let paused = try XCTUnwrap(visibleAddresses.subtracting(cohort.runtimeOwners).first)
-    let pausedRaster = try XCTUnwrap(cohort.sourceRasters[paused])
-    let pausedDemand = try XCTUnwrap(cohort.sourceReceipts[paused]?.demand)
-    XCTAssertNotNil(pausedRaster.image(for: pausedDemand.rasterSource, minimumScale: pausedDemand.minimumScale))
-    let sourcePicture = XCTAttachment(image: pausedRaster.image)
-    sourcePicture.name = "Paused SVG exact source pixels before placement"
-    sourcePicture.lifetime = .keepAlways
-    add(sourcePicture)
+    let queued = try XCTUnwrap(visibleAddresses.subtracting(admitted).first)
+    XCTAssertFalse(cohort.hasInstalledPixels(for: queued), "A cold queued source does not claim to be a ready control")
     XCTAssertEqual(webViews(in: host.view).count, 3)
     let picture = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
       window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
     }
     let attachment = XCTAttachment(image: picture)
-    attachment.name = "Three live SVG programs and one explicitly paused prepared neighbour"
+    attachment.name = "Three live SVG programs and one automatically queued visible control"
     attachment.lifetime = .keepAlways
     add(attachment)
     let identities = Set(webViews(in: host.view).map(ObjectIdentifier.init))
@@ -442,7 +443,20 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     }
     XCTAssertEqual(model.sceneIndexGeneration, generation)
     XCTAssertEqual(model.compositionTiles.published?.runtimeOwners, cohort.runtimeOwners)
-    model.updatePresence(try XCTUnwrap(model.presence), settled: true)
+    let queuedElement = try XCTUnwrap(elements.first { $0.id == queued.elementID })
+    model.updatePresence(.init(boardID: boardID, mode: .board,
+      camera: .init(center: try XCTUnwrap(queuedElement.worldOrigin).offsetBy(x: 90, y: 80), scale: 3),
+      viewport: presence.viewport), settled: true)
+    let visibilityDeadline = ContinuousClock.now + .seconds(10)
+    while !liveAddresses().contains(queued), ContinuousClock.now < visibilityDeadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    XCTAssertTrue(liveAddresses().contains(queued), "Panning to a queued control prepares it without selecting or activating it")
+    XCTAssertNil(model.interactiveElementFocus)
+    model.updatePresence(presence, settled: true)
+    let restoreDeadline = ContinuousClock.now + .seconds(10)
+    while liveAddresses().count != 3, ContinuousClock.now < restoreDeadline { try await Task.sleep(for: .milliseconds(20)) }
+    let restoredIdentities = Set(webViews(in: host.view).map(ObjectIdentifier.init))
     model.selectElement(.spatial(boardID: boardID, elementID: elements[4].id))
     let offscreenAddress = SceneSourceAddress(plane: .board(boardID), elementID: elements[4].id)
     let pinDeadline = ContinuousClock.now + .seconds(8)
@@ -464,7 +478,7 @@ final class WorkspaceSceneIndexTests: XCTestCase {
       ContinuousClock.now < releaseDeadline {
       try await Task.sleep(for: .milliseconds(20))
     }
-    XCTAssertEqual(Set(webViews(in: host.view).map(ObjectIdentifier.init)), identities)
+    XCTAssertEqual(Set(webViews(in: host.view).map(ObjectIdentifier.init)), restoredIdentities)
     XCTAssertNil(model.compositionTiles.published?.sourceReceipts[offscreenAddress])
     XCTAssertEqual(model.sceneWorkset(presence: try XCTUnwrap(model.presence)).elements.count, 4)
     await model.finishPendingPersistence()

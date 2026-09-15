@@ -113,6 +113,7 @@ final class DocumentPagePresentationOwner {
       if owner.entries.isEmpty && owner.openDocuments == 0 { owner.stop() }
       else { owner.retirePaperAfterDocumentClose(); owner.schedule() }
     }
+    func cameraDidChange() { owner?.refreshVisiblePrograms() }
     isolated deinit { close() }
   }
   private var openDocuments = 0
@@ -139,7 +140,7 @@ final class DocumentPagePresentationOwner {
     let entries = owner.entries.values.map { entry in
       "\(entry.id):page=\(entry.input.pageIndex),current=\(entry.input.isCurrent),host=\(entry.host.map { String(describing: ObjectIdentifier($0)) } ?? "nil"),window=\(entry.host?.window != nil)"
     }.sorted()
-    return "current=\(String(describing: owner.current?.id)) mounted=\(String(describing: owner.mountedID)) entries=\(entries) paperPage=\(String(describing: owner.paper.payload?.pageIndex)) canonical=\(owner.paper.hasCanonicalPixels) paper=\(path(owner.paper.webView)) paperToken=\(owner.paper.payload?.renderToken ?? "nil") currentToken=\(owner.current?.input.token ?? "nil") work=\(String(describing: owner.workID)) needsWork=\(owner.needsWork) passivePage=\(String(describing: owner.passive?.payload?.pageIndex)) gesture=\(owner.gestureLocked) focused=\(owner.programOwner.hasFocus) terminal=\(owner.terminalFailures.sorted()) pressure=\(owner.failures.keys.sorted())"
+    return "current=\(String(describing: owner.current?.id)) mounted=\(String(describing: owner.mountedID)) entries=\(entries) paperPage=\(String(describing: owner.paper.payload?.pageIndex)) canonical=\(owner.paper.hasCanonicalPixels) paper=\(path(owner.paper.webView)) paperToken=\(owner.paper.payload?.renderToken ?? "nil") currentToken=\(owner.current?.input.token ?? "nil") work=\(String(describing: owner.workID)) needsWork=\(owner.needsWork) passivePage=\(String(describing: owner.passive?.payload?.pageIndex)) gesture=\(owner.gestureLocked) focused=\(owner.programOwner.hasFocus) terminal=\(owner.terminalFailures.keys.sorted()) pressure=\(owner.failures.keys.sorted())"
   }
 
   /// Submission freezes the installed native paper and all clipped program
@@ -196,7 +197,8 @@ final class DocumentPagePresentationOwner {
   private var contacts: Set<String> = []
   private var pictures: [Int: Picture] = [:]
   private var failures: [String: SceneRasterAdmission] = [:]
-  private var terminalFailures: Set<String> = []
+  private enum FailureScope { case paper, composite }
+  private var terminalFailures: [String: FailureScope] = [:]
   private var work: Task<Void, Never>?
   private var workID: UUID?
   private var needsWork = false
@@ -219,12 +221,6 @@ final class DocumentPagePresentationOwner {
       guard let self else { return }
       if let current, current.id == mountedID, !gestureLocked { installPrograms(on: current) }
       schedule()
-    }
-    programOwner.onFailure = { [weak self] block, error in
-      guard let self else { return }
-      for entry in entries.values where source?.layout?.blockIDs(on: [entry.input.pageIndex]).contains(block) == true {
-        entry.input.onPreparationFailure(error)
-      }
     }
     programOwner.onMount = { [weak self] web, size in
       guard let host = self?.driver?.host else { return }
@@ -514,7 +510,7 @@ final class DocumentPagePresentationOwner {
     // This preparation owner only pins images a current presentation can use.
     pictures = pictures.filter { requestedTokens.contains($0.value.token) }
     failures = failures.filter { requestedTokens.contains($0.key) }
-    terminalFailures.formIntersection(requestedTokens)
+    terminalFailures = terminalFailures.filter { requestedTokens.contains($0.key) }
   }
 
   /// UIKit's adjacent controllers can remain mounted without being displayed.
@@ -581,7 +577,7 @@ final class DocumentPagePresentationOwner {
   private func reconcile() async throws {
     guard let entry = driver, let host = entry.host else { return }
     let input = entry.input
-    guard !terminalFailures.contains(input.token) else { return }
+    guard !hasTerminalFailure(for: entry) else { return }
     if paper.payload?.pageIndex != input.pageIndex, !gestureLocked {
       await programOwner.blurFocused()
     }
@@ -677,8 +673,14 @@ final class DocumentPagePresentationOwner {
       guard !stopped, !Task.isCancelled else { return }
       if candidate.id == current?.id { continue }
       guard needsPicture(candidate), failures[candidate.input.token] == nil,
-        !terminalFailures.contains(candidate.input.token),
-        programsReady(on: candidate.input.pageIndex) else { continue }
+        !hasTerminalFailure(for: candidate) else { continue }
+      if !requestsLivePaper(for: candidate), !programsReady(on: candidate.input.pageIndex) {
+        let ids = layout.blockIDs(on: [candidate.input.pageIndex])
+        if let error = ids.compactMap({ programOwner.runtimes[$0]?.failure }).first {
+          show(error, on: candidate, scope: .composite)
+        }
+        continue
+      }
       let token = candidate.input.token
       let measurements = candidate.input.measurements
       var landingTrace: DocumentPagePreparationTrace?
@@ -690,12 +692,11 @@ final class DocumentPagePresentationOwner {
         landingTrace = renderer.pagePreparationTrace
         measurements?.observeLanding(landingTrace, stage: .preparing)
         let liveDemand = preparationDemand.flatMap { demand -> PageTurnActivity.PreparationDemand? in
-          guard demand.presentation == .live, demand.pageIndex == candidate.input.pageIndex,
-            layout.blockIDs(on: [candidate.input.pageIndex]).intersection(source?.programIDs ?? []).isEmpty else { return nil }
+          guard demand.presentation == .live, demand.pageIndex == candidate.input.pageIndex else { return nil }
           return demand
         }
-        // A cut of a shared/tall program still needs its immutable picture
-        // during a transition. Ordinary paper can transfer the prepared WK.
+        // Only curl needs an immutable composite. A non-curl landing transfers
+        // canonical paper and mounts each program at the actual handoff.
         let preparationHost = liveDemand == nil ? passiveHost : (candidate.host ?? passiveHost)
         renderer.preservesFallback = true
         renderer.mount(in: preparationHost, physicalSize: physicalSize(candidate.input), isInteractive: false, priority: .visible)
@@ -707,6 +708,13 @@ final class DocumentPagePresentationOwner {
             candidate.host === preparationHost else { throw CancellationError() }
           stagedPaper = .init(entryID: candidate.id, token: token, demandID: liveDemand.id)
           passiveStage = .staged
+          preparationHost.installProgramOverlay()
+          _ = preparationHost.programOverlay.present([], paperSize: physicalSize(candidate.input), interactive: false)
+          preparationHost.programOverlay.presentPending(layout.regions(on: candidate.input.pageIndex).compactMap { region in
+            guard source?.programIDs.contains(region.id) == true else { return nil }
+            return .init(blockID: region.id, rect: .init(x: region.frame.x, y: region.frame.y,
+              width: region.frame.width, height: region.frame.height), message: "Подготовка программы…")
+          })
           preparationHost.removeFallback(); preparationHost.removeLoading(); preparationHost.removeFailure()
           measurements?.observeLanding(landingTrace, stage: .completed)
           observe("document_live_target_prepared", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
@@ -754,9 +762,7 @@ final class DocumentPagePresentationOwner {
   }
 
   private func requestsLivePaper(for entry: Entry) -> Bool {
-    guard preparationDemand?.presentation == .live, preparationDemand?.pageIndex == entry.input.pageIndex,
-      let source, let layout = source.layout else { return false }
-    return layout.blockIDs(on: [entry.input.pageIndex]).intersection(source.programIDs).isEmpty
+    preparationDemand?.presentation == .live && preparationDemand?.pageIndex == entry.input.pageIndex && source?.layout != nil
   }
 
   private func passiveRenderer(in host: DocumentWebHost, input: DocumentPagePresentation) -> DocumentWebCoordinator {
@@ -781,6 +787,32 @@ final class DocumentPagePresentationOwner {
     for entry in entries.values { source?.retainPage(entry.input.pageIndex, hostID: entry.id) }
   }
 
+  private func visiblePrograms() -> Set<String> {
+    guard let source, let layout = source.layout else { return [] }
+    var visibleIDs: Set<String> = []
+    if let entry = current, entry.input.isVisible, let host = entry.host {
+      let size = physicalSize(entry.input), bounds = host.bounds
+      let scale = min(bounds.width / size.width, bounds.height / size.height)
+      if scale.isFinite, scale > 0 {
+        let visible = SceneSourceVisibility.visibleRect(host)
+        guard !visible.isNull, !visible.isEmpty else { return [] }
+        let rect = CGRect(x: (visible.minX - bounds.midX) / scale + size.width / 2,
+          y: (visible.minY - bounds.midY) / scale + size.height / 2,
+          width: visible.width / scale, height: visible.height / scale)
+        visibleIDs = Set(layout.regions(on: entry.input.pageIndex).filter { region in
+          rect.intersects(CGRect(x: region.frame.x, y: region.frame.y, width: region.frame.width, height: region.frame.height))
+        }.map(\.id))
+      }
+    }
+    return visibleIDs.intersection(source.programIDs)
+  }
+
+  private func refreshVisiblePrograms() {
+    guard !stopped, visiblePrograms() != programOwner.visibleIDs else { return }
+    refreshProgramDemand()
+    if let current, current.id == mountedID, !gestureLocked { installPrograms(on: current) }
+  }
+
   private func refreshProgramDemand() {
     guard let input = stateOwner?.input, let layout = source?.layout,
       source?.matches(input.document) == true else { return }
@@ -792,7 +824,8 @@ final class DocumentPagePresentationOwner {
       }
     }
     programOwner.update(input: input, layout: layout, pages: pages,
-      currentPage: current?.input.pageIndex, blocked: gestureLocked, contacts: contacts, densities: densities)
+      currentPage: current?.input.pageIndex, visibleIDs: visiblePrograms(), preparationPage: preparationDemand?.pageIndex,
+      blocked: gestureLocked, contacts: contacts, densities: densities)
   }
 
   private func installPrograms(on entry: Entry) {
@@ -814,18 +847,16 @@ final class DocumentPagePresentationOwner {
       let id = region.id, runtime = programOwner.runtimes[id]
       let message: String, actionTitle: String, action: (() -> Void)?
       if programOwner.retiringIDs.contains(id) {
-        message = "Приостанавливаем программу…"; actionTitle = "Запустить"; action = nil
-      } else if programOwner.paused(id) != nil, !programOwner.liveIDs.contains(id) {
-        message = "Программа приостановлена"; actionTitle = "Запустить"
-        action = { [weak self] in self?.programOwner.activate(id) }
+        message = "Сохраняем состояние программы…"; actionTitle = ""; action = nil
       } else if runtime?.failure != nil || programOwner.pauseFailures[id] != nil {
         message = "Не удалось подготовить программу"; actionTitle = "Повторить"
         action = { [weak self] in
           self?.programOwner.retry(id)
         }
       } else if runtime?.ready != true || !programOwner.liveIDs.contains(id) {
-        message = "Подготовка программы…"; actionTitle = "Запустить"
-        action = id == programOwner.requestedID ? nil : { [weak self] in self?.programOwner.activate(id) }
+        message = runtime?.webView == nil && programOwner.liveIDs.contains(id)
+          ? "Ожидаем свободные ресурсы…" : "Подготовка программы…"
+        actionTitle = ""; action = nil
       } else { return nil }
       return DocumentProgramPendingPlacement(blockID: id,
         rect: .init(x: region.frame.x, y: region.frame.y, width: region.frame.width, height: region.frame.height),
@@ -837,11 +868,11 @@ final class DocumentPagePresentationOwner {
     installationGeneration &+= 1
     let installedToken = entry.input.token
     let installation = host.programOverlay.installation(for: placements, paperSize: physicalSize(entry.input), passive: passive)
-    let isInstalled: @MainActor () -> Bool = { [weak self, weak host, weak entry] in
+    let isInstalled: @MainActor (DocumentPresentationScope) -> Bool = { [weak self, weak host, weak entry] scope in
         guard let self, let host, let entry else { return false }
         return current?.id == entry.id && entry.input.token == installedToken
           && paper.payload?.renderToken == entry.input.paperToken && mountedID == entry.id && host.window?.isKeyWindow == true
-          && !host.hasSnapshot && paper.hasCanonicalPixels && programsReady(on: entry.input.pageIndex)
+          && !host.hasSnapshot && paper.hasCanonicalPixels && programsReady(on: entry.input.pageIndex, scope: scope)
           && installation.isInstalled
       }
     DocumentRenderRegistry.shared.publishLive(documentID: documentID, token: installedToken,
@@ -853,7 +884,7 @@ final class DocumentPagePresentationOwner {
       measurements.observeInstallation(documentID: documentID, pageIndex: entry.input.pageIndex, token: installedToken,
         isInstalled: { [weak self, weak entry, weak host] in
           guard let self, let entry, let host else { return false }
-          return isInstalled() && entry.input.isInteractive && !self.gestureLocked
+          return isInstalled(.page) && entry.input.isInteractive && !self.gestureLocked
             && self.paper.nativeInputIsReady(in: host)
         }, publish: { [weak host] value in host?.accessibilityValue = value })
     }
@@ -890,9 +921,14 @@ final class DocumentPagePresentationOwner {
     return host.programOverlay.isPresenting(placements(on: entry), paperSize: physicalSize(entry.input), passive: passivePlacements(on: entry))
   }
 
-  private func programsReady(on page: Int) -> Bool {
+  private func programsReady(on page: Int, scope: DocumentPresentationScope = .page) -> Bool {
     guard let source, let layout = source.layout else { return false }
-    return layout.blockIDs(on: [page]).intersection(source.programIDs).allSatisfy { programOwner.presents($0) }
+    switch scope {
+    case .paper: return true
+    case .block(let id):
+      return layout.blockIDs(on: [page]).contains(id) && (!source.programIDs.contains(id) || programOwner.presents(id))
+    case .page: return layout.blockIDs(on: [page]).intersection(source.programIDs).allSatisfy { programOwner.presents($0) }
+    }
   }
 
   private func capture(_ entry: Entry, using renderer: DocumentWebCoordinator) async throws -> RasterLease {
@@ -1029,7 +1065,15 @@ final class DocumentPagePresentationOwner {
     return captureWidth(entry) > image.width
   }
 
-  private func show(_ error: Error, on entry: Entry) {
+  private func hasTerminalFailure(for entry: Entry) -> Bool {
+    switch terminalFailures[entry.input.token] {
+    case .paper: return true
+    case .composite: return entry.id != current?.id && !requestsLivePaper(for: entry) && !programsReady(on: entry.input.pageIndex)
+    case nil: return false
+    }
+  }
+
+  private func show(_ error: Error, on entry: Entry, scope: FailureScope = .paper) {
     if NotebookNavigationObservation.enabled {
       let native = error as NSError
       let knownCase: String?
@@ -1057,12 +1101,15 @@ final class DocumentPagePresentationOwner {
     }
     entry.input.onPreparationFailure(error)
     if error as? SceneRenderError == .resourceLimit { failures[entry.input.token] = resources.rasterAdmission }
-    else { terminalFailures.insert(entry.input.token) }
+    else { terminalFailures[entry.input.token] = scope }
     let token = entry.input.token
     let retry: @MainActor () -> Void = { [weak self, weak entry] in
       guard let self, let entry, entries[entry.id] === entry, entry.input.token == token else { return }
-      failures[entry.input.token] = nil; terminalFailures.remove(entry.input.token)
+      failures[entry.input.token] = nil; terminalFailures[entry.input.token] = nil
       if current?.id == entry.id, paper.acquisitionError != nil { paper.retryPreparation() }
+      for id in source?.layout?.blockIDs(on: [entry.input.pageIndex]) ?? [] where programOwner.runtimes[id]?.failure != nil {
+        programOwner.retry(id)
+      }
       entry.host?.removeFailure(); schedule()
     }
     let message = "Не удалось подготовить страницу. Можно повторить попытку."
@@ -1084,7 +1131,7 @@ final class DocumentPagePresentationOwner {
     }
     if recovered || entries.values.contains(where: {
       $0.id != current?.id && failures[$0.input.token] == nil
-        && !terminalFailures.contains($0.input.token) && needsPicture($0)
+        && !hasTerminalFailure(for: $0) && needsPicture($0)
     }) { schedule() }
   }
   private func stop() {

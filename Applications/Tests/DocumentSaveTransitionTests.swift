@@ -7,12 +7,29 @@ import XCTest
 @MainActor
 final class DocumentSaveTransitionTests: XCTestCase {
   func testDurableSaveKeepsTextAcrossAHostGapAndCompletesOnlyOnNativeInstallation() async throws {
+    try await savedTransition(brokenNeighbour: false)
+  }
+
+  func testSavedTextInstallsWhileAnIndependentProgramHasFailed() async throws {
+    try await savedTransition(brokenNeighbour: true)
+  }
+
+  private func savedTransition(brokenNeighbour: Bool) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let id = try XCTUnwrap(model.createDocument(at: .zero, paperSize: .a4))
     await model.finishPendingPersistence()
+    if brokenNeighbour {
+      try await model.performStoreCommand(publishesChanges: true) { store in
+        var document = try store.loadDocument(id)
+        _ = document.replaceContent(blocks: [.markdown(id: "body", source: "# Edit this text"),
+          .interactive(id: "broken", html: "<button>Broken</button>", javaScript: "throw new Error('broken save neighbour')", height: 100)], actor: UUID())
+        _ = try store.saveMergedDocument(document)
+      }
+      await model.reloadExternalChanges()?.value
+    }
     let initial = try XCTUnwrap(model.presence), center = try XCTUnwrap(model.board?.focusedCenter(of: id))
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene), rootController = UIViewController(), host = DocumentWebHost()
@@ -25,7 +42,7 @@ final class DocumentSaveTransitionTests: XCTestCase {
     await model.prepareDocumentOpening(id, pageIndex: 0)?.value
     host.frame = .init(x: 20, y: 20, width: geometry.width, height: geometry.height)
     rootController.view.addSubview(host)
-    let resources = SceneRenderResources(maximumWebSurfaces: 1)
+    let resources = brokenNeighbour ? SceneRenderResources() : SceneRenderResources(maximumWebSurfaces: 1)
     let lifetime = DocumentPagePresentationOwner.shared(documentID: id, resources: resources).retainOpenDocument()
     var physical = DocumentPhysicalPageCoordinator()
     defer { physical.invalidate(); lifetime.close(); window.isHidden = true; previous?.makeKey() }
@@ -67,6 +84,12 @@ final class DocumentSaveTransitionTests: XCTestCase {
     physical = DocumentPhysicalPageCoordinator()
     try update()
     await wait { model.documentSavePresentation?.phase == .installed }
+    if brokenNeighbour {
+      XCTAssertFalse(DocumentRenderRegistry.shared.hasLiveSurface(document: savedDocument,
+        state: try XCTUnwrap(model.documentStates[id]), pageIndex: 0))
+      XCTAssertTrue(DocumentRenderRegistry.shared.hasLiveSurface(document: savedDocument,
+        state: try XCTUnwrap(model.documentStates[id]), pageIndex: 0, scope: .paper))
+    }
     XCTAssertTrue(paper() === web, "A host gap is not a document close or a replacement WK runtime")
     let rendered = try await web.evaluateJavaScript("!document.querySelector('textarea') && document.querySelector('#document').textContent.includes('Saved by the sole writer')")
     XCTAssertEqual(rendered as? Bool, true)

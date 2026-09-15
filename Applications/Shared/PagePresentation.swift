@@ -17,6 +17,10 @@ final class NotebookPagePresentationRegistry {
 
   func remove(_ owner: PagePresentationNativeView) { owners[ObjectIdentifier(owner)] = nil }
 
+  func cameraDidChange() {
+    for owner in owners.values { owner.value?.scheduleVisibleRegion() }
+  }
+
   func isPresented(_ page: PageDocument) -> Bool {
     owners = owners.filter { $0.value.value != nil }
     return owners.values.contains { $0.value?.isPresenting(page) == true }
@@ -30,11 +34,14 @@ struct PagePresentationView: UIViewRepresentable {
   let isVisible: Bool
   let isReady: Bool
   let activity: PageTurnActivity?
+  var onVisibleRegion: (CGRect) -> Void = { _ in }
 
   func makeUIView(context: Context) -> PagePresentationNativeView { PagePresentationNativeView() }
   func updateUIView(_ view: PagePresentationNativeView, context: Context) {
     view.update(model: model, page: page, isCurrent: isCurrent, isVisible: isVisible,
       isReady: isReady, activity: activity)
+    view.onVisibleRegion = onVisibleRegion
+    view.scheduleVisibleRegion()
   }
   static func dismantleUIView(_ view: PagePresentationNativeView, coordinator: ()) { view.uninstall() }
 }
@@ -57,6 +64,9 @@ final class PagePresentationNativeView: UIView, NotebookScenePresentationOwner {
   private var isReady = false
   private var activity: PageTurnActivity?
   private var retired = false
+  var onVisibleRegion: (CGRect) -> Void = { _ in }
+  private var regionTask: Task<Void, Never>?
+  private var publishedRegion: CGRect?
 
   init() {
     super.init(frame: .zero)
@@ -80,6 +90,21 @@ final class PagePresentationNativeView: UIView, NotebookScenePresentationOwner {
     self.isReady = isReady; self.activity = activity
   }
 
+  override func layoutSubviews() { super.layoutSubviews(); scheduleVisibleRegion() }
+  override func didMoveToWindow() { super.didMoveToWindow(); scheduleVisibleRegion() }
+
+  func scheduleVisibleRegion() {
+    guard !retired, regionTask == nil else { return }
+    regionTask = Task { @MainActor [weak self] in
+      guard let self else { return }
+      regionTask = nil
+      guard !retired, model?.permitsBackgroundPreparation == true else { return }
+      let visible = isCurrent && isVisible ? SceneSourceVisibility.visibleRect(self) : .null
+      guard visible != publishedRegion else { return }
+      publishedRegion = visible; onVisibleRegion(visible)
+    }
+  }
+
   func isPresenting(_ page: PageDocument) -> Bool {
     guard !retired, isCurrent, isVisible, isReady, activity?.isTransitioning != true,
       source == Source(page), let window, !window.isHidden, !bounds.isEmpty,
@@ -95,6 +120,7 @@ final class PagePresentationNativeView: UIView, NotebookScenePresentationOwner {
   func uninstall() {
     guard !retired else { return }
     retired = true; source = nil; activity = nil
+    regionTask?.cancel(); regionTask = nil; onVisibleRegion = { _ in }
     model?.pagePresentations.remove(self)
     model?.unregisterScenePresentation(self)
     model = nil
@@ -107,6 +133,7 @@ struct PagePresentationView: View {
   let isVisible: Bool
   let isReady: Bool
   let activity: PageTurnActivity?
+  var onVisibleRegion: (CGRect) -> Void = { _ in }
   var body: some View { Color.clear.accessibilityHidden(true) }
 }
 #endif

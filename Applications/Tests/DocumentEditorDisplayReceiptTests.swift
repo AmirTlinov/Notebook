@@ -12,6 +12,14 @@ final class DocumentEditorDisplayReceiptTests: XCTestCase {
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let id = try XCTUnwrap(model.createDocument(at: .zero, paperSize: .letter))
+    await model.finishPendingPersistence()
+    try await model.performStoreCommand(publishesChanges: true) { store in
+      var document = try store.loadDocument(id)
+      _ = document.replaceContent(blocks: [.markdown(id: "body", source: "# Edit me"),
+        .interactive(id: "broken", html: "<button>Broken</button>", javaScript: "throw new Error('broken receipt neighbour')", height: 100)], actor: UUID())
+      _ = try store.saveMergedDocument(document)
+    }
+    await model.reloadExternalChanges()?.value
     let opening = try XCTUnwrap(model.presence), center = try XCTUnwrap(model.board?.focusedCenter(of: id))
     let viewport = SpatialPoint(x: 820, y: 1180)
     model.updatePresence(.init(boardID: opening.boardID, mode: .document,
@@ -58,7 +66,8 @@ final class DocumentEditorDisplayReceiptTests: XCTestCase {
     _ = try await web.evaluateJavaScript("editor.dispatchEvent(new Event('compositionend'));editor.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));true")
     await wait { coordinator.hasCanonicalPixels && !model.scenePreparationPending }
     await model.refreshCollaborationDetails()
-    XCTAssertTrue(DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: 0))
+    XCTAssertTrue(DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: 0, scope: .block("body")))
+    XCTAssertFalse(DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: 0))
     let rendered = try await web.evaluateJavaScript("document.querySelector('#document').textContent.includes('Результат агента')")
     XCTAssertEqual(rendered as? Bool, true)
     model.confirmVisibleActions(presence: try XCTUnwrap(model.presence))

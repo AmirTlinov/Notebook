@@ -45,6 +45,54 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertTrue(fixture.isPresented)
   }
 
+  func testBrokenVisibleProgramReleasesItsSlotWithoutBlockingTextOrAnotherControl() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [
+      .markdown(id: "text", source: "# Independent saved text"),
+      .interactive(id: "good", html: "<button onclick='notebook.commit({count:1})'>First tap</button>", height: 100),
+      .interactive(id: "bad", html: "<button>Broken</button>", javaScript: "throw new Error('broken fixture')", height: 100)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.web(block: "good") != nil && fixture.hasProgramAction("bad") && fixture.presents(.paper)
+    }
+    XCTAssertTrue(fixture.presents(.block("text")))
+    XCTAssertTrue(fixture.presents(.block("good")))
+    XCTAssertFalse(fixture.presents(.block("bad")))
+    XCTAssertFalse(fixture.presents(.page))
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 2, "A failed program cannot retain the slot needed by its neighbour")
+    XCTAssertTrue(fixture.preparationErrors.isEmpty, "A program failure is local, not a failure of independent paper")
+    let web = try XCTUnwrap(fixture.web(block: "good"))
+    _ = try await web.evaluateJavaScript("document.querySelector('button').click();true")
+    try await wait(message: { fixture.diagnostics }) { fixture.number("good", field: "count") == 1 && fixture.presents(.block("good")) }
+  }
+
+  func testFailedCompositeDoesNotBlockALiveDistantLandingWithTheSameProgramSource() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [
+      .markdown(id: "body", source: String(repeating: "Paper and programs have independent readiness.\n\n", count: 160)),
+      .interactive(id: "bad", html: "<button>Broken neighbour</button>", javaScript: "throw new Error('broken far fixture')", height: 150)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) }
+    let layout = try XCTUnwrap(DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document).layout)
+    let target = try XCTUnwrap(layout.regions.first { $0.id == "bad" }?.pageIndex)
+    XCTAssertGreaterThan(target, 1)
+    fixture.showPages(current: 0, neighbour: target); fixture.restorePresentation(1)
+    try await wait(message: { fixture.diagnostics }) { !fixture.preparationErrors.isEmpty }
+    XCTAssertNotEqual(fixture.ready[1], true, "A failed program cannot yield a complete curl picture")
+    fixture.activity.prepare(target, presentation: .live)
+    let demand = try XCTUnwrap(fixture.activity.preparationDemand)
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true && fixture.canonicalPaper(in: 1) }
+    let incoming = try XCTUnwrap(fixture.paper(in: 1))
+    XCTAssertFalse(fixture.hosts[1].hasSnapshot)
+    fixture.activity.update(true); fixture.activity.didInstall(demand)
+    fixture.select(1); fixture.activity.prepare(nil); fixture.activity.update(false)
+    try await wait(message: { fixture.diagnostics }) { fixture.presents(.paper) && fixture.hasProgramAction("bad") }
+    XCTAssertTrue(fixture.paper(in: 1) === incoming)
+    XCTAssertFalse(fixture.hosts[1].hasSnapshot)
+    XCTAssertFalse(fixture.presents(.block("bad")))
+    XCTAssertTrue(fixture.hosts[1].isUserInteractionEnabled)
+  }
+
   func testIndependentLandingDoesNotJoinAnInvisibleProgramsCheckpoint() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [
       .interactive(id: "program", html: "<button>Count</button>", css: "",
@@ -1118,7 +1166,24 @@ final class DocumentProgramOwnerTests: XCTestCase {
     attachment.name = "stationary-document-refined-after-admission"; attachment.lifetime = .keepAlways; add(attachment)
   }
 
-  func testNineProgramsHaveFiniteAdmissionAndExplicitActivationPreservesAcceptedState() async throws {
+  func testAnOffscreenProgramReleasesItsExecutorAfterWritingEvenWhenNoRasterCanBeAdmitted() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: (0..<4).map { index in
+      .interactive(id: "program-\(index)", html: "<button>Control \(index)</button>",
+        javaScript: "notebook.commit({accepted:1})", height: 100)
+    })
+    let resources = SceneRenderResources(maximumRasterCount: 0)
+    let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { (0..<3).allSatisfy { fixture.web(block: "program-\($0)") != nil } }
+    fixture.reveal(block: "program-3")
+    try await wait(message: { fixture.diagnostics }) { fixture.web(block: "program-3") != nil }
+    XCTAssertTrue((0..<3).allSatisfy { fixture.checkpointValues["program-\($0)"]?["accepted"] == .number(1) })
+    XCTAssertEqual(resources.rasterAdmission.pinnedCount, 0)
+    XCTAssertLessThanOrEqual(resources.activeWebSurfaceCount, 2)
+    XCTAssertTrue(fixture.presents(.paper))
+  }
+
+  func testNineVisibleProgramsQueueAutomaticallyAndViewportChangesPreserveAcceptedState() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: (0..<9).map { index in
       .interactive(id: "program-\(index)", html: "<button id='increment'>Increment \(index)</button><output id='value'></output>",
         css: "button{font-size:20px}output{padding:8px}", javaScript: """
@@ -1127,50 +1192,44 @@ final class DocumentProgramOwnerTests: XCTestCase {
         notebook.commit({...notebook.state,mounts:(notebook.state.mounts||0)+1});render();
         """, initialState: .object(["count": .number(0)]), height: 90)
     })
-    let fixture = try ProgramFixture(document: document)
-    fixture.showPages(current: 0, neighbour: 0)
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) {
-      (0..<9).allSatisfy { fixture.value("program-\($0)") != nil }
-        && fixture.checkpoints.count >= 6 && fixture.resources.pendingWebRequestCount == 0
-        && fixture.resources.activeWebSurfaceCount <= 4 && fixture.resources.activeBackgroundWebSurfaceCount == 0
+      (0..<3).allSatisfy { fixture.web(block: "program-\($0)") != nil }
+        && fixture.resources.pendingWebRequestCount == 6
     }
-    XCTAssertLessThanOrEqual(fixture.resources.activeWebSurfaceCount, 4,
-      "Three automatic controls and paper leave room for source preparation and deliberate input")
-    let first = try XCTUnwrap(fixture.web(block: "program-0"))
-    XCTAssertTrue(first.isUserInteractionEnabled)
-    XCTAssertNil(fixture.web(block: "program-8"), "The ninth program has exact passive pixels, not a hidden live runtime")
-    fixture.start(block: "program-8")
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 4)
+    XCTAssertNil(fixture.web(block: "program-8"))
+    XCTAssertFalse(fixture.hasProgramAction("program-8"), "Waiting is not a fake control or an activation button")
+    fixture.reveal(block: "program-8")
     try await wait(message: { fixture.diagnostics }) { fixture.web(block: "program-8")?.isUserInteractionEnabled == true }
     let eighth = try XCTUnwrap(fixture.web(block: "program-8"))
     _ = try await eighth.evaluateJavaScript("document.querySelector('button').click();document.body.style.background='rgb(0,0,255)';true")
     try await wait(message: { fixture.diagnostics }) { fixture.number("program-8", field: "count") == 1 }
-    fixture.start(block: "program-7")
+    fixture.reveal(block: "program-7", through: "program-8")
+    try await wait(message: { fixture.diagnostics }) { fixture.web(block: "program-7") != nil }
+    XCTAssertTrue(fixture.web(block: "program-8") === eighth, "An overlapping visible control retains its context")
+    fixture.reveal(block: "program-0")
     try await wait(message: { fixture.diagnostics }) {
-      fixture.web(block: "program-7")?.isUserInteractionEnabled == true && eighth.superview == nil
+      fixture.web(block: "program-0") != nil && eighth.superview == nil
         && fixture.checkpointValues["program-8"]?["count"] == .number(1)
     }
-    XCTAssertTrue(fixture.web(block: "program-0") === first, "Activating one paused source cannot restart neighboring ready controls")
-    XCTAssertEqual(fixture.number("program-8", field: "count"), 1)
-    XCTAssertTrue(fixture.checkpoints.contains("program-8"))
+    fixture.revealAll()
+    try await wait(message: { fixture.diagnostics }) {
+      (0..<9).filter { fixture.web(block: "program-\($0)") != nil }.count == 3 && fixture.resources.pendingWebRequestCount == 6
+    }
+    XCTAssertNil(fixture.web(block: "program-8"))
     let paused = UIGraphicsImageRenderer(bounds: fixture.hosts[0].bounds).image { _ in
       fixture.hosts[0].drawHierarchy(in: fixture.hosts[0].bounds, afterScreenUpdates: true)
     }
-    XCTAssertGreaterThan(try bluePixels(paused), 100,
-      "Demotion freezes the program's current DOM pixels, including changes with no state commit")
+    XCTAssertGreaterThan(try bluePixels(paused), 100, "The waiting region retains actual checkpoint pixels, not a ready-control claim")
     let pausedAttachment = XCTAttachment(image: paused)
-    pausedAttachment.name = "nine-programs-current-dom-preserved-in-paused-block"
-    pausedAttachment.lifetime = .keepAlways; add(pausedAttachment)
-    fixture.start(block: "program-8")
+    pausedAttachment.name = "nine-programs-waiting-retains-current-dom-pixels"; pausedAttachment.lifetime = .keepAlways; add(pausedAttachment)
+    fixture.reveal(block: "program-8")
     try await wait(message: { fixture.diagnostics }) { fixture.web(block: "program-8")?.isUserInteractionEnabled == true }
     XCTAssertEqual(fixture.number("program-8", field: "count"), 1)
-    XCTAssertTrue(fixture.web(block: "program-8") !== eighth, "A deliberate restart restores the checkpointed explicit state")
+    XCTAssertTrue(fixture.web(block: "program-8") !== eighth, "Returning to visibility restores the accepted explicit state")
     XCTAssertLessThanOrEqual(fixture.resources.activeWebSurfaceCount, fixture.resources.maximumWebSurfaces)
-    let image = UIGraphicsImageRenderer(bounds: fixture.hosts[0].bounds).image { _ in
-      fixture.hosts[0].drawHierarchy(in: fixture.hosts[0].bounds, afterScreenUpdates: true)
-    }
-    let attachment = XCTAttachment(image: image)
-    attachment.name = "nine-programs-live-and-paused-after-activation"; attachment.lifetime = .keepAlways; add(attachment)
     func images(_ view: UIView) -> [UIImageView] {
       (view as? UIImageView).map { [$0] } ?? view.subviews.flatMap(images)
     }
@@ -1251,7 +1310,10 @@ private final class ProgramFixture {
   var preparationErrors: [String] = []
   var diagnostics: String { "ready=\(ready) errors=\(preparationErrors) web=\(resources.activeWebSurfaceCount) queued=\(resources.pendingWebRequestCount) held=\(resources.rasterAdmission.heldBytes) state=\(state.records.map { ($0.id, $0.value) })" }
   var currentToken: String { DocumentSnapshotCache.token(document: document, state: state, pageIndex: pageIndices[selected]) }
-  var isPresented: Bool { DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: pageIndices[selected]) }
+  var isPresented: Bool { presents(.page) }
+  func presents(_ scope: DocumentPresentationScope) -> Bool {
+    DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: pageIndices[selected], scope: scope)
+  }
   func token(page: Int) -> String { DocumentSnapshotCache.token(document: document, state: state, pageIndex: page) }
   func replaceState(blockID: String, value: JSONValue) {
     XCTAssertTrue(state.commit(blockID: blockID, value: value, actor: actor)); refresh()
@@ -1337,15 +1399,28 @@ private final class ProgramFixture {
   }
   func web(in index: Int) -> WKWebView? { descendants(hosts[index]).first { $0.accessibilityIdentifier?.hasPrefix("document-program-") == true && $0.isUserInteractionEnabled } }
   func web(block: String) -> WKWebView? {
-    descendants(hosts[0]).first { $0.accessibilityIdentifier == "document-program-" + block && $0.isUserInteractionEnabled }
+    descendants(hosts[selected]).first { $0.accessibilityIdentifier == "document-program-" + block && $0.isUserInteractionEnabled }
   }
-  func start(block: String) {
-    func buttons(_ view: UIView) -> [UIButton] {
-      (view as? UIButton).map { [$0] } ?? view.subviews.flatMap(buttons)
-    }
-    let button = buttons(hosts[0]).first { $0.accessibilityIdentifier == "document-program-retry-" + block }
-    XCTAssertNotNil(button, "A paused or waiting program exposes its native activation action")
-    button?.sendActions(for: .touchUpInside)
+  func hasProgramAction(_ block: String) -> Bool {
+    func buttons(_ view: UIView) -> [UIButton] { (view as? UIButton).map { [$0] } ?? view.subviews.flatMap(buttons) }
+    return buttons(hosts[selected]).contains { $0.accessibilityIdentifier == "document-program-retry-" + block && !$0.isHidden }
+  }
+  private var visibleClip: UIView?
+  func reveal(block: String, through last: String? = nil) {
+    let layout = DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources).source(document).layout!
+    let first = layout.regions.first { $0.id == block }!, end = layout.regions.first { $0.id == (last ?? block) }!
+    let geometry = WorkspaceItemGeometry.document(document.paperSize), scale = 340 / geometry.width
+    let clip = visibleClip ?? UIView()
+    clip.clipsToBounds = true
+    clip.frame = .init(x: 0, y: 0, width: 340, height: (end.frame.y + end.frame.height - first.frame.y) * scale)
+    if clip.superview == nil { window.rootViewController!.view.addSubview(clip) }
+    clip.addSubview(hosts[0]); visibleClip = clip
+    hosts[0].frame = .init(x: 0, y: -first.frame.y * scale, width: 340, height: 340 * geometry.height / geometry.width)
+    window.layoutIfNeeded(); refresh()
+  }
+  func revealAll() {
+    window.rootViewController!.view.addSubview(hosts[0]); visibleClip?.removeFromSuperview(); visibleClip = nil
+    hosts[0].frame.origin = .zero; window.layoutIfNeeded(); refresh()
   }
   func paper(in index: Int) -> WKWebView? { descendants(hosts[index]).first { hosts[index].ownsSurface($0) } }
   func assertPaperReceivesNativeHit(_ web: WKWebView, file: StaticString = #filePath, line: UInt = #line) async throws {

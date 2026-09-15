@@ -90,8 +90,8 @@ struct PreparedAgentElementView: View {
 
   private var isActive: Bool {
     guard allowsInteraction, element.kind == .web else { return false }
-    // An explicit launch owns the reserved input admission. Passive programs
-    // are selected by the same physical cohort that supplies their geometry.
+    // Focus retains an accepted input owner. Every actually visible program
+    // is otherwise demanded by its physical cohort, not by an activation tap.
     if hasFocus { return true }
     guard allowsProgramExecution else { return false }
     guard case .board(let boardID, let id) = focus, let cohort = composition.cohort else { return true }
@@ -256,17 +256,8 @@ struct PreparedAgentElementView: View {
           }.frame(minWidth: 44, minHeight: 44)
         }
         .padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-      } else if allowsInteraction && element.kind == .web && !isActive && preparedSource == element && !showsLiveProgram {
-        VStack(spacing: 4) {
-          Text("Программа приостановлена").font(.caption)
-          Button("Запустить") { model.interactiveElementFocus = focus }
-            .frame(minWidth: 44, minHeight: 44)
-            .accessibilityIdentifier("agent-program-start-\(element.id)")
-            .disabled(!inputEnabled)
-        }
-        .padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
       } else if (preparedSource != element || isActive) && !showsLiveProgram {
-        Text(isActive ? "Запуск программы…" : (raster == nil ? "Подготовка…" : "Обновление…"))
+        Text(isActive ? (web == nil ? "Ожидаем свободные ресурсы…" : "Запуск программы…") : (raster == nil ? "Подготовка…" : "Обновление…"))
           .font(.caption).foregroundStyle(.secondary)
           .padding(6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
           .allowsHitTesting(false)
@@ -400,7 +391,7 @@ struct PreparedAgentElementView: View {
     do {
       let acquired = try await SceneRenderResources.shared.acquireWebSurface(
         priority: demand.active ? (demand.inputEnabled && demand.focused ? .input : .liveProgram) : .visible,
-        source: focus, deadline: .now + .seconds(8))
+        source: focus)
       guard !Task.isCancelled, model.shutdownPhase != .stopped else { acquired.release(); return }
       bindRuntime(acquired, demand: demand)
       web = acquired
@@ -408,7 +399,7 @@ struct PreparedAgentElementView: View {
       return
     } catch {
       guard !Task.isCancelled else { return }
-      failure = "Ожидает свободных ресурсов"
+      failure = nil
       waitingForAdmission = true
       onRenderReady(false)
     }

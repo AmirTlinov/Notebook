@@ -40,4 +40,30 @@ final class PagePresentationTests: XCTestCase {
     view.uninstall()
     XCTAssertFalse(model.pagePresentations.isPresented(page), "UIKit retaining a retired owner cannot retain its proof")
   }
+  @MainActor
+  func testVisibleProgramRegionComesFromThePhysicalClipAfterTheNativeCameraTransaction() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("page-visibility-\(UUID())")
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first { $0.isKeyWindow }, window = UIWindow(windowScene: scene)
+    let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    let clip = UIView(frame: .init(x: 20, y: 20, width: 50, height: 100)); clip.clipsToBounds = true
+    controller.view.addSubview(clip)
+    let view = PagePresentationNativeView(), page = PageDocument(size: .init(width: 100, height: 100), actor: UUID())
+    view.frame = .init(x: -50, y: 0, width: 100, height: 100); clip.addSubview(view)
+    var region: CGRect?
+    view.onVisibleRegion = { region = $0 }
+    view.update(model: model, page: page, isCurrent: true, isVisible: true, isReady: false, activity: nil)
+    model.pagePresentations.cameraDidChange()
+    await Task.yield(); await Task.yield()
+    XCTAssertEqual(region, CGRect(x: 50, y: 0, width: 50, height: 100), "Program demand is visible geometry, not whole-page readiness")
+    view.frame.origin.x = 0
+    model.pagePresentations.cameraDidChange()
+    await Task.yield(); await Task.yield()
+    XCTAssertEqual(region, CGRect(x: 0, y: 0, width: 50, height: 100))
+    view.uninstall()
+  }
+
 }

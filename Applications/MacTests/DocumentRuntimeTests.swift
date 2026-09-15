@@ -915,7 +915,7 @@ final class DocumentRuntimeTests: XCTestCase {
     let registry = DocumentRenderRegistry(), document = DocumentDocument(actor: UUID())
     let state = DocumentStateJournal(id: document.id, actor: UUID()), hostID = UUID()
     let token = DocumentSnapshotCache.token(document: document, state: state, pageIndex: 0)
-    registry.publishLive(documentID: document.id, token: token, pageIndex: 0, hostID: hostID, generation: 2, isAttached: { true })
+    registry.publishLive(documentID: document.id, token: token, pageIndex: 0, hostID: hostID, generation: 2, isAttached: { _ in true })
     registry.revokeLive(hostID: hostID, through: 1)
     XCTAssertTrue(registry.hasLiveSurface(document: document, state: state, pageIndex: 0))
     registry.revokeLive(hostID: hostID, through: 2)
@@ -1025,7 +1025,7 @@ final class DocumentRuntimeTests: XCTestCase {
     } onChange: { invalidation.fulfill() }
     for _ in 0..<100 {
       registry.mountRenderer(coordinator, hostID: hostID)
-      registry.publishLive(documentID: documentID, token: "source", pageIndex: 0, hostID: hostID, generation: 1, isAttached: { false })
+      registry.publishLive(documentID: documentID, token: "source", pageIndex: 0, hostID: hostID, generation: 1, isAttached: { _ in false })
     }
     registry.unmountRenderer(hostID: hostID)
     await fulfillment(of: [invalidation], timeout: 0.05)
