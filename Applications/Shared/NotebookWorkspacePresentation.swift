@@ -7,6 +7,7 @@ import UIKit
 /// application controls are siblings, so they cannot enter a source-region PNG.
 struct NotebookWorkspacePresentation<Content: View>: UIViewControllerRepresentable {
   @Environment(NotebookAppModel.self) private var model
+  @Environment(\.sceneComposition) private var composition
   let presence: SessionPresence
   let cohort: SceneCompositionCohort?
   @ViewBuilder let content: () -> Content
@@ -16,7 +17,10 @@ struct NotebookWorkspacePresentation<Content: View>: UIViewControllerRepresentab
   }
   func updateUIViewController(_ controller: NotebookWorkspacePresentationController, context: Context) {
     controller.update(model: model, presence: presence, cohort: cohort,
-      content: AnyView(content().environment(\.self, context.environment)))
+      // Only application dependencies cross this hosting boundary. Copying
+      // EnvironmentValues wholesale also copies SwiftUI's private platform/
+      // accessibility host state and hides this second tree from its window.
+      content: AnyView(content().environment(model).environment(\.sceneComposition, composition)))
   }
   static func dismantleUIViewController(_ controller: NotebookWorkspacePresentationController, coordinator: ()) {
     controller.uninstall()

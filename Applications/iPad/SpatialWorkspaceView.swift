@@ -1799,6 +1799,9 @@ private struct WorkspaceSceneItem: View, Equatable {
       }
     }
     .accessibilityElement(children: .contain)
+    .accessibilityLabel(rendered.item.title.isEmpty
+      ? (rendered.item.kind == .notebook ? "Тетрадь" : rendered.item.kind == .document ? "Документ" : "Доска")
+      : rendered.item.title)
     .accessibilityIdentifier(
       "workspace-item-\(rendered.id.uuidString.lowercased())"
     )
