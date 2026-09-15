@@ -608,6 +608,78 @@ import XCTest
     let description: String
   }
 
+  private struct ControlFitGeometry {
+    let webFrame: CGRect
+    let controlFrames: [CGRect]
+    let viewport: CGRect
+
+    func hasFrozenControls(after previous: Self) -> Bool {
+      func change(_ lhs: CGRect, _ rhs: CGRect) -> CGFloat {
+        max(abs(lhs.minX - rhs.minX), abs(lhs.minY - rhs.minY),
+          abs(lhs.width - rhs.width), abs(lhs.height - rhs.height))
+      }
+      // The same one-point precision as the real native pan assertion. A
+      // subpixel frame read is not evidence that the camera moved a control.
+      return change(webFrame, previous.webFrame) > 1
+        && controlFrames.count == previous.controlFrames.count && !controlFrames.isEmpty
+        && zip(controlFrames, previous.controlFrames).allSatisfy { change($0, $1) <= 1 }
+    }
+
+    var evidence: [String: Any] {
+      func components(_ frame: CGRect) -> [CGFloat] { [frame.minX, frame.minY, frame.width, frame.height] }
+      return ["webFrame": components(webFrame), "controlFrames": controlFrames.map(components),
+        "viewport": components(viewport)]
+    }
+  }
+
+  func testControlFitObserverRejectsFrozenAXAfterNativeMovement() {
+    let web = CGRect(x: 50, y: 400, width: 720, height: 370)
+    let frames = [CGRect(x: 140, y: 497, width: 87, height: 53),
+      CGRect(x: 143, y: 583, width: 349, height: 17), CGRect(x: 140, y: 629, width: 669, height: 53)]
+    let viewport = CGRect(x: 28, y: 90, width: 764, height: 980)
+    let before = ControlFitGeometry(webFrame: web, controlFrames: frames, viewport: viewport)
+    XCTAssertTrue(ControlFitGeometry(webFrame: web.offsetBy(dx: -65, dy: -9.5),
+      controlFrames: frames, viewport: viewport).hasFrozenControls(after: before), "Do not send the second corrective pan")
+    XCTAssertTrue(ControlFitGeometry(webFrame: web.applying(.init(scaleX: 0.8, y: 0.8)),
+      controlFrames: frames, viewport: viewport).hasFrozenControls(after: before), "A pinch must not reuse frozen AX either")
+    XCTAssertFalse(before.hasFrozenControls(after: before), "No native movement is not the stale-AX diagnosis")
+    XCTAssertFalse(ControlFitGeometry(webFrame: web.offsetBy(dx: 0.5, dy: 0.5),
+      controlFrames: frames, viewport: viewport).hasFrozenControls(after: before), "Ignore subpixel native jitter")
+    XCTAssertFalse(ControlFitGeometry(webFrame: web.offsetBy(dx: -65, dy: -9.5),
+      controlFrames: frames.map { $0.offsetBy(dx: -65, dy: -9.5) }, viewport: viewport)
+      .hasFrozenControls(after: before), "Following AX must still permit ordinary fitting")
+    XCTAssertFalse(ControlFitGeometry(webFrame: web.applying(.init(scaleX: 0.8, y: 0.8)),
+      controlFrames: frames.map { $0.applying(.init(scaleX: 0.8, y: 0.8)) }, viewport: viewport)
+      .hasFrozenControls(after: before), "Following AX must still permit an ordinary pinch")
+  }
+
+  private func controlFitGeometry() throws -> ControlFitGeometry {
+    // Native WK and its AX children must come from one immutable observation,
+    // not a series of queries across different camera/layout instants.
+    let snapshot = try controlWebView.snapshot()
+    func find(_ node: XCUIElementSnapshot, type: XCUIElement.ElementType, name: String) -> XCUIElementSnapshot? {
+      if node.elementType == type && (node.identifier == name || node.label == name) { return node }
+      return node.children.lazy.compactMap { find($0, type: type, name: name) }.first
+    }
+    let frames = try [(XCUIElement.ElementType.button, "Acceptance increment"),
+      (.slider, "Acceptance slider"), (.textField, "Acceptance text")].map { type, name in
+        try XCTUnwrap(find(snapshot, type: type, name: name), "Missing control in native WK observation: \(name)").frame
+      }
+    return ControlFitGeometry(webFrame: snapshot.frame, controlFrames: frames, viewport: controlViewport)
+  }
+
+  private func failControlFitObservation(_ reason: String, before: ControlFitGeometry?,
+    after: ControlFitGeometry, corrections: Int) throws -> Never {
+    let geometry: [String: Any] = ["reason": reason, "completedCorrections": corrections,
+      "coordinateSpace": "screen points", "controlOrder": ["Acceptance increment", "Acceptance slider", "Acceptance text"],
+      "before": before?.evidence ?? [:], "after": after.evidence]
+    let observation = XCTAttachment(data: try JSONSerialization.data(withJSONObject: geometry, options: [.sortedKeys]),
+      uniformTypeIdentifier: "public.json")
+    observation.name = "control-fit-observation-failure"; observation.lifetime = .keepAlways; add(observation)
+    screenshot("control-fit-observation-failure")
+    throw ControlGeometryError(description: "Control-fit observation failed after \(corrections) correction(s): \(reason). No further corrective gesture was sent.")
+  }
+
   private func screenCoordinate(_ point: CGPoint) -> XCUICoordinate {
     let window = app.windows.firstMatch
     return window.coordinate(withNormalizedOffset: .zero)
@@ -618,24 +690,21 @@ import XCTest
   /// a nominal inverse XCTest pinch is not assumed to restore the earlier pose.
   private func fitControlMaterial(using ink: XCUIElement, permitsFingerPan: Bool = true) throws {
     XCTAssertTrue(controlWebView.waitForExistence(timeout: 5))
-    for _ in 0..<6 {
+    var previous: ControlFitGeometry?
+    for corrections in 0...6 {
       // Input acceptance needs the actual button, slider and field completely
       // visible. Empty HTML padding can extend under chrome without covering
       // any control; shrinking that padding is not a user interaction gate.
       let controls = [app.webViews.buttons["Acceptance increment"],
         app.webViews.sliders["Acceptance slider"], app.webViews.textFields["Acceptance text"]]
-      let frames = controls.map(\.frame)
-      let frame = frames.reduce(CGRect.null) { $0.union($1) }, viewport = controlViewport
-      let geometry: [String: Any] = [
-        "controlFrames": frames.map { [$0.minX, $0.minY, $0.width, $0.height] },
-        "webFrame": [controlWebView.frame.minX, controlWebView.frame.minY, controlWebView.frame.width, controlWebView.frame.height],
-        "viewport": [viewport.minX, viewport.minY, viewport.width, viewport.height]
-      ]
-      let observation = XCTAttachment(data: try JSONSerialization.data(withJSONObject: geometry, options: [.sortedKeys]),
-        uniformTypeIdentifier: "public.json")
-      observation.name = "control-fit-observed-geometry"; observation.lifetime = .keepAlways; add(observation)
+      let geometry = try controlFitGeometry()
+      let frame = geometry.controlFrames.reduce(CGRect.null) { $0.union($1) }, viewport = geometry.viewport
       guard !frame.isEmpty, !frame.isInfinite, !frame.isNull else {
-        throw ControlGeometryError(description: "The live control has no finite native frame: \(frame)")
+        throw ControlGeometryError(description: "The live control has no finite AX frame: \(frame)")
+      }
+      if let previous, geometry.hasFrozenControls(after: previous) {
+        try failControlFitObservation("Native surface moved but AX control frames stayed unchanged",
+          before: previous, after: geometry, corrections: corrections)
       }
       if viewport.contains(frame) {
         XCTAssertTrue(controls.allSatisfy(\.isHittable), "Every fully visible control must accept an actual touch")
@@ -643,6 +712,11 @@ import XCTest
           "The control must remain large enough for a real touch after fitting")
         return
       }
+      guard corrections < 6 else {
+        try failControlFitObservation("Real camera gestures did not fit the actual controls",
+          before: previous, after: geometry, corrections: corrections)
+      }
+      previous = geometry
       if frame.width > viewport.width || frame.height > viewport.height || !permitsFingerPan {
         // In the Pencil profile a one-finger camera repair would be a stroke.
         // A real inward two-finger gesture can bring the source into view.
@@ -650,13 +724,12 @@ import XCTest
       } else {
         let dx = min(max(viewport.midX - frame.midX, -viewport.width * 0.35), viewport.width * 0.35)
         let dy = min(max(viewport.midY - frame.midY, -viewport.height * 0.35), viewport.height * 0.35)
-        try panFreeBoard(by: .init(dx: dx, dy: dy))
+        try panFreeBoard(by: .init(dx: dx, dy: dy), recordsEvidence: false)
       }
     }
-    throw ControlGeometryError(description: "Real camera gestures did not fit the actual controls; container: \(controlWebView.frame), viewport: \(controlViewport)")
   }
 
-  private func panFreeBoard(by delta: CGVector) throws {
+  private func panFreeBoard(by delta: CGVector, recordsEvidence: Bool = true) throws {
     // Leave the system's edge-gesture area outside the scene-pan route.
     // A narrow visual strip next to a widget is not a proven app touch area.
     let viewport = app.windows.firstMatch.frame.insetBy(dx: 44, dy: 44)
@@ -690,10 +763,12 @@ import XCTest
             "frameAfter": [after.minX, after.minY, after.width, after.height],
             "excludedFrames": occupied.map { [$0.minX, $0.minY, $0.width, $0.height] },
             "systemEdgeInset": 44]
-          let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: proof,
-            options: [.prettyPrinted, .sortedKeys]), uniformTypeIdentifier: "public.json")
-          attachment.name = "actual-free-board-pan-route"; attachment.lifetime = .keepAlways; add(attachment)
-          screenshot("actual-free-board-after-pan")
+          if recordsEvidence {
+            let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: proof,
+              options: [.prettyPrinted, .sortedKeys]), uniformTypeIdentifier: "public.json")
+            attachment.name = "actual-free-board-pan-route"; attachment.lifetime = .keepAlways; add(attachment)
+            screenshot("actual-free-board-after-pan")
+          }
           XCTAssertEqual(after.midX - before.midX, translation.dx, accuracy: 1,
             "The real board pan must move the displayed control horizontally")
           XCTAssertEqual(after.midY - before.midY, translation.dy, accuracy: 1,

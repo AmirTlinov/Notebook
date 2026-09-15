@@ -1,5 +1,50 @@
 # Проверка Notebook
 
+## 15 сентября — наблюдатель прекращает наведение по неподвижным AX-рамкам
+
+Изменён только `Applications/AcceptanceUITests/NotebookAcceptanceUITests.swift`.
+`fitControlMaterial` читает native WK frame и три дочерних AX frame из одного
+snapshot. Если после настоящего корректирующего pan/pinch поверхность изменилась,
+а рамки контролов остались прежними, он сохраняет одну JSON/PNG пару и бросает
+конкретную ошибку наблюдения **до следующего жеста и до проверки успешного fit**.
+Точность сравнения1pt соответствует прежней проверке native pan. Шесть попыток
+по устаревшим координатам и послойные повторные geometry attachments удалены;
+ограниченный подбор при согласованной геометрии сохранён. Приложение, WebKit layout
+и владельцы сцены не менялись.
+
+Использован существующий `notebook_acceptance.py ui-build --run
+.build/scene-geometry-observation-release/runs/d3f8489d-d961-46b1-8f07-3cc0cb89a795
+--evidence .build/control-fit-fail-closed-ui`, затем `ui --test-build`.
+Сборка только runner заняла7,272s; в products нет Notebook.app. Test source SHA
+`bda91b5014dac5cd7206adc7284f56f34a0d5d53cb7357960812e4242bb53337`,
+неизменное приложение source SHA `278c15d5…`, bundle SHA `1257a8c3…`.
+Описи установленного binary/container совпали до и после сборки и всех трёх
+проверок. `source_inputs` и Python-драйвер не изменяли, приложение/пару не
+пересобирали, не переустанавливали и не сопрягали заново.
+
+Проверка наблюдателя `testControlFitObserverRejectsFrozenAXAfterNativeMovement`,
+run `4c494140…`: **1 PASS**, шесть положительных/отрицательных случаев для
+pan, pinch, неподвижности и субпиксельного изменения. Короткий настоящий
+`testCameraAndFirstTouchControlsOnAgentMaterial`, run `c3c8fa2b…`, воспроизвёл
+нужное условие: native frame `[51.25,405.5,717.5,369]` →
+`[126.75,415,717.5,369]`, все три AX frame полностью совпали. **UI FAIL за17,420s**
+с сообщением `Control-fit observation failed after 1 correction(s)`;
+xcresult exit65, 0 skips/expected failures/runtime warnings. В журнале ровно
+один корректирующий pan и ни одного жеста после отказа. Единственная
+geometry JSON `B742C210…` и оригинальный PNG `728BCCF2…` сохранены в attachments
+этого run; PNG просмотрен. Это подтверждает остановку наблюдателя, **не PASS
+доступности приложения**. AX после camera остаётся открытым в GUI-200.
+
+Предшествующий 17-цикловый `ffb98383…` дошёл до цикла15 с принятой клавиатурой,
+но прерван существующим лимитом драйвера240s при rotation; xcresult не завершён,
+экспорт attachments/metrics отказал. Это **не PASS**; video/logs и failed scenario
+сохранены, лимит не увеличивали, сценарий не повторяли. Полный v3 на `df2758f`
+намеренно остановлен SIGINT на Core в10:39UTC по новому приоритету Амира, до
+Xcode/Simulator; `.build/notebook-integrated-plan-full-v3` также не полный PASS.
+Проверенные документный цикл и отказ микрофона не повторялись из-за этой правки.
+Физическое сопоставление изображения/попадания/AX, системные метрики и общая
+длительная приёмка остаются отдельными условиями выпуска, не задачами этого observer-среза.
+
 ## 15 сентября — отказ микрофона не прерывает настоящий текстовый чат
 
 Чистая `.build/scene-geometry-observation-release`, commit `07967c5`, source
