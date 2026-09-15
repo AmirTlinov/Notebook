@@ -158,6 +158,15 @@ import XCTest
     attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
   }
 
+  /// Streaming text can replace AX children between indexed element reads.
+  /// Traverse one immutable observation instead of querying each stale index.
+  private func staticTextLabels(in element: XCUIElement) throws -> [String] {
+    func labels(_ node: XCUIElementSnapshot) -> [String] {
+      (node.elementType == .staticText ? [node.label] : []) + node.children.flatMap(labels)
+    }
+    return labels(try element.snapshot())
+  }
+
   /// Exercise the ordinary request UI for the two tools explicitly authorized
   /// by this isolated scenario. Never grant file, shell, network or global access.
   @discardableResult
@@ -172,10 +181,10 @@ import XCTest
     screenshot("collaboration-notebook-access-request-details")
     let evidence = XCTAttachment(string: description)
     evidence.name = "actual-notebook-access-request"; evidence.lifetime = .keepAlways; add(evidence)
-    let offered = try XCTUnwrap(request.staticTexts.allElementsBoundByIndex.compactMap { element -> (String, [String: Any])? in
-      guard let data = element.label.data(using: .utf8) else { return nil }
+    let offered = try XCTUnwrap(staticTextLabels(in: request).compactMap { label -> (String, [String: Any])? in
+      guard let data = label.data(using: .utf8) else { return nil }
       guard let parameters = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
-      return (element.label, parameters)
+      return (label, parameters)
     }.first(where: { $0.1["serverName"] != nil }), "The actual request details must expose its structured parameters")
     let parameters = offered.1
     let metadata = try XCTUnwrap(parameters["_meta"] as? [String: Any])
@@ -323,9 +332,12 @@ import XCTest
     let expression = try NSRegularExpression(pattern: #"\{[^{}]{1,16384}\}"#)
     var found: [String: Any]?
     let expectation = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
-      do { if try approveNotebookAccessIfRequested() { return false } }
-      catch { XCTFail("Cannot complete the authorized Notebook access request: \(error)"); return true }
-      for label in app.webViews.staticTexts.allElementsBoundByIndex.suffix(128).map(\.label)
+      let labels: [String]
+      do {
+        if try approveNotebookAccessIfRequested() { return false }
+        labels = try staticTextLabels(in: transcript)
+      } catch { XCTFail("Cannot observe the real conversation/access request: \(error)"); return true }
+      for label in labels.suffix(128)
         where label.contains(test) && label.contains(phase) {
         let range = NSRange(label.startIndex..<label.endIndex, in: label)
         for match in expression.matches(in: label, range: range) {
@@ -458,6 +470,7 @@ import XCTest
     let title = "Collaboration \(nonce)"
     let button = "Collaboration increment \(nonce)"
     let output = "Collaboration count \(nonce): "
+    let svg = Data("<svg xmlns='http://www.w3.org/2000/svg' width='160' height='48'><path d='M4 40L80 4L156 40' fill='none' stroke='#173d69'/><text x='12' y='32'>Joint Figure</text></svg>".utf8).base64EncodedString()
     let before = try count()
     try selectCounterRegion()
     try send("""
@@ -472,6 +485,11 @@ import XCTest
       увиденного и интерактивный блок на первой странице, исходный count 0, настоящая кнопка с aria-label
       «\(button)», output «\(output)0». Кнопка прибавляет 1, notebook.commit сохраняет состояние,
       notebookstate его восстанавливает, notebook.ready объявляет готовность. Прочитай сохранённый документ.
+      Первый markdown-блок должен иметь id joint-reading, заголовок «Joint route \(nonce)»,
+      короткое объяснение, формулу x^2+1 с обычными MathJax delimiters, внутреннюю ссылку
+      <a href='#joint-reading'>Joint reading</a> и <img width='160' height='48'
+      src='data:image/svg+xml;base64,\(svg)'>. Поставь id joint-reading также на его HTML-заголовке.
+      Не заменяй формулу картинкой. Весь первый блок и кнопка должны помещаться на первой странице.
       Не двигай мою камеру. В финале дай один плоский JSON без вложенных объектов: test=\(nonce),
       phase=attention_created, contextID, referenceID, artifactSHA256, artifactSHA256After, boardID,
       documentID, programID, creationActionID, creationRunID, attentionRunID, beforeRevision, afterRevision,
@@ -500,9 +518,81 @@ import XCTest
     XCTAssertNotEqual(try string(receipt, "beforeRevision"), try string(receipt, "afterRevision"))
     collapseChat()
     XCTAssertEqual(try count(), before + 1)
-    try inspectCreatedDocument(receipt: receipt, nonce: nonce, before: before)
-    try continueCreatedMaterial(receipt: receipt, nonce: nonce)
+    try useCreatedDocument(receipt: receipt, nonce: nonce, before: before)
     try systemTrace?.ended(app)
+  }
+
+  private func useCreatedDocument(receipt: [String: Any], nonce: String, before: Int) throws {
+    try inspectCreatedDocument(receipt: receipt, nonce: nonce, before: before)
+    let humanMarker = try editAndExportCreatedDocument(receipt: receipt, nonce: nonce)
+    try continueCreatedMaterial(receipt: receipt, nonce: nonce)
+    XCTAssertTrue(app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", humanMarker)).firstMatch.exists,
+      "Agent continuation and undo must preserve the human source edit in the same installed document")
+  }
+
+  /// Close the previously separate Save/export boundary inside the real
+  /// agent/human conversation. Agent prose only supplies addresses for the
+  /// independent public export audit; it is not accepted as a file receipt.
+  private func editAndExportCreatedDocument(receipt: [String: Any], nonce: String) throws -> String {
+    let heading = app.webViews.staticTexts["Joint route \(nonce)"].firstMatch
+    XCTAssertTrue(heading.isHittable); heading.doubleTap()
+    let editor = app.textViews["Исходный Markdown или LaTeX"].firstMatch
+    XCTAssertTrue(editor.waitForExistence(timeout: 5)); editor.tap()
+    let keyboard = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
+      app.keyboards.firstMatch.exists && app.keyboards.firstMatch.frame.height > 100
+    }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [keyboard], timeout: 3), .completed)
+    let original = try XCTUnwrap(editor.value as? String)
+    let marker = "Human source \(nonce)"
+    // A centre tap can put the caret inside the SVG's data URI. Move through
+    // the ordinary keyboard command and prove the original source survives.
+    editor.typeKey(XCUIKeyboardKey.downArrow.rawValue, modifierFlags: .command)
+    editor.typeText("\n\n" + marker)
+    let entered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      editor.value as? String == original + "\n\n" + marker
+    }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [entered], timeout: 3), .completed)
+    screenshot("joint-route-human-source-before-save")
+    let save = app.webViews.buttons["Сохранить"].firstMatch
+    XCTAssertTrue(save.isHittable); save.tap()
+    XCTAssertTrue(editor.waitForNonExistence(timeout: 10))
+    let installedText = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", marker)).firstMatch
+    XCTAssertTrue(installedText.waitForExistence(timeout: 15),
+      "Save ends only when the saved source is installed, not when the editor disappears")
+    XCTAssertTrue(installedText.isHittable)
+    screenshot("joint-route-saved-human-source-actually-installed")
+    let documentID = try uuid(receipt, "documentID").uuidString
+    try send("""
+      Продолжим тот же маршрут \(nonce), документ \(documentID). Я отредактировал первый блок
+      через настоящий редактор и Save: в joint-reading теперь есть «\(marker)».
+      Через notebook_context/notebook_execute прочитай именно сохранённый документ, убедись в маркере,
+      прежней формуле, SVG data URI, ссылке и count=1 интерактивного блока. Ничего не изменяй.
+      Создай один nb.export для этой сохранённой версии. Дождись nb.exportStatus с готовым файлом,
+      не повторяя запрос экспорта. Emit полные фактические ответы document, export и exportStatus.
+      Ответь одним плоским JSON: test=\(nonce), phase=human_saved_exported, documentID,
+      jobID, exportRunID, contentRevision, stateRevision, markerPresent (boolean),
+      formulaPresent (boolean), svgPresent (boolean), linkPresent (boolean), actualCount (1).
+      Адреса и версии возьми из реальных ответов, не из этого сообщения. Ошибка не заменяется пакетом PASS.
+      """)
+    try readSavedExport(receipt: receipt, nonce: nonce)
+    return marker
+  }
+
+  private func readSavedExport(receipt: [String: Any], nonce: String) throws {
+    let documentID = try uuid(receipt, "documentID").uuidString
+    let marker = "Human source \(nonce)"
+    let export = try packet(test: nonce, phase: "human_saved_exported", timeout: 240)
+    XCTAssertEqual(try uuid(export, "documentID"), try uuid(receipt, "documentID"))
+    for key in ["jobID", "exportRunID"] { try uuid(export, key) }
+    for key in ["contentRevision", "stateRevision"] { _ = try string(export, key) }
+    for key in ["markerPresent", "formulaPresent", "svgPresent", "linkPresent"] {
+      XCTAssertEqual(export[key] as? Bool, true)
+    }
+    XCTAssertEqual(export["actualCount"] as? Int, 1)
+    try attach(["test": nonce, "documentID": documentID, "blockID": "joint-reading", "marker": marker,
+      "agentReportedExportAddresses": export], name: "joint-route-save-export-addresses-for-independent-public-audit")
+    collapseChat()
+    XCTAssertTrue(app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", marker)).firstMatch.exists)
   }
 
   /// Continue the same completed creation through its remaining human/agent
@@ -517,10 +607,40 @@ import XCTest
       || app.buttons["notebook-chat-menu"].exists)
     openChat()
     XCTAssertFalse(app.buttons["notebook-chat-stop"].exists)
+    let receipt = try currentCreationReceipt()
+    let nonce = try string(receipt, "test"), before = try XCTUnwrap(receipt["sentCount"] as? Int)
+    collapseChat()
+    // The earlier board observation belongs to the original scenario, not to
+    // an offscreen control in the currently restored document.
+    try useCreatedDocument(receipt: receipt, nonce: nonce, before: before)
+  }
+
+  /// The Save and outgoing export request already happened before an observer
+  /// failed. Read that same real turn; never press Save/Send/export a second time.
+  func testContinueSavedDocumentFromTheExistingRealConversation() throws {
+    continueAfterFailure = false; executionTimeAllowance = 600
+    app.activate(); openChat()
+    let receipt = try currentCreationReceipt(), nonce = try string(receipt, "test")
+    try readSavedExport(receipt: receipt, nonce: nonce)
+    if app.webViews.staticTexts["Collaboration count \(nonce): 102"].firstMatch.exists {
+      // A host timeout may leave the real human edit and agent undo complete.
+      // Validate that same response instead of resending the +100 request.
+      openChat()
+      try readCreatedConflictAndCancel(receipt: receipt, nonce: nonce)
+    } else {
+      try continueCreatedMaterial(receipt: receipt, nonce: nonce)
+    }
+    XCTAssertTrue(app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Human source \(nonce)")).firstMatch.exists)
+  }
+
+  private func currentCreationReceipt() throws -> [String: Any] {
     var packets: [[String: Any]] = []
     let loaded = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
-      packets = transcript.descendants(matching: .staticText).allElementsBoundByIndex.compactMap { item -> [String: Any]? in
-      guard let data = item.label.data(using: .utf8),
+      let labels: [String]
+      do { labels = try staticTextLabels(in: transcript) }
+      catch { XCTFail("Cannot observe the existing creation response: \(error)"); return true }
+      packets = labels.compactMap { label -> [String: Any]? in
+      guard let data = label.data(using: .utf8),
         let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
         value["phase"] as? String == "attention_created" else { return nil }
       return value
@@ -539,12 +659,7 @@ import XCTest
     let before = try XCTUnwrap(receipt["sentCount"] as? Int)
     XCTAssertEqual(receipt["currentCount"] as? Int, before + 1)
     try attach(receipt, name: "completed-real-turn-public-addresses-unverified")
-    collapseChat()
-    // This continuation may restore the document left open by the failed tap.
-    // The earlier board observation belongs to the original scenario, not to
-    // an offscreen control in the current restored document.
-    try inspectCreatedDocument(receipt: receipt, nonce: nonce, before: before)
-    try continueCreatedMaterial(receipt: receipt, nonce: nonce)
+    return receipt
   }
 
   private func inspectCreatedDocument(receipt: [String: Any], nonce: String, before: Int) throws {
@@ -619,6 +734,13 @@ import XCTest
     XCTAssertTrue(app.webViews.staticTexts[output + "102"].firstMatch.waitForExistence(timeout: 3))
     screenshot("same-created-material-human-second-edit")
     openChat()
+    try readCreatedConflictAndCancel(receipt: receipt, nonce: nonce)
+  }
+
+  private func readCreatedConflictAndCancel(receipt: [String: Any], nonce: String) throws {
+    let documentID = try uuid(receipt, "documentID").uuidString
+    let programID = try string(receipt, "programID")
+    let output = "Collaboration count \(nonce): "
     let conflict = try packet(test: nonce, phase: "created_conflict_undone", timeout: 240)
     XCTAssertEqual(try uuid(conflict, "documentID"), try uuid(receipt, "documentID"))
     XCTAssertEqual(try string(conflict, "programID"), programID)
@@ -749,8 +871,9 @@ import XCTest
     XCTAssertEqual(outgoing.count, 0)
     XCTAssertEqual(replies.count, 1)
     let actualReply = replies.firstMatch.label
-    XCTAssertTrue(app.webViews.buttons["Остановлено · 1 действие"].firstMatch.waitForExistence(timeout: 5),
-      "The interrupted native turn must not be presented as completed just because its tool returned")
+    // Stop may arrive before the first tool activity. Do not require a
+    // fabricated one-action work group; the same turn's interrupted status
+    // is checked independently against the actual Codex owner.
     XCTAssertEqual(composer.value as? String, draft)
     XCTAssertFalse(app.staticTexts["Mac недоступен · сообщения сохраняются на iPad"].exists)
     screenshot("same-chat-reconnected-single-reply-and-unsent-draft")

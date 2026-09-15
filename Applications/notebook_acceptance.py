@@ -614,6 +614,7 @@ COLLABORATION_UI_TESTS = frozenset({
 
 COLLABORATION_RECOVERY_UI_TESTS = frozenset({
     "NotebookCollaborationAcceptanceUITests/testUseCreatedDocumentFromTheExistingRealConversation",
+    "NotebookCollaborationAcceptanceUITests/testContinueSavedDocumentFromTheExistingRealConversation",
     "NotebookCollaborationAcceptanceUITests/testOfflineOutgoingAndDraftSurviveRelaunchInTheSameConversation",
     "NotebookCollaborationAcceptanceUITests/testReconnectedConversationDeliversOnceAndRetainsUnsentDraft",
 })

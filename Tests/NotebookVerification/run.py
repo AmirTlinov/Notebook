@@ -57,6 +57,7 @@ class SelectionTests(unittest.TestCase):
             "NotebookCollaborationAcceptanceUITests/testCreatedMaterialRetainsHumanEditsThroughAgentUndoAndCancellation",
             "NotebookCollaborationAcceptanceUITests/testConcurrentHumanStateRejectsStaleAgentWriteAndSurvivesItsUndo",
             "NotebookCollaborationAcceptanceUITests/testUseCreatedDocumentFromTheExistingRealConversation",
+            "NotebookCollaborationAcceptanceUITests/testContinueSavedDocumentFromTheExistingRealConversation",
             "NotebookCollaborationAcceptanceUITests/testOfflineOutgoingAndDraftSurviveRelaunchInTheSameConversation",
             "NotebookCollaborationAcceptanceUITests/testReconnectedConversationDeliversOnceAndRetainsUnsentDraft",
         ]
