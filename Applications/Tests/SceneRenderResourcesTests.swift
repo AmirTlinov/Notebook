@@ -5,6 +5,26 @@ import XCTest
 
 final class SceneRenderResourcesTests: XCTestCase {
   @MainActor
+  func testFourVisibleProgramsAreInputOwnersNotPassivePreparation() async throws {
+    let resources = SceneRenderResources()
+    var programs: [WebSurfaceLease] = []
+    defer { programs.forEach { $0.release() } }
+    for _ in 0..<4 {
+      programs.append(try await resources.acquireWebSurface(priority: .liveProgram,
+        deadline: .now + .milliseconds(250)))
+    }
+    let preparation = try await resources.acquireWebSurface(priority: .background,
+      deadline: .now + .milliseconds(250))
+    defer { preparation.release() }
+    let input = try await resources.acquireWebSurface(priority: .input,
+      deadline: .now + .milliseconds(250))
+    defer { input.release() }
+    XCTAssertEqual(resources.activeWebSurfaceCount, 6)
+    XCTAssertEqual(resources.activePassiveWebSurfaceCount, 1)
+    XCTAssertEqual(resources.activeBackgroundWebSurfaceCount, 1)
+  }
+
+  @MainActor
   func testOptionalSynchronousAllocationsCannotPassAnAcceptedDerivedStage() async throws {
     let resources = SceneRenderResources(byteLimit: 10_000, profile: .interactive)
     let held = try XCTUnwrap(resources.reserveDerivedBytes(4_000, priority: .passive))
@@ -395,31 +415,21 @@ final class SceneRenderResourcesTests: XCTestCase {
   }
 
   @MainActor
-  func testVisibleProgramsLeaveAnExecutorForStaticNeighboursAndSlotsForInput() async throws {
+  func testVisibleProgramsCannotPermanentlyOccupyTheRasterExecutor() async throws {
     let resources = SceneRenderResources()
     var programs: [WebSurfaceLease] = []
-    for _ in 0..<3 { programs.append(try await resources.acquireWebSurface(priority: .liveProgram)) }
-    var admittedFourth = false
-    let fourth = Task { @MainActor in
-      let value = try await resources.acquireWebSurface(priority: .liveProgram)
-      admittedFourth = true
-      return value
-    }
-    defer { fourth.cancel(); programs.forEach { $0.release() } }
-    await Task.yield()
-    XCTAssertFalse(admittedFourth)
-    let staticSource = try await resources.acquireWebSurface(priority: .background)
-    let current = try await resources.acquireWebSurface(priority: .currentPage)
-    let input = try await resources.acquireWebSurface(priority: .input)
-    defer { staticSource.release(); current.release(); input.release() }
+    for _ in 0..<5 { programs.append(try await resources.acquireWebSurface(priority: .liveProgram)) }
+    defer { programs.forEach { $0.release() } }
+    let sixth = Task { try await resources.acquireWebSurface(priority: .liveProgram) }
+    defer { sixth.cancel() }
+    try await waitUntil { resources.pendingWebRequestCount == 1 }
+    let preparation = try await resources.acquireWebSurface(priority: .background)
     XCTAssertEqual(resources.activeWebSurfaceCount, 6)
-    XCTAssertEqual(resources.activeBackgroundWebSurfaceCount, 1,
-      "Already running controls do not masquerade as short-lived raster jobs")
+    preparation.release()
+    XCTAssertEqual(resources.pendingWebRequestCount, 1, "A permanent owner cannot take the transient executor")
     programs.removeLast().release()
-    let replacement = try await fourth.value
-    defer { replacement.release() }
-    XCTAssertTrue(admittedFourth)
-    XCTAssertEqual(resources.activeWebSurfaceCount, 6)
+    let replacement = try await sixth.value
+    replacement.release()
   }
 
   @MainActor

@@ -5,6 +5,38 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testIndependentMaterialsKeepFirstInputAndStateAfterColdReopening() {
+    continueAfterFailure = false
+    for count in [2, 4, 8] {
+      let app = XCUIApplication()
+      app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures",
+        "--notebook-independent-materials=\(count)"]
+      launchPortraitFixture(app)
+      let started = ContinuousClock.now
+      for number in 1...count / 2 {
+        XCTAssertTrue(app.buttons["Program \(number)"].waitForExistence(timeout: 4),
+          "A visible program must not wait for a passive quota or its slow neighbour")
+      }
+      let ready = XCTAttachment(string: "\(count) materials: native controls observed in \(started.duration(to: .now)); not touch-to-photon timing")
+      ready.name = "independent-materials-\(count)-readiness"; ready.lifetime = .keepAlways; add(ready)
+      let pixels = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+      pixels.name = "independent-materials-\(count)-ready"; pixels.lifetime = .keepAlways; add(pixels)
+      for number in 1...count / 2 {
+        app.buttons["Program \(number)"].tap()
+        XCTAssertTrue(app.staticTexts["Program \(number) count 1"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts["Program \(number) count 2"].exists)
+      }
+      app.terminate()
+      app.launchArguments.append("--notebook-reopen-fixture")
+      launchPortraitFixture(app)
+      for number in 1...count / 2 {
+        XCTAssertTrue(app.staticTexts["Program \(number) count 1"].waitForExistence(timeout: 5),
+          "A cold process must read the committed state, not a retained runtime")
+      }
+      app.terminate()
+    }
+  }
+
   func testHoldingLinkedImageMovesAndDeletesItsMaterialWithoutOpeningTheLink() {
     continueAfterFailure = false
     let app = XCUIApplication()
@@ -117,7 +149,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     let mood = app.webViews.containing(.image, identifier: "Утренний свет").firstMatch
     let nutrition = app.webViews.containing(.button, identifier: "Пересчитать порции").firstMatch
     XCTAssertTrue(mood.waitForExistence(timeout: 10)); XCTAssertTrue(nutrition.waitForExistence(timeout: 10))
-    // Fresh outer native WK frames, not child AX positions after the camera.
+    // Fresh outer native image frames, not child AX positions after the camera.
     for (surface, offset, delta) in [
       (mood, CGVector(dx: 0.5, dy: 0.15), CGVector(dx: 45, dy: 35)),
       (nutrition, CGVector(dx: 0.5, dy: 0.12), CGVector(dx: -35, dy: -25)),
@@ -129,7 +161,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       let after = [mood.frame, nutrition.frame]
       let proof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
       proof.name = "mixed-material-pan-\(offset.dy)-\(delta.dx)"; proof.lifetime = .keepAlways; add(proof)
-      let geometry = XCTAttachment(string: "Native WK frames before: \(before)\nafter: \(after)")
+      let geometry = XCTAttachment(string: "Native material frames before: \(before)\nafter: \(after)")
       geometry.name = "mixed-material-native-geometry"; geometry.lifetime = .keepAlways; add(geometry)
       for (frame, previous) in zip(after, before) {
         XCTAssertEqual(frame.midX - previous.midX, delta.dx, accuracy: 6)
@@ -147,7 +179,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures",
       "--notebook-passive-svg-fixture"]
     launchPortraitFixture(app)
-    let svg = app.webViews.containing(.image, identifier: "Пассивная схема").firstMatch
+    let svg = app.images["Пассивная схема"]
     let controls = app.webViews.containing(.button, identifier: "SVG scene counter").firstMatch
     XCTAssertTrue(svg.waitForExistence(timeout: 10)); XCTAssertTrue(controls.waitForExistence(timeout: 10))
     for delta in [CGVector(dx: 80, dy: 50), CGVector(dx: -40, dy: -30)] {
@@ -155,7 +187,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       let start = svg.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
       start.press(forDuration: 0.45, thenDragTo: start.withOffset(delta), withVelocity: .slow, thenHoldForDuration: 0)
       let after = [svg.frame, controls.frame]
-      let geometry = XCTAttachment(string: "Native WK frames before: \(before)\nafter: \(after)")
+      let geometry = XCTAttachment(string: "Native material frames before: \(before)\nafter: \(after)")
       geometry.name = "passive-svg-hold-\(delta.dx)-geometry"; geometry.lifetime = .keepAlways; add(geometry)
       let pixels = XCTAttachment(screenshot: app.screenshot())
       pixels.name = "passive-svg-after-hold-\(delta.dx)"; pixels.lifetime = .keepAlways; add(pixels)
@@ -179,16 +211,16 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures",
       "--notebook-passive-svg-fixture"]
     launchPortraitFixture(app)
-    let svg = app.webViews.containing(.image, identifier: "Пассивная схема").firstMatch
+    let svg = app.images["Пассивная схема"]
     XCTAssertTrue(svg.waitForExistence(timeout: 10))
-    // Gesture coordinates belong to the freshly observed native WK surface,
+    // Gesture coordinates belong to the freshly observed native image surface,
     // never the SVG child's potentially stale accessibility rectangle.
     for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
       XCUIDevice.shared.orientation = orientation
       let before = svg.frame
       svg.pinch(withScale: 1.25, velocity: 0.5)
       let after = svg.frame
-      let geometry = XCTAttachment(string: "Native WK frames before: \(before)\nafter: \(after)")
+      let geometry = XCTAttachment(string: "Native material frames before: \(before)\nafter: \(after)")
       geometry.name = "passive-svg-pinch-\(orientation.rawValue)-geometry"; geometry.lifetime = .keepAlways; add(geometry)
       // Capture the screen after rotation: XCTest can retain the application's
       // old portrait crop even while its native window is already landscape.
@@ -197,7 +229,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       let scale = after.width / before.width
       XCTAssertGreaterThan(scale, 1.1, "A pinch beginning on SVG must reach the scene camera")
       XCTAssertEqual(after.height / before.height, scale, accuracy: 0.01)
-      // The outer native WK frame, not the inner SVG DOM rectangle, proves
+      // The outer native image frame, not the inner SVG DOM rectangle, proves
       // scene magnification. Off-screen neighbours may legitimately retire;
       // their independent input is exercised by the pan/control regression.
       XCTAssertFalse(app.buttons["delete-agent-element"].exists, "A pair cannot also select the drawing")
@@ -212,7 +244,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     launchPortraitFixture(app)
     let picture = app.images["Пассивная схема"]
     XCTAssertTrue(picture.waitForExistence(timeout: 10))
-    let svg = app.webViews.containing(.image, identifier: "Пассивная схема").firstMatch
+    let svg = app.images["Пассивная схема"]
     let controls = app.webViews.containing(.button, identifier: "SVG scene counter").firstMatch
     XCTAssertTrue(svg.exists); XCTAssertTrue(controls.waitForExistence(timeout: 10))
     let button = controls.buttons["SVG scene counter"]
@@ -231,14 +263,14 @@ final class DrawingResponsivenessTests: XCTestCase {
       let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = name; proof.lifetime = .keepAlways; add(proof)
     }
     screenshot("passive-svg-before-first-pan")
-    // Use the current native WK frame, not WebKit's child AX geometry after
+    // Use the current native image frame, not WebKit's child AX geometry after
     // movement. There is no activation tap and no corrective camera loop.
     for delta in [CGVector(dx: 90, dy: 60), CGVector(dx: -50, dy: -40)] {
       let before = [svg.frame, controls.frame]
       let start = svg.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
       start.press(forDuration: 0.01, thenDragTo: start.withOffset(delta), withVelocity: .fast, thenHoldForDuration: 0)
       let after = [svg.frame, controls.frame]
-      let geometry = XCTAttachment(string: "Native WK frames before: \(before)\nafter: \(after)")
+      let geometry = XCTAttachment(string: "Native material frames before: \(before)\nafter: \(after)")
       geometry.name = "passive-svg-pan-\(delta.dx)-geometry"; geometry.lifetime = .keepAlways; add(geometry)
       screenshot("passive-svg-after-pan-\(delta.dx)")
       for (frame, previous) in zip(after, before) {

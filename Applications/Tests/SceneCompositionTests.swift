@@ -6,6 +6,31 @@ import XCTest
 
 final class SceneCompositionTests: XCTestCase {
   @MainActor
+  func testStaticSVGPublishesWithoutRetainingAProgramExecutor() async throws {
+    let fixture = Fixture(count: 0), stamp = fixture.workspace.stamp, boardID = fixture.presence.boardID
+    let element = SpatialElement(id: "static-svg", surface: .board(boardID), kind: .web,
+      frame: .init(x: 0, y: 0, width: 96, height: 96), worldOrigin: .zero, source: "Static drawing",
+      html: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'><rect width='96' height='96' fill='red'/></svg>", stamp: stamp)
+    let hierarchy = BoardHierarchy(rootBoardID: boardID,
+      boards: [.init(id: boardID, board: .init(freeItems: fixture.hierarchy.boards[0].board.freeItems,
+        elements: [element], stamp: stamp))], stamp: stamp)
+    let index = WorkspaceSceneIndex(workspace: fixture.workspace, hierarchy: hierarchy, paperSizes: [:])
+    let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: fixture.journal)
+    let presence = SessionPresence(boardID: boardID, mode: .board,
+      camera: .init(center: .init(x: 48, y: 48), scale: 1), viewport: .init(x: 320, y: 256))
+    let resources = SceneRenderResources(), coordinator = SceneCompositionTiles(resources: resources)
+    addTeardownBlock { @MainActor in await coordinator.stop() }
+    coordinator.prepare(source: source, presence: presence,
+      frame: .init(index: index, presence: presence, portalCamera: { _ in nil }), pinned: [])
+    let address = SceneSourceAddress(plane: .board(boardID), elementID: element.id)
+    try await waitUntil { coordinator.published?.sourceReceipts[address]?.hasCurrentPixels == true }
+    XCTAssertFalse(try XCTUnwrap(coordinator.published).runtimeOwners.contains(address))
+    try await waitUntil { resources.activeWebSurfaceCount == 0 }
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+    XCTAssertLessThanOrEqual(resources.peakAccountedBytes, resources.byteLimit)
+  }
+
+  @MainActor
   func testPendingSourceBecomesReadyWhileCameraDensityContinuesChanging() async throws {
     let fixture = Fixture(count: 0), stamp = fixture.workspace.stamp, boardID = fixture.presence.boardID
     var elements = (0..<7).map { index in

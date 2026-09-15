@@ -89,7 +89,7 @@ struct PreparedAgentElementView: View {
   }
 
   private var isActive: Bool {
-    guard allowsInteraction, element.kind == .web else { return false }
+    guard allowsInteraction, element.requiresLiveRuntime else { return false }
     // Focus retains an accepted input owner. Every actually visible program
     // is otherwise demanded by its physical cohort, not by an activation tap.
     if hasFocus { return true }
@@ -391,7 +391,7 @@ struct PreparedAgentElementView: View {
     do {
       let acquired = try await SceneRenderResources.shared.acquireWebSurface(
         priority: demand.active ? (demand.inputEnabled && demand.focused ? .input : .liveProgram) : .visible,
-        source: focus)
+        source: focus, deadline: .now + .seconds(8))
       guard !Task.isCancelled, model.shutdownPhase != .stopped else { acquired.release(); return }
       bindRuntime(acquired, demand: demand)
       web = acquired
@@ -399,7 +399,7 @@ struct PreparedAgentElementView: View {
       return
     } catch {
       guard !Task.isCancelled else { return }
-      failure = nil
+      failure = "Недостаточно ресурсов для программы"
       waitingForAdmission = true
       onRenderReady(false)
     }

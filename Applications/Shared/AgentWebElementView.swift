@@ -180,6 +180,11 @@ struct AgentWebSourceFailure: Equatable, Sendable {
       guard !isRetired else { return }
       let image = raster.image
       retainedRaster = raster
+      if let source = raster.source.agentElement, !source.requiresLiveRuntime {
+        isAccessibilityElement = true
+        accessibilityTraits = .image
+        accessibilityLabel = source.source
+      }
       if raster.source.captureRegion != nil {
         layer.contents = nil
         cropLayer.contents = image.cgImage; cropLayer.contentsScale = image.scale
@@ -488,6 +493,55 @@ struct AgentProgramSource: Equatable {
   init(_ element: AgentElement) {
     id = element.id; kind = element.kind; source = element.source
     html = element.html; css = element.css; javaScript = element.javaScript
+  }
+}
+
+extension AgentElement {
+  /// Only a proven static SVG can retire its WebKit after preparation. Empty
+  /// JavaScript alone says nothing about HTML controls, links or inline code.
+  /// This is a rendering choice, not an HTML sanitizer or another SVG renderer.
+  var requiresLiveRuntime: Bool {
+    guard kind == .web else { return false }
+    guard javaScript.isEmpty, css.isEmpty else { return true }
+    let drawing = StaticSVGContent()
+    let parser = XMLParser(data: Data(html.utf8))
+    parser.shouldResolveExternalEntities = false
+    parser.delegate = drawing
+    return !(parser.parse() && drawing.isDrawing)
+  }
+}
+
+private final class StaticSVGContent: NSObject, XMLParserDelegate {
+  private(set) var isDrawing = false
+  private var depth = 0
+  private static let elements: Set<String> = ["svg", "g", "defs", "title", "desc", "path", "rect", "circle",
+    "ellipse", "line", "polyline", "polygon", "text", "tspan", "textPath", "linearGradient", "radialGradient",
+    "stop", "clipPath", "mask", "pattern", "marker", "symbol", "use"]
+
+  func parser(_ parser: XMLParser, didStartElement name: String, namespaceURI: String?,
+    qualifiedName: String?, attributes: [String: String]) {
+    guard Self.elements.contains(name), depth > 0 || name == "svg",
+      attributes.allSatisfy({ key, value in
+        let key = key.lowercased()
+        if key.hasPrefix("on") || ["style", "tabindex", "contenteditable"].contains(key) { return false }
+        if key == "href" || key == "xlink:href" { return value.hasPrefix("#") }
+        return true
+      }) else { isDrawing = false; parser.abortParsing(); return }
+    depth += 1
+    isDrawing = true
+  }
+
+  func parser(_ parser: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName: String?) {
+    depth -= 1
+  }
+
+  func parser(_ parser: XMLParser, foundProcessingInstructionWithTarget target: String, data: String?) {
+    isDrawing = false; parser.abortParsing()
+  }
+
+  func parser(_ parser: XMLParser, foundExternalEntityDeclarationWithName name: String,
+    publicID: String?, systemID: String?) {
+    isDrawing = false; parser.abortParsing()
   }
 }
 

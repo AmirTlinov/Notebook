@@ -950,7 +950,7 @@ final class SceneCompositionTiles {
         // Portal previews are read-only projections: assigning their sources
         // a runtime owner would suppress the static producer even though no
         // such runtime can be mounted, leaving the source pending forever.
-        guard request.source.kind == .web, request.owner.plane.boardID == plan.rootBoardID else { return false }
+        guard request.source.requiresLiveRuntime, request.owner.plane.boardID == plan.rootBoardID else { return false }
         if let coverID = request.owner.plane.coverID { return coverID == root.focusedItemID }
         guard let view = plan.presentations[request.owner.plane], let origin = request.demand.worldOrigin else { return false }
         let visible = SceneSourceCapture.visibleRect(source: request.source, origin: origin, presence: view)

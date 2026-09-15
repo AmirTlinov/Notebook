@@ -26,9 +26,12 @@
     static let pointerArgument = "--notebook-pointer-fixture"
     static let passiveSVGArgument = "--notebook-passive-svg-fixture"
     static let mixedWebArgument = "--notebook-mixed-web-fixture"
+    static let independentMaterialsArgument = "--notebook-independent-materials="
 
     static func makeModel() -> NotebookAppModel {
       let fileManager = FileManager.default
+      let materialCount = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix(independentMaterialsArgument) })
+        .flatMap { Int($0.dropFirst(independentMaterialsArgument.count)) }
       let startsAtCover = ProcessInfo.processInfo.arguments.contains(
         coverArgument
       ) || ProcessInfo.processInfo.arguments.contains(offCenterCoverArgument)
@@ -63,7 +66,9 @@
         agentElementArgument
       )
       let fixtureName: String
-      if ProcessInfo.processInfo.arguments.contains(mixedWebArgument) {
+      if let materialCount {
+        fixtureName = "IndependentMaterials-\(materialCount)"
+      } else if ProcessInfo.processInfo.arguments.contains(mixedWebArgument) {
         fixtureName = "MixedWebCamera"
       } else if ProcessInfo.processInfo.arguments.contains(passiveSVGArgument) {
         fixtureName = "PassiveSVGCamera"
@@ -103,6 +108,10 @@
         .appendingPathComponent("NotebookUITests", isDirectory: true)
         .appendingPathComponent(fixtureName, isDirectory: true)
       do {
+        if materialCount != nil, ProcessInfo.processInfo.arguments.contains("--notebook-reopen-fixture"),
+          fileManager.fileExists(atPath: root.path) {
+          return NotebookAppModel(store: NotebookStore(root: root), startsNearbySync: false)
+        }
         if fileManager.fileExists(atPath: root.path) {
           try fileManager.removeItem(at: root)
         }
@@ -149,7 +158,34 @@
             ] : [])
         )
         try store.savePage(page)
-        if ProcessInfo.processInfo.arguments.contains(mixedWebArgument) {
+        if let materialCount {
+          precondition([2, 4, 8].contains(materialCount))
+          var board = BoardDocument.initial(itemIDs: [itemID], actor: actor)
+          _ = board.moveItem(itemID, to: .init(x: 8_000, y: 8_000), actor: actor)
+          for offset in 0..<materialCount {
+            let number = offset + 1, program = offset < materialCount / 2
+            let slow = materialCount == 8 && offset == 7
+            let text = !program && !slow && offset == materialCount - 2
+            let element = SpatialElement(id: String(format: "material-%02d", number),
+              surface: .board(index.rootBoardID), kind: text ? .nativeText : .web,
+              frame: .init(x: 0, y: 0, width: 170, height: 170),
+              worldOrigin: .init(x: -360 + Double(offset % 4) * 185, y: -330 + Double(offset / 4) * 190),
+              source: text ? "Native text" : "Material \(number)",
+              html: program
+                ? "<button aria-label='Program \(number)'>Add \(number)</button><output></output>"
+                : "<svg xmlns='http://www.w3.org/2000/svg' role='img' aria-label='Material \(number)' viewBox='0 0 170 170'><rect width='170' height='170' fill='#def0df'/><path d='M15 150L85 15L155 150Z' fill='#23784c'/></svg>",
+              css: program ? "body{padding:12px;background:#e7efff}button{width:140px;height:60px}output{display:block;margin-top:20px}" : "",
+              javaScript: program
+                ? "document.querySelector('button').onclick=()=>{notebook.commit({count:notebook.state.count+1});draw()};function draw(){document.querySelector('output').textContent='Program \(number) count '+notebook.state.count}addEventListener('notebookstate',draw);draw()"
+                : (slow ? "notebook.ready(new Promise(resolve=>setTimeout(resolve,6000)))" : ""),
+              state: .object(["count": .number(0)]), stamp: .init(counter: 0, actor: actor))
+            _ = board.upsertElement(element, expected: nil, actor: actor)
+          }
+          try store.saveBoard(.init(rootBoardID: index.rootBoardID,
+            boards: [.init(id: index.rootBoardID, board: board)], stamp: board.stamp), items: index.items)
+          try store.savePresence(.init(boardID: index.rootBoardID, mode: .board,
+            camera: .init(center: .zero, scale: 1), viewport: .init(x: size.width, y: size.height)))
+        } else if ProcessInfo.processInfo.arguments.contains(mixedWebArgument) {
           var board = BoardDocument.initial(itemIDs: [itemID], actor: actor)
           _ = board.moveItem(itemID, to: .init(x: 8_000, y: 8_000), actor: actor)
           for element in [

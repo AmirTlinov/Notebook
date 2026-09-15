@@ -240,8 +240,8 @@ final class PortalPassageTests: XCTestCase {
     scene.model.interactiveElementFocus = .board(boardID: scene.childID, elementID: interactive.id)
     let mounted = try await preparedRuntimeIdentities(in: scene, focused: interactive)
     XCTAssertGreaterThan(mounted.count, 0)
-    XCTAssertLessThanOrEqual(mounted.count, SceneRenderResources.shared.maximumPassiveLivePrograms + 1,
-      "Visible controls prepare within the shared limit, with one reserved explicit input owner")
+    XCTAssertLessThanOrEqual(mounted.count, SceneRenderResources.shared.maximumWebSurfaces - 1,
+      "Visible input owners leave one transient executor for static neighbours")
     XCTAssertLessThan(mounted.count, 10, "Entering a board cannot run all of its programs")
     scene.model.inputGate.beginContact(source: input)
     try scene.send(.began(centroid: center, isOpeningApproach: true))
@@ -268,7 +268,7 @@ final class PortalPassageTests: XCTestCase {
         let sources = (scene.model.boardHierarchy?.board(scene.childID)?.elements ?? [])
           .filter { ids.contains($0.id) }.map(agentElementSnapshotSource)
         let views = agentWebViews(in: scene.host.view)
-        let expected = min(ids.count, SceneRenderResources.shared.maximumPassiveLivePrograms + 1)
+        let expected = min(ids.count, SceneRenderResources.shared.maximumWebSurfaces - 1)
         let ready = views.allSatisfy { web in
           sources.contains { (web.navigationDelegate as? AgentWebCoordinator)?.hasLiveSource($0) == true }
         }

@@ -46,11 +46,13 @@ enum SceneRasterSource: Equatable, Sendable {
 fileprivate enum RasterOwner: Hashable { case agent(String), document(UUID), composition(SceneCompositionTileKey) }
 
 enum WebPriority: Int, Comparable, Sendable {
-  case currentPage, input, neighbor, liveProgram, visible, background
+  case currentPage, input, liveProgram, neighbor, visible, background
   static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
   /// Visible source preparation and export preparation share the same executor
   /// allowance. Neighbor pages are already live physical sheets, not raster jobs.
   fileprivate var preparesRaster: Bool { self == .visible || self == .background }
+  /// A visible control is already an input owner, even before its first tap.
+  fileprivate var isPassive: Bool { self > .liveProgram }
 }
 
 enum SceneRenderError: Error, Equatable, CustomStringConvertible {
@@ -366,10 +368,10 @@ final class SceneRenderResources {
   private func reclaimUnusedWebIfNeeded(for priority: WebPriority) {
     guard !hasWebCapacity(priority), !isReclaimingIdleWeb, retiringIdleWebSurfaces.isEmpty else { return }
     let rasterBlocked = priority.preparesRaster && activeBackgroundWebSurfaceCount >= maximumBackgroundWebSurfaces
-    let passiveBlocked = priority > .input && activePassiveWebSurfaceCount >= maximumWebSurfaces - reservedInteractiveSlots
+    let passiveBlocked = priority.isPassive && activePassiveWebSurfaceCount >= maximumWebSurfaces - reservedInteractiveSlots
     let candidates = idleWebSurfaces.filter { id, _ in
       guard let role = activeWebSurfaces[id] else { return false }
-      return (!rasterBlocked || role.preparesRaster) && (!passiveBlocked || role > .input)
+      return (!rasterBlocked || role.preparesRaster) && (!passiveBlocked || role.isPassive)
     }
     guard let selected = candidates.min(by: { $0.value.order < $1.value.order }) else { return }
     isReclaimingIdleWeb = true
@@ -922,7 +924,7 @@ final class SceneRenderResources {
     activeWebSources[id] = nil; idleWebSurfaces[id] = nil; retiringIdleWebSurfaces.remove(id)
     activeWebSurfaceCount = activeWebSurfaces.count
     if priority.preparesRaster { activeBackgroundWebSurfaceCount -= 1 }
-    if priority > .input { activePassiveWebSurfaceCount -= 1 }
+    if priority.isPassive { activePassiveWebSurfaceCount -= 1 }
     admitWaiters()
     publishWebAvailability(after: availability)
   }
@@ -932,8 +934,8 @@ final class SceneRenderResources {
     activeWebSurfaces[id] = priority
     if previous.preparesRaster { activeBackgroundWebSurfaceCount -= 1 }
     if priority.preparesRaster { activeBackgroundWebSurfaceCount += 1 }
-    if previous > .input { activePassiveWebSurfaceCount -= 1 }
-    if priority > .input { activePassiveWebSurfaceCount += 1 }
+    if previous.isPassive { activePassiveWebSurfaceCount -= 1 }
+    if priority.isPassive { activePassiveWebSurfaceCount += 1 }
     // Existing contacts may temporarily exceed a passive role quota after a
     // handoff. Preserve their leases and admit no new work until below quota.
     admitWaiters()
@@ -956,18 +958,12 @@ final class SceneRenderResources {
   private func hasWebCapacity(_ priority: WebPriority) -> Bool {
     activeWebSurfaces.count < maximumWebSurfaces
       && (!priority.preparesRaster || activeBackgroundWebSurfaceCount < maximumBackgroundWebSurfaces)
-      && (priority <= .input || activePassiveWebSurfaceCount < maximumWebSurfaces - reservedInteractiveSlots)
-      && (priority != .liveProgram || activeWebSurfaces.values.filter { $0 == .liveProgram }.count < maximumPassiveLivePrograms)
+      && (!priority.isPassive || activePassiveWebSurfaceCount < maximumWebSurfaces - reservedInteractiveSlots)
+      && (priority != .liveProgram || activeWebSurfaces.count - activeBackgroundWebSurfaceCount
+        < maximumWebSurfaces - (maximumWebSurfaces > 1 && maximumBackgroundWebSurfaces > 0 ? 1 : 0))
   }
   private func canAdmit(_ priority: WebPriority, source: WebExecutionSource? = nil) -> Bool {
     hasWebCapacity(priority) && (source.map { !activeWebSources.values.contains($0) } ?? true)
-  }
-  /// A visible program keeps running after preparation. It cannot occupy the
-  /// entire raster executor allowance forever or prevent a static neighbour
-  /// from becoming visible. The same overall pool and input reserve apply.
-  var maximumPassiveLivePrograms: Int {
-    let passive = maximumWebSurfaces - reservedInteractiveSlots
-    return passive - (passive > 1 && maximumBackgroundWebSurfaces > 0 ? 1 : 0)
   }
   private func grantWebSurface(id: UUID, priority: WebPriority, source: WebExecutionSource? = nil) -> WebSurfaceLease {
     activeWebSurfaces[id] = priority
@@ -983,7 +979,7 @@ final class SceneRenderResources {
     }
     activeWebSurfaceCount = activeWebSurfaces.count
     if priority.preparesRaster { activeBackgroundWebSurfaceCount += 1 }
-    if priority > .input { activePassiveWebSurfaceCount += 1 }
+    if priority.isPassive { activePassiveWebSurfaceCount += 1 }
     return WebSurfaceLease(id: id, priority: priority, resources: self)
   }
   private func admitWaiters() {
