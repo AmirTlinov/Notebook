@@ -2075,9 +2075,20 @@ private enum DocumentWebViewFactory {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Use init()") }
     func install(_ web: WKWebView, size: CGSize) {
-      viewport?.retire()
-      let viewport = PhysicalWebViewport(webView: web, contentSize: size)
-      self.viewport = viewport
+      if ownsSurface(web) { viewport?.setContentSize(size); return }
+      removeSurface()
+      let incoming: PhysicalWebViewport
+      if let projection = web.superview as? PhysicalWebViewport,
+        let previous = projection.superview as? DocumentWebHost, previous.viewport === projection {
+        // Transfer the physical subtree, not WebKit through an unattached new
+        // wrapper. Its canonical bounds and window remain continuous; retiring
+        // the departed host can no longer detach the incoming owner's surface.
+        previous.viewport = nil
+        incoming = projection
+        incoming.setContentSize(size)
+      } else { incoming = PhysicalWebViewport(webView: web, contentSize: size) }
+      viewport = incoming
+      let viewport = incoming
       if programOverlay.superview === self { insertSubview(viewport, belowSubview: programOverlay) }
       else if let fallback { insertSubview(viewport, belowSubview: fallback) } else { addSubview(viewport) }
       setNeedsLayout()
@@ -2104,7 +2115,7 @@ private enum DocumentWebViewFactory {
         hit !== failureView && !hit.isDescendant(of: failureView) { return nil }
       return hit
     }
-    func removeSurface() { viewport?.retire(); viewport = nil }
+    func removeSurface() { viewport?.retire(); viewport?.removeFromSuperview(); viewport = nil }
     func ownsSurface(_ web: WKWebView) -> Bool {
       guard let viewport else { return false }
       return viewport.webView === web && web.superview === viewport

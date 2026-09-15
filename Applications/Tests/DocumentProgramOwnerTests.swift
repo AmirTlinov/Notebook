@@ -143,6 +143,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.canonicalPaper(in: 0) }
     let original = try XCTUnwrap(fixture.paper(in: 0))
+    let originalProjection = ObjectIdentifier(try XCTUnwrap(original.superview))
+    let originalWindow = try XCTUnwrap(original.window)
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
     let target = try XCTUnwrap(source.layout?.anchorPages["far"])
     XCTAssertGreaterThan(target, 1)
@@ -165,6 +167,10 @@ final class DocumentProgramOwnerTests: XCTestCase {
     fixture.activity.update(true)
     fixture.activity.didInstall(demand); fixture.activity.prepare(nil); fixture.activity.update(false)
     fixture.retirePresentation(0)
+    XCTAssertEqual(original.superview.map(ObjectIdentifier.init), originalProjection,
+      "Retiring the old page shell transfers its existing projection, not just a detached WebKit reference")
+    XCTAssertTrue(original.window === originalWindow,
+      "The installed distant target keeps the reusable source shell in the same native window")
     let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
     await owner.observePendingPresentationWork()
     XCTAssertTrue(fixture.paper(in: 1) === incoming, "Native completion retains the target while SwiftUI current input is delayed")

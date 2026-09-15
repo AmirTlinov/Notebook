@@ -485,6 +485,16 @@ final class DocumentPagePresentationOwner {
     if mountedID == id, let web = paper.webView, entry.host?.ownsSurface(web) == true,
       let admission = paper.borrowSurfaceForTransfer(web) {
       paperTransfer = .init(renderer: paper, web: web, admission: admission)
+      if let stagedPaper, let incoming = entries[stagedPaper.entryID], hasStagedPaper(for: incoming),
+        incoming.activity?.installedPreparation?.id == stagedPaper.demandID,
+        let destination = incoming.host, destination.window != nil {
+        // UIKit has actually completed this non-curl landing. Keep the retired
+        // paper's existing physical subtree in that same window, without a
+        // render/mount or an intermediate WebKit detach. Its next passive
+        // request reuses this projection; the idle resource offer may retire it.
+        destination.installPreparationHost(passiveHost, size: physicalSize(entry.input))
+        passiveHost.install(web, size: physicalSize(entry.input))
+      }
     }
     if mountedID == id { mountedID = nil }
     entry.stopObserving(); entry.host?.onContactChange = { _ in }; entry.host?.onSizeChange = { }
@@ -691,6 +701,7 @@ final class DocumentPagePresentationOwner {
         let renderer = passiveRenderer(in: host, input: candidate.input)
         observe("passive_page_prepare_start", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
         configure(renderer, input: candidate.input, page: candidate.input.pageIndex)
+        observe("passive_page_configured", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
         landingTrace = renderer.pagePreparationTrace
         measurements?.observeLanding(landingTrace, stage: .preparing)
         let liveDemand = preparationDemand.flatMap { demand -> PageTurnActivity.PreparationDemand? in
@@ -702,6 +713,7 @@ final class DocumentPagePresentationOwner {
         let preparationHost = liveDemand == nil ? passiveHost : (candidate.host ?? passiveHost)
         renderer.preservesFallback = true
         renderer.mount(in: preparationHost, physicalSize: physicalSize(candidate.input), isInteractive: false, priority: .visible)
+        observe("passive_page_mounted", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
         try await renderer.awaitPresentation(token: candidate.input.paperToken)
         observe("passive_page_canonical_ready", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
         if let liveDemand {
@@ -880,14 +892,25 @@ final class DocumentPagePresentationOwner {
     DocumentRenderRegistry.shared.publishLive(documentID: documentID, token: installedToken,
       pageIndex: entry.input.pageIndex, hostID: installationID, generation: installationGeneration, isAttached: isInstalled)
     if let measurements = entry.input.measurements, measurements.enabled {
+      if NotebookNavigationObservation.enabled {
+        observe("document_content_published", entryID: entry.id, page: entry.input.pageIndex,
+          reason: "installed=\(isInstalled(.page)), nativeInput=\(paper.nativeInputIsReady(in: host))")
+      }
       measurements.contentReady(documentID: documentID, pageIndex: entry.input.pageIndex, token: installedToken,
         sourcePreparationPhasesMS: source?.preparationPhasesMS ?? [:], sourcePreparationMeasurement: source?.measurementCount,
         pagePreparation: paper.pagePreparationTrace)
+      var observedInstallation: Bool?
       measurements.observeInstallation(documentID: documentID, pageIndex: entry.input.pageIndex, token: installedToken,
         isInstalled: { [weak self, weak entry, weak host] in
           guard let self, let entry, let host else { return false }
-          return isInstalled(.page) && entry.input.isInteractive && !self.gestureLocked
+          let installed = isInstalled(.page) && entry.input.isInteractive && !self.gestureLocked
             && self.paper.nativeInputIsReady(in: host)
+          if NotebookNavigationObservation.enabled, observedInstallation != installed {
+            observedInstallation = installed
+            self.observe("document_input_installation_observed", entryID: entry.id, page: entry.input.pageIndex,
+              reason: installed ? "ready" : Self.presentationDiagnostic(documentID: self.documentID, resources: self.resources))
+          }
+          return installed
         }, publish: { [weak host] value in host?.accessibilityValue = value })
     }
   }

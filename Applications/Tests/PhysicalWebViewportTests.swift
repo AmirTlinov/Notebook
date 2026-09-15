@@ -5,6 +5,35 @@ import XCTest
 
 @MainActor
 final class PhysicalWebViewportTests: XCTestCase {
+  func testDocumentHostTransfersItsPhysicalSubtreeWithoutDetachingWebKit() throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+    let previous = scene.windows.first { $0.isKeyWindow }
+    let window = UIWindow(windowScene: scene), controller = UIViewController()
+    window.rootViewController = controller
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    let source = DocumentWebHost(), target = DocumentWebHost(), web = WindowTrackingDocumentWebView()
+    let size = CGSize(width: 240, height: 320)
+    for (index, host) in [source, target].enumerated() {
+      controller.view.addSubview(host)
+      host.frame = .init(x: index * 250, y: 0, width: 240, height: 320)
+    }
+    source.install(web, size: size); source.configure(size: size, interactive: true); source.layoutIfNeeded()
+    let projection = try XCTUnwrap(web.superview as? PhysicalWebViewport)
+    web.windowDetachments = 0
+    target.install(web, size: size); target.configure(size: size, interactive: false); target.layoutIfNeeded()
+    XCTAssertTrue(web.superview === projection)
+    XCTAssertTrue(projection.superview === target)
+    XCTAssertTrue(web.window === window)
+    XCTAssertEqual(web.windowDetachments, 0, "A same-window handoff must not suspend and rebuild WebKit's visible subtree")
+    source.removeSurface()
+    XCTAssertTrue(target.ownsSurface(web))
+    target.install(web, size: size)
+    XCTAssertTrue(web.superview === projection, "Repeated native mounting does not replace the projection")
+    target.removeSurface()
+    XCTAssertNil(web.superview); XCTAssertNil(projection.superview)
+  }
+
   func testCanonicalWebLayoutPrecedesWindowInstallationAndSurvivesProjectionAndReparenting() async throws {
     let web = WKWebView()
     web.scrollView.contentInsetAdjustmentBehavior = .never
@@ -61,5 +90,14 @@ final class PhysicalWebViewportTests: XCTestCase {
       try await Task.sleep(for: .milliseconds(10))
     }
     XCTAssertEqual(actual, [width, height], "The real document viewport must follow canonical bounds before any screen projection")
+  }
+}
+
+@MainActor
+private final class WindowTrackingDocumentWebView: WKWebView {
+  var windowDetachments = 0
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    if window == nil { windowDetachments += 1 }
   }
 }
