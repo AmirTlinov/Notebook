@@ -305,6 +305,64 @@ final class CoverOpeningPhysicsTests: XCTestCase {
   }
 
   @MainActor
+  func testUnchangedLayerDisplayDoesNotBorrowAnotherCoverDrawable() async throws {
+    let (window, controller) = try coverWindow()
+    defer { window.isHidden = true }
+    let owner = UUID(), coverRevision = revision(title: "One requested frame")
+    func update(_ progress: Double) {
+      controller.update(ownerID: owner, progress: progress, revision: coverRevision,
+        backsideColor: .document, preparesCoverMotion: true,
+        canPrepare: { true }, cornerRadius: 12, cover: AnyView(Color.red))
+    }
+    update(0)
+    for _ in 0..<100 where controller.submittedCurlFrameCount == 0 {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertGreaterThan(controller.submittedCurlFrameCount, 0)
+    let curl = try XCTUnwrap(controller.view.subviews.compactMap { $0 as? MTKView }.first)
+    let warmFrames = controller.submittedCurlFrameCount
+    // The document page installing beside this cover flushes the layer tree.
+    // No new cover pixels, geometry or progress were requested by its owner.
+    for _ in 0..<5 { curl.draw() }
+    XCTAssertEqual(controller.submittedCurlFrameCount, warmFrames)
+    update(0.35)
+    curl.draw()
+    XCTAssertEqual(controller.submittedCurlFrameCount, warmFrames + 1)
+    for _ in 0..<5 { curl.draw() }
+    XCTAssertEqual(controller.submittedCurlFrameCount, warmFrames + 1)
+    XCTAssertEqual(controller.capturedCoverCount, 1)
+  }
+
+  @MainActor
+  func testDetachedCoverKeepsLatestDemandWithoutSubmittingDrawables() async throws {
+    let (window, controller) = try coverWindow()
+    defer { window.isHidden = true }
+    let owner = UUID(), coverRevision = revision(title: "Detached curl")
+    func update(_ progress: Double) {
+      controller.update(ownerID: owner, progress: progress, revision: coverRevision,
+        backsideColor: .document, preparesCoverMotion: true,
+        canPrepare: { true }, cornerRadius: 12, cover: AnyView(Color.red))
+    }
+    update(0)
+    for _ in 0..<100 where controller.submittedCurlFrameCount == 0 {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertGreaterThan(controller.submittedCurlFrameCount, 0)
+    let curl = try XCTUnwrap(controller.view.subviews.compactMap { $0 as? MTKView }.first)
+    let frames = controller.submittedCurlFrameCount
+    curl.removeFromSuperview()
+    XCTAssertNil(curl.window)
+    for progress in [0.2, 0.4, 0.7] { update(progress); curl.draw() }
+    XCTAssertEqual(controller.submittedCurlFrameCount, frames)
+    controller.view.addSubview(curl)
+    for _ in 0..<100 where controller.submittedCurlFrameCount == frames {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertEqual(controller.submittedCurlFrameCount, frames + 1)
+    XCTAssertEqual(controller.capturedCoverCount, 1)
+  }
+
+  @MainActor
   private func coverWindow() throws -> (UIWindow, IPadCoverOpeningController) {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene)

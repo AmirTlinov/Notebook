@@ -998,14 +998,29 @@ private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
     setNeedsDisplay(bounds)
   }
 
+  #if os(iOS)
+    override func didMoveToWindow() {
+      super.didMoveToWindow()
+      if window != nil, framePending { setNeedsDisplay(bounds) }
+    }
+  #elseif os(macOS)
+    override func viewDidMoveToWindow() {
+      super.viewDidMoveToWindow()
+      if window != nil, framePending { setNeedsDisplay(bounds) }
+    }
+  #endif
+
   func draw(in view: MTKView) {
     // A queued warm frame is still background work when a new contact arrives.
     // Keep it pending, without rescheduling a busy loop, until the next update.
-    guard !isHidden, permitsFrameSubmission() else { return }
-    guard inFlightSemaphore.wait(timeout: .now()) == .success else {
-      setNeedsDisplay(bounds)
-      return
-    }
+    // UIKit also requests display during unrelated layer/layout transactions.
+    // Those requests must not consume another drawable for the same cover.
+    guard framePending, window != nil, !isHidden, permitsFrameSubmission() else { return }
+    autoreleasepool { submitPendingFrame() }
+  }
+
+  private func submitPendingFrame() {
+    guard inFlightSemaphore.wait(timeout: .now()) == .success else { return }
     var mustSignal = true
     defer {
       if mustSignal { inFlightSemaphore.signal() }
@@ -1016,7 +1031,6 @@ private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
       let curlLayout,
       let commandQueue,
       let commandBuffer = commandQueue.makeCommandBuffer(),
-      let drawable = currentDrawable,
       let imageContext
     else { return }
 
@@ -1038,7 +1052,12 @@ private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
     filter.shadowAmount = CoverOpeningPhysics.systemShadowAmount
     filter.shadowExtent = canvasExtent
 
-    guard let output = filter.outputImage?.cropped(to: canvasExtent) else {
+    // Build the graph before borrowing a drawable. All temporary Core Image /
+    // Metal references leave this frame's autorelease pool after submission,
+    // not after every other view has drawn in the same layer transaction.
+    guard let output = filter.outputImage?.cropped(to: canvasExtent),
+      let drawable = currentDrawable
+    else {
       return
     }
     guard clear(texture: drawable.texture, with: commandBuffer) else {
@@ -1051,8 +1070,15 @@ private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
       bounds: canvasExtent,
       colorSpace: outputColorSpace
     )
-    commandBuffer.addCompletedHandler { [inFlightSemaphore] _ in
+    commandBuffer.addCompletedHandler { [weak self, inFlightSemaphore] _ in
       inFlightSemaphore.signal()
+      Task { @MainActor [weak self] in
+        guard let self, framePending, window != nil, !isHidden,
+          permitsFrameSubmission() else { return }
+        // Capacity becoming free, rather than a display/poll loop, resumes the
+        // most recent camera demand. Intermediate progress values are not queued.
+        setNeedsDisplay(bounds)
+      }
     }
     mustSignal = false
     commandBuffer.present(drawable)
