@@ -394,6 +394,28 @@ func collaborationConcurrentDocumentBlocks() throws {
   #expect(left == right)
 }
 
+@Test("Отмена своего оформления сохраняет позднюю офлайн-правку и переживает старое эхо")
+func collaborationUndoPreservesALateIndependentHuman() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  _ = try f.store.applyCollaborationAction(f.action([f.insert()]), actor: f.agent)
+  var offline = try f.store.loadPage(f.pageID)
+  let element = offline.elements[0]
+  let edited = offline.replaceElements([AgentElement(id: element.id, kind: element.kind, frame: element.frame,
+    source: "Offline human", html: "Offline human", css: element.css, state: element.state)], actor: f.human)
+  #expect(edited)
+  let action = try f.action([.init(kind: .updateElement, target: f.page, id: "idea", values: [
+    "source": .string("Agent"), "html": .string("Agent"), "css": .string("p { color: blue }")])])
+  _ = try f.store.applyCollaborationAction(action, actor: f.agent)
+  let oldAgent = try f.store.loadPage(f.pageID)
+  _ = try f.store.savePage(offline)
+  let undone = try f.store.undoCollaborationAction(action.id, actor: f.human)
+  #expect(undone.undo?.preserved.isEmpty == false)
+  _ = try f.store.savePage(oldAgent)
+  let cold = try NotebookStore(root: f.store.root).loadPage(f.pageID)
+  #expect(cold.elements[0].source == "Offline human")
+  #expect(cold.elements[0].css == "")
+}
+
 @Test("Два устройства добавляют элементы на одну доску с сохранением обоих")
 func collaborationConcurrentBoardElements() throws {
   let f = try CollaborationFixture(); defer { f.clean() }

@@ -1023,7 +1023,7 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     try incoming.materializeVersions(in: .encode(other), fallback: other.stamp)
     var fields = local.fields
     for (key, version) in incoming.fields {
-      if key == "elements/order" { fields[key] = fields[key].map { $0.joining(version) } ?? version }
+      if key == "elements/order" { fields[key] = try fields[key].map { try $0.joining(version) } ?? version }
       else {
         guard fields[key] == nil else { throw CollaborationError("import_collision", "Владелец поля уже присутствует на доске.") }
         fields[key] = version
@@ -1205,7 +1205,7 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     var values = Dictionary(uniqueKeysWithValues: placements.map { ($0.id, $0) })
     for incoming in other.placements { values[incoming.id] = try values[incoming.id]?.merging(incoming) ?? incoming }
     let a = try JSONValue.encode(self), b = try JSONValue.encode(other)
-    let fields = CollaborativeContent.merge(local: a, incoming: b, localState: collaboration,
+    let fields = try CollaborativeContent.merge(local: a, incoming: b, localState: collaboration,
       incomingState: other.collaboration, localStamp: stamp, incomingStamp: other.stamp)
     var result = try fields.value.decode(Self.self)
     result.placements = values.values.sorted { $0.id.uuidString < $1.id.uuidString }

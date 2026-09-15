@@ -158,6 +158,21 @@ struct DocumentSourceReplicationTests {
     }
   }
 
+  @Test func concurrentSourceValuesLargerThanAClockRemainDeliverable() throws {
+    try fixture { a, b, actor, id in
+      let other = UUID()
+      let packet = try changedSource(a, id, actor: actor, source: String(repeating: "A", count: 100_000))
+      _ = try changedSource(b, id, actor: other, source: String(repeating: "B", count: 100_000))
+      let cursor = try b.currentChangeCursor()
+      try deliver(packet, a, b, actor)
+      #expect(try b.currentChangeCursor() > cursor)
+      for change in try b.changeJournal(after: 0) { try deliver(change, b, a, other) }
+      #expect(try a.loadDocument(id).blocks == b.loadDocument(id).blocks)
+      let cold = NotebookStore(root: b.root)
+      #expect(try cold.loadDocument(id).collaboration == a.loadDocument(id).collaboration)
+    }
+  }
+
   @Test func membershipAndOrderCrossAddressWindowsWithoutRecreatingProgramState() throws {
     try fixture { a, b, actor, id in
       let ids = ["a0", "a!", "a", "a/child", "a~child", UUID().uuidString, "А"] + (0..<130).map { "block-\($0)" }
@@ -182,19 +197,24 @@ struct DocumentSourceReplicationTests {
     }
   }
 
-  @Test func concurrentHumanAdoptionProtectsARemotelyRemovedProgram() throws {
+  @Test(arguments: [false, true])
+  func concurrentHumanAdoptionProtectsARemotelyRemovedProgram(adoptionWinsTie: Bool) throws {
     try fixture { a, b, actor, id in
       var removed = try a.loadDocument(id), adopted = removed
       let removedProgram = removed.replaceContent(blocks: Array(removed.blocks.dropFirst()), actor: actor)
       #expect(removedProgram)
-      let adoptedProgram = adopted.replaceBlockSource(id: selected, source: "<button>Human</button>", actor: UUID())
+      let human = UUID(uuidString: adoptionWinsTie ? "FFFFFFFF-FFFF-4FFF-8FFF-FFFFFFFFFFFF" : "00000000-0000-4000-8000-000000000001")!
+      let adoptedProgram = adopted.replaceBlockSource(id: selected, source: "<button>Human</button>", actor: human)
       #expect(adoptedProgram)
       try b.saveMergedDocument(adopted)
       let cursor = try a.currentChangeCursor(); try a.saveMergedDocument(removed)
       var expected = try a.loadDocument(id); _ = expected.merge(adopted)
       try deliver(a.changeJournal(after: cursor)[0], a, b, actor)
       #expect(try b.loadDocument(id).blocks == expected.blocks)
-      #expect(try b.loadDocument(id).collaboration?.fields == expected.collaboration?.fields)
+      let actual = try b.loadDocument(id).collaboration?.fields ?? [:]
+      for key in Set(actual.keys).union(expected.collaboration?.fields.keys ?? [:].keys) {
+        #expect(actual[key] == expected.collaboration?.fields[key], "Field \(key)")
+      }
     }
   }
 

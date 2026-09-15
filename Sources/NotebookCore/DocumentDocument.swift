@@ -253,14 +253,14 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
   public mutating func merge(_ other: Self) -> Bool {
     guard id == other.id, paperSize == other.paperSize, other.isValid,
       let local = try? JSONValue.encode(self), let incoming = try? JSONValue.encode(other) else { return false }
-    let merged = CollaborativeContent.merge(local: local, incoming: incoming,
+    guard let merged = try? CollaborativeContent.merge(local: local, incoming: incoming,
       localState: collaboration, incomingState: other.collaboration,
-      localStamp: contentStamp, incomingStamp: other.contentStamp)
+      localStamp: contentStamp, incomingStamp: other.contentStamp) else { return false }
     guard var candidate = try? merged.value.decode(Self.self), candidate.isValid else { return false }
     candidate.collaboration = merged.state
     candidate.contentStamp = mergedContentStamp(local: local, incoming: incoming, result: merged.value,
       localStamp: contentStamp, incomingStamp: other.contentStamp)
-    guard candidate != self else { return false }
+    guard candidate.isValid, candidate != self else { return false }
     self = candidate
     return true
   }
@@ -290,7 +290,9 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
     let stamp = max(contentStamp, local.contentStamp)
     guard blocks[index] != resolved || stamp != contentStamp || !changedFields.isEmpty else { return false }
     var metadata = collaboration ?? CollaborativeContent()
-    for (key, version) in changedFields { metadata.joinField(key, version: version) }
+    for (key, version) in changedFields {
+      do { try metadata.joinField(key, version: version) } catch { return false }
+    }
     guard metadata.fields.count <= CollaborativeContent.maximumFieldCount,
       changedFields.values.allSatisfy(\.isValid), resolved.isValid else { return false }
     blocks[index] = resolved
@@ -404,11 +406,10 @@ public struct DocumentStateRecord: Codable, Equatable, Identifiable, Sendable {
   mutating func replace(_ value: JSONValue, version: ContentFieldVersion) -> Bool {
     guard value.isValid else { return false }
     let previous = fieldVersion ?? .init(stamp:self.stamp,human:true)
-    let merged = previous.joining(version)
-    let useIncoming = version.wins(over:previous)
-    let changed = fieldVersion != merged || (useIncoming && self.value != value)
-    fieldVersion = merged
-    if useIncoming { self.value = value; self.stamp = version.stamp }
+    guard let resolved = try? previous.resolving(value: self.value, with: version, incomingValue: value),
+      let selected = resolved.value else { return false }
+    let changed = fieldVersion != resolved.version || self.value != selected
+    fieldVersion = resolved.version; self.value = selected; self.stamp = resolved.version.stamp
     return changed
   }
 

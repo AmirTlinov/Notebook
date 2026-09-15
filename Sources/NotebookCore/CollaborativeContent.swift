@@ -1,45 +1,127 @@
 import Foundation
 
-/// Causal field clocks let two devices retain independent edits. A concurrent
-/// human edit owns its field over an agent suggestion based on the older value.
+/// The received frontier is distinct from each immutable author's context.
+/// Concurrent values must survive a display choice: a later causal successor
+/// can remove that winner and expose a previously non-winning human edit.
 public struct ContentFieldVersion: Codable, Equatable, Sendable {
   public let stamp: VersionStamp
   public let human: Bool
   public let observed: [String: UInt64]
+  private var heads: [ContentFieldHead]?
 
   init(stamp: VersionStamp, human: Bool, previous: ContentFieldVersion? = nil) {
-    self.stamp = stamp
-    self.human = human
     var observed = previous?.observed ?? [:]
     observed[stamp.actor.uuidString.lowercased()] = stamp.counter
-    self.observed = observed
-  }
-
-  var isValid: Bool {
-    stamp.counter <= VersionStamp.maximumCounter && observed.count <= 256
-      && observed.allSatisfy { UUID(uuidString: $0.key) != nil && $0.value <= VersionStamp.maximumCounter }
-  }
-
-  public func includes(_ other: Self) -> Bool {
-    (observed[other.stamp.actor.uuidString.lowercased()] ?? 0) >= other.stamp.counter
-  }
-
-  func wins(over other: Self) -> Bool {
-    let follows = includes(other), precedes = other.includes(self)
-    if follows != precedes { return follows }
-    if human != other.human { return human }
-    return stamp > other.stamp
-  }
-
-  func joining(_ other: Self) -> Self {
-    let winner = wins(over: other) ? self : other
-    var observations = observed
-    for (actor, counter) in other.observed { observations[actor] = max(observations[actor] ?? 0, counter) }
-    return .init(stamp: winner.stamp, human: winner.human, observed: observations)
+    self.init(stamp: stamp, human: human, observed: observed)
   }
 
   init(stamp: VersionStamp, human: Bool, observed: [String: UInt64]) {
-    self.stamp = stamp; self.human = human; self.observed = observed
+    self.stamp = stamp; self.human = human; self.observed = observed; heads = nil
+  }
+
+  var isValid: Bool {
+    guard stamp.counter <= VersionStamp.maximumCounter && observed.count <= 256,
+      observed.allSatisfy({ UUID(uuidString: $0.key) != nil && $0.value <= VersionStamp.maximumCounter }) else { return false }
+    guard let heads else { return true }
+    guard !heads.isEmpty, heads.count <= 256,
+      heads.allSatisfy({ $0.isValid && $0.observed.allSatisfy { (observed[$0.key] ?? 0) >= $0.value } }),
+      let canonical = try? Self.frontier(heads), canonical == heads,
+      let winner = Self.winner(heads) else { return false }
+    return winner.stamp == stamp && winner.human == human
+  }
+
+  public func includes(_ other: Self) -> Bool {
+    observed[other.stamp.actor.uuidString.lowercased()].map { $0 >= other.stamp.counter } ?? false
+  }
+
+  private var authoredHeads: [ContentFieldHead] {
+    heads ?? [.init(stamp: stamp, human: human, observed: observed, value: nil, hasValue: false)]
+  }
+
+  private func binding(_ value: JSONValue?) -> Self {
+    var bound = self
+    bound.heads = authoredHeads.map { head in
+      guard head.stamp == stamp, !head.hasValue else { return head }
+      var head = head; head.value = value; head.hasValue = true; return head
+    }
+    return bound
+  }
+
+  /// A removed member has no displayed payload in which to keep this value.
+  /// Its existence clock owns removal; its source is still this author's value.
+  func retainingValue(_ value: JSONValue?) -> Self { binding(value) }
+
+  /// The ordinary (non-concurrent) version remains a compact clock. Only a
+  /// genuine frontier retains values; the visible value alone cannot represent it.
+  func resolving(value: JSONValue?, with other: Self, incomingValue: JSONValue?) throws -> (value: JSONValue?, version: Self) {
+    let left = binding(value), right = other.binding(incomingValue)
+    let retained = try Self.frontier(left.authoredHeads + right.authoredHeads)
+    guard let winner = Self.winner(retained), winner.hasValue else { throw NotebookStorageError.invalidTransaction("content author value missing") }
+    return (winner.value, left.joined(right, retained: retained, winner: winner, retainSingleValue: false))
+  }
+
+  func joining(_ other: Self) throws -> Self {
+    let retained = try Self.frontier(authoredHeads + other.authoredHeads)
+    guard let winner = Self.winner(retained) else { throw NotebookStorageError.transactionConflict }
+    return joined(other, retained: retained, winner: winner, retainSingleValue: true)
+  }
+
+  private func joined(_ other: Self, retained: [ContentFieldHead], winner: ContentFieldHead, retainSingleValue: Bool) -> Self {
+    var observations = observed
+    for (actor, counter) in other.observed { observations[actor] = max(observations[actor] ?? 0, counter) }
+    var result = Self(stamp: winner.stamp, human: winner.human, observed: observations)
+    if retained.count > 1 || winner.observed != observations || (retainSingleValue && winner.hasValue) {
+      result.heads = retained
+    }
+    return result
+  }
+
+  private static func winner(_ heads: [ContentFieldHead]) -> ContentFieldHead? {
+    heads.max { a, b in a.human == b.human ? a.stamp < b.stamp : !a.human }
+  }
+
+  private static func frontier(_ input: [ContentFieldHead]) throws -> [ContentFieldHead] {
+    guard input.count <= 512 else { throw NotebookStorageError.limitExceeded("content_frontier") }
+    var dots: [VersionStamp: ContentFieldHead] = [:]
+    for head in input {
+      if let old = dots[head.stamp] {
+        guard old.human == head.human, old.observed == head.observed else {
+          throw NotebookStorageError.invalidTransaction("content author context changed")
+        }
+        guard !old.hasValue || !head.hasValue || old.value == head.value else {
+          throw NotebookStorageError.invalidTransaction("content author value changed")
+        }
+        if !old.hasValue { dots[head.stamp] = head }
+      } else { dots[head.stamp] = head }
+    }
+    let values = Array(dots.values)
+    let retained = try values.filter { head in
+      for other in values where other.stamp != head.stamp {
+        if other.includes(head) {
+          guard !head.includes(other) else { throw NotebookStorageError.invalidTransaction("content causal cycle") }
+          return false
+        }
+      }
+      return true
+    }.sorted { $0.stamp < $1.stamp }
+    guard retained.count <= 256 else { throw NotebookStorageError.limitExceeded("content_frontier") }
+    return retained
+  }
+}
+
+private struct ContentFieldHead: Codable, Equatable, Sendable {
+  let stamp: VersionStamp
+  let human: Bool
+  let observed: [String: UInt64]
+  var value: JSONValue?
+  var hasValue: Bool
+  var isValid: Bool {
+    stamp.counter <= VersionStamp.maximumCounter && observed.count <= 256
+      && observed.allSatisfy { UUID(uuidString: $0.key) != nil && $0.value <= VersionStamp.maximumCounter }
+      && (value?.isValid ?? true)
+  }
+  func includes(_ other: Self) -> Bool {
+    observed[other.stamp.actor.uuidString.lowercased()].map { $0 >= other.stamp.counter } ?? false
   }
 }
 
@@ -54,8 +136,8 @@ public struct CollaborativeContent: Codable, Equatable, Sendable {
     fields[key] = .init(stamp: stamp, human: human, previous: fields[key])
   }
 
-  mutating func joinField(_ key: String, version: ContentFieldVersion) {
-    fields[key] = fields[key].map { $0.joining(version) } ?? version
+  mutating func joinField(_ key: String, version: ContentFieldVersion) throws {
+    fields[key] = try fields[key].map { try $0.joining(version) } ?? version
   }
 
   mutating func setPageOrderVersion(_ key: String, register: NotebookPageOrderRegister) {
@@ -86,7 +168,9 @@ public struct CollaborativeContent: Codable, Equatable, Sendable {
     guard a != b else { return }
     for key in Set(a.keys).union(b.keys) {
       let previous = fields[key] ?? .init(stamp: beforeStamp, human: true)
-      if a[key] != b[key] {
+      if let exists = memberExistenceField(key), a[exists] == .bool(true), b[exists] == nil {
+        fields[key] = previous.retainingValue(a[key])
+      } else if a[key] != b[key] {
         fields[key] = .init(stamp: stamp, human: human, previous: previous)
       } else if fields[key] == nil { fields[key] = previous }
     }
@@ -103,30 +187,60 @@ public struct CollaborativeContent: Codable, Equatable, Sendable {
 
   static func merge(local: JSONValue, incoming: JSONValue,
     localState: Self?, incomingState: Self?, localStamp: VersionStamp,
-    incomingStamp: VersionStamp) -> (value: JSONValue, state: Self) {
+    incomingStamp: VersionStamp) throws -> (value: JSONValue, state: Self) {
     let a = contentFields(local), b = contentFields(incoming)
     var result: [String: JSONValue] = [:]
     var metadata = Self()
     let keys = Set(a.keys).union(b.keys).union(localState?.fields.keys ?? Dictionary<String, ContentFieldVersion>().keys)
       .union(incomingState?.fields.keys ?? Dictionary<String, ContentFieldVersion>().keys)
     for key in keys {
-      let av = localState?.fields[key] ?? .init(
-        stamp: a[key] == nil ? .init(counter: 0, actor: localStamp.actor) : localStamp, human: true)
-      let bv = incomingState?.fields[key] ?? .init(
-        stamp: b[key] == nil ? .init(counter: 0, actor: incomingStamp.actor) : incomingStamp, human: true)
-      let useLocal = av.wins(over: bv)
-      metadata.fields[key] = av.joining(bv)
+      // No field and no authored clock is no observation, not a counter-zero
+      // deletion by the sender. A real removal carries its existence version.
+      if a[key] == nil && localState?.fields[key] == nil {
+        metadata.fields[key] = incomingState?.fields[key] ?? .init(stamp: incomingStamp, human: true)
+        result[key] = b[key]; continue
+      }
+      if b[key] == nil && incomingState?.fields[key] == nil {
+        metadata.fields[key] = localState?.fields[key] ?? .init(stamp: localStamp, human: true)
+        result[key] = a[key]; continue
+      }
+      let av = localState?.fields[key] ?? .init(stamp: localStamp, human: true)
+      let bv = incomingState?.fields[key] ?? .init(stamp: incomingStamp, human: true)
+      let resolved = try av.resolving(value: a[key], with: bv, incomingValue: b[key])
+      metadata.fields[key] = resolved.version
       // Absence of a field on a removed member is owned by its existence clock.
       // Surviving members retain their complete payload during a concurrent edit.
       if key.hasSuffix("/exists") {
-        result[key] = useLocal ? a[key] : b[key]
+        result[key] = resolved.value
       } else {
-        result[key] = (useLocal ? a[key] : b[key]) ?? (useLocal ? b[key] : a[key])
+        result[key] = resolved.value ?? a[key] ?? b[key]
+        if result[key] != resolved.value {
+          metadata.fields[key] = resolved.version.retainingValue(resolved.value)
+        }
+      }
+    }
+    for key in keys {
+      if let exists = memberExistenceField(key), result[exists] != .bool(true) {
+        metadata.fields[key] = metadata.fields[key]?.retainingValue(result[key])
       }
     }
     let base = localStamp > incomingStamp ? local : incoming
-    return (rebuildContent(base: base, fields: result), metadata)
+    let value = rebuildContent(base: base, fields: result)
+    // Membership can append concurrent survivors to the chosen author's
+    // sequence. That derived display order is not a new value by that author.
+    for name in ["elements", "blocks"] where value[name] != nil {
+      let key = fieldKey([name, "order"])
+      let displayed = JSONValue.array(value[name]!.array.compactMap(\.memberIdentity).map(JSONValue.string))
+      if displayed != result[key] { metadata.fields[key] = metadata.fields[key]?.retainingValue(result[key]) }
+    }
+    return (value, metadata)
   }
+}
+
+private func memberExistenceField(_ key: String) -> String? {
+  let parts = key.split(separator: "/", omittingEmptySubsequences: false)
+  guard parts.count == 3, (parts[0] == "elements" || parts[0] == "blocks"), parts[2] != "exists" else { return nil }
+  return parts[0] + "/" + parts[1] + "/exists"
 }
 
 func mergedContentStamp(local: JSONValue, incoming: JSONValue, result: JSONValue,

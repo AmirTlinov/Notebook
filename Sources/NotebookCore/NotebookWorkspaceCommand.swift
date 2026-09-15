@@ -74,7 +74,7 @@ extension NotebookStore {
         try writePageOrder(nextOrder, itemID: itemID)
       } else { nextOrder = currentOrder }
       for (offset, key) in keys.enumerated() {
-        let joined = previous[offset].map { $0.joining(authored[offset]) } ?? authored[offset]
+        let joined = try previous[offset].map { try $0.joining(authored[offset]) } ?? authored[offset]
         let version = offset == 1 ? nextOrder.fieldVersion : existing == nil && offset == 0
           ? ContentFieldVersion(stamp: frontier, human: true, previous: joined) : joined
         guard version.isValid else { throw NotebookStorageError.limitExceeded("page append causal actors") }

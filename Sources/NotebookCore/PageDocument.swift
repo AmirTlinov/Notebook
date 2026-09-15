@@ -339,7 +339,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     // this collection, including while merging an unrelated element edit.
     let local = try Self.elementContent(candidate.elements)
     let incoming = try Self.elementContent(other.elements)
-    let merged = CollaborativeContent.merge(local: local, incoming: incoming,
+    let merged = try CollaborativeContent.merge(local: local, incoming: incoming,
       localState: collaboration, incomingState: other.collaboration,
       localStamp: agentStamp, incomingStamp: other.agentStamp)
     guard let elements = merged.value["elements"] else { throw NotebookStorageError.transactionConflict }

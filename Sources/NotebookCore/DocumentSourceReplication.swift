@@ -69,8 +69,10 @@ extension NotebookStore {
       let address = fieldPrefix + fieldKey([key])
       let changes = try delivered ? incoming(address) : []
       if let mutation = changes.first, mutation[1].text == nil { throw NotebookStorageError.invalidTransaction("causal document fields are retained") }
-      let row = try fragments(changes, maximumBytes: 65_536).first
-        ?? boundedStoredFragments([(address, false)], maximumCount: 1, maximumBytes: 65_536,
+      // A causal frontier can retain actual conflicting source, not only a
+      // small clock. It shares the addressed program's existing byte bound.
+      let row = try fragments(changes, maximumBytes: 16_777_216).first
+        ?? boundedStoredFragments([(address, false)], maximumCount: 1, maximumBytes: 16_777_216,
           budget: "document_replication_field").first
       if let row {
         let version = try row.value.decode(ContentFieldVersion.self)
@@ -100,6 +102,7 @@ extension NotebookStore {
     }
     let previousOrderVersion = try field("blocks/order", delivered: false)?.value.decode(ContentFieldVersion.self)
     let candidateOrderVersion = try field("blocks/order", delivered: true)?.value.decode(ContentFieldVersion.self)
+    let declaresOrder = try !incoming(fieldPrefix + fieldKey(["blocks/order"])).isEmpty
     let oldOrderRows = try database.rows("SELECT member,position FROM records WHERE parent=? AND collection='blocks' ORDER BY position,member LIMIT 513", [.text(root)])
     guard oldOrderRows.count <= DocumentDocument.maximumBlockCount else { throw NotebookStorageError.limitExceeded("document_blocks") }
     let oldOrder = oldOrderRows.compactMap { $0[0].text }
@@ -217,11 +220,16 @@ extension NotebookStore {
       for row in rows {
         let address = row[0].text!; after = address
         let key = String(address.dropFirst(fieldPrefix.count)).replacingOccurrences(of: "~1", with: "/").replacingOccurrences(of: "~0", with: "~")
+        let parts = key.split(separator: "/", omittingEmptySubsequences: false)
+        if key == "preamble" || key == "blocks/order"
+          || (parts.count == 3 && parts[0] == "blocks" && DocumentBlock.causalFieldNames.contains(String(parts[2]))) {
+          continue // This field already joined with its value in the addressed owner above.
+        }
         let old = try field(key, delivered: false)?.value.decode(ContentFieldVersion.self)
         guard let next = try field(key, delivered: true)?.value.decode(ContentFieldVersion.self) else {
           throw NotebookStorageError.corruptRecord(address)
         }
-        try publishField(key, value: .encode(old.map { next.joining($0) } ?? next))
+        try publishField(key, value: .encode(old.map { try next.joining($0) } ?? next))
       }
     }
     let storedOrder = try database.rows("SELECT member,position FROM records WHERE parent=? AND collection='blocks' ORDER BY position,member LIMIT 513", [.text(root)])
@@ -231,12 +239,21 @@ extension NotebookStore {
     }
     let av = candidateOrderVersion ?? .init(stamp: candidate.contentStamp, human: true)
     let bv = previousOrderVersion ?? .init(stamp: previous?.contentStamp ?? .init(counter: 0, actor: candidate.contentStamp.actor), human: true)
-    let preferred = previous == nil || av.wins(over: bv) ? candidateOrder : oldOrder
+    // A source-only packet carries that block's old SQL position, not a new
+    // authored order. Do not bind a synthetic partial permutation to the
+    // receiver's unchanged order clock.
+    let resolvedOrder = try (declaresOrder ? previous : nil).map { _ in
+      try av.resolving(value: .array(candidateOrder.map(JSONValue.string)), with: bv,
+        incomingValue: .array(oldOrder.map(JSONValue.string)))
+    }
+    let preferred = resolvedOrder?.value?.array.compactMap(\.string) ?? (previous == nil ? candidateOrder : oldOrder)
     let survivors = Set(storedOrder.compactMap { $0[0].text })
     let order = contentMemberOrder(preferred: preferred, escapedMembers: survivors.map { fieldKey([$0]) })
     let newestOrder = previous.map { candidate.contentStamp <= $0.contentStamp ? oldOrder : candidateOrder } ?? candidateOrder
     differsFromNewest = differsFromNewest || order != newestOrder
-    try publishField("blocks/order", value: .encode(previous == nil ? av : av.joining(bv)))
+    var orderVersion = resolvedOrder?.version ?? (previous == nil ? av : bv)
+    if order != preferred { orderVersion = orderVersion.retainingValue(.array(preferred.map(JSONValue.string))) }
+    try publishField("blocks/order", value: .encode(orderVersion))
     if order != storedOrder.compactMap({ $0[0].text }) {
       for (position, member) in order.enumerated() {
         let address = blockPrefix + fieldKey([member])

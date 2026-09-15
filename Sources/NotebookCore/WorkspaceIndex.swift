@@ -576,11 +576,19 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
       throw CollaborationError("invalid_content", "Каталоги должны принадлежать одному корню.")
     }
     if self == other { try validatePageOrderWitness(); return self }
-    func incomingOwns(_ field: String) -> Bool {
-      guard let incoming = other.collaboration.fields[field] else { return false }
-      guard let current = collaboration.fields[field] else { return true }
-      return incoming.wins(over: current)
+    var resolvedFields: [String: ContentFieldVersion] = [:]
+    func resolve(_ field: String, local: JSONValue?, incoming: JSONValue?) throws -> JSONValue? {
+      guard let next = other.collaboration.fields[field] else { return local }
+      guard let old = collaboration.fields[field] else { resolvedFields[field] = next; return incoming }
+      let result: (value: JSONValue?, version: ContentFieldVersion)
+      do { result = try old.resolving(value: local, with: next, incomingValue: incoming) }
+      catch NotebookStorageError.invalidTransaction(let reason) {
+        throw NotebookStorageError.invalidTransaction("\(field): \(reason)")
+      }
+      resolvedFields[field] = result.version
+      return result.value
     }
+
     var nodes = pageOrderNodes
     for (hash, node) in other.pageOrderNodes {
       if let old = nodes[hash], old != node { throw NotebookStorageError.blobHashMismatch }
@@ -591,17 +599,17 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     var byID: [UUID: WorkspaceItem] = [:]
     for id in Set(items.map(\.id)).union(other.items.map(\.id)) {
       let local = item(id: id), incoming = other.item(id: id)
-      let exists = incomingOwns(Self.itemField(id, "exists")) ? incoming != nil : local != nil
+      let exists = try resolve(Self.itemField(id, "exists"), local: .bool(local != nil), incoming: .bool(incoming != nil)) == .bool(true)
       guard exists else { continue }
       guard var resolved = local ?? incoming else { continue }
       if let local, let incoming {
         guard local.kind == incoming.kind else {
           throw CollaborationError("invalid_content", "UUID предмета не меняет вид владельца.")
         }
-        resolved.title = incomingOwns(Self.itemField(id, "title")) ? incoming.title : local.title
+        resolved.title = try resolve(Self.itemField(id, "title"), local: .string(local.title), incoming: .string(incoming.title))?.string ?? local.title
         let localPages = Set(local.pageIDs), incomingPages = Set(incoming.pageIDs)
-        let live = localPages.union(incomingPages).filter { page in
-          incomingOwns(Self.pageField(id, page)) ? incomingPages.contains(page) : localPages.contains(page)
+        let live = try localPages.union(incomingPages).filter { page in
+          try resolve(Self.pageField(id, page), local: .bool(localPages.contains(page)), incoming: .bool(incomingPages.contains(page))) == .bool(true)
         }
         if local.kind == .notebook {
           let key = id.uuidString.lowercased()
@@ -617,8 +625,9 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     guard !byID.isEmpty else {
       throw CollaborationError("workspace_conflict", "Независимые удаления требуют сохранить хотя бы один доступный предмет.")
     }
-    let preferred = incomingOwns("items/order") ? other.items : items
-    let preferredIDs = preferred.map(\.id)
+    let preferred = try resolve("items/order", local: .array(items.map { .string($0.id.uuidString) }),
+      incoming: .array(other.items.map { .string($0.id.uuidString) }))
+    let preferredIDs = preferred?.array.compactMap { $0.string.flatMap(UUID.init(uuidString:)) } ?? items.map(\.id)
     let order = preferredIDs.filter { byID[$0] != nil }
       + Set(byID.keys).subtracting(preferredIDs).sorted { $0.uuidString < $1.uuidString }
     let selected = self
@@ -634,7 +643,13 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     result.selectedItemID = selectedID
     result.selectedPageID = selectedPage
     result.stamp = frontier
-    for (key, version) in other.collaboration.fields { result.collaboration.joinField(key, version: version) }
+    if preferred != .array(result.items.map { .string($0.id.uuidString) }) {
+      resolvedFields["items/order"] = resolvedFields["items/order"]?.retainingValue(preferred)
+    }
+    let authoredPageOrders = Set(orders.keys.compactMap(UUID.init(uuidString:)).map { Self.itemField($0, "pageIDs") })
+    for (key, version) in other.collaboration.fields where !authoredPageOrders.contains(key) {
+      try result.collaboration.joinField(key, version: resolvedFields[key] ?? version)
+    }
     for item in result.items where item.kind == .notebook {
       let key = item.id.uuidString.lowercased()
       if let register = result.pageOrders[key] {
