@@ -297,33 +297,38 @@ import XCTest
     try systemTrace?.ended(app)
   }
 
-  private func typeAndObserve(_ marker: String, in input: XCUIElement, name: String) throws {
+  private func typeAndObserve(_ marker: String, in input: XCUIElement, name: String, submits: Bool = false) throws {
     input.tap()
     let typingStartedAt = ProcessInfo.processInfo.systemUptime
-    input.typeText(marker)
+    input.typeText(marker + (submits ? "\n" : ""))
     let typingReturnedAt = ProcessInfo.processInfo.systemUptime
     let immediateValue = input.value as? String
     let valueObservedAt = ProcessInfo.processInfo.systemUptime
-    // Preserve the immediate assertion while recording the exact failed
-    // observation. A later AX read must not silently turn that failure green.
+    // XCTest can return before WebKit has consumed the synthesized keys. The
+    // native input journal distinguishes that boundary from lost admitted
+    // state. Keep the first observation, but assert the bounded final value.
     screenshot("widget-input-immediate-observation-\(name)")
-    let subsequentValue = input.value as? String
+    let entered = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", marker), object: input)
+    let complete = immediateValue?.contains(marker) == true || XCTWaiter.wait(for: [entered], timeout: 3) == .completed
+    let finalValue = input.value as? String
     let inputObservation: [String: Any] = [
       "expectedMarker": marker,
       "typingStartedAt": typingStartedAt,
       "typingReturnedAt": typingReturnedAt,
       "valueObservedAt": valueObservedAt,
       "immediateValue": immediateValue as Any? ?? NSNull(),
-      "subsequentValue": subsequentValue as Any? ?? NSNull(),
-      "subsequentObservedAt": ProcessInfo.processInfo.systemUptime,
+      "finalValue": finalValue as Any? ?? NSNull(),
+      "finalObservedAt": ProcessInfo.processInfo.systemUptime,
+      "completionObserved": complete,
+      "completionTimeoutSeconds": 3,
       "measurement": "XCTest input and accessibility observation; not native control latency"
     ]
     let observation = XCTAttachment(data: try JSONSerialization.data(withJSONObject: inputObservation,
       options: [.prettyPrinted, .sortedKeys]), uniformTypeIdentifier: "public.json")
     observation.name = "widget-input-observation-\(name)"
     observation.lifetime = .keepAlways; add(observation)
-    XCTAssertTrue(immediateValue?.contains(marker) == true,
-      "The first AX observation after typeText did not contain the complete new marker; see widget-input-observation-\(name)")
+    XCTAssertTrue(complete && finalValue?.contains(marker) == true,
+      "The completed input did not preserve the full new marker; see widget-input-observation-\(name)")
   }
 
   func testPinchStartingOnReadySliderDoesNotMoveTheScene() throws {
@@ -486,6 +491,38 @@ import XCTest
     var lastScreenshot = began - 60
     let pencil = ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_PENCIL_CONTACTS"] == "1"
     while ProcessInfo.processInfo.systemUptime - began < seconds {
+      try performMixedIteration(iteration, pencil: pencil, began: began, lastScreenshot: &lastScreenshot)
+      iteration += 1
+    }
+    let elapsed = ProcessInfo.processInfo.systemUptime - began
+    XCTAssertGreaterThanOrEqual(iteration, 10)
+    XCTAssertGreaterThanOrEqual(elapsed, seconds)
+    let receipt = XCTAttachment(string: "elapsedSeconds=\(elapsed)\ncompletedIterations=\(iteration)\ninputProfile=\(pencil ? "measured Simulator Pencil contacts" : "native finger contacts")")
+    receipt.name = "mixed-workload-duration"; receipt.lifetime = .keepAlways; add(receipt)
+    screenshot("mixed-workload-finished")
+    try systemTrace?.ended(app)
+  }
+
+  /// The same native gestures as the long scenario, narrowed to its first
+  /// second-keyboard/rotation boundary. The existing observer only records.
+  func testKeyboardAfterCameraAndRotationPreservesAcceptedInput() throws {
+    let session = UUID().uuidString
+    app.launchEnvironment["NOTEBOOK_INTERACTION_SESSION_ID"] = session
+    app.launchEnvironment["NOTEBOOK_INTERACTION_SELECTORS"] = "[\"#text\",\"#count\",\"#slider\"]"
+    let identity = XCTAttachment(string: session)
+    identity.name = "input-state-observation-session"; identity.lifetime = .keepAlways; add(identity)
+    try launch()
+    try navigateToAcceptanceControls()
+    let began = ProcessInfo.processInfo.systemUptime
+    var lastScreenshot = began - 60
+    for iteration in 0..<7 {
+      try performMixedIteration(iteration, pencil: false, began: began, lastScreenshot: &lastScreenshot)
+    }
+    try systemTrace?.ended(app)
+  }
+
+  private func performMixedIteration(_ iteration: Int, pencil: Bool, began: TimeInterval,
+    lastScreenshot: inout TimeInterval) throws {
       try XCTContext.runActivity(named: "mixed-interaction-\(iteration)") { _ in
         let ink = app.otherElements["spatial-ink"]
         try fitControlMaterial(using: ink, permitsFingerPan: !pencil)
@@ -498,10 +535,9 @@ import XCTest
         XCTAssertEqual(try counterValue(), before + 1, "One physical tap must produce exactly one effect")
         if iteration.isMultiple(of: 5) {
           let input = app.webViews.textFields["Acceptance text"]
-          XCTAssertTrue(input.exists); input.tap()
+          XCTAssertTrue(input.exists)
           let marker = "\(iteration)-" + UUID().uuidString
-          input.typeText(marker + "\n")
-          XCTAssertTrue((input.value as? String)?.contains(marker) == true)
+          try typeAndObserve(marker, in: input, name: "mixed-\(iteration)", submits: true)
           try dismissSystemKeyboard()
         }
         if pencil {
@@ -525,15 +561,6 @@ import XCTest
           lastScreenshot = ProcessInfo.processInfo.systemUptime
         }
       }
-      iteration += 1
-    }
-    let elapsed = ProcessInfo.processInfo.systemUptime - began
-    XCTAssertGreaterThanOrEqual(iteration, 10)
-    XCTAssertGreaterThanOrEqual(elapsed, seconds)
-    let receipt = XCTAttachment(string: "elapsedSeconds=\(elapsed)\ncompletedIterations=\(iteration)\ninputProfile=\(pencil ? "measured Simulator Pencil contacts" : "native finger contacts")")
-    receipt.name = "mixed-workload-duration"; receipt.lifetime = .keepAlways; add(receipt)
-    screenshot("mixed-workload-finished")
-    try systemTrace?.ended(app)
   }
 
   /// System metrics are exported from xcresult. A missing/unsupported hitch

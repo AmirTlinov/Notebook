@@ -1,5 +1,6 @@
 #if os(iOS)
 import Foundation
+import NotebookCore
 import Darwin
 import UIKit
 import WebKit
@@ -87,6 +88,16 @@ import WebKit
       data.count <= 16_384 else { return }
     recorder.append(["kind": "dom", "runtime": identity(runtime), "readyAtReceipt": ready,
       "observation": payload])
+  }
+
+  static func state(_ value: JSONValue, stage: String, webView: WKWebView, revision: UInt64, accepted: Bool? = nil) {
+    guard let recorder, let runtime = runtimes[ObjectIdentifier(webView)], runtime.webView === webView,
+      let bytes = try? JSONEncoder().encode(value) else { return }
+    var record: [String: Any] = ["kind": "state", "stage": stage, "runtime": identity(runtime),
+      "inputRevision": String(revision), "valueJSON": String(decoding: bytes.prefix(4096), as: UTF8.self),
+      "valueBytes": bytes.count]
+    if let accepted { record["accepted"] = accepted }
+    recorder.append(record)
   }
 
   private static func identity(_ runtime: Runtime) -> [String: Any] {

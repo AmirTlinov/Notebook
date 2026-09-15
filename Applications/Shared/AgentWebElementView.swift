@@ -814,6 +814,9 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     if let previous = loadedElement, AgentProgramSource(previous) == AgentProgramSource(element) {
       loadedElement = element
       if previous.state != element.state {
+        #if os(iOS)
+          NotebookInteractionDiagnostics.state(element.state, stage: "native_projection", webView: webView, revision: localStateRevision)
+        #endif
         stateToApply = appliedState == element.state ? nil : element.state
       }
       if policyChanged || previous.state != element.state || previous.frame.width != element.frame.width || previous.frame.height != element.frame.height {
@@ -874,6 +877,9 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         let element = loadedElement, let next = stateToApply {
         stateToApply = nil
         let expectedRevision = localStateRevision
+        #if os(iOS)
+          NotebookInteractionDiagnostics.state(next, stage: "native_apply_submitted", webView: web, revision: expectedRevision)
+        #endif
         do {
           let state = try JSONSerialization.jsonObject(with: JSONEncoder().encode(next), options: .fragmentsAllowed)
           let accepted = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, any Error>) in
@@ -886,6 +892,9 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
               }
           }
           guard accepts(token), !Task.isCancelled else { return }
+          #if os(iOS)
+            NotebookInteractionDiagnostics.state(next, stage: "native_apply_completed", webView: web, revision: expectedRevision, accepted: accepted)
+          #endif
           if accepted, localStateRevision == expectedRevision { appliedState = next }
         } catch {
           if accepts(token), !Task.isCancelled { record(error, kind: "render_error", token: token, source: element) }
@@ -952,7 +961,13 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       // Passive renderers and an unfocused program may compute local state,
       // but have not admitted a human write. Only the input owner's positive
       // acknowledgement advances the canonical live value; it is not a save.
-      guard onState(value) else {
+      let admitted = onState(value)
+      #if os(iOS)
+        if let web = attachedWebView {
+          NotebookInteractionDiagnostics.state(value, stage: "program_commit", webView: web, revision: sequence, accepted: admitted)
+        }
+      #endif
+      guard admitted else {
         if appliedState != loadedElement?.state {
           stateToApply = loadedElement?.state; applyCurrentState()
         }

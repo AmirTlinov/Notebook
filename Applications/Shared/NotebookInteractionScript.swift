@@ -33,6 +33,7 @@ enum NotebookInteractionScript {
         const rect = node.getBoundingClientRect();
         return {selector, found:true, target:target(node), text:(node.textContent||'').slice(0,512),
           value:typeof node.value === 'string' ? node.value.slice(0,512) : null,
+          selectionStart:node.selectionStart??null, selectionEnd:node.selectionEnd??null,
           rect:{x:rect.x,y:rect.y,width:rect.width,height:rect.height},
           viewport:{width:innerWidth,height:innerHeight}};
       });
@@ -42,12 +43,15 @@ enum NotebookInteractionScript {
         lastEvent = {eventID, name:event.type, timeStamp:event.timeStamp,
           pointerID:Number.isFinite(event.pointerId)?event.pointerId:null};
         send({stage:'trusted_event', ...lastEvent, target:target(event.target),
+          key:typeof event.key==='string'?event.key.slice(0,32):null,
+          data:typeof event.data==='string'?event.data.slice(0,128):null,
+          inputType:event.inputType??null, isComposing:event.isComposing??null,
           clientX:Number.isFinite(event.clientX)?event.clientX:null,
           clientY:Number.isFinite(event.clientY)?event.clientY:null});
         // This is a DOM endpoint, explicitly not rendering or display evidence.
         queueMicrotask(() => send({stage:'post_listener_microtask_dom', eventID, observables:observables()}));
       };
-      for (const name of ['pointerdown','pointerup','pointercancel','click','input','change','keydown'])
+      for (const name of ['pointerdown','pointerup','pointercancel','click','beforeinput','input','change','keydown','focus','blur','compositionstart','compositionend'])
         addEventListener(name, record, {capture:true,passive:true});
       let previous = '';
       const inspect = () => {
@@ -56,6 +60,7 @@ enum NotebookInteractionScript {
         previous = serialized;
         send({stage:'dom_observable_change', precedingEvent:lastEvent, observables:value});
       };
+      addEventListener('notebookstate', () => queueMicrotask(inspect));
       addEventListener('DOMContentLoaded', () => {
         inspect(); new MutationObserver(inspect).observe(document.body,
           {subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['value','aria-valuenow']});

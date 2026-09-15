@@ -59,3 +59,23 @@ test('observer output stops at its explicit budget',()=>{
   const count=x.messages.length;assert.ok(count<=4097);assert.equal(x.messages.at(-1).observation.stage,'truncated');
   x.dispatch('click');assert.equal(x.messages.length,count);
 });
+test('keyboard and composition observations preserve the actual event and selection without mutating them',()=>{
+  const x=setup();x.node.value='abc';x.node.selectionStart=1;x.node.selectionEnd=2;
+  x.dispatch('beforeinput',{data:'ж',inputType:'insertCompositionText',isComposing:true});
+  const observed=x.messages.at(-1).observation;
+  assert.equal(observed.data,'ж');assert.equal(observed.inputType,'insertCompositionText');
+  assert.equal(observed.isComposing,true);
+  x.microtasks.forEach(fn=>fn());
+  const field=x.messages.at(-1).observation.observables[0];
+  assert.equal(field.value,'abc');assert.equal(field.selectionStart,1);assert.equal(field.selectionEnd,2);
+  for(const name of ['beforeinput','focus','blur','compositionstart','compositionend']){
+    assert.equal(x.listeners.get(name).options.passive,true);assert.equal(x.listeners.get(name).options.capture,true);
+  }
+});
+test('a native state notification observes the resulting DOM on the existing microtask path',()=>{
+  const x=setup();x.dispatch('DOMContentLoaded');const before=x.messages.length;
+  x.dispatch('notebookstate');x.node.value='saved';assert.equal(x.messages.length,before);
+  x.microtasks.forEach(fn=>fn());
+  assert.equal(x.messages.at(-1).observation.stage,'dom_observable_change');
+  assert.equal(x.messages.at(-1).observation.observables[0].value,'saved');
+});
