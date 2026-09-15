@@ -24,6 +24,7 @@
     static let collaborationArgument = "--notebook-collaboration-fixture"
     static let historyArgument = "--notebook-history-performance-fixture"
     static let pointerArgument = "--notebook-pointer-fixture"
+    static let passiveSVGArgument = "--notebook-passive-svg-fixture"
 
     static func makeModel() -> NotebookAppModel {
       let fileManager = FileManager.default
@@ -61,7 +62,9 @@
         agentElementArgument
       )
       let fixtureName: String
-      if ProcessInfo.processInfo.arguments.contains(historyArgument) {
+      if ProcessInfo.processInfo.arguments.contains(passiveSVGArgument) {
+        fixtureName = "PassiveSVGCamera"
+      } else if ProcessInfo.processInfo.arguments.contains(historyArgument) {
         fixtureName = "HistoryPerformance"
       } else if ProcessInfo.processInfo.arguments.contains(collaborationArgument) {
         fixtureName = "SharedCollaboration"
@@ -143,7 +146,26 @@
             ] : [])
         )
         try store.savePage(page)
-        if startsInDocument {
+        if ProcessInfo.processInfo.arguments.contains(passiveSVGArgument) {
+          var board = BoardDocument.initial(itemIDs: [itemID], actor: actor)
+          _ = board.moveItem(itemID, to: .init(x: 8_000, y: 8_000), actor: actor)
+          for element in [
+            SpatialElement(id: "passive-svg", surface: .board(index.rootBoardID), kind: .web,
+              frame: .init(x: 0, y: 0, width: 400, height: 220), worldOrigin: .init(x: -350, y: -250),
+              source: "Пассивная схема", html: "<svg role='img' aria-label='Пассивная схема' xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 220'><rect width='400' height='220' fill='#ecf5ed'/><path d='M25 190L200 25L375 190' stroke='#185e3b' stroke-width='5' fill='none'/></svg>",
+              stamp: .init(counter: 0, actor: actor)),
+            SpatialElement(id: "svg-scene-controls", surface: .board(index.rootBoardID), kind: .web,
+              frame: .init(x: 0, y: 0, width: 240, height: 200), worldOrigin: .init(x: 100, y: 80),
+              source: "Controls", html: "<button aria-label='SVG scene counter'>Add</button><output id='count'>Count 0</output><input aria-label='SVG scene slider' type='range' value='20'>",
+              css: "body{background:#eef4fc;padding:15px}button,input{display:block;width:180px;height:48px}",
+              javaScript: "document.querySelector('button').onclick=()=>{notebook.commit({count:notebook.state.count+1});draw()};function draw(){document.getElementById('count').textContent='Count '+notebook.state.count}addEventListener('notebookstate',draw);draw()",
+              state: .object(["count": .number(0)]), stamp: .init(counter: 0, actor: actor))
+          ] { _ = board.upsertElement(element, expected: nil, actor: actor) }
+          try store.saveBoard(.init(rootBoardID: index.rootBoardID,
+            boards: [.init(id: index.rootBoardID, board: board)], stamp: board.stamp), items: index.items)
+          try store.savePresence(.init(boardID: index.rootBoardID, mode: .board,
+            camera: .init(center: .zero, scale: 1), viewport: .init(x: size.width, y: size.height)))
+        } else if startsInDocument {
           let documentID = UUID(
             uuidString: "7E7A1000-0000-4000-8000-000000000006"
           )!

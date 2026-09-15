@@ -625,9 +625,11 @@ struct BoardPanView: UIViewRepresentable {
           panRecognitionOffset = .zero
           startingCover = touch.view as? NotebookInteractionTouchView
         }
-        // The cover's direct-touch surface can hand motion to the camera.
-        // Its passthrough editors and interactive content keep their own input.
-        return startingCover != nil || isFreeBoard
+        // The actual native owner has already admitted this contact to the
+        // scene. A passive drawing's rectangle cannot take it back merely
+        // because it is an element rather than empty board. Covers still
+        // arbitrate their pending hold in gestureRecognizerShouldBegin.
+        return true
       }
       tapRevision = revision
       return isFreeBoard

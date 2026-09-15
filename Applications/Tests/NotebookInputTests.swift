@@ -347,7 +347,7 @@ final class NotebookInputTests: XCTestCase {
   }
 
   @MainActor
-  func testBoardPanYieldsToPhysicalElementsAndNativeInteractiveAncestors() throws {
+  func testBoardPanCrossesPassiveElementsButYieldsToNativeInteractiveAncestors() throws {
     let gate = NotebookInputGate()
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene), host = UIViewController()
@@ -360,14 +360,18 @@ final class NotebookInputTests: XCTestCase {
     defer { owner.uninstall(); window.isHidden = true }
     let pan = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer }.first)
     let finger = InputTouch(); finger.inputType = .direct
-    XCTAssertFalse(owner.gestureRecognizer(pan, shouldReceive: finger), "Элемент доски не является свободным фоном")
+    XCTAssertTrue(owner.gestureRecognizer(pan, shouldReceive: finger), "Пассивный рисунок передаёт движение камере, а не блокирует его своей рамкой")
     finger.point = .init(x: 400, y: 500)
     XCTAssertTrue(owner.gestureRecognizer(pan, shouldReceive: finger))
-    let slider = UISlider(), thumb = UIView(); slider.addSubview(thumb)
+    gate.endFingerContacts([ObjectIdentifier(finger)])
+    let slider = UISlider(), thumb = UIView(); slider.addSubview(thumb); anchor.addSubview(slider)
     finger.sourceView = thumb
+    XCTAssertTrue(sceneReceives(finger, inside: anchor), "This contact reaches the scene, not an unrelated window")
     XCTAssertFalse(owner.gestureRecognizer(pan, shouldReceive: finger))
-    let scroll = UIScrollView(), webContent = UIView(); scroll.addSubview(webContent)
+    gate.endFingerContacts([ObjectIdentifier(finger)])
+    let scroll = UIScrollView(), webContent = UIView(); scroll.addSubview(webContent); anchor.addSubview(scroll)
     finger.sourceView = webContent
+    XCTAssertTrue(sceneReceives(finger, inside: anchor))
     XCTAssertFalse(owner.gestureRecognizer(pan, shouldReceive: finger))
   }
 

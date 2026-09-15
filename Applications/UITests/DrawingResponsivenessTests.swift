@@ -5,6 +5,54 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testDraggingPassiveSVGFromFirstContactMovesCameraAndKeepsControlsIndependent() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures",
+      "--notebook-passive-svg-fixture"]
+    launchPortraitFixture(app)
+    let picture = app.images["Пассивная схема"]
+    XCTAssertTrue(picture.waitForExistence(timeout: 10))
+    let svg = app.webViews.containing(.image, identifier: "Пассивная схема").firstMatch
+    let controls = app.webViews.containing(.button, identifier: "SVG scene counter").firstMatch
+    XCTAssertTrue(svg.exists); XCTAssertTrue(controls.waitForExistence(timeout: 10))
+    let button = controls.buttons["SVG scene counter"]
+    XCTAssertTrue(button.isHittable); button.tap()
+    XCTAssertTrue(controls.staticTexts["Count 1"].waitForExistence(timeout: 3))
+    let slider = controls.sliders["SVG scene slider"]
+    let beforeSlider = slider.value as? String
+    let beforeControl = controls.frame
+    // WebKit exposes the range value but not XCTest's native scrubber bounds.
+    // Drag the visible thumb before any camera movement invalidates child AX.
+    slider.coordinate(withNormalizedOffset: .init(dx: 0.25, dy: 0.5)).press(forDuration: 0.01,
+      thenDragTo: slider.coordinate(withNormalizedOffset: .init(dx: 0.75, dy: 0.5)))
+    XCTAssertNotEqual(slider.value as? String, beforeSlider)
+    XCTAssertEqual(controls.frame, beforeControl, "A slider gesture must not pan the camera")
+    func screenshot(_ name: String) {
+      let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = name; proof.lifetime = .keepAlways; add(proof)
+    }
+    screenshot("passive-svg-before-first-pan")
+    // Use the current native WK frame, not WebKit's child AX geometry after
+    // movement. There is no activation tap and no corrective camera loop.
+    for delta in [CGVector(dx: 90, dy: 60), CGVector(dx: -50, dy: -40)] {
+      let before = [svg.frame, controls.frame]
+      let start = svg.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
+      start.press(forDuration: 0.01, thenDragTo: start.withOffset(delta), withVelocity: .fast, thenHoldForDuration: 0)
+      let after = [svg.frame, controls.frame]
+      let geometry = XCTAttachment(string: "Native WK frames before: \(before)\nafter: \(after)")
+      geometry.name = "passive-svg-pan-\(delta.dx)-geometry"; geometry.lifetime = .keepAlways; add(geometry)
+      screenshot("passive-svg-after-pan-\(delta.dx)")
+      for (frame, previous) in zip(after, before) {
+        XCTAssertEqual(frame.midX - previous.midX, delta.dx, accuracy: 6)
+        XCTAssertEqual(frame.midY - previous.midY, delta.dy, accuracy: 6)
+        XCTAssertEqual(frame.width, previous.width, accuracy: 0.01)
+        XCTAssertEqual(frame.height, previous.height, accuracy: 0.01)
+      }
+      XCTAssertTrue(controls.staticTexts["Count 1"].exists, "Pan cannot activate a neighbour")
+    }
+    XCTAssertFalse(app.buttons["delete-agent-element"].exists, "Immediate movement pans rather than picking up the drawing")
+  }
+
   func testCompanionAdditionsOwnPencilAboveTheBoard() {
     continueAfterFailure = false
     let app = XCUIApplication()

@@ -10,7 +10,10 @@ final class PhysicalWebViewport: UIView, NotebookSceneFingerInputOwner {
   var onInstalled: (() -> Void)?
   private var contentSize: CGSize
   private let holdsFingerInput: Bool
-  var ownsSceneFingerInput: Bool { holdsFingerInput && webView?.superview === self }
+  var ownsSceneFingerInput: Bool {
+    holdsFingerInput && webView?.superview === self
+      && (webView?.navigationDelegate as? AgentWebCoordinator)?.yieldsFingerMotionToScene != true
+  }
 
   init(webView: WKWebView, contentSize: CGSize, holdsFingerInput: Bool = false) {
     self.webView = webView
