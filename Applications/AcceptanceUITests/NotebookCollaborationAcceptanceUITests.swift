@@ -749,6 +749,8 @@ import XCTest
     XCTAssertEqual(outgoing.count, 0)
     XCTAssertEqual(replies.count, 1)
     let actualReply = replies.firstMatch.label
+    XCTAssertTrue(app.webViews.staticTexts["Остановлено · 1 действие"].firstMatch.waitForExistence(timeout: 5),
+      "The interrupted native turn must not be presented as completed just because its tool returned")
     XCTAssertEqual(composer.value as? String, draft)
     XCTAssertFalse(app.staticTexts["Mac недоступен · сообщения сохраняются на iPad"].exists)
     screenshot("same-chat-reconnected-single-reply-and-unsent-draft")

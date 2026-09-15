@@ -74,9 +74,9 @@ function workHeading(labelText,active,disclosure=true){
 }
 let next=null,running=false,shownConversation=null;
 window.revealMessage=id=>{const item=[...document.querySelectorAll('article')].find(x=>x.dataset.itemId===id);if(item){item.querySelectorAll('details').forEach(x=>x.open=true);item.scrollIntoView({block:'start'});}};
-window.showMessages=async function(json,conversation='',focus='',work=null){
- next={messages:JSON.parse(json),conversation,work,focus:focus||(next?.conversation===conversation?next.focus:'')};if(running)return;running=true;
- try{await MathJax.startup.promise;while(next){const {messages,conversation,focus,work}=next;next=null;
+window.showMessages=async function(json,conversation='',focus='',work=null,turnStatuses={}){
+ next={messages:JSON.parse(json),conversation,work,turnStatuses,focus:focus||(next?.conversation===conversation?next.focus:'')};if(running)return;running=true;
+ try{await MathJax.startup.promise;while(next){const {messages,conversation,focus,work,turnStatuses}=next;next=null;
  const root=document.getElementById('messages'),changed=conversation!==shownConversation;shownConversation=conversation;
  const follows=changed||!root.childElementCount||scrollY+innerHeight>=document.documentElement.scrollHeight-60;
  const anchor=!changed&&[...root.querySelectorAll('article')].find(x=>{const r=x.getBoundingClientRect();return r.height>0&&r.bottom>0});
@@ -87,10 +87,12 @@ window.showMessages=async function(json,conversation='',focus='',work=null){
  if(index>groupEnd)group=null;
  if(isWorkMessage(m)&&!group){let end=index;while(end+1<messages.length&&isWorkMessage(messages[end+1])&&messages[end+1].turnID===m.turnID)end++;
    group=document.createElement('details');group.className='work';group.dataset.key='work:'+m.id;group.open=expanded.has(group.dataset.key);groupEnd=end;
-   const items=messages.slice(index,end+1),comment=items.findLast(x=>x.phase==='commentary'&&!x.activity),failed=items.some(x=>['failed','declined'].includes(x.activity?.status));
+   const items=messages.slice(index,end+1),failed=items.some(x=>['failed','declined'].includes(x.activity?.status));
    const active=work&&work.turnID===m.turnID&&end===messages.findLastIndex(x=>isWorkMessage(x)&&x.turnID===m.turnID);
    const count=items.filter(x=>x.activity).length,word=count%10===1&&count%100!==11?'действие':count%10>=2&&count%10<=4&&(count%100<12||count%100>14)?'действия':'действий';
-   const title=active?work.title:comment?.text||(failed?'Есть ошибка · ':'Выполнено · ')+count+' '+word;
+   // A tool's completion acknowledges that tool, not the containing Codex turn.
+   const status=turnStatuses[m.turnID],outcome=status==='interrupted'?'Остановлено':status==='failed'?'Есть ошибка':status==='completed'?'Выполнено':failed?'Есть ошибка':'Работа Codex';
+   const title=active?work.title:outcome+(count?' · '+count+' '+word:'');
    group.append(workHeading(title,!!(active&&work.running)));root.append(group);if(active)activeWorkShown=true;
  }
  const destination=group||root;

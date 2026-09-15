@@ -7,6 +7,51 @@ import XCTest
 
 @MainActor
 final class NotebookChatPanelTests: XCTestCase {
+  func testTerminalTurnStatusOwnsTheHeadingAfterAToolHasCompleted() async throws {
+    let coordinator = NotebookChatTranscript.Coordinator()
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+      .first { $0.activationState == .foregroundActive })
+    let previous = scene.keyWindow, window = UIWindow(windowScene: scene), root = UIViewController()
+    window.frame = CGRect(x: 0, y: 0, width: 540, height: 560)
+    window.rootViewController = root; window.makeKeyAndVisible(); window.layoutIfNeeded()
+    coordinator.mount(root.view)
+    defer { coordinator.close(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    let messages: [CodexMessage] = [
+      .init(id: "comment", turnID: "turn", clientID: nil, role: .assistant,
+        text: "Продолжаю наблюдение", phase: "commentary"),
+      .init(id: "tool", turnID: "turn", clientID: nil, role: .assistant,
+        text: "Публичная операция принята", activity: .init(kind: .tool, status: "completed", detail: "notebook_execute"))]
+    func heading(_ title: String) async throws {
+      let deadline = ContinuousClock.now + .seconds(8)
+      while .now < deadline {
+        if let web = coordinator.web,
+          (try? await web.evaluateJavaScript("document.querySelector('.work-label')?.textContent")) as? String == title { return }
+        try await Task.sleep(for: .milliseconds(20))
+      }
+      XCTFail("The actual transcript did not show \(title)")
+    }
+    coordinator.update(messages: messages, conversationID: "task")
+    try await heading("Работа Codex · 1 действие")
+    let web = try XCTUnwrap(coordinator.web)
+    _ = try await web.evaluateJavaScript("document.querySelector('.work').open=true;true")
+    // Messages and active-work state are identical. Only the native terminal
+    // status changes; a completed tool must not mask the interrupted turn.
+    coordinator.update(messages: messages, turnStatuses: ["turn": "interrupted", "older": "completed"], conversationID: "task")
+    try await heading("Остановлено · 1 действие")
+    let stopped = try await web.evaluateJavaScript("document.querySelector('.work').open && document.querySelectorAll('article').length===2 && document.querySelectorAll('[data-running=true]').length===0") as? Bool
+    XCTAssertEqual(stopped, true)
+    _ = try await web.evaluateJavaScript("window.kept=document.querySelector('[data-item-id=tool]');true")
+    coordinator.update(messages: messages, turnStatuses: ["older": "completed", "turn": "interrupted"], conversationID: "task")
+    try await Task.sleep(for: .milliseconds(100))
+    let retained = try await web.evaluateJavaScript("window.kept===document.querySelector('[data-item-id=tool]')") as? Bool
+    XCTAssertEqual(retained, true, "Dictionary order is not a new terminal state")
+    try await attachInstalledWindow(window, web: web)
+    coordinator.update(messages: messages, turnStatuses: ["turn": "failed"], conversationID: "task")
+    try await heading("Есть ошибка · 1 действие")
+    coordinator.update(messages: messages, turnStatuses: ["turn": "completed"], conversationID: "task")
+    try await heading("Выполнено · 1 действие")
+  }
+
   func testNativeWorkShimmersOnceAndDisclosureSurvivesResizeWithoutReplayingItems() async throws {
     let coordinator = NotebookChatTranscript.Coordinator()
     let container = UIView(frame: .init(x: 0, y: 0, width: 540, height: 560))
