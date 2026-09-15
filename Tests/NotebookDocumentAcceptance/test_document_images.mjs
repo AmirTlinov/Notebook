@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 const source = fs.readFileSync(new URL('../../Applications/WebResources/document-images.js', import.meta.url), 'utf8');
-const context = {window: {}, DOMException, AbortController, getComputedStyle: node => node.style};
+const context = {window: {}, DOMException, AbortController, performance, getComputedStyle: node => node.style};
 vm.runInNewContext(source, context);
 const api = context.window.notebookDocumentImages;
 const px = value => ({unit: 'px', value});
@@ -38,7 +38,8 @@ test('geometry only waits intrinsic images; visible pixel barrier waits both', a
   let fixedCalls=0, intrinsicCalls=0;
   fixed.image.decode=async()=>{fixedCalls++}; intrinsic.image.decode=async()=>{intrinsicCalls++};
   fixed.root.querySelectorAll=()=>[fixed.image,intrinsic.image];
-  await api.waitForGeometry(fixed.root,()=>false);
+  const phases=await api.waitForGeometry(fixed.root,()=>false);
+  assert.ok(phases.imageGeometryClassification>=0);assert.ok(phases.imageDecodeWait>=0);
   assert.equal(fixedCalls,0); assert.equal(intrinsicCalls,1);
   await api.waitForPixels(fixed.root);
   assert.equal(fixedCalls,1); assert.equal(intrinsicCalls,2);

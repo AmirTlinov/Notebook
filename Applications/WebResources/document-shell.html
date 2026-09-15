@@ -629,7 +629,7 @@
             observeBrowserState(observation, 'fonts_after');
           }
           phase('fontsReady');
-          await notebookDocumentImages.waitForGeometry(flow,()=>preparation.cancelled);
+          Object.assign(preparationPhasesMS, await notebookDocumentImages.waitForGeometry(flow,()=>preparation.cancelled));
           phase('imageDecode');
           if(preparation.cancelled)throw new Error('document_source_preparation_cancelled');
           const contentWidth=width-2*margin,columnGap=2*margin+gap;
@@ -662,6 +662,7 @@
             contentTop:flowRect.y-origin.y,contentBottom:flowRect.bottom-origin.y,
             originX:origin.x,originY:origin.y,regions},()=>preparation.cancelled);
           phase('fragmentIndex');
+          Object.assign(preparationPhasesMS,compiler.preparationPhasesMS);
           const receipt={sourceKey:source.key,layoutScope:'source',layoutCanonical:true,width,height,pageCount,regions,
             anchors:compiler.anchors,reading:compiler.reading,indexedNodes:compiler.indexedNodes,indexedEdges:compiler.indexedEdges,diagnostics:preparation.diagnostics,mathStyles,preparationPhasesMS};
           const layoutJSON=JSON.stringify(receipt),layoutBytes=new TextEncoder().encode(layoutJSON).length;

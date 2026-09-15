@@ -79,11 +79,11 @@ class NavigationObservationContracts(unittest.TestCase):
         with self.assertRaises(release.ReleaseError): self.prepare()
 
     def test_unchanged_old_native_owner_without_document_hooks_is_not_new_observation(self):
-        path = self.build / "source" / "Applications/Shared/DocumentProgramOwner.swift"
+        path = self.build / "source" / "Applications/Shared/DocumentPagePresentationOwner.swift"
         path.write_text("// old owner without lifecycle hooks\n")
         listing = json.loads((self.build / "source.json").read_text())
         for entry in listing["files"]:
-            if entry["path"] == "Applications/Shared/DocumentProgramOwner.swift":
+            if entry["path"] == "Applications/Shared/DocumentPagePresentationOwner.swift":
                 entry["sha256"] = release.file_digest(path)
         (self.build / "source.json").write_text(json.dumps(listing))
         with self.assertRaisesRegex(release.ReleaseError, "отсутствующие native hooks"):
@@ -93,13 +93,14 @@ class NavigationObservationContracts(unittest.TestCase):
         value = self.prepare()
         self.assertEqual(value["nativeSources"], self.sources)
         self.assertIn("Applications/Shared/DocumentProgramOwner.swift", value["nativeSources"])
+        self.assertIn("Applications/Shared/DocumentPagePresentationOwner.swift", value["nativeSources"])
         self.assertIn("Applications/iPad/IPadPageTurnController.swift", value["nativeSources"])
         self.assertFalse(Path(value["nativeJournalDirectory"]).exists())
         self.assertFalse(value["displayMeasured"])
         self.assertEqual(value["environment"], {"NOTEBOOK_NAVIGATION_OBSERVATION_SESSION_ID": self.session})
 
     def test_changed_physical_page_owner_cannot_reuse_native_provenance(self):
-        for name in ("Applications/Shared/DocumentProgramOwner.swift", "Applications/iPad/IPadPageTurnController.swift"):
+        for name in ("Applications/Shared/DocumentPagePresentationOwner.swift", "Applications/Shared/DocumentProgramOwner.swift", "Applications/iPad/IPadPageTurnController.swift"):
             path = self.build / "source" / name
             original = path.read_bytes()
             path.write_bytes(original + b"// changed native lifecycle\n")

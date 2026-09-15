@@ -492,6 +492,13 @@ final class DocumentWebCoordinator: NSObject,
     applyInputAdmission(isInteractive)
   }
 
+  /// The page owner calls this after the real handoff, even when UIKit has
+  /// already detached the old host. An idle shell cannot remain an input owner.
+  func releaseInputOwnership() {
+    holdsEditingOwnership = false
+    applyInputAdmission(false)
+  }
+
   private func applyInputAdmission(_ isInteractive: Bool) {
     requestedInput = isInteractive
     if let payload {

@@ -605,9 +605,11 @@ final class DocumentPagePresentationOwner {
         let outgoing = paper!
         stagedPaper = nil; passive = nil
         paper = incoming
-        host.installPreparationHost(passiveHost, size: physicalSize(input))
-        outgoing.holdsEditingOwnership = false
-        outgoing.mount(in: passiveHost, physicalSize: physicalSize(input), isInteractive: false, priority: .visible)
+        outgoing.releaseInputOwnership()
+        // UIKit has already installed the incoming host. Parking the retired
+        // WebKit here would synchronously rebuild an offscreen viewport before
+        // admitting the person's input. Keep its existing idle lease; the next
+        // actual passive request mounts it, or the resource owner reclaims it.
         passive = outgoing; offerPassiveRenderer(outgoing)
         paperTransfer = nil
         observe("document_live_target_adopted", entryID: entry.id, page: input.pageIndex, renderer: incoming)

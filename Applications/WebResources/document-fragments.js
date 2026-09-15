@@ -54,6 +54,8 @@
     let resumeYield=null;
     channel.port1.onmessage=()=>{const resume=resumeYield;resumeYield=null;resume?.()};
     const yieldToBrowser=()=>new Promise(resolve=>{resumeYield=resolve;channel.port2.postMessage(null)});
+    const indexStarted=performance.now();
+    let sliceStarted=indexStarted,lastYieldNode=0,yieldWait=0;
     try {
       while(stack.length) {
         if(isCancelled())throw new Error('document_source_preparation_cancelled');
@@ -134,12 +136,19 @@
         if(node.nodeType===Node.ELEMENT_NODE&&!atomicTags.has(node.localName)) {
           for(let index=node.childNodes.length-1;index>=0;index--)stack.push({node:node.childNodes[index],parent:entry});
         }
-        if(indexedNodes%256===0)await yieldToBrowser();
+        // Yield for actual work, not for every tiny group of text nodes. The
+        // time slice preserves input/cancellation responsiveness, and the node
+        // cap still yields when the browser's clock has coarse precision.
+        if(indexedNodes%256===0&&(indexedNodes-lastYieldNode>=1024||performance.now()-sliceStarted>=4)) {
+          const began=performance.now();await yieldToBrowser();
+          sliceStarted=performance.now();yieldWait+=sliceStarted-began;lastYieldNode=indexedNodes;
+        }
       }
     } finally {
       channel.port1.onmessage=null;
       channel.port1.close();channel.port2.close();
     }
+    const preparationPhasesMS=Object.freeze({fragmentIndexActive:performance.now()-indexStarted-yieldWait,fragmentIndexYieldWait:yieldWait});
 
     // HTML counters belong to their original list, including explicit resets
     // and reversed lists. Removing preceding items does not renumber a fragment.
@@ -342,7 +351,7 @@
       return {format:1, sourceKey, pageIndex, width, height, contentTop, contentBottom, blockIDs, regions:pageRegions, html, nodeCount, utf8Bytes, visitedNodes};
     } finally { measurement.remove(); }
     };
-    return Object.freeze({compile,indexedNodes,indexedEdges,reading,anchors:[...anchors].map(([name,pageIndex])=>({name,pageIndex}))});
+    return Object.freeze({compile,indexedNodes,indexedEdges,reading,preparationPhasesMS,anchors:[...anchors].map(([name,pageIndex])=>({name,pageIndex}))});
   };
 
   window.notebookDocumentFragments = Object.freeze({create});

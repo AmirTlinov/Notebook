@@ -70,8 +70,13 @@
     if (signal?.aborted || isCancelled()) throw aborted();
   };
 
-  const waitForGeometry = (root, isCancelled) => waitFor(
-    [...root.querySelectorAll('img')].filter(image => !hasFixedGeometry(image, root)), {isCancelled});
+  const waitForGeometry = async (root, isCancelled) => {
+    const started = performance.now();
+    const images = [...root.querySelectorAll('img')].filter(image => !hasFixedGeometry(image, root));
+    const classified = performance.now();
+    await waitFor(images, {isCancelled});
+    return {imageGeometryClassification: classified - started, imageDecodeWait: performance.now() - classified};
+  };
   const waitForPixels = (root, signal) => waitFor([...root.querySelectorAll('img')], {signal});
   window.notebookDocumentImages = Object.freeze({hasFixedGeometry, waitForGeometry, waitForPixels});
 })();

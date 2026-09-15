@@ -11,10 +11,11 @@ NATIVE_FILES = (
     "Applications/Shared/NotebookAppModel.swift",
     "Applications/Shared/NotebookNavigationView.swift",
     "Applications/iPad/SpatialWorkspaceView.swift",
-    "Applications/Shared/DocumentProgramOwner.swift",
+    "Applications/Shared/DocumentPagePresentationOwner.swift",
     "Applications/iPad/IPadPageTurnController.swift",
     "Applications/Shared/DocumentPagePreparation.swift",
     "Applications/Shared/SceneRenderResources.swift",
+    "Applications/Shared/DocumentProgramOwner.swift",
 )
 TARGET = "navigation"
 MAX_BYTES = 4 * 1024 * 1024 + 65536
