@@ -3,6 +3,37 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class NotebookSceneSelectionTests: XCTestCase {
+  func testLinkKeepsItsTapButHoldLiftsItsMaterialAndCancelsNativeDelivery() async throws {
+    let gate = NotebookInputGate(), recognizer = SceneSelectionRecognizer(), touch = SelectionTouch()
+    let view = UIView(); view.addGestureRecognizer(recognizer); recognizer.gate = gate
+    let content = UIView(), neighbour = UIView()
+    view.addSubview(content)
+    let nativeHold = UILongPressGestureRecognizer(), neighbourHold = UILongPressGestureRecognizer(), camera = UIPanGestureRecognizer()
+    content.addGestureRecognizer(nativeHold); neighbour.addGestureRecognizer(neighbourHold)
+    var begins = 0, drops = 0
+    recognizer.onPoint = { _, _, _, _ in XCTFail("The original link owns a short tap") }
+    recognizer.onLift = { _ in .init(begin: { begins += 1 }, change: { _ in }, end: { _ in drops += 1 }, cancel: {}) }
+    func begin() {
+      _ = gate.fingerContactOwner(for: ObjectIdentifier(touch)) { .webLink(ObjectIdentifier(view)) }
+      recognizer.touchesBegan([touch], with: UIEvent())
+    }
+    begin()
+    XCTAssertFalse(recognizer.canPrevent(nativeHold), "A possible lift cannot take the link's short tap")
+    recognizer.touchesEnded([touch], with: UIEvent())
+    // UIKit may already have reset .failed to .possible; observe the effects,
+    // not a terminal state that the framework is free to retire immediately.
+    XCTAssertEqual(begins, 0); XCTAssertEqual(drops, 0)
+    recognizer.isEnabled = false; recognizer.isEnabled = true
+    begin(); try await Task.sleep(for: .milliseconds(250))
+    XCTAssertTrue(recognizer.cancelsTouchesInView)
+    XCTAssertTrue(recognizer.canPrevent(nativeHold), "The lifted material cannot also select text or open a link menu")
+    XCTAssertFalse(recognizer.canPrevent(neighbourHold)); XCTAssertFalse(recognizer.canPrevent(camera))
+    XCTAssertEqual(begins, 1)
+    recognizer.touchesEnded([touch], with: UIEvent())
+    XCTAssertEqual(drops, 1)
+    recognizer.cancelSelection(); gate.endFingerContacts([ObjectIdentifier(touch)])
+  }
+
   func testFingerTapIsOneSelectionAndMotionBeforeHoldRemainsNavigation() {
     let gate = NotebookInputGate(), recognizer = SceneSelectionRecognizer(), touch = SelectionTouch()
     let view = UIView(); view.addGestureRecognizer(recognizer)

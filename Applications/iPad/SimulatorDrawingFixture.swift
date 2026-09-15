@@ -155,9 +155,9 @@
           for element in [
             SpatialElement(id: "mixed-moodboard", surface: .board(index.rootBoardID), kind: .web,
               frame: .init(x: 0, y: 0, width: 340, height: 300), worldOrigin: .init(x: -360, y: -300),
-              source: "Тихое утро", html: "<main id='board'><h1>Тихое утро</h1><a href='#photo'><svg role='img' aria-label='Утренний свет' width='300' height='180'><rect width='300' height='180' fill='#b7c6a5'/><path d='M20 150L150 20L280 150' stroke='#354e37' stroke-width='5' fill='none'/></svg></a><p>Место для спокойной работы</p></main>",
+              source: "Тихое утро", html: "<main id='board'><h1>Тихое утро</h1><a href='#photo'><svg role='img' aria-label='Утренний свет' width='300' height='180'><rect width='300' height='180' fill='#b7c6a5'/><path d='M20 150L150 20L280 150' stroke='#354e37' stroke-width='5' fill='none'/></svg></a><p id='link-result'>Место для спокойной работы</p></main>",
               css: "#board{width:340px;height:300px;padding:20px;background:#f3efe6;transform-origin:0 0}h1{font:32px Georgia;margin:0 0 12px}p{font-size:17px}a{display:block}",
-              javaScript: "function fit(){document.getElementById('board').style.transform='scale('+Math.min(innerWidth/340,innerHeight/300)+')'}fit();addEventListener('resize',fit);notebook.ready(document.fonts.ready)",
+              javaScript: "function fit(){document.getElementById('board').style.transform='scale('+Math.min(innerWidth/340,innerHeight/300)+')'}fit();addEventListener('resize',fit);let followed=0;addEventListener('hashchange',()=>{document.getElementById('link-result').textContent='Открыта ссылка '+(++followed)});notebook.ready(document.fonts.ready)",
               stamp: .init(counter: 0, actor: actor)),
             SpatialElement(id: "mixed-nutrition", surface: .board(index.rootBoardID), kind: .web,
               frame: .init(x: 0, y: 0, width: 320, height: 440), worldOrigin: .init(x: 30, y: -120),

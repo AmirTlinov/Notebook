@@ -18,8 +18,8 @@ final class NotebookInputGate {
   enum ContactKind { case finger, pencil }
   enum FingerContactOwner: Equatable {
     case scene
-    /// A browser link owns a tap, not a drag or scene selection. Once native
-    /// camera motion wins, UIKit cancels the link's original contact.
+    /// A browser link owns a tap, not a drag or material hold. Once native
+    /// camera motion or a lift wins, UIKit cancels the original link contact.
     case webLink(ObjectIdentifier)
     case nativeInput(ObjectIdentifier)
 

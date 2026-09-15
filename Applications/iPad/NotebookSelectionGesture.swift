@@ -54,12 +54,14 @@ struct NotebookSelectionGesture: UIViewRepresentable {
         if current is NotebookInteractionTouchView { return false }
         view = current.superview
       }
-      // Selection shares the camera's accepted-contact owner. In particular,
-      // a live program cannot also point or lift its containing scene item;
-      // reparenting during that contact cannot give it to selection later.
-      return NotebookSceneFingerRouting.owner(of: touch, gate: gate) == .scene
+      // A link keeps its native tap, but its containing material can still be
+      // lifted. Actual controls retain input; neither reparenting nor a later
+      // hit test can change this accepted contact's owner.
+      return NotebookSceneFingerRouting.owner(of: touch, gate: gate).permitsSceneNavigation
     }
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+      !recognizer.canPrevent(other)
+    }
   }
 }
 
@@ -82,6 +84,7 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
   private var touch: UITouch?
   private var start = CGPoint.zero
   private var held = false
+  private var nativeTapOwner: ObjectIdentifier?
   private var revision: UInt64?
   private var hold: Task<Void, Never>?
   override init(target: Any?, action: Selector?) {
@@ -90,7 +93,18 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
     cancelsTouchesInView = false; delaysTouchesBegan = false; delaysTouchesEnded = false
   }
   convenience init() { self.init(target: nil, action: nil) }
-  override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+  override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool {
+    // A successful lift owns this link's whole contact, including WebKit's
+    // recognizers, not just touches delivered to WKContentView. Other runtime
+    // controls and the window's camera/Pencil observers are not competitors.
+    guard held, let nativeTapOwner else { return false }
+    var view = preventedGestureRecognizer.view
+    while let current = view {
+      if ObjectIdentifier(current) == nativeTapOwner { return true }
+      view = current.superview
+    }
+    return false
+  }
   override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
   func cancelSelection() {
     hold?.cancel(); hold = nil; touch = nil
@@ -104,7 +118,14 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
       event.allTouches?.filter({ $0.phase != .ended && $0.phase != .cancelled }).count ?? 1 == 1,
       let first = touches.first, first.type == .direct, let revision = gate?.beginFingerSequence() else { cancelSelection(); return }
     touch = first; start = first.location(in: coordinateView); self.revision = revision
+    if let gate, case .webLink(let owner) = NotebookSceneFingerRouting.owner(of: first, gate: gate) {
+      nativeTapOwner = owner
+    } else { nativeTapOwner = nil }
     lift = onLift?(start)
+    // Recognizing the hold cancels the original WebKit contact. A short tap
+    // must fail this observer instead, so its native link is delivered once.
+    cancelsTouchesInView = nativeTapOwner != nil
+    if nativeTapOwner != nil && lift == nil { cancelSelection(); return }
     let delay = lift == nil ? 0.35 : NotebookInteractionTouchView.liftDelay
     hold = Task { [weak self] in
       do { try await Task.sleep(for: .seconds(delay)) } catch { return }
@@ -134,6 +155,8 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
     if held, let lift {
       self.lift = nil; held = false
       lift.end(CGPoint(x: end.x - start.x, y: end.y - start.y))
+    } else if nativeTapOwner != nil {
+      self.lift = nil; state = .failed; return
     } else {
       if held { onPreview?(nil) }
       onPoint?(start, end, held, touch.tapCount)
@@ -142,7 +165,7 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
     state = .ended
   }
   override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { cancelSelection() }
-  override func reset() { super.reset(); hold?.cancel(); hold = nil; touch = nil; revision = nil; if held { held = false; lift?.cancel(); onPreview?(nil) }; lift = nil }
+  override func reset() { super.reset(); hold?.cancel(); hold = nil; touch = nil; revision = nil; nativeTapOwner = nil; cancelsTouchesInView = false; if held { held = false; lift?.cancel(); onPreview?(nil) }; lift = nil }
 }
 
 /// A window-backed display link supplies an opportunity to inspect the current

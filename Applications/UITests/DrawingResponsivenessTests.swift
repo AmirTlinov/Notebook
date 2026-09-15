@@ -5,6 +5,67 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testHoldingLinkedImageMovesAndDeletesItsMaterialWithoutOpeningTheLink() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures",
+      "--notebook-mixed-web-fixture"]
+    launchPortraitFixture(app)
+    let material = app.webViews.containing(.image, identifier: "Утренний свет").firstMatch
+    let neighbour = app.webViews.containing(.button, identifier: "Пересчитать порции").firstMatch
+    XCTAssertTrue(material.waitForExistence(timeout: 10)); XCTAssertTrue(neighbour.waitForExistence(timeout: 10))
+    let before = material.frame, neighbourBefore = neighbour.frame
+    let start = material.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
+    start.press(forDuration: 0.45, thenDragTo: start.withOffset(.init(dx: 45, dy: 30)),
+      withVelocity: .slow, thenHoldForDuration: 0)
+    let proof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    proof.name = "linked-image-after-hold"; proof.lifetime = .keepAlways; add(proof)
+    XCTAssertEqual(material.frame.midX - before.midX, 45, accuracy: 6)
+    XCTAssertEqual(material.frame.midY - before.midY, 30, accuracy: 6)
+    XCTAssertEqual(neighbour.frame, neighbourBefore, "Holding lifts only the material, not the camera")
+    XCTAssertFalse(app.menuItems.firstMatch.exists, "The material lift cannot also open WebKit's text/link menu")
+    XCTAssertFalse(app.buttons["Copy"].exists, "Native text selection cannot share the lifted link's contact")
+    XCTAssertTrue(material.staticTexts["Место для спокойной работы"].exists, "The hold cannot also follow the link")
+    material.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).tap()
+    XCTAssertTrue(material.staticTexts["Открыта ссылка 1"].waitForExistence(timeout: 3), "A fresh short tap still follows the native link exactly once")
+    let delete = app.buttons["delete-agent-element"]
+    XCTAssertTrue(delete.waitForExistence(timeout: 3))
+    delete.tap()
+    XCTAssertTrue(material.waitForNonExistence(timeout: 5), "Deletion removes the installed material, not just its selection")
+    XCTAssertTrue(neighbour.exists); XCTAssertTrue(neighbour.staticTexts["Count 0"].exists)
+    let removed = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    removed.name = "linked-image-deleted-neighbour-retained"; removed.lifetime = .keepAlways; add(removed)
+  }
+
+  func testHoldingMixedProgramBackgroundMovesAndDeletesTheProgram() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures",
+      "--notebook-mixed-web-fixture"]
+    launchPortraitFixture(app)
+    let material = app.webViews.containing(.button, identifier: "Пересчитать порции").firstMatch
+    let neighbour = app.webViews.containing(.image, identifier: "Утренний свет").firstMatch
+    XCTAssertTrue(material.waitForExistence(timeout: 10)); XCTAssertTrue(neighbour.waitForExistence(timeout: 10))
+    let field = material.textFields["Овсянка, граммы"]
+    field.tap(); field.typeText("7")
+    let value = field.value as? String, before = material.frame, neighbourBefore = neighbour.frame
+    let start = material.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.12))
+    start.press(forDuration: 0.45, thenDragTo: start.withOffset(.init(dx: -35, dy: -25)),
+      withVelocity: .slow, thenHoldForDuration: 0)
+    XCTAssertEqual(material.frame.midX - before.midX, -35, accuracy: 6)
+    XCTAssertEqual(material.frame.midY - before.midY, -25, accuracy: 6)
+    XCTAssertEqual(neighbour.frame, neighbourBefore)
+    XCTAssertEqual(field.value as? String, value); XCTAssertTrue(material.staticTexts["Count 0"].exists)
+    let delete = app.buttons["delete-agent-element"]
+    XCTAssertTrue(delete.waitForExistence(timeout: 3))
+    let lifted = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    lifted.name = "mixed-program-lift-keeps-edited-input"; lifted.lifetime = .keepAlways; add(lifted)
+    delete.tap()
+    XCTAssertTrue(material.waitForNonExistence(timeout: 5)); XCTAssertTrue(neighbour.exists)
+    let removed = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    removed.name = "mixed-program-deleted-neighbour-retained"; removed.lifetime = .keepAlways; add(removed)
+  }
+
   func testMixedWebControlsKeepInputWhileBackgroundPansAndPinches() {
     continueAfterFailure = false
     let app = XCUIApplication()
@@ -105,6 +166,11 @@ final class DrawingResponsivenessTests: XCTestCase {
       XCTAssertEqual(after[1], before[1], "Lifting the drawing cannot move the camera or its neighbour")
       XCTAssertTrue(controls.staticTexts["Count 0"].exists)
     }
+    app.buttons["delete-agent-element"].tap()
+    XCTAssertTrue(svg.waitForNonExistence(timeout: 5), "Deletion must retire the actual SVG surface")
+    XCTAssertTrue(controls.exists); XCTAssertTrue(controls.staticTexts["Count 0"].exists)
+    let removed = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    removed.name = "passive-svg-deleted-neighbour-retained"; removed.lifetime = .keepAlways; add(removed)
   }
 
   func testPinchingPassiveSVGScalesAfterRotationWithoutSelectingTheDrawing() {
