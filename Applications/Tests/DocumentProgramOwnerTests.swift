@@ -933,6 +933,32 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertLessThanOrEqual(fixture.resources.activeWebSurfaceCount, 4)
   }
 
+  func testViewRecreationAndNewSourceKeepTheComposingEditorAndItsSelection() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "# Original text"),
+      .markdown(id: "other", source: "A separate block")])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
+    let lifetime = owner.retainOpenDocument()
+    defer { fixture.close(); lifetime.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled }
+    let web = try XCTUnwrap(fixture.paper(in: 0))
+    _ = try await web.evaluateJavaScript("""
+      document.querySelector('#document .editable').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
+      window.originalEditor=document.querySelector('textarea');originalEditor.value='A composing draft stays here';
+      originalEditor.setSelectionRange(2,11);originalEditor.dispatchEvent(new Event('compositionstart'));
+      originalEditor.dispatchEvent(new Event('input'));true
+      """)
+    fixture.replaceSource(blockID: "other", source: "A changed independent block")
+    await owner.observePendingPresentationWork()
+    fixture.retirePresentation(0)
+    await owner.observePendingPresentationWork()
+    fixture.restorePresentation(0)
+    try await wait(message: { fixture.diagnostics }) { fixture.paper(in: 0) === web && fixture.hosts[0].isUserInteractionEnabled }
+    let unchanged = try await web.evaluateJavaScript("originalEditor===document.querySelector('textarea')&&document.activeElement===originalEditor&&notebookRenderer.editingDraft().isComposing&&originalEditor.value==='A composing draft stays here'&&originalEditor.selectionStart===2&&originalEditor.selectionEnd===11")
+    XCTAssertEqual(unchanged as? Bool, true)
+    _ = try await web.evaluateJavaScript("originalEditor.dispatchEvent(new Event('compositionend'));true")
+  }
+
   func testAnOpenSourceEditorKeepsItsDOMWhilePassiveWorkAndCameraSizeChange() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
       (0..<60).map { "Paragraph \($0). " + String(repeating: "The editor owns this accepted draft. ", count: 10) }.joined(separator: "\n\n"))])

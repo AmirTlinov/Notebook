@@ -1275,6 +1275,18 @@ final class DrawingResponsivenessTests: XCTestCase {
       (editor.value as? String)?.contains("Новая строка") == true,
       "Редактор должен принимать Markdown с экранной клавиатуры"
     )
+    let save = app.buttons["Сохранить"].firstMatch
+    XCTAssertTrue(save.isHittable, "Клавиатура не должна закрывать сохранение")
+    save.tap()
+    XCTAssertTrue(firstPage.staticTexts["Новая строка"].firstMatch.waitForExistence(timeout: 12),
+      "Сохранённый текст должен появиться на этой бумаге без закрытия документа")
+    XCTAssertFalse(editor.exists, "Редактор завершается установкой сохранённого источника")
+    let finished = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      !app.otherElements["document-save-status"].exists
+    }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 5), .completed)
+    let savedImage = XCTAttachment(screenshot: app.screenshot())
+    savedImage.name = "document-after-physical-save"; savedImage.lifetime = .keepAlways; add(savedImage)
   }
 
   func testDocumentRuntimeRendersMarkdownLatexAndInteractiveContent() async throws {

@@ -460,16 +460,30 @@ final class NotebookAppModel {
 
   #if os(iOS)
   let nativeCameraProjection = SceneNativeCameraProjection()
+  @ObservationIgnored private var openDocumentPresentation: DocumentPagePresentationOwner.OpenDocument?
   #endif
 
   private(set) var presence: SessionPresence? {
     didSet {
       #if os(iOS)
       nativeCameraProjection.update(presence)
+      let opened = presence.flatMap { value -> UUID? in
+        guard value.openProgress > 0, value.mode == .document else { return nil }
+        return value.focusedItemID
+      }
+      if openDocumentPresentation?.documentID != opened {
+        openDocumentPresentation?.close(); openDocumentPresentation = nil
+        if let opened, !isClosing {
+          openDocumentPresentation = DocumentPagePresentationOwner.shared(documentID: opened,
+            resources: .shared).retainOpenDocument()
+        }
+      }
       #endif
     }
   }
   private(set) var presencePhase = PresencePhase.settled
+  private(set) var documentSavePresentation: DocumentSavePresentation?
+  @ObservationIgnored private var documentSaveObserver: UUID?
   var interactiveElementFocus: InteractiveElementReference? {
     get {
       guard selectionSession.isInteractive else { return nil }
@@ -1023,6 +1037,7 @@ final class NotebookAppModel {
   }
 
   isolated deinit {
+    if let documentSaveObserver { DocumentRenderRegistry.shared.removeLiveObserver(documentSaveObserver) }
     sync?.stop()
     #if os(macOS)
       commandServer?.stop()
@@ -1912,6 +1927,7 @@ final class NotebookAppModel {
     }
     rememberDocumentReading()
     readingSuppressedDocument = nil
+    completeDocumentSavePresentation()
     return true
   }
 
@@ -2497,7 +2513,21 @@ final class NotebookAppModel {
       throw NotebookPersistenceQueue.Failure(message: "Документ удаляется; новые изменения временно недоступны.")
     }
     let actor = actorID
-    let result = try await persistence.submit(publishesChanges: true) { try $0.commitDocumentSource(edit: edit, actor: actor) }
+    if let documentSaveObserver { DocumentRenderRegistry.shared.removeLiveObserver(documentSaveObserver) }
+    documentSavePresentation = .init(sessionID: edit.sessionID, documentID: edit.documentID,
+      blockID: edit.blockID, phase: .saving, source: edit.source)
+    documentSaveObserver = DocumentRenderRegistry.shared.observeLive(documentID: edit.documentID) { [weak self] in
+      // The native publication can occur during representable update. Its
+      // actual attachment is checked again after that update, never polled.
+      Task { @MainActor [weak self] in self?.completeDocumentSavePresentation() }
+    }
+    let result: DocumentSourceCommitResult
+    do {
+      result = try await persistence.submit(publishesChanges: true) { try $0.commitDocumentSource(edit: edit, actor: actor) }
+    } catch {
+      clearDocumentSavePresentation(sessionID: edit.sessionID)
+      throw error
+    }
     documentDraftEpoch &+= 1
     if result.status == .committed {
       documentEditingSessions.removeAll { $0.id == edit.sessionID }
@@ -2506,15 +2536,41 @@ final class NotebookAppModel {
         _ = document.mergeSource(publication)
         documents[document.id] = document
       }
+      if documentSavePresentation?.sessionID == edit.sessionID {
+        documentSavePresentation?.phase = .saved
+        completeDocumentSavePresentation()
+      }
     } else {
+      clearDocumentSavePresentation(sessionID: edit.sessionID)
       let phase: DocumentEditingSession.Phase = result.status == .conflict ? .conflict : .targetMissing
       let current = documentEditingSessions.first { $0.id == edit.sessionID }
       documentEditingSessions.removeAll { $0.id == edit.sessionID }
       documentEditingSessions.append(.init(edit: current?.edit ?? edit,
         selectionStart: current?.selectionStart ?? 0, selectionEnd: current?.selectionEnd ?? 0,
-        isComposing: current?.isComposing ?? false, phase: phase))
+        isComposing: current?.isComposing ?? false, scrollTop: current?.scrollTop, phase: phase))
     }
     return result.status
+  }
+
+  private func clearDocumentSavePresentation(sessionID: UUID) {
+    guard documentSavePresentation?.sessionID == sessionID else { return }
+    documentSavePresentation = nil
+    if let documentSaveObserver { DocumentRenderRegistry.shared.removeLiveObserver(documentSaveObserver) }
+    documentSaveObserver = nil
+  }
+
+  private func completeDocumentSavePresentation() {
+    guard let saved = documentSavePresentation, saved.phase == .saved,
+      let presence, presence.mode == .document, presence.focusedItemID == saved.documentID,
+      presence.openProgress >= 0.999, presencePhase == .settled,
+      readingRestoreTarget?.id != saved.documentID, readingRestoreDocument != saved.documentID,
+      let document = documents[saved.documentID], let state = documentStates[saved.documentID],
+      document.blocks.first(where: { $0.id == saved.blockID })?.source == saved.source,
+      DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: presence.documentPageIndex) else { return }
+    documentSavePresentation?.phase = .installed
+    documentSavePresentation?.source = nil
+    if let documentSaveObserver { DocumentRenderRegistry.shared.removeLiveObserver(documentSaveObserver) }
+    documentSaveObserver = nil
   }
 
   @discardableResult
@@ -3667,6 +3723,8 @@ final class NotebookAppModel {
       observeNavigation("page_input_finish_end", fields: trace)
       guard !Task.isCancelled, continuing() else { return false }
       if presencePhase == .active, let presence { updatePresence(presence, settled: true) }
+      if let documentID = presence?.focusedItemID, documents[documentID] != nil,
+        !(await DocumentRenderRegistry.shared.finishEditing(documentID: documentID)) { return false }
       guard await finishPendingPersistence(boundary: boundary, continuing: continuing) else { return false }
       // The await itself is not a contact boundary: a later Pencil may have
       // started or even lifted while the preceding publication was draining.
@@ -3753,6 +3811,11 @@ final class NotebookAppModel {
       // refresh owner available to the explicit repair/retry action. Terminal
       // teardown would otherwise make publicationFailure impossible to clear.
       guard agentStopped && inputSaved else { return false }
+      if let documentSaveObserver { DocumentRenderRegistry.shared.removeLiveObserver(documentSaveObserver) }
+      documentSaveObserver = nil
+      #if os(iOS)
+        openDocumentPresentation?.close(); openDocumentPresentation = nil
+      #endif
       shutdownPhase = .draining
       inputGate.onActivityChange = nil
       inputGate.onNewAcceptedContact = nil

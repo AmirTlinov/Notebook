@@ -50,7 +50,7 @@ func documentSourceCASLeavesConflictDraft() throws {
   let fixture = try EditingFixture()
   defer { try? FileManager.default.removeItem(at: fixture.root) }
   let edit = fixture.edit("Мой незавершённый текст")
-  try fixture.store.saveDocumentDraft(.init(edit: edit, selectionStart: 4, selectionEnd: 9, isComposing: true))
+  try fixture.store.saveDocumentDraft(.init(edit: edit, selectionStart: 4, selectionEnd: 9, isComposing: true, scrollTop: 132.5))
   var external = fixture.document
   let changed2 = external.replaceBlockSource(id: "body", source: "Другой принятый текст", actor: UUID())
   #expect(changed2)
@@ -63,6 +63,8 @@ func documentSourceCASLeavesConflictDraft() throws {
   #expect(drafts.first?.phase == .conflict)
   #expect(drafts.first?.selectionStart == 4)
   #expect(drafts.first?.selectionEnd == 9)
+  #expect(drafts.first?.scrollTop == 132.5)
+  #expect(try NotebookStore(root: fixture.root).documentEditingSessions().first?.scrollTop == 132.5)
 }
 
 @Test("Возврат того же текста не обходит проверку причинной версии")

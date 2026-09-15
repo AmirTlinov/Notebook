@@ -711,6 +711,9 @@
         const origin=fragment.pageIndex*pageLayout.stride;
         Object.assign(root.style,{left:`${origin}px`,top:`${fragment.contentTop}px`,width:`${fragment.width}px`,
           height:`${fragment.contentBottom-fragment.contentTop}px`,overflow:'hidden'});
+        // Durability alone cannot dismiss the saved text. Retire its overlay
+        // only as the exact saved source is installed by the ordinary renderer.
+        if(activeEditor?.canFinishFor(job.source))activeEditor.finishSavedPresentation();
         const oldEditor=editingBlockID && [...root.children].find(node=>node.dataset.blockId===editingBlockID);
         let keptEditor=false;
         for(const node of [...fragmentDOM.children]) {
@@ -941,15 +944,16 @@
         editor.value = restored?.edit.source ?? block.source ?? '';
         const edit = restored?.edit || {sessionID:crypto.randomUUID(),documentID:payload.documentID,blockID,
           baseSource:block.source || '',baseVersion:payload.sourceVersions[blockID],source:editor.value,sequence:0};
-        let sequence = edit.sequence, composing = false, waitingForCommit = false, lastDraft = restored;
+        let sequence = edit.sequence, composing = false, waitingForCommit = false, committed = false, lastDraft = restored;
         const reportDraft = () => {
-          if(waitingForCommit)return lastDraft;
+          if(waitingForCommit||committed)return lastDraft;
           if(lastDraft?.edit.source===editor.value && lastDraft.selectionStart===editor.selectionStart
-            && lastDraft.selectionEnd===editor.selectionEnd && lastDraft.isComposing===composing)return lastDraft;
+            && lastDraft.selectionEnd===editor.selectionEnd && lastDraft.isComposing===composing
+            && (lastDraft.scrollTop||0)===editor.scrollTop)return lastDraft;
           sequence += 1;
           lastDraft={
             edit:{...edit,source:editor.value,sequence},selectionStart:editor.selectionStart,selectionEnd:editor.selectionEnd,
-            isComposing:composing,phase:'editing'};
+            isComposing:composing,scrollTop:editor.scrollTop,phase:'editing'};
           bridge({kind:'draft',documentID:edit.documentID,blockID,session:lastDraft});
           return lastDraft;
         };
@@ -957,6 +961,7 @@
         editor.addEventListener('compositionend',()=>{composing=false;reportDraft()});
         editor.addEventListener('input',reportDraft);
         editor.addEventListener('select',reportDraft);
+        editor.addEventListener('scroll',reportDraft);
         editor.setAttribute('aria-label', 'Исходный Markdown или LaTeX');
         editor.setAttribute('autocomplete', 'off');
         editor.setAttribute('autocorrect', 'off');
@@ -981,6 +986,7 @@
         toolbar.append(status, cancelButton, saveButton);
         editorLayer.append(toolbar);
         const fitEditor = () => {
+          const scrollTop=editor.scrollTop;
           const available = Math.max(
             minimumHeight,
             pageLayout.pageHeight - pageLayout.margin - editorTop
@@ -990,6 +996,7 @@
             available,
             Math.max(minimumHeight, editor.scrollHeight + 4)
           )}px`;
+          editor.scrollTop=scrollTop;
         };
         const positionEditor = () => {
           const sectionRect = section.getBoundingClientRect();
@@ -1024,6 +1031,7 @@
         // task leaves a visible editor with no keyboard.
         if(!restored)editor.focus({ preventScroll: true });
         editor.setSelectionRange(restored?.selectionStart ?? editor.value.length, restored?.selectionEnd ?? editor.value.length);
+        editor.scrollTop=restored?.scrollTop||0;
         if(!restored)reportDraft();
 
         const close = () => {
@@ -1033,7 +1041,7 @@
           presentationChanged();
         };
         const finish = commit => {
-          if(waitingForCommit||composing)return;
+          if(waitingForCommit||committed||composing)return;
           if(!commit){
             finishedSessionIDs.add(edit.sessionID.toLowerCase());
             bridge({kind:'discardDraft',documentID:edit.documentID,blockID,sessionID:edit.sessionID});
@@ -1044,15 +1052,19 @@
           status.textContent='Сохранение…';
           bridge({kind:'source',documentID:edit.documentID,blockID,edit:{...edit,source:editor.value,sequence}});
         };
-        activeEditor = {sessionID:edit.sessionID,reportDraft,suspend:()=>{
+        activeEditor = {sessionID:edit.sessionID,reportDraft,
+          canFinishFor:source=>committed && source?.blocks.some(block=>block.id===blockID && block.source===editor.value),
+          finishSavedPresentation:close,suspend:()=>{
           const draft=reportDraft(); editor.readOnly=true; editor.blur(); close(); return draft;
         },complete:(result)=>{
           if(result.sequence!==sequence)return;
           waitingForCommit=false;editor.readOnly=false;
           saveButton.disabled = false; cancelButton.disabled = false;
           if(result.status==='committed'){
+            committed=true;editor.readOnly=true;saveButton.disabled=true;cancelButton.disabled=true;
+            status.textContent='Сохранено. Обновляем страницу…';
             finishedSessionIDs.add(edit.sessionID.toLowerCase());
-            close(); refreshSourcePresentation();
+            if(activeEditor.canFinishFor(currentFrame?.source))refreshSourcePresentation();
           }else{
             status.textContent=result.status==='conflict'?'Исходник изменился. Ваш черновик сохранён.'
               :result.status==='targetMissing'?'Блок удалён. Ваш черновик сохранён.':'Не удалось сохранить. Черновик остаётся здесь.';
@@ -1173,6 +1185,7 @@
         pageReceipt,
         presentationReceipt,
         setEditingEnabled,
+        editingDraft:()=>activeEditor?.reportDraft()||null,
         completeSourceEdit: result => {if(activeEditor?.sessionID.toLowerCase()===result.sessionID.toLowerCase())activeEditor.complete(result)}
       };
       bridge({ kind: 'ready' });

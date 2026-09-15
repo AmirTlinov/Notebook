@@ -489,7 +489,7 @@ final class DocumentWebCoordinator: NSObject,
     let installed = webView.map { host?.hasCanonicalSurface($0) == true } ?? false
     // Editor pixels are a valid installed input surface too. A snapshot or a
     // loading overlay never grants access to the DOM underneath it.
-    acceptsInput = isInteractive && installed && (hasCanonicalPixels || (renderIsReady && isPresentingEditor))
+    acceptsInput = isInteractive && installed && (hasCanonicalPixels || (ownsEditing && isPresentingEditor))
     host?.configure(size: physicalSize, interactive: acceptsInput)
     if isInteractive, hasCanonicalPixels, let payload, let presentation = pixelPresentation, let host, let web = webView,
       host.hasCanonicalSurface(web) {
@@ -610,9 +610,9 @@ final class DocumentWebCoordinator: NSObject,
     recordPreparation(.mountAt)
     let previousHost = self.host
     self.host = host
-    if previousHost !== host, let webView {
+    if let webView, previousHost !== host || !host.ownsSurface(webView) {
       host.install(webView, size: physicalSize)
-      previousHost?.removeSurface()
+      if previousHost !== host { previousHost?.removeSurface() }
     }
     DocumentRenderRegistry.shared.mountRenderer(self, hostID: hostID)
     self.physicalSize = physicalSize
@@ -738,6 +738,7 @@ final class DocumentWebCoordinator: NSObject,
   /// The resource and all callbacks belong to this one mounted lifetime.
   func invalidate() {
     guard !isInvalidated else { return }
+    retainFinalEditingDraft()
     isInvalidated = true
     pagePreparationTrace = nil; preparationRequestID = nil
     generation &+= 1
@@ -838,24 +839,47 @@ final class DocumentWebCoordinator: NSObject,
       arguments: ["drafts": drafts], in: nil, in: .page, completionHandler: nil)
   }
 
-  func flushEditingDraft() async {
-    guard let webView, isReady else { return }
+  func flushEditingDraft() async { _ = await readEditingDraft(suspends: true) }
+  func checkpointEditingDraft() async -> Bool { await readEditingDraft(suspends: false) }
+
+  private func readEditingDraft(suspends: Bool) async -> Bool {
+    guard let webView, isReady else { return !isPresentingEditor }
     let expectedRuntime = runtimeID
-    let result: DocumentEditingSession? = await withCheckedContinuation { continuation in
+    let result: (Bool, DocumentEditingSession?) = await withCheckedContinuation { continuation in
       var completed = false
       let deadline = Task { @MainActor in
         do { try await Task.sleep(for: .seconds(1)) } catch { return }
         guard !completed else { return }; completed = true
-        continuation.resume(returning: nil)
+        continuation.resume(returning: (false, nil))
       }
-      webView.evaluateJavaScript("window.notebookRenderer.setEditingEnabled(false)") { value, _ in
+      let script = suspends ? "window.notebookRenderer.setEditingEnabled(false)" : "window.notebookRenderer.editingDraft()"
+      webView.evaluateJavaScript(script) { value, error in
         guard !completed else { return }; completed = true; deadline.cancel()
-        continuation.resume(returning: Self.decode(value))
+        let draft: DocumentEditingSession? = Self.decode(value)
+        continuation.resume(returning: (error == nil && (value == nil || value is NSNull || draft != nil), draft))
       }
     }
-    guard !isInvalidated, runtimeID == expectedRuntime,
-      let draft = result, draft.edit.documentID == payload?.documentID else { return }
-    acceptDraft(draft)
+    guard result.0, !isInvalidated, runtimeID == expectedRuntime else { return false }
+    if let draft = result.1, draft.edit.documentID == payload?.documentID { acceptDraft(draft) }
+    return true
+  }
+
+  /// The final asynchronous DOM read borrows its real executor and captures
+  /// the accepted writer callback before the representable disappears.
+  private func retainFinalEditingDraft() {
+    guard ownsEditing || isPresentingEditor, let webView, isReady, let documentID = payload?.documentID,
+      let borrow = try? surfaceLease?.borrow() else { return }
+    let save = onDraftChange, registry = DocumentRenderRegistry.shared
+    let task = Task { @MainActor in
+      let draft: DocumentEditingSession? = await withCheckedContinuation { continuation in
+        webView.evaluateJavaScript("window.notebookRenderer.setEditingEnabled(false)") { value, _ in
+          continuation.resume(returning: Self.decode(value))
+        }
+      }
+      defer { borrow.release() }
+      if let draft, draft.edit.documentID == documentID, registry.recordDraft(draft) { save(draft) }
+    }
+    registry.retainRetiringEditor(documentID: documentID, drain: task)
   }
 
   private func acceptDraft(_ draft: DocumentEditingSession) {
@@ -2165,8 +2189,9 @@ private enum DocumentWebViewFactory {
       if web?.frame.size != size { web?.setFrameSize(size) }
       web?.setAccessibilityHidden(!interactive)
     }
+    func ownsSurface(_ web: WKWebView) -> Bool { self.web === web && web.superview === self }
     func hasCanonicalSurface(_ web: WKWebView) -> Bool {
-      self.web === web && web.superview === self && window != nil && !isHidden
+      ownsSurface(web) && window != nil && !isHidden
         && !web.isHidden && !hasSnapshot && failureView == nil && !bounds.isEmpty
     }
     func hasInteractiveSurface(_ web: WKWebView) -> Bool {

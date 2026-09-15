@@ -22,12 +22,14 @@ final class DocumentEditorPresentationTests: XCTestCase {
 
   private func surface(_ document: DocumentDocument, _ state: DocumentStateJournal,
     resources: SceneRenderResources, thumbnail: Bool = false,
+    sourceCommit: @escaping (DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status = { _ in .targetMissing },
+    draftChanged: @escaping (DocumentEditingSession) -> Void = { _ in },
     commit: @escaping (String, JSONValue) -> ContentFieldVersion? = { _,_ in nil }) -> Surface {
     let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onSourceChange: { _ in .targetMissing }, onStateChange: commit)
+      onPageLayout: { _ in }, onSourceChange: sourceCommit, onStateChange: commit)
     coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: thumbnail,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .targetMissing },
-      onStateChange: commit, snapshotPixelWidth: thumbnail ? 256 : nil)
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: sourceCommit,
+      onStateChange: commit, snapshotPixelWidth: thumbnail ? 256 : nil, onDraftChange: draftChanged)
     let host = DocumentWebHost(), size = WorkspaceItemGeometry.document(document.paperSize)
     let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: size.width, height: size.height),
       styleMask: .borderless, backing: .buffered, defer: false)
@@ -41,6 +43,71 @@ final class DocumentEditorPresentationTests: XCTestCase {
     DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "# Канонический текст $x^2$"),
       .markdown(id: "other", source: "Соседний блок"),
       .interactive(id: "program", html: "<input>", javaScript: "notebook.commit({boot:crypto.randomUUID()})", height: 80)])
+  }
+
+  func testExplicitFenceAndRetirementReadTheFinalEditorWithoutLosingSelectionOrScroll() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "# Original")])
+    let state = DocumentStateJournal(id: document.id, actor: UUID()), resources = SceneRenderResources(maximumWebSurfaces: 1)
+    var drafts: [DocumentEditingSession] = []
+    let live = surface(document, state, resources: resources, draftChanged: { drafts.append($0) })
+    defer { live.close() }
+    await wait { live.coordinator.hasCanonicalPixels }
+    let web = try XCTUnwrap(live.coordinator.webView)
+    _ = try await js("""
+      document.querySelector('[data-block-id=body]').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
+      window.editor=document.querySelector('textarea');editor.value='Line of the pending draft.\\n'.repeat(100);
+      editor.dispatchEvent(new Event('input'));editor.setSelectionRange(2,11);editor.scrollTop=200;
+      editor.dispatchEvent(new Event('compositionstart'));'ready'
+      """, web)
+    let captured = await live.coordinator.checkpointEditingDraft(); XCTAssertTrue(captured)
+    XCTAssertEqual(drafts.last?.selectionStart, 2); XCTAssertEqual(drafts.last?.selectionEnd, 11)
+    XCTAssertEqual(drafts.last?.scrollTop, 200)
+    let stillEditing = try await js("String(editor===document.querySelector('textarea'))", web)
+    XCTAssertEqual(stillEditing, "true", "A background/write fence does not finish editing")
+    // No synthetic input message publishes these last values. The retiring
+    // executor must read its actual DOM before returning the borrowed slot.
+    _ = try await js("editor.value='The final accepted draft.\\n'.repeat(100);editor.setSelectionRange(3,12);editor.scrollTop=250;'final'", web)
+    live.close()
+    let drained = await DocumentRenderRegistry.shared.finishEditing(documentID: document.id)
+    XCTAssertTrue(drained)
+    XCTAssertEqual(drafts.last?.selectionStart, 3); XCTAssertEqual(drafts.last?.selectionEnd, 12)
+    XCTAssertEqual(drafts.last?.scrollTop, 250)
+    XCTAssertTrue(drafts.last?.edit.source.hasPrefix("The final accepted draft.") == true)
+    await wait { resources.activeWebSurfaceCount == 0 }
+  }
+
+  func testCommitKeepsSavedTextUntilItsExactSourceIsActuallyInstalled() async throws {
+    var document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "# Before saving")])
+    let state = DocumentStateJournal(id: document.id, actor: UUID())
+    var submitted: DocumentSourceEdit?
+    let commit: (DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status = { submitted = $0; return .committed }
+    let live = surface(document, state, resources: SceneRenderResources(maximumWebSurfaces: 1), sourceCommit: commit)
+    defer { live.close() }
+    await wait { live.coordinator.hasCanonicalPixels }
+    let web = try XCTUnwrap(live.coordinator.webView)
+    _ = try await js("""
+      document.querySelector('[data-block-id=body]').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
+      window.savedEditor=document.querySelector('textarea');savedEditor.value='# Saved text remains accessible';
+      savedEditor.dispatchEvent(new Event('input'));
+      document.querySelector('[data-editor-action=save]').click();'submitted'
+      """, web)
+    await wait { submitted != nil }
+    var saved = false
+    for _ in 0..<200 {
+      saved = try await js("String(document.querySelector('.source-editor-status')?.textContent.startsWith('Сохранено.'))", web) == "true"
+      if saved { break }; try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertTrue(saved)
+    XCTAssertFalse(live.coordinator.hasCanonicalPixels)
+    let pending = try await js("String(savedEditor===document.querySelector('textarea')&&savedEditor.readOnly&&savedEditor.value.includes('Saved text'))", web)
+    XCTAssertEqual(pending, "true", "The write acknowledgement is not a presentation acknowledgement")
+    XCTAssertTrue(document.replaceBlockSource(id: "body", source: try XCTUnwrap(submitted).source, actor: UUID()))
+    live.coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: commit, onStateChange: { _, _ in nil })
+    await wait { live.coordinator.hasCanonicalPixels }
+    let installed = try await js("String(!document.querySelector('textarea')&&document.getElementById('document').textContent.includes('Saved text remains accessible'))", web)
+    XCTAssertEqual(installed, "true")
+    XCTAssertTrue(live.coordinator.webView === web)
   }
 
   func testComposingEditorKeepsInputButCannotCreateACanonicalRaster() async throws {

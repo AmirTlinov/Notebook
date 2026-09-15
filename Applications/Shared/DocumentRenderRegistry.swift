@@ -59,6 +59,17 @@ final class DocumentRenderRegistry {
     let isAttached: @MainActor () -> Bool
   }
   @ObservationIgnored private var liveSurfaces: [UUID: LiveSurface] = [:]
+  private struct LiveObserver {
+    let documentID: UUID
+    let changed: @MainActor () -> Void
+  }
+  @ObservationIgnored private var liveObservers: [UUID: LiveObserver] = [:]
+
+  func observeLive(documentID: UUID, changed: @escaping @MainActor () -> Void) -> UUID {
+    let id = UUID(); liveObservers[id] = .init(documentID: documentID, changed: changed); return id
+  }
+
+  func removeLiveObserver(_ id: UUID) { liveObservers[id] = nil }
   private final class Renderer {
     weak var value: DocumentWebCoordinator?
     init(_ value: DocumentWebCoordinator) { self.value = value }
@@ -74,6 +85,28 @@ final class DocumentRenderRegistry {
     let task: Task<Void, Never>
   }
   @ObservationIgnored private var sourceEdits: [UUID: SourceEditTask] = [:]
+  @ObservationIgnored private var retiringEditors: [UUID: SourceEditTask] = [:]
+
+  func retainRetiringEditor(documentID: UUID, drain: Task<Void, Never>) {
+    let id = UUID()
+    let task = Task { @MainActor [weak self] in
+      await drain.value
+      guard let self else { return }
+      retiringEditors[id] = nil; releaseEditingIfUnmounted(documentID)
+    }
+    retiringEditors[id] = .init(documentID: documentID, task: task)
+  }
+
+  /// Explicit background/close fencing reads the actual textarea without
+  /// dismissing it. A view update never invokes this document-level boundary.
+  func finishEditing(documentID: UUID) async -> Bool {
+    for source in Array(sourceEdits.values).filter({ $0.documentID == documentID }) { await source.task.value }
+    await editingTransfers[documentID]?.value
+    if let host = editingOwners[documentID], let renderer = renderers[host]?.value,
+      !renderer.isInvalidated, !(await renderer.checkpointEditingDraft()) { return false }
+    for editor in Array(retiringEditors.values).filter({ $0.documentID == documentID }) { await editor.task.value }
+    return true
+  }
 
   func mountRenderer(_ renderer: DocumentWebCoordinator, hostID: UUID) {
     guard renderers[hostID]?.value !== renderer else { return }
@@ -160,6 +193,7 @@ final class DocumentRenderRegistry {
 
   private func releaseEditingIfUnmounted(_ documentID: UUID) {
     guard editingTransfers[documentID] == nil, !sourceEdits.values.contains(where: { $0.documentID == documentID }),
+      !retiringEditors.values.contains(where: { $0.documentID == documentID }),
       !renderers.values.contains(where: { $0.value?.payload?.documentID == documentID && $0.value?.isInvalidated == false }) else { return }
     editingOwners[documentID] = nil; editingGenerations[documentID] = nil
     editingDrafts[documentID] = nil; finishedDrafts[documentID] = nil
@@ -187,6 +221,7 @@ final class DocumentRenderRegistry {
     if let previous = liveSurfaces[hostID], previous.generation > generation { return }
     liveSurfaces[hostID] = .init(documentID: documentID, token: token, pageIndex: pageIndex,
       generation: generation, isAttached: isAttached)
+    for observer in Array(liveObservers.values) where observer.documentID == documentID { observer.changed() }
   }
 
   func revokeLive(hostID: UUID, through generation: UInt64) {

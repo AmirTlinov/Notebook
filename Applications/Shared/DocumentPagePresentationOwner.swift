@@ -98,6 +98,24 @@ final class DocumentPagePresentationOwner {
     let admission: WebSurfaceBorrow
   }
   private static var owners: [Key: WeakOwner] = [:]
+  /// An open document outlives any one SwiftUI/UIKit representation. This
+  /// explicit lease belongs to the model's open/close transition, not a timer.
+  @MainActor final class OpenDocument {
+    let documentID: UUID
+    private var owner: DocumentPagePresentationOwner?
+    fileprivate init(_ owner: DocumentPagePresentationOwner) {
+      documentID = owner.documentID; self.owner = owner; owner.openDocuments += 1
+    }
+    func close() {
+      guard let owner else { return }; self.owner = nil
+      owner.openDocuments -= 1
+      if owner.entries.isEmpty && owner.openDocuments == 0 { owner.stop() }
+      else { owner.retirePaperAfterDocumentClose(); owner.schedule() }
+    }
+    isolated deinit { close() }
+  }
+  private var openDocuments = 0
+  func retainOpenDocument() -> OpenDocument { OpenDocument(self) }
   static func shared(documentID: UUID, resources: SceneRenderResources) -> DocumentPagePresentationOwner {
     let key = Key(documentID: documentID, resources: ObjectIdentifier(resources))
     if let owner = owners[key]?.value, !owner.stopped { return owner }
@@ -311,7 +329,7 @@ final class DocumentPagePresentationOwner {
     return entries.values.first { $0.input.isCurrent }
   }
   private var driver: Entry? { current ?? entries.values.first { $0.input.isVisible } }
-  private var hasOpenDocumentPresentations: Bool { entries.values.contains { $0.input.retainsOpenDocument } }
+  private var hasOpenDocumentPresentations: Bool { openDocuments > 0 || entries.values.contains { $0.input.retainsOpenDocument } }
 
   /// Full physical presentations own the document lifetime. The selected input
   /// page may disappear during an ordinary handoff; that is not a document
@@ -454,7 +472,7 @@ final class DocumentPagePresentationOwner {
     // paper's asynchronous state echo must not revoke the same source's input.
     // Publication still compares the full state-bearing token in isInstalled.
     let matches = current?.id == id && paper.payload?.pageIndex == input.pageIndex
-      && paper.payload?.source.matches(input.document) == true
+      && (paper.payload?.source.matches(input.document) == true || paper.isPresentingEditor)
     if matches, contacts.isEmpty {
       paper.updateInteractionCallbacks(onDraftChange: input.onDraftChange,
         onDraftDiscard: input.onDraftDiscard, onLinkActivation: input.onLinkActivation)
@@ -471,6 +489,7 @@ final class DocumentPagePresentationOwner {
       let admission = paper.borrowSurfaceForTransfer(web) {
       paperTransfer = .init(renderer: paper, web: web, admission: admission)
     }
+    if mountedID == id { mountedID = nil }
     entry.stopObserving(); entry.host?.onContactChange = { _ in }; entry.host?.onSizeChange = { }
     // SwiftUI/UIKit can retain the departed host after its coordinator ends.
     // Native installation, including its raster pins, ends at this boundary.
@@ -484,7 +503,7 @@ final class DocumentPagePresentationOwner {
     if previousTarget != currentTarget { interruptPassiveWork() }
     refreshPreparationDemand()
     trim()
-    if entries.isEmpty { stop() } else { retirePaperAfterDocumentClose(); schedule() }
+    if entries.isEmpty && openDocuments == 0 { stop() } else { retirePaperAfterDocumentClose(); schedule() }
   }
 
   private func trim() {
@@ -562,13 +581,13 @@ final class DocumentPagePresentationOwner {
     guard let entry = driver, let host = entry.host else { return }
     let input = entry.input
     guard !terminalFailures.contains(input.token) else { return }
-    if mountedID != entry.id || paper.payload?.pageIndex != input.pageIndex, !gestureLocked {
+    if paper.payload?.pageIndex != input.pageIndex, !gestureLocked {
       await programOwner.blurFocused()
     }
     if current != nil, (mountedID != entry.id || paper.payload?.renderToken != input.token || !paper.hasCanonicalPixels),
-      !(paper.isPresentingEditor && mountedID == entry.id) {
+      !(paper.isPresentingEditor && mountedID == entry.id && paper.payload?.source.matches(input.document) == true) {
       guard !inputLocked else { return }
-      if paper.isPresentingEditor { await paper.flushEditingDraft() }
+      if paper.isPresentingEditor, paper.payload?.pageIndex != input.pageIndex { await paper.flushEditingDraft() }
       // Only a deliberate physical navigation changes this paper viewport.
       // Programs live above it, and a state echo never disables their input.
       if mountedID != entry.id, let old = mountedID.flatMap({ entries[$0] }) {
@@ -750,10 +769,7 @@ final class DocumentPagePresentationOwner {
     renderer.update(document: input.document, state: input.state, selectedPageIndex: page, capturesSnapshot: false,
       onRenderReady: .init { _ in }, onPageLayout: { [weak self] layout in
         self?.entries.values.forEach { $0.input.onPageLayout(layout) }
-      }, onSourceChange: { [weak self] edit in
-        guard let owner = self?.stateOwner else { return .targetMissing }
-        return try await owner.input.onSourceChange(edit)
-      }, onStateChange: { _, _ in nil }, drafts: input.drafts,
+      }, onSourceChange: input.onSourceChange, onStateChange: { _, _ in nil }, drafts: input.drafts,
       onDraftChange: input.onDraftChange, onDraftDiscard: input.onDraftDiscard,
       onLinkActivation: input.onLinkActivation,
       preparationRequestID: input.measurements?.preparationRequestID(documentID: documentID, pageIndex: page, token: input.token))
@@ -1071,7 +1087,7 @@ final class DocumentPagePresentationOwner {
     }) { schedule() }
   }
   private func stop() {
-    observe("document_owner_stop", reason: "entries_empty")
+    observe("document_owner_stop", reason: "document_and_presentations_closed")
     stopped = true; work?.cancel(); work = nil; captureTail?.cancel(); captureTail = nil
     paper?.invalidate(); passive?.invalidate(); programOwner.stop()
     paperTransfer = nil

@@ -9,6 +9,7 @@ struct NotebookNavigationView: View {
   @State private var showsSearch = false
   @State private var showsPages = false
   @State private var pageWindow = 0
+  @State private var savedText: String?
 
   private var item: WorkspaceItem? { model.workspace?.items.first { $0.id == presence.focusedItemID } }
   private var pageIndex: Int {
@@ -50,6 +51,20 @@ struct NotebookNavigationView: View {
       .buttonStyle(.plain).padding(4).background(.regularMaterial, in: Capsule())
       Spacer(minLength: 0)
       if presence.mode == .page || presence.mode == .document {
+        if let save = model.documentSavePresentation, save.documentID == presence.focusedItemID,
+          save.phase != .installed {
+          HStack(spacing: 8) {
+            if model.documentPageNavigationStatus?.phase != .failed { ProgressView().controlSize(.small) }
+            Text(save.phase == .saving ? "Сохранение…" : "Сохранено. Обновляем страницу…").font(.caption)
+            if save.phase == .saved {
+              Button("Сохранённый текст") { savedText = save.source }
+                .accessibilityIdentifier("show-saved-document-text")
+            }
+          }
+          .padding(10).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+          .accessibilityIdentifier("document-save-status")
+          .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 18)
+        }
         if presence.mode == .document,
           let status = model.documentPageNavigationStatus,
           status.documentID == presence.focusedItemID, let target = status.target {
@@ -82,6 +97,14 @@ struct NotebookNavigationView: View {
       }
     }
     .sheet(isPresented: $showsSearch) { NotebookSearchView() }
+    .sheet(isPresented: Binding(get: { savedText != nil }, set: { if !$0 { savedText = nil } })) {
+      NavigationStack {
+        ScrollView { Text(savedText ?? "").font(.body.monospaced()).textSelection(.enabled)
+          .frame(maxWidth: .infinity, alignment: .leading).padding() }
+          .navigationTitle("Сохранённый текст")
+          .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { savedText = nil } } }
+      }
+    }
   }
 
   private var pageOverview: some View {

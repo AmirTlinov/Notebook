@@ -179,6 +179,7 @@ final class IPadPageTurnController: UIViewController,
   ) {
     let previousResolvedTarget = resolvedDocumentTarget
     self.canonicalDocumentLayout = canonicalDocumentLayout
+    let replacesDocument = self.ownerID != ownerID || documentNavigation == nil
     let ownerChanged = self.ownerID != ownerID || self.sequenceRevision != sequenceRevision
     let previousSelectedIndex = self.selectedIndex
     let awaitedLocalAcknowledgement = selection.awaitsLocalAcknowledgement
@@ -215,7 +216,15 @@ final class IPadPageTurnController: UIViewController,
       lastDocumentLanding = nil
       self.documentSelection = nil
       selection.reset(to: self.selectedIndex)
-      if isViewLoaded { replaceOwnerPages() }
+      if isViewLoaded {
+        if replacesDocument { replaceOwnerPages() }
+        else {
+          // A source revision changes page readiness, not the person's mounted
+          // textarea. The same paper measures the new source beside that DOM.
+          readyPages.removeAll()
+          refreshRenderedPages()
+        }
+      }
     } else if documentNavigation != nil {
       // Confirmed model presence only acknowledges native landings. It cannot
       // become a second external target while an explicit request is waiting.
@@ -712,7 +721,7 @@ final class IPadPageTurnController: UIViewController,
       let target = resolvedDocumentTarget ?? request.pageIndex
       return resolvedDocumentTarget != nil && target == displayedIndex
         && !isTransitioning && readyPages[target] == true ? nil : target
-    }
+    } ?? (readyPages[displayedIndex] != true && preparationFailures[displayedIndex] != nil ? displayedIndex : nil)
     let failure = target.flatMap { readyPages[$0] == true ? nil : preparationFailures[$0] }
     let phase: DocumentPageNavigationStatus.Phase? = target == nil ? nil
       : failure != nil ? .failed : isTransitioning ? .transitioning : .preparing

@@ -25,18 +25,19 @@ public struct DocumentEditingSession: Codable, Equatable, Sendable, Identifiable
   public let selectionStart: Int
   public let selectionEnd: Int
   public let isComposing: Bool
+  public let scrollTop: Double?
   public let phase: Phase
 
   public var isUnfinished: Bool { ![Phase.committed, .discarded].contains(phase) }
 
   public init(edit: DocumentSourceEdit, selectionStart: Int = 0, selectionEnd: Int = 0,
-    isComposing: Bool = false, phase: Phase = .editing) {
+    isComposing: Bool = false, scrollTop: Double? = nil, phase: Phase = .editing) {
     self.edit = edit; self.selectionStart = selectionStart; self.selectionEnd = selectionEnd
-    self.isComposing = isComposing; self.phase = phase
+    self.isComposing = isComposing; self.scrollTop = scrollTop; self.phase = phase
   }
 
   fileprivate func replacingPhase(_ phase: Phase) -> Self {
-    .init(edit: edit, selectionStart: selectionStart, selectionEnd: selectionEnd, isComposing: false, phase: phase)
+    .init(edit: edit, selectionStart: selectionStart, selectionEnd: selectionEnd, isComposing: false, scrollTop: scrollTop, phase: phase)
   }
 
   fileprivate func validate() throws {
@@ -47,7 +48,8 @@ public struct DocumentEditingSession: Codable, Equatable, Sendable, Identifiable
       edit.baseVersion.stamp.counter <= VersionStamp.maximumCounter,
       edit.baseVersion.observed.count <= 256,
       edit.baseVersion.observed.allSatisfy({ UUID(uuidString: $0.key) != nil && $0.value <= VersionStamp.maximumCounter }),
-      selectionStart >= 0, selectionEnd >= selectionStart, selectionEnd <= edit.source.utf16.count else {
+      selectionStart >= 0, selectionEnd >= selectionStart, selectionEnd <= edit.source.utf16.count,
+      scrollTop.map({ $0.isFinite && $0 >= 0 }) ?? true else {
       throw CollaborationError("invalid_draft", "Черновик называет исходный блок, его версию и допустимое выделение текста.")
     }
   }
@@ -144,7 +146,7 @@ extension NotebookStore {
       let phase: DocumentEditingSession.Phase = status == .committed ? .committed : status == .conflict ? .conflict : .targetMissing
       let draft = DocumentEditingSession(edit: edit,
         selectionStart: min(previous?.selectionStart ?? 0, edit.source.utf16.count),
-        selectionEnd: min(previous?.selectionEnd ?? 0, edit.source.utf16.count), phase: phase)
+        selectionEnd: min(previous?.selectionEnd ?? 0, edit.source.utf16.count), scrollTop: previous?.scrollTop, phase: phase)
       try publishCollaboration(writes: [documentDraftPath(edit.sessionID): try .encode(draft)])
       return .init(status: status, publication: document.flatMap {
         DocumentBlockSourcePublication(document: $0, blockID: edit.blockID)
