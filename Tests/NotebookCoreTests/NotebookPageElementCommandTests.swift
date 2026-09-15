@@ -74,6 +74,25 @@ struct NotebookPageElementCommandTests {
       .map { [$0[0].text!, $0[1].text!, String($0[2].integer!)] } }
   }
 
+  @Test func nativeFrameCommitDoesNotReadOrRewriteInkAndLargeNeighbours() throws {
+    try fixture(largeNeighbour: true) { store, actor, page in
+      let element = try #require(page.elements.first { $0.id == elementID })
+      let identity = try #require(page.elementIdentityStamp(elementID))
+      let file = pageFile(page.id), before = try recordIndex(store, file: file), cursor = try store.currentChangeCursor()
+      let frame = PageRect(x: 40, y: 60, width: 200, height: 200)
+      let moved = try bounded(store) { try store.commitPageElementFrame(pageID: page.id, elementID: elementID,
+        identity: identity, original: element.frame, frame: frame, actor: actor) }
+      #expect(moved?.element.frame == frame && moved?.element.source == element.source)
+      let changes = Set(try store.readChangedAddresses(after: cursor, through: store.currentChangeCursor()).addresses)
+      let after = try recordIndex(store, file: file)
+      #expect(before.filter { !changes.contains($0[0]) } == after.filter { !changes.contains($0[0]) })
+      #expect(!changes.contains { $0.contains("/drawingData") || $0.contains("/computations") || $0.contains("/@foreign") })
+      #expect(try store.commitPageElementFrame(pageID: page.id, elementID: elementID,
+        identity: identity, original: element.frame, frame: .init(x: 70, y: 80, width: 200, height: 200), actor: actor) == nil)
+      #expect(try store.loadPage(page.id).elements.first { $0.id == elementID }?.frame == frame)
+    }
+  }
+
   @Test func updateReceiptRetryContinuationsAndUndoNeverReadUnrequestedBodies() throws {
     try fixture(largeNeighbour: true) { store, actor, page in
       let file = pageFile(page.id), root = file + "#"

@@ -2360,7 +2360,7 @@ final class NotebookAppModel {
       let geometry = elementGeometry(reference) else { return nil }
     cancelElementManipulation()
     let contact = NotebookElementManipulation(reference: reference, kind: kind,
-      frame: geometry.frame, bounds: geometry.bounds)
+      frame: geometry.frame, bounds: geometry.bounds, identity: geometry.identity, worldOrigin: geometry.worldOrigin)
     selectionSession.manipulation = contact
     inputGate.beginContact(source: contact.id)
     inputGate.registerFingerCancellation(source: contact.id) { [weak self] in self?.cancelElementManipulation(contact.id) }
@@ -2379,20 +2379,32 @@ final class NotebookAppModel {
     guard let contact = selectionSession.manipulation else { return false }
     cancelElementManipulation(id)
     guard contact.frame != contact.original,
-      elementGeometry(contact.reference)?.frame == contact.original else { return false }
-    return commitElementFrame(contact.reference, frame: contact.frame)
+      let current = elementGeometry(contact.reference), current.frame == contact.original,
+      current.identity == contact.identity, current.worldOrigin == contact.worldOrigin else { return false }
+    return commitElementFrame(contact)
   }
 
   /// Preview and commit use the same completed rectangle. Storage changes the
   /// addressed material; it does not run a second resize calculation.
-  private func commitElementFrame(_ reference: EditableElementReference, frame: CGRect) -> Bool {
-    switch reference {
+  private func commitElementFrame(_ contact: NotebookElementManipulation) -> Bool {
+    guard let identity = contact.identity else { return false }
+    let frame = contact.frame, original = contact.original, actor = actorID
+    switch contact.reference {
     case .page(let pageID, let elementID):
-      return mutatePageElements(pageID: pageID) { _, elements in
-        guard let index = elements.firstIndex(where: { $0.id == elementID }) else { return false }
-        elements[index] = elements[index].updating(frame: .init(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height))
-        return true
+      guard var page = pages[pageID], let index = page.elements.firstIndex(where: { $0.id == elementID }) else { return false }
+      var elements = page.elements
+      let value = PageRect(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height)
+      elements[index] = elements[index].updating(frame: value)
+      guard page.replaceElements(elements, actor: actor) else { return false }
+      pages[pageID] = page
+      let expected = elements[index], expectedStamp = page.agentStamp
+      persistence.enqueue { store in
+        let committed = try store.commitPageElementFrame(pageID: pageID, elementID: elementID, identity: identity,
+          original: .init(x: original.minX, y: original.minY, width: original.width, height: original.height),
+          frame: value, actor: actor)
+        return committed?.element != expected || committed?.stamp != expectedStamp
       }
+      return true
     case .spatial(let boardID, let elementID):
       guard var hierarchy = boardHierarchy, workspace != nil,
         var element = hierarchy.board(boardID)?.elements.first(where: { $0.id == elementID }),
@@ -2400,7 +2412,15 @@ final class NotebookAppModel {
       let expected = element.stamp
       guard element.update(frame: .init(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height), actor: actorID),
         hierarchy.upsertElement(element, in: boardID, expected: expected, actor: actorID) else { return false }
-      persistBoard(hierarchy); return true
+      boardHierarchy = hierarchy
+      let accepted = element, expectedStamp = hierarchy.stamp
+      persistence.enqueue { store in
+        let committed = try store.commitSpatialElementFrame(boardID: boardID, elementID: elementID, identity: identity,
+          original: .init(x: original.minX, y: original.minY, width: original.width, height: original.height),
+          frame: accepted.frame, origin: contact.worldOrigin, actor: actor)
+        return committed?.element != accepted || committed?.stamp != expectedStamp
+      }
+      return true
     }
   }
 
@@ -2416,19 +2436,20 @@ final class NotebookAppModel {
     return .init(x: contact.movement.x, y: contact.movement.y)
   }
 
-  private func elementGeometry(_ reference: EditableElementReference) -> (frame: CGRect, bounds: CGRect?)? {
+  private func elementGeometry(_ reference: EditableElementReference) -> (frame: CGRect, bounds: CGRect?, identity: VersionStamp?, worldOrigin: WorldPoint?)? {
     switch reference {
     case .page(let pageID, let id):
       guard !isPageBeingDeleted(pageID), let page = pages[pageID],
         let element = page.elements.first(where: { $0.id == id }) else { return nil }
       return (.init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height),
-        .init(x: 0, y: 0, width: page.size.width, height: page.size.height))
+        .init(x: 0, y: 0, width: page.size.width, height: page.size.height), page.elementIdentityStamp(id), nil)
     case .spatial(let boardID, let id):
       guard let element = boardHierarchy?.board(boardID)?.elements.first(where: { $0.id == id }),
         surfaceAcceptsChanges(element.surface) else { return nil }
       let size = itemGeometry(element.surface.ownerID)
       let bounds: CGRect? = element.surface.kind == .cover ? .init(x: 0, y: 0, width: size.width, height: size.height) : nil
-      return (.init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height), bounds)
+      return (.init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height), bounds,
+        boardHierarchy?.board(boardID)?.elementIdentityStamp(id), element.worldOrigin)
     }
   }
 
@@ -3616,6 +3637,10 @@ final class NotebookAppModel {
     admitDocumentReading(state.reading)
     presence = state.presence
     alignWorkspaceSelection()
+    if case .page(let pageID, let elementID) = selectionSession.element,
+      let page = pages[pageID], !page.elements.contains(where: { $0.id == elementID }) {
+      clearSelection()
+    }
   }
 
   private func reloadCollaborationMetadata() { reloadExternalChanges() }

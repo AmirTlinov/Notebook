@@ -114,6 +114,85 @@ import XCTest
     }
   }
 
+  func testCancellingAPreviewPreservesAnAgentEditAndCannotCommitOnLateLift() async throws {
+    try await fixture { model, reference in
+      let before = try XCTUnwrap(model.activePage)
+      model.selectElement(reference)
+      let contact = try XCTUnwrap(model.beginElementManipulation(reference, kind: .move))
+      model.updateElementManipulation(contact, translation: .init(x: 80, y: 60))
+      let target = CollaborationTarget(kind: .page, id: before.id)
+      _ = try model.store.applyCollaborationAction(.init(summary: "Concurrent source", expected: [
+        .init(target: target, revision: before.agentStamp.revision)], operations: [
+        .init(kind: .updateElement, target: target, id: "chart", values: ["html": .string("<p>New source</p>")])]), actor: UUID())
+      model.cancelElementManipulation(contact)
+      XCTAssertFalse(model.finishElementManipulation(contact, translation: .init(x: 80, y: 60)))
+      await model.reloadExternalChanges()?.value
+      let flushed = await model.finishPendingPersistence(); XCTAssertTrue(flushed)
+      let saved = try model.store.loadPage(before.id)
+      XCTAssertEqual(saved.elements.first?.html, "<p>New source</p>")
+      XCTAssertEqual(saved.elements.first?.frame, before.elements.first?.frame)
+      XCTAssertNil(model.selectionSession.manipulation)
+    }
+  }
+
+  func testADeletionDuringAHeldContactCannotBeAdoptedByItsLateLift() async throws {
+    try await fixture { model, reference in
+      let before = try XCTUnwrap(model.activePage)
+      model.selectElement(reference)
+      let contact = try XCTUnwrap(model.beginElementManipulation(reference, kind: .move))
+      model.updateElementManipulation(contact, translation: .init(x: 80, y: 60))
+      let target = CollaborationTarget(kind: .page, id: before.id)
+      _ = try model.store.applyCollaborationAction(.init(summary: "Remove held material", expected: [
+        .init(target: target, revision: before.agentStamp.revision)], operations: [
+        .init(kind: .removeElement, target: target, id: "chart")]), actor: UUID())
+      await model.reloadExternalChanges()?.value
+      _ = model.finishElementManipulation(contact, translation: .init(x: 80, y: 60))
+      let flushed = await model.finishPendingPersistence(); XCTAssertTrue(flushed)
+      await model.reloadExternalChanges()?.value
+      XCTAssertTrue(try model.store.loadPage(before.id).elements.isEmpty, "A stale gesture is not an intentional adoption of a deleted member")
+      XCTAssertTrue(model.activePage?.elements.isEmpty == true)
+      XCTAssertNil(model.selectionSession.manipulation)
+      XCTAssertNil(model.selectionSession.element)
+      XCTAssertTrue(try NotebookStore(root: model.store.root).loadPage(before.id).elements.isEmpty)
+    }
+  }
+
+  func testARecreatedIDIsNotTheMaterialAcceptedByTheOldContact() async throws {
+    try await fixture { model, reference in
+      var page = try XCTUnwrap(model.activePage)
+      let initial = try XCTUnwrap(page.elements.first)
+      model.selectElement(reference)
+      let contact = try XCTUnwrap(model.beginElementManipulation(reference, kind: .move))
+      let other = UUID()
+      XCTAssertTrue(page.replaceElements([], actor: other)); _ = try model.store.savePage(page)
+      XCTAssertTrue(page.replaceElements([.init(id: initial.id, kind: initial.kind, frame: initial.frame,
+        source: "Replacement", html: "<p>Different material</p>")], actor: other))
+      _ = try model.store.savePage(page)
+      _ = model.finishElementManipulation(contact, translation: .init(x: 90, y: 60))
+      let flushed = await model.finishPendingPersistence(); XCTAssertTrue(flushed)
+      await model.reloadExternalChanges()?.value
+      let saved = try model.store.loadPage(page.id)
+      XCTAssertEqual(saved.elements.first?.frame, initial.frame)
+      XCTAssertEqual(saved.elements.first?.source, "Replacement")
+    }
+  }
+
+  func testFrameCommitPublishesTheCurrentPageFrontierAndItsNewNeighbour() async throws {
+    try await fixture { model, reference in
+      var page = try XCTUnwrap(model.activePage)
+      model.selectElement(reference)
+      let contact = try XCTUnwrap(model.beginElementManipulation(reference, kind: .move))
+      let inserted = page.replaceElements(page.elements + [.init(id: "neighbour", kind: .web,
+        frame: .init(x: 500, y: 100, width: 100, height: 100), source: "New", html: "<p>New</p>")], actor: UUID())
+      XCTAssertTrue(inserted); _ = try model.store.savePage(page)
+      XCTAssertTrue(model.finishElementManipulation(contact, translation: .init(x: 30, y: 20)))
+      let flushed = await model.finishPendingPersistence(); XCTAssertTrue(flushed)
+      let saved = try model.store.loadPage(page.id)
+      XCTAssertEqual(model.activePage?.agentStamp, saved.agentStamp)
+      XCTAssertTrue(model.activePage?.elements.contains { $0.id == "neighbour" } == true)
+    }
+  }
+
   func testMissingElementPinsKeepTheirBoardAddress() async throws {
     try await fixture { model, _ in
       let child = try XCTUnwrap(model.createBoard(at: .zero))

@@ -1,4 +1,5 @@
 import Foundation
+import NotebookCore
 
 enum NotebookElementCorner: String, CaseIterable, Sendable {
   case topLeading, topTrailing, bottomLeading, bottomTrailing
@@ -26,11 +27,15 @@ struct NotebookElementManipulation: Equatable, Sendable {
   let kind: Kind
   let original: CGRect
   let bounds: CGRect?
+  let identity: VersionStamp?
+  let worldOrigin: WorldPoint?
   private(set) var frame: CGRect
 
-  init(reference: EditableElementReference, kind: Kind, frame: CGRect, bounds: CGRect?) {
+  init(reference: EditableElementReference, kind: Kind, frame: CGRect, bounds: CGRect?, identity: VersionStamp? = nil,
+    worldOrigin: WorldPoint? = nil) {
     self.reference = reference; self.kind = kind; original = frame
     self.frame = frame; self.bounds = bounds
+    self.identity = identity; self.worldOrigin = worldOrigin
   }
 
   mutating func update(translation: CGPoint) {

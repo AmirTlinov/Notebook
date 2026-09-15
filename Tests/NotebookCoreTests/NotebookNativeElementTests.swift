@@ -66,6 +66,24 @@ struct NotebookNativeElementTests {
     }
   }
 
+  @Test func frameCommitKeepsCurrentSourceAndCannotRecreateADeletedSpatialElement() throws {
+    try fixture { store, actor, boardID, element in
+      let board = try #require(store.loadBoard(items: store.loadIndex().items).board(boardID))
+      let identity = try #require(board.elementIdentityStamp(element.id))
+      _ = try store.updateNativeSpatialText(boardID: boardID, elementID: element.id, text: "Concurrent source", finish: false, actor: UUID())
+      let frame = SpatialRect(x: 60, y: 70, width: 200, height: 90)
+      let moved = try store.commitSpatialElementFrame(boardID: boardID, elementID: element.id, identity: identity,
+        original: element.frame, frame: frame, origin: nil, actor: actor)
+      #expect(moved?.element.frame == frame && moved?.element.source == "Concurrent source")
+      _ = try store.updateNativeSpatialText(boardID: boardID, elementID: element.id, text: "", finish: true, actor: actor)
+      let cursor = try store.currentChangeCursor()
+      #expect(try store.commitSpatialElementFrame(boardID: boardID, elementID: element.id, identity: identity,
+        original: frame, frame: element.frame, origin: nil, actor: actor) == nil)
+      #expect(try store.currentChangeCursor() == cursor)
+      #expect(try NotebookStore(root: store.root).readSpatialElement(boardID: boardID, elementID: element.id) == nil)
+    }
+  }
+
   @Test func offscreenPinsRetainTheirCarrierAndRejectAnInsufficientBudget() throws {
     try fixture { store, actor, board, element in
       let owner = try #require(element.surface.ownerID)
