@@ -475,6 +475,16 @@ def system_trace_module():
     return module
 
 
+def write_upgrade_manifest(previous_manifest, manifest, source_sha256):
+    # A container handoff, not source content, owns this launch manifest. A
+    # development and a clean build may have identical sources; the earlier
+    # manifest must remain byte-for-byte intact after either installation.
+    path = previous_manifest.with_name("ipad-build-" + source_sha256[:16] + "-" + str(uuid.uuid4()) + ".json")
+    release.require(not path.exists(), "Manifest этого обновления уже существует.")
+    write(path, manifest)
+    return path
+
+
 def upgrade(args):
     """Update only the selected private pair; preserve its data and trust scope."""
     release.require(args.mac_pid > 1, "Нужен конкретный PID private helper.")
@@ -536,9 +546,7 @@ def upgrade(args):
     after = {"mac": data_inventory(mac_root), "iPad": data_inventory(ipad_manifest["root"])}
     write(directory / "data-after.json", after)
     release.require(before == after, "Обновление изменило сохранённые данные; пара не запущена.")
-    new_manifest = relocated_old_manifest.with_name("ipad-build-" + built["sourceSHA256"][:16] + ".json")
-    release.require(not new_manifest.exists(), "Manifest этой сборки уже существует.")
-    write(new_manifest, ipad_manifest)
+    new_manifest = write_upgrade_manifest(relocated_old_manifest, ipad_manifest, built["sourceSHA256"])
     current = {**previous, "build": str(build_directory), "sourceSHA256": built["sourceSHA256"],
                "sourceRevision": built["sourceRevision"], "iPadManifest": str(new_manifest),
                "continuedFrom": str(previous_directory / "run.json"),

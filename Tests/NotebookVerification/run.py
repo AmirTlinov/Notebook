@@ -175,6 +175,24 @@ class SelectionTests(unittest.TestCase):
             with self.assertRaises(release.ReleaseError):
                 acceptance.rebase_simulator_manifest({**manifest, "root": str(outside)}, old, new)
 
+    def test_equal_source_builds_preserve_previous_manifests_across_two_handoffs(self):
+        source = "a" * 64
+        previous = self.root / ("ipad-build-" + source[:16] + ".json")
+        original = {"runID": str(uuid.uuid4()), "actorID": str(uuid.uuid4()), "root": "/old/store"}
+        previous.write_text(json.dumps(original))
+        original_bytes = previous.read_bytes()
+        first_value = {**original, "root": "/first/store"}
+        first = acceptance.write_upgrade_manifest(previous, first_value, source)
+        first_bytes = first.read_bytes()
+        second_value = {**original, "root": "/second/store"}
+        second = acceptance.write_upgrade_manifest(first, second_value, source)
+        self.assertEqual(len({previous, first, second}), 3)
+        self.assertEqual(previous.read_bytes(), original_bytes)
+        self.assertEqual(first.read_bytes(), first_bytes)
+        self.assertEqual(json.loads(first_bytes), first_value)
+        self.assertEqual(json.loads(second.read_bytes()), second_value)
+        self.assertEqual(second.parent, previous.parent)
+
     def test_installed_manifest_follows_moved_container_without_reading_missing_original(self):
         old, new = (self.root / str(uuid.uuid4()) for _ in range(2))
         run_id, workspace = str(uuid.uuid4()), str(uuid.uuid4())
