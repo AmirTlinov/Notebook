@@ -485,6 +485,27 @@ def write_upgrade_manifest(previous_manifest, manifest, source_sha256):
     return path
 
 
+def pairing_invitation_path(value, attempt):
+    runtime = Path.home() / "Library/Application Support/NotebookAcceptance" / str(uuid.UUID(value["runID"]))
+    release.require(Path(value["macManifest"]).resolve().parent == runtime.resolve(),
+                    "Приглашение должно принадлежать private runtime выбранной пары.")
+    # XCTest's Mac runner is sandboxed. Its ordinary clipboard handoff belongs
+    # to that runner's own container, not the helper's storage or the checkout.
+    runner = Path.home() / "Library/Containers" / (MAC_BUNDLE + ".uitests.xctrunner") / "Data"
+    return runner / "Library/Application Support/NotebookAcceptance" / runtime.name / ("ui-invitation-" + str(uuid.UUID(attempt)) + ".private")
+
+
+def read_pairing_invitation(value, reference):
+    release.require(reference["runID"] == value["runID"], "Приглашение принадлежит другой паре.")
+    path = pairing_invitation_path(value, reference["attempt"])
+    release.require(not path.is_symlink() and path.is_file()
+                    and path.stat().st_mode & 0o777 == 0o600 and path.stat().st_size <= 16_384,
+                    "Нужно закрытое приглашение из обычного Mac UI.")
+    invitation = path.read_text()
+    release.require(invitation.startswith("notebook-pair:v2:"), "Нет приглашения Notebook из обычного Mac UI.")
+    return invitation
+
+
 def upgrade(args):
     """Update only the selected private pair; preserve its data and trust scope."""
     release.require(args.mac_pid > 1, "Нужен конкретный PID private helper.")
@@ -740,9 +761,17 @@ def ui(args):
         write(ui_manifest, manifest)
         launch_manifest = str(ui_manifest)
     environment = {"NOTEBOOK_ACCEPTANCE_MANIFEST": launch_manifest if args.platform == "ipad" else value["macManifest"],
-                   "NOTEBOOK_ACCEPTANCE_INVITATION_FILE": str(directory / "invitation.private"),
                    "NOTEBOOK_ACCEPTANCE_PEER_ID": peer["actorID"], "NOTEBOOK_ACCEPTANCE_WORKSPACE_ID": value["workspaceID"],
                    "NOTEBOOK_ACCEPTANCE_REPLY_MARKER": "ACCEPTANCE_REPLY_" + value["runID"]}
+    creates_invitation = args.platform == "mac" and args.test == "NotebookAcceptanceMacUITests/testCreateInvitationThroughMenu"
+    invitation_reference = {"runID": value["runID"], "attempt": attempt} if creates_invitation else None
+    if creates_invitation:
+        # The invitation is runtime data, not a source artifact. A UI runner
+        # does not need access to the user's Documents to hand this secret to
+        # the selected iPad. Each real copy has its own immutable private file.
+        invitation_path = pairing_invitation_path(value, attempt)
+        invitation_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        environment["NOTEBOOK_ACCEPTANCE_INVITATION_FILE"] = str(invitation_path)
     if args.platform == "mac":
         environment["NOTEBOOK_ACCEPTANCE_MAC_APPLICATION"] = built["macApp"]
     if interaction:
@@ -769,7 +798,7 @@ def ui(args):
     if navigation:
         environment.update(navigation["environment"])
     if args.platform == "ipad" and args.test == "NotebookAcceptanceUITests/testJoinRealMacThroughPairingUI":
-        environment["NOTEBOOK_ACCEPTANCE_INVITATION"] = (directory / "invitation.private").read_text()
+        environment["NOTEBOOK_ACCEPTANCE_INVITATION"] = read_pairing_invitation(value, read(directory / "invitation.json"))
     targets = ui_targets(spec)
     chosen = [t for t in targets if t.get("BlueprintName") == target_name or t.get("TestBundlePath", "").endswith(target_name + ".xctest")]
     release.require(len(chosen) == 1, "Не найден ровно один изолированный UI target.")
@@ -834,6 +863,9 @@ def ui(args):
         if recording:
             recording.start()
         run(command, output=evidence / "test.log", timeout=timeout, on_exit=runner_did_exit)
+        if invitation_reference:
+            read_pairing_invitation(value, invitation_reference)
+            write(directory / "invitation.json", invitation_reference)
         if trace:
             write(evidence / "system-trace-segments.json", trace.finish())
             trace_finished = True
