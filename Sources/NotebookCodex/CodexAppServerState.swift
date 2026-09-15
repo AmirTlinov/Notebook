@@ -33,9 +33,16 @@ struct CodexAppServerState: Sendable {
     for message in history { try acceptMessageID(message) }
     let known = Set(messages.map(\.id))
     messages = Array((history.filter { !known.contains($0.id) } + messages).suffix(64))
+    for turn in turns {
+      guard let id = turn["id"]?.string, let status = turn["status"]?.string else { throw CodexBridgeError.invalidResponse }
+      // Events received during the read own their newer status. A runtime
+      // activity event must not discard unrelated historical terminal states.
+      if turnStatuses[id] == nil { turnStatuses[id] = status }
+    }
     if !receivedRuntimeState {
       runtimeActive = thread["status"]?["type"] == .string("active")
-      for turn in turns { try acceptTurn(turn) }
+      // Descending history: only the newest turn can establish current work.
+      if let newest = turns.first { try acceptTurn(newest) }
     }
     ready = true; revision += 1
   }

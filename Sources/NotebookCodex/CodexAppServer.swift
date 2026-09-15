@@ -98,9 +98,11 @@ public actor CodexAppServer {
       "threadId": .string(threadID), "items": .array([Self.notebookRuntimeContext])]))
     guard epoch == generation else { throw CodexBridgeError.disconnected }
     let history = try await history(threadID: threadID)
+    // Terminal headings need the bounded recent turn metadata after reconnect,
+    // not the multi-megabyte items that produced each tool receipt.
     let turns = try await rpc.request("thread/turns/list", params: .object([
-      "threadId": .string(threadID), "limit": .number(1), "sortDirection": .string("desc"), "itemsView": .string("notLoaded")]))
-    guard epoch == generation, var state = states[threadID], let rows = turns["data"]?.array, rows.count <= 1 else { throw CodexBridgeError.disconnected }
+      "threadId": .string(threadID), "limit": .number(64), "sortDirection": .string("desc"), "itemsView": .string("notLoaded")]))
+    guard epoch == generation, var state = states[threadID], let rows = turns["data"]?.array, rows.count <= 64 else { throw CodexBridgeError.disconnected }
     try state.hydrate(thread: thread, history: history.messages, turns: rows)
     states[threadID] = state; output.yield(.conversation(state.view))
   }

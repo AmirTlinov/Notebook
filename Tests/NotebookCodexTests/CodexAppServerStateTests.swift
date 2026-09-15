@@ -29,6 +29,27 @@ struct CodexAppServerStateTests {
       history: [.init(id: "answer", turnID: "turn", clientID: nil, role: .assistant, text: "old")], turns: [])
     #expect(state.view.messages[0].text == "new"); #expect(state.view.ready)
   }
+  @Test func reconnectKeepsHistoricalStopDespiteNewerRuntimeEvents() throws {
+    var state = CodexAppServerState(threadID: "thread")
+    try state.accept(event("thread/status/changed", ["status": .object(["type": .string("idle")])]))
+    try state.accept(event("turn/completed", ["turn": .object(["id": .string("newest"), "status": .string("completed")])]))
+    try state.hydrate(thread: .object(["id": .string("thread"), "status": .object(["type": .string("active")])]),
+      history: [.init(id: "old-tool", turnID: "stopped", clientID: nil, role: .assistant,
+        text: "Operation admitted", activity: .init(kind: .tool, status: "completed"))],
+      turns: [.object(["id": .string("newest"), "status": .string("inProgress")]),
+        .object(["id": .string("stopped"), "status": .string("interrupted")])])
+    #expect(state.view.turnStatuses == ["newest": "completed", "stopped": "interrupted"])
+    #expect(!state.view.busy); #expect(state.view.activeTurnID == nil)
+  }
+  @Test func historicalTurnMetadataDoesNotTakeOverCurrentWork() throws {
+    var state = CodexAppServerState(threadID: "thread")
+    try state.hydrate(thread: .object(["id": .string("thread"), "status": .object(["type": .string("active")])]),
+      history: [], turns: [.object(["id": .string("newest"), "status": .string("inProgress")]),
+        .object(["id": .string("older"), "status": .string("inProgress")]),
+        .object(["id": .string("stopped"), "status": .string("interrupted")])])
+    #expect(state.view.busy); #expect(state.view.activeTurnID == "newest")
+    #expect(state.view.turnStatuses["stopped"] == "interrupted")
+  }
   @Test func requestsResolveByNativeIDAndDoNotResolveTheirNeighbor() throws {
     var state = CodexAppServerState(threadID: "thread")
     for id in [JSONValue.number(8), .string("8")] {
