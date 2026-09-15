@@ -45,8 +45,8 @@ struct PageSurface: View {
               publishReadiness(ink: inkIsReady, overlay: overlayIsReady)
             },
             onState: { elementID, state in
-              guard isVisible, isCurrent, model.activePage?.id == page.id else { return }
-              model.commitElementState(pageID: page.id, elementID: elementID, state: state)
+              guard isVisible, isCurrent, model.activePage?.id == page.id else { return false }
+              return model.commitElementState(pageID: page.id, elementID: elementID, state: state)
             }, visibleRegion: visibleRegion
           )
           .opacity(isVisible ? 1 : 0)

@@ -99,8 +99,9 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     model.inputGate.notifyAcceptedContact()
     let premature = expectation(description: "The submitted FIFO read still owns the opening task")
     premature.isInverted = true
-    var isHoldingWriter = true
-    let observer = Task { await opening.value; if isHoldingWriter { premature.fulfill() } }
+    let isHoldingWriter = NotebookPersistenceFenceContract.Signal<Bool>()
+    isHoldingWriter.set(true)
+    let observer = Task { await opening.value; if isHoldingWriter.value == true { premature.fulfill() } }
     // Repeated accepted/revoked openings replace intent, while the one source
     // read stays behind the controlled writer until its actual completion.
     for _ in 0..<5 {
@@ -110,7 +111,7 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     }
     await fulfillment(of: [premature], timeout: 0.1)
     XCTAssertNil(model.documents[first.id])
-    isHoldingWriter = false
+    isHoldingWriter.set(false)
     blocker.release()
     try await predecessor.value
     await observer.value

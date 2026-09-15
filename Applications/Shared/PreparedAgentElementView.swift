@@ -59,7 +59,7 @@ struct PreparedAgentElementView: View {
   let requestedCapture: AgentSnapshotPolicy?
   let focus: InteractiveElementReference
   let onRenderReady: (Bool) -> Void
-  let onState: (JSONValue) -> Void
+  let onState: (JSONValue) -> Bool
 
   @State private var raster: RasterLease?
   @State private var web: WebSurfaceLease?
@@ -77,7 +77,7 @@ struct PreparedAgentElementView: View {
 
   init(element: AgentElement, allowsInteraction: Bool, inputEnabled: Bool = true,
     allowsProgramExecution: Bool = true, capturePolicy: AgentSnapshotPolicy? = nil, focus: InteractiveElementReference,
-    onRenderReady: @escaping (Bool) -> Void, onState: @escaping (JSONValue) -> Void) {
+    onRenderReady: @escaping (Bool) -> Void, onState: @escaping (JSONValue) -> Bool) {
     self.element = element
     self.allowsInteraction = allowsInteraction
     self.inputEnabled = inputEnabled
@@ -237,8 +237,8 @@ struct PreparedAgentElementView: View {
             }
             onRenderReady(false)
           }, onState: { value in
-            guard isActive, hasFocus, self.web?.id == web.id, !web.isReleased else { return }
-            onState(value)
+            guard isActive, hasFocus, self.web?.id == web.id, !web.isReleased else { return false }
+            return onState(value)
           })
           .id(web.id)
           .opacity(showsLiveProgram ? 1 : 0)

@@ -46,7 +46,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     var onInteraction: () -> Void = {}
     var onInstalled: (SceneSourceInstallation) -> Void = { _ in }
     var onFailure: (AgentWebSourceFailure) -> Void = { _ in }
-    let onState: (JSONValue) -> Void
+    let onState: (JSONValue) -> Bool
 
     func makeCoordinator() -> AgentWebCoordinator {
       AgentWebCoordinator(
@@ -238,7 +238,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     var onInteraction: () -> Void = {}
     var onInstalled: (SceneSourceInstallation) -> Void = { _ in }
     var onFailure: (AgentWebSourceFailure) -> Void = { _ in }
-    let onState: (JSONValue) -> Void
+    let onState: (JSONValue) -> Bool
 
     func makeCoordinator() -> AgentWebCoordinator {
       AgentWebCoordinator(
@@ -560,7 +560,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private let resources: SceneRenderResources
   private var snapshotPolicy: AgentSnapshotPolicy
   private(set) var snapshotFailure: SceneRenderError?
-  private var onState: (JSONValue) -> Void
+  private var onState: (JSONValue) -> Bool
   private var onRenderReady: (Bool) -> Void
   private var onSnapshotPrepared: ((RasterLease) -> Void)?
   private var onInteractionReady: (Bool) -> Void
@@ -574,6 +574,8 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private(set) var loadToken: String?
   private var runtimeLoaded = false
   private var appliedState: JSONValue?
+  private var localStateRevision: UInt64 = 0
+  private var stateToApply: JSONValue?
   private var stateApplication: Task<Void, Never>?
   private var stateApplicationID: UUID?
   private var currentCapture: AgentSnapshotCapture?
@@ -596,7 +598,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     onRenderReady: @escaping (Bool) -> Void = { _ in },
     onInteractionReady: @escaping (Bool) -> Void = { _ in },
     onFailure: @escaping (AgentWebSourceFailure) -> Void = { _ in },
-    onState: @escaping (JSONValue) -> Void
+    onState: @escaping (JSONValue) -> Bool
   ) {
     self.lease = lease
     self.resources = resources
@@ -741,7 +743,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     self.onFailure = onFailure
   }
 
-  func use(onState: @escaping (JSONValue) -> Void) {
+  func use(onState: @escaping (JSONValue) -> Bool) {
     guard !isInvalidated else { return }
     self.onState = onState
   }
@@ -759,6 +761,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     loadToken = nil
     loadedElement = nil
     appliedState = nil
+    stateToApply = nil
     activeNavigation = nil
     renderIsReady = false
     stateApplicationID = nil; stateApplication?.cancel(); stateApplication = nil
@@ -769,7 +772,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     onInteractionReady = { _ in }
     onInteraction = {}
     onFailure = { _ in }
-    onState = { _ in }
+    onState = { _ in false }
     attachedWebView?.stopLoading()
     attachedWebView?.navigationDelegate = nil
     attachedWebView?.configuration.userContentController.removeScriptMessageHandler(forName: "notebook")
@@ -798,7 +801,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     if policyChanged { readinessGeneration &+= 1 }
     if let policy { snapshotPolicy = policy }
     guard loadedElement != element else {
-      if policyChanged, runtimeLoaded, let token = loadToken {
+      if policyChanged, runtimeLoaded, appliedState == element.state, let token = loadToken {
         snapshotFailure = nil
         setRenderReady(false, token: token)
         beginPreparationDeadline(token: token, policy: snapshotPolicy)
@@ -810,6 +813,9 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     }
     if let previous = loadedElement, AgentProgramSource(previous) == AgentProgramSource(element) {
       loadedElement = element
+      if previous.state != element.state {
+        stateToApply = appliedState == element.state ? nil : element.state
+      }
       if policyChanged || previous.state != element.state || previous.frame.width != element.frame.width || previous.frame.height != element.frame.height {
         snapshotFailure = nil
         if let token = loadToken {
@@ -849,6 +855,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     #endif
     loadedElement = element
     appliedState = element.state
+    localStateRevision = 0; stateToApply = nil
     snapshotFailure = nil; lastCaptureFailure = nil
     renderIsReady = false
     publishRenderReadiness(false, token: token)
@@ -863,29 +870,31 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     stateApplication = Task { @MainActor [weak self] in
       guard let self else { return }
       defer { if stateApplicationID == id { stateApplicationID = nil; stateApplication = nil } }
-      while !Task.isCancelled, accepts(token), let web = attachedWebView, let element = loadedElement {
-        if appliedState == element.state { break }
+      while !Task.isCancelled, accepts(token), let web = attachedWebView,
+        let element = loadedElement, let next = stateToApply {
+        stateToApply = nil
+        let expectedRevision = localStateRevision
         do {
-          let state = try JSONSerialization.jsonObject(with: JSONEncoder().encode(element.state), options: .fragmentsAllowed)
-          try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            web.callAsyncJavaScript("window.notebookApplyState(state); return true;",
-              arguments: ["state": state], in: nil, in: .page) { result in
+          let state = try JSONSerialization.jsonObject(with: JSONEncoder().encode(next), options: .fragmentsAllowed)
+          let accepted = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, any Error>) in
+            web.callAsyncJavaScript("return window.notebookApplyState(state, revision);",
+              arguments: ["state": state, "revision": String(expectedRevision)], in: nil, in: .page) { result in
                 switch result {
-                case .success: continuation.resume()
+                case .success(let value): continuation.resume(returning: value as? Bool == true)
                 case .failure(let error): continuation.resume(throwing: error)
                 }
               }
           }
           guard accepts(token), !Task.isCancelled else { return }
-          appliedState = element.state
+          if accepted, localStateRevision == expectedRevision { appliedState = next }
         } catch {
           if accepts(token), !Task.isCancelled { record(error, kind: "render_error", token: token, source: element) }
           return
         }
         guard accepts(token), !Task.isCancelled else { return }
-        if loadedElement == element { break }
       }
-      guard accepts(token), !Task.isCancelled, let web = attachedWebView else { return }
+      guard accepts(token), !Task.isCancelled, let web = attachedWebView,
+        appliedState == loadedElement?.state else { return }
       captureSnapshot(of: web, token: token)
     }
   }
@@ -933,8 +942,28 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       resources.record(.init(kind: kind, elementID: element.id, message: String(message.prefix(2000))), for: element)
     } else if object["kind"] as? String == "interaction", runtimeLoaded {
       onInteraction()
-    } else if object["kind"] as? String == "state", let state = object["value"], let value = Self.decodeState(state) {
-      onState(value)
+    } else if object["kind"] as? String == "state",
+      let sequence = (object["revision"] as? String).flatMap(UInt64.init), sequence > localStateRevision,
+      let state = object["value"], let value = Self.decodeState(state) {
+      // This is already the program's current value, not a request to apply an
+      // older persistence echo. A queued native application also carries this
+      // revision into WebKit, where even an as-yet-undelivered input can reject it.
+      localStateRevision = sequence
+      // Passive renderers and an unfocused program may compute local state,
+      // but have not admitted a human write. Only the input owner's positive
+      // acknowledgement advances the canonical live value; it is not a save.
+      guard onState(value) else {
+        if appliedState != loadedElement?.state {
+          stateToApply = loadedElement?.state; applyCurrentState()
+        }
+        return
+      }
+      appliedState = value; stateToApply = nil
+      if runtimeLoaded {
+        preparationDeadline?.cancel(); preparationDeadline = nil; preparationDeadlineAt = nil
+        currentCapture?.cancel()
+      }
+      setRenderReady(false, token: token)
     }
   }
 
@@ -992,7 +1021,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   }
 
   private func captureSnapshot(of webView: WKWebView, token: String) {
-    guard accepts(token), let element = loadedElement else { return }
+    guard accepts(token), let element = loadedElement, appliedState == element.state else { return }
     if snapshotInFlight { needsSnapshot = true; return }
     lastCaptureAdmission = resources.rasterAdmission
     let policy = snapshotPolicy
@@ -1035,6 +1064,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     element: AgentElement, reservation: RasterReservation, policy: AgentSnapshotPolicy? = nil) {
     defer { reservation.release() }
     guard accepts(token), let loadedElement,
+      appliedState == element.state,
       SceneRasterSource.agent(loadedElement) == .agent(element) else { return }
     if let error {
       record(error, kind: "snapshot_error", token: token, source: element, policy: policy ?? snapshotPolicy)
@@ -1244,20 +1274,23 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         window.notebookDiagnostic = (category, message) => window.webkit.messageHandlers.notebook.postMessage({token:notebookLoadToken,kind:'diagnostic',category,message:String(message)});
         addEventListener('error', event => window.notebookDiagnostic('javascript_error', event.message || 'Resource load error'));
         addEventListener('unhandledrejection', event => window.notebookDiagnostic('javascript_error', event.reason));
-        let notebookState = \(state);
+        let notebookState = \(state), notebookStateRevision = 0n;
         const notebookCanonical = value => JSON.stringify(value, (_,v) => v && typeof v === 'object' && !Array.isArray(v)
           ? Object.fromEntries(Object.keys(v).sort().map(key => [key,v[key]])) : v);
-        window.notebookApplyState = value => {
-          if (notebookCanonical(value) === notebookCanonical(notebookState)) return;
+        window.notebookApplyState = (value, expectedRevision) => {
+          if (String(notebookStateRevision) !== expectedRevision) return false;
+          if (notebookCanonical(value) === notebookCanonical(notebookState)) return true;
           notebookState = value;
           dispatchEvent(new CustomEvent('notebookstate', { detail: value }));
+          return String(notebookStateRevision) === expectedRevision;
         };
         window.notebook = Object.freeze({
           get state() { return notebookState; },
           commit(value) {
             if (notebookCanonical(value) === notebookCanonical(notebookState)) return;
             notebookState = value;
-            window.webkit.messageHandlers.notebook.postMessage({ token: notebookLoadToken, kind: 'state', value });
+            notebookStateRevision++;
+            window.webkit.messageHandlers.notebook.postMessage({ token: notebookLoadToken, kind: 'state', value, revision: String(notebookStateRevision) });
           },
           ready(promise) {
             window.notebookReadyPromise = Promise.resolve(promise);

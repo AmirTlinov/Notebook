@@ -2089,8 +2089,13 @@ final class NotebookAppModel {
 
   /// Geometry/state changes do not revoke a program's accepted message. A
   /// different program or an explicit deletion does, even if this view is gone.
-  func commitSpatialElementState(boardID: UUID, rendered: SpatialElement, state: JSONValue) {
-    guard surfaceAcceptsChanges(rendered.surface) else { return }
+  @discardableResult
+  func commitSpatialElementState(boardID: UUID, rendered: SpatialElement, state: JSONValue) -> Bool {
+    guard surfaceAcceptsChanges(rendered.surface) else { return false }
+    // Admission changes the input frontier before its addressed write can
+    // finish. A read queued before this contact must not overwrite the live
+    // program with an earlier saved value while that write is still pending.
+    collaborationReadEpoch &+= 1
     let actor = actorID
     enqueueStoreWrite(owner: .elementState(boardID, rendered.id), reload: true) { store in
       do { _ = try store.commitSpatialElementState(boardID: boardID, rendered: rendered, state: state, actor: actor) }
@@ -2099,6 +2104,7 @@ final class NotebookAppModel {
         // program keeps its state; dependent writes must not wait for a retry.
       }
     }
+    return true
   }
 
   func reserveDrawingAction(pageID: UUID) -> VersionStamp? {
@@ -2441,17 +2447,19 @@ final class NotebookAppModel {
     }
   }
 
-  func commitElementState(pageID: UUID, elementID: String, state: JSONValue) {
-    guard !isPageBeingDeleted(pageID), var page = pages[pageID] else { return }
+  @discardableResult
+  func commitElementState(pageID: UUID, elementID: String, state: JSONValue) -> Bool {
+    guard !isPageBeingDeleted(pageID), var page = pages[pageID] else { return false }
     guard let index = page.elements.firstIndex(where: { $0.id == elementID }) else {
-      return
+      return false
     }
     var elements = page.elements
     elements[index] = elements[index].updating(state: state)
     let previous = page.agentStamp
     page.replaceElements(elements, actor: actorID)
-    guard previous != page.agentStamp else { return }
+    guard previous != page.agentStamp else { return true }
     page = persistMerged(page)
+    return true
   }
 
   @discardableResult

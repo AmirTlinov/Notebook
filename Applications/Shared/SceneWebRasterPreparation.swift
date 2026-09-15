@@ -57,7 +57,7 @@ final class SceneWebRasterPreparation {
 
   private init(resources: SceneRenderResources, lease: WebSurfaceLease) throws {
     self.resources = resources; self.lease = lease
-    coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in })
+    coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in false })
     web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     #if os(iOS)
       guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })

@@ -47,7 +47,7 @@ final class AgentWebLeaseTests: XCTestCase {
   func testCurrentFrameCapturesTheInstalledDOMAndRevokesProofOnDetachOrReplacement() async throws {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .input)
-    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in })
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in false })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let host = UIViewController()
@@ -127,7 +127,7 @@ final class AgentWebLeaseTests: XCTestCase {
   func testLargeSourceCapturesOnlyItsVisibleRegionWithoutChangingLayoutOrReloading() async throws {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .input)
-    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in })
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in false })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let host = UIViewController()
@@ -192,7 +192,7 @@ final class AgentWebLeaseTests: XCTestCase {
   func testDensityChangeRecapturesTheExistingLiveProgramWithoutReloadingIt() async throws {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .input)
-    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in })
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in false })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let host = UIViewController()
@@ -269,7 +269,7 @@ final class AgentWebLeaseTests: XCTestCase {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .input)
     var states: [JSONValue] = []
-    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { states.append($0) })
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { states.append($0); return true })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     defer { coordinator.invalidate(); lease.release() }
     let previous = element(source: "first")
@@ -280,13 +280,14 @@ final class AgentWebLeaseTests: XCTestCase {
     let currentToken = try XCTUnwrap(coordinator.loadToken)
     XCTAssertNotEqual(previousToken, currentToken)
 
-    coordinator.receive(["token": previousToken, "kind": "state", "value": "late previous state"])
+    coordinator.receive(["token": previousToken, "kind": "state", "revision": "1", "value": "late previous state"])
     coordinator.receive(["token": previousToken, "kind": "diagnostic", "category": "javascript_error", "message": "late previous error"])
     coordinator.receive(["kind": "state", "value": "unaddressed state"])
     XCTAssertTrue(states.isEmpty)
     XCTAssertTrue(resources.diagnostics(for: [previous, current]).isEmpty)
 
-    coordinator.receive(["token": currentToken, "kind": "state", "value": ["current": true]])
+    coordinator.receive(["token": currentToken, "kind": "state", "revision": "1", "value": ["current": true]])
+    coordinator.receive(["token": currentToken, "kind": "state", "revision": "1", "value": "replayed input"])
     coordinator.receive(["token": currentToken, "kind": "diagnostic", "category": "overflow", "message": "current frame"])
     XCTAssertEqual(states, [.object(["current": .bool(true)])])
     XCTAssertEqual(resources.diagnostics(for: [current]).map(\.kind), ["overflow"])
@@ -300,7 +301,7 @@ final class AgentWebLeaseTests: XCTestCase {
     var ready: [Bool] = []
     var states: [JSONValue] = []
     let coordinator = AgentWebCoordinator(lease: lease, resources: resources,
-      onRenderReady: { ready.append($0) }, onState: { states.append($0) })
+      onRenderReady: { ready.append($0) }, onState: { states.append($0); return true })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     defer { coordinator.invalidate(); lease.release() }
     let source = element(source: "current")
@@ -324,7 +325,7 @@ final class AgentWebLeaseTests: XCTestCase {
   func testSnapshotFromPreviousLoadDoesNotReplaceCurrentSourceRaster() async throws {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .visible)
-    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in })
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in false })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     defer { coordinator.invalidate(); lease.release() }
     let previous = element(source: "previous")
@@ -350,7 +351,7 @@ final class AgentWebLeaseTests: XCTestCase {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .visible)
     var states: [JSONValue] = []
-    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { states.append($0) })
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { states.append($0); return true })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     defer { coordinator.invalidate() }
     let source = element(source: "old owner")
@@ -367,7 +368,7 @@ final class AgentWebLeaseTests: XCTestCase {
   func testOriginOnlyMoveReusesRasterAndAcceptsAnAlreadyRunningSnapshot() async throws {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .visible)
-    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in })
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in false })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     defer { coordinator.invalidate(); lease.release() }
     let original = element(source: "one physical surface")
@@ -391,7 +392,7 @@ final class AgentWebLeaseTests: XCTestCase {
   func testCurrentSnapshotErrorIsReportedButInvalidatedErrorIsDiscarded() async throws {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .visible)
-    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in })
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in false })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     defer { coordinator.invalidate(); lease.release() }
     let source = element(source: "current")

@@ -988,7 +988,7 @@ final class DocumentRuntimeTests: XCTestCase {
     let lease = try await resources.acquireWebSurface(priority: .input)
     var ready = false, commits: [JSONValue] = []
     let coordinator = AgentWebCoordinator(lease: lease, resources: resources, snapshotPolicy: .display(scale: 1),
-      onRenderReady: { ready = $0 }, onState: { commits.append($0) })
+      onRenderReady: { ready = $0 }, onState: { commits.append($0); return true })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: 240, height: 120),
       styleMask: .borderless, backing: .buffered, defer: false)

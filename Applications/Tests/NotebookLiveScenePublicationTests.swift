@@ -1,9 +1,43 @@
 import NotebookCore
+import SwiftUI
+import UIKit
 import XCTest
 @testable import Notebook
 
 @MainActor
 final class NotebookLiveScenePublicationTests: XCTestCase {
+  func testAcceptedProgramStateInvalidatesAReadBeforeItsWriterCompletes() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("input-frontier-" + UUID().uuidString)
+    let store = NotebookStore(root: root), actor = UUID()
+    _ = try store.initializeWorkspace(actor: actor, pageSize: NotebookAppModel.defaultPageSize)
+    let workspace = try store.loadIndex(), before = try store.loadBoard(items: workspace.items)
+    var after = before
+    let rendered = SpatialElement(id: "text-control", surface: .board(workspace.rootBoardID), kind: .web,
+      frame: .init(x: 0, y: 0, width: 200, height: 120), worldOrigin: .zero,
+      source: "Input frontier", html: "<input>", stamp: .init(counter: 0, actor: actor))
+    XCTAssertTrue(after.upsertElement(rendered, in: workspace.rootBoardID, expected: nil, actor: actor))
+    _ = try store.saveBoardEdits(before: before, after: after)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let presence = try XCTUnwrap(model.presence)
+    let savedBefore = await model.finishPendingPersistence(); XCTAssertTrue(savedBefore)
+    let epoch = model.collaborationReadEpoch
+    let read = try NotebookSceneState.read(store: model.store, presence: presence, viewport: presence.viewport)
+    let lock = try NotebookSQLWriteBlocker(store: model.store)
+    defer { try? lock.release() }
+    XCTAssertTrue(model.commitSpatialElementState(boardID: presence.boardID, rendered: rendered, state: .string("first")))
+    XCTAssertFalse(model.acceptExternalScene(read, observedEpoch: epoch, observedPresence: presence, itemPins: [:]))
+    let firstEpoch = model.collaborationReadEpoch
+    XCTAssertTrue(model.commitSpatialElementState(boardID: presence.boardID, rendered: rendered, state: .string("complete input")))
+    XCTAssertGreaterThan(model.collaborationReadEpoch, firstEpoch)
+    XCTAssertFalse(model.acceptExternalScene(read, observedEpoch: firstEpoch, observedPresence: presence, itemPins: [:]))
+    try lock.release()
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    XCTAssertEqual(try model.store.readSpatialElement(boardID: presence.boardID, elementID: rendered.id)?.state,
+      .string("complete input"))
+  }
+
   func testTwoMovesResizeAndDeleteUseAcceptedGeometryWhileTheCohortStaysOld() async throws {
     let fixture = try await fixture()
     let (model, cohort, presence, reference) = (fixture.model, fixture.cohort, fixture.presence, fixture.boardReference)
@@ -251,8 +285,74 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     let cohort = try XCTUnwrap(model.compositionTiles.published, model.compositionTiles.failure ?? "No admitted scene")
     XCTAssertTrue(cohort.plan.allowsLive(.element(boardElement.id), in: .board(workspace.rootBoardID)))
     XCTAssertTrue(cohort.plan.allowsLive(.element(coverElement.id), in: .cover(boardID: workspace.rootBoardID, itemID: workspace.selectedItemID)))
+    // Retain this actual native publication while exercising newer accepted
+    // geometry. A prepared cohort alone is deliberately not a paint receipt.
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    window.frame = .init(x: 0, y: 0, width: presence.viewport.x, height: presence.viewport.y)
+    window.rootViewController = UIHostingController(rootView:
+      RetainedLiveScene(cohort: cohort, presence: presence).environment(model).ignoresSafeArea())
+    window.makeKeyAndVisible()
+    addTeardownBlock { @MainActor in
+      window.isHidden = true; window.rootViewController = nil; previous?.makeKey()
+    }
+    let paintDeadline = ContinuousClock.now + .seconds(5)
+    while !cohort.isPaintInstalled, .now < paintDeadline {
+      window.layoutIfNeeded(); try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertTrue(cohort.isPaintInstalled)
     return .init(model: model, cohort: cohort, presence: presence,
       boardReference: .spatial(boardID: workspace.rootBoardID, elementID: boardElement.id),
       coverReference: .spatial(boardID: workspace.rootBoardID, elementID: coverElement.id))
+  }
+}
+
+/// The normal content/native-plane owners with one deliberately retained cohort;
+/// no automatic preparation task can replace the old generation under this case.
+private struct RetainedLiveScene: View {
+  @Environment(NotebookAppModel.self) private var model
+  let cohort: SceneCompositionCohort
+  let presence: SessionPresence
+  private let ink = SpatialInkSurfaceRegistry()
+
+  var body: some View {
+    ZStack { plane(.elements); plane(.covers) }
+      .environment(\.sceneComposition, .init(cohort))
+      .environment(\.workspaceSceneFrame, cohort.frame)
+  }
+
+  private func plane(_ layer: ScenePaintPosition.Layer) -> some View {
+    let workset = model.presentedWorkset(cohort: cohort, boardID: presence.boardID, presence: presence)
+    return SceneCameraPlane(presence: presence, revision: model.scenePublicationGeneration,
+      installation: cohort.installation(for: layer)) { anchor in
+      ZStack {
+        ForEach(SceneCompositionTileBandView.bands(in: cohort, plane: .board(presence.boardID), layer: layer, presence: anchor)) { band in
+          band.zIndex(Double(band.rank))
+        }
+        if layer == .elements {
+          ForEach(workset.elements) { element in
+            if let origin = element.worldOrigin {
+              let point = anchor.camera.worldToScreen(origin, viewport: anchor.viewport)
+              SpatialElementContent(element: element, commitsState: false, boardID: presence.boardID)
+                .frame(width: element.frame.width, height: element.frame.height)
+                .scaleEffect(anchor.camera.scale)
+                .position(x: point.x + (element.frame.x + element.frame.width / 2) * anchor.camera.scale,
+                  y: point.y + (element.frame.y + element.frame.height / 2) * anchor.camera.scale)
+            }
+          }
+        } else {
+          ForEach(workset.items) { item in
+            let point = anchor.camera.worldToScreen(item.center, viewport: anchor.viewport)
+            WorkspaceItemCoverView(item: item.item, boardID: presence.boardID, geometry: item.geometry,
+              spatialInkSurfaces: ink,
+              elements: model.presentedCoverElements(cohort: cohort, boardID: presence.boardID, itemID: item.id),
+              editingTextID: nil, portalOpenProgress: 0, portalViewport: anchor.viewport,
+              onTap: { _, _ in }, onTextEditingEnded: { _ in })
+              .frame(width: item.geometry.width, height: item.geometry.height)
+              .scaleEffect(anchor.camera.scale).position(x: point.x, y: point.y)
+          }
+        }
+      }
+    }
   }
 }

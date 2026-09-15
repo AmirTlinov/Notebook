@@ -1,5 +1,88 @@
 # Проверка Notebook
 
+## 15 сентября — сохранённая правка экспортирована; смешанный ввод обнаружил откат
+
+После p95 тот же чистый `e99c235` прошёл
+`ipad-testBigDocumentFullLifecyclePreservesActualSource-efa77678-9c48-4786-bf7a-0dd11e370908`:
+**1 UI PASS**, 0 skips. Новый маркер
+`Notebook UI edit 96778299-0D5D-4F4E-B726-384DEDBA6AF1` виден до закрытия
+(просмотрен PNG `7C634F6B-3BC1-4185-AE82-0BC9BBBBFC04`), затем подтверждён
+повторным открытием. Артефакты — в прежнем run `d3f8489d…` под
+`.build/async-pairing-release/runs/`.
+
+Публичный экспорт job `4100ffdf-e5ca-4477-86cd-d33ca130c217` сохранён именно
+из `contentRevision 3@a4a8e3d6-4665-46d9-96ff-f9e7ab9da146`:
+35 страниц, 2 331 848 bytes, PDF SHA
+`caf7652ef83e41ac02ae621df50045c49597019a4bf888ace1c31d6036c3ee86`.
+Маркер проверен в TeX и тексте PDF; сохранены 1680 выражений и 35 векторных
+активов, проверены их SHA/bytes, действующие GoTo 1→34 и 34→1.
+PDF страницы 1 и 34 просмотрены. Недоступная намеренная ссылка не стала
+активной битой аннотацией. Аудит:
+`.build/async-pairing-release/public/saved-edit-export-audit.json`.
+Компилятор выдал 67 предупреждений о версии включаемых PDF; итоговый PDF 1.7,
+warning-free экспорт не заявляется.
+
+Первый смешанный run `ipad-testThirtyMinutesOfMixedInteraction-43a67229…`
+**FAIL за 25,520 s**, 0 полных итераций: кнопка и slider сработали, но первая
+строка клавиатуры сократилась до `0-7F-622-BF724A2C` и в UI, и в сохранённом
+состоянии. 30 минут не засчитаны. Исправление продвигает существующий epoch
+при admission адресного ввода и проверяет внутреннюю версию WebKit до
+асинхронного применения native state; старый безусловный echo-путь заменён.
+Passive/unfocused вычисление не считается принятой записью. Публичный
+JavaScript API, единственный писатель и формат состояния не меняются.
+
+`.build/agent-input-frontier-v3/verification.json`: **1 Mac + 65 iPad PASS**,
+0 skips/runtime warnings, source SHA
+`c66cf36a2c91d4a4ed939d26ac405ca3d4a6d8328f50e9164617150adac3a87c`.
+Регрессии держат настоящий WKWebView и задержанный native callback,
+проверяют более новый ввод, фокус/selection, density-only обновление,
+повторный revision, последующее внешнее состояние и FIFO read за принятым
+вводом. Три прежних attention fixtures теперь монтируют реальные native planes
+с намеренно удержанным cohort вместо объявления подготовленных данных показанными.
+Warning о захваченном mutable test flag устранён через существующий Signal.
+v1 отклонён preflight выбора Simulator; v2: 1 Mac PASS, 55 iPad PASS/4 FAIL
+(три немонтированных fixtures и недопустимый JS function-result в новой проверке).
+Тот же SHA собран в неизменную development-копию Release и обновил прежнюю
+частную пару без изменения данных/идентичностей/доверия. Настоящий
+`testRepeatedNativeKeyboardInputPreservesExactTypedMarkers` — **1 UI PASS**,
+0 skips/runtime warnings; run `4b62a464-7a6c-46e1-8eb8-84f657338c21` под
+`.build/agent-input-frontier-development/runs/d3f8489d…`.
+Оба полных новых маркера есть в первом AX-чтении сразу после typeText;
+без дополнительного ожидания. JSON `03EFA8B3…`, `61BEFB1B…`;
+PNG `80B4A9F8…` просмотрен. Последнее значение UI в точности равно адресному
+сохранённому значению Mac, публичный read `a111212f-7744-4697-8da9-58b9bc6ac062`.
+Это короткая регрессия ввода, не повтор 30 минут и не финальная чистая приёмка.
+
+## 15 сентября — большой документ прошёл оба порога p95
+
+Чистый Release `e99c235`, source SHA
+`431328361128a6a8a3121a23daa8da74aa5a6deda957033db089081b7277738c`,
+обновил прежнюю частную пару `d3f8489d…`: описи данных до/после совпали,
+идентичности и доверие сохранены. Производственная пара не изменялась.
+Контроль `d1bc3dea…` измерен до следующей правки: 140 блоков, 1680 формул,
+35 SVG, более 6 MiB исходника; два прежних UI-маркера сохранены.
+
+`.build/async-pairing-release/runs/d3f8489d-d961-46b1-8f07-3cc0cb89a795/`
+`ipad-testTenColdOpeningsAndWarmDistantLinksMeetNativeInstallationBudgets-668723fb-2217-4fe3-8c3c-199ffe8b74ff`:
+**1 UI PASS**, 0 skips; установленный bundle до/после совпал.
+Десять новых процессов приложения/WebKit дали cold p95 **2895,64 ms**
+(порог 3000); двадцать тёплых ссылок — p95 **254,02 ms**, максимум
+257,06 ms (порог 300). Ресурсные бюджеты и подтверждения установки не ослаблены.
+JSON: `B0F596CF-DA55-4037-AF60-AB9A15A92D50` и
+`23E886FB-48D5-4D25-BAE5-7D25F370607F`. Последние cold/distant PNG просмотрены:
+текст, формулы, SVG и обратная ссылка установлены на настоящей странице.
+Это request-to-observed-installation Simulator, не FPS или touch-to-photon.
+
+Отдельный новый mini-стенд `de6f0bd8…` ещё не прошёл UI-сопряжение.
+Mac UI runner истёк через 240 s до входа в тест; sample PID 65643 показывает
+`libsecinit_appsandbox` → XPC до main. Диагностика:
+`.build/async-pairing-mac-runner-sample.txt` и mini-run
+`mac-testCreateInvitationThroughMenu-7ad9d4f1…`. Прямой запуск точного private
+helper показал обычное окно и после Copy — «Приглашение создано. Ожидается iPad».
+Затем CUA native pipe закрылся при выборе окна Simulator. Защита системы не
+отключалась, успех сопряжения не заявлен. Mini helper остановлен; продолжается
+независимая проверка исходной частной пары. Общий выпуск пока не принят.
+
 ## 15 сентября — Keychain не задерживает UI и не публикует старое сопряжение
 
 Security warnings полного Mac-прогона были реальным синхронным Keychain путём

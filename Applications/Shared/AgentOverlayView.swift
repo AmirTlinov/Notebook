@@ -12,7 +12,7 @@ struct AgentOverlayView: View {
   let allowsInteraction: Bool
   let inputEnabled: Bool
   let onRenderReady: (Bool) -> Void
-  let onState: (String, JSONValue) -> Void
+  let onState: (String, JSONValue) -> Bool
   var visibleRegion: CGRect? = nil
 
   @State private var readiness = AgentOverlayReadiness()
@@ -68,8 +68,8 @@ struct AgentOverlayView: View {
               setElement(element, ready: ready)
             },
             onState: { state in
-              guard allowsInteraction, model.interactiveElementFocus == interactiveReference else { return }
-              onState(element.id, state)
+              guard allowsInteraction, model.interactiveElementFocus == interactiveReference else { return false }
+              return onState(element.id, state)
             }
           )
         }
