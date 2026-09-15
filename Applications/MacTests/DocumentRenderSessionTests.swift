@@ -61,7 +61,7 @@ final class DocumentRenderSessionTests: XCTestCase {
   }
 
   func testEqualMaxStateStampDoesNotAliasDifferentRecordsOrRewriteTheOldSnapshot() throws {
-    let actor = UUID(), document = DocumentDocument(actor: UUID()), resources = SceneRenderResources()
+    let actor = UUID(), document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "body", html: "<button>Control</button>", height: 100)]), resources = SceneRenderResources()
     let stamp = VersionStamp(counter: 0, actor: actor)
     let before = DocumentStateJournal(id: document.id, actor: actor, records: [.init(id: "body", value: .number(1), stamp: stamp)])
     let after = DocumentStateJournal(id: document.id, actor: actor, records: [.init(id: "body", value: .number(2), stamp: stamp)])
@@ -98,6 +98,22 @@ final class DocumentRenderSessionTests: XCTestCase {
     XCTAssertThrowsError(try source.acceptLayout(receipt as NSDictionary, geometry: geometry))
   }
 
+  func testStateProjectionSharesUnchangedProgramsAcrossJournalVersions() throws {
+    let document = DocumentDocument(actor: UUID()), actor = UUID()
+    let session = DocumentRenderSession(documentID: document.id)
+    var state = DocumentStateJournal(id: document.id, actor: actor)
+    XCTAssertTrue(state.commit(blockID: "first", value: .number(1), actor: actor))
+    let first = session.state(state, blockIDs: ["first"])
+    let paper = session.state(state, blockIDs: [])
+    XCTAssertTrue(state.commit(blockID: "other", value: .number(2), actor: actor))
+    XCTAssertTrue(session.state(state, blockIDs: ["first"]) === first)
+    XCTAssertTrue(session.state(state, blockIDs: []) === paper)
+    XCTAssertTrue(paper.records.isEmpty)
+    XCTAssertTrue(state.commit(blockID: "first", value: .number(3), actor: actor))
+    XCTAssertFalse(session.state(state, blockIDs: ["first"]) === first)
+    XCTAssertEqual(first.message.states, ["first": .number(1)])
+  }
+
   func testLayoutAcceptanceRejectsAnInconsistentNeighborWithoutReplacingTheFirstRecord() throws {
     let registry = DocumentRenderRegistry(), resources = SceneRenderResources()
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "Body")])
@@ -118,7 +134,7 @@ final class DocumentRenderSessionTests: XCTestCase {
       XCTAssertEqual(error.localizedDescription, "document_layout_inconsistent")
     }
     XCTAssertTrue(source.layout === first)
-    XCTAssertTrue(registry.entry(document: document, state: state, pageIndex: 0)?.layout === first)
+    XCTAssertTrue(registry.entry(document: document, pageIndex: 0)?.layout === first)
     XCTAssertEqual(first.regions.first?.frame.height, 100)
   }
 

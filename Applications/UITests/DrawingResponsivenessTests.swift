@@ -1314,6 +1314,19 @@ final class DrawingResponsivenessTests: XCTestCase {
       "Markdown, LaTeX и интерактивный блок должны жить без падения приложения"
     )
 
+    let slider = app.webViews.sliders.firstMatch
+    XCTAssertTrue(slider.waitForExistence(timeout: 5)); XCTAssertTrue(slider.isHittable)
+    let before = try XCTUnwrap(slider.value as? String)
+    // The fixture starts at x=3 on [0,10]. Touch the actual thumb directly;
+    // there is no separate activation tap or replay into a later runtime.
+    slider.coordinate(withNormalizedOffset: .init(dx: 0.3, dy: 0.5)).press(forDuration: 0.05,
+      thenDragTo: slider.coordinate(withNormalizedOffset: .init(dx: 0.7, dy: 0.5)),
+      withVelocity: .slow, thenHoldForDuration: 0)
+    await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      (slider.value as? String).map { $0 != before } == true
+    }, object: nil)], timeout: 3)
+    XCTAssertTrue(slider.isHittable, "Accepted state cannot revoke the same control's native input")
+
     let proof = XCTAttachment(screenshot: app.screenshot())
     proof.name = "document-markdown-latex-interactive"
     proof.lifetime = .keepAlways

@@ -27,6 +27,7 @@ struct DocumentPagePresentation {
   let onPreparationFailure: (Error) -> Void
   var onStateCheckpoint: (String, JSONValue, ContentFieldVersion) async throws -> Bool = { _, _, _ in false }
   var measurements: DocumentPresentationRecorder? = nil
+  var paperToken: String { DocumentSnapshotCache.paperToken(sourceRevision: document.contentStamp.revision, pageIndex: pageIndex) }
   var token: String { DocumentSnapshotCache.token(document: document, state: state, pageIndex: pageIndex) }
   /// A full physical page retains the open document even while UIKit has not
   /// yet selected it. A thumbnail owns only its bounded static preparation.
@@ -356,6 +357,7 @@ final class DocumentPagePresentationOwner {
     input.measurements?.demand(documentID: documentID, pageIndex: input.pageIndex, token: input.token)
     let previousTarget = currentTarget
     let previousToken = entries[id]?.input.token
+    let previousPaperToken = entries[id]?.input.paperToken
     let createsEntry = entries[id] == nil
     let entry: Entry
     if let existing = entries[id] { entry = existing; entry.input = input; entry.host = host }
@@ -389,7 +391,7 @@ final class DocumentPagePresentationOwner {
     }
     source?.retainPage(input.pageIndex, hostID: id)
     if previousTarget != currentTarget
-      || (previousToken != input.token && previousToken != nil && passive?.payload?.renderToken == previousToken) {
+      || (previousToken != input.token && previousToken != nil && passive?.payload?.renderToken == previousPaperToken) {
       interruptPassiveWork()
     }
     refreshPreparationDemand()
@@ -468,9 +470,8 @@ final class DocumentPagePresentationOwner {
     guard !stopped, let id = mountedID, let entry = entries[id],
       let host = entry.host else { return }
     let input = entry.input
-    // Program state has already changed inside its own retained WebKit. Its
-    // paper's asynchronous state echo must not revoke the same source's input.
-    // Publication still compares the full state-bearing token in isInstalled.
+    // Program state and its paint receipt belong to each retained runtime;
+    // independent state changes never send another frame through the paper.
     let matches = current?.id == id && paper.payload?.pageIndex == input.pageIndex
       && (paper.payload?.source.matches(input.document) == true || paper.isPresentingEditor)
     if matches, contacts.isEmpty {
@@ -584,7 +585,7 @@ final class DocumentPagePresentationOwner {
     if paper.payload?.pageIndex != input.pageIndex, !gestureLocked {
       await programOwner.blurFocused()
     }
-    if current != nil, (mountedID != entry.id || paper.payload?.renderToken != input.token || !paper.hasCanonicalPixels),
+    if current != nil, (mountedID != entry.id || paper.payload?.renderToken != input.paperToken || !paper.hasCanonicalPixels),
       !(paper.isPresentingEditor && mountedID == entry.id && paper.payload?.source.matches(input.document) == true) {
       guard !inputLocked else { return }
       if paper.isPresentingEditor, paper.payload?.pageIndex != input.pageIndex { await paper.flushEditingDraft() }
@@ -643,12 +644,12 @@ final class DocumentPagePresentationOwner {
         // same runtime. A replaced/failed renderer cannot keep a departed one.
         paperTransfer = nil
       }
-      try await paper.awaitPresentation(token: input.token, allowsEditor: true)
+      try await paper.awaitPresentation(token: input.paperToken, allowsEditor: true)
     } else if current == nil, source == nil {
       let renderer = passiveRenderer(in: host, input: input)
       configure(renderer, input: input, page: input.pageIndex)
       renderer.mount(in: passiveHost, physicalSize: physicalSize(input), isInteractive: false, priority: .visible)
-      try await renderer.awaitPresentation(token: input.token)
+      try await renderer.awaitPresentation(token: input.paperToken)
     }
     guard let layout = source?.layout else { return }
     try Task.checkCancellation()
@@ -698,7 +699,7 @@ final class DocumentPagePresentationOwner {
         let preparationHost = liveDemand == nil ? passiveHost : (candidate.host ?? passiveHost)
         renderer.preservesFallback = true
         renderer.mount(in: preparationHost, physicalSize: physicalSize(candidate.input), isInteractive: false, priority: .visible)
-        try await renderer.awaitPresentation(token: token)
+        try await renderer.awaitPresentation(token: candidate.input.paperToken)
         observe("passive_page_canonical_ready", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
         if let liveDemand {
           try Task.checkCancellation()
@@ -747,7 +748,7 @@ final class DocumentPagePresentationOwner {
 
   private func hasStagedPaper(for entry: Entry) -> Bool {
     guard let stagedPaper, stagedPaper.entryID == entry.id, stagedPaper.token == entry.input.token,
-      let passive, passive.payload?.renderToken == entry.input.token, passive.hasCanonicalPixels,
+      let passive, passive.payload?.renderToken == entry.input.paperToken, passive.hasCanonicalPixels,
       let web = passive.webView, entry.host?.ownsSurface(web) == true else { return false }
     return true
   }
@@ -796,7 +797,7 @@ final class DocumentPagePresentationOwner {
 
   private func installPrograms(on entry: Entry) {
     guard let host = entry.host, let layout = source?.layout, paper.renderIsReady,
-      paper.payload?.renderToken == entry.input.token else { return }
+      paper.payload?.renderToken == entry.input.paperToken else { return }
     CATransaction.begin(); CATransaction.setDisableActions(true)
     defer { CATransaction.commit() }
     refreshMountedInput()
@@ -839,7 +840,7 @@ final class DocumentPagePresentationOwner {
     let isInstalled: @MainActor () -> Bool = { [weak self, weak host, weak entry] in
         guard let self, let host, let entry else { return false }
         return current?.id == entry.id && entry.input.token == installedToken
-          && paper.payload?.renderToken == installedToken && mountedID == entry.id && host.window?.isKeyWindow == true
+          && paper.payload?.renderToken == entry.input.paperToken && mountedID == entry.id && host.window?.isKeyWindow == true
           && !host.hasSnapshot && paper.hasCanonicalPixels && programsReady(on: entry.input.pageIndex)
           && installation.isInstalled
       }
@@ -885,13 +886,13 @@ final class DocumentPagePresentationOwner {
 
   private func isInstalled(_ entry: Entry) -> Bool {
     guard let host = entry.host, mountedID == entry.id,
-      paper.payload?.renderToken == entry.input.token else { return false }
+      paper.payload?.renderToken == entry.input.paperToken else { return false }
     return host.programOverlay.isPresenting(placements(on: entry), paperSize: physicalSize(entry.input), passive: passivePlacements(on: entry))
   }
 
   private func programsReady(on page: Int) -> Bool {
     guard let source, let layout = source.layout else { return false }
-    return layout.blockIDs(on: [page]).intersection(source.programIDs).allSatisfy { programOwner.runtimes[$0]?.ready == true || programOwner.paused($0) != nil }
+    return layout.blockIDs(on: [page]).intersection(source.programIDs).allSatisfy { programOwner.presents($0) }
   }
 
   private func capture(_ entry: Entry, using renderer: DocumentWebCoordinator) async throws -> RasterLease {
@@ -899,7 +900,7 @@ final class DocumentPagePresentationOwner {
     let task = Task { @MainActor [self] in
       if let preceding { _ = try? await preceding.value }
       try Task.checkCancellation()
-      guard !stopped, entry.input.token == token, renderer.payload?.renderToken == token else { throw CancellationError() }
+      guard !stopped, entry.input.token == token, renderer.payload?.renderToken == entry.input.paperToken else { throw CancellationError() }
       return try await capturePixels(entry, using: renderer)
     }
     captureTail = task; captureID = operation
@@ -933,7 +934,7 @@ final class DocumentPagePresentationOwner {
     defer { reservations.forEach { $0.release() } }
     let base = try await renderer.retainPreparedSnapshot(pixelWidth: width, force: true, reservation: reservations[0])
     renderer.releasePreparedSnapshot()
-    guard !Task.isCancelled, !stopped, entry.input.token == token, renderer.payload?.renderToken == token else {
+    guard !Task.isCancelled, !stopped, entry.input.token == token, renderer.payload?.renderToken == entry.input.paperToken else {
       base.release(); throw CancellationError()
     }
     if !hasPrograms { return base }
@@ -951,7 +952,7 @@ final class DocumentPagePresentationOwner {
       }
     }
     try Task.checkCancellation()
-    guard entry.input.token == token, renderer.payload?.renderToken == token else { throw CancellationError() }
+    guard entry.input.token == token, renderer.payload?.renderToken == entry.input.paperToken else { throw CancellationError() }
     let reservation = reservations[reservations.count - 1]
     let format = UIGraphicsImageRendererFormat(); format.scale = Double(width) / physical.width; format.opaque = true
     let image = UIGraphicsImageRenderer(size: physical, format: format).image { context in

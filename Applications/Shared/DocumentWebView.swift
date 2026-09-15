@@ -63,15 +63,28 @@ final class DocumentSnapshotCache {
     }
     #endif
 
-    nonisolated static func token(
+    static func token(
       document: DocumentDocument,
       state: DocumentStateJournal,
       pageIndex: Int
     ) -> String {
       precondition(document.id == state.id)
       precondition(pageIndex >= 0)
-      return
-        "\(document.contentStamp.counter)@\(document.contentStamp.actor.uuidString.lowercased())|\(state.stamp.counter)@\(state.stamp.actor.uuidString.lowercased())|page:\(pageIndex)"
+      let ids = DocumentRenderRegistry.shared.programIDs(document: document, pageIndex: pageIndex)
+        ?? Set(document.blocks.filter { $0.kind == .interactive }.map(\.id))
+      return compositeToken(sourceRevision: document.contentStamp.revision, records: state.records, pageIndex: pageIndex, programIDs: ids)
+    }
+
+    nonisolated static func paperToken(sourceRevision: String, pageIndex: Int) -> String {
+      "\(sourceRevision)|page:\(pageIndex)"
+    }
+
+    nonisolated static func compositeToken(sourceRevision: String, records: [DocumentStateRecord], pageIndex: Int, programIDs: Set<String>) -> String {
+      let dependencies = records.filter { programIDs.contains($0.id) }.map {
+        "\($0.id.utf8.count):\($0.id)=\($0.stamp.revision)"
+      }.joined(separator: "|")
+      let paper = paperToken(sourceRevision: sourceRevision, pageIndex: pageIndex)
+      return dependencies.isEmpty ? paper : paper + "|programs:" + dependencies
     }
   }
 
@@ -171,7 +184,7 @@ struct DocumentThumbnailView: View {
 @MainActor
 struct DocumentRuntimePayload {
   let source: DocumentSourceSnapshot
-  let state: DocumentStateSnapshot
+  var state: DocumentStateSnapshot
   var documentID: UUID { source.message.documentID }
   var paper: DocumentPaperLayout { source.message.paper }
   var blocks: [DocumentBlock] { source.message.blocks }
@@ -189,7 +202,13 @@ struct DocumentRuntimePayload {
     let omitsPrograms = programMode == "external" && source.layout.map { layout in
       layout.blockIDs(on: [pageIndex]).intersection(source.programIDs).isEmpty == false
     } != false
-    return omitsPrograms ? "paper:" + renderToken : renderToken
+    return omitsPrograms ? "paper:" + renderToken : compositeToken
+  }
+
+  var compositeToken: String {
+    let ids = source.layout?.blockIDs(on: [pageIndex]).intersection(source.programIDs) ?? source.programIDs
+    return DocumentSnapshotCache.compositeToken(sourceRevision: source.stamp.revision, records: state.records,
+      pageIndex: pageIndex, programIDs: ids)
   }
 
   func frame(generation: UInt64) -> DocumentRuntimeFrame {
@@ -639,7 +658,7 @@ final class DocumentWebCoordinator: NSObject,
     }
     if let snapshotPixelWidth, acquisitionTask == nil, let payload,
       let producer = DocumentRenderRegistry.shared.rasterProducer(documentID: payload.documentID,
-        token: payload.renderToken, resources: resources, excluding: hostID) {
+        token: payload.rasterToken, resources: resources, excluding: hostID) {
       let id = UUID(); acquisitionID = id; requestedPriority = priority
       let attemptedEpoch = producer.canonicalPixelEpoch
       acquisitionTask = Task { @MainActor [weak self] in
@@ -916,7 +935,7 @@ final class DocumentWebCoordinator: NSObject,
   private func refreshLiveReceipt() {
     guard !externallyHostedPrograms, hasCanonicalPixels, snapshotPixelWidth == nil, acceptsInput, let payload,
       appliedPageIndex == requestedPageIndex, let pageIndex = appliedPageIndex else { revokeLiveReceipt(); return }
-    DocumentRenderRegistry.shared.publishLive(documentID: payload.documentID, token: payload.renderToken,
+    DocumentRenderRegistry.shared.publishLive(documentID: payload.documentID, token: payload.compositeToken,
       pageIndex: pageIndex, hostID: hostID, generation: generation) { [weak self] in
         guard let self, !isInvalidated, hasCanonicalPixels, acceptsInput, let host else { return false }
         #if os(iOS)
@@ -1105,7 +1124,15 @@ final class DocumentWebCoordinator: NSObject,
       renderSession = DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources)
     }
     guard let renderSession else { return }
-    let nextSource = renderSession.source(document), nextState = renderSession.state(state)
+    let nextSource = renderSession.source(document)
+    let stateIDs = externallyHostedPrograms ? [] : (nextSource.layout?.blockIDs(on: [selectedPageIndex]).intersection(nextSource.programIDs) ?? nextSource.programIDs)
+    let records = state.records.filter { stateIDs.contains($0.id) }
+    // A first frame may predate measurement. Keep its immutable packet when
+    // only records outside this physical page changed; they cannot affect it.
+    let nextState: DocumentStateSnapshot
+    if let previous = payload?.state, previous.message.documentID == document.id,
+      previous.records.filter({ stateIDs.contains($0.id) }) == records { nextState = previous }
+    else { nextState = renderSession.state(records: records) }
     #if os(macOS)
       let programMode = capturesSnapshot ? "headless" : "live"
     #else
@@ -1147,7 +1174,7 @@ final class DocumentWebCoordinator: NSObject,
         recoveryAttempts = 0
       }
       payload = DocumentRuntimePayload(source: nextSource, state: nextState,
-        editable: ownsEditing, renderToken: DocumentSnapshotCache.token(document: document, state: state, pageIndex: selectedPageIndex),
+        editable: ownsEditing, renderToken: DocumentSnapshotCache.paperToken(sourceRevision: document.contentStamp.revision, pageIndex: selectedPageIndex),
         pageIndex: selectedPageIndex, runtimeID: runtimeID, blockTokens: blockTokens,
         programMode: programMode, drafts: Array(draftsByID.values))
       beginPreparationObservation(configuredAt: configuredAt)
@@ -1562,6 +1589,12 @@ final class DocumentWebCoordinator: NSObject,
     waitsForRasterAdmission: Bool = false, reservation granted: RasterReservation? = nil) async throws -> RasterLease {
     guard let payload, !isInvalidated else { throw CancellationError() }
     let requestGeneration = generation
+    // Only measured page membership can name a composite image. Before that
+    // point no exact page-state cache lookup exists, so join canonical readiness.
+    if payload.source.layout == nil {
+      try await awaitPresentation(token: payload.renderToken)
+      guard generation == requestGeneration else { throw CancellationError() }
+    }
     let source = SceneRasterSource.document(id: payload.documentID, token: payload.rasterToken)
     let minimumScale = nativeScale ?? Self.snapshotMinimumScale(pixelWidth: pixelWidth, size: physicalSize)
     if !force, let cached = resources.retainRaster(for: source, minimumScale: minimumScale) { return cached }

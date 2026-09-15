@@ -177,7 +177,7 @@ enum CurrentViewPreviewWriter {
       let preparedDocument = try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: request.pageIndex)
       documentRaster = preparedDocument
       full = try await raster(preparedDocument.image)
-      diagnostics = DocumentRenderRegistry.shared.entry(document: document, state: state, pageIndex: request.pageIndex)?.diagnostics ?? []
+      diagnostics = DocumentRenderRegistry.shared.entry(document: document, pageIndex: request.pageIndex)?.diagnostics ?? []
     case .board, .cover:
       let boardID = target.kind == .board ? target.id : target.boardID!
       guard try await source.boardExists(boardID) else { throw PreviewError.invalidSurface }

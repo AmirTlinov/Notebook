@@ -1487,8 +1487,8 @@ struct SpatialWorkspaceView: View {
     case .item(let boardID, let itemID, let center, let geometry):
       if target.kind != .page { model.selectItem(itemID) }
       var pageIndex = reference.pageIndex ?? 0
-      if target.kind == .document, let id = reference.elementID, let document = model.documents[itemID], let state = model.documentStates[itemID],
-        let region = DocumentRenderRegistry.shared.regions(document:document,state:state).first(where: { $0.id == id }) { pageIndex = region.pageIndex }
+      if target.kind == .document, let id = reference.elementID, let document = model.documents[itemID],
+        let region = DocumentRenderRegistry.shared.regions(document: document).first(where: { $0.id == id }) { pageIndex = region.pageIndex }
       let mode: WorkspaceSemanticMode = target.kind == .page ? .page : target.kind == .document ? .document : .cover
       if mode == .document { model.prepareDocumentOpening(itemID, pageIndex: pageIndex, boardID: boardID, restoreReading: false) }
       // The reference is a requested destination. A camera settlement cannot
@@ -1504,10 +1504,10 @@ struct SpatialWorkspaceView: View {
             && model.requestedReturn == nil
             && (model.requestedReference == nil || model.requestedReference?.id == reference.id)
         }, resolve: {
-          guard !settling, let document = model.documents[itemID], let state = model.documentStates[itemID]
+          guard !settling, let document = model.documents[itemID]
           else { return nil }
           if let blockID = reference.elementID {
-            return DocumentRenderRegistry.shared.regions(document: document, state: state)
+            return DocumentRenderRegistry.shared.regions(document: document)
               .first(where: { $0.id == blockID })?.pageIndex
           }
           return pageIndex

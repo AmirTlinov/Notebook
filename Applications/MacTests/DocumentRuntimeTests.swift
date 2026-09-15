@@ -48,7 +48,7 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertEqual(actual1, "0")
     let actual2 = try await js("String(requestAnimationFrame).includes('[native code]') ? 'native' : 'replaced'", web)
     XCTAssertEqual(actual2, "native")
-    XCTAssertNotNil(DocumentRenderRegistry.shared.entry(document: document, state: state, pageIndex: 0))
+    XCTAssertNotNil(DocumentRenderRegistry.shared.entry(document: document, pageIndex: 0))
     XCTAssertFalse(DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: 0),
       "An offscreen layout is not a human-visible frame")
   }
@@ -142,13 +142,13 @@ final class DocumentRuntimeTests: XCTestCase {
     let raster = try await surface.coordinator.retainPreparedSnapshot(pixelWidth: 320)
     surface.close()
     XCTAssertNotNil(layout)
-    XCTAssertTrue(DocumentRenderRegistry.shared.entry(document: document, state: state, pageIndex: 0)?.layout === layout)
+    XCTAssertTrue(DocumentRenderRegistry.shared.entry(document: document, pageIndex: 0)?.layout === layout)
     XCTAssertGreaterThan(resources.reservedBytes, 0)
     raster.release()
     await waitUntil { resources.activeWebSurfaceCount == 0 }
     let replacement = try XCTUnwrap(resources.reserveDerivedBytes(resources.byteLimit, priority: .passive))
     XCTAssertNil(layout)
-    XCTAssertNil(DocumentRenderRegistry.shared.entry(document: document, state: state, pageIndex: 0))
+    XCTAssertNil(DocumentRenderRegistry.shared.entry(document: document, pageIndex: 0))
     XCTAssertEqual(DocumentRenderRegistry.shared.layoutReferenceCount(documentID: document.id), 0,
       "Expired addresses and diagnostics must leave with their measured owner")
     XCTAssertEqual(resources.reservedBytes, resources.byteLimit)
@@ -310,7 +310,7 @@ final class DocumentRuntimeTests: XCTestCase {
       detail.name = "Program-only source readiness"; detail.lifetime = .keepAlways; add(detail)
       throw surface.coordinator.acquisitionError ?? DocumentSessionError.invalidLayout
     }
-    let expected = Set(DocumentRenderRegistry.shared.regions(document: document, state: state).filter { $0.pageIndex == 0 }.map(\.id))
+    let expected = Set(DocumentRenderRegistry.shared.regions(document: document).filter { $0.pageIndex == 0 }.map(\.id))
     XCTAssertFalse(expected.isEmpty)
     XCTAssertLessThan(expected.count, blocks.count)
     XCTAssertEqual(booted, expected, "A page host must not run the rest of the document's programs")
@@ -1105,6 +1105,32 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertTrue(surface.coordinator.payload?.source === source); XCTAssertEqual(source.encodingCount, 1)
   }
 
+  func testAnOffPageStateChangeKeepsTheActualPaperFrameAndItsCompositeKey() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [
+      .markdown(id: "body", source: String(repeating: "Independent paper and formulas $x^2$.\n\n", count: 160)),
+      .interactive(id: "far", html: "<button>Far</button>", height: 100)])
+    let actor = UUID()
+    var state = DocumentStateJournal(id: document.id, actor: actor)
+    XCTAssertTrue(state.commit(blockID: "far", value: .number(1), actor: actor))
+    let surface = surface(document: document, state: state)
+    defer { surface.close() }
+    await waitUntil { surface.coordinator.hasCanonicalPixels }
+    let web = try XCTUnwrap(surface.coordinator.webView)
+    let before = try await js("JSON.stringify(notebookRenderer.pageReceipt().work)", web)
+    let token = DocumentSnapshotCache.token(document: document, state: state, pageIndex: 0)
+    let packet = try XCTUnwrap(surface.coordinator.payload?.state)
+    XCTAssertFalse(surface.coordinator.payload?.source.layout?.blockIDs(on: [0]).contains("far") ?? true)
+    XCTAssertTrue(state.commit(blockID: "far", value: .number(2), actor: actor))
+    surface.coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _,_ in nil })
+    XCTAssertTrue(surface.coordinator.hasCanonicalPixels)
+    XCTAssertTrue(surface.coordinator.payload?.state === packet)
+    XCTAssertEqual(DocumentSnapshotCache.token(document: document, state: state, pageIndex: 0), token)
+    XCTAssertEqual(surface.coordinator.payload?.rasterToken, token)
+    let after = try await js("JSON.stringify(notebookRenderer.pageReceipt().work)", web)
+    XCTAssertEqual(after, before)
+  }
+
   func testPreparedMathKeepsItsPixelsInAnotherWebKitWithoutASecondTypeset() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [
       .markdown(id: "inline", source: "# Общая формула $x^2+y^2=z^2$\n\nТекст с $\\frac{1}{n}$ и математическими символами.\n\n👩🏽‍💻 Семья 👨‍👩‍👧‍👦 и e\u{0301}. العربية تحفظ ترتيب النص. 中文文字保持完整。"),
@@ -1150,7 +1176,7 @@ final class DocumentRuntimeTests: XCTestCase {
       XCTAssertTrue(page.coordinator.renderIsReady)
       XCTAssertTrue(page.coordinator.payload?.source === source)
       XCTAssertTrue(page.coordinator.payload?.state === pages[0].coordinator.payload?.state)
-      XCTAssertTrue(DocumentRenderRegistry.shared.entry(document: document, state: state, pageIndex: index)?.layout === layout)
+      XCTAssertTrue(DocumentRenderRegistry.shared.entry(document: document, pageIndex: index)?.layout === layout)
       let web = try XCTUnwrap(page.coordinator.webView)
       let pageNumber = try await js("String(window.notebookRenderer.pageReceipt().pageIndex)", web)
       XCTAssertEqual(pageNumber, String(index))

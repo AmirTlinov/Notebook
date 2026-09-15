@@ -23,6 +23,8 @@ final class DocumentRenderRegistry {
   }
   @MainActor private struct PublishedEntry {
     let token: String
+    let sourceStamp: VersionStamp
+    let programIDs: Set<String>
     let pageIndex: Int
     weak var layout: DocumentLayoutRecord?
     let diagnostics: [RenderDiagnostic]
@@ -203,7 +205,7 @@ final class DocumentRenderRegistry {
     renderers.first { id, renderer in
       id != hostID && renderer.value?.canShareSnapshot == true
         && renderer.value?.resourceOwner === resources
-        && renderer.value?.payload?.documentID == documentID && renderer.value?.payload?.renderToken == token
+        && renderer.value?.payload?.documentID == documentID && renderer.value?.payload?.rasterToken == token
     }?.value.value
   }
 
@@ -229,14 +231,22 @@ final class DocumentRenderRegistry {
     liveSurfaces[hostID] = nil
   }
 
-  func entry(document: DocumentDocument, state: DocumentStateJournal, pageIndex: Int) -> Entry? {
-    let token = "\(document.contentStamp.revision)|\(state.stamp.revision)"
-    return entries[document.id]?.last { $0.layout != nil && $0.token.hasPrefix(token) && $0.pageIndex == pageIndex }?.retained
+  func entry(document: DocumentDocument, pageIndex: Int) -> Entry? {
+    return entries[document.id]?.last { $0.layout != nil && $0.sourceStamp == document.contentStamp && $0.pageIndex == pageIndex }?.retained
   }
 
-  func regions(document: DocumentDocument, state: DocumentStateJournal) -> [DocumentBlockRegion] {
-    let token = "\(document.contentStamp.revision)|\(state.stamp.revision)"
-    return entries[document.id]?.last(where: { $0.layout != nil && $0.token.hasPrefix(token) })?.layout?.regions ?? []
+  func layout(document: DocumentDocument) -> DocumentLayoutRecord? {
+    entries[document.id]?.last(where: { $0.layout != nil && $0.sourceStamp == document.contentStamp })?.layout
+  }
+
+  func programIDs(document: DocumentDocument, pageIndex: Int) -> Set<String>? {
+    guard let entry = entries[document.id]?.last(where: { $0.layout != nil && $0.sourceStamp == document.contentStamp }),
+      let layout = entry.layout else { return nil }
+    return layout.blockIDs(on: [pageIndex]).intersection(entry.programIDs)
+  }
+
+  func regions(document: DocumentDocument) -> [DocumentBlockRegion] {
+    layout(document: document)?.regions ?? []
   }
 
   func layoutReferenceCount(documentID: UUID) -> Int { entries[documentID]?.count ?? 0 }
@@ -261,7 +271,8 @@ final class DocumentRenderRegistry {
     if let previous = values.last(where: { $0.token == token && $0.pageIndex == pageIndex }),
       previous.layout === layout, previous.diagnostics == diagnostics { return }
     values.removeAll { $0.token == token && $0.pageIndex == pageIndex }
-    values.append(.init(token: token, pageIndex: pageIndex, layout: layout, diagnostics: diagnostics))
+    values.append(.init(token: token, sourceStamp: source.stamp, programIDs: source.programIDs,
+      pageIndex: pageIndex, layout: layout, diagnostics: diagnostics))
     entries[documentID] = Array(values.suffix(8))
   }
 }

@@ -33,6 +33,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   private let origin = URL(string: "https://document.notebook.invalid/")!
   private var initialNavigationPending = false
   private var revision: UInt64 = 0
+  private var presentedRevision: UInt64?
   private var appliedValue: JSONValue
   private var observedStateVersion: ContentFieldVersion?
   var onChange: () -> Void = { }
@@ -43,6 +44,11 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   var onMount: (WKWebView, CGSize) -> Void = { _, _ in }
   private let size: CGSize
   var blockWidth: Double { size.width }
+
+  func presents(_ value: JSONValue, version: ContentFieldVersion?) -> Bool {
+    ready && failure == nil && presentedRevision == revision && appliedValue == value
+      && (version.map { observedStateVersion?.includes($0) == true } ?? true)
+  }
 
   init(documentID: UUID, block: DocumentBlock, sourceVersion: ContentFieldVersion,
     value: JSONValue, stateVersion: ContentFieldVersion?, width: Double, resources: SceneRenderResources) {
@@ -107,11 +113,12 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     let data = try JSONEncoder().encode(next)
     let argument = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
     let expectedRevision = revision
-    let accepted = try await webView.callAsyncJavaScript("return window.documentProgram.apply(value,revision);", arguments: ["value": argument, "revision": String(expectedRevision)], in: nil, contentWorld: .page)
+    let accepted = try await webView.callAsyncJavaScript("return await window.documentProgram.apply(value,revision);", arguments: ["value": argument, "revision": String(expectedRevision)], in: nil, contentWorld: .page)
     // A later accepted native commit wins even if WebKit's reply to the older
     // state application arrives after that commit's message.
     if accepted as? Bool == true, !stopped, self.webView === webView, revision == expectedRevision {
       value = next; appliedValue = next; observedStateVersion = stateVersion
+      presentedRevision = revision; onChange()
     }
   }
 
@@ -176,7 +183,13 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     case "ready":
       guard failure == nil || readinessTimedOut else { return }
       readinessDeadline?.cancel(); readinessDeadline = nil; readinessTimedOut = false; failure = nil
-      ready = true; onChange()
+      ready = true
+      if let value = body["revision"] as? String, UInt64(value) == revision { presentedRevision = revision }
+      onChange()
+    case "presented":
+      if let value = body["revision"] as? String, UInt64(value) == revision {
+        presentedRevision = revision; onChange()
+      }
     case "state":
       guard let data = try? JSONSerialization.data(withJSONObject: body["value"] ?? NSNull(), options: [.fragmentsAllowed]),
         let next = try? JSONDecoder().decode(JSONValue.self, from: data) else { return }
@@ -194,7 +207,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
 
   func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
     guard self.webView === webView else { return }
-    ready = false; focused = false; revision = 0; onFocus(false)
+    ready = false; focused = false; revision = 0; presentedRevision = nil; onFocus(false)
     releaseSurface(); failure = nil; start(priority: .liveProgram); onChange()
   }
 
@@ -209,7 +222,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
 
   func retry() {
     guard failure != nil else { return }
-    ready = false; failure = nil; revision = 0; releaseSurface(); start(priority: .input)
+    ready = false; failure = nil; revision = 0; presentedRevision = nil; releaseSurface(); start(priority: .input)
   }
 
   func stop() { stopped = true; startTask?.cancel(); startTask = nil; startID = nil; releaseSurface() }
@@ -242,14 +255,16 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
       const runtimeID=\(try encoded(id.uuidString));let value=\(try encoded(value)),suspended=false,declaredReady=null,revision=0n;
       const post=(kind,extra={})=>webkit.messageHandlers.documentProgram.postMessage({runtimeID,kind,...extra});
       const stable=value=>JSON.stringify(value,(_,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,v[k]])):v);
+      const painted=()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const present=async expected=>{await painted();if(revision===expected)post('presented',{revision:String(expected)})};
       const focus=()=>post('focus',{value:!!document.activeElement?.matches('input,textarea,[contenteditable=true]')});
       addEventListener('focusin',focus);addEventListener('focusout',()=>queueMicrotask(focus));
       addEventListener('click',event=>{const link=event.target.closest('a[href]');if(!link)return;event.preventDefault();post('link',{href:link.getAttribute('href'),userActivated:event.isTrusted})});
       addEventListener('error',event=>post('failure',{message:String(event.error || event.message)}));
       addEventListener('unhandledrejection',event=>post('failure',{message:String(event.reason)}));
-      window.notebook=Object.freeze({get state(){return value},commit(next){if(suspended||stable(next)===stable(value))return false;value=next;revision++;post('state',{value});return true},ready(promise){declaredReady=Promise.resolve(promise);return declaredReady}});
-      window.documentProgram=Object.freeze({apply(next,expected){if(String(revision)!==expected)return false;if(stable(value)!==stable(next)){value=next;dispatchEvent(new CustomEvent('notebookstate',{detail:value}))}return true},suspend(){suspended=true;return value},resume(){suspended=false;return true}});
-      addEventListener('load',async()=>{try{await document.fonts.ready;await Promise.all([...document.images].map(image=>image.decode().catch(()=>{})));await declaredReady;post('ready')}catch(error){post('failure',{message:String(error)})}});
+      window.notebook=Object.freeze({get state(){return value},commit(next){if(suspended||stable(next)===stable(value))return false;value=next;revision++;post('state',{value});present(revision);return true},ready(promise){declaredReady=Promise.resolve(promise);return declaredReady}});
+      window.documentProgram=Object.freeze({async apply(next,expected){if(String(revision)!==expected)return false;if(stable(value)!==stable(next)){value=next;dispatchEvent(new CustomEvent('notebookstate',{detail:value}))}await painted();return String(revision)===expected},suspend(){suspended=true;return value},resume(){suspended=false;return true}});
+      addEventListener('load',async()=>{try{await document.fonts.ready;await Promise.all([...document.images].map(image=>image.decode().catch(()=>{})));await declaredReady;await painted();post('ready',{revision:String(revision)})}catch(error){post('failure',{message:String(error)})}});
       addEventListener('DOMContentLoaded',()=>{try{const script=document.createElement('script');script.textContent=\(try encoded(block.javaScript));document.body.append(script)}catch(error){post('failure',{message:String(error)})}});
     })()</script></head><body>\(block.html)</body></html>
     """

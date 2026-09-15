@@ -53,8 +53,8 @@ enum NotebookAttentionProjection {
       itemID = target.id
       if target.kind == .document {
         guard presence.mode == .document, presence.focusedItemID == itemID else { return nil }
-        if let id = elementID, let document = model.documents[itemID], let state = model.documentStates[itemID] {
-          guard let region = DocumentRenderRegistry.shared.regions(document:document,state:state).first(where: { $0.id == id && $0.pageIndex == presence.documentPageIndex }) else { return nil }
+        if let id = elementID, let document = model.documents[itemID] {
+          guard let region = DocumentRenderRegistry.shared.regions(document: document).first(where: { $0.id == id && $0.pageIndex == presence.documentPageIndex }) else { return nil }
           local = region.frame
         } else if let page = pageIndex, page != presence.documentPageIndex { return nil }
       } else if target.kind == .cover {
@@ -299,9 +299,9 @@ enum NotebookAttentionProjection {
           elementID = element.id; region = element.frame
         }
       } else if presence.focusedItemID == item.id && presence.mode == .document,
-        let document = sources.documents[item.id], let state = sources.states[item.id] {
+        let document = sources.documents[item.id] {
         target = .init(kind:.document,id:item.id); pageIndex = presence.documentPageIndex
-        if !dragged, let block = DocumentRenderRegistry.shared.regions(document: document, state: state).first(where: {
+        if !dragged, let block = DocumentRenderRegistry.shared.regions(document: document).first(where: {
           $0.pageIndex == pageIndex && CGRect(x: $0.frame.x, y: $0.frame.y, width: $0.frame.width, height: $0.frame.height)
             .contains(CGPoint(x: region.x, y: region.y))
         }) {

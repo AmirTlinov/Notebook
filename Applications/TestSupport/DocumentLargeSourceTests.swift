@@ -393,7 +393,7 @@ final class DocumentLargeSourceTests: XCTestCase {
     let first = try store.requestTargetRender(target: target, expectedRevision: document.contentStamp.revision)
     try await CurrentViewPreviewWriter.writeTarget(first, model: model)
     let coldDuration = started.duration(to: .now)
-    let layout = try XCTUnwrap(DocumentRenderRegistry.shared.entry(document: document, state: state, pageIndex: 0)?.layout)
+    let layout = try XCTUnwrap(DocumentRenderRegistry.shared.entry(document: document, pageIndex: 0)?.layout)
     XCTAssertGreaterThan(layout.pageCount, 30)
     var firstPixels: Data?
     for index in [0, layout.pageCount - 1, layout.pageCount / 2, 0] {

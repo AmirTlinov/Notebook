@@ -76,6 +76,14 @@ final class DocumentProgramOwner {
     return saved
   }
 
+  func presents(_ id: String) -> Bool {
+    guard let input = context?.input, let block = input.document.blocks.first(where: { $0.id == id }) else { return false }
+    if paused(id) != nil { return true }
+    guard let runtime = runtimes[id], runtime.sourceVersion == input.document.sourceVersion(blockID: id) else { return false }
+    let record = input.state.records.first { $0.id == id }
+    return runtime.presents(record?.value ?? block.initialState, version: record?.valueVersion)
+  }
+
   func activate(_ id: String) {
     guard retainedIDs.contains(id) else { return }
     requestedID = id; pauseFailures[id] = nil

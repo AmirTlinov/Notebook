@@ -6,6 +6,45 @@ import XCTest
 
 @MainActor
 final class DocumentProgramOwnerTests: XCTestCase {
+  func testProgramStateChangesOnlyItsCompositeAndNeverReframesIndependentPaper() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [
+      .interactive(id: "counter", html: "<button>Increment</button><output>0</output>", javaScript: """
+        const render=()=>document.querySelector('output').textContent=String(notebook.state.count);
+        document.querySelector('button').onclick=()=>{notebook.commit({count:notebook.state.count+1});render()};
+        addEventListener('notebookstate',render);
+        """, initialState: .object(["count": .number(0)]), height: 100),
+      .markdown(id: "text", source: String(repeating: "Independent physical paper stays measured and installed.\n\n", count: 160)),
+      .interactive(id: "far", html: "<button>Far control</button>", height: 100)])
+    let fixture = try ProgramFixture(document: document)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.ready[1] == true && fixture.web(block: "counter") != nil }
+    let paper = try XCTUnwrap(fixture.paper(in: 0)), program = try XCTUnwrap(fixture.web(block: "counter"))
+    let coordinator = try XCTUnwrap(paper.navigationDelegate as? DocumentWebCoordinator)
+    let old = try await paper.evaluateJavaScript("notebookRenderer.pageReceipt().generation") as? String
+    let neighbour = try XCTUnwrap(fixture.hosts[1].snapshotEntryID)
+    let token = fixture.token(page: 1)
+    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
+    _ = try await program.evaluateJavaScript("document.querySelector('button').click();true")
+    try await wait(message: { fixture.diagnostics }) { fixture.number("counter", field: "count") == 1 && fixture.isPresented }
+    await owner.observePendingPresentationWork()
+    XCTAssertEqual(fixture.hosts[1].snapshotEntryID, neighbour)
+    XCTAssertEqual(fixture.token(page: 1), token)
+    XCTAssertTrue(coordinator.payload?.state.records.isEmpty == true)
+    fixture.replaceState(blockID: "counter", value: .object(["count": .number(9)]))
+    XCTAssertFalse(fixture.isPresented, "Admission to a block's state application is not its painted frame")
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented }
+    let shown = try await program.evaluateJavaScript("document.querySelector('output').textContent") as? String
+    XCTAssertEqual(shown, "9")
+    fixture.replaceState(blockID: "far", value: .object(["checked": .bool(true)]))
+    await owner.observePendingPresentationWork()
+    let generation = try await paper.evaluateJavaScript("notebookRenderer.pageReceipt().generation") as? String
+    XCTAssertEqual(generation, old)
+    XCTAssertTrue(fixture.paper(in: 0) === paper && fixture.web(block: "counter") === program)
+    XCTAssertEqual(fixture.hosts[1].snapshotEntryID, neighbour)
+    XCTAssertEqual(fixture.token(page: 1), token)
+    XCTAssertTrue(fixture.isPresented)
+  }
+
   func testIndependentLandingDoesNotJoinAnInvisibleProgramsCheckpoint() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [
       .interactive(id: "program", html: "<button>Count</button>", css: "",
@@ -1212,6 +1251,11 @@ private final class ProgramFixture {
   var preparationErrors: [String] = []
   var diagnostics: String { "ready=\(ready) errors=\(preparationErrors) web=\(resources.activeWebSurfaceCount) queued=\(resources.pendingWebRequestCount) held=\(resources.rasterAdmission.heldBytes) state=\(state.records.map { ($0.id, $0.value) })" }
   var currentToken: String { DocumentSnapshotCache.token(document: document, state: state, pageIndex: pageIndices[selected]) }
+  var isPresented: Bool { DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: pageIndices[selected]) }
+  func token(page: Int) -> String { DocumentSnapshotCache.token(document: document, state: state, pageIndex: page) }
+  func replaceState(blockID: String, value: JSONValue) {
+    XCTAssertTrue(state.commit(blockID: blockID, value: value, actor: actor)); refresh()
+  }
 
   init(document: DocumentDocument, resources: SceneRenderResources = SceneRenderResources(),
     measurements: DocumentPresentationRecorder? = nil, interactive: Bool = true, showsNeighbour: Bool = true) throws {
@@ -1240,7 +1284,7 @@ private final class ProgramFixture {
   func canonicalPaper(in index: Int) -> Bool {
     guard let web = paper(in: index), let coordinator = web.navigationDelegate as? DocumentWebCoordinator else { return false }
     return coordinator.hasCanonicalPixels && coordinator.payload?.pageIndex == pageIndices[index]
-      && coordinator.payload?.renderToken == DocumentSnapshotCache.token(document: document, state: state, pageIndex: pageIndices[index])
+      && coordinator.payload?.renderToken == DocumentSnapshotCache.paperToken(sourceRevision: document.contentStamp.revision, pageIndex: pageIndices[index])
   }
   func select(_ index: Int) { selected = index; refresh() }
   func setInteractive(_ value: Bool) { interactive = value; refresh() }

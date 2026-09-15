@@ -508,7 +508,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
         XCTAssertLessThanOrEqual(try XCTUnwrap(raster.image.cgImage).width, 256)
         XCTAssertNil(resources.retainRaster(for: source, minimumScale: 1), "A preview cannot certify exact paper-resolution export")
       }
-      XCTAssertEqual(DocumentRenderRegistry.shared.entry(document: document, state: state, pageIndex: index)?.token, token)
+      XCTAssertEqual(DocumentRenderRegistry.shared.entry(document: document, pageIndex: index)?.token, token)
       raster.release()
     }
     controller.rootView = content(previews: false)

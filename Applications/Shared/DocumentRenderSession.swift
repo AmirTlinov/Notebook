@@ -17,7 +17,7 @@ final class DocumentRenderSession {
     init(_ value: DocumentStateSnapshot) { self.value = value }
   }
   private var sources: [VersionStamp: [WeakSource]] = [:]
-  private var states: [VersionStamp: [WeakState]] = [:]
+  private var states: [WeakState] = []
 
   init(documentID: UUID) { self.documentID = documentID }
 
@@ -32,14 +32,16 @@ final class DocumentRenderSession {
     return snapshot
   }
 
-  func state(_ journal: DocumentStateJournal) -> DocumentStateSnapshot {
+  func state(_ journal: DocumentStateJournal, blockIDs: Set<String>? = nil) -> DocumentStateSnapshot {
     precondition(journal.id == documentID)
-    if let snapshot = states[journal.stamp]?.lazy.compactMap(\.value).first(where: { $0.matches(journal) }) { return snapshot }
-    states = states.compactMapValues { values in
-      let live = values.filter { $0.value != nil }; return live.isEmpty ? nil : live
-    }
-    let snapshot = DocumentStateSnapshot(journal)
-    states[journal.stamp, default: []].append(WeakState(snapshot))
+    return state(records: journal.records.filter { blockIDs?.contains($0.id) ?? true })
+  }
+
+  func state(records: [DocumentStateRecord]) -> DocumentStateSnapshot {
+    states = states.filter { $0.value != nil }
+    if let snapshot = states.lazy.compactMap(\.value).first(where: { $0.records == records }) { return snapshot }
+    let snapshot = DocumentStateSnapshot(documentID: documentID, records: records)
+    states.append(WeakState(snapshot))
     return snapshot
   }
 
@@ -190,19 +192,15 @@ final class DocumentSourceSnapshot {
 @MainActor
 final class DocumentStateSnapshot {
   let message: DocumentStateMessage
-  private let journal: DocumentStateJournal
-  let stamp: VersionStamp
+  let records: [DocumentStateRecord]
   private var encoding: Task<String, Error>?
   private(set) var encodingCount = 0
 
-  init(_ journal: DocumentStateJournal) {
-    self.journal = journal
-    stamp = journal.stamp
-    message = .init(key: UUID().uuidString, documentID: journal.id,
-      states: Dictionary(uniqueKeysWithValues: journal.records.map { ($0.id, $0.value) }))
+  init(documentID: UUID, records: [DocumentStateRecord]) {
+    self.records = records
+    message = .init(key: UUID().uuidString, documentID: documentID,
+      states: Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0.value) }))
   }
-
-  func matches(_ journal: DocumentStateJournal) -> Bool { self.journal == journal }
 
   func encodedJSON() async throws -> String {
     if encoding == nil {
