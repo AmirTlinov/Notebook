@@ -110,7 +110,7 @@ private struct DocumentInstallationHistory {
     app.buttons["notebook-search"].tap()
     let search = app.searchFields.firstMatch
     XCTAssertTrue(search.waitForExistence(timeout: 5)); search.tap(); search.typeText(title)
-    let result = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", title)).firstMatch
+    let result = app.collectionViews.buttons.matching(NSPredicate(format: "label CONTAINS %@", title)).firstMatch
     XCTAssertTrue(result.waitForExistence(timeout: 10), app.debugDescription)
     XCTAssertTrue(result.isHittable); result.tap()
     // A title hit addresses the cover. Open the actual located document with
@@ -204,7 +204,7 @@ private struct DocumentInstallationHistory {
     app.buttons["notebook-search"].tap()
     let search = app.searchFields.firstMatch
     XCTAssertTrue(search.waitForExistence(timeout: 5)); search.tap(); search.typeText(title)
-    let result = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", title)).firstMatch
+    let result = app.collectionViews.buttons.matching(NSPredicate(format: "label CONTAINS %@", title)).firstMatch
     XCTAssertTrue(result.waitForExistence(timeout: 10)); XCTAssertTrue(result.isHittable); result.tap()
     let cover = app.buttons["workspace-item-" + (try expectedDocumentID).uuidString.lowercased()]
     XCTAssertTrue(cover.waitForExistence(timeout: 10)); XCTAssertTrue(cover.isHittable)

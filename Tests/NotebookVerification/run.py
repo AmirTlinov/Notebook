@@ -54,8 +54,11 @@ class SelectionTests(unittest.TestCase):
 
     def test_collaborative_host_deadline_exceeds_real_native_agent_waits_only_for_exact_scenarios(self):
         scenarios = [
-            "NotebookCollaborationAcceptanceUITests/testSentRegionRemainsImmutableWhileRealAgentCreatesAnInteractiveDocument",
+            "NotebookCollaborationAcceptanceUITests/testCreatedMaterialRetainsHumanEditsThroughAgentUndoAndCancellation",
             "NotebookCollaborationAcceptanceUITests/testConcurrentHumanStateRejectsStaleAgentWriteAndSurvivesItsUndo",
+            "NotebookCollaborationAcceptanceUITests/testUseCreatedDocumentFromTheExistingRealConversation",
+            "NotebookCollaborationAcceptanceUITests/testOfflineOutgoingAndDraftSurviveRelaunchInTheSameConversation",
+            "NotebookCollaborationAcceptanceUITests/testReconnectedConversationDeliversOnceAndRetainsUnsentDraft",
         ]
         for scenario in scenarios:
             with self.subTest(scenario=scenario):
@@ -79,7 +82,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_attached_trace_accepts_only_ipad_scenarios_with_the_launch_handshake(self):
         collaborative = [
-            "NotebookCollaborationAcceptanceUITests/testSentRegionRemainsImmutableWhileRealAgentCreatesAnInteractiveDocument",
+            "NotebookCollaborationAcceptanceUITests/testCreatedMaterialRetainsHumanEditsThroughAgentUndoAndCancellation",
             "NotebookCollaborationAcceptanceUITests/testConcurrentHumanStateRejectsStaleAgentWriteAndSurvivesItsUndo",
         ]
         for scenario in collaborative + ["NotebookAcceptanceUITests/testRealChatReplyAfterPairing",
@@ -87,6 +90,7 @@ class SelectionTests(unittest.TestCase):
             self.assertTrue(acceptance.supports_attached_ui_trace("ipad", scenario))
             self.assertFalse(acceptance.supports_attached_ui_trace("mac", scenario))
         for scenario in [collaborative[0] + "Other", "NotebookCollaborationAcceptanceUITests/testWithoutHandshake",
+                         *acceptance.COLLABORATION_RECOVERY_UI_TESTS,
                          "NotebookChatPanelTests/testNativeWorkShimmersOnceAndDisclosureSurvivesResizeWithoutReplayingItems",
                          "UnknownUITests/testRealGesture"]:
             self.assertFalse(acceptance.supports_attached_ui_trace("ipad", scenario))

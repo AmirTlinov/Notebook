@@ -34,10 +34,9 @@ import XCTest
     if XCUIDevice.shared.orientation != .portrait { XCUIDevice.shared.orientation = .portrait }
     XCTAssertTrue(app.buttons["notebook-companion-compose"].waitForExistence(timeout: 20), app.debugDescription)
     XCTAssertFalse(app.otherElements["persistence-failure"].exists)
-    for _ in 0..<8 where app.otherElements["page-turn-surface"].exists {
-      let back = app.buttons["leave-nested-board"]
-      XCTAssertTrue(back.isHittable); back.tap()
-    }
+    let collapse = app.buttons["notebook-chat-toggle"]
+    if collapse.exists { XCTAssertTrue(collapse.isHittable); collapse.tap()
+      XCTAssertTrue(collapse.waitForNonExistence(timeout: 5)) }
     // Each independent scenario navigates through the real search owner; a
     // preceding document/camera test may have left the controls offscreen.
     let searchButton = app.buttons["notebook-search"]
@@ -46,11 +45,12 @@ import XCTest
     XCTAssertTrue(search.waitForExistence(timeout: 5)); search.tap()
     let sourceText = "Контрольные кнопка, ползунок и поле ввода"
     search.typeText(sourceText)
-    let results = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", sourceText))
+    let results = app.collectionViews.buttons.matching(NSPredicate(format: "label CONTAINS %@", sourceText))
     XCTAssertTrue(results.firstMatch.waitForExistence(timeout: 10)); XCTAssertEqual(results.count, 1)
     XCTAssertTrue(results.firstMatch.isHittable); results.firstMatch.tap()
     XCTAssertTrue(search.waitForNonExistence(timeout: 10))
-    XCTAssertFalse(app.otherElements["page-turn-surface"].exists)
+    XCTAssertTrue(app.otherElements["page-turn-surface"].waitForNonExistence(timeout: 10),
+      "Addressed search must finish leaving the preceding paper before the board gesture")
     XCTAssertTrue(increment.waitForExistence(timeout: 30)); XCTAssertTrue(increment.isHittable)
   }
 
@@ -299,7 +299,8 @@ import XCTest
     let existing = composer.value as? String ?? ""
     if !existing.isEmpty, existing != "Сообщение Codex" {
       XCTAssertTrue(["Помоги разобраться с выделенным фрагментом.", "Совместная проверка конфликта ",
-        "Это проверка изолированного пространства Notebook."].contains { existing.hasPrefix($0) },
+        "Это проверка изолированного пространства Notebook.", "Продолжи тот же материал проверки ",
+        "Это проверка отмены того же материала "].contains { existing.hasPrefix($0) },
         "Only an earlier acceptance scenario's unsent draft may be replaced.")
       screenshot("collaboration-earlier-acceptance-draft-before-replacement")
       composer.typeKey("a", modifierFlags: .command)
@@ -451,7 +452,7 @@ import XCTest
       "agentReportedPublicAddresses": receipt], name: "ui-recovered-conflict-for-independent-public-audit")
   }
 
-  func testSentRegionRemainsImmutableWhileRealAgentCreatesAnInteractiveDocument() throws {
+  func testCreatedMaterialRetainsHumanEditsThroughAgentUndoAndCancellation() throws {
     try launch()
     let nonce = UUID().uuidString.lowercased()
     let title = "Collaboration \(nonce)"
@@ -500,16 +501,18 @@ import XCTest
     collapseChat()
     XCTAssertEqual(try count(), before + 1)
     try inspectCreatedDocument(receipt: receipt, nonce: nonce, before: before)
+    try continueCreatedMaterial(receipt: receipt, nonce: nonce)
     try systemTrace?.ended(app)
   }
 
-  /// Continue only the observed presentation part of a completed real turn.
-  /// This does not turn an earlier timed-out end-to-end scenario into a pass.
+  /// Continue the same completed creation through its remaining human/agent
+  /// transitions. The earlier interrupted attempt retains its own failure.
   func testUseCreatedDocumentFromTheExistingRealConversation() throws {
     continueAfterFailure = false
+    executionTimeAllowance = 600
     app.launchEnvironment["NOTEBOOK_ACCEPTANCE_MANIFEST"] = try XCTUnwrap(
       ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_MANIFEST"])
-    app.activate()
+    app.launch()
     XCTAssertTrue(app.buttons["notebook-companion-compose"].waitForExistence(timeout: 20)
       || app.buttons["notebook-chat-menu"].exists)
     openChat()
@@ -541,6 +544,7 @@ import XCTest
     // The earlier board observation belongs to the original scenario, not to
     // an offscreen control in the current restored document.
     try inspectCreatedDocument(receipt: receipt, nonce: nonce, before: before)
+    try continueCreatedMaterial(receipt: receipt, nonce: nonce)
   }
 
   private func inspectCreatedDocument(receipt: [String: Any], nonce: String, before: Int) throws {
@@ -550,8 +554,14 @@ import XCTest
     app.buttons["notebook-search"].tap()
     let search = app.searchFields.firstMatch
     XCTAssertTrue(search.waitForExistence(timeout: 5)); search.tap(); search.typeText(title)
-    let result = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", title)).firstMatch
-    XCTAssertTrue(result.waitForExistence(timeout: 15)); result.tap()
+    let results = app.collectionViews.buttons.matching(NSPredicate(format: "label CONTAINS %@", title))
+    let result = results.firstMatch
+    XCTAssertTrue(result.waitForExistence(timeout: 15)); XCTAssertEqual(results.count, 1)
+    let searchRow = XCTAttachment(string: result.debugDescription)
+    searchRow.name = "created-document-search-row-before-first-touch"; searchRow.lifetime = .keepAlways; add(searchRow)
+    XCTAssertTrue(result.isHittable)
+    result.tap()
+    XCTAssertTrue(search.waitForNonExistence(timeout: 5), "One result tap must close search and navigate")
     // A title search locates its cover; the ordinary double tap opens the
     // document. The agent-reported ID only addresses this subsequent UI check.
     let cover = app.buttons["workspace-item-" + (try uuid(receipt, "documentID")).uuidString.lowercased()]
@@ -568,6 +578,184 @@ import XCTest
     try attach(["test": nonce, "recordedBeforeSendCount": before, "recordedAfterSendCount": before + 1,
       "actualCreatedProgramCount": 1, "agentReportedPublicAddresses": receipt],
       name: "ui-observations-for-independent-public-receipt-audit")
+  }
+
+  /// Continue the same document and conversation. No new fixture, direct
+  /// model mutation or second data writer can substitute for this transition.
+  private func continueCreatedMaterial(receipt: [String: Any], nonce: String) throws {
+    let documentID = try uuid(receipt, "documentID").uuidString
+    let programID = try string(receipt, "programID")
+    let output = "Collaboration count \(nonce): "
+    let createdButton = app.webViews.buttons["Collaboration increment \(nonce)"].firstMatch
+    XCTAssertTrue(app.webViews.staticTexts[output + "1"].firstMatch.exists)
+    try send("""
+      Продолжи тот же материал проверки \(nonce), документ \(documentID), блок \(programID), в этом же чате.
+      Работай только через notebook_context/notebook_execute. Я уже нажал созданную тобой кнопку один раз.
+      Прочитай реальное состояние: count должен быть 1. Если он другой — остановись с настоящей ошибкой.
+      Сохраняя остальные поля, одной nb.transaction/setBlockState прибавь 100: получится 101.
+      expected содержит contentRevision И stateRevision из nb.document. Сохрани actionID и точные
+      revisions из квитанции этого эффекта, не из последующего чтения. Emit полную квитанцию и state.
+      Не меняй исходник, разметку, камеру или другие владельцы. Я увижу 101 и нажму ту же кнопку ещё раз.
+      Жди actual count 102 ограниченными публичными чтениями; один JS run не дольше 30 секунд,
+      продолжения без повторения эффекта. После моей правки намеренно попробуй setBlockState с
+      ожиданиями именно твоей сохранённой версии 101. Ожидается revision_conflict; не обновляй expected
+      и не повторяй запись. Если запись принята — остановись и сообщи реальную ошибку.
+      Emit фактическую ошибку. Отмени только свой эффект +100 через nb.undo, прочитай итог:
+      человеческая версия 102 должна сохраниться. Создание документа не отменяй.
+      В финале один плоский JSON: test=\(nonce), phase=created_conflict_undone, documentID,
+      programID, effectActionID, effectRunID, casRunID, undoRunID, undoReceiptID,
+      observedHumanCount (1), agentCount (101), humanCount, afterUndoCount, casErrorCode,
+      undoPreservedCount (из receipt.undo.preservedCount). RunID и все квитанции только из реальных
+      ответов; emit полные ответы эффекта, отказа и undo для независимого публичного аудита.
+      """)
+    let ready = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
+      do { if try approveNotebookAccessIfRequested() { return false } }
+      catch { XCTFail("Cannot complete Notebook access: \(error)"); return true }
+      return app.webViews.staticTexts[output + "101"].firstMatch.exists && app.buttons["notebook-chat-stop"].exists
+    }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 240), .completed,
+      "The agent must continue the user's saved 1, not recreate its initial 0")
+    collapseChat(); XCTAssertTrue(createdButton.isHittable); createdButton.tap()
+    XCTAssertTrue(app.webViews.staticTexts[output + "102"].firstMatch.waitForExistence(timeout: 3))
+    screenshot("same-created-material-human-second-edit")
+    openChat()
+    let conflict = try packet(test: nonce, phase: "created_conflict_undone", timeout: 240)
+    XCTAssertEqual(try uuid(conflict, "documentID"), try uuid(receipt, "documentID"))
+    XCTAssertEqual(try string(conflict, "programID"), programID)
+    for key in ["effectActionID", "effectRunID", "casRunID", "undoRunID", "undoReceiptID"] { try uuid(conflict, key) }
+    XCTAssertEqual(try uuid(conflict, "effectActionID"), try uuid(conflict, "undoReceiptID"))
+    XCTAssertEqual(conflict["observedHumanCount"] as? Int, 1)
+    XCTAssertEqual(conflict["agentCount"] as? Int, 101)
+    XCTAssertEqual(conflict["humanCount"] as? Int, 102)
+    XCTAssertEqual(conflict["afterUndoCount"] as? Int, 102)
+    XCTAssertEqual(try string(conflict, "casErrorCode"), "revision_conflict")
+    XCTAssertGreaterThan(try XCTUnwrap(conflict["undoPreservedCount"] as? Int), 0)
+    collapseChat()
+    XCTAssertTrue(app.webViews.staticTexts[output + "102"].firstMatch.exists)
+    screenshot("same-created-material-human-version-after-agent-undo")
+
+    try send("""
+      Это проверка отмены того же материала \(nonce). Ничего не записывай. В течение 120 секунд
+      наблюдай его состояние через публичный Notebook API с nb.wait между чтениями, используя
+      ограниченные JS runs. Не меняй камеру/содержимое и не запускай другие инструменты.
+      Я прерву этот настоящий ход кнопкой Stop; до этого продолжай наблюдение.
+      """)
+    let stop = app.buttons["notebook-chat-stop"]
+    XCTAssertTrue(stop.isHittable); stop.tap()
+    XCTAssertTrue(stop.waitForNonExistence(timeout: 30))
+    let thread = try currentConversationID()
+    screenshot("same-conversation-real-turn-cancelled")
+    collapseChat()
+    XCTAssertTrue(app.webViews.staticTexts[output + "102"].firstMatch.exists)
+    try attach(["test": nonce, "threadID": thread, "documentID": documentID, "programID": programID,
+      "actualCountAfterCancel": 102, "creationAddresses": receipt, "continuationAddresses": conflict],
+      name: "linked-agent-human-cancel-chain-for-public-audit")
+  }
+
+  private func currentConversationID() throws -> String {
+    let prefix = "notebook-chat-conversation-"
+    let ids = Set(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix))
+      .allElementsBoundByIndex.map(\.identifier))
+    XCTAssertEqual(ids.count, 1)
+    let id = String(try XCTUnwrap(ids.first).dropFirst(prefix.count))
+    XCTAssertNotNil(UUID(uuidString: id)); return id
+  }
+
+  private func launchExistingCreatedMaterial() throws -> String {
+    continueAfterFailure = false; executionTimeAllowance = 600
+    app.launchEnvironment["NOTEBOOK_ACCEPTANCE_MANIFEST"] = try XCTUnwrap(
+      ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_MANIFEST"])
+    app.launch()
+    XCTAssertTrue(app.otherElements["page-turn-surface"].waitForExistence(timeout: 30))
+    let collapse = app.buttons["notebook-chat-toggle"]
+    if collapse.exists { XCTAssertTrue(collapse.isHittable); collapse.tap() }
+    let prefix = "Collaboration increment "
+    let buttons = app.webViews.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", prefix))
+    XCTAssertTrue(buttons.firstMatch.waitForExistence(timeout: 30)); XCTAssertEqual(buttons.count, 1)
+    let nonce = String(buttons.firstMatch.label.dropFirst(prefix.count))
+    XCTAssertNotNil(UUID(uuidString: nonce))
+    XCTAssertTrue(app.webViews.staticTexts["Collaboration count \(nonce): 102"].firstMatch.exists,
+      "The preceding agent/human/undo/cancel chain must remain visible in this same document")
+    return nonce
+  }
+
+  /// The external acceptance runner first stops only the manifest's private
+  /// Mac process. This method never fakes connectivity or changes stored jobs.
+  func testOfflineOutgoingAndDraftSurviveRelaunchInTheSameConversation() throws {
+    let nonce = try launchExistingCreatedMaterial()
+    openChat()
+    let threadID = try currentConversationID()
+    let notice = app.staticTexts["Mac недоступен · сообщения сохраняются на iPad"]
+    XCTAssertTrue(notice.waitForExistence(timeout: 20), "A real disconnected peer is required")
+    let outgoing = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "notebook-chat-outgoing-"))
+    let acknowledgement = "RECONNECTED \(nonce)"
+    XCTAssertFalse(app.webViews.staticTexts[acknowledgement].firstMatch.exists)
+    let composer = app.descendants(matching: .any).matching(identifier: "notebook-chat-text").firstMatch
+    XCTAssertTrue(composer.waitForExistence(timeout: 5)); composer.tap()
+    XCTAssertTrue((composer.value as? String ?? "").isEmpty || composer.value as? String == "Сообщение Codex")
+    let message = "После восстановления связи ответь только: \(acknowledgement). Не вызывай инструменты и ничего не меняй."
+    let savedMessage = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@",
+      "notebook-chat-outgoing-", message))
+    // The text and its delivery label share one job ID. Count jobs, not AX
+    // descendants. Continue an already accepted exact message without Send.
+    let existingIDs = Set(outgoing.allElementsBoundByIndex.map(\.identifier))
+    if existingIDs.isEmpty {
+      composer.typeText(message); XCTAssertEqual(composer.value as? String, message)
+      let send = app.buttons["notebook-chat-send"]
+      XCTAssertTrue(send.isHittable); XCTAssertTrue(send.isEnabled); send.tap()
+    }
+    XCTAssertTrue(outgoing.firstMatch.waitForExistence(timeout: 10))
+    let outgoingIDs = Set(outgoing.allElementsBoundByIndex.map(\.identifier))
+    XCTAssertEqual(outgoingIDs.count, 1); XCTAssertEqual(savedMessage.count, 1)
+    let outgoingID = try XCTUnwrap(outgoingIDs.first)
+    XCTAssertNotNil(UUID(uuidString: String(outgoingID.dropFirst("notebook-chat-outgoing-".count))))
+    XCTAssertFalse(app.buttons["notebook-chat-stop"].exists)
+    let draft = "Неотправленный черновик \(nonce)"
+    composer.tap(); composer.typeText(draft); XCTAssertEqual(composer.value as? String, draft)
+    screenshot("same-chat-offline-outgoing-and-separate-draft")
+    app.terminate(); app.launch()
+    XCTAssertTrue(app.buttons["notebook-companion-compose"].waitForExistence(timeout: 20)
+      || app.buttons["notebook-chat-menu"].exists)
+    openChat()
+    XCTAssertEqual(try currentConversationID(), threadID)
+    XCTAssertTrue(notice.waitForExistence(timeout: 10))
+    XCTAssertTrue(outgoing.firstMatch.waitForExistence(timeout: 10))
+    XCTAssertEqual(Set(outgoing.allElementsBoundByIndex.map(\.identifier)), [outgoingID])
+    XCTAssertEqual(composer.value as? String, draft)
+    XCTAssertEqual(savedMessage.count, 1)
+    screenshot("same-chat-offline-relaunch-preserves-message-identity-and-draft")
+    try attach(["test": nonce, "threadID": threadID, "outgoingID": outgoingID,
+      "message": message, "draft": draft, "actualCount": 102,
+      "continuedExistingOutgoingWithoutResending": !existingIDs.isEmpty], name: "offline-same-conversation-durable-observations")
+  }
+
+  /// Run after restarting the exact same private Mac manifest and binary.
+  func testReconnectedConversationDeliversOnceAndRetainsUnsentDraft() throws {
+    let nonce = try launchExistingCreatedMaterial()
+    openChat()
+    let threadID = try currentConversationID()
+    let composer = app.descendants(matching: .any).matching(identifier: "notebook-chat-text").firstMatch
+    let draft = "Неотправленный черновик \(nonce)"
+    XCTAssertEqual(composer.value as? String, draft)
+    let acknowledgement = "RECONNECTED \(nonce)"
+    // The requested marker is followed by sentence punctuation in the real
+    // prompt. Either exact response is valid; the outgoing prompt is neither.
+    let replies = app.webViews.staticTexts.matching(NSPredicate(format: "label IN %@",
+      [acknowledgement, acknowledgement + "."]))
+    XCTAssertTrue(replies.firstMatch.waitForExistence(timeout: 240),
+      "A local outbox receipt is not an actual Codex response")
+    XCTAssertTrue(app.buttons["notebook-chat-stop"].waitForNonExistence(timeout: 30))
+    let outgoing = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "notebook-chat-outgoing-"))
+    XCTAssertEqual(outgoing.count, 0)
+    XCTAssertEqual(replies.count, 1)
+    let actualReply = replies.firstMatch.label
+    XCTAssertEqual(composer.value as? String, draft)
+    XCTAssertFalse(app.staticTexts["Mac недоступен · сообщения сохраняются на iPad"].exists)
+    screenshot("same-chat-reconnected-single-reply-and-unsent-draft")
+    collapseChat()
+    XCTAssertTrue(app.webViews.staticTexts["Collaboration count \(nonce): 102"].firstMatch.exists)
+    try attach(["test": nonce, "threadID": threadID, "acknowledgement": actualReply,
+      "draft": draft, "actualCountAfterReconnect": 102], name: "reconnected-same-conversation-for-independent-history-audit")
   }
 
   func testConcurrentHumanStateRejectsStaleAgentWriteAndSurvivesItsUndo() throws {

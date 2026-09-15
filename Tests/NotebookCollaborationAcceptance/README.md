@@ -14,11 +14,11 @@ Codex с двумя публичными инструментами, а созд
 отрисовываются на `notebookstate`. Board UUID определяется агентом через контекст,
 не зашит в тесте. Нужен видимый свободный край доски рядом с виджетом для long hold.
 
-Два независимых selector, до 600 секунд каждый; `notebook_acceptance.py`
+Основной связный сценарий и отдельная регрессия CAS, до 600 секунд каждый; `notebook_acceptance.py`
 назначает этим точным сценариям 660 секунд внешнего ожидания и сохраняет
 выбранный `timeoutSeconds` в квитанции:
 
-- `NotebookAcceptanceUITests/NotebookCollaborationAcceptanceUITests/testSentRegionRemainsImmutableWhileRealAgentCreatesAnInteractiveDocument`
+- `NotebookAcceptanceUITests/NotebookCollaborationAcceptanceUITests/testCreatedMaterialRetainsHumanEditsThroughAgentUndoAndCancellation`
 - `NotebookAcceptanceUITests/NotebookCollaborationAcceptanceUITests/testConcurrentHumanStateRejectsStaleAgentWriteAndSurvivesItsUndo`
 
 Первый тест выбирает область настоящим hold/drag от пустой доски, проверяет
@@ -26,7 +26,23 @@ Codex с двумя публичными инструментами, а созд
 нажимает исходный counter. Агент должен открыть отправленные пиксели, прочитать
 старое значение, дождаться нового живого state и повторно получить тот же SHA
 внимания; затем создать документ с интерактивным блоком. UI ищет этот документ,
-открывает его и проверяет изменение 0 → 1 первым настоящим нажатием.
+открывает его и проверяет изменение 0 → 1 первым настоящим нажатием. В том же
+документе и чате агент продолжает сохранённое 1 одной транзакцией до 101. Человек
+нажимает ту же кнопку до 102; устаревшая CAS записи агента обязана получить
+revision_conflict. Undo отменяет только +100 и сохраняет человеческие 102.
+Затем UI останавливает настоящий следующий readonly turn; документ не исчезает.
+
+После этого внешний runner останавливает **только точный процесс private Mac**.
+`testOfflineOutgoingAndDraftSurviveRelaunchInTheSameConversation` требует настоящий
+offline banner, сохраняет одно исходящее сообщение, отдельный неотправленный
+черновик, перезапускает iPad и сверяет conversation/outgoing UUID и точный текст.
+После запуска прежнего private binary с тем же manifest метод
+`testReconnectedConversationDeliversOnceAndRetainsUnsentDraft` ждёт реальный ответ
+Codex, пустой outbox, неизменный черновик и сохранённые102. Для этих двух методов
+и `testUseCreatedDocumentFromTheExistingRealConversation` driver также даёт660s,
+но не разрешает trace attach без launch-handshake. Recovery читает фактическую
+квитанцию прежнего создания из того же transcript, не запускает создание снова.
+Неудачный исходный прогон остаётся FAIL, даже если продолжение прошло.
 
 Во втором тесте агент сначала принимает изменение text того же виджета и
 сохраняет post-commit `saved.receipt.revisions` и `saved.receipt.id` из ответа той
@@ -44,7 +60,8 @@ expected: оно уже могло бы прочитать человеческ�
 `publication.saved`, `receipt.undo.completedAt` (исходное число Apple reference date),
 `restored` и `preservedCount`.
 
-Каждый прогон создаёт новый чат и nonce. Тест сначала читает ID текущего
+Основной сценарий создания и отдельная регрессия CAS создают новый чат и nonce;
+recovery/offline/reconnect продолжают прежний чат. Тест сначала читает ID текущего
 разговора и задач в настоящем каталоге, затем однократно нажимает «Новый чат».
 Квитанция создания должна открыть разговор с новым UUID; тест проверяет его
 реальную AX-идентичность и пустой transcript. Пустой чат может ещё не входить
@@ -75,7 +92,7 @@ attention pixels или control тест остаётся FAIL, готовый �
    в принятых операциях, исходной CAS ошибке из run output и результате undo.
    Совпадение слов агента с ожидаемыми строками недостаточно.
 3. Прочитать созданный документ и состояние его `programID`: на первом нажатии
-   сохранено 1. Прочитать исходный `acceptance-controls` и сверить пользовательские
+   сохранено 1, после продолжения/undo/Stop — 102. Прочитать исходный `acceptance-controls` и сверить пользовательские
    count/text с UI attachments после undo.
 4. Отдельно сверить сохранение, доставку и actual shown версии через публичные
    publication/presentation receipts. Прочитанный cache image не заменяет показ.
@@ -84,9 +101,9 @@ attention pixels или control тест остаётся FAIL, готовый �
 
 Необязательная системная трасса использует существующий
 `NotebookSystemTraceHandshake`: отдельная identity/segment для настоящего launch,
-READY → Recording started → жесты → END. Это не измерение FPS посредством видео
-или CADisplayLink. Исполнение этих двух новых UI сценариев пока не подтверждено;
-их компиляция также не считается сквозной приёмкой.
+READY → Darwin start notification → жесты → END. Это не измерение FPS посредством видео
+или CADisplayLink. Исполнение каждого этапа фиксируется отдельно в docs/verification.md;
+компиляция не считается сквозной приёмкой.
 
 Семантику Swift 6 проверяет `python3 Tests/NotebookCollaborationAcceptance/typecheck.py`.
 Скрипт не занимает Simulator runner и сохраняет точную команду, compiler version,

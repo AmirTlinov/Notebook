@@ -579,8 +579,14 @@ def document_ui_request(platform, test, document_id, document_title):
 
 
 COLLABORATION_UI_TESTS = frozenset({
-    "NotebookCollaborationAcceptanceUITests/testSentRegionRemainsImmutableWhileRealAgentCreatesAnInteractiveDocument",
+    "NotebookCollaborationAcceptanceUITests/testCreatedMaterialRetainsHumanEditsThroughAgentUndoAndCancellation",
     "NotebookCollaborationAcceptanceUITests/testConcurrentHumanStateRejectsStaleAgentWriteAndSurvivesItsUndo",
+})
+
+COLLABORATION_RECOVERY_UI_TESTS = frozenset({
+    "NotebookCollaborationAcceptanceUITests/testUseCreatedDocumentFromTheExistingRealConversation",
+    "NotebookCollaborationAcceptanceUITests/testOfflineOutgoingAndDraftSurviveRelaunchInTheSameConversation",
+    "NotebookCollaborationAcceptanceUITests/testReconnectedConversationDeliversOnceAndRetainsUnsentDraft",
 })
 
 
@@ -592,7 +598,7 @@ def supports_attached_ui_trace(platform, test):
 
 def ui_timeout(platform, test, *, document=None, workload_seconds=1800):
     """Keep the host alive through the selected native scenario's own deadline."""
-    if test in COLLABORATION_UI_TESTS:
+    if test in COLLABORATION_UI_TESTS | COLLABORATION_RECOVERY_UI_TESTS:
         release.require(platform == "ipad", "Совместная UI-приёмка выполняется на iPad Simulator.")
         # XCTest allows 600 seconds, including genuine Codex packet waits.
         # The outer process gets another minute to report its terminal result.
