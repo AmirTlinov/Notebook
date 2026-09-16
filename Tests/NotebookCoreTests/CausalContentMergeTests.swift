@@ -49,6 +49,90 @@ import Testing
     }
   }
 
+  @Test func receivedContextCanAdvanceWithoutChangingTheAuthorOrValue() throws {
+    let original = try storedClock(observed: [z.uuidString.lowercased(): 9])
+    let accumulated = try storedClock(observed: [x.uuidString.lowercased(): 10,
+      y.uuidString.lowercased(): 11, z.uuidString.lowercased(): 9])
+    for (a, b) in [(original, accumulated), (accumulated, original)] {
+      let joined = try a.resolving(value: .string("c"), with: b, incomingValue: .string("c"))
+      #expect(joined.value == .string("c"))
+      #expect(joined.version == accumulated)
+      #expect(joined.version.isValid)
+      #expect(try JSONValue.encode(joined.version)["heads"] == nil,
+        "Received history is one register context, not a second copy on its author")
+      #expect(try a.joining(b) == accumulated)
+      #expect(throws: NotebookStorageError.invalidTransaction("content author value changed")) {
+        try a.resolving(value: .string("c"), with: b, incomingValue: .string("forged"))
+      }
+    }
+  }
+
+  @Test func aNewEditAfterTheJoinSupersedesAllConcurrentValues() throws {
+    let values = versions.enumerated().map { index, version in
+      State(value: .object(["text": .string(["a", "b", "c"][index])]),
+        metadata: .init(fields: ["text": version]), stamp: version.stamp)
+    }
+    let joined = try merge(merge(values[0], values[2]), values[1])
+    let nextStamp = VersionStamp(counter: 12, actor: x)
+    let next = State(value: .object(["text": .string("d")]), metadata: .init(fields: ["text":
+      .init(stamp: nextStamp, human: false, previous: joined.metadata.fields["text"])]), stamp: nextStamp)
+    for replay in values + [joined] {
+      let result = try merge(next, replay)
+      #expect(result.value == next.value, "Human priority applies to concurrency, not superseded edits")
+      #expect(result.metadata == next.metadata)
+      #expect(result.metadata.isValid)
+    }
+  }
+
+  /// These are exactly the compact stored clocks written before concurrent
+  /// values were retained. Observations could grow while the winner stayed C.
+  private func storedClock(observed: [String: UInt64]) throws -> ContentFieldVersion {
+    try JSONValue.object(["stamp": .encode(VersionStamp(counter: 9, actor: z)),
+      "human": .bool(true), "observed": .encode(observed)]).decode(ContentFieldVersion.self)
+  }
+
+  @Test func twoSQLiteReplicasAcceptStoredAccumulatedContextAndContinueEditing() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("causal-upgrade-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let local = NotebookStore(root: root.appendingPathComponent("local"))
+    let remote = NotebookStore(root: root.appendingPathComponent("remote"))
+    let (workspace, _) = try local.loadOrCreate(actor: x, pageSize: .init(width: 834, height: 1194))
+    _ = try local.loadOrCreateBoard(workspace: workspace, actor: x)
+    _ = try local.loadOrCreateSpatialInk(actor: x)
+    let id = try #require(workspace.selectedPageID)
+    let original = try page(id: id, index: 2)
+    let received = try storedClock(observed: [x.uuidString.lowercased(): 10,
+      y.uuidString.lowercased(): 11, z.uuidString.lowercased(): 9])
+    var fields = original.collaboration!.fields
+    fields["elements/material/content"] = received
+    let accumulated = try JSONValue.encode(original)
+      .setting("collaboration", .encode(CollaborativeContent(fields: fields))).decode(PageDocument.self)
+    _ = try local.savePage(original)
+    try remote.prepareEmptyWorkspace(workspaceID: local.workspaceHeader().workspaceID)
+    try transfer(from: local, to: remote, peer: x)
+    _ = try NotebookStore(root: remote.root).savePage(accumulated)
+    try transfer(from: remote, to: local, peer: z)
+    try transfer(from: local, to: remote, peer: x)
+    for store in [NotebookStore(root: local.root), NotebookStore(root: remote.root)] {
+      let cold = try store.loadPage(id)
+      #expect(cold.elements.first?.source == "c")
+      #expect(cold.collaboration?.fields["elements/material/content"] == received)
+      _ = try store.savePage(original)
+      #expect(try store.loadPage(id).collaboration?.fields["elements/material/content"] == received)
+    }
+    var edited = try local.loadPage(id)
+    let material = try #require(edited.elements.first)
+    let changed = edited.replaceElements([.init(id: material.id, kind: material.kind, frame: material.frame,
+      source: "After update", html: material.html)], stamp: .init(counter: 12, actor: x))
+    #expect(changed)
+    _ = try local.savePage(edited)
+    try transfer(from: local, to: remote, peer: x)
+    for store in [NotebookStore(root: local.root), NotebookStore(root: remote.root)] {
+      _ = try store.savePage(accumulated)
+      #expect(try store.loadPage(id).elements.first?.source == "After update")
+    }
+  }
+
   @Test func aConcurrentRemovalDoesNotReauthorTheSurvivingPayloadOnReplay() throws {
     let original = JSONValue.object(["elements": .array([.object([
       "id": .string("material"), "source": .string("Keep this source"), "css": .string("black")])])])

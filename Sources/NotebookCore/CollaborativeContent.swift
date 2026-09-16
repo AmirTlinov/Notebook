@@ -1,6 +1,6 @@
 import Foundation
 
-/// The received frontier is distinct from each immutable author's context.
+/// One received context belongs to the register, not its displayed author.
 /// Concurrent values must survive a display choice: a later causal successor
 /// can remove that winner and expose a previously non-winning human edit.
 public struct ContentFieldVersion: Codable, Equatable, Sendable {
@@ -24,18 +24,23 @@ public struct ContentFieldVersion: Codable, Equatable, Sendable {
       observed.allSatisfy({ UUID(uuidString: $0.key) != nil && $0.value <= VersionStamp.maximumCounter }) else { return false }
     guard let heads else { return true }
     guard !heads.isEmpty, heads.count <= 256,
-      heads.allSatisfy({ $0.isValid && $0.observed.allSatisfy { (observed[$0.key] ?? 0) >= $0.value } }),
-      let canonical = try? Self.frontier(heads), canonical == heads,
+      heads.allSatisfy({ $0.isValid && includes($0.stamp) }),
+      Set(heads.map(\.stamp)).count == heads.count,
+      heads == heads.sorted(by: { $0.stamp < $1.stamp }),
       let winner = Self.winner(heads) else { return false }
     return winner.stamp == stamp && winner.human == human
   }
 
   public func includes(_ other: Self) -> Bool {
-    observed[other.stamp.actor.uuidString.lowercased()].map { $0 >= other.stamp.counter } ?? false
+    includes(other.stamp)
+  }
+
+  private func includes(_ dot: VersionStamp) -> Bool {
+    observed[dot.actor.uuidString.lowercased()].map { $0 >= dot.counter } ?? false
   }
 
   private var authoredHeads: [ContentFieldHead] {
-    heads ?? [.init(stamp: stamp, human: human, observed: observed, value: nil, hasValue: false)]
+    heads ?? [.init(stamp: stamp, human: human, value: nil, hasValue: false)]
   }
 
   private func binding(_ value: JSONValue?) -> Self {
@@ -55,13 +60,13 @@ public struct ContentFieldVersion: Codable, Equatable, Sendable {
   /// genuine frontier retains values; the visible value alone cannot represent it.
   func resolving(value: JSONValue?, with other: Self, incomingValue: JSONValue?) throws -> (value: JSONValue?, version: Self) {
     let left = binding(value), right = other.binding(incomingValue)
-    let retained = try Self.frontier(left.authoredHeads + right.authoredHeads)
+    let retained = try left.frontier(with: right)
     guard let winner = Self.winner(retained), winner.hasValue else { throw NotebookStorageError.invalidTransaction("content author value missing") }
     return (winner.value, left.joined(right, retained: retained, winner: winner, retainSingleValue: false))
   }
 
   func joining(_ other: Self) throws -> Self {
-    let retained = try Self.frontier(authoredHeads + other.authoredHeads)
+    let retained = try frontier(with: other)
     guard let winner = Self.winner(retained) else { throw NotebookStorageError.transactionConflict }
     return joined(other, retained: retained, winner: winner, retainSingleValue: true)
   }
@@ -70,7 +75,7 @@ public struct ContentFieldVersion: Codable, Equatable, Sendable {
     var observations = observed
     for (actor, counter) in other.observed { observations[actor] = max(observations[actor] ?? 0, counter) }
     var result = Self(stamp: winner.stamp, human: winner.human, observed: observations)
-    if retained.count > 1 || winner.observed != observations || (retainSingleValue && winner.hasValue) {
+    if retained.count > 1 || (retainSingleValue && winner.hasValue) {
       result.heads = retained
     }
     return result
@@ -80,48 +85,44 @@ public struct ContentFieldVersion: Codable, Equatable, Sendable {
     heads.max { a, b in a.human == b.human ? a.stamp < b.stamp : !a.human }
   }
 
-  private static func frontier(_ input: [ContentFieldHead]) throws -> [ContentFieldHead] {
-    guard input.count <= 512 else { throw NotebookStorageError.limitExceeded("content_frontier") }
-    var dots: [VersionStamp: ContentFieldHead] = [:]
-    for head in input {
-      if let old = dots[head.stamp] {
-        guard old.human == head.human, old.observed == head.observed else {
-          throw NotebookStorageError.invalidTransaction("content author context changed")
-        }
-        guard !old.hasValue || !head.hasValue || old.value == head.value else {
+  private func frontier(with other: Self) throws -> [ContentFieldHead] {
+    let left = authoredHeads, right = other.authoredHeads
+    guard left.count <= 256, right.count <= 256 else { throw NotebookStorageError.limitExceeded("content_frontier") }
+    let a = Dictionary(left.map { ($0.stamp, $0) }, uniquingKeysWith: { first, _ in first })
+    let b = Dictionary(right.map { ($0.stamp, $0) }, uniquingKeysWith: { first, _ in first })
+    guard a.count == left.count, b.count == right.count else {
+      throw NotebookStorageError.invalidTransaction("duplicate content author")
+    }
+    var retained: [ContentFieldHead] = []
+    for dot in Set(a.keys).union(b.keys) {
+      switch (a[dot], b[dot]) {
+      case (.some(let old), .some(let incoming)):
+        guard old.human == incoming.human,
+          !old.hasValue || !incoming.hasValue || old.value == incoming.value else {
           throw NotebookStorageError.invalidTransaction("content author value changed")
         }
-        if !old.hasValue { dots[head.stamp] = head }
-      } else { dots[head.stamp] = head }
-    }
-    let values = Array(dots.values)
-    let retained = try values.filter { head in
-      for other in values where other.stamp != head.stamp {
-        if other.includes(head) {
-          guard !head.includes(other) else { throw NotebookStorageError.invalidTransaction("content causal cycle") }
-          return false
-        }
+        retained.append(old.hasValue ? old : incoming)
+      case (.some(let head), .none):
+        // Seen but absent means superseded. A displayed winner does not
+        // inherit authorship of every dot received by its replica.
+        if !other.includes(dot) { retained.append(head) }
+      case (.none, .some(let head)):
+        if !includes(dot) { retained.append(head) }
+      case (.none, .none): break
       }
-      return true
-    }.sorted { $0.stamp < $1.stamp }
+    }
     guard retained.count <= 256 else { throw NotebookStorageError.limitExceeded("content_frontier") }
-    return retained
+    return retained.sorted { $0.stamp < $1.stamp }
   }
 }
 
 private struct ContentFieldHead: Codable, Equatable, Sendable {
   let stamp: VersionStamp
   let human: Bool
-  let observed: [String: UInt64]
   var value: JSONValue?
   var hasValue: Bool
   var isValid: Bool {
-    stamp.counter <= VersionStamp.maximumCounter && observed.count <= 256
-      && observed.allSatisfy { UUID(uuidString: $0.key) != nil && $0.value <= VersionStamp.maximumCounter }
-      && (value?.isValid ?? true)
-  }
-  func includes(_ other: Self) -> Bool {
-    observed[other.stamp.actor.uuidString.lowercased()].map { $0 >= other.stamp.counter } ?? false
+    stamp.counter <= VersionStamp.maximumCounter && (value?.isValid ?? true)
   }
 }
 
