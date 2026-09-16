@@ -297,12 +297,12 @@ final class PreparedAgentElementViewTests: XCTestCase {
     let currentPolicy = AgentSnapshotPolicy.exact(scale: 1)
     coordinator.load(source, policy: currentPolicy, in: web)
     coordinator.completeSnapshot(prior.image, error: nil, token: token, element: source,
-      reservation: try XCTUnwrap(resources.reserveRaster(pixelWidth: 320, pixelHeight: 240)), policy: currentPolicy)
+      reservation: try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: .init(width: 320, height: 240))), policy: currentPolicy)
     let queued = try XCTUnwrap(resources.retainRaster(for: .agent(source), minimumScale: 2))
     defer { queued.release() }
     coordinator.completeSnapshot(nil, error: NSError(domain: "CurrentNativeCapture", code: 1),
       token: token, element: source,
-      reservation: try XCTUnwrap(resources.reserveRaster(pixelWidth: 320, pixelHeight: 240)), policy: currentPolicy)
+      reservation: try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: .init(width: 320, height: 240))), policy: currentPolicy)
     failureIssued = true
     try await waitUntil("The current failed capture delivers failure and false readiness") {
       failures.count == 1 && afterFailureReadiness.contains(false)

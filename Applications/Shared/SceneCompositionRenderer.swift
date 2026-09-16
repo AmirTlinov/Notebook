@@ -387,10 +387,9 @@ final class SceneCompositionRenderer {
       self.demand = demand; requestedScale = demand.minimumScale
       guard let exact = demand.policy.pixelSize(for: source),
         exact.width < Double(Int.max - 2), exact.height < Double(Int.max - 2),
-        let resident = SceneRenderResources.estimatedRasterBytes(pixelWidth: Int(exact.width), pixelHeight: Int(exact.height)),
-        let capture = SceneRenderResources.estimatedRasterBytes(pixelWidth: Int(exact.width) + 2, pixelHeight: Int(exact.height) + 2)
+        let budget = SceneRenderResources.webSnapshotBudget(pixelSize: exact)
       else { throw SceneRenderError.resourceLimit }
-      residentBytes = resident; snapshotAdditionalBytes = max(0, capture - resident)
+      residentBytes = budget.resident; snapshotAdditionalBytes = max(0, budget.capture - budget.resident)
     }
   }
 

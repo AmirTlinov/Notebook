@@ -8,6 +8,48 @@ import XCTest
 
 final class AgentWebLeaseTests: XCTestCase {
   @MainActor
+  func testSourceMipmapPyramidPreservesOriginalPixelsAndSharesItsChargedLifetime() throws {
+    let size = CGSize(width: 301, height: 173)
+    let format = UIGraphicsImageRendererFormat(); format.scale = 1
+    let image = UIGraphicsImageRenderer(size: size, format: format).image { context in
+      UIColor.red.setFill(); context.fill(CGRect(origin: .zero, size: size))
+      UIColor.blue.setFill(); context.fill(CGRect(x: 150, y: 80, width: 151, height: 93))
+    }
+    let resources = SceneRenderResources(byteLimit: 4 * 1024 * 1024, profile: .headless)
+    let source = element(source: "asymmetric pixels", width: size.width, height: size.height)
+    let reservation = try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: size))
+    let reserved = reservation.byteCount, started = ContinuousClock.now
+    let raster = try XCTUnwrap(resources.storeWebSnapshot(image, for: .agent(source), reservation: reservation))
+    let elapsed = started.duration(to: .now), original = try XCTUnwrap(image.cgImage)
+    XCTAssertTrue(raster.image === image, "Export and composition retain the original exact pixels")
+    XCTAssertTrue(raster.hasMipmaps); XCTAssertEqual(raster.pixelScale, 1)
+    let copy = try XCTUnwrap(raster.retainedCopy())
+    var width = original.width, height = original.height, charged = 0, levels = 0
+    while true {
+      let pixels = CGSize(width: width, height: height)
+      let level = try XCTUnwrap(raster.sampledImage(for: pixels))
+      XCTAssertEqual(level.width, width); XCTAssertEqual(level.height, height)
+      XCTAssertTrue(copy.sampledImage(for: pixels) === level, "A second presenter borrows the same level")
+      charged += level.bytesPerRow * level.height * 2; levels += 1
+      if width == 1 && height == 1 { break }
+      width = max(1, (width + 1) / 2); height = max(1, (height + 1) / 2)
+    }
+    XCTAssertEqual(resources.rasterCount, 1)
+    XCTAssertEqual(resources.residentBytes, charged)
+    XCTAssertLessThanOrEqual(charged, reserved)
+    XCTAssertEqual(resources.reservedBytes, 0)
+    raster.release()
+    XCTAssertEqual(resources.rasterAdmission.pinnedBytes, copy.accountedByteCount)
+    copy.release()
+    XCTAssertEqual(resources.rasterAdmission.pinnedBytes, 0)
+    let tooSmall = SceneRenderResources(byteLimit: reserved - 1, profile: .headless)
+    XCTAssertNil(tooSmall.reserveWebSnapshot(pixelSize: size), "Reject before allocating capture or levels")
+    XCTAssertEqual(tooSmall.reservedBytes, 0); XCTAssertEqual(tooSmall.rasterCount, 0)
+    let report = XCTAttachment(string: "301x173, levels=\(levels), reserved=\(reserved), resident=\(charged), generation=\(elapsed)")
+    report.name = "mipmap-allocation-and-generation"; report.lifetime = .keepAlways; add(report)
+  }
+
+  @MainActor
   func testRetiredPhysicalViewportReleasesRuntimeWhileUIKitKeepsTheShell() async {
     weak var released: WKWebView?
     var shell: PhysicalWebViewport?
@@ -307,7 +349,7 @@ final class AgentWebLeaseTests: XCTestCase {
     let source = element(source: "current")
     coordinator.load(source, in: web)
     let token = try XCTUnwrap(coordinator.loadToken)
-    let reservation = try XCTUnwrap(resources.reserveRaster(pixelWidth: 32, pixelHeight: 32))
+    let reservation = try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: .init(width: 32, height: 32)))
     coordinator.invalidate()
     coordinator.completeSnapshot(raster(), error: nil, token: token, element: source, reservation: reservation)
     coordinator.receive(["token": token, "kind": "state", "value": 42])
@@ -332,14 +374,14 @@ final class AgentWebLeaseTests: XCTestCase {
     let current = element(source: "current")
     coordinator.load(previous, in: web)
     let previousToken = try XCTUnwrap(coordinator.loadToken)
-    let previousReservation = try XCTUnwrap(resources.reserveRaster(pixelWidth: 32, pixelHeight: 32))
+    let previousReservation = try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: .init(width: 32, height: 32)))
     coordinator.load(current, in: web)
     coordinator.completeSnapshot(raster(), error: nil, token: previousToken, element: previous,
       reservation: previousReservation)
     XCTAssertNil(resources.image(for: previous))
     XCTAssertNil(resources.image(for: current))
 
-    let currentReservation = try XCTUnwrap(resources.reserveRaster(pixelWidth: 32, pixelHeight: 32))
+    let currentReservation = try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: .init(width: 32, height: 32)))
     coordinator.completeSnapshot(raster(), error: nil, token: try XCTUnwrap(coordinator.loadToken),
       element: current, reservation: currentReservation)
     XCTAssertNotNil(resources.image(for: current))
@@ -377,7 +419,7 @@ final class AgentWebLeaseTests: XCTestCase {
     let token = try XCTUnwrap(coordinator.loadToken)
     coordinator.load(moved, in: web)
     XCTAssertEqual(coordinator.loadToken, token)
-    let reservation = try XCTUnwrap(resources.reserveRaster(pixelWidth: 32, pixelHeight: 32))
+    let reservation = try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: .init(width: 32, height: 32)))
     coordinator.completeSnapshot(raster(), error: nil, token: token, element: original, reservation: reservation)
     let retained = try XCTUnwrap(resources.retainRaster(for: moved))
     defer { retained.release() }
@@ -401,11 +443,11 @@ final class AgentWebLeaseTests: XCTestCase {
     let failure = NSError(domain: "NotebookSnapshotTest", code: 1,
       userInfo: [NSLocalizedDescriptionKey: "Snapshot failed"])
     coordinator.completeSnapshot(nil, error: failure, token: token, element: source,
-      reservation: try XCTUnwrap(resources.reserveRaster(pixelWidth: 32, pixelHeight: 32)))
+      reservation: try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: .init(width: 32, height: 32))))
     XCTAssertEqual(resources.diagnostics(for: [source]).map(\.kind), ["snapshot_error"])
     coordinator.invalidate()
     coordinator.completeSnapshot(nil, error: NSError(domain: "late", code: 2), token: token, element: source,
-      reservation: try XCTUnwrap(resources.reserveRaster(pixelWidth: 32, pixelHeight: 32)))
+      reservation: try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: .init(width: 32, height: 32))))
     XCTAssertEqual(resources.diagnostics(for: [source]).count, 1)
   }
 

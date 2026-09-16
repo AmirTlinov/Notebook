@@ -52,8 +52,26 @@ struct SceneCameraProjection: Equatable {
 /// Handlers read the latest projection without subscribing physical content to
 /// every camera sample. This value owns no camera and never writes presence.
 @MainActor
+protocol ScenePlaneProjectionObserver: AnyObject {
+  func scenePlaneDidProject()
+}
+
+@MainActor
 final class ScenePlaneProjection {
+  private final class Observer {
+    weak var value: (any ScenePlaneProjectionObserver)?
+    init(_ value: any ScenePlaneProjectionObserver) { self.value = value }
+  }
+  private var observers: [ObjectIdentifier: Observer] = [:]
   private(set) var current: SessionPresence
+  func register(_ observer: any ScenePlaneProjectionObserver) { observers[ObjectIdentifier(observer)] = Observer(observer) }
+  func remove(_ observer: any ScenePlaneProjectionObserver) { observers[ObjectIdentifier(observer)] = nil }
+  func didProject() {
+    for (id, observer) in observers {
+      guard let value = observer.value else { observers[id] = nil; continue }
+      value.scenePlaneDidProject()
+    }
+  }
   init(_ current: SessionPresence) { self.current = current }
   func update(_ current: SessionPresence) { self.current = current }
 }
@@ -352,12 +370,14 @@ final class SceneCameraPlaneController<Revision: Equatable>: UIViewController, S
     host.view.transform = CGAffineTransform(scaleX: matrix.scale, y: matrix.scale)
     host.view.center = CGPoint(x: anchor.viewport.x / 2 * matrix.scale + matrix.translation.x,
       y: anchor.viewport.y / 2 * matrix.scale + matrix.translation.y)
+    projection?.didProject()
     if countsProjection { cameraProjectionCount += 1 }
   }
 
   override func viewDidLayoutSubviews() {
     super.viewDidLayoutSubviews()
     if let host { host.view.layoutIfNeeded(); hasInstalledLayout = true }
+    projection?.didProject()
     observe("plane_did_layout")
   }
 

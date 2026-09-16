@@ -21,8 +21,8 @@ struct AgentWebSourceFailure: Equatable, Sendable {
 
   static func captureFitsAfterImprovement(source: AgentElement, policy: AgentSnapshotPolicy,
     previous: SceneRasterAdmission, current: SceneRasterAdmission) -> Bool {
-    guard let pixels = policy.pixelSize(for: source), pixels.width < CGFloat(Int.max - 2), pixels.height < CGFloat(Int.max - 2),
-      let bytes = SceneRenderResources.estimatedRasterBytes(pixelWidth: Int(pixels.width) + 2, pixelHeight: Int(pixels.height) + 2, bytesPerPixel: SceneRenderResources.webSnapshotBytesPerPixel)
+    guard let pixels = policy.pixelSize(for: source),
+      let budget = SceneRenderResources.webSnapshotBudget(pixelSize: pixels)
     else { return false }
     func available(_ admission: SceneRasterAdmission) -> Int {
       min(admission.byteLimit - admission.heldBytes,
@@ -31,7 +31,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     let improved = available(current) > available(previous)
       || current.countLimit - current.pinnedCount - current.reservedCount
         > previous.countLimit - previous.pinnedCount - previous.reservedCount
-    return improved && current.fits(additionalBytes: bytes, additionalCount: 1)
+    return improved && current.fits(additionalBytes: budget.capture, additionalCount: 1)
   }
 }
 
@@ -101,6 +101,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
   /// both duplicates the backing and can retain a minified image across zoom.
   struct AgentElementSnapshotView: UIViewRepresentable {
     @Environment(NotebookAppModel.self) private var model: NotebookAppModel?
+    @Environment(\.scenePlaneProjection) private var projection
     weak var raster: RasterLease?
     var onInstalled: (RasterLease) -> Void = { _ in }
     var onSourceInstalled: (SceneSourceInstallation, RasterLease) -> Void = { _, _ in }
@@ -111,6 +112,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
 
     func updateUIView(_ view: AgentSnapshotRasterView, context: Context) {
       view.bindSceneLifecycle(to: model)
+      view.bindProjection(projection)
       view.onRasterInstalled = { [weak view] raster in
         onInstalled(raster)
         if let view { onSourceInstalled(view.installation(for: raster), raster) }
@@ -126,11 +128,12 @@ struct AgentWebSourceFailure: Equatable, Sendable {
 
   /// The physical bounds determine backing allocation. An external camera
   /// transform only projects this completed raster and never raises its density.
-  final class AgentSnapshotRasterView: UIView, NotebookScenePresentationOwner, SceneSourceInstallationOwner {
+  final class AgentSnapshotRasterView: UIView, NotebookScenePresentationOwner, SceneSourceInstallationOwner, ScenePlaneProjectionObserver {
     private weak var sceneModel: NotebookAppModel?
     private var isRetired = false
     private var retainedRaster: RasterLease?
     private let cropLayer = CALayer()
+    private weak var projection: ScenePlaneProjection?
     var onRasterInstalled: ((RasterLease) -> Void)?
 
     init() {
@@ -152,6 +155,31 @@ struct AgentWebSourceFailure: Equatable, Sendable {
       sceneModel?.unregisterScenePresentation(self)
       sceneModel = model
       model?.registerScenePresentation(self)
+    }
+
+    func bindProjection(_ projection: ScenePlaneProjection?) {
+      guard self.projection !== projection else { return }
+      self.projection?.remove(self); self.projection = projection; projection?.register(self)
+    }
+    func scenePlaneDidProject() { updateSampling() }
+    private func updateSampling() {
+      guard let raster = retainedRaster, !raster.isReleased else { return }
+      let region = raster.source.captureRegion
+      let physical = region.flatMap { region in raster.source.agentElement.map { source in
+        CGRect(x: region.x / source.frame.width * bounds.width, y: region.y / source.frame.height * bounds.height,
+          width: region.width / source.frame.width * bounds.width, height: region.height / source.frame.height * bounds.height)
+      }} ?? bounds
+      let projected = convert(physical, to: window)
+      let scale = window?.screen.scale ?? traitCollection.displayScale
+      let pixelSize = projected.isEmpty ? CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        : CGSize(width: projected.width * scale, height: projected.height * scale)
+      let image = raster.sampledImage(for: pixelSize)
+      let target = region == nil ? layer : cropLayer
+      let filter: CALayerContentsFilter = raster.hasMipmaps ? .linear : .trilinear
+      guard (target.contents as AnyObject?) !== image || target.minificationFilter != filter else { return }
+      CATransaction.begin(); CATransaction.setDisableActions(true)
+      target.minificationFilter = filter; target.contents = image
+      CATransaction.commit()
     }
 
     /// A tile's cohort may end while this native view is still shown. Its
@@ -187,17 +215,17 @@ struct AgentWebSourceFailure: Equatable, Sendable {
       }
       if raster.source.captureRegion != nil {
         layer.contents = nil
-        cropLayer.contents = image.cgImage; cropLayer.contentsScale = image.scale
+        cropLayer.contentsScale = image.scale
         layoutRaster()
       } else {
         cropLayer.contents = nil
-        if (layer.contents as AnyObject?) !== image.cgImage { layer.contents = image.cgImage }
         layer.contentsScale = image.scale
       }
+      updateSampling()
       if window != nil { onRasterInstalled?(raster) }
     }
 
-    override func layoutSubviews() { super.layoutSubviews(); layoutRaster() }
+    override func layoutSubviews() { super.layoutSubviews(); layoutRaster(); updateSampling() }
 
     private func layoutRaster() {
       guard let raster = retainedRaster, let region = raster.source.captureRegion,
@@ -212,6 +240,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
 
     override func didMoveToWindow() {
       super.didMoveToWindow()
+      updateSampling()
       if window != nil, let retainedRaster { onRasterInstalled?(retainedRaster) }
     }
 
@@ -221,6 +250,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     func uninstall() {
       guard !isRetired else { return }
       isRetired = true
+      projection?.remove(self); projection = nil
       sceneModel?.unregisterScenePresentation(self)
       sceneModel = nil
       layer.contents = nil
@@ -769,7 +799,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     guard let pixels = policy.pixelSize(for: element),
       let configuration = Self.snapshotConfiguration(for: element, policy: policy, backingScale: snapshotScale(of: web)),
       pixels.width < CGFloat(Int.max - 2), pixels.height < CGFloat(Int.max - 2),
-      let reservation = resources.reserveRaster(pixelWidth: Int(pixels.width) + 2, pixelHeight: Int(pixels.height) + 2, bytesPerPixel: SceneRenderResources.webSnapshotBytesPerPixel)
+      let reservation = resources.reserveWebSnapshot(pixelSize: pixels)
     else { throw SceneRenderError.resourceLimit }
     let capture = AgentSnapshotCapture(reservation: reservation, lease: lease)
     submittedCaptures[capture.id] = capture
@@ -789,7 +819,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
             hasLiveSource(element) else { result.finish(.success(nil)); return }
           if let error { result.finish(.failure(error)); return }
           guard let image else { result.finish(.failure(SceneRenderError.snapshotPending(element.id))); return }
-          guard let raster = resources.storeAndRetain(image, for: policy.rasterSource(for: element), reservation: reservation)
+          guard let raster = resources.storeWebSnapshot(image, for: policy.rasterSource(for: element), reservation: reservation)
           else { result.finish(.failure(SceneRenderError.resourceLimit)); return }
           guard raster.pixelScale + 0.000_001 >= policy.minimumScale(for: element) else {
             raster.release(); result.finish(.failure(SceneRenderError.snapshotPending("live_capture_density_" + element.id))); return
@@ -1113,7 +1143,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       let configuration = Self.snapshotConfiguration(for: element, policy: policy, backingScale: snapshotScale(of: webView)),
       pixels.width.isFinite, pixels.height.isFinite,
       pixels.width < CGFloat(Int.max - 2), pixels.height < CGFloat(Int.max - 2),
-      let reservation = resources.reserveRaster(pixelWidth: Int(pixels.width) + 2, pixelHeight: Int(pixels.height) + 2, bytesPerPixel: SceneRenderResources.webSnapshotBytesPerPixel)
+      let reservation = resources.reserveWebSnapshot(pixelSize: pixels)
     else {
       fail(.init(kind: "resource_limit", elementID: element.id,
         message: "The requested snapshot exceeds the raster resource budget."), token: token, policy: policy)
@@ -1154,7 +1184,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     } else if let image {
       let capturedPolicy = policy ?? snapshotPolicy
       let source = capturedPolicy.rasterSource(for: element)
-      if resources.store(image, for: source, reservation: reservation) {
+      if resources.storeWebSnapshot(image, for: source, reservation: reservation) != nil {
         // A capture submitted before a density change is a useful fallback,
         // but cannot acknowledge the newer demand. The one queued capture
         // uses the latest policy without reloading the running program.

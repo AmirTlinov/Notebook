@@ -22,9 +22,17 @@ final class BoardElementProjectionTests: XCTestCase {
     window.frame = CGRect(x: 0, y: 0, width: 600, height: 400)
     defer { window.isHidden = true; window.rootViewController = nil; model.compositionTiles.cancelPreparation() }
     func content(scale: Double, phase: Double, passive: Bool) -> some View {
-      SpatialElementContent(element: element, commitsState: !passive)
-        .frame(width: 1000, height: 500).scaleEffect(scale).offset(x: phase)
-        .frame(width: 600, height: 400).background(.white).ignoresSafeArea().environment(model)
+      let presence = SessionPresence(boardID: model.workspace!.rootBoardID,
+        mode: .board, camera: .init(center: .init(x: -phase / scale, y: 0), scale: scale),
+        viewport: .init(x: 600, y: 400))
+      return SceneCameraPlane(presence: presence, revision: passive, reanchorsOnRevision: false,
+        isCameraActive: true) { anchor in
+        let offset = anchor.camera.center.delta(to: .zero)
+        SpatialElementContent(element: element, commitsState: !passive)
+          .frame(width: 1000, height: 500).scaleEffect(anchor.camera.scale)
+          .position(x: 300 + offset.x * anchor.camera.scale, y: 200 + offset.y * anchor.camera.scale)
+          .environment(model)
+      }.background(.white).ignoresSafeArea()
     }
     let host = UIHostingController(rootView: content(scale: 0.5, phase: 0, passive: false))
     window.rootViewController = host

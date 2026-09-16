@@ -91,10 +91,31 @@ final class RasterLease {
   let entryID: UUID
   private var resources: SceneRenderResources?
   private var retainedImage: AgentSnapshotImage?
+  private var mipmaps: [CGImage]
   var isReleased: Bool { resources == nil }
   var image: AgentSnapshotImage {
     precondition(!isReleased, "A released raster lease has no image")
     return retainedImage!
+  }
+  var hasMipmaps: Bool { !mipmaps.isEmpty }
+  /// Choose from this entry's admitted pixel pyramid using installed native
+  /// geometry. Camera motion never allocates or resamples an image.
+  func sampledImage(for pixelSize: CGSize) -> CGImage? {
+    precondition(!isReleased, "A released raster lease has no pixels")
+    #if os(iOS)
+    var result = retainedImage?.cgImage
+    #else
+    var result = retainedImage?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+    #endif
+    // Nearest level in log2 space bounds either downsampling or enlargement
+    // by sqrt(2), rather than undersampling a high-frequency source by almost 2.
+    let boundary = sqrt(2.0)
+    for level in mipmaps {
+      guard Double(level.width) >= pixelSize.width / boundary,
+        Double(level.height) >= pixelSize.height / boundary else { break }
+      result = level
+    }
+    return result
   }
   /// Snapshot composition reads this retained entry, never a newer cache alias.
   func image(for source: SceneRasterSource, minimumScale: Double = 0) -> AgentSnapshotImage? {
@@ -103,8 +124,9 @@ final class RasterLease {
     return retainedImage
   }
   fileprivate init(source: SceneRasterSource, pixelScale: Double, image: AgentSnapshotImage,
-    byteCount: Int, entryID: UUID, resources: SceneRenderResources) {
+    mipmaps: [CGImage], byteCount: Int, entryID: UUID, resources: SceneRenderResources) {
     self.source = source; self.pixelScale = pixelScale; retainedImage = image; accountedByteCount = byteCount
+    self.mipmaps = mipmaps
     self.entryID = entryID; self.resources = resources
   }
   func retainedCopy() -> RasterLease? {
@@ -112,7 +134,7 @@ final class RasterLease {
   }
   func release() {
     guard let owner = resources else { return }
-    resources = nil; retainedImage = nil
+    resources = nil; retainedImage = nil; mipmaps = []
     owner.releaseRaster(entryID)
   }
   isolated deinit { release() }
@@ -438,6 +460,7 @@ final class SceneRenderResources {
   private struct RasterEntry {
     let source: SceneRasterSource
     let image: AgentSnapshotImage
+    let mipmaps: [CGImage]
     let pixelScale: Double
     let cost: Int
     let documentLayout: DocumentLayoutRecord?
@@ -542,7 +565,46 @@ final class SceneRenderResources {
     guard var entry = entries[id] else { return nil }
     accessClock &+= 1; entry.access = accessClock; entry.retains += 1; entries[id] = entry
     return RasterLease(source: entry.source, pixelScale: entry.pixelScale, image: entry.image,
-      byteCount: entry.cost, entryID: id, resources: self)
+      mipmaps: entry.mipmaps, byteCount: entry.cost, entryID: id, resources: self)
+  }
+
+  func reserveWebSnapshot(pixelSize: CGSize) -> RasterReservation? {
+    guard derivedWaiters.isEmpty, let budget = Self.webSnapshotBudget(pixelSize: pixelSize),
+      makeRoom(for: budget.capture, additionalEntry: true, priority: .passive) else { return nil }
+    return reserveAllocation(bytes: budget.capture, rasterCount: 1, priority: .passive, physicalOwner: nil)
+  }
+
+  /// One estimate for execution, retry and the scene's preflight. Both CPU
+  /// pixels and GPU copies of every level remain charged through the same lease.
+  nonisolated static func webSnapshotBudget(pixelSize: CGSize) -> (resident: Int, capture: Int)? {
+    guard pixelSize.width.isFinite, pixelSize.height.isFinite,
+      pixelSize.width >= 1, pixelSize.height >= 1,
+      pixelSize.width < CGFloat(Int.max - 2), pixelSize.height < CGFloat(Int.max - 2) else { return nil }
+    func cost(_ width: Int, _ height: Int) -> Int? {
+      guard var total = estimatedRasterBytes(pixelWidth: width, pixelHeight: height,
+        bytesPerPixel: webSnapshotBytesPerPixel) else { return nil }
+      #if os(iOS)
+      for size in mipmapSizes(width: width, height: height) {
+        guard let level = estimatedRasterBytes(pixelWidth: size.width, pixelHeight: size.height) else { return nil }
+        let sum = total.addingReportingOverflow(level)
+        guard !sum.overflow else { return nil }
+        total = sum.partialValue
+      }
+      #endif
+      return total
+    }
+    let width = Int(pixelSize.width), height = Int(pixelSize.height)
+    guard let resident = cost(width, height), let capture = cost(width + 2, height + 2) else { return nil }
+    return (resident, capture)
+  }
+
+  nonisolated private static func mipmapSizes(width: Int, height: Int) -> [(width: Int, height: Int)] {
+    var width = width, height = height, result: [(Int, Int)] = []
+    while width > 1 || height > 1 {
+      width = max(1, (width + 1) / 2); height = max(1, (height + 1) / 2)
+      result.append((width, height))
+    }
+    return result
   }
 
   func reserveRaster(pixelWidth: Int, pixelHeight: Int, backingCount: Int = 2, bytesPerPixel: Int = 4) -> RasterReservation? {
@@ -755,19 +817,55 @@ final class SceneRenderResources {
     installRaster(image, for: source, reservation: reservation, documentLayout: documentLayout) != nil
   }
 
+  /// A source owns its minification pixels, not each view or camera position.
+  /// NPOT images need explicit levels on renderers that ignore trilinear mipmaps.
+  /// This keeps the original exact pixels and adds about a third, not POT padding.
+  func storeWebSnapshot(_ image: AgentSnapshotImage, for source: SceneRasterSource,
+    reservation: RasterReservation) -> RasterLease? {
+    #if os(iOS)
+    guard !reservation.isReleased, reservation.resources === self,
+      let allocation = reservations[reservation.id], let original = image.cgImage,
+      let base = Self.rasterDescription(image, source: source, mipmaps: []) else { return nil }
+    let sizes = Self.mipmapSizes(width: original.width, height: original.height)
+    var required = base.cost
+    for size in sizes {
+      guard let cost = Self.estimatedRasterBytes(pixelWidth: size.width, pixelHeight: size.height) else { return nil }
+      let sum = required.addingReportingOverflow(cost)
+      guard !sum.overflow, sum.partialValue <= allocation.bytes else { return nil }
+      required = sum.partialValue
+    }
+    let space = original.colorSpace?.model == .rgb ? original.colorSpace : CGColorSpace(name: CGColorSpace.sRGB)
+    guard let space else { return nil }
+    var previous = original, levels: [CGImage] = []
+    for size in sizes {
+      guard let context = CGContext(data: nil, width: size.width, height: size.height,
+        bitsPerComponent: 8, bytesPerRow: ((size.width * 4 + 63) / 64) * 64, space: space,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+      context.interpolationQuality = .high
+      context.setBlendMode(.copy)
+      context.draw(previous, in: CGRect(x: 0, y: 0, width: size.width, height: size.height))
+      guard let level = context.makeImage() else { return nil }
+      levels.append(level); previous = level
+    }
+    return storeAndRetain(image, for: source, reservation: reservation, mipmaps: levels)
+    #else
+    return storeAndRetain(image, for: source, reservation: reservation)
+    #endif
+  }
+
   /// An observed live frame must retain the entry just captured. A cache lookup
   /// could select an older higher-density image of the same program/state.
   func storeAndRetain(_ image: AgentSnapshotImage, for source: SceneRasterSource,
-    reservation: RasterReservation, documentLayout: DocumentLayoutRecord? = nil) -> RasterLease? {
-    guard let id = installRaster(image, for: source, reservation: reservation, documentLayout: documentLayout, retaining: true),
+    reservation: RasterReservation, documentLayout: DocumentLayoutRecord? = nil, mipmaps: [CGImage] = []) -> RasterLease? {
+    guard let id = installRaster(image, for: source, reservation: reservation, documentLayout: documentLayout, retaining: true, mipmaps: mipmaps),
       let entry = entries[id] else { return nil }
     return RasterLease(source: entry.source, pixelScale: entry.pixelScale, image: entry.image,
-      byteCount: entry.cost, entryID: id, resources: self)
+      mipmaps: entry.mipmaps, byteCount: entry.cost, entryID: id, resources: self)
   }
 
   private func installRaster(_ image: AgentSnapshotImage, for source: SceneRasterSource,
-    reservation: RasterReservation?, documentLayout: DocumentLayoutRecord?, retaining: Bool = false) -> UUID? {
-    guard let raster = Self.rasterDescription(image, source: source) else { return nil }
+    reservation: RasterReservation?, documentLayout: DocumentLayoutRecord?, retaining: Bool = false, mipmaps: [CGImage] = []) -> UUID? {
+    guard let raster = Self.rasterDescription(image, source: source, mipmaps: mipmaps) else { return nil }
     let previous = rasterAdmission
     if let reservation {
       guard !reservation.isReleased, reservation.resources === self,
@@ -793,7 +891,7 @@ final class SceneRenderResources {
     }
     accessClock &+= 1
     let id = UUID()
-    entries[id] = RasterEntry(source: source, image: image, pixelScale: raster.scale,
+    entries[id] = RasterEntry(source: source, image: image, mipmaps: mipmaps, pixelScale: raster.scale,
       cost: raster.cost, documentLayout: documentLayout, publication: accessClock, access: accessClock, retains: retaining ? 1 : 0)
     rasterOwners[source.owner, default: []].append(id)
     residentBytes += raster.cost; rasterCount = entries.count
@@ -1116,7 +1214,7 @@ final class SceneRenderResources {
     return rowsOverflow || copiesOverflow ? nil : cost
   }
   private static func rasterDescription(_ image: AgentSnapshotImage,
-    source: SceneRasterSource) -> (cost: Int, scale: Double)? {
+    source: SceneRasterSource, mipmaps: [CGImage]) -> (cost: Int, scale: Double)? {
     #if os(iOS)
       guard let cgImage = image.cgImage else { return nil }
     #else
@@ -1125,6 +1223,14 @@ final class SceneRenderResources {
     let (bytes, overflow) = cgImage.bytesPerRow.multipliedReportingOverflow(by: cgImage.height)
     let (cost, doubledOverflow) = bytes.multipliedReportingOverflow(by: 2)
     guard !overflow, !doubledOverflow, cost > 0 else { return nil }
+    var total = cost
+    for level in mipmaps {
+      let bytes = level.bytesPerRow.multipliedReportingOverflow(by: level.height)
+      let copies = bytes.partialValue.multipliedReportingOverflow(by: 2)
+      let sum = total.addingReportingOverflow(copies.partialValue)
+      guard !bytes.overflow, !copies.overflow, !sum.overflow else { return nil }
+      total = sum.partialValue
+    }
     let size: CGSize
     switch source {
     case .agent(let element): size = .init(width: element.frame.width, height: element.frame.height)
@@ -1135,7 +1241,7 @@ final class SceneRenderResources {
     let horizontal = Double(cgImage.width) / size.width
     let vertical = Double(cgImage.height) / size.height
     guard abs(horizontal - vertical) <= max(1 / size.width, 1 / size.height) + 0.000_001 else { return nil }
-    return (cost, min(horizontal, vertical))
+    return (total, min(horizontal, vertical))
   }
 
   /// Every caller uses the same granted executor and receives the exact entry

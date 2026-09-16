@@ -662,10 +662,9 @@ final class SceneCompositionTests: XCTestCase {
     let display = try XCTUnwrap(AgentSnapshotPolicy.display(scale: 2).pixelSize(for: request.source))
     let exact = try XCTUnwrap(AgentSnapshotPolicy.exact(scale: request.requestedScale).pixelSize(for: request.source))
     XCTAssertGreaterThan(exact.width, display.width, "The display cap is not the exact snapshot allocation extent")
-    let final = try XCTUnwrap(SceneRenderResources.estimatedRasterBytes(pixelWidth: Int(exact.width), pixelHeight: Int(exact.height)))
-    let capture = try XCTUnwrap(SceneRenderResources.estimatedRasterBytes(pixelWidth: Int(exact.width) + 2, pixelHeight: Int(exact.height) + 2))
-    XCTAssertEqual(request.residentBytes, final)
-    XCTAssertEqual(request.snapshotAdditionalBytes, capture - final)
+    let budget = try XCTUnwrap(SceneRenderResources.webSnapshotBudget(pixelSize: exact))
+    XCTAssertEqual(request.residentBytes, budget.resident)
+    XCTAssertEqual(request.snapshotAdditionalBytes, budget.capture - budget.resident)
   }
 
   @MainActor
