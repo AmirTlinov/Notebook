@@ -474,9 +474,12 @@ final class DocumentWebCoordinator: NSObject,
 
   /// Event routing can change while the canonical pixels and their generation
   /// stay identical (for example after the measured page count reaches SwiftUI).
-  func updateInteractionCallbacks(onDraftChange: @escaping (DocumentEditingSession) -> Void,
+  func updateInteractionCallbacks(
+    onSourceChange: @escaping (DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status,
+    onDraftChange: @escaping (DocumentEditingSession) -> Void,
     onDraftDiscard: @escaping (UUID) -> Void,
     onLinkActivation: @escaping (DocumentLinkActivation) -> Void) {
+    self.onSourceChange = onSourceChange
     self.onDraftChange = onDraftChange; self.onDraftDiscard = onDraftDiscard
     self.onLinkActivation = onLinkActivation
   }

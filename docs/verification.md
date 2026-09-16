@@ -1,5 +1,37 @@
 # Проверка Notebook
 
+## 16 сентября — живой Save удерживал прежнюю композицию
+
+Private Release v3 (`27824b3`, source `1d56ba0a9364a4ff1a943914389df8f7e74d939f00d6fdcc6c60725cffe2496a`)
+сохранил данные той же пары, но повтор 10 cold / 20 warm опять **FAIL** на первой
+дальней ссылке. Короткий повтор с navigation observer подтвердил тот же
+рабочий набор: 41 composition + 3 agent raster, 117 930 376 удержанных байт.
+Теперь источник корректно ожидал admission, но показ целевой страницы не
+состоялся (`snapshot_pending`); это не исправленный полный сценарий.
+
+Memgraph настоящего Release PID 22159 после отказа показывает две композиции.
+Текущая принадлежит `SceneCompositionTiles.published`, предыдущую удерживает
+`DocumentWebCoordinator.onSourceChange` через захваченный `WorkspaceSceneItem`.
+Это удержание достижимого объекта, не доказанный retain cycle. Консервативные
+ссылки сканера через массивы значений не принимались за сильные Swift-ссылки.
+Доказательства: `.build/seven-slices-release-v3-memgraph/assessment.json`,
+`cohort-a.txt`, `cohort-b.txt` и исходный memgraph в том же каталоге.
+
+При неизменных пикселях `refreshMountedInput` заменял draft/link callbacks,
+но оставлял старый Save callback. Теперь он обновляет и `onSourceChange` у
+того же владельца; принятый контакт сохраняет прежний обработчик до завершения.
+Не добавлены новый cache, лимит, timeout, reload или замена браузера.
+
+`.build/seven-slices-document-callback-negative/` воспроизвёл удержание старого
+cohort в полной нативной сцене с открытым документом. После исправления
+`.build/seven-slices-document-callback-fixed/`: **63 iPad PASS**, 0 skips и
+runtime warnings, source до/после
+`13e3d53c00b1d54949a55a5e97328207fe80ab52602751c735cad655a325bf4b`.
+Проверены освобождение старой сцены при том же живом WebKit, Save, весь
+DocumentProgramOwner/DocumentResourceLease и настоящий UI-поиск после обзора.
+Следующая immutable Release должна заново пройти исходный большой документ;
+этот узкий PASS не закрывает срез 6 или физическую приёмку.
+
 ## 16 сентября — Release выявил удержание старой сцены и отказ хвоста
 
 Private Release v2 из `3266642`, source

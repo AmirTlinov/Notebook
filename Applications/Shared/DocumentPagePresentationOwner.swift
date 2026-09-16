@@ -471,7 +471,7 @@ final class DocumentPagePresentationOwner {
     let matches = current?.id == id && paper.payload?.pageIndex == input.pageIndex
       && (paper.payload?.source.matches(input.document) == true || paper.isPresentingEditor)
     if matches, contacts.isEmpty {
-      paper.updateInteractionCallbacks(onDraftChange: input.onDraftChange,
+      paper.updateInteractionCallbacks(onSourceChange: input.onSourceChange, onDraftChange: input.onDraftChange,
         onDraftDiscard: input.onDraftDiscard, onLinkActivation: input.onLinkActivation)
     }
     paper.updateInputAdmission(in: host,

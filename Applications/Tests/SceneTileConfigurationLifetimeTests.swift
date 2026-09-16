@@ -1,30 +1,57 @@
 import NotebookCore
 import SwiftUI
 import UIKit
+import WebKit
 import XCTest
 @testable import Notebook
 
 @MainActor
 final class SceneTileConfigurationLifetimeTests: XCTestCase {
   func testChangingPaintDensityReleasesTheUnchangedItemsPreviousCohort() async throws {
+    try await replacePaintDensity(openDocument: false)
+  }
+
+  func testOpenDocumentCallbacksDoNotRetainThePreviousWholeScene() async throws {
+    try await replacePaintDensity(openDocument: true)
+  }
+
+  private func replacePaintDensity(openDocument: Bool) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("paint-publication-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let boardID = try XCTUnwrap(model.workspace?.rootBoardID)
-    let presence = SessionPresence(boardID: boardID, mode: .board,
+    var presence = SessionPresence(boardID: boardID, mode: .board,
       camera: .init(scale: 0.6), viewport: .init(x: 834, y: 1194))
+    var documentID: UUID?
+    if openDocument {
+      let id = try XCTUnwrap(model.createDocument(at: .zero, paperSize: .a4))
+      let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+      let center = try XCTUnwrap(model.board?.focusedCenter(of: id))
+      presence = .init(boardID: boardID, mode: .document,
+        camera: .init(center: center, scale: model.itemGeometry(id).fitScale(viewport: presence.viewport)),
+        viewport: presence.viewport, focusedItemID: id, openProgress: 1, selectedItemID: id)
+      documentID = id
+    }
     model.updatePresence(presence, settled: true)
+    if let documentID { await model.prepareDocumentOpening(documentID, pageIndex: 0)?.value }
     let host = UIHostingController(rootView: SpatialWorkspaceView().environment(model).environment(\.displayScale, 2).ignoresSafeArea())
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     window.frame = .init(x: 0, y: 0, width: 834, height: 1194)
     window.rootViewController = host; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
-    let firstDeadline = ContinuousClock.now + .seconds(5)
-    while model.compositionTiles.published?.isPaintInstalled != true || model.compositionTiles.isPreparing {
+    func paper(in view: UIView) -> WKWebView? {
+      if let web = view as? WKWebView, let owner = web.navigationDelegate as? DocumentWebCoordinator,
+        owner.payload?.source.message.documentID == documentID, owner.hasCanonicalPixels { return web }
+      return view.subviews.lazy.compactMap { paper(in: $0) }.first
+    }
+    let firstDeadline = ContinuousClock.now + .seconds(8)
+    while model.compositionTiles.published?.isPaintInstalled != true || model.compositionTiles.isPreparing
+      || (openDocument && paper(in: host.view) == nil) {
       guard .now < firstDeadline else { XCTFail("Initial physical scene did not install"); return }
       try await Task.sleep(for: .milliseconds(10))
     }
+    let web = paper(in: host.view)
     weak let old = model.compositionTiles.published
     let frame = try XCTUnwrap(old?.frame), revision = try XCTUnwrap(old?.plan.revision)
     let source = SceneCompositionSource(index: frame.index, hierarchy: try XCTUnwrap(model.boardHierarchy),
@@ -41,6 +68,11 @@ final class SceneTileConfigurationLifetimeTests: XCTestCase {
     while old != nil, .now < retirementDeadline { try await Task.sleep(for: .milliseconds(10)) }
     XCTAssertNil(old, "Unchanged item callbacks and cached ForEach closures cannot own an obsolete whole scene")
     XCTAssertTrue(model.compositionTiles.published?.isPaintInstalled == true)
+    if openDocument {
+      XCTAssertNotNil(web)
+      XCTAssertTrue(paper(in: host.view) === web, "Releasing obsolete paint must not replace the open browser")
+      XCTAssertTrue((web?.navigationDelegate as? DocumentWebCoordinator)?.hasCanonicalPixels == true)
+    }
   }
 
   func testShutdownRetiresCachedNativeTilesWithoutRevokingAnotherBorrower() async throws {
