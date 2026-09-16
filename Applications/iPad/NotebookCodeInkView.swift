@@ -30,6 +30,13 @@ final class NotebookCodeInkPresenter {
     self.text = text; self.notes = notes; self.file = file; self.gate = gate; self.review = review
     overlay.backgroundColor = .clear; overlay.isOpaque = false
     overlay.paper.touchView.simulatesPencilContacts = gate.simulatesPencilContacts
+    // The code viewport can sit behind the chat controls in the same hosting
+    // controller. Its actual text descendant, not that shared controller's
+    // rectangle, owns Pencil above code.
+    overlay.paper.admitsPencilContact = { [weak text] touch in
+      guard let text, let source = touch.view else { return false }
+      return source.isDescendant(of: text)
+    }
     text.addSubview(overlay)
     overlay.paper.touchView.accessibilityLabel = "Пометки на коде"
     overlay.paper.touchView.accessibilityIdentifier = "notebook-code-ink"
@@ -51,7 +58,7 @@ final class NotebookCodeInkPresenter {
   }
   private var canBegin: Bool { !closed && review == nil && gate.permitsNewContact && !notes.contactActive && text?.isEditable == false }
   func configure(pen: PenStyle, eraser: EraserStyle, tool: DrawingTool) {
-    overlay.acceptsPencil = review == nil && text?.isEditable == false
+    overlay.paper.setInputEnabled(review == nil && text?.isEditable == false)
     overlay.paper.touchView.configure(penStyle: pen, eraserStyle: eraser, drawingTool: tool)
   }
   func layout() {
@@ -116,6 +123,7 @@ final class NotebookCodeInkPresenter {
   func stop() {
     guard !closed else { return }
     finish(); end(); closed = true; generation &+= 1; preparation?.cancel(); preparation = nil
+    overlay.paper.retireInput()
     overlay.paper.touchView.canBeginAction = { false }
     overlay.paper.touchView.onActionWillBegin = nil; overlay.paper.touchView.onDrawingMutation = nil
     overlay.paper.touchView.onActionCancelled = nil
@@ -227,15 +235,11 @@ private struct NotebookCodeInkPlacement: Equatable, Sendable {
 @MainActor
 final class NotebookCodePencilOverlay: UIView {
   let paper = PaperCanvasContainerView()
-  var acceptsPencil = true
   override init(frame: CGRect) { super.init(frame: frame); addSubview(paper) }
   @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
   override func layoutSubviews() { super.layoutSubviews(); paper.frame = bounds }
   override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-    guard acceptsPencil, self.point(inside: point, with: event) else { return nil }
-    let pencil = paper.touchView.simulatesPencilContacts
-      || event?.allTouches?.contains(where: paper.touchView.acceptsDrawingTouch) == true
-    return pencil ? paper.touchView : nil
+    nil
   }
 }
 

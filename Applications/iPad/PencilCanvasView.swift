@@ -109,6 +109,10 @@ struct PencilCanvasView: UIViewRepresentable {
     func attach(to paper: PaperCanvasContainerView) {
       attachedPaper = paper
       paper.touchView.simulatesPencilContacts = inputGate.simulatesPencilContacts
+      paper.admitsPencilContact = { [weak self, weak paper] touch in
+        guard let self, let paper else { return false }
+        return inputGate.permitsSceneContact(at: touch.preciseLocation(in: paper.window), kind: .pencil)
+      }
       paper.touchView.canBeginAction = { [weak self] in self?.inputGate.permitsNewContact == true }
       paper.touchView.onActionWillBegin = { [weak self] in self?.reserveMeasuredAction() == true }
       paper.touchView.onActionCancelled = { [weak self] in self?.releaseMeasuredAction() }
@@ -211,6 +215,7 @@ struct PencilCanvasView: UIViewRepresentable {
       // before removing callbacks or releasing the gate's Pencil source.
       paper.touchView.finishCurrentAction {}
       releaseMeasuredAction()
+      paper.retireInput()
       paper.touchView.canBeginAction = { false }
       paper.touchView.onActionWillBegin = nil
       paper.touchView.onActionCancelled = nil
@@ -362,6 +367,9 @@ struct PencilCanvasView: UIViewRepresentable {
 final class PaperCanvasContainerView: UIView {
   let inkView = InkCanvasView(frame: .zero)
   let touchView = PaperInputView(frame: .zero)
+  var admitsPencilContact: (UITouch) -> Bool = { _ in true }
+  private let pencil = PaperPencilGestureRecognizer()
+  private var inputIsRetired = false
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -392,6 +400,13 @@ final class PaperCanvasContainerView: UIView {
 
     addSubview(inkView)
     addSubview(touchView)
+    pencil.name = "NotebookPaperPencil"
+    pencil.input = touchView
+    pencil.canBeginContact = { [weak self] touch in
+      guard let self, !inputIsRetired, touchView.isUserInteractionEnabled,
+        sceneReceives(touch, inside: self) else { return false }
+      return admitsPencilContact(touch)
+    }
   }
 
   @available(*, unavailable)
@@ -405,15 +420,32 @@ final class PaperCanvasContainerView: UIView {
     touchView.frame = bounds
   }
 
-  /// Paper owns Pencil above every artifact; fingers reach the material below.
+  /// Hit testing precedes UIKit's touch classification, including on a real
+  /// Pencil. The window recognizer receives the typed contact; this transparent
+  /// layer never guesses its owner from an initially empty UIEvent.allTouches.
   override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-    guard touchView.isUserInteractionEnabled, self.point(inside: point, with: event) else { return nil }
-    // XCTest's first hit test can carry an empty touch set. An explicitly
-    // admitted Simulator Pencil fixture already owns that classification.
-    // Real devices never enable it and still use the actual UITouch type.
-    guard touchView.simulatesPencilContacts
-      || event?.allTouches?.contains(where: touchView.acceptsDrawingTouch) == true else { return nil }
-    return touchView
+    nil
+  }
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    guard pencil.view !== window else { return }
+    if pencil.view != nil { touchView.finishCurrentAction {} }
+    pencil.view?.removeGestureRecognizer(pencil)
+    guard !inputIsRetired, let window else { return }
+    pencil.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+    if touchView.simulatesPencilContacts {
+      pencil.allowedTouchTypes.append(NSNumber(value: UITouch.TouchType.direct.rawValue))
+    }
+    window.addGestureRecognizer(pencil)
+  }
+
+  func retireInput() {
+    inputIsRetired = true
+    touchView.finishCurrentAction {}
+    pencil.isEnabled = false
+    pencil.view?.removeGestureRecognizer(pencil)
+    admitsPencilContact = { _ in false }
   }
 
   func apply(_ drawing: PageInkDrawing) {
@@ -430,6 +462,63 @@ final class PaperCanvasContainerView: UIView {
     touchView.isUserInteractionEnabled = enabled
     touchView.isAccessibilityElement = enabled
     touchView.accessibilityElementsHidden = !enabled
+    pencil.isEnabled = enabled && !inputIsRetired
+  }
+}
+
+/// One typed contact feeds the existing measured ink owner. UIKit may initially
+/// hit the HTML or hosting view underneath the paper; Pencil cancels that view's
+/// contact, while ordinary fingers remain entirely outside this recognizer.
+@MainActor
+final class PaperPencilGestureRecognizer: UIGestureRecognizer {
+  weak var input: PaperInputView?
+  var canBeginContact: (UITouch) -> Bool = { _ in false }
+  private var activeTouch: UITouch?
+
+  override init(target: Any?, action: Selector?) {
+    super.init(target: target, action: action)
+    cancelsTouchesInView = true
+    delaysTouchesBegan = false
+    delaysTouchesEnded = false
+  }
+
+  override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+    guard activeTouch == nil else { finishTracking(); state = .cancelled; return }
+    guard let input, let touch = touches.first,
+      input.acceptsDrawingTouch(touch), canBeginContact(touch) else {
+      finishTracking(); state = .failed; return
+    }
+    input.touchesBegan([touch], with: event)
+    guard input.hasActiveAction else { state = .failed; return }
+    activeTouch = touch; state = .began
+  }
+
+  override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+    guard let touch = activeTouch, touches.contains(touch) else { return }
+    input?.touchesMoved([touch], with: event); state = .changed
+  }
+
+  override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+    guard let touch = activeTouch, touches.contains(touch) else { return }
+    activeTouch = nil
+    input?.touchesEnded([touch], with: event); state = .ended
+  }
+
+  override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+    guard let touch = activeTouch, touches.contains(touch) else { return }
+    activeTouch = nil
+    input?.touchesCancelled([touch], with: event); state = .cancelled
+  }
+
+  override func touchesEstimatedPropertiesUpdated(_ touches: Set<UITouch>) {
+    input?.touchesEstimatedPropertiesUpdated(touches)
+  }
+
+  override func reset() { finishTracking(); super.reset() }
+
+  private func finishTracking() {
+    guard activeTouch != nil else { return }
+    activeTouch = nil; input?.finishCurrentAction {}
   }
 }
 

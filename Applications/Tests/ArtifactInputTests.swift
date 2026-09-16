@@ -5,6 +5,43 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class ArtifactInputTests: XCTestCase {
+  func testPaperContactKeepsFingerAndControlOwnershipAndFinishesOnlyItsAcceptedPencil() throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow)
+    let window = UIWindow(windowScene: scene), host = UIViewController()
+    window.rootViewController = host; window.makeKeyAndVisible()
+    let paper = PaperCanvasContainerView(frame: .init(x: 20, y: 20, width: 220, height: 280))
+    host.view.addSubview(paper); paper.layoutIfNeeded()
+    defer { paper.retireInput(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    let receiver = try XCTUnwrap(window.gestureRecognizers?.first { $0.name == "NotebookPaperPencil" })
+    var actions: [PageInkAction] = []
+    paper.touchView.onDrawingMutation = { actions.append($0) }
+    let finger = ArtifactTouch(window: window, kind: .direct)
+    finger.point = .init(x: 120, y: 140); finger.sourceView = host.view
+    receiver.touchesBegan([finger], with: ArtifactEvent(finger))
+    XCTAssertFalse(paper.touchView.hasActiveAction); receiver.reset()
+    let pencil = ArtifactTouch(window: window, kind: .pencil)
+    pencil.point = finger.point; pencil.sourceView = host.view
+    paper.admitsPencilContact = { _ in false }
+    receiver.touchesBegan([pencil], with: ArtifactEvent(pencil))
+    XCTAssertFalse(paper.touchView.hasActiveAction); XCTAssertTrue(actions.isEmpty); receiver.reset()
+    paper.admitsPencilContact = { _ in true }
+    pencil.estimateIndex = 1; pencil.awaitingForce = true; pencil.measuredForce = 0.2
+    receiver.touchesBegan([pencil], with: ArtifactEvent(pencil))
+    receiver.touchesEnded([pencil], with: ArtifactEvent(pencil)); receiver.reset()
+    XCTAssertTrue(actions.isEmpty, "A normal lift still allows UIKit's measured force correction")
+    pencil.awaitingForce = false; pencil.measuredForce = 0.8
+    receiver.touchesEstimatedPropertiesUpdated([pencil])
+    XCTAssertEqual(actions.count, 1)
+    XCTAssertEqual(actions.first?.samples.last?.force ?? 0, 0.8, accuracy: 0.001)
+    pencil.estimateIndex = nil; pencil.sampleTime += 1
+    receiver.touchesBegan([pencil], with: ArtifactEvent(pencil))
+    XCTAssertTrue(paper.touchView.hasActiveAction)
+    paper.retireInput()
+    XCTAssertEqual(actions.count, 2, "Retirement finishes measured ink instead of abandoning it")
+    XCTAssertFalse(paper.touchView.hasActiveAction); XCTAssertNil(receiver.view)
+  }
+
   func testPencilHitsPaperAboveASelectedLiveArtifactAndPersistsItsOwnStroke() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
@@ -35,16 +72,19 @@ import XCTest
     let pencil = ArtifactTouch(window: window, kind: .pencil)
     pencil.point = input.convert(.init(x: input.bounds.midX, y: input.bounds.midY), to: window)
     let event = ArtifactEvent(pencil)
-    XCTAssertTrue(window.hitTest(pencil.point, with: event) === input,
-      "Neither an agent's HTML button nor selected frame may intercept Pencil")
+    // Physical iPadOS begins hit testing before UIEvent.allTouches contains
+    // the Pencil. The input route must not guess a touch type from that set.
+    pencil.sourceView = window.hitTest(pencil.point, with: ArtifactEvent(pencil, includesTouch: false))
+    XCTAssertFalse(pencil.sourceView === input)
+    let receiver = try XCTUnwrap(window.gestureRecognizers?.first { $0.name == "NotebookPaperPencil" })
     let oldDrawing = try PageInkDrawing.decode(page.drawingData)
-    input.touchesBegan([pencil], with: event)
+    receiver.touchesBegan([pencil], with: event)
     XCTAssertTrue(model.inputGate.hasActivePencil)
     for dx in stride(from: 10.0, through: 100.0, by: 10) {
       pencil.point = input.convert(.init(x: input.bounds.midX + dx, y: input.bounds.midY), to: window)
-      pencil.sampleTime += 0.02; input.touchesMoved([pencil], with: event)
+      pencil.sampleTime += 0.02; receiver.touchesMoved([pencil], with: event)
     }
-    input.touchesEnded([pencil], with: event)
+    receiver.touchesEnded([pencil], with: event)
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
     let durable = try model.store.loadPage(page.id)
     let drawing = try PageInkDrawing.decode(durable.drawingData)
@@ -123,12 +163,20 @@ import XCTest
 @MainActor private final class ArtifactTouch: UITouch {
   let sourceWindow: UIWindow
   let kind: UITouch.TouchType
+  var sourceView: UIView?
+  override var view: UIView? { sourceView }
+  override var window: UIWindow? { sourceWindow }
   var point = CGPoint.zero
   var sampleTime: TimeInterval = 1
+  var measuredForce: CGFloat = 1
+  var awaitingForce = false
+  var estimateIndex: NSNumber?
   init(window: UIWindow, kind: UITouch.TouchType) { sourceWindow = window; self.kind = kind; super.init() }
   override var type: UITouch.TouchType { kind }
   override var timestamp: TimeInterval { sampleTime }
-  override var force: CGFloat { 1 }
+  override var force: CGFloat { measuredForce }
+  override var estimationUpdateIndex: NSNumber? { estimateIndex }
+  override var estimatedPropertiesExpectingUpdates: UITouch.Properties { awaitingForce ? .force : [] }
   override var maximumPossibleForce: CGFloat { 1 }
   override var altitudeAngle: CGFloat { .pi / 2 }
   override func preciseLocation(in view: UIView?) -> CGPoint { view?.convert(point, from: sourceWindow) ?? point }
@@ -138,6 +186,7 @@ import XCTest
 
 private final class ArtifactEvent: UIEvent {
   let touch: UITouch
-  init(_ touch: UITouch) { self.touch = touch; super.init() }
-  override var allTouches: Set<UITouch>? { [touch] }
+  let includesTouch: Bool
+  init(_ touch: UITouch, includesTouch: Bool = true) { self.touch = touch; self.includesTouch = includesTouch; super.init() }
+  override var allTouches: Set<UITouch>? { includesTouch ? [touch] : [] }
 }
