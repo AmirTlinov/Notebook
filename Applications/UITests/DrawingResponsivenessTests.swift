@@ -244,6 +244,8 @@ final class DrawingResponsivenessTests: XCTestCase {
       // scene magnification. Off-screen neighbours may legitimately retire;
       // their independent input is exercised by the pan/control regression.
       XCTAssertFalse(app.buttons["delete-agent-element"].exists, "A pair cannot also select the drawing")
+      XCTAssertFalse(app.staticTexts["Обновление…"].exists,
+        "Camera refinement cannot cover unchanged material with a content-update banner")
     }
   }
 

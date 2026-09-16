@@ -102,6 +102,12 @@ struct PreparedAgentElementView: View {
   private var showsLiveProgram: Bool {
     web != nil && (isActive || runtimeWasPresented) && liveProgram == AgentProgramSource(element)
   }
+  private var awaitsRasterSource: Bool {
+    guard let installed = raster?.source.agentElement else { return true }
+    // Refining the same source is not a content update. Keep its pixels quiet
+    // while the independent density/crop demand still reports not-ready.
+    return SceneRasterSource.agent(installed) != .agent(element)
+  }
 
   private var sourceDemand: SceneSourceDemand? {
     sourceAddress.flatMap { composition.cohort?.sourceReceipts[$0]?.demand }
@@ -257,7 +263,7 @@ struct PreparedAgentElementView: View {
           }.frame(minWidth: 44, minHeight: 44)
         }
         .padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-      } else if (preparedSource != element || isActive) && !showsLiveProgram {
+      } else if (awaitsRasterSource || isActive) && !showsLiveProgram {
         Text(isActive ? (web == nil ? "Ожидаем свободные ресурсы…" : "Запуск программы…") : (raster == nil ? "Подготовка…" : "Обновление…"))
           .font(.caption).foregroundStyle(.secondary)
           .padding(6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
