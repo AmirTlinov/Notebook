@@ -24,10 +24,15 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     let savedBefore = await model.finishPendingPersistence(); XCTAssertTrue(savedBefore)
     let epoch = model.collaborationReadEpoch
     let read = try NotebookSceneState.read(store: model.store, presence: presence, viewport: presence.viewport)
+    await model.refreshCollaborationDetails()
+    XCTAssertTrue(model.collaborationDetailsAreCurrent)
+    let historyKey = model.collaborationPreparationKey
     let lock = try NotebookSQLWriteBlocker(store: model.store)
     defer { try? lock.release() }
     XCTAssertTrue(model.commitSpatialElementState(boardID: presence.boardID, rendered: rendered, state: .string("first")))
     XCTAssertFalse(model.acceptExternalScene(read, observedEpoch: epoch, observedPresence: presence, itemPins: [:]))
+    XCTAssertFalse(model.collaborationDetailsAreCurrent, "Accepted input cannot leave old history results current while its write waits")
+    XCTAssertNotEqual(model.collaborationPreparationKey, historyKey)
     let firstEpoch = model.collaborationReadEpoch
     XCTAssertTrue(model.commitSpatialElementState(boardID: presence.boardID, rendered: rendered, state: .string("complete input")))
     XCTAssertGreaterThan(model.collaborationReadEpoch, firstEpoch)

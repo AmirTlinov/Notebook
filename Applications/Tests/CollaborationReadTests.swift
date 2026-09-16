@@ -70,6 +70,38 @@ final class CollaborationReadTests: XCTestCase {
     XCTAssertTrue(model.collaborationDetailsAreCurrent)
     XCTAssertEqual(model.results(for: readModel).first?.region?.x, 30)
 
+    let preparedKey = model.collaborationPreparationKey
+    let preparedContent = model.collaborationContent
+    for _ in 0..<3 {
+      let readEpoch = model.collaborationReadEpoch
+      await model.reloadExternalChanges()?.value
+      XCTAssertEqual(model.collaborationContent, preparedContent)
+      XCTAssertGreaterThan(model.collaborationReadEpoch, readEpoch,
+        "Accepting a SQL cut must still invalidate older asynchronous scene reads")
+      XCTAssertEqual(model.collaborationPreparationKey, preparedKey,
+        "Reading identical source values is not a new history input")
+      XCTAssertTrue(model.collaborationDetailsAreCurrent,
+        "A repeated read must retain prepared results without serializing the same sources again")
+      XCTAssertEqual(model.results(for: readModel).first?.region?.x, 30)
+    }
+
+    model.selectElement(.page(pageID: page.id, elementID: "idea"))
+    model.clearSelection()
+    XCTAssertEqual(model.collaborationPreparationKey, preparedKey,
+      "Ordinary selection does not add a reference or change source content")
+    XCTAssertTrue(model.collaborationDetailsAreCurrent)
+
+    model.requestShow(reference)
+    let highlighted = try XCTUnwrap(model.requestedReference)
+    model.completeShow(highlighted)
+    XCTAssertFalse(model.collaborationDetailsAreCurrent, "A new highlighted reference must be prepared")
+    await model.refreshCollaborationDetails()
+    XCTAssertNil(model.referenceStatusLabel(highlighted))
+    model.clearSelection()
+    XCTAssertFalse(model.collaborationDetailsAreCurrent)
+    await model.refreshCollaborationDetails()
+    XCTAssertTrue(model.collaborationDetailsAreCurrent)
+
     var changed = try model.store.loadPage(page.id)
     _ = changed.replaceElements([.init(id: "idea", kind: .markdown,
       frame: .init(x: 130, y: 30, width: 200, height: 80), source: "Human", html: "Human")], actor: model.actorID)

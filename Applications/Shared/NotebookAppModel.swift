@@ -44,8 +44,19 @@ final class NotebookAppModel {
   static let defaultPageSize = PageSize(width: 834, height: 1_194)
 
   private(set) var loadState: LoadState = .loading
-  private(set) var workspace: WorkspaceIndex? { didSet { collaborationReadEpoch &+= 1; scheduleScenePreparation() } }
-  private(set) var pages: [UUID: PageDocument] = [:] { didSet { collaborationReadEpoch &+= 1 } }
+  private(set) var workspace: WorkspaceIndex? {
+    didSet {
+      collaborationReadEpoch &+= 1
+      if oldValue != workspace { collaborationContentEpoch &+= 1 }
+      scheduleScenePreparation()
+    }
+  }
+  private(set) var pages: [UUID: PageDocument] = [:] {
+    didSet {
+      collaborationReadEpoch &+= 1
+      if oldValue != pages { collaborationContentEpoch &+= 1 }
+    }
+  }
   /// A prepared slot belongs to one immutable order. This finite view cache
   /// is not the notebook's membership list; SQLite/vector remain its owner.
   private struct PageAddress: Hashable { let itemID: UUID; let index: Int; let root: String }
@@ -197,7 +208,13 @@ final class NotebookAppModel {
     }
   }
 
-  private(set) var documents: [UUID: DocumentDocument] = [:] { didSet { collaborationReadEpoch &+= 1; validateDocumentPageNavigation(); scheduleScenePreparation() } }
+  private(set) var documents: [UUID: DocumentDocument] = [:] {
+    didSet {
+      collaborationReadEpoch &+= 1
+      if oldValue != documents { collaborationContentEpoch &+= 1 }
+      validateDocumentPageNavigation(); scheduleScenePreparation()
+    }
+  }
   private(set) var documentEditingSessions: [DocumentEditingSession] = []
   private(set) var documentReadingPositions: [UUID: DocumentReadingPosition] = [:]
   @ObservationIgnored private var documentReadingLayout: (id: UUID, stamp: VersionStamp, record: DocumentLayoutRecord)?
@@ -220,9 +237,16 @@ final class NotebookAppModel {
   }
   @ObservationIgnored private var documentOpeningRequest: DocumentOpeningRequest?
   @ObservationIgnored private var documentOpeningTask: Task<Void, Never>?
-  private(set) var documentStates: [UUID: DocumentStateJournal] = [:] { didSet { collaborationReadEpoch &+= 1 } }
+  private(set) var documentStates: [UUID: DocumentStateJournal] = [:] {
+    didSet {
+      collaborationReadEpoch &+= 1
+      if oldValue != documentStates { collaborationContentEpoch &+= 1 }
+    }
+  }
   private(set) var boardContentRevisions: [UUID: String] = [:] {
-    didSet { if oldValue != boardContentRevisions { collaborationReadEpoch &+= 1 } }
+    didSet {
+      if oldValue != boardContentRevisions { collaborationReadEpoch &+= 1; collaborationContentEpoch &+= 1 }
+    }
   }
   private(set) var boardHierarchy: BoardHierarchy? {
     didSet {
@@ -231,10 +255,17 @@ final class NotebookAppModel {
       for id in Array(boardContentRevisions.keys) where oldValue?.board(id) != boardHierarchy?.board(id) {
         boardContentRevisions[id] = nil
       }
-      collaborationReadEpoch &+= 1; scheduleScenePreparation()
+      collaborationReadEpoch &+= 1
+      if oldValue != boardHierarchy { collaborationContentEpoch &+= 1 }
+      scheduleScenePreparation()
     }
   }
-  private(set) var spatialInk: SpatialInkJournal? { didSet { collaborationReadEpoch &+= 1 } }
+  private(set) var spatialInk: SpatialInkJournal? {
+    didSet {
+      collaborationReadEpoch &+= 1
+      if oldValue != spatialInk { collaborationContentEpoch &+= 1 }
+    }
+  }
   private(set) var loadedInkSurfaces: Set<SurfaceID> = []
   func renderingInk(on surface: SurfaceID, fallback: SpatialInkJournal?) -> SpatialInkJournal? {
     loadedInkSurfaces.contains(surface) ? spatialInk : fallback
@@ -536,7 +567,12 @@ final class NotebookAppModel {
   private var referenceHighlightTask: Task<Void, Never>?
   private var collaborationUndoTask: Task<Void, Never>?
   private var collaborationReadSnapshot: CollaborationReadSnapshot?
+  /// Publication/admission order rejects stale asynchronous scene reads, even
+  /// when the accepted cut happens to contain the same source values.
   private(set) var collaborationReadEpoch: UInt64 = 0
+  /// History preparation follows changed input values, not repeated SQL reads.
+  /// This identity does not replace the scene publication frontier above.
+  private var collaborationContentEpoch: UInt64 = 0
   private var preparedCollaborationVersion: UInt64?
   @ObservationIgnored private var collaborationReadTask: Task<CollaborationReadSnapshot, Error>?
   @ObservationIgnored private var collaborationReadGeneration = 0
@@ -547,9 +583,19 @@ final class NotebookAppModel {
   let coverPresentations = NotebookCoverPresentationRegistry()
   #endif
   private(set) var isPeerConnected = false
-  private(set) var collaborationActions: [NotebookActionReadModel] = [] { didSet { collaborationReadEpoch &+= 1 } }
+  private(set) var collaborationActions: [NotebookActionReadModel] = [] {
+    didSet {
+      collaborationReadEpoch &+= 1
+      if oldValue != collaborationActions { collaborationContentEpoch &+= 1 }
+    }
+  }
   private(set) var regionalReferenceStatuses: [UUID: ReferenceStatus] = [:]
-  private(set) var sharedContexts: [SharedContextSummary] = [] { didSet { collaborationReadEpoch &+= 1 } }
+  private(set) var sharedContexts: [SharedContextSummary] = [] {
+    didSet {
+      collaborationReadEpoch &+= 1
+      if oldValue != sharedContexts { collaborationContentEpoch &+= 1 }
+    }
+  }
   var activeSharedContext: SharedContextSummary? {
     sharedContexts.first { $0.id == agentQuestion?.contextID }
   }
@@ -659,7 +705,11 @@ final class NotebookAppModel {
   private(set) var penStyle: PenStyle
   private(set) var eraserStyle: EraserStyle
   private(set) var drawingTool: DrawingTool = .pen
-  private(set) var selectionSession = NotebookSelectionSession()
+  private(set) var selectionSession = NotebookSelectionSession() {
+    didSet {
+      if oldValue.highlightedReference != selectionSession.highlightedReference { collaborationContentEpoch &+= 1 }
+    }
+  }
 
   /// The document bundle supplies its physical size. A notebook or an
   /// unselected board uses the canonical notebook/portal rectangle.
@@ -2104,6 +2154,7 @@ final class NotebookAppModel {
     // finish. A read queued before this contact must not overwrite the live
     // program with an earlier saved value while that write is still pending.
     collaborationReadEpoch &+= 1
+    collaborationContentEpoch &+= 1
     let actor = actorID
     enqueueStoreWrite(owner: .elementState(boardID, rendered.id), reload: true) { store in
       do { _ = try store.commitSpatialElementState(boardID: boardID, rendered: rendered, state: state, actor: actor) }
@@ -3086,15 +3137,15 @@ final class NotebookAppModel {
     let permitsPreparation: Bool
   }
 
-  // Every source owner and immutable receipt/context input invalidates this
-  // disposable projection on assignment. Camera frames do not. Rows compare
-  // one generation instead of re-hashing content or scanning all owner stamps.
+  // Re-reading equal source values keeps the existing immutable projection.
+  // Actual content, receipt/context or highlighted-reference changes invalidate
+  // it. Scene reads keep their independent publication/admission ordering.
   var collaborationPreparationKey: CollaborationPreparationKey {
-    .init(epoch: collaborationReadEpoch, permitsPreparation: permitsBackgroundPreparation)
+    .init(epoch: collaborationContentEpoch, permitsPreparation: permitsBackgroundPreparation)
   }
 
   var collaborationDetailsAreCurrent: Bool {
-    collaborationReadSnapshot != nil && preparedCollaborationVersion == collaborationReadEpoch
+    collaborationReadSnapshot != nil && preparedCollaborationVersion == collaborationContentEpoch
   }
 
   func collaborationHistoryMounted(after duration: Duration) {
@@ -3115,7 +3166,7 @@ final class NotebookAppModel {
     if let previous { _ = try? await previous.value }
     guard !Task.isCancelled, generation == collaborationReadGeneration,
       permitsBackgroundPreparation, let content = collaborationContent else { return }
-    let version = collaborationReadEpoch, actions = collaborationActions
+    let version = collaborationContentEpoch, actions = collaborationActions
     var references = sharedContexts.flatMap { $0.previewEntries.flatMap(\.references) }
     if let highlightedReference { references.append(highlightedReference) }
     let considered = references
@@ -3128,7 +3179,7 @@ final class NotebookAppModel {
     } onCancel: { worker.cancel() }
     guard generation == collaborationReadGeneration else { return }
     collaborationReadTask = nil
-    guard !Task.isCancelled, permitsBackgroundPreparation, version == collaborationReadEpoch, let result else { return }
+    guard !Task.isCancelled, permitsBackgroundPreparation, version == collaborationContentEpoch, let result else { return }
     collaborationReadSnapshot = result
     preparedCollaborationVersion = version
     regionalReferenceStatuses = [:]
@@ -3142,7 +3193,7 @@ final class NotebookAppModel {
 
   func refreshReferenceStatuses() async {
     guard permitsBackgroundPreparation, collaborationDetailsAreCurrent, let snapshot = collaborationReadSnapshot else { return }
-    let version = collaborationReadEpoch
+    let version = collaborationContentEpoch
     let references = sharedContexts.flatMap { $0.previewEntries.flatMap(\.references) }.filter { $0.region != nil && $0.elementID == nil }
     let store = store
     let values = await Task.detached(priority: .utility) {
@@ -3151,7 +3202,7 @@ final class NotebookAppModel {
         return (reference.id, (try? store.referenceStatus(reference, currentRevision: revision)) ?? .init(.checking))
       }
     }.value
-    guard !Task.isCancelled, permitsBackgroundPreparation, version == collaborationReadEpoch else { return }
+    guard !Task.isCancelled, permitsBackgroundPreparation, version == collaborationContentEpoch else { return }
     let statuses = Dictionary(values, uniquingKeysWith: { _, new in new })
     if regionalReferenceStatuses != statuses { regionalReferenceStatuses = statuses }
   }
