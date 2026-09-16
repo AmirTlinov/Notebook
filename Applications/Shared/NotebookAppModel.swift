@@ -3214,10 +3214,15 @@ final class NotebookAppModel {
     let references = sharedContexts.flatMap { $0.previewEntries.flatMap(\.references) }.filter { $0.region != nil && $0.elementID == nil }
     let store = store
     let values = await Task.detached(priority: .utility) {
-      references.compactMap { reference -> (UUID, ReferenceStatus)? in
-        guard let revision = snapshot.references[reference.id]?.currentRevision else { return nil }
-        return (reference.id, (try? store.referenceStatus(reference, currentRevision: revision)) ?? .init(.checking))
-      }
+      guard !references.isEmpty else { return [(UUID, ReferenceStatus)]() }
+      // The batch shares one WAL read, not a fresh connection/schema preparation
+      // for every proof. No connection or result outlives this synchronous cut.
+      return (try? store.readTransaction { store in
+        references.compactMap { reference -> (UUID, ReferenceStatus)? in
+          guard let revision = snapshot.references[reference.id]?.currentRevision else { return nil }
+          return (reference.id, (try? store.referenceStatus(reference, currentRevision: revision)) ?? .init(.checking))
+        }
+      }) ?? []
     }.value
     guard !Task.isCancelled, permitsBackgroundPreparation, version == collaborationContentEpoch else { return }
     let statuses = Dictionary(values, uniquingKeysWith: { _, new in new })

@@ -4,6 +4,56 @@ import XCTest
 
 final class CollaborationReadTests: XCTestCase {
   @MainActor
+  func testRegionalProofBatchKeepsIndependentStatesAndRefreshesArrivingReceipts() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let page = try XCTUnwrap(model.activePage)
+    let target = CollaborationTarget(kind: .page, id: page.id)
+    let revision = try model.store.referenceRevision(target: target)
+    let current = CollaborationReference(target: target,
+      region: .init(x: 10, y: 10, width: 30, height: 30), revision: revision)
+    let pending = CollaborationReference(target: target,
+      region: .init(x: 50, y: 10, width: 30, height: 30), revision: revision)
+    let unexamined = CollaborationReference(target: target,
+      region: .init(x: 90, y: 10, width: 30, height: 30), revision: "unexamined-version")
+    let missing = CollaborationReference(target: .init(kind: .page, id: UUID()),
+      region: .init(x: 10, y: 10, width: 30, height: 30), revision: revision)
+    try model.store.appendContext(references: [current, pending, unexamined, missing],
+      author: .human, actor: model.actorID)
+    let readyRequest = try model.store.requestTargetRender(target: target,
+      expectedRevision: model.store.targetContentRevision(target: target), region: current.region)
+    let pendingRequest = try model.store.requestTargetRender(target: target,
+      expectedRevision: model.store.targetContentRevision(target: target), region: pending.region)
+    try model.store.saveTargetRender(.init(request: readyRequest, status: "ready", referenceFingerprint: "first-region"))
+    await model.reloadExternalChanges()?.value
+    await model.refreshCollaborationDetails()
+    XCTAssertTrue(model.collaborationDetailsAreCurrent)
+    XCTAssertNil(model.referenceStatusLabel(current))
+    XCTAssertEqual(model.referenceStatusLabel(pending), "Проверяется область")
+    XCTAssertEqual(model.referenceStatusLabel(unexamined), "Нужно рассмотреть заново")
+    XCTAssertEqual(model.referenceStatusLabel(missing), "Исходник удалён")
+
+    let historyKey = model.collaborationPreparationKey
+    try model.store.saveTargetRender(.init(request: pendingRequest, status: "ready", referenceFingerprint: "second-region"))
+    let finger = UUID()
+    model.inputGate.beginContact(source: finger)
+    await model.refreshReferenceStatuses()
+    XCTAssertEqual(model.referenceStatusLabel(pending), "Проверяется область",
+      "A new proof must not start background preparation during the contact")
+    model.inputGate.endContact(source: finger)
+    for _ in 0..<100 where model.inputGate.isActive { await Task.yield() }
+    await model.refreshReferenceStatuses()
+    XCTAssertEqual(model.collaborationPreparationKey, historyKey,
+      "A new proof needs a fresh read, not a new content snapshot or a persistent proof cache")
+    XCTAssertNil(model.referenceStatusLabel(current))
+    XCTAssertNil(model.referenceStatusLabel(pending))
+    XCTAssertEqual(model.referenceStatusLabel(unexamined), "Нужно рассмотреть заново")
+    XCTAssertEqual(model.referenceStatusLabel(missing), "Исходник удалён")
+  }
+
+  @MainActor
   func testLargeReceivedActionOpensTheBoardWithoutLoadingTheClosedDocumentBody() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let store = NotebookStore(root: root), actor = UUID(), id = UUID()
