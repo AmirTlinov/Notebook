@@ -5,7 +5,7 @@ import Foundation
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
   // A peer must understand native graphics and reversible ink presentation.
-  public static let protocolVersion = 14
+  public static let protocolVersion = 15
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 180 * 1_024
   public static let maximumUnacknowledgedFrames = 16

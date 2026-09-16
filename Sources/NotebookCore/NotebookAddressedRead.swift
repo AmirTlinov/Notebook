@@ -174,6 +174,7 @@ extension NotebookStore {
     if (fragment.file.hasPrefix("pages/") && fragment.collection == "elements")
       || (fragment.file == "board.json" && fragment.collection == "board/elements") {
       try database.run("DELETE FROM graphic_sources WHERE address=?", [.text(fragment.address)])
+      try database.run("DELETE FROM graphic_bindings WHERE address=?", [.text(fragment.address)])
       if let graphic = try fragment.value["graphic"]?.decode(NotebookGraphic.self),
         let id = fragment.value["id"]?.string {
         let owner: String
@@ -186,6 +187,14 @@ extension NotebookStore {
         for stroke in graphic.sourceInkIDs {
           try database.run("INSERT INTO graphic_sources(address,owner,element_id,stroke_id) VALUES(?,?,?,?)",
             [.text(fragment.address), .text(owner), .text(id), .text(stroke.uuidString.lowercased())])
+        }
+        if let connection = graphic.connection {
+          for (terminal, endpoint) in [("start", connection.start), ("end", connection.end)] {
+            if let binding = endpoint.binding {
+              try database.run("INSERT INTO graphic_bindings(address,owner,target_id,terminal) VALUES(?,?,?,?)",
+                [.text(fragment.address), .text(owner), .text(collaborationIdentity(binding.elementID)), .text(terminal)])
+            }
+          }
         }
       }
     }
@@ -227,16 +236,24 @@ extension NotebookStore {
     }
   }
 
-  func indexSpatialElement(_ fragment: NotebookStoredFragment, database: NotebookSQLConnection) throws {
+  func indexSpatialElement(_ fragment: NotebookStoredFragment, database: NotebookSQLConnection, resolvingGraphics: Bool = false) throws {
       guard let boardString = fragment.parent?.components(separatedBy: "@").last,
         let boardID = UUID(uuidString: boardString) else { throw NotebookStorageError.corruptRecord(fragment.address) }
       try database.run("DELETE FROM spatial_entries WHERE address=?", [.text(fragment.address)])
       let element = try fragment.value.decode(SpatialElement.self)
+      let frame: PageRect
+      if resolvingGraphics, element.graphic != nil {
+        let target = element.surface.kind == .cover
+          ? CollaborationTarget(kind: .cover, id: element.surface.ownerID!, boardID: boardID)
+          : CollaborationTarget(kind: .board, id: boardID)
+        guard let layout = try readGraphicResolution(target: target, elementID: element.id).layout else { return }
+        frame = layout.frame
+      } else { frame = .init(x: element.frame.x,y: element.frame.y,width: element.frame.width,height: element.frame.height) }
       let id = element.surface.kind == .cover ? (element.surface.ownerID?.uuidString.lowercased() ?? "") : element.id
       try insertSpatialEntry(address: fragment.address, boardID: boardID, id: id,
         kind: element.surface.kind == .cover ? "coverElement" : "element", key: element.id,
-        origin: (element.worldOrigin ?? .zero).offsetBy(x: element.frame.x, y: element.frame.y),
-        width: element.frame.width, height: element.frame.height, z: Double(fragment.position), database: database)
+        origin: (element.worldOrigin ?? .zero).offsetBy(x: frame.x, y: frame.y),
+        width: frame.width, height: frame.height, z: Double(fragment.position), database: database)
       if element.surface.kind == .cover { try database.noteOwner(.cover, fragment.address) }
   }
 
@@ -411,6 +428,7 @@ extension NotebookStore {
         if content.count > remaining { truncated = true }
         for row in content.prefix(remaining) { try include(row[0].text!, required: false) }
       }
+      try appendGraphicDependencies(to: &rows, boardAddress: address)
       try appendBoardCausalFragments(to: &rows, address: address)
       let board = try NotebookRecordCodec.decode(rows, root: address).decode(BoardNode.self)
       var items: [WorkspaceItem] = [], paper: [UUID: DocumentPaperSize] = [:], counts: [UUID: Int] = [:]

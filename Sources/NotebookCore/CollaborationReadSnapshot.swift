@@ -31,11 +31,17 @@ public struct CollaborationReadSnapshot: Sendable {
       func geometry(_ target: CollaborationTarget, _ elementID: String) throws -> (PageRect, WorldPoint?)? {
         if target.kind == .page,
           let element = try store.storedMember(file: pageFile(target.id), collection: "elements", id: elementID) {
+          if element["graphic"] != nil {
+            return try store.readGraphicResolution(target:target,elementID:elementID).layout.map { ($0.frame,nil) }
+          }
           return try element["frame"].map { (try $0.decode(PageRect.self), nil) }
         }
         if target.kind == .board || target.kind == .cover, let boardID = target.boardID ?? (target.kind == .board ? target.id : nil),
           let element = try store.readSpatialElement(boardID: boardID, elementID: elementID),
           element.surface == (target.kind == .board ? .board(target.id) : .cover(target.id)) {
+          if element.graphic != nil {
+            return try store.readGraphicResolution(target:target,elementID:elementID).layout.map { ($0.frame,element.worldOrigin) }
+          }
           return (.init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height), element.worldOrigin)
         }
         return nil

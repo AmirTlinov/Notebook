@@ -94,13 +94,15 @@ struct BoardPortalPreview: View {
           }
           ForEach(workset.elements.filter { cohort.plan.allowsLive(.element($0.id), in: plane) }) { element in
             if let origin = element.worldOrigin {
+              let layout = cohort.frame.index.graphicLayout(id:element.id,boardID:boardID)
+              let local = layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
               let screen = camera.worldToScreen(origin, viewport: viewport)
-              SpatialElementContent(element: element, commitsState: false, boardID: boardID)
-                .frame(width: element.frame.width, height: element.frame.height)
+              SpatialElementContent(element: element, commitsState: false, boardID: boardID,graphicLayout:layout)
+                .frame(width: local.width, height: local.height)
                 .scaleEffect(camera.scale)
-                .frame(width: element.frame.width * camera.scale, height: element.frame.height * camera.scale)
-                .position(x: screen.x + (element.frame.x + element.frame.width / 2) * camera.scale,
-                  y: screen.y + (element.frame.y + element.frame.height / 2) * camera.scale)
+                .frame(width: local.width * camera.scale, height: local.height * camera.scale)
+                .position(x: screen.x + (local.x + local.width / 2) * camera.scale,
+                  y: screen.y + (local.y + local.height / 2) * camera.scale)
                 .zIndex(cohort.plan.rank(id: .element(element.id), in: plane) ?? 0)
             }
           }
@@ -192,6 +194,8 @@ struct WorkspaceItemCoverView: View {
     let plane = cohort?.plan.liveOwners.first(where: { $0.id == .item(item.id) }).map {
       SceneCompositionPlane.cover(boardID: $0.plane.boardID, itemID: item.id)
     }
+    let graph = cohort.map { model.presentedGraphicGraph(boardID:boardID,cohort:$0,preview:!isPortalProjection) }
+      ?? model.boardHierarchy?.board(boardID)?.graphicGraph()
     ZStack(alignment: .topLeading) {
       coverBackground.zIndex(-2)
       WorkspaceCoverTitle(item: item, geometry: geometry).zIndex(-1)
@@ -201,23 +205,27 @@ struct WorkspaceItemCoverView: View {
         }
       }
       ForEach(elements.filter { element in
+        if element.graphic != nil, graph?.resolve(element.id).layout == nil { return false }
         guard let cohort, let plane else { return true }
         return cohort.plan.allowsLive(.element(element.id), in: plane)
       }) { element in
         let reference = EditableElementReference.spatial(boardID: boardID, elementID: element.id)
+        let layout = graph?.resolve(element.id).layout
+        let local = layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
         let retainsTextInput = !isPortalProjection
           && element.kind == .nativeText && editingTextID == element.id
         EditableElementContainer(reference: reference, coordinateScale: 1) {
           SpatialElementContent(
             element: element, commitsState: !isPortalProjection,
             boardID: boardID,
+            graphicLayout:layout,
             isTextEditing: retainsTextInput,
             onTextEditingEnded: { onTextEditingEnded(element.id) }
           )
         }
         .allowsHitTesting(ownerIsAvailable)
-        .frame(width: element.frame.width, height: element.frame.height)
-        .offset(x: element.frame.x, y: element.frame.y)
+        .frame(width: local.width, height: local.height)
+        .offset(x: local.x, y: local.y)
         .opacity(portalOverlayOpacity)
         .zIndex(plane.flatMap { cohort?.plan.rank(id: .element(element.id), in: $0) } ?? 0)
       }
@@ -354,6 +362,7 @@ struct SpatialElementContent: View {
   let element: SpatialElement
   let commitsState: Bool
   let boardID: UUID?
+  let graphicLayout: NotebookGraphicLayout?
   let isTextEditing: Bool
   let onTextEditingEnded: () -> Void
 
@@ -361,12 +370,14 @@ struct SpatialElementContent: View {
     element: SpatialElement,
     commitsState: Bool = true,
     boardID: UUID? = nil,
+    graphicLayout: NotebookGraphicLayout? = nil,
     isTextEditing: Bool = false,
     onTextEditingEnded: @escaping () -> Void = {}
   ) {
     self.element = element
     self.commitsState = commitsState
     self.boardID = boardID
+    self.graphicLayout = graphicLayout
     self.isTextEditing = isTextEditing
     self.onTextEditingEnded = onTextEditingEnded
   }
@@ -374,8 +385,10 @@ struct SpatialElementContent: View {
   var body: some View {
     switch element.kind {
     case .graphic:
-      if let graphic = element.graphic, let sourceBoardID {
-        NotebookGraphicElementView(graphic: graphic, reference: .spatial(boardID: sourceBoardID, elementID: element.id))
+      if let graphic = element.graphic {
+        if commitsState, let sourceBoardID {
+          NotebookGraphicElementView(graphic: graphic, reference: .spatial(boardID: sourceBoardID, elementID: element.id), layout: graphicLayout)
+        } else { NotebookGraphicView(graphic: graphic, layout: graphicLayout) }
       }
     case .nativeText:
       NativeTextElementView(

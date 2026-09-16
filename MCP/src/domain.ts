@@ -24,20 +24,36 @@ export type JSONValue =
   | { [key: string]: JSONValue };
 
 export type AgentElementKind = "markdown" | "web" | "graphic";
+export type NotebookGraphicResolution = {state:"geometry";frame:PageRect} | {state:"hidden"} | {state:"pending";dependencies:string[]};
 
 export interface NotebookGraphic {
-  shape: "ellipse";
-  style: { stroke: { red: number; green: number; blue: number }; strokeWidth: number; fill?: { red: number; green: number; blue: number } };
+  shape: "ellipse" | "connector";
+  style: { stroke: { red: number; green: number; blue: number }; strokeWidth: number; fill?: { red: number; green: number; blue: number }; dash?: "solid" | "dashed" | "dotted" };
   label: string;
   representation: "ink" | "geometry";
   visible: boolean;
   sourceInkIDs: string[];
+  connection?: NotebookGraphicConnection;
+}
+
+export interface NotebookGraphicConnection {
+  start: NotebookGraphicEndpoint;
+  end: NotebookGraphicEndpoint;
+  bend: number;
+  startArrowhead: "none" | "arrow" | "triangle" | "square" | "dot" | "pipe" | "diamond" | "inverted" | "bar";
+  endArrowhead: NotebookGraphicConnection["startArrowhead"];
+  labelPosition: number;
+}
+export interface NotebookGraphicEndpoint {
+  point: { x: number; y: number };
+  binding?: { elementID: string; normalizedAnchor: { x: number; y: number }; isExact: boolean; isPrecise: boolean };
 }
 
 export interface AgentElement {
   id: string;
   kind: AgentElementKind;
   graphic?: NotebookGraphic;
+  graphicResolution?: NotebookGraphicResolution;
   frame: PageRect;
   source: string;
   html: string;
@@ -149,6 +165,7 @@ export interface SpatialElement {
   surface: SurfaceID;
   kind: SpatialElementKind;
   graphic?: NotebookGraphic;
+  graphicResolution?: NotebookGraphicResolution;
   frame: PageRect;
   worldOrigin?: WorldPoint;
   source: string;
@@ -307,6 +324,7 @@ export function publicPage(page: PageDocument, options: { includeSource?: boolea
       id: element.id,
       kind: element.kind,
       ...(element.graphic ? {graphic: element.graphic} : {}),
+      ...(element.graphicResolution ? {graphicResolution:element.graphicResolution} : {}),
       frame: element.frame,
       sourcePreview: element.source.slice(0, 160),
       sourceCharacterCount: element.source.length,

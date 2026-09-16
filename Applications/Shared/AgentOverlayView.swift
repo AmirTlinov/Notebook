@@ -18,9 +18,24 @@ struct AgentOverlayView: View {
 
   @State private var readiness = AgentOverlayReadiness()
 
-  private var visibleElements: [AgentElement] { elements.filter {
-    ($0.graphic == nil || graphicPresentation.geometryIDs.contains($0.id)) && captureRegion(for: $0) != nil
-  } }
+  private var graph: NotebookGraphicGraph {
+    if let page = model.pages[pageID] { return model.graphicGraph(page:page) }
+    return .init(elements.compactMap { element in
+      guard let graphic = element.graphic else { return nil }
+      return .init(id:element.id,graphic:graphic,frame:element.frame,surface:.page(pageID),shown:graphicPresentation.geometryIDs.contains(element.id))
+    })
+  }
+
+  private var visibleElements: [AgentElement] {
+    let graph = graph
+    return elements.filter {
+      if $0.graphic != nil {
+        guard let frame = graph.resolve($0.id).layout?.frame else { return false }
+        return frame.x < pageSize.width && frame.y < pageSize.height && frame.x+frame.width > 0 && frame.y+frame.height > 0
+      }
+      return captureRegion(for: $0) != nil
+    }
+  }
 
   private func captureRegion(for element: AgentElement) -> PageRect? {
     let frame = element.frame
@@ -51,6 +66,7 @@ struct AgentOverlayView: View {
 
   var body: some View {
     let visible = visibleElements
+    let graph = graph
     let runningPrograms = runtimeIDs(in: visible)
     ZStack(alignment: .topLeading) {
       ForEach(visible) { element in
@@ -59,9 +75,11 @@ struct AgentOverlayView: View {
           elementID: element.id
         )
         let interactiveReference = InteractiveElementReference.page(pageID: pageID, elementID: element.id)
+        let layout = element.graphic == nil ? nil : graph.resolve(element.id).layout
+        let frame = layout?.frame ?? element.frame
         EditableElementContainer(reference: reference, coordinateScale: 1) {
           if let graphic = element.graphic {
-            NotebookGraphicElementView(graphic: graphic, reference: reference)
+            NotebookGraphicElementView(graphic: graphic, reference: reference, layout: layout)
           } else {
           PreparedAgentElementView(
             element: element,
@@ -81,10 +99,10 @@ struct AgentOverlayView: View {
           }
         }
         .frame(
-          width: element.frame.width,
-          height: element.frame.height
+          width: frame.width,
+          height: frame.height
         )
-        .offset(x: element.frame.x, y: element.frame.y)
+        .offset(x: frame.x, y: frame.y)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent-element-\(element.id)")
       }

@@ -20,6 +20,15 @@ extension WorkspaceSceneProjection {
 }
 
 extension NotebookAppModel {
+  func presentedGraphicGraph(boardID: UUID, cohort: SceneCompositionCohort, preview: Bool = true) -> NotebookGraphicGraph {
+    guard let captured = cohort.frame.index.capturedHierarchy.board(boardID) else { return .init([]) }
+    let board = presentedBoard(captured, boardID:boardID,cohort:cohort)
+    let usesPreview: Bool
+    if case .spatial(let owner, _) = selectionSession.manipulation?.reference { usesPreview = preview && owner == boardID }
+    else { usesPreview = false }
+    return board.graphicGraph(frames: usesPreview ? graphicPreviewFrames() : [:],
+      connections: usesPreview ? graphicPreviewConnections() : [:])
+  }
   /// The cohort admits physical hosts and excludes their pixels from its tiles.
   /// Its immutable geometry is not another owner of subsequent accepted input.
   /// This bounded projection changes only those already admitted hosts.

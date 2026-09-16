@@ -312,15 +312,26 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(scale["checks"]["core"], [selector])
         self.assertFalse(scale["checks"]["ipad"])
 
-    def test_renamed_simulator_is_selected_by_type_and_id_not_display_name(self):
-        device = {"name": "Notebook InputUI RC", "udid": "ipad", "state": "Booted", "isAvailable": True,
-                  "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Air-11-inch-M4"}
-        inventory = {"devices": {"runtime": [device]}}
-        self.assertEqual(verify.select_simulator(inventory), device)
-        self.assertEqual(verify.select_simulator(inventory, "ipad"), device)
-        inventory["devices"]["runtime"].append(dict(device, udid="second"))
-        with self.assertRaises(release.ReleaseError): verify.select_simulator(inventory)
-        self.assertEqual(verify.select_simulator(inventory, "ipad"), device)
+    def test_ipad_selection_uses_the_physical_device_and_an_isolated_signed_app(self):
+        class RunnerReached(Exception): pass
+        calls = []
+        def command(label, argv, **kwargs):
+            calls.append((label, argv))
+            if label == "ipad": raise RunnerReached()
+            return b"", None
+        plan = {"checks": {"core": [], "ipad": ["NotebookTests/NotebookGraphicModelTests"],
+                            "mac": [], "commands": []}}
+        with patch.object(release, "release_commands", return_value=command), \
+             patch.object(release, "source_inputs", return_value={"source": "fixture"}), \
+             patch.object(release, "read_toolchain", return_value={"toolchain": "fixture"}), \
+             self.assertRaises(RunnerReached):
+            verify.run_selected(self.root, plan, self.root / "physical-native")
+        args = next(args for label, args in calls if label == "ipad")
+        self.assertEqual(args[args.index("-destination") + 1], "platform=iOS,id=" + release.UDID)
+        self.assertIn("NOTEBOOK_BUNDLE_SUFFIX=.native-test", args)
+        self.assertIn("DEVELOPMENT_TEAM=" + release.TEAM, args)
+        self.assertIn("-allowProvisioningUpdates", args)
+        self.assertFalse(any("simctl" in args for _, args in calls))
 
     def test_docs_do_not_start_any_runner(self):
         self.change("docs/contract.md")
@@ -519,7 +530,7 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(verify.make_plan(self.root, tests=[scenario], only=True)["unclassified"], ["Sources/Unknown.swift"])
 
     def test_shared_ui_fixture_requires_a_named_gesture_not_a_broad_profile(self):
-        paths = ["Applications/iPad/SimulatorDrawingFixture.swift", "Applications/UITests/DrawingResponsivenessTests.swift"]
+        paths = ["Applications/iPad/NotebookDrawingFixture.swift", "Applications/UITests/DrawingResponsivenessTests.swift"]
         for path in paths:
             self.change(path)
         self.assertEqual(verify.make_plan(self.root, profiles=["documents"])["unclassified"], sorted(paths))
@@ -747,7 +758,7 @@ class SelectionTests(unittest.TestCase):
         release.write_json(evidence / "selection.json", plan)
         receipt["artifacts"] = release.verification_artifacts(evidence, full=False)
         self.assertEqual(verify.validate_selected(self.root, evidence, receipt), receipt)
-        plan["unclassified"] = ["Applications/iPad/SimulatorDrawingFixture.swift"]
+        plan["unclassified"] = ["Applications/iPad/NotebookDrawingFixture.swift"]
         release.write_json(evidence / "selection.json", plan)
         receipt["artifacts"] = release.verification_artifacts(evidence, full=False)
         with self.assertRaises(release.ReleaseError): verify.validate_selected(self.root, evidence, receipt)

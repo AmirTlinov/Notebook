@@ -43,7 +43,11 @@ extension NotebookStore {
     }
     let revisions = try receipt.revisions.map(JSONValue.encode)
     let changes = try receipt.changes.map(Self.fieldAddress)
-    let undo = try receipt.undo?.preserved.map(Self.fieldAddress) ?? []
+    let undo = try (receipt.undo?.preserved.map(Self.fieldAddress) ?? []) + (receipt.undo?.dependencies ?? []).map { dependency in
+      var value = try JSONValue.encode(dependency)
+      value = value.setting("reason",.string("retained_dependency"))
+      return value
+    }
     var projected: [String: JSONValue] = [
       "id": try .encode(receipt.id), "createdAt": try .encode(receipt.createdAt),
       "requestFingerprint": try .encode(receipt.requestFingerprint),

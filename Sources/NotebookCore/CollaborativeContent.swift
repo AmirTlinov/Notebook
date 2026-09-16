@@ -278,7 +278,11 @@ private func contentFields(_ value: JSONValue) -> [String: JSONValue] {
         for (field, val) in item.object {
           if ["source", "html", "kind"].contains(field) { content[field] = val }
           else if field == "graphic" {
-            for (part, value) in val.object { result[fieldKey([name, id, "graphic", part])] = value }
+            for (part, value) in val.object {
+              if part == "connection" {
+                for (field, value) in value.object { result[fieldKey([name, id, "graphic", part, field])] = value }
+              } else { result[fieldKey([name, id, "graphic", part])] = value }
+            }
           }
           else { result[fieldKey([name, id, field])] = val }
         }
@@ -306,7 +310,8 @@ private func rebuildContent(base: JSONValue, fields: [String: JSONValue]) -> JSO
           let field = String(key.dropFirst(memberPrefix.count))
           if field == "content" { for (part, value) in val.object { object[part] = value } }
           else if field.hasPrefix("graphic/") {
-            object["graphic"] = (object["graphic"] ?? .object([:])).setting(String(field.dropFirst(8)), val)
+            let parts = field.dropFirst(8).components(separatedBy: "/").map(CollaborationPathComponent.field)
+            object["graphic"] = (object["graphic"] ?? .object([:])).setting(at: parts[...], to: val)
           }
           else if field != "exists" { object[field] = val }
         }

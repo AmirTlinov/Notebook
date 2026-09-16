@@ -905,9 +905,9 @@ final class NotebookAppModel {
       || ProcessInfo.processInfo.arguments.contains("--notebook-profile-documents"))
     #if DEBUG && targetEnvironment(simulator)
       let arguments = ProcessInfo.processInfo.arguments
-      let fixturePencil = arguments.contains(SimulatorDrawingFixture.launchArgument)
-        && (!arguments.contains(SimulatorDrawingFixture.fingerGestureArgument)
-          || arguments.contains(SimulatorDrawingFixture.mixedInputArgument))
+      let fixturePencil = arguments.contains(NotebookDrawingFixture.launchArgument)
+        && (!arguments.contains(NotebookDrawingFixture.fingerGestureArgument)
+          || arguments.contains(NotebookDrawingFixture.mixedInputArgument))
       inputGate = NotebookInputGate(simulatesPencilContacts: fixturePencil || acceptance?.simulatorContact == "pencil")
     #else
       inputGate = NotebookInputGate(simulatesPencilContacts: acceptance?.simulatorContact == "pencil")
@@ -2454,9 +2454,12 @@ final class NotebookAppModel {
     kind: NotebookElementManipulation.Kind) -> UUID? {
     guard selectionSession.element == reference, inputGate.beginFingerSequence() != nil,
       let geometry = elementGeometry(reference) else { return nil }
+    let connection = graphicElement(reference)?.connection
+    let kind: NotebookElementManipulation.Kind = kind == .move && connection?.bindings.isEmpty == false ? .bend : kind
     cancelElementManipulation()
     let contact = NotebookElementManipulation(reference: reference, kind: kind,
-      frame: geometry.frame, bounds: geometry.bounds, identity: geometry.identity, worldOrigin: geometry.worldOrigin)
+      frame: geometry.frame, bounds: geometry.bounds, identity: geometry.identity, worldOrigin: geometry.worldOrigin,
+      connection: connection, layout: graphicLayout(reference, preview:false))
     selectionSession.manipulation = contact
     inputGate.beginContact(source: contact.id)
     inputGate.registerFingerCancellation(source: contact.id) { [weak self] in self?.cancelElementManipulation(contact.id) }
@@ -2466,6 +2469,7 @@ final class NotebookAppModel {
   func updateElementManipulation(_ id: UUID, translation: SpatialPoint) {
     guard selectionSession.manipulation?.id == id else { return }
     selectionSession.manipulation?.update(translation: .init(x: translation.x, y: translation.y))
+    selectionSession.manipulation?.bindEndpoint(manipulatedEndpointBinding())
   }
 
   @discardableResult
@@ -2474,9 +2478,20 @@ final class NotebookAppModel {
     updateElementManipulation(id, translation: translation)
     guard let contact = selectionSession.manipulation else { return false }
     cancelElementManipulation(id)
-    guard contact.frame != contact.original,
+    guard contact.frame != contact.original || contact.connection != contact.originalConnection,
       let current = elementGeometry(contact.reference), current.frame == contact.original,
-      current.identity == contact.identity, current.worldOrigin == contact.worldOrigin else { return false }
+      current.identity == contact.identity, current.worldOrigin == contact.worldOrigin,
+      graphicElement(contact.reference)?.connection == contact.originalConnection else { return false }
+    if let connection = contact.connection, connection != contact.originalConnection {
+      guard let original = contact.originalConnection else { return false }
+      var patch: [String: JSONValue] = [:]
+      if connection.start != original.start { patch["start"] = try? .encode(connection.start) }
+      if connection.end != original.end { patch["end"] = try? .encode(connection.end) }
+      if connection.bend != original.bend { patch["bend"] = .number(connection.bend) }
+      performGraphicOperation(.updateElement,reference:contact.reference,
+        values:["graphic":.object(["connection":.object(patch)])],summary:"Изменить связь")
+      return true
+    }
     return commitElementFrame(contact)
   }
 
@@ -2568,19 +2583,19 @@ final class NotebookAppModel {
   }
 
   func acceptQuickShape(_ fit: NotebookQuickShapeFit, pageID: UUID, stroke: PageInkAction) {
-    let graphic = NotebookGraphic(style: .init(stroke: stroke.color, strokeWidth: stroke.samples.first?.width ?? 2), sourceInkIDs: [stroke.id])
+    let graphic = NotebookGraphic(shape:fit.shape,style: .init(stroke: stroke.color, strokeWidth: stroke.samples.first?.width ?? 2), sourceInkIDs: [stroke.id],connection:fit.connection)
     guard let values = try? ["kind": JSONValue.string("graphic"), "source": .string(""),
       "frame": .encode(fit.frame), "graphic": .encode(graphic)] else { return }
     performGraphicOperation(.convertInkToElement, reference: .page(pageID: pageID, elementID: UUID().uuidString.lowercased()),
-      values: values, summary: "Преобразовать набросок в эллипс")
+      values: values, summary:fit.connection == nil ? "Преобразовать набросок в эллипс" : "Преобразовать набросок в связь")
   }
 
   func acceptQuickShape(_ fit: NotebookQuickShapeFit, boardID: UUID, origin: WorldPoint, stroke: SpatialInkAction) {
-    let graphic = NotebookGraphic(style: .init(stroke: stroke.color, strokeWidth: stroke.spans.first?.samples.first?.width ?? 2), sourceInkIDs: [stroke.id])
+    let graphic = NotebookGraphic(shape:fit.shape,style: .init(stroke: stroke.color, strokeWidth: stroke.spans.first?.samples.first?.width ?? 2), sourceInkIDs: [stroke.id],connection:fit.connection)
     guard let values = try? ["kind": JSONValue.string("graphic"), "source": .string(""),
       "frame": .encode(fit.frame), "graphic": .encode(graphic), "worldOrigin": .encode(origin)] else { return }
     performGraphicOperation(.convertInkToElement, reference: .spatial(boardID: boardID, elementID: UUID().uuidString.lowercased()),
-      values: values, summary: "Преобразовать набросок в эллипс")
+      values: values, summary:fit.connection == nil ? "Преобразовать набросок в эллипс" : "Преобразовать набросок в связь")
   }
 
   func setGraphicLabel(_ text: String, reference: EditableElementReference, replacing original: String? = nil) {
@@ -2591,6 +2606,21 @@ final class NotebookAppModel {
     guard graphicElement(reference)?.label != text else { return }
     performGraphicOperation(.updateElement, reference: reference,
       values: ["graphic": .object(["label": .string(text)])], summary: "Изменить подпись фигуры")
+  }
+
+  func setGraphicStyle(reference: EditableElementReference, update: (inout NotebookGraphic.Style) -> Void) {
+    guard let original = graphicElement(reference)?.style else { return }
+    var style = original; update(&style)
+    guard original != style, let value = try? JSONValue.encode(style) else { return }
+    performGraphicOperation(.updateElement,reference:reference,values:["graphic":.object(["style":value])],summary:"Изменить оформление фигуры")
+  }
+
+  func setGraphicArrowhead(_ head: NotebookGraphicConnection.Arrowhead, terminal: NotebookGraphicConnection.Terminal,
+    reference: EditableElementReference) {
+    guard graphicElement(reference)?.connection != nil else { return }
+    performGraphicOperation(.updateElement,reference:reference,
+      values:["graphic":.object(["connection":.object([terminal == .start ? "startArrowhead" : "endArrowhead":.string(head.rawValue)])])],
+      summary:"Изменить наконечник связи")
   }
 
   private func performGraphicOperation(_ kind: CollaborationOperation.Kind, reference: EditableElementReference,

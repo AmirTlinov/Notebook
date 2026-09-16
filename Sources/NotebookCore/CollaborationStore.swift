@@ -168,6 +168,7 @@ extension NotebookStore {
         }
       }
       try after.recordFieldChanges(from: before, human: human)
+      try after.validateGraphicBindings(action: action, scope: self)
       try after.validate(scope: self)
       let changes = try graphicConversionChanges(action, after: after.files,
         changes: collaborationDiff(before.files, after.files).filter { !action.ownsInkField($0) })
@@ -198,6 +199,7 @@ extension NotebookStore {
       var preserved: [CollaborationFieldChange] = []
       var restoredFields: [CollaborationFieldChange] = []
       let protected = try before.protectedCreationChanges(in: receipt, scope: self)
+      var preservedDependencies: [CollaborationPreservedDependency] = []
       var restored = 0
       for operation in receipt.action.operations where operation.kind == .appendInkStroke {
         if try after.undoInk(operation, actor: actor) { restored += 1 }
@@ -230,7 +232,7 @@ extension NotebookStore {
         let version = collaborationFieldVersion(file: before.files[change.file], path: change.path)
         let stillOwned = try fieldIsOwned(version, by: change)
         guard !protected.contains(change),
-          try !graphicConversionIsAdopted(change, receipt: receipt, files: before.files),
+          try !graphicConversionIsAdopted(change, receipt: receipt, files: before.files, preserving:&preservedDependencies),
           stillOwned,
           collaborationComparable(current, file: change.file, path: change.path) == collaborationComparable(change.after, file: change.file, path: change.path) else {
           preserved.append(change)
@@ -260,6 +262,7 @@ extension NotebookStore {
       // hand has adopted any of them; validation is the final ownership gate.
       try after.validate(scope: self)
       receipt.undo = CollaborationUndoResult(restored: restored, preserved: preserved, completedAt: Date())
+      receipt.undo?.dependencies = preservedDependencies.isEmpty ? nil : preservedDependencies
       receipt.undo?.restorations = restoredFields.compactMap { change in
         guard let prior = change.beforeVersion,
           let written = collaborationFieldVersion(file: after.files[change.file], path: change.path),
@@ -633,10 +636,17 @@ struct CollaborationWorkspace {
       for (key, value) in op.values {
         if key == "graphic" {
           guard var graphic = elements[index]["graphic"], !value.object.isEmpty,
-            Set(value.object.keys).isSubset(of: Set(NotebookGraphic.causalFields).subtracting(["sourceInkIDs"])) else {
+            Set(value.object.keys).isSubset(of: Set(NotebookGraphic.causalFields + ["connection"]).subtracting(["sourceInkIDs"])) else {
             throw invalid("Правка геометрии не меняет её исходные измерения.")
           }
-          for (part, supplied) in value.object { graphic = graphic.setting(part, supplied) }
+          for (part, supplied) in value.object {
+            if part == "connection", let previous = graphic[part] {
+              guard !supplied.object.isEmpty, Set(supplied.object.keys).isSubset(of: Set(NotebookGraphicConnection.causalFields)) else {
+                throw invalid("Правка связи называет её концы, изгиб, наконечники или положение подписи.")
+              }
+              graphic = graphic.setting(part, .object(previous.object.merging(supplied.object) { _, latest in latest }))
+            } else { graphic = graphic.setting(part, supplied) }
+          }
           elements[index] = elements[index].setting(key, graphic)
         } else { elements[index] = elements[index].setting(key, value) }
       }
@@ -1346,7 +1356,10 @@ func collaborationCausalFieldPath(_ path: [CollaborationPathComponent]) -> [Coll
       parts.append(collaborationIdentity(id))
       if local.count > 2, case .field(let field) = local[2] {
         parts.append(collection != "items" && ["source", "html", "kind"].contains(field) ? "content" : field)
-        if field == "graphic", local.count > 3, case .field(let part) = local[3] { parts.append(part) }
+        if field == "graphic", local.count > 3, case .field(let part) = local[3] {
+          parts.append(part)
+          if part == "connection", local.count > 4, case .field(let property) = local[4] { parts.append(property) }
+        }
       } else { parts.append("exists") }
     case .field: return nil
     }

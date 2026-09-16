@@ -76,8 +76,8 @@ final class NotebookInputTests: XCTestCase {
     let camera = WorkspaceGestureLayer.Coordinator(defersHorizontalMotionToPageTurn: false,
       isEnabled: true, inputGate: gate, onCamera: { _ in }, onUndo: {})
     camera.install(on: window, inside: anchor)
-    let pan = BoardPanView.Coordinator(isEnabled: true, itemFrames: [], inputGate: gate,
-      onTap: {}, onBegan: {}, onChanged: { _ in }, onEnded: { _ in }, onCancelled: {})
+    let pan = BoardPanView.Coordinator(isEnabled: true, inputGate: gate,
+      onBegan: {}, onChanged: { _ in }, onEnded: { _ in }, onCancelled: {})
     pan.install(on: window, inside: anchor)
     defer { camera.uninstall(); pan.uninstall(); ink.uninstall(); window.isHidden = true }
     let pencil = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SpatialPencilGestureRecognizer }.first)
@@ -261,8 +261,8 @@ final class NotebookInputTests: XCTestCase {
     let anchor = UIView(frame: .init(x: 0, y: 0, width: 600, height: 800))
     window.rootViewController = host; host.view.addSubview(anchor); window.makeKeyAndVisible()
     var shown = CGPoint.zero, cancellations = 0, commits = 0
-    let owner = BoardPanView.Coordinator(isEnabled: true, itemFrames: [], inputGate: gate,
-      onTap: {}, onBegan: {}, onChanged: { shown = $0 }, onEnded: { shown = $0; commits += 1 },
+    let owner = BoardPanView.Coordinator(isEnabled: true, inputGate: gate,
+      onBegan: {}, onChanged: { shown = $0 }, onEnded: { shown = $0; commits += 1 },
       onCancelled: { cancellations += 1 })
     owner.install(on: window, inside: anchor)
     defer { owner.uninstall(); window.isHidden = true }
@@ -297,8 +297,8 @@ final class NotebookInputTests: XCTestCase {
     let anchor = UIView(frame: .init(x: 0, y: 0, width: 600, height: 800))
     window.rootViewController = host; host.view.addSubview(anchor); window.makeKeyAndVisible()
     var samples: [CGPoint] = []
-    let owner = BoardPanView.Coordinator(isEnabled: true, itemFrames: [], inputGate: NotebookInputGate(),
-      onTap: {}, onBegan: {}, onChanged: { samples.append($0) },
+    let owner = BoardPanView.Coordinator(isEnabled: true, inputGate: NotebookInputGate(),
+      onBegan: {}, onChanged: { samples.append($0) },
       onEnded: { samples.append($0) }, onCancelled: {})
     owner.install(on: window, inside: anchor)
     defer { owner.uninstall(); window.isHidden = true; previous?.makeKey() }
@@ -333,8 +333,8 @@ final class NotebookInputTests: XCTestCase {
     window.rootViewController = host; host.view.addSubview(anchor); window.makeKeyAndVisible()
     var isUpdatingView = false, begins = 0, cancellations = 0, successorCancellations = 0
     var shown = CGPoint.zero
-    let owner = BoardPanView.Coordinator(isEnabled: true, itemFrames: [], inputGate: gate,
-      onTap: {}, onBegan: { begins += 1 }, onChanged: { shown = $0 }, onEnded: { shown = $0 },
+    let owner = BoardPanView.Coordinator(isEnabled: true, inputGate: gate,
+      onBegan: { begins += 1 }, onChanged: { shown = $0 }, onEnded: { shown = $0 },
       onCancelled: {
         XCTAssertFalse(isUpdatingView, "SwiftUI completion must not run inside native configuration")
         cancellations += 1
@@ -395,8 +395,8 @@ final class NotebookInputTests: XCTestCase {
     let anchor = UIView(frame: .init(x: 0, y: 0, width: 600, height: 800))
     window.rootViewController = host; host.view.addSubview(anchor); window.makeKeyAndVisible()
     let owner = BoardPanView.Coordinator(isEnabled: true,
-      itemFrames: [.init(x: 100, y: 200, width: 200, height: 100)], inputGate: gate,
-      onTap: {}, onBegan: {}, onChanged: { _ in }, onEnded: { _ in }, onCancelled: {})
+      inputGate: gate,
+      onBegan: {}, onChanged: { _ in }, onEnded: { _ in }, onCancelled: {})
     owner.install(on: window, inside: anchor)
     defer { owner.uninstall(); window.isHidden = true }
     let pan = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer }.first)

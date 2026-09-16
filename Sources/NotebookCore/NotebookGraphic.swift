@@ -3,14 +3,16 @@ import Foundation
 /// Native content on a physical page or board, not an embedded document.
 /// Measurements remain in that owner's ink journal; presentation only names them.
 public struct NotebookGraphic: Codable, Equatable, Sendable {
-  public enum Shape: String, Codable, Sendable { case ellipse }
+  public enum Shape: String, Codable, Sendable { case ellipse, connector }
   public enum Representation: String, Codable, Sendable { case ink, geometry }
   public struct Style: Codable, Equatable, Sendable {
+    public enum Dash: String, Codable, Sendable { case solid, dashed, dotted }
     public var stroke: SpatialInkColor
     public var strokeWidth: Double
     public var fill: SpatialInkColor?
-    public init(stroke: SpatialInkColor = .black, strokeWidth: Double = 2, fill: SpatialInkColor? = nil) {
-      self.stroke = stroke; self.strokeWidth = strokeWidth; self.fill = fill
+    public var dash: Dash?
+    public init(stroke: SpatialInkColor = .black, strokeWidth: Double = 2, fill: SpatialInkColor? = nil, dash: Dash? = nil) {
+      self.stroke = stroke; self.strokeWidth = strokeWidth; self.fill = fill; self.dash = dash
     }
     var isValid: Bool {
       stroke.isValid && (fill?.isValid ?? true)
@@ -23,19 +25,27 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
   public var representation: Representation
   public var visible: Bool
   public let sourceInkIDs: [UUID]
+  public var connection: NotebookGraphicConnection?
 
   public init(shape: Shape = .ellipse, style: Style = .init(), label: String = "",
-    representation: Representation = .geometry, visible: Bool = true, sourceInkIDs: [UUID] = []) {
+    representation: Representation = .geometry, visible: Bool = true, sourceInkIDs: [UUID] = [],
+    connection: NotebookGraphicConnection? = nil) {
     self.shape = shape; self.style = style; self.label = label
     self.representation = representation; self.visible = visible; self.sourceInkIDs = sourceInkIDs
+    self.connection = connection
   }
 
   static let causalFields = ["shape", "style", "label", "representation", "visible", "sourceInkIDs"]
+  static let allCausalPaths = causalFields.map { [$0] } + NotebookGraphicConnection.causalFields.map { ["connection", $0] }
+  var causalPaths: [[String]] {
+    Self.causalFields.map { [$0] } + (connection == nil ? [] : NotebookGraphicConnection.causalFields.map { ["connection", $0] })
+  }
   public var showsGeometry: Bool { visible && representation == .geometry }
   var isValid: Bool {
     style.isValid && label.utf16.count <= 100_000 && sourceInkIDs.count <= 16
       && Set(sourceInkIDs).count == sourceInkIDs.count
       && (representation != .ink || !sourceInkIDs.isEmpty)
+      && (shape == .connector ? connection?.isValid == true : connection == nil)
   }
 }
 
@@ -44,7 +54,7 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
 public enum NotebookGraphicGeometry {
   public static func hitTest(_ graphic: NotebookGraphic, width: Double, height: Double,
     x: Double, y: Double, tolerance: Double) -> Bool {
-    guard graphic.showsGeometry, width > 0, height > 0 else { return false }
+    guard graphic.showsGeometry, graphic.shape == .ellipse, width > 0, height > 0 else { return false }
     let dx = (x - width / 2) / (width / 2), dy = (y - height / 2) / (height / 2)
     let radius = hypot(dx, dy)
     if !graphic.label.isEmpty, abs(x - width / 2) <= min(width / 2, Double(graphic.label.count) * 8 + tolerance),

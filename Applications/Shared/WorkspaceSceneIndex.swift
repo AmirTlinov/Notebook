@@ -26,6 +26,7 @@ struct WorkspaceSceneIndex: Sendable {
     let covers: [UUID: [SpatialElement]]
     let coverIndices: [UUID: WorkspaceSpatialIndex]
     let index: WorkspaceSpatialIndex
+    let graphics: NotebookGraphicGraph
   }
 
   private let itemValues: [UUID: WorkspaceItem]
@@ -86,13 +87,17 @@ struct WorkspaceSceneIndex: Sendable {
         }
       }
       let graphicPresentation = node.board.graphicPresentation
+      let graphicGraph = node.board.graphicGraph()
       for (position, element) in node.board.elements.enumerated() {
         guard element.graphic == nil || graphicPresentation.geometryIDs.contains(element.id) else { continue }
+        let layout = element.graphic == nil ? nil : graphicGraph.resolve(element.id).layout
+        guard element.graphic == nil || layout != nil else { continue }
+        let frame = layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
         elements[element.id] = element
         if element.surface == .board(node.id), let origin = element.worldOrigin {
           entries.append(.init(id: .element(element.id), bounds: .init(
-            origin: origin.offsetBy(x: element.frame.x, y: element.frame.y),
-            width: element.frame.width, height: element.frame.height), zIndex: Double(position)))
+            origin: origin.offsetBy(x: frame.x, y: frame.y),
+            width: frame.width, height: frame.height), zIndex: Double(position)))
         } else if element.surface.kind == .cover, let owner = element.surface.ownerID {
           covers[owner, default: []].append(element)
         }
@@ -100,10 +105,11 @@ struct WorkspaceSceneIndex: Sendable {
       prepared[node.id] = Board(source: node.board, items: items, elements: elements,
         covers: covers, coverIndices: covers.mapValues { elements in
           WorkspaceSpatialIndex(entries: elements.enumerated().map { offset, element in
-            .init(id: .element(element.id), bounds: .init(origin: .init(x: element.frame.x, y: element.frame.y),
-              width: element.frame.width, height: element.frame.height), zIndex: Double(offset))
+            let frame = graphicGraph.resolve(element.id).layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+            return .init(id: .element(element.id), bounds: .init(origin: .init(x: frame.x, y: frame.y),
+              width: frame.width, height: frame.height), zIndex: Double(offset))
           })
-        }, index: WorkspaceSpatialIndex(entries: entries))
+        }, index: WorkspaceSpatialIndex(entries: entries), graphics: graphicGraph)
     }
     boards = prepared
   }
@@ -136,6 +142,7 @@ struct WorkspaceSceneIndex: Sendable {
   func pageOwner(pageID: UUID) -> UUID? { pageOwners[pageID] }
   func ownerBoard(itemID: UUID) -> UUID? { itemOwners[itemID] }
   func element(id: String, boardID: UUID) -> SpatialElement? { boards[boardID]?.elements[id] }
+  func graphicLayout(id: String, boardID: UUID) -> NotebookGraphicLayout? { boards[boardID]?.graphics.resolve(id).layout }
   func paintEntry(id: WorkspaceSpatialID, boardID: UUID, coverID: UUID? = nil) -> WorkspaceSpatialEntry? {
     guard let board = boards[boardID] else { return nil }
     return coverID.flatMap { board.coverIndices[$0] }?.entry(id: id)

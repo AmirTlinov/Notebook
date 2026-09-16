@@ -269,7 +269,8 @@ public struct NotebookCommandDispatcher: Sendable {
       let set = try store.readWorkingSet(itemIDs: query.itemIDs ?? [], pageIDs: query.pageIDs ?? [],
         boardIDs: query.boardIDs ?? [], surfaces: query.surfaces ?? [])
       return .object(["header": try .encode(set.header), "items": try .encode(set.items), "boards": .array(try set.boards.map(boardReadProjection)),
-        "pages": try keyed(set.pages), "documents": try keyed(set.documents), "states": try keyed(set.states), "ink": try .encode(set.ink)])
+        "pages": .object(try Dictionary(uniqueKeysWithValues:set.pages.map { ($0.key.uuidString.lowercased(),try $0.value.graphicReadProjection()) })),
+        "documents": try keyed(set.documents), "states": try keyed(set.states), "ink": try .encode(set.ink)])
     case .sceneWindow:
       guard let bounds = query.bounds else { throw invalid("invalid_region", "Нужна физическая область сцены.") }
       let window = try store.readSceneWindow(boardID: required(query.id), bounds: bounds.validated(),
@@ -300,7 +301,7 @@ public struct NotebookCommandDispatcher: Sendable {
     case .codeFragments:
       guard let file = query.file else { throw invalid("invalid_reference", "Нужен адрес файла на компьютере.") }
       return try .encode(store.codeFragments(file: file, after: query.after, limit: query.limit ?? 64))
-    case .page: return try .encode(store.loadPage(required(query.id)))
+    case .page: return try store.loadPage(required(query.id)).graphicReadProjection()
     case .document: return try .encode(store.loadDocument(required(query.id)))
     case .documentState: return try .encode(store.loadDocumentState(required(query.id)))
     case .documentBlock:
@@ -312,7 +313,9 @@ public struct NotebookCommandDispatcher: Sendable {
     case .boardContentRevision: return try .encode(store.boardContentRevision(required(query.id)))
     case .boardElement:
       guard let elementID = query.elementID, elementID.utf8.count <= 120 else { throw invalid("invalid_reference", "Нужен ID элемента.") }
-      return try .encode(store.readSpatialElement(boardID: required(query.id), elementID: elementID))
+      let boardID = try required(query.id)
+      guard let element = try store.readSpatialElement(boardID:boardID,elementID:elementID) else { return .null }
+      return try elementReadProjection(element,boardID:boardID)
     case .ownerBoard: return try .encode(store.ownerBoardID(of: required(query.id)))
     case .notebookPages:
       return try .encode(store.readNotebookPageWindow(itemID: required(query.id), pages: query.pages ?? [],
@@ -351,8 +354,16 @@ public struct NotebookCommandDispatcher: Sendable {
     }
     board["freeItems"] = try .encode(node.board.freeItems)
     board["stacks"] = try .encode(node.board.stacks)
+    board["elements"] = .array(try node.board.elements.map { try elementReadProjection($0,boardID:node.id) })
     value["board"] = .object(board)
     return .object(value)
+  }
+
+  private func elementReadProjection(_ element: SpatialElement, boardID: UUID) throws -> JSONValue {
+    let value = try JSONValue.encode(element)
+    guard element.graphic != nil, let owner = element.surface.ownerID else { return value }
+    let target = CollaborationTarget(kind:element.surface.kind == .cover ? .cover : .board,id:owner,boardID:boardID)
+    return try value.setting("graphicResolution",store.readGraphicResolution(target:target,elementID:element.id).readProjection())
   }
 
   private func delivery(_ id: UUID) throws -> JSONValue {

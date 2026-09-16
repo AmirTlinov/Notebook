@@ -1,9 +1,9 @@
-#if DEBUG && targetEnvironment(simulator)
+#if DEBUG
   import Foundation
   import NotebookCore
 
   @MainActor
-  enum SimulatorDrawingFixture {
+  enum NotebookDrawingFixture {
     static let launchArgument = "--notebook-drawing-responsiveness-fixture"
     static let penPersistenceArgument = "--notebook-pen-persistence-fixture"
     static let fingerGestureArgument = "--notebook-simulator-finger-gestures"
@@ -74,7 +74,8 @@
       // The full route reads this gesture's durable result after other UI
       // scenarios. Their fresh default fixture must not replace that evidence.
       if nativeGraphics {
-        fixtureName = nativeGraphicPage ? "NativeGraphicPage" : "NativeGraphicBoard"
+        fixtureName = (nativeGraphicPage ? "NativeGraphicPage" : "NativeGraphicBoard")
+          + (ProcessInfo.processInfo.arguments.contains("--notebook-native-connector") ? "Connector" : "")
       } else if ProcessInfo.processInfo.arguments.contains(penPersistenceArgument) {
         fixtureName = "PenPersistence"
       } else if let materialCount {
@@ -556,11 +557,24 @@
         node["worldOrigin"] = try .encode(WorldPoint(x: -340, y: -260))
         program["worldOrigin"] = try .encode(WorldPoint(x: 30, y: -240))
       }
-      _ = try store.applyCollaborationAction(.init(summary: "Native diagram with a live neighbour",
-        expected: [.init(target: target, revision: store.targetContentRevision(target: target))], operations: [
+      var operations: [CollaborationOperation] = [
           .init(kind: .insertElement, target: target, id: "native-circle", values: node),
           .init(kind: .insertElement, target: target, id: "native-neighbour", values: program)
-        ]), actor: actor)
+        ]
+      if ProcessInfo.processInfo.arguments.contains("--notebook-native-connector") {
+        var second = node
+        second["frame"] = try .encode(PageRect(x:onPage ? 100 : 20,y:onPage ? 570 : 330,width:160,height:140))
+        second["graphic"] = try .encode(NotebookGraphic(label:"Узел −"))
+        var link = node
+        link["frame"] = try .encode(PageRect(x:onPage ? 180 : 100,y:onPage ? 400 : 160,width:1,height:170))
+        link["graphic"] = try .encode(NotebookGraphic(shape:.connector,label:"1:2",connection:.init(
+          start:.init(point:.zero,binding:.init(elementID:"native-circle")),
+          end:.init(point:.init(x:0,y:170),binding:.init(elementID:"native-second")))))
+        operations += [.init(kind:.insertElement,target:target,id:"native-second",values:second),
+          .init(kind:.insertElement,target:target,id:"native-connection",values:link)]
+      }
+      _ = try store.applyCollaborationAction(.init(summary: "Native diagram with a live neighbour",
+        expected: [.init(target: target, revision: store.targetContentRevision(target: target))], operations:operations), actor:actor)
       let viewport = SpatialPoint(x: NotebookAppModel.defaultPageSize.width, y: NotebookAppModel.defaultPageSize.height)
       let center = onPage ? before.board(index.rootBoardID)?.focusedCenter(of: index.selectedItemID) ?? .zero : .zero
       try store.savePresence(.init(boardID: index.rootBoardID, mode: onPage ? .page : .board,

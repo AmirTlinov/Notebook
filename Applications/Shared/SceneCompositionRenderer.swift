@@ -216,11 +216,14 @@ final class SceneCompositionRenderer {
           guard let element = try await source.element(id, boardID: presence.boardID), let origin = element.worldOrigin else {
             throw SceneRenderError.snapshotPending("element_source")
           }
-          let screen = presence.camera.worldToScreen(origin.offsetBy(x: element.frame.x, y: element.frame.y), viewport: presence.viewport)
+          let layout = try await source.graphicLayout(element,boardID:presence.boardID)
+          if element.graphic != nil && layout == nil { continue }
+          let local = layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+          let screen = presence.camera.worldToScreen(origin.offsetBy(x: local.x, y: local.y), viewport: presence.viewport)
           let rect = CGRect(x: frame.minX + screen.x * projection, y: frame.minY + screen.y * projection,
-            width: element.frame.width * presence.camera.scale * projection,
-            height: element.frame.height * presence.camera.scale * projection)
-          if rect.intersects(visible) { try await paintElement(element, boardID: presence.boardID, frame: rect, canvas: canvas) }
+            width: local.width * presence.camera.scale * projection,
+            height: local.height * presence.camera.scale * projection)
+          if rect.intersects(visible) { try await paintElement(element, boardID: presence.boardID, frame: rect, canvas: canvas, graphicLayout:layout) }
         case .item(let id):
           guard let item = try await source.item(id, presence: itemPresentation ?? presence) else { continue }
           let screen = presence.camera.worldToScreen(item.center, viewport: presence.viewport)
@@ -260,10 +263,13 @@ final class SceneCompositionRenderer {
         guard case .element(let id) = entry.id, let element = try await source.element(id, boardID: boardID) else {
           throw SceneRenderError.snapshotPending("cover_element_source")
         }
-        let delta = bounds.origin.delta(to: .init(x: element.frame.x, y: element.frame.y))
+        let layout = try await source.graphicLayout(element,boardID:boardID)
+        if element.graphic != nil && layout == nil { continue }
+        let local = layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+        let delta = bounds.origin.delta(to: .init(x: local.x, y: local.y))
         try await paintElement(element, boardID: boardID, frame: .init(x: frame.minX + delta.x * projection,
-          y: frame.minY + delta.y * projection, width: element.frame.width * projection,
-          height: element.frame.height * projection), canvas: canvas)
+          y: frame.minY + delta.y * projection, width: local.width * projection,
+          height: local.height * projection), canvas: canvas, graphicLayout:layout)
       }
       await Task.yield()
     } while cursor != nil
@@ -316,12 +322,14 @@ final class SceneCompositionRenderer {
     try await canvas.popClip()
   }
 
-  private func paintElement(_ element: SpatialElement, boardID: UUID, frame: CGRect, canvas: SceneRasterCompositor) async throws {
+  private func paintElement(_ element: SpatialElement, boardID: UUID, frame: CGRect, canvas: SceneRasterCompositor,
+    graphicLayout: NotebookGraphicLayout? = nil) async throws {
     try checkPreparation()
     if let graphic = element.graphic {
       if graphic.showsGeometry {
-        try await canvas.drawView(NotebookGraphicView(graphic: graphic),
-          size: .init(width: element.frame.width, height: element.frame.height), in: frame)
+        let size = graphicLayout?.frame ?? .init(x:0,y:0,width:element.frame.width,height:element.frame.height)
+        try await canvas.drawView(NotebookGraphicView(graphic: graphic,layout:graphicLayout),
+          size: .init(width: size.width, height: size.height), in: frame)
       }
       return
     }

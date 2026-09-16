@@ -341,6 +341,18 @@ actor SceneCompositionSource {
     case .values(let index, _, _): index.element(id: id, boardID: boardID)
     }
   }
+  func graphicLayout(_ element: SpatialElement, boardID: UUID) throws -> NotebookGraphicLayout? {
+    guard element.graphic != nil else { return nil }
+    switch origin {
+    case .sql(let store): return try checked(store) {
+      let target = element.surface.kind == .cover
+        ? CollaborationTarget(kind:.cover,id:element.surface.ownerID!,boardID:boardID)
+        : CollaborationTarget(kind:.board,id:boardID)
+      return try $0.readGraphicResolution(target:target,elementID:element.id).layout
+    }
+    case .values(let index, _, _): return index.graphicLayout(id:element.id,boardID:boardID)
+    }
+  }
   func item(_ id: UUID, presence: SessionPresence) throws -> RenderedWorkspaceItem? {
     switch origin {
     case .values(let index, _, _): return index.renderedItem(id: id, presence: presence)

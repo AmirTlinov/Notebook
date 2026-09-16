@@ -7,7 +7,7 @@ import XCTest
 final class PagePresentationTests: XCTestCase {
   @MainActor
   func testStoredInkPageOpensWithoutAnExistingPresence() async throws {
-    let model = SimulatorDrawingFixture.makeModel()
+    let model = NotebookDrawingFixture.makeModel()
     retainNotebookUntilTeardown(model, removing: model.store.root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let presence = try XCTUnwrap(model.presence), page = try XCTUnwrap(model.activePage)
@@ -26,7 +26,7 @@ final class PagePresentationTests: XCTestCase {
 
   @MainActor
   func testColdRootInstallsTheStoredInkPageAtTheActualViewport() async throws {
-    let model = SimulatorDrawingFixture.makeModel()
+    let model = NotebookDrawingFixture.makeModel()
     retainNotebookUntilTeardown(model, removing: model.store.root)
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)

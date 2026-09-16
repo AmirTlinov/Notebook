@@ -339,7 +339,7 @@ def make_plan(root, base="HEAD", profiles=(), tests=(), only=False):
         # Shared UI fixtures have no production behavior to certify. Their
         # caller must name the real gesture(s); a broad profile cannot silently
         # select all UI cases or pretend that native tests exercised a tap.
-        if path in ("Applications/iPad/SimulatorDrawingFixture.swift", "Applications/UITests/DrawingResponsivenessTests.swift"):
+        if path in ("Applications/iPad/NotebookDrawingFixture.swift", "Applications/UITests/DrawingResponsivenessTests.swift"):
             if not any(t.startswith(UI) and t.count("/") == 2 for t in tests):
                 unknown.append(path)
             continue
@@ -428,7 +428,7 @@ def validate_selected(source, evidence, receipt):
     plan = release.read_json(evidence / "selection.json")
     release.require(not plan["unclassified"] or plan["manualSelection"],
                     "Для этих исходников явно выберите достаточные --profile/--test.")
-    release.require(not set(plan["unclassified"]) & {"Applications/iPad/SimulatorDrawingFixture.swift", "Applications/UITests/DrawingResponsivenessTests.swift"},
+    release.require(not set(plan["unclassified"]) & {"Applications/iPad/NotebookDrawingFixture.swift", "Applications/UITests/DrawingResponsivenessTests.swift"},
                     "Изменённая UI-фикстура требует названного жестового сценария.")
     release.require(receipt["source"] == release.source_inputs(source)
                     == release.read_json(evidence / "source-before.json") == release.read_json(evidence / "source-after.json"),
@@ -461,12 +461,12 @@ def validate_selected(source, evidence, receipt):
     return receipt
 
 
-def select_simulator(inventory, device_id=None):
-    available = [d for values in inventory["devices"].values() for d in values
-                 if d.get("isAvailable", False) and ".iPad-" in d.get("deviceTypeIdentifier", "")]
-    candidates = [d for d in available if d["udid"] == device_id] if device_id else [d for d in available if d["state"] == "Booted"]
-    release.require(len(candidates) == 1, "Укажите NOTEBOOK_SIMULATOR_ID или запустите один iPad Simulator.")
-    return candidates[0]
+def native_ipad_signing_settings():
+    # Physical verification owns a temporary app, never the admitted pair's
+    # container, Keychain group or bundle. DEBUG fixtures use ordinary input.
+    return ["-allowProvisioningUpdates", "CODE_SIGN_IDENTITY=Apple Development",
+            "CODE_SIGN_STYLE=Automatic", "CODE_SIGNING_ALLOWED=YES",
+            "DEVELOPMENT_TEAM=" + release.TEAM, "NOTEBOOK_BUNDLE_SUFFIX=.native-test"]
 
 
 def native_mac_signing_settings():
@@ -514,19 +514,19 @@ def run_selected(root, plan, evidence):
     # Xcode still builds changed dependencies. Only its derived products are reused;
     # fixtures, test execution, source hashes and result bundles are always fresh.
     derived = Path(tempfile.gettempdir()) / "notebook-selected-builds" / hashlib.sha256(str(root).encode()).hexdigest()[:16]
-    for platform, scheme in (("mac", "NotebookMac"), ("ipad", "Notebook")):
+    for platform, scheme in (("ipad", "Notebook"), ("mac", "NotebookMac")):
         if not checks[platform]:
             continue
         destination = "platform=macOS"
         if platform == "ipad":
-            devices, _ = command("simulators", ["xcrun", "simctl", "list", "devices", "available", "--json"], read_output=True)
-            device = select_simulator(json.loads(devices), os.environ.get("NOTEBOOK_SIMULATOR_ID"))
-            destination = "platform=iOS Simulator,id=" + device["udid"]
+            destination = "platform=iOS,id=" + release.UDID
         result = evidence / (platform + ".xcresult")
         args = ["xcrun", "xcodebuild", "-quiet", "-project", "Notebook.xcodeproj", "-scheme", scheme,
                 "-configuration", "Debug", "-destination", destination, "-derivedDataPath", str(derived / platform),
                 "-resultBundlePath", str(result), "-parallel-testing-enabled", "NO", "-collect-test-diagnostics", "never",
                 "test"] + ["-only-testing:" + selector for selector in checks[platform]]
+        if platform == "ipad":
+            args.extend(native_ipad_signing_settings())
         if platform == "mac":
             tex_runtime = release.prepare_tex_runtime(root, command)
             args.append("NOTEBOOK_TEX_RUNTIME=" + str(tex_runtime))

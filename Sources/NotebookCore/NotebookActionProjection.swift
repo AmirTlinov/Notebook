@@ -18,7 +18,7 @@ struct NotebookPageElementProjection: Codable {
       && collaboration.isValid && collaboration.fields["computations"] == nil
       && collaboration.fields["elements/order"] != nil
       && elements.allSatisfy { element in
-        AgentElement.causalFieldKeys(id: element.id, graphic: element.graphic != nil).allSatisfy { collaboration.fields[$0] != nil }
+        AgentElement.causalFieldKeys(id: element.id, graphic: element.graphic != nil, connection: element.graphic?.connection != nil).allSatisfy { collaboration.fields[$0] != nil }
       }
       && PageDocument.elementsAreValid(elements, in: size)
   }
@@ -243,7 +243,7 @@ extension NotebookStore {
       let root = pageFile(id) + "#", ids = (pageElementIDs[id] ?? []).sorted()
       return [(root, false)]
         + ids.map { (root + "/elements/@" + fieldKey([$0]), true) }
-        + (["elements/order"] + ids.flatMap { AgentElement.causalFieldKeys(id: $0, graphic: true) }).map {
+        + (["elements/order"] + ids.flatMap { AgentElement.causalFieldKeys(id: $0, graphic: true, connection: true) }).map {
           (root + "/collaboration/fields/@" + fieldKey([$0]), false)
         }
     }

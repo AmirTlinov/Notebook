@@ -22,6 +22,10 @@ extension NotebookStore {
           guard let element = try store.readSpatialElement(boardID: target.id, elementID: elementID) else { throw missing }
           origin = element.worldOrigin ?? .zero
           region = .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height)
+          if element.graphic != nil {
+            guard let layout = try store.readGraphicResolution(target:target,elementID:elementID).layout else { throw missing }
+            region = layout.frame
+          }
         }
         guard region.width > 0, region.height > 0,
           let center = origin.addressOffset(x: region.x + region.width / 2, y: region.y + region.height / 2)

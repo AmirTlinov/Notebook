@@ -20,15 +20,17 @@ final class NotebookFrozenVisualSources {
   private let regionalCaptures: [UUID: RegionalCapture]
   private var submittedRegions: [UUID: NotebookSubmittedPixels] = [:]
   private var failures: [UUID: [String: Error]] = [:]
+  private let graphicLayouts: [UUID: NotebookGraphicLayout]
   private init(rasters: [UUID: [String: RasterLease]], liveCaptures: [UUID: [String: Capture]] = [:],
-    regionalCaptures: [UUID: RegionalCapture] = [:]) {
+    regionalCaptures: [UUID: RegionalCapture] = [:], graphicLayouts: [UUID: NotebookGraphicLayout] = [:]) {
     self.rasters = rasters; self.liveCaptures = liveCaptures; self.regionalCaptures = regionalCaptures
+    self.graphicLayouts = graphicLayouts
   }
 
   /// Sending fixes both the selected source and the existing visible owner.
   /// No later cache entry or newly created JavaScript context can supply it.
   func freezingForSubmission() -> NotebookFrozenVisualSources {
-    let frozen = NotebookFrozenVisualSources(rasters: rasters)
+    let frozen = NotebookFrozenVisualSources(rasters: rasters,graphicLayouts:graphicLayouts)
     for (reference, captures) in liveCaptures {
       for (key, capture) in captures {
         frozen.rasters[reference]?[key] = nil
@@ -57,6 +59,7 @@ final class NotebookFrozenVisualSources {
     var rasters: [UUID: [String: RasterLease]] = [:]
     var captures: [UUID: [String: Capture]] = [:]
     var regionalCaptures: [UUID: RegionalCapture] = [:]
+    var graphics: [UUID: NotebookGraphicLayout] = [:]
     struct Slot: Hashable { let reference: UUID; let key: String }
     var slots = Set<Slot>()
     func admits(_ reference: UUID, _ key: String) -> Bool {
@@ -110,6 +113,9 @@ final class NotebookFrozenVisualSources {
           continue
         }
         let boardID = fragment.target.kind == .board ? fragment.target.id : fragment.target.boardID
+        if let id = fragment.elementID, let boardID, let layout = hierarchy.board(boardID)?.graphicGraph().resolve(id).layout {
+          graphics[fragment.id] = layout; continue
+        }
         guard let id = fragment.elementID, let boardID,
           let element = hierarchy.board(boardID)?.elements.first(where: { $0.id == id }),
           element.kind != .nativeText && element.kind != .graphic else { continue }
@@ -142,8 +148,10 @@ final class NotebookFrozenVisualSources {
       case .workspace, .codeFragment: break
       }
     }
-    return .init(rasters: rasters, liveCaptures: captures, regionalCaptures: regionalCaptures)
+    return .init(rasters: rasters, liveCaptures: captures, regionalCaptures: regionalCaptures,graphicLayouts:graphics)
   }
+
+  func graphicLayout(referenceID: UUID) -> NotebookGraphicLayout? { graphicLayouts[referenceID] }
 
   func submittedRegion(referenceID: UUID) throws -> NotebookSubmittedPixels? {
     if let failure = failures[referenceID]?["document-page"] { throw failure }
@@ -238,10 +246,13 @@ enum NotebookPinnedImageRenderer {
       let canvas = try await SceneRasterCompositor.create(size: .init(width: region.width, height: region.height),
         scale: scale, resources: resources)
       let delta = (reference.worldOrigin ?? .zero).delta(to: element.worldOrigin ?? .zero)
-      let frame = CGRect(x: delta.x + element.frame.x - region.x, y: delta.y + element.frame.y - region.y,
-        width: element.frame.width, height: element.frame.height)
+      let layout = visuals?.graphicLayout(referenceID:reference.id)
+      let local = layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+      let frame = CGRect(x: delta.x + local.x - region.x, y: delta.y + local.y - region.y,
+        width: local.width, height: local.height)
       if let graphic = element.graphic {
-        try await canvas.drawView(NotebookGraphicView(graphic: graphic), size: frame.size, in: frame)
+        guard graphic.connection == nil || layout != nil else { throw SceneRenderError.snapshotPending("historical_graphic_dependencies") }
+        try await canvas.drawView(NotebookGraphicView(graphic: graphic,layout:layout), size: frame.size, in: frame)
       } else if element.kind == .nativeText {
         try await canvas.drawView(SpatialTextSnapshot(element: element), size: frame.size, in: frame)
       } else {

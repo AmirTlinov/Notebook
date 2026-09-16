@@ -13,11 +13,20 @@ final class DrawingResponsivenessTests: XCTestCase {
     nativeGraphicScenario(onPage: true)
   }
 
-  private func nativeGraphicScenario(onPage: Bool) {
+  func testBoundConnectorOnBoardFollowsTheNodeAndEditsItsBendAndLabel() {
+    nativeGraphicScenario(onPage:false,connected:true)
+  }
+
+  func testBoundConnectorOnPageFollowsTheNodeAndEditsItsBendAndLabel() {
+    nativeGraphicScenario(onPage:true,connected:true)
+  }
+
+  private func nativeGraphicScenario(onPage: Bool, connected: Bool = false) {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures",
       "--notebook-native-graphics-fixture"] + (onPage ? ["--notebook-native-graphic-page"] : [])
+      + (connected ? ["--notebook-native-connector"] : [])
     launchPortraitFixture(app)
     let node = app.images["Узел +"]
     let neighbour = app.webViews.containing(.button, identifier: "Graphic scene counter").firstMatch
@@ -28,6 +37,9 @@ final class DrawingResponsivenessTests: XCTestCase {
     let field = neighbour.textFields["Graphic scene draft"]
     field.tap(); field.typeText("7")
     let before = node.frame, peerFrame = neighbour.frame
+    let link = app.images["1:2"]
+    if connected { XCTAssertTrue(link.waitForExistence(timeout:5)) }
+    let originalLinkFrame = connected ? link.frame : .zero
     let start = node.coordinate(withNormalizedOffset: .init(dx: 0.97, dy: 0.5))
     start.press(forDuration: 0.01, thenDragTo: start.withOffset(.init(dx: 38, dy: 26)),
       withVelocity: .slow, thenHoldForDuration: 0)
@@ -38,13 +50,48 @@ final class DrawingResponsivenessTests: XCTestCase {
       "The live program must retain its exact runtime, not just recreate saved state")
     app.typeText("8")
     XCTAssertTrue((field.value as? String)?.contains("78") == true, "The original first responder survives object movement")
-    let proof = XCTAttachment(screenshot: app.screenshot())
+    var editedLinkLabel = "1:2"
+    var curvedFrame = CGRect.zero
+    if connected {
+      XCTAssertNotEqual(link.frame,originalLinkFrame,"The bound line follows the moved node")
+      link.doubleTap()
+      let editor = app.descendants(matching:.any).matching(identifier:"graphic-label-editor").firstMatch
+      XCTAssertTrue(editor.waitForExistence(timeout:3)); editor.typeText("?")
+      editedLinkLabel = editor.value as? String ?? ""
+      XCTAssertTrue(editedLinkLabel.contains("?"))
+      workspaceWindow(in:app).coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.13)).tap()
+      XCTAssertTrue(editor.waitForNonExistence(timeout:3))
+      let editedLink = app.images[editedLinkLabel]
+      XCTAssertTrue(editedLink.waitForExistence(timeout:3)); editedLink.tap()
+      let bend = app.descendants(matching:.any).matching(identifier:"graphic-bend-handle").firstMatch
+      XCTAssertTrue(bend.waitForExistence(timeout:3))
+      XCTAssertTrue(app.descendants(matching:.any).matching(identifier:"graphic-start-handle").firstMatch.exists)
+      XCTAssertTrue(app.descendants(matching:.any).matching(identifier:"graphic-end-handle").firstMatch.exists)
+      let straight = editedLink.frame, initialBend = bend.frame, initialNode = node.frame
+      let handle = bend.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
+      handle.press(forDuration:0.01,thenDragTo:handle.withOffset(.init(dx:70,dy:0)),withVelocity:.slow,thenHoldForDuration:0)
+      // Clipping follows the nodes: bending can move the whole derived bounds
+      // sideways without making them much wider. Verify the held control and
+      // visible link move while the node and camera do not, not a guessed width.
+      XCTAssertEqual(bend.frame.midX-initialBend.midX,70,accuracy:8)
+      XCTAssertGreaterThan(editedLink.frame.midX,straight.midX+40)
+      XCTAssertEqual(node.frame,initialNode)
+      curvedFrame = editedLink.frame
+      XCTAssertEqual(neighbour.staticTexts.matching(NSPredicate(format:"label BEGINSWITH 'Runtime '")).firstMatch.label,runtime)
+    }
+    let proof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
     proof.name = onPage ? "native-graphic-page-moved" : "native-graphic-board-moved"
     proof.lifetime = .keepAlways; add(proof)
     let moved = node.frame
     app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
     XCTAssertTrue(node.waitForExistence(timeout: 10)); XCTAssertTrue(neighbour.staticTexts["Count 1"].waitForExistence(timeout: 10))
     XCTAssertEqual(node.frame.midX, moved.midX, accuracy: 6); XCTAssertEqual(node.frame.midY, moved.midY, accuracy: 6)
+    if connected {
+      let reopenedLink = app.images[editedLinkLabel]
+      XCTAssertTrue(reopenedLink.waitForExistence(timeout:5))
+      XCTAssertEqual(reopenedLink.frame.width,curvedFrame.width,accuracy:6)
+      XCTAssertEqual(reopenedLink.frame.midX,curvedFrame.midX,accuracy:6)
+    }
     node.doubleTap()
     let editor = app.descendants(matching: .any).matching(identifier: "graphic-label-editor").firstMatch
     XCTAssertTrue(editor.waitForExistence(timeout: 3), "A completed second tap edits the native label")
@@ -60,6 +107,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     edited.tap()
     app.buttons["delete-agent-element"].tap()
     XCTAssertTrue(edited.waitForNonExistence(timeout: 5)); XCTAssertTrue(neighbour.staticTexts["Count 1"].exists)
+    if connected { XCTAssertTrue(app.images[editedLinkLabel].waitForNonExistence(timeout:5),"Deleting a node hides its bound connection without detaching it") }
     app.terminate()
   }
 

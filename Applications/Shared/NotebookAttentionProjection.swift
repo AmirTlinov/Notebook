@@ -35,6 +35,10 @@ enum NotebookAttentionProjection {
         guard let element = model.presentedElement(.spatial(boardID: presence.boardID, elementID: id), cohort: cohort),
           element.surface == .board(target.id) else { return nil }
         local = .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+        if element.graphic != nil {
+          guard let layout = model.graphicLayout(.spatial(boardID:presence.boardID,elementID:id)) else { return nil }
+          local = layout.frame
+        }
         origin = element.worldOrigin ?? .zero
       }
       let top = presence.camera.worldToScreen(origin.offsetBy(x:local.x,y:local.y),viewport:presence.viewport)
@@ -48,6 +52,10 @@ enum NotebookAttentionProjection {
       if let id = elementID {
         guard let element = model.pages[target.id]?.elements.first(where: { $0.id == id }) else { return nil }
         local = element.frame
+        if element.graphic != nil {
+          guard let layout = model.graphicLayout(.page(pageID:target.id,elementID:id)) else { return nil }
+          local = layout.frame
+        }
       }
     } else {
       itemID = target.id
@@ -63,6 +71,10 @@ enum NotebookAttentionProjection {
           guard let element = model.presentedElement(.spatial(boardID: presence.boardID, elementID: id), cohort: cohort),
             element.surface == .cover(itemID) else { return nil }
           local = .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+          if element.graphic != nil {
+            guard let layout = model.graphicLayout(.spatial(boardID:presence.boardID,elementID:id)) else { return nil }
+            local = layout.frame
+          }
         }
       } else { return nil }
     }
@@ -302,16 +314,16 @@ enum NotebookAttentionProjection {
         width:rect.width/presence.camera.scale,height:rect.height/presence.camera.scale)
       if presence.focusedItemID == item.id && presence.mode == .page, let pageID = sources.selectedPageID {
         target = .init(kind:.page,id:pageID)
+        let graph = sources.pages[pageID]?.graphicGraph()
         if !dragged, let element = sources.pages[pageID]?.elements.last(where: {
           if let graphic = $0.graphic {
-            return sources.pages[pageID]?.graphicPresentation.geometryIDs.contains($0.id) == true
-              && NotebookGraphicGeometry.hitTest(graphic, width: $0.frame.width, height: $0.frame.height,
-                x: region.x - $0.frame.x, y: region.y - $0.frame.y, tolerance: 8 / presence.camera.scale)
+            guard let layout = graph?.resolve($0.id).layout else { return false }
+            return layout.hitTest(.init(x:region.x-layout.frame.x,y:region.y-layout.frame.y),graphic:graphic,tolerance:8/presence.camera.scale)
           }
           return CGRect(x: $0.frame.x, y: $0.frame.y, width: $0.frame.width, height: $0.frame.height)
             .contains(CGPoint(x: region.x, y: region.y))
         }) {
-          elementID = element.id; region = element.frame
+          elementID = element.id; region = graph?.resolve(element.id).layout?.frame ?? element.frame
         }
       } else if presence.focusedItemID == item.id && presence.mode == .document,
         let document = sources.documents[item.id] {
@@ -325,9 +337,17 @@ enum NotebookAttentionProjection {
       } else {
         target = .init(kind:.cover,id:item.id,boardID:presence.boardID)
         if !dragged {
-          if let element = board.elements.last(where: { $0.surface == .cover(item.id) && $0.frame.contains(.init(x:region.x,y:region.y)) }) {
+          let graph = board.graphicGraph()
+          if let element = board.elements.last(where: {
+            guard $0.surface == .cover(item.id) else { return false }
+            if let graphic = $0.graphic {
+              guard let layout = graph.resolve($0.id).layout else { return false }
+              return layout.hitTest(.init(x:region.x-layout.frame.x,y:region.y-layout.frame.y),graphic:graphic,tolerance:8/presence.camera.scale)
+            }
+            return $0.frame.contains(.init(x:region.x,y:region.y))
+          }) {
             elementID = element.id
-            region = .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height)
+            region = graph.resolve(element.id).layout?.frame ?? .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height)
           }
           if elementID == nil { region = .init(x:0,y:0,width:item.geometry.width,height:item.geometry.height) }
         }
@@ -336,16 +356,17 @@ enum NotebookAttentionProjection {
       origin = presence.camera.screenToWorld(.init(x:rect.minX,y:rect.minY),viewport:presence.viewport)
       region = .init(x:0,y:0,width:rect.width/presence.camera.scale,height:rect.height/presence.camera.scale)
       if !dragged, let pointOrigin = origin {
+        let graph = board.graphicGraph()
         for element in admitted.elements.reversed() where element.surface == .board(presence.boardID) {
           let delta = (element.worldOrigin ?? .zero).delta(to: pointOrigin)
           let contains: Bool
           if let graphic = element.graphic {
-            contains = NotebookGraphicGeometry.hitTest(graphic, width: element.frame.width, height: element.frame.height,
-              x: delta.x - element.frame.x, y: delta.y - element.frame.y, tolerance: 8 / presence.camera.scale)
+            guard let layout = graph.resolve(element.id).layout else { continue }
+            contains = layout.hitTest(.init(x:delta.x-layout.frame.x,y:delta.y-layout.frame.y),graphic:graphic,tolerance:8/presence.camera.scale)
           } else { contains = element.frame.contains(delta) }
           if contains {
             elementID = element.id
-            region = .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height)
+            region = graph.resolve(element.id).layout?.frame ?? .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height)
             origin = element.worldOrigin ?? .zero
             break
           }

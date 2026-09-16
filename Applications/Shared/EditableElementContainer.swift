@@ -13,7 +13,7 @@ struct EditableElementContainer<Content: View>: View {
   #endif
 
   var body: some View {
-    let movement = model.elementMovement(reference)
+    let movement = model.graphicElement(reference) == nil ? model.elementMovement(reference) : .zero
     content
       .accessibilityAction(named: "Изменить элемент") { model.selectElement(reference) }
       .accessibilityAction(named: "Удалить элемент") { model.selectElement(reference); model.deleteElement(reference) }
