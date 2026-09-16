@@ -775,11 +775,17 @@ struct SpatialWorkspaceView: View {
     cohort: SceneCompositionCohort?
   ) -> some View {
     let graph = cohort.map { model.presentedGraphicGraph(boardID:presence.boardID,cohort:$0) }
-    ForEach(elements.filter { cohort?.plan.allowsLive(.element($0.id), in: .board(presence.boardID)) == true
-      && ($0.graphic == nil || graph?.resolve($0.id).layout != nil) }) { element in
+    if let cohort, let graph {
+      ForEach(cohort.plan.vectorRuns.filter { $0.plane == .board(presence.boardID) }) { run in
+        NotebookGraphicBatchView(run: run, elements: elements, graph: graph,
+          scale: presence.camera.scale, size: .init(width: viewport.x, height: viewport.y),
+          projectOrigin: { presence.camera.worldToScreen($0, viewport: viewport).cgPoint })
+          .zIndex(cohort.plan.rank(id: run.id.id, in: run.plane) ?? 0)
+      }
+    }
+    ForEach(elements.filter { $0.graphic == nil && cohort?.plan.allowsLive(.element($0.id), in: .board(presence.boardID)) == true }) { element in
         if let worldOrigin = element.worldOrigin {
-          let layout = graph?.resolve(element.id).layout
-          let local = layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+          let local = element.frame
           let reference = EditableElementReference.spatial(boardID: presence.boardID, elementID: element.id)
           let base = presence.camera.worldToScreen(
             worldOrigin,
@@ -796,7 +802,6 @@ struct SpatialWorkspaceView: View {
             observationElementID: element.id, observationElementStamp: element.stamp) {
             EditableElementContainer(reference: reference, coordinateScale: 1) {
               SpatialElementContent(element: element, boardID: presence.boardID,
-                graphicLayout:layout,
                 isTextEditing: editingSpatialText == reference,
                 onTextEditingEnded: { [selectionID = model.selectionSession.id] in model.finishInteractiveElementInput(reference, selectionID: selectionID) })
                 .frame(width: local.width, height: local.height)

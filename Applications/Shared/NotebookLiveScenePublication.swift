@@ -105,7 +105,7 @@ extension NotebookAppModel {
     let elements = captured.elements.compactMap { presentedElement($0, boardID: boardID, cohort: cohort) }
     // Retain passive intent sources rather than claiming unseen new peers. A
     // whole-area capture separately checks that this describes shown pixels.
-    let header = cohort.plan.liveOwners.contains { $0.plane.boardID == boardID } ? current : captured
+    let header = cohort.plan.presentedOwners.contains { $0.plane.boardID == boardID } ? current : captured
     return header.projecting(placements: placements, elements: elements)
   }
 

@@ -252,7 +252,7 @@ actor SceneCompositionSource {
         let referenceRoot = frame.returnBoardID ?? plan.rootBoardID
         let basis = try store.referenceBasis(rootBoardID: referenceRoot,
           targets: targets.sorted { $0.key < $1.key }, surfaces: replaceable,
-          liveOwners: plan.liveOwners.map { owner in
+          liveOwners: plan.presentedOwners.map { owner in
             switch owner.id {
             case .item(let id): return .item(boardID: owner.plane.boardID, id: id)
             case .element(let id): return .element(boardID: owner.plane.boardID, id: id)
@@ -461,15 +461,56 @@ actor SceneCompositionSource {
     return retained
   }
 
-  func position(id: WorkspaceSpatialID, boardID: UUID, coverID: UUID? = nil) throws -> ScenePaintPosition? {
+  func vectorRuns(_ owners: [SceneCompositionLiveOwner]) throws -> [SceneCompositionVectorRun] {
+    func identity(_ id: String) -> String { UUID(uuidString: id)?.uuidString.lowercased() ?? id }
+    var successors: [SceneCompositionPlane: [String: String]] = [:]
+    for (plane, group) in Dictionary(grouping: owners, by: \.plane) {
+      let ids = group.compactMap { if case .element(let id) = $0.id { return id }; return nil }
+      switch origin {
+      case .sql(let store):
+        successors[plane] = try checked(store) { try $0.readSceneElementSuccessors(boardID: plane.boardID, elementIDs: ids) }
+      case .values(_, let hierarchy, _):
+        let surface = plane.coverID.map(SurfaceID.cover) ?? .board(plane.boardID)
+        let elements = hierarchy.board(plane.boardID)?.elements.filter { $0.surface == surface } ?? []
+        let wanted = Set(ids)
+        successors[plane] = Dictionary(uniqueKeysWithValues: zip(elements, elements.dropFirst()).compactMap { a, b in
+          wanted.contains(a.id) ? (a.id, identity(b.id)) : nil
+        })
+      }
+    }
+    var result: [SceneCompositionVectorRun] = []
+    for owner in owners.sorted(by: {
+      $0.plane == $1.plane ? $0.position < $1.position : String(describing: $0.plane) < String(describing: $1.plane)
+    }) {
+      if let last = result.last, last.plane == owner.plane,
+        case .element(let previousID) = last.owners.last!.id, case .element(let id) = owner.id,
+        successors[owner.plane]?[previousID] == identity(id) {
+        result[result.count - 1].owners.append(owner)
+      } else { result.append(.init(plane: owner.plane, owners: [owner])) }
+    }
+    return result
+  }
+
+  /// The whole bounded admission borrows one WAL cut. A vector run can contain
+  /// dozens of shapes without opening one SQLite connection per shape.
+  func positionedOwners(_ candidates: [(plane: SceneCompositionPlane, id: WorkspaceSpatialID)]) throws -> [SceneCompositionLiveOwner] {
+    guard candidates.count <= WorkspaceSceneIndex.detailLimit else { throw SceneRenderError.resourceLimit }
     switch origin {
     case .sql(let store):
       return try checked(store) { store in
-        guard let value = try store.readScenePaintPosition(boardID: boardID, coverID: coverID, id: id) else { return nil }
-        return .init(layer: value.layer == 0 ? .elements : .covers, zIndex: value.zIndex, key: value.key)
+        try candidates.map { candidate in
+          guard let value = try store.readScenePaintPosition(boardID: candidate.plane.boardID,
+            coverID: candidate.plane.coverID, id: candidate.id) else { throw SceneRenderError.snapshotPending("live_owner_source") }
+          return .init(plane: candidate.plane, id: candidate.id,
+            position: .init(layer: value.layer == 0 ? .elements : .covers, zIndex: value.zIndex, key: value.key))
+        }
       }
     case .values(let index, _, _):
-      return index.paintEntry(id: id, boardID: boardID, coverID: coverID).map(ScenePaintPosition.init)
+      return try candidates.map { candidate in
+        guard let entry = index.paintEntry(id: candidate.id, boardID: candidate.plane.boardID,
+          coverID: candidate.plane.coverID) else { throw SceneRenderError.snapshotPending("live_owner_source") }
+        return .init(plane: candidate.plane, id: candidate.id, position: .init(entry: entry))
+      }
     }
   }
 }

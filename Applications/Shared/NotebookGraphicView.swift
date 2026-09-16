@@ -7,7 +7,13 @@ struct NotebookGraphicView: View {
   let graphic: NotebookGraphic
   var layout: NotebookGraphicLayout? = nil
   var body: some View {
-    Canvas { context, size in
+    Canvas { context, size in Self.paint(graphic, layout: layout, in: context, size: size) }
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(graphic.label.isEmpty ? (graphic.shape == .ellipse ? "Эллипс" : "Связь") : graphic.label)
+    .accessibilityAddTraits(.isImage)
+  }
+  static func paint(_ graphic: NotebookGraphic, layout: NotebookGraphicLayout?,
+    in context: GraphicsContext, size: CGSize) {
       guard graphic.showsGeometry else { return }
       let stroke = graphic.style.stroke.swiftUIColor
       let width = graphic.style.strokeWidth
@@ -47,10 +53,6 @@ struct NotebookGraphicView: View {
         context.draw(Text(graphic.label).font(.system(size: 24)).foregroundStyle(graphic.style.stroke.swiftUIColor),
           at: layout?.label.cgPoint ?? CGPoint(x: size.width / 2, y: size.height / 2))
       }
-    }
-    .accessibilityElement(children: .ignore)
-    .accessibilityLabel(graphic.label.isEmpty ? (graphic.shape == .ellipse ? "Эллипс" : "Связь") : graphic.label)
-    .accessibilityAddTraits(.isImage)
   }
   static func path(_ layout: NotebookGraphicLayout) -> Path {
     var path = Path()

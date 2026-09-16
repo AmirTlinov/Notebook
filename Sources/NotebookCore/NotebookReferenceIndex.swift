@@ -148,7 +148,9 @@ extension NotebookStore {
   /// in the addressed owners' ink; it never decodes samples or scans an archive.
   public func referenceBasis(rootBoardID: UUID, targets: [CollaborationTarget],
     surfaces: [SurfaceID], liveOwners: [NotebookReferenceLiveOwner] = []) throws -> NotebookReferenceBasis {
-    guard liveOwners.count <= 15, Set(liveOwners).count == liveOwners.count,
+    // Native vector batches share the scene's bounded 96-element working set;
+    // they are not additional WebKit / paper owners.
+    guard liveOwners.count <= 96, Set(liveOwners).count == liveOwners.count,
       surfaces.count <= 15, Set(surfaces).count == surfaces.count,
       surfaces.allSatisfy({ $0.isValid && $0.kind != .page }) else {
       throw NotebookStorageError.limitExceeded("reference_live_owners")
@@ -782,9 +784,11 @@ extension NotebookStore {
   }
 
   private func referenceNeighbors(owner: String, position: Int64, member: String, database: NotebookSQLConnection) throws -> (String?, String?) {
-    let args: [NotebookSQLValue] = [.text(owner), .integer(position), .integer(position), .text(member)]
-    let previous = try database.rows("SELECT member FROM reference_element_order WHERE owner_key=? AND (position<? OR (position=? AND member<?)) ORDER BY position DESC,member DESC LIMIT 1", args).first?[0].text
-    let next = try database.rows("SELECT member FROM reference_element_order WHERE owner_key=? AND (position>? OR (position=? AND member>?)) ORDER BY position,member LIMIT 1", args).first?[0].text
+    // A tuple range seeks the (owner_key, position, member) index. Splitting
+    // it into OR terms scans the owner's prefix for every changed element.
+    let args: [NotebookSQLValue] = [.text(owner), .integer(position), .text(member)]
+    let previous = try database.rows("SELECT member FROM reference_element_order WHERE owner_key=? AND (position,member)<(?,?) ORDER BY position DESC,member DESC LIMIT 1", args).first?[0].text
+    let next = try database.rows("SELECT member FROM reference_element_order WHERE owner_key=? AND (position,member)>(?,?) ORDER BY position,member LIMIT 1", args).first?[0].text
     return (previous, next)
   }
 

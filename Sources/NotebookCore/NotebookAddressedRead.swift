@@ -483,6 +483,27 @@ extension NotebookStore {
     let rows = try storedFragments(address: address)
     return rows.isEmpty ? nil : try NotebookRecordCodec.decode(rows, root: address).decode(SpatialElement.self)
   }
+
+  /// Exact authored neighbours, including off-window and hidden elements. A
+  /// native paint batch may cross no unknown owner; viewport membership or
+  /// coincident z values alone cannot establish adjacency.
+  public func readSceneElementSuccessors(boardID: UUID, elementIDs: [String]) throws -> [String: String] {
+    guard elementIDs.count <= 96, Set(elementIDs).count == elementIDs.count,
+      elementIDs.allSatisfy({ !$0.isEmpty && $0.utf16.count <= 120 }) else {
+      throw NotebookStorageError.limitExceeded("scene_element_successors")
+    }
+    return try readTransaction { _ in
+      var result: [String: String] = [:]
+      for id in elementIDs {
+        let address = "board.json#/boards/@" + boardID.uuidString.lowercased() + "/board/elements/@" + fieldKey([collaborationIdentity(id)])
+        guard let row = try currentSQL!.rows("SELECT owner_key,position,member FROM reference_element_order WHERE address=?", [.text(address)]).first,
+          let owner = row[0].text, let position = row[1].integer, let member = row[2].text else { continue }
+        result[id] = try currentSQL!.rows("SELECT member FROM reference_element_order WHERE owner_key=? AND (position,member)>(?,?) ORDER BY position,member LIMIT 1",
+          [.text(owner), .integer(position), .text(member)]).first?[0].text
+      }
+      return result
+    }
+  }
 }
 
 extension NotebookStore {
@@ -598,14 +619,21 @@ extension NotebookStore {
 
 extension NotebookStore {
   public func readScenePaintPosition(boardID: UUID, coverID: UUID? = nil, id: WorkspaceSpatialID) throws -> NotebookScenePaintPosition? {
-    let key: String, kind: String
+    let key: String, kind: String, address: String?
     switch id {
-    case .item(let id): key = id.uuidString; kind = "item"
-    case .element(let id): key = id; kind = coverID == nil ? "element" : "coverElement"
+    case .item(let id): key = id.uuidString; kind = "item"; address = nil
+    case .element(let id):
+      key = id; kind = coverID == nil ? "element" : "coverElement"
+      address = "board.json#/boards/@" + boardID.uuidString.lowercased() + "/board/elements/@" + fieldKey([collaborationIdentity(id)])
     }
     return try sqlRead { database in
-      let rows = try database.rows("SELECT layer,z_index,paint_key FROM spatial_entries WHERE board_id=? AND paint_key=? AND kind=? AND (? IS NULL OR owner_id=?) LIMIT 1", [
-        .text(boardID.uuidString.lowercased()), .text(key), .text(kind), coverID.map { .text($0.uuidString.lowercased()) } ?? .null, coverID.map { .text($0.uuidString.lowercased()) } ?? .null])
+      // A vector admission reads up to 96 exact records. A board-index scan
+      // per ID would make a small visible diagram depend on the whole archive.
+      let prefix = address == nil ? "" : " INDEXED BY spatial_address"
+      let predicate = address == nil ? "" : "address=? AND "
+      let rows = try database.rows("SELECT layer,z_index,paint_key FROM spatial_entries" + prefix + " WHERE " + predicate + "board_id=? AND paint_key=? AND kind=? AND (? IS NULL OR owner_id=?) LIMIT 1",
+        (address.map { [NotebookSQLValue.text($0)] } ?? []) + [
+          .text(boardID.uuidString.lowercased()), .text(key), .text(kind), coverID.map { .text($0.uuidString.lowercased()) } ?? .null, coverID.map { .text($0.uuidString.lowercased()) } ?? .null])
       guard let row = rows.first else { return nil }
       let z: Double
       if case .real(let value) = row[1] { z = value } else { z = Double(row[1].integer ?? 0) }

@@ -2,6 +2,18 @@ import Foundation
 import Testing
 @testable import NotebookCore
 
+@Test("Пакет векторов не перескакивает через незагруженного соседа в авторском порядке")
+func graphicPaintSuccessorsKeepOffWindowBarriers() throws {
+  let fixture = try ConnectorFixture(board: true)
+  defer { fixture.clean() }
+  _ = try fixture.write([fixture.node("a", x: 0), fixture.node("off-window", x: 100_000), fixture.node("b", x: 120)])
+  let result = try fixture.store.readSceneElementSuccessors(boardID: fixture.target.id, elementIDs: ["a", "b"])
+  #expect(result["a"] == "off-window")
+  #expect(result["b"] == nil)
+  _ = try fixture.write([fixture.operation(.removeElement, "off-window", [:])])
+  #expect(try fixture.store.readSceneElementSuccessors(boardID: fixture.target.id, elementIDs: ["a"])["a"] == "off-window")
+}
+
 private struct ConnectorFixture {
   let root = FileManager.default.temporaryDirectory.appendingPathComponent("connector-\(UUID())")
   let store: NotebookStore

@@ -76,6 +76,7 @@
       if nativeGraphics {
         fixtureName = (nativeGraphicPage ? "NativeGraphicPage" : "NativeGraphicBoard")
           + (ProcessInfo.processInfo.arguments.contains("--notebook-native-connector") ? "Connector" : "")
+          + (ProcessInfo.processInfo.arguments.contains("--notebook-native-dense") ? "Dense" : "")
       } else if ProcessInfo.processInfo.arguments.contains(penPersistenceArgument) {
         fixtureName = "PenPersistence"
       } else if let materialCount {
@@ -572,6 +573,22 @@
           end:.init(point:.init(x:0,y:170),binding:.init(elementID:"native-second")))))
         operations += [.init(kind:.insertElement,target:target,id:"native-second",values:second),
           .init(kind:.insertElement,target:target,id:"native-connection",values:link)]
+      }
+      if ProcessInfo.processInfo.arguments.contains("--notebook-native-dense") {
+        for index in 0..<12 {
+          let id = "batch-node-\(index)"
+          var extra = node
+          extra["frame"] = try .encode(PageRect(x: 405 + Double(index % 4) * 70,
+            y: 400 + Double(index / 4) * 80, width: 52, height: 52))
+          extra["graphic"] = try .encode(NotebookGraphic(label: "N\(index + 1)"))
+          var link = node
+          link["frame"] = try .encode(PageRect(x: 0, y: 0, width: 1, height: 1))
+          link["graphic"] = try .encode(NotebookGraphic(shape: .connector, label: "D\(index + 1)", connection: .init(
+            start: .init(point: .zero, binding: .init(elementID: index == 0 ? "native-circle" : "batch-node-\(index - 1)")),
+            end: .init(point: .zero, binding: .init(elementID: id)))))
+          operations += [.init(kind: .insertElement, target: target, id: id, values: extra),
+            .init(kind: .insertElement, target: target, id: "batch-link-\(index)", values: link)]
+        }
       }
       _ = try store.applyCollaborationAction(.init(summary: "Native diagram with a live neighbour",
         expected: [.init(target: target, revision: store.targetContentRevision(target: target))], operations:operations), actor:actor)

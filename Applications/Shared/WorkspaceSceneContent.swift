@@ -92,12 +92,18 @@ struct BoardPortalPreview: View {
           ForEach(SceneCompositionTileBandView.bands(in: cohort, plane: plane, layer: .elements, presence: presence)) { band in
             band.zIndex(Double(band.rank))
           }
-          ForEach(workset.elements.filter { cohort.plan.allowsLive(.element($0.id), in: plane) }) { element in
+          ForEach(cohort.plan.vectorRuns.filter { $0.plane == plane }) { run in
+            NotebookGraphicBatchView(run: run, elements: workset.elements,
+              graph: cohort.frame.index.capturedHierarchy.board(boardID)?.graphicGraph() ?? .init([]),
+              scale: camera.scale, size: .init(width: viewport.x, height: viewport.y),
+              projectOrigin: { camera.worldToScreen($0, viewport: viewport).cgPoint }, commitsState: false)
+              .zIndex(cohort.plan.rank(id: run.id.id, in: plane) ?? 0)
+          }
+          ForEach(workset.elements.filter { $0.graphic == nil && cohort.plan.allowsLive(.element($0.id), in: plane) }) { element in
             if let origin = element.worldOrigin {
-              let layout = cohort.frame.index.graphicLayout(id:element.id,boardID:boardID)
-              let local = layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+              let local = element.frame
               let screen = camera.worldToScreen(origin, viewport: viewport)
-              SpatialElementContent(element: element, commitsState: false, boardID: boardID,graphicLayout:layout)
+              SpatialElementContent(element: element, commitsState: false, boardID: boardID)
                 .frame(width: local.width, height: local.height)
                 .scaleEffect(camera.scale)
                 .frame(width: local.width * camera.scale, height: local.height * camera.scale)
@@ -204,21 +210,28 @@ struct WorkspaceItemCoverView: View {
           band.zIndex(Double(band.rank)).opacity(portalOverlayOpacity)
         }
       }
+      if let cohort, let plane, let graph {
+        ForEach(cohort.plan.vectorRuns.filter { $0.plane == plane }) { run in
+          NotebookGraphicBatchView(run: run, elements: elements, graph: graph, scale: 1,
+            size: .init(width: geometry.width, height: geometry.height), projectOrigin: { _ in .zero },
+            commitsState: !isPortalProjection)
+            .opacity(portalOverlayOpacity)
+            .zIndex(cohort.plan.rank(id: run.id.id, in: plane) ?? 0)
+        }
+      }
       ForEach(elements.filter { element in
-        if element.graphic != nil, graph?.resolve(element.id).layout == nil { return false }
+        if element.graphic != nil { return false }
         guard let cohort, let plane else { return true }
         return cohort.plan.allowsLive(.element(element.id), in: plane)
       }) { element in
         let reference = EditableElementReference.spatial(boardID: boardID, elementID: element.id)
-        let layout = graph?.resolve(element.id).layout
-        let local = layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+        let local = element.frame
         let retainsTextInput = !isPortalProjection
           && element.kind == .nativeText && editingTextID == element.id
         EditableElementContainer(reference: reference, coordinateScale: 1) {
           SpatialElementContent(
             element: element, commitsState: !isPortalProjection,
             boardID: boardID,
-            graphicLayout:layout,
             isTextEditing: retainsTextInput,
             onTextEditingEnded: { onTextEditingEnded(element.id) }
           )
@@ -362,7 +375,6 @@ struct SpatialElementContent: View {
   let element: SpatialElement
   let commitsState: Bool
   let boardID: UUID?
-  let graphicLayout: NotebookGraphicLayout?
   let isTextEditing: Bool
   let onTextEditingEnded: () -> Void
 
@@ -370,26 +382,20 @@ struct SpatialElementContent: View {
     element: SpatialElement,
     commitsState: Bool = true,
     boardID: UUID? = nil,
-    graphicLayout: NotebookGraphicLayout? = nil,
     isTextEditing: Bool = false,
     onTextEditingEnded: @escaping () -> Void = {}
   ) {
+    precondition(element.kind != .graphic, "Native graphics belong to the scene's vector runs")
     self.element = element
     self.commitsState = commitsState
     self.boardID = boardID
-    self.graphicLayout = graphicLayout
     self.isTextEditing = isTextEditing
     self.onTextEditingEnded = onTextEditingEnded
   }
 
   var body: some View {
     switch element.kind {
-    case .graphic:
-      if let graphic = element.graphic {
-        if commitsState, let sourceBoardID {
-          NotebookGraphicElementView(graphic: graphic, reference: .spatial(boardID: sourceBoardID, elementID: element.id), layout: graphicLayout)
-        } else { NotebookGraphicView(graphic: graphic, layout: graphicLayout) }
-      }
+    case .graphic: EmptyView()
     case .nativeText:
       NativeTextElementView(
         element: element,

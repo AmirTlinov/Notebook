@@ -60,6 +60,14 @@ struct SceneCompositionLiveOwner: Hashable, Sendable {
   let position: ScenePaintPosition
 }
 
+/// One contiguous native painter run, not one retained UIKit/WebKit host per
+/// figure. Adjacency is proved by the source's order index, never by the window.
+struct SceneCompositionVectorRun: Identifiable, Equatable, Sendable {
+  let plane: SceneCompositionPlane
+  var owners: [SceneCompositionLiveOwner]
+  var id: SceneCompositionLiveOwner { owners[0] }
+}
+
 struct SceneCompositionBand: Identifiable, Sendable {
   let plane: SceneCompositionPlane
   let range: ScenePaintRange
@@ -86,13 +94,19 @@ struct SceneCompositionPlan: Sendable {
   let presentations: [SceneCompositionPlane: SessionPresence]
   let tiles: [SceneCompositionTileKey]
   var requiredPixelDensity: [SceneCompositionPlane: Double] = [:]
-  var primitiveCount: Int { tiles.count + liveOwners.count + inkBoardIDs.count }
+  var vectorRuns: [SceneCompositionVectorRun] = []
+  var presentedOwners: [SceneCompositionLiveOwner] { liveOwners + vectorRuns.flatMap(\.owners) }
+  var primitiveCount: Int { tiles.count + liveOwners.count + vectorRuns.count + inkBoardIDs.count }
   /// Every resource retry removes an optional owner or a static tile. Keeping
   /// this integer strictly decreasing bounds preparation without a timer retry.
   private var coverageTileCount: Int {
     tiles.count
   }
-  var reductionPotential: Int { (liveOwners.count - protectedOwners.count) * (Self.maximumTiles + 1) + coverageTileCount }
+  var reductionPotential: Int {
+    let optional = liveOwners.filter { !protectedOwners.contains($0) }.count
+      + vectorRuns.filter { protectedOwners.isDisjoint(with: $0.owners) }.count
+    return optional * (Self.maximumTiles + 1) + coverageTileCount
+  }
   var nativeOwnerCount: Int {
     inkBoardIDs.count + liveOwners.filter { if case .item = $0.id { return true }; return false }.count
   }
@@ -103,10 +117,25 @@ struct SceneCompositionPlan: Sendable {
     return inkBoardIDs.sorted().map(SurfaceID.board) + items.sorted().map(SurfaceID.cover)
   }
 
+  private struct PaintSpan {
+    let lower: ScenePaintPosition
+    let upper: ScenePaintPosition
+    let ids: Set<WorkspaceSpatialID>
+  }
+  private static func paintSpans(owners: [SceneCompositionLiveOwner], vectors: [SceneCompositionVectorRun],
+    plane: SceneCompositionPlane, layer: ScenePaintPosition.Layer) -> [PaintSpan] {
+    let singles = owners.filter { $0.plane == plane && $0.position.layer == layer }.map {
+      PaintSpan(lower: $0.position, upper: $0.position, ids: [$0.id])
+    }
+    let batches = vectors.filter { $0.plane == plane && $0.owners.first?.position.layer == layer }.map {
+      PaintSpan(lower: $0.owners.first!.position, upper: $0.owners.last!.position, ids: Set($0.owners.map(\.id)))
+    }
+    return (singles + batches).sorted { $0.lower < $1.lower }
+  }
   func rank(id: WorkspaceSpatialID, in plane: SceneCompositionPlane) -> Double? {
-    guard let owner = liveOwners.first(where: { $0.id == id && $0.plane == plane }) else { return nil }
-    let peers = liveOwners.filter { $0.plane == plane && $0.position.layer == owner.position.layer }.sorted { $0.position < $1.position }
-    return peers.firstIndex(of: owner).map { Double($0 * 2 + 1) }
+    guard let owner = presentedOwners.first(where: { $0.id == id && $0.plane == plane }) else { return nil }
+    return Self.paintSpans(owners: liveOwners, vectors: vectorRuns, plane: plane, layer: owner.position.layer)
+      .firstIndex { $0.ids.contains(id) }.map { Double($0 * 2 + 1) }
   }
   func allowsLive(_ id: WorkspaceSpatialID, in plane: SceneCompositionPlane) -> Bool { rank(id: id, in: plane) != nil }
 
@@ -120,7 +149,7 @@ struct SceneCompositionPlan: Sendable {
     return .init(revision: revision, workspaceID: workspaceID, rootBoardID: rootBoardID,
       inkBoardIDs: inkBoardIDs, liveOwners: liveOwners, protectedOwners: protectedOwners,
       bands: bands, coverage: coverage, presentations: presentations, tiles: populated,
-      requiredPixelDensity: requiredPixelDensity)
+      requiredPixelDensity: requiredPixelDensity, vectorRuns: vectorRuns)
   }
 
   /// Empty painter ranges and cells preserve order and coverage without a
@@ -192,7 +221,8 @@ struct SceneCompositionPlan: Sendable {
     let result = Self(revision: revision, workspaceID: workspaceID, rootBoardID: rootBoardID,
       inkBoardIDs: inkBoardIDs, liveOwners: liveOwners, protectedOwners: protectedOwners,
       bands: bands, coverage: coverage, presentations: presentations, tiles: tiles,
-      requiredPixelDensity: requiredPixelDensity)
+      requiredPixelDensity: requiredPixelDensity, vectorRuns: vectorRuns)
+    guard result.primitiveCount <= Self.maximumPrimitives else { throw SceneRenderError.resourceLimit }
     return result
   }
 
@@ -209,8 +239,6 @@ struct SceneCompositionPlan: Sendable {
     if let id = presence.focusedItemID { pinned.insert(.item(id)) }
     if frame.returnBoardID != nil { pinned.insert(.item(presence.boardID)) }
     guard displayScale.isFinite, displayScale > 0, frame.rootBoardID == presence.boardID else { throw SceneRenderError.resourceLimit }
-    // Board ink retains the current Pencil owner even when it is still empty.
-    guard pinned.count < maximumLiveOwners else { throw SceneRenderError.snapshotPending("live_owner_budget") }
     var candidates: [(plane: SceneCompositionPlane, id: WorkspaceSpatialID, pinned: Bool, runtime: Bool)] = []
     let boardIDs = [presence.boardID] + frame.worksets.keys.filter { $0 != presence.boardID }.sorted { $0.uuidString < $1.uuidString }
     for boardID in boardIDs {
@@ -231,9 +259,10 @@ struct SceneCompositionPlan: Sendable {
     // A pin on cover contents pins its physical carrier, then its local element.
     for (itemID, workset) in frame.covers {
       guard let boardID = frame.worksets.first(where: { $0.value.items.contains(where: { $0.id == itemID }) })?.key else { continue }
-      for element in workset.elements where pinned.contains(.element(element.id)) {
-        candidates.append((.cover(boardID: boardID, itemID: itemID), .element(element.id), true, false))
-        if let index = candidates.firstIndex(where: { $0.id == .item(itemID) }) { candidates[index].pinned = true }
+      for element in workset.elements where element.graphic != nil || pinned.contains(.element(element.id)) {
+        let isPinned = pinned.contains(.element(element.id))
+        candidates.append((.cover(boardID: boardID, itemID: itemID), .element(element.id), isPinned, false))
+        if isPinned, let index = candidates.firstIndex(where: { $0.id == .item(itemID) }) { candidates[index].pinned = true }
       }
     }
     guard pinned.allSatisfy({ pin in candidates.contains { $0.id == pin } }) else { throw SceneRenderError.snapshotPending("pinned_owner_source") }
@@ -243,42 +272,58 @@ struct SceneCompositionPlan: Sendable {
       if (left.plane.boardID == presence.boardID) != (right.plane.boardID == presence.boardID) { return left.plane.boardID == presence.boardID }
       return String(describing: left.id) < String(describing: right.id)
     }
-    guard candidates.filter(\.pinned).count < maximumLiveOwners else { throw SceneRenderError.snapshotPending("live_owner_budget") }
-    var owners: [SceneCompositionLiveOwner] = []
-    for candidate in candidates.prefix(maximumLiveOwners - 1) {
-      guard let position = try await source.position(id: candidate.id, boardID: candidate.plane.boardID, coverID: candidate.plane.coverID) else {
-        throw SceneRenderError.snapshotPending("live_owner_source")
-      }
-      owners.append(.init(plane: candidate.plane, id: candidate.id, position: position))
+    func isVector(_ id: WorkspaceSpatialID, boardID: UUID) -> Bool {
+      guard case .element(let id) = id else { return false }
+      return frame.index.element(id: id, boardID: boardID)?.graphic != nil
     }
-    let protected = Set(owners.filter { owner in
+    let physical = candidates.filter { !isVector($0.id, boardID: $0.plane.boardID) }
+    let vectors = candidates.filter { isVector($0.id, boardID: $0.plane.boardID) }
+    guard physical.filter(\.pinned).count < maximumLiveOwners else { throw SceneRenderError.snapshotPending("live_owner_budget") }
+    let positioned = try await source.positionedOwners((Array(physical.prefix(maximumLiveOwners - 1)) + vectors)
+      .map { (plane: $0.plane, id: $0.id) })
+    var owners = positioned.filter { !isVector($0.id, boardID: $0.plane.boardID) }
+    let native = positioned.filter { isVector($0.id, boardID: $0.plane.boardID) }
+    var vectorRuns = try await source.vectorRuns(native)
+    let protected = Set(positioned.filter { owner in
       candidates.contains { $0.pinned && $0.id == owner.id && $0.plane == owner.plane }
     })
     while true {
       do {
         let assembled = try assemble(revision: source.revision, workspaceID: source.workspaceID, owners: owners, presence: presence,
-          frame: frame, pinned: pinned, protected: protected, displayScale: displayScale, previous: previous)
+          frame: frame, pinned: pinned, protected: protected, displayScale: displayScale, previous: previous, vectorRuns: vectorRuns)
         return try await assembled.allocatingPopulatedCoverage(source: source, presence: presence,
           frame: frame, displayScale: displayScale)
       } catch {
-        guard let index = owners.lastIndex(where: { !protected.contains($0) }) else { throw error }
-        owners.remove(at: index)
+        // Fragmented native runs can require too many intervening raster
+        // bands. Flatten an optional run, never lose its source or evict a
+        // program merely to retain more optional vector detail.
+        if let index = vectorRuns.lastIndex(where: { protected.isDisjoint(with: $0.owners) }) {
+          vectorRuns.remove(at: index)
+        } else if let index = owners.lastIndex(where: { !protected.contains($0) }) {
+          owners.remove(at: index)
+        } else { throw error }
       }
     }
   }
 
-  /// Removing an optional physical owner puts its exact painter position back
-  /// into a static range. Mandatory pins, their carriers and the return aperture
+  /// Removing an optional host or native run puts its exact painter positions
+  /// back into a static range. Mandatory pins, their carriers and the return aperture
   /// survive every reassembly; source values are never discarded as a shortcut.
   func demoting(_ owner: SceneCompositionLiveOwner, presence: SessionPresence,
     frame: WorkspaceSceneFrame, displayScale: Double) throws -> Self? {
-    guard liveOwners.contains(owner), !protectedOwners.contains(owner) else { return nil }
+    guard !protectedOwners.contains(owner) else { return nil }
+    var owners = liveOwners, vectors = vectorRuns
+    if let index = owners.firstIndex(of: owner) { owners.remove(at: index) }
+    else if let index = vectors.firstIndex(where: { $0.owners.contains(owner) }),
+      protectedOwners.isDisjoint(with: vectors[index].owners) { vectors.remove(at: index) }
+    else { return nil }
     do {
       let result = try Self.assemble(revision: revision, workspaceID: workspaceID,
-        owners: liveOwners.filter { $0 != owner }, presence: presence, frame: frame,
+        owners: owners, presence: presence, frame: frame,
         pinned: Set(protectedOwners.map(\.id)), protected: protectedOwners,
-        displayScale: displayScale, previous: self, preservesCoverageDensity: true)
+        displayScale: displayScale, previous: self, vectorRuns: vectors, preservesCoverageDensity: true)
       guard result.reductionPotential < reductionPotential else { return nil }
+      guard result.tiles.count <= Self.maximumTiles, result.primitiveCount <= Self.maximumPrimitives else { return nil }
       return result
     } catch SceneRenderError.resourceLimit { return nil }
     catch SceneRenderError.snapshotPending { return nil }
@@ -295,7 +340,7 @@ struct SceneCompositionPlan: Sendable {
       let result = try Self.assemble(revision: revision, workspaceID: workspaceID,
         owners: liveOwners, presence: presence, frame: frame,
         pinned: Set(protectedOwners.map(\.id)), protected: protectedOwners,
-        displayScale: displayScale, previous: self, preservesCoverageDensity: true,
+        displayScale: displayScale, previous: self, vectorRuns: vectorRuns, preservesCoverageDensity: true,
         tileAllowance: coverageTileCount - 1)
       guard result.coverageTileCount < coverageTileCount, result.liveOwners == liveOwners,
         result.protectedOwners == protectedOwners else { return nil }
@@ -322,6 +367,7 @@ struct SceneCompositionPlan: Sendable {
   private static func assemble(revision: UInt64, workspaceID: UUID, owners requestedOwners: [SceneCompositionLiveOwner],
     presence: SessionPresence, frame: WorkspaceSceneFrame, pinned: Set<WorkspaceSpatialID>,
     protected: Set<SceneCompositionLiveOwner>, displayScale: Double, previous: Self?,
+    vectorRuns requestedVectors: [SceneCompositionVectorRun] = [],
     preservesCoverageDensity: Bool = false, tileAllowance: Int = maximumTiles) throws -> Self {
     guard (1...maximumTiles).contains(tileAllowance) else { throw SceneRenderError.resourceLimit }
     var owners = requestedOwners
@@ -341,7 +387,12 @@ struct SceneCompositionPlan: Sendable {
       }
     }
     owners.removeAll { !includedBoards.contains($0.plane.boardID) }
-    guard pinned.allSatisfy({ pin in owners.contains { $0.id == pin } }), protected.isSubset(of: Set(owners))
+    let vectorRuns = requestedVectors.filter { run in
+      includedBoards.contains(run.plane.boardID) && (run.plane.coverID == nil
+        || owners.contains { $0.id == .item(run.plane.coverID!) && $0.plane == .board(run.plane.boardID) })
+    }
+    let presented = owners + vectorRuns.flatMap(\.owners)
+    guard pinned.allSatisfy({ pin in presented.contains { $0.id == pin } }), protected.isSubset(of: Set(presented))
     else { throw SceneRenderError.snapshotPending("pinned_owner_projection") }
     #if os(iOS)
       let inkBoardIDs = includedBoards
@@ -380,14 +431,16 @@ struct SceneCompositionPlan: Sendable {
       let layers: [ScenePaintPosition.Layer] = plane.coverID == nil
         ? (inkBoardIDs.contains(plane.boardID) ? [.elements, .covers] : [.elements, .ink, .covers]) : [.elements]
       for layer in layers {
-        let positions = owners.filter { $0.plane == plane && $0.position.layer == layer }.map(\.position).sorted()
+        let positions = paintSpans(owners: owners, vectors: vectorRuns, plane: plane, layer: layer)
         for index in 0...positions.count {
           bands.append(.init(plane: plane, range: .init(layer: layer,
-            lower: index == 0 ? nil : positions[index - 1], upper: index == positions.count ? nil : positions[index]), rank: index * 2))
+            lower: index == 0 ? nil : positions[index - 1].upper, upper: index == positions.count ? nil : positions[index].lower), rank: index * 2))
         }
       }
     }
-    guard bands.count <= maximumTiles else { throw SceneRenderError.snapshotPending("composition_band_budget") }
+    // These are metadata ranges, not allocated images. Many ranges are
+    // transparent (e.g. native figures separated by off-window neighbours).
+    guard bands.count <= maximumPrimitives else { throw SceneRenderError.snapshotPending("composition_band_budget") }
     var coverage: [SceneCompositionPlane: CompositionTileCoverage] = [:]
     var tiles: [SceneCompositionTileKey] = []
     let planes = presentations.keys.sorted { a, b in
@@ -400,8 +453,10 @@ struct SceneCompositionPlan: Sendable {
       let coarse = try CompositionTileCoverage(bounds: bounds, pixelsPerWorldPoint: 0x1p-48, maximumTiles: maximumTiles)
       minimumCost[plane] = coarse.tiles.count * bands.filter { $0.plane == plane }.count
     }
-    guard minimumCost.values.reduce(0, +) <= tileAllowance else { throw SceneRenderError.resourceLimit }
-    var remaining = tileAllowance
+    // Let the existing occupancy probe decide which coarse candidates need
+    // pixels before applying the raster quota. The initial metadata is bounded
+    // by the admitted ranges and each plane's minimum covering grid.
+    var remaining = max(tileAllowance, minimumCost.values.reduce(0, +))
     for (offset, plane) in planes.enumerated() {
       let planeBands = bands.filter { $0.plane == plane }
       let reserved = planes.dropFirst(offset + 1).reduce(0) { $0 + (minimumCost[$1] ?? 0) }
@@ -426,7 +481,6 @@ struct SceneCompositionPlan: Sendable {
         }
       }
     }
-    guard tiles.count <= maximumTiles, tiles.count + owners.count + inkBoardIDs.count <= maximumPrimitives else { throw SceneRenderError.resourceLimit }
     // Once the finite owner selection has admitted a portal's physical child
     // plane, that aperture is part of this cohort's continuing camera route.
     // Byte pressure may flatten optional source rasters or coarsen every range,
@@ -437,7 +491,7 @@ struct SceneCompositionPlan: Sendable {
       return presentations[.board(id)] != nil
     }
     return .init(revision: revision, workspaceID: workspaceID, rootBoardID: presence.boardID, inkBoardIDs: inkBoardIDs, liveOwners: owners, protectedOwners: protected.union(apertures), bands: bands,
-      coverage: coverage, presentations: presentations, tiles: tiles, requiredPixelDensity: density)
+      coverage: coverage, presentations: presentations, tiles: tiles, requiredPixelDensity: density, vectorRuns: vectorRuns)
   }
 }
 
@@ -513,9 +567,9 @@ final class SceneCompositionCohort {
   }
   func sharesGeometry(with plan: SceneCompositionPlan, frame: WorkspaceSceneFrame) -> Bool {
     guard self.plan.workspaceID == plan.workspaceID, self.plan.rootBoardID == plan.rootBoardID,
-      self.plan.liveOwners == plan.liveOwners, self.plan.inkBoardIDs == plan.inkBoardIDs,
+      self.plan.liveOwners == plan.liveOwners, self.plan.vectorRuns == plan.vectorRuns, self.plan.inkBoardIDs == plan.inkBoardIDs,
       Set(self.plan.presentations.keys) == Set(plan.presentations.keys) else { return false }
-    for owner in plan.liveOwners {
+    for owner in plan.presentedOwners {
       switch owner.id {
       case .item(let id):
         guard let previous = self.frame.worksets[owner.plane.boardID]?.items.first(where: { $0.id == id }),
@@ -1302,7 +1356,8 @@ final class SceneCompositionTiles {
       return coarse
     }
     var best: SceneCompositionPlan?, bestCost = Int.max
-    for owner in plan.liveOwners where !plan.protectedOwners.contains(owner) {
+    let candidates = plan.vectorRuns.map { $0.owners[0] } + plan.liveOwners
+    for owner in candidates where !plan.protectedOwners.contains(owner) {
       guard let candidate = try plan.demoting(owner, presence: presence, frame: frame, displayScale: displayScale) else { continue }
       let selected = requests.filter { candidate.liveOwners.contains($0.owner) }
       // Cross-revision carry is checked after selecting the smaller plan. This
@@ -1325,7 +1380,7 @@ final class SceneCompositionTiles {
       // Density and live-owner refinement follow settlement, so a pinch within
       // an already painted area projects the same pixels instead of recapturing.
       (!refinesDetails || ((0.6...1).contains(presence.camera.scale / basis.camera.scale) && plan.meetsRequiredDensity)),
-      pinned.allSatisfy({ pin in plan.liveOwners.contains { $0.id == pin } }), let tiles = plan.coverage[plane]?.tiles,
+      pinned.allSatisfy({ pin in plan.presentedOwners.contains { $0.id == pin } }), let tiles = plan.coverage[plane]?.tiles,
       let first = tiles.first, let last = tiles.last else { return false }
     let visible = WorkspaceSpatialBounds(origin: presence.camera.screenToWorld(.zero, viewport: presence.viewport),
       width: presence.viewport.x / presence.camera.scale, height: presence.viewport.y / presence.camera.scale)

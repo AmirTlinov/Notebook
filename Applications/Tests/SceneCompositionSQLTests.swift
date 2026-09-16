@@ -4,6 +4,98 @@ import XCTest
 @testable import Notebook
 
 final class SceneCompositionSQLTests: XCTestCase {
+  func testFragmentedNativeRunsCountOnlyPopulatedRasterBandsAndKeepManyNativePins() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    let initial = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let workspace = try store.loadIndex(), before = try store.loadBoard(items: workspace.items)
+    var hierarchy = before
+    _ = hierarchy.moveItem(workspace.selectedItemID, in: initial.rootBoardID, to: .init(x: 100_000, y: 100_000), actor: actor)
+    for index in 0..<40 {
+      for isNative in [true, false] {
+        let element = SpatialElement(id: "\(isNative ? "node" : "off-window")-\(index)", surface: .board(initial.rootBoardID),
+          kind: isNative ? .graphic : .nativeText,
+          frame: .init(x: Double(index % 8) * 50, y: Double(index / 8) * 50, width: 36, height: 36),
+          worldOrigin: isNative ? .zero : .init(x: 100_000, y: 100_000), source: "",
+          graphic: isNative ? .init(label: "\(index)") : nil, stamp: .init(counter: 0, actor: actor))
+        XCTAssertTrue(hierarchy.upsertElement(element, in: initial.rootBoardID, expected: nil, actor: actor))
+      }
+    }
+    _ = try store.saveBoardEdits(before: before, after: hierarchy)
+    let header = try store.workspaceHeader()
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
+    let presence = SessionPresence(boardID: initial.rootBoardID, mode: .board,
+      camera: .init(center: .init(x: 200, y: 150), scale: 1), viewport: .init(x: 600, y: 600))
+    let pins = Set((0..<10).map { WorkspaceSpatialID.element("node-\($0)") })
+    let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil }, pinned: pins)
+    let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID)
+    let plan = try await SceneCompositionPlan.prepare(source: source, presence: presence, frame: frame,
+      pinned: pins, displayScale: 2, previous: nil)
+    XCTAssertEqual(plan.vectorRuns.count, 40, "Off-window neighbours still split authored runs")
+    XCTAssertTrue(plan.liveOwners.isEmpty, "Native pins are not physical program hosts")
+    XCTAssertTrue(plan.tiles.isEmpty, "Empty painter ranges allocate no pixel buffers")
+    XCTAssertLessThanOrEqual(plan.primitiveCount, SceneCompositionPlan.maximumPrimitives)
+    for pin in pins { XCTAssertTrue(plan.allowsLive(pin, in: .board(initial.rootBoardID))) }
+    let data = try await source.liveData(plan: plan, presence: presence, frame: frame)
+    XCTAssertNotNil(data.referenceBasis)
+  }
+
+  func testNativeVectorRunsUseAuthoredAdjacencyWithoutSpendingLiveHostSlots() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    let initial = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let workspace = try store.loadIndex(), before = try store.loadBoard(items: workspace.items)
+    var hierarchy = before
+    _ = hierarchy.moveItem(workspace.selectedItemID, in: initial.rootBoardID, to: .init(x: 100_000, y: 100_000), actor: actor)
+    for index in 0..<30 {
+      let element = SpatialElement(id: "node-\(index)", surface: .board(initial.rootBoardID), kind: .graphic,
+        frame: .init(x: Double(index % 6) * 60, y: Double(index / 6) * 60, width: 48, height: 48),
+        worldOrigin: .zero, source: "", graphic: .init(label: "\(index)"), stamp: .init(counter: 0, actor: actor))
+      XCTAssertTrue(hierarchy.upsertElement(element, in: initial.rootBoardID, expected: nil, actor: actor))
+      if index == 14 {
+        let barrier = SpatialElement(id: "barrier", surface: .board(initial.rootBoardID), kind: .nativeText,
+          frame: .init(x: 0, y: 0, width: 100, height: 30), worldOrigin: .zero, source: "Above 0–14, below 15–29",
+          stamp: .init(counter: 0, actor: actor))
+        XCTAssertTrue(hierarchy.upsertElement(barrier, in: initial.rootBoardID, expected: nil, actor: actor))
+      }
+    }
+    _ = try store.saveBoardEdits(before: before, after: hierarchy)
+    let header = try store.workspaceHeader()
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
+    let presence = SessionPresence(boardID: initial.rootBoardID, mode: .board,
+      camera: .init(center: .init(x: 180, y: 150), scale: 1), viewport: .init(x: 600, y: 600))
+    let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil })
+    let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID)
+    let plan = try await SceneCompositionPlan.prepare(source: source, presence: presence, frame: frame,
+      pinned: [.element("node-0")], displayScale: 2, previous: nil)
+    XCTAssertEqual(plan.vectorRuns.map { $0.owners.count }, [15, 15])
+    XCTAssertEqual(plan.liveOwners.map(\.id), [.element("barrier")])
+    XCTAssertLessThanOrEqual(plan.primitiveCount, SceneCompositionPlan.maximumPrimitives)
+    let plane = SceneCompositionPlane.board(initial.rootBoardID)
+    for number in 0..<30 {
+      let id = WorkspaceSpatialID.element("node-\(number)")
+      let entry = try XCTUnwrap(index.paintEntry(id: id, boardID: initial.rootBoardID))
+      XCTAssertTrue(plan.allowsLive(id, in: plane))
+      XCTAssertFalse(plan.bands.contains { $0.plane == plane && $0.range.contains(entry) }, "No raster duplicate beneath a vector run")
+    }
+    XCTAssertLessThan(try XCTUnwrap(plan.rank(id: .element("node-0"), in: plane)), try XCTUnwrap(plan.rank(id: .element("barrier"), in: plane)))
+    XCTAssertLessThan(try XCTUnwrap(plan.rank(id: .element("barrier"), in: plane)), try XCTUnwrap(plan.rank(id: .element("node-29"), in: plane)))
+    let data = try await source.liveData(plan: plan, presence: presence, frame: frame)
+    XCTAssertNotNil(data.referenceBasis, "Every vector retains addressed authorship in the shared pointing proof")
+    let pinnedOwner = try XCTUnwrap(plan.vectorRuns.first?.owners.first)
+    XCTAssertNil(try plan.demoting(pinnedOwner, presence: presence, frame: frame, displayScale: 2))
+    let optional = try XCTUnwrap(plan.vectorRuns.last?.owners.first)
+    let reduced = try XCTUnwrap(plan.demoting(optional, presence: presence, frame: frame, displayScale: 2))
+    XCTAssertLessThan(reduced.reductionPotential, plan.reductionPotential)
+    XCTAssertEqual(reduced.liveOwners, plan.liveOwners, "Native detail yields without replacing the program's host")
+    XCTAssertEqual(reduced.protectedOwners, plan.protectedOwners)
+    XCTAssertTrue(reduced.allowsLive(pinnedOwner.id, in: plane))
+    let demotedEntry = try XCTUnwrap(index.paintEntry(id: optional.id, boardID: initial.rootBoardID))
+    XCTAssertEqual(reduced.bands.filter { $0.plane == plane && $0.range.contains(demotedEntry) }.count, 1)
+  }
+
   func testSQLTileBatchKeepsAddressedCoverageAndRejectsAnObsoleteCut() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

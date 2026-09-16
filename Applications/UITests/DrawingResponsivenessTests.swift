@@ -21,12 +21,17 @@ final class DrawingResponsivenessTests: XCTestCase {
     nativeGraphicScenario(onPage:true,connected:true)
   }
 
-  private func nativeGraphicScenario(onPage: Bool, connected: Bool = false) {
+  func testDenseNativeDiagramKeepsAllConnectionsLiveAndTheProgramFocused() {
+    nativeGraphicScenario(onPage: false, connected: true, dense: true)
+  }
+
+  private func nativeGraphicScenario(onPage: Bool, connected: Bool = false, dense: Bool = false) {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures",
       "--notebook-native-graphics-fixture"] + (onPage ? ["--notebook-native-graphic-page"] : [])
       + (connected ? ["--notebook-native-connector"] : [])
+      + (dense ? ["--notebook-native-dense"] : [])
     launchPortraitFixture(app)
     let node = app.images["Узел +"]
     let neighbour = app.webViews.containing(.button, identifier: "Graphic scene counter").firstMatch
@@ -40,12 +45,20 @@ final class DrawingResponsivenessTests: XCTestCase {
     let link = app.images["1:2"]
     if connected { XCTAssertTrue(link.waitForExistence(timeout:5)) }
     let originalLinkFrame = connected ? link.frame : .zero
+    let extraLink = app.images["D1"], extraFrame = dense ? extraLink.frame : .zero
+    if dense {
+      for index in 1...12 {
+        XCTAssertTrue(app.images["N\(index)"].exists)
+        XCTAssertTrue(app.images["D\(index)"].exists)
+      }
+    }
     let start = node.coordinate(withNormalizedOffset: .init(dx: 0.97, dy: 0.5))
     start.press(forDuration: 0.01, thenDragTo: start.withOffset(.init(dx: 38, dy: 26)),
       withVelocity: .slow, thenHoldForDuration: 0)
     XCTAssertEqual(node.frame.midX - before.midX, 38, accuracy: 6)
     XCTAssertEqual(node.frame.midY - before.midY, 26, accuracy: 6)
     XCTAssertEqual(neighbour.frame, peerFrame, "The first object contact is not camera input")
+    if dense { XCTAssertNotEqual(extraLink.frame, extraFrame, "A dependency outside the old live-owner quota follows the same draft") }
     XCTAssertEqual(neighbour.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Runtime '")).firstMatch.label, runtime,
       "The live program must retain its exact runtime, not just recreate saved state")
     app.typeText("8")
