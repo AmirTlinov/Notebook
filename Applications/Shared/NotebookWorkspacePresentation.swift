@@ -123,6 +123,8 @@ final class NotebookWorkspacePresentationController: UIViewController, NotebookS
     let contentIdentity = cohort.map { NotebookWorkspaceContentIdentity.current(model: model, cohort: $0) }
     if self.presence != presence || installedContent != contentIdentity { hasInstalledLayout = false }
     self.presence = presence; self.cohort = cohort; installedContent = contentIdentity
+    view.accessibilityIdentifier = model.documentMeasurements.enabled ? "workspace-scene-state" : nil
+    view.accessibilityValue = model.scenePreparationDiagnostic
     host?.rootView = content
     host?.view.setNeedsLayout()
   }

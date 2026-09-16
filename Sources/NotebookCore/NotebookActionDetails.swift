@@ -68,7 +68,7 @@ extension NotebookStore {
         "readDetails": .object(["method": .string("action"), "args": .object(["actionID": try .encode(receipt.id)])])])
     }
     func continuations() throws -> [JSONValue] {
-      try receipt.continuations(in: actionSourceProjection(receipt.sourceScope, readModel: receipt).files).map(JSONValue.encode)
+      try actionContinuations(receipt).map(JSONValue.encode)
     }
     func snapshots() throws -> [JSONValue] {
       try loadActionSnapshots(receipt).map { snapshot in .object([

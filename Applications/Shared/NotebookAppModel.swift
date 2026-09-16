@@ -345,6 +345,15 @@ final class NotebookAppModel {
 
   func scenePortalCamera(boardID: UUID) -> BoardPortalCamera? { scenePortalCameras[boardID] }
 
+  /// Opt-in, read-only state at the same native presentation boundary as pixels.
+  /// A blank physical scene must be distinguishable from an unready document.
+  var scenePreparationDiagnostic: String? {
+    guard documentMeasurements.enabled else { return nil }
+    let id = presence?.focusedItemID
+    let cohort = compositionTiles.published
+    return "focus=\(id?.uuidString ?? "none") body=\(id.flatMap { documents[$0] } != nil) state=\(id.flatMap { documentStates[$0] } != nil) opening=\(documentOpeningRequest?.documentID.uuidString ?? "none") openingTask=\(documentOpeningTask != nil) indexed=\(id.flatMap { sceneIndex?.item(id: $0) } != nil) scenePending=\(scenePreparationPending) permits=\(permitsScenePreparation) input=\(inputIsActive) peerInput=\(peerInputIsActive) composing=\(compositionTiles.isPreparing) cohortBoard=\(cohort?.plan.rootBoardID.uuidString ?? "none") live=\(id.map { id in cohort?.plan.liveOwners.contains { $0.id == .item(id) } == true } ?? false) paint=\(cohort?.isPaintInstalled == true) failure=\(persistenceFailure ?? publicationFailure ?? compositionTiles.failure ?? "none")"
+  }
+
   func sceneWorkset(presence: SessionPresence, pinned: Set<WorkspaceSpatialID> = [],
     limit: Int = WorkspaceSceneIndex.detailLimit, pixelScale: Double? = nil) -> WorkspaceSceneWorkset {
     sceneQueryCount &+= 1
@@ -3165,13 +3174,21 @@ final class NotebookAppModel {
     previous?.cancel()
     if let previous { _ = try? await previous.value }
     guard !Task.isCancelled, generation == collaborationReadGeneration,
-      permitsBackgroundPreparation, let content = collaborationContent else { return }
-    let version = collaborationContentEpoch, actions = collaborationActions
+      permitsBackgroundPreparation else { return }
+    let version = collaborationContentEpoch
+    // History describes accepted durable content. Drain the already accepted
+    // input tail before its SQL read; a later input still invalidates the result.
+    guard await finishPendingPersistence(boundary: .acceptedInput, continuing: {
+      generation == self.collaborationReadGeneration && version == self.collaborationContentEpoch
+        && self.permitsBackgroundPreparation
+    }), !Task.isCancelled, generation == collaborationReadGeneration,
+      version == collaborationContentEpoch, permitsBackgroundPreparation else { return }
+    let actions = collaborationActions, store = store
     var references = sharedContexts.flatMap { $0.previewEntries.flatMap(\.references) }
     if let highlightedReference { references.append(highlightedReference) }
     let considered = references
     let worker = Task.detached(priority: .utility) {
-      try CollaborationReadSnapshot(content: content, actions: actions, references: considered)
+      try CollaborationReadSnapshot(store: store, actions: actions, references: considered)
     }
     collaborationReadTask = worker
     let result = try? await withTaskCancellationHandler {

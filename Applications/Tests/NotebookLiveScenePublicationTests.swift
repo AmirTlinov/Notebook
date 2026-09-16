@@ -37,10 +37,19 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     XCTAssertTrue(model.commitSpatialElementState(boardID: presence.boardID, rendered: rendered, state: .string("complete input")))
     XCTAssertGreaterThan(model.collaborationReadEpoch, firstEpoch)
     XCTAssertFalse(model.acceptExternalScene(read, observedEpoch: firstEpoch, observedPresence: presence, itemPins: [:]))
+    let preparing = Task { await model.refreshCollaborationDetails() }
+    try await Task.sleep(for: .milliseconds(100))
+    XCTAssertFalse(model.collaborationDetailsAreCurrent,
+      "A history retry cannot certify the old SQL content while accepted input is still queued")
+    preparing.cancel()
+    await preparing.value
+    XCTAssertFalse(model.collaborationDetailsAreCurrent)
     try lock.release()
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
     XCTAssertEqual(try model.store.readSpatialElement(boardID: presence.boardID, elementID: rendered.id)?.state,
       .string("complete input"))
+    await model.refreshCollaborationDetails()
+    XCTAssertTrue(model.collaborationDetailsAreCurrent)
   }
 
   func testTwoMovesResizeAndDeleteUseAcceptedGeometryWhileTheCohortStaysOld() async throws {

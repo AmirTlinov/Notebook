@@ -111,13 +111,14 @@ actor SceneCompositionSource {
     }
   }
 
-  /// A settled child retains its immediate return boundary in the same read
-  /// revision. The parent contributes at most 24 addressed primitives; its
-  /// remaining contents still pass through the ordinary streaming painter.
-  /// This is a projection of the current source, not a cached former parent.
+  /// Board navigation retains its immediate return boundary in the same read
+  /// revision. An opened or focused material cannot expose that boundary:
+  /// preparing its invisible parent would make its ink compete with the paper.
+  /// The ordinary board transition requests the parent before portal exit.
   func compositionFrame(requested: WorkspaceSceneFrame, presence: SessionPresence,
     pinned: Set<WorkspaceSpatialID>) throws -> WorkspaceSceneFrame {
     guard requested.rootBoardID == presence.boardID else { throw NotebookStorageError.transactionConflict }
+    guard presence.mode == .board else { return requested }
     switch origin {
     case .values(let index, let hierarchy, _):
       guard let parentID = index.ownerBoard(itemID: presence.boardID),

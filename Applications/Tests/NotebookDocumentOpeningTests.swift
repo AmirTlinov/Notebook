@@ -8,6 +8,46 @@ import XCTest
 
 @MainActor
 final class NotebookDocumentOpeningTests: XCTestCase {
+  func testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera() async throws {
+    try await assertHistoryOpening(onAnotherBoard: false)
+  }
+
+  func testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard() async throws {
+    try await assertHistoryOpening(onAnotherBoard: true)
+  }
+
+  private func assertHistoryOpening(onAnotherBoard: Bool) async throws {
+    let (model, _, destination) = try await fixture(secondOnAnotherBoard: onAnotherBoard)
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let host = UIHostingController(rootView: SpatialWorkspaceView().environment(model).ignoresSafeArea())
+    window.rootViewController = host; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil; model.compositionTiles.cancelPreparation() }
+    let initialDeadline = ContinuousClock.now + .seconds(10)
+    while model.compositionTiles.published?.isPaintInstalled != true, ContinuousClock.now < initialDeadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    XCTAssertTrue(model.compositionTiles.published?.isPaintInstalled == true)
+    XCTAssertNil(model.documents[destination.id])
+    let target = CollaborationTarget(kind: .document, id: destination.id)
+    let revision = try await model.performStoreCommand { try $0.referenceRevision(target: target) }
+    model.requestShow(.init(target: target, revision: revision))
+    func installed() -> Bool {
+      guard let document = model.documents[destination.id], let state = model.documentStates[destination.id] else { return false }
+      return model.presence?.mode == .document && model.presence?.focusedItemID == destination.id
+        && model.presencePhase == .settled && model.compositionTiles.published?.isPaintInstalled == true
+        && DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: 0, scope: .paper)
+    }
+    let deadline = ContinuousClock.now + .seconds(15)
+    while !installed(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    XCTAssertTrue(installed(), "A history reference must install the actual document, not only change the title: \(model.persistenceFailure ?? model.compositionTiles.failure ?? "no failure reported"); document=\(model.documents[destination.id] != nil), indexed=\(model.sceneIndex?.item(id: destination.id) != nil), scenePending=\(model.scenePreparationPending), permits=\(model.permitsScenePreparation), preparing=\(model.compositionTiles.isPreparing), presence=\(String(describing: model.presence))")
+    XCTAssertEqual(model.documents[destination.id], destination)
+    let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
+      window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+    }
+    let proof = XCTAttachment(image: image); proof.name = "history-opens-unloaded-document"
+    proof.lifetime = .keepAlways; add(proof)
+  }
+
   func testOpenedDocumentOwnsPixelsHitTestingAndAttentionAboveAnOverlappingCoverWithoutMovingIt() async throws {
     let (model, first, second) = try await fixture()
     model.moveItem(second.id, to: .zero)
@@ -209,7 +249,7 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     XCTAssertEqual(model.presence?.openProgress, 0)
   }
 
-  private func fixture() async throws -> (NotebookAppModel, DocumentDocument, DocumentDocument) {
+  private func fixture(secondOnAnotherBoard: Bool = false) async throws -> (NotebookAppModel, DocumentDocument, DocumentDocument) {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("document-opening-" + UUID().uuidString)
     let store = NotebookStore(root: root), actor = UUID()
     let pageSize = NotebookAppModel.defaultPageSize
@@ -220,8 +260,15 @@ final class NotebookDocumentOpeningTests: XCTestCase {
       XCTAssertTrue(hierarchy.addItem(first.id, to: index.rootBoardID, near: .zero, actor: actor))
       let a = DocumentDocument(id: first.id, actor: actor, paperSize: .a4, blocks: [.markdown(id: "text", source: "First real body")])
       try store.saveDocumentWorkspaceBundle(index: index, document: a, state: .init(id: a.id, actor: actor), board: hierarchy)
+      var secondBoard = index.rootBoardID
+      if secondOnAnotherBoard {
+        let board = try XCTUnwrap(index.createBoard(title: "Other board", actor: actor))
+        XCTAssertTrue(hierarchy.createBoard(board.id, in: index.rootBoardID,
+          near: .init(x: 90_000, y: 0), actor: actor))
+        secondBoard = board.id
+      }
       let second = try XCTUnwrap(index.createDocument(title: "Second", actor: actor))
-      XCTAssertTrue(hierarchy.addItem(second.id, to: index.rootBoardID, near: .init(x: 2_000, y: 0), actor: actor))
+      XCTAssertTrue(hierarchy.addItem(second.id, to: secondBoard, near: .init(x: 2_000, y: 0), actor: actor))
       let b = DocumentDocument(id: second.id, actor: actor, paperSize: .a4, blocks: [.markdown(id: "text", source: "Second closed body")])
       _ = index.selectItem(first.id, actor: actor)
       try store.saveDocumentWorkspaceBundle(index: index, document: b, state: .init(id: b.id, actor: actor), board: hierarchy)

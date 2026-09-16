@@ -43,8 +43,7 @@ extension NotebookStore {
     try prepare()
     return try readTransaction { _ in
       try currentSQL!.limitReads(.agentCommand)
-      let receipt = try loadAction(id)
-      return receipt.continuations(in: try actionSourceProjection(receipt.action, receipt: receipt).files)
+      return try actionContinuations(actionReadModel(id))
     }
   }
 
@@ -1259,21 +1258,25 @@ private func collaborationDiff(_ before: [String: JSONValue], _ after: [String: 
 }
 
 func collaborationFieldVersion(file: JSONValue?, path: [CollaborationPathComponent]) -> ContentFieldVersion? {
-  guard var owner = file else { return nil }
-  var local = path
-  if local.count >= 2, local[0] == .field("records"), case .member(let id) = local[1],
-    let record = owner["records"]?.array.first(where: { $0.memberIdentity == id }) {
+  collaborationFieldVersion(path: path) { file?.value(at: $0[...]) }
+}
+
+/// File and addressed readers share the same causal owner of a field.
+func collaborationFieldVersion(path: [CollaborationPathComponent],
+  read: ([CollaborationPathComponent]) throws -> JSONValue?) rethrows -> ContentFieldVersion? {
+  var owner: [CollaborationPathComponent] = [], local = path
+  if local.count >= 2, local[0] == .field("records"), case .member = local[1],
+    let record = try read(Array(local.prefix(2))) {
     return (try? record["fieldVersion"]?.decode(ContentFieldVersion.self))
-      ?? (try? record["stamp"]?.decode(VersionStamp.self)).map { .init(stamp:$0,human:true) }
+      ?? (try? record["stamp"]?.decode(VersionStamp.self)).map { .init(stamp: $0, human: true) }
   }
   if local.count >= 3, local[0] == .field("boards"), local[2] == .field("board") {
-    guard let board = owner.value(at: local.prefix(3)) else { return nil }
-    owner = board
+    owner = Array(local.prefix(3))
     local = Array(local.dropFirst(3))
   }
-  if local.count == 2, local[0] == .field("placements"), case .member(let id) = local[1] {
-    return (try? owner["placements"]?.array.first(where: { $0.memberIdentity == collaborationIdentity(id) })?
-      .decode(WorkspacePlacement.self))?.winner.version
+  if local.count == 2, local[0] == .field("placements"), case .member = local[1] {
+    let placement = try read(owner + local)
+    return (try? placement?.decode(WorkspacePlacement.self))?.winner.version
   }
   guard let first = local.first, case .field(let collection) = first else { return nil }
   var parts = [collection]
@@ -1288,5 +1291,6 @@ func collaborationFieldVersion(file: JSONValue?, path: [CollaborationPathCompone
     case .field: return nil
     }
   }
-  return try? owner["collaboration"]?["fields"]?[fieldKey(parts)]?.decode(ContentFieldVersion.self)
+  let value = try read(owner + [.field("collaboration"), .field("fields"), .field(fieldKey(parts))])
+  return try? value?.decode(ContentFieldVersion.self)
 }

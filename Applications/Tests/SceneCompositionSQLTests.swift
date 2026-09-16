@@ -5,6 +5,56 @@ import XCTest
 
 final class SceneCompositionSQLTests: XCTestCase {
   @MainActor
+  func testFocusedMaterialDoesNotAllocateItsInvisibleParentUnderPassivePressure() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let actor = UUID(), store = NotebookStore(root: root)
+    let initial = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    var workspace = try store.loadIndex(), hierarchy = try store.loadBoard(items: workspace.items)
+    let child = try XCTUnwrap(workspace.createBoard(title: "Child", actor: actor))
+    XCTAssertTrue(hierarchy.createBoard(child.id, in: initial.rootBoardID, near: .zero, actor: actor))
+    let item = try XCTUnwrap(workspace.createDocument(title: "Visible paper", actor: actor))
+    XCTAssertTrue(hierarchy.addItem(item.id, to: child.id, near: .zero, actor: actor))
+    let document = DocumentDocument(id: item.id, actor: actor, paperSize: .a4,
+      blocks: [.markdown(id: "text", source: "The actual opened paper")])
+    try store.saveDocumentWorkspaceBundle(index: workspace, document: document,
+      state: .init(id: item.id, actor: actor), board: hierarchy)
+    var ink = try store.readSpatialInk(surfaces: [.board(initial.rootBoardID)])
+    XCTAssertNotNil(ink.append(tool: .pen, spans: [.init(surface: .board(initial.rootBoardID), samples: [
+      .init(point: .zero, worldPoint: .zero, timeOffset: 0, width: 4, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+    ])], actor: actor))
+    try store.saveSpatialInk(ink)
+    let resources = SceneRenderResources(profile: .interactive)
+    // Match the real refusal without constructing 127 MiB of unrelated data.
+    // The current paper's input allocation still fits the unchanged total cap.
+    let pressure = try XCTUnwrap(resources.reserveDerivedBytes(resources.passiveByteLimit - 1_024 * 1_024, priority: .passive))
+    defer { pressure.release() }
+    let registry = SpatialInkSurfaceRegistry()
+    // Use one physical owner for both focused-cover and opened-document phases.
+    let composition = SceneCompositionTiles(resources: resources, surfaceRegistry: registry)
+    addTeardownBlock { @MainActor in await composition.stop(); await registry.stopSceneInk() }
+    for mode in [WorkspaceSemanticMode.cover, .document] {
+      let presence = SessionPresence(boardID: child.id, mode: mode,
+        camera: .init(scale: 0.5), viewport: .init(x: 834, y: 1194),
+        focusedItemID: item.id, openProgress: mode == .document ? 1 : 0, selectedItemID: item.id)
+      let state = try NotebookSceneState.read(store: store, presence: presence, viewport: presence.viewport)
+      let index = WorkspaceSceneIndex(workspace: state.workspace, hierarchy: state.hierarchy, paperSizes: state.paperSizes)
+      let requested = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil })
+      let source = SceneCompositionSource(store: store, revision: state.header.cursor, workspaceID: state.header.workspaceID)
+      let frame = try await source.compositionFrame(requested: requested, presence: presence, pinned: [.item(item.id)])
+      XCTAssertNil(frame.returnBoardID, "An invisible parent is not a prerequisite for opening a material")
+      composition.prepare(source: source, presence: presence, frame: requested, pinned: [.item(item.id)], displayScale: 2)
+      let deadline = ContinuousClock.now + .seconds(10)
+      while composition.isPreparing, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+      XCTAssertNil(composition.failure, "\(composition.budgetFailures)")
+      let installed = try XCTUnwrap(composition.published)
+      XCTAssertEqual(installed.plan.inkBoardIDs, [child.id])
+      XCTAssertTrue(installed.plan.allowsLive(.item(item.id), in: .board(child.id)))
+      XCTAssertFalse(installed.liveData.ink.actions.contains { $0.spans.contains { $0.surface == .board(initial.rootBoardID) } })
+    }
+  }
+
+  @MainActor
   func testOpeningDistantChildPublishesItsVisibleProgramsFromTheAddressedWindow() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let store = NotebookStore(root: root), actor = UUID()

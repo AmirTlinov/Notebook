@@ -159,6 +159,7 @@ func collaborationReadSnapshotUsesCurrentSources() throws {
   let unrelated = PageDocument(id: UUID(), size: .init(width: 834, height: 1194), actor: f.human,
     drawingData: Data(repeating: 1, count: 16 * 1024 * 1024))
   content.pages.append(unrelated)
+  try f.store.savePage(content.pages[0])
   let missing = CollaborationReference(target: f.page, elementID: "missing", revision: "missing")
   let regional = CollaborationReference(target: f.page, region: .init(x: 1, y: 1, width: 20, height: 20), revision: "old")
   let references = [before, missing, regional]
@@ -166,7 +167,7 @@ func collaborationReadSnapshotUsesCurrentSources() throws {
   #expect(!paths.contains("pages/\(unrelated.id.uuidString.lowercased()).json"))
   let files = try content.sourceFiles(including: paths)
   #expect(!files.keys.contains("pages/\(unrelated.id.uuidString.lowercased()).json"))
-  let snapshot = try CollaborationReadSnapshot(content: content, actions: [try NotebookActionReadModel(receipt)], references: references)
+  let snapshot = try CollaborationReadSnapshot(store: f.store, actions: [try NotebookActionReadModel(receipt)], references: references)
   #expect(snapshot.results[receipt.id] == receipt.resultReferences(in: content))
   #expect(snapshot.results[receipt.id]?.first?.region?.x == 120)
   #expect(snapshot.continuations[receipt.id] == receipt.continuations(in: files))
@@ -179,13 +180,91 @@ func collaborationReadSnapshotUsesCurrentSources() throws {
 @Test("Отменённая подготовка истории не возвращает частичный результат")
 func collaborationReadSnapshotCancellation() async throws {
   let f = try CollaborationFixture(); defer { f.clean() }
-  let content = try f.store.collaborationContent()
   await Task.detached {
     withUnsafeCurrentTask { $0?.cancel() }
     #expect(throws: CancellationError.self) {
-      try CollaborationReadSnapshot(content: content, actions: [], references: [])
+      try CollaborationReadSnapshot(store: f.store, actions: [], references: [])
     }
   }.value
+}
+
+@Test("История поля не декодирует посторонние штрихи той же доски")
+func collaborationReadSnapshotDoesNotReadUnchangedInkSamples() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let operation = CollaborationOperation(kind: .insertElement, target: f.board, id: "button",
+    values: ["kind": .string("web"), "source": .string("<button>+</button>"), "html": .string("<button>+</button>"),
+      "frame": try .encode(PageRect(x: 20, y: 30, width: 120, height: 90)), "worldOrigin": try .encode(WorldPoint.zero)])
+  let receipt = try f.store.applyCollaborationAction(f.action([operation], targets: [f.board]), actor: f.agent)
+  let action = try f.store.actionReadModel(receipt.id)
+  var ink = try f.store.loadSpatialInk()
+  let samples = (0..<12_000).map { index in
+    SpatialInkSample(point: .init(x: Double(index) / 3, y: 60), worldPoint: .init(x: Double(index) / 3, y: 60),
+      timeOffset: Double(index) / 240, width: 2, opacity: 1, force: 0.4, azimuth: 0, altitude: .pi / 2)
+  }
+  #expect(ink.append(tool: .pen, spans: [.init(surface: .board(f.boardID), samples: samples)], actor: f.human) != nil)
+  try f.store.saveSpatialInk(ink)
+  let whole = CollaborationReference(target: f.board, revision: try f.store.referenceRevision(target: f.board))
+  let snapshot = try f.store.readTransaction { store in
+    try store.currentSQL!.limitReads(.init(rows: 512, bytes: 256 * 1_024, valueBytes: 64 * 1_024,
+      reason: "history_field_without_board_samples"))
+    return try CollaborationReadSnapshot(store: store, actions: [action], references: [whole])
+  }
+  #expect(snapshot.results[action.id]?.first?.region?.x == 20)
+  #expect(snapshot.continuations[action.id]?.isEmpty == true)
+  #expect(snapshot.references[whole.id]?.status == .current)
+  #expect(throws: NotebookStorageError.self) {
+    try f.store.readTransaction { store in
+      try store.currentSQL!.limitReads(.init(rows: 512, bytes: 256 * 1_024, valueBytes: 64 * 1_024,
+        reason: "sample_read_negative_control"))
+      _ = try store.readSpatialInk(surfaces: [.board(f.boardID)])
+    }
+  }
+}
+
+@Test("История порядка видит новых членов, человеческую правку и удаление")
+func collaborationReadSnapshotUsesCurrentOrderRatherThanTheOldCommandScope() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  func insert(_ id: String) throws -> CollaborationOperation {
+    .init(kind: .insertElement, target: f.board, id: id, values: ["kind": .string("web"),
+      "source": .string(id), "html": .string(id), "worldOrigin": try .encode(WorldPoint.zero),
+      "frame": try .encode(PageRect(x: 20, y: 30, width: 120, height: 90))])
+  }
+  _ = try f.store.applyCollaborationAction(f.action([try insert("a"), insert("b")], targets: [f.board]), actor: f.agent)
+  let receipt = try f.store.applyCollaborationAction(.init(additionalOwners: [f.board], summary: "Порядок",
+    expected: [f.expectation(f.board)], operations: [.init(kind: .reorderElements, target: f.board,
+      values: ["ids": .array([.string("b"), .string("a")])])]), actor: f.agent)
+  let action = try f.store.actionReadModel(receipt.id)
+  _ = try f.store.applyCollaborationAction(f.action([try insert("c")], targets: [f.board]), actor: f.agent)
+  let index = try f.store.loadIndex(), before = try f.store.loadBoard(items: index.items)
+  var after = before
+  #expect(after.removeElements(ids: ["a"], from: f.boardID, actor: f.human) == 1)
+  _ = try f.store.saveBoardEdits(before: before, after: after)
+  let files = try f.store.collaborationContent().sourceFiles()
+  let expected = receipt.continuations(in: files)
+  #expect(!expected.isEmpty)
+  let snapshot = try CollaborationReadSnapshot(store: f.store, actions: [action], references: [])
+  #expect(snapshot.continuations[action.id] == expected)
+  #expect(try f.store.collaborationContinuations(action.id) == expected)
+  for field in action.changes {
+    #expect(try f.store.readCollaborationValue(file: field.file, path: field.path) == files[field.file]?.value(at: field.path[...]))
+  }
+}
+
+@Test("Запоздалая подготовка не соединяет отменённую квитанцию с новым содержанием")
+func collaborationReadSnapshotRejectsAnEarlierReceiptVersion() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let receipt = try f.store.applyCollaborationAction(f.action([f.insert()]), actor: f.agent)
+  let action = try f.store.actionReadModel(receipt.id)
+  _ = try f.store.undoCollaborationAction(receipt.id, actor: f.human)
+  do {
+    _ = try CollaborationReadSnapshot(store: f.store, actions: [action], references: [])
+    Issue.record("The old receipt cannot certify a current history cut")
+  } catch let error as CollaborationError {
+    #expect(error.code == "source_conflict")
+  }
+  let undone = try f.store.actionReadModel(receipt.id)
+  let snapshot = try CollaborationReadSnapshot(store: f.store, actions: [undone], references: [])
+  #expect(snapshot.continuations[undone.id]?.isEmpty == true)
 }
 
 @Test("Повторные результаты истории сохраняют один текущий источник и отдельные ID")
@@ -200,21 +279,27 @@ func collaborationReadSnapshotReusesRepeatedSourceRevisions() throws {
     let inserted = content.hierarchy.upsertElement(element, in: f.boardID, expected: nil, actor: f.agent)
     #expect(inserted)
   }
+  let stored = try f.store.collaborationContent()
+  _ = try f.store.saveBoardEdits(before: stored.hierarchy, after: content.hierarchy)
   // Distinct historical actions address the same owner. A removed element
   // falls back to that owner, but must not share the other action's result ID.
   let actions = try (0..<64).map { index in
     let action = CollaborationAction(summary: "History \(index)", expected: [], operations: [
       .init(kind: .reorderElements, target: f.board),
       .init(kind: .removeElement, target: f.board, id: "removed")])
-    return try NotebookActionReadModel(CollaborationReceipt(id: action.id, action: action,
-      createdAt: Date(timeIntervalSince1970: Double(index)), revisions: [], changes: []))
+    let receipt = CollaborationReceipt(id: action.id, action: action,
+      createdAt: Date(timeIntervalSince1970: Double(index)), revisions: [], changes: [])
+    try f.store.withMutationLock {
+      try f.store.publishCollaboration(writes: ["collaboration/actions/" + receipt.id.uuidString.lowercased() + ".json": .encode(receipt)])
+    }
+    return try NotebookActionReadModel(receipt)
   }
   let files = try content.sourceFiles(), revision = try NotebookStore.referenceRevision(target: f.board, files: files)
   let reference = CollaborationReference(target: f.board, revision: revision)
   var samples: [Double] = []
   for _ in 0..<10 {
     let clock = ContinuousClock(), started = clock.now
-    let snapshot = try CollaborationReadSnapshot(content: content, actions: actions, references: [reference])
+    let snapshot = try CollaborationReadSnapshot(store: f.store, actions: actions, references: [reference])
     let elapsed = started.duration(to: clock.now).components
     samples.append(Double(elapsed.seconds) * 1_000 + Double(elapsed.attoseconds) / 1e15)
     let results = actions.flatMap { snapshot.results[$0.id] ?? [] }
@@ -225,12 +310,13 @@ func collaborationReadSnapshotReusesRepeatedSourceRevisions() throws {
   print("history-repeated-source-ms " + String(decoding: try JSONEncoder().encode(samples), as: UTF8.self))
   let removed = content.hierarchy.removeElements(ids: ["detail-0"], from: f.boardID, actor: f.human)
   #expect(removed == 1)
-  let changed = try CollaborationReadSnapshot(content: content, actions: actions, references: [reference])
+  _ = try f.store.saveBoardEdits(before: f.store.loadBoard(items: content.workspace.items), after: content.hierarchy)
+  let changed = try CollaborationReadSnapshot(store: f.store, actions: actions, references: [reference])
   #expect(changed.references[reference.id]?.status == .changed)
   #expect(changed.results[actions[0].id]?.allSatisfy { $0.revision != revision } == true)
 }
 
-@Test("История разных досок готовит общее дерево один раз и сохраняет SQL-идентичности")
+@Test("История разных досок читает полные SQL-идентичности без построения дерева")
 func collaborationReadSnapshotSharesSpatialOwnerTree() throws {
   let f = try CollaborationFixture(); defer { f.clean() }
   var content = try f.store.collaborationContent()
@@ -259,14 +345,18 @@ func collaborationReadSnapshotSharesSpatialOwnerTree() throws {
     let target = CollaborationTarget(kind: .board, id: id)
     let action = CollaborationAction(summary: "History", expected: [], operations: [
       .init(kind: .reorderElements, target: target), .init(kind: .removeElement, target: target, id: "removed")])
-    return try NotebookActionReadModel(CollaborationReceipt(id: action.id, action: action,
-      createdAt: Date(timeIntervalSince1970: 0), revisions: [], changes: []))
+    let receipt = CollaborationReceipt(id: action.id, action: action,
+      createdAt: Date(timeIntervalSince1970: 0), revisions: [], changes: [])
+    try f.store.withMutationLock {
+      try f.store.publishCollaboration(writes: ["collaboration/actions/" + receipt.id.uuidString.lowercased() + ".json": .encode(receipt)])
+    }
+    return try NotebookActionReadModel(receipt)
   }
   let misplaced = CollaborationReference(target: .init(kind: .cover, id: boards[0], boardID: boards[1]), revision: "old")
   var samples: [Double] = []
   for _ in 0..<10 {
     let clock = ContinuousClock(), started = clock.now
-    let snapshot = try CollaborationReadSnapshot(content: content, actions: actions, references: references + [misplaced])
+    let snapshot = try CollaborationReadSnapshot(store: f.store, actions: actions, references: references + [misplaced])
     let elapsed = started.duration(to: clock.now).components
     samples.append(Double(elapsed.seconds) * 1_000 + Double(elapsed.attoseconds) / 1e15)
     let results = actions.flatMap { snapshot.results[$0.id] ?? [] }
@@ -278,7 +368,8 @@ func collaborationReadSnapshotSharesSpatialOwnerTree() throws {
   print("history-multiple-owners-ms " + String(decoding: try JSONEncoder().encode(samples), as: UTF8.self))
   let removed = content.hierarchy.removeElements(ids: ["detail-0"], from: boards[0], actor: f.human)
   #expect(removed == 1)
-  let changed = try CollaborationReadSnapshot(content: content, actions: actions, references: references)
+  _ = try f.store.saveBoardEdits(before: f.store.loadBoard(items: content.workspace.items), after: content.hierarchy)
+  let changed = try CollaborationReadSnapshot(store: f.store, actions: actions, references: references)
   let affected = Set([f.board, .init(kind: .board, id: boards[0]), .init(kind: .cover, id: boards[0], boardID: f.boardID)])
   for reference in references {
     #expect(changed.references[reference.id]?.status == (affected.contains(reference.target) ? .changed : .current))

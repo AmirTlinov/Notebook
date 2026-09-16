@@ -35,6 +35,13 @@ final class CollaborationReadTests: XCTestCase {
     let delivery = try XCTUnwrap(store.deviceActionReceipts(actionIDs: [actionID]).first)
     XCTAssertTrue(delivery.matches(action))
     XCTAssertFalse(delivery.displayComplete, "Arrival alone is not installation")
+    await model.refreshCollaborationDetails()
+    XCTAssertTrue(model.collaborationDetailsAreCurrent)
+    XCTAssertEqual(model.results(for: action).first?.target, .init(kind: .document, id: id),
+      "History resolves the durable owner even when its body is outside the scene")
+    XCTAssertTrue(model.continuations(for: action).isEmpty,
+      "An unloaded document is not a removed document")
+    XCTAssertNil(model.documents[id], "Reading history must not mount a closed document")
   }
 
   @MainActor

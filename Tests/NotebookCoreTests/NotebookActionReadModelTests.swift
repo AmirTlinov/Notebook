@@ -59,6 +59,10 @@ struct NotebookActionReadModelTests {
       let model = try store.actionReadModel(receipt.id)
       #expect(try model.continuations(in: files) == receipt.continuations(in: files))
       #expect(try !model.continuations(in: files).isEmpty)
+      #expect(try store.actionContinuations(model) == receipt.continuations(in: files))
+      let snapshot = try CollaborationReadSnapshot(store: store, actions: [model], references: [])
+      #expect(snapshot.continuations[model.id] == receipt.continuations(in: files))
+      #expect(snapshot.results[model.id] == receipt.resultReferences(in: content))
       #expect(model.resultReferences(in: content) == receipt.resultReferences(in: content))
     }
   }

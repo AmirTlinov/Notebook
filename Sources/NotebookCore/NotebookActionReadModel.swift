@@ -10,8 +10,6 @@ public struct NotebookActionReadModel: Codable, Equatable, Sendable, Identifiabl
     public let id: String?
     public let frame: PageRect?
     let itemIDs: [UUID]
-    let orderedIDs: [String]
-    let pageID: UUID?
     let strokeID: UUID?
     let strokeRegion: PageRect?
     let strokeOrigin: WorldPoint?
@@ -20,21 +18,11 @@ public struct NotebookActionReadModel: Codable, Equatable, Sendable, Identifiabl
       kind = operation.kind; target = operation.target; id = operation.id
       frame = try? operation.values["frame"]?.decode(PageRect.self)
       itemIDs = kind == .stackItems ? try operation.values["itemIDs"]?.decode([UUID].self) ?? [] : []
-      orderedIDs = kind == .reorderElements ? try operation.values["ids"]?.decode([String].self) ?? [] : []
-      pageID = kind == .createNotebook ? operation.values["pageID"]?.string.flatMap(UUID.init(uuidString:)) : nil
       let stroke = kind == .appendInkStroke ? try? CollaborationInkStroke(operation) : nil
       strokeID = stroke?.id; strokeRegion = stroke?.region; strokeOrigin = stroke?.worldOrigin
     }
 
-    /// Only the address selector consumes this request-shaped value. It must
-    /// never reach validation, normalization, execution or publication.
-    var sourceScope: CollaborationOperation {
-      var values: [String: JSONValue] = [:]
-      if kind == .stackItems { values["itemIDs"] = .array(itemIDs.map { .string($0.uuidString) }) }
-      if kind == .reorderElements { values["ids"] = .array(orderedIDs.map(JSONValue.string)) }
-      if let pageID { values["pageID"] = .string(pageID.uuidString) }
-      return .init(kind: kind, target: target, id: id, values: values)
-    }
+
   }
 
   public struct Action: Codable, Equatable, Sendable {
@@ -86,18 +74,20 @@ public struct NotebookActionReadModel: Codable, Equatable, Sendable, Identifiabl
       preserved: $0.preserved.map(Field.init)) }
   }
 
-  var sourceScope: CollaborationAction {
-    .init(id: id, contextID: action.resolvedContextID, summary: summary,
-      references: action.references, expected: revisions, operations: action.operations.map(\.sourceScope))
+  public func continuations(in files: [String: JSONValue]) throws -> [CollaborationContinuation] {
+    try continuations(currentValue: { files[$0.file]?.value(at: $0.path[...]) },
+      currentVersion: { collaborationFieldVersion(file: files[$0.file], path: $0.path) })
   }
 
-  public func continuations(in files: [String: JSONValue]) throws -> [CollaborationContinuation] {
+  func continuations(currentValue: (Field) throws -> JSONValue?,
+    currentVersion: (Field) throws -> ContentFieldVersion?) throws -> [CollaborationContinuation] {
     guard undo == nil else { return [] }
     return try changes.compactMap { field in
+      try Task.checkCancellation()
       guard !field.retiredPlacement else { return nil }
-      let current = files[field.file]?.value(at: field.path[...])
+      let current = try currentValue(field)
       guard try Field.digest(current, file: field.file, path: field.path) != field.afterDigest else { return nil }
-      let version = collaborationFieldVersion(file: files[field.file], path: field.path)
+      let version = try currentVersion(field)
       let removed = current == nil || (placementAddress(field.file, field.path) != nil
         && (try? current?.decode(WorkspacePlacement.self))?.pose == nil)
       return .init(file: field.file, path: field.path, author: removed ? .removed : version?.human == false ? .agent : .human)
@@ -112,6 +102,73 @@ extension DeviceActionReceipt {
 }
 
 extension NotebookStore {
+  /// Compare the receipt's actual field addresses, not a command-shaped
+  /// projection or the viewport's partial copy of a physical owner.
+  func actionContinuations(_ action: NotebookActionReadModel) throws -> [CollaborationContinuation] {
+    try readTransaction { store in
+      try action.continuations(currentValue: { field in
+        try store.readCollaborationValue(file: field.file, path: field.path)
+      }, currentVersion: { field in
+        try collaborationFieldVersion(path: field.path) { path in
+          try store.readCollaborationValue(file: field.file, path: path)
+        }
+      })
+    }
+  }
+
+  /// Walk the existing record collections to the field's owner. A member read
+  /// never reconstructs its siblings (or a page's drawing); a whole-owner
+  /// change still compares the complete owner, including later human adoption.
+  func readCollaborationValue(file: String, path: [CollaborationPathComponent]) throws -> JSONValue? {
+    try sqlRead { database in
+      func read(_ address: String, _ path: ArraySlice<CollaborationPathComponent>) throws -> JSONValue? {
+        try Task.checkCancellation()
+        guard let row = try storedFragments(address: address, descendants: false).first else { return nil }
+        let collections = row.collections.filter { collection in
+          let prefix = collection.path.map(CollaborationPathComponent.field)
+          return path.starts(with: prefix) || prefix.starts(with: path)
+        }
+        for collection in collections {
+          let prefix = collection.path.map(CollaborationPathComponent.field)
+          guard path.starts(with: prefix) else { continue }
+          let tail = path.dropFirst(prefix.count)
+          let collectionKey = fieldKey(collection.path)
+          switch (collection.kind, tail.first) {
+          case (.array, .member(let id)):
+            return try read(address + "/" + collectionKey + "/@" + fieldKey([collaborationIdentity(id)]), tail.dropFirst())
+          case (.dictionary, .field(let key)):
+            return try read(address + "/" + collectionKey + "/@" + fieldKey([key]), tail.dropFirst())
+          case (.array, .order) where tail.count == 1:
+            // These arrays use canonical record positions. Special causal
+            // collections below retain the codec's ordering and validation.
+            if file != "spatial-ink.json", !file.hasPrefix("collaboration/contexts/"),
+              !file.hasPrefix("document-states/"), collection.path != ["computations"] {
+              if collection.path == ["pageIDs"] { return .array([]) }
+              let ids = try database.rows("SELECT member FROM records WHERE parent=? AND collection=? ORDER BY position,member",
+                [.text(address), .text(collectionKey)])
+              return .array(ids.map { .string($0[0].text!) })
+            }
+          default: break
+          }
+        }
+        guard !collections.isEmpty else { return row.value.value(at: path) }
+        // Only the selected collection/subtree is assembled. In particular,
+        // elements/order and a single element never pull in drawing samples.
+        var rows = [row.replacing(value: row.value, collections: collections)]
+        for collection in collections {
+          let children = try database.rows("SELECT address FROM records WHERE parent=? AND collection=?",
+            [.text(address), .text(fieldKey(collection.path))])
+          for child in children {
+            try Task.checkCancellation()
+            rows += try storedFragments(address: child[0].text!)
+          }
+        }
+        return try NotebookRecordCodec.decode(rows, root: address).value(at: path)
+      }
+      return try read(file + "#", path[...])
+    }
+  }
+
   func indexActionReadModel(_ receipt: CollaborationReceipt, address: String,
     database: NotebookSQLConnection) throws {
     let model = try NotebookActionReadModel(receipt)

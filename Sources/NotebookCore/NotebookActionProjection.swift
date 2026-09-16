@@ -37,10 +37,9 @@ extension NotebookStore {
   /// archive. The resulting dictionaries are projections, so they must only
   /// be published through a baseline delta, never through whole-file replace.
   func actionSourceProjection(_ action: CollaborationAction, receipt: CollaborationReceipt? = nil,
-    references: [CollaborationReference] = [], readModel: NotebookActionReadModel? = nil) throws -> CollaborationWorkspace {
-    let receiptOperations = receipt?.action.operations ?? readModel?.action.operations.map(\.sourceScope)
-    let receiptFields = receipt?.changes.map { ($0.file, $0.path) }
-      ?? readModel?.changes.map { ($0.file, $0.path) } ?? []
+    references: [CollaborationReference] = []) throws -> CollaborationWorkspace {
+    let receiptOperations = receipt?.action.operations
+    let receiptFields = receipt?.changes.map { ($0.file, $0.path) } ?? []
     let header = try workspaceHeader()
     var itemIDs = Set<UUID>(), boardIDs: Set<UUID> = [header.rootBoardID]
     var pageIDs = Set<UUID>(), documentIDs = Set<UUID>(), codeIDs = Set<UUID>()
