@@ -34,6 +34,22 @@ final class SpatialInkProjectionTests: XCTestCase {
     }
   }
 
+  func testChunkQueryPrunesInvisibleGeometryBeforeReadingItsVertices() {
+    let chunks: [SpatialInkGeometry.Chunk] = (0..<8_192).map { index in
+      .init(vertices: index*3..<(index+1)*3,
+        bounds: .init(x: Double(index % 128) * 100, y: Double(index / 128) * 100, width: 12, height: 12))
+    }
+    let index = SpatialInkGeometry.ChunkIndex(chunks)
+    let transforms: [SIMD4<Float>] = [.init(1, 1, 0, 0), .init(2, 2, -4_000, -800), .init(0.5, 0.5, -800, -200)]
+    for transform in transforms {
+      let viewport = CGRect(x: 0, y: 0, width: 300, height: 200)
+      let selected = index.query(viewport: viewport, transform: transform)
+      let reference = chunks.indices.filter { chunks[$0].intersects(viewport: viewport, transform: transform) }
+      XCTAssertEqual(selected.chunks, reference, "Keep exact culling and painter order at each camera transform")
+      XCTAssertLessThan(selected.visitedNodes, chunks.count / 8, "Invisible branches must not be scanned on a frame")
+    }
+  }
+
   @MainActor
   func testOnlyVisibleChunksReceiveGPUBuffersAndUnmountReleasesThem() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)

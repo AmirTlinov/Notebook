@@ -148,11 +148,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   fileprivate struct CommittedBatch {
     let mesh: SpatialInkMesh.Batch
-    var buffers: [GeometryBuffer?]
+    var buffers: [Int: GeometryBuffer] = [:]
     var operation: RenderOperation { mesh.tool == .pen ? .ink : .erase }
     init(_ mesh: SpatialInkMesh.Batch) {
       self.mesh = mesh
-      buffers = Array(repeating: nil, count: mesh.chunks.count)
     }
   }
 
@@ -239,7 +238,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private(set) var renderFailure: SceneRenderError?
   var residentCommittedBufferBytes: Int {
     committedBatches.reduce(0) { count, batch in
-      count + batch.buffers.reduce(0) { $0 + ($1?.reservation.byteCount ?? 0) }
+      count + batch.buffers.values.reduce(0) { $0 + $1.reservation.byteCount }
     }
   }
 
@@ -1118,15 +1117,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         if batch.mesh.vertices.isEmpty { return true }
         guard spatialDrawableScale != nil, bounds.width > 0, bounds.height > 0 else { return false }
         let transform = batch.mesh.projection.transform(camera: spatialCamera, viewport: spatialViewport)
-        return !batch.mesh.chunks.contains {
-          $0.intersects(viewport: CGRect(origin: .zero, size: bounds.size), transform: transform)
-        }
+        return batch.mesh.chunkIndex.query(viewport: CGRect(origin: .zero, size: bounds.size), transform: transform).chunks.isEmpty
       })
     else { return false }
     // Source ink elsewhere on this board is not a visible Metal allocation.
     // Keep its mesh; a later projection prepares the same chunks normally.
     for batch in committedBatches.indices {
-      for chunk in committedBatches[batch].buffers.indices { committedBatches[batch].buffers[chunk] = nil }
+      committedBatches[batch].buffers.removeAll(keepingCapacity: true)
     }
     visibleCommittedVertexCount = 0; visibleCommittedChunkCount = 0
     isPaused = true
@@ -1174,7 +1171,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   private func releaseGeometryBuffers() {
     for index in committedBatches.indices {
-      committedBatches[index].buffers = Array(repeating: nil, count: committedBatches[index].mesh.chunks.count)
+      committedBatches[index].buffers.removeAll(keepingCapacity: true)
     }
     releaseActiveBuffers()
   }
@@ -1289,11 +1286,14 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     for batchIndex in batches.indices {
       let mesh = batches[batchIndex].mesh
       let transform = mesh.projection.transform(camera: camera, viewport: viewport)
-      for chunkIndex in mesh.chunks.indices {
-        let chunk = mesh.chunks[chunkIndex]
-        if chunk.intersects(viewport: viewportRect, transform: transform) { visible.append((batchIndex, chunkIndex)) }
-        else { batches[batchIndex].buffers[chunkIndex] = nil }
+      let selected = mesh.chunkIndex.query(viewport: viewportRect, transform: transform).chunks
+      let selectedIDs = Set(selected)
+      // Only resident uploads can need retirement; unvisited source chunks do
+      // not even have a buffer slot. Nearby retention uses this same pool.
+      for chunkIndex in batches[batchIndex].buffers.keys where !selectedIDs.contains(chunkIndex) {
+        batches[batchIndex].buffers[chunkIndex] = nil
       }
+      visible.append(contentsOf: selected.map { (batchIndex, $0) })
     }
     for (batchIndex, chunkIndex) in visible where batches[batchIndex].buffers[chunkIndex] == nil {
       let mesh = batches[batchIndex].mesh

@@ -68,6 +68,31 @@ final class DocumentResourceLeaseTests: XCTestCase {
     XCTAssertFalse(web.scrollView.isScrollEnabled)
   }
 
+  func testFirstWorkingPageNeverTransfersTheUnreadDocumentTail() async throws {
+    let resources = SceneRenderResources(profile: .interactive)
+    let first = (0..<70).map { "Paragraph \($0). " + String(repeating: "Only this block belongs to the working page. ", count: 10) }.joined(separator: "\n\n")
+    let unread = String(repeating: "Unread material. ", count: 55_000)
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: first)]
+      + (0..<24).map { .markdown(id: "unread-\($0)", source: unread) })
+    let fixture = fixture(resources: resources, interactive: true, document: document)
+    let window = try show(fixture.host)
+    defer { fixture.coordinator.invalidate(); window.isHidden = true }
+    await waitUntil(timeout: .seconds(6)) { fixture.coordinator.hasCanonicalPixels || fixture.coordinator.acquisitionError != nil }
+    XCTAssertTrue(fixture.coordinator.hasCanonicalPixels)
+    XCTAssertNil(fixture.coordinator.acquisitionError)
+    let source = try XCTUnwrap(fixture.coordinator.payload?.source)
+    XCTAssertEqual(source.preparedSourceBlockCount, 1,
+      "More than 16 MB of unread blocks must never cross the bridge for this page or its neighbours")
+    XCTAssertFalse(try XCTUnwrap(source.layout).isComplete,
+      "Showing a page is not a request to prepare the remainder of the book")
+    let web = try XCTUnwrap(fixture.coordinator.webView)
+    let editable = try await web.evaluateJavaScript("""
+      document.querySelector('[data-block-id=body]').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
+      document.querySelector('textarea')?.value;
+      """) as? String
+    XCTAssertEqual(editable, first, "The page includes its exact editable block, not a read-only excerpt")
+  }
+
   func testProducerServesExactPageDemandWithoutExpandingTheSceneWindowAgain() async throws {
     let resources = SceneRenderResources(profile: .interactive)
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
@@ -119,7 +144,6 @@ final class DocumentResourceLeaseTests: XCTestCase {
     XCTAssertTrue(fixture.coordinator.webView === web)
     XCTAssertTrue(fixture.coordinator.payload?.source === source)
     XCTAssertEqual(fixture.coordinator.payload?.runtimeID, runtime)
-    XCTAssertEqual(source.encodingCount, 1)
     XCTAssertEqual(source.preparationCount, 1)
     XCTAssertEqual(source.measurementCount, 1)
     let receipt = try await web.evaluateJavaScript("notebookRenderer.pageReceipt()") as? [String: Any]
@@ -132,7 +156,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
       "# Recovered page\n\n" + (0..<20).map { "Paragraph \($0). " + String(repeating: "The index has a charged lifetime. ", count: 8) }.joined(separator: "\n\n"))])
     let measurementSource = DocumentSourceSnapshot(document)
-    let sourceBytes = try await measurementSource.encodedJSON().utf8.count
+    let sourceBytes = try canonicalDocumentJSON(measurementSource.message).utf8.count
     // The source input can enter, but the measured native index cannot coexist
     // with this genuine scene allocation. This exercises the later transfer,
     // not the already-covered pre-materialization source-announcement wait.
@@ -161,7 +185,6 @@ final class DocumentResourceLeaseTests: XCTestCase {
     XCTAssertTrue(fixture.coordinator.webView === web)
     XCTAssertTrue(fixture.coordinator.payload?.source === source)
     XCTAssertEqual(fixture.coordinator.payload?.runtimeID, runtime)
-    XCTAssertEqual(source.encodingCount, 1)
     XCTAssertEqual(source.preparationCount, 1)
     XCTAssertEqual(resources.pendingDerivedRequestCount, 0)
   }
@@ -170,7 +193,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
     let resources = SceneRenderResources(byteLimit: 8 * 1024 * 1024, profile: .interactive)
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
       "# Surviving reader\n\n" + String(repeating: "One source can serve another physical reader. ", count: 160))])
-    let sourceBytes = try await DocumentSourceSnapshot(document).encodedJSON().utf8.count
+    let sourceBytes = try canonicalDocumentJSON(DocumentSourceSnapshot(document).message).utf8.count
     let blocker = try XCTUnwrap(resources.reserveDerivedBytes(resources.passiveByteLimit - sourceBytes * 2 - 4_096,
       priority: .passive))
     let first = fixture(resources: resources, interactive: true, document: document)

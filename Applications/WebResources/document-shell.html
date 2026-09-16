@@ -565,7 +565,7 @@
       const beginSourcePreparation = async (source, throughPage = null) => {
         const dimensions=viewport.getBoundingClientRect();
         if(sourcePreparation)throw new Error('document_source_preparation_busy');
-        if(!source?.key || !Array.isArray(source.blocks) || !dimensions
+        if(!source?.key || !Number.isSafeInteger(source.blockCount) || source.blockCount<0 || !dimensions
           || ![dimensions.width,dimensions.height].every(value=>Number.isFinite(value)&&value>0))
           throw new Error('document_source_preparation_invalid');
         if(!payload)configurePaper(source,0);
@@ -579,17 +579,23 @@
         for(const [name,value] of Object.entries({'page-margin':margin,'content-width':width-2*margin,
           'content-height':height-2*margin,'column-gap':2*margin+gap}))host.style.setProperty('--'+name,`${value}px`);
         flow.className='document-content document-flow';
-        sourcePreparation={key:source.key,source,host,flow,cursor:0,cancelled:false,diagnostics:[],
+        sourcePreparation={key:source.key,source,host,flow,cursor:0,pendingBlocks:[],cancelled:false,diagnostics:[],
           width,height,margin,gap,stride,advancing:false};
         work.sourceInstalls+=1;
         return extendSourcePreparation(source.key,throughPage);
       };
 
-      const extendSourcePreparation = async (key, throughPage = null) => {
+      const extendSourcePreparation = async (key, throughPage = null, batch = null) => {
         const preparation=sourcePreparation;
         if(!preparation || preparation.key!==key || preparation.cancelled || preparation.advancing
           || preparation.pendingPage || (throughPage!==null && (!Number.isInteger(throughPage)||throughPage<0)))
           throw new Error('document_source_preparation_not_ready');
+        if(batch!==null) {
+          if(batch.offset!==preparation.cursor || preparation.pendingBlocks.length || !Array.isArray(batch.blocks)
+            || !batch.blocks.length || batch.offset+batch.blocks.length>preparation.source.blockCount)
+            throw new Error('document_source_block_address_invalid');
+          preparation.pendingBlocks=batch.blocks;
+        }
         preparation.advancing=true;
         const {source,host,flow,width,height,margin,gap,stride}=preparation;
         const preparationPhasesMS={};let phaseStarted=performance.now();
@@ -602,13 +608,19 @@
           const contentWidth=width-2*margin,columnGap=2*margin+gap;
           const countPages=()=>Math.max(1,Math.round((Math.max(contentWidth,flow.scrollWidth)+columnGap)/(contentWidth+columnGap)));
           let pageCount=countPages();
-          while(preparation.cursor<source.blocks.length && (throughPage===null || pageCount<throughPage+3)) {
+          while(preparation.cursor<source.blockCount && (throughPage===null || pageCount<throughPage+3)) {
+            if(!preparation.pendingBlocks.length) {
+              // Ask for the next addressed block only when the accepted page
+              // needs it. Neither unread text nor programs cross this boundary.
+              flow.remove();preparation.advancing=false;
+              return {sourceKey:key,nextBlockIndex:preparation.cursor};
+            }
             // Small forward batches yield at actual runtime/image callbacks.
             // No far markup is parsed merely to discover a first-page anchor.
             const nodes=[];
-            const end=Math.min(source.blocks.length,preparation.cursor+(throughPage===null?4:1));
+            const end=preparation.cursor+Math.min(preparation.pendingBlocks.length,throughPage===null?4:1);
             while(preparation.cursor<end) {
-              const node=createBlock(source.blocks[preparation.cursor++]);
+              const node=createBlock(preparation.pendingBlocks.shift());preparation.cursor+=1;
               for(const image of node.querySelectorAll(':is(h1,h2,h3,h4,h5,h6) + :is(img,svg)')) {
                 const heading=image.previousElementSibling,lead=document.createElement('div');
                 lead.className='document-illustration-lead';heading.before(lead);lead.append(heading,image);
@@ -640,7 +652,7 @@
             pageCount=countPages();
             if(pageCount>4096)throw new Error('document_layout_page_budget');
           }
-          const complete=preparation.cursor===source.blocks.length;
+          const complete=preparation.cursor===source.blockCount;
           if(complete) {
             // Automatic addresses are a navigation index, not a paint barrier.
             // Only the complete flow can reserve every explicit author ID.

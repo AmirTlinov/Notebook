@@ -83,8 +83,8 @@ struct DocumentStateMessage: Encodable, Sendable {
   let states: [String: JSONValue]
 }
 
-/// The encoded string has one producer even when all four pages request it at
-/// once. Encoding runs outside the input actor, and no caller mutates its input.
+/// Pages share one immutable source. Its body crosses the browser boundary
+/// only in the addressed block batches requested by the canonical flow.
 @MainActor
 final class DocumentSourceSnapshot {
   let message: DocumentSourceMessage
@@ -92,8 +92,6 @@ final class DocumentSourceSnapshot {
   let stamp: VersionStamp
   let programIDs: Set<String>
   private let blockIDs: Set<String>
-  private var encoding: Task<String, Error>?
-  private(set) var encodingCount = 0
   private(set) var layout: DocumentLayoutRecord?
   private var preparation: DocumentPagePreparation?
   private var layoutObservers: [UUID: (DocumentLayoutRecord) -> Void] = [:]
@@ -117,24 +115,13 @@ final class DocumentSourceSnapshot {
     return layout.blockIDs(on: [page]).intersection(programIDs)
   }
 
-  private func encodingTask() -> Task<String, Error> {
-    if encoding == nil {
-      encodingCount += 1
-      let message = message
-      encoding = Task.detached(priority: .userInitiated) { try canonicalDocumentJSON(message) }
-    }
-    return encoding!
-  }
-
-  func encodedJSON() async throws -> String { try await encodingTask().value }
-
   func preparedPage(_ index: Int, hostID: UUID, in web: WKWebView, lease: WebSurfaceLease,
     resources: SceneRenderResources, onAdmissionWait: @escaping (Bool) -> Void = { _ in },
     onLayoutChanged: @escaping (DocumentLayoutRecord) -> Void = { _ in }) async throws -> DocumentPreparedPage {
     layoutObservers[hostID] = onLayoutChanged
     if preparation == nil {
       preparationCount += 1
-      preparation = DocumentPagePreparation(message: message, sourceJSON: encodingTask(), resources: resources)
+      preparation = DocumentPagePreparation(message: message, resources: resources)
       preparation?.onLayoutAccepted = { [weak self] record in
         guard let self else { return }
         if let layout, layout !== record { try layout.acceptExtension(record) }
@@ -170,7 +157,7 @@ final class DocumentSourceSnapshot {
     if web != nil { layoutObservers[hostID] = nil }
     preparation?.releasePage(hostID: hostID, in: web)
   }
-  func didPresentPage() { preparation?.didPresentPage() }
+  func didPresentPage(_ page: Int) { preparation?.didPresentPage(page) }
   func completeLayout(in web: WKWebView, lease: WebSurfaceLease) async throws -> DocumentLayoutRecord {
     guard let preparation else { throw DocumentSessionError.invalidLayout }
     return try await preparation.completeLayout(in: web, lease: lease)
@@ -180,6 +167,7 @@ final class DocumentSourceSnapshot {
   var retainedPageIndices: Set<Int> { preparation?.retainedPageIndices ?? [] }
   var compiledPageCount: Int { preparation?.compiledPageCount ?? 0 }
   var measurementCount: Int { preparation?.measurementCount ?? 0 }
+  var preparedSourceBlockCount: Int { preparation?.preparedSourceBlockCount ?? 0 }
   var preparationPhasesMS: [String: Double] { preparation?.preparationPhasesMS ?? [:] }
   var lastPreparationLayoutMismatch: String? { receiptLayoutMismatch ?? preparation?.lastLayoutMismatch }
 
@@ -210,7 +198,6 @@ final class DocumentSourceSnapshot {
     return measured
   }
 
-  isolated deinit { encoding?.cancel() }
 }
 
 @MainActor
@@ -238,7 +225,7 @@ final class DocumentStateSnapshot {
   isolated deinit { encoding?.cancel() }
 }
 
-private func canonicalDocumentJSON<T: Encodable>(_ value: T) throws -> String {
+func canonicalDocumentJSON<T: Encodable>(_ value: T) throws -> String {
   let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
   return String(decoding: try encoder.encode(value), as: UTF8.self)
 }

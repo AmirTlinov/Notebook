@@ -107,19 +107,33 @@ final class DocumentPagePresentationOwner {
   @MainActor final class OpenDocument {
     let documentID: UUID
     private var owner: DocumentPagePresentationOwner?
+    private var isReturn = false
     fileprivate init(_ owner: DocumentPagePresentationOwner) {
       documentID = owner.documentID; self.owner = owner; owner.openDocuments += 1
     }
     func close() {
       guard let owner else { return }; self.owner = nil
       owner.openDocuments -= 1
+      if isReturn { owner.returnDocuments -= 1 }
       if owner.entries.isEmpty && owner.openDocuments == 0 { owner.stop() }
       else { owner.retirePaperAfterDocumentClose(); owner.schedule() }
+    }
+    func parkForReturn() {
+      guard let owner, !isReturn else { return }
+      isReturn = true; owner.returnDocuments += 1
+      owner.retirePaperAfterDocumentClose()
+    }
+    func resume() {
+      guard let owner, isReturn else { return }
+      isReturn = false; owner.returnDocuments -= 1
+      owner.paper.offerIdleReclamation(nil)
+      owner.programOwner.resumeFromReturn()
     }
     func cameraDidChange() { owner?.refreshVisiblePrograms() }
     isolated deinit { close() }
   }
   private var openDocuments = 0
+  private var returnDocuments = 0
   func retainOpenDocument() -> OpenDocument { OpenDocument(self) }
   static func shared(documentID: UUID, resources: SceneRenderResources) -> DocumentPagePresentationOwner {
     let key = Key(documentID: documentID, resources: ObjectIdentifier(resources))
@@ -334,7 +348,21 @@ final class DocumentPagePresentationOwner {
   /// Full physical presentations own the document lifetime. The selected input
   /// page may disappear during an ordinary handoff; that is not a document
   /// close. Conversely, surviving thumbnails cannot retain its live paper.
+  private var holdsReturnPaper: Bool {
+    openDocuments > 0 && returnDocuments == openDocuments && current == nil
+      && !entries.values.contains { $0.input.retainsOpenDocument }
+  }
+
   private func retirePaperAfterDocumentClose() {
+    if holdsReturnPaper {
+      paper.parkForReturn()
+      programOwner.parkForReturn()
+      paper.offerIdleReclamation { [weak self] in
+        guard let self, holdsReturnPaper else { return }
+        paper.invalidate(); paperTransfer = nil; paper = makePaper()
+      }
+      return
+    }
     guard !hasOpenDocumentPresentations,
       paper.payload != nil || paperTransfer != nil || mountedID != nil else { return }
     observe("document_paper_replace", reason: "last_full_presentation_closed")
@@ -857,6 +885,7 @@ final class DocumentPagePresentationOwner {
   }
 
   private func refreshProgramDemand() {
+    guard !holdsReturnPaper else { return }
     guard let input = stateOwner?.input ?? entries.values.first?.input, let layout = source?.layout,
       source?.matches(input.document) == true else { return }
     let pages = Set(entries.values.filter(\.requiresPreparation).map { min($0.input.pageIndex, layout.pageCount - 1) })

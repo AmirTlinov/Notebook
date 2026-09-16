@@ -46,6 +46,7 @@ final class DocumentProgramOwner {
   private var applications: [String: Application] = [:]
   private var retirementAttempts: [String: String] = [:]
   private var stopped = false
+  private var parkedForReturn = false
   var onChange: () -> Void = {}
   var onMount: (WKWebView, CGSize) -> Void = { _, _ in }
   var onLink: (String, ContentFieldVersion, String) -> Void = { _, _, _ in }
@@ -59,6 +60,28 @@ final class DocumentProgramOwner {
 
   init(documentID: UUID, resources: SceneRenderResources) {
     self.documentID = documentID; self.resources = resources
+  }
+
+  /// Keep already running return programs, but lend their existing slots to
+  /// actual foreground demand. Eviction checkpoints state without raster work.
+  func parkForReturn() {
+    guard !parkedForReturn, !stopped else { return }
+    parkedForReturn = true
+    for (id, runtime) in runtimes {
+      if !runtime.ready { retireImmediately(id, runtime: runtime); continue }
+      guard !runtime.focused, context?.contacts.contains(id) != true else { continue }
+      runtime.offerReturnReclamation { [weak self, weak runtime] in
+        guard let self, let runtime, parkedForReturn, runtimes[id] === runtime else { return }
+        liveIDs.remove(id)
+        if jobs[id] == nil { startCheckpoint(id, runtime: runtime, keepsPicture: false) }
+      }
+    }
+  }
+
+  func resumeFromReturn() {
+    guard parkedForReturn else { return }
+    parkedForReturn = false
+    for runtime in runtimes.values { runtime.offerReturnReclamation(nil) }
   }
 
   func update(input: DocumentPagePresentation, layout: DocumentLayoutRecord, pages: Set<Int>,
@@ -96,7 +119,7 @@ final class DocumentProgramOwner {
   }
 
   private func reconcile() {
-    guard !stopped, let context else { return }
+    guard !stopped, !parkedForReturn, let context else { return }
     let input = context.input, retained = retainedIDs
     pausedPrograms = pausedPrograms.filter { retained.contains($0.key) && paused($0.key) != nil }
     pauseFailures = pauseFailures.filter { retained.contains($0.key) }
@@ -226,7 +249,7 @@ final class DocumentProgramOwner {
         guard !stopped, runtimes[block] === runtime, let latest = self.context,
           !latest.blocked, !latest.contacts.contains(block), !runtime.focused, !liveIDs.contains(block),
           latest.input.document.sourceVersion(blockID: block) == runtime.sourceVersion,
-          runtime.value == value, keepsPicture || !retainedIDs.contains(block) else {
+          runtime.value == value, keepsPicture || parkedForReturn || !retainedIDs.contains(block) else {
           await runtime.resume(); return
         }
         if let pixels, keepsPicture { pausedPrograms[block] = .init(sourceVersion: runtime.sourceVersion, value: value, raster: pixels); self.previewID = nil }

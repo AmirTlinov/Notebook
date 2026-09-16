@@ -501,6 +501,7 @@ final class NotebookAppModel {
   #if os(iOS)
   let nativeCameraProjection = SceneNativeCameraProjection()
   @ObservationIgnored private var openDocumentPresentation: DocumentPagePresentationOwner.OpenDocument?
+  @ObservationIgnored private var returnDocumentPresentation: DocumentPagePresentationOwner.OpenDocument?
   #endif
 
   private(set) var presence: SessionPresence? {
@@ -512,11 +513,20 @@ final class NotebookAppModel {
         return value.focusedItemID
       }
       if openDocumentPresentation?.documentID != opened {
-        openDocumentPresentation?.close(); openDocumentPresentation = nil
-        if let opened, !isClosing {
-          openDocumentPresentation = DocumentPagePresentationOwner.shared(documentID: opened,
-            resources: .shared).retainOpenDocument()
+        let returning = returnDocumentPresentation?.documentID == opened ? returnDocumentPresentation : nil
+        if returning != nil { returnDocumentPresentation = nil }
+        if let outgoing = openDocumentPresentation {
+          returnDocumentPresentation?.close()
+          outgoing.parkForReturn(); returnDocumentPresentation = outgoing
+          openDocumentPresentation = nil
         }
+        if let opened, !isClosing {
+          if let returning { returning.resume(); openDocumentPresentation = returning }
+          else {
+            openDocumentPresentation = DocumentPagePresentationOwner.shared(documentID: opened,
+              resources: .shared).retainOpenDocument()
+          }
+        } else { returning?.close() }
       }
       openDocumentPresentation?.cameraDidChange()
       pagePresentations.cameraDidChange()
@@ -4040,6 +4050,7 @@ final class NotebookAppModel {
       documentSaveObserver = nil
       #if os(iOS)
         openDocumentPresentation?.close(); openDocumentPresentation = nil
+        returnDocumentPresentation?.close(); returnDocumentPresentation = nil
       #endif
       shutdownPhase = .draining
       inputGate.onActivityChange = nil

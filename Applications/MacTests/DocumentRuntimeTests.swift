@@ -63,9 +63,19 @@ final class DocumentRuntimeTests: XCTestCase {
     let web = try XCTUnwrap(surface.coordinator.webView), source = try XCTUnwrap(surface.coordinator.payload?.source)
     await source.discardIdlePreparation()
     try await execute("""
+      async function prepareFixtureSource(source,page=null) {
+        const renderer=window.notebookRenderer;
+        let packet=await renderer.beginSourcePreparation({key:source.key,documentID:source.documentID,
+          paper:source.paper,blockCount:source.blocks.length},page);
+        while(Number.isInteger(packet.nextBlockIndex)) {
+          const offset=packet.nextBlockIndex;
+          packet=await renderer.extendSourcePreparation(source.key,page,{offset,blocks:source.blocks.slice(offset,offset+4)});
+        }
+        return packet;
+      }
       const source=JSON.parse(encoded), renderer=notebookRenderer, bytes=value=>new TextEncoder().encode(value).length;
       const refused=operation=>{let failed=false;try{operation()}catch{failed=true}if(!failed)throw Error('Packet address was accepted');};
-      const layout=await renderer.beginSourcePreparation(source);
+      const layout=await prepareFixtureSource(source);
       try {
         if(layout.sourceKey!==source.key || layout.pageIndex!==null || bytes(JSON.stringify(layout))>512)throw Error('Invalid layout announcement');
         const json=renderer.readPreparedPacket(source.key,null);
@@ -84,7 +94,7 @@ final class DocumentRuntimeTests: XCTestCase {
       refused(()=>renderer.readPreparedPacket(source.key,0));
       refused(()=>renderer.readPreparedPacket(source.key,null));
       return true;
-      """, arguments: ["encoded": try await source.encodedJSON()], in: web)
+      """, arguments: ["encoded": try canonicalDocumentJSON(source.message)], in: web)
   }
 
   func testNativeReaderRejectsChangedLayoutAndPagePacketLengthsWithoutPublishingOrLeaking() async throws {
@@ -413,7 +423,7 @@ final class DocumentRuntimeTests: XCTestCase {
           onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
         let deadline = ContinuousClock.now + .seconds(8)
         while !surface.coordinator.renderIsReady && surface.coordinator.acquisitionError == nil && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
-        let sourceJSON = try await source.encodedJSON()
+        let sourceJSON = try canonicalDocumentJSON(source.message)
         var pixels: [Data] = []
         var rasterWidth = 0, rasterHeight = 0
         // These PNGs expose the complete native paint paths. The source
@@ -426,11 +436,21 @@ final class DocumentRuntimeTests: XCTestCase {
           if mode == "measured" {
             await source.discardIdlePreparation()
             try await execute("""
+      async function prepareFixtureSource(source,page=null) {
+        const renderer=window.notebookRenderer;
+        let packet=await renderer.beginSourcePreparation({key:source.key,documentID:source.documentID,
+          paper:source.paper,blockCount:source.blocks.length},page);
+        while(Number.isInteger(packet.nextBlockIndex)) {
+          const offset=packet.nextBlockIndex;
+          packet=await renderer.extendSourcePreparation(source.key,page,{offset,blocks:source.blocks.slice(offset,offset+4)});
+        }
+        return packet;
+      }
               const fragments=notebookDocumentFragments;let measured;
               window.notebookDocumentFragments={...fragments,create:async (...args)=>{
                 const compiler=await fragments.create(...args);measured=args[0];return compiler;
               }};
-              try { await notebookRenderer.beginSourcePreparation(JSON.parse(source)); }
+              try { await prepareFixtureSource(JSON.parse(source)); }
               finally { window.notebookDocumentFragments=fragments; }
               const host=document.querySelector('.document-layout-preparation');
               // This independent source-pixel oracle deliberately reconnects
@@ -1111,7 +1131,7 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertEqual(value["mutations"] as? Int, 0)
     XCTAssertEqual(drafts.last?.isComposing, true)
     XCTAssertEqual(commits.count, 1, "The iframe browsing context must not boot again")
-    XCTAssertTrue(surface.coordinator.payload?.source === source); XCTAssertEqual(source.encodingCount, 1)
+    XCTAssertTrue(surface.coordinator.payload?.source === source); XCTAssertEqual(source.preparationCount, 1)
   }
 
   func testAnOffPageStateChangeKeepsTheActualPaperFrameAndItsCompositeKey() async throws {
@@ -1204,7 +1224,7 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertEqual(preparationRoots, 1, "One admitted page owns the inert source index; neighbors own only their physical page")
     XCTAssertEqual(layoutPasses, 1); XCTAssertEqual(typesetPasses, 1)
     XCTAssertEqual(source.preparationCount, 1)
-    XCTAssertEqual(source.encodingCount, 1)
+    XCTAssertEqual(source.preparationCount, 1)
     XCTAssertEqual(pages[0].coordinator.payload?.state.encodingCount, 1)
     XCTAssertEqual(resources.activeWebSurfaceCount, 4); XCTAssertEqual(resources.pendingWebRequestCount, 0)
   }

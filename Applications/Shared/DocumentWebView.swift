@@ -503,6 +503,13 @@ final class DocumentWebCoordinator: NSObject,
     applyInputAdmission(false)
   }
 
+  /// The model retains one return surface in the same WebKit pool. Parking
+  /// changes scheduling priority, not its DOM, source, editor or scroll state.
+  func parkForReturn() {
+    releaseInputOwnership()
+    surfaceLease?.updatePriority(.neighbor); requestedPriority = .neighbor
+  }
+
   private func applyInputAdmission(_ isInteractive: Bool) {
     requestedInput = isInteractive
     if let payload {
@@ -527,11 +534,10 @@ final class DocumentWebCoordinator: NSObject,
         runtimeID: payload.runtimeID, generation: generation, renderToken: payload.renderToken,
         pageIndex: payload.pageIndex, presentationEpoch: presentation.epoch)
     }
-    // A one-page export or neighbour has no demand for the entire navigation
-    // index. The current reader owns that continuation, including when it
-    // adopts a surface whose canonical pixels were prepared in the background.
-    if hasCanonicalPixels, requestedPriority == .currentPage {
-      payload?.source.didPresentPage()
+    // The current reader warms a bounded continuation, not the rest of the
+    // book. A neighbour or one-page export cannot expand that window.
+    if hasCanonicalPixels, requestedPriority == .currentPage, let payload {
+      payload.source.didPresentPage(payload.pageIndex)
     }
     refreshLiveReceipt()
   }

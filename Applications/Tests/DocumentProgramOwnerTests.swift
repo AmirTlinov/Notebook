@@ -846,6 +846,63 @@ final class DocumentProgramOwnerTests: XCTestCase {
     }
   }
 
+  func testReturnToDocumentReattachesPreparedWorkingPaperWithoutRebuildingIt() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
+      "# Return here\n\nA prepared formula \\(x^2 + y^2\\) and editable source.")])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
+    let lifetime = owner.retainOpenDocument()
+    defer { fixture.close(); lifetime.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) && fixture.hosts[0].isUserInteractionEnabled }
+    let web = try XCTUnwrap(fixture.paper(in: 0))
+    let original = try await web.evaluateJavaScript("JSON.stringify(notebookRenderer.pageReceipt().work)") as? String
+    let source = try XCTUnwrap((web.navigationDelegate as? DocumentWebCoordinator)?.payload?.source)
+    let measurements = source.measurementCount, fragments = source.compiledPageCount
+    lifetime.parkForReturn()
+    fixture.retirePresentation(0)
+    await owner.observePendingPresentationWork()
+    XCTAssertFalse(web.isDescendant(of: fixture.hosts[0]))
+    lifetime.resume()
+    fixture.restorePresentation(0)
+    try await wait(message: { fixture.diagnostics }) { fixture.paper(in: 0) === web && fixture.hosts[0].isUserInteractionEnabled }
+    let returned = try await web.evaluateJavaScript("JSON.stringify(notebookRenderer.pageReceipt().work)") as? String
+    XCTAssertEqual(returned, original, "Return attaches the existing DOM; parsing, math, layout and page installation do not run again")
+    XCTAssertEqual(source.measurementCount, measurements)
+    XCTAssertEqual(source.compiledPageCount, fragments)
+    let editing = try await web.evaluateJavaScript("""
+      document.querySelector('[data-block-id=body]').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
+      document.querySelector('textarea').value;
+      """) as? String
+    XCTAssertEqual(editing, document.blocks[0].source, "Return must expose the working source, not just a cached picture")
+  }
+
+  func testReturnProgramsYieldTheirExistingPoolSlotsAfterCheckpointWhenForegroundNeedsThem() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program",
+      html: "<button>Retained return program</button>", javaScript: "notebook.commit({count:1})",
+      initialState: .object(["count": .number(0)]), height: 100)])
+    let resources = SceneRenderResources(maximumWebSurfaces: 3)
+    let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
+    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: resources)
+    let lifetime = owner.retainOpenDocument()
+    defer { fixture.close(); lifetime.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.web(in: 0) != nil }
+    let original = try XCTUnwrap(fixture.web(in: 0))
+    lifetime.parkForReturn(); fixture.retirePresentation(0)
+    await owner.observePendingPresentationWork()
+    let first = try await resources.acquireWebSurface(priority: .input)
+    defer { first.release() }
+    let second = try await resources.acquireWebSurface(priority: .input)
+    defer { second.release() }
+    let third = try await resources.acquireWebSurface(priority: .input)
+    defer { third.release() }
+    XCTAssertTrue(fixture.checkpoints.contains("program"), "Only an accepted state checkpoint can retire a running return program")
+    XCTAssertEqual(fixture.checkpointValues["program"], .object(["count": .number(1)]))
+    first.release(); second.release(); third.release()
+    lifetime.resume(); fixture.restorePresentation(0)
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.web(in: 0) != nil && fixture.web(in: 0) !== original }
+    XCTAssertEqual(fixture.value("program"), .object(["count": .number(1)]))
+  }
+
   func testClosingFullPresentationRetiresPaperWhileThumbnailKeepsItsPicture() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
       "# One open document\n\nA remaining thumbnail owns its picture, not the closed document runtime.")])

@@ -83,32 +83,21 @@ struct SpatialInkMesh: Sendable {
 
   struct Batch: Sendable {
     let tool: SpatialInkTool
-    private(set) var vertices: [SpatialInkGeometry.Vertex]
+    let vertices: [SpatialInkGeometry.Vertex]
     let projection: Projection
-    private(set) var chunks: [Chunk] = []
+    let chunks: [Chunk]
+    let chunkIndex: SpatialInkGeometry.ChunkIndex
 
     init(tool: SpatialInkTool, vertices: [SpatialInkGeometry.Vertex], projection: Projection) {
-      self.tool = tool; self.vertices = []; self.projection = projection
-      append(vertices)
+      self.init(tool: tool, vertices: vertices, chunks: SpatialInkGeometry.chunks(for: vertices), projection: projection)
     }
 
     init(tool: SpatialInkTool, vertices: [SpatialInkGeometry.Vertex], chunks: [Chunk], projection: Projection) {
       self.tool = tool; self.vertices = vertices; self.projection = projection; self.chunks = chunks
-    }
-
-    mutating func append(_ added: [SpatialInkGeometry.Vertex]) {
-      guard !added.isEmpty else { return }
-      precondition(added.count.isMultiple(of: 3))
-      let previousCount = vertices.count
-      vertices.append(contentsOf: added)
-      var start = previousCount
-      if let last = chunks.last, last.vertices.count < Chunk.maximumVertexCount {
-        start = last.vertices.lowerBound
-        chunks.removeLast()
-      }
-      chunks.append(contentsOf: SpatialInkGeometry.chunks(for: vertices, startingAt: start))
+      chunkIndex = .init(chunks)
     }
   }
+
   let batches: [Batch]
 
   static func local(_ layers: [SpatialInkRenderLayer]) -> Self {
@@ -130,6 +119,12 @@ struct SpatialInkMesh: Sendable {
 
   static func prepare(surface: SurfaceID, journal: SpatialInkJournal?, suppressedInkIDs: Set<UUID> = []) throws -> Self {
     var batches: [Batch] = []
+    var pending: (tool: SpatialInkTool, projection: Projection, vertices: [SpatialInkGeometry.Vertex])?
+    func seal() {
+      guard let value = pending else { return }
+      batches.append(.init(tool: value.tool, vertices: value.vertices, projection: value.projection))
+      pending = nil
+    }
     for action in journal?.actions ?? [] where action.isActive && !suppressedInkIDs.contains(action.id) {
       try Task.checkCancellation()
       for span in action.spans where span.surface == surface {
@@ -149,13 +144,14 @@ struct SpatialInkMesh: Sendable {
           to: &vertices)
         try Task.checkCancellation()
         let projection = origin.map(Projection.world) ?? .local
-        if let index = batches.indices.last, batches[index].tool == action.tool, batches[index].projection == projection {
-          batches[index].append(vertices)
+        if pending?.tool == action.tool, pending?.projection == projection {
+          pending?.vertices.append(contentsOf: vertices)
         } else {
-          batches.append(.init(tool: action.tool, vertices: vertices, projection: projection))
+          seal(); pending = (action.tool, projection, vertices)
         }
       }
     }
+    seal()
     return .init(batches: batches)
   }
 }
@@ -205,7 +201,7 @@ final class SpatialInkMeshCache {
     // Count retained source storage too; shared Swift arrays only reduce the
     // real cost. One oversized surface is used by its canvas but not retained.
     let cost = vertices * MemoryLayout<SpatialInkGeometry.Vertex>.stride
-      + mesh.batches.reduce(0) { $0 + $1.chunks.count * MemoryLayout<SpatialInkGeometry.Chunk>.stride }
+      + mesh.batches.reduce(0) { $0 + $1.chunks.count * MemoryLayout<SpatialInkGeometry.Chunk>.stride + $1.chunkIndex.byteCount }
       + samples * MemoryLayout<SpatialInkSample>.stride
       + (journal?.actions.count ?? 0) * MemoryLayout<SpatialInkAction>.stride
     guard capacity > 0, cost <= byteLimit else { return }

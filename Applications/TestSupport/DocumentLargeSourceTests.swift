@@ -91,13 +91,13 @@ final class DocumentLargeSourceTests: XCTestCase {
     XCTAssertEqual(document.blocks.count, 140)
     XCTAssertGreaterThan(document.blocks.reduce(0) { $0 + $1.source.utf8.count }, 6 * 1024 * 1024)
     let resources = SceneRenderResources(profile: .interactive), start = ContinuousClock.now
-    let surface = try surface(document, state, resources: resources)
+    let surface = try surface(document, state, resources: resources, acceptsInput: true)
     defer { surface.close() }
     try await ready(surface.coordinator)
     let elapsed = start.duration(to: .now)
     XCTAssertLessThan(elapsed, .seconds(8), "The production preparation deadline is not enlarged for a book")
     let source = try XCTUnwrap(surface.coordinator.payload?.source)
-    try await complete(source)
+    try await complete(source, requestedBy: surface.coordinator)
     let layout = try XCTUnwrap(source.layout)
     XCTAssertGreaterThan(layout.pageCount, 30)
     let web = try XCTUnwrap(surface.coordinator.webView)
@@ -142,7 +142,7 @@ final class DocumentLargeSourceTests: XCTestCase {
       XCTAssertTrue(source.retainedPageIndices.isSubset(of: Set(max(0, index - 1)...min(layout.pageCount - 1, index + 1))),
         "The fragment cache belongs to the current working window, not visited pages")
     }
-    XCTAssertEqual(source.preparationCount, 1); XCTAssertEqual(source.encodingCount, 1)
+    XCTAssertEqual(source.preparationCount, 1)
     XCTAssertLessThanOrEqual(resources.peakAccountedBytes, resources.byteLimit / 2,
       "Book preparation must leave the protected Pencil reserve intact")
     let measurement = XCTAttachment(string: "coldReady=\(elapsed), pages=\(layout.pageCount), peakAccountedBytes=\(resources.peakAccountedBytes)")
@@ -189,8 +189,7 @@ final class DocumentLargeSourceTests: XCTestCase {
     surface.coordinator.onLinkActivation = { links.append($0.destination) }
     if shownBeforeTail {
       XCTAssertEqual(prefix?.isComplete, false)
-      XCTAssertNil(source.programIDs(on: 1), "An unmeasured page is not a proved empty program set")
-      XCTAssertNil(DocumentRenderRegistry.shared.programIDs(document: document, pageIndex: 1))
+      XCTAssertEqual(source.preparedSourceBlockCount, 1, "Only the useful block and its editing source have crossed the bridge")
       let actual = try await evaluate("""
         const root=document.querySelector('#document');
         if(!root.textContent.includes('Useful first page') || !root.querySelector('mjx-container'))throw Error('Not useful paper');
@@ -302,17 +301,20 @@ final class DocumentLargeSourceTests: XCTestCase {
     try await ready(surface.coordinator)
   }
 
-  private func complete(_ source: DocumentSourceSnapshot) async throws {
+  private func complete(_ source: DocumentSourceSnapshot, requestedBy coordinator: DocumentWebCoordinator? = nil) async throws {
+    if let coordinator, source.layout?.isComplete != true {
+      coordinator.resolveLink("#explicit-full-index-request", origin: try XCTUnwrap(coordinator.currentLinkOrigin), deliver: { _ in })
+    }
     let deadline = ContinuousClock.now + .seconds(8)
     while source.layout?.isComplete != true, .now < deadline { try await Task.sleep(for: .milliseconds(10)) }
     XCTAssertEqual(source.layout?.isComplete, true, source.lastPreparationLayoutMismatch ?? "Navigation index did not finish")
   }
 
-  func testPassivePageDoesNotStartTheWholeBookUntilItsReadySurfaceBecomesTheReader() async throws {
+  func testNeitherPassiveNorCurrentPageStartsTheWholeBookWithoutAnIndexRequest() async throws {
     let actor = UUID(), resources = SceneRenderResources(profile: .interactive)
     var document = DocumentDocument(actor: actor, blocks: [.markdown(id: "initial", source: "Initial page")])
     let state = DocumentStateJournal(id: document.id, actor: actor)
-    let surface = try surface(document, state, resources: resources, priority: .background)
+    let surface = try surface(document, state, resources: resources, acceptsInput: true, priority: .background)
     defer { surface.close() }
     try await ready(surface.coordinator)
     let web = try XCTUnwrap(surface.coordinator.webView)
@@ -344,15 +346,14 @@ final class DocumentLargeSourceTests: XCTestCase {
     let size = WorkspaceItemGeometry.document(document.paperSize)
     surface.coordinator.mount(in: surface.host, physicalSize: .init(width: size.width, height: size.height),
       isInteractive: true, priority: .currentPage)
-    let deadline = ContinuousClock.now + .seconds(2)
-    var starts = "0"
-    while starts == "0", .now < deadline {
-      starts = try await evaluate("return String(window.tailStarts);", arguments: [:], web: web)
-      if starts == "0" { try await Task.sleep(for: .milliseconds(10)) }
-    }
+    // The current reader extends only its nearby page window, not the tail.
+    await Task.yield()
+    let starts = try await evaluate("return String(window.tailStarts);", arguments: [:], web: web)
+    XCTAssertEqual(starts, "0")
+    XCTAssertEqual(source.preparedSourceBlockCount, 1)
     _ = try await evaluate("window.releaseTail();return 'released';", arguments: [:], web: web)
-    XCTAssertEqual(starts, "1", "Adopting ready pixels into the current reader must start its index once")
-    try await complete(source)
+    try await ready(surface.coordinator)
+    try await complete(source, requestedBy: surface.coordinator)
     XCTAssertTrue(surface.coordinator.webView === web)
     XCTAssertEqual(source.measurementCount, 1)
     let returned = try await capture(web, name: "Same passive pixels after adoption into the reader")
@@ -366,11 +367,11 @@ final class DocumentLargeSourceTests: XCTestCase {
 
   func testIncrementalBookAgreesWithFullRemeasureAfterIndexReclamation() async throws {
     let document = illustratedBook(), state = DocumentStateJournal(id: document.id, actor: UUID())
-    let surface = try surface(document, state, resources: SceneRenderResources(profile: .interactive))
+    let surface = try surface(document, state, resources: SceneRenderResources(profile: .interactive), acceptsInput: true)
     defer { surface.close() }
     try await ready(surface.coordinator)
     let source = try XCTUnwrap(surface.coordinator.payload?.source)
-    try await complete(source)
+    try await complete(source, requestedBy: surface.coordinator)
     let layout = try XCTUnwrap(source.layout), web = try XCTUnwrap(surface.coordinator.webView)
     let first = try await capture(web, name: "Incremental mixed book first page")
     await source.discardIdlePreparation()
@@ -395,7 +396,7 @@ final class DocumentLargeSourceTests: XCTestCase {
     let surface = try surface(document, state, resources: SceneRenderResources())
     defer { surface.close() }
     try await ready(surface.coordinator)
-    try await complete(try XCTUnwrap(surface.coordinator.payload?.source))
+    try await complete(try XCTUnwrap(surface.coordinator.payload?.source), requestedBy: surface.coordinator)
     let layout = try XCTUnwrap(surface.coordinator.payload?.source.layout)
     XCTAssertGreaterThan(layout.pageCount, 3)
     var headings = 0
@@ -571,7 +572,7 @@ final class DocumentLargeSourceTests: XCTestCase {
         return 'shown';
         """, arguments: ["index": page], web: web)
     }
-    XCTAssertEqual(snapshot.encodingCount, 1); XCTAssertEqual(snapshot.preparationCount, 1)
+    XCTAssertEqual(snapshot.preparationCount, 1)
     XCTAssertLessThanOrEqual(resources.peakAccountedBytes, 256 * 1024 * 1024)
     let measurement = XCTAttachment(string: "peakAccountedBytes=\(resources.peakAccountedBytes), passiveReservedBytes=\(resources.passiveReservedBytes), pages=\(layout.pageCount)")
     measurement.name = "Large book beside drawn paper"; measurement.lifetime = .keepAlways; add(measurement)
@@ -589,6 +590,16 @@ final class DocumentLargeSourceTests: XCTestCase {
     let source = try XCTUnwrap(surface.coordinator.payload?.source), web = try XCTUnwrap(surface.coordinator.webView)
     await source.discardIdlePreparation()
     let report = try await evaluate("""
+      async function prepareFixtureSource(source,page=null) {
+        const renderer=window.notebookRenderer;
+        let packet=await renderer.beginSourcePreparation({key:source.key,documentID:source.documentID,
+          paper:source.paper,blockCount:source.blocks.length},page);
+        while(Number.isInteger(packet.nextBlockIndex)) {
+          const offset=packet.nextBlockIndex;
+          packet=await renderer.extendSourcePreparation(source.key,page,{offset,blocks:source.blocks.slice(offset,offset+4)});
+        }
+        return packet;
+      }
       const source=JSON.parse(encoded), renderer=notebookRenderer;
       const fragments=notebookDocumentFragments;let original;
       window.notebookDocumentFragments={...fragments,create:async (...args)=>{
@@ -597,7 +608,7 @@ final class DocumentLargeSourceTests: XCTestCase {
         return compiler;
       }};
       try {
-        await renderer.beginSourcePreparation(source);
+        await prepareFixtureSource(source);
         renderer.readPreparedPacket(source.key,null);
         if(original.size===0)throw Error('Fixture did not create a local MathJax cache');
         renderer.preparePagePacket(source.key,0);
@@ -622,7 +633,7 @@ final class DocumentLargeSourceTests: XCTestCase {
         if(definitions<4||references<10)throw Error('Insufficient glyph ownership coverage');
         return JSON.stringify({definitions,references});
       } finally { window.notebookDocumentFragments=fragments;renderer.finishSourcePreparation(source.key); }
-      """, arguments: ["encoded": try await source.encodedJSON()], web: web)
+      """, arguments: ["encoded": try canonicalDocumentJSON(source.message)], web: web)
     let evidence = XCTAttachment(string: report); evidence.name = "Physical MathJax ownership"; evidence.lifetime = .keepAlways; add(evidence)
   }
 
@@ -695,6 +706,16 @@ final class DocumentLargeSourceTests: XCTestCase {
     let source = try XCTUnwrap(surface.coordinator.payload?.source), web = try XCTUnwrap(surface.coordinator.webView)
     await source.discardIdlePreparation()
     let report = try await evaluate("""
+      async function prepareFixtureSource(source,page=null) {
+        const renderer=window.notebookRenderer;
+        let packet=await renderer.beginSourcePreparation({key:source.key,documentID:source.documentID,
+          paper:source.paper,blockCount:source.blocks.length},page);
+        while(Number.isInteger(packet.nextBlockIndex)) {
+          const offset=packet.nextBlockIndex;
+          packet=await renderer.extendSourcePreparation(source.key,page,{offset,blocks:source.blocks.slice(offset,offset+4)});
+        }
+        return packet;
+      }
       const source=JSON.parse(encoded),fragments=notebookDocumentFragments;
       const getStyle=window.getComputedStyle,getRects=Range.prototype.getClientRects,getBox=Range.prototype.getBoundingClientRect;
       let measured,host,expected,pages;
@@ -705,7 +726,7 @@ final class DocumentLargeSourceTests: XCTestCase {
         expected=pages.map(page=>compiler.compile(page));return compiler;
       }};
       try {
-        await notebookRenderer.beginSourcePreparation(source);
+        await prepareFixtureSource(source);
         if(measured.isConnected||!host.isConnected||host.querySelector('main'))throw Error('Source still participates in live layout');
         const check=node=>{if(node===measured||measured.contains(node))throw Error('Re-read measured source geometry')};
         window.getComputedStyle=(node,...args)=>{check(node);return getStyle(node,...args)};
@@ -722,7 +743,7 @@ final class DocumentLargeSourceTests: XCTestCase {
         Range.prototype.getClientRects=getRects;Range.prototype.getBoundingClientRect=getBox;
         notebookRenderer.finishSourcePreparation(source.key);
       }
-      """, arguments: ["encoded": try await source.encodedJSON()], web: web)
+      """, arguments: ["encoded": try canonicalDocumentJSON(source.message)], web: web)
     let evidence = XCTAttachment(string: report); evidence.name = "Detached measured source cuts"; evidence.lifetime = .keepAlways; add(evidence)
   }
 

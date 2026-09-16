@@ -63,6 +63,11 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     self.sourceVersion == sourceVersion && self.block == block && abs(size.width - width) < 1 / 32
   }
 
+  func offerReturnReclamation(_ reclaim: (@MainActor () -> Void)?) {
+    if reclaim != nil { lease?.updatePriority(.neighbor); requestedPriority = .neighbor }
+    lease?.offerIdleReclamation(reclaim)
+  }
+
   func start(priority: WebPriority) {
     guard !stopped else { return }
     if let lease { lease.updatePriority(priority); requestedPriority = priority; return }
